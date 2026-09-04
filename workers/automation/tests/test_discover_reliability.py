@@ -339,6 +339,150 @@ async def test_live_enrichment_cancellation_does_not_persist_a_false_terminal_st
         )
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("streaming", "cancel_requested", "terminal"),
+    [(True, True, False), (True, False, False), (False, True, True), (False, False, False)],
+)
+async def test_discovery_activity_preserves_the_stop_cause(
+    monkeypatch: pytest.MonkeyPatch, streaming: bool, cancel_requested: bool, terminal: bool,
+) -> None:
+    captured = {}
+
+    def capture_event(**kwargs):
+        captured["event"] = kwargs["cancel_event"]
+        return {"status": "ok"}
+
+    async def cancel_attempt(fn, *, on_cancel, **_kwargs):
+        fn()
+        on_cancel()
+        raise asyncio.CancelledError()
+
+    monkeypatch.setattr("jobctrl.infrastructure.temporal.runtime_guard.assert_activity_runtime", lambda **_kwargs: None)
+    monkeypatch.setattr("jobctrl.infrastructure.temporal.run_in_activity.run_blocking_with_heartbeat", cancel_attempt)
+    monkeypatch.setattr(runner, "run_discovery_enrichment_stage", capture_event)
+    monkeypatch.setattr(activities, "begin_pipeline_step_attempt", lambda _scope: None)
+    monkeypatch.setattr(activities.activity, "cancellation_details", lambda: SimpleNamespace(cancel_requested=cancel_requested))
+
+    with pytest.raises(asyncio.CancelledError):
+        await activities.discovery_enrichment_activity(DiscoveryEnrichmentActivityInput(
+            tenant_id="local", stream_while_discovering=streaming,
+        ))
+
+    assert captured["event"].is_set()
+    assert getattr(captured["event"], "terminal_cancellation_requested", True) is terminal
+
+
+@pytest.mark.asyncio
+async def test_source_completion_during_live_enrichment_is_reclaimed_by_terminal_pass(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Exercise the real activity stop signal, SQLite stage ownership and drain."""
+    from jobctrl.state import ensure_job_stage_rows, utc_now
+
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    execution = DiscoveryExecutionRef("local", "discover-stop-race", "run-stop-race")
+    captured = {}
+    try:
+        job_id = _seed_pending(conn, "https://example.test/source-stop-race", "Example")
+        conn.execute(
+            "INSERT INTO discovery_execution_jobs (tenant_id, discover_workflow_id, discover_run_id, "
+            "job_id, cohort_kind, source_family, work_plan_state, linked_at) "
+            "VALUES ('local', ?, ?, ?, 'observed_this_run', 'jobspy', 'pending', '2026-09-04T20:00:00Z')",
+            (execution.workflow_id, execution.temporal_run_id, str(job_id)),
+        )
+        conn.commit()
+        monkeypatch.setattr(runner, "get_connection", lambda: conn)
+        monkeypatch.setattr(runner, "run_discovery_hygiene", lambda *_args, **_kwargs: 0)
+        live_lease = runner._claim_execution_enrichment_lease(
+            execution, owner_token="live:1", activity_phase=1, activity_attempt=1,
+        )
+
+        def source_finishes(_conn, _site, _jobs, *, cancel_event, **_kwargs):
+            ensure_job_stage_rows(_conn, job_id, tenant_id=LOCAL_TENANT)
+            detail._claim_enrich_job_for_activity(
+                _conn, job_id, started_at=utc_now(), tenant_id=LOCAL_TENANT, activity_lease=live_lease,
+            )
+            _conn.commit()
+            captured["stop"]()
+            raise TransientNetworkError("producer-lifetime stop")
+
+        def live_stage(**kwargs):
+            return detail._run_detail_scraper(
+                conn, workers=1, job_ids=(job_id,), cancel_event=kwargs["cancel_event"],
+                reset_linkedin_candidates=False, discovery_execution=execution, activity_lease=live_lease,
+            )
+
+        async def stop_attempt(fn, *, on_cancel, **_kwargs):
+            captured["stop"] = on_cancel
+            with pytest.raises(TransientNetworkError, match="producer-lifetime stop"):
+                fn()
+            raise asyncio.CancelledError()
+
+        with monkeypatch.context() as live_patch:
+            live_patch.setattr("jobctrl.infrastructure.temporal.runtime_guard.assert_activity_runtime", lambda **_kwargs: None)
+            live_patch.setattr("jobctrl.infrastructure.temporal.run_in_activity.run_blocking_with_heartbeat", stop_attempt)
+            live_patch.setattr(runner, "run_discovery_enrichment_stage", live_stage)
+            live_patch.setattr(detail, "scrape_site_batch", source_finishes)
+            with pytest.raises(asyncio.CancelledError):
+                await activities.discovery_enrichment_activity(DiscoveryEnrichmentActivityInput(
+                    tenant_id="local", stream_while_discovering=True, discovery_execution=execution,
+                ))
+
+        assert conn.execute("SELECT state FROM job_stage_states WHERE job_id = ? AND stage = 'enrich'", (str(job_id),)).fetchone()[0] != "canceled"
+
+        # Run the real terminal drain and persistence with only the browser
+        # result replaced by a network-free posting fixture.
+        monkeypatch.setattr("jobctrl.database.get_connection", lambda *_args, **_kwargs: conn)
+        monkeypatch.setattr(detail, "PolitenessGateway", lambda: offline_gateway())
+        monkeypatch.setattr(detail, "LiveChromeDiscoveryClient", lambda *_args, **_kwargs: SimpleNamespace(ensure_available=lambda: None))
+        monkeypatch.setattr(detail, "LiveChromeRobotsCache", lambda _client: AllowAllRobots())
+        monkeypatch.setattr(detail, "scrape_detail_page_via_live_chrome", lambda *_args, **_kwargs: {
+            "status": "ok", "tier_used": 1, "full_description": _long_description(),
+            "application_url": None, "error": None, "elapsed": 0.1,
+            "active_state": "active", "verification_method": "fixture", "http_status": 200,
+        })
+        handed_off = []
+        result = runner.run_discovery_enrichment_stage(
+            workers=1, limit=1, discovery_execution=execution, activity_owner_token="terminal:1",
+            on_job_enriched=handed_off.append,
+        )
+        assert result["status"] == "ok"
+        assert result["passes"] == 1
+        assert result["pending"] == 0
+        assert handed_off == [job_id]
+        assert conn.execute("SELECT state FROM job_stage_states WHERE job_id = ? AND stage = 'enrich'", (str(job_id),)).fetchone()[0] == "succeeded"
+    finally:
+        close_connection(db_path)
+
+
+@pytest.mark.asyncio
+async def test_real_workflow_cancel_still_finds_rows_released_by_live_consumer(tmp_path, monkeypatch):
+    from jobctrl.enrichment.activities import CancelEnrichmentCohortInput, cancel_enrichment_cohort_activity
+    from jobctrl.state import ensure_job_stage_rows
+
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    try:
+        job_id = _seed_pending(conn, "https://example.test/released-before-cancel", "Example")
+        ensure_job_stage_rows(conn, job_id)
+        detail._queue_enrichment_cohort(conn, (job_id,), tenant_id=LOCAL_TENANT, workflow_id="discover-local", workflow_run_id="canceled-run")
+        detail._release_unstarted_enrichment_cohort(conn, (job_id,), tenant_id=LOCAL_TENANT, workflow_id="discover-local", workflow_run_id="canceled-run")
+        assert conn.execute("SELECT state FROM job_stage_states WHERE job_id = ? AND stage = 'enrich'", (str(job_id),)).fetchone()[0] == "pending"
+        monkeypatch.setattr("jobctrl.database.get_connection", lambda: conn)
+        monkeypatch.setattr("jobctrl.infrastructure.temporal.runtime_guard.assert_activity_runtime", lambda **_kwargs: None)
+
+        canceled = await cancel_enrichment_cohort_activity(CancelEnrichmentCohortInput(
+            tenant_id="local", workflow_id="discover-local", workflow_run_id="canceled-run",
+        ))
+
+        assert canceled == 1
+        assert conn.execute("SELECT state FROM job_stage_states WHERE job_id = ? AND stage = 'enrich'", (str(job_id),)).fetchone()[0] == "canceled"
+    finally:
+        close_connection(db_path)
+
+
 
 @pytest.mark.asyncio
 async def test_discovery_source_family_activity_treats_skipped_limit_as_success(

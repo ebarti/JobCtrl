@@ -39,12 +39,15 @@ describe("deterministic autofill content script", () => {
     const { waitForRenderedPageReady } = await import("./content-script");
     document.body.innerHTML = '<main><div role="progressbar">Loading</div></main>';
     let polls = 0;
+    let elapsed = 0;
 
     await waitForRenderedPageReady(document, "https://www.linkedin.com/jobs/view/123", {
       timeoutMs: 1_000,
       pollIntervalMs: 100,
       minimumStableMs: 100,
-      sleep: async () => {
+      now: () => elapsed,
+      sleep: async (milliseconds: number) => {
+        elapsed += milliseconds;
         polls += 1;
         if (polls === 2) {
           document.body.innerHTML = `<main><section class="jobs-description__content">${"Authenticated job detail ".repeat(20)}</section></main>`;
@@ -56,16 +59,39 @@ describe("deterministic autofill content script", () => {
     expect(document.querySelector(".jobs-description__content")).not.toBeNull();
   });
 
+  it("recognizes the current LinkedIn SDUI detail only after its description is populated", async () => {
+    const { waitForRenderedPageReady } = await import("./content-script");
+    document.body.innerHTML = '<main><div id="JobDetails_AboutTheJob_123" componentkey="JobDetails_AboutTheJob_123"><h2>About the job</h2></div></main>';
+    let elapsed = 0;
+    const sleep = vi.fn(async (milliseconds: number) => {
+      elapsed += milliseconds;
+      if (elapsed >= 200) {
+        document.querySelector("#JobDetails_AboutTheJob_123")!.innerHTML += `<p>${"Build and operate reliable infrastructure. ".repeat(10)}</p>`;
+      }
+    });
+
+    await waitForRenderedPageReady(document, "https://www.linkedin.com/jobs/view/123/", {
+      timeoutMs: 1_000,
+      pollIntervalMs: 100,
+      sleep,
+      now: () => elapsed,
+    });
+
+    expect(sleep).toHaveBeenCalledTimes(2);
+  });
+
   it("uses a short stability window for non-LinkedIn rendered pages", async () => {
     const { waitForRenderedPageReady } = await import("./content-script");
     document.body.innerHTML = "<main>Stable public job detail</main>";
-    const sleep = vi.fn(async () => undefined);
+    let elapsed = 0;
+    const sleep = vi.fn(async (milliseconds: number) => { elapsed += milliseconds; });
 
     await waitForRenderedPageReady(document, "https://careers.example.com/jobs/123", {
       timeoutMs: 1_000,
       pollIntervalMs: 100,
       minimumStableMs: 200,
       sleep,
+      now: () => elapsed,
     });
 
     expect(sleep).toHaveBeenCalledTimes(2);
@@ -74,7 +100,8 @@ describe("deterministic autofill content script", () => {
   it("returns a retryable bounded failure when a LinkedIn loading shell never hydrates", async () => {
     const { captureRenderedPageSnapshotResponse } = await import("./content-script");
     document.body.innerHTML = '<main><div role="progressbar">Loading</div></main>';
-    const sleep = vi.fn(async () => undefined);
+    let elapsed = 0;
+    const sleep = vi.fn(async (milliseconds: number) => { elapsed += milliseconds; });
 
     const response = await captureRenderedPageSnapshotResponse(
       document,
@@ -83,6 +110,7 @@ describe("deterministic autofill content script", () => {
         timeoutMs: 300,
         pollIntervalMs: 100,
         sleep,
+        now: () => elapsed,
       },
     );
 
@@ -93,6 +121,23 @@ describe("deterministic autofill content script", () => {
       retryable: true,
     });
     expect(sleep).toHaveBeenCalledTimes(3);
+  });
+
+  it("uses elapsed wall time when an inactive tab delays a readiness poll", async () => {
+    const { captureRenderedPageSnapshotResponse } = await import("./content-script");
+    document.body.innerHTML = '<main><div id="JobDetails_AboutTheJob_123">Loading</div></main>';
+    let elapsed = 0;
+    const sleep = vi.fn(async () => { elapsed += 5_000; });
+
+    const response = await captureRenderedPageSnapshotResponse(document, "https://www.linkedin.com/jobs/view/123/", {
+      timeoutMs: 1_000,
+      pollIntervalMs: 100,
+      sleep,
+      now: () => elapsed,
+    });
+
+    expect(response).toMatchObject({ status: "failed", errorCode: "navigation_failed", retryable: true });
+    expect(sleep).toHaveBeenCalledTimes(1);
   });
 
   it("strips browser-owned identity headers from Discovery fetches", async () => {

@@ -293,6 +293,12 @@ the lifecycle schema has no canceled terminal state. Per-job stage rows record
 its durable work; terminal reconciliation owns the persisted enrichment-pass
 boundary.
 
+This internal consumer stop is not a user cancellation: unfinished Enrich rows
+remain reclaimable by the terminal pass. Only a canceled `DiscoverWorkflow`
+requests exact workflow/run-owned cohort cancellation. Released pending rows
+retain their ownership metadata until reclaimed, so cancellation cleanup can
+still find them without touching a successor's work.
+
 ### Durable projection recovery and runtime-only visibility
 
 `projectionCoverage` is the selected execution's durable recovery checkpoint;

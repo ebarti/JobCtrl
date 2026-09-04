@@ -44,6 +44,14 @@ site cookie was set, return that cookie-observed response, and leave no copied
 profile or API tab. Reproduce a request that never responds and prove the hard
 task timeout posts a retryable failure without leaving a tab. Reproduce a
 public-to-loopback redirect and prove the loopback target receives no request.
+Also lease a rendered-page task against a delayed LinkedIn SDUI fixture:
+`JobDetails_AboutTheJob_*` must remain unready while empty, then return its
+populated description. Background-tab polling uses a monotonic deadline, not
+a count of requested sleep intervals; a never-ready page fails and cleans up.
+Finish source intake while a live Enrich capture is in flight and prove the
+terminal pass reclaims and processes its job instead of leaving it canceled.
+Separately cancel the owning workflow and prove its exact cohort still closes,
+including queued rows released by the stopping consumer.
 Pair two installation IDs and prove only the explicitly
 selected one can heartbeat/lease/complete; token rotation must clear that
 binding. Admit four concurrent leases, reject a fifth with bounded backpressure,

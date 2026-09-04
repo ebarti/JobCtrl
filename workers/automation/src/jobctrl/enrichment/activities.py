@@ -28,8 +28,11 @@ class _ActivityCancellationEvent(threading.Event):
 
     terminal_cancellation_requested: bool
 
-    def __init__(self) -> None:
+    def __init__(self, *, terminal_on_cancel: bool = True) -> None:
         super().__init__()
+        # A producer-lifetime consumer is canceled internally when producers
+        # finish. Its parent workflow, not this local stop, owns user cancel.
+        self._terminal_on_cancel = terminal_on_cancel
         self.terminal_cancellation_requested = False
 
     def request_stop(self) -> None:
@@ -37,7 +40,9 @@ class _ActivityCancellationEvent(threading.Event):
             details = activity.cancellation_details()
         except RuntimeError:
             details = None
-        self.terminal_cancellation_requested = bool(details is None or details.cancel_requested)
+        self.terminal_cancellation_requested = self._terminal_on_cancel and bool(
+            details is None or details.cancel_requested
+        )
         self.set()
 
 
