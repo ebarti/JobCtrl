@@ -100,6 +100,7 @@ export {
 export { useInvalidationRouter } from "./hooks/useInvalidationRouter.js";
 
 export { useActivityEventQuery } from "./hooks/useActivityEventQuery.js";
+export { useDiscoveryBrowserBridgeQuery } from "./hooks/useDiscoveryBrowserBridgeQuery.js";
 export { useOutcomeAnalyticsQuery } from "./hooks/useOutcomeAnalyticsQuery.js";
 export { useApplyRunsListQuery } from "./hooks/useApplyRunsListQuery.js";
 export { useApplyReviewQueueQuery } from "./hooks/useApplyReviewQueueQuery.js";

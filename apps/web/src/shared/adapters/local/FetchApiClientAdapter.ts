@@ -341,6 +341,9 @@ export class FetchApiClientAdapter implements ApiClientPort {
   extensionCapabilityToken() {
     return this.client.extensionCapabilityToken();
   }
+  discoveryBrowserBridgeStatus() {
+    return this.client.discoveryBrowserBridgeStatus();
+  }
   rotateExtensionCapabilityToken() {
     return this.client.rotateExtensionCapabilityToken();
   }

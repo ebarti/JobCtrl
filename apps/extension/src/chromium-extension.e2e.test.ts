@@ -1,5 +1,6 @@
 import { chromium, type BrowserContext, type Page, type Request, type Route, type Worker } from "@playwright/test";
 import fs from "node:fs";
+import { createServer, type Server } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,20 +17,30 @@ interface RecordedRequest {
 
 interface FakeLoopbackApi {
   requests: RecordedRequest[];
+  discoveryCompletions: unknown[];
+  close(): Promise<void>;
+}
+
+interface FakeDiscoverySource {
+  baseUrl: string;
+  liveProfileCookieSeen(): boolean;
+  privateRedirectTargetSeen(): boolean;
   close(): Promise<void>;
 }
 
 describe("Chromium loaded extension privacy boundary", () => {
-  it("sends capture and autofill API requests only to loopback origins", async () => {
+  it("runs a JSON API request from the live profile when the source root is not injectable HTML", async () => {
     const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-extension-e2e-"));
     let api: FakeLoopbackApi | null = null;
     let context: BrowserContext | null = null;
+    let source: FakeDiscoverySource | null = null;
     try {
+      source = await startFakeDiscoverySource();
       context = await launchExtensionContext(userDataDir);
       if (!context) {
         return;
       }
-      api = await installFakeLoopbackApi(context);
+      api = await installFakeLoopbackApi(context, `${source.baseUrl}/api/jobs`);
       const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent("serviceworker", { timeout: 10_000 }));
       const extensionId = new URL(worker.url()).host;
       const extensionHttpRequests: string[] = [];
@@ -39,30 +50,47 @@ describe("Chromium loaded extension privacy boundary", () => {
         }
       });
 
-      await context.route("https://jobs.ashbyhq.com/**", (route) =>
-        route.fulfill({
-          status: 200,
-          contentType: "text/html",
-          body: `
-            <!doctype html>
-            <html>
-              <head><title>Synthetic Ashby application</title></head>
-              <body>
-                <form id="application">
-                  <label>Email <input name="email" /></label>
-                </form>
-              </body>
-            </html>
-          `,
-        }),
-      );
+      await context.addCookies([
+        {
+          name: "jobctrl_session_probe",
+          value: "live-profile",
+          domain: "careers.jobctrl.test",
+          path: "/",
+          secure: false,
+          sameSite: "Lax",
+        },
+      ]);
 
       const controller = await context.newPage();
       await controller.goto(`chrome-extension://${extensionId}/popup.html`);
-      expect(await sendExtensionMessage(controller, { type: "saveToken", token: "token-1" })).toEqual({
+      await controller.locator("#token-input").fill("token-1");
+      await controller.locator("#save-token").click();
+      await controller.waitForFunction(() =>
+        document.querySelector("#api-state")?.textContent?.includes("Discovery connected"),
+      );
+      expect(await controller.locator("#api-state").textContent()).not.toContain("undefined");
+      expect(await sendExtensionMessage(controller, { type: "getStatus" })).toMatchObject({
         ok: true,
-        status: "token_saved",
+        status: "ready",
+        protocolVersion: 1,
+        paired: true,
+        apiReady: true,
+        discoverySelected: true,
+        installationIdSuffix: expect.stringMatching(/^[0-9a-f]{8}$/i),
       });
+
+      await waitFor(() => api?.discoveryCompletions.length === 1, 25_000);
+      if ((api.discoveryCompletions[0] as { result?: { status?: string } }).result?.status !== "succeeded") {
+        throw new Error(`Discovery completion failed: ${JSON.stringify(api.discoveryCompletions[0])}`);
+      }
+      expect(api.discoveryCompletions[0]).toMatchObject({
+        result: {
+          status: "succeeded",
+          finalUrl: `${source.baseUrl}/api/jobs`,
+          bodyText: '{"jobs":[{"id":"fixture-role"}]}',
+        },
+      });
+      expect(source.liveProfileCookieSeen()).toBe(true);
 
       const capturePage = await context.newPage();
       await capturePage.goto(`${LOOPBACK_ORIGIN}/synthetic-capture`);
@@ -70,14 +98,16 @@ describe("Chromium loaded extension privacy boundary", () => {
       const capture = await sendExtensionMessage(controller, { type: "captureCurrentTab" });
       expect(capture).toMatchObject({ ok: true, status: "captured", jobKey: "synthetic-job" });
 
-      const atsPage = await context.newPage();
-      await atsPage.goto("https://jobs.ashbyhq.com/acme/senior-platform-engineer");
-      await atsPage.bringToFront();
-      await atsPage.waitForSelector("input[name='email']");
-      const autofill = await sendAutofillReviewFromExtensionPage(controller, "token-1");
+      const applicationPage = await context.newPage();
+      await applicationPage.goto(`${source.baseUrl}/acme/senior-platform-engineer`);
+      await applicationPage.bringToFront();
+      await applicationPage.waitForSelector("input[name='email']");
+      expect(await applicationPage.locator("#jobctrl-autofill-root").count()).toBe(0);
+      expect(await applicationPage.locator("input[name='email']").inputValue()).toBe("");
+      const autofill = await sendAutofillReviewFromExtensionPage(controller);
       expect(autofill).toMatchObject({ ok: true, status: "review_opened", suggestions: 1, missing: 0 });
-      expect(await atsPage.locator("input[name='email']").inputValue()).toBe("");
-      await expectPageText(atsPage, "Profile value ready");
+      expect(await applicationPage.locator("input[name='email']").inputValue()).toBe("");
+      await expectPageText(applicationPage, "Profile value ready");
 
       expect(api.requests.map((request) => `${request.method} ${request.path}`)).toContain("POST /v1/extension/captures");
       expect(api.requests.map((request) => `${request.method} ${request.path}`)).toContain(
@@ -86,13 +116,76 @@ describe("Chromium loaded extension privacy boundary", () => {
       expect(extensionHttpRequests).toEqual(expect.arrayContaining([
         `${LOOPBACK_ORIGIN}/v1/extension/captures`,
         `${LOOPBACK_ORIGIN}/v1/extension/autofill/profile`,
+        `${source.baseUrl}/api/jobs`,
       ]));
       expect(
-        extensionHttpRequests.every((url) => url.startsWith(`${LOOPBACK_ORIGIN}/`) || url.startsWith("http://localhost:8766/")),
+        extensionHttpRequests.every(
+          (url) =>
+            url.startsWith(`${LOOPBACK_ORIGIN}/`) ||
+            url.startsWith("http://localhost:8766/") ||
+            url === `${source?.baseUrl}/api/jobs`,
+        ),
       ).toBe(true);
     } finally {
       await api?.close();
       await context?.close();
+      await source?.close();
+      fs.rmSync(userDataDir, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it("hard-times out a hanging live-profile HTTP request without leaving a temporary tab", async () => {
+    const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-extension-timeout-e2e-"));
+    let api: FakeLoopbackApi | null = null;
+    let context: BrowserContext | null = null;
+    let source: FakeDiscoverySource | null = null;
+    try {
+      source = await startFakeDiscoverySource();
+      context = await launchExtensionContext(userDataDir);
+      if (!context) return;
+      api = await installFakeLoopbackApi(context, `${source.baseUrl}/hang`, 1_000);
+      const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent("serviceworker", { timeout: 10_000 }));
+      const controller = await context.newPage();
+      await controller.goto(`chrome-extension://${new URL(worker.url()).host}/popup.html`);
+
+      await sendExtensionMessage(controller, { type: "saveToken", token: "token-timeout" });
+      await waitFor(() => api?.discoveryCompletions.length === 1, 8_000);
+
+      expect(api.discoveryCompletions[0]).toMatchObject({
+        result: { status: "failed", errorCode: "request_failed", retryable: true },
+      });
+      expect(context.pages().filter((page) => page.url().startsWith(source?.baseUrl ?? "")).length).toBe(0);
+    } finally {
+      await api?.close();
+      await context?.close();
+      await source?.close();
+      fs.rmSync(userDataDir, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it("blocks a public-to-loopback redirect before the private target is requested", async () => {
+    const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-extension-redirect-e2e-"));
+    let api: FakeLoopbackApi | null = null;
+    let context: BrowserContext | null = null;
+    let source: FakeDiscoverySource | null = null;
+    try {
+      source = await startFakeDiscoverySource();
+      context = await launchExtensionContext(userDataDir);
+      if (!context) return;
+      api = await installFakeLoopbackApi(context, `${source.baseUrl}/redirect-private`);
+      const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent("serviceworker", { timeout: 10_000 }));
+      const controller = await context.newPage();
+      await controller.goto(`chrome-extension://${new URL(worker.url()).host}/popup.html`);
+
+      await sendExtensionMessage(controller, { type: "saveToken", token: "token-redirect" });
+      await waitFor(() => api?.discoveryCompletions.length === 1, 10_000);
+
+      expect(api.discoveryCompletions[0]).toMatchObject({ result: { status: "failed" } });
+      expect(source.privateRedirectTargetSeen()).toBe(false);
+    } finally {
+      await api?.close();
+      await context?.close();
+      await source?.close();
       fs.rmSync(userDataDir, { recursive: true, force: true });
     }
   }, 60_000);
@@ -102,7 +195,11 @@ async function launchExtensionContext(userDataDir: string): Promise<BrowserConte
   try {
     return await chromium.launchPersistentContext(userDataDir, {
       headless: false,
-      args: [`--disable-extensions-except=${DIST}`, `--load-extension=${DIST}`],
+      args: [
+        `--disable-extensions-except=${DIST}`,
+        `--load-extension=${DIST}`,
+        "--host-resolver-rules=MAP careers.jobctrl.test 127.0.0.1",
+      ],
     });
   } catch (error) {
     if (isHeadedBrowserUnavailable(error)) {
@@ -135,39 +232,10 @@ async function sendExtensionMessage(page: Page, message: unknown): Promise<unkno
   );
 }
 
-async function sendAutofillReviewFromExtensionPage(page: Page, token: string): Promise<unknown> {
+async function sendAutofillReviewFromExtensionPage(page: Page): Promise<unknown> {
   let lastError = "";
   for (let attempt = 0; attempt < 10; attempt += 1) {
-    const response = await page.evaluate(async (capabilityToken) => {
-      try {
-        const profile = await fetch("http://127.0.0.1:8766/v1/extension/autofill/profile", {
-          headers: { authorization: `Bearer ${capabilityToken}` },
-        }).then((candidate) => candidate.json());
-        const [tab] = await (globalThis as unknown as {
-          chrome: {
-            tabs: {
-              query(query: { active: true; currentWindow: true }): Promise<Array<{ id?: number }>>;
-              sendMessage(tabId: number, message: unknown): Promise<unknown>;
-            };
-          };
-        }).chrome.tabs.query({ active: true, currentWindow: true });
-        if (!tab?.id) {
-          return { ok: false, error: "missing_tab", message: "No active tab." };
-        }
-        return await (globalThis as unknown as {
-          chrome: { tabs: { sendMessage(tabId: number, message: unknown): Promise<unknown> } };
-        }).chrome.tabs.sendMessage(tab.id, {
-          type: "jobctrl.autofill.review",
-          profile,
-        });
-      } catch (error) {
-        return {
-          ok: false,
-          error: "autofill_probe_failed",
-          message: error instanceof Error ? error.message : String(error),
-        };
-      }
-    }, token);
+    const response = await sendExtensionMessage(page, { type: "reviewAutofill" });
     if (isSuccessfulAutofillResponse(response)) {
       return response;
     }
@@ -206,10 +274,16 @@ function isExtensionInitiatedHttpRequest(request: Request, extensionId: string):
   }
 }
 
-async function installFakeLoopbackApi(context: BrowserContext): Promise<FakeLoopbackApi> {
+async function installFakeLoopbackApi(
+  context: BrowserContext,
+  discoveryUrl: string,
+  taskTimeoutMs = 15_000,
+): Promise<FakeLoopbackApi> {
   const requests: RecordedRequest[] = [];
+  const discoveryCompletions: unknown[] = [];
+  let discoveryTaskLeased = false;
   const headers = {
-    "access-control-allow-headers": "authorization,content-type",
+    "access-control-allow-headers": "authorization,content-type,x-jobctrl-extension-installation,x-jobctrl-extension-version",
     "access-control-allow-methods": "GET,POST,OPTIONS",
     "access-control-allow-origin": "*",
   };
@@ -238,6 +312,40 @@ async function installFakeLoopbackApi(context: BrowserContext): Promise<FakeLoop
       return;
     }
     if (requestUrl.pathname === "/v1/health") {
+      await json(route, { ok: true }, headers);
+      return;
+    }
+    if (requestUrl.pathname === "/v1/extension/discovery/claim") {
+      await json(route, { ok: true, installationBound: true, selected: true }, headers);
+      return;
+    }
+    if (requestUrl.pathname === "/v1/extension/discovery/tasks/next") {
+      if (discoveryTaskLeased) {
+        await json(route, { ok: true, status: "idle" }, headers);
+        return;
+      }
+      discoveryTaskLeased = true;
+      await json(route, {
+        ok: true,
+        status: "task",
+        taskId: "discover-browser:live-profile-e2e",
+        leaseId: "00000000-0000-4000-8000-000000000001",
+        timeoutMs: taskTimeoutMs,
+        request: {
+          mode: "http_request",
+          url: discoveryUrl,
+          method: "GET",
+          headers: { Accept: "application/json" },
+        },
+      }, headers);
+      return;
+    }
+    if (/^\/v1\/extension\/discovery\/tasks\/[^/]+\/lease$/.test(requestUrl.pathname)) {
+      await json(route, { ok: true, active: true }, headers);
+      return;
+    }
+    if (/^\/v1\/extension\/discovery\/tasks\/[^/]+\/result$/.test(requestUrl.pathname)) {
+      discoveryCompletions.push(request.postDataJSON());
       await json(route, { ok: true }, headers);
       return;
     }
@@ -276,8 +384,96 @@ async function installFakeLoopbackApi(context: BrowserContext): Promise<FakeLoop
   await context.route(`${LOOPBACK_ORIGIN}/**`, handler);
   return {
     requests,
+    discoveryCompletions,
     close: () => context.unroute(`${LOOPBACK_ORIGIN}/**`, handler),
   };
+}
+
+async function startFakeDiscoverySource(): Promise<FakeDiscoverySource> {
+  let cookieSeen = false;
+  let privateRedirectSeen = false;
+  const privateTarget: Server = createServer((_request, response) => {
+    privateRedirectSeen = true;
+    response.writeHead(200, { "content-type": "text/plain" });
+    response.end("private target must remain unreachable");
+  });
+  await new Promise<void>((resolve, reject) => {
+    privateTarget.once("error", reject);
+    privateTarget.listen(0, "127.0.0.1", resolve);
+  });
+  const privateAddress = privateTarget.address();
+  if (!privateAddress || typeof privateAddress === "string") {
+    throw new Error("Synthetic private redirect target did not expose a TCP port.");
+  }
+  const server: Server = createServer((request, response) => {
+    if (request.url === "/") {
+      response.writeHead(401, { "content-type": "text/plain" });
+      response.end("API root does not host an injectable HTML document");
+      return;
+    }
+    if (request.url === "/api/jobs") {
+      cookieSeen = String(request.headers.cookie ?? "").includes(
+        "jobctrl_session_probe=live-profile",
+      );
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end('{"jobs":[{"id":"fixture-role"}]}');
+      return;
+    }
+    if (request.url === "/hang") {
+      return;
+    }
+    if (request.url === "/redirect-private") {
+      response.writeHead(302, { location: `http://127.0.0.1:${privateAddress.port}/private` });
+      response.end();
+      return;
+    }
+    response.writeHead(200, { "content-type": "text/html" });
+    response.end(`
+      <!doctype html>
+      <html>
+        <head><title>Synthetic generic application</title></head>
+        <body>
+          <form id="application">
+            <label>Email <input name="email" /></label>
+          </form>
+        </body>
+      </html>
+    `);
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Synthetic Discovery source did not expose a TCP port.");
+  }
+  return {
+    baseUrl: `http://careers.jobctrl.test:${address.port}`,
+    liveProfileCookieSeen: () => cookieSeen,
+    privateRedirectTargetSeen: () => privateRedirectSeen,
+    close: async () => {
+      await Promise.all([
+        closeServer(server),
+        closeServer(privateTarget),
+      ]);
+    },
+  };
+}
+
+function closeServer(server: Server): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()));
+  });
+}
+
+async function waitFor(predicate: () => boolean, timeoutMs = 10_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error("Timed out waiting for the extension Discovery task.");
 }
 
 async function json(route: Route, body: unknown, headers: Record<string, string>, status = 200): Promise<void> {

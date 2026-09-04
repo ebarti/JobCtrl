@@ -66,7 +66,7 @@ enter the system. They do not hold provider credentials or raw feed contents.
 | `GET /v1/browser-capabilities` | Read managed/optional capability states plus transient supported-browser candidates and their selectable profiles as opaque IDs and safe labels; no local path is returned or adopted. |
 | `POST /v1/browser-capabilities/:capabilityId/enable` | Explicitly adopt exactly one transient `detectedBrowserId` or one write-only `executablePath` for an optional capability. |
 | `POST /v1/browser-capabilities/:capabilityId/disable` | Disable an optional capability immediately. |
-| `POST /v1/browser-capabilities/authenticated-linkedin-browser/profile-copy` | Copy exactly one explicitly selected detected profile by opaque browser/profile IDs, retain the legacy browser-only Default arm, or accept one write-only manual source path; every arm requires explicit consent. |
+| `POST /v1/browser-capabilities/authenticated-linkedin-browser/profile-copy` | Backward-compatible operator API for copying one explicitly selected detected profile by opaque browser/profile IDs, retaining the legacy browser-only Default arm, or accepting one write-only manual source path; every arm requires explicit consent. It is not exposed by current Settings and is never used by integrated Discovery or Enrich. |
 
 Credential responses expose enough state for the UI to show whether a provider
 is configured, but do not return stored secret material. Guided provider
@@ -141,6 +141,6 @@ file does not contain credentials, feed locations, or compensation records.
 | Settings → General (`/settings`) | Spend/apply/worker controls and compensation source policy (not a feed connection). |
 | Settings → Credentials (`/settings/credentials`) | Provider modes, credential presence, and explicit Codex verification. |
 | Settings → Model selection (`/settings/models`) | Provider-scoped preferred model IDs plus analysis and tailoring execution policy. |
-| Settings → Browser & extension (`/settings/browser`) | Browser capability adoption/removal, consented profile copy, and extension pairing/rotation. |
+| Settings → Browser & extension (`/settings/browser`) | Apply-browser capability adoption/removal plus live-profile extension pairing, installation selection, status, and token rotation. It does not expose profile copying. |
 
 This split keeps a configuration change from masquerading as candidate evidence.

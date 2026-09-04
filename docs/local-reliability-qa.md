@@ -18,6 +18,7 @@ final PR, then run product QA on the cumulative stack.
 | Web UI | `corepack pnpm web:check`, `corepack pnpm --filter @jobctrl/web test`, and `corepack pnpm web:build` |
 | Frontend types | `corepack pnpm --filter @jobctrl/web test-d` |
 | Browser flow | `corepack pnpm --filter @jobctrl/web e2e -- tests/<flow>.spec.ts` |
+| Browser-extension page access, privacy, autofill, or live-profile Discovery | `corepack pnpm extension:check`, `corepack pnpm extension:test`, `corepack pnpm extension:build`, and `corepack pnpm extension:e2e`; for Discovery also run focused API bridge, web preflight/status, and Python transport/wiring tests |
 | Public demo browser workspace | `corepack pnpm --filter @jobctrl/web e2e:demo-workspace` |
 | Public demo edge | `corepack pnpm demo-edge:check`, `corepack pnpm demo-edge:test`, and `corepack pnpm demo-edge:dry-run` |
 | Python worker | `uv --project workers/automation run --locked --all-extras ruff check .` and `uv --project workers/automation run --locked --all-extras pytest -q` |
@@ -27,6 +28,46 @@ final PR, then run product QA on the cumulative stack.
 Start the attached full stack with `corepack pnpm dev` when the path needs the
 API, Temporal, worker, and web app together. Confirm `GET /v1/health` reports a
 healthy worker before starting worker-backed stages.
+
+For the live-profile Discovery gate, start from a built and reloaded unpacked
+extension. With the API running but the extension stopped or carrying an old
+token, prove the Browser settings surface says offline and a Discover launch is
+rejected before Temporal dispatch. Also prove job-level and bulk Enrich
+runs/retries reject before dispatch, and that every retry rejects before its
+stage state, attempt count, diagnostics, metadata, or event history are reset.
+Pair/reload the extension, wait for
+`GET /v1/discovery/browser-extension/status` to report a fresh versioned
+heartbeat, and prove Pipelines enables Discover. The extension E2E must lease a
+synthetic public-looking API task whose origin root is non-HTML, execute it in
+the extension service worker from the same persistent Chrome context where a
+site cookie was set, return that cookie-observed response, and leave no copied
+profile or API tab. Reproduce a request that never responds and prove the hard
+task timeout posts a retryable failure without leaving a tab. Reproduce a
+public-to-loopback redirect and prove the loopback target receives no request.
+Pair two installation IDs and prove only the explicitly
+selected one can heartbeat/lease/complete; token rotation must clear that
+binding. Admit four concurrent leases, reject a fifth with bounded backpressure,
+and prove the worker waits for capacity before starting its lease deadline.
+Keep an active lease alive beyond 45 seconds and prove Settings remains
+connected. Feed multibyte request/result fixtures and an oversized stream to
+prove byte bounds and early cancellation. Worker fixtures must prove every
+JobStreaming adapter session plus ATS, Workday, Smart Extract, robots, and
+integrated detail enrichment select the live bridge under an exact
+`DiscoveryExecutionRef`; browser-owned Cookie/User-Agent headers must never
+cross the worker task. Seed an unresolved legacy WelcomeToTheJungle row and
+invoke the outer Temporal `run_enrichment()` entry: workflow/run identity must
+be bound before legacy URL repair, and neither Playwright nor direct networking
+may run. Reproduce a LinkedIn detail request whose anonymous
+`robots.txt` policy denies the crawler and prove the owner-authenticated live
+Chrome session still performs the bounded exact-origin fetch through the
+extension while pacing, request budgets, URL safety, and audit history remain
+active. Prove that a Temporal-backed standalone Enrich retry synthesizes its
+bridge execution reference, never launches or reads a copied profile, and that
+extension reconnection recovers both the current blocked-condition value and
+the legacy value without duplicate dispatch. Finally, run a bounded Discover
+product path and confirm the bridge reports task activity and the workflow
+reaches a truthful terminal or actionable failed state. Do not use an
+application form and do not submit anything.
 
 ## Pull-request CI
 
@@ -597,21 +638,25 @@ and the relevant process restarts.
 
 ### Browser capability adoption gate
 
-When browser detection, adoption, profile copying, or Settings browser UI
+When browser detection, adoption, legacy profile-copy compatibility, or
+Settings browser UI
 changes, prove that listing capabilities only performs passive detection and
 returns opaque browser kinds plus labels—never executable paths. Listing must
 not launch, adopt, or persist a browser. Enabling requires an explicit detected
 selection or one advanced manual path, re-resolves a detected selection at
 mutation time, and fails closed when the installation disappeared. Profile-copy
-consent remains a separate affirmative action; capability enablement must not
-imply it. With Default plus at least one `Profile N` fixture, prove Settings
-renders every safe Chrome display label, forwards the chosen opaque profile ID,
-copies only that profile as the isolated owned Default, and never returns a host
-path. Replacing a prior consented copy must stage the new profile first, preserve
-the old copy on pre-publish or post-publish state-validation failure, and exclude
-every sibling profile. Concurrent replacements must serialize through publish,
-state validation, rollback, and cleanup so a stale failure cannot overwrite a
-newer successful selection.
+consent remains a separate affirmative action on the backward-compatible API;
+capability enablement must not imply it. Settings must not expose the legacy
+`authenticated-linkedin-browser` capability or any profile-copy action, because
+integrated Discovery and Enrich use the paired live-profile extension. With
+Default plus at least one `Profile N` fixture, prove the legacy API forwards the
+chosen opaque profile ID, copies only that profile as the isolated owned
+Default, and never returns a host path. Replacing a prior consented copy must
+stage the new profile first, preserve the old copy on pre-publish or
+post-publish state-validation failure, and exclude every sibling profile.
+Concurrent replacements must serialize through publish, state validation,
+rollback, and cleanup so a stale failure cannot overwrite a newer successful
+selection.
 
 For Chrome records whose `is_using_default_name` flag is true, use the bounded
 `gaia_name` as the recognizable label instead of Chrome's generic default such
@@ -823,8 +868,9 @@ The gate passes only when:
   preserves persisted comments even when a rendered-line anchor cannot be
   resolved;
 - passive browser detection exposes no paths or side effects, stale detected
-  IDs fail closed, manual path entry remains an advanced explicit fallback, and
-  profile copying still requires separate consent;
+  IDs fail closed, manual path entry remains an advanced explicit fallback,
+  Settings never exposes the legacy copied-profile capability, and the retained
+  compatibility API still requires separate consent;
 - an environment-owned active provider route stays authoritative and read-only
   while alternative supported routes remain editable but inactive; and
 - a retry with `runAfter: true` preflights worker readiness before resetting

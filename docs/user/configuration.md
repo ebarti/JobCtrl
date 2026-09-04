@@ -34,6 +34,7 @@ Contributors running from source can use the checkout-prefixed commands in
 | Spend/capacity, scoring guidance, or compensation source policy | **Settings → General** (`/settings`) |
 | Provider secret or cloud mode | **Settings → Credentials** (`/settings/credentials`) on macOS, or `~/.jobctrl/.env` / the shell |
 | Preferred provider model or employer-analysis perspectives | **Settings → Model selection** (`/settings/models`); see [Employer Analysis Perspectives](discovery.md#employer-analysis-perspectives) for how the selection is used during Discover preparation |
+| Pairing and live Discovery browser readiness | **Settings → Browser & extension** (`/settings/browser`); integrated Discovery requires the extension's live heartbeat from the user's current Chrome profile |
 
 The rest of this page is a shared-settings lookup. [Data, Privacy & Safety](data-and-safety.md)
 explains what is stored or sent; [Security](security.md) explains the controls
@@ -61,7 +62,7 @@ feature off, but cannot turn it on.
 | Settings → General | [`config.json`](../api/profile-and-settings.md#config-json-field-reference) | `/v1/settings` | Live, next poll/run/workflow, or restart, as labeled; worker activity slots show desired versus active values |
 | Settings → Credentials | Non-secret desired values in `config.json`; secrets in macOS Keychain, the launch environment, or native provider stores | `/v1/credentials` | Claude and Google Keychain edits require the relevant Python process to restart; an environment-owned active route remains authoritative until its value is removed and the process restarts; Codex verification is immediate |
 | Settings → Model selection | [`config.json`](../api/profile-and-settings.md#config-json-field-reference) | `/v1/settings`; `/v1/providers/models` | Newly started work; no worker restart |
-| Settings → Browser & extension | Non-secret capability choices and adopted executable configuration in `config.json`; pairing token and copied profile contents remain separate | `/v1/browser-capabilities`; `/v1/extension/pairing-token` | Capability changes and token rotation are live; making the authenticated LinkedIn browser ready immediately continues condition-blocked Enrich → Score → Tailor → Cover work without Discover |
+| Settings → Browser & extension | Non-secret Apply-browser choices and adopted executable configuration in `config.json`; the pairing token and mode-`0600` selected-extension installation ID remain separate; live Discovery task status is transient | `/v1/browser-capabilities`; `/v1/extension/pairing-token`; `/v1/extension/discovery/claim`; `/v1/discovery/browser-extension/status` | Saving the token from an extension explicitly selects that Chrome installation; token rotation clears it. Integrated Discovery and Enrich become launchable only while that selected installation heartbeats from the user's current Chrome profile. Settings does not create a LinkedIn profile copy. |
 
 [Discovery](discovery.md) and [Apply](apply.md) document the storage and
 activation timing for their feature-specific controls.

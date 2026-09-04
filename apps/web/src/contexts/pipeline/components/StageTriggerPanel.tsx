@@ -59,6 +59,7 @@ import {
   TabsTrigger,
 } from "../../../shared/ui/tabs.js";
 import { useDashboardSummaryQuery } from "../../operations/hooks/useDashboardSummaryQuery.js";
+import { useDiscoveryBrowserBridgeQuery } from "../../operations/hooks/useDiscoveryBrowserBridgeQuery.js";
 import { useSourceRegistryQuery } from "../../operations/hooks/useDiscoveryProductControlsQuery.js";
 import { useHealthQuery } from "../../operations/hooks/useHealthQuery.js";
 import { useSettingsPolicyQuery } from "../../operations/hooks/useSettingsPolicyQueries.js";
@@ -569,6 +570,7 @@ export function StageTriggerPanel({
   );
   const unavailableReasonId = useId();
   const blockedReasonId = useId();
+  const discoveryExtensionReasonId = useId();
   const runStages = useRunPipelineStagesMutation();
   const [submittedStage, setSubmittedStage] = useState<Stage | null>(null);
   const [submittedAt, setSubmittedAt] = useState<number | null>(null);
@@ -599,6 +601,9 @@ export function StageTriggerPanel({
     (state) => state.patchStageConfig,
   );
   const controls = STAGE_CONTROLS[activeStage];
+  const discoveryBrowserBridge = useDiscoveryBrowserBridgeQuery({
+    enabled: controls.discoverySource,
+  });
   const sourceRegistry = useSourceRegistryQuery({
     enabled: controls.discoverySource,
   });
@@ -648,6 +653,11 @@ export function StageTriggerPanel({
       ? `JobCtrl automation worker health check failed: ${health.error.message}`
       : (health.data?.worker.message ??
         "JobCtrl automation worker health is unavailable.");
+  const discoveryExtensionBlocked =
+    controls.discoverySource &&
+    (discoveryBrowserBridge.isPending ||
+      discoveryBrowserBridge.isError ||
+      discoveryBrowserBridge.data?.connected !== true);
 
   useEffect(() => {
     if (!settings.data || synchronizedInternalConcurrency.current) return;
@@ -696,7 +706,11 @@ export function StageTriggerPanel({
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!runAvailability.available || stageRunBlockReason) return;
+    if (
+      !runAvailability.available ||
+      stageRunBlockReason ||
+      discoveryExtensionBlocked
+    ) return;
     const workers = boundedInternalConcurrency(internalConcurrency);
     setInternalConcurrency(String(workers));
     try {
@@ -706,6 +720,10 @@ export function StageTriggerPanel({
     }
     const workerSnapshot = await health.refetch();
     if (workerSnapshot.data?.worker.status !== "healthy") return;
+    if (controls.discoverySource) {
+      const bridgeSnapshot = await discoveryBrowserBridge.refetch();
+      if (bridgeSnapshot.data?.connected !== true) return;
+    }
     setSubmittedStage(activeStage);
     setSubmittedAt(Date.now());
     const tailorJudgeMinScore =
@@ -1106,13 +1124,16 @@ export function StageTriggerPanel({
               ? unavailableReasonId
               : stageRunBlockReason
                 ? blockedReasonId
+                : discoveryExtensionBlocked
+                  ? discoveryExtensionReasonId
                 : undefined
           }
           disabled={
             runStages.isPending ||
             workerUnhealthy ||
             !runAvailability.available ||
-            Boolean(stageRunBlockReason)
+            Boolean(stageRunBlockReason) ||
+            discoveryExtensionBlocked
           }
           type="submit"
         >
@@ -1123,6 +1144,10 @@ export function StageTriggerPanel({
             ? health.isPending
               ? "Checking worker"
               : "Worker unavailable"
+            : discoveryExtensionBlocked
+              ? discoveryBrowserBridge.isPending
+                ? "Checking extension"
+                : "Extension offline"
             : runStages.isPending
               ? `Starting ${labelForStage(statusStage)}`
               : `Run ${labelForStage(activeStage)}`}
@@ -1156,6 +1181,17 @@ export function StageTriggerPanel({
             role="status"
           >
             {stageRunBlockReason}
+          </span>
+        ) : discoveryExtensionBlocked ? (
+          <span
+            className="status-line danger-action"
+            data-typography="body"
+            id={discoveryExtensionReasonId}
+            role="alert"
+          >
+            Discovery requires the paired JobCtrl extension in your current
+            Chrome profile. Open Chrome, then verify the connection in{" "}
+            <a href="/settings/browser">Browser settings</a>.
           </span>
         ) : workerUnhealthy ? (
           <span

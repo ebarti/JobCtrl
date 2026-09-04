@@ -5,7 +5,12 @@ export const LOCAL_ORIGIN_PATTERNS = [
 ];
 
 export const LOCAL_CORS_METHODS = ["DELETE", "GET", "HEAD", "POST", "PATCH"];
-export const LOCAL_CORS_ALLOWED_HEADERS = ["authorization", "content-type"];
+export const LOCAL_CORS_ALLOWED_HEADERS = [
+  "authorization",
+  "content-type",
+  "x-jobctrl-extension-installation",
+  "x-jobctrl-extension-version",
+];
 const DEFAULT_FIRST_PARTY_WEB_PORTS = ["5173", "5174"];
 
 export const LOOPBACK_HOST_PATTERNS = [

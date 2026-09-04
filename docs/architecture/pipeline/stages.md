@@ -106,6 +106,28 @@ Key facts about the four activities:
   Cooperative cancellation instead marks all unfinished units `canceled` and
   they are not resumed. The internal `jobspy` family/source-ID name remains a
   compatibility key only.
+
+  For an integrated execution, every job-source acquisition is a bounded
+  live-browser task carrying the exact `DiscoveryExecutionRef`. JobStreaming's
+  provider sessions, canonical ATS/API and Workday clients, Smart Extract page
+  rendering, and each source policy's `robots.txt` fetch all delegate through
+  the API broker to the paired extension in the user's current Chrome profile.
+  The worker does not open a second browser, copy a profile, or fall back to a
+  direct transport. The broker is transient; source checkpoints and accepted
+  observations remain the durable replay authority. One explicitly selected
+  extension installation owns leases. Four background executors match the
+  broker's four-task admission bound; overflow waits at worker admission rather
+  than aging inside the broker. Pending admission and leased execution have
+  separate deadlines. Each active lease heartbeats and carries an abort path,
+  so workflow cancellation or the hard task timeout aborts the request and
+  closes a temporary tab when one exists. The API revalidates public DNS
+  immediately before lease. HTTP/API tasks execute in the extension service
+  worker with redirect following disabled; rendered-page tasks use tab-scoped
+  DNR rules to block cross-origin main-frame or Discovery-fetch redirects before
+  dispatch. LinkedIn detail enrichment through the user's owner-authenticated
+  live session does not inherit the anonymous crawler's robots denial, but it
+  retains the same public-destination validation, pacing, request budget,
+  exact-origin, audit, and no-submit boundaries.
 - **`discovery_enrichment`** drains detail enrichment (below) and then runs
   post-discovery hygiene.
 - **`discovery_preparation_fanout`** derives targets and starts per-job
@@ -156,16 +178,15 @@ sequenceDiagram
     autonumber
     participant Enr as discovery_enrichment
     participant Run as pipeline.runner drain loop
-    participant Fetch as detail fetch + extraction
-    participant Chrome as authenticated Chrome (LinkedIn)
+    participant Fetch as detail extraction
+    participant Ext as paired extension in current Chrome profile
     participant DB as SQLite
 
     Enr->>Run: run_discovery_enrichment_stage(limit, workers, cancel_event)
     Run->>DB: select jobs still MISSING enrichment (pending = absence)
-    Run->>Fetch: fetch posting detail pages
+    Run->>Ext: execution-bound rendered-page task
+    Ext-->>Fetch: bounded live-profile snapshot
     Fetch->>DB: full description, apply URL, attempts/errors
-    Run->>Chrome: LinkedIn misses -> authenticated pass
-    Chrome->>DB: external URL or explicit no-external-URL outcome
     Enr->>DB: StageCompleted/StageFailed + PostingContentSnapshotCaptured, projections refresh
 ```
 
@@ -183,15 +204,12 @@ Two truths correct the old diagram:
   `EnrichmentFailed` — those come from that unused use case and from the separate
   protected-source manual-capture snapshot path.
 
-For LinkedIn rows that are failed or enriched without an application URL, a
-bounded authenticated Chrome pass may click the LinkedIn apply control to
-capture an external company URL **only when the separately enabled, explicitly
-consented authenticated-LinkedIn browser capability is ready** — and it **stops
-before any form or submission**. A LinkedIn on-site application control is a
-terminal, non-retryable result: the application flow exists, but there is no
-external ATS URL to capture. Missing controls, missing external targets,
-navigation failures, and unsafe targets retain separate auditable codes and
-retry policies. These application-target outcomes do not determine description
+Within `DiscoverWorkflow`, detail rendering uses only the paired extension in
+the current profile and the shared extraction cascade. It does not start the
+legacy Playwright browser or the separately consented copied-profile LinkedIn
+resolver, and it never clicks an apply control. The copied-profile resolver is
+retained only for standalone maintenance compatibility outside integrated
+Discovery. Application-target outcomes remain distinct from description
 confidence and cannot quarantine otherwise trustworthy posting content.
 Detail enrichment isolates faults at two levels. A crash while processing one
 site's batch is recorded in `site_errors`, healthy sites keep running, and the

@@ -2328,3 +2328,57 @@ separate invisible layer avoids trading that fidelity for a picture-only PDF.
 Consequences: `PdfExportPort` remains browser-local and receives only the
 currently mounted Plate element. Export does not persist the editor, call a
 generation endpoint, register or replace an artifact, or change approval state.
+
+## 2026-09-02: Integrated Discovery Uses The Extension In The User's Live Chrome Profile
+
+Status: accepted
+
+Decision: every job-source acquisition owned by `DiscoverWorkflow` is delegated
+to the installed JobCtrl extension in the user's currently running Chrome profile.
+The boundary includes JobStreaming provider sessions, canonical ATS/API and
+Workday requests, Smart Extract rendering, `robots.txt`, and the integrated
+detail-enrichment drain. The API mediates bounded execution-bound tasks; it does
+not launch Chrome, copy a profile, or offer a direct-network, Playwright,
+adopted-browser, or copied-profile fallback. A current extension heartbeat—not
+pairing-token existence—is a Discover launch prerequisite.
+
+Rationale: a copied profile is a stale snapshot whose cookies and settings
+diverge as soon as the user changes the real profile. Launching a separate
+automation profile also fails the user's expectation that Discovery sees the
+same authenticated state they can see in Chrome. One explicit live-profile
+transport removes that ambiguity and makes offline behavior fail closed instead
+of silently changing identity.
+
+Consequences:
+
+- saving the token in an extension explicitly selects that extension-local
+  installation UUID; other Chrome profiles holding the same token cannot lease
+  until the user replaces the selection there;
+- the extension runs four bounded loopback polling executors inside the profile
+  where it is installed. HTTP/API work executes in the service worker;
+  rendered-page work uses temporary inactive tabs. The broker admits at most
+  four tasks, workers retry capacity under a separate admission deadline, and
+  execution timeouts begin on lease;
+- each active lease heartbeats independently and is abortable; worker
+  cancellation or hard timeout closes a temporary tab when one exists and
+  invalidates stale completion;
+- the API validates public DNS at creation and immediately before lease.
+  Service-worker HTTP/API fetches disable redirect following; tab-scoped
+  exact-origin DNR rules block cross-origin main-frame and Discovery-fetch
+  redirects for rendered pages before dispatch;
+- Chrome owns cookies, session, proxy, and user agent. Browser-owned headers do
+  not cross the worker task contract, and the returned browser user agent is
+  used for robots evaluation;
+- the broker retains task payloads/results only in API process memory. Temporal
+  execution identity, source checkpoints, accepted observations, and normal
+  workflow persistence remain the durable authorities;
+- Pipelines and the API reject a new Discover launch while the heartbeat is
+  offline; scheduled runs reach the same fail-closed worker boundary;
+- wildcard HTTP(S) content-script and host-permission reach are required for
+  source diversity and API origins that cannot host an injectable HTML page.
+  Capture/autofill traffic stays loopback-only, and remote service-worker
+  requests exist only for active broker leases; response/request contracts use
+  UTF-8 byte bounds and stream responses rather than buffering beyond the
+  limit; and
+- copied-profile capabilities remain available only for separately consented
+  compatibility paths outside integrated Discovery.

@@ -290,4 +290,8 @@ Chromium candidates by label. Detection is read-only: it does not launch,
 enable, or persist a browser. Explicitly enabling a detected candidate adopts it;
 an advanced manual executable path remains available. If a candidate disappears
 before confirmation, enable fails without changing capability state. Extension
-pairing and authenticated-profile copying remain separate explicit actions.
+pairing is a separate explicit action, and Settings does not offer a LinkedIn
+profile-copy flow. A live status reports whether the paired extension is
+currently heartbeating from the user's running Chrome profile; integrated
+Discovery, LinkedIn enrichment, and Enrich retries use that live profile
+directly and never use a copied profile.

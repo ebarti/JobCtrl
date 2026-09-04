@@ -1807,6 +1807,17 @@ export const sampleExtensionCapabilityTokenResponse = {
   created: false,
 };
 
+export const sampleDiscoveryBrowserBridgeStatusResponse = {
+  ok: true as const,
+  connected: true,
+  installationBound: true,
+  installationIdSuffix: "00000099",
+  lastSeenAt: "2026-09-02T10:00:00.000Z",
+  extensionVersion: "0.1.0",
+  pendingTasks: 0,
+  activeTasks: 0,
+};
+
 export const sampleResumeTemplateListResponse: ResumeTemplateListResponse = {
   ok: true,
   templates: [

@@ -35,7 +35,7 @@ from jobctrl.domain.discovery.use_cases import (
     DiscoverJobsUseCase,
 )
 from jobctrl.domain.discovery.value_objects import Employer, JobMetadata, PostingUrl, SearchStrategy, Source
-from jobctrl.domain.errors import TransientNetworkError
+from jobctrl.domain.errors import ConfigurationError, TransientNetworkError
 from jobctrl.domain.discovery.source_registry import SMART_EXTRACT_EXPERIMENTAL_POLICY
 from jobctrl.domain.ports.discovery import ScrapedJobPosting
 from jobctrl.domain.tenant import LOCAL_TENANT
@@ -50,6 +50,12 @@ from jobctrl.infrastructure.network import (
 from jobctrl.infrastructure.discovery.location_filter import (
     configured_location_filters,
     location_matches_target,
+)
+from jobctrl.infrastructure.discovery.live_browser import (
+    LiveBrowserResult,
+    LiveChromeDiscoveryClient,
+    LiveChromeRobotsCache,
+    PoliteLiveChromeHttpClient,
 )
 from jobctrl.infrastructure.discovery.production_wiring import DurableJobEventPublisher
 from jobctrl.infrastructure.discovery.sqlite_repository import SqliteJobRepository
@@ -72,7 +78,12 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
         pass
 
 
-def _smart_extract_session() -> PolitenessSession:
+def _smart_extract_session(
+    *,
+    source_id: str | None = None,
+    run_id: str | None = None,
+    browser: LiveChromeDiscoveryClient | None = None,
+) -> PolitenessSession:
     """Politeness session for the smart-extract crawl (robots + rate + budget).
 
     Uses the process-wide host limiter so parallel site fetches share per-host
@@ -80,10 +91,18 @@ def _smart_extract_session() -> PolitenessSession:
     the run budget is provisioned per call; recording is deferred (no conn here).
     """
     return PolitenessSession(
-        PolitenessGateway(),
+        PolitenessGateway(
+            robots=LiveChromeRobotsCache(browser) if browser is not None else None,
+        ),
         policy=SMART_EXTRACT_EXPERIMENTAL_POLICY,
         budget=RunBudgetCounter(SMART_EXTRACT_EXPERIMENTAL_POLICY.max_requests_per_run),
-        context=PolitenessSourceContext(stage="discover", adapter="smart_extract"),
+        context=PolitenessSourceContext(
+            stage="discover",
+            source_id=source_id,
+            source_role="smart_extract",
+            adapter="smart_extract",
+            run_id=run_id,
+        ),
     )
 
 
@@ -536,6 +555,87 @@ def collect_page_intelligence(
         intel["api_responses"].append(summary)
 
     return intel
+
+
+def collect_live_page_intelligence(url: str, result: LiveBrowserResult) -> dict:
+    """Build SmartExtract intelligence from a page rendered by the user's Chrome."""
+
+    intel = _empty_page_intelligence(url)
+    full_html = result.body_html or result.body_text
+    soup = BeautifulSoup(full_html, "html.parser")
+    intel["url"] = result.final_url
+    intel["page_title"] = result.title
+    intel["full_html"] = full_html
+
+    for element in soup.select('script[type="application/ld+json"]'):
+        try:
+            intel["json_ld"].append(json.loads(element.get_text()))
+        except (TypeError, json.JSONDecodeError):
+            continue
+    next_data = soup.select_one("script#__NEXT_DATA__")
+    if next_data is not None:
+        try:
+            intel["next_data"] = json.loads(next_data.get_text())
+        except (TypeError, json.JSONDecodeError):
+            pass
+
+    intel["data_testids"] = [
+        {
+            "testid": element.get("data-testid"),
+            "tag": element.name,
+            "text": element.get_text(" ", strip=True)[:80],
+        }
+        for element in soup.select("[data-testid]")[:50]
+    ]
+    body = soup.body or soup
+    intel["dom_stats"] = {
+        "total_elements": len(body.find_all(True)),
+        "links": len(body.select("a[href]")),
+        "headings": len(body.select("h1,h2,h3,h4")),
+        "lists": len(body.select("ul,ol")),
+        "tables": len(body.select("table")),
+        "articles": len(body.select("article")),
+        "has_data_ids": len(body.select("[data-id]")),
+    }
+    intel["card_candidates"] = _rendered_card_candidates(body)
+    return intel
+
+
+def _rendered_card_candidates(body: BeautifulSoup) -> list[dict]:
+    candidates: list[dict] = []
+    for parent in body.find_all(True):
+        children = [child for child in parent.find_all(recursive=False) if getattr(child, "name", None)]
+        if len(children) < 3:
+            continue
+        tag_counts: dict[str, int] = {}
+        for child in children:
+            tag_counts[child.name] = tag_counts.get(child.name, 0) + 1
+        child_tag, count = max(tag_counts.items(), key=lambda item: item[1])
+        if count < 3:
+            continue
+        repeated = [child for child in children if child.name == child_tag]
+        with_text = [child for child in repeated if len(child.get_text(" ", strip=True)) > 20]
+        if len(with_text) < 3:
+            continue
+        with_links = [child for child in with_text if child.select_one("a[href]") is not None]
+        parent_selector = parent.name
+        if parent.get("id"):
+            parent_selector += f"#{parent.get('id')}"
+        child_classes = [str(value) for value in (with_text[0].get("class") or []) if len(str(value)) < 30][:3]
+        child_selector = child_tag + ("." + ".".join(child_classes) if child_classes else "")
+        candidates.append(
+            {
+                "parent_selector": parent_selector,
+                "child_selector": child_selector,
+                "child_tag": child_tag,
+                "total_children": len(repeated),
+                "with_text": len(with_text),
+                "with_links": len(with_links),
+                "score": len(with_links) * 2 + len(with_text),
+                "examples": [str(child)[:5000] for child in with_text[:3]],
+            }
+        )
+    return sorted(candidates, key=lambda item: int(item["score"]), reverse=True)[:3]
 
 
 # -- Judge: filter API responses ---------------------------------------------
@@ -1059,7 +1159,12 @@ def _raise_if_canceled(cancel_event: threading.Event | None) -> None:
         raise TransientNetworkError("smart-extract discovery canceled")
 
 
-def _run_one_site(name: str, url: str, cancel_event: threading.Event | None = None) -> dict:
+def _run_one_site(
+    name: str,
+    url: str,
+    cancel_event: threading.Event | None = None,
+    browser_client: PoliteLiveChromeHttpClient | None = None,
+) -> dict:
     """Run full smart extraction pipeline on one site URL."""
     log.info("=" * 60)
     log.info("%s: %s", name, url)
@@ -1068,7 +1173,11 @@ def _run_one_site(name: str, url: str, cancel_event: threading.Event | None = No
     _raise_if_canceled(cancel_event)
     log.info("[1] Collecting page intelligence...")
     t0 = time.time()
-    intel = collect_page_intelligence(url)
+    if browser_client is None:
+        intel = collect_page_intelligence(url)
+    else:
+        rendered = browser_client.rendered_page(url, timeout=60.0)
+        intel = collect_live_page_intelligence(url, rendered) if rendered is not None else _empty_page_intelligence(url)
     _raise_if_canceled(cancel_event)
     collect_time = time.time() - t0
     log.info(
@@ -1097,7 +1206,9 @@ def _run_one_site(name: str, url: str, cancel_event: threading.Event | None = No
     ]
     _is_captcha = any(s in full_html.lower() for s in _captcha_signals) if full_html else False
     if len(cleaned_check) < 5000 and full_html and not _is_captcha:
-        if is_bundled_runtime():
+        if browser_client is not None:
+            log.info("Cleaned HTML only %s chars -- retaining the live-profile result", f"{len(cleaned_check):,}")
+        elif is_bundled_runtime():
             log.info("Cleaned HTML only %s chars -- retaining headless-only result", f"{len(cleaned_check):,}")
         else:
             log.info("Cleaned HTML only %s chars -- retrying headful...", f"{len(cleaned_check):,}")
@@ -1336,6 +1447,20 @@ def _run_all(
     total_new = 0
     total_existing = 0
 
+    def _browser_client_for_target(target: dict) -> PoliteLiveChromeHttpClient | None:
+        if discovery_execution is None:
+            return None
+        slug = re.sub(r"[^a-z0-9]+", "-", str(target.get("name") or "site").casefold()).strip("-")
+        source_id = f"smart_extract:{slug or 'site'}"
+        client = LiveChromeDiscoveryClient(
+            discovery_execution,
+            source_family="smartextract",
+            source_id=source_id,
+            cancel_event=cancel_event,
+        )
+        session = _smart_extract_session(source_id=source_id, run_id=run_id, browser=client)
+        return PoliteLiveChromeHttpClient(session, client, default_timeout=60.0)
+
     def _process_result(r: dict, target: dict) -> None:
         nonlocal total_new, total_existing
         remaining = max(limit - total_new, 0) if limit > 0 else 0
@@ -1377,9 +1502,19 @@ def _run_all(
         with ThreadPoolExecutor(max_workers=min(workers, len(targets))) as pool:
             future_to_target = {
                 (
-                    pool.submit(_run_one_site, target["name"], target["url"], cancel_event)
-                    if cancel_event is not None
-                    else pool.submit(_run_one_site, target["name"], target["url"])
+                    pool.submit(
+                        _run_one_site,
+                        target["name"],
+                        target["url"],
+                        cancel_event,
+                        _browser_client_for_target(target),
+                    )
+                    if discovery_execution is not None
+                    else (
+                        pool.submit(_run_one_site, target["name"], target["url"], cancel_event)
+                        if cancel_event is not None
+                        else pool.submit(_run_one_site, target["name"], target["url"])
+                    )
                 ): target
                 for target in targets
             }
@@ -1391,7 +1526,7 @@ def _run_all(
                 target = future_to_target[future]
                 try:
                     r = future.result()
-                except TransientNetworkError:
+                except (ConfigurationError, TransientNetworkError):
                     raise
                 except Exception as exc:
                     r = _site_error_result(target, exc)
@@ -1410,11 +1545,18 @@ def _run_all(
             log.info("[%d/%d] %s", i + 1, len(targets), label)
 
             try:
-                if cancel_event is None:
+                if discovery_execution is not None:
+                    r = _run_one_site(
+                        target["name"],
+                        target["url"],
+                        cancel_event,
+                        _browser_client_for_target(target),
+                    )
+                elif cancel_event is None:
                     r = _run_one_site(target["name"], target["url"])
                 else:
                     r = _run_one_site(target["name"], target["url"], cancel_event)
-            except TransientNetworkError:
+            except (ConfigurationError, TransientNetworkError):
                 raise
             except Exception as exc:
                 r = _site_error_result(target, exc)

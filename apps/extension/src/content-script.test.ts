@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+// @vitest-environment-options {"url":"https://careers.example.com/jobs"}
 
 import type { ExtensionAutofillProfileField } from "@jobctrl/contracts";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -34,6 +35,138 @@ afterEach(() => {
 });
 
 describe("deterministic autofill content script", () => {
+  it("waits for the signed-in LinkedIn job detail instead of snapshotting its loading shell", async () => {
+    const { waitForRenderedPageReady } = await import("./content-script");
+    document.body.innerHTML = '<main><div role="progressbar">Loading</div></main>';
+    let polls = 0;
+
+    await waitForRenderedPageReady(document, "https://www.linkedin.com/jobs/view/123", {
+      timeoutMs: 1_000,
+      pollIntervalMs: 100,
+      minimumStableMs: 100,
+      sleep: async () => {
+        polls += 1;
+        if (polls === 2) {
+          document.body.innerHTML = `<main><section class="jobs-description__content">${"Authenticated job detail ".repeat(20)}</section></main>`;
+        }
+      },
+    });
+
+    expect(polls).toBe(2);
+    expect(document.querySelector(".jobs-description__content")).not.toBeNull();
+  });
+
+  it("uses a short stability window for non-LinkedIn rendered pages", async () => {
+    const { waitForRenderedPageReady } = await import("./content-script");
+    document.body.innerHTML = "<main>Stable public job detail</main>";
+    const sleep = vi.fn(async () => undefined);
+
+    await waitForRenderedPageReady(document, "https://careers.example.com/jobs/123", {
+      timeoutMs: 1_000,
+      pollIntervalMs: 100,
+      minimumStableMs: 200,
+      sleep,
+    });
+
+    expect(sleep).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns a retryable bounded failure when a LinkedIn loading shell never hydrates", async () => {
+    const { captureRenderedPageSnapshotResponse } = await import("./content-script");
+    document.body.innerHTML = '<main><div role="progressbar">Loading</div></main>';
+    const sleep = vi.fn(async () => undefined);
+
+    const response = await captureRenderedPageSnapshotResponse(
+      document,
+      "https://www.linkedin.com/jobs/view/123",
+      {
+        timeoutMs: 300,
+        pollIntervalMs: 100,
+        sleep,
+      },
+    );
+
+    expect(response).toEqual({
+      status: "failed",
+      errorCode: "navigation_failed",
+      message: "LinkedIn job detail did not become ready before the bounded Discovery wait.",
+      retryable: true,
+    });
+    expect(sleep).toHaveBeenCalledTimes(3);
+  });
+
+  it("strips browser-owned identity headers from Discovery fetches", async () => {
+    const { executeDiscoveryHttpRequest } = await import("./content-script");
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      url: "https://careers.example.com/api/jobs",
+      status: 200,
+      headers: new Headers({ "content-type": "application/json" }),
+      text: async () => '{"jobs":[]}',
+    } as Response);
+
+    const response = await executeDiscoveryHttpRequest({
+      mode: "http_request",
+      url: "https://careers.example.com/api/jobs",
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        Cookie: "must-not-cross",
+        "User-Agent": "must-not-cross",
+        "Sec-CH-UA": '"Hard-coded browser";v="1"',
+        "Proxy-Authorization": "must-not-cross",
+      },
+    });
+
+    expect(response).toMatchObject({
+      status: "succeeded",
+      bodyText: '{"jobs":[]}',
+    });
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "https://careers.example.com/api/jobs",
+      expect.objectContaining({ headers: { Accept: "application/json" } }),
+    );
+    fetchSpy.mockRestore();
+  });
+
+  it("cancels an oversized streaming response before buffering beyond 4 MB", async () => {
+    const { executeDiscoveryHttpRequest } = await import("./content-script");
+    let producedChunks = 0;
+    let canceled = false;
+    const chunk = new Uint8Array(1_000_000);
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        producedChunks += 1;
+        controller.enqueue(chunk);
+        if (producedChunks >= 10) controller.close();
+      },
+      cancel() {
+        canceled = true;
+      },
+    });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(body, {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    const response = await executeDiscoveryHttpRequest({
+      mode: "http_request",
+      url: "https://careers.example.com/api/jobs",
+      method: "GET",
+      headers: {},
+    });
+
+    expect(response).toMatchObject({
+      status: "failed",
+      errorCode: "response_too_large",
+      retryable: false,
+    });
+    expect(producedChunks).toBeLessThan(10);
+    expect(canceled).toBe(true);
+    fetchSpy.mockRestore();
+  });
+
   it("opens a review response that matches the background popup contract", async () => {
     const { showAutofillReview } = await import("./content-script");
     document.body.innerHTML = `<label>Email <input name="email" /></label>`;
@@ -53,7 +186,7 @@ describe("deterministic autofill content script", () => {
     expect(document.getElementById("jobctrl-autofill-root")).not.toBeNull();
   });
 
-  it("rejects unsupported ATS pages before suggesting fields", async () => {
+  it("offers deterministic review on a generic HTTPS application form", async () => {
     const { showAutofillReview } = await import("./content-script");
     document.body.innerHTML = `<label>Email <input name="email" /></label>`;
 
@@ -63,7 +196,25 @@ describe("deterministic autofill content script", () => {
       "https://example.com/jobs/1",
     );
 
-    expect(response).toMatchObject({ ok: false, error: "unsupported_ats" });
+    expect(response).toEqual({
+      ok: true,
+      status: "review_opened",
+      suggestions: 1,
+      missing: 0,
+    });
+  });
+
+  it("rejects non-web pages before suggesting fields", async () => {
+    const { showAutofillReview } = await import("./content-script");
+    document.body.innerHTML = `<label>Email <input name="email" /></label>`;
+
+    const response = showAutofillReview(
+      { ok: true, profileVersion: 1, fields: profileFields() },
+      document,
+      "file:///tmp/application.html",
+    );
+
+    expect(response).toMatchObject({ ok: false, error: "unsupported_page" });
   });
 
   it("does not expose unaccepted profile values into the page DOM", async () => {

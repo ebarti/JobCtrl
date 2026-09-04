@@ -30,7 +30,7 @@ For a plain-language overview, read
 | Does Discovery make network requests? | ✓ **Yes—that is how it searches configured job sources and, for AI-assisted steps, communicates with the model providers you selected.** Requests occur during runs you start or schedules you explicitly enable. |
 | Is product telemetry enabled by default? | ✕ **No.** Langfuse requires configuration; `LANGFUSE_DISABLE=1` overrides it. |
 | Does this documentation site use analytics? | ◐ **Only after you accept.** The optional Google Analytics tag stays unloaded until you choose **Accept analytics**; declining keeps the documentation fully available. |
-| Can Discovery or enrichment launch a browser? | ◐ **Only when needed.** Smart extraction and some detail enrichment use Playwright during runs you start or schedules you explicitly enable. |
+| Does Discovery use my browser profile? | ✓ **Yes, directly through the paired extension.** Integrated Discovery requires the user's currently running Chrome profile; HTTP/API tasks run in its extension service worker and rendered-page tasks use temporary inactive tabs. It does not copy or separately launch the profile. |
 | Does application-submission browser automation run continuously? | ✕ **No.** It starts only through apply/dry-run work you initiate or a standing loop you explicitly enable. |
 | Does JobCtrl submit applications or send employer-facing email by default? | ✕ **No.** Browser submission and Gmail application sending are explicit guarded actions. |
 | Does Outreach send messages automatically? | ✕ **No.** Drafts end at copy/export; send logs are user attestations. |
@@ -141,8 +141,8 @@ Unless a row says otherwise, every path below is relative to JOBCTRL_DIR
 | `claude_home/`, `provider-packs/`, `provider-runtime/` | Isolated or separately acquired provider runtime state. |
 | `tailored_resumes/`, `cover_letters/` | Generated text, HTML, and PDF artifacts. |
 | `logs/`, `apply-workers/`, `chrome-workers/` | Logs and local browser/apply state, including CAPTCHA usage metadata when applicable. |
-| `browser-profiles/` | Consented copied browser profiles. Non-secret adoption metadata lives in `config.json`. |
-| `extension-capability-token` | Private local browser-extension pairing secret. |
+| `browser-profiles/` | Consented copied profiles retained for separate compatibility capabilities. Integrated `DiscoverWorkflow` never reads or launches them. Non-secret adoption metadata lives in `config.json`. |
+| `extension-capability-token` | Private local browser-extension pairing secret. Discovery bridge task bodies and results are memory-only and are not stored beside it. |
 | `backups/` | Timestamped SQLite snapshots created by `jobctrl backup`. |
 | `gmail/` | Gmail OAuth client and token files. |
 | Baseline/legacy resume files | `resume.txt`, `resume.pdf`, and older local style/template files. |
@@ -204,7 +204,7 @@ records something you did. Follow-ups are reminders and never act automatically.
 | Service | When used | Data involved |
 | --- | --- | --- |
 | LLM providers | Scoring, employer analysis, materials, contact extraction, stored interview prep | Posting text, relevant profile evidence, generated text, or opted-in fetched page text. |
-| Job boards, ATS APIs, posting pages | Discovery and enrichment | Search terms, URLs, and page/API requests. |
+| Job boards, ATS APIs, posting pages | Integrated Discovery and its enrichment drain, through the paired extension in the current Chrome profile | Search terms, URLs, and page/API requests; Chrome may also send cookies or other session state that already belongs to that site. Cookie values and the browser user agent are not copied into the worker task. |
 | Apply model and browser | Apply/dry-run work you start, or a standing loop you enable | Apply prompt, reviewed materials, profile application fields, and page interaction. |
 | Gmail | Authenticated verification, bounded outcome feedback, or an approved email application | Scoped queries/evidence or the exact approved recipient/attachment. |
 | Google Maps | Profile location autocomplete with a configured key | Address text typed into the location field. |

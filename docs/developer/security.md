@@ -25,8 +25,9 @@ JobCtrl is a local-first job-search automation system. A React/Vite UI talks to
 a loopback Fastify API, the API reads SQLite projections and starts work through
 JSON-RPC/Temporal, and a Python worker performs discovery, enrichment, scoring,
 resume and cover-letter generation, PDF rendering, Gmail-assisted verification,
-and guarded apply automation. A Chromium extension can capture the active page
-and run deterministic autofill against the local API.
+and guarded apply automation. A Chromium extension is integrated Discovery's
+live-profile browser transport and can also capture the active page and run
+deterministic autofill against the local API.
 
 Primary assets are the candidate profile and resume baseline, generated resumes
 and cover letters, application history, SQLite event/projection data, local
@@ -122,26 +123,59 @@ reviews should still treat any externally supplied `href`, artifact path, or
 HTML preview path as sensitive.
 
 **Browser extension.** The extension is a local companion, not a hosted auth
-surface. It can POST active-page captures and GET a whitelisted autofill profile
-DTO only after pairing with the local capability token. It has no apply/submit
-route, and deterministic autofill excludes password and resume content. Main
-risks are token disclosure to a local process or malicious extension, an
-overbroad autofill field whitelist, or content-script bugs that fill the wrong
-field. Those risks should not be confused with remote-account authorization.
+surface. After pairing with the local capability token it can POST active-page
+captures, GET a whitelisted autofill profile DTO, and lease bounded
+execution-bound Discovery tasks from the memory-only broker. It has no
+apply/submit route, and deterministic autofill excludes password and resume
+content. The content script intentionally matches all HTTP(S) pages so source
+and application hosts do not require per-host releases; autofill remains passive
+until an explicit review click, while the background worker may open temporary
+inactive tabs for an explicitly started/scheduled Discover execution. The
+manifest's HTTP(S) host permission is also wildcarded so brokered API requests
+can execute in the service worker when an API origin cannot host an injectable
+HTML page. Capture/autofill routes remain loopback-only; the service worker does
+not create a remote request without a leased Discovery task. Worker task
+contracts reject browser-owned cookie/user-agent/origin and `Sec-*`/`Proxy-*`
+headers; Chrome supplies those values from the profile where the extension is
+installed. Main risks are token disclosure to a local process or malicious
+extension, unexpected page interaction from broad content-script reach,
+overbroad autofill fields, or a task/result escaping its
+execution/URL/payload/timeout bounds.
 
-**Discovery, enrichment, and crawling.** Discovery and enrichment process public
+One extension-local installation UUID is selected by the user's explicit token
+save and persisted as a mode-`0600` control file; every heartbeat, lease-control,
+and completion request carries that ID. Another Chrome profile holding the same
+token receives `409` until its own explicit save replaces the selection. The
+broker admits four active/pending tasks for four background executors. Worker
+admission retries a `429` capacity response under a separate 30-second bound;
+the 120-second task timeout begins only on lease. An independent 750 ms
+lease-control poll keeps bridge liveness fresh and aborts/closes a rendered-page
+tab when the worker deletes the lease. The executor also applies the hard
+timeout when a service-worker HTTP request or page request never settles.
+
+**Discovery, enrichment, and crawling.** Integrated Discovery processes public
 job sources, ATS APIs, broad-board crawls, page HTML, captured API responses,
-and discovered posting/apply URLs. The shared politeness gateway honors
-`robots.txt` for rendered detail crawls, uses an honest User-Agent, paces
-requests per host, and enforces run budgets; JobStreaming remains a
-documented residual because its internal per-board requests cannot be
-robots-gated. The shared public-HTTP guard rejects loopback, private-network,
-link-local, reserved, unspecified, multicast, metadata, and non-HTTP(S)
-destinations. Discovery detail rendering, smart extraction, Playwright
-enrichment, LinkedIn apply resolution, contact research, and apply launch use
-the guard at their applicable initial, final, redirect, popup, and subrequest
-boundaries. New fetch/navigation paths must reuse that guard rather than
-creating an unreviewed egress exception.
+and discovered posting/apply URLs only through the paired extension in the
+user's current Chrome profile. The API validates each initial task, revalidates
+its DNS/public-address decision immediately before lease, and validates the
+reported final URL. HTTP/API tasks run in the extension service worker with
+redirect following disabled. Before rendered-page navigation, the extension
+installs tab-scoped DNR rules that allow main-frame and Discovery-XHR traffic
+only to the exact source origin; a cross-origin redirect is blocked before
+dispatch. The content script and broker independently reject non-web,
+credential-bearing, lexically local, or cross-origin final targets. Response
+streaming stops at the 4 MB UTF-8 byte bound instead of buffering an unbounded
+body. JobCtrl applies host pacing,
+run budgets, and robots policy around that transport; `robots.txt` is acquired
+through the same profile and evaluated with the browser-reported user agent.
+JobStreaming remains a documented residual for request accounting because its
+internal traversal is invocation-gated, even though its provider sessions use
+the extension. Normal rendered-page subresource loading is Chrome/site-owned and
+must not be described as the old Playwright request-replay guard. Contact
+research, standalone maintenance Playwright paths, copied-profile LinkedIn
+resolution, and apply retain their own applicable destination guards. New
+integrated Discovery acquisition paths must reuse the live bridge rather than
+creating a raw-HTTP or copied-profile egress exception.
 
 **LLM scoring, materials, and outreach.** Scoring, employer analysis,
 interview prep, contact research, outreach drafts, resume tailoring, and
@@ -386,7 +420,9 @@ launch, persist, copy, or enable a browser. The enable request is a strict XOR
 between one transient `detectedBrowserId` and one write-only `executablePath`.
 The worker resolves detected IDs again inside the mutation transaction; a
 stale or missing candidate fails closed and must not reuse cached path data.
-Profile copying remains a second, separately versioned affirmative-consent arm.
+The legacy profile-copy API remains a second, separately versioned
+affirmative-consent compatibility arm. Current Settings does not expose it,
+and integrated Discovery or Enrich must never call it.
 
 **The release gate is enforced before release-bound changes land.**
 `scripts/release_check.py` runs automatically on every push to `main` and is

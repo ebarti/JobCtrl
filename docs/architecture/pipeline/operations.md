@@ -231,13 +231,15 @@ provably never started, and use one deterministic Temporal identity per
 delivered profile event. The
 continuation runs Score, Tailor, and Cover without forcing a rescore, so valid
 current scores are reused; a normalized no-op or an unrelated style/template
-save does not start preparation. An authenticated-LinkedIn browser transition
-to fully ready maps the resolved browser condition to canonical
-`enrich` rows blocked with `ENRICH_ROBOTS_DISALLOWED`, selects only LinkedIn
-jobs carrying that typed condition (with a source-identity fallback for legacy
-rows), and dispatches those JobIds through Enrich, Score, Tailor, and Cover.
+save does not start preparation. A selected live-profile extension connection
+maps the resolved `discovery_browser_extension_unavailable` condition to
+canonical `enrich` rows blocked with `ENRICH_ROBOTS_DISALLOWED`, selects only
+LinkedIn jobs carrying that typed condition (including the former
+`authenticated_linkedin_browser_unavailable` value and source-identity fallback
+for legacy rows), and dispatches those JobIds through Enrich, Score, Tailor, and
+Cover.
 Unrelated robots blocks and ordinary pending Enrich rows are not swept into the
-recovery. The browser continuation uses one stable workflow identity for the
+recovery. The extension continuation uses one stable workflow identity for the
 resolved condition even while individual rows leave the blocked cohort; a
 concurrent trigger attaches to the active execution, while a later resolution
 episode may reuse the identity after it closes. These continuations use the
