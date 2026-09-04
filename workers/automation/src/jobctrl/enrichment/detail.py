@@ -3559,7 +3559,10 @@ def _release_unstarted_enrichment_cohort(
                 tenant_id=tenant_id,
                 attempt_count=int(row[1] or 0),
                 retryable=True,
-                metadata={"recoveryReason": "workflow_selection_unprocessed"},
+                metadata={
+                    **metadata,
+                    "recoveryReason": "workflow_selection_unprocessed",
+                },
                 validate_transition=False,
                 expected_version=int(row[3] or 0),
             )

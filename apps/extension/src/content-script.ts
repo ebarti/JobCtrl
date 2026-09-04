@@ -709,6 +709,7 @@ export interface RenderedPageReadinessOptions {
   pollIntervalMs?: number;
   minimumStableMs?: number;
   sleep?: RenderedPageSleep;
+  now?: () => number;
 }
 
 /**
@@ -732,29 +733,28 @@ export async function waitForRenderedPageReady(
   const pollIntervalMs = Math.max(25, options.pollIntervalMs ?? 250);
   const minimumStableMs = Math.max(pollIntervalMs, options.minimumStableMs ?? 750);
   const sleep = options.sleep ?? ((milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
+  const now = options.now ?? (() => performance.now());
   const linkedinJobPage = isLinkedInJobPage(pageUrl);
-  let elapsedMs = 0;
-  let stableMs = 0;
+  const deadline = now() + timeoutMs;
+  let stableSince = now();
   let previousSignature = renderedPageSignature(doc);
 
-  while (elapsedMs < timeoutMs) {
+  while (now() < deadline) {
     if (linkedinJobPage && hasLinkedInJobDetailContent(doc)) {
       return;
     }
 
-    await sleep(Math.min(pollIntervalMs, timeoutMs - elapsedMs));
-    elapsedMs += pollIntervalMs;
+    await sleep(Math.min(pollIntervalMs, Math.max(0, deadline - now())));
 
+    const observedAt = now();
     const signature = renderedPageSignature(doc);
     const busy = doc.querySelector('[aria-busy="true"], [role="progressbar"]') !== null;
-    if (signature === previousSignature && !busy && doc.readyState !== "loading") {
-      stableMs += pollIntervalMs;
-    } else {
-      stableMs = 0;
+    if (signature !== previousSignature || busy || doc.readyState === "loading") {
+      stableSince = observedAt;
     }
     previousSignature = signature;
 
-    if (!linkedinJobPage && stableMs >= minimumStableMs) {
+    if (!linkedinJobPage && observedAt - stableSince >= minimumStableMs) {
       return;
     }
   }
@@ -796,8 +796,9 @@ function isLinkedInJobPage(pageUrl: string): boolean {
 }
 
 function hasLinkedInJobDetailContent(doc: Document): boolean {
-  const detail = doc.querySelector(
+  const details = doc.querySelectorAll(
     [
+      '[id^="JobDetails_AboutTheJob_"]',
       ".jobs-description__content",
       ".jobs-box__html-content",
       ".jobs-description-content__text",
@@ -805,7 +806,7 @@ function hasLinkedInJobDetailContent(doc: Document): boolean {
       '[data-view-name*="job-details"]',
     ].join(", "),
   );
-  if (readableText(detail).length >= 200) {
+  if ([...details].some((detail) => readableText(detail).length >= 200)) {
     return true;
   }
   return [...doc.querySelectorAll('script[type="application/ld+json"]')].some((script) =>

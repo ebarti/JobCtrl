@@ -29,6 +29,42 @@ interface FakeDiscoverySource {
 }
 
 describe("Chromium loaded extension privacy boundary", () => {
+  it("captures a hydrated LinkedIn SDUI detail in an inactive extension tab", async () => {
+    const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-extension-rendered-e2e-"));
+    let api: FakeLoopbackApi | null = null;
+    let context: BrowserContext | null = null;
+    const jobUrl = "https://www.linkedin.com/jobs/view/123/";
+    const description = "Design and operate reliable distributed systems. ".repeat(10);
+    try {
+      context = await launchExtensionContext(userDataDir);
+      if (!context) return;
+      // Public-shaped fixture only: no real site, profile, or account is used.
+      await context.route("https://www.linkedin.com/**", async (route) => {
+        await route.fulfill({ contentType: "text/html", body: `<!doctype html><title>Fixture role</title>
+          <main><div id="JobDetails_AboutTheJob_123" componentkey="JobDetails_AboutTheJob_123"><h2>About the job</h2></div></main>
+          <script>setTimeout(() => { document.querySelector('#JobDetails_AboutTheJob_123').append(${JSON.stringify(description)}); }, 300);</script>` });
+      });
+      api = await installFakeLoopbackApi(context, jobUrl, 15_000, "rendered_page");
+      const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent("serviceworker", { timeout: 10_000 }));
+      const controller = await context.newPage();
+      await controller.goto(`chrome-extension://${new URL(worker.url()).host}/popup.html`);
+      await sendExtensionMessage(controller, { type: "saveToken", token: "rendered-fixture-token" });
+
+      await waitFor(() => api?.discoveryCompletions.length === 1, 20_000);
+
+      expect(api.discoveryCompletions[0]).toMatchObject({ result: {
+        status: "succeeded", finalUrl: jobUrl,
+        bodyText: expect.stringContaining(description.trim()),
+        bodyHtml: expect.stringContaining('id="JobDetails_AboutTheJob_123"'),
+      } });
+      expect(context.pages().some((page) => page.url() === jobUrl)).toBe(false);
+    } finally {
+      await api?.close();
+      await context?.close();
+      fs.rmSync(userDataDir, { recursive: true, force: true });
+    }
+  }, 60_000);
+
   it("runs a JSON API request from the live profile when the source root is not injectable HTML", async () => {
     const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-extension-e2e-"));
     let api: FakeLoopbackApi | null = null;
@@ -278,6 +314,7 @@ async function installFakeLoopbackApi(
   context: BrowserContext,
   discoveryUrl: string,
   taskTimeoutMs = 15_000,
+  mode: "http_request" | "rendered_page" = "http_request",
 ): Promise<FakeLoopbackApi> {
   const requests: RecordedRequest[] = [];
   const discoveryCompletions: unknown[] = [];
@@ -331,7 +368,7 @@ async function installFakeLoopbackApi(
         taskId: "discover-browser:live-profile-e2e",
         leaseId: "00000000-0000-4000-8000-000000000001",
         timeoutMs: taskTimeoutMs,
-        request: {
+        request: mode === "rendered_page" ? { mode, url: discoveryUrl } : {
           mode: "http_request",
           url: discoveryUrl,
           method: "GET",
