@@ -51,7 +51,7 @@ from jobctrl.domain.discovery.value_objects import (
     SearchStrategy,
     Source,
 )
-from jobctrl.domain.errors import TransientNetworkError
+from jobctrl.domain.errors import ConfigurationError, TransientNetworkError
 from jobctrl.domain.enrichment import DetailPage, ExtractionTier, FullDescription, JobEnrichment
 from jobctrl.domain.enrichment.services import CssSelectorExtractor, JsonLdExtractor
 from jobctrl.domain.enrichment.snapshot_services import (
@@ -74,6 +74,11 @@ from jobctrl.infrastructure.discovery.ats_adapters import (
 from jobctrl.infrastructure.discovery.location_filter import (
     configured_location_filters,
     location_matches_target,
+)
+from jobctrl.infrastructure.discovery.live_browser import (
+    LiveChromeDiscoveryClient,
+    LiveChromeRobotsCache,
+    PoliteLiveChromeHttpClient,
 )
 from jobctrl.infrastructure.network import (
     GatewayHttpClient,
@@ -541,9 +546,14 @@ def run_scheduled_ats_sources(
     ``http`` fetcher is injected (production), a per-source
     :class:`GatewayHttpClient` is built from the source policy so robots
     (exempt for documented APIs, D2), per-host rate/concurrency, the per-run
-    request budget, and the honest UA all apply. Tests may inject ``http`` to
-    bypass the network.
+    request budget, and the honest UA all apply. Standalone tests may inject
+    ``http`` to bypass the network; an execution-scoped Discover run rejects
+    that override so it cannot bypass the live extension transport.
     """
+    if discovery_execution is not None and http is not None:
+        raise ConfigurationError(
+            "Integrated Discovery cannot override the live Chrome extension transport."
+        )
     ensure_worker_discovery_tables(conn)
     resolved_gateway = gateway if gateway is not None else (PolitenessGateway() if http is None else None)
     runnable = tuple(source for source in sources if getattr(source, "should_run", True))
@@ -555,6 +565,8 @@ def run_scheduled_ats_sources(
             conn=conn,
             run_id=run_id,
             search_cfg=search_cfg,
+            discovery_execution=discovery_execution,
+            cancel_event=cancel_event,
         )
         for source in runnable
     )
@@ -634,6 +646,8 @@ def run_scheduled_ats_sources(
                     source_processed = True
                     if remaining_new is not None and summary.new_jobs > 0:
                         remaining_new -= summary.new_jobs
+        except (ConfigurationError, TransientNetworkError):
+            raise
         except Exception as exc:
             failed_sources.append(adapter.source_id)
             _record_ats_source_failure(conn, adapter.source_id, run_id, exc)
@@ -1938,6 +1952,8 @@ def _adapter_for_source(
     conn: sqlite3.Connection | None,
     run_id: str | None,
     search_cfg: Mapping[str, Any],
+    discovery_execution: DiscoveryExecutionRef | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> Any | None:
     source_id = str(getattr(source, "source_id", "")).strip()
     if source_id.startswith("workday:"):
@@ -1947,10 +1963,20 @@ def _adapter_for_source(
     location_accept, location_reject = configured_location_filters(search_cfg)
     if ats_kind not in (AtsKind.GREENHOUSE, AtsKind.LEVER, AtsKind.ASHBY):
         return None
-    fetcher = (
-        http
-        if http is not None
-        else _gateway_ats_fetcher(
+    fetcher = http
+    if fetcher is None and discovery_execution is not None:
+        fetcher = _live_browser_ats_fetcher(
+            source,
+            source_id=source_id,
+            ats_kind=ats_kind,
+            gateway=gateway,
+            conn=conn,
+            run_id=run_id,
+            discovery_execution=discovery_execution,
+            cancel_event=cancel_event,
+        )
+    if fetcher is None:
+        fetcher = _gateway_ats_fetcher(
             source,
             source_id=source_id,
             ats_kind=ats_kind,
@@ -1958,7 +1984,6 @@ def _adapter_for_source(
             conn=conn,
             run_id=run_id,
         )
-    )
     common = dict(
         source_id=source_id,
         company=_company_name(source, adapter_config),
@@ -1983,8 +2008,8 @@ def _gateway_ats_fetcher(
     run_id: str | None,
 ) -> HttpFetcher:
     """Build a per-source gateway-routed JSON fetcher for an ATS adapter."""
-    active_gateway = gateway if gateway is not None else PolitenessGateway()
     policy: SourcePolicy = getattr(source, "policy", None) or ATS_API_POLICY
+    active_gateway = gateway if gateway is not None else PolitenessGateway()
     context = PolitenessSourceContext(
         stage="discover",
         source_id=source_id,
@@ -2002,6 +2027,47 @@ def _gateway_ats_fetcher(
         recorder_conn=conn,
     )
     return GatewayHttpClient(session).fetch_json
+
+
+def _live_browser_ats_fetcher(
+    source: Any,
+    *,
+    source_id: str,
+    ats_kind: AtsKind,
+    gateway: PolitenessGateway | None,
+    conn: sqlite3.Connection | None,
+    run_id: str | None,
+    discovery_execution: DiscoveryExecutionRef,
+    cancel_event: threading.Event | None,
+) -> HttpFetcher:
+    """Build an ATS JSON fetcher that preserves policy and uses live Chrome."""
+
+    policy: SourcePolicy = getattr(source, "policy", None) or ATS_API_POLICY
+    browser = LiveChromeDiscoveryClient(
+        discovery_execution,
+        source_family="ats_api",
+        source_id=source_id,
+        cancel_event=cancel_event,
+    )
+    active_gateway = (gateway if gateway is not None else PolitenessGateway()).with_robots(
+        LiveChromeRobotsCache(browser)
+    )
+    session = PolitenessSession(
+        active_gateway,
+        policy=policy,
+        budget=active_gateway.new_run_budget(policy.max_requests_per_run),
+        context=PolitenessSourceContext(
+            stage="discover",
+            source_id=source_id,
+            source_kind=_enum_value(getattr(source, "source_kind", None)),
+            source_priority=_enum_value(getattr(source, "priority", None)),
+            source_role="ats_api",
+            adapter=f"{ats_kind.value}_api",
+            run_id=run_id,
+        ),
+        recorder_conn=conn,
+    )
+    return PoliteLiveChromeHttpClient(session, browser).fetch_json
 
 
 def _enum_value(value: Any) -> str | None:

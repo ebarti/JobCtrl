@@ -18,7 +18,7 @@ import {
   CollapsibleTrigger,
 } from "../../../shared/ui/collapsible.js";
 import { TailorJobButton } from "../../materials/components/RetailorCurrentPolicyButton.js";
-import { useBrowserCapabilitiesQuery } from "../../operations/hooks/useBrowserCapabilitiesQuery.js";
+import { useDiscoveryBrowserBridgeQuery } from "../../operations/hooks/useDiscoveryBrowserBridgeQuery.js";
 import { useRetryStageMutation } from "../hooks/useRetryStageMutation.js";
 import { StageBadge } from "./StageBadge.js";
 
@@ -37,8 +37,9 @@ export function StageTimeline({
     <ol aria-label="Preparation stages" className="timeline stage-timeline">
       {stages.map((stage) => {
         const diagnostics = stageDiagnostics(stage);
-        const guidance = stageGuidance(stage);
-        const manualCaptureUrl = guidance ? publicPostingUrl(postingUrl) : null;
+        const postingPageUrl = publicPostingUrl(postingUrl);
+        const guidance = stageGuidance(stage, postingPageUrl);
+        const manualCaptureUrl = guidance ? postingPageUrl : null;
         return (
           <li
             className="timeline-row stage-timeline__item"
@@ -73,7 +74,7 @@ export function StageTimeline({
                   stage.errorCode === "ENRICH_ROBOTS_DISALLOWED" &&
                   jobId &&
                   isLinkedInJobUrl(manualCaptureUrl) ? (
-                    <AuthenticatedLinkedInRetry jobId={jobId} />
+                    <LiveProfileLinkedInRetry jobId={jobId} />
                   ) : null}
                   <p>
                     <strong>Manual capture fallback.</strong> Open the posting
@@ -153,23 +154,17 @@ function StageDiagnosticDisclosure({
   );
 }
 
-function AuthenticatedLinkedInRetry({ jobId }: { jobId: string }): JSX.Element {
-  const capabilities = useBrowserCapabilitiesQuery();
+function LiveProfileLinkedInRetry({ jobId }: { jobId: string }): JSX.Element {
+  const bridge = useDiscoveryBrowserBridgeQuery();
   const retryStage = useRetryStageMutation();
-  const authenticatedLinkedIn = capabilities.data?.capabilities.find(
-    (capability) => capability.id === "authenticated-linkedin-browser",
-  );
-  const ready =
-    authenticatedLinkedIn?.status === "ready" &&
-    authenticatedLinkedIn.enabled &&
-    authenticatedLinkedIn.profileCopyReady;
+  const ready = bridge.data?.connected === true && bridge.data.installationBound;
 
-  if (capabilities.isPending) {
+  if (bridge.isPending) {
     return (
       <div className="flex flex-col items-start gap-2">
-        <p>Checking the authenticated LinkedIn browser capability.</p>
+        <p>Checking the paired extension in your current Chrome profile.</p>
         <Button disabled size="sm" variant="outline">
-          Checking authenticated browser
+          Checking Chrome extension
         </Button>
       </div>
     );
@@ -179,8 +174,9 @@ function AuthenticatedLinkedInRetry({ jobId }: { jobId: string }): JSX.Element {
     return (
       <div className="flex flex-col items-start gap-2">
         <p>
-          Authenticated retry needs an enabled LinkedIn browser and an
-          explicitly consented JobCtrl-owned profile copy.
+          Open the paired JobCtrl extension in the Chrome profile where you are
+          signed in to LinkedIn. JobCtrl reads that live profile directly; it
+          does not create or launch a copy.
         </p>
         <Button
           nativeButton={false}
@@ -188,7 +184,7 @@ function AuthenticatedLinkedInRetry({ jobId }: { jobId: string }): JSX.Element {
           size="sm"
           variant="outline"
         >
-          Set up authenticated LinkedIn browser
+          Connect this Chrome profile
         </Button>
       </div>
     );
@@ -197,10 +193,11 @@ function AuthenticatedLinkedInRetry({ jobId }: { jobId: string }): JSX.Element {
   return (
     <div className="flex flex-col items-start gap-2">
       <p>
-        Retry this LinkedIn job with the consented JobCtrl-owned profile. Host
-        pacing and the current run request budget still apply. The stage reset
-        and new attempt remain in audit history, and this preparation retry
-        never reaches application submission.
+        Retry this LinkedIn job through the extension in your current signed-in
+        Chrome profile. Host pacing and the current run request budget still
+        apply. No browser profile is copied or launched, the stage reset and new
+        attempt remain in audit history, and this preparation retry never
+        reaches application submission.
       </p>
       <Button
         disabled={retryStage.isPending}
@@ -214,12 +211,13 @@ function AuthenticatedLinkedInRetry({ jobId }: { jobId: string }): JSX.Element {
         size="sm"
       >
         {retryStage.isPending
-          ? "Retrying with authenticated browser"
-          : "Retry with authenticated browser"}
+          ? "Retrying through this Chrome profile"
+          : "Retry through this Chrome profile"}
       </Button>
       {retryStage.isError ? (
         <p role="alert">
-          The authenticated retry could not start. Try again from this job.
+          The live-profile retry could not start. Check that the extension is
+          connected, then try again from this job.
         </p>
       ) : null}
     </div>
@@ -307,6 +305,7 @@ function stageDiagnostics(stage: StageSummary): Array<[string, string]> {
 
 function stageGuidance(
   stage: StageSummary,
+  postingUrl: string | null,
 ): { title: string; explanation: string } | null {
   if (
     stage.stage !== "enrich" ||
@@ -315,6 +314,13 @@ function stageGuidance(
     return null;
   }
   if (stage.errorCode === "ENRICH_ROBOTS_DISALLOWED") {
+    if (isLinkedInJobUrl(postingUrl)) {
+      return {
+        title: "LinkedIn enrichment needs your live Chrome session",
+        explanation:
+          "A previous anonymous enrichment attempt stopped at LinkedIn's robots policy. Retry through the paired extension to read the posting in your current signed-in Chrome profile.",
+      };
+    }
     return {
       title: "Automated enrichment is blocked by site policy",
       explanation:

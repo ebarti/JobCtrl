@@ -1,6 +1,6 @@
 import type {
   ActionRunResponse,
-  BrowserCapabilitiesResponse,
+  DiscoveryBrowserBridgeStatusResponse,
   StageSummary,
 } from "@jobctrl/contracts";
 import { screen, waitFor } from "@testing-library/react";
@@ -32,48 +32,18 @@ function makeStage(
   };
 }
 
-function readyAuthenticatedLinkedInBrowser(): BrowserCapabilitiesResponse {
+function discoveryBrowserBridge(
+  connected: boolean,
+): DiscoveryBrowserBridgeStatusResponse {
   return {
     ok: true,
-    detectedBrowsers: [
-      {
-        id: "google-chrome",
-        label: "Google Chrome",
-        defaultProfileAvailable: true,
-        profiles: [
-          {
-            id: "profile-0123456789abcdef0123456789abcdef",
-            label: "Signed in",
-          },
-        ],
-      },
-    ],
-    capabilities: [
-      {
-        id: "core-browser",
-        status: "ready",
-        detail: "Managed browser ready.",
-        mutable: false,
-        enabled: true,
-        profileCopyReady: false,
-      },
-      {
-        id: "auto-apply-browser",
-        status: "disabled",
-        detail: "Disabled.",
-        mutable: true,
-        enabled: false,
-        profileCopyReady: false,
-      },
-      {
-        id: "authenticated-linkedin-browser",
-        status: "ready",
-        detail: "Consented profile copy ready.",
-        mutable: true,
-        enabled: true,
-        profileCopyReady: true,
-      },
-    ],
+    connected,
+    installationBound: true,
+    installationIdSuffix: "00000099",
+    lastSeenAt: connected ? "2026-09-02T10:00:00.000Z" : null,
+    extensionVersion: connected ? "0.1.1" : null,
+    pendingTasks: 0,
+    activeTasks: 0,
   };
 }
 
@@ -285,13 +255,13 @@ describe("<StageTimeline>", () => {
     );
 
     expect(screen.getByRole("alert")).toHaveTextContent(
-      "Automated enrichment is blocked by site policy",
+      "LinkedIn enrichment needs your live Chrome session",
     );
     expect(screen.getByRole("alert")).toHaveTextContent(
-      /robots policy does not allow/i,
+      /previous anonymous enrichment attempt/i,
     );
     expect(screen.getByRole("alert")).toHaveTextContent(
-      /JobCtrl did not fetch it/i,
+      /current signed-in Chrome profile/i,
     );
     expect(screen.getByRole("alert")).toHaveTextContent(
       /paired JobCtrl extension/i,
@@ -320,7 +290,7 @@ describe("<StageTimeline>", () => {
     );
   });
 
-  it("retries one robots-blocked LinkedIn job with the ready authenticated browser", async () => {
+  it("retries one robots-blocked LinkedIn job through the connected live-profile extension", async () => {
     const user = userEvent.setup();
     const retryStage = vi.fn(
       async (jobKey: string): Promise<ActionRunResponse> => ({
@@ -338,8 +308,8 @@ describe("<StageTimeline>", () => {
         },
       }),
     );
-    const browserCapabilities = vi.fn(async () =>
-      readyAuthenticatedLinkedInBrowser(),
+    const discoveryBrowserBridgeStatus = vi.fn(async () =>
+      discoveryBrowserBridge(true),
     );
     renderWithProviders(
       <StageTimeline
@@ -353,12 +323,19 @@ describe("<StageTimeline>", () => {
           },
         ]}
       />,
-      { ports: buildTestPorts({ api: { browserCapabilities, retryStage } }) },
+      {
+        ports: buildTestPorts({
+          api: { discoveryBrowserBridgeStatus, retryStage },
+        }),
+      },
     );
 
     const retry = await screen.findByRole("button", {
-      name: "Retry with authenticated browser",
+      name: "Retry through this Chrome profile",
     });
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      /No browser profile is copied/i,
+    );
     expect(screen.getByRole("alert")).toHaveTextContent(/host pacing/i);
     expect(screen.getByRole("alert")).toHaveTextContent(/run request budget/i);
     expect(screen.getByRole("alert")).toHaveTextContent(
@@ -383,7 +360,10 @@ describe("<StageTimeline>", () => {
     ).toBeInTheDocument();
   });
 
-  it("links to authenticated browser setup when the capability is not ready", async () => {
+  it("links to extension setup when the selected live Chrome profile is offline", async () => {
+    const discoveryBrowserBridgeStatus = vi.fn(async () =>
+      discoveryBrowserBridge(false),
+    );
     renderWithProviders(
       <StageTimeline
         jobId="linkedin-job-456"
@@ -396,30 +376,32 @@ describe("<StageTimeline>", () => {
           },
         ]}
       />,
-      { ports: buildTestPorts() },
+      {
+        ports: buildTestPorts({ api: { discoveryBrowserBridgeStatus } }),
+      },
     );
 
     expect(
       await screen.findByRole("link", {
-        name: "Set up authenticated LinkedIn browser",
+        name: "Connect this Chrome profile",
       }),
     ).toHaveAttribute("href", "/settings/browser");
     expect(
       screen.queryByRole("button", {
-        name: "Retry with authenticated browser",
+        name: "Retry through this Chrome profile",
       }),
     ).not.toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent(
-      /explicitly consented/i,
+      /does not create or launch a copy/i,
     );
     expect(
       screen.getByRole("link", { name: "Open posting for manual capture" }),
     ).toBeInTheDocument();
   });
 
-  it("never offers the authenticated bypass for a non-LinkedIn URL", async () => {
-    const browserCapabilities = vi.fn(async () =>
-      readyAuthenticatedLinkedInBrowser(),
+  it("never offers the live-profile LinkedIn retry for a non-LinkedIn URL", async () => {
+    const discoveryBrowserBridgeStatus = vi.fn(async () =>
+      discoveryBrowserBridge(true),
     );
     renderWithProviders(
       <StageTimeline
@@ -433,25 +415,27 @@ describe("<StageTimeline>", () => {
           },
         ]}
       />,
-      { ports: buildTestPorts({ api: { browserCapabilities } }) },
+      {
+        ports: buildTestPorts({ api: { discoveryBrowserBridgeStatus } }),
+      },
     );
 
     expect(
       screen.queryByRole("button", {
-        name: "Retry with authenticated browser",
+        name: "Retry through this Chrome profile",
       }),
     ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("link", {
-        name: "Set up authenticated LinkedIn browser",
+        name: "Connect this Chrome profile",
       }),
     ).not.toBeInTheDocument();
-    expect(browserCapabilities).not.toHaveBeenCalled();
+    expect(discoveryBrowserBridgeStatus).not.toHaveBeenCalled();
   });
 
-  it("never offers the authenticated bypass unless the robots-blocked state is current", () => {
-    const browserCapabilities = vi.fn(async () =>
-      readyAuthenticatedLinkedInBrowser(),
+  it("never offers the live-profile retry unless the robots-blocked state is current", () => {
+    const discoveryBrowserBridgeStatus = vi.fn(async () =>
+      discoveryBrowserBridge(true),
     );
     renderWithProviders(
       <StageTimeline
@@ -465,15 +449,17 @@ describe("<StageTimeline>", () => {
           },
         ]}
       />,
-      { ports: buildTestPorts({ api: { browserCapabilities } }) },
+      {
+        ports: buildTestPorts({ api: { discoveryBrowserBridgeStatus } }),
+      },
     );
 
     expect(
       screen.queryByRole("button", {
-        name: "Retry with authenticated browser",
+        name: "Retry through this Chrome profile",
       }),
     ).not.toBeInTheDocument();
-    expect(browserCapabilities).not.toHaveBeenCalled();
+    expect(discoveryBrowserBridgeStatus).not.toHaveBeenCalled();
   });
 
   it("explains a blocked page request without hiding the fetch-guard evidence", async () => {

@@ -1280,8 +1280,11 @@ Current-version preparation maintenance actions are separate endpoints:
   `run_stage` workflows with the selected job URLs and requested worker count.
   The route records pipeline workflow metadata plus per-job `StageQueued`
   events with `source: "bulk_retry_failed"` so later debugging can tell which
-  action picked up the reset rows. `apply` failures are reset but not
-  auto-run from the bulk retry route.
+  action picked up the reset rows. When that preview cohort contains Enrich,
+  the selected extension must have a current heartbeat; otherwise the route
+  returns `503 discovery_extension_unavailable` before resetting any stage,
+  attempt/error metadata, diagnostics, or events and without dispatching.
+  `apply` failures are reset but not auto-run from the bulk retry route.
 - The active Jobs bulk toolbar exposes `retry all failed` outside the failed
   state filter. It posts the current Jobs filters with `state: failed` and
   `deleted: active`, sets `runAfter: true`, and sends the saved pipeline worker
@@ -1290,7 +1293,9 @@ Current-version preparation maintenance actions are separate endpoints:
 - The active Jobs bulk toolbar also exposes `continue pending prep`, posting
   the current Jobs filters with `state: pending` and `deleted: active` to the
   bulk pending-preparation endpoint. The endpoint still filters out application
-  work, so this control never auto-submits applications.
+  work, so this control never auto-submits applications. If the selected pending
+  cohort starts at Enrich, an offline extension returns the same `503` before
+  dispatch and leaves the pending stage untouched.
 
 First-time manual tailoring is not a re-tailor action. The job detail stage
 timeline exposes `POST /v1/jobs/:jobKey/actions/tailor` on the internal
@@ -1542,6 +1547,45 @@ run link to its exact activity stream.
   restrictive file permissions. These pairing routes are for CLI callers and
   same-origin Settings requests only; arbitrary loopback web origins and
   extension-origin CORS cannot mint or rotate the token.
+- `GET /v1/discovery/browser-extension/status` is the secret-free live bridge
+  read model used by Settings and Pipelines. It reports `connected`,
+  `installationBound`, `installationIdSuffix`, `lastSeenAt`, `extensionVersion`,
+  `pendingTasks`, and `activeTasks`; a pairing token without a selected,
+  heartbeating installation remains offline. Rotating the pairing token clears
+  both the installation binding and connection immediately.
+- `POST /v1/extension/discovery/claim` selects one extension-local installation
+  UUID. The first selection and every replacement require the explicit claim
+  sent when the token is saved from that Chrome profile; automatic polling
+  cannot select a profile.
+- The memory-only Discovery browser broker uses `GET
+  /v1/extension/discovery/tasks/next` for extension heartbeat/lease, `POST
+  /v1/extension/discovery/tasks` for local-worker task creation, `GET
+  /v1/extension/discovery/tasks/:taskId` for worker result polling, `POST
+  /v1/extension/discovery/tasks/:taskId/result` for exact-lease completion, and
+  `DELETE /v1/extension/discovery/tasks/:taskId` for worker cancellation. Tasks
+  bind exact workflow/run identity to a public HTTP(S) `GET`, `POST`, or rendered
+  page request, cap timeouts and payloads, reject browser-owned cookie/user-agent/`Sec-*`/`Proxy-*`
+  headers, and expire rather than persisting response bodies. Browser-origin
+  callers cannot create/read/cancel worker tasks; every lease/result operation
+  still requires the same local capability token and selected installation ID
+  used by the paired extension. `GET
+  /v1/extension/discovery/tasks/:taskId/lease?leaseId=…` is the active-lease
+  heartbeat/cancellation channel. The broker admits four active/pending tasks;
+  overflow receives `429 discovery_browser_capacity`. Pending admission has a
+  30-second bound, while the task timeout begins on lease. The API revalidates
+  DNS before returning a lease. The extension runs HTTP/API tasks in its service
+  worker with redirects disabled and applies tab-scoped exact-origin
+  allow/default-block DNR rules to rendered-page navigation. Timeout/cancel
+  hard-aborts work, closes an inactive tab when one exists, and streams results
+  under UTF-8 byte limits.
+- A Discover request to `POST /v1/pipeline/actions/run-stage`, or a job-scoped
+  or bulk Enrich run/retry, returns `503` with
+  `error: "discovery_extension_unavailable"` before dispatch unless the broker
+  has a current extension heartbeat. Integrated Discovery uses the Chrome
+  profile where that extension is installed and never falls back to an adopted
+  executable or copied profile. Enrich retry rejection happens before the API
+  resets the stage, including bulk retry previews; pending bulk continuation
+  also stops before dispatch.
 - `GET /v1/browser-capabilities` returns `core-browser`,
   `auto-apply-browser`, and `authenticated-linkedin-browser` state without
   returning a saved executable or source-profile path. It also returns
@@ -1558,7 +1602,8 @@ run link to its exact activity stream.
   transient candidate again at mutation time, and a stale/missing ID fails
   closed with sanitized `400 browser_capability_failed` without adopting any
   fallback. The matching `/disable` route applies
-  immediately. `POST /v1/browser-capabilities/authenticated-linkedin-browser/profile-copy`
+  immediately. The legacy-compatible `POST
+  /v1/browser-capabilities/authenticated-linkedin-browser/profile-copy`
   requires explicit consent and accepts an explicit
   `{ detectedBrowserId, detectedProfileId }`, the compatible browser-only
   Default selection, or `{ sourceProfilePath }`. The explicit detected-profile
@@ -1568,7 +1613,9 @@ run link to its exact activity stream.
   new copy has staged successfully. Sibling profile directories and metadata
   are excluded. The manual path is cleared after the request; JobCtrl never
   returns, logs, or persists it. A detected candidate becomes adopted only
-  through the separate explicit enable mutation.
+  through the separate explicit enable mutation. Current Settings does not
+  expose this profile-copy route, and making a copy does not resolve or dispatch
+  LinkedIn Enrich work; the selected live-profile extension owns that path.
 - Authenticated extension routes under `/v1/extension/*` require `Authorization:
   Bearer <token>`. A valid token allows a `chrome-extension://` origin through
   the route-scoped CORS and unsafe-mutation guards, but only after the loopback
@@ -1618,14 +1665,14 @@ as a devDependency of `apps/api` for API tests).
 ## Commands
 
 ```bash
-pnpm api:dev
-pnpm api:check
-pnpm api:test
-pnpm qa:test
-pnpm web:dev
-pnpm web:build
-pnpm extension:check
-pnpm extension:e2e
+corepack pnpm api:dev
+corepack pnpm api:check
+corepack pnpm api:test
+corepack pnpm qa:test
+corepack pnpm web:dev
+corepack pnpm web:build
+corepack pnpm extension:check
+corepack pnpm extension:e2e
 ```
 
 The API defaults to `http://127.0.0.1:8766`. The web app proxies `/v1/*` to

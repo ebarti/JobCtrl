@@ -24,6 +24,7 @@ from typing import Iterator
 import pytest
 
 from jobctrl.database import close_connection, init_db
+from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
 from jobctrl.domain.identifiers import JobId, generate_job_id
 from jobctrl.domain.ports.politeness import PolitenessDecision, PolitenessOutcome
 from jobctrl.domain.tenant import LOCAL_TENANT
@@ -36,6 +37,7 @@ from jobctrl.infrastructure.network import (
     RobotsCache,
     RunBudgetCounter,
 )
+from jobctrl.infrastructure.discovery.live_browser import LiveBrowserResult
 
 from .politeness_helpers import (
     AllowAllRobots,
@@ -75,7 +77,7 @@ def test_linkedin_robots_block_records_the_typed_recovery_condition(tmp_path: Pa
         ).fetchone()
         assert row is not None
         assert json.loads(row[0])["blockedConditions"] == [
-            "authenticated_linkedin_browser_unavailable"
+            "discovery_browser_extension_unavailable"
         ]
     finally:
         close_connection(db_path)
@@ -547,6 +549,189 @@ class _FakeResolver:
 
     def close(self) -> None:
         return None
+
+
+class _FakeLiveChrome:
+    instances: list["_FakeLiveChrome"] = []
+
+    def __init__(
+        self,
+        execution: DiscoveryExecutionRef,
+        **_kwargs: object,
+    ) -> None:
+        self.execution = execution
+        self.available_checks = 0
+        self.rendered_urls: list[str] = []
+        type(self).instances.append(self)
+
+    def ensure_available(self) -> None:
+        self.available_checks += 1
+
+    def request(self, _url: str, **_kwargs: object) -> LiveBrowserResult:
+        raise AssertionError("authenticated LinkedIn enrichment must not fetch anonymous robots.txt")
+
+    def rendered_page(self, url: str, **_kwargs: object) -> LiveBrowserResult:
+        self.rendered_urls.append(url)
+        posting_json = json.dumps(
+            {
+                "@type": "JobPosting",
+                "description": LONG_DESC,
+                "url": "https://example.test/apply",
+                "directApply": True,
+            }
+        )
+        return LiveBrowserResult(
+            final_url=url,
+            status_code=200,
+            content_type="text/html",
+            title="Role",
+            body_text=LONG_DESC,
+            body_html=(
+                "<html><body>"
+                f'<script type="application/ld+json">{posting_json}</script>'
+                f'<main><article class="job-description">{LONG_DESC}</article></main>'
+                "</body></html>"
+            ),
+            browser_user_agent="Chrome/Test",
+        )
+
+
+def test_live_profile_linkedin_enrichment_skips_anonymous_robots_without_copying_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tier1_extraction: None
+) -> None:
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    url = "https://www.linkedin.com/jobs/view/live-profile"
+    execution = DiscoveryExecutionRef(
+        tenant_id="local",
+        workflow_id="discover-live-profile",
+        temporal_run_id="run-live-profile",
+    )
+    try:
+        _seed_pending(conn, url, "linkedin")
+        _FakeLiveChrome.instances = []
+        monkeypatch.setattr(detail, "LiveChromeDiscoveryClient", _FakeLiveChrome)
+        monkeypatch.setattr(
+            detail,
+            "sync_playwright",
+            lambda: (_ for _ in ()).throw(AssertionError("must not launch Playwright")),
+        )
+        monkeypatch.setattr(
+            detail,
+            "LinkedInApplyUrlResolver",
+            lambda **_kwargs: (_ for _ in ()).throw(AssertionError("must not open copied profile")),
+        )
+
+        stats = scrape_site_batch(
+            conn,
+            "linkedin",
+            [(_job_id(conn, url), "Role")],
+            gateway=offline_gateway(robots=DenyAllRobots()),
+            discovery_execution=execution,
+        )
+
+        assert stats["blocked"] == 0
+        assert stats["ok"] == 1
+        assert len(_FakeLiveChrome.instances) == 1
+        browser = _FakeLiveChrome.instances[0]
+        assert browser.execution == execution
+        assert browser.available_checks == 1
+        assert browser.rendered_urls == [url]
+        assert _enrich_stage(conn, url)["state"] == "succeeded"
+    finally:
+        close_connection(db_path)
+
+
+def test_temporal_enrich_retry_synthesizes_live_extension_execution_and_skips_copy_prepass(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tier1_extraction: None
+) -> None:
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    url = "https://www.linkedin.com/jobs/view/workflow-retry"
+    try:
+        _seed_pending(conn, url, "linkedin")
+        _FakeLiveChrome.instances = []
+        monkeypatch.setattr(detail, "LiveChromeDiscoveryClient", _FakeLiveChrome)
+        monkeypatch.setattr(
+            detail,
+            "_reset_authenticated_linkedin_retry_candidates",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError("workflow retry must not run the copied-profile pre-pass")
+            ),
+        )
+
+        stats = detail._run_detail_scraper(
+            conn,
+            workers=1,
+            job_ids=(_job_id(conn, url),),
+            workflow_id="job-pipeline-live-profile-retry",
+            workflow_run_id="run-live-profile-retry",
+        )
+
+        assert stats["ok"] == 1
+        assert len(_FakeLiveChrome.instances) == 1
+        execution = _FakeLiveChrome.instances[0].execution
+        assert execution.tenant_id == "local"
+        assert execution.workflow_id == "job-pipeline-live-profile-retry"
+        assert execution.temporal_run_id == "run-live-profile-retry"
+        assert _FakeLiveChrome.instances[0].rendered_urls == [url]
+    finally:
+        close_connection(db_path)
+
+
+def test_run_enrichment_binds_temporal_extension_before_legacy_wttj_repair(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    captured: dict[str, object] = {}
+    try:
+        _seed_pending(conn, "wttj-relative-slug", "WelcomeToTheJungle")
+        monkeypatch.setattr(detail, "init_db", lambda: conn)
+        monkeypatch.setattr(
+            detail,
+            "resolve_wttj_urls",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError("Temporal Enrich must not enter the Playwright WTTJ repair")
+            ),
+        )
+        monkeypatch.setattr(
+            detail,
+            "sync_playwright",
+            lambda: (_ for _ in ()).throw(
+                AssertionError("Temporal Enrich must not launch Playwright")
+            ),
+        )
+
+        def _capture_scraper(_conn: object, **kwargs: object) -> dict[str, object]:
+            captured.update(kwargs)
+            return {
+                "processed": 0,
+                "ok": 0,
+                "partial": 0,
+                "error": 0,
+                "tiers": {1: 0, 2: 0, 3: 0},
+                "site_errors": {},
+            }
+
+        monkeypatch.setattr(detail, "_run_detail_scraper", _capture_scraper)
+
+        result = detail.run_enrichment(
+            workflow_id="global-enrich-live-profile",
+            workflow_run_id="global-enrich-run",
+        )
+
+        assert result["processed"] == 0
+        assert captured["discovery_execution"] == DiscoveryExecutionRef(
+            tenant_id="local",
+            workflow_id="global-enrich-live-profile",
+            temporal_run_id="global-enrich-run",
+        )
+        assert conn.execute(
+            "SELECT url FROM jobs WHERE site = 'WelcomeToTheJungle'"
+        ).fetchone()[0] == "wttj-relative-slug"
+    finally:
+        close_connection(db_path)
 
 
 def test_authenticated_linkedin_session_skips_robots_but_keeps_budget(

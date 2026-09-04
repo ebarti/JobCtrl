@@ -69,6 +69,7 @@ import type {
   DiscoverySettingsUpdateRequest,
   DiscoveryFeedbackRequest,
   DiscoveryFeedbackResponse,
+  DiscoveryBrowserBridgeStatusResponse,
   DiscoveryPreviewResponse,
   EndpointClientMethods,
   ExtensionCapabilityTokenResponse,
@@ -351,6 +352,7 @@ export interface ApiClientPort extends EndpointClientMethods {
   settings(): Promise<SettingsResponse>;
   updateSettings(body: SettingsUpdateRequest): Promise<SettingsResponse>;
   extensionCapabilityToken(): Promise<ExtensionCapabilityTokenResponse>;
+  discoveryBrowserBridgeStatus(): Promise<DiscoveryBrowserBridgeStatusResponse>;
   rotateExtensionCapabilityToken(): Promise<ExtensionCapabilityTokenResponse>;
   runPipelineStages(body: RunPipelineStagesRequest): Promise<PipelineStageRunResponse>;
 

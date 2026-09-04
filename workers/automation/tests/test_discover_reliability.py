@@ -9,7 +9,6 @@ network-free: scraping and browsers are stubbed.
 from __future__ import annotations
 
 import asyncio
-from contextlib import contextmanager
 import json
 import sqlite3
 import threading
@@ -53,7 +52,7 @@ from jobctrl.enrichment import detail
 from jobctrl.infrastructure.enrichment import SqliteEnrichmentRepository
 from jobctrl.pipeline import runner
 
-from .politeness_helpers import offline_gateway
+from .politeness_helpers import AllowAllRobots, offline_gateway
 
 
 # ---------------------------------------------------------------------------
@@ -825,7 +824,7 @@ def test_selected_enrich_workflow_does_not_steal_another_queued_owner(
         close_connection(db_path)
 
 
-def test_linkedin_prepass_persists_owner_before_navigation_and_restart_cancels_it(
+def test_live_extension_batch_persists_owner_before_navigation_and_restart_cancels_it(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -884,16 +883,18 @@ def test_linkedin_prepass_persists_owner_before_navigation_and_restart_cancels_i
             finished_at="2026-08-05T00:01:01+00:00",
         )
     )
-    repo.save(failed)
+    # The API reset happens before a Temporal retry is dispatched. Reproduce
+    # that contract here so the activity starts from a retryable pending
+    # aggregate without invoking the retired copied-profile pre-pass.
+    repo.save(failed.reset(reset_at="2026-08-05T00:02:02+00:00"))
     repo.save(enriched)
-    for job_id, state in ((failed_id, "failed"), (enriched_id, "succeeded")):
+    for job_id, state in ((failed_id, "pending"), (enriched_id, "succeeded")):
         ensure_job_stage_rows(conn, job_id)
         set_stage_state(
             conn,
             job_id,
             "enrich",
             state,
-            error_code="DETAIL_ERROR" if state == "failed" else None,
             retryable=True,
             validate_transition=False,
         )
@@ -910,42 +911,38 @@ def test_linkedin_prepass_persists_owner_before_navigation_and_restart_cancels_i
         activity_phase=1,
         activity_attempt=1,
     )
-    resolver_started = threading.Event()
-    resolver_release = threading.Event()
+    batch_started = threading.Event()
+    batch_release = threading.Event()
     cancel_event = threading.Event()
+    captured_execution: list[DiscoveryExecutionRef | None] = []
 
-    class _BlockingResolver:
-        def resolve(self, _url: str):
-            resolver_started.set()
-            assert resolver_release.wait(timeout=10)
-            return None
-
-        def close(self) -> None:
-            return None
-
-    class _AllowedSession:
-        @contextmanager
-        def guard(self, _url: str):
-            yield SimpleNamespace(allowed=True)
-
-    monkeypatch.setattr(detail, "linkedin_apply_resolver_enabled", lambda: True)
     monkeypatch.setattr(
         detail,
-        "_default_linkedin_apply_resolver_factory",
-        _BlockingResolver,
-    )
-    monkeypatch.setattr(
-        detail,
-        "_enrichment_session",
-        lambda *_args, **_kwargs: _AllowedSession(),
-    )
-    monkeypatch.setattr(
-        detail,
-        "scrape_site_batch",
+        "_reset_authenticated_linkedin_retry_candidates",
         lambda *_args, **_kwargs: pytest.fail(
-            "normal cohort started before cancellation"
+            "Temporal enrichment must not enter the copied-profile pre-pass"
         ),
     )
+
+    def _blocking_live_batch(*_args: object, **kwargs: object) -> dict[str, object]:
+        selected_execution = kwargs.get("discovery_execution")
+        assert selected_execution is None or isinstance(
+            selected_execution, DiscoveryExecutionRef
+        )
+        captured_execution.append(selected_execution)
+        batch_started.set()
+        assert batch_release.wait(timeout=10)
+        if cancel_event.is_set():
+            raise TransientNetworkError("enrichment canceled")
+        return {
+            "processed": 0,
+            "ok": 0,
+            "partial": 0,
+            "error": 0,
+            "tiers": {1: 0, 2: 0, 3: 0},
+        }
+
+    monkeypatch.setattr(detail, "scrape_site_batch", _blocking_live_batch)
     thread_errors: list[BaseException] = []
 
     def _run() -> None:
@@ -968,7 +965,14 @@ def test_linkedin_prepass_persists_owner_before_navigation_and_restart_cancels_i
 
     worker = threading.Thread(target=_run, daemon=True)
     worker.start()
-    assert resolver_started.wait(timeout=10)
+    assert batch_started.wait(timeout=10)
+    assert captured_execution == [
+        DiscoveryExecutionRef(
+            tenant_id="local",
+            workflow_id=workflow_id,
+            temporal_run_id=run_id,
+        )
+    ]
 
     durable = conn.execute(
         "SELECT state, metadata_json FROM job_stage_states "
@@ -995,7 +999,7 @@ def test_linkedin_prepass_persists_owner_before_navigation_and_restart_cancels_i
     conn.commit()
     cancel_event.set()
     assert _reconcile_canceled_enrichment_cohorts(conn, tenant_id="local") == 1
-    resolver_release.set()
+    batch_release.set()
     worker.join(timeout=10)
     assert not worker.is_alive()
     assert thread_errors and isinstance(
@@ -1471,6 +1475,92 @@ def test_stale_cleanup_cannot_release_after_terminal_lease(tmp_path: Path) -> No
 # ---------------------------------------------------------------------------
 # Per-job fault isolation
 # ---------------------------------------------------------------------------
+
+
+def test_integrated_detail_enrichment_uses_live_extension_without_playwright(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    execution = DiscoveryExecutionRef(
+        tenant_id="local",
+        workflow_id="discover-local",
+        temporal_run_id="run-live-detail",
+    )
+    captured: dict[str, object] = {}
+
+    class _FakeLiveChrome:
+        def __init__(
+            self,
+            selected_execution: DiscoveryExecutionRef,
+            **kwargs: object,
+        ) -> None:
+            captured["execution"] = selected_execution
+            captured["client_kwargs"] = kwargs
+
+        def ensure_available(self) -> None:
+            captured["available"] = True
+
+    try:
+        job_id = _seed_pending(
+            conn,
+            "https://careers.example.com/jobs/live-detail",
+            "Example",
+        )
+        monkeypatch.setattr(
+            detail,
+            "sync_playwright",
+            lambda: pytest.fail("integrated Discovery must not start Playwright"),
+        )
+        monkeypatch.setattr(detail, "LiveChromeDiscoveryClient", _FakeLiveChrome)
+        monkeypatch.setattr(
+            detail,
+            "LiveChromeRobotsCache",
+            lambda _browser: AllowAllRobots(),
+        )
+
+        def fake_live_scrape(browser, url, *, session):
+            captured["browser"] = browser
+            captured["url"] = url
+            captured["session"] = session
+            return {
+                "status": "ok",
+                "tier_used": 1,
+                "full_description": _long_description(),
+                "application_url": "https://careers.example.com/apply/live-detail",
+                "error": None,
+                "elapsed": 1.0,
+                "active_state": "active",
+                "verification_method": "json_ld",
+                "http_status": 200,
+            }
+
+        monkeypatch.setattr(
+            detail,
+            "scrape_detail_page_via_live_chrome",
+            fake_live_scrape,
+        )
+
+        stats = detail.scrape_site_batch(
+            conn,
+            "Example",
+            [(job_id, "Live detail")],
+            gateway=offline_gateway(),
+            discovery_execution=execution,
+        )
+
+        assert stats["ok"] == 1
+        assert captured["execution"] == execution
+        assert captured["client_kwargs"] == {
+            "source_family": "enrichment",
+            "source_id": "enrichment:example",
+            "cancel_event": None,
+        }
+        assert captured["available"] is True
+        assert isinstance(captured["browser"], _FakeLiveChrome)
+        assert captured["url"] == "https://careers.example.com/jobs/live-detail"
+    finally:
+        close_connection(db_path)
 
 
 def test_scrape_site_batch_isolates_single_job_failure(
@@ -2521,10 +2611,12 @@ def test_until_idle_live_pass_enriches_only_the_current_execution(
         "_execution_recoverable_enrichment_job_ids",
         lambda _selected: (),
     )
-    captured_job_ids: list[tuple[JobId, ...]] = []
+    captured_calls: list[tuple[tuple[JobId, ...], DiscoveryExecutionRef | None]] = []
 
     def fake_enrich(**kwargs):
-        captured_job_ids.append(kwargs["job_ids"])
+        captured_calls.append(
+            (kwargs["job_ids"], kwargs.get("discovery_execution"))
+        )
         return {"status": "ok"}
 
     monkeypatch.setattr(runner, "_run_enrich", fake_enrich)
@@ -2540,7 +2632,7 @@ def test_until_idle_live_pass_enriches_only_the_current_execution(
         discovery_execution=execution,
     )
 
-    assert captured_job_ids == [(current_job_id,)]
+    assert captured_calls == [((current_job_id,), execution)]
     assert result == {"status": "ok", "passes": 1, "pending": 0}
 
 

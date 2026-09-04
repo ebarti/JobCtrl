@@ -141,6 +141,60 @@ mode, then keep the operations workspace open while work proceeds. The source
 picker supports up to 50 selections and labels broad-board adapters as
 JobStreaming; the persisted `jobspy:` prefix remains only a compatibility ID.
 
+### Live Chrome prerequisite
+
+Integrated Discovery requires the paired JobCtrl extension to be running in the
+user's current Chrome profile. The Browser & extension settings card reports a
+live heartbeat; a saved pairing token by itself is not readiness. When the
+heartbeat is absent, Pipelines disables Discover and the API rejects a launch
+before it creates a workflow. There is no Playwright, direct-HTTP, or copied-
+profile fallback.
+
+Open the extension popup in the Chrome profile you want Discovery to use and
+save the pairing token there. That explicit action selects the extension
+installation stored in that profile and replaces any previous selection; an
+extension in another Chrome profile cannot lease work with the same token.
+Settings shows the selected installation's short identifier so the live bridge
+is not confused with token presence.
+
+After rebuilding an unpacked extension, reload its Chrome extension card before
+pairing. If Chrome loads the new popup while retaining the previous background
+worker, the popup reports **Extension update incomplete** and disables its
+actions rather than presenting a false ready state. Once reloaded, a popup that
+already holds the token shows **Use this Chrome profile for Discovery** when the
+installation still needs to be selected; copying the token again is unnecessary.
+
+Every broad-board request, canonical ATS/API request, Workday request, Smart
+Extract render, `robots.txt` read, and detail-enrichment page acquisition in
+`DiscoverWorkflow` is delegated to that extension. Brokered HTTP/API requests
+run in its service worker; rendered-page work opens bounded temporary inactive
+tabs. Both execute in the Chrome profile where the extension is installed, so
+current cookies, authenticated sessions, browser settings, and later profile
+changes are used directly. JobCtrl does not copy, export, or launch that
+profile. The task bridge is execution-bound and memory-only. It admits at most
+four tasks to four extension executors; additional worker requests wait under
+bounded backpressure instead of expiring behind another task. The queue-wait
+bound is separate from the execution timeout, which begins only when Chrome
+leases the task. Active leases heartbeat independently. Cancellation or the
+hard task timeout aborts the request, closes a temporary tab when one exists,
+and prevents a stale result from being accepted. Response bodies are not added
+to `config.json` or a bridge queue on disk.
+
+The API validates a destination when it is queued and again immediately before
+lease. HTTP/API execution disables redirect following, which is required
+because vendor API roots can be JSON/plain text or redirect away and therefore
+cannot reliably host a content script. Before rendered-page navigation, the
+extension installs a tab-scoped rule pair that allows the task's exact origin
+and blocks all other HTTP(S) main-frame and Discovery-fetch destinations.
+Cross-origin redirects are therefore blocked before the redirected request is
+sent in either mode. Request bodies are limited to 2 MB of UTF-8 data, and
+response text/HTML is streamed and stopped at 4 MB per field.
+
+A recurring Discovery schedule has the same prerequisite: Chrome must be
+running with the paired extension connected when the scheduled workflow reaches
+source acquisition. If it is not, the run fails closed and can be retried after
+Chrome reconnects.
+
 The workspace deliberately keeps different scopes and units separate:
 
 - **Current execution** is work admitted to the selected Discover execution.
@@ -332,18 +386,22 @@ succeeds. Changes apply to the next employer analysis.
 
 ## Crawl Politeness
 
-Every discovery/enrichment fetch routes through one politeness gateway
-(`robots.txt` + per-host rate limit + per-run budget + honest user-agent). The
-defaults are conservative and fail-closed and need no configuration; the one
-value you should review before real crawls is the **outbound user-agent** under
-**Discovery → Runtime settings**. Both its product token and optional contact
-are persisted in SQLite with the rest of the page.
+Integrated Discovery keeps its politeness policy around the live-Chrome
+transport: JobCtrl applies per-host pacing/concurrency and a per-run request
+budget before delegating a bounded request, and fetches `robots.txt` through the
+same extension/profile. Chrome owns the effective cookies, proxy, and user
+agent. The extension returns that browser user agent with the robots response so
+JobCtrl evaluates the requested path under the same identity that performs the
+page fetch. An inconclusive robots result fails closed; denied, rate-limited,
+budget-exhausted, and unsafe outcomes remain first-class audit facts.
 
-The effective identity is `<product>/<version> (+<contact>)` — for example
-`JobCtrl/0.3 (+https://github.com/ebarti/JobCtrl)`. It **never impersonates
-a browser**. The built-in default points at the public project repository, not
-any personal identity; **owners should review it (and set a contact they own)
-before crawling real sites** — `jobctrl doctor` prints the effective value.
+The **outbound user-agent** under **Discovery → Runtime settings** remains the
+configured identity for standalone/non-extension gateway operations such as
+opted-in contact research. Its effective form is
+`<product>/<version> (+<contact>)`—for example
+`JobCtrl/0.3 (+https://github.com/ebarti/JobCtrl)`—and `jobctrl doctor` prints
+it. Integrated live-profile Discovery does not overwrite Chrome's real user
+agent with that value.
 
 The rest of crawl policy also lives on the SQLite-backed Discovery boundary, so
 per-source overrides ride the existing registry rather than a parallel config
@@ -356,12 +414,16 @@ surface:
   ride the existing `SourceRegistryEntry` rows; a registry policy editor is a
   planned addition, not yet in the UI.
 - **Broad boards** (`indeed`, `linkedin`, `glassdoor`, `zip_recruiter`) are
-  fetched by JobStreaming, which owns its board transports — JobCtrl cannot
-  robots-gate or count its per-board requests, so it applies budget + pacing at
-  the invocation boundary only, and `jobctrl doctor` warns when they are on.
-- A malformed `proxy` value (the SQLite discovery setting, `host:port[:user:pass]`)
-  now **fails loud** rather than silently degrading to a direct connection, so a
-  crawl never quietly runs without the proxy you intended.
+  parsed by JobStreaming, but all of its provider sessions are replaced with
+  the extension transport for an integrated run. JobStreaming still owns its
+  internal per-board traversal, so JobCtrl applies budget and pacing at the
+  invocation boundary rather than pretending to count requests it does not
+  own; `jobctrl doctor` warns when those sources are enabled.
+- Live-profile Discovery uses the proxy configured in Chrome or the operating
+  system. It does not inject the SQLite `proxy` value into the user's browser.
+  Standalone compatibility paths that consume the JobCtrl proxy setting still
+  reject malformed `host:port[:user:pass]` values instead of silently going
+  direct.
 
 ## Contact Research
 

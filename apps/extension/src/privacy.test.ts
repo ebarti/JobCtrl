@@ -4,25 +4,26 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
-import { SUPPORTED_ATS_HOST_PERMISSIONS } from "./ats";
-
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
-const LOOPBACK_PERMISSIONS = new Set(["http://127.0.0.1:8766/*", "http://localhost:8766/*"]);
-const FORBIDDEN_NETWORK_PATTERNS = [/https:\/\/\*\//, /<all_urls>/, /wss?:\/\//, /fetch\(["'`]https?:\/\/(?!127\.0\.0\.1:8766|localhost:8766)/];
+const WEB_PAGE_MATCHES = new Set(["http://*/*", "https://*/*"]);
+const FORBIDDEN_NETWORK_PATTERNS = [/<all_urls>/, /wss?:\/\//, /fetch\(["'`]https?:\/\/(?!127\.0\.0\.1:8766|localhost:8766)/];
 
 describe("extension privacy boundary", () => {
-  it("limits manifest network reach to loopback origins", () => {
+  it("wildcards HTTP(S) page and brokered Discovery network access", () => {
     const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, "public/manifest.json"), "utf8")) as {
+      permissions?: string[];
       host_permissions?: string[];
       content_scripts?: Array<{ matches?: string[] }>;
       content_security_policy?: { extension_pages?: string };
     };
 
-    expect(new Set(manifest.host_permissions ?? [])).toEqual(LOOPBACK_PERMISSIONS);
-    expect(new Set(manifest.content_scripts?.[0]?.matches ?? [])).toEqual(new Set(SUPPORTED_ATS_HOST_PERMISSIONS));
-    expect(manifest.content_security_policy?.extension_pages).toContain("connect-src http://127.0.0.1:8766 http://localhost:8766");
+    expect(new Set(manifest.permissions ?? [])).toEqual(
+      new Set(["activeTab", "alarms", "declarativeNetRequest", "scripting", "storage"]),
+    );
+    expect(new Set(manifest.host_permissions ?? [])).toEqual(WEB_PAGE_MATCHES);
+    expect(new Set(manifest.content_scripts?.[0]?.matches ?? [])).toEqual(WEB_PAGE_MATCHES);
+    expect(manifest.content_security_policy?.extension_pages).toContain("connect-src http: https:");
     expect(JSON.stringify(manifest)).not.toContain("<all_urls>");
-    expect(JSON.stringify(manifest)).not.toContain("https://*/*");
   });
 
   it("does not introduce non-loopback network literals in extension sources", () => {

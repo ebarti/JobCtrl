@@ -4530,7 +4530,11 @@ export interface SettingsResponse {
   };
 }
 
-export const EXTENSION_CAPABILITY_VALUES = ["capture", "autofill_read"] as const;
+export const EXTENSION_CAPABILITY_VALUES = [
+  "capture",
+  "autofill_read",
+  "discovery_browser",
+] as const;
 export type ExtensionCapability = (typeof EXTENSION_CAPABILITY_VALUES)[number];
 
 export const ExtensionCapabilityTokenResponseSchema = z
@@ -4569,6 +4573,215 @@ export interface ExtensionAutofillProfileResponse {
   ok: true;
   profileVersion: number | null;
   fields: ExtensionAutofillProfileField[];
+}
+
+export const DISCOVERY_BROWSER_SOURCE_FAMILIES = [
+  "jobspy",
+  "ats_api",
+  "workday",
+  "smartextract",
+  "enrichment",
+] as const;
+export type DiscoveryBrowserSourceFamily =
+  (typeof DISCOVERY_BROWSER_SOURCE_FAMILIES)[number];
+
+const DiscoveryBrowserTaskIdSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(160)
+  .regex(/^[A-Za-z0-9._:-]+$/);
+
+const DiscoveryBrowserHttpUrlSchema = z
+  .string()
+  .trim()
+  .max(4096)
+  .regex(/^https?:\/\/[^\s]+$/i, "url must be a valid http(s) URL");
+
+const DiscoveryBrowserHeadersSchema = z
+  .record(z.string().trim().min(1).max(80), z.string().max(4096))
+  .refine((headers) => Object.keys(headers).length <= 32, {
+    message: "At most 32 request headers are allowed.",
+  })
+  .superRefine((headers, context) => {
+    const forbidden = new Set([
+      "connection",
+      "content-length",
+      "cookie",
+      "host",
+      "origin",
+      "referer",
+      "sec-fetch-dest",
+      "sec-fetch-mode",
+      "sec-fetch-site",
+      "user-agent",
+    ]);
+    for (const name of Object.keys(headers)) {
+      const normalized = name.toLowerCase();
+      if (
+        forbidden.has(normalized) ||
+        normalized.startsWith("sec-") ||
+        normalized.startsWith("proxy-")
+      ) {
+        context.addIssue({
+          code: "custom",
+          message: `Header ${name} is browser-owned and cannot be supplied.`,
+        });
+      }
+    }
+  });
+
+const DiscoveryBrowserRequestBodySchema = z
+  .string()
+  .max(2_000_000)
+  .refine((value) => utf8ByteLength(value) <= 2_000_000, {
+    message: "Discovery request body must not exceed 2 MB of UTF-8 data.",
+  });
+
+const DiscoveryBrowserResultBodySchema = z
+  .string()
+  .max(4_000_000)
+  .refine((value) => utf8ByteLength(value) <= 4_000_000, {
+    message: "Discovery response content must not exceed 4 MB of UTF-8 data.",
+  });
+
+export const DiscoveryBrowserRequestSchema = z.discriminatedUnion("mode", [
+  z
+    .object({
+      mode: z.literal("http_request"),
+      url: DiscoveryBrowserHttpUrlSchema,
+      method: z.enum(["GET", "POST"]),
+      headers: DiscoveryBrowserHeadersSchema.default({}),
+      body: DiscoveryBrowserRequestBodySchema.optional(),
+    })
+    .strict()
+    .refine((request) => request.method === "POST" || request.body === undefined, {
+      message: "GET browser requests cannot include a body.",
+      path: ["body"],
+    }),
+  z
+    .object({
+      mode: z.literal("rendered_page"),
+      url: DiscoveryBrowserHttpUrlSchema,
+    })
+    .strict(),
+]);
+export type DiscoveryBrowserRequest = z.infer<typeof DiscoveryBrowserRequestSchema>;
+
+export const DiscoveryBrowserTaskCreateSchema = z
+  .object({
+    taskId: DiscoveryBrowserTaskIdSchema,
+    workflowId: z.string().trim().min(1).max(200),
+    temporalRunId: z.string().trim().min(1).max(200),
+    sourceFamily: z.enum(DISCOVERY_BROWSER_SOURCE_FAMILIES),
+    sourceId: z.string().trim().min(1).max(200).optional(),
+    request: DiscoveryBrowserRequestSchema,
+    timeoutMs: z.number().int().min(1_000).max(120_000).default(60_000),
+  })
+  .strict();
+export type DiscoveryBrowserTaskCreateRequest = z.infer<
+  typeof DiscoveryBrowserTaskCreateSchema
+>;
+
+export const DiscoveryBrowserTaskResultSchema = z.discriminatedUnion("status", [
+  z
+    .object({
+      status: z.literal("succeeded"),
+      finalUrl: DiscoveryBrowserHttpUrlSchema,
+      statusCode: z.number().int().min(0).max(599).nullable(),
+      contentType: z.string().trim().max(300).default(""),
+      title: z.string().max(500).default(""),
+      browserUserAgent: z.string().max(500).optional(),
+      bodyText: DiscoveryBrowserResultBodySchema,
+      bodyHtml: DiscoveryBrowserResultBodySchema.optional(),
+    })
+    .strict(),
+  z
+    .object({
+      status: z.literal("failed"),
+      errorCode: z.enum([
+        "navigation_failed",
+        "request_failed",
+        "response_too_large",
+        "unsafe_redirect",
+        "unsupported_page",
+      ]),
+      message: z.string().trim().min(1).max(500),
+      retryable: z.boolean(),
+    })
+    .strict(),
+]);
+export type DiscoveryBrowserTaskResult = z.infer<
+  typeof DiscoveryBrowserTaskResultSchema
+>;
+
+export const DiscoveryBrowserTaskCompletionSchema = z
+  .object({
+    leaseId: z.string().uuid(),
+    result: DiscoveryBrowserTaskResultSchema,
+  })
+  .strict();
+export type DiscoveryBrowserTaskCompletionRequest = z.infer<
+  typeof DiscoveryBrowserTaskCompletionSchema
+>;
+
+export const DiscoveryBrowserExtensionClaimSchema = z
+  .object({
+    installationId: z.string().uuid(),
+    extensionVersion: z.string().trim().min(1).max(80),
+    replace: z.boolean().default(false),
+  })
+  .strict();
+export type DiscoveryBrowserExtensionClaimRequest = z.infer<
+  typeof DiscoveryBrowserExtensionClaimSchema
+>;
+
+export interface DiscoveryBrowserTaskAcceptedResponse {
+  ok: true;
+  taskId: string;
+  status: "pending" | "leased" | "succeeded" | "failed";
+}
+
+export type DiscoveryBrowserTaskLeaseResponse =
+  | {
+      ok: true;
+      status: "idle";
+    }
+  | {
+      ok: true;
+      status: "task";
+      taskId: string;
+      leaseId: string;
+      timeoutMs: number;
+      request: DiscoveryBrowserRequest;
+    };
+
+export type DiscoveryBrowserTaskStatusResponse =
+  | {
+      ok: true;
+      taskId: string;
+      status: "pending" | "leased";
+    }
+  | {
+      ok: true;
+      taskId: string;
+      status: "succeeded" | "failed";
+      result: DiscoveryBrowserTaskResult;
+    };
+
+export interface DiscoveryBrowserBridgeStatusResponse {
+  ok: true;
+  connected: boolean;
+  installationBound: boolean;
+  installationIdSuffix: string | null;
+  lastSeenAt: string | null;
+  extensionVersion: string | null;
+  pendingTasks: number;
+  activeTasks: number;
+}
+
+function utf8ByteLength(value: string): number {
+  return new TextEncoder().encode(value).byteLength;
 }
 
 export const COMPENSATION_SOURCE_TYPES = [

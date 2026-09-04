@@ -35,7 +35,7 @@ when implementing or debugging a specific endpoint.
 
 | Boundary | Representative routes | Response model |
 | --- | --- | --- |
-| Profile and configuration | `/v1/profile`, `/v1/settings`, `/v1/credentials`, `/v1/providers/models`, `/v1/discovery/settings`, `/v1/browser-capabilities`, `/v1/extension/pairing-token` | Synchronous reads and validated patches |
+| Profile and configuration | `/v1/profile`, `/v1/settings`, `/v1/credentials`, `/v1/providers/models`, `/v1/discovery/settings`, `/v1/browser-capabilities`, `/v1/extension/pairing-token`, `/v1/discovery/browser-extension/status` | Synchronous reads, validated patches, and live extension readiness |
 | Jobs and evidence | `/v1/jobs`, `/v1/jobs/:jobKey`, `/v1/evidence-map`, `/v1/artifacts` | Projection-backed reads |
 | Scoring keywords and feedback learning | `/v1/scoring/keywords`, `/v1/learning/recommendations`, `/v1/learning/policies/materials` | Current score-version aggregation plus explicit review and versioned policy history |
 | Review and outcomes | `/v1/apply/review-queue`, `/v1/jobs/:jobKey/apply-review/decision`, `/v1/jobs/:jobKey/repeat-application/override`, `/v1/outcomes` | Explicit review commands plus read models |
@@ -114,6 +114,54 @@ role-match feedback are covered in
 worker-owned `JobUrlImportWorkflow`. It returns either the canonical imported
 `jobKey` or a typed `manual_capture_required` outcome with the pending queue
 item and reason. The API never fetches the remote page itself.
+
+## Live Discovery Browser Bridge
+
+`GET /v1/discovery/browser-extension/status` returns the memory-only bridge
+snapshot: `connected`, `installationBound`, the non-secret
+`installationIdSuffix`, `lastSeenAt`, `extensionVersion`, `pendingTasks`, and
+`activeTasks`. A heartbeat is current for 45 seconds. A pairing token can exist
+while `connected` is false; token presence is not readiness. `POST
+/v1/extension/discovery/claim` binds one extension-local installation UUID.
+The automatic background claim cannot establish or replace that selection;
+saving the token in the extension sends the explicit replacement claim.
+
+The paired extension and local worker share a bounded task protocol under
+`/v1/extension/discovery/tasks`:
+
+- `GET /v1/extension/discovery/tasks/next?extensionVersion=…` heartbeats and
+  leases the next task to the authenticated, selected extension installation;
+- `GET /v1/extension/discovery/tasks/:taskId/lease?leaseId=…` refreshes the
+  selected installation heartbeat and tells the extension whether the exact
+  lease remains active, allowing prompt worker cancellation;
+- `POST /v1/extension/discovery/tasks` lets only a token-authenticated local
+  non-browser worker create an execution-bound task;
+- `GET /v1/extension/discovery/tasks/:taskId` lets that worker poll the result;
+- `POST /v1/extension/discovery/tasks/:taskId/result` accepts the extension's
+  exact lease result after final-URL validation; and
+- `DELETE /v1/extension/discovery/tasks/:taskId` lets the worker cancel/forget
+  its task.
+
+Task schemas allow public HTTP(S) `GET`/`POST` or rendered-page acquisition,
+cap request bodies at 2 MB of UTF-8 data and response text/HTML at 4 MB of
+UTF-8 data each, cap timeouts at 120 seconds, and forbid browser-owned
+cookie/user-agent/origin plus `Sec-*`/`Proxy-*` headers. The broker is
+process-memory-only, idempotently binds a task ID to its workflow/run request
+fingerprint, separates a 30-second pending/admission window from the execution
+timeout that starts on lease, and admits at most four active/pending tasks for
+the extension's four executors. Active lease checks keep the 45-second bridge
+heartbeat current. Cancellation deletes the lease; the next control check
+aborts Chrome work and closes a tab when one exists. The API validates DNS at
+creation and again immediately before lease. HTTP/API tasks execute in the
+extension service worker with redirects disabled; rendered-page tasks use
+tab-scoped DNR rules that allow the exact source origin and block cross-origin
+main-frame/Discovery-fetch redirects before dispatch. Response streaming stops
+at its byte limit rather than buffering an unbounded body. Rotating the pairing
+token clears the selected
+installation and immediately marks the old extension disconnected. `POST
+/v1/pipeline/actions/run-stage` returns `503
+discovery_extension_unavailable` before workflow dispatch when Discover is the
+one of the requested stages and the heartbeat is offline.
 
 ## Compensation
 
@@ -210,12 +258,15 @@ provider without requiring it to be ready.
 
 `GET/PATCH /v1/settings` also carries effective-source and activation metadata
 for launch controls. Environment-owned fields are read-only. Discovery runtime
-and schedule controls use `GET/PATCH /v1/discovery/settings`; browser adoption
-uses `GET /v1/browser-capabilities` plus capability-specific `POST` enable,
-disable, and profile-copy routes. Standard default profiles can be selected by
-opaque detected-browser ID; write-only filesystem paths are an advanced
-fallback. Extension pairing uses
-`GET /v1/extension/pairing-token` and `POST /v1/extension/pairing-token/rotate`.
+and schedule controls use `GET/PATCH /v1/discovery/settings`; Apply-browser
+adoption uses `GET /v1/browser-capabilities` plus capability-specific `POST`
+enable and disable routes. The older profile-copy route remains API-compatible
+for existing installations but is not exposed by current Settings and does not
+start LinkedIn recovery. Extension pairing uses
+`GET /v1/extension/pairing-token` and `POST /v1/extension/pairing-token/rotate`;
+live current-profile readiness uses
+`GET /v1/discovery/browser-extension/status`. Integrated Discovery and Enrich
+never read an adopted executable or copied profile.
 
 ## Related Packages
 

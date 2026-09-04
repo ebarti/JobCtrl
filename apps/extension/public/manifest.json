@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "JobCtrl",
-  "description": "Save job postings from the browser into the local JobCtrl app.",
+  "description": "Run JobCtrl Discovery in this Chrome profile, capture postings, and review autofill suggestions.",
   "version": "0.1.1",
   "action": {
     "default_popup": "popup.html"
@@ -10,27 +10,22 @@
     "service_worker": "background.js",
     "type": "module"
   },
-  "permissions": ["activeTab", "scripting", "storage"],
+  "permissions": ["activeTab", "alarms", "declarativeNetRequest", "scripting", "storage"],
   "host_permissions": [
-    "http://127.0.0.1:8766/*",
-    "http://localhost:8766/*"
+    "http://*/*",
+    "https://*/*"
   ],
   "content_scripts": [
     {
       "matches": [
-        "https://*.myworkdayjobs.com/*",
-        "https://boards.greenhouse.io/*",
-        "https://*.greenhouse.io/*",
-        "https://jobs.lever.co/*",
-        "https://*.lever.co/*",
-        "https://jobs.ashbyhq.com/*",
-        "https://*.ashbyhq.com/*"
+        "http://*/*",
+        "https://*/*"
       ],
       "js": ["content-script.js"],
       "run_at": "document_idle"
     }
   ],
   "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'self'; connect-src http://127.0.0.1:8766 http://localhost:8766;"
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src http: https:;"
   }
 }
