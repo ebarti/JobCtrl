@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   sampleHealthResponse,
+  sampleDiscoveryBrowserBridgeStatusResponse,
   sampleExtensionCapabilityTokenResponse,
   sampleSettingsResponse,
 } from "../../../test/fixtures/projections.js";
@@ -62,11 +63,17 @@ describe("<SettingsPanel>", () => {
     renderWithProviders(<ExtensionPairingPanel />, { ports });
 
     await user.click(await screen.findByRole("button", { name: /^Browser extension\b/i }));
-    expect(await screen.findByText("Pairing token")).toBeInTheDocument();
-    expect(screen.getByText("capture, autofill read")).toHaveAttribute(
+    expect(await screen.findByText("Live Chrome connection")).toBeInTheDocument();
+    expect(screen.getByText("capture, autofill read, Discovery browser")).toHaveAttribute(
       "data-typography",
       "body",
     );
+    expect(screen.getByText("Current Chrome profile; never copied")).toBeInTheDocument();
+    expect(screen.getByText("Chrome installation …00000099")).toBeInTheDocument();
+    expect(
+      screen.getByText(/Saving this token in that profile selects its extension installation/),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Connected in Chrome")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Copy token" }));
     expect(ports.clipboard.write).toHaveBeenCalledWith(sampleExtensionCapabilityTokenResponse.token);
 
@@ -77,7 +84,36 @@ describe("<SettingsPanel>", () => {
     expect(ports.clipboard.write).toHaveBeenLastCalledWith(
       "jh_ext_rotated_token_123456789012345678901234567",
     );
-    expect(await screen.findByRole("status")).toHaveTextContent("Token rotated");
+    expect(await screen.findByText("Token rotated")).toBeInTheDocument();
+  });
+
+  it("does not call a pairing token ready when the live Chrome extension is offline", async () => {
+    const ports = buildTestPorts({
+      api: {
+        extensionCapabilityToken: vi.fn(
+          async () => sampleExtensionCapabilityTokenResponse,
+        ),
+        discoveryBrowserBridgeStatus: vi.fn(async () => ({
+          ...sampleDiscoveryBrowserBridgeStatusResponse,
+          connected: false,
+          lastSeenAt: null,
+          extensionVersion: null,
+        })),
+      },
+    });
+
+    renderWithProviders(<ExtensionPairingPanel />, { ports });
+
+    expect(await screen.findByText("Extension offline")).toBeInTheDocument();
+    const disclosure = screen.getByRole("button", {
+      name: /^Browser extension\b/i,
+    });
+    expect(screen.queryByText("Ready")).not.toBeInTheDocument();
+
+    await userEvent.click(disclosure);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Open Chrome with the paired JobCtrl extension before running Discovery",
+    );
   });
 
   it("keeps a successful rotation visible when automatic clipboard copy is denied", async () => {
@@ -111,7 +147,7 @@ describe("<SettingsPanel>", () => {
     );
     await user.click(screen.getByRole("button", { name: "Confirm rotation and disconnect" }));
 
-    expect(await screen.findByRole("status")).toHaveTextContent("Token rotated");
+    expect(await screen.findByText("Token rotated")).toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent(
       "Token rotated, but automatic copy was unavailable. Use copy token to try again.",
     );

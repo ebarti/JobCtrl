@@ -22,6 +22,7 @@ import {
   makeArtifactDetail,
   makeArtifactsPage,
   sampleArtifact,
+  sampleDiscoveryBrowserBridgeStatusResponse,
   sampleExtensionCapabilityTokenResponse,
   sampleResumeTemplateListResponse,
 } from "./fixtures/projections.js";
@@ -276,6 +277,9 @@ export function buildTestPorts(overrides: BuildTestPortsOptions = {}): Ports {
     })),
     extensionCapabilityToken: vi.fn(
       async () => sampleExtensionCapabilityTokenResponse,
+    ),
+    discoveryBrowserBridgeStatus: vi.fn(
+      async () => sampleDiscoveryBrowserBridgeStatusResponse,
     ),
     rotateExtensionCapabilityToken: vi.fn(async () => ({
       ...sampleExtensionCapabilityTokenResponse,

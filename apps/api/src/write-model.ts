@@ -231,10 +231,11 @@ function resetResolvedJobStage(
 }
 
 export function retryFailedJobs(db: SqliteDatabase, request: BulkJobMutationRequest): RetryFailedJobsResult {
-  const candidates = mutableResolvedJobs(db, request);
-  const targets = candidates
-    .map((job) => ({ job, stage: currentFailedStageById(db, LOCAL_TENANT, job.jobId) }))
-    .filter((target): target is { job: ResolvedJobIdentity; stage: Stage } => target.stage !== null);
+  const targets = retryFailedJobTargets(db, request).map((target) => {
+    const job = resolveJobIdentity(db, LOCAL_TENANT, target.jobUrl);
+    if (!job) throw new InputError("Job not found.");
+    return { job, stage: target.stage };
+  });
   const transaction = db.transaction((rows: typeof targets) => {
     for (const { job, stage } of rows) {
       resetResolvedJobStage(db, job, stage, { resetAttempts: false });
@@ -249,6 +250,17 @@ export function retryFailedJobs(db: SqliteDatabase, request: BulkJobMutationRequ
     targets: responseTargets,
     stageCounts: stageCountsForRetryTargets(responseTargets),
   };
+}
+
+/** Resolve the exact failed-stage retry cohort without mutating stage state. */
+export function retryFailedJobTargets(
+  db: SqliteDatabase,
+  request: BulkJobMutationRequest,
+): RetryFailedJobTarget[] {
+  return mutableResolvedJobs(db, request)
+    .map((job) => ({ job, stage: currentFailedStageById(db, LOCAL_TENANT, job.jobId) }))
+    .filter((target): target is { job: ResolvedJobIdentity; stage: Stage } => target.stage !== null)
+    .map(({ job, stage }) => ({ jobUrl: job.jobUrl, stage }));
 }
 
 function stageCountsForRetryTargets(targets: readonly RetryFailedJobTarget[]): Partial<Record<Stage, number>> {

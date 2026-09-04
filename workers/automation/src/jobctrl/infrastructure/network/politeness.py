@@ -135,6 +135,15 @@ class PolitenessGateway(PolitenessGatewayPort):
     def new_run_budget(self, max_requests: int) -> RunBudget:
         return RunBudgetCounter(max_requests)
 
+    def with_robots(self, robots: RobotsPort) -> PolitenessGateway:
+        """Keep this gateway's identity and limiter while replacing robots I/O."""
+
+        return PolitenessGateway(
+            user_agent=self._user_agent,
+            robots=robots,
+            rate_limiter=self._rate_limiter,
+        )
+
     def check(self, url: str, policy: SourcePolicy, budget: RunBudget) -> PolitenessDecision:
         if budget.remaining() <= 0:
             return self._budget_exhausted()

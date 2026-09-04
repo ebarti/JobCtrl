@@ -39,6 +39,10 @@ with workflow.unsafe.imports_passed_through():
         emit_workflow_outcome,
         emit_workflow_started,
     )
+    from jobctrl.enrichment.activities import (
+        CancelEnrichmentCohortInput,
+        cancel_enrichment_cohort_activity,
+    )
     from jobctrl.llm import SpendBudgetInput, check_spend_budget
     from jobctrl.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
 
@@ -126,6 +130,7 @@ class DiscoverWorkflow:
             await _check_spend(payload)
             result = await self._execute(payload, discovery_execution)
         except CancelledError:
+            await _cancel_owned_enrichment(payload, discovery_execution)
             await emit_workflow_outcome(
                 tenant_id=payload.tenant_id,
                 workflow_type="DiscoverWorkflow",
@@ -557,6 +562,32 @@ async def _stop_live_enrichment_activity(handle: Any) -> None:
         if _activity_error_was_cancelled(exc):
             return
         workflow.logger.warning("Live discovery enrichment stopped early: %s", exc)
+
+
+async def _cancel_owned_enrichment(
+    payload: DiscoverWorkflowInput,
+    execution: DiscoveryExecutionRef,
+) -> None:
+    """Only a canceled workflow terminalizes its unfinished Enrich cohort."""
+    if not workflow.patched("discover-enrich-cancellation-v1"):
+        return
+    await workflow.execute_activity(
+        cancel_enrichment_cohort_activity,
+        CancelEnrichmentCohortInput(
+            tenant_id=payload.tenant_id,
+            workflow_id=execution.workflow_id,
+            workflow_run_id=execution.temporal_run_id,
+            expected_app_dir=payload.expected_app_dir,
+            expected_db_path=payload.expected_db_path,
+        ),
+        start_to_close_timeout=timedelta(seconds=30),
+        retry_policy=RetryPolicy(
+            initial_interval=timedelta(seconds=1),
+            maximum_interval=timedelta(seconds=10),
+            maximum_attempts=5,
+        ),
+        cancellation_type=workflow.ActivityCancellationType.ABANDON,
+    )
 
 
 def _enrichment_activity_input(

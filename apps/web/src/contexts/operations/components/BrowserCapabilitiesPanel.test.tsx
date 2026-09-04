@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { screen, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -16,11 +16,11 @@ describe("<BrowserCapabilitiesPanel>", () => {
     expect(await screen.findByText("Core managed browser")).toBeInTheDocument();
     expect(
       screen.getAllByText(/nothing is enabled or launched until you confirm/i),
-    ).toHaveLength(3);
+    ).toHaveLength(1);
     expect(screen.queryByRole("note")).not.toBeInTheDocument();
     expect(
       screen.getAllByRole("button", { name: "Enable Google Chrome" }),
-    ).toHaveLength(2);
+    ).toHaveLength(1);
     expect(
       screen.queryByLabelText(/Chrome or Chromium executable path/i),
     ).not.toBeInTheDocument();
@@ -38,7 +38,7 @@ describe("<BrowserCapabilitiesPanel>", () => {
     });
 
     const heading = await screen.findByRole("heading", {
-      name: "Authenticated LinkedIn browser",
+      name: "Auto-apply browser",
     });
     const card = heading.closest("article");
     expect(card).not.toBeNull();
@@ -50,7 +50,7 @@ describe("<BrowserCapabilitiesPanel>", () => {
 
     expect(enableBrowserCapability).toHaveBeenCalledOnce();
     expect(enableBrowserCapability).toHaveBeenCalledWith(
-      "authenticated-linkedin-browser",
+      "auto-apply-browser",
       { detectedBrowserId: "google-chrome" },
     );
   });
@@ -91,105 +91,27 @@ describe("<BrowserCapabilitiesPanel>", () => {
     expect(input).toHaveValue("/Applications/Safari.app");
   });
 
-  it("copies a detected authenticated profile without requiring a filesystem path", async () => {
-    const user = userEvent.setup();
+  it("never exposes the legacy copied-profile capability in Settings", async () => {
     const copyLinkedInBrowserProfile = vi.fn();
-    const browserCapabilities = vi.fn(async () => ({
-      ok: true as const,
-      detectedBrowsers: [
-        {
-          id: "google-chrome" as const,
-          label: "Google Chrome",
-          defaultProfileAvailable: true,
-          profiles: [
-            {
-              id: "profile-0123456789abcdef0123456789abcdef",
-              label: "Default",
-            },
-            {
-              id: "profile-fedcba9876543210fedcba9876543210",
-              label: "E",
-            },
-          ],
-        },
-      ],
-      capabilities: [
-        {
-          id: "core-browser" as const,
-          status: "ready" as const,
-          detail: "Managed browser ready.",
-          mutable: false,
-          enabled: true,
-          profileCopyReady: false,
-        },
-        {
-          id: "auto-apply-browser" as const,
-          status: "disabled" as const,
-          detail: "Disabled.",
-          mutable: true,
-          enabled: false,
-          profileCopyReady: false,
-        },
-        {
-          id: "authenticated-linkedin-browser" as const,
-          status: "missing" as const,
-          detail: "Profile copy is missing.",
-          mutable: true,
-          enabled: true,
-          profileCopyReady: false,
-        },
-      ],
-    }));
     renderWithProviders(<BrowserCapabilitiesPanel />, {
       ports: buildTestPorts({
-        api: { browserCapabilities, copyLinkedInBrowserProfile },
+        api: { copyLinkedInBrowserProfile },
       }),
     });
 
+    expect(await screen.findByText("Core managed browser")).toBeInTheDocument();
     expect(
-      await screen.findByLabelText("Detected browser profile"),
-    ).toHaveTextContent(
-      "Google Chrome · Default",
-    );
-    expect(screen.getByText("Profile copy missing")).toBeInTheDocument();
-    expect(
-      screen.queryByLabelText("Existing browser user-data directory"),
+      screen.queryByRole("heading", { name: "Authenticated LinkedIn browser" }),
     ).not.toBeInTheDocument();
-    const profileSelect = screen.getByLabelText("Detected browser profile");
-    await user.click(profileSelect);
-    await user.click(await screen.findByRole("option", { name: "Google Chrome · E" }));
-    expect(profileSelect).toHaveTextContent("Google Chrome · E");
-    const consent = screen.getByRole("checkbox", {
-      name: /I explicitly consent to copy this profile/i,
-    });
-    const copy = screen.getByRole("button", {
-      name: "Copy E profile",
-    });
-
-    expect(copy).toBeDisabled();
-    await user.click(consent);
-    expect(copy).toBeEnabled();
-    await user.click(copy);
-
-    await waitFor(() =>
-      expect(copyLinkedInBrowserProfile).toHaveBeenCalledOnce(),
-    );
-    expect(copyLinkedInBrowserProfile).toHaveBeenCalledWith({
-      detectedBrowserId: "google-chrome",
-      detectedProfileId: "profile-fedcba9876543210fedcba9876543210",
-      consent: true,
-      consentMethod: "explicit-ui-v1",
-    });
+    expect(screen.queryByText(/profile copy/i)).not.toBeInTheDocument();
+    expect(copyLinkedInBrowserProfile).not.toHaveBeenCalled();
   });
 
-  it("distinguishes managed, optional, and consent-required access", async () => {
+  it("distinguishes managed and optional access", async () => {
     const { container } = renderWithProviders(<BrowserCapabilitiesPanel />);
 
     expect(await screen.findByText("Managed by JobCtrl")).toBeInTheDocument();
     expect(screen.getByText("Optional browser access")).toBeInTheDocument();
-    expect(
-      screen.getByText("Optional access · separate consent for profile copy"),
-    ).toBeInTheDocument();
     expect(
       container.querySelector('[data-browser-capability="core-browser"]'),
     ).toHaveAttribute("data-browser-access", "managed");
@@ -197,6 +119,6 @@ describe("<BrowserCapabilitiesPanel>", () => {
       container.querySelector(
         '[data-browser-capability="authenticated-linkedin-browser"]',
       ),
-    ).toHaveAttribute("data-browser-access", "consent");
+    ).not.toBeInTheDocument();
   });
 });

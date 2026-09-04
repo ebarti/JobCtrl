@@ -4,10 +4,9 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { SUPPORTED_ATS_HOST_PERMISSIONS } from "./ats";
-
 const DIST = path.resolve(fileURLToPath(new URL(".", import.meta.url)), "../../../dist/extension");
-const FORBIDDEN_BUNDLE_PATTERNS = [/<all_urls>/, /https:\/\/\*\//, /fetch\(["'`]https?:\/\/(?!127\.0\.0\.1:8766|localhost:8766)/, /XMLHttpRequest/];
+const WEB_PAGE_MATCHES = new Set(["http://*/*", "https://*/*"]);
+const FORBIDDEN_BUNDLE_PATTERNS = [/<all_urls>/, /fetch\(["'`]https?:\/\/(?!127\.0\.0\.1:8766|localhost:8766)/, /XMLHttpRequest/];
 const MODULE_SYNTAX_PATTERN = /^\s*(?:import|export)\b/m;
 
 type RuntimeListener = (message: unknown, sender: unknown, sendResponse: (response?: unknown) => void) => boolean | void;
@@ -17,18 +16,20 @@ afterEach(() => {
 });
 
 describe("built extension privacy boundary", () => {
-  it("keeps the built manifest and bundle loopback-only", () => {
+  it("builds wildcard HTTP(S) page and brokered Discovery network access", () => {
     const files = distFiles(DIST);
     const manifest = JSON.parse(fs.readFileSync(path.join(DIST, "manifest.json"), "utf8")) as {
+      permissions?: string[];
       host_permissions?: string[];
       content_scripts?: Array<{ matches?: string[] }>;
       content_security_policy?: { extension_pages?: string };
     };
-    expect(new Set(manifest.host_permissions)).toEqual(
-      new Set(["http://127.0.0.1:8766/*", "http://localhost:8766/*"]),
+    expect(new Set(manifest.permissions)).toEqual(
+      new Set(["activeTab", "alarms", "declarativeNetRequest", "scripting", "storage"]),
     );
-    expect(new Set(manifest.content_scripts?.[0]?.matches ?? [])).toEqual(new Set(SUPPORTED_ATS_HOST_PERMISSIONS));
-    expect(manifest.content_security_policy?.extension_pages).toContain("connect-src http://127.0.0.1:8766 http://localhost:8766");
+    expect(new Set(manifest.host_permissions)).toEqual(WEB_PAGE_MATCHES);
+    expect(new Set(manifest.content_scripts?.[0]?.matches ?? [])).toEqual(WEB_PAGE_MATCHES);
+    expect(manifest.content_security_policy?.extension_pages).toContain("connect-src http: https:");
 
     const bundle = files.map((file) => fs.readFileSync(file, "utf8")).join("\n");
     for (const pattern of FORBIDDEN_BUNDLE_PATTERNS) {
@@ -47,8 +48,16 @@ describe("built extension privacy boundary", () => {
     const requests: string[] = [];
     const storage = createMemoryStorage();
     let listener: RuntimeListener | null = null;
-    const sendMessage = vi.fn(async () => ({ ok: true, status: "review_opened", suggestions: 1, missing: 0 }));
+    const sendMessage = vi.fn(async (_tabId: number, message: unknown) =>
+      isAutofillProbe(message)
+        ? { ok: true, status: "autofill_ready" }
+        : { ok: true, status: "review_opened", suggestions: 1, missing: 0 },
+    );
     vi.stubGlobal("chrome", {
+      alarms: {
+        create: vi.fn(),
+        onAlarm: { addListener: vi.fn() },
+      },
       runtime: {
         getManifest: () => ({ version: "0.3.0" }),
         sendMessage: vi.fn(),
@@ -59,11 +68,13 @@ describe("built extension privacy boundary", () => {
         },
       },
       scripting: {
-        executeScript: vi.fn(async () => [{ result: { title: "Synthetic ATS", text: "Visible role description" } }]),
+        executeScript: vi.fn(async () => [{ result: { title: "Synthetic application", text: "Visible role description" } }]),
       },
       storage: { local: storage },
       tabs: {
-        query: vi.fn(async () => [{ id: 42, url: "https://jobs.ashbyhq.com/acme/senior-platform-engineer" }]),
+        create: vi.fn(),
+        query: vi.fn(async () => [{ id: 42, url: "https://careers.example.com/acme/senior-platform-engineer" }]),
+        remove: vi.fn(),
         sendMessage,
       },
     });
@@ -76,11 +87,11 @@ describe("built extension privacy boundary", () => {
           return jsonResponse({
             ok: true,
             itemId: "extension-1",
-            jobKey: "https://jobs.ashbyhq.com/acme/senior-platform-engineer",
+            jobKey: "https://careers.example.com/acme/senior-platform-engineer",
             importedAt: "2026-07-05T10:00:00Z",
             provenance: {
               sourceKind: "user_mediated_capture",
-              originatingUrl: "https://jobs.ashbyhq.com/acme/senior-platform-engineer",
+              originatingUrl: "https://careers.example.com/acme/senior-platform-engineer",
               captureMode: "current_page",
               futureManualActionRequired: false,
             },
@@ -102,19 +113,75 @@ describe("built extension privacy boundary", () => {
 
     expect(capture).toMatchObject({ ok: true, status: "captured" });
     expect(autofill).toMatchObject({ ok: true, status: "review_opened" });
-    expect(sendMessage).toHaveBeenCalledWith(
-      42,
-      expect.objectContaining({ type: "jobctrl.autofill.review" }),
-    );
-    expect(requests).toEqual([
+    expect(sendMessage.mock.calls).toEqual([
+      [42, { type: "jobctrl.autofill.probe" }],
+      [42, expect.objectContaining({ type: "jobctrl.autofill.review" })],
+    ]);
+    expect(requests).toEqual(expect.arrayContaining([
       "http://127.0.0.1:8766/v1/extension/captures",
       "http://127.0.0.1:8766/v1/extension/autofill/profile",
-    ]);
+      expect.stringContaining("/v1/extension/discovery/tasks/next"),
+    ]));
     expect(
       requests.every((url) => url.startsWith("http://127.0.0.1:8766/") || url.startsWith("http://localhost:8766/")),
     ).toBe(true);
   });
+
+  it("does not read profile data when the current page has no JobCtrl content script", async () => {
+    const storage = createMemoryStorage();
+    let listener: RuntimeListener | null = null;
+    const sendMessage = vi.fn(async () => {
+      throw new Error("No receiving end");
+    });
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL) =>
+      jsonResponse({ ok: true, profileVersion: 1, fields: [] }),
+    );
+    vi.stubGlobal("chrome", {
+      alarms: {
+        create: vi.fn(),
+        onAlarm: { addListener: vi.fn() },
+      },
+      runtime: {
+        getManifest: () => ({ version: "0.3.0" }),
+        sendMessage: vi.fn(),
+        onMessage: {
+          addListener: (candidate: RuntimeListener) => {
+            listener = candidate;
+          },
+        },
+      },
+      scripting: { executeScript: vi.fn() },
+      storage: { local: storage },
+      tabs: {
+        create: vi.fn(),
+        query: vi.fn(async () => [{ id: 42 }]),
+        remove: vi.fn(),
+        sendMessage,
+      },
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await import(`${pathToFileURL(path.join(DIST, "background.js")).href}?missing-content-script=${Date.now()}`);
+    expect(listener).not.toBeNull();
+
+    await sendRuntimeMessage(listener, { type: "saveToken", token: "token-1" });
+    const response = await sendRuntimeMessage(listener, { type: "reviewAutofill" });
+
+    expect(response).toMatchObject({ ok: false, error: "unsupported_page" });
+    expect(sendMessage).toHaveBeenCalledWith(42, { type: "jobctrl.autofill.probe" });
+    expect(fetchMock.mock.calls.map(([input]) => String(input))).not.toContain(
+      "http://127.0.0.1:8766/v1/extension/autofill/profile",
+    );
+  });
 });
+
+function isAutofillProbe(message: unknown): boolean {
+  return Boolean(
+    message &&
+      typeof message === "object" &&
+      (message as Record<string, unknown>).type === "jobctrl.autofill.probe",
+  );
+}
 
 function distFiles(dir: string): string[] {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {

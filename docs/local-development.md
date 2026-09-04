@@ -301,17 +301,17 @@ git diff --check
 Use focused checks while iterating:
 
 ```bash
-pnpm api:check
-pnpm api:test
-pnpm web:check
-pnpm web:build
+corepack pnpm api:check
+corepack pnpm api:test
+corepack pnpm web:check
+corepack pnpm web:build
 corepack pnpm --filter @jobctrl/web e2e:demo-workspace
-pnpm scripts:test
-pnpm qa:test
-pnpm extension:check
-pnpm extension:test
-pnpm extension:build
-pnpm extension:e2e
+corepack pnpm scripts:test
+corepack pnpm qa:test
+corepack pnpm extension:check
+corepack pnpm extension:test
+corepack pnpm extension:build
+corepack pnpm extension:e2e
 ```
 
 The hermetic broad-board recovery fixture uses local fake adapters and a
@@ -485,22 +485,50 @@ which executes the per-story `play()` interactions and the
 
 ## Browser Extension
 
-The Manifest V3 browser extension lives under `apps/extension`. It is a local
-capture client for the TypeScript API, not a hosted/browser-store package.
+The Manifest V3 browser extension lives under `apps/extension`. It is the local
+capture/autofill client and integrated-Discovery browser transport for the
+TypeScript API, not a hosted/browser-store package.
 
 ```bash
-pnpm extension:check
-pnpm extension:test
-pnpm extension:build
-pnpm extension:e2e
+corepack pnpm extension:check
+corepack pnpm extension:test
+corepack pnpm extension:build
+corepack pnpm extension:e2e
 ```
 
-`pnpm extension:build` writes the unpacked extension bundle to
+`corepack pnpm extension:build` writes the unpacked extension bundle to
 `dist/extension/`; load that directory in Chrome/Chromium developer mode for
-manual QA. The extension uses `activeTab`, `scripting`, and `storage`, and its
-manifest network permissions are limited to `http://127.0.0.1:8766/*` and
-`http://localhost:8766/*`. `pnpm extension:e2e` builds the bundle and scans the
-built manifest/assets for the localhost-only invariant.
+manual QA, or reload its existing unpacked-extension card after rebuilding.
+Reload any application tabs that were already open so Chrome injects the newly
+built content script into them.
+Chrome can otherwise load the rebuilt popup from disk while retaining the old
+background service worker. The popup validates their shared message protocol,
+reports **Extension update incomplete**, and disables pairing/actions instead
+of rendering missing fields or claiming readiness. Reload the unpacked
+extension card to make both halves use the same build.
+The content script matches `http://*/*` and `https://*/*`, which Chrome presents
+as access to all ordinary web sites; browser-internal and extension pages remain
+outside that match. Autofill stays passive until an explicit extension action;
+the background service worker also polls for bounded Discovery tasks and
+executes HTTP/API work in the service worker and rendered-page work in temporary
+inactive tabs in the profile where the extension is loaded. Saving the token in
+that popup explicitly selects its extension-local installation UUID for
+Discovery; merely retaining an older token does not win a race with another
+Chrome profile. The extension uses `activeTab`, `alarms`,
+`declarativeNetRequest`, `scripting`, and `storage`; HTTP(S) page and network
+access are wildcarded because the broker can lease arbitrary configured public
+job sources. Capture/autofill API traffic remains loopback-only, and remote
+service-worker requests exist only for active Discovery leases.
+`corepack pnpm extension:e2e` builds the bundle and proves wildcard page reach,
+the generic-form review path, loopback-only capture/autofill traffic, and a
+synthetic Discovery API lease completed from a non-HTML source origin with a
+cookie set in that same persistent Chrome context. It also proves a hanging
+request hard-times out without leaving a tab and that a public source redirect
+cannot reach a loopback target. After every rebuild, reload the installed extension before using its
+selected-installation heartbeat as product-path evidence. A current popup with
+an already stored token reports whether this exact installation is selected and
+offers **Use this Chrome profile for Discovery**, so recovery does not require
+copying the token again.
 
 ## Docs Site
 

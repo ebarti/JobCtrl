@@ -44,6 +44,11 @@ from jobctrl.infrastructure.network import (
 from jobctrl.discovery.target_queries import query_specs_for_source, title_matches_any_query
 from jobctrl.discovery.title_filter import title_matches_query
 from jobctrl.infrastructure.discovery.sqlite_repository import SqliteJobRepository
+from jobctrl.infrastructure.discovery.live_browser import (
+    LiveChromeDiscoveryClient,
+    LiveChromeRobotsCache,
+    PoliteLiveChromeHttpClient,
+)
 from jobctrl.state import record_job_event
 
 log = logging.getLogger(__name__)
@@ -137,11 +142,20 @@ def strip_html(html: str) -> str:
 
 
 class _WorkdayPoliteness:
-    def __init__(self, gateway: PolitenessGateway, run_id: str | None, opener) -> None:
+    def __init__(
+        self,
+        gateway: PolitenessGateway,
+        run_id: str | None,
+        opener,
+        discovery_execution: DiscoveryExecutionRef | None,
+        cancel_event: threading.Event | None,
+    ) -> None:
         self.gateway = gateway
         self.run_id = run_id
         self.opener = opener
-        self.clients: dict[str, GatewayHttpClient] = {}
+        self.discovery_execution = discovery_execution
+        self.cancel_event = cancel_event
+        self.clients: dict[str, GatewayHttpClient | PoliteLiveChromeHttpClient] = {}
         self.lock = threading.Lock()
 
 
@@ -154,11 +168,19 @@ def configure_workday_politeness(
     run_id: str | None = None,
     proxy: str | None = None,
     opener: object | None = None,
+    discovery_execution: DiscoveryExecutionRef | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> None:
     """Configure the politeness gateway for a Workday run (optional proxy)."""
     global _politeness
     active_opener = opener or build_opener(proxy)
-    _politeness = _WorkdayPoliteness(gateway or PolitenessGateway(), run_id, active_opener)
+    _politeness = _WorkdayPoliteness(
+        gateway or PolitenessGateway(),
+        run_id,
+        active_opener,
+        discovery_execution,
+        cancel_event,
+    )
 
 
 def _workday_source_id(*, configured: object = "", employer_key: object = "", name: object = "") -> str:
@@ -186,7 +208,7 @@ def _employer_source_id(employer: dict) -> str:
     )
 
 
-def _employer_client(employer: dict) -> GatewayHttpClient:
+def _employer_client(employer: dict) -> GatewayHttpClient | PoliteLiveChromeHttpClient:
     politeness = _politeness
     if politeness is None:
         configure_workday_politeness()
@@ -202,8 +224,23 @@ def _employer_client(employer: dict) -> GatewayHttpClient:
     with politeness.lock:
         client = politeness.clients.get(cache_key)
         if client is None:
+            browser = (
+                LiveChromeDiscoveryClient(
+                    politeness.discovery_execution,
+                    source_family="workday",
+                    source_id=source_id,
+                    cancel_event=politeness.cancel_event,
+                )
+                if politeness.discovery_execution is not None
+                else None
+            )
+            active_gateway = (
+                politeness.gateway.with_robots(LiveChromeRobotsCache(browser))
+                if browser is not None
+                else politeness.gateway
+            )
             session = PolitenessSession(
-                politeness.gateway,
+                active_gateway,
                 policy=WORKDAY_API_POLICY,
                 budget=politeness.gateway.new_run_budget(WORKDAY_API_POLICY.max_requests_per_run),
                 context=PolitenessSourceContext(
@@ -216,7 +253,10 @@ def _employer_client(employer: dict) -> GatewayHttpClient:
                 ),
                 recorder_conn=get_connection(),
             )
-            client = GatewayHttpClient(session, default_timeout=30.0, opener=politeness.opener)
+            if browser is None:
+                client = GatewayHttpClient(session, default_timeout=30.0, opener=politeness.opener)
+            else:
+                client = PoliteLiveChromeHttpClient(session, browser, default_timeout=30.0)
             politeness.clients[cache_key] = client
         return client
 
@@ -872,7 +912,12 @@ def run_workday_discovery(
         return {"found": 0, "new": 0, "existing": 0, "queries": 0}
 
     proxy = search_cfg.get("proxy")
-    configure_workday_politeness(run_id=run_id, proxy=proxy)
+    configure_workday_politeness(
+        run_id=run_id,
+        proxy=proxy,
+        discovery_execution=discovery_execution,
+        cancel_event=cancel_event,
+    )
 
     location_filter = search_cfg.get("workday_location_filter", True)
     max_pages_per_employer = _workday_max_pages_per_employer(search_cfg, limit=limit)

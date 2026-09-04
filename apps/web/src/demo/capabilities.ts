@@ -110,6 +110,7 @@ export const DEMO_CAPABILITY_MANIFEST = {
   settings: local("Reads synthetic application settings."),
   updateSettings: local("Edits synthetic settings locally."),
   extensionCapabilityToken: unavailable("Browser-extension pairing is unavailable in the public demo."),
+  discoveryBrowserBridgeStatus: unavailable("Live Chrome Discovery is unavailable in the public demo."),
   rotateExtensionCapabilityToken: unavailable("Browser-extension pairing is unavailable in the public demo."),
   runPipelineStages: unavailable("Multi-stage pipeline runs are deferred from the public-demo MVP."),
   credentials: local("Shows a browser-local, read-only explanation with no configured credential values."),

@@ -209,15 +209,13 @@ evidence, qualifications, and the complete capability matrix.
   application URLs are locators resolved only at explicit capture/import/API
   boundaries, so a URL change cannot detach scores, materials, outcomes, or
   workflow history. Source and employer remain separate persisted facts.
-- Fetch politely: anonymous discovery/enrichment requests route through one
-  gateway that honors `robots.txt`, paces each host, bounds each run's request
-  budget, and sends an honest `User-Agent` that never impersonates a browser.
-  A separately enabled, explicitly consented authenticated LinkedIn profile may
-  recover the full posting and inspect its application target without applying
-  the anonymous robots verdict. An external URL is stored when one exists;
-  LinkedIn on-site apply and other unresolved-target cases receive distinct,
-  auditable reasons. Public-destination checks, host pacing, run budgets, audit
-  history, and the no-submission boundary still apply (details in
+- Fetch politely: integrated Discovery delegates every broad-board, ATS API,
+  Workday, Smart Extract, `robots.txt`, and detail-enrichment acquisition to the
+  paired extension in the user's currently running Chrome profile. Chrome owns
+  its live cookies, session, proxy, and user agent; JobCtrl keeps per-host
+  pacing, run budgets, robots evaluation, public-destination checks, and audit
+  outcomes around that transport. Discovery never copies or launches a profile
+  and has no direct-network fallback when the extension is offline (details in
   [Local Data And Safety](#local-data-and-safety)).
 - Capture a current browser job page through the optional local browser
   extension, which feeds the existing manual-capture import path.
@@ -362,30 +360,58 @@ does not bypass this protection. See
 System Chrome/Chromium is never a core requirement. A source checkout uses its
 managed Playwright Chromium installs; the bundled release carries exactly one
 Playwright Chromium headless shell. Inspect the split with
-`jobctrl capability list`; adopt a system browser only for authenticated apply
-features:
+`jobctrl capability list`; adopt a system browser only for the separate Apply
+browser:
 
 ```bash
 jobctrl capability enable auto-apply-browser --browser-path /path/to/Chrome
-jobctrl capability enable authenticated-linkedin-browser --browser-path /path/to/Chrome \
-  --copy-profile-from /path/to/Chrome-profile --consent-copy-profile
 ```
 
-LinkedIn profile copying always requires its own consent flag: `--yes` never
-grants it. JobCtrl copies only into its owned data directory and does not retain
-the source-profile path.
+LinkedIn Discovery and Enrich do not adopt that executable or copy a browser
+profile. They use the paired extension in the user's currently running Chrome
+profile, including job-scoped retries of previously blocked Enrich work.
 
-### Browser Extension Capture And Autofill
+### Browser Extension Discovery, Capture, And Autofill
 
-The optional Manifest V3 extension is a local capture and assist surface:
-build with `pnpm extension:build`, load `dist/extension/` unpacked, and pair
+The Manifest V3 extension is integrated Discovery's required live-browser
+transport and also a local capture/assist surface:
+build with `corepack pnpm extension:build`, load `dist/extension/` unpacked, and pair
 it with the token shown in JobCtrl Settings. **Save job** captures the active
 page over loopback into the manual-capture importer (same dedupe, snapshots,
 quarantine, and source provenance as any user-mediated capture), with a
-bounded offline queue when the stack is down. On supported ATS pages,
-**Review autofill** shows deterministic, profile-sourced field suggestions —
-you choose what to fill. The extension does not generate free-text answers
-and has no submission path.
+bounded offline queue when the stack is down. Its page script is available on
+all ordinary HTTP(S) sites, not a fixed ATS allowlist, but remains passive until
+you click **Review autofill**. The review shows deterministic, profile-sourced
+field suggestions on the current form; you choose what to fill. The extension
+does not generate free-text answers and has no submission path. Its outbound
+HTTP(S) permission is wildcarded so an explicitly brokered Discovery API task
+can run in the extension service worker; capture and autofill API calls remain
+loopback-only, and no remote request is created without a leased Discovery
+task.
+
+The same installed extension is the required browser transport for integrated
+Discovery. While Chrome is running, it heartbeats over loopback and executes
+bounded HTTP/API tasks in the extension service worker plus rendered-page tasks
+in temporary inactive tabs inside the profile where the extension is installed.
+Both use the user's live profile—not an exported or copied snapshot—so later
+cookie and session changes take effect automatically.
+Saving the pairing token in the extension explicitly selects that extension
+installation for Discovery; selecting it in another Chrome profile replaces the
+prior selection. Settings shows the selected installation's short identifier.
+The popup separately reports whether that exact installation is selected. If a
+rebuilt popup detects that Chrome is still running an older background worker,
+it reports **Extension update incomplete** and disables pairing actions until
+the unpacked extension is reloaded; it never renders that mixed-version state
+as ready. After reload, an already stored token can select the current profile
+with **Use this Chrome profile for Discovery** without being copied again.
+Pipelines disables Discover while that heartbeat is absent, and the API also
+rejects the launch instead of falling back to Playwright or a copied profile.
+Four extension executors provide bounded concurrency. Active leases heartbeat
+independently, and worker cancellation or the task's hard timeout aborts the
+request and closes an inactive tab when one exists. Direct HTTP/API requests
+disable redirect following; rendered-page tabs use exact-origin request rules
+that block cross-origin navigation/fetch redirects before Chrome dispatches
+them.
 
 ## Responsible Use
 
@@ -502,8 +528,9 @@ By default, JobCtrl writes local data under `~/.jobctrl/`:
   or changes the normal Codex home. Prompt-driven reads are limited to
   `codex_home/workspace/`.
 - `gmail/` — Gmail OAuth client and private refresh/access token state.
-- `browser-profiles/`, `extension-capability-token`, `chrome-workers/`,
-  `apply-workers/` — copied profiles, extension pairing, and browser/apply
+- `browser-profiles/`, `extension-capability-token`,
+  `extension-discovery-installation-id`, `chrome-workers/`, `apply-workers/` —
+  copied profiles, extension pairing/selected live installation, and browser/apply
   state. Browser capability choices live in `config.json`.
 - `provider-packs/`, `provider-runtime/`, `claude_home/` — provider runtime
   packages and isolated provider state when those paths are used.
@@ -530,27 +557,33 @@ not make a manually copied or force-added private file safe to publish. Use
 [Data, Privacy & Safety](https://jobctrl.dev/user/data-and-safety) and
 [SECURITY.md](SECURITY.md).
 
-Anonymous discovery and enrichment fetch politely: each request runs through
-one gateway that honors `robots.txt` — failing closed on an inconclusive fetch
-(`5xx` or timeout) but failing open with a warning when the host has no
-robots endpoint at all (DNS failure or refused connection) — paces each host,
-bounds each run's request budget, and sends an honest `User-Agent`
-(`JobCtrl/<version> (+<repo url>)`) that never impersonates a browser. Review
-review or change that identity in **Discovery → Runtime**; the saved policy is
-held in SQLite and `jobctrl doctor` prints the effective value. Direct targets,
-redirects, and Playwright subrequests must also be public HTTP(S) destinations;
-loopback, private, link-local, metadata-service, and file URLs are blocked
-before content extraction or LLM enrichment. JobCtrl does not evade login,
-paywall, CAPTCHA, rate-limit, or bot-control gates. The one explicit carve-out
-is owner-authenticated LinkedIn recovery: after the capability is enabled and a
-profile copy is separately consented, JobCtrl may use that existing session to
-recover the full posting and inspect its application target without applying
-the anonymous robots verdict. It records whether an external URL was recovered,
-LinkedIn owns the application flow, the control or external target was missing,
-navigation failed, or the target was unsafe. Missing an external URL does not
-downgrade a readable posting or block Tailor. The recovery retains public-route
-validation, pacing, request budgets, and audit history, and it cannot submit an
-application.
+Integrated Discovery and its detail-enrichment drain use the paired extension
+in the user's current Chrome profile for every job-source page, job-source API,
+and `robots.txt` request. Chrome therefore owns the effective cookies, session,
+proxy, and browser user agent. JobCtrl still applies the source policy's
+per-host pacing, concurrency, and run budget before delegation; fetches and
+final destinations must remain public HTTP(S), and the browser-reported user
+agent is used for ordinary robots evaluation. LinkedIn detail enrichment inside
+the user's owner-authenticated live Chrome session is not classified by the
+anonymous crawler's robots verdict; the same pacing, request budget,
+destination, exact-origin, audit, and no-submit controls still apply. An
+inconclusive ordinary robots result fails closed, while an absent robots
+endpoint follows the documented warning policy. JobCtrl does not evade login,
+paywall, CAPTCHA, rate-limit, or bot-control gates, and the extension has no
+application-submission path.
+The API validates DNS both when the worker enqueues a task and immediately
+before the extension receives its lease. Brokered HTTP/API fetches run in the
+extension service worker with Chrome credentials and redirect following
+disabled. Rendered-page work installs a tab-scoped exact-origin allow rule above
+a default HTTP(S) block rule. In both modes, a public source cannot redirect the
+request to a different origin before rejection.
+
+The configurable `JobCtrl/<version> (+<contact>)` crawl identity remains the
+identity for standalone/non-extension gateway operations and is reported by
+`jobctrl doctor`; it is not substituted for Chrome's own user agent during a
+live-profile Discovery run. Existing copied-profile capabilities remain for
+separately consented compatibility paths, but `DiscoverWorkflow` never reads or
+launches those copies and never falls back to them.
 
 ### Back Up And Restore
 
@@ -769,29 +802,29 @@ in `config.json`, defaults to `25`
 (`0` = unlimited), spendful workflows run a budget preflight, and the health
 surface shows today's estimated spend.
 
-Optional system-browser capabilities and extension pairing are also available
-from **Settings → Browser & extension**. JobCtrl can list supported local
+The optional Apply browser and extension pairing are also available from
+**Settings → Browser & extension**. JobCtrl can list supported local
 Chrome/Chromium installations by label, but detection is read-only: it does not
 launch, enable, or persist a browser. Choosing a detected browser and clicking
-Enable explicitly adopts it; an advanced manual executable path remains
-available. For authenticated LinkedIn, JobCtrl can also detect a standard local
-default profile and copy it by browser label after separate affirmative consent;
-no filesystem path entry is required. That detected flow copies only the
-`Default` profile plus sanitized root metadata needed by Chrome; sibling
-profiles are excluded. A write-only manual profile path remains an advanced
-fallback. Browser enable/disable and pairing-token rotation are live, and
-extension pairing remains separate from browser adoption.
+Enable explicitly adopts it for Apply; an advanced manual executable path
+remains available. Settings does not offer LinkedIn profile copying. Browser
+enable/disable and pairing-token rotation are live, and extension pairing
+remains separate from Apply-browser adoption. Integrated Discovery and Enrich
+require a live heartbeat from the extension installed in the user's
+already-running Chrome profile and never use an adopted executable or copied
+profile.
 
 ## Development
 
 ```bash
 scripts/install            # or: corepack pnpm install:interactive when Corepack exists
-pnpm check                 # cross-stack typecheck + lint
-pnpm test                  # API + web build + Python tests
+corepack pnpm check        # cross-stack typecheck + lint
+corepack pnpm test         # API + web build + Python tests
 ```
 
-Focused commands (`pnpm api:test`, `pnpm web:test`, `pnpm web:e2e`,
-`pnpm extension:test`, `uv --project workers/automation run --extra dev
+Focused commands (`corepack pnpm api:test`, `corepack pnpm web:test`,
+`corepack pnpm web:e2e`, `corepack pnpm extension:test`,
+`uv --project workers/automation run --extra dev
 pytest -q`, …) are listed in
 [Local Development](https://jobctrl.dev/local-development). Contributor
 workflow: [CONTRIBUTING.md](CONTRIBUTING.md).

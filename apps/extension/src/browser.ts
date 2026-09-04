@@ -29,18 +29,49 @@ export interface BrowserRuntime {
 }
 
 export interface BrowserTabs {
+  create(createProperties: { active?: boolean; url?: string }): Promise<BrowserTab>;
+  update(tabId: number, updateProperties: { active?: boolean; url?: string }): Promise<BrowserTab>;
   query(queryInfo: { active?: boolean; currentWindow?: boolean }): Promise<BrowserTab[]>;
+  remove(tabId: number): Promise<void>;
   sendMessage<TResponse = unknown>(tabId: number, message: unknown): Promise<TResponse>;
 }
 
+export interface BrowserDeclarativeNetRequestRule {
+  id: number;
+  priority: number;
+  action: { type: "allow" | "block" };
+  condition: {
+    regexFilter: string;
+    resourceTypes: Array<"main_frame" | "xmlhttprequest">;
+    tabIds: number[];
+  };
+}
+
+export interface BrowserDeclarativeNetRequest {
+  updateSessionRules(options: {
+    removeRuleIds: number[];
+    addRules?: BrowserDeclarativeNetRequestRule[];
+  }): Promise<void>;
+}
+
+export interface BrowserAlarms {
+  create(name: string, alarmInfo: { delayInMinutes?: number; periodInMinutes?: number }): void;
+  onAlarm: {
+    addListener(listener: (alarm: { name: string }) => void): void;
+  };
+}
+
 export interface BrowserScripting {
-  executeScript<TResult>(options: {
+  executeScript<TResult, TArgs extends unknown[] = []>(options: {
     target: { tabId: number };
-    func: () => TResult;
+    func: (...args: TArgs) => TResult;
+    args?: TArgs;
   }): Promise<Array<{ result?: TResult }>>;
 }
 
 export interface BrowserApi {
+  alarms: BrowserAlarms;
+  declarativeNetRequest: BrowserDeclarativeNetRequest;
   runtime: BrowserRuntime;
   scripting: BrowserScripting;
   storage: {
