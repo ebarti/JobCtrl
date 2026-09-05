@@ -245,7 +245,8 @@ export function useSeedResumeReviewCommentThreadsMutation(): UseMutationResult<
 export function useRenderResumeReviewDraftMutation(): UseMutationResult<
   ResumeReviewDraftRenderResponse,
   Error,
-  RenderResumeReviewDraftVariables
+  RenderResumeReviewDraftVariables,
+  { readonly tenantId: TenantId }
 > {
   const tenantId = useTenantId();
   const { api } = usePorts();
