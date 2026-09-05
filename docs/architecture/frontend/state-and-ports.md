@@ -41,6 +41,8 @@ is the canonical decision matrix.
 | Daily digest and digest acknowledge state | **Server** (Query + mutation) | `GET /v1/digest` is a passive local read. Only explicit acknowledge advances `digest_state`; digest deep links carry filters/sort in the URL. |
 | Jobs list response | **Server** (Query) | Same. |
 | Job detail | **Server** (Query) | Same. |
+| Saved resume review draft | **Server** (Query) | The apply-context reconciler publishes create/save/seed/render/reply responses to the initiating tenant/job key. Draft identity and base generation precede revision/state/time ordering; threads, replies and feedback signals merge independently by their IDs. |
+| Unsaved resume review edits | **Mounted Plate session** | Acknowledging saved snapshot A updates the baseline while later text or formatting B stays dirty. Comment-only updates do not reset focus or selection. |
 | Artifacts list / detail | **Server** (Query) | Same. |
 | Apply run live timeline | **Server** (Query) — appended via `setQueryData` from SSE | High-frequency; see §7.5. |
 | Resume import wizard step state (uploaded file metadata, parsed draft) | **Client** (Zustand+persist) | Cross-step, refresh-safe, but not URL-bound (the URL identifies *which step*, not *the data*). |

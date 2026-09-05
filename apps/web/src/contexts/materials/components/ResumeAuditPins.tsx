@@ -3248,10 +3248,24 @@ export function ResumePlateEditor({
   }, [draft?.latestRevision?.plateDocument, htmlState]);
   const [currentPlateValue, setCurrentPlateValue] = useState<Value | null>(initialPlateValue);
 
+  const reviewDocumentIdentity = draft ? `${draft.draftId}:${draft.baseGeneration}` : artifactId;
+  const savedDocument = useRef({ identity: reviewDocumentIdentity, signature: resumePlateValueSignature(initialPlateValue) });
   useEffect(() => {
-    setCurrentPlateValue(initialPlateValue);
-    setDraftSourceVersion((currentVersion) => currentVersion + 1);
-  }, [initialPlateValue]);
+    const signature = resumePlateValueSignature(initialPlateValue);
+    const previous = savedDocument.current;
+    if (previous.identity === reviewDocumentIdentity && previous.signature === signature) return;
+    savedDocument.current = { identity: reviewDocumentIdentity, signature };
+    // A saved response acknowledges its snapshot, not edits typed after it.
+    // Comment-only publications and identical acknowledgements never remount
+    // Plate, preserving formatting, focus and selection in the live document.
+    const currentSignature = resumePlateValueSignature(currentPlateValue);
+    if (previous.identity !== reviewDocumentIdentity || currentSignature === previous.signature) {
+      if (currentSignature !== signature) {
+        setCurrentPlateValue(initialPlateValue);
+        setDraftSourceVersion((currentVersion) => currentVersion + 1);
+      }
+    }
+  }, [currentPlateValue, initialPlateValue, reviewDocumentIdentity]);
 
   const currentDraftText = useMemo(
     () => (currentPlateValue ? resumeTextFromPlateValue(currentPlateValue) : ""),

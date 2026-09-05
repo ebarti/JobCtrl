@@ -35,8 +35,9 @@ process.env["JOBCTRL_E2E_STATE_FILE"] = E2E_STATE_FILE;
 // Documentation screenshots are committed artifacts, so their run must own
 // both servers and the disposable workspace wired into them. A listening port
 // is not sufficient evidence that an existing process uses E2E_DIR.
+const ISOLATED_E2E = process.env["JOBCTRL_E2E_ISOLATED"] === "1";
 const REUSE_EXISTING_SERVERS =
-  !process.env["CI"] && process.env["JOBCTRL_DOCS_SCREENSHOTS"] !== "1";
+  !ISOLATED_E2E && !process.env["CI"] && process.env["JOBCTRL_DOCS_SCREENSHOTS"] !== "1";
 const DOCS_SERVICE_ENVIRONMENT =
   process.env["JOBCTRL_DOCS_SCREENSHOTS"] === "1"
     ? {
@@ -87,7 +88,9 @@ export default defineConfig({
   ],
   webServer: [
     {
-      command: "corepack pnpm --filter @jobctrl/api dev",
+      command: ISOLATED_E2E
+        ? "corepack pnpm --filter @jobctrl/api exec tsx test/e2e-server.ts"
+        : "corepack pnpm --filter @jobctrl/api dev",
       port: Number(API_PORT),
       cwd: repoRoot,
       env: {

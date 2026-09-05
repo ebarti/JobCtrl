@@ -1998,6 +1998,48 @@ describe("<ApplyReviewView>", () => {
     );
   });
 
+  it("preserves later formatting and focus when a saved snapshot and stale seed response arrive", async () => {
+    const draft = makeResumeReviewDraft();
+    let acknowledge: (() => void) | undefined;
+    const saveResumeReviewDraftRevision = vi.fn(async (_draftId, body) => {
+      await new Promise<void>((resolve) => { acknowledge = resolve; });
+      const saved = makeResumeReviewDraft(draft.jobKey, {
+        ...body, revisionId: "saved-2", revisionNumber: 2,
+      });
+      return { ok: true as const, draft: saved, revision: saved.latestRevision! };
+    });
+    let seed: (() => void) | undefined;
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({ api: {
+        applyReviewQueue: vi.fn(async () => sampleApplyReviewQueue),
+        createResumeReviewDraft: vi.fn(async () => ({ ok: true as const, draft })),
+        saveResumeReviewDraftRevision,
+        seedResumeReviewCommentThreads: vi.fn(async () => {
+          await new Promise<void>((resolve) => { seed = resolve; });
+          return { ok: true as const, draft, commentThreads: [], seededCount: 0, updatedCount: 0 };
+        }),
+      } }),
+    });
+    const editor = await screen.findByRole("textbox", { name: "Tailored resume preview editor" });
+    await chooseSelectOption("Font", "Garamond");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled());
+    await userEvent.click(screen.getByRole("button", { name: "Save draft" }));
+    await waitFor(() => expect(acknowledge).toBeDefined());
+    await chooseSelectOption("Font", "Helvetica");
+    await userEvent.click(editor);
+    expect(editor).toHaveFocus();
+    acknowledge!();
+    await waitFor(() => expect(screen.getByText("unsaved changes")).toBeInTheDocument());
+    seed?.();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled());
+    expect(screen.getByRole("textbox", { name: "Tailored resume preview editor" })).toBe(editor);
+    expect(editor).toHaveFocus();
+    const shadow = await findResumeShadowRoot();
+    expect(shadowElementWithText(shadow, "Principal Platform Engineer").style.fontFamily).toContain("Helvetica");
+    expect(JSON.stringify(saveResumeReviewDraftRevision.mock.calls[0]![1].plateDocument)).toContain("garamond");
+    expect(JSON.stringify(saveResumeReviewDraftRevision.mock.calls[0]![1].plateDocument)).not.toContain("helvetica");
+  });
+
   it("keeps the cached resume review draft visible while create/load is pending", async () => {
     const jobKey = sampleApplyReviewQueue.items[0]!.jobKey;
     const draft = makeResumeReviewDraft(jobKey, {
