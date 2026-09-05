@@ -1,5 +1,3 @@
-import fs from "node:fs";
-import path from "node:path";
 import crypto from "node:crypto";
 
 import type {
@@ -86,7 +84,7 @@ const DEFAULT_FIT_BAND_THRESHOLDS = [
  *
  * Throws `InputError` when the transition is rejected.
  *
- * Wired into `upsertStageState`, so every write-model command —
+ * Wired into `upsertStageStateById`, so every write-model command —
  * `resetJobStage`, `markJobApplied`, `markJobSkipped`, `cancelJobAction` —
  * is gated by §8.5 before the SQLite write happens.
  */
@@ -823,15 +821,6 @@ function resetEnrichmentAggregate(db: SqliteDatabase, tenantId: string, jobId: s
            updated_at = ?
      WHERE tenant_id = ? AND job_id = ?`,
   ).run(now, tenantId, jobId);
-}
-
-function mutableJobKeys(db: SqliteDatabase, request: BulkJobMutationRequest): string[] {
-  if (request.allMatching) {
-    return uniqueJobKeys(matchingJobKeys(db, request.filter ?? {}));
-  }
-  return uniqueJobKeys(request.jobKeys)
-    .map((jobKey) => resolveJobUrl(db, jobKey))
-    .filter((jobUrl): jobUrl is string => Boolean(jobUrl));
 }
 
 function mutableResolvedJobs(db: SqliteDatabase, request: BulkJobMutationRequest): ResolvedJobIdentity[] {
@@ -1596,239 +1585,10 @@ function cleanJsonRecord(value: Record<string, unknown>): Record<string, unknown
 }
 
 /**
- * Upsert one row into `job_stage_states`, gated by the §8.5 state machine.
- *
- * §8.5 enforcement is **default-on** via `validateStageTransition`.  The
- * only callers that legitimately bypass the gate are the four admin-override
- * commands in this file:
- *
- *   - `resetJobStage`        — user retry, mirrors Python `reset_job_stage`
- *   - `markJobApplied`       — user assertion "I applied externally"
- *   - `markJobSkipped`       — user assertion "skip this one"
- *   - `resetStaleScoresForRescore` — explicit stale-score rescore request
- *
- * **Automated pipeline writes (Phase 9 / S-34 onward) MUST NOT pass
- * `skipValidation`.**  If you're adding a new TS write path and you can't
- * justify it as one of the four admin overrides above, leave the option
- * unset and let the gate enforce §8.5.
+ * Write stage state by canonical identity. Validate automated transitions by
+ * default; only explicit admin overrides (reset/retry, mark applied/skipped)
+ * may set skipValidation.
  */
-function upsertStageState(
-  db: SqliteDatabase,
-  jobUrl: string,
-  stage: Stage,
-  state: StageState,
-  options: {
-    attemptCount?: number;
-    clearTiming?: boolean;
-    finishedAt?: string;
-    retryable?: boolean;
-    /**
-     * S-12: skip the §8.5 validation gate. Admin overrides (manual
-     * mark-applied, mark-skipped, reset) set this to mirror
-     * Python's `set_stage_state(... validate_transition=False)` —
-     * see `state.py::reset_job_stage`. Automated/normal writes leave
-     * this `false` (default) and pay the cost of the gate.
-     */
-    skipValidation?: boolean;
-  } = {},
-): void {
-  if (!tableExists(db, "job_stage_states")) {
-    return;
-  }
-  if (!options.skipValidation) {
-    validateStageTransition(db, jobUrl, stage, state);
-  }
-  const columns = columnNames(db, "job_stage_states");
-  const now = new Date().toISOString();
-  const updates: Record<string, SqliteValue> = {
-    state,
-    updated_at: now,
-    error_code: null,
-    error_message: null,
-    retryable: options.retryable === false ? 0 : 1,
-    blocked_by_json: "[]",
-    next_action: null,
-  };
-  if (options.attemptCount !== undefined) {
-    updates.attempt_count = options.attemptCount;
-  }
-  if (options.clearTiming) {
-    updates.started_at = null;
-    updates.finished_at = null;
-    updates.duration_ms = null;
-  }
-  if (options.finishedAt) {
-    updates.finished_at = options.finishedAt;
-  }
-
-  const updateEntries = Object.entries(updates).filter(([name]) => columns.has(name));
-  const assignments = updateEntries.map(([name]) => `${name} = ?`).join(", ");
-  const result = db.prepare(`UPDATE job_stage_states SET ${assignments} WHERE job_url = ? AND stage = ?`).run(
-    ...updateEntries.map(([, value]) => value),
-    jobUrl,
-    stage,
-  );
-  if (result.changes > 0) {
-    return;
-  }
-
-  const insert: Record<string, SqliteValue> = {
-    job_url: jobUrl,
-    stage,
-    state,
-    attempt_count: options.attemptCount ?? 0,
-    max_attempts: DEFAULT_MAX_ATTEMPTS[stage],
-    updated_at: now,
-    retryable: options.retryable === false ? 0 : 1,
-    blocked_by_json: "[]",
-  };
-  if (options.finishedAt) {
-    insert.finished_at = options.finishedAt;
-  }
-  const insertEntries = Object.entries(insert).filter(([name]) => columns.has(name));
-  db.prepare(
-    `INSERT INTO job_stage_states (${insertEntries.map(([name]) => name).join(", ")}) VALUES (${insertEntries
-      .map(() => "?")
-      .join(", ")})`,
-  ).run(...insertEntries.map(([, value]) => value));
-}
-
-function getStageState(db: SqliteDatabase, jobUrl: string, stage: Stage): StageSummary {
-  if (!tableExists(db, "job_stage_states")) {
-    return defaultStage(stage, "pending");
-  }
-  const row = getRow<Record<string, unknown>>(
-    db,
-    "SELECT * FROM job_stage_states WHERE job_url = ? AND stage = ? LIMIT 1",
-    [jobUrl, stage],
-  );
-  if (!row) {
-    return defaultStage(stage, "pending");
-  }
-  return {
-    stage,
-    state: row.state === "exhausted" ? "failed" : isStageState(row.state) ? row.state : "pending",
-    attemptCount: Number(row.attempt_count ?? 0),
-    maxAttempts: nullableNumber(row.max_attempts) ?? DEFAULT_MAX_ATTEMPTS[stage],
-    startedAt: nullableString(row.started_at),
-    updatedAt: nullableString(row.updated_at),
-    finishedAt: nullableString(row.finished_at),
-    durationMs: nullableNumber(row.duration_ms),
-    errorCode: nullableString(row.error_code),
-    errorMessage: nullableString(row.error_message),
-    failureReason: row.state === "exhausted" ? "attempt_budget_exhausted" : null,
-    retryable:
-      row.state === "exhausted"
-        ? true
-        : row.retryable === null || row.retryable === undefined
-          ? true
-          : Boolean(row.retryable),
-    blockedBy: parseStringArray(nullableString(row.blocked_by_json)),
-    nextAction:
-      row.state === "exhausted"
-        ? "Retry to reset the attempt budget."
-        : nullableString(row.next_action),
-  };
-}
-
-function currentMutableStage(db: SqliteDatabase, jobUrl: string): Stage {
-  if (!tableExists(db, "job_stage_states")) {
-    return "apply";
-  }
-  const rows = allRows<Record<string, unknown>>(
-    db,
-    "SELECT stage, state FROM job_stage_states WHERE job_url = ? ORDER BY rowid",
-    [jobUrl],
-  );
-  const active = rows.find((row) => ["queued", "running"].includes(String(row.state ?? "")));
-  if (active && STAGES.includes(active.stage as Stage)) {
-    return active.stage as Stage;
-  }
-  return "apply";
-}
-
-function currentFailedStage(db: SqliteDatabase, jobUrl: string): Stage | null {
-  if (!tableExists(db, "job_stage_states")) {
-    return null;
-  }
-  const rows = allRows<{ stage: Stage; state: string; retryable: number | null }>(
-    db,
-    "SELECT stage, state, retryable FROM job_stage_states WHERE job_url = ?",
-    [jobUrl],
-  );
-  const failedStages = new Set(
-    rows
-      .filter(
-        (row) =>
-          STAGES.includes(row.stage) &&
-          ["failed", "exhausted"].includes(row.state) &&
-          (row.state === "exhausted" ||
-            row.stage === "enrich" ||
-            (row.retryable !== 0 &&
-              latestStageRetryableOverride(db, jobUrl, row.stage) !== false)),
-      )
-      .map((row) => row.stage),
-  );
-  return STAGES.find((stage) => failedStages.has(stage)) ?? null;
-}
-
-function latestStageRetryableOverride(
-  db: SqliteDatabase,
-  jobUrl: string,
-  stage: Stage,
-): boolean | null {
-  if (!tableExists(db, "job_events")) return null;
-  const rows = allRows<{ payload_json: string | null }>(
-    db,
-    `SELECT payload_json
-     FROM job_events
-     WHERE job_url = ?
-       AND stage = ?
-       AND payload_json IS NOT NULL
-     ORDER BY event_id ASC`,
-    [jobUrl, stage],
-  );
-  let latest: boolean | null = null;
-  for (const row of rows) {
-    const payload = parseJsonRecord(row.payload_json);
-    const retryable = payload?.["retryable"];
-    if (typeof retryable === "boolean") {
-      latest = retryable;
-    }
-  }
-  return latest;
-}
-
-function recordActionEvent(
-  db: SqliteDatabase,
-  event: {
-    jobUrl: string;
-    stage: Stage;
-    eventType: string;
-    level: string;
-    message: string;
-    payload: Record<string, unknown>;
-  },
-): void {
-  if (!tableExists(db, "job_events")) {
-    return;
-  }
-  const columns = columnNames(db, "job_events");
-  const values: Record<string, SqliteValue> = {
-    job_url: event.jobUrl,
-    stage: event.stage,
-    event_type: event.eventType,
-    level: event.level,
-    message: event.message,
-    occurred_at: new Date().toISOString(),
-    payload_json: JSON.stringify(event.payload),
-  };
-  const entries = Object.entries(values).filter(([name]) => columns.has(name));
-  db.prepare(
-    `INSERT INTO job_events (${entries.map(([name]) => name).join(", ")}) VALUES (${entries.map(() => "?").join(", ")})`,
-  ).run(...entries.map(([, value]) => value));
-}
-
 function upsertStageStateById(
   db: SqliteDatabase,
   tenantId: string,
@@ -2028,50 +1788,6 @@ function recordActionEventById(
     new Date().toISOString(),
     JSON.stringify({ tenantId: event.tenantId, jobId: event.jobId, ...event.payload }),
   );
-}
-
-function parseJsonObjectInput(raw: unknown, rawText: string | undefined, label: string): Record<string, unknown> {
-  const parsed = rawText !== undefined ? parseJson(rawText, label) : raw;
-  if (!isRecord(parsed)) {
-    throw new InputError(`${label} must be a JSON object.`);
-  }
-  return parsed;
-}
-
-function parseJson(text: string, label: string): unknown {
-  try {
-    return JSON.parse(text);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Invalid JSON.";
-    throw new InputError(`${label} contains invalid JSON: ${message}`);
-  }
-}
-
-function writeJson(filePath: string, value: Record<string, unknown>): void {
-  writeText(filePath, `${JSON.stringify(value, null, 2)}\n`);
-}
-
-function readJsonObject(filePath: string): Record<string, unknown> {
-  if (!fs.existsSync(filePath)) {
-    return {};
-  }
-  const parsed = parseJson(fs.readFileSync(filePath, "utf8"), path.basename(filePath));
-  if (!isRecord(parsed)) {
-    throw new InputError(`${path.basename(filePath)} must be a JSON object.`);
-  }
-  return parsed;
-}
-
-function writeText(filePath: string, value: string): void {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, value, "utf8");
-}
-
-function columnNames(db: SqliteDatabase, tableName: string): Set<string> {
-  if (!tableExists(db, tableName)) {
-    return new Set();
-  }
-  return new Set(allRows<{ name: string }>(db, `PRAGMA table_info(${tableName})`).map((row) => row.name));
 }
 
 function defaultStage(stage: Stage, state: StageState): StageSummary {

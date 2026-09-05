@@ -241,14 +241,10 @@ apps/web/
 │   │   ├── stores/
 │   │   │   ├── ui-preferences.ts           # Zustand+persist → jh:ui-preferences (theme, density, sidebar expansion)
 │   │   │   ├── saved-table-views.ts        # Zustand+persist → jh:saved-table-views (table templates + presentation)
-│   │   │   ├── toasts.ts                   # Zustand
-│   │   │   └── command-palette.ts          # Zustand (open/close + search)
+│   │   │   └── toasts.ts                   # Zustand
 │   │   ├── hooks/
-│   │   │   ├── useTenantId.ts              # re-export of TenantProvider's useTenantId
 │   │   │   ├── useTheme.ts
-│   │   │   ├── useDensity.ts
-│   │   │   ├── useToast.ts
-│   │   │   └── useEscapeKey.ts
+│   │   │   └── useDensity.ts
 │   │   ├── lib/
 │   │   │   ├── cn.ts                       # tailwind-merge helper
 │   │   │   ├── createOptimisticMutation.ts # snapshot → patch → rollback → invalidate helper
@@ -261,7 +257,6 @@ apps/web/
 │   ├── test/
 │   │   ├── msw/
 │   │   │   ├── handlers.ts                 # one handler per apps/api route
-│   │   │   ├── sse-handlers.ts             # SSE mocks
 │   │   │   └── server.ts                   # setupServer for Vitest
 │   │   ├── fixtures/
 │   │   │   ├── projections.ts              # canonical sample projection rows

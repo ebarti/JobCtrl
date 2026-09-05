@@ -89,10 +89,9 @@ browser" check on CI.
 
 **MSW setup:** one handler per backend route (mirrors
 `packages/api-client`). REST handlers live in
-`apps/web/src/test/msw/handlers.ts` and SSE handlers in
-`apps/web/src/test/msw/sse-handlers.ts`. Each test imports a base set and
-overrides per-case; where MSW's SSE support is limiting, the fallback is a
-custom `EventStreamPort` mock injected through `<PortsProvider />`.
+`apps/web/src/test/msw/handlers.ts`; each test overrides the base handlers
+per case. Event-stream tests use `FakeEventStreamPort` from
+`apps/web/src/test/testPorts.ts`, injected through `<PortsProvider />`.
 
 ## 10.4 End-to-End Tests (Playwright)
 

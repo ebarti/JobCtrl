@@ -42,7 +42,6 @@ import type {
   EmployerAnalysis,
   JobCompensationAudit,
   JobCompensationSummary,
-  JobDeletedFilter,
   JobAuditEntry,
   JobDetail,
   InterviewPrep,
@@ -426,12 +425,6 @@ interface DashboardWorkRow extends Record<string, unknown> {
 }
 
 function dashboardWorkSummary(db: SqliteDatabase): DashboardSummary["work"] {
-  const empty: DashboardSummary["work"] = {
-    active: 0,
-    stuck: 0,
-    stuckAfterSeconds: DASHBOARD_STUCK_AFTER_SECONDS,
-    stuckItems: [],
-  };
   const activeFilter = jobSqlFilter(digestBaseJobQuery());
   const rows = allRows<DashboardWorkRow>(
     db,
@@ -6423,13 +6416,6 @@ function parseApplyRunTimelineEvents(value: string | null): DashboardSummary["ap
 
 // ================================================================ helpers
 
-function readJson(filePath: string, fallback: unknown): unknown {
-  try {
-    return JSON.parse(fs.readFileSync(filePath, "utf8"));
-  } catch {
-    return fallback;
-  }
-}
 
 function formatSize(size: number | null): string {
   if (size === null) return "missing file";
@@ -6537,16 +6523,4 @@ function boundedPercent(value: unknown): number | null {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
-
-function normalizeBool(value: unknown, fallback: boolean): boolean {
-  if (typeof value === "boolean") return value;
-  if (typeof value === "number") return value !== 0;
-  if (typeof value === "string") {
-    const normalized = value.trim().toLowerCase();
-    if (["1", "true", "yes", "on"].includes(normalized)) return true;
-    if (["0", "false", "no", "off"].includes(normalized)) return false;
-  }
-  return fallback;
 }

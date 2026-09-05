@@ -133,13 +133,6 @@ interface PipelineStepProjectionFold extends PipelineStepProjectionEvent {
   lastUpdatedAt: string;
 }
 const COMPENSATION_PROJECTION_VERSION = 3;
-const WORKFLOW_RUN_PROJECTION_COLUMNS: ReadonlyArray<readonly [string, string]> = [
-  ["input_summary_json", "TEXT NOT NULL DEFAULT '{}'"],
-  ["error_code", "TEXT"],
-  ["error_message", "TEXT"],
-  ["retryable", "INTEGER NOT NULL DEFAULT 0"],
-  ["temporal_run_id", "TEXT"],
-];
 const DEFAULT_MAX_ATTEMPTS: Record<string, number> = {
   discover: 1,
   enrich: 3,
@@ -1634,7 +1627,7 @@ function rebuildEvidenceUsageProjection(db: SqliteDatabase, tenantId: string): v
   const skillEntriesByName = loadProfileSkillEntries(db, tenantId, entries);
   attachResumeUsages(db, tenantId, entries);
   attachRequirementUsagesAndGaps(db, tenantId, entries, gaps);
-  attachSkillCoverageUsagesAndGaps(db, tenantId, entries, skillEntriesByName, gaps);
+  attachSkillCoverageUsagesAndGaps(db, tenantId, skillEntriesByName, gaps);
 
   const insert = db.prepare(
     `INSERT INTO evidence_usage_projections (
@@ -1954,7 +1947,6 @@ function attachRequirementUsagesAndGaps(
 function attachSkillCoverageUsagesAndGaps(
   db: SqliteDatabase,
   tenantId: string,
-  entries: Map<string, EvidenceMapEntryPayload>,
   skillEntriesByName: Map<string, EvidenceMapEntryPayload[]>,
   gaps: Map<string, EvidenceGapPayload>,
 ): void {
@@ -2711,7 +2703,7 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobId: stri
   const scoreKeywordsJson = JSON.stringify(score.keywords);
   const compensationProjection = buildCompensationProjection(db, tenantId, jobId);
 
-  const artifacts = collectArtifacts(db, tenantId, jobId, materials);
+  const artifacts = collectArtifacts(db, tenantId, jobId);
   const resume = preferredArtifactSource(
     artifacts,
     ["tailored_resume", "tailored_resume_txt"],
@@ -3255,7 +3247,6 @@ function collectArtifacts(
   db: SqliteDatabase,
   tenantId: string,
   jobId: string,
-  materials: MaterialsLatest,
 ): ArtifactRow[] {
   const out: ArtifactRow[] = [];
   const seen = new Set<string>();
@@ -3365,11 +3356,6 @@ function artifactStatusRank(status: string): number {
     default:
       return 0;
   }
-}
-
-function pdfSibling(value: string | null | undefined): string | null {
-  if (!value) return null;
-  return `${value.replace(/\.[^.]+$/, "")}.pdf`;
 }
 
 // Score bands bucket ``fit_score`` by the user-facing scoring criteria in

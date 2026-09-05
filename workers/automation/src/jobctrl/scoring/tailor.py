@@ -266,58 +266,6 @@ def _build_master_tailor_prompt(snapshot: ProfileSnapshot) -> str:
     return build_master_tailor_prompt(snapshot)
 
 
-def _mark_cover_pending_after_tailor_success(
-    conn: sqlite3.Connection,
-    job_url: str,
-    *,
-    reason: str,
-) -> None:
-    """Legacy batch-runner cover reset.
-
-    ``run_tailoring`` remains outside the canonical JobId cutover in this
-    slice. Its URL-shaped selector is kept untouched until its own bounded
-    migration; the per-job preparation entry point uses the exact helper
-    below.
-    """
-    now = utc_now()
-    metadata = json.dumps(
-        {"invalidated_at": now, "reason": reason},
-        sort_keys=True,
-    )
-    conn.execute(
-        "UPDATE jobs SET cover_letter_path = NULL, cover_letter_at = NULL, cover_attempts = 0 WHERE url = ?",
-        (job_url,),
-    )
-    conn.execute(
-        """
-        UPDATE job_stage_states
-        SET state = 'pending',
-            attempt_count = 0,
-            max_attempts = 5,
-            started_at = NULL,
-            updated_at = ?,
-            finished_at = NULL,
-            duration_ms = NULL,
-            error_code = NULL,
-            error_message = NULL,
-            retryable = 1,
-            blocked_by_json = '[]',
-            next_action = NULL,
-            metadata_json = ?
-        WHERE job_url = ? AND stage = 'cover'
-        """,
-        (now, metadata, job_url),
-    )
-    record_job_event(
-        conn,
-        job_url,
-        "cover",
-        "StageReset",
-        message="Cover stage reset after tailored resume generation",
-        payload={"reason": reason},
-    )
-
-
 def _mark_cover_pending_after_tailor_success_by_id(
     conn: sqlite3.Connection,
     job_id: JobId,

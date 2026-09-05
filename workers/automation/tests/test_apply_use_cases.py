@@ -430,9 +430,9 @@ def test_execute_keeps_reviewed_materials_outside_agent_worker(
     apply_workers = tmp_path / "apply-workers"
 
     monkeypatch.setattr(chrome_mod.config, "APPLY_WORKER_DIR", apply_workers)
-    monkeypatch.setattr("jobctrl.apply.prompt.config.load_env", lambda: None)
+    monkeypatch.setattr("jobctrl.config.load_env", lambda: None)
     monkeypatch.setattr(
-        "jobctrl.apply.prompt.config.gmail_mcp_auth_status",
+        "jobctrl.config.gmail_mcp_auth_status",
         lambda: (False, "missing OAuth client at /tmp/.jobctrl/gmail/oauth-client.json"),
     )
 
