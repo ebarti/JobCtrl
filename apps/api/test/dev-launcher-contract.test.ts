@@ -1,6 +1,7 @@
 import { execFileSync, spawn, type ChildProcessByStdio } from "node:child_process";
 import {
   chmodSync,
+  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -13,10 +14,18 @@ import { join } from "node:path";
 import type { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
-const devScript = join(repoRoot, "scripts/dev");
+const sourceDevScript = join(repoRoot, "scripts/dev");
+
+function fixtureDevScript(tempDir: string): string {
+  const script = join(tempDir, "repo", "scripts", "dev");
+  mkdirSync(join(tempDir, "repo", "scripts"), { recursive: true });
+  copyFileSync(sourceDevScript, script);
+  chmodSync(script, 0o755);
+  return script;
+}
 type DevLauncherProcess = ChildProcessByStdio<null, Readable, Readable>;
 
 function waitForOutput(child: DevLauncherProcess, text: string): Promise<void> {
@@ -134,16 +143,46 @@ function processExists(pid: number): boolean {
 }
 
 function devScriptEnv(devDir: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  const home = extra.HOME ?? join(devDir, "home");
+  const appDir = "JOBCTRL_DIR" in extra ? extra.JOBCTRL_DIR ?? join(home, ".jobctrl") : join(devDir, "app");
+  const tempDir = join(devDir, "tmp");
+  mkdirSync(tempDir, { recursive: true });
   return {
-    ...process.env,
-    HOME: join(devDir, "home"),
-    JOBCTRL_DIR: join(devDir, "app"),
+    PATH: process.env.PATH,
+    LANG: "C.UTF-8",
+    HOME: home,
+    JOBCTRL_DIR: appDir,
+    JOBCTRL_DB_PATH: join(appDir, "jobctrl.db"),
+    JOBCTRL_CONFIG_PATH: join(appDir, "config.json"),
     JOBCTRL_DEV_DIR: devDir,
+    JOBCTRL_USER_ENV_PATH: join(home, "JobCtrl", ".env"),
+    TMPDIR: tempDir,
+    TMP: tempDir,
+    TEMP: tempDir,
     ...extra,
   };
 }
 
 describe("dev launcher contract", () => {
+  it("does not forward ambient env-source or database overrides to launcher fixtures", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "jobctrl-dev-launcher-"));
+    const devDir = join(tempDir, "dev-state");
+    try {
+      vi.stubEnv("BASH_ENV", join(tempDir, "ambient-shell.env"));
+      vi.stubEnv("JOBCTRL_USER_ENV_PATH", join(tempDir, "ambient-user.env"));
+      vi.stubEnv("JOBCTRL_DB_PATH", join(tempDir, "ambient.db"));
+      vi.stubEnv("JOBCTRL_CONFIG_PATH", join(tempDir, "ambient-config.json"));
+      const env = devScriptEnv(devDir);
+      expect(env.BASH_ENV).toBeUndefined();
+      expect(env.JOBCTRL_USER_ENV_PATH).toBe(join(devDir, "home", "JobCtrl", ".env"));
+      expect(env.JOBCTRL_DB_PATH).toBe(join(devDir, "app", "jobctrl.db"));
+      expect(env.JOBCTRL_CONFIG_PATH).toBe(join(devDir, "app", "config.json"));
+    } finally {
+      vi.unstubAllEnvs();
+      rmSync(tempDir, { force: true, recursive: true });
+    }
+  });
+
   it("keeps the documented default dev command attached", () => {
     const packageJson = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8")) as {
       scripts: Record<string, string>;
@@ -155,10 +194,11 @@ describe("dev launcher contract", () => {
 
   it("advertises foreground run mode and a direct web port override", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "jobctrl-dev-launcher-"));
+    const devScript = fixtureDevScript(tempDir);
     const env = devScriptEnv(join(tempDir, "dev-state"));
 
     try {
-      execFileSync("bash", ["-n", devScript], { cwd: repoRoot });
+      execFileSync("bash", ["-n", devScript], { cwd: repoRoot, env });
 
       const help = execFileSync(devScript, ["help"], { cwd: repoRoot, encoding: "utf8", env });
       expect(help).toContain("scripts/dev run [name...]");
@@ -175,6 +215,7 @@ describe("dev launcher contract", () => {
 
   it("reports worker heartbeat health in status output", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "jobctrl-dev-launcher-"));
+    const devScript = fixtureDevScript(tempDir);
     const devDir = join(tempDir, "dev-state");
     const pidDir = join(devDir, "pids");
 
@@ -207,6 +248,7 @@ echo '{"worker":{"status":"stale"}}'
 
   it("reports status without inspecting legacy default workspaces", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "jobctrl-dev-launcher-"));
+    const devScript = fixtureDevScript(tempDir);
     const home = join(tempDir, "home");
     const devDir = join(tempDir, "dev-state");
     const legacyDirname = ".job" + "ctl";
@@ -218,11 +260,7 @@ echo '{"worker":{"status":"stale"}}'
       const output = execFileSync(devScript, ["status"], {
         cwd: repoRoot,
         encoding: "utf8",
-        env: {
-          ...process.env,
-          HOME: home,
-          JOBCTRL_DEV_DIR: devDir,
-        },
+        env: devScriptEnv(devDir, { HOME: home, JOBCTRL_DIR: undefined }),
       });
 
       expect(output).toContain("NAME");
@@ -236,6 +274,7 @@ echo '{"worker":{"status":"stale"}}'
 
   it("starts without migrating or rejecting legacy default workspaces", async () => {
     const tempDir = mkdtempSync(join(tmpdir(), "jobctrl-dev-launcher-"));
+    const devScript = fixtureDevScript(tempDir);
     const home = join(tempDir, "home");
     const devDir = join(tempDir, "dev-state");
     const callsLog = join(tempDir, "calls.log");
@@ -257,15 +296,13 @@ while true; do sleep 1; done
       );
       chmodSync(join(tempDir, "pnpm"), 0o755);
 
-      env = {
-        ...process.env,
+      env = devScriptEnv(devDir, {
         HOME: home,
         PATH: `${tempDir}:${process.env.PATH ?? ""}`,
-        JOBCTRL_DEV_DIR: devDir,
         JOBCTRL_DIR: undefined,
         JOBCTRL_STOP_WAIT_TICKS: "10",
         JOBCTRL_STOP_WAIT_INTERVAL_SECONDS: "0.05",
-      };
+      });
 
       const output = execFileSync(devScript, ["start", "api"], {
         cwd: repoRoot,
@@ -299,6 +336,7 @@ while true; do sleep 1; done
 
   it("replaces a tracked process before starting a fresh detached process", async () => {
     const tempDir = mkdtempSync(join(tmpdir(), "jobctrl-dev-launcher-"));
+    const devScript = fixtureDevScript(tempDir);
     const devDir = join(tempDir, "dev-state");
     const callsLog = join(tempDir, "calls.log");
     const pidFile = join(devDir, "pids/api.pid");
@@ -352,6 +390,7 @@ while true; do sleep 1; done
 
   it("prints the actual Vite binding observed from detached web logs", async () => {
     const tempDir = mkdtempSync(join(tmpdir(), "jobctrl-dev-launcher-"));
+    const devScript = fixtureDevScript(tempDir);
     const devDir = join(tempDir, "dev-state");
     const callsLog = join(tempDir, "calls.log");
     const pidFile = join(devDir, "pids/web.pid");
@@ -407,6 +446,7 @@ while true; do sleep 1; done
 
   it("loads user-local frontend env before starting the web process", async () => {
     const tempDir = mkdtempSync(join(tmpdir(), "jobctrl-dev-launcher-"));
+    const devScript = fixtureDevScript(tempDir);
     const devDir = join(tempDir, "dev-state");
     const callsLog = join(tempDir, "calls.log");
     const pidFile = join(devDir, "pids/web.pid");
@@ -459,6 +499,7 @@ while true; do sleep 1; done
 
   it("runs attached processes and cleans PID files on termination", async () => {
     const tempDir = mkdtempSync(join(tmpdir(), "jobctrl-dev-launcher-"));
+    const devScript = fixtureDevScript(tempDir);
     const devDir = join(tempDir, "dev-state");
     const callsLog = join(tempDir, "calls.log");
     const childPidFile = join(tempDir, "child.pid");
@@ -489,15 +530,11 @@ while true; do sleep 1; done
 
       const runningChild: DevLauncherProcess = spawn(devScript, ["run", "--", "api"], {
         cwd: repoRoot,
-        env: {
-          ...process.env,
-          HOME: join(devDir, "home"),
-          JOBCTRL_DIR: join(devDir, "app"),
+        env: devScriptEnv(devDir, {
           PATH: `${tempDir}:${process.env.PATH ?? ""}`,
-          JOBCTRL_DEV_DIR: devDir,
           JOBCTRL_STOP_WAIT_TICKS: "2",
           JOBCTRL_STOP_WAIT_INTERVAL_SECONDS: "0.05",
-        },
+        }),
         stdio: ["ignore", "pipe", "pipe"],
       });
       child = runningChild;
@@ -534,6 +571,7 @@ while true; do sleep 1; done
 
   it("starts Temporal with a persistent dev-store filename", async () => {
     const tempDir = mkdtempSync(join(tmpdir(), "jobctrl-dev-launcher-"));
+    const devScript = fixtureDevScript(tempDir);
     const devDir = join(tempDir, "dev-state");
     const callsLog = join(tempDir, "calls.log");
     const pidFile = join(devDir, "pids/temporal.pid");
