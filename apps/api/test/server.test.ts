@@ -118,6 +118,17 @@ beforeEach(() => {
   options = {
     dbPath: path.join(tempDir, "jobctrl.db"),
     configPath: path.join(tempDir, "config.json"),
+    providerDispatcher: {
+      call: vi.fn(async (method) => {
+        if (method !== "browser_capabilities_list") throw new Error(`Unexpected provider RPC in API fixture: ${method}`);
+        return { jsonrpc: "2.0" as const, id: 1, result: { capabilities: [], detectedBrowsers: [] } };
+      }),
+      close: vi.fn(async () => undefined),
+    },
+    pythonRuntime: {
+      id: "api-fixture-deny-python",
+      resolve: () => { throw new Error("Python execution is outside the API fixture"); },
+    },
     actionDispatcher: vi.fn(async (): Promise<ActionDispatchResult> => ({ status: "queued", runId: "run-profile-retailor" })),
     resumePdfRenderer: async ({ htmlPath, pdfPath }) => {
       fs.writeFileSync(pdfPath, `%PDF-1.4 rendered\n${fs.readFileSync(htmlPath, "utf8")}`);

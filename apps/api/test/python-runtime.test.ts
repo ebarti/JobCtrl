@@ -97,16 +97,28 @@ describe("Python runtime command resolution", () => {
       fs.mkdirSync(playwrightSite, { recursive: true });
       fs.mkdirSync(ambientSite, { recursive: true });
 
-      const sourcePython = execFileSync("python3", ["-c", "import sys; print(sys.executable)"], {
-        encoding: "utf8",
+      const setupHome = path.join(tempDir, "setup-home");
+      fs.mkdirSync(setupHome);
+      const setupEnv = {
+        PATH: process.env.PATH, HOME: setupHome, TMPDIR: tempDir, TMP: tempDir, TEMP: tempDir,
+        LANG: "C.UTF-8", PYTHON_DOTENV_DISABLED: "1",
+      };
+      const sourcePython = execFileSync("python3", ["-I", "-B", "-c", "import sys; print(sys.executable)"], {
+        encoding: "utf8", cwd: tempDir, env: setupEnv,
       }).trim();
-      execFileSync(sourcePython, ["-m", "venv", "--without-pip", pythonRoot]);
+      execFileSync(sourcePython, ["-I", "-B", "-m", "venv", "--without-pip", pythonRoot], {
+        cwd: tempDir, env: setupEnv,
+      });
       const bundledPython = path.join(pythonRoot, "bin", "python3");
       const systemSite = execFileSync(
         bundledPython,
-        ["-I", "-c", "import site; print(site.getsitepackages()[0])"],
-        { encoding: "utf8" },
+        ["-I", "-B", "-c", "import site; print(site.getsitepackages()[0])"],
+        { encoding: "utf8", cwd: tempDir, env: setupEnv },
       ).trim();
+      const relativeSite = path.relative(fs.realpathSync(pythonRoot), fs.realpathSync(systemSite));
+      if (!relativeSite || relativeSite.startsWith("..") || path.isAbsolute(relativeSite)) {
+        throw new Error("Fixture site-packages escaped its owned venv");
+      }
       fs.writeFileSync(
         path.join(systemSite, "jobctrl-payload.pth"),
         "../../../../worker/site-packages\n../../../../playwright-python/site-packages\n",

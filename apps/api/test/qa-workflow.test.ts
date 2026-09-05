@@ -8,6 +8,7 @@ import type {
 import { CredentialKeys } from "@jobctrl/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { ActionDispatcher } from "../src/local-actions.js";
 import type { CredentialStore } from "../src/credentials.js";
 import { buildApp, type BuildAppOptions } from "../src/server.js";
 import {
@@ -22,12 +23,23 @@ const LOOPBACK_HEADERS = { origin: "http://127.0.0.1:5173" };
 
 let workspace: QaWorkspace;
 let options: BuildAppOptions;
+let actionDispatcher: ReturnType<typeof vi.fn<ActionDispatcher>>;
 
 beforeEach(() => {
   workspace = createQaWorkspace();
+  actionDispatcher = vi.fn<ActionDispatcher>(async () => ({ status: "queued", runId: "qa-profile-preparation" }));
   options = {
     dbPath: workspace.dbPath,
     configPath: workspace.configPath,
+    actionDispatcher,
+    providerDispatcher: {
+      call: vi.fn(async () => { throw new Error("Provider RPC is outside the seeded QA fixture"); }),
+      close: vi.fn(async () => undefined),
+    },
+    pythonRuntime: {
+      id: "seeded-qa-fixture-deny-python",
+      resolve: () => { throw new Error("Python execution is outside the seeded QA fixture"); },
+    },
     profilePreviewRenderer: async () => ({
       pdfBytes: Buffer.from("%PDF-1.4\n% QA preview\n"),
       htmlText: '<main class="resume-page">QA preview</main>',
@@ -237,6 +249,10 @@ describe("seeded local QA workflow", () => {
     const profileAfterUpdate = await app.inject({ method: "GET", url: "/v1/profile" });
     expect(profileAfterUpdate.statusCode, profileAfterUpdate.body).toBe(200);
     expect(profileAfterUpdate.json().profile.personal.full_name).toBe("John Doe Edited");
+    await vi.waitFor(() => expect(actionDispatcher).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "run_stage", stages: ["score", "tailor", "cover"] }),
+      expect.objectContaining({ dbPath: workspace.dbPath }),
+    ));
 
     const preview = await app.inject({ method: "GET", url: "/v1/profile/preview.pdf" });
     expect(preview.statusCode, preview.body).toBe(200);

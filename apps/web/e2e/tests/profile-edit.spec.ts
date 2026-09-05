@@ -550,10 +550,17 @@ test.describe("structured profile persistence", () => {
     const editor = page.getByRole("textbox", { name: "Baseline resume editor editor" });
     const bullet = editor.locator('[data-resume-layout-target="experience:structured-first:bullet:1"]');
     await expect(bullet).toContainText("Built 10 synthetic systems.");
-    await bullet.click();
-    await editor.press("End");
-    await editor.press("Backspace");
-    await editor.pressSequentially("; revised 12x.");
+    // Click actual text rather than the full-width line container, then keep
+    // keyboard input on that selection instead of refocusing the editor root.
+    await bullet.locator('[data-slate-string="true"]').click();
+    await expect(editor).toBeFocused();
+    await expect.poll(() => bullet.evaluate((element) => {
+      const selection = window.getSelection();
+      return Boolean(selection && element.contains(selection.anchorNode) && element.contains(selection.focusNode));
+    })).toBe(true);
+    await page.keyboard.press("End");
+    await page.keyboard.press("Backspace");
+    await page.keyboard.type("; revised 12x.");
     await expect(bullet).toContainText("Built 10 synthetic systems; revised 12x.");
     await page.getByRole("button", { name: "Profile data", exact: true }).click();
     await expect(page.getByLabel("Full name", { exact: true })).toHaveValue("Structured Saved Candidate");
