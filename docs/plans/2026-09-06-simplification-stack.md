@@ -351,7 +351,7 @@ Update this table with actual results; do not mark proposals implemented.
 
 | Phase | PR and head | Deleted mechanism | Tests and product proof | Review / QA |
 | --- | --- | --- | --- | --- |
-| 1 | Publication pending | View-owned five-snapshot draft selector and reply merger removed; cache mutation publication reconciles saved state | Focused web regression, type/build, Storybook build and docs checks pass; isolated browser race/a11y fixture ready | Independent review and product QA pending |
+| 1 | [#865](https://github.com/ebarti/JobCtrl/pull/865); implementation `6d6f28a18` | View-owned five-snapshot draft selector and reply merger removed; cache mutation publication reconciles saved state | 79 focused web tests, 13 type tests, web/API checks, web/Storybook/docs builds pass; isolated browser race/a11y fixture ready | Independent review and product QA pending |
 | 2 | Pending | Pending | Pending | Pending |
 | 3 | Pending | Pending | Pending | Pending |
 | 4 | Pending | Pending | Pending | Pending |
