@@ -107,6 +107,25 @@ order preserve the saved sequence. Apply **Sort newest first** and verify it
 restores current/latest roles first. A role with a summary but no bullets must
 not render an empty list or the full bullet-bearing entry gap.
 
+For saved review-draft reconciliation, run the artifact-comparison browser
+fixture with controlled response ordering: save A, type B, receive A; then
+render a saved revision before releasing an older comment-seed snapshot.
+Verify B remains editable/dirty, focus remains in Plate, rendering stays gated
+until the later edit is saved, and the rendered revision/comparison do not
+regress. Focused mutation fixtures also cover draft replacement with restarted
+revision numbering, independent replies/feedback, and tenant/job switches.
+
+The isolated browser mode (`JOBCTRL_E2E_ISOLATED=1`) uses the test-only API
+entry point with synthetic capability/credential responses and denied provider
+subprocesses. It requires `JOBCTRL_DOCS_SCREENSHOTS=1`, the existing owned
+screenshot-directory marker, and matching contained app/database/config/state/
+temporary paths before setup, API construction and teardown. Use the existing
+`createOwnedDocsScreenshotDirectory` and `createDocsScreenshotEnvironment`
+helpers with fresh ports; isolate telemetry and dotenv loading in the child
+environment. This mode never reuses a listening server. It retains real seeded
+API/SQLite reads and writes; browser responses can control only the feature
+requests needed by an individual race fixture.
+
 ## Pick The Right Checklist
 
 | You changed… | Use |

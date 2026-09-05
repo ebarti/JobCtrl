@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { checkA11y, injectAxe } from "axe-playwright";
 
 import {
   makeArtifactDetail,
@@ -10,6 +11,11 @@ import {
   sampleDraftResumeArtifact,
   sampleResumeTemplateListResponse,
 } from "../../src/test/fixtures/projections.js";
+
+test.beforeEach(async ({ context, baseURL }) => {
+  const allowed = new Set([new URL(baseURL!).origin, `http://127.0.0.1:${process.env["JOBCTRL_E2E_API_PORT"] ?? "8767"}`]);
+  await context.route("**/*", (route) => allowed.has(new URL(route.request().url()).origin) ? route.continue() : route.abort("blockedbyclient"));
+});
 
 const jobKey = sampleApplyReviewQueue.items[0]!.jobKey;
 const acceptedArtifact = {
@@ -215,6 +221,8 @@ test("apply review compares accepted artifact with rendered draft artifact", asy
   await expect(
     page.getByRole("region", { name: "Tailored resume preview" }),
   ).toBeVisible();
+  await injectAxe(page);
+  await checkA11y(page, ".apply-review-resume-review", { includedImpacts: ["critical", "serious"] });
 });
 
 test("artifact full-page detail compares same-job generated artifacts", async ({
@@ -248,4 +256,60 @@ test("artifact full-page detail compares same-job generated artifacts", async ({
   await expect(comparison).toContainText("+declared");
   await expect(comparison).toContainText("declared lost");
   await expect(comparison).toContainText("gcp");
+});
+
+test("late saved snapshot preserves newer typing and keeps rendering gated", async ({ page }) => {
+  await installArtifactComparisonRoutes(page);
+  let acknowledge!: () => void;
+  let savedText = "";
+  let savedDraft = draft;
+  await page.route("**/v1/resume-review/drafts/*/revisions", async (route) => {
+    const body = route.request().postDataJSON();
+    savedText = body.editedText;
+    await new Promise<void>((resolve) => { acknowledge = resolve; });
+    savedDraft = {
+      ...draft,
+      currentRevisionId: "revision-2",
+      latestRevisionNumber: 2,
+      latestRevision: { ...draft.latestRevision, revisionId: "revision-2", revisionNumber: 2,
+        editedText: body.editedText, plateDocument: body.plateDocument },
+    };
+    await route.fulfill({ json: { ok: true, draft: savedDraft, revision: savedDraft.latestRevision } });
+  });
+  await page.goto("/apply-review");
+  const editor = page.getByRole("textbox", { name: "Tailored resume preview editor" });
+  await expect(editor).toBeVisible();
+  await editor.click();
+  await editor.press("ControlOrMeta+End");
+  await editor.pressSequentially(" snapshotA");
+  await expect(page.getByRole("button", { name: "Save draft" })).toBeEnabled();
+  await page.getByRole("button", { name: "Save draft" }).click();
+  await expect.poll(() => Boolean(acknowledge)).toBe(true);
+  await editor.click();
+  await editor.press("ControlOrMeta+End");
+  await editor.pressSequentially(" laterB");
+  acknowledge();
+  await expect(page.getByText("unsaved changes", { exact: true })).toBeVisible();
+  await expect(editor).toContainText("laterB");
+  await expect(editor).toBeFocused();
+  expect(savedText).toContain("snapshotA");
+  expect(savedText).not.toContain("laterB");
+  await expect(page.getByRole("button", { name: "Save draft" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Render replacement" })).toBeDisabled();
+});
+
+test("a delayed seed snapshot cannot replace a rendered saved revision", async ({ page }) => {
+  await installArtifactComparisonRoutes(page);
+  let finishSeed!: () => void;
+  await page.route("**/v1/resume-review/drafts/*/comment-threads", async (route) => {
+    await new Promise<void>((resolve) => { finishSeed = resolve; });
+    await route.fulfill({ json: { ok: true, draft, commentThreads: draft.commentThreads, seededCount: 1, updatedCount: 0 } });
+  });
+  await page.goto("/apply-review");
+  await expect.poll(() => Boolean(finishSeed)).toBe(true);
+  await page.getByRole("button", { name: "Render replacement" }).click();
+  await expect(page.getByText("replacement rendered", { exact: true })).toBeVisible();
+  finishSeed();
+  await expect(page.getByText("replacement rendered", { exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Artifact comparison" })).toContainText("+covered");
 });
