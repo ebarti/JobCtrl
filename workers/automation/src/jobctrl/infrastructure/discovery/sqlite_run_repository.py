@@ -6,7 +6,6 @@ import json
 import sqlite3
 from typing import Any
 
-from jobctrl.database import ensure_discovery_run_tables
 from jobctrl.domain.discovery.scheduler import (
     DiscoveryProviderProgress,
     DiscoveryRun,
@@ -20,7 +19,6 @@ from jobctrl.domain.tenant import TenantId
 class SqliteDiscoveryRunRepository:
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._conn = conn
-        ensure_discovery_run_tables(conn)
 
     def save(self, run: DiscoveryRun) -> None:
         self._conn.execute(

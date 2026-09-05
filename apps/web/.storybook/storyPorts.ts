@@ -1,6 +1,6 @@
 import { LOCAL_TENANT } from "@jobctrl/domain-types";
 
-import { FetchApiClientAdapter } from "../src/shared/adapters/local/FetchApiClientAdapter.js";
+import { JobCtrlApiClient } from "@jobctrl/api-client";
 import { BrowserPdfExportAdapter } from "../src/shared/adapters/local/BrowserPdfExportAdapter.js";
 import type {
   ClipboardPort,
@@ -129,7 +129,7 @@ class StoryFeatureFlagPort implements FeatureFlagPort {
 
 export function buildStoryPorts(): Ports {
   return {
-    api: new FetchApiClientAdapter(),
+    api: new JobCtrlApiClient(),
     eventStream: new StoryEventStreamPort(),
     storage: new InMemoryStoragePort(),
     session: new StorySessionPort(),

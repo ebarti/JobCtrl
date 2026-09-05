@@ -130,7 +130,7 @@ hitting the network and gives a clear seam for cloud evolution.
 
 | Port | Purpose | Local-mode adapter | Hosted-mode adapter (named, not built) |
 |---|---|---|---|
-| `ApiClientPort` | HTTP requests against `apps/api` | `FetchApiClientAdapter` (wraps `@jobctrl/api-client`) | Same adapter; baseUrl from env, JWT auth header injected by `AuthInterceptor` |
+| `ApiClientPort` | HTTP requests against `apps/api` | `JobCtrlApiClient` from `@jobctrl/api-client` | Transport with hosted authentication when implemented |
 | `EventStreamPort` | Subscribe to a stream of `DomainEvent`s | `SseEventStreamAdapter` (`new EventSource(...)`) | `WebSocketEventStreamAdapter` (if SSE proves limiting at scale) or same SSE adapter behind CDN with edge buffering |
 | `StoragePort` | Persist client preferences and wizard drafts | `LocalStorageAdapter` (browser `localStorage`) | `IndexedDbAdapter` (when client-side cache exceeds 5 MB) |
 | `SessionPort` | Resolve `TenantId` and `UserId` for the current request | `LocalSessionAdapter` (returns `LOCAL_TENANT` + a stub user) | `JwtSessionAdapter` (Auth0 / Cognito; reads JWT, exposes `useSession()`) |
@@ -166,11 +166,11 @@ export function PortsProvider({ children, ports }: ...) { /* ... */ }
 export function usePorts(): Ports { /* throws if missing */ }
 ```
 
-Concrete adapters are constructed in `main.tsx`:
+Concrete adapters are constructed in `demo/portFactory.ts`, selected by `main.tsx`:
 
 ```ts
-const api = new FetchApiClientAdapter(import.meta.env.VITE_JOBCTRL_API_BASE_URL);
-const eventStream = new SseEventStreamAdapter(api);
+const api = new JobCtrlApiClient(apiBaseUrl);
+const eventStream = new SseEventStreamAdapter(apiBaseUrl);
 const storage = new LocalStorageAdapter("jh:");
 const session = new LocalSessionAdapter();
 // ...
@@ -185,12 +185,12 @@ In tests, `PortsProvider` accepts mocks. Components depend on the port
 export interface ApiClientPort {
   jobs(query?: Partial<JobListQuery>): Promise<PaginatedResponse<JobSummary>>;
   job(jobKey: string): Promise<JobDetail>;
-  // ... one method per api-client method (~90 today)
+  // ... the capabilities consumed by the frontend
 }
 ```
 
-`ApiClientPort` has grown to roughly ninety methods spanning the full API
-surface: read (`dashboardSummary`, `jobs`/`job`, `artifacts`/`artifact`,
+`ApiClientPort` spans the API surface: read (`dashboardSummary`,
+`jobs`/`job`, `artifacts`/`artifact`,
 `activity`, `workflowRuns`/`workflowRun`, `applyReviewQueue`,
 `applicationOutcomes`, `health`), job lifecycle (delete/hide/restore/
 permanent-delete + bulk), discovery-source administration, scoring
@@ -204,20 +204,12 @@ promises. LLM spend/budget is not a dedicated method; it rides on
 `health()` (`ApiHealthResponse.llmSpend`). Methods take `jobKey: string`,
 not a branded `JobId` (see R13).
 
-The `FetchApiClientAdapter` delegates to the existing `JobCtrlApiClient`
-from `@jobctrl/api-client`. The reason we still have a port wrapping it:
-
-1. **Test seam.** Without a port, every test that needs to fake the API
-   has to install MSW handlers (slower, more setup). With a port, tests
-   pass a mock adapter to `<PortsProvider />`. MSW remains the integration-
-   test default; the port enables faster unit tests.
-2. **Hosted-mode auth interceptor.** When auth ships, the adapter wraps
-   the underlying client with a request interceptor that adds
-   `Authorization: Bearer <jwt>`. Without the port, every component that
-   calls `apiClient.x()` would need to know about the interceptor.
-3. **Tenant prefix.** The hosted adapter can inject `X-Tenant-Id` header
-   (or assert that the JWT's tenant claim matches the request) without
-   feature code being aware.
+`JobCtrlApiClient` already satisfies `ApiClientPort` and is bound directly.
+The interface provides the test and demo seam: tests can inject mocks into
+`PortsProvider`, and demo mode supplies `DemoApiClientAdapter`. A forwarding
+class adds no boundary or behavior. Future authentication belongs in the
+selected transport; it does not require a second implementation of every
+client method today.
 
 ### 6.4 `EventStreamPort` Detail
 

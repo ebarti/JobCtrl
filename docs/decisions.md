@@ -477,6 +477,11 @@ The TanStack and Tailwind decisions remain accepted.
 
 Status: accepted
 
+Amended (2026-09-05): `JobCtrlApiClient` satisfies `ApiClientPort` directly.
+The forwarding `FetchApiClientAdapter` has been removed; the interface and
+local/demo composition retain the test and replacement boundary. Future
+authentication does not justify forwarding every client method today.
+
 Decision: the frontend ships its own hexagonal architecture. Components and
 feature hooks depend only on **port interfaces**; concrete adapters bind in
 `shared/providers/PortsProvider.tsx`. Eight ports are named, with the
@@ -485,7 +490,7 @@ adapter named-not-built per the cloud-evolution path:
 
 | Port              | Local-mode adapter                             | Hosted-mode adapter (named)                              |
 | ----------------- | ---------------------------------------------- | -------------------------------------------------------- |
-| `ApiClientPort`   | `FetchApiClientAdapter`                        | Same adapter; JWT injected by hosted `AuthInterceptor`.  |
+| `ApiClientPort`   | `JobCtrlApiClient`                             | Transport with hosted authentication when implemented.  |
 | `EventStreamPort` | `SseEventStreamAdapter`                        | `WebSocketEventStreamAdapter`.                           |
 | `StoragePort`     | `LocalStorageAdapter`                          | `IndexedDbAdapter`.                                      |
 | `SessionPort`     | `LocalSessionAdapter` (returns `LOCAL_TENANT`) | `JwtSessionAdapter` (Auth0 / Cognito).                   |

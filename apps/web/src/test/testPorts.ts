@@ -1,7 +1,7 @@
 import { LOCAL_TENANT } from "@jobctrl/domain-types";
 import { vi } from "vitest";
 
-import { FetchApiClientAdapter } from "../shared/adapters/local/FetchApiClientAdapter.js";
+import { JobCtrlApiClient } from "@jobctrl/api-client";
 import type {
   ClipboardPort,
   DomainEventEnvelope,
@@ -198,7 +198,7 @@ export interface BuildTestPortsOptions {
 }
 
 export function buildTestPorts(overrides: BuildTestPortsOptions = {}): Ports {
-  const baseApi = new FetchApiClientAdapter();
+  const baseApi = new JobCtrlApiClient();
   const templateApiDefaults: Partial<Ports["api"]> = {
     artifacts: vi.fn(async () => makeArtifactsPage()),
     artifact: vi.fn(async (artifactId: string) =>

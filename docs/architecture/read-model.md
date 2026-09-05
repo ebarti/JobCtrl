@@ -130,16 +130,32 @@ scan API response.
 
 ## Cross-Runtime Consistency
 
-Python's `ProjectionBuilder` and TypeScript's `refreshProjections` consume new
-`job_events` rows after the shared
-`event_watermarks.operations_projections` watermark. Each rebuilds from
-canonical aggregate state and advances the watermark in the same transaction.
-SQLite serializes concurrent advances.
+Python's `ProjectionBuilder` and TypeScript's `refreshProjections` consume their
+tenant's `job_events` using independent `operations_projections:python:<tenant>`
+and `operations_projections:typescript:<tenant>` cursors in `event_watermarks`.
+Each reads canonical state, rebuilds projections, and advances its cursor in
+one transaction. SQLite serializes standalone passes from the initial snapshot
+read; nested passes preserve the caller's transaction. The
+[consistency contract](data-events-and-projections.md#projection-ownership-and-consistency)
+owns replay and failure recovery.
 
 Both runtimes emit the same JSON shapes. Shared parity fixtures guard the
 dual-written job, contact, research, outreach, follow-up, compensation, and
 audit projections. That makes a one-sided column or shape change a test failure
 instead of a client surprise.
+
+With both development toolchains installed, the disposable mixed-runtime
+fixture exercises the real builders in both orders, recovers existing open
+run rows whose terminal events are behind the legacy cursor, and verifies
+repeated refreshes:
+
+```bash
+uv --project workers/automation run --no-sync --locked python \
+  workers/automation/tests/projection_cross_runtime_fixture.py
+```
+
+The ordinary per-language suites cover tenant isolation and transaction
+rollback without requiring the other runtime's installed dependencies.
 
 ## Pipeline Operations Read Model
 

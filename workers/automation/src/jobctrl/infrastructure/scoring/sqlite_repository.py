@@ -18,7 +18,6 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any, Final
 
-from jobctrl.database import ensure_scoring_policy_tables
 from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.scoring.aggregate import JobScore, ScoreStaleMarker
 from jobctrl.domain.scoring.policy import CorrectionSignal, ScoringPolicy
@@ -724,7 +723,6 @@ class SqliteScoringPolicyRepository:
 
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._conn = conn
-        ensure_scoring_policy_tables(conn)
 
     def get_current(self, tenant_id: TenantId) -> ScoringPolicy:
         row = self._conn.execute(

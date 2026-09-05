@@ -254,7 +254,11 @@ function seedExactV7DeleteGraph(db: Database.Database): void {
   db.prepare(`INSERT INTO evidence_usage_projections (tenant_id, projection_kind, projection_id, title, payload_json)
               VALUES ('local', 'entry', 'stale-target', 'stale target', '{}'), (?, 'entry', 'other-evidence', 'other evidence', '{}')`).run(OTHER_TENANT);
   db.prepare(`INSERT INTO dashboard_projections (tenant_id, total_jobs, generated_at) VALUES ('local', 2, ?), (?, 1, ?)`).run(NOW, OTHER_TENANT, NOW);
-  db.prepare(`INSERT INTO event_watermarks (projection_name, last_event_id, updated_at) VALUES ('operations_projections', 999, ?)`).run(NOW);
+  for (const projectionName of [
+    "operations_projections", "operations_projections:python:local", "operations_projections:typescript:local",
+  ]) {
+    db.prepare(`INSERT INTO event_watermarks (projection_name, last_event_id, updated_at) VALUES (?, 999, ?)`).run(projectionName, NOW);
+  }
 }
 
 describe("exact-v7 permanent job deletion", () => {
@@ -356,9 +360,13 @@ describe("exact-v7 permanent job deletion", () => {
 
     expect(db.prepare("SELECT total_jobs FROM dashboard_projections WHERE tenant_id = 'local'").get()).toEqual({ total_jobs: 1 });
     expect(countRows(db, "evidence_usage_projections", "tenant_id = 'local'")).toBe(0);
-    expect(rowSnapshot(db, "event_watermarks", "projection_name = 'operations_projections'")).toEqual([
-      expect.objectContaining({ last_event_id: 999 }),
-    ]);
+    for (const projectionName of [
+      "operations_projections", "operations_projections:python:local", "operations_projections:typescript:local",
+    ]) {
+      expect(rowSnapshot(db, "event_watermarks", "projection_name = ?", [projectionName])).toEqual([
+        expect.objectContaining({ last_event_id: 999, updated_at: NOW }),
+      ]);
+    }
     expect(db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     expect(schemaManifest(db, EXACT_V9_SCHEMA_MANIFEST.version)).toEqual(manifestBefore);
 

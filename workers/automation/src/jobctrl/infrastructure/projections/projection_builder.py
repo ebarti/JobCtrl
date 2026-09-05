@@ -24,8 +24,8 @@ authoritative aggregate tables for each dirty job, which means
 
 Watermark semantics (``event_watermarks`` table from Phase 3 / S-10):
 the builder reads ``last_event_id`` for the
-``operations_projections`` projection name, processes every newer
-``job_events`` row, and advances the watermark in the same
+``operations_projections:python:<tenant>`` projection name, processes every
+newer ``job_events`` row for that tenant, and advances the watermark in the same
 transaction.  On startup the projection tables may be empty AND the
 watermark zero — we handle that by force-marking every existing
 ``jobs`` row as dirty so the initial backfill catches pre-event-history
@@ -76,7 +76,6 @@ from jobctrl.infrastructure.projections.location_normalization import (
 )
 from jobctrl.infrastructure.projections.sqlite_projection_store import (
     SqliteProjectionStore,
-    ensure_projection_tables,
 )
 from jobctrl.infrastructure.projections.source_quality import (
     SOURCE_QUALITY_EVENT_TYPES,
@@ -784,20 +783,15 @@ class ProjectionBuilder:
         # that thread.  This is necessary because the wildcard
         # subscriber fires on whatever thread published the event.
         self._local = threading.local()
-        # Schema setup runs once on construction.  We pull a connection
-        # from the factory and intentionally do **not** close it: when
-        # the factory returns a thread-local cached handle (production)
-        # or a shared test handle (``lambda: conn``), closing here would
-        # break subsequent callers.  The factory is the right place to
-        # own connection lifetime.
-        boot_conn = conn_factory()
-        ensure_projection_tables(boot_conn)
-        boot_conn.commit()
+        # Exact-schema initialization/admission and connection lifetime belong
+        # to the caller. Construction must not mutate or commit its connection.
 
     @property
     def _watermark_name(self) -> str:
         tenant = str(self._tenant_id)
-        return PROJECTION_NAME if tenant == str(LOCAL_TENANT) else f"{PROJECTION_NAME}:{tenant}"
+        # Replay from zero when this consumer first runs, including events the
+        # TypeScript refresher previously skipped behind the legacy shared key.
+        return f"{PROJECTION_NAME}:python:{tenant}"
 
     # ------------------------------------------------------------ subscription
 
@@ -880,17 +874,36 @@ class ProjectionBuilder:
         the bootstrap path reuses a thread-local cached connection
         (``get_connection`` in :mod:`jobctrl.database`) and tests
         commonly pass ``lambda: conn`` so the same shared handle is
-        returned every call.  Only :meth:`_on_event` owns the close
-        because it opens a per-event connection on whichever thread
-        published the event.
+        returned every call. Connection lifetime belongs to the factory.
         """
         conn = self._conn_factory()
         return self._refresh(conn)
 
     def _refresh(self, conn: sqlite3.Connection) -> int:
         """Refresh against an already-opened connection (used by ``_on_event``)."""
-        with self._bind(conn):
-            return self._refresh_impl()
+        caller_transaction = conn.in_transaction
+        if caller_transaction:
+            # The subscriber may swallow a projection exception. Roll back only
+            # this fold so the publisher can still commit or roll back its work.
+            conn.execute("SAVEPOINT operations_projection_refresh")
+        else:
+            # Reserve the writer before reading canonical rows or the cursor.
+            conn.execute("BEGIN IMMEDIATE")
+        try:
+            with self._bind(conn):
+                result = self._refresh_impl()
+            if caller_transaction:
+                conn.execute("RELEASE SAVEPOINT operations_projection_refresh")
+            else:
+                conn.commit()
+            return result
+        except BaseException:
+            if caller_transaction:
+                conn.execute("ROLLBACK TO SAVEPOINT operations_projection_refresh")
+                conn.execute("RELEASE SAVEPOINT operations_projection_refresh")
+            else:
+                conn.rollback()
+            raise
 
     def _refresh_impl(self) -> int:
         watermark_name = self._watermark_name
@@ -1025,15 +1038,6 @@ class ProjectionBuilder:
         ):
             return 0
 
-        # ``record_job_event`` invokes the wildcard subscriber inside the
-        # caller's open transaction (e.g. ``acquire_job``'s
-        # ``BEGIN IMMEDIATE`` block). Issuing our own ``commit()`` mid-
-        # transaction would prematurely release the row lock and break
-        # the caller's rollback path. Detect the in-transaction case and
-        # let the caller flush both writes; standalone refreshes (the
-        # CLI / tests) commit themselves.
-        defer_commit = bool(getattr(self._conn, "in_transaction", False))
-
         if not dirty_job_ids:
             # Watermark advanced past events with no job (e.g.
             # system events, workflow lifecycle events) OR first-run: bump
@@ -1054,13 +1058,11 @@ class ProjectionBuilder:
             if evidence_usage_dirty:
                 self._rebuild_evidence_usage()
             if max_event_id > watermark:
-                self._watermarks.set(watermark_name, max_event_id, commit=not defer_commit)
+                self._watermarks.set(watermark_name, max_event_id, commit=False)
             if not dashboard_exists:
                 self._rebuild_dashboard()
             if audit_backfill_pending:
                 self._mark_score_audit_backfill_done()
-            if not defer_commit:
-                self._conn.commit()
             return 0
 
         # PR 4 of the Temporal stack: rebuild ``apply_run_projections``
@@ -1085,11 +1087,9 @@ class ProjectionBuilder:
         self._rebuild_dashboard()
         self._rebuild_evidence_usage()
         if max_event_id > watermark:
-            self._watermarks.set(watermark_name, max_event_id, commit=not defer_commit)
+            self._watermarks.set(watermark_name, max_event_id, commit=False)
         if audit_backfill_pending:
             self._mark_score_audit_backfill_done()
-        if not defer_commit:
-            self._conn.commit()
         return len(dirty_job_ids)
 
     # -------------------------------------------------------------- builders
@@ -3407,7 +3407,7 @@ class ProjectionBuilder:
         return bool(row and int(row[0]) > 0)
 
     def _pipeline_steps_backfill_pending(self) -> bool:
-        """Detect step rows missed after either runtime advanced the watermark."""
+        """Detect missing step rows independently of the consumer cursor."""
 
         placeholders = ", ".join("?" for _ in PIPELINE_STEP_EVENT_TYPES)
         try:
@@ -3443,13 +3443,13 @@ class ProjectionBuilder:
         return event_count > projection_count
 
     def _rebuild_pipeline_steps(self) -> None:
-        """Fold orchestration-step facts before advancing the shared watermark.
+        """Fold orchestration-step facts before advancing this consumer's cursor.
 
         The fold is attempt-aware and first-terminal-wins within an attempt.
         A higher attempt replaces the current row; late events from an older
         attempt and duplicate start/terminal facts are idempotent. Re-reading
-        the complete event family makes either the Python worker or TypeScript
-        API safe to win the shared ``operations_projections`` watermark race.
+        the complete event family keeps the Python and TypeScript folds
+        consistent regardless of which consumer refreshes first.
         """
 
         placeholders = ", ".join("?" for _ in PIPELINE_STEP_EVENT_TYPES)
@@ -3736,10 +3736,9 @@ class ProjectionBuilder:
         """Detect workflow-run rows missed by the incremental watermark.
 
         ``workflow_run_projections`` is folded from canonical ``Workflow*``
-        events. The TypeScript API refresher shares the operations watermark but
-        does not write this Python-owned table, so an existing local DB can have
-        the watermark past workflow events while the workflow-run table is still
-        empty. A count mismatch is enough to trigger a deterministic rebuild.
+        events. A database restored with missing projection rows can have its
+        cursor past workflow events while this table is still empty. A count
+        mismatch triggers a deterministic rebuild independently of the cursor.
         """
         # Count state-bearing events only: an audit-only group (e.g. a lone
         # ``WorkflowCancellationRequested``) never materialises a row, so it

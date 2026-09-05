@@ -146,16 +146,17 @@ def test_refresh_scopes_exact_v7_source_events_by_tenant() -> None:
 
     assert [row[0] for row in local_stats] == ["greenhouse:local"]
     assert payload["userContext"] == "Attack vectors:\nPrompt injection"
-    assert SqliteEventWatermarkRepository(conn).get(PROJECTION_NAME) == 2
+    watermarks = SqliteEventWatermarkRepository(conn)
+    assert watermarks.get(f"{PROJECTION_NAME}:python:{LOCAL_TENANT}") == 2
+    assert watermarks.get(PROJECTION_NAME) == 0
 
     other_builder = ProjectionBuilder(
         conn_factory=lambda: conn,
         tenant_id=TenantId("other"),
     )
     assert other_builder.refresh() == 0
-    assert SqliteEventWatermarkRepository(conn).get(
-        f"{PROJECTION_NAME}:other"
-    ) == 1
+    assert watermarks.get(f"{PROJECTION_NAME}:python:other") == 1
+    assert watermarks.get(f"{PROJECTION_NAME}:other") == 0
 
 
 def test_refresh_projects_exact_job_artifacts_and_apply_runs_by_tenant_job_id() -> None:

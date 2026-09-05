@@ -7,10 +7,9 @@
  * SELECT from a single denormalised source — no LEFT JOIN soup.
  *
  * Both the Python ProjectionBuilder and this TS refresher write to the
- * same tables; they share the ``operations_projections`` watermark in
- * ``event_watermarks``.  Either side can advance the watermark
- * independently — both produce the same projection state because both
- * derive from the canonical aggregate tables (jobs, job_stage_states,
+ * same tables with independent consumer-and-tenant watermarks in
+ * ``event_watermarks``. Shared families derive from the canonical
+ * aggregate tables (jobs, job_stage_states,
  * job_scores, job_materials, job_enrichments,
  * jobctrl_deleted_jobs, job_artifacts, job_materials_artifacts).
  *
@@ -303,9 +302,9 @@ function readWatermark(db: SqliteDatabase, projection: string): number {
 }
 
 /**
- * Atomic upsert + commit of the watermark. MAX() keeps the watermark
+ * Upsert the watermark within the caller's transaction. MAX() keeps it
  * monotonic: a stale or out-of-order writer can never rewind an advance
- * made by the other runtime's builder, and updated_at only moves when the
+ * made by another refresh of this consumer, and updated_at only moves when the
  * value actually advances. Mirrors the Python setter in
  * workers/automation/src/jobctrl/infrastructure/events/watermark.py.
  */
@@ -325,7 +324,7 @@ export function setWatermark(db: SqliteDatabase, projection: string, eventId: nu
 
 /** Force-rebuild contact summaries from exact-v7 canonical contact rows. */
 export function refreshContactProjections(db: SqliteDatabase, tenantId = "local"): void {
-  rebuildContactProjections(db, tenantId);
+  db.transaction(() => rebuildContactProjections(db, tenantId)).immediate();
 }
 
 /**
@@ -335,7 +334,7 @@ export function refreshContactProjections(db: SqliteDatabase, tenantId = "local"
  * dirty; the confirm route calls this directly to keep the projection honest.
  */
 export function refreshContactResearchProjections(db: SqliteDatabase, tenantId = "local"): void {
-  rebuildContactResearchProjections(db, tenantId);
+  db.transaction(() => rebuildContactResearchProjections(db, tenantId)).immediate();
 }
 
 /**
@@ -345,8 +344,10 @@ export function refreshContactResearchProjections(db: SqliteDatabase, tenantId =
  * write returns (mirrors `refreshContactResearchProjections`).
  */
 export function refreshOutreachProjections(db: SqliteDatabase, tenantId = "local"): void {
-  rebuildOutreachProjections(db, tenantId);
-  rebuildDueFollowUpProjections(db, tenantId);
+  db.transaction(() => {
+    rebuildOutreachProjections(db, tenantId);
+    rebuildDueFollowUpProjections(db, tenantId);
+  }).immediate();
 }
 
 function pipelineStepsBackfillPending(db: SqliteDatabase, tenantId: string): boolean {
@@ -631,7 +632,7 @@ function rebuildPipelineStepProjections(db: SqliteDatabase, tenantId: string): v
 }
 
 /**
- * Refresh the projections from canonical state, advancing the shared
+ * Refresh the projections from canonical state, advancing this consumer's
  * watermark.  Called at the top of every read-model query so dashboards,
  * lists, and detail views always reflect the latest worker writes (which
  * also bump ``job_events``). One call folds at most
@@ -679,10 +680,17 @@ function scheduleBackgroundDrain(dbPath: string, tenantId: string): void {
 
 /** One bounded fold pass; returns true when it stopped at the batch cap. */
 function runRefreshPass(db: SqliteDatabase, tenantId: string): boolean {
+  return db.transaction(() => runRefreshPassInTransaction(db, tenantId)).immediate();
+}
+
+function runRefreshPassInTransaction(db: SqliteDatabase, tenantId: string): boolean {
   const repairedDependencyJobs = reconcileDependencyBlockers(db, tenantId);
   const repairedCoverConflictJobs = reconcileObsoleteCoverGenerationConflicts(db, tenantId);
 
-  const watermark = readWatermark(db, PROJECTION_WATERMARK_NAME);
+  // A runtime must never acknowledge events only the other runtime folds.
+  // Ignore the legacy shared cursor so a first pass repairs skipped history.
+  const watermarkName = `${PROJECTION_WATERMARK_NAME}:typescript:${tenantId}`;
+  const watermark = readWatermark(db, watermarkName);
 
   let dirtyJobs = new Set<string>([...repairedDependencyJobs, ...repairedCoverConflictJobs]);
   let sourceQualityDirty = false;
@@ -696,14 +704,13 @@ function runRefreshPass(db: SqliteDatabase, tenantId: string): boolean {
   {
     const rows = allRows<{ event_id: number; tenant_id: string; job_id: string | null; event_type: string }>(
       db,
-      "SELECT event_id, tenant_id, job_id, event_type FROM job_events WHERE event_id > ? ORDER BY event_id ASC LIMIT ?",
-      [watermark, REFRESH_EVENT_BATCH_LIMIT],
+      "SELECT event_id, tenant_id, job_id, event_type FROM job_events WHERE tenant_id = ? AND event_id > ? ORDER BY event_id ASC LIMIT ?",
+      [tenantId, watermark, REFRESH_EVENT_BATCH_LIMIT],
     );
     capped = rows.length === REFRESH_EVENT_BATCH_LIMIT;
     for (const row of rows) {
       const eventId = Number(row.event_id);
       if (eventId > maxEventId) maxEventId = eventId;
-      if (row.tenant_id !== tenantId) continue;
       if (row.job_id) dirtyJobs.add(String(row.job_id));
       if (SOURCE_QUALITY_EVENT_TYPES.has(String(row.event_type))) {
         sourceQualityDirty = true;
@@ -843,7 +850,7 @@ function runRefreshPass(db: SqliteDatabase, tenantId: string): boolean {
   }
 
   if (maxEventId > watermark) {
-    setWatermark(db, PROJECTION_WATERMARK_NAME, maxEventId);
+    setWatermark(db, watermarkName, maxEventId);
   }
   return capped;
 }
@@ -1668,7 +1675,7 @@ function rebuildEvidenceUsageProjection(db: SqliteDatabase, tenantId: string): v
  * Rebuild the tenant-wide projections affected by a permanent Job deletion.
  *
  * The delete command removes the target's projections and cascades its events,
- * so resetting the shared event watermark would replay unrelated tenants. The
+ * so resetting consumer cursors would replay unrelated history. The
  * remaining local rows are already canonical; these two projections can be
  * rebuilt directly and transactionally with the delete command instead.
  */

@@ -1,7 +1,7 @@
+import { JobCtrlApiClient } from "@jobctrl/api-client";
 import { describe, expect, it, vi } from "vitest";
 
 import { ConsoleTelemetryAdapter } from "../shared/adapters/local/ConsoleTelemetryAdapter.js";
-import { FetchApiClientAdapter } from "../shared/adapters/local/FetchApiClientAdapter.js";
 import { LocalSessionAdapter } from "../shared/adapters/local/LocalSessionAdapter.js";
 import { LocalStorageAdapter } from "../shared/adapters/local/LocalStorageAdapter.js";
 import { NavigatorClipboardAdapter } from "../shared/adapters/local/NavigatorClipboardAdapter.js";
@@ -70,7 +70,7 @@ describe("port factory", () => {
       apiBaseUrl: "http://127.0.0.1:8787",
     });
     expect(composition.kind).toBe("local");
-    expect(direct.api).toBeInstanceOf(FetchApiClientAdapter);
+    expect(direct.api).toBeInstanceOf(JobCtrlApiClient);
     expect(direct.eventStream).toBeInstanceOf(SseEventStreamAdapter);
     expect(direct.storage).toBeInstanceOf(LocalStorageAdapter);
     expect(direct.session).toBeInstanceOf(LocalSessionAdapter);
@@ -79,7 +79,7 @@ describe("port factory", () => {
     expect(direct.telemetry).toBeInstanceOf(ConsoleTelemetryAdapter);
     expect(direct.featureFlags).toBeInstanceOf(StaticFeatureFlagAdapter);
     expect(direct.featureFlags.get("demoMode", false)).toBe(false);
-    expect(composition.ports.api).toBeInstanceOf(FetchApiClientAdapter);
+    expect(composition.ports.api).toBeInstanceOf(JobCtrlApiClient);
   });
 
   it("selects demo only explicitly and constructs no product-network, SSE, or host-OS adapter", async () => {
@@ -97,7 +97,7 @@ describe("port factory", () => {
 
       expect(composition.kind).toBe("demo");
       if (composition.kind !== "demo") return;
-      expect(composition.ports.api).not.toBeInstanceOf(FetchApiClientAdapter);
+      expect(composition.ports.api).not.toBeInstanceOf(JobCtrlApiClient);
       expect(composition.ports.eventStream).toBeInstanceOf(
         DemoWorkspaceEventStreamAdapter,
       );
@@ -141,7 +141,7 @@ describe("port factory", () => {
       mode: resolveAppMode("preview"),
     });
     expect(composition.kind).toBe("local");
-    expect(composition.ports.api).toBeInstanceOf(FetchApiClientAdapter);
+    expect(composition.ports.api).toBeInstanceOf(JobCtrlApiClient);
   });
 
   it("continues demo initialization in typed tab-local memory mode when IndexedDB is unavailable", async () => {
