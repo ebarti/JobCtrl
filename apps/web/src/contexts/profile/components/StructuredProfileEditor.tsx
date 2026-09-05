@@ -65,14 +65,12 @@ import {
 } from "./GoogleAddressSearchField.js";
 import {
   asTextArray,
-  cloneJsonRecord,
   defaultRepeatItem,
   editableTextArrayAt,
   getPathValue,
   type JsonRecord,
   lines,
   numberOrEmpty,
-  parseJsonRecord,
   recordArrayAt,
   recordAt,
   setPathValue,
@@ -215,10 +213,10 @@ export interface StructuredProfileEditorProps {
   applicationConfigurationFields?: ReactNode;
   mode?: "profile" | "preferences" | "target-search";
   showSectionHeading?: boolean;
-  profileText: string;
-  styleText: string;
-  onProfileTextChange: (value: string) => void;
-  onStyleTextChange: (value: string) => void;
+  profile: JsonRecord | null;
+  style: JsonRecord | null;
+  onProfileChange: (value: JsonRecord) => void;
+  onStyleChange: (value: JsonRecord) => void;
 }
 
 function TargetPreferenceCard({
@@ -251,13 +249,11 @@ export function StructuredProfileEditor({
   applicationConfigurationFields,
   mode = "profile",
   showSectionHeading = true,
-  profileText,
-  styleText,
-  onProfileTextChange,
-  onStyleTextChange,
+  profile,
+  style,
+  onProfileChange,
+  onStyleChange,
 }: StructuredProfileEditorProps) {
-  const profile = parseJsonRecord(profileText);
-  const style = parseJsonRecord(styleText);
   const focusTargetsRef = useRef(new Map<string, HTMLInputElement | HTMLSelectElement>());
   const pendingFocusKeyRef = useRef<string | null>(null);
 
@@ -275,7 +271,7 @@ export function StructuredProfileEditor({
     if (element instanceof HTMLInputElement) {
       element.select();
     }
-  }, [profileText]);
+  }, [profile]);
 
   const registerFocusTarget = (key: string) => (element: HTMLInputElement | HTMLSelectElement | null) => {
     if (element) {
@@ -317,10 +313,10 @@ export function StructuredProfileEditor({
   };
 
   const updateProfileDraft = (updater: (draft: JsonRecord) => void) => {
-    const draft = cloneJsonRecord(profile);
+    const draft = structuredClone(profile);
     updater(draft);
     normalizePreferencesClaimPolicy(draft);
-    onProfileTextChange(JSON.stringify(draft, null, 2));
+    onProfileChange(draft);
   };
 
   const updateProfilePath = (path: string, value: unknown) => {
@@ -328,9 +324,9 @@ export function StructuredProfileEditor({
   };
 
   const updateStylePath = (path: string, value: unknown) => {
-    const draft = cloneJsonRecord(style);
+    const draft = structuredClone(style);
     setPathValue(draft, path, value);
-    onStyleTextChange(JSON.stringify(draft, null, 2));
+    onStyleChange(draft);
   };
 
   const setRequiredId = (path: string, id: string, checked: boolean) => {

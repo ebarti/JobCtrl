@@ -2,19 +2,6 @@ import { isRecord } from "../../../shared/lib/type-guards.js";
 
 export type JsonRecord = Record<string, unknown>;
 
-export function parseJsonRecord(text: string): JsonRecord | null {
-  try {
-    const parsed = JSON.parse(text);
-    return isJsonRecord(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
-export function cloneJsonRecord(value: JsonRecord): JsonRecord {
-  return JSON.parse(JSON.stringify(value)) as JsonRecord;
-}
-
 export function isJsonRecord(value: unknown): value is JsonRecord {
   return isRecord(value);
 }

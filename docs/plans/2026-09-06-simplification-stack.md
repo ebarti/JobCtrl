@@ -159,8 +159,10 @@ do not substitute whole-profile replacement or array-index matching.
 
 ### Acceptance evidence
 
-1. Saving preserves unknown nested fields, unedited fields and the current
-   request schema/field names. Profile and style serialize at the boundary.
+1. The outgoing save request preserves unknown nested fields, unedited fields
+   and the current request schema/field names. Profile and style serialize at
+   the boundary. Existing server validation/normalization remains unchanged;
+   this does not add storage for unsupported fields.
 2. Incomplete numeric/date input remains editable; invalid chronological dates
    prevent save with the existing useful validation feedback.
 3. An unrelated boxed edit plus a Plate edit both survive. Conflicting edits
@@ -168,7 +170,9 @@ do not substitute whole-profile replacement or array-index matching.
 4. Deletion, splitting, reordering and undo retain source-bound targeting;
    punctuation/digits and formatting-only changes preserve current semantics.
 5. A stale autosave response or refreshed initial prop cannot erase newer
-   local edits. Save/reload retains exact synthetic values and ordering.
+   local edits. Real SQLite save/reload retains supported synthetic values and
+   ordering. The isolated preview seam generates escaped, semantically bound
+   HTML from each current stored profile; no Python/PDF renderer is needed.
 6. `/profile` and `/preferences` retain applicable controls, accessibility,
    dirty state and user-visible validation; no profile persistence behavior
    or discovery-setting behavior changes.
@@ -355,8 +359,8 @@ Update this table with actual results; do not mark proposals implemented.
 
 | Phase | PR and head | Deleted mechanism | Tests and product proof | Review / QA |
 | --- | --- | --- | --- | --- |
-| 1 | [#865](https://github.com/ebarti/JobCtrl/pull/865); implementation `6d6f28a18` | View-owned five-snapshot draft selector and reply merger removed; cache mutation publication reconciles saved state | 79 focused web tests, 13 type tests, web/API checks, web/Storybook/docs builds pass; isolated browser race/a11y fixture ready | Review found a promotion regression, reproduced and corrected with 71 affected tests and web typecheck passing; revised promotion/late-seed browser fixtures await the same review and QA gates |
-| 2 | Pending | Pending | Pending | Pending |
+| 1 | [#865](https://github.com/ebarti/JobCtrl/pull/865); `2428ce2ddd` | View-owned five-snapshot draft selector and reply merger removed; cache mutation publication reconciles saved state | Focused/type/build checks pass; corrected promotion regression passes 71 tests. All 4 isolated Chromium scenarios pass, scoped axe clean, 9 ownership/config tests pass | Reviewer and QA: PASS; High resolved; all applicable CI successful, merge state CLEAN |
+| 2 | Publication pending | Form/editor/projector JSON round trips removed; object drafts preserve original values and serialize at the request boundary | 61 focused tests; full web 323 files/2020 tests, 13 type tests, web/API checks and web/Storybook builds pass. Docs build and the one pure preview-fixture test pass; the latter used an owned pre-import environment. Real save/reload browser fixture ready | Independent review and QA pending |
 | 3 | Pending | Pending | Pending | Pending |
 | 4 | Pending | Pending | Pending | Pending |
 
