@@ -1998,6 +1998,48 @@ describe("<ApplyReviewView>", () => {
     );
   });
 
+  it("preserves later formatting and focus when a saved snapshot and stale seed response arrive", async () => {
+    const draft = makeResumeReviewDraft();
+    let acknowledge: (() => void) | undefined;
+    const saveResumeReviewDraftRevision = vi.fn(async (_draftId, body) => {
+      await new Promise<void>((resolve) => { acknowledge = resolve; });
+      const saved = makeResumeReviewDraft(draft.jobKey, {
+        ...body, revisionId: "saved-2", revisionNumber: 2,
+      });
+      return { ok: true as const, draft: saved, revision: saved.latestRevision! };
+    });
+    let seed: (() => void) | undefined;
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({ api: {
+        applyReviewQueue: vi.fn(async () => sampleApplyReviewQueue),
+        createResumeReviewDraft: vi.fn(async () => ({ ok: true as const, draft })),
+        saveResumeReviewDraftRevision,
+        seedResumeReviewCommentThreads: vi.fn(async () => {
+          await new Promise<void>((resolve) => { seed = resolve; });
+          return { ok: true as const, draft, commentThreads: [], seededCount: 0, updatedCount: 0 };
+        }),
+      } }),
+    });
+    const editor = await screen.findByRole("textbox", { name: "Tailored resume preview editor" });
+    await chooseSelectOption("Font", "Garamond");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled());
+    await userEvent.click(screen.getByRole("button", { name: "Save draft" }));
+    await waitFor(() => expect(acknowledge).toBeDefined());
+    await chooseSelectOption("Font", "Helvetica");
+    await userEvent.click(editor);
+    expect(editor).toHaveFocus();
+    acknowledge!();
+    await waitFor(() => expect(screen.getByText("unsaved changes")).toBeInTheDocument());
+    seed?.();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled());
+    expect(screen.getByRole("textbox", { name: "Tailored resume preview editor" })).toBe(editor);
+    expect(editor).toHaveFocus();
+    const shadow = await findResumeShadowRoot();
+    expect(shadowElementWithText(shadow, "Principal Platform Engineer").style.fontFamily).toContain("Helvetica");
+    expect(JSON.stringify(saveResumeReviewDraftRevision.mock.calls[0]![1].plateDocument)).toContain("garamond");
+    expect(JSON.stringify(saveResumeReviewDraftRevision.mock.calls[0]![1].plateDocument)).not.toContain("helvetica");
+  });
+
   it("keeps the cached resume review draft visible while create/load is pending", async () => {
     const jobKey = sampleApplyReviewQueue.items[0]!.jobKey;
     const draft = makeResumeReviewDraft(jobKey, {
@@ -2132,7 +2174,7 @@ describe("<ApplyReviewView>", () => {
     expect(screen.queryByText("Saved draft will render automatically before approval.")).not.toBeInTheDocument();
   });
 
-  it("compares the accepted artifact with the rendered draft artifact", async () => {
+  it.each([false, true])("keeps the completed-render comparison when a new active draft is loaded: %s", async (loadNewActiveDraft) => {
     const jobKey = sampleApplyReviewQueue.items[0]!.jobKey;
     const acceptedArtifact = {
       ...sampleAcceptedResumeArtifact,
@@ -2162,7 +2204,7 @@ describe("<ApplyReviewView>", () => {
         ok: true as const,
         draft: {
           ...draft,
-          state: "rendered" as const,
+          state: "promoted" as const,
         },
         validation: { passed: true, errors: [], warnings: [] },
         artifacts: {
@@ -2191,6 +2233,7 @@ describe("<ApplyReviewView>", () => {
               materialsPreview: {
                 ...item.materialsPreview,
                 resumeTextArtifactId: draftArtifact.artifactId,
+                resumePdfArtifactId: "resume-review-pdf",
               },
             }
           : item,
@@ -2225,12 +2268,17 @@ describe("<ApplyReviewView>", () => {
       return makeArtifactDetail({ ...sampleArtifact, artifactId });
     });
 
-    renderWithProviders(<ApplyReviewView />, {
+    const { queryClient } = renderWithProviders(<ApplyReviewView />, {
       ports: buildTestPorts({
         api: {
           applyReviewQueue,
           artifact,
-          createResumeReviewDraft: vi.fn(async () => ({ ok: true as const, draft })),
+          createResumeReviewDraft: vi.fn(async () => ({ ok: true as const, draft: renderCompleted && loadNewActiveDraft ? {
+            ...draft, draftId: "draft-after-promotion", baseGeneration: 3,
+            baseResumeTextArtifactId: draftArtifact.artifactId, baseResumePdfArtifactId: "resume-review-pdf",
+            state: "active" as const, currentRevisionId: null, latestRevisionNumber: 0,
+            latestRevision: null, commentThreads: [],
+          } : draft })),
           renderResumeReviewDraft,
           seedResumeReviewCommentThreads: vi.fn(async () => ({
             ok: true as const,
@@ -2262,6 +2310,21 @@ describe("<ApplyReviewView>", () => {
     expect(comparison.getByText("claim risk")).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Tailored resume preview" })).toBeInTheDocument();
 
+    if (loadNewActiveDraft) {
+      expect(await screen.findByText("draft ready")).toBeInTheDocument();
+      expect(renderButton).toBeDisabled();
+      expect(screen.queryByText("replacement rendered")).not.toBeInTheDocument();
+      queryClient.setQueryData(applyReviewKeys.queue(LOCAL_TENANT), {
+        ...refreshedQueue,
+        items: refreshedQueue.items.map((item) => item.jobKey === jobKey ? {
+          ...item, materialsPreview: { ...item.materialsPreview,
+            resumeTextArtifactId: "unrelated-generation-text", resumePdfArtifactId: "unrelated-generation-pdf" },
+        } : item),
+      });
+      expect(await comparison.findByText("Render a saved draft to compare it with the accepted artifact.")).toBeInTheDocument();
+      expect(comparison.queryByText("Accepted resume")).not.toBeInTheDocument();
+      return;
+    }
     await waitFor(() => expect(renderButton).not.toBeDisabled());
     await userEvent.click(renderButton);
     await waitFor(() => expect(renderResumeReviewDraft).toHaveBeenCalledTimes(2));
