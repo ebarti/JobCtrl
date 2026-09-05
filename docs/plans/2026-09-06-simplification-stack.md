@@ -156,6 +156,10 @@ do not substitute whole-profile replacement or array-index matching.
 - Relevant `ProfileEditor` integration tests; touch its production code only
   if required by the representation change.
 - Existing `apps/web/e2e/tests/profile-edit.spec.ts` and owning frontend/QA docs.
+- Product QA exposed a shared Plate click race: synchronize the actual native
+  range into Slate before publishing audit-line selection. Keep noneditable,
+  invalid and cross-editor ranges guarded. Scope Font selector colors to the
+  existing toolbar themes; preserve normal browser typing and axe checks.
 - Narrow test-only API/launcher prevention: shared API fixtures explicitly
   fake/deny irrelevant dispatch, launcher tests copy the script into disposable
   roots with controlled shell environments, and Python payload setup uses
@@ -332,6 +336,9 @@ For phases 1 and 2, the command set is:
   `corepack pnpm --filter @jobctrl/web exec playwright test --config=e2e/playwright.config.ts tests/artifact-comparison.spec.ts --project=chromium --retries=0 --output=<owned-results>`.
   Phase 2 uses
   `corepack pnpm --filter @jobctrl/web exec playwright test --config=e2e/playwright.config.ts tests/profile-edit.spec.ts --grep 'structured profile persistence' --project=chromium --retries=0 --output=<owned-results>`.
+  After the shared Plate caret correction, cumulative frontend QA selects both
+  files with `--grep 'structured profile persistence|apply review compares accepted artifact|artifact full-page detail|late saved snapshot|a delayed seed snapshot'`
+  (six Chromium scenarios).
   The runner establishes the guarded environment and output path before any
   import; these fixtures prove the changed race/preservation behavior.
 - Build Storybook and run the relevant browser/a11y coverage for touched
@@ -367,7 +374,7 @@ Update this table with actual results; do not mark proposals implemented.
 | Phase | PR and head | Deleted mechanism | Tests and product proof | Review / QA |
 | --- | --- | --- | --- | --- |
 | 1 | [#865](https://github.com/ebarti/JobCtrl/pull/865); reviewed implementation `2428ce2dd` | View-owned five-snapshot draft selector and reply merger removed; cache mutation publication reconciles saved state | Original focused web/type checks and web/API/Storybook/docs builds passed; promotion fix passed 71 affected tests and all four isolated Chromium scenarios with scoped axe clean | The promotion High passed independent review and QA at `2428ce2dd`; the pending-create and cached-job isolation corrections passed independent review at `55fa84f0`; cumulative synchronized-head QA remains pending |
-| 2 | [#866](https://github.com/ebarti/JobCtrl/pull/866); implementation `1a54c7a6b` | Form/editor/projector JSON round trips removed; object drafts preserve original values and serialize at the request boundary | 61 focused tests; full web 323 files/2020 tests, 13 type tests, web/API checks and web/Storybook builds pass. Docs build and pure preview-fixture test pass. Full API suite deliberately run through the reviewed owned pre-import environment: 59 files/828 tests PASS. | Initial review PASS; fixture delta review and two browser reruns pending. Initial browser failures exposed wrong caret targeting and noncanonical heading markup; corrected fixtures assert target selection and use renderer classes without suppressing axe |
+| 2 | [#866](https://github.com/ebarti/JobCtrl/pull/866); implementation `1a54c7a6b` | Form/editor/projector JSON round trips removed; object drafts preserve original values and serialize at the request boundary | 61 focused tests; full web 323 files/2020 tests, 13 type tests, web/API checks and web/Storybook builds pass. Docs build and pure preview-fixture test pass. Full API suite deliberately run through the reviewed owned pre-import environment: 59 files/828 tests PASS. | Earlier implementation and fixture reviews PASS; final caret/color delta review and six cumulative browser scenarios pending. Diagnostic profile case passes real save/reload, entry order and scoped axe after fixing the native-caret publication race and toolbar Select colors. Full web suite and web types/build/Storybook rechecked after the shared owner correction; the new native-caret regression and affected Profile/Apply suites pass 96 tests. Renderer-class and line-end fixtures retain explicit caret assertions |
 | 3 | Pending | Pending | Pending | Pending |
 | 4 | Pending | Pending | Pending | Pending |
 

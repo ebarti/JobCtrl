@@ -96,6 +96,14 @@ highlight boxes. The action must not save the
 profile, template, or review draft; call a generation endpoint; register or
 replace an artifact; or change Apply approval state.
 
+For Profile Plate text projection, first click an experience bullet's actual
+text while the editor has no selection. Confirm the native caret stays inside
+that line when its audit highlight appears; moving to the line end and typing
+must update that bullet, not the resume header. Include the Font selector in
+scoped axe checks: the trigger and value must use the resume toolbar's matching
+foreground/background in both light and dark app themes, including the themed
+Apply review toolbar.
+
 For Profile Plate text projection, edit an experience bullet or non-empty
 position summary in the Plate document, switch to **Profile data**, and verify
 the matching boxed field contains the same unsaved value and the normal Profile

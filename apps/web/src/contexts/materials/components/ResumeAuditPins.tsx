@@ -2111,7 +2111,22 @@ function ResumeBlockElement(props: PlateElementProps<ResumePlateDomElement>): JS
     .filter(Boolean)
     .join(" ");
   const handleSelect = element.lineNumber && lineEntry
-    ? () => onSelectLine(selectionFromPlateLine(lineEntry.line, lineEntry.index, layoutBoxes))
+    ? (event: MouseEvent<HTMLElement>) => {
+        const selection = event.currentTarget.ownerDocument.getSelection();
+        // Publish the native caret before selecting the audit line rerenders
+        // Slate, whose layout effect would otherwise restore a stale range.
+        if (
+          event.currentTarget.isContentEditable &&
+          !(event.target instanceof Element && event.target.closest('[contenteditable="false"]')) &&
+          selection?.anchorNode && selection.focusNode &&
+          event.currentTarget.contains(selection.anchorNode) &&
+          event.currentTarget.contains(selection.focusNode)
+        ) {
+          const range = props.editor.api.toSlateRange(selection, { exactMatch: true, suppressThrow: true });
+          if (range) props.editor.tf.select(range);
+        }
+        onSelectLine(selectionFromPlateLine(lineEntry.line, lineEntry.index, layoutBoxes));
+      }
     : undefined;
   return createElement(
     safeResumePlateTag(element.tagName),

@@ -2420,6 +2420,7 @@ input[type="radio"] {
   font-size: var(--jh-type-control-size);
 }
 
+.resume-format-select [data-slot="select-trigger"],
 .resume-format-select select,
 .resume-format-select input {
   min-block-size: 30px;

@@ -558,7 +558,12 @@ test.describe("structured profile persistence", () => {
       const selection = window.getSelection();
       return Boolean(selection && element.contains(selection.anchorNode) && element.contains(selection.focusNode));
     })).toBe(true);
-    await page.keyboard.press("End");
+    await page.keyboard.press(process.platform === "darwin" ? "Meta+ArrowRight" : "End");
+    await expect.poll(() => bullet.evaluate((element) => {
+      const selection = window.getSelection();
+      return Boolean(selection?.isCollapsed && element.contains(selection.anchorNode) &&
+        selection.anchorOffset === selection.anchorNode?.textContent?.length);
+    })).toBe(true);
     await page.keyboard.press("Backspace");
     await page.keyboard.type("; revised 12x.");
     await expect(bullet).toContainText("Built 10 synthetic systems; revised 12x.");
