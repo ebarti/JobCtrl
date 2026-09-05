@@ -534,9 +534,12 @@ test.describe("structured profile persistence", () => {
       { id: "structured-first", company: "First Fixture", title: "Platform Lead", location: "", date_range: "Jan 2022 - Present", summary: "First fixture summary.", bullets: ["Built 10 synthetic systems.", "Second unique first-entry bullet."] },
       { id: "structured-second", company: "Second Fixture", title: "Engineer", location: "", date_range: "Jan 2020 - Dec 2021", summary: "Second fixture summary.", bullets: ["Second entry unique achievement."] },
     ];
-    const seed = await page.request.patch(`${apiOrigin}/v1/profile`, { data: {
-      profileText: JSON.stringify(stored.profile), styleText: JSON.stringify(stored.style), templateText: stored.templateText,
-    } });
+    const seed = await page.request.patch(`${apiOrigin}/v1/profile`, {
+      headers: { origin: new URL(baseURL!).origin, "sec-fetch-site": "same-origin" },
+      data: {
+        profileText: JSON.stringify(stored.profile), styleText: JSON.stringify(stored.style), templateText: stored.templateText,
+      },
+    });
     expect(seed.status()).toBe(200);
   });
 
