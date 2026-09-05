@@ -360,7 +360,7 @@ Update this table with actual results; do not mark proposals implemented.
 | Phase | PR and head | Deleted mechanism | Tests and product proof | Review / QA |
 | --- | --- | --- | --- | --- |
 | 1 | [#865](https://github.com/ebarti/JobCtrl/pull/865); `2428ce2ddd` | View-owned five-snapshot draft selector and reply merger removed; cache mutation publication reconciles saved state | Focused/type/build checks pass; corrected promotion regression passes 71 tests. All 4 isolated Chromium scenarios pass, scoped axe clean, 9 ownership/config tests pass | Reviewer and QA: PASS; High resolved; all applicable CI successful, merge state CLEAN |
-| 2 | Publication pending | Form/editor/projector JSON round trips removed; object drafts preserve original values and serialize at the request boundary | 61 focused tests; full web 323 files/2020 tests, 13 type tests, web/API checks and web/Storybook builds pass. Docs build and the one pure preview-fixture test pass; the latter used an owned pre-import environment. Real save/reload browser fixture ready | Independent review and QA pending |
+| 2 | [#866](https://github.com/ebarti/JobCtrl/pull/866); implementation `1a54c7a6b` | Form/editor/projector JSON round trips removed; object drafts preserve original values and serialize at the request boundary | 61 focused tests; full web 323 files/2020 tests, 13 type tests, web/API checks and web/Storybook builds pass. Docs build and the one pure preview-fixture test pass; the latter used an owned pre-import environment. Real save/reload browser fixture ready | Independent review and QA pending |
 | 3 | Pending | Pending | Pending | Pending |
 | 4 | Pending | Pending | Pending | Pending |
 
