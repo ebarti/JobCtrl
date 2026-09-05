@@ -22,7 +22,6 @@ import type {
   ConfirmContactCandidateResponse,
   ContactAttributeDto,
   ContactCandidateDto,
-  ContactDetail,
   ContactResearchListQuery,
   ContactResearchSourceAttempt,
   ContactResearchTaskDetail,

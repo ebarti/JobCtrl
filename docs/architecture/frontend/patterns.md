@@ -554,11 +554,11 @@ changes geometry, not typography.
   state is not server-derived." Examples we anticipate: a `commandPalette`
   open/close (cmd-k UX), a `confirmDialog` queue.
 
-Six Zustand stores exist today: `ui-preferences`, `toasts`, and
-`command-palette` (transient), plus `profile-import` and
-`stage-trigger-config` and `saved-table-views` (persisted). Four carry
-`persist` middleware — `jh:ui-preferences`, `jh:profile-import`,
-`jh:stage-trigger-config`, and `jh:saved-table-views`.
+Zustand stores hold `ui-preferences`, `toasts`, `profile-import`,
+`outreach-import`, `stage-trigger-config`, and `saved-table-views`.
+The toast queue is transient. Persisted stores use `jh:ui-preferences`,
+`jh:profile-import`, `jh:outreach-import`, `jh:stage-trigger-config`, and
+`jh:saved-table-views`.
 
 **Why this split (not "all Zustand" or "all context"):**
 

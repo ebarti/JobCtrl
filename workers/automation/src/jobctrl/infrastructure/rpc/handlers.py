@@ -50,7 +50,6 @@ from jobctrl.pipeline.preparation import (
     latest_source_event_id,
 )
 from jobctrl.workflow_specs import (
-    apply_workflow_id,
     build_apply_workflow_spec,
     build_compensation_refresh_workflow_spec,
     build_contact_research_workflow_spec,
@@ -152,85 +151,6 @@ def _required_job_id(params: dict[str, Any]) -> JobId:
 
 def _job_id(job: dict[str, Any]) -> JobId:
     return canonical_job_id(str(job["job_id"]))
-
-
-def _current_job_url(job: dict[str, Any]) -> str:
-    job_url = str(job.get("url") or "").strip()
-    if not job_url:
-        raise invalid_params(f"jobId {job.get('job_id')} has no current posting URL")
-    return job_url
-
-
-def _selected_job_ids(params: dict[str, Any]) -> tuple[JobId | None, tuple[JobId, ...]]:
-    _reject_job_url_params(params)
-    if "jobId" in params and "jobIds" in params:
-        raise invalid_params("provide jobId or jobIds, not both")
-    if "jobId" in params:
-        try:
-            return canonical_job_id(str(_require(params, "jobId"))), ()
-        except ValueError as exc:
-            raise invalid_params(str(exc)) from exc
-    if "jobIds" not in params:
-        return None, ()
-    raw_many = params["jobIds"]
-    if not isinstance(raw_many, list):
-        raise invalid_params("jobIds must be an array")
-    if not raw_many:
-        return None, ()
-    try:
-        return None, tuple(
-            dict.fromkeys(
-                canonical_job_id(str(item))
-                for item in raw_many
-            )
-        )
-    except ValueError as exc:
-        raise invalid_params(str(exc)) from exc
-
-
-def _load_current_job_urls_by_id(
-    conn: Any,
-    *,
-    tenant_id: TenantId,
-    job_ids: tuple[JobId, ...],
-) -> tuple[str, ...]:
-    return tuple(
-        _current_job_url(
-            _load_current_job_by_id(conn, tenant_id=tenant_id, job_id=job_id)
-        )
-        for job_id in job_ids
-    )
-
-
-def _legacy_workflow_locator_params(params: dict[str, Any]) -> dict[str, Any]:
-    """Adapt canonical RPC IDs to the pre-#623/#628 workflow input contract.
-
-    The current URL is loaded by tenant-scoped ``JobId`` here; no caller URL
-    crosses JSON-RPC. The mapped runtime PRs remove this adapter after rebase.
-    """
-
-    tenant_id = TenantId(_tenant_id(params))
-    job_id, job_ids = _selected_job_ids(params)
-    adapted = {
-        key: value
-        for key, value in params.items()
-        if key not in {"jobId", "jobIds"}
-    }
-    if job_id is None and not job_ids:
-        return adapted
-    conn = get_connection()
-    if job_id is not None:
-        job = _load_current_job_by_id(conn, tenant_id=tenant_id, job_id=job_id)
-        adapted["jobUrl"] = _current_job_url(job)
-    else:
-        adapted["jobUrls"] = list(
-            _load_current_job_urls_by_id(
-                conn,
-                tenant_id=tenant_id,
-                job_ids=job_ids,
-            )
-        )
-    return adapted
 
 
 # ---------------------------------------------------------------------------
@@ -686,11 +606,6 @@ def job_url_import(params: dict[str, Any]) -> WorkflowStartSpec:
 # ---------------------------------------------------------------------------
 
 
-def _apply_workflow_id(tenant_id: str, job_id: str) -> str:
-    """Deterministic ``apply-{tenant}-{jobId}`` id so a double-click apply for one job
-    attaches to the running workflow (USE_EXISTING) instead of double-submitting.
-    """
-    return apply_workflow_id(tenant_id, job_id)
 
 
 def apply_action(params: dict[str, Any]) -> WorkflowStartSpec:

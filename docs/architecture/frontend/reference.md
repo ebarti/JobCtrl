@@ -319,7 +319,7 @@ first's reconciliation.
 | **URL State** | Frontend (Modeling) | Filter, sort, pagination, and selected-detail state stored in the URL via typed search params. One of the three layers (§2.1). |
 | **View** | Frontend (Composition) | A composer under `views/` (today: `dashboard/`, `jobs/`, `artifacts/`, `apply-review/`, `runs/`, `pipelines/`, `discovery/`, `debug/`). Owns layout, URL binding, and ephemeral view-local state; consumes hooks from `contexts/operations/` and components / mutations from aggregate contexts. **Not** a bounded context. |
 | **View Composition Layer** | Frontend (Architecture) | The `views/` folder; sibling of `contexts/`. Holds the view composers (Dashboard, Jobs, Artifacts, Apply Review, Runs, Pipelines, Discovery, Contacts, Debug, and others) and is the only layer permitted to import from multiple contexts in one file. |
-| **Zustand** | Frontend (Library) | Lightweight client-state store. Five today: `ui-preferences`, `toasts`, `command-palette`, the resume-import wizard draft (`profile-import`), and the pipeline `stage-trigger-config`; three persist (`jh:ui-preferences`, `jh:profile-import`, `jh:stage-trigger-config`). |
+| **Zustand** | Frontend (Library) | Lightweight client-state store for UI preferences, toast queues, and navigation-surviving drafts. Store ownership and persistence are defined in [State Patterns](patterns.md). |
 
 ---
 
