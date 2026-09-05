@@ -11,7 +11,7 @@ import pytest
 
 from jobctrl.domain.compensation import ReportedCompensationObservation, parse_posted_compensation
 from jobctrl.domain.identifiers import JobId, generate_job_id
-from jobctrl.domain.tenant import LOCAL_TENANT
+from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 from jobctrl.database import close_connection, init_db
 from jobctrl.infrastructure.compensation import SqliteMarketCompensationRepository, SqlitePostedCompensationRepository
 from jobctrl.infrastructure.events.in_process_bus import InProcessEventBus
@@ -24,6 +24,7 @@ from jobctrl.state import record_job_event, utc_now
 
 
 _INERT_CONTEXT = {"userContext": "Attack vectors:\nPrompt injection"}
+PYTHON_WATERMARK_NAME = f"python:{PROJECTION_NAME}:local"
 
 
 @pytest.fixture
@@ -73,7 +74,7 @@ def _seed_job(
 
 def test_initial_watermark_is_zero(conn: sqlite3.Connection) -> None:
     repo = SqliteEventWatermarkRepository(conn)
-    assert repo.get(PROJECTION_NAME) == 0
+    assert repo.get(PYTHON_WATERMARK_NAME) == 0
 
 
 def test_refresh_advances_watermark(conn: sqlite3.Connection) -> None:
@@ -85,7 +86,7 @@ def test_refresh_advances_watermark(conn: sqlite3.Connection) -> None:
     builder.refresh()
 
     repo = SqliteEventWatermarkRepository(conn)
-    last = repo.get(PROJECTION_NAME)
+    last = repo.get(PYTHON_WATERMARK_NAME)
     assert last >= 1
 
 
@@ -100,14 +101,172 @@ def test_refresh_resumes_from_watermark(conn: sqlite3.Connection) -> None:
     # Add another event for a new job; watermark should advance only by
     # the delta.
     repo = SqliteEventWatermarkRepository(conn)
-    pre_watermark = repo.get(PROJECTION_NAME)
+    pre_watermark = repo.get(PYTHON_WATERMARK_NAME)
     second_job_id = _seed_job(conn, "https://example.com/r2")
     record_job_event(conn, second_job_id, "discover", "JobDiscovered", payload=_INERT_CONTEXT)
     conn.commit()
 
     builder.refresh()
-    post_watermark = repo.get(PROJECTION_NAME)
+    post_watermark = repo.get(PYTHON_WATERMARK_NAME)
     assert post_watermark > pre_watermark
+
+
+@pytest.mark.parametrize("commit", [False, True])
+def test_subscriber_preserves_caller_transaction(
+    conn: sqlite3.Connection, commit: bool,
+) -> None:
+    job_id = _seed_job(conn, "https://example.com/caller-transaction")
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
+    before = _projection_transaction_snapshot(conn)
+    db_path = conn.execute("PRAGMA database_list").fetchone()[2]
+    with sqlite3.connect(db_path) as observer:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute("UPDATE jobs SET title = 'Changed' WHERE job_id = ?", (str(job_id),))
+        # Construction and the subscriber's per-refresh adapter binding must
+        # both leave the publisher's pending canonical write uncommitted.
+        builder = ProjectionBuilder(conn_factory=lambda: conn)
+        bus = InProcessEventBus()
+        builder.subscribe_to(bus)
+        assert conn.in_transaction
+        record_job_event(conn, job_id, "discover", "JobDiscovered", publisher=bus)
+        assert conn.in_transaction
+        assert conn.execute("SELECT title FROM job_list_projections").fetchone()[0] == "Changed"
+        assert observer.execute("SELECT title FROM jobs").fetchone()[0] == "Engineer"
+        assert observer.execute("SELECT COUNT(*) FROM job_events").fetchone()[0] == 0
+        if commit:
+            conn.commit()
+            assert observer.execute("SELECT title FROM jobs").fetchone()[0] == "Changed"
+            assert observer.execute("SELECT title FROM job_list_projections").fetchone()[0] == "Changed"
+            assert observer.execute("SELECT COUNT(*) FROM job_events").fetchone()[0] == 1
+            assert SqliteEventWatermarkRepository(observer).get(PYTHON_WATERMARK_NAME) > 0
+        else:
+            conn.rollback()
+            assert observer.execute("SELECT title FROM jobs").fetchone()[0] == "Engineer"
+            assert observer.execute("SELECT COUNT(*) FROM job_events").fetchone()[0] == 0
+            assert _projection_transaction_snapshot(conn) == before
+        assert not conn.in_transaction
+
+
+def _projection_transaction_snapshot(conn: sqlite3.Connection) -> dict[str, list[tuple]]:
+    return {
+        table: [tuple(row) for row in conn.execute(f"SELECT * FROM {table} ORDER BY rowid")]
+        for table in (
+            "job_list_projections", "job_detail_projections", "dashboard_projections",
+            "evidence_usage_projections", "event_watermarks", "projection_backfills",
+        )
+    }
+
+
+@pytest.mark.parametrize("caller_transaction", [False, True])
+@pytest.mark.parametrize("failure_table", ["evidence_usage_projections", "event_watermarks"])
+def test_refresh_failure_rolls_back_only_its_projection_pass(
+    conn: sqlite3.Connection, caller_transaction: bool, failure_table: str,
+) -> None:
+    job_id = _seed_job(conn, "https://example.com/failed-projection")
+    conn.execute(
+        "INSERT INTO candidate_profile_skill_categories "
+        "(tenant_id, profile_id, category_id, position_index, label) "
+        "VALUES ('local', 'default', 'fixture', 0, 'Fixture')"
+    )
+    conn.execute(
+        "INSERT INTO candidate_profile_skill_items "
+        "(tenant_id, profile_id, category_id, item_index, item_text) "
+        "VALUES ('local', 'default', 'fixture', 0, 'Python')"
+    )
+    conn.commit()
+    builder = ProjectionBuilder(conn_factory=lambda: conn)
+    builder.refresh()
+    before = _projection_transaction_snapshot(conn)
+    assert before["evidence_usage_projections"]
+    conn.execute(
+        f"CREATE TEMP TRIGGER fail_projection BEFORE INSERT ON {failure_table} "
+        "BEGIN SELECT RAISE(ABORT, 'projection fixture failure'); END"
+    )
+    conn.execute("BEGIN IMMEDIATE")
+    conn.execute("UPDATE jobs SET title = 'Changed' WHERE job_id = ?", (str(job_id),))
+    if caller_transaction:
+        bus = InProcessEventBus()
+        builder.subscribe_to(bus)
+        # The event subscriber catches the error; its savepoint must still
+        # discard every partial projection write before the publisher commits.
+        record_job_event(conn, job_id, "discover", "JobDiscovered", publisher=bus)
+        assert conn.in_transaction
+    else:
+        record_job_event(conn, job_id, "discover", "JobDiscovered")
+        conn.commit()
+        with pytest.raises(sqlite3.IntegrityError, match="projection fixture failure"):
+            builder.refresh()
+        assert not conn.in_transaction
+    assert _projection_transaction_snapshot(conn) == before
+    db_path = conn.execute("PRAGMA database_list").fetchone()[2]
+    if caller_transaction:
+        with sqlite3.connect(db_path) as observer:
+            assert observer.execute("SELECT title FROM jobs").fetchone()[0] == "Engineer"
+            assert observer.execute("SELECT COUNT(*) FROM job_events").fetchone()[0] == 0
+    conn.commit()
+    with sqlite3.connect(db_path) as observer:
+        assert observer.execute("SELECT title FROM jobs").fetchone()[0] == "Changed"
+        assert observer.execute("SELECT COUNT(*) FROM job_events").fetchone()[0] == 1
+        assert _projection_transaction_snapshot(observer) == before
+    conn.execute("DROP TRIGGER fail_projection")
+    builder.refresh()
+    assert not conn.in_transaction
+    with sqlite3.connect(db_path) as observer:
+        assert observer.execute("SELECT title FROM job_list_projections").fetchone()[0] == "Changed"
+        assert SqliteEventWatermarkRepository(observer).get(PYTHON_WATERMARK_NAME) > 0
+    after = _projection_transaction_snapshot(conn)
+    builder.refresh()
+    assert _projection_transaction_snapshot(conn) == after
+
+
+def test_refresh_has_independent_tenant_and_consumer_cursors(conn: sqlite3.Connection) -> None:
+    insert = (
+        "INSERT INTO job_events (tenant_id, job_id, identity_version, event_type, occurred_at, payload_json) "
+        "VALUES (?, NULL, 1, 'CandidateProfileUpdated', '2026-09-01T00:00:00Z', '{}')"
+    )
+    foreign_event = conn.execute(insert, ("foreign",)).lastrowid
+    local_event = conn.execute(insert, ("local",)).lastrowid
+    assert foreign_event is not None and local_event is not None
+    repo = SqliteEventWatermarkRepository(conn)
+    repo.set(PROJECTION_NAME, local_event)
+    repo.set(f"typescript:{PROJECTION_NAME}:local", local_event)
+    local_builder = ProjectionBuilder(conn_factory=lambda: conn)
+    local_builder.refresh()
+    assert repo.get(PYTHON_WATERMARK_NAME) == local_event
+    assert repo.get(f"python:{PROJECTION_NAME}:foreign") == 0
+    foreign_builder = ProjectionBuilder(conn_factory=lambda: conn, tenant_id=TenantId("foreign"))
+    foreign_builder.refresh()
+    assert repo.get(f"python:{PROJECTION_NAME}:foreign") == foreign_event
+    assert repo.get(PYTHON_WATERMARK_NAME) == local_event
+    assert repo.get(PROJECTION_NAME) == local_event
+    local_builder.refresh()
+    foreign_builder.refresh()
+    assert repo.get(f"python:{PROJECTION_NAME}:foreign") == foreign_event
+
+
+def test_legacy_opaque_tenant_cursors_cannot_acknowledge_local_events(conn: sqlite3.Connection) -> None:
+    job_id = _seed_job(conn, "https://example.com/legacy-tenant-cursor")
+    builder = ProjectionBuilder(conn_factory=lambda: conn)
+    builder.refresh()
+    conn.execute("UPDATE jobs SET title = 'Changed' WHERE job_id = ?", (str(job_id),))
+    record_job_event(conn, job_id, "discover", "JobDiscovered")
+    event_id = conn.execute("SELECT MAX(event_id) FROM job_events").fetchone()[0]
+    legacy_rows = [
+        (f"{PROJECTION_NAME}:{tenant}", 10_000 + index, "2026-08-31T00:00:00Z")
+        for index, tenant in enumerate(("python:local", "typescript:local"))
+    ]
+    conn.executemany(
+        "INSERT OR REPLACE INTO event_watermarks (projection_name, last_event_id, updated_at) VALUES (?, ?, ?)",
+        legacy_rows,
+    )
+    conn.commit()
+    builder.refresh()
+    assert conn.execute("SELECT title FROM job_list_projections").fetchone()[0] == "Changed"
+    assert SqliteEventWatermarkRepository(conn).get(f"python:{PROJECTION_NAME}:local") == event_id
+    for legacy_row in legacy_rows:
+        assert tuple(conn.execute(
+            "SELECT * FROM event_watermarks WHERE projection_name = ?", (legacy_row[0],)
+        ).fetchone()) == legacy_row
 
 
 def test_backfill_from_empty(conn: sqlite3.Connection) -> None:
@@ -700,7 +859,7 @@ def test_posted_parser_reconciliation_rebuilds_settled_list_and_detail_projectio
 
     builder = ProjectionBuilder(conn_factory=lambda: conn)
     assert builder.refresh() == 1
-    settled_watermark = SqliteEventWatermarkRepository(conn).get(PROJECTION_NAME)
+    settled_watermark = SqliteEventWatermarkRepository(conn).get(PYTHON_WATERMARK_NAME)
     initial = conn.execute(
         """
         SELECT list.compensation_summary_json,
@@ -730,7 +889,7 @@ def test_posted_parser_reconciliation_rebuilds_settled_list_and_detail_projectio
         == 1
     )
     assert builder.refresh() == 1
-    assert SqliteEventWatermarkRepository(conn).get(PROJECTION_NAME) > settled_watermark
+    assert SqliteEventWatermarkRepository(conn).get(PYTHON_WATERMARK_NAME) > settled_watermark
 
     rebuilt = conn.execute(
         """
@@ -790,7 +949,7 @@ def test_posted_parser_reconciliation_corrects_hr_prose_period_in_settled_projec
 
     builder = ProjectionBuilder(conn_factory=lambda: conn)
     assert builder.refresh() == 1
-    settled_watermark = SqliteEventWatermarkRepository(conn).get(PROJECTION_NAME)
+    settled_watermark = SqliteEventWatermarkRepository(conn).get(PYTHON_WATERMARK_NAME)
     initial = conn.execute(
         """
         SELECT list.compensation_summary_json,
@@ -818,7 +977,7 @@ def test_posted_parser_reconciliation_corrects_hr_prose_period_in_settled_projec
         == 1
     )
     assert builder.refresh() == 1
-    assert SqliteEventWatermarkRepository(conn).get(PROJECTION_NAME) > settled_watermark
+    assert SqliteEventWatermarkRepository(conn).get(PYTHON_WATERMARK_NAME) > settled_watermark
 
     rebuilt = conn.execute(
         """
@@ -1304,7 +1463,7 @@ def test_score_audit_backfill_repopulates_existing_null_rows(conn: sqlite3.Conne
     )
     # Watermark already advanced past the score event: no event-driven rebuild.
     latest_event_id = conn.execute("SELECT MAX(event_id) FROM job_events").fetchone()[0]
-    SqliteEventWatermarkRepository(conn).set(PROJECTION_NAME, int(latest_event_id))
+    SqliteEventWatermarkRepository(conn).set(PYTHON_WATERMARK_NAME, int(latest_event_id))
     conn.commit()
 
     pre = conn.execute(
@@ -1376,7 +1535,7 @@ def test_score_audit_backfill_runs_at_most_once(conn: sqlite3.Connection) -> Non
     )
     record_job_event(conn, later_job_id, "score", "JobScored", payload=_INERT_CONTEXT)
     latest_event_id = conn.execute("SELECT MAX(event_id) FROM job_events").fetchone()[0]
-    SqliteEventWatermarkRepository(conn).set(PROJECTION_NAME, int(latest_event_id))
+    SqliteEventWatermarkRepository(conn).set(PYTHON_WATERMARK_NAME, int(latest_event_id))
     conn.commit()
 
     ProjectionBuilder(conn_factory=lambda: conn).refresh()

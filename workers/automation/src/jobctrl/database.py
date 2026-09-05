@@ -255,8 +255,9 @@ def ensure_projection_tables_in_db(conn: sqlite3.Connection | None = None) -> li
     """Create the Operations / Read-Side projection tables (Phase 9 / S-32).
 
     Defers to ``infrastructure.projections.sqlite_projection_store`` so the
-    schema lives next to its adapter; ``init_db`` calls it as part of the
-    standard startup migrations.  The import is local to keep
+    compatibility schema helper stays next to its adapter. Runtime ``init_db``
+    creates or admits the exact v9 manifest instead; this helper is for explicit
+    legacy-schema preparation. The import is local to keep
     ``database.py`` free of infrastructure imports at module-load time.
     """
     if conn is None:

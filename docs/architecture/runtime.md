@@ -210,7 +210,7 @@ to the ports in `shared/providers/PortsProvider.tsx`
 
 | Port | Local-mode adapter | Hosted-mode adapter (named, not built) |
 |---|---|---|
-| `ApiClientPort` | `FetchApiClientAdapter` (wraps `@jobctrl/api-client`) | Same adapter; baseUrl from env, `Authorization: Bearer <jwt>` injected by hosted `AuthInterceptor`. |
+| `ApiClientPort` | `JobCtrlApiClient` from `@jobctrl/api-client` | Transport with hosted authentication when implemented. |
 | `EventStreamPort` | `SseEventStreamAdapter` (`new EventSource(...)`) | `WebSocketEventStreamAdapter` if SSE proves limiting. |
 | `StoragePort` | `LocalStorageAdapter` | `IndexedDbAdapter` when client-side cache exceeds 5 MB. |
 | `SessionPort` | `LocalSessionAdapter` (returns `LOCAL_TENANT`) | `JwtSessionAdapter` (Auth0 / Cognito). |

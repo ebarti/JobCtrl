@@ -110,6 +110,11 @@ compatibility layer: the TypeScript API and Python worker accept exact v9 and
 reject direct v6/v7/v8 operation. Runtime projections read registered persisted
 artifacts only and do not reconstruct legacy URL-shaped fallback rows.
 
+SQLite repository and projection constructors do not initialize schema or
+commit caller work. Exact-v9 creation/admission owns that boundary before runtime
+refresh begins; each refresh owns only its derived writes and consumer cursor
+inside a transaction or the caller's savepoint.
+
 V9 adds one optional per-position summary to normalized Candidate Profile
 experience rows. Existing rows receive the empty-string default; empty values
 render nothing, while non-empty values appear between the role heading and its

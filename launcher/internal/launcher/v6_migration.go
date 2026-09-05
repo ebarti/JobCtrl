@@ -43,17 +43,6 @@ type temporalQuiescenceReceipt struct {
 	Status                string `json:"status"`
 }
 
-type sealedV7CandidateReceipt struct {
-	CandidateLogicalDigest string `json:"candidate_logical_digest"`
-	CandidateSHA256        string `json:"candidate_sha256"`
-	JobCount               int    `json:"job_count"`
-	SchemaVersion          int    `json:"schema_version"`
-	SourceDigest           string `json:"source_digest"`
-	Status                 string `json:"status"`
-	TableCount             int    `json:"table_count"`
-	UserVersion            int64  `json:"user_version"`
-}
-
 func verifiedReleaseContext(base launchContext, verified verifiedRelease) launchContext {
 	return launchContext{
 		Executable:   filepath.Join(verified.payloadRoot, "launcher", "jobctrl"),
@@ -325,62 +314,6 @@ func runTemporalQuiescenceModule(candidate launchContext) error {
 		return errors.New("Temporal quiescence preflight returned invalid evidence")
 	}
 	return nil
-}
-
-func buildSealedV7Candidate(candidate launchContext, pair databasePair, journalID string) (string, error) {
-	source, err := pairedDatabasePath(candidate.Instance.StateDir, pair, "jobctrl.db", legacyJobCtrlSchemaVersion)
-	if err != nil {
-		return "", err
-	}
-	path := v7CandidatePath(candidate.Instance.StateDir, journalID)
-	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
-		return "", errors.New("v7 migration candidate path already exists")
-	}
-	python := filepath.Join(candidate.PayloadRoot, "python", "bin", "python3")
-	command := exec.Command(
-		python,
-		"-I",
-		"-B",
-		"-m",
-		"jobctrl.infrastructure.migrations.v6_to_v7_execute",
-		"--source",
-		source,
-		"--candidate",
-		path,
-		"--migration-at",
-		time.Now().UTC().Format(time.RFC3339Nano),
-	)
-	command.Env = candidate.Environment
-	command.Dir = candidate.Instance.StateDir
-	output, err := command.Output()
-	if err != nil || len(output) > 4096 {
-		cleanupV7Candidate(candidate.Instance.StateDir, journalID)
-		return "", errors.New("sealed v6-to-v7 candidate execution failed")
-	}
-	var receipt sealedV7CandidateReceipt
-	if err := decodeSingleJSON(output, &receipt); err != nil ||
-		receipt.SchemaVersion != 1 || receipt.Status != "ready" ||
-		receipt.UserVersion != exactJobCtrlSchemaVersion || receipt.JobCount < 0 || receipt.TableCount < 1 ||
-		!validSHA256(receipt.SourceDigest) || !validSHA256(receipt.CandidateLogicalDigest) || !validSHA256(receipt.CandidateSHA256) {
-		cleanupV7Candidate(candidate.Instance.StateDir, journalID)
-		return "", errors.New("sealed v6-to-v7 candidate receipt is invalid")
-	}
-	info, statErr := os.Lstat(path)
-	if statErr != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0o077 != 0 {
-		cleanupV7Candidate(candidate.Instance.StateDir, journalID)
-		return "", errors.New("sealed v7 candidate is not an owner-private regular file")
-	}
-	digest, digestErr := sha256Path(path)
-	if digestErr != nil || digest != receipt.CandidateSHA256 {
-		cleanupV7Candidate(candidate.Instance.StateDir, journalID)
-		return "", errors.New("sealed v7 candidate digest verification failed")
-	}
-	version, versionErr := sqliteUserVersion(python, path)
-	if versionErr != nil || version != exactJobCtrlSchemaVersion {
-		cleanupV7Candidate(candidate.Instance.StateDir, journalID)
-		return "", errors.New("sealed v7 candidate schema verification failed")
-	}
-	return path, nil
 }
 
 func pairedDatabasePath(stateDir string, pair databasePair, name string, version int64) (string, error) {

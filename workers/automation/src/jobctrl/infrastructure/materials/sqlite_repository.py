@@ -24,7 +24,7 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any
 
-from jobctrl.database import effective_tailoring_min_score, ensure_tailoring_policy_tables
+from jobctrl.database import effective_tailoring_min_score
 from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.materials.aggregate import MaterialsSet
 from jobctrl.domain.materials.entities import Artifact
@@ -948,7 +948,6 @@ class SqliteLearningRecommendationReviewRepository:
 
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._conn = conn
-        ensure_tailoring_policy_tables(conn)
 
     def review(
         self,
@@ -1118,7 +1117,6 @@ class SqliteTailoringPolicyRepository:
     ) -> None:
         self._conn = conn
         self._unit_of_work = unit_of_work
-        ensure_tailoring_policy_tables(conn)
 
     def get_current(self, tenant_id: TenantId) -> TailoringPolicy | None:
         row = self._conn.execute(
@@ -1309,7 +1307,6 @@ class SqliteTailoringPolicyRepository:
                 self._conn,
                 publisher=InProcessEventBus(),
                 profile_id=str(profile_snapshot.profile_id),
-                initialize_schema=False,
             ).load_snapshot(profile_snapshot.tenant_id)
         except FileNotFoundError as exc:
             raise TailoringPolicyChangedError(

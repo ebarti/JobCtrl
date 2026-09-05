@@ -4,7 +4,7 @@
  * The Python half lives at
  * ``workers/automation/tests/test_pipeline_step_projection.py``. Both runtimes
  * fold the same shared event fixture so duplicate, retry, late-event, privacy,
- * and shared-watermark behavior cannot drift independently.
+ * and legacy-cursor recovery cannot drift independently.
  */
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -134,7 +134,7 @@ describe("pipeline_step_projections cross-runtime parity", () => {
     expect(projected(db)).toEqual(first);
   });
 
-  it("backfills lifecycle rows after another runtime advanced the watermark", () => {
+  it("replays lifecycle rows behind the retired shared cursor", () => {
     const db = seededDb();
     const maxEventId = fixture.events.length;
     db.prepare(
@@ -153,5 +153,8 @@ describe("pipeline_step_projections cross-runtime parity", () => {
       .prepare("SELECT last_event_id FROM event_watermarks WHERE projection_name = ?")
       .get(PROJECTION_WATERMARK_NAME) as { last_event_id: number };
     expect(Number(watermark.last_event_id)).toBe(maxEventId);
+    expect(db.prepare("SELECT last_event_id FROM event_watermarks WHERE projection_name = ?").get(
+      `typescript:${PROJECTION_WATERMARK_NAME}:${fixture.tenantId}`,
+    )).toEqual({ last_event_id: maxEventId });
   });
 });

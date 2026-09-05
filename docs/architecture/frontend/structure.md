@@ -229,7 +229,6 @@ apps/web/
 │   │   │   └── index.ts
 │   │   ├── adapters/                        # concrete adapters — sibling of ports/, NOT ports/adapters/
 │   │   │   └── local/
-│   │   │       ├── FetchApiClientAdapter.ts
 │   │   │       ├── SseEventStreamAdapter.ts
 │   │   │       ├── LocalStorageAdapter.ts
 │   │   │       ├── LocalSessionAdapter.ts
