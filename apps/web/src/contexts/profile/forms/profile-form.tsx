@@ -10,7 +10,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ProfileConfigResponse } from "../../operations/types.js";
 import { Alert, AlertDescription } from "../../../shared/ui/alert.js";
 import { Button } from "../../../shared/ui/button.js";
-import { Empty } from "../../../shared/ui/empty.js";
+import { isJsonRecord, setPathValue, type JsonRecord } from "../lib/json-record.js";
 import { StructuredProfileEditor } from "../components/StructuredProfileEditor.js";
 import { useUpdateProfileMutation } from "../hooks/useUpdateProfileMutation.js";
 import { AutosaveUndoController } from "../../../shared/ui/autosave-undo-controller.js";
@@ -22,8 +22,8 @@ import {
 export type ProfileSection = "profile" | "preferences" | "target-search";
 
 export interface ProfileFormValues {
-  profileText: string;
-  styleText: string;
+  profile: JsonRecord | null;
+  style: JsonRecord | null;
   templateText: string;
 }
 
@@ -46,29 +46,14 @@ export interface ProfilePlateTextController {
 
 export function toProfileFormValues(profile: ProfileConfigResponse): ProfileFormValues {
   return {
-    profileText: JSON.stringify(profile.profile, null, 2),
-    styleText: JSON.stringify(profile.style, null, 2),
+    profile: isJsonRecord(profile.profile) ? profile.profile : null,
+    style: isJsonRecord(profile.style) ? profile.style : null,
     templateText: profile.templateText,
   };
 }
 
-function tryParseJson(text: string): { ok: true; value: unknown } | { ok: false; error: string } {
-  try {
-    return { ok: true, value: JSON.parse(text) as unknown };
-  } catch (parseError) {
-    return {
-      ok: false,
-      error: parseError instanceof Error ? parseError.message : "Invalid JSON",
-    };
-  }
-}
-
 function validateProfileForm(values: ProfileFormValues): string | undefined {
-  const parsedProfile = tryParseJson(values.profileText);
-  if (!parsedProfile.ok) {
-    return `Profile data: ${parsedProfile.error}`;
-  }
-  const profileResult = ProfileSchema.safeParse(parsedProfile.value);
+  const profileResult = ProfileSchema.safeParse(values.profile);
   if (!profileResult.success) {
     return `Profile data: ${profileResult.error.issues[0]?.message ?? "invalid profile"}`;
   }
@@ -76,10 +61,7 @@ function validateProfileForm(values: ProfileFormValues): string | undefined {
   if (profileDateError) {
     return profileDateError;
   }
-  const parsedStyle = tryParseJson(values.styleText);
-  if (!parsedStyle.ok) {
-    return `Resume style settings: ${parsedStyle.error}`;
-  }
+  if (!values.style) return "Resume style settings: expected an object";
   return undefined;
 }
 
@@ -96,8 +78,8 @@ function validateProfileDateRanges(profile: ProfileShape): string | undefined {
 
 function toUpdateRequest(values: ProfileFormValues): ProfileUpdateRequest {
   return {
-    profileText: values.profileText,
-    styleText: values.styleText,
+    profileText: JSON.stringify(values.profile, null, 2),
+    styleText: JSON.stringify(values.style, null, 2),
     templateText: values.templateText,
   };
 }
@@ -118,7 +100,7 @@ interface PlateProfileProjectionState {
 
 interface PlateProfileProjectionResult {
   readonly conflictCount: number;
-  readonly profileText: string;
+  readonly profile: JsonRecord | null;
   readonly state: PlateProfileProjectionState;
 }
 
@@ -152,8 +134,8 @@ function matchingTextSequenceIndexes(
   return matches;
 }
 
-function profileTextWithPlateChanges(
-  profileText: string,
+function profileWithPlateChanges(
+  profileDraft: JsonRecord | null,
   changes: readonly ProfilePlateTextChange[],
   previousState: PlateProfileProjectionState | null,
 ): PlateProfileProjectionResult {
@@ -161,15 +143,16 @@ function profileTextWithPlateChanges(
   const appliedTargets = new Map(previousState?.appliedTargets ?? []);
   const unchangedResult = (conflictCount = 0): PlateProfileProjectionResult => ({
     conflictCount,
-    profileText,
+    profile: profileDraft,
     state: { activeChanges, appliedTargets },
   });
-  const parsed = tryParseJson(profileText);
-  if (!parsed.ok) return unchangedResult();
-  const profileResult = ProfileSchema.safeParse(parsed.value);
-  if (!profileResult.success) return unchangedResult();
+  const profileResult = ProfileSchema.safeParse(profileDraft);
+  if (!profileDraft || !profileResult.success) return unchangedResult();
 
-  const profile = structuredClone(profileResult.data);
+  // Parsed values supply validated semantic reads only. Write changed fields
+  // into the original draft so unknown fields and incomplete input survive.
+  const profile = profileResult.data;
+  const updatedProfile = structuredClone(profileDraft);
   let changed = false;
   let conflictCount = 0;
   const effectiveChanges = [...activeChanges.values()];
@@ -217,7 +200,7 @@ function profileTextWithPlateChanges(
   for (const change of effectiveChanges) {
     if (change.semanticId === "personal:full_name") {
       applySingleText(change, profile.personal.full_name ?? "", (value) => {
-        profile.personal.full_name = value;
+        setPathValue(updatedProfile, "personal.full_name", value);
       });
       continue;
     }
@@ -226,7 +209,7 @@ function profileTextWithPlateChanges(
         change,
         profile.resume.executive_profile.baseline_text ?? "",
         (value) => {
-          profile.resume.executive_profile.baseline_text = value;
+          setPathValue(updatedProfile, "resume.executive_profile.baseline_text", value);
         },
       );
       continue;
@@ -243,7 +226,7 @@ function profileTextWithPlateChanges(
         continue;
       }
       applySingleText(change, entry.summary, (value) => {
-        entry.summary = value;
+        setPathValue(updatedProfile, `resume.experience_entries.${profile.resume.experience_entries.indexOf(entry)}.summary`, value);
       });
       continue;
     }
@@ -297,6 +280,7 @@ function profileTextWithPlateChanges(
       );
       if (!plateTextArraysEqual(currentTexts, desiredTexts)) {
         entry.bullets.splice(bulletIndex, expectedTexts.length, ...desiredTexts);
+        setPathValue(updatedProfile, `resume.experience_entries.${profile.resume.experience_entries.indexOf(entry)}.bullets`, entry.bullets);
         changed = true;
       }
       if (activeChanges.has(change.semanticId)) {
@@ -312,7 +296,7 @@ function profileTextWithPlateChanges(
 
   return {
     conflictCount,
-    profileText: changed ? JSON.stringify(profile, null, 2) : profileText,
+    profile: changed ? updatedProfile : profileDraft,
     state: { activeChanges, appliedTargets },
   };
 }
@@ -358,9 +342,7 @@ export function ProfileForm({
       const submittedValues = serializeProfileValues(value);
       const initialValues = toProfileFormValues(initial);
       const shouldUpdateProfile =
-        value.profileText !== initialValues.profileText ||
-        value.styleText !== initialValues.styleText ||
-        value.templateText !== initialValues.templateText;
+        submittedValues !== serializeProfileValues(initialValues);
       const profileResponse = shouldUpdateProfile
         ? await updateProfile.mutateAsync(toUpdateRequest(value))
         : initial;
@@ -378,9 +360,9 @@ export function ProfileForm({
 
   const applyPlateTextChanges = useCallback(
     (changes: readonly ProfilePlateTextChange[]) => {
-      const currentProfileText = form.state.values.profileText;
-      const projection = profileTextWithPlateChanges(
-        currentProfileText,
+      const currentProfile = form.state.values.profile;
+      const projection = profileWithPlateChanges(
+        currentProfile,
         changes,
         plateProfileProjectionRef.current,
       );
@@ -393,8 +375,8 @@ export function ProfileForm({
       } else {
         clearTransientStatus();
       }
-      if (projection.profileText !== currentProfileText) {
-        form.setFieldValue("profileText", projection.profileText);
+      if (projection.profile !== currentProfile) {
+        form.setFieldValue("profile", projection.profile);
       }
     },
     [clearTransientStatus, form],
@@ -489,20 +471,20 @@ export function ProfileForm({
           ) : null
         }
       </form.Subscribe>
-      <form.Field name="profileText">
+      <form.Field name="profile">
         {(profileField) => (
-          <form.Field name="styleText">
+          <form.Field name="style">
             {(styleField) => (
               <StructuredProfileEditor
                 mode={section}
                 showSectionHeading={showSectionHeading}
-                profileText={profileField.state.value}
-                styleText={styleField.state.value}
-                onProfileTextChange={(value) => {
+                profile={profileField.state.value}
+                style={styleField.state.value}
+                onProfileChange={(value) => {
                   clearTransientStatus();
                   profileField.handleChange(value);
                 }}
-                onStyleTextChange={(value) => {
+                onStyleChange={(value) => {
                   clearTransientStatus();
                   styleField.handleChange(value);
                 }}
@@ -528,9 +510,6 @@ export function ProfileForm({
         <Alert className="inline" variant="destructive">
           <AlertDescription>{updateProfile.error.message}</AlertDescription>
         </Alert>
-      ) : null}
-      {!form.state.values.profileText && !form.state.values.styleText ? (
-        <Empty title="Loading profile." />
       ) : null}
     </form>
   );

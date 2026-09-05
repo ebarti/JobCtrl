@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 
 import { test, expect } from "@playwright/test";
+import { checkA11y, injectAxe } from "axe-playwright";
 import type { ProviderId } from "@jobctrl/contracts";
 import { getDocument, OPS } from "pdfjs-dist/legacy/build/pdf.mjs";
 
@@ -511,4 +512,96 @@ test("Model Selection requires a ready provider and saves one provider preferenc
   expect(
     await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
   ).toBe(true);
+});
+
+test.describe("structured profile persistence", () => {
+  test.skip(process.env["JOBCTRL_E2E_ISOLATED"] !== "1", "Requires the owned, no-subprocess API fixture");
+  const apiOrigin = `http://127.0.0.1:${process.env["JOBCTRL_E2E_API_PORT"]}`;
+
+  test.beforeEach(async ({ context, page, baseURL }) => {
+    const allowed = new Set([new URL(baseURL!).origin, apiOrigin]);
+    await context.route("**/*", (route) => allowed.has(new URL(route.request().url()).origin)
+      ? route.continue() : route.abort("blockedbyclient"));
+    for (const [endpoint, response] of [
+      ["credentials", sampleCredentialsResponse],
+      ["providers/status", sampleProviderStatusResponse],
+      ["providers/models", sampleProviderModelsResponse],
+    ] as const) await page.route(`**/v1/${endpoint}`, (route) => route.fulfill({ json: response }));
+    const stored = await (await page.request.get(`${apiOrigin}/v1/profile`)).json();
+    stored.profile.personal.full_name = "Structured Fixture Candidate";
+    stored.profile.experience.target_locations = "";
+    stored.profile.resume.experience_entries = [
+      { id: "structured-first", company: "First Fixture", title: "Platform Lead", location: "", date_range: "Jan 2022 - Present", summary: "First fixture summary.", bullets: ["Built 10 synthetic systems.", "Second unique first-entry bullet."] },
+      { id: "structured-second", company: "Second Fixture", title: "Engineer", location: "", date_range: "Jan 2020 - Dec 2021", summary: "Second fixture summary.", bullets: ["Second entry unique achievement."] },
+    ];
+    const seed = await page.request.patch(`${apiOrigin}/v1/profile`, {
+      headers: { origin: new URL(baseURL!).origin, "sec-fetch-site": "same-origin" },
+      data: {
+        profileText: JSON.stringify(stored.profile), styleText: JSON.stringify(stored.style), templateText: stored.templateText,
+      },
+    });
+    expect(seed.status()).toBe(200);
+  });
+
+  test("boxed and Plate edits retain their fields and order through real save and reload", async ({ page }) => {
+    await page.goto("/profile");
+    await page.getByLabel("Full name", { exact: true }).fill("Structured Saved Candidate");
+    await page.getByRole("button", { name: "Resume editor", exact: true }).click();
+    const editor = page.getByRole("textbox", { name: "Baseline resume editor editor" });
+    const bullet = editor.locator('[data-resume-layout-target="experience:structured-first:bullet:1"]');
+    await expect(bullet).toContainText("Built 10 synthetic systems.");
+    // Click actual text rather than the full-width line container, then keep
+    // keyboard input on that selection instead of refocusing the editor root.
+    await bullet.locator('[data-slate-string="true"]').click();
+    await expect(editor).toBeFocused();
+    await expect.poll(() => bullet.evaluate((element) => {
+      const selection = window.getSelection();
+      return Boolean(selection && element.contains(selection.anchorNode) && element.contains(selection.focusNode));
+    })).toBe(true);
+    await page.keyboard.press("End");
+    await page.keyboard.press("Backspace");
+    await page.keyboard.type("; revised 12x.");
+    await expect(bullet).toContainText("Built 10 synthetic systems; revised 12x.");
+    await page.getByRole("button", { name: "Profile data", exact: true }).click();
+    await expect(page.getByLabel("Full name", { exact: true })).toHaveValue("Structured Saved Candidate");
+    await page.getByRole("button", { name: /^Experience entries/ }).click();
+    await expect(page.getByLabel("Bullet 1", { exact: true }).first()).toHaveValue("Built 10 synthetic systems; revised 12x.");
+    await page.getByRole("button", { name: "Move First Fixture - Platform Lead down" }).click();
+    await page.getByRole("button", { name: "Save changes", exact: true }).click();
+    await expect(page.getByText("Profile saved", { exact: true })).toBeVisible();
+    await page.reload();
+    await expect(page.getByLabel("Full name", { exact: true })).toHaveValue("Structured Saved Candidate");
+    const stored = await (await page.request.get(`${apiOrigin}/v1/profile`)).json();
+    expect(stored.profile.resume.experience_entries.map((entry: { id: string }) => entry.id)).toEqual(["structured-second", "structured-first"]);
+    expect(stored.profile.resume.experience_entries[1].bullets).toEqual(["Built 10 synthetic systems; revised 12x.", "Second unique first-entry bullet."]);
+    await page.getByRole("button", { name: "Resume editor", exact: true }).click();
+    await expect(editor.locator('[data-resume-layout-target="experience:structured-first:bullet:1"]')).toContainText("Built 10 synthetic systems; revised 12x.");
+    await expect(editor.locator("li").first()).toContainText("Second entry unique achievement.");
+    await injectAxe(page);
+    await checkA11y(page, ".profile-workspace", { includedImpacts: ["critical", "serious"] });
+  });
+
+  test("preferences keep intermediate numeric input and persist profile and style fields", async ({ page }) => {
+    await page.goto("/preferences");
+    const salary = page.getByLabel("Salary range min", { exact: true });
+    await salary.fill("");
+    await expect(salary).toHaveValue("");
+    await salary.fill("165001");
+    await page.getByRole("button", { name: /^Resume style/ }).click();
+    const scale = page.getByLabel("Page scale", { exact: true });
+    await scale.fill("");
+    await expect(scale).toHaveValue("");
+    await scale.fill("0.91");
+    await page.getByRole("button", { name: "Save changes", exact: true }).click();
+    await expect(page.getByText("Preferences saved", { exact: true })).toBeVisible();
+    await page.reload();
+    await expect(salary).toHaveValue("165001");
+    await page.getByRole("button", { name: /^Resume style/ }).click();
+    await expect(scale).toHaveValue("0.91");
+    const stored = await (await page.request.get(`${apiOrigin}/v1/profile`)).json();
+    expect(stored.profile.compensation.salary_range_min).toBe("165001");
+    expect(stored.style.page_scale).toBe(0.91);
+    await injectAxe(page);
+    await checkA11y(page, ".profile-data-workspace", { includedImpacts: ["critical", "serious"] });
+  });
 });

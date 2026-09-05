@@ -5,14 +5,15 @@ import { BrowserCapabilityIds } from "@jobctrl/contracts";
 import type { CredentialStore } from "../src/credentials.js";
 import type { JsonRpcDispatcher } from "../src/json-rpc-adapter.js";
 
-const { assertIsolatedE2eWorkspace } = createRequire(import.meta.url)(
+const { assertIsolatedE2eWorkspace, assertExpectedWorkspace } = createRequire(import.meta.url)(
   "../../web/e2e/fixtures/isolated-workspace.cjs",
-) as { assertIsolatedE2eWorkspace(): Promise<string> };
+) as { assertIsolatedE2eWorkspace(): Promise<string>; assertExpectedWorkspace(workspace: unknown): void };
 await assertIsolatedE2eWorkspace();
 const { resolveApiConfig } = await import("../src/config.js");
 const { buildApp } = await import("../src/server.js");
 const { e2eStubActionDispatcher, e2eStubProfileImporter } =
   await import("../src/e2e-dispatch.js");
+const { e2eProfilePreviewRenderer } = await import("./fixtures/e2e-profile-preview.js");
 const config = resolveApiConfig();
 const unavailable = async () => {
   throw new Error("Operation is outside the isolated E2E fixture");
@@ -72,6 +73,11 @@ const app = buildApp({
   },
   actionDispatcher: e2eStubActionDispatcher,
   profileImporter: e2eStubProfileImporter,
+  profilePreviewRenderer: async (input, context) => {
+    await assertIsolatedE2eWorkspace();
+    assertExpectedWorkspace(context);
+    return e2eProfilePreviewRenderer(input, context);
+  },
   artifactOpener: unavailable,
   jobUrlValidator: unavailable,
   placeValidator: unavailable,

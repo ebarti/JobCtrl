@@ -98,6 +98,12 @@ and verify both changes survive. If the boxed editor removes or changes the
 same bullet first, the Plate projection must preserve the boxed structure and
 surface a conflict. A formatting-only change or edit to a composite
 company/location/title/date line must not create a guessed profile-field edit.
+Profile object-draft regression tests also verify unknown nested fields and raw
+numeric strings survive in the outgoing request. Backend schema normalization
+is unchanged. The isolated profile browser fixture uses real GET/PATCH and
+SQLite persistence for supported values/order, with deterministic preview HTML
+bound to each current stored profile; it must not start Python or provider work.
+
 Verify the Size control displays its relative value as a percentage (100% at
 the resume default) with high-contrast text rather than exposing the internal
 unitless scale. Verify experience entries render newest-first and education

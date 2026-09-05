@@ -111,6 +111,45 @@ describe("<ProfileForm>", () => {
     expect(screen.getByLabelText("Bullet 2")).toHaveValue("Led the SRE org.");
   });
 
+  it("serializes only edited fields while preserving unknown nested data through Plate projection", async () => {
+    const user = userEvent.setup();
+    const initial = structuredClone(sampleProfileResponse);
+    const profile = initial.profile as Record<string, unknown>;
+    profile["futureProfile"] = { nested: ["keep", { flag: true }] };
+    const resume = profile["resume"] as Record<string, unknown>;
+    const rules = resume["tailoring_rules"] as Record<string, unknown>;
+    rules["max_bullets_per_role"] = "07";
+    const entries = resume["experience_entries"] as Array<Record<string, unknown>>;
+    entries[0]!["futureEntry"] = { source: "synthetic-preserved" };
+    initial.style = { ...(initial.style as Record<string, unknown>), futureStyle: { nested: [3, 1] } };
+    const original = structuredClone(initial);
+    let plateController: ProfilePlateTextController | null = null;
+    const updateProfile = vi.fn(async (request) => ({
+      ...initial, profile: JSON.parse(request.profileText), style: JSON.parse(request.styleText),
+    }));
+    renderWithProviders(<ProfileForm initial={initial} onPlateTextControllerChange={(controller) => {
+      plateController = controller;
+    }} />, { ports: buildTestPorts({ api: { updateProfile } }), withRouter: true });
+
+    fireEvent.change(await screen.findByLabelText("Full name"), { target: { value: "Boxed synthetic name" } });
+    act(() => plateController?.apply([{
+      semanticId: "experience:exp-1:bullet:1", baselineTexts: ["Scaled the platform 10x."],
+      plateTexts: ["Scaled the platform 12x.", "Second synthetic bullet."],
+    }]));
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(1));
+    const request = updateProfile.mock.calls[0]![0];
+    expect(Object.keys(request).sort()).toEqual(["profileText", "styleText", "templateText"]);
+    const expected = structuredClone(original.profile) as Record<string, unknown>;
+    (expected["personal"] as Record<string, unknown>)["full_name"] = "Boxed synthetic name";
+    const expectedEntries = (expected["resume"] as Record<string, unknown>)["experience_entries"] as Array<Record<string, unknown>>;
+    expectedEntries[0]!["bullets"] = ["Scaled the platform 12x.", "Second synthetic bullet.", "Led the SRE org."];
+    expect(JSON.parse(request.profileText)).toEqual(expected);
+    expect(JSON.parse(request.styleText)).toEqual(original.style);
+    expect(request.templateText).toEqual(original.templateText);
+    expect(initial).toEqual(original);
+  });
+
   it("preserves and surfaces a structural Profile conflict instead of overwriting it from Plate", async () => {
     const user = userEvent.setup();
     let plateController: ProfilePlateTextController | null = null;
