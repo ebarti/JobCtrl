@@ -110,11 +110,25 @@ function artifactDetail(artifactId: string) {
   return makeArtifactDetail({ ...acceptedArtifact, artifactId });
 }
 
-async function installArtifactComparisonRoutes(page: Page) {
+async function installArtifactComparisonRoutes(page: Page, advanceDraftAfterRender = true) {
+  let renderCompleted = false;
+  const nextDraft = {
+    ...draft, draftId: "draft-after-promotion", baseGeneration: 3,
+    baseResumeTextArtifactId: draftArtifact.artifactId, baseResumePdfArtifactId: "resume-review-pdf",
+    state: "active", currentRevisionId: null, latestRevisionNumber: 0,
+    latestRevision: null, commentThreads: [],
+  };
+  const currentDraft = () => renderCompleted && advanceDraftAfterRender ? nextDraft : draft;
   await page.route("**/v1/apply/review-queue", async (route) => {
     await route.fulfill({
       contentType: "application/json",
-      body: JSON.stringify(sampleApplyReviewQueue),
+      body: JSON.stringify(renderCompleted && advanceDraftAfterRender ? {
+        ...sampleApplyReviewQueue,
+        items: sampleApplyReviewQueue.items.map((item) => item.jobKey === jobKey ? {
+          ...item, materialsPreview: { ...item.materialsPreview,
+            resumeTextArtifactId: draftArtifact.artifactId, resumePdfArtifactId: "resume-review-pdf" },
+        } : item),
+      } : sampleApplyReviewQueue),
     });
   });
   await page.route("**/v1/resume-templates", async (route) => {
@@ -126,7 +140,7 @@ async function installArtifactComparisonRoutes(page: Page) {
   await page.route("**/v1/jobs/*/resume-review/draft", async (route) => {
     await route.fulfill({
       contentType: "application/json",
-      body: JSON.stringify({ ok: true, draft }),
+      body: JSON.stringify({ ok: true, draft: currentDraft() }),
     });
   });
   await page.route(
@@ -136,20 +150,21 @@ async function installArtifactComparisonRoutes(page: Page) {
         contentType: "application/json",
         body: JSON.stringify({
           ok: true,
-          draft,
-          commentThreads: draft.commentThreads,
-          seededCount: draft.commentThreads.length,
+          draft: currentDraft(),
+          commentThreads: currentDraft().commentThreads,
+          seededCount: currentDraft().commentThreads.length,
           updatedCount: 0,
         }),
       });
     },
   );
   await page.route("**/v1/resume-review/drafts/*/render", async (route) => {
+    renderCompleted = true;
     await route.fulfill({
       contentType: "application/json",
       body: JSON.stringify({
         ok: true,
-        draft: { ...draft, state: "rendered" },
+        draft: { ...draft, state: advanceDraftAfterRender ? "promoted" : "rendered" },
         validation: { passed: true, errors: [], warnings: [] },
         artifacts: {
           resumeText: {
@@ -180,7 +195,11 @@ async function installArtifactComparisonRoutes(page: Page) {
   await page.route("**/v1/artifacts/*/preview.html*", async (route) => {
     await route.fulfill({
       contentType: "text/html",
-      body: "<main><h1>Principal Platform Engineer</h1><p>Owned platform reliability work for incident response.</p></main>",
+      body: `<main><section class="resume-page" data-resume-page="1">
+        <h1 data-resume-line-number="1" data-resume-layout-target="personal:full_name">Principal Platform Engineer</h1>
+        <h2 data-resume-line-number="2" data-resume-layout-target="section:experience">Experience</h2>
+        <p data-resume-line-number="3" data-resume-layout-target="experience:line:3">Owned platform reliability work for incident response.</p>
+      </section></main>`,
     });
   });
   await page.route("**/v1/artifacts/*", async (route) => {
@@ -218,6 +237,11 @@ test("apply review compares accepted artifact with rendered draft artifact", asy
   await expect(comparison).toContainText("declared lost");
   await expect(comparison).toContainText("gcp");
   await expect(comparison).toContainText("claim risk");
+  await expect(comparison).toContainText("Accepted resume");
+  await expect(comparison).toContainText("Rendered draft resume");
+  await expect(page.getByText("draft ready", { exact: true })).toBeVisible();
+  await expect(renderButton).toBeDisabled();
+  await expect(page.getByText("replacement rendered", { exact: true })).toHaveCount(0);
   await expect(
     page.getByRole("region", { name: "Tailored resume preview" }),
   ).toBeVisible();
@@ -299,17 +323,23 @@ test("late saved snapshot preserves newer typing and keeps rendering gated", asy
 });
 
 test("a delayed seed snapshot cannot replace a rendered saved revision", async ({ page }) => {
-  await installArtifactComparisonRoutes(page);
+  await installArtifactComparisonRoutes(page, false);
   let finishSeed!: () => void;
+  const lateThread = { ...draft.commentThreads[0]!, threadId: "late-seed-witness",
+    semanticId: null, lineAnchor: null, sourcePinId: null, anchorResolved: false,
+    commentBody: "Late seed response published" };
+  const seededDraft = { ...draft, commentThreads: [...draft.commentThreads, lateThread] };
   await page.route("**/v1/resume-review/drafts/*/comment-threads", async (route) => {
     await new Promise<void>((resolve) => { finishSeed = resolve; });
-    await route.fulfill({ json: { ok: true, draft, commentThreads: draft.commentThreads, seededCount: 1, updatedCount: 0 } });
+    await route.fulfill({ json: { ok: true, draft: seededDraft, commentThreads: seededDraft.commentThreads, seededCount: 1, updatedCount: 0 } });
   });
   await page.goto("/apply-review");
   await expect.poll(() => Boolean(finishSeed)).toBe(true);
   await page.getByRole("button", { name: "Render replacement" }).click();
   await expect(page.getByText("replacement rendered", { exact: true })).toBeVisible();
   finishSeed();
+  // This new thread is observable only after the late mutation publishes into the cache.
+  await expect(page.getByText("Late seed response published", { exact: true })).toBeVisible();
   await expect(page.getByText("replacement rendered", { exact: true })).toBeVisible();
   await expect(page.getByRole("region", { name: "Artifact comparison" })).toContainText("+covered");
 });

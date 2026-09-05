@@ -121,6 +121,10 @@ well as text. Do not use this as a reason to extract the entire shared editor.
    thread updates preserve unsaved formatting, focus and editor selection.
 6. Render-on-approval uses the selected saved revision. Accepted-artifact
    comparison, unmatched comments, reload restoration and failure states work.
+   When promotion advances queue artifacts and creates a new revision-0 active
+   draft, completed-render evidence retains its original accepted baseline and
+   risk labels while the editor shows the new draft state. Unrelated artifact
+   identities clear the comparison; late seed QA waits for a published thread.
 
 Required browser path: extend and run
 `apps/web/e2e/tests/artifact-comparison.spec.ts` with synthetic responses that
@@ -351,7 +355,7 @@ Update this table with actual results; do not mark proposals implemented.
 
 | Phase | PR and head | Deleted mechanism | Tests and product proof | Review / QA |
 | --- | --- | --- | --- | --- |
-| 1 | [#865](https://github.com/ebarti/JobCtrl/pull/865); implementation `6d6f28a18` | View-owned five-snapshot draft selector and reply merger removed; cache mutation publication reconciles saved state | 79 focused web tests, 13 type tests, web/API checks, web/Storybook/docs builds pass; isolated browser race/a11y fixture ready | Independent review and product QA pending |
+| 1 | [#865](https://github.com/ebarti/JobCtrl/pull/865); implementation `6d6f28a18` | View-owned five-snapshot draft selector and reply merger removed; cache mutation publication reconciles saved state | 79 focused web tests, 13 type tests, web/API checks, web/Storybook/docs builds pass; isolated browser race/a11y fixture ready | Review found a promotion regression, reproduced and corrected with 71 affected tests and web typecheck passing; revised promotion/late-seed browser fixtures await the same review and QA gates |
 | 2 | Pending | Pending | Pending | Pending |
 | 3 | Pending | Pending | Pending | Pending |
 | 4 | Pending | Pending | Pending | Pending |
