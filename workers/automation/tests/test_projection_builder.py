@@ -24,7 +24,7 @@ from jobctrl.state import record_job_event, utc_now
 
 
 _INERT_CONTEXT = {"userContext": "Attack vectors:\nPrompt injection"}
-PYTHON_WATERMARK_NAME = f"{PROJECTION_NAME}:python:local"
+PYTHON_WATERMARK_NAME = f"python:{PROJECTION_NAME}:local"
 
 
 @pytest.fixture
@@ -229,19 +229,44 @@ def test_refresh_has_independent_tenant_and_consumer_cursors(conn: sqlite3.Conne
     assert foreign_event is not None and local_event is not None
     repo = SqliteEventWatermarkRepository(conn)
     repo.set(PROJECTION_NAME, local_event)
-    repo.set(f"{PROJECTION_NAME}:typescript:local", local_event)
+    repo.set(f"typescript:{PROJECTION_NAME}:local", local_event)
     local_builder = ProjectionBuilder(conn_factory=lambda: conn)
     local_builder.refresh()
     assert repo.get(PYTHON_WATERMARK_NAME) == local_event
-    assert repo.get(f"{PROJECTION_NAME}:python:foreign") == 0
+    assert repo.get(f"python:{PROJECTION_NAME}:foreign") == 0
     foreign_builder = ProjectionBuilder(conn_factory=lambda: conn, tenant_id=TenantId("foreign"))
     foreign_builder.refresh()
-    assert repo.get(f"{PROJECTION_NAME}:python:foreign") == foreign_event
+    assert repo.get(f"python:{PROJECTION_NAME}:foreign") == foreign_event
     assert repo.get(PYTHON_WATERMARK_NAME) == local_event
     assert repo.get(PROJECTION_NAME) == local_event
     local_builder.refresh()
     foreign_builder.refresh()
-    assert repo.get(f"{PROJECTION_NAME}:python:foreign") == foreign_event
+    assert repo.get(f"python:{PROJECTION_NAME}:foreign") == foreign_event
+
+
+def test_legacy_opaque_tenant_cursors_cannot_acknowledge_local_events(conn: sqlite3.Connection) -> None:
+    job_id = _seed_job(conn, "https://example.com/legacy-tenant-cursor")
+    builder = ProjectionBuilder(conn_factory=lambda: conn)
+    builder.refresh()
+    conn.execute("UPDATE jobs SET title = 'Changed' WHERE job_id = ?", (str(job_id),))
+    record_job_event(conn, job_id, "discover", "JobDiscovered")
+    event_id = conn.execute("SELECT MAX(event_id) FROM job_events").fetchone()[0]
+    legacy_rows = [
+        (f"{PROJECTION_NAME}:{tenant}", 10_000 + index, "2026-08-31T00:00:00Z")
+        for index, tenant in enumerate(("python:local", "typescript:local"))
+    ]
+    conn.executemany(
+        "INSERT OR REPLACE INTO event_watermarks (projection_name, last_event_id, updated_at) VALUES (?, ?, ?)",
+        legacy_rows,
+    )
+    conn.commit()
+    builder.refresh()
+    assert conn.execute("SELECT title FROM job_list_projections").fetchone()[0] == "Changed"
+    assert SqliteEventWatermarkRepository(conn).get(f"python:{PROJECTION_NAME}:local") == event_id
+    for legacy_row in legacy_rows:
+        assert tuple(conn.execute(
+            "SELECT * FROM event_watermarks WHERE projection_name = ?", (legacy_row[0],)
+        ).fetchone()) == legacy_row
 
 
 def test_backfill_from_empty(conn: sqlite3.Connection) -> None:

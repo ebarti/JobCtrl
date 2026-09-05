@@ -4092,7 +4092,7 @@ describe("direct projection publication", () => {
 });
 
 describe("consumer watermark discipline", () => {
-  const watermarkName = `${PROJECTION_WATERMARK_NAME}:typescript:local`;
+  const watermarkName = `typescript:${PROJECTION_WATERMARK_NAME}:local`;
   function readWatermarkRow(
     db: InstanceType<typeof Database>,
   ): { last_event_id: number; updated_at: string } | undefined {
@@ -4100,6 +4100,43 @@ describe("consumer watermark discipline", () => {
       .prepare("SELECT last_event_id, updated_at FROM event_watermarks WHERE projection_name = ?")
       .get(watermarkName) as { last_event_id: number; updated_at: string } | undefined;
   }
+
+  it("replays local changes without consuming legacy opaque-tenant cursors", () => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      seedSchema(dbPath);
+      const db = new Database(dbPath);
+      try {
+        refreshProjections(db);
+        db.prepare("UPDATE jobs SET title = 'Changed' WHERE job_id = ?").run(EVENT_JOB_ID);
+        const eventId = Number(db.prepare(
+          `INSERT INTO job_events (tenant_id, job_id, identity_version, event_type, occurred_at, payload_json)
+           VALUES ('local', ?, 1, 'JobUpdated', '2026-09-01T00:00:00Z', '{}')`,
+        ).run(EVENT_JOB_ID).lastInsertRowid);
+        const legacyRows = ["python:local", "typescript:local"].map((tenantId, index) => ({
+          projection_name: `${PROJECTION_WATERMARK_NAME}:${tenantId}`,
+          last_event_id: 10_000 + index,
+          updated_at: "2026-08-31T00:00:00Z",
+        }));
+        for (const row of legacyRows) {
+          db.prepare(`INSERT OR REPLACE INTO event_watermarks (projection_name, last_event_id, updated_at)
+            VALUES (?, ?, ?)`).run(row.projection_name, row.last_event_id, row.updated_at);
+        }
+        refreshProjections(db);
+        expect(db.prepare("SELECT title FROM job_list_projections WHERE job_id = ?").get(EVENT_JOB_ID)).toEqual({ title: "Changed" });
+        expect(db.prepare("SELECT last_event_id FROM event_watermarks WHERE projection_name = ?").get(
+          `typescript:${PROJECTION_WATERMARK_NAME}:local`,
+        )).toEqual({ last_event_id: eventId });
+        for (const row of legacyRows) {
+          expect(db.prepare("SELECT * FROM event_watermarks WHERE projection_name = ?").get(row.projection_name)).toEqual(row);
+        }
+      } finally {
+        db.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
 
   it.each([
     ["evidence_usage_projections", false],
@@ -4213,20 +4250,20 @@ describe("consumer watermark discipline", () => {
         const foreignLast = REFRESH_EVENT_BATCH_LIMIT;
         const localLast = Number(event.run("local").lastInsertRowid);
         setWatermark(db, PROJECTION_WATERMARK_NAME, localLast);
-        setWatermark(db, `${PROJECTION_WATERMARK_NAME}:python:local`, localLast);
+        setWatermark(db, `python:${PROJECTION_WATERMARK_NAME}:local`, localLast);
         refreshProjections(db, "local");
         expect(readWatermarkRow(db)?.last_event_id).toBe(localLast);
         expect(db.prepare("SELECT last_event_id FROM event_watermarks WHERE projection_name = ?").get(
-          `${PROJECTION_WATERMARK_NAME}:typescript:foreign`,
+          `typescript:${PROJECTION_WATERMARK_NAME}:foreign`,
         )).toBeUndefined();
         // Stop below the cap for the foreign pass so no asynchronous work
         // outlives this fixture. The local pass had to skip the full foreign cap.
-        setWatermark(db, `${PROJECTION_WATERMARK_NAME}:typescript:foreign`, 1);
+        setWatermark(db, `typescript:${PROJECTION_WATERMARK_NAME}:foreign`, 1);
         refreshProjections(db, "foreign");
         expect(db.prepare("SELECT projection_name, last_event_id FROM event_watermarks ORDER BY projection_name").all()).toEqual([
           { projection_name: PROJECTION_WATERMARK_NAME, last_event_id: localLast },
-          { projection_name: `${PROJECTION_WATERMARK_NAME}:python:local`, last_event_id: localLast },
-          { projection_name: `${PROJECTION_WATERMARK_NAME}:typescript:foreign`, last_event_id: foreignLast },
+          { projection_name: `python:${PROJECTION_WATERMARK_NAME}:local`, last_event_id: localLast },
+          { projection_name: `typescript:${PROJECTION_WATERMARK_NAME}:foreign`, last_event_id: foreignLast },
           { projection_name: watermarkName, last_event_id: localLast },
         ]);
       } finally {

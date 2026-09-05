@@ -150,10 +150,12 @@ There are two materializers over the same SQLite read-model spine:
 
 They derive overlapping projections from the same canonical state, but each
 consumer and tenant has an independent monotonic cursor in `event_watermarks`:
-`operations_projections:typescript:<tenant>` and
-`operations_projections:python:<tenant>`. Neither consumer can acknowledge
-events on behalf of the other. The legacy `operations_projections` cursor is
-retained but unused; the first consumer-specific pass replays history so it
+`typescript:operations_projections:<tenant>` and
+`python:operations_projections:<tenant>`. Neither consumer can acknowledge
+events on behalf of the other. Runtime-first names cannot collide with legacy
+`operations_projections` or `operations_projections:<tenant>` keys, even when
+an opaque tenant ID contains colons. Those legacy cursors and their timestamps
+are retained but unused; the first consumer-specific pass replays history so it
 repairs terminal events previously skipped behind that shared cursor. Some families
 have a narrower owner: apply-run and workflow-run projections are materialized
 on the Python side and read by TypeScript. Shared fixtures and parity tests

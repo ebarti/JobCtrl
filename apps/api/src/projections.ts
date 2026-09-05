@@ -688,8 +688,9 @@ function runRefreshPassInTransaction(db: SqliteDatabase, tenantId: string): bool
   const repairedCoverConflictJobs = reconcileObsoleteCoverGenerationConflicts(db, tenantId);
 
   // A runtime must never acknowledge events only the other runtime folds.
-  // Ignore the legacy shared cursor so a first pass repairs skipped history.
-  const watermarkName = `${PROJECTION_WATERMARK_NAME}:typescript:${tenantId}`;
+  // Runtime-first names cannot collide with legacy operations_projections
+  // keys, including those suffixed by an opaque tenant ID such as python:local.
+  const watermarkName = `typescript:${PROJECTION_WATERMARK_NAME}:${tenantId}`;
   const watermark = readWatermark(db, watermarkName);
 
   let dirtyJobs = new Set<string>([...repairedDependencyJobs, ...repairedCoverConflictJobs]);

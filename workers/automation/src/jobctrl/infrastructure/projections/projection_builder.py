@@ -24,7 +24,7 @@ authoritative aggregate tables for each dirty job, which means
 
 Watermark semantics (``event_watermarks`` table from Phase 3 / S-10):
 the builder reads ``last_event_id`` for the
-``operations_projections:python:<tenant>`` projection name, processes every
+``python:operations_projections:<tenant>`` projection name, processes every
 newer ``job_events`` row for that tenant, and advances the watermark in the same
 transaction.  On startup the projection tables may be empty AND the
 watermark zero — we handle that by force-marking every existing
@@ -791,7 +791,9 @@ class ProjectionBuilder:
         tenant = str(self._tenant_id)
         # Replay from zero when this consumer first runs, including events the
         # TypeScript refresher previously skipped behind the legacy shared key.
-        return f"{PROJECTION_NAME}:python:{tenant}"
+        # Put the runtime first to avoid every legacy operations_projections
+        # key, including opaque tenant IDs containing colons.
+        return f"python:{PROJECTION_NAME}:{tenant}"
 
     # ------------------------------------------------------------ subscription
 

@@ -293,5 +293,5 @@ export const PROJECTION_TABLES = [
 ] as const;
 export type ProjectionTable = (typeof PROJECTION_TABLES)[number];
 
-/** Prefix for per-consumer, per-tenant cursors; the legacy bare key is unused. */
+/** Family name in `<runtime>:<family>:<tenant>` cursors; legacy keys stay unused. */
 export const PROJECTION_WATERMARK_NAME = "operations_projections";

@@ -131,8 +131,8 @@ scan API response.
 ## Cross-Runtime Consistency
 
 Python's `ProjectionBuilder` and TypeScript's `refreshProjections` consume their
-tenant's `job_events` using independent `operations_projections:python:<tenant>`
-and `operations_projections:typescript:<tenant>` cursors in `event_watermarks`.
+tenant's `job_events` using independent `python:operations_projections:<tenant>`
+and `typescript:operations_projections:<tenant>` cursors in `event_watermarks`.
 Each reads canonical state, rebuilds projections, and advances its cursor in
 one transaction. SQLite serializes standalone passes from the initial snapshot
 read; nested passes preserve the caller's transaction. The

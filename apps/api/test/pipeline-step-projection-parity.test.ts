@@ -154,7 +154,7 @@ describe("pipeline_step_projections cross-runtime parity", () => {
       .get(PROJECTION_WATERMARK_NAME) as { last_event_id: number };
     expect(Number(watermark.last_event_id)).toBe(maxEventId);
     expect(db.prepare("SELECT last_event_id FROM event_watermarks WHERE projection_name = ?").get(
-      `${PROJECTION_WATERMARK_NAME}:typescript:${fixture.tenantId}`,
+      `typescript:${PROJECTION_WATERMARK_NAME}:${fixture.tenantId}`,
     )).toEqual({ last_event_id: maxEventId });
   });
 });

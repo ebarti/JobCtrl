@@ -147,7 +147,7 @@ def test_refresh_scopes_exact_v7_source_events_by_tenant() -> None:
     assert [row[0] for row in local_stats] == ["greenhouse:local"]
     assert payload["userContext"] == "Attack vectors:\nPrompt injection"
     watermarks = SqliteEventWatermarkRepository(conn)
-    assert watermarks.get(f"{PROJECTION_NAME}:python:{LOCAL_TENANT}") == 2
+    assert watermarks.get(f"python:{PROJECTION_NAME}:{LOCAL_TENANT}") == 2
     assert watermarks.get(PROJECTION_NAME) == 0
 
     other_builder = ProjectionBuilder(
@@ -155,7 +155,7 @@ def test_refresh_scopes_exact_v7_source_events_by_tenant() -> None:
         tenant_id=TenantId("other"),
     )
     assert other_builder.refresh() == 0
-    assert watermarks.get(f"{PROJECTION_NAME}:python:other") == 1
+    assert watermarks.get(f"python:{PROJECTION_NAME}:other") == 1
     assert watermarks.get(f"{PROJECTION_NAME}:other") == 0
 
 
