@@ -3,6 +3,7 @@ import { axe } from "jest-axe";
 import { describe, expect, it, vi } from "vitest";
 
 import { sampleProfileResponse } from "../../../test/fixtures/projections.js";
+import { recordAt } from "../lib/json-record.js";
 import { StructuredProfileEditor } from "./StructuredProfileEditor.js";
 
 describe("<StructuredProfileEditor> a11y", () => {
@@ -20,10 +21,10 @@ describe("<StructuredProfileEditor> a11y", () => {
     const view = render(
       <StructuredProfileEditor
         mode="preferences"
-        profileText={JSON.stringify(profile, null, 2)}
-        styleText={JSON.stringify(sampleProfileResponse.style, null, 2)}
-        onProfileTextChange={vi.fn()}
-        onStyleTextChange={vi.fn()}
+        profile={profile}
+        style={recordAt(sampleProfileResponse, "style")}
+        onProfileChange={vi.fn()}
+        onStyleChange={vi.fn()}
       />,
     );
 

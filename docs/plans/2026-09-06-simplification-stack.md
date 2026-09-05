@@ -159,8 +159,10 @@ do not substitute whole-profile replacement or array-index matching.
 
 ### Acceptance evidence
 
-1. Saving preserves unknown nested fields, unedited fields and the current
-   request schema/field names. Profile and style serialize at the boundary.
+1. The outgoing save request preserves unknown nested fields, unedited fields
+   and the current request schema/field names. Profile and style serialize at
+   the boundary. Existing server validation/normalization remains unchanged;
+   this does not add storage for unsupported fields.
 2. Incomplete numeric/date input remains editable; invalid chronological dates
    prevent save with the existing useful validation feedback.
 3. An unrelated boxed edit plus a Plate edit both survive. Conflicting edits
@@ -168,7 +170,9 @@ do not substitute whole-profile replacement or array-index matching.
 4. Deletion, splitting, reordering and undo retain source-bound targeting;
    punctuation/digits and formatting-only changes preserve current semantics.
 5. A stale autosave response or refreshed initial prop cannot erase newer
-   local edits. Save/reload retains exact synthetic values and ordering.
+   local edits. Real SQLite save/reload retains supported synthetic values and
+   ordering. The isolated preview seam generates escaped, semantically bound
+   HTML from each current stored profile; no Python/PDF renderer is needed.
 6. `/profile` and `/preferences` retain applicable controls, accessibility,
    dirty state and user-visible validation; no profile persistence behavior
    or discovery-setting behavior changes.
@@ -356,7 +360,7 @@ Update this table with actual results; do not mark proposals implemented.
 | Phase | PR and head | Deleted mechanism | Tests and product proof | Review / QA |
 | --- | --- | --- | --- | --- |
 | 1 | [#865](https://github.com/ebarti/JobCtrl/pull/865); reviewed implementation `2428ce2dd` | View-owned five-snapshot draft selector and reply merger removed; cache mutation publication reconciles saved state | Original focused web/type checks and web/API/Storybook/docs builds passed; promotion fix passed 71 affected tests and all four isolated Chromium scenarios with scoped axe clean | The promotion High passed independent review and QA at `2428ce2dd`; the pending-create and cached-job isolation corrections passed independent review at `55fa84f0`; cumulative synchronized-head QA remains pending |
-| 2 | Pending | Pending | Pending | Pending |
+| 2 | Publication pending | Form/editor/projector JSON round trips removed; object drafts preserve original values and serialize at the request boundary | 61 focused tests; full web 323 files/2020 tests, 13 type tests, web/API checks and web/Storybook builds pass. Docs build and the one pure preview-fixture test pass; the latter used an owned pre-import environment. Real save/reload browser fixture ready | Independent review and QA pending |
 | 3 | Pending | Pending | Pending | Pending |
 | 4 | Pending | Pending | Pending | Pending |
 

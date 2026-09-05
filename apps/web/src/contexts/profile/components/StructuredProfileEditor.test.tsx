@@ -4,6 +4,7 @@ import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import { sampleProfileResponse } from "../../../test/fixtures/projections.js";
+import { recordAt, type JsonRecord } from "../lib/json-record.js";
 import { StructuredProfileEditor } from "./StructuredProfileEditor.js";
 
 type ProfileFixture = Record<string, unknown> & {
@@ -47,28 +48,28 @@ vi.mock("./GoogleAddressSearchField.js", () => ({
 }));
 
 function StatefulEditor({
-  initialProfile = sampleProfileResponse.profile,
+  initialProfile = recordAt(sampleProfileResponse, "profile"),
   mode,
   onLatestProfile = () => undefined,
 }: {
-  initialProfile?: unknown;
+  initialProfile?: JsonRecord;
   mode?: "profile" | "preferences";
   onLatestProfile?: (value: string) => void;
 }) {
-  const [profileText, setProfileText] = useState(JSON.stringify(initialProfile, null, 2));
-  const [styleText, setStyleText] = useState(JSON.stringify(sampleProfileResponse.style, null, 2));
-  const updateProfile = (value: string) => {
-    onLatestProfile(value);
-    setProfileText(value);
+  const [profile, setProfile] = useState(initialProfile);
+  const [style, setStyle] = useState(recordAt(sampleProfileResponse, "style"));
+  const updateProfile = (value: JsonRecord) => {
+    onLatestProfile(JSON.stringify(value));
+    setProfile(value);
   };
   const modeProps = mode ? { mode } : {};
   return (
     <StructuredProfileEditor
       {...modeProps}
-      profileText={profileText}
-      styleText={styleText}
-      onProfileTextChange={updateProfile}
-      onStyleTextChange={setStyleText}
+      profile={profile}
+      style={style}
+      onProfileChange={updateProfile}
+      onStyleChange={setStyle}
     />
   );
 }

@@ -46,7 +46,7 @@ is the canonical decision matrix.
 | Artifacts list / detail | **Server** (Query) | Same. |
 | Apply run live timeline | **Server** (Query) — appended via `setQueryData` from SSE | High-frequency; see §7.5. |
 | Resume import wizard step state (uploaded file metadata, parsed draft) | **Client** (Zustand+persist) | Cross-step, refresh-safe, but not URL-bound (the URL identifies *which step*, not *the data*). |
-| Form drafts (profile, settings) | **Form library state** (TanStack Form) | Owned by the form until submit; mutates the server via the mutation hook. Direct Profile Plate edits with an unambiguous semantic owner project into this same draft rather than creating a second profile store. |
+| Form drafts (profile, settings) | **Form library state** (TanStack Form) | Profile and resume style stay object-valued until the existing string-valued update request; validation does not replace the edited object with normalized schema output. Owned by the form until submit; mutates the server via the mutation hook. Direct Profile Plate edits with an unambiguous semantic owner project into this same draft rather than creating a second profile store. |
 | Connection status to API (the inline "live"/"offline" status) | **Server** (Query: `useHealthQuery({ refetchInterval: ... })`) | Polling the health endpoint, not a manual `useState`. |
 
 ### 5.2 URL ↔ Query Cache Binding
