@@ -548,8 +548,10 @@ interaction, and the desktop/mobile comparison layout (including keyboard access
 its wide table) in Chromium. It also intercepts the Google tag and proves the
 documentation cookie banner makes no analytics request before acceptance,
 persists both choices, emits SPA page views only after acceptance, and stops
-tracking plus clears site analytics cookies after withdrawal;
-run it after `pnpm docs:build` for public-doc changes. Note that
+tracking plus clears site analytics cookies after withdrawal.
+Choose whether this browser gate is required using
+[Documentation verification](developer/documentation-standards.md#verification),
+and run it after `corepack pnpm docs:build` when required. Note that
 `pnpm docs:preview` snapshots the built file list at startup: after any
 rebuild, restart the preview server or hashed assets will 404. Deploys to
 Cloudflare Pages run from `main` once the `DOCS_DEPLOY_ENABLED` repository

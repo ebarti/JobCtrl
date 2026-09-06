@@ -78,6 +78,10 @@ git rebase --signoff origin/main
 
 ## Validation
 
+For coding agents, [AGENTS.md](AGENTS.md) owns instruction priority, autonomous
+execution, delegation, and validation tiers. `CLAUDE.md` links to that same
+file; frontend work also follows [apps/web/AGENTS.md](apps/web/AGENTS.md).
+
 Run the touched-surface commands in
 [Reliability & QA](docs/local-reliability-qa.md) plus `git diff --check`. Add the
 cross-stack aggregates only for cross-stack, release/high-risk, or plan-required

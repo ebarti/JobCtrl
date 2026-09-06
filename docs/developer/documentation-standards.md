@@ -205,17 +205,23 @@ and keep the ubiquitous language intact.
 
 ## Verification
 
-Run the documentation gates after editing published pages:
+For published prose or link changes, build the site and check the diff:
 
 ```bash
 corepack pnpm docs:build
-corepack pnpm docs:check:runtime
 git diff --check
 ```
 
 `docs:build` includes VitePress's dead-link check and the emitted-href gate.
-`docs:check:runtime` starts a fresh preview and checks hydration, asset loading,
-current-page navigation state, screenshots, and Mermaid rendering in a browser.
+Also run `corepack pnpm docs:check:runtime` when changing navigation, theme,
+components, assets, diagrams, or other browser-visible behavior, or when a
+rendering concern or the applicable plan requires it. It starts a fresh preview
+and checks hydration, asset loading, current-page navigation state, screenshots,
+and Mermaid rendering in a browser.
+
+Repository-only instruction/workflow changes follow the root `AGENTS.md`
+validation tiers. Do not add application suites or browser checks for prose
+changes that cannot affect those paths.
 
 ::: warning Rebuilds invalidate running previews
 The preview server snapshots the distribution file list at startup. Rebuilding
