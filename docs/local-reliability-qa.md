@@ -296,6 +296,17 @@ false completed/failed terminal event for the interrupted owner. Also hold a
 blocking activity thread past its cancellation grace window: the abandoned
 generation must be recorded and fenced, and the next activity must run on fresh
 bounded executor capacity without restarting the worker.
+
+For batch Tailor changes, exercise the actual `tailor_activity` without job IDs
+as well as the selected path. Seed more eligible jobs than workers and cancel
+during synthetic generation: only dispatched jobs may emit `StageStarted`, no
+later item may start, and late work must preserve successor ownership and the
+last accepted artifact. Verify commit-before-cancel and crash-after-commit
+recovery without another generation, prerequisite blocks without attempt
+spending, fifth-attempt exhaustion, tenant/limit/model policy, and approved-only
+Cover scope. Use owned pre-import fixtures and the relevant Temporal workflow
+matrix; the generic durable-timer demo does not prove these material invariants.
+
 Repeated Tailor validation/model-repair failures must also keep the inner LLM
 attempt count separate from the durable stage execution count. Each activity
 execution advances the durable count once; the fifth durable failure retains

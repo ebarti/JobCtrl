@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sqlite3
 import threading
@@ -9,6 +10,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from temporalio.testing import ActivityEnvironment
+from temporalio.exceptions import ApplicationError
 
 from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.materials.analysis import (
@@ -34,6 +37,282 @@ from jobctrl.scoring import tailor as tailor_module
 _TENANT_A = TenantId("tenant-a")
 _TENANT_B = TenantId("tenant-b")
 _JOB_ID = canonical_job_id("30000000-0000-4000-8000-000000000001")
+
+
+@pytest.fixture()
+def batch_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Real activity/selector/state with a separate connection per worker."""
+    from jobctrl import config, database
+    from jobctrl.pipeline import runner
+
+    db_path = tmp_path / "batch.db"
+    database.init_db(db_path)
+    database.close_connection()
+    local = threading.local()
+    connections = []
+
+    def connect():
+        if not hasattr(local, "connection"):
+            local.connection = sqlite3.connect(db_path, check_same_thread=False)
+            local.connection.row_factory = sqlite3.Row
+            connections.append(local.connection)
+        return local.connection
+
+    monkeypatch.setattr(config, "APP_DIR", tmp_path)
+    monkeypatch.setattr(config, "DB_PATH", db_path)
+    for module in (database, runner, tailor_module):
+        monkeypatch.setattr(module, "get_connection", connect)
+    monkeypatch.setattr(tailor_module, "TAILORED_DIR", tmp_path / "tailored")
+    monkeypatch.setattr(tailor_module, "_build_pdf_renderer", lambda: object())
+    snapshot = _snapshot(_TENANT_A)
+    snapshots = []
+
+    def load_snapshot(tenant_id):
+        snapshots.append(tenant_id)
+        return snapshot
+
+    monkeypatch.setattr(
+        "jobctrl.infrastructure.profile.get_profile_repository",
+        lambda: SimpleNamespace(load_snapshot=load_snapshot),
+    )
+    yield SimpleNamespace(
+        connect=connect, snapshots=snapshots, snapshot=snapshot,
+        app_dir=str(tmp_path), db_path=str(db_path),
+    )
+    for connection in connections:
+        connection.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("selected", [False, True])
+async def test_tailor_activity_routes_share_canonical_tenant_state(batch_runtime, monkeypatch, selected):
+    conn = batch_runtime.connect()
+    job_ids = tuple(canonical_job_id(f"30000000-0000-4000-8000-{i:012d}") for i in range(1, 4))
+    for job_id in job_ids:
+        _seed_job(conn, tenant_id=_TENANT_A, job_id=job_id, url=f"https://example.test/{job_id}")
+    _seed_job(conn, tenant_id=_TENANT_B, url="https://example.test/other-tenant", fit_score=10)
+    calls = []
+
+    def generate(job, _legacy_text, snapshot, validation_mode, **kwargs):
+        calls.append((job, snapshot, validation_mode, kwargs))
+        return _fake_approved_result(job)
+
+    monkeypatch.setattr(tailor_module, "_tailor_one_job", generate)
+    output = await ActivityEnvironment().run(
+        activities_module.tailor_activity,
+        activities_module.TailorActivityInput(
+            tenant_id=str(_TENANT_A), expected_app_dir=batch_runtime.app_dir,
+            expected_db_path=batch_runtime.db_path, workers=2, limit=2,
+            job_ids=job_ids if selected else (), validation_mode="lenient",
+            tailor_models=("codex:fixture",), tailor_judge_model="codex:judge",
+            tailor_judge_min_score=0.91, workflow_id="batch-owner",
+        ),
+    )
+    assert output.status == "ok"
+    assert output.stages[0]["approved"] == 2
+    assert len(calls) == 2
+    for job, snapshot, mode, kwargs in calls:
+        assert job["tenant_id"] == str(_TENANT_A)
+        assert snapshot is batch_runtime.snapshot
+        assert mode == "lenient"
+        assert kwargs["llm_policy"].candidate_models == ("codex:fixture",)
+        assert kwargs["llm_policy"].judge_model == "codex:judge"
+        assert kwargs["llm_policy"].judge_min_score == 0.91
+        assert kwargs["audit_execution_id"] == "batch-owner"
+        assert callable(kwargs["commit_guard"])
+    if not selected:
+        assert batch_runtime.snapshots == [_TENANT_A]
+        assert calls[0][3]["llm_policy"] is calls[1][3]["llm_policy"]
+    states = conn.execute(
+        "SELECT state, attempt_count FROM job_stage_states WHERE tenant_id = ? AND stage = 'tailor'",
+        (str(_TENANT_A),),
+    ).fetchall()
+    assert sorted(tuple(row) for row in states) == [("pending", 0), ("succeeded", 1), ("succeeded", 1)]
+    assert conn.execute(
+        "SELECT COUNT(*) FROM job_events WHERE tenant_id = ? AND stage = 'tailor' AND event_type = 'StageStarted'",
+        (str(_TENANT_B),),
+    ).fetchone()[0] == 0
+
+
+@pytest.mark.asyncio
+async def test_unscoped_tailor_activity_cancellation_stops_dispatch_and_preserves_successor(batch_runtime, monkeypatch):
+    conn = batch_runtime.connect()
+    job_ids = tuple(canonical_job_id(f"30000000-0000-4000-8000-{i:012d}") for i in range(1, 6))
+    for job_id in job_ids:
+        _seed_job(conn, tenant_id=_TENANT_A, job_id=job_id, url=f"https://example.test/{job_id}")
+    started = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    release = threading.Event()
+    finished = threading.Event()
+    all_returned = threading.Event()
+    lock = threading.Lock()
+    dispatched = []
+    rejected = []
+    returned = []
+    canonical_tailor = tailor_module.tailor_job_by_id
+
+    def run_job(job_id, **kwargs):
+        try:
+            return canonical_tailor(job_id, **kwargs)
+        finally:
+            with lock:
+                returned.append(job_id)
+                if len(returned) == 2:
+                    all_returned.set()
+
+    def generate(job, *_args, **kwargs):
+        with lock:
+            dispatched.append(job["job_id"])
+            if len(dispatched) == 2:
+                loop.call_soon_threadsafe(started.set)
+        assert release.wait(5), "fixture release missing"
+        try:
+            kwargs["commit_guard"]()
+        except RuntimeError:
+            with lock:
+                rejected.append(job["job_id"])
+                if len(rejected) == 2:
+                    finished.set()
+            raise
+        raise AssertionError("canceled generation passed persistence fence")
+
+    monkeypatch.setattr(tailor_module, "_tailor_one_job", generate)
+    monkeypatch.setattr(tailor_module, "tailor_job_by_id", run_job)
+    task = asyncio.create_task(ActivityEnvironment().run(
+        activities_module.tailor_activity,
+        activities_module.TailorActivityInput(
+            tenant_id=str(_TENANT_A), expected_app_dir=batch_runtime.app_dir,
+            expected_db_path=batch_runtime.db_path, workers=2, workflow_id="old-owner",
+        ),
+    ))
+    try:
+        await asyncio.wait_for(started.wait(), 5)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, 5)
+        successor = dispatched[0]
+        conn.execute(
+            "UPDATE job_stage_states SET state = 'running', metadata_json = ? WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'",
+            (json.dumps({"activityOwner": "successor"}), str(_TENANT_A), successor),
+        )
+        conn.commit()
+    finally:
+        release.set()
+        await asyncio.to_thread(finished.wait, 5)
+        await asyncio.to_thread(all_returned.wait, 5)
+        if not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+    assert len(dispatched) == len(rejected) == len(returned) == 2
+    assert conn.execute("SELECT COUNT(*) FROM job_materials").fetchone()[0] == 0
+    assert conn.execute(
+        "SELECT metadata_json FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'",
+        (str(_TENANT_A), successor),
+    ).fetchone()[0] == json.dumps({"activityOwner": "successor"})
+    assert conn.execute(
+        "SELECT COUNT(*) FROM job_events WHERE tenant_id = ? AND stage = 'tailor' AND event_type = 'StageStarted'",
+        (str(_TENANT_A),),
+    ).fetchone()[0] == 2
+    assert conn.execute(
+        "SELECT COUNT(*) FROM job_events WHERE tenant_id = ? AND stage = 'tailor' AND event_type IN ('StageCompleted', 'StageFailed')",
+        (str(_TENANT_A),),
+    ).fetchone()[0] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("selected", [False, True])
+async def test_tailor_activity_keeps_aggregate_and_partial_failure_adapters(batch_runtime, monkeypatch, selected):
+    job_ids = (_JOB_ID, canonical_job_id("30000000-0000-4000-8000-000000000002"))
+    for job_id in job_ids:
+        _seed_job(batch_runtime.connect(), tenant_id=_TENANT_A, job_id=job_id, url=f"https://example.test/{job_id}")
+
+    def generate(job, *_args, **_kwargs):
+        if job["job_id"] == str(_JOB_ID):
+            return _fake_approved_result(job)
+        raise RuntimeError("synthetic generation failure")
+
+    monkeypatch.setattr(tailor_module, "_tailor_one_job", generate)
+    invocation = ActivityEnvironment().run(
+        activities_module.tailor_activity,
+        activities_module.TailorActivityInput(
+            tenant_id=str(_TENANT_A), expected_app_dir=batch_runtime.app_dir,
+            expected_db_path=batch_runtime.db_path, workers=2,
+            job_ids=job_ids if selected else (), workflow_id="mixed-owner",
+        ),
+    )
+    if selected:
+        output = await invocation
+        assert output.status == "partial"
+        assert output.errors == {}
+        assert output.stages[0]["approvedJobIds"] == [_JOB_ID]
+        assert output.stages[0]["failed"] == 1
+    else:
+        with pytest.raises(ApplicationError, match="tailoring error"):
+            await invocation
+    states = batch_runtime.connect().execute(
+        "SELECT state, attempt_count FROM job_stage_states WHERE tenant_id = ? AND stage = 'tailor' ORDER BY job_id",
+        (str(_TENANT_A),),
+    ).fetchall()
+    assert [tuple(row) for row in states] == [("succeeded", 1), ("failed", 1)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancel_after_commit", [False, True])
+async def test_unscoped_tailor_reuses_commit_before_crash_or_cancellation(batch_runtime, monkeypatch, cancel_after_commit):
+    from jobctrl.infrastructure.preparation_recovery import CancelPreparationStateInput, cancel_preparation_state_rows
+
+    conn = batch_runtime.connect()
+    _seed_job(conn, tenant_id=_TENANT_A, url="https://example.test/committed-tailor")
+    artifact = Path(batch_runtime.app_dir) / "accepted.txt"
+    artifact.write_text("Synthetic accepted resume")
+    calls = []
+    token = []
+    canonical_tailor = tailor_module.tailor_job_by_id
+
+    def run_job(job_id, **kwargs):
+        token.append(kwargs["cancel_event"])
+        return canonical_tailor(job_id, **kwargs)
+
+    def commit_then_fail(job, *_args, **kwargs):
+        calls.append(job["job_id"])
+        kwargs["commit_guard"]()
+        current = batch_runtime.connect()
+        current.execute(
+            "INSERT INTO job_materials (tenant_id, job_id, generation, status, created_at, updated_at) VALUES (?, ?, 1, 'resume_approved', '2026-09-06', '2026-09-06')",
+            (str(_TENANT_A), str(_JOB_ID)),
+        )
+        current.execute(
+            "INSERT INTO job_materials_artifacts (tenant_id, job_id, generation, artifact_type, artifact_id, status, path, render_format, metadata_json, created_at) VALUES (?, ?, 1, 'tailored_resume', 'synthetic-resume', 'approved', ?, 'text', '{}', '2026-09-06')",
+            (str(_TENANT_A), str(_JOB_ID), str(artifact)),
+        )
+        current.commit()
+        if cancel_after_commit:
+            token[0].set()
+        raise RuntimeError("synthetic crash after accepted commit")
+
+    monkeypatch.setattr(tailor_module, "_tailor_one_job", commit_then_fail)
+    monkeypatch.setattr(tailor_module, "tailor_job_by_id", run_job)
+    payload = activities_module.TailorActivityInput(
+        tenant_id=str(_TENANT_A), expected_app_dir=batch_runtime.app_dir,
+        expected_db_path=batch_runtime.db_path, workflow_id="committed-owner",
+    )
+    if cancel_after_commit:
+        with pytest.raises(ApplicationError, match="canceled"):
+            await ActivityEnvironment().run(activities_module.tailor_activity, payload)
+        result = cancel_preparation_state_rows(conn, CancelPreparationStateInput(
+            tenant_id=str(_TENANT_A), workflow_id="committed-owner", stage="tailor", job_ids=(str(_JOB_ID),),
+        ))
+        assert result.restored == 1
+    else:
+        output = await ActivityEnvironment().run(activities_module.tailor_activity, payload)
+        assert output.stages[0]["approved"] == 1
+    await ActivityEnvironment().run(activities_module.tailor_activity, payload)
+    assert calls == [str(_JOB_ID)]
+    assert artifact.read_text() == "Synthetic accepted resume"
+    assert conn.execute(
+        "SELECT state FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'",
+        (str(_TENANT_A), str(_JOB_ID)),
+    ).fetchone()[0] == "succeeded"
 
 
 @pytest.fixture()

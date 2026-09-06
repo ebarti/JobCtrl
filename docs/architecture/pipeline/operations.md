@@ -262,6 +262,15 @@ publish a terminal outcome while its rows still claim that owner. This is not
 a second scheduler or a polling reaper—Temporal durably delivers one
 idempotent reconciliation decision.
 
+Unscoped Tailor freezes its eligible tenant cohort, profile snapshot and model
+policy once, then uses the same per-JobId lifecycle as selected Tailor. A job's
+`StageStarted` is recorded when a worker dispatches that job, not when the batch
+is selected. The bounded material executor stops admitting later jobs after
+cancellation; in-flight work must still pass the canonical cancellation and
+activity-owner checks before material or terminal-state writes. Selected runs
+keep partial results and approved IDs for Cover, while the unscoped adapter
+retains aggregate failure and durable-exhaustion escalation.
+
 ### Two durable progress authorities
 
 Canonical `job_stage_states` remains the source of truth for per-job `enrich`,

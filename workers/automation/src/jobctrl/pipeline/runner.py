@@ -42,7 +42,7 @@ from jobctrl.domain.enrichment import (
     StaleEnrichmentExecutionLease,
 )
 from jobctrl.domain.identifiers import JobId
-from jobctrl.domain.tenant import LOCAL_TENANT
+from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 from jobctrl.infrastructure.enrichment.execution_lease import (
     claim_enrichment_execution_lease,
     fence_enrichment_execution_lease,
@@ -2117,6 +2117,9 @@ def _run_tailor(
     tailor_judge_min_score: float | None = None,
     cancel_event: threading.Event | None = None,
     workflow_id: str | None = None,
+    tenant_id: str = "local",
+    suppress_existing_artifacts: bool = False,
+    allow_low_fit_override: bool = False,
 ) -> dict:
     """Stage: Resume tailoring — generate tailored resumes for high-fit jobs."""
     if cancel_event is not None and cancel_event.is_set():
@@ -2124,6 +2127,10 @@ def _run_tailor(
     from jobctrl.scoring.tailor import run_tailoring
     result = run_tailoring(
         min_score=min_score,
+        tenant_id=TenantId(tenant_id),
+        cancel_event=cancel_event,
+        suppress_existing_artifacts=suppress_existing_artifacts,
+        allow_low_fit_override=allow_low_fit_override,
         limit=limit,
         validation_mode=validation_mode,
         workers=workers,

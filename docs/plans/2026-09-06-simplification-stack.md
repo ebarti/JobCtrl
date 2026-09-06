@@ -238,18 +238,12 @@ durable queued cohort and document this cancellation-correctness change.
 6. Preserve the last accepted artifact on cancellation, rejection, exception
    and rollback. Empty frozen cohorts do not invoke an unscoped fallback.
 
-Before executing `scripts/reliability-demo.sh`, remove inherited database,
-configuration and provider overrides, prohibit dotenv/Keychain/provider lookup,
-inject a synthetic API dispatcher, assert owned paths before worker bootstrap,
-and pass non-null expected application/database paths to the workflow. Retain
-captured-PID shutdown. The existing harness must not run unchanged for this
-stack; cover its required isolation with negative fixtures first.
-
-Use the existing synthetic material/activity fixtures and relevant
-preparation cancellation/recovery matrix. Audit the repository's four-process
-reliability harness before using it; if required by the touched operational
-path, run both documented restart orders using only its captured temporary
-workspace and PIDs. Never substitute an existing user runtime for this proof.
+Use the existing synthetic material/activity fixtures and relevant preparation
+cancellation/recovery matrix. The generic `scripts/reliability-demo.sh` drives
+only the durable-timer probe, so it does not exercise the changed batch Tailor
+lifecycle and is not part of this phase's proof. Run the exact activity, material
+recovery/UoW and relevant Temporal workflow fixtures instead, under reviewed
+owned pre-import environments. Never substitute an existing user runtime.
 
 ## Phase 4: carry evidence with each evaluated candidate
 
@@ -347,7 +341,11 @@ For phases 1 and 2, the command set is:
 
 For phases 3 and 4, run Ruff over the touched Python source/tests and focused
 pytest families listed above with the isolated environment already set. The
-final Python phase runs the full Python suite. Include the existing workflow,
+final Python phase uses the exact published head's full GitHub Python CI matrix
+for the full-suite requirement, with every supported Python lane independently
+verified. Local validation runs the guarded changed-path/materials and real
+Temporal fixtures; CI results must not be described as a local full-suite run.
+Include the existing workflow,
 activity cancellation/recovery and materials transaction matrix that proves
 the changed boundary, plus the exact unscoped activity and candidate-counting
 product fixtures. Tests that only call a replacement helper do not prove the
@@ -361,9 +359,9 @@ scenarios; reuse already passing unaffected results rather than inventing
 unrelated checks. Confirm all applicable GitHub checks pass on published heads.
 
 The coordinator owns plan maintenance and gate dispatch. One implementation
-agent, `gpt-6-astra` at `high` reasoning, owns the four sequential changes,
-focused validation, commits and PR publication. It must not spawn replacement
-reviewers or broaden the scope. A newly discovered prerequisite is included
+owner handles the four sequential changes, focused validation, commits and PR
+publication. The same independent reviewers handle fixes and reruns without
+broadening scope. A newly discovered prerequisite is included
 only when necessary for these acceptance criteria; otherwise record it outside
 this stack without implementing it.
 
@@ -375,7 +373,7 @@ Update this table with actual results; do not mark proposals implemented.
 | --- | --- | --- | --- | --- |
 | 1 | [#865](https://github.com/ebarti/JobCtrl/pull/865); reviewed implementation `2428ce2dd` | View-owned five-snapshot draft selector and reply merger removed; cache mutation publication reconciles saved state | Original focused web/type checks and web/API/Storybook/docs builds passed; promotion fix passed 71 affected tests and all four isolated Chromium scenarios with scoped axe clean | The promotion High passed independent review and QA at `2428ce2dd`; the pending-create and cached-job isolation corrections passed independent review at `55fa84f0`; cumulative synchronized-head QA remains pending |
 | 2 | [#866](https://github.com/ebarti/JobCtrl/pull/866); validated head `a8bb11f3e` | Form/editor/projector JSON round trips removed; object drafts preserve original values and serialize at the request boundary | 61 focused tests; full web 323 files/2020 tests, 13 type tests, web/API checks and web/Storybook builds pass. Docs build and pure preview-fixture test pass. Full API suite deliberately run through the reviewed owned pre-import environment: 59 files/828 tests PASS. | PR #866 records final independent review and QA PASS at `a8bb11f3e`: six cumulative browser scenarios and three scoped axe scans passed, with all applicable CI successful. The later [published review](https://github.com/ebarti/JobCtrl/pull/866#pullrequestreview-5126582837) also reports Gate PASS, but did not rerun those browser scenarios; their evidence remains the author-reported isolated run. Diagnostic profile coverage includes real save/reload, entry order and scoped axe after fixing the native-caret publication race and toolbar Select colors. Full web suite and web types/build/Storybook rechecked after the shared owner correction; the new native-caret regression and affected Profile/Apply suites pass 96 tests. Renderer-class and line-end fixtures retain explicit caret assertions |
-| 3 | Pending | Pending | Pending | Pending |
+| 3 | [#868](https://github.com/ebarti/JobCtrl/pull/868) | Duplicate batch attempt/start/terminal-write loop removed; frozen cohorts dispatch through the canonical per-job lifecycle and shared bounded executor | Reviewed owned pre-import core matrix: admission PASS and 162 tests PASS. Exact real Temporal activity/workflow matrix: admission PASS, 20 cases PASS, captured process-group cleanup PASS. Focused Ruff and docs build PASS. The unrelated durable-timer demo is not a Tailor proof and was not run. | Independent review and QA pending |
 | 4 | Pending | Pending | Pending | Pending |
 
 The Phase 1 review follow-up preserves unsaved edits when a revision-zero draft
