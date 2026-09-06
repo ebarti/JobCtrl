@@ -3130,7 +3130,7 @@ def test_tailor_use_case_feeds_gate_finding_into_retry_and_recovers(
     repo = _FakeRepository()
     fabricated = _payload_with_bullet("Automated backend deployments with Kubernetes.")
     clean = _payload_with_bullet("Cut backend latency 40% using Python.")
-    llm = _ScriptedLlm([fabricated, _judge_pass(), clean, _judge_pass()])
+    llm = _ScriptedLlm([fabricated, clean, _judge_pass()])
     use_case = TailorResumeUseCase(
         repository=repo,
         llm=llm,
@@ -3160,8 +3160,9 @@ def test_tailor_use_case_feeds_gate_finding_into_retry_and_recovers(
     assert any("Kubernetes" in note for note in history[1]["avoid_notes"])
     assert "fabrication_detected" in history[1]["retry_reasons"]
     fabricated_note = first["fabrication_gate"]["avoid_notes"][0]
-    assert fabricated_note not in llm.calls[2][0].content
-    assert fabricated_note not in llm.calls[2][1].content
+    assert fabricated_note not in llm.calls[1][0].content
+    assert fabricated_note not in llm.calls[1][1].content
+    assert len(llm.calls) == 3
 
 
 def test_tailor_use_case_hard_fails_when_every_candidate_trips_gate(
@@ -3189,7 +3190,7 @@ def test_tailor_use_case_hard_fails_when_every_candidate_trips_gate(
     repo.save(approved_gen1)
 
     fabricated = _payload_with_bullet("Automated backend deployments with Kubernetes.")
-    llm = _ScriptedLlm([fabricated, _judge_pass(), fabricated, _judge_pass()])
+    llm = _ScriptedLlm([fabricated, fabricated])
     use_case = TailorResumeUseCase(
         repository=repo,
         llm=llm,
@@ -4334,3 +4335,53 @@ def test_llm_protocol_satisfied_by_fake() -> None:
 def test_publisher_protocol_satisfied_by_fake() -> None:
     fake: EventPublisher = _RecordingPublisher()
     assert callable(fake.publish)
+
+
+@pytest.mark.parametrize("failure", ["fabrication", "judge"])
+def test_later_parse_failure_cannot_promote_an_earlier_rejected_candidate(
+    tmp_path: Path, snapshot: ProfileSnapshot, job: dict, failure: str,
+) -> None:
+    job = {**job, "fit_score": 9}
+    payload = _payload_with_bullet(
+        "Automated backend deployments with Kubernetes."
+        if failure == "fabrication" else "Cut backend latency 40% using Python."
+    )
+    responses = [payload, "not JSON"] if failure == "fabrication" else [payload, _judge_fail(), "not JSON"]
+    llm = _ScriptedLlm(responses)
+    repo = _FakeRepository()
+    accepted_path = tmp_path / "accepted.txt"
+    accepted_path.write_text("Previously accepted synthetic resume.")
+    accepted = MaterialsSetFactory.initial(
+        tenant_id=LOCAL_TENANT, job_id=canonical_job_id(str(job["job_id"])),
+        created_at="2024-01-01T00:00:00+00:00",
+    ).with_resume_attempt(
+        Artifact.create(
+            type=ArtifactType.TAILORED_RESUME, path=str(accepted_path),
+            created_at="2024-01-01T00:00:00+00:00", render_format=RenderFormat.TEXT,
+        ),
+        validation=ValidationResult.success(), verdict=JudgeVerdict.passed(),
+        updated_at="2024-01-01T00:00:00+00:00",
+    )
+    repo.save(accepted)
+    use_case = TailorResumeUseCase(
+        repository=repo, llm=llm, validator=ContentValidator(),
+        assembler=ResumeAssembler(), max_retries=1,
+    )
+    outcome = use_case.execute(
+        job=job, profile_snapshot=snapshot, tailored_dir=tmp_path, retailor=True,
+        employer_analysis=_analysis_with_keywords(job, ["python", "backend", "Kubernetes"]),
+    )
+    assert outcome.status == ("failed_validation" if failure == "fabrication" else "failed_judge")
+    assert not outcome.materials.is_resume_approved
+    assert repo.load_current_approved(LOCAL_TENANT, canonical_job_id(str(job["job_id"]))) is accepted
+    assert accepted_path.read_text() == "Previously accepted synthetic resume."
+    history = outcome.report["attempt_history"]
+    first = history[0]["candidates"][0]
+    assert first["status"] == ("failed_fabrication_gate" if failure == "fabrication" else "judge_rejected")
+    assert history[1]["candidates"][0]["status"] == "parse_error"
+    assert outcome.final_payload == first["parsed_json"]
+    assert len(llm.calls) == len(responses)
+    if failure == "fabrication":
+        assert all(call["response_schema"] == TAILORED_RESUME_RESPONSE_SCHEMA for call in llm.kwargs)
+        assert "judge" not in first and "adversarial_review" not in first
+        assert "fabrication_detected" in history[1]["retry_reasons"]

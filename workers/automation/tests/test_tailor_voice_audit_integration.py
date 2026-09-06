@@ -23,6 +23,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from jobctrl.domain.identifiers import JobId
 from jobctrl.domain.materials.aggregate import MaterialsSet
 from jobctrl.domain.materials.adversarial import AdversarialReviewResult
@@ -1032,3 +1034,94 @@ def test_no_voice_port_keeps_pre_phase3_behaviour(tmp_path: Path) -> None:
     # No voice was attempted → voice record is None (or marked skipped/not-ran).
     assert saved.voice is None or not saved.voice.ran
     assert all(row.transform_type is not TransformType.VOICE for row in saved.bullets)
+
+
+@pytest.mark.parametrize("voice_mode", ["absent", "noop", "accepted", "rejected"])
+def test_each_candidate_keeps_one_evaluation_through_voice_and_persistence(
+    tmp_path: Path, monkeypatch, voice_mode: str,
+) -> None:
+    from collections import Counter
+    from jobctrl.domain.materials import use_cases as module
+
+    calls = Counter()
+    for name in (
+        "build_tailoring_plan", "build_evidence_corpus", "build_skill_evidence_corpus",
+        "build_bullet_provenance", "ground_claim_mappings",
+        "score_generated_resume_against_target", "compute_keyword_coverage",
+        "evaluate_tailoring_quality",
+    ):
+        original = getattr(module, name)
+
+        def counted(*args, _name=name, _original=original, **kwargs):
+            calls[_name] += 1
+            return _original(*args, **kwargs)
+
+        monkeypatch.setattr(module, name, counted)
+
+    for name in ("validate_json_fields", "validate_tailored_resume"):
+        original = getattr(ContentValidator, name)
+
+        def counted_validation(*args, _name=name, _original=original, **kwargs):
+            calls[_name] += 1
+            return _original(*args, **kwargs)
+
+        monkeypatch.setattr(ContentValidator, name, counted_validation)
+
+    def rewrite(request: VoiceRequest) -> VoiceResult:
+        if voice_mode == "noop":
+            return VoiceResult(
+                executive_profile=request.executive_profile,
+                executive_profile_sentences=request.executive_profile_sentences,
+                experience_bullets=request.experience_bullets,
+            )
+        return VoiceResult(
+            executive_profile="Backend engineer who cut API latency with Python.",
+            executive_profile_sentences=("Backend engineer who cut API latency with Python.",),
+            experience_bullets=(("acme_swe", ("Owned the API and cut latency 40% with Python.",)),),
+        )
+
+    provenance = _FakeProvenanceRepo()
+    llm = _ScriptedLlm([
+        _payload(_GENERATOR_BULLET, summary=_GENERATOR_SUMMARY), _judge_pass(),
+        _judge_fail_semantic_drift() if voice_mode == "rejected" else _judge_pass(),
+    ])
+    use_case = _use_case(
+        _FakeMaterialsRepo(), provenance, llm, _RecordingPublisher(),
+        None if voice_mode == "absent" else _FunctionVoice(rewrite),
+    )
+    use_case._max_retries = 0
+    assembled = []
+    assemble = use_case._assembler.assemble_resume_text
+
+    def count_assembly(_self, payload, profile):
+        assert payload["_jobctrl_artifact_budget_version"] == 1
+        text = assemble(payload, profile)
+        assembled.append((payload, text))
+        return text
+
+    monkeypatch.setattr(ResumeAssembler, "assemble_resume_text", count_assembly)
+    outcome = use_case.execute(job=_job(), profile_snapshot=_snapshot(), tailored_dir=tmp_path)
+    assert outcome.status == "approved"
+    evaluations = 2 if voice_mode in {"accepted", "rejected"} else 1
+    for name in ("build_tailoring_plan", "build_evidence_corpus", "build_skill_evidence_corpus"):
+        assert calls[name] == 1, (name, calls)
+    for name in (
+        "build_bullet_provenance", "ground_claim_mappings",
+        "score_generated_resume_against_target", "compute_keyword_coverage",
+        "evaluate_tailoring_quality", "validate_json_fields", "validate_tailored_resume",
+    ):
+        assert calls[name] == evaluations, (name, calls)
+    assert len(assembled) == evaluations
+    assert len(llm.calls) == 1 + evaluations
+    selected = assembled[-1] if voice_mode == "accepted" else assembled[0]
+    assert outcome.final_payload is selected[0]
+    assert Path(outcome.text_path).read_text() == selected[1]
+    saved = provenance.load(LOCAL_TENANT, JOB_ID)
+    assert saved is not None
+    for row in saved.bullets:
+        assert row.generated_text in sanitize_text(selected[1])
+    final_fit = outcome.report["tailoring_quality"]["post_generation_fit_final"]
+    assert final_fit["lifecycle"] == "post_voice_shipped"
+    if voice_mode == "rejected":
+        assert saved.voice.reason == "voice_final_judge_rejected"
+        assert all(row.transform_type != TransformType.VOICE for row in saved.bullets)

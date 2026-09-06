@@ -727,15 +727,15 @@ def test_fabricated_employer_is_hard_rejected_by_detector_and_writes_no_provenan
     publisher = _RecordingPublisher()
     # The candidate invents an employer ("Globex Corporation") the user never
     # worked at. The base quality gate does NOT check employers and the scripted
-    # judge "passes" — so ONLY the deterministic never-fabricate detector
+    # judge is never called — the deterministic never-fabricate detector
     # (independent of the prompt) can catch this. It must HARD-REJECT the resume.
     fabricated = _payload("Owned the API and cut latency 40% at Globex Corporation.")
-    llm = _ScriptedLlm([fabricated, _judge_pass()] * 4)
+    llm = _ScriptedLlm([fabricated] * 4)
     outcome = _use_case(materials_repo, provenance_repo, llm, publisher).execute(
         job=_job(), profile_snapshot=_snapshot(), tailored_dir=tmp_path
     )
 
-    # The resume is NOT approved despite the judge pass — the detector gated it.
+    # The resume is NOT approved; the detector rejected it before paid review.
     assert outcome.status == "failed_validation"
     assert outcome.materials is not None
     assert not outcome.materials.is_resume_approved

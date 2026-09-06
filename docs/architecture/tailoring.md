@@ -37,10 +37,10 @@ Approval must clear every gate below (each detailed under
 | --- | --- | --- |
 | Schema + field validation | JSON shape, required IDs, allowed skills, title safety, max bullets | deterministic |
 | Rendered-text + quality | required anchors present, evidence/metrics verified, prohibited claims absent, keyword stuffing bounded | deterministic |
-| Post-generation fit | fit score and must-have coverage against the target profile | LLM + deterministic |
+| Fabrication gate | never-fabricate token scan + prose skill/tool allowlist before paid review; changed voice text is checked afresh | deterministic |
+| Post-generation fit | fit score and must-have coverage against grounded candidate text and the target profile | deterministic |
 | Structured judge | independent pass/fail safety, selection focus, semantic fidelity, and professional register; re-run on accepted post-voice text (skipped only in lenient mode) | LLM |
 | Adversarial review | six-persona challenge for high-fit jobs | LLM |
-| Fabrication gate | never-fabricate token scan + prose skill/tool allowlist; re-run after the voice pass; fails closed | deterministic |
 
 Tailoring is owned by the Materials bounded context. The main implementation is
 in `workers/automation/src/jobctrl/domain/materials/use_cases.py`, supported
@@ -87,28 +87,24 @@ profile structure decides where generated text can go.
 
 ```mermaid
 flowchart TB
-    INPUTS@{ icon: "tabler:clipboard-list", form: "rounded", label: "1. Plan<br/>job · profile · analysis · fit", h: 64 }
-    DRAFT@{ icon: "tabler:pencil", form: "rounded", label: "2. Draft<br/>structured output", h: 64 }
-    CHECK@{ icon: "tabler:shield-check", form: "rounded", label: "3. Validate<br/>schema · render · quality · judge", h: 64 }
-    VOICE@{ icon: "tabler:message", form: "rounded", label: "4. Refine<br/>optional voice pass", h: 64 }
-    GATE@{ icon: "tabler:shield-lock", form: "rounded", label: "5. Protect<br/>fabrication + prose gates", h: 64 }
-    SAVE@{ shape: "docs", label: "6. Persist<br/>provenance · coverage · artifacts" }
+    INPUTS["1. Plan: job, profile, analysis and fit"]
+    DRAFT["2. Draft structured output"]
+    CHECK["3. Normalize and evaluate schema, rendered quality, provenance, fabrication and fit"]
+    GATE["4. Paid judge and applicable adversarial review"]
+    VOICE["5. Optional voice rewrite"]
+    SAVE["6. Persist accepted text, evidence and artifacts"]
 
-    subgraph CREATE["Create a grounded candidate"]
-      direction LR
-      INPUTS -->|tailoring plan| DRAFT
-      DRAFT -->|candidate| CHECK
-    end
-
-    subgraph APPROVE["Refine and approve"]
-      direction LR
-      VOICE -->|refined text| GATE
-      GATE -->|approved artifact| SAVE
-    end
-
-    CHECK -->|accepted draft| VOICE
-    CHECK -.->|repairable issue| DRAFT
-    GATE -.->|reject or repair| DRAFT
+    INPUTS --> DRAFT
+    DRAFT --> CHECK
+    CHECK -->|deterministic gates pass| GATE
+    CHECK -.->|generator rejected: typed repair| DRAFT
+    GATE -.->|generator rejected: typed repair| DRAFT
+    GATE -->|selected evaluated candidate| VOICE
+    VOICE -->|unchanged or rejected rewrite: retain base evidence| SAVE
+    VOICE -->|changed text: evaluate and review afresh| CHECK
+    CHECK -.->|voice rejected: retain base| SAVE
+    GATE -.->|voice rejected: retain base| SAVE
+    GATE -->|accepted voice candidate| SAVE
 ```
 
 The loop is deliberate: a candidate is persisted as approved only after the
@@ -373,17 +369,20 @@ For each attempt:
    - user: original resume baseline, target job blob, and JSON-only reminder.
 4. Run each configured candidate model through `chat_json()` with
    `TAILORED_RESUME_RESPONSE_SCHEMA`.
-5. Validate each candidate independently.
-6. Judge each valid candidate unless `validation_mode` is `lenient`.
+5. Normalize the current artifact-budget policy before assembling candidate
+   text. Evaluate schema, rendered quality, provenance, fabrication and grounded
+   fit once for that exact payload. Hard fabrications trigger typed repair
+   guidance with zero judge or adversarial calls.
+6. Judge each deterministically valid candidate unless `validation_mode` is `lenient`.
 7. Optionally run adversarial review for high-fit jobs.
-8. Select the best clean approved candidate by judge score.
-9. Run the deterministic fabrication gate (never-fabricate detector + prose
-   skill/tool gate) on the selected candidate; a hard finding re-enters the
-   loop as an `avoid_note` while retry budget remains and fails closed
-   otherwise.
-10. If only warning-bearing approved candidates exist, retry while retry budget
-    remains, then accept the best residual warning candidate only when allowed
-    by the loop logic.
+8. Select the best clean approved candidate by judge score, retaining its
+   evaluated payload, text and evidence together.
+9. If only warning-bearing approved candidates exist, retry while retry budget
+   remains, then accept the best residual warning candidate only when allowed
+   by the loop logic.
+10. Reuse the selected evidence for no voice/no-op paths. A changed voice payload
+    receives fresh evaluation and paid review; rejection retains the accepted
+    base candidate. Write the accepted candidate's already evaluated text.
 
 The retry loop is separate from the durable preparation work-item retry budget.
 The inner loop improves one tailoring run. The durable work item controls how
@@ -503,94 +502,12 @@ It applies profile policy helpers:
 Quality errors fail the candidate. Quality warnings can trigger a retry unless
 they are label-only low-quality signals such as stock phrase markers.
 
-### 6. Post-Generation Fit Gate
+### 6. Deterministic Fabrication Gate
 
-After assembly, requirement-led candidates are scored against the target
-profile. The scorer records:
-
-- final fit score,
-- must-have coverage ratio,
-- covered and uncovered requirement IDs,
-- prioritized fixes,
-- review blockers from adjacent or draft claims.
-
-The versioned default gates are minimum fit score 8/10, must-have coverage
-0.85, and one revision/enhancement attempt. If thresholds fail and claim policy
-allows adjacent translation or draft confirmation, the retry loop receives the
-prioritized fixes and uncovered requirements. Deterministic validators still
-own fact safety: scoring can request revision, but it cannot approve unsupported
-claims. The resulting revision decision has one disposition: `passed`,
-`revise`, `review_required`, or `accept_with_residual_gap`. Once the bounded
-revision budget is exhausted—or when canonical profile evidence cannot support
-an enhancement—an otherwise-safe candidate continues through judge,
-adversarial, and fabrication gates with a persisted residual warning. It does
-not fail Tailor or spend more retries trying to manufacture missing experience;
-Scoring remains the owner of fit and eligibility.
-
-Coverage-bearing claims are grounded against the shipped rendered text before
-they count: a claim binds to a shipped line (location + text binding, honoring
-the same bullet's pre-voice text for voice-reworded lines), claimed-only
-requirements with no shipped line fail the gate with explicit shipped-resume
-fixes feeding the revision loop, and the shipped artifact persists a
-lifecycle-labeled post-voice grounded fit record
-(`post_generation_fit_final`). Apply Review labels the gate's coverage basis
-(`grounded_shipped_text_v1` vs `judge_claimed_legacy`) instead of hiding it.
-
-### 7. Structured Judge
-
-`build_judge_prompt()` asks a separate judge model whether the exact candidate is
-safe to show the user. The judge receives canonical profile evidence, allowed
-skills, achievement-owned metrics, the tailoring quality plan, the target job,
-the tailored JSON, and the rendered resume.
-
-The judge returns `TAILORING_JUDGE_RESPONSE_SCHEMA`:
-
-- `verdict`: `PASS` or `FAIL`,
-- `score`: 0-1,
-- `criterion_scores`,
-- `issues`,
-- `unsupported_claims`,
-- `fabrications`,
-- `missing_required_evidence`,
-- `repair_instructions`.
-
-Approval requires:
-
-- `verdict == PASS`,
-- score at or above `tailorJudgeMinScore`,
-- every required criterion score, including `semantic_fidelity`,
-  `bullet_selection_focus`, and `professional_register`,
-- no unsupported claims, fabrications, or missing required evidence.
-
-In `lenient` mode, the structured judge is skipped.
-
-### 8. Adversarial Review
-
-High-fit jobs (fit at or above the adversarial threshold of 0.8, i.e. 8/10)
-run an additional adversarial review after the judge approves. Six personas
-challenge the resume — `ats_parser`, `skeptical_recruiter`,
-`hiring_manager_domain_expert`, `evidence_auditor`, `anti_ai_voice_critic`,
-and `interview_defensibility_critic` — each with its own rubric.
-If it finds blockers, the candidate becomes rejected. Its blockers and repair
-instructions remain inspectable audit data; only the code-owned
-`adversarial_rejected` reason can influence the next generator prompt.
-
-### 9. Optional Voice Pass
-
-If a `VoicePort` is injected, it may rewrite only lines that contain a configured
-buzzword. Clean lines must remain byte-for-byte unchanged. A rewrite is eligible
-only when it reduces buzzword density; opening-verb or length variety is audit
-diagnostic data, not an optimization target. Before the voiced payload can ship,
-claim text is rebound to the final prose and JobCtrl re-runs mapping validation,
-rendered quality, provenance, fabrication, final fit, the structured judge, and
-the high-fit adversarial review when applicable. Any scope, semantic, grounding,
-or judge regression keeps the already accepted pre-voice candidate.
-
-### 10. Deterministic Fabrication Gate
-
-A final deterministic gate runs on validation- and judge-approved candidates
-and is re-confirmed after the voice pass, immediately before provenance and
-persistence:
+The deterministic gate runs on each candidate before the structured judge or
+adversarial review. Its findings and provenance belong to that exact normalized
+payload. Unchanged selected text reuses them; a changed voice payload receives
+a fresh gate evaluation before paid review:
 
 - The never-fabricate detector scans numeric/date/title/employer tokens in the
   shipped prose against the profile evidence corpus. SKILLS section rows are
@@ -626,6 +543,91 @@ new cover-letter text is approved, any prior cover-letter PDF is persisted as
 `superseded` and the aggregate returns to `cover_letter_ready`; a failed PDF
 render therefore remains pending instead of projecting stale PDF bytes as
 approved.
+
+### 7. Post-Generation Fit Gate
+
+After assembly, requirement-led candidates are scored against the target
+profile. The scorer records:
+
+- final fit score,
+- must-have coverage ratio,
+- covered and uncovered requirement IDs,
+- prioritized fixes,
+- review blockers from adjacent or draft claims.
+
+The versioned default gates are minimum fit score 8/10, must-have coverage
+0.85, and one revision/enhancement attempt. If thresholds fail and claim policy
+allows adjacent translation or draft confirmation, the retry loop receives the
+prioritized fixes and uncovered requirements. Deterministic validators still
+own fact safety: scoring can request revision, but it cannot approve unsupported
+claims. The resulting revision decision has one disposition: `passed`,
+`revise`, `review_required`, or `accept_with_residual_gap`. Once the bounded
+revision budget is exhausted—or when canonical profile evidence cannot support
+an enhancement—an otherwise-safe candidate continues through judge,
+adversarial, and fabrication gates with a persisted residual warning. It does
+not fail Tailor or spend more retries trying to manufacture missing experience;
+Scoring remains the owner of fit and eligibility.
+
+Coverage-bearing claims are grounded against the shipped rendered text before
+they count: a claim binds to a shipped line (location + text binding, honoring
+the same bullet's pre-voice text for voice-reworded lines), claimed-only
+requirements with no shipped line fail the gate with explicit shipped-resume
+fixes feeding the revision loop, and the shipped artifact persists a
+lifecycle-labeled post-voice grounded fit record
+(`post_generation_fit_final`). Apply Review labels the gate's coverage basis
+(`grounded_shipped_text_v1` vs `judge_claimed_legacy`) instead of hiding it.
+
+### 8. Structured Judge
+
+`build_judge_prompt()` asks a separate judge model whether the exact candidate is
+safe to show the user. The judge receives canonical profile evidence, allowed
+skills, achievement-owned metrics, the tailoring quality plan, the target job,
+the tailored JSON, and the rendered resume.
+
+The judge returns `TAILORING_JUDGE_RESPONSE_SCHEMA`:
+
+- `verdict`: `PASS` or `FAIL`,
+- `score`: 0-1,
+- `criterion_scores`,
+- `issues`,
+- `unsupported_claims`,
+- `fabrications`,
+- `missing_required_evidence`,
+- `repair_instructions`.
+
+Approval requires:
+
+- `verdict == PASS`,
+- score at or above `tailorJudgeMinScore`,
+- every required criterion score, including `semantic_fidelity`,
+  `bullet_selection_focus`, and `professional_register`,
+- no unsupported claims, fabrications, or missing required evidence.
+
+In `lenient` mode, the structured judge is skipped.
+
+### 9. Adversarial Review
+
+High-fit jobs (fit at or above the adversarial threshold of 0.8, i.e. 8/10)
+run an additional adversarial review after the judge approves. Six personas
+challenge the resume — `ats_parser`, `skeptical_recruiter`,
+`hiring_manager_domain_expert`, `evidence_auditor`, `anti_ai_voice_critic`,
+and `interview_defensibility_critic` — each with its own rubric.
+If it finds blockers, the candidate becomes rejected. Its blockers and repair
+instructions remain inspectable audit data; only the code-owned
+`adversarial_rejected` reason can influence the next generator prompt.
+
+### 10. Optional Voice Pass
+
+If a `VoicePort` is injected, it may rewrite only lines that contain a configured
+buzzword. Clean lines must remain byte-for-byte unchanged. A rewrite is eligible
+only when it reduces buzzword density; opening-verb or length variety is audit
+diagnostic data, not an optimization target. Before the voiced payload can ship,
+claim text is rebound to the final prose and JobCtrl re-runs mapping validation,
+rendered quality, provenance, fabrication, final fit, the structured judge, and
+the high-fit adversarial review when applicable. Any scope, semantic, grounding,
+or judge regression keeps the already accepted pre-voice candidate and its
+evidence. Unchanged/no-op text is not evaluated again. Final fit audit records
+label the retained measurement as `post_voice_shipped` without recomputing it.
 
 ## Persistence And Audit Data
 
@@ -836,8 +838,9 @@ changes should also exercise the API/web path that displays the audit data.
   selection.
 - `build_master_tailor_prompt()`: generator prompt and output contract.
 - `TAILORED_RESUME_RESPONSE_SCHEMA`: strict generator output schema.
-- `_run_candidate()`: LLM call, validation, assembly, quality checks, judge,
-  adversarial review.
+- `_run_candidate()`: candidate generation and safe provider/parse failure records.
+- `_evaluate_candidate()`: normalized payload/text, deterministic evidence and
+  paid review retained in `_TailorCandidate`.
 - `build_judge_prompt()` and `_judge_resume()`: independent structured judge.
 - `build_tailoring_plan()`: analysis/fit/profile to quality plan.
 - `evaluate_tailoring_quality()`: deterministic quality gate.

@@ -19,7 +19,6 @@ from jobctrl.domain.materials.policy import (
     RevisionGatePolicy,
     adapt_requirement_led_controls,
 )
-from jobctrl.domain.materials.provenance import BulletProvenance
 from jobctrl.domain.materials.claim_grounding import (
     GROUNDED_COVERAGE_BASIS,
     ground_claim_mappings,
@@ -54,7 +53,6 @@ from jobctrl.domain.materials.use_cases import (
     _claim_mapping_validation_errors,
     _post_generation_fit_gate,
 )
-from jobctrl.domain.materials.value_objects import ControlRule, TransformType
 from jobctrl.domain.scoring import (
     FitScore,
     RequirementFitAssessment,
@@ -957,18 +955,11 @@ def test_logistics_requirement_stays_auditable_but_cannot_fail_resume_coverage()
         },
         tailoring_plan=plan,
         attempt=1,
-        shipped_rows=(
-            BulletProvenance(
-                bullet_id="bullet-1",
-                section="experience",
-                source_id="acme_swe",
-                evidence_ids=("ev_latency",),
-                requirement_ids=("req_python",),
-                matched_keywords=("Python API reliability",),
-                transform_type=TransformType.REPHRASE,
-                control=ControlRule.REPHRASE_ALLOWED,
-                rationale="Grounded rephrasing of the recorded achievement.",
-                generated_text=generated_bullet,
+        grounding=ground_claim_mappings(
+            (summary_mapping, mapping),
+            (
+                ("summary-1", "Senior backend engineer."),
+                ("bullet-1", generated_bullet),
             ),
         ),
     )
