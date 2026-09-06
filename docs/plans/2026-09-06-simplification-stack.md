@@ -2,7 +2,7 @@
 
 Status: all four implementations delivered as open PRs on 6 September 2026.
 Independent implementation review and synthetic QA passed for every phase.
-The final published head's CI awaits verification in [PR #869's live checks](https://github.com/ebarti/JobCtrl/pull/869/checks).
+The final published head's CI status is tracked in [PR #869's live checks](https://github.com/ebarti/JobCtrl/pull/869/checks).
 Native stack #867 remains open and unmerged; merging is a separate action.
 
 ## Starting point and delivery order
