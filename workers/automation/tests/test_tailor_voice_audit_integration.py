@@ -1125,3 +1125,41 @@ def test_each_candidate_keeps_one_evaluation_through_voice_and_persistence(
     if voice_mode == "rejected":
         assert saved.voice.reason == "voice_final_judge_rejected"
         assert all(row.transform_type != TransformType.VOICE for row in saved.bullets)
+
+
+def test_changed_voice_in_lenient_mode_retains_skipped_review_audit(tmp_path: Path, monkeypatch) -> None:
+    def rewrite(request: VoiceRequest) -> VoiceResult:
+        return VoiceResult(
+            executive_profile="Backend engineer who cut API latency with Python.",
+            executive_profile_sentences=("Backend engineer who cut API latency with Python.",),
+            experience_bullets=(("acme_swe", ("Owned the API and cut latency 40% with Python.",)),),
+        )
+
+    provenance = _FakeProvenanceRepo()
+    llm = _ScriptedLlm([_payload(_GENERATOR_BULLET, summary=_GENERATOR_SUMMARY)])
+    voice = _FunctionVoice(rewrite)
+    use_case = _use_case(_FakeMaterialsRepo(), provenance, llm, _RecordingPublisher(), voice)
+    use_case._max_retries = 0
+
+    def forbidden_review(**_kwargs):
+        pytest.fail("lenient candidates must not invoke paid review")
+
+    monkeypatch.setattr(use_case, "_judge_resume", forbidden_review)
+    monkeypatch.setattr(use_case, "_adversarial_review", forbidden_review)
+    outcome = use_case.execute(
+        job={**_job(), "fit_score": 9}, profile_snapshot=_snapshot(),
+        tailored_dir=tmp_path, validation_mode="lenient",
+    )
+    assert outcome.status == "approved"
+    assert len(llm.calls) == 1
+    assert len(voice.calls) == 1
+    saved = provenance.load(LOCAL_TENANT, JOB_ID)
+    assert saved.voice.accepted is True
+    assert outcome.final_payload["experience_updates"][0]["bullets"] == [
+        "Owned the API and cut latency 40% with Python."
+    ]
+    for audit in (saved.voice.final_judge, outcome.report["tailoring_quality"]["final_judge"]):
+        assert audit["verdict"] == "SKIPPED"
+        assert audit["reason"] == "lenient_validation_mode"
+        assert "model" not in audit and "schema_version" not in audit
+        assert "adversarial_review" not in audit

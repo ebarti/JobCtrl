@@ -723,6 +723,12 @@ a fabricated or judge-rejected candidate with invalid JSON and prove the run
 stays rejected, its history remains inspectable, and the previous accepted
 artifact bytes survive. Retain the transaction and render-failure fixtures that
 protect the previous accepted generation and provenance.
+Also return parsed JSON with `skill_category_updates: null` before a valid
+candidate: field validation must reject it before assembly, preserve its audit
+and continue bounded repair. Exhausting that malformed response must leave the
+previous accepted artifact intact. A changed voice rewrite in lenient mode must
+retain `SKIPPED` with reason `lenient_validation_mode` in both voice and final
+judge metadata, without judge/adversarial calls or paid-model attribution.
 
 For direct URL import, exercise the Jobs-page dialog through the product API
 and worker boundary. A readable JSON-LD posting must create one canonical job,

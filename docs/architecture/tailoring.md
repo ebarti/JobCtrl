@@ -446,6 +446,10 @@ profile contract:
 - Watchlisted fabricated skills are rejected unless they are present in the
   allowed profile skills (the later fabrication gate additionally scans ALL
   prose skills/tools against the profile vocabulary and evidence corpus).
+
+Field validation must pass before assembly. A parsed object with malformed
+nested fields remains a rejected candidate with inspectable JSON and validation
+errors; it cannot abort the bounded repair loop through an assembler exception.
 - Banned words are warnings in normal mode, errors in strict mode, and ignored
   in lenient mode.
 
@@ -583,6 +587,10 @@ lifecycle-labeled post-voice grounded fit record
 safe to show the user. The judge receives canonical profile evidence, allowed
 skills, achievement-owned metrics, the tailoring quality plan, the target job,
 the tailored JSON, and the rendered resume.
+
+In lenient mode, candidate and changed-voice audits retain `SKIPPED` with reason
+`lenient_validation_mode`. The acceptance verdict does not imply that paid review
+ran; voice and final artifact metadata reuse the actual candidate review record.
 
 The judge returns `TAILORING_JUDGE_RESPONSE_SCHEMA`:
 

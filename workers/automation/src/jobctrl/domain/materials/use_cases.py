@@ -2408,7 +2408,7 @@ class TailorResumeUseCase:
         except OSError:
             size_bytes = None
 
-        judge_record = self._judge_record(verdict)
+        judge_record = final_candidate.record.get("judge")
         report["final_judge"] = judge_record
         resume_template = _resolve_effective_resume_template(
             self._repository,
@@ -3180,12 +3180,15 @@ class TailorResumeUseCase:
         validation = self._validator.validate_json_fields(
             payload, profile_snapshot, mode=validation_mode
         )
-        tailored_text = self._assembler.assemble_resume_text(payload, profile_snapshot)
+        tailored_text = ""
         shipped_rows: tuple[BulletProvenance, ...] = ()
         fabrication_error: str | None = None
         findings: tuple[FabricationFinding, ...] = ()
         grounding = ClaimGrounding((), ())
         if validation.passed:
+            # A parsed object may still contain malformed nested fields. Only
+            # validated structure satisfies the assembler's input contract.
+            tailored_text = self._assembler.assemble_resume_text(payload, profile_snapshot)
             rendered_validation = self._validator.validate_tailored_resume(
                 tailored_text, profile_snapshot
             )
@@ -3303,7 +3306,10 @@ class TailorResumeUseCase:
 
         if validation_mode == "lenient":
             verdict = JudgeVerdict.passed(score=1.0, notes="judge skipped (lenient)")
-            record["judge"] = {"verdict": "SKIPPED", "passed": True, "issues": [], "score": 1.0}
+            record["judge"] = {
+                "verdict": "SKIPPED", "passed": True, "issues": [], "score": 1.0,
+                "reason": "lenient_validation_mode",
+            }
             record["status"] = "approved"
             return replace(candidate, verdict=verdict)
 
@@ -3817,7 +3823,7 @@ class TailorResumeUseCase:
             else:
                 reason = "voice_final_validation_rejected: " + "; ".join(voiced.validation.errors)
             return candidate, replace(voice_record, accepted=False, reason=reason)
-        final_judge = self._judge_record(voiced.verdict) or {}
+        final_judge = dict(voiced.record.get("judge") or {})
         review = voiced.adversarial_review
         if review is not None:
             final_judge["adversarial_review"] = review.to_voice_pass_dict()

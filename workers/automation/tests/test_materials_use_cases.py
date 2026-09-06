@@ -4385,3 +4385,59 @@ def test_later_parse_failure_cannot_promote_an_earlier_rejected_candidate(
         assert all(call["response_schema"] == TAILORED_RESUME_RESPONSE_SCHEMA for call in llm.kwargs)
         assert "judge" not in first and "adversarial_review" not in first
         assert "fabrication_detected" in history[1]["retry_reasons"]
+
+
+@pytest.mark.parametrize("recover", [True, False])
+def test_malformed_nested_candidate_preserves_repair_and_accepted_artifact(
+    tmp_path: Path, snapshot: ProfileSnapshot, job: dict, monkeypatch, recover: bool,
+) -> None:
+    valid = _payload_with_bullet("Cut backend latency 40% using Python.")
+    malformed = json.dumps({**json.loads(valid), "skill_category_updates": None})
+    responses = [malformed, valid, _judge_pass()] if recover else [malformed, malformed]
+    llm = _ScriptedLlm(responses)
+    repo = _FakeRepository()
+    previous_path = tmp_path / "accepted.txt"
+    previous_path.write_text("Accepted synthetic artifact.")
+    previous = MaterialsSetFactory.initial(
+        tenant_id=LOCAL_TENANT, job_id=canonical_job_id(str(job["job_id"])),
+        created_at="2024-01-01T00:00:00+00:00",
+    ).with_resume_attempt(
+        Artifact.create(
+            type=ArtifactType.TAILORED_RESUME, path=str(previous_path),
+            created_at="2024-01-01T00:00:00+00:00", render_format=RenderFormat.TEXT,
+        ),
+        validation=ValidationResult.success(), verdict=JudgeVerdict.passed(),
+        updated_at="2024-01-01T00:00:00+00:00",
+    )
+    repo.save(previous)
+    assembler = ResumeAssembler()
+    assemble = assembler.assemble_resume_text
+    assembled = []
+
+    def recording_assembly(_self, payload, profile):
+        assembled.append(payload)
+        return assemble(payload, profile)
+
+    monkeypatch.setattr(ResumeAssembler, "assemble_resume_text", recording_assembly)
+    outcome = TailorResumeUseCase(
+        repository=repo, llm=llm, validator=ContentValidator(), assembler=assembler,
+        max_retries=1,
+    ).execute(
+        job=job, profile_snapshot=snapshot, tailored_dir=tmp_path, retailor=True,
+        employer_analysis=_analysis_with_keywords(job, ["python", "backend", "latency"]),
+    )
+    assert outcome.status == ("approved" if recover else "failed_validation")
+    assert len(llm.calls) == len(responses)
+    history = outcome.report["attempt_history"]
+    assert len(history) == 2
+    first = history[0]["candidates"][0]
+    assert first["status"] == "failed_validation"
+    assert first["parsed_json"]["skill_category_updates"] is None
+    assert first["validator"]["passed"] is False
+    assert "validation_failed" in history[1]["retry_reasons"]
+    assert len(assembled) == int(recover)
+    assert previous_path.read_text() == "Accepted synthetic artifact."
+    if not recover:
+        assert history[1]["candidates"][0]["status"] == "failed_validation"
+        assert repo.load_current_approved(LOCAL_TENANT, previous.job_id) is previous
+        assert not outcome.materials.is_resume_approved
