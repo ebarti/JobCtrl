@@ -2348,6 +2348,13 @@ def test_tailor_use_case_failed_validation_persists_rejected_artifact(
     assert outcome.materials.last_verdict is None
     assert outcome.report["final_judge"] is None
     assert outcome.materials.tailored_resume is not None
+    rejected_text = Path(outcome.text_path).read_text(encoding="utf-8")
+    assert rejected_text.startswith("Rejected resume candidate\n")
+    inspection = json.loads(rejected_text.partition("\n")[2])
+    assert inspection["parsed_json"] == outcome.final_payload
+    assert inspection["validator"]["passed"] is False
+    assert inspection["validator"]["errors"] == list(outcome.materials.last_validation.errors)
+    assert outcome.materials.tailored_resume.size_bytes == len(rejected_text.encode("utf-8"))
     assert outcome.materials.tailored_resume.metadata["judge"] is None
     assert outcome.materials.tailored_resume.metadata["final_judge"] is None
     assert outcome.materials.tailored_resume.metadata["voice_pass"]["final_judge"] == {}
@@ -4441,3 +4448,8 @@ def test_malformed_nested_candidate_preserves_repair_and_accepted_artifact(
         assert history[1]["candidates"][0]["status"] == "failed_validation"
         assert repo.load_current_approved(LOCAL_TENANT, previous.job_id) is previous
         assert not outcome.materials.is_resume_approved
+        rejected_text = Path(outcome.text_path).read_text(encoding="utf-8")
+        assert rejected_text.startswith("Rejected resume candidate\n")
+        inspection = json.loads(rejected_text.partition("\n")[2])
+        assert inspection["parsed_json"]["skill_category_updates"] is None
+        assert inspection["validator"]["errors"] == history[-1]["candidates"][0]["validator"]["errors"]

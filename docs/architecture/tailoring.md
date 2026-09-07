@@ -446,12 +446,12 @@ profile contract:
 - Watchlisted fabricated skills are rejected unless they are present in the
   allowed profile skills (the later fabrication gate additionally scans ALL
   prose skills/tools against the profile vocabulary and evidence corpus).
+- Banned words are warnings in normal mode, errors in strict mode, and ignored
+  in lenient mode.
 
 Field validation must pass before assembly. A parsed object with malformed
 nested fields remains a rejected candidate with inspectable JSON and validation
 errors; it cannot abort the bounded repair loop through an assembler exception.
-- Banned words are warnings in normal mode, errors in strict mode, and ignored
-  in lenient mode.
 
 ### 3. Resume Assembly
 
@@ -640,8 +640,10 @@ label the retained measurement as `post_voice_shipped` without recomputing it.
 ## Persistence And Audit Data
 
 After a parseable payload exists, the use case writes a text artifact for
-inspection even when the final status is not approved. The artifact metadata is
-the main audit surface for tailoring.
+inspection even when the final status is not approved. If field validation
+prevented assembly, this file contains the rejected JSON and validation errors,
+labelled as a rejected candidate. Otherwise it retains the exact evaluated
+resume text. The artifact metadata is the main audit surface for tailoring.
 
 Approved resume metadata includes:
 

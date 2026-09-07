@@ -2398,10 +2398,16 @@ class TailorResumeUseCase:
         tailored_dir.mkdir(parents=True, exist_ok=True)
         text_path = tailored_dir / f"{prefix}.txt"
 
-        # Always write the raw text so callers can inspect it (mirrors
-        # legacy behaviour that wrote even rejected attempts so the user
-        # can compare).
-        text_path.write_text(tailored_text, encoding="utf-8")
+        # Field-invalid candidates never reach assembly. Preserve their source
+        # and validation errors for inspection without manufacturing resume text.
+        inspection_text = tailored_text
+        if not tailored_text and not validation.passed:
+            inspection_text = "Rejected resume candidate\n" + json.dumps(
+                {"parsed_json": final_payload, "validator": validation.to_dict()},
+                indent=2,
+                ensure_ascii=False,
+            ) + "\n"
+        text_path.write_text(inspection_text, encoding="utf-8")
 
         try:
             size_bytes = text_path.stat().st_size

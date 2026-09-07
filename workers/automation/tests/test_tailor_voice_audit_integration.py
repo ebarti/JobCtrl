@@ -1161,5 +1161,5 @@ def test_changed_voice_in_lenient_mode_retains_skipped_review_audit(tmp_path: Pa
     for audit in (saved.voice.final_judge, outcome.report["tailoring_quality"]["final_judge"]):
         assert audit["verdict"] == "SKIPPED"
         assert audit["reason"] == "lenient_validation_mode"
-        assert "model" not in audit and "schema_version" not in audit
+        assert "judge_model" not in audit and "judge_schema_version" not in audit
         assert "adversarial_review" not in audit

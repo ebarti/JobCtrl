@@ -726,7 +726,10 @@ protect the previous accepted generation and provenance.
 Also return parsed JSON with `skill_category_updates: null` before a valid
 candidate: field validation must reject it before assembly, preserve its audit
 and continue bounded repair. Exhausting that malformed response must leave the
-previous accepted artifact intact. A changed voice rewrite in lenient mode must
+previous accepted artifact intact. Read the rejected `.txt` for both missing
+required fields and malformed nested fields: it must contain the selected JSON
+and validation errors, with nonzero registered size, without invoking assembly
+on invalid fields. A changed voice rewrite in lenient mode must
 retain `SKIPPED` with reason `lenient_validation_mode` in both voice and final
 judge metadata, without judge/adversarial calls or paid-model attribution.
 
