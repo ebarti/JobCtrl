@@ -2,6 +2,8 @@
 
 Status: all four implementations delivered as open PRs on 6 September 2026.
 Independent implementation review and synthetic QA passed for every phase.
+Review corrections and cumulative synthetic QA also passed on 7 September
+2026 at code head `f1c8aae101a727001802d44a3433a6fdb0e28c08`.
 The final published head's CI status is tracked in [PR #869's live checks](https://github.com/ebarti/JobCtrl/pull/869/checks).
 Native stack #867 remains open and unmerged; merging is a separate action.
 
@@ -372,9 +374,9 @@ Update this table with actual results; do not mark proposals implemented.
 
 | Phase | PR and head | Deleted mechanism | Tests and product proof | Review / QA |
 | --- | --- | --- | --- | --- |
-| 1 | [#865](https://github.com/ebarti/JobCtrl/pull/865); reviewed implementation `2428ce2dd` | View-owned five-snapshot draft selector and reply merger removed; cache mutation publication reconciles saved state | Original focused web/type checks and web/API/Storybook/docs builds passed; promotion fix passed 71 affected tests and all four isolated Chromium scenarios with scoped axe clean | The promotion High passed independent review and QA at `2428ce2dd`; the pending-create and cached-job isolation corrections passed independent review at `55fa84f0`; cumulative synchronized-head QA remains pending |
+| 1 | [#865](https://github.com/ebarti/JobCtrl/pull/865); reviewed implementation `2428ce2dd` | View-owned five-snapshot draft selector and reply merger removed; cache mutation publication reconciles saved state | Original focused web/type checks and web/API/Storybook/docs builds passed; promotion fix passed 71 affected tests and all four isolated Chromium scenarios with scoped axe clean | The promotion High passed independent review and QA at `2428ce2dd`; the pending-create and cached-job isolation corrections passed independent review at `55fa84f0`; cumulative synchronized-head QA passed at `f1c8aae1` as recorded below |
 | 2 | [#866](https://github.com/ebarti/JobCtrl/pull/866); validated head `a8bb11f3e` | Form/editor/projector JSON round trips removed; object drafts preserve original values and serialize at the request boundary | 61 focused tests; full web 323 files/2020 tests, 13 type tests, web/API checks and web/Storybook builds pass. Docs build and pure preview-fixture test pass. Full API suite deliberately run through the reviewed owned pre-import environment: 59 files/828 tests PASS. | PR #866 records final independent review and QA PASS at `a8bb11f3e`: six cumulative browser scenarios and three scoped axe scans passed, with all applicable CI successful. The later [published review](https://github.com/ebarti/JobCtrl/pull/866#pullrequestreview-5126582837) also reports Gate PASS, but did not rerun those browser scenarios; their evidence remains the author-reported isolated run. Diagnostic profile coverage includes real save/reload, entry order and scoped axe after fixing the native-caret publication race and toolbar Select colors. Full web suite and web types/build/Storybook rechecked after the shared owner correction; the new native-caret regression and affected Profile/Apply suites pass 96 tests. Renderer-class and line-end fixtures retain explicit caret assertions |
-| 3 | [#868](https://github.com/ebarti/JobCtrl/pull/868) | Duplicate batch attempt/start/terminal-write loop removed; frozen cohorts dispatch through the canonical per-job lifecycle and shared bounded executor | Reviewed owned pre-import core matrix: admission PASS and 162 tests PASS. Exact real Temporal activity/workflow matrix: admission PASS, 20 cases PASS, captured process-group cleanup PASS. Focused Ruff and docs build PASS. Full CI exposed two stale executor instrumentation targets; corrected `test_selected_tailor_activity_uses_bounded_requested_workers` and `test_selected_cover_activity_uses_bounded_requested_workers` both PASS under the same admission guard, preserving their real activity calls and worker-limit assertions. The unrelated durable-timer demo is not a Tailor proof and was not run. | Independent review and QA passed at `bffe0af8`. [Python CI run 34000773050](https://github.com/ebarti/JobCtrl/actions/runs/34000773050) completed successfully on that head: Python 3.11, 3.12 and 3.13 each passed lint, full tests and package build. The later escaped-item-error correction has focused regression coverage; synchronized-head review, QA and CI must be verified separately. |
+| 3 | [#868](https://github.com/ebarti/JobCtrl/pull/868) | Duplicate batch attempt/start/terminal-write loop removed; frozen cohorts dispatch through the canonical per-job lifecycle and shared bounded executor | Reviewed owned pre-import core matrix: admission PASS and 162 tests PASS. Exact real Temporal activity/workflow matrix: admission PASS, 20 cases PASS, captured process-group cleanup PASS. Focused Ruff and docs build PASS. Full CI exposed two stale executor instrumentation targets; corrected `test_selected_tailor_activity_uses_bounded_requested_workers` and `test_selected_cover_activity_uses_bounded_requested_workers` both PASS under the same admission guard, preserving their real activity calls and worker-limit assertions. The unrelated durable-timer demo is not a Tailor proof and was not run. | Independent review and QA passed at `bffe0af8`. [Python CI run 34000773050](https://github.com/ebarti/JobCtrl/actions/runs/34000773050) completed successfully on that head: Python 3.11, 3.12 and 3.13 each passed lint, full tests and package build. The later escaped-item-error correction passed independent review at `e0c49970`; cumulative guarded QA and published-code-head CI passed at `f1c8aae1`, as recorded below. |
 | 4 | [#869](https://github.com/ebarti/JobCtrl/pull/869); implementation head `8b06a201` | Candidate tuple decomposition and repeated selected/voice-baseline provenance, grounding, fit and text assembly removed; fabrication runs before paid review | Reviewed guarded cumulative matrix: admission PASS and 192 tests PASS across seven materials/runtime files plus the exact requirement-led fit regression. Unchanged real Temporal matrix: admission PASS, 20 cases PASS and owned process-group cleanup PASS. Ruff, static Mermaid validation and docs build PASS. Counting fixtures cover absent/no-op/accepted/rejected voice; mixed rejected/parse-failure fixtures preserve prior accepted artifacts. Review regressions reproduce and fix malformed nested JSON entering assembly and lenient voice review falsely labeled PASS; all three added cases pass. Prior six-scenario frontend QA with three scoped axe checks and two JSON-RPC worker-bound tests carry forward. | Independent reviewer and QA PASS at `8b06a201`, zero remaining findings; fresh QA passes 192 tests. Published-head CI is tracked in [live checks](https://github.com/ebarti/JobCtrl/pull/869/checks). |
 
 All four implementations are published in native stack #867:
@@ -396,7 +398,48 @@ six isolated Chromium artifact-comparison scenarios pass, including actual
 typing while draft creation is pending and switching cached jobs with identical
 saved documents without carrying over local edits. Independent review passed at
 `55fa84f0`, including the unchanged cached-job counterexample and 73 focused
-tests. Cumulative synchronized-head QA remains required before completion.
+tests. Cumulative synchronized-head QA passed at `f1c8aae1`.
+
+## Review-correction completion on 7 September 2026
+
+The synchronized code head is
+`f1c8aae101a727001802d44a3433a6fdb0e28c08`. Independent remediation reviews
+passed for each phase, including pending-create typing and cached-job isolation,
+structured-profile fixture accuracy, escaped batch item failures, and rejected
+candidate inspection. The historical phase results above retain their original
+head and evidence attribution.
+
+Independent cumulative product QA returned **Gate: PASS** on that exact head:
+
+- **198 guarded core/materials tests** passed, including canonical batch Tailor,
+  candidate rejection and inspection, accepted-artifact preservation, recovery,
+  unit-of-work and bounded-worker activity paths.
+- **20 real Temporal cases** passed with 14 balanced ephemeral-server lifecycles,
+  covering cancellation, owner fencing, retry/restart recovery and frozen cohorts.
+- **Eight real Chromium flows** passed: six artifact comparison/editor cases,
+  including both review-draft regressions, and two structured-profile persistence
+  cases. **Three scoped axe checks** passed.
+- No cumulative QA case failed or was skipped. Owned pre-import admission,
+  independently parsed JUnit results, captured process/port cleanup, clean exact
+  checkout and `git diff --check` all passed. All providers and data were synthetic.
+
+[Python CI run 34110669959](https://github.com/ebarti/JobCtrl/actions/runs/34110669959)
+passed on `f1c8aae1`: Python 3.11, 3.12 and 3.13 each passed lint, **3,742 tests**
+with two unchanged opt-in system-browser skips, and both sdist and wheel builds.
+[TypeScript CI run 34110669878](https://github.com/ebarti/JobCtrl/actions/runs/34110669878)
+passed API, web unit/types/build, Storybook, extension and browser E2E checks.
+The latest applicable workflows also passed on synchronized #865 `6da9a318`,
+#866 `67dc2478` and #868 `c11d1e73`; superseded cancelled runs are not current
+failures. Intentional DCO/deployment skips remain distinct from test results.
+
+The closing plan update changes prose only. Code review and synthetic product
+QA evidence carry forward from `f1c8aae1`; automated results for the current
+published documentation head are available in
+[PR #869's live checks](https://github.com/ebarti/JobCtrl/pull/869/checks).
+The stack remains open and unmerged. The separate #860 authenticated-provider
+Discover + Enrich operational High remains unverified; synthetic browser/transport
+QA does not close it, and no live-provider or application-submission run is
+included in this completion record.
 
 Delivery means four published PRs with the exact base chain above, necessary
 docs, passing independent gates and applicable CI, no unresolved Blocker/High
