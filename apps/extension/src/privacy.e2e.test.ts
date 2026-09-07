@@ -25,7 +25,7 @@ describe("built extension privacy boundary", () => {
       content_security_policy?: { extension_pages?: string };
     };
     expect(new Set(manifest.permissions)).toEqual(
-      new Set(["activeTab", "alarms", "declarativeNetRequest", "scripting", "storage"]),
+      new Set(["activeTab", "alarms", "declarativeNetRequest", "scripting", "storage", "webNavigation"]),
     );
     expect(new Set(manifest.host_permissions)).toEqual(WEB_PAGE_MATCHES);
     expect(new Set(manifest.content_scripts?.[0]?.matches ?? [])).toEqual(WEB_PAGE_MATCHES);

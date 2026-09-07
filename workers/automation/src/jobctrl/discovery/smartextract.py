@@ -1495,6 +1495,7 @@ def _run_all(
             "total": 0,
             "titles": 0,
             "error": str(exc),
+            "retryable": bool(getattr(exc, "retryable", True)),
         }
 
     if workers > 1 and len(targets) > 1:

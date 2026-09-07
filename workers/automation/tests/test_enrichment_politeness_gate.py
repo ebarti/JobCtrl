@@ -1037,3 +1037,91 @@ def test_repeatedly_robots_blocked_job_stays_blocked_never_failed(
         assert _enrichment_status(conn, url) is None
     finally:
         close_connection(db_path)
+
+
+@pytest.mark.parametrize("retryable", [True, False])
+def test_live_browser_task_failure_isolated_from_remaining_enrich_jobs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tier1_extraction: None, retryable: bool
+) -> None:
+    from .live_browser_helpers import FixtureBrowserBroker, retryable_page_failure
+
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    urls = [f"https://www.linkedin.com/jobs/view/fixture-{index}" for index in range(3)]
+    execution = DiscoveryExecutionRef(tenant_id="local", workflow_id="fixture-discover", temporal_run_id="fixture-run")
+
+    def result_for(url: str) -> dict:
+        if url == urls[0]:
+            return {**retryable_page_failure(), "retryable": retryable}
+        return {
+            "status": "succeeded", "finalUrl": url, "statusCode": 200,
+            "contentType": "text/html", "title": "Role", "bodyText": LONG_DESC,
+            "bodyHtml": '<html><body><script type="application/ld+json">' + json.dumps({
+                "@type": "JobPosting", "description": LONG_DESC,
+                "url": "https://example.test/apply", "directApply": True,
+            }) + f'</script><main><article class="job-description">{LONG_DESC}</article></main></body></html>',
+        }
+
+    broker = FixtureBrowserBroker(tmp_path, result_for)
+    monkeypatch.setattr(detail, "LiveChromeDiscoveryClient", broker.client)
+    try:
+        for url in urls:
+            _seed_pending(conn, url, "linkedin")
+        stats = scrape_site_batch(
+            conn, "linkedin", [(_job_id(conn, url), "Role") for url in urls],
+            gateway=offline_gateway(robots=DenyAllRobots()), discovery_execution=execution,
+        )
+        assert stats["error"] == 1
+        assert stats["ok"] == 2
+        assert broker.visited == urls
+        assert broker.tasks == {}
+        assert [_enrich_stage(conn, url)["state"] for url in urls] == ["failed", "succeeded", "succeeded"]
+        failed = conn.execute(
+            "SELECT error_code, retryable FROM job_stage_states WHERE job_id = ? AND stage = 'enrich'",
+            (_job_id(conn, urls[0]),),
+        ).fetchone()
+        assert failed["error_code"] == "navigation_failed"
+        assert bool(failed["retryable"]) is retryable
+        aggregate = detail.SqliteEnrichmentRepository(conn).load(LOCAL_TENANT, _job_id(conn, urls[0]))
+        assert aggregate is not None
+        assert aggregate.attempts[-1].error is not None
+        assert aggregate.attempts[-1].error.retryable is retryable
+    finally:
+        close_connection(db_path)
+
+
+def test_extension_disconnect_still_aborts_enrich_before_the_next_job(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tier1_extraction: None
+) -> None:
+    from jobctrl.domain.errors import ConfigurationError
+    from .live_browser_helpers import FixtureBrowserBroker, retryable_page_failure
+
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    urls = [f"https://www.linkedin.com/jobs/view/disconnected-{index}" for index in range(2)]
+    broker = FixtureBrowserBroker(tmp_path, lambda _url: retryable_page_failure())
+    original_transport = broker.transport
+
+    def disconnected_transport(method, url, data, headers, timeout):
+        if method == "GET" and "/tasks/" in url:
+            return 503, b'{"error":"discovery_extension_unavailable","message":"fixture disconnected"}'
+        return original_transport(method, url, data, headers, timeout)
+
+    monkeypatch.setattr(broker, "transport", disconnected_transport)
+    monkeypatch.setattr(detail, "LiveChromeDiscoveryClient", broker.client)
+    try:
+        for url in urls:
+            _seed_pending(conn, url, "linkedin")
+        with pytest.raises(ConfigurationError, match="fixture disconnected"):
+            scrape_site_batch(
+                conn, "linkedin", [(_job_id(conn, url), "Role") for url in urls],
+                gateway=offline_gateway(robots=DenyAllRobots()),
+                discovery_execution=DiscoveryExecutionRef(
+                    tenant_id="local", workflow_id="fixture-disconnect", temporal_run_id="fixture-run"
+                ),
+            )
+        assert broker.tasks == {}
+        assert _enrich_stage(conn, urls[0])["state"] == "pending"
+        assert _enrich_stage(conn, urls[1]) is None
+    finally:
+        close_connection(db_path)

@@ -575,8 +575,14 @@ The API validates DNS both when the worker enqueues a task and immediately
 before the extension receives its lease. Brokered HTTP/API fetches run in the
 extension service worker with Chrome credentials and redirect following
 disabled. Rendered-page work installs a tab-scoped exact-origin allow rule above
-a default HTTP(S) block rule. In both modes, a public source cannot redirect the
-request to a different origin before rejection.
+a default HTTP(S) main-frame block rule, leaving page-owned fetch/XHR alone. In
+both modes, a public source cannot redirect the request to a different origin
+before rejection.
+
+Signed-in page snapshots can include personalized account content beyond a
+posting. The worker may persist extracted posting text and send snapshot or
+posting content to configured LLM providers; see the
+[data-flow notice](docs/user/data-and-safety.md#external-services).
 
 The configurable `JobCtrl/<version> (+<contact>)` crawl identity remains the
 identity for standalone/non-extension gateway operations and is reported by

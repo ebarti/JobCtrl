@@ -204,12 +204,20 @@ records something you did. Follow-ups are reminders and never act automatically.
 | Service | When used | Data involved |
 | --- | --- | --- |
 | LLM providers | Scoring, employer analysis, materials, contact extraction, stored interview prep | Posting text, relevant profile evidence, generated text, or opted-in fetched page text. |
-| Job boards, ATS APIs, posting pages | Integrated Discovery and its enrichment drain, through the paired extension in the current Chrome profile | Search terms, URLs, and page/API requests; Chrome may also send cookies or other session state that already belongs to that site. Cookie values and the browser user agent are not copied into the worker task. |
+| Job boards, ATS APIs, posting pages | Integrated Discovery and its enrichment drain, through the paired extension in the current Chrome profile | Search terms, URLs, and page/API requests; Chrome may also send cookies or other session state that already belongs to that site. Cookie values are never copied into worker tasks or results. The browser user-agent string is returned with results for robots evaluation only. |
 | Apply model and browser | Apply/dry-run work you start, or a standing loop you enable | Apply prompt, reviewed materials, profile application fields, and page interaction. |
 | Gmail | Authenticated verification, bounded outcome feedback, or an approved email application | Scoped queries/evidence or the exact approved recipient/attachment. |
 | Google Maps | Profile location autocomplete with a configured key | Address text typed into the location field. |
 | CAPTCHA provider | Supported widget during an apply run you explicitly start or a standing loop you enable, with a configured solver | Site key and page URL through the owned local tool. |
 | Langfuse/OpenTelemetry | Explicitly configured telemetry | Metadata-only LLM, workflow, and JSON-RPC spans: provider/model, operation/stage, outcome, token counts, and safe sizes. |
+
+Discovery and Enrich capture HTML and text from pages as rendered in your
+signed-in Chrome session. These snapshots can include account-personalized
+content beyond the posting, such as greetings or job-match panels. The worker
+processes that content; extracted posting text can be persisted locally and
+page HTML or posting text can be sent to configured LLM providers for extraction
+and later pipeline stages. Keeping broker tasks in memory does not prevent this
+downstream persistence or LLM processing.
 
 Review [Security → What Leaves Your Machine](security.md#what-leaves-your-machine)
 before enabling a provider.

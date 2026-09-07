@@ -29,6 +29,7 @@ describe("Discovery browser lease loop", () => {
     });
     const remove = vi.fn(async () => undefined);
     const browser = {
+      webNavigation: { onErrorOccurred: { addListener: vi.fn(), removeListener: vi.fn() } },
       declarativeNetRequest: { updateSessionRules: vi.fn(async () => undefined) },
       tabs: {
         create: vi.fn(async () => ({ id: 55 })),

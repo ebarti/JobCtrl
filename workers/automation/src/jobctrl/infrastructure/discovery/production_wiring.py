@@ -1935,7 +1935,7 @@ def _record_ats_source_failure(
             "sourceIds": [source_id],
             "error_class": type(exc).__name__,
             "errorClass": type(exc).__name__,
-            "retryable": True,
+            "retryable": bool(getattr(exc, "retryable", True)),
             "failed_at": failed_at,
             "failedAt": failed_at,
         },

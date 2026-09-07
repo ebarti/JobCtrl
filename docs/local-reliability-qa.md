@@ -52,7 +52,14 @@ the extension service worker from the same persistent Chrome context where a
 site cookie was set, return that cookie-observed response, and leave no copied
 profile or API tab. Reproduce a request that never responds and prove the hard
 task timeout posts a retryable failure without leaving a tab. Reproduce a
-public-to-loopback redirect and prove the loopback target receives no request.
+public-to-loopback redirect in both HTTP and rendered-page modes and prove the
+loopback target receives no request. The rendered-page result must be promptly
+non-retryable `unsafe_redirect`, without consuming the task timeout. Render a
+fixture that hydrates its posting through a second origin and prove its
+page-owned fetch succeeds. Return a retryable task failure for one job/target
+and prove remaining Enrich, ATS, and Smart Extract targets complete in the same
+attempt; preserve the failed target's retryability. Extension unavailability and
+cancellation must still abort the attempt.
 Also lease a rendered-page task against a delayed LinkedIn SDUI fixture:
 `JobDetails_AboutTheJob_*` must remain unready while empty, then return its
 populated description. Background-tab polling uses a monotonic deadline, not

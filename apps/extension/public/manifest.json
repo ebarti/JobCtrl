@@ -10,7 +10,7 @@
     "service_worker": "background.js",
     "type": "module"
   },
-  "permissions": ["activeTab", "alarms", "declarativeNetRequest", "scripting", "storage"],
+  "permissions": ["activeTab", "alarms", "declarativeNetRequest", "scripting", "storage", "webNavigation"],
   "host_permissions": [
     "http://*/*",
     "https://*/*"

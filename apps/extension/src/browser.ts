@@ -69,7 +69,22 @@ export interface BrowserScripting {
   }): Promise<Array<{ result?: TResult }>>;
 }
 
+export interface BrowserNavigationError {
+  tabId: number;
+  frameId: number;
+  url: string;
+  error: string;
+}
+
+export interface BrowserWebNavigation {
+  onErrorOccurred: {
+    addListener(listener: (details: BrowserNavigationError) => void): void;
+    removeListener(listener: (details: BrowserNavigationError) => void): void;
+  };
+}
+
 export interface BrowserApi {
+  webNavigation: BrowserWebNavigation;
   alarms: BrowserAlarms;
   declarativeNetRequest: BrowserDeclarativeNetRequest;
   runtime: BrowserRuntime;

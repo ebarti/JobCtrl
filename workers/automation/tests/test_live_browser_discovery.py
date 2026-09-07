@@ -317,3 +317,69 @@ def test_robots_policy_is_fetched_and_cached_through_the_live_profile() -> None:
     assert robots.evaluate("https://example.com/public", "JobCtrl/1") is RobotsVerdict.ALLOW
     assert robots.evaluate("https://example.com/private/role", "JobCtrl/1") is RobotsVerdict.DISALLOW
     assert client.calls == ["https://example.com/robots.txt"]
+
+
+@pytest.mark.parametrize("workers", [1, 2])
+def test_live_browser_smartextract_failure_preserves_remaining_targets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, workers: int
+) -> None:
+    from .live_browser_helpers import FixtureBrowserBroker, retryable_page_failure
+    from jobctrl.discovery import smartextract
+
+    def result_for(url: str) -> dict:
+        if "slow" in url:
+            return retryable_page_failure()
+        return {"status": "succeeded", "finalUrl": url, "statusCode": 200, "bodyText": "fixture"}
+
+    broker = FixtureBrowserBroker(tmp_path, result_for)
+    monkeypatch.setattr(smartextract, "init_db", lambda: object())
+    monkeypatch.setattr(smartextract, "get_stats", lambda _conn: {"total": 0, "pending_detail": 0})
+
+    def run_one(name, url, cancel_event, browser_client):
+        browser_client._client.rendered_page(url)
+        return {"name": name, "status": "PASS", "strategy": "fixture", "total": 0, "titles": 0, "jobs": []}
+
+    monkeypatch.setattr(smartextract, "LiveChromeDiscoveryClient", broker.client)
+    monkeypatch.setattr(smartextract, "_run_one_site", run_one)
+    result = smartextract._run_all(
+        [{"name": "Slow", "url": "https://slow.example/jobs"}, {"name": "Ready", "url": "https://ready.example/jobs"}],
+        [], [], workers=workers, discovery_execution=_execution(),
+    )
+    assert result["errors"] == 1
+    assert result["passed"] == 1
+    assert result["total"] == 2
+    assert len(broker.visited) == 2
+    assert broker.tasks == {}
+
+
+def test_unsafe_task_admission_is_a_target_failure(tmp_path: Path) -> None:
+    from jobctrl.infrastructure.discovery.live_browser import LiveBrowserTaskError
+
+    scripted = _ScriptedTransport(tmp_path)
+
+    def transport(method, url, data, headers, timeout):
+        if method == "POST":
+            return 400, b'{"error":"unsafe_discovery_browser_url","message":"unresolvable host"}'
+        return scripted(method, url, data, headers, timeout)
+
+    client = LiveChromeDiscoveryClient(_execution(), source_family="ats_api", app_dir=tmp_path, transport=transport)
+    with pytest.raises(LiveBrowserTaskError) as caught:
+        client.fetch_json("https://unresolvable.example/jobs")
+    assert caught.value.code == "unsafe_discovery_browser_url"
+    assert caught.value.retryable is False
+
+
+def test_lost_broker_task_retains_transient_bridge_failure(tmp_path: Path) -> None:
+    from jobctrl.domain.errors import TransientNetworkError
+
+    scripted = _ScriptedTransport(tmp_path)
+
+    def transport(method, url, data, headers, timeout):
+        if method == "GET" and "/tasks/" in url:
+            return 404, b'{"error":"discovery_browser_task_not_found","message":"broker restarted"}'
+        return scripted(method, url, data, headers, timeout)
+
+    client = LiveChromeDiscoveryClient(_execution(), source_family="ats_api", app_dir=tmp_path, transport=transport)
+    with pytest.raises(TransientNetworkError, match="broker restarted"):
+        client.fetch_json("https://example.com/jobs")
+    assert scripted.calls[-1][0] == "DELETE"

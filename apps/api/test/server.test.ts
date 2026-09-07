@@ -9248,14 +9248,18 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
-  it("rejects direct top-level enrich runs because Discovery owns detail enrichment", async () => {
+  it.each([
+    { stages: ["enrich"] },
+    { stages: ["discover", "enrich"] },
+    { stages: ["score", "enrich"] },
+  ])("rejects top-level Enrich in $stages because Discovery owns detail enrichment", async ({ stages }) => {
     const dispatch = vi.fn(async () => ({ status: "queued" }));
     const app = buildApp({ ...options, actionDispatcher: dispatch });
 
     const response = await app.inject({
       method: "POST",
       url: "/v1/pipeline/actions/run-stage",
-      payload: { stages: ["enrich"], dryRun: true },
+      payload: { stages, dryRun: true },
     });
 
     expect(response.statusCode, response.body).toBe(400);

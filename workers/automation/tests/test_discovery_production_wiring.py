@@ -1675,3 +1675,35 @@ def test_barcelona_spain_tech_leadership_acceptance_report_is_end_to_end(
     assert report["source_quality_updates"] >= fixture["minimums"]["source_quality_updates"]
     assert report["scoring_handoff_count"] == fixture["minimums"]["scoring_handoff_count"]
     assert report["details"]["locator_candidates"] == 1
+
+
+def test_live_browser_ats_failure_preserves_other_sources(
+    conn: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from .live_browser_helpers import FixtureBrowserBroker, retryable_page_failure
+    from .politeness_helpers import offline_gateway
+    from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
+    from jobctrl.infrastructure.discovery import production_wiring
+
+    def result_for(url: str) -> dict:
+        if "lever.co" in url:
+            return retryable_page_failure()
+        return {
+            "status": "succeeded", "finalUrl": url, "statusCode": 200,
+            "contentType": "application/json", "bodyText": json.dumps(_fake_ats_http(url)),
+        }
+
+    broker = FixtureBrowserBroker(tmp_path, result_for)
+    monkeypatch.setattr(production_wiring, "LiveChromeDiscoveryClient", broker.client)
+    schedule = DiscoveryScheduler().plan(registry=_barcelona_registry())
+    result = run_scheduled_ats_sources(
+        conn, schedule.for_kinds(SourceKind.ATS_API), search_cfg=_search_cfg(), run_id="fixture-ats",
+        gateway=offline_gateway(),
+        discovery_execution=DiscoveryExecutionRef(tenant_id="local", workflow_id="fixture-ats", temporal_run_id="fixture-run"),
+    )
+    assert result["new_jobs"] == 2
+    assert result["failed_sources"] == ["lever:leadershipco"]
+    assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 2
+    assert broker.tasks == {}
+    failure = conn.execute("SELECT payload_json FROM job_events WHERE event_type = 'DiscoveryRunFailed'").fetchone()
+    assert json.loads(failure[0])["retryable"] is True

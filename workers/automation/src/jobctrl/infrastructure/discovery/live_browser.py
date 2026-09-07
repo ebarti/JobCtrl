@@ -2,8 +2,9 @@
 
 The paired extension owns every remote page/API request. This worker-side client
 talks only to the loopback JobCtrl API broker, so it neither launches Chrome nor
-copies a browser profile. Temporal remains the durability authority: brokered
-request bodies and authenticated page content stay process-memory-only.
+copies a browser profile. Temporal remains the durability authority and broker
+request/result envelopes stay in process memory. Downstream extraction can
+persist posting text and send captured content to configured LLM providers.
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ from urllib.robotparser import RobotFileParser
 
 from jobctrl import config
 from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
-from jobctrl.domain.errors import ConfigurationError, TransientNetworkError
+from jobctrl.domain.errors import ConfigurationError, JobCtrlError, TransientNetworkError
 from jobctrl.domain.ports.politeness import RobotsPort, RobotsVerdict
 
 
@@ -73,6 +74,15 @@ class LiveBrowserHttpError(RuntimeError):
 
     def __init__(self, status_code: int, message: str) -> None:
         self.status_code = status_code
+        super().__init__(message)
+
+
+class LiveBrowserTaskError(JobCtrlError):
+    """One remote acquisition failed; other targets may still make progress."""
+
+    def __init__(self, message: str, *, code: str, retryable: bool) -> None:
+        self.code = code
+        self.retryable = retryable
         super().__init__(message)
 
 
@@ -245,7 +255,9 @@ class LiveChromeDiscoveryClient:
         try:
             return json.loads(response.body_text)
         except json.JSONDecodeError as exc:
-            raise TransientNetworkError("Discovery source returned invalid JSON through Chrome") from exc
+            raise LiveBrowserTaskError(
+                "Discovery source returned invalid JSON through Chrome", code="invalid_json", retryable=True
+            ) from exc
 
     def _execute(self, request_payload: dict[str, Any], *, timeout_seconds: float) -> LiveBrowserResult:
         timeout_ms = min(120_000, max(1_000, int(timeout_seconds * 1_000)))
@@ -314,9 +326,11 @@ class LiveChromeDiscoveryClient:
                     raise TransientNetworkError("JobCtrl returned an invalid Discovery browser result")
                 if state == "failed" or result.get("status") == "failed":
                     message = str(result.get("message") or "Chrome could not complete the Discovery request")
-                    if bool(result.get("retryable")):
-                        raise TransientNetworkError(message)
-                    raise ConfigurationError(message)
+                    raise LiveBrowserTaskError(
+                        message,
+                        code=str(result.get("errorCode") or "request_failed"),
+                        retryable=bool(result.get("retryable")),
+                    )
                 if state != "succeeded" or result.get("status") != "succeeded":
                     raise TransientNetworkError("JobCtrl returned an unknown Discovery browser task state")
                 return LiveBrowserResult(
@@ -336,7 +350,7 @@ class LiveChromeDiscoveryClient:
                     authenticated=True,
                     allow_empty=True,
                 )
-            except (ConfigurationError, TransientNetworkError):
+            except (ConfigurationError, TransientNetworkError, LiveBrowserTaskError):
                 pass
 
     def _check_canceled(self, *, task_id: str | None) -> None:
@@ -350,7 +364,7 @@ class LiveChromeDiscoveryClient:
                     authenticated=True,
                     allow_empty=True,
                 )
-            except (ConfigurationError, TransientNetworkError):
+            except (ConfigurationError, TransientNetworkError, LiveBrowserTaskError):
                 pass
         raise TransientNetworkError("Discovery browser request canceled")
 
@@ -395,6 +409,8 @@ class LiveChromeDiscoveryClient:
                 raise _DiscoveryCapacityBusy(message)
             if status_code in {401, 403} or error_code == "discovery_extension_unavailable":
                 raise ConfigurationError(message)
+            if status_code == 400 and method == "POST" and path == "/v1/extension/discovery/tasks":
+                raise LiveBrowserTaskError(message, code=error_code or "request_rejected", retryable=False)
             raise TransientNetworkError(message)
         return response
 

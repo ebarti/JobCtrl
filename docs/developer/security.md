@@ -160,9 +160,12 @@ user's current Chrome profile. The API validates each initial task, revalidates
 its DNS/public-address decision immediately before lease, and validates the
 reported final URL. HTTP/API tasks run in the extension service worker with
 redirect following disabled. Before rendered-page navigation, the extension
-installs tab-scoped DNR rules that allow main-frame and Discovery-XHR traffic
+installs tab-scoped DNR rules that allow main-frame navigation
 only to the exact source origin; a cross-origin redirect is blocked before
-dispatch. The content script and broker independently reject non-web,
+dispatch. A task-scoped `webNavigation.onErrorOccurred` listener observes only
+the temporary tab's top frame, reports cross-origin blocked navigation as
+non-retryable `unsafe_redirect`, and is removed during task cleanup. Page-owned
+fetch/XHR subresources are not matched by the DNR rules. The content script and broker independently reject non-web,
 credential-bearing, lexically local, or cross-origin final targets. Response
 streaming stops at the 4 MB UTF-8 byte bound instead of buffering an unbounded
 body. JobCtrl applies host pacing,

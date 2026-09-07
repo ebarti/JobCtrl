@@ -155,13 +155,18 @@ aborts Chrome work and closes a tab when one exists. The API validates DNS at
 creation and again immediately before lease. HTTP/API tasks execute in the
 extension service worker with redirects disabled; rendered-page tasks use
 tab-scoped DNR rules that allow the exact source origin and block cross-origin
-main-frame/Discovery-fetch redirects before dispatch. Response streaming stops
+main-frame redirects before dispatch without restricting page-owned fetch/XHR.
+Blocked cross-origin rendered navigation returns non-retryable `unsafe_redirect`
+promptly via a task-scoped navigation-error listener. Response streaming stops
 at its byte limit rather than buffering an unbounded body. Rotating the pairing
 token clears the selected
 installation and immediately marks the old extension disconnected. `POST
 /v1/pipeline/actions/run-stage` returns `503
-discovery_extension_unavailable` before workflow dispatch when Discover is the
-one of the requested stages and the heartbeat is offline.
+discovery_extension_unavailable` before workflow dispatch when Discover is one
+of the requested stages and the heartbeat is offline. Top-level `enrich`,
+including mixed-stage requests containing it, is rejected with `400` by the
+request schema; Discovery owns the pipeline enrichment drain. Job-level and
+bulk Enrich run/retry routes perform the same extension heartbeat preflight.
 
 ## Compensation
 

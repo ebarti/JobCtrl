@@ -82,6 +82,7 @@ from jobctrl.infrastructure.enrichment.execution_lease import (
 from jobctrl.infrastructure.discovery.sqlite_identity_resolver import SqliteJobIdentityResolver
 from jobctrl.infrastructure.discovery.live_browser import (
     LiveBrowserResult,
+    LiveBrowserTaskError,
     LiveChromeDiscoveryClient,
     LiveChromeRobotsCache,
 )
@@ -1341,6 +1342,8 @@ def _record_enrich_job_failure(
     the row was already marked succeeded earlier in the loop).
     """
     message = f"{type(exc).__name__}: {exc}"[:500]
+    error_code = exc.code if isinstance(exc, LiveBrowserTaskError) else "ENRICH_INTERNAL_ERROR"
+    retryable = exc.retryable if isinstance(exc, LiveBrowserTaskError) else True
     try:
         from jobctrl.state import record_job_event, set_stage_state, utc_now
 
@@ -1360,6 +1363,8 @@ def _record_enrich_job_failure(
             conn,
             job_id,
             message,
+            error_code=error_code,
+            retryable=retryable,
             finished_at=finished_at,
             tenant_id=tenant_id,
             commit=activity_lease is None,
@@ -1369,9 +1374,9 @@ def _record_enrich_job_failure(
             job_id,
             "enrich",
             "failed",
-            error_code="ENRICH_INTERNAL_ERROR",
+            error_code=error_code,
             error_message=message,
-            retryable=True,
+            retryable=retryable,
             finished_at=finished_at,
             validate_transition=False,
             tenant_id=tenant_id,
@@ -1385,9 +1390,9 @@ def _record_enrich_job_failure(
             level="error",
             message=message,
             payload={
-                "errorCode": "ENRICH_INTERNAL_ERROR",
+                "errorCode": error_code,
                 "errorMessage": message,
-                "retryable": True,
+                "retryable": retryable,
             },
             tenant_id=tenant_id,
         )
@@ -1405,6 +1410,8 @@ def _record_enrich_aggregate_failure(
     message: str,
     *,
     finished_at: str,
+    error_code: str,
+    retryable: bool,
     tenant_id: TenantId = LOCAL_TENANT,
     commit: bool = True,
 ) -> None:
@@ -1417,9 +1424,9 @@ def _record_enrich_aggregate_failure(
         return
 
     error = EnrichmentError(
-        code="ENRICH_INTERNAL_ERROR",
+        code=error_code,
         message=message,
-        retryable=True,
+        retryable=retryable,
     )
     aggregate = existing or JobEnrichment.empty(
         tenant_id=tenant_id,
@@ -2046,7 +2053,7 @@ def scrape_site_batch(
                 except StaleEnrichmentExecutionLease as exc:
                     conn.rollback()
                     raise TransientNetworkError(str(exc)) from exc
-                except TransientNetworkError:
+                except (ConfigurationError, TransientNetworkError):
                     _reset_interrupted_enrich_stage(
                         conn,
                         job_id,

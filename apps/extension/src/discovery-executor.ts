@@ -4,7 +4,7 @@ import type {
   DiscoveryBrowserTaskResult,
 } from "@jobctrl/contracts";
 
-import type { BrowserApi, BrowserDeclarativeNetRequestRule } from "./browser";
+import type { BrowserApi, BrowserDeclarativeNetRequestRule, BrowserNavigationError } from "./browser";
 
 type LeasedDiscoveryTask = Extract<DiscoveryBrowserTaskLeaseResponse, { status: "task" }>;
 type DiscoveryProbeResponse = { ok: true; status: "discovery_ready" };
@@ -49,6 +49,8 @@ export async function executeDiscoveryBrowserTask(
 
   let tabId: number | null = null;
   let ruleIds: number[] = [];
+  let navigationListener: ((details: BrowserNavigationError) => void) | null = null;
+  let blockedRedirect = false;
   try {
     if (task.request.mode === "http_request") {
       return await executeExtensionHttpRequest(task.request, controller.signal);
@@ -61,6 +63,18 @@ export async function executeDiscoveryBrowserTask(
       return failed("navigation_failed", "Chrome did not create a Discovery tab.", true);
     }
     tabId = tab.id;
+    navigationListener = (details) => {
+      if (details.tabId !== tabId || details.frameId !== 0 || controller.signal.aborted) return;
+      if (details.error !== "net::ERR_BLOCKED_BY_CLIENT") return;
+      try {
+        if (new URL(details.url).origin === destination.origin) return;
+      } catch {
+        return;
+      }
+      blockedRedirect = true;
+      controller.abort(new Error("Chrome blocked a Discovery redirect outside the validated source origin."));
+    };
+    browser.webNavigation.onErrorOccurred.addListener(navigationListener);
     const rules = redirectGuardRules(task, tabId, destination.origin);
     ruleIds = rules.map((rule) => rule.id);
     await withAbort(
@@ -83,6 +97,9 @@ export async function executeDiscoveryBrowserTask(
     );
     return sameOriginResult(task, result);
   } catch (error) {
+    if (blockedRedirect) {
+      return failed("unsafe_redirect", "Chrome blocked a Discovery redirect outside the validated source origin.", false);
+    }
     if (controller.signal.aborted) {
       const message =
         abortKind === "timeout"
@@ -101,6 +118,7 @@ export async function executeDiscoveryBrowserTask(
     );
   } finally {
     clearTimeout(timeout);
+    if (navigationListener) browser.webNavigation.onErrorOccurred.removeListener(navigationListener);
     options.signal?.removeEventListener("abort", onExternalAbort);
     if (tabId !== null) {
       try {
@@ -308,10 +326,8 @@ function redirectGuardRules(
   origin: string,
 ): BrowserDeclarativeNetRequestRule[] {
   const baseId = discoveryRuleBase(task.taskId, task.leaseId);
-  const resourceTypes: Array<"main_frame" | "xmlhttprequest"> = [
-    "main_frame",
-    "xmlhttprequest",
-  ];
+  // Page-owned fetch/XHR must remain free to hydrate a SPA from another origin.
+  const resourceTypes: Array<"main_frame"> = ["main_frame"];
   return [
     {
       id: baseId,

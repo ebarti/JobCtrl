@@ -65,6 +65,35 @@ describe("Chromium loaded extension privacy boundary", () => {
     }
   }, 60_000);
 
+  it("hydrates a rendered posting using the page's own fetch to a second origin", async () => {
+    const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-extension-cross-origin-e2e-"));
+    let api: FakeLoopbackApi | null = null;
+    let context: BrowserContext | null = null;
+    let source: FakeDiscoverySource | null = null;
+    try {
+      source = await startFakeDiscoverySource();
+      context = await launchExtensionContext(userDataDir);
+      if (!context) return;
+      const jobUrl = `${source.baseUrl.replace("careers.jobctrl.test", "www.linkedin.com")}/jobs/view/cross-origin-fixture`;
+      api = await installFakeLoopbackApi(context, jobUrl, 15_000, "rendered_page");
+      const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent("serviceworker", { timeout: 10_000 }));
+      const controller = await context.newPage();
+      await controller.goto(`chrome-extension://${new URL(worker.url()).host}/popup.html`);
+      await sendExtensionMessage(controller, { type: "saveToken", token: "cross-origin-fixture-token" });
+      await waitFor(() => api?.discoveryCompletions.length === 1, 20_000);
+      expect(api.discoveryCompletions[0]).toMatchObject({ result: {
+        status: "succeeded", finalUrl: jobUrl,
+        bodyText: expect.stringContaining("Cross-origin fixture engineer"),
+      } });
+      expect(context.pages().some((page) => page.url() === jobUrl)).toBe(false);
+    } finally {
+      await api?.close();
+      await context?.close();
+      await source?.close();
+      fs.rmSync(userDataDir, { recursive: true, force: true });
+    }
+  }, 60_000);
+
   it("runs a JSON API request from the live profile when the source root is not injectable HTML", async () => {
     const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-extension-e2e-"));
     let api: FakeLoopbackApi | null = null;
@@ -199,7 +228,8 @@ describe("Chromium loaded extension privacy boundary", () => {
     }
   }, 60_000);
 
-  it("blocks a public-to-loopback redirect before the private target is requested", async () => {
+  it.each(["http_request", "rendered_page"] as const)(
+    "blocks a public-to-loopback redirect promptly in %s mode", async (mode) => {
     const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-extension-redirect-e2e-"));
     let api: FakeLoopbackApi | null = null;
     let context: BrowserContext | null = null;
@@ -208,7 +238,7 @@ describe("Chromium loaded extension privacy boundary", () => {
       source = await startFakeDiscoverySource();
       context = await launchExtensionContext(userDataDir);
       if (!context) return;
-      api = await installFakeLoopbackApi(context, `${source.baseUrl}/redirect-private`);
+      api = await installFakeLoopbackApi(context, `${source.baseUrl}/redirect-private`, 60_000, mode);
       const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent("serviceworker", { timeout: 10_000 }));
       const controller = await context.newPage();
       await controller.goto(`chrome-extension://${new URL(worker.url()).host}/popup.html`);
@@ -216,7 +246,7 @@ describe("Chromium loaded extension privacy boundary", () => {
       await sendExtensionMessage(controller, { type: "saveToken", token: "token-redirect" });
       await waitFor(() => api?.discoveryCompletions.length === 1, 10_000);
 
-      expect(api.discoveryCompletions[0]).toMatchObject({ result: { status: "failed" } });
+      expect(api.discoveryCompletions[0]).toMatchObject({ result: { status: "failed", errorCode: "unsafe_redirect", retryable: false } });
       expect(source.privateRedirectTargetSeen()).toBe(false);
     } finally {
       await api?.close();
@@ -234,7 +264,7 @@ async function launchExtensionContext(userDataDir: string): Promise<BrowserConte
       args: [
         `--disable-extensions-except=${DIST}`,
         `--load-extension=${DIST}`,
-        "--host-resolver-rules=MAP careers.jobctrl.test 127.0.0.1",
+        "--host-resolver-rules=MAP careers.jobctrl.test 127.0.0.1, MAP www.linkedin.com 127.0.0.1",
       ],
     });
   } catch (error) {
@@ -429,7 +459,12 @@ async function installFakeLoopbackApi(
 async function startFakeDiscoverySource(): Promise<FakeDiscoverySource> {
   let cookieSeen = false;
   let privateRedirectSeen = false;
-  const privateTarget: Server = createServer((_request, response) => {
+  const privateTarget: Server = createServer((request, response) => {
+    if (request.url === "/listings") {
+      response.writeHead(200, { "content-type": "application/json", "access-control-allow-origin": "*" });
+      response.end(JSON.stringify({ description: "Cross-origin fixture engineer operates reliable distributed systems. ".repeat(10) }));
+      return;
+    }
     privateRedirectSeen = true;
     response.writeHead(200, { "content-type": "text/plain" });
     response.end("private target must remain unreachable");
@@ -454,6 +489,17 @@ async function startFakeDiscoverySource(): Promise<FakeDiscoverySource> {
       );
       response.writeHead(200, { "content-type": "application/json" });
       response.end('{"jobs":[{"id":"fixture-role"}]}');
+      return;
+    }
+    if (request.url === "/jobs/view/cross-origin-fixture") {
+      response.writeHead(200, { "content-type": "text/html" });
+      response.end(`<!doctype html><title>Fixture role</title>
+        <main><div id="JobDetails_AboutTheJob_123"><h2>About the job</h2></div></main>
+        <script>
+          fetch('http://careers.jobctrl.test:${privateAddress.port}/listings')
+            .then(response => response.json())
+            .then(data => document.querySelector('#JobDetails_AboutTheJob_123').append(data.description));
+        </script>`);
       return;
     }
     if (request.url === "/hang") {

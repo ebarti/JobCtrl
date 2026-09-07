@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { BrowserApi } from "./browser";
+import type { BrowserApi, BrowserNavigationError } from "./browser";
 import { executeDiscoveryBrowserTask } from "./discovery-executor";
 
 afterEach(() => {
@@ -26,6 +26,7 @@ describe("Discovery browser executor", () => {
         bodyHtml: "<main>Fixture role</main>",
       });
     const browser = {
+      webNavigation: { onErrorOccurred: { addListener: vi.fn(), removeListener: vi.fn() } },
       declarativeNetRequest: { updateSessionRules },
       tabs: { create, update, remove, sendMessage },
     } as unknown as BrowserApi;
@@ -46,12 +47,12 @@ describe("Discovery browser executor", () => {
         expect.objectContaining({
           priority: 10,
           action: { type: "allow" },
-          condition: expect.objectContaining({ tabIds: [42] }),
+          condition: expect.objectContaining({ tabIds: [42], resourceTypes: ["main_frame"] }),
         }),
         expect.objectContaining({
           priority: 1,
           action: { type: "block" },
-          condition: expect.objectContaining({ tabIds: [42] }),
+          condition: expect.objectContaining({ tabIds: [42], resourceTypes: ["main_frame"] }),
         }),
       ]),
     }));
@@ -60,10 +61,45 @@ describe("Discovery browser executor", () => {
     expect(remove).toHaveBeenCalledWith(42);
   });
 
+  it("reports a blocked task navigation promptly while ignoring unrelated tab and frame errors", async () => {
+    let listener: ((details: BrowserNavigationError) => void) | undefined;
+    const removeListener = vi.fn();
+    const remove = vi.fn(async () => undefined);
+    const browser = {
+      webNavigation: { onErrorOccurred: {
+        addListener: vi.fn((callback) => { listener = callback; }), removeListener,
+      } },
+      declarativeNetRequest: { updateSessionRules: vi.fn(async () => undefined) },
+      tabs: {
+        create: vi.fn(async () => ({ id: 44 })),
+        update: vi.fn(async () => {
+          listener?.({ tabId: 45, frameId: 0, url: "https://other.example/", error: "net::ERR_BLOCKED_BY_CLIENT" });
+          listener?.({ tabId: 44, frameId: 1, url: "https://other.example/", error: "net::ERR_BLOCKED_BY_CLIENT" });
+          listener?.({ tabId: 44, frameId: 0, url: "https://example.com/jobs/1", error: "net::ERR_BLOCKED_BY_CLIENT" });
+          return { id: 44 };
+        }),
+        remove,
+        sendMessage: vi.fn(async () => {
+          listener?.({ tabId: 44, frameId: 0, url: "https://other.example/", error: "net::ERR_BLOCKED_BY_CLIENT" });
+          throw new Error("Content script unavailable on error page");
+        }),
+      },
+    } as unknown as BrowserApi;
+    const result = await executeDiscoveryBrowserTask(browser, {
+      ok: true, status: "task", taskId: "blocked-navigation", leaseId: "fixture-lease",
+      timeoutMs: 60_000, request: { mode: "rendered_page", url: "https://example.com/jobs/1" },
+    });
+    expect(browser.tabs.sendMessage).toHaveBeenCalledOnce();
+    expect(result).toMatchObject({ status: "failed", errorCode: "unsafe_redirect", retryable: false });
+    expect(remove).toHaveBeenCalledWith(44);
+    expect(removeListener).toHaveBeenCalledWith(listener);
+  });
+
   it("cleans up the inactive tab and redirect guard after a retryable hydration failure", async () => {
     const remove = vi.fn(async () => undefined);
     const updateSessionRules = vi.fn(async () => undefined);
     const browser = {
+      webNavigation: { onErrorOccurred: { addListener: vi.fn(), removeListener: vi.fn() } },
       declarativeNetRequest: { updateSessionRules },
       tabs: {
         create: vi.fn(async () => ({ id: 46 })),
@@ -113,6 +149,7 @@ describe("Discovery browser executor", () => {
     );
     vi.stubGlobal("fetch", fetchRequest);
     const browser = {
+      webNavigation: { onErrorOccurred: { addListener: vi.fn(), removeListener: vi.fn() } },
       declarativeNetRequest: { updateSessionRules },
       tabs: { create, update, remove, sendMessage },
     } as unknown as BrowserApi;
@@ -157,6 +194,7 @@ describe("Discovery browser executor", () => {
     );
     vi.stubGlobal("fetch", fetchRequest);
     const browser = {
+      webNavigation: { onErrorOccurred: { addListener: vi.fn(), removeListener: vi.fn() } },
       declarativeNetRequest: { updateSessionRules: vi.fn() },
       tabs: {
         create: vi.fn(),
@@ -227,6 +265,7 @@ describe("Discovery browser executor", () => {
       ),
     );
     const browser = {
+      webNavigation: { onErrorOccurred: { addListener: vi.fn(), removeListener: vi.fn() } },
       declarativeNetRequest: { updateSessionRules: vi.fn() },
       tabs: {
         create: vi.fn(),
@@ -274,6 +313,7 @@ describe("Discovery browser executor", () => {
       ),
     );
     const browser = {
+      webNavigation: { onErrorOccurred: { addListener: vi.fn(), removeListener: vi.fn() } },
       declarativeNetRequest: { updateSessionRules },
       tabs: { create, update, remove, sendMessage },
     } as unknown as BrowserApi;
@@ -311,6 +351,7 @@ describe("Discovery browser executor", () => {
     );
     vi.stubGlobal("fetch", fetchRequest);
     const browser = {
+      webNavigation: { onErrorOccurred: { addListener: vi.fn(), removeListener: vi.fn() } },
       declarativeNetRequest: { updateSessionRules: vi.fn() },
       tabs: {
         create: vi.fn(),
@@ -346,6 +387,7 @@ describe("Discovery browser executor", () => {
     const controller = new AbortController();
     const remove = vi.fn(async () => undefined);
     const browser = {
+      webNavigation: { onErrorOccurred: { addListener: vi.fn(), removeListener: vi.fn() } },
       declarativeNetRequest: { updateSessionRules: vi.fn(async () => undefined) },
       tabs: {
         create: vi.fn(async () => ({ id: 45 })),

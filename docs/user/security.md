@@ -60,6 +60,14 @@ identity, and privacy contact, read the canonical
 | CAPTCHA provider | Supported widget during an apply run you explicitly start or a standing loop you enable, with a configured solver | Site key and page URL through the local solver tool. |
 | Langfuse/OpenTelemetry | Explicit telemetry configuration | Metadata-only provider/model, operation/stage, outcome, token-count, and safe-size span attributes. |
 
+Discovery and Enrich snapshots contain HTML and text rendered in your signed-in
+Chrome session, which can include personalized account content beyond the job
+posting. Extracted posting text can be stored locally, and snapshots or posting
+text can reach configured LLM providers during extraction and later stages.
+See the [data-flow notice](data-and-safety.md#external-services). Cookie values
+are never copied into worker tasks or results; the browser user-agent string is
+returned with results for robots evaluation only.
+
 The Apply model receives no applicant profile or generated-material prose.
 Reviewed resume and cover-letter files remain local for the user to handle
 manually; the page-reading model cannot upload or access them.
@@ -156,9 +164,12 @@ revalidates DNS immediately before returning the lease. The extension's
 wildcard HTTP(S) host permission exists only to execute those brokered tasks in
 the installed profile. Direct HTTP/API tasks run in the service worker with
 redirect following disabled. Rendered-page navigation uses a tab-scoped
-exact-origin allow rule above a default HTTP(S) block rule for main-frame and
-Discovery `fetch` requests. A cross-origin redirect is therefore blocked before
-its destination request is sent. The content script and broker also reject
+exact-origin allow rule above a default HTTP(S) block rule for main-frame
+navigation only. A cross-origin redirect is therefore blocked before
+its destination request is sent. The extension observes navigation errors only
+for its temporary task tab, using the `webNavigation` permission, and reports a
+blocked cross-origin navigation as non-retryable `unsafe_redirect` immediately.
+The content script and broker also reject
 non-web, credential-bearing, lexically local, or cross-origin final URLs. A
 rendered page's ordinary subresource loading remains owned by Chrome and the
 visited site, as it would during normal browsing in that profile.
