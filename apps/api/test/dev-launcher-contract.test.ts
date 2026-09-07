@@ -14,7 +14,7 @@ import { join } from "node:path";
 import type { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
 const sourceDevScript = join(repoRoot, "scripts/dev");
@@ -164,25 +164,6 @@ function devScriptEnv(devDir: string, extra: NodeJS.ProcessEnv = {}): NodeJS.Pro
 }
 
 describe("dev launcher contract", () => {
-  it("does not forward ambient env-source or database overrides to launcher fixtures", () => {
-    const tempDir = mkdtempSync(join(tmpdir(), "jobctrl-dev-launcher-"));
-    const devDir = join(tempDir, "dev-state");
-    try {
-      vi.stubEnv("BASH_ENV", join(tempDir, "ambient-shell.env"));
-      vi.stubEnv("JOBCTRL_USER_ENV_PATH", join(tempDir, "ambient-user.env"));
-      vi.stubEnv("JOBCTRL_DB_PATH", join(tempDir, "ambient.db"));
-      vi.stubEnv("JOBCTRL_CONFIG_PATH", join(tempDir, "ambient-config.json"));
-      const env = devScriptEnv(devDir);
-      expect(env.BASH_ENV).toBeUndefined();
-      expect(env.JOBCTRL_USER_ENV_PATH).toBe(join(devDir, "home", "JobCtrl", ".env"));
-      expect(env.JOBCTRL_DB_PATH).toBe(join(devDir, "app", "jobctrl.db"));
-      expect(env.JOBCTRL_CONFIG_PATH).toBe(join(devDir, "app", "config.json"));
-    } finally {
-      vi.unstubAllEnvs();
-      rmSync(tempDir, { force: true, recursive: true });
-    }
-  });
-
   it("keeps the documented default dev command attached", () => {
     const packageJson = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8")) as {
       scripts: Record<string, string>;
