@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 
 import { listApplyReviewQueue } from "../src/application-feedback.js";
-import { buildDigest, readDigestState } from "../src/read-model.js";
+import { buildDashboardSummary, buildDigest, readDigestState } from "../src/read-model.js";
 import { BUILT_IN_RESUME_TEMPLATE_THEME } from "../src/resume-templates.js";
 import { buildApp } from "../src/server.js";
 import { describe, expect, it } from "vitest";
@@ -112,6 +112,32 @@ const fixturePath = path.resolve(
 const fixture = JSON.parse(fs.readFileSync(fixturePath, "utf8")) as DigestParityFixture;
 
 describe("daily digest read model", () => {
+  it("carries registry source names into health and digest without changing failure evidence", () => {
+    const { dbPath, tempDir, cleanup } = makeTempDb();
+    try {
+      seedDigestDatabase(dbPath, tempDir);
+      const db = new Database(dbPath);
+      try {
+        db.prepare("UPDATE source_quality_stats SET source_id = ? WHERE source_id = ?")
+          .run("jobspy:linkedin", "workday:unstable-example");
+        db.prepare(`INSERT INTO source_registry_entries (
+          tenant_id, source_id, kind, display_name, owner, priority, state, policy_id, created_at, updated_at
+        ) VALUES ('local', 'jobspy:linkedin', 'broad_board', 'JobStreaming LinkedIn', 'system', 'lead_generator', 'experimental', 'broad_board_lead_generator', ?, ?)`)
+          .run(fixture.now, fixture.now);
+
+        const source = buildDashboardSummary(db).sourceHealth.find((item) => item.sourceId === "jobspy:linkedin");
+        expect(source).toMatchObject({ displayName: "JobStreaming LinkedIn", recommendedState: "quarantined", consecutiveFailures: 3 });
+        expect(buildDigest(db).blockedSources.sources).toContainEqual({
+          sourceId: "jobspy:linkedin", displayName: "JobStreaming LinkedIn", recommendedState: "quarantined", consecutiveFailures: 3,
+        });
+      } finally {
+        db.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
   it("builds the shared local digest fixture without advancing the acknowledge watermark", () => {
     const { dbPath, tempDir, cleanup } = makeTempDb();
     try {

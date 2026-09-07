@@ -88,6 +88,7 @@ import { buildApplyAudit, type ApplyAuditLatestRun } from "./apply-audit.js";
 import { evaluateRepeatApplication } from "./repeat-application.js";
 import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
 import { emptyPolitenessOutcomes, politenessOutcomesBySource } from "./source-politeness.js";
+import { canonicalSourceDisplayName, sourceDisplayNames } from "./source-display-names.js";
 import type { SourcePolitenessOutcomes } from "@jobctrl/contracts";
 import { normalizeJobLocation } from "./location-normalization.js";
 import { refreshProjections } from "./projections.js";
@@ -716,6 +717,7 @@ function digestBlockedSources(db: SqliteDatabase): DailyDigest["blockedSources"]
     )
     .map((source) => ({
       sourceId: source.sourceId,
+      ...(source.displayName ? { displayName: source.displayName } : {}),
       recommendedState: source.recommendedState,
       consecutiveFailures: source.consecutiveFailures,
     }));
@@ -4315,12 +4317,20 @@ function defaultDashboardRow(): DashboardProjectionRow {
 }
 
 function listSourceHealth(db: SqliteDatabase): DashboardSummary["sourceHealth"] {
+  const names = sourceDisplayNames(db);
+  const withDisplayName = (source: DashboardSummary["sourceHealth"][number]) => {
+    const displayName = canonicalSourceDisplayName(
+      source.sourceId,
+      names.get(source.sourceId) || source.sourceId,
+    );
+    return displayName === source.sourceId ? source : { ...source, displayName };
+  };
   const operationalBySource = operationalSourceRollups(db);
   const politenessBySource = politenessOutcomesBySource(db);
   const seen = new Set<string>();
   if (!tableExists(db, "source_quality_stats")) {
     return [...operationalBySource.values()].map((source) =>
-      sourceRollupToHealth(source, politenessBySource.get(source.sourceId ?? source.key)),
+      withDisplayName(sourceRollupToHealth(source, politenessBySource.get(source.sourceId ?? source.key))),
     );
   }
   const rows = allRows<SourceQualityProjectionRow>(
@@ -4366,7 +4376,7 @@ function listSourceHealth(db: SqliteDatabase): DashboardSummary["sourceHealth"] 
     if (!source.sourceId || seen.has(source.sourceId)) continue;
     sourceHealth.push(sourceRollupToHealth(source, politenessBySource.get(source.sourceId)));
   }
-  return sourceHealth;
+  return sourceHealth.map(withDisplayName);
 }
 
 function buildOperationalMetrics(db: SqliteDatabase): DashboardSummary["operationalMetrics"] {

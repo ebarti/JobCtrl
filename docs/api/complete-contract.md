@@ -231,6 +231,8 @@ and budget status. Passive reads never advance `digest_state.last_acknowledged_a
 only the explicit acknowledge flow may move the watermark. The digest uses a
 timestamp watermark and a UTC follow-up cutoff, resolving the plan's local-vs-UTC
 day-boundary inconsistency in favor of UTC.
+`blockedSources.sources[]` keeps its stable `sourceId` and may include an
+optional registry-resolved `displayName`, which clients prefer for presentation.
 `POST /v1/digest/acknowledge` accepts an optional `acknowledgedAt` ISO
 timestamp, advances the watermark monotonically, and returns the updated
 `digest_state`. Acknowledge writes also record `DigestReviewed`, which lets the
@@ -338,6 +340,9 @@ scoring, tailoring, Apply, workflow, or artifact work.
 source-observation, duplicate, content snapshot, enrichment, apply-URL, and
 active-state events and user discovery feedback. It is the read-side signal the
 web dashboard uses for source health. The same response also includes
+optional `displayName` on each source-health entry. Historical board keys keep
+their identity while displaying their current JobStreaming provider name;
+renaming does not reset health, failure, or quarantine data. It also includes
 `operationalMetrics`, sourced from `operational_attempt_metrics`, plus
 per-source operational/scrape/retryable failure counts. These counters use
 structured stage/source/apply attempt rows, not label math over free-text event

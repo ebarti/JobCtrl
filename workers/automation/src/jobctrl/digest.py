@@ -320,6 +320,24 @@ def _blocked_sources(conn: sqlite3.Connection) -> dict[str, Any]:
     for source in _operational_only_source_health(conn, seen):
         if _blocked_source_predicate(source):
             sources.append(source)
+    names = {}
+    if _table_exists(conn, "source_registry_entries"):
+        names = {
+            str(_row_get(row, "source_id")): str(_row_get(row, "display_name") or "")
+            for row in conn.execute(
+                "SELECT source_id, display_name FROM source_registry_entries WHERE tenant_id = ?",
+                (TENANT_ID,),
+            ).fetchall()
+        }
+    for source in sources:
+        source_id = source["sourceId"]
+        display_name = names.get(source_id) or source_id
+        if source_id.startswith("jobspy:"):
+            from jobctrl.config import _jobstreaming_source_display_name
+
+            display_name = _jobstreaming_source_display_name(source_id.split(":", 1)[1].replace("-", "_"))
+        if display_name != source_id:
+            source["displayName"] = display_name
     return {"count": len(sources), "sources": sources}
 
 

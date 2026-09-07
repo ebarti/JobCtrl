@@ -45,7 +45,7 @@ function formatMoney(value: number | null): string {
 function digestRows(digest: DailyDigest): readonly DigestRow[] {
   const blockedSourceNames = digest.blockedSources.sources
     .slice(0, 2)
-    .map((source) => source.sourceId)
+    .map((source) => source.displayName ?? source.sourceId)
     .join(", ");
   const budgetDetail = digest.budget.unlimited
     ? `${formatMoney(digest.budget.estimatedUsd)} spent`

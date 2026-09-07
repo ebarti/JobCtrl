@@ -5,6 +5,19 @@ import { sampleDashboardSummary } from "../../test/fixtures/projections.js";
 import { SourceHealthCard } from "./SourceHealthCard.js";
 
 describe("SourceHealthCard", () => {
+  it("shows the registry name while preserving source quality failures", () => {
+    const [source] = sampleDashboardSummary.sourceHealth;
+    render(<SourceHealthCard summary={{
+      ...sampleDashboardSummary,
+      sourceHealth: [{ ...source!, sourceId: "jobspy:linkedin", displayName: "JobStreaming LinkedIn", recommendedState: "quarantined", fullDescriptionSuccessRate: 0 }],
+    }} />);
+
+    expect(screen.getByText("JobStreaming LinkedIn")).toBeInTheDocument();
+    expect(screen.queryByText("jobspy:linkedin")).not.toBeInTheDocument();
+    expect(screen.getByText("quarantined")).toBeInTheDocument();
+    expect(screen.getByText(/0% full detail/)).toBeInTheDocument();
+  });
+
   it("renders source quality rates from the dashboard summary", () => {
     render(<SourceHealthCard summary={sampleDashboardSummary} />);
 

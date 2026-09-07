@@ -47,7 +47,7 @@ export function SourceHealthCard({ summary }: SourceHealthCardProps) {
                 {source.recommendedState}
               </StatusBadge>
               <span className="title-stack">
-                <b data-typography="strong-body">{source.sourceId}</b>
+                <b data-typography="strong-body">{source.displayName ?? source.sourceId}</b>
                 <span className="source-health-primary" data-typography="metadata">
                   {pct(source.activeVerificationRate)} active · {pct(source.applyUrlSuccessRate)} apply
                 </span>
@@ -55,7 +55,10 @@ export function SourceHealthCard({ summary }: SourceHealthCardProps) {
                   {pct(source.fullDescriptionSuccessRate)} full detail · {pct(source.duplicateRate)}{" "}
                   duplicates
                 </span>
-                <SourcePolitenessBadges politeness={source.politeness} sourceLabel={source.sourceId} />
+                <SourcePolitenessBadges
+                  politeness={source.politeness}
+                  sourceLabel={source.displayName ?? source.sourceId}
+                />
               </span>
               {source.consecutiveFailures ? (
                 <StatusBadge tone="danger">{source.consecutiveFailures} fails</StatusBadge>

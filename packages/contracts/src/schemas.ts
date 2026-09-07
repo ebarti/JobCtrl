@@ -3735,6 +3735,8 @@ export interface SourcePolitenessOutcomes {
 
 export interface SourceHealthSummary {
   sourceId: string;
+  /** Registry/provider name, independent of the stable source key. */
+  displayName?: string;
   recommendedState: string;
   runCount: number;
   failedRunCount: number;
@@ -3782,6 +3784,7 @@ export interface DailyDigest {
     count: number;
     sources: Array<{
       sourceId: string;
+      displayName?: string;
       recommendedState: string;
       consecutiveFailures: number;
     }>;
