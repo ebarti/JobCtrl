@@ -2132,6 +2132,45 @@ def test_tailor_use_case_does_not_promote_judge_feedback_into_retry_prompt(
     )
 
 
+@pytest.mark.parametrize("unrelated_citation", [False, True])
+def test_tailor_rewrites_uncitable_baseline_tenure_without_dropping_pinned_metrics(
+    tmp_path: Path, job: dict, unrelated_citation: bool,
+) -> None:
+    profile = _profile_dict()
+    baseline_summary = "Senior engineer with 37 years of experience."
+    profile["resume"]["executive_profile"]["baseline_text"] = baseline_summary
+    profile["resume"]["tailoring_rules"]["required_bullets_by_experience_id"] = {
+        "acme_swe": ["Cut latency 40%."],
+    }
+    snapshot = ProfileSnapshot.from_profile(Profile.from_dict(LOCAL_TENANT, profile))
+    bad = json.loads(_payload_with_bullet("Cut latency 40%.", summary=baseline_summary))
+    if unrelated_citation:
+        next(mapping for mapping in bad["generated_claim_mappings"]
+             if mapping["location"] == "executive_profile")["evidence_ids"] = ["ev_latency"]
+    llm = _ScriptedLlm([json.dumps(bad), _good_json_payload(), _judge_pass()])
+    outcome = TailorResumeUseCase(
+        repository=_FakeRepository(), llm=llm, validator=ContentValidator(),
+        assembler=ResumeAssembler(), analyze_use_case=_FakeAnalyzeUseCase(), max_retries=1,
+    ).execute(job=job, profile_snapshot=snapshot, tailored_dir=tmp_path)
+
+    assert outcome.status == "approved"
+    assert len(llm.calls) == 3
+    rejected = outcome.report["attempt_history"][0]["candidates"][0]
+    assert rejected["status"] == "failed_validation"
+    assert any("37 years" in error for error in rejected["validator"]["errors"])
+    first_system = llm.calls[0][0].content
+    retry_guidance = llm.calls[1][0].content.split("## CODE-OWNED RETRY REQUIREMENTS", 1)[1]
+    assert "Preserve every number exactly" not in first_system
+    assert "For a rewritten executive profile" in first_system
+    assert "years of experience" in retry_guidance
+    assert "cited achievement evidence" in retry_guidance
+    assert outcome.text_path is not None
+    rendered = Path(outcome.text_path).read_text()
+    assert "37 years" not in rendered
+    assert "Cut latency 40%." in rendered
+    assert "37 years" in snapshot.as_dict()["resume"]["executive_profile"]["baseline_text"]
+
+
 def test_tailor_use_case_judge_rejected_fails_quality_gate(
     tmp_path: Path, snapshot: ProfileSnapshot, job: dict
 ) -> None:
@@ -2610,7 +2649,7 @@ def test_tailor_use_case_persists_safe_provider_failures_without_calling_them_pa
         "inner_attempt": 4,
         "workflow_run_id": "temporal-run-builder-error",
         "durable_attempt": 2,
-        "schema_version": "tailored-resume.v3",
+        "schema_version": "tailored-resume.v4",
     }.items()
     assert provider_error["candidate_id"]
     assert provider_error["prompt_fingerprint"]

@@ -236,7 +236,8 @@ evidence, qualifications, and the complete capability matrix.
 - Generate tailored resumes, cover letters, PDFs, and review artifacts. Resume
   tailoring selects the smallest job-relevant set of profile achievements;
   per-role bullet limits are ceilings, and each metric stays bound to the
-  achievement that contains it.
+  achievement that contains it. Required roles with no achievement evidence
+  retain their existing role details without generated bullets.
 - Triage jobs through the real **Active**, **Deleted**, and **Hidden** queues.
   The default Active view keeps source and warning columns available but hidden,
   uses destructive styling for deletion, and opens a row through its focused
@@ -283,6 +284,11 @@ evidence, qualifications, and the complete capability matrix.
   failure reason, and Retry resets that budget. Runs keeps the durable workflow
   history; Jobs and route-level
   detail workspaces keep record-specific evidence and actions adjacent.
+- Recover unfinished enrichment, scoring, and material generation
+  automatically. While the worker is running, eligible saved jobs resume within
+  their existing retry budget without another discovery search. Explicit
+  cancellations, safety blocks, and completed results are preserved; recovery
+  does not start Apply. See [preparation recovery](docs/architecture/pipeline/operations.md#automatic-preparation-recovery).
 - Inspect Discover, preparation, and Apply through the same Runs vocabulary,
   timeline, terminal-state rules, and cancellation control. Repeated cancel
   requests are harmless, the requester/source remains in the run timeline, and

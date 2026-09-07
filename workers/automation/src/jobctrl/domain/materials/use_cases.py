@@ -168,6 +168,7 @@ from jobctrl.domain.profile.achievement_metrics import (
 from jobctrl.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 from jobctrl.resume_profile import (
+    get_achievement_evidence,
     get_custom_tailoring_prompt,
     get_education_entries,
     get_experience_entries,
@@ -185,8 +186,8 @@ from jobctrl.resume_profile import (
 
 log = logging.getLogger(__name__)
 
-TAILORING_PROMPT_VERSION = "tailor.v6.minimal-achievement-set"
-TAILORING_SCHEMA_VERSION = "tailored-resume.v3"
+TAILORING_PROMPT_VERSION = "tailor.v8.summary-metric-grounding"
+TAILORING_SCHEMA_VERSION = "tailored-resume.v4"
 TAILORING_JUDGE_SCHEMA_VERSION = "tailor-judge.v2.final-semantic-fidelity"
 TAILORING_JUDGE_CRITERIA: tuple[str, ...] = (
     "relevance_to_job",
@@ -249,7 +250,7 @@ TAILORED_RESUME_RESPONSE_SCHEMA: dict[str, Any] = {
                     "title": {"type": "string"},
                     "bullets": {
                         "type": "array",
-                        "minItems": 1,
+                        "minItems": 0,
                         "items": {"type": "string"},
                     },
                 },
@@ -1007,10 +1008,12 @@ def _experience_bullet_curation_errors(
     bullet represents exactly one achievement. Target-covered and explicit
     pinned achievements may appear; a required role with neither gets exactly
     one evidence-backed positioning bullet so the role remains representable.
+    A required role with no achievement evidence retains only its fixed metadata.
     """
 
     mapping_tuple = tuple(mappings)
     evidence_by_id = tailoring_plan.evidence_by_id
+    evidence_entry_ids = {item.experience_entry_id for item in evidence_by_id.values()}
     pins = tailoring_plan.requirement_led_controls.required_content_pins
     required_roles = set(pins.experience_entry_ids)
     explicit_evidence_pins = set(tailoring_plan.required_evidence_ids)
@@ -1095,7 +1098,11 @@ def _experience_bullet_curation_errors(
                 for mapping in positioning
             )
         elif not covered_or_pinned:
-            if entry_id in required_roles and len(positioning) != 1:
+            if (
+                entry_id in required_roles
+                and entry_id in evidence_entry_ids
+                and len(positioning) != 1
+            ):
                 errors.append(
                     f"Required experience {entry_id} without target-covered or pinned "
                     "evidence must have exactly one positioning-only bullet."
@@ -1311,7 +1318,10 @@ _RETRY_GUIDANCE: dict[str, str] = {
     ),
     "validation_failed": (
         "Correct the schema and deterministic validation failures without adding "
-        "facts beyond canonical profile evidence."
+        "facts beyond canonical profile evidence. For summary years of experience "
+        "or other quantities, require support from the cited achievement evidence; "
+        "otherwise remove the quantity and retain only the supported qualitative "
+        "claim. Preserve verified pinned metrics."
     ),
 }
 
@@ -1690,6 +1700,12 @@ def build_master_tailor_prompt(
     require_resume_master(profile)
     resume = get_resume_master(profile)
     required_experience_ids = get_required_experience_entry_ids(profile)
+    evidence_entry_ids = {
+        item["experience_entry_id"] for item in get_achievement_evidence(profile)
+    }
+    required_roles_without_evidence = [
+        entry_id for entry_id in required_experience_ids if entry_id not in evidence_entry_ids
+    ]
     required_skill_ids = get_required_skill_category_ids(profile)
     all_experience_entries = get_experience_entries(profile)
     all_skill_categories = get_skill_categories(profile)
@@ -1790,6 +1806,10 @@ SOURCE OF TRUTH:
   in the TAILORING QUALITY PLAN are the only evidence for candidate claims.
 - A metric belongs only to the achievement evidence that contains it. Never use
   a number from one achievement to quantify another claim.
+- For a rewritten executive profile, use a metric only when its cited achievement
+  evidence supports that exact claim. If baseline years of experience or other
+  summary quantities lack that evidence, omit the quantity and use qualitative
+  wording. Do not infer tenure from employment dates.
 - TARGET JOB text is context only. Do NOT copy target-job technologies,
   systems, responsibilities, business claims, or phrases into the candidate's
   executive profile or bullets unless the same fact appears in the master
@@ -1808,7 +1828,7 @@ HARD RULES:
 - Do NOT add or remove skill categories
 - Do NOT rewrite historical experience titles or append job keywords to titles
 - Skill items must be exact strings from MASTER SKILL CATEGORIES; do NOT add job-only skills
-- Preserve every number exactly and bind it to the same achievement that supplied it
+- Preserve each retained metric exactly and bind it to the achievement that supplied it
 - Do NOT invent companies, roles, degrees, or certifications
 - Max {max_bullets} bullets per experience entry is a hard ceiling, never a target;
   requirement coverage and required bullets do not permit an overflow
@@ -1834,7 +1854,10 @@ HARD RULES:
 - Use each achievement evidence id in at most one experience bullet
 - If a required role has target-covered or explicitly pinned evidence, include
   only those bullets and no positioning-only filler. If it has neither, include
-  exactly one evidence-backed positioning bullet so the required role remains visible
+  exactly one positioning bullet citing an achievement from that role when one exists
+- For REQUIRED EXPERIENCE IDS WITHOUT ACHIEVEMENT EVIDENCE, return bullets: []
+  and title: "". The code preserves the source role details. Do not invent a
+  positioning bullet or cite an achievement from another role
 - non_requirement_reason is a required fallback classification. Choose pinned,
   positioning, or structure. When coverage_edge_ids is non-empty it is ignored;
   when coverage_edge_ids is empty it must truthfully classify the claim
@@ -1884,6 +1907,9 @@ WRITING STYLE:
 {quality_plan_block}
 REQUIRED EXPERIENCE IDS:
 {json.dumps(required_experience_ids, ensure_ascii=False)}
+
+REQUIRED EXPERIENCE IDS WITHOUT ACHIEVEMENT EVIDENCE:
+{json.dumps(required_roles_without_evidence, ensure_ascii=False)}
 
 REQUIRED SKILL CATEGORY IDS:
 {json.dumps(required_skill_ids, ensure_ascii=False)}

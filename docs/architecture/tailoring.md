@@ -23,6 +23,10 @@ behind a stack of gates. What it guarantees:
 - Every experience bullet maps to one achievement. Each numeric claim must be
   present in that same achievement's evidence; a global metric inventory is not
   claim authority.
+- When rewriting the executive profile, baseline tenure estimates are omitted
+  or expressed qualitatively unless the mapped achievement evidence supports
+  them. The generator preserves each retained metric and verified content pin;
+  it is not instructed to copy every number from the baseline summary.
 - No fabricated metric, date, title, employer, or ungrounded named technology
   survives into an approved artifact.
 - Keyword coverage is computed against the rendered resume text, never inferred
@@ -435,8 +439,11 @@ profile contract:
   one primary achievement evidence ID; the same achievement cannot produce
   several bullets.
 - A covered or explicitly pinned role cannot carry positioning-only filler. A
-  required role with neither receives exactly one evidence-backed positioning
-  bullet; an optional unsupported role is omitted.
+  required role with neither receives exactly one positioning bullet when it
+  has achievement evidence. A required role with no achievement evidence keeps
+  its fixed role details and an empty bullet list; the generator must not invent
+  a claim or borrow another role's achievement. An optional unsupported role is
+  omitted.
 - Generated title must be empty or exactly match the source title.
 - Each required skill category ID must appear exactly once.
 - Unknown or duplicate skill category IDs are rejected.

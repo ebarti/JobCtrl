@@ -641,6 +641,49 @@ def test_accepted_resume_records_provenance_and_publishes_event(tmp_path: Path) 
     assert provenance_events[0].payload["artifact_id"] == saved.artifact_id
 
 
+def test_required_role_without_achievements_preserves_metadata_without_invented_bullets(
+    tmp_path: Path,
+) -> None:
+    profile = _profile_dict()
+    profile["resume"]["experience_entries"].append({
+        "id": "earlier_role",
+        "date_range": "2017-2019",
+        "title": "Software Engineer",
+        "company": "Earlier Employer",
+        "location": "Remote",
+        "bullets": [],
+        "achievement_evidence": [],
+    })
+    profile["resume"]["tailoring_rules"]["required_experience_entry_ids"].append("earlier_role")
+    snapshot = ProfileSnapshot.from_profile(Profile.from_dict(LOCAL_TENANT, profile))
+    payload = json.loads(
+        _payload("Owned the API and cut latency 40% with Python by replacing synchronous calls.")
+    )
+    payload["experience_updates"].append({"id": "earlier_role", "title": "", "bullets": []})
+    materials_repo = _FakeMaterialsRepo()
+    provenance_repo = _FakeProvenanceRepo()
+    publisher = _RecordingPublisher()
+    llm = _ScriptedLlm([json.dumps(payload), _judge_pass()])
+
+    outcome = _use_case(materials_repo, provenance_repo, llm, publisher).execute(
+        job=_job(), profile_snapshot=snapshot, tailored_dir=tmp_path
+    )
+
+    assert outcome.status == "approved"
+    assert outcome.materials is not None and outcome.materials.is_resume_approved
+    artifact = outcome.materials.tailored_resume
+    assert artifact is not None
+    text = Path(artifact.path).read_text()
+    assert "Earlier Employer" in text
+    assert "Software Engineer" in text
+    assert "2017-2019" in text
+    provenance = provenance_repo.load(LOCAL_TENANT, JOB_ID)
+    assert provenance is not None
+    experience_rows = [row for row in provenance.bullets if row.section == "experience"]
+    assert len(experience_rows) == 1
+    assert "latency" in experience_rows[0].generated_text
+
+
 def test_accepted_resume_updates_requirement_fit_artifact_coverage(tmp_path: Path) -> None:
     materials_repo = _FakeMaterialsRepo()
     provenance_repo = _FakeProvenanceRepo()

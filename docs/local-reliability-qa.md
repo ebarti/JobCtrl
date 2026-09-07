@@ -37,6 +37,42 @@ Start the attached full stack with `corepack pnpm dev` when the path needs the
 API, Temporal, worker, and web app together. Confirm `GET /v1/health` reports a
 healthy worker before starting worker-backed stages.
 
+For automatic preparation recovery, seed canonical failed enrichment and a
+saved enriched/unscored job, then exercise worker startup/heartbeat without a
+Discover command. Prove enrichment can advance to a persisted score, a restart
+or lost dispatch acknowledgement retains one execution, and retries preserve
+attempts and cooldowns. Include canceled/unsafe/blocked/exhausted, deleted,
+closed, and other-tenant jobs; preserve accepted scores/materials and prove no
+Apply dispatch. The historical discovery consumer-stop fixture must require
+positive evidence from the exact completed run and reject user cancellations.
+Use the real Temporal recovery fixture to prove worker replacement, late
+provider results after cancellation, and exact stopped-owner settlement.
+Missing workflow history must retain ownership; a recovered enrichment lease
+must reject a late predecessor write.
+For an automatic batch interrupted by an activity timeout, include one consumed
+job and one reservation that never started. Prove the latter returns to pending
+with unchanged attempt counters and can enter a new workflow after cooldown,
+including when the earlier cleanup already marked it `PREPARATION_RECOVERY_STOPPED`.
+Require the exact execution's timeout and durable attempt progress; cancellation,
+termination, missing history, mismatched cohorts, and preflight-only failures
+must not release reservations. Include copied timeout history in a reset
+descendant and a mismatched scheduled activity owner. Recheck protected rows
+while holding the write lock.
+An owned Score must persist a requirement-fit report for its exact score version,
+and real Tailor prerequisite evaluation must consume it. Reproduce a historical
+missing report, rescore only that job through the normal workflow, preserve the
+old score, and prove both explicit and automatic Tailor continuation. Automatic
+continuation must respect the real cooldown. Incoherent or empty reports and
+canceled, exhausted, non-retryable, or budget-exhausted rows must remain blocked
+from automatic resumption.
+Dashboard source-health and digest QA must show JobStreaming names while
+retaining the underlying quarantine, failure counts, and stable source IDs.
+For summary metric grounding, seed a baseline tenure estimate with no supporting
+achievement and a separately pinned verified metric. The normal Tailor use case
+must reject the tenure claim even with an unrelated citation, retain that failure
+in the audit, accept a grounded qualitative rewrite, and preserve the pinned
+metric and original profile. Retry instructions remain code-owned guidance.
+
 ## Pull-request CI
 
 CI is plain path-filtered GitHub Actions with no routing layer: each workflow
@@ -638,6 +674,12 @@ rollback before calling the public deployment healthy.
 
 ### Provider setup gate
 
+For the isolated Codex SDK environment, merge hostile ambient credential and
+auth-endpoint overrides as the real SDK does. Credential values must remain
+cleared, while refresh/revocation requests must build valid HTTPS URLs for
+OpenAI's default endpoints. Empty URLs must not mask an expired or rejected
+saved login as a request-builder failure.
+
 When provider auth, Settings credentials, model routing, or employer analysis
 changes, prove each sanctioned provider independently: Codex persisted CLI auth,
 Claude API/cloud auth, Google Gemini key, Google standard ADC, and an existing
@@ -723,6 +765,12 @@ a fabricated or judge-rejected candidate with invalid JSON and prove the run
 stays rejected, its history remains inspectable, and the previous accepted
 artifact bytes survive. Retain the transaction and render-failure fixtures that
 protect the previous accepted generation and provenance.
+Include a required experience entry with no source bullets or achievement
+evidence: Tailor must accept an empty bullet list while the assembled artifact
+preserves its employer, title, and dates. The same empty list must fail for a
+role with achievement evidence; an invented positioning bullet must still fail
+its evidence check. Keep this case in the real Materials use-case fixture so
+field validation, claim validation, assembly, and accepted provenance all run.
 Also return parsed JSON with `skill_category_updates: null` before a valid
 candidate: field validation must reject it before assembly, preserve its audit
 and continue bounded repair. Exhausting that malformed response must leave the

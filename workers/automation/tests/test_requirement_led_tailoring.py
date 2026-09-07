@@ -24,6 +24,7 @@ from jobctrl.domain.materials.claim_grounding import (
     ground_claim_mappings,
 )
 from jobctrl.domain.materials.quality import build_tailoring_plan
+from jobctrl.domain.materials.services import ContentValidator
 from jobctrl.domain.materials.requirement_coverage import (
     AchievementNode,
     CoverageEdge,
@@ -553,6 +554,56 @@ def test_claim_mapping_gate_rejects_positioning_filler_when_role_has_job_evidenc
     errors = _claim_mapping_validation_errors(payload=payload, tailoring_plan=plan)
 
     assert any("positioning-only bullet" in error for error in errors)
+
+
+@pytest.mark.parametrize("has_evidence", (False, True))
+def test_required_role_can_have_no_bullets_only_without_achievement_evidence(
+    has_evidence: bool,
+) -> None:
+    profile = _profile()
+    if not has_evidence:
+        entry = profile["resume"]["experience_entries"][0]
+        entry["bullets"] = []
+        entry["achievement_evidence"] = []
+    plan = build_tailoring_plan(
+        profile, _senior_job(), employer_analysis=_employer_analysis("python")
+    )
+    payload = _mapped_payload(bullets=[], bullet_mappings=[])
+
+    fields = ContentValidator().validate_json_fields(payload, profile)
+    claims = _claim_mapping_validation_errors(payload=payload, tailoring_plan=plan)
+
+    assert fields.passed is not has_evidence
+    assert bool(claims) is has_evidence
+
+
+def test_required_role_without_evidence_rejects_a_generated_positioning_bullet() -> None:
+    profile = _profile()
+    entry = profile["resume"]["experience_entries"][0]
+    entry["bullets"] = []
+    entry["achievement_evidence"] = []
+    plan = build_tailoring_plan(
+        profile, _senior_job(), employer_analysis=_employer_analysis("python")
+    )
+    bullet = "Led an unsupported platform transformation."
+    payload = _mapped_payload(
+        bullets=[bullet],
+        bullet_mappings=[{
+            "claim_id": "unsupported",
+            "location": "experience.acme_swe.bullets[0]",
+            "text": bullet,
+            "claim_label": "positioning",
+            "coverage_edge_ids": [],
+            "requirement_ids": [],
+            "evidence_ids": [],
+            "non_requirement_reason": "positioning",
+            "review_required": False,
+        }],
+    )
+
+    errors = _claim_mapping_validation_errors(payload=payload, tailoring_plan=plan)
+
+    assert any("exactly one primary achievement" in error for error in errors)
 
 
 def test_claim_metric_must_be_supported_by_that_bullets_mapped_achievement() -> None:

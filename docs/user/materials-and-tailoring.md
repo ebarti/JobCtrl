@@ -46,7 +46,9 @@ last accepted resume.
    and skill-category IDs, preserve source titles, respect bullet limits, and
    use skills that already exist in the profile. The generator selects the
    smallest sufficient achievement set: a maximum bullet count is a ceiling,
-   not a quota, and optional inventory does not become required content.
+   not a quota, and optional inventory does not become required content. Required
+   roles with no achievement evidence retain their existing role details without
+   generated bullets.
 3. **Validate the assembled resume, not just model JSON.** Deterministic checks
    run over the actual candidate text for grounding, preserved employers,
    education, section structure, prohibited claims, metrics, seniority, and
@@ -167,6 +169,11 @@ and Apply Review, but the resume is never required to claim them. An unknown
 office-attendance preference can therefore warn or ask for confirmation; it
 cannot reject a resume candidate or spend Tailor retries.
 
+When summary rewriting is enabled, an old years-of-experience estimate may be
+expressed qualitatively if it lacks supporting achievement evidence. Verified
+metrics and required achievement bullets remain subject to their normal
+preservation checks.
+
 Cover letters follow the same evidence boundary. They may describe employer
 priorities from the posting, but posting-only numbers and dates are omitted or
 expressed qualitatively. Only numeric/date facts already grounded in the
@@ -177,6 +184,11 @@ generation, JobCtrl shows Tailor as blocked by Score and asks you to rescore the
 job. This prerequisite block does not consume a Tailor retry. It prevents an
 empty coverage plan from being retried as though it were a model-quality
 failure.
+
+When rescoring restores missing evidence, JobCtrl returns that retryable Tailor
+block to pending after checking the current score and posting analysis. The
+worker can then continue automatically after the normal cooldown and eligibility
+checks. This preserves prior attempts, canceled decisions, and approved resumes.
 
 The minimum-fit policy is a different terminal decision. When the current
 score is below the live materials threshold, Tailor, Cover, and Apply are
