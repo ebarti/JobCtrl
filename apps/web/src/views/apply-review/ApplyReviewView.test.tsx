@@ -2040,6 +2040,37 @@ describe("<ApplyReviewView>", () => {
     expect(JSON.stringify(saveResumeReviewDraftRevision.mock.calls[0]![1].plateDocument)).not.toContain("helvetica");
   });
 
+  it("keeps unsaved edits scoped when selecting an identical cached draft", async () => {
+    const first = sampleApplyReviewQueue.items[0]!;
+    const other = sampleApplyReviewQueue.items[1]!;
+    const second = { ...first, jobKey: other.jobKey, title: other.title,
+      materialsPreview: { ...first.materialsPreview, resumeTextArtifactId: "other-job-b-text", resumePdfArtifactId: "other-job-b-pdf" } };
+    const draftA = makeResumeReviewDraft(first.jobKey, { draftId: "other-draft-a" });
+    const draftB = { ...makeResumeReviewDraft(second.jobKey, { draftId: "other-draft-b" }),
+      baseResumeTextArtifactId: "other-job-b-text", baseResumePdfArtifactId: "other-job-b-pdf" };
+    expect(draftA.latestRevision?.plateDocument).toEqual(draftB.latestRevision?.plateDocument);
+    const queryClient = createTestQueryClient();
+    queryClient.setQueryData(applyReviewKeys.draft(LOCAL_TENANT, first.jobKey), { ok: true, draft: draftA });
+    queryClient.setQueryData(applyReviewKeys.draft(LOCAL_TENANT, second.jobKey), { ok: true, draft: draftB });
+    const createResumeReviewDraft = vi.fn((): Promise<{ok:true;draft:ResumeReviewDraft}> => new Promise(() => {}));
+    renderWithProviders(<ApplyReviewView />, { queryClient, ports: buildTestPorts({ api: {
+      applyReviewQueue: vi.fn(async () => ({ ...sampleApplyReviewQueue, items: [first, second] })),
+      createResumeReviewDraft,
+      seedResumeReviewCommentThreads: vi.fn(async (draftId: string) => {
+        const draft = draftId === draftA.draftId ? draftA : draftB;
+        return { ok: true as const, draft, commentThreads: [], seededCount: 0, updatedCount: 0 };
+      }),
+    } }) });
+    await findResumeShadowRoot();
+    await chooseSelectOption("Font", "Garamond");
+    expect(shadowElementWithText(await findResumeShadowRoot(), "Principal Platform Engineer").style.fontFamily).toContain("Garamond");
+    expect(screen.getByLabelText("Editable resume page")).toHaveAttribute("data-draft-dirty", "true");
+    await userEvent.click(within(screen.getByLabelText("Application review queue")).getByRole("button", { name: new RegExp(second.title) }));
+    await waitFor(() => expect(createResumeReviewDraft).toHaveBeenCalledTimes(2));
+    expect(shadowElementWithText(await findResumeShadowRoot(), "Principal Platform Engineer").style.fontFamily).not.toContain("Garamond");
+    expect(screen.getByLabelText("Editable resume page")).toHaveAttribute("data-draft-dirty", "false");
+  });
+
   it("preserves formatting while the initial revision-zero draft is loading", async () => {
     const draft = makeResumeReviewDraft(sampleApplyReviewQueue.items[0]!.jobKey, null);
     let finishCreating: (() => void) | undefined;

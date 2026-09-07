@@ -282,6 +282,56 @@ test("artifact full-page detail compares same-job generated artifacts", async ({
   await expect(comparison).toContainText("gcp");
 });
 
+test("switching identical cached drafts does not carry unsaved text to another job", async ({ page }) => {
+  await installArtifactComparisonRoutes(page);
+  const first = sampleApplyReviewQueue.items[0]!;
+  const other = sampleApplyReviewQueue.items[1]!;
+  const second = { ...first, jobKey: other.jobKey, title: other.title,
+    materialsPreview: { ...first.materialsPreview,
+      resumeTextArtifactId: "other-job-text", resumePdfArtifactId: "other-job-pdf" },
+  };
+  const plateDocument = [{ type: "resume_block", tagName: "main", className: "resume-page", pageNumber: 1,
+    children: [{ type: "resume_block", tagName: "p", lineNumber: 3, pageNumber: 1,
+      semanticId: "experience:line:3", children: [{ text: "Shared saved resume content." }] }],
+  }];
+  const draftA = { ...draft, latestRevision: { ...draft.latestRevision, plateDocument }, commentThreads: [] };
+  const draftB = { ...draftA, draftId: "other-job-draft", jobKey: second.jobKey,
+    baseResumeTextArtifactId: "other-job-text", baseResumePdfArtifactId: "other-job-pdf",
+    latestRevision: { ...draftA.latestRevision, draftId: "other-job-draft", jobKey: second.jobKey },
+  };
+  const loadedJobs = new Set<string>();
+  await page.route("**/v1/apply/review-queue", route => route.fulfill({
+    json: { ...sampleApplyReviewQueue, items: [first, second] },
+  }));
+  await page.route("**/v1/jobs/*/resume-review/draft", async (route) => {
+    const requestedJob = decodeURIComponent(new URL(route.request().url()).pathname.split("/")[3]!);
+    await route.fulfill({ json: { ok: true, draft: requestedJob === first.jobKey ? draftA : draftB } });
+    loadedJobs.add(requestedJob);
+  });
+  await page.route("**/v1/resume-review/drafts/*/comment-threads", route => route.fulfill({ json: {
+    ok: true, draft: route.request().url().includes(draftB.draftId) ? draftB : draftA,
+    commentThreads: [], seededCount: 0, updatedCount: 0,
+  } }));
+  await page.goto("/apply-review");
+  const editor = page.getByRole("textbox", { name: "Tailored resume preview editor" });
+  const queue = page.getByLabel("Application review queue");
+  await expect(editor).toContainText("Shared saved resume content.");
+  await expect.poll(() => loadedJobs.has(first.jobKey)).toBe(true);
+  await queue.getByRole("button", { name: new RegExp(second.title) }).click();
+  await expect.poll(() => loadedJobs.has(second.jobKey)).toBe(true);
+  await expect(page.getByLabel("Editable resume page")).toHaveAttribute("data-draft-dirty", "false");
+  await queue.getByRole("button", { name: new RegExp(first.title) }).click();
+  await editor.click();
+  await editor.press("ControlOrMeta+End");
+  await editor.pressSequentially(" belongsOnlyToFirstJob");
+  await expect(page.getByLabel("Editable resume page")).toHaveAttribute("data-draft-dirty", "true");
+  await queue.getByRole("button", { name: new RegExp(second.title) }).click();
+  await expect(editor).toContainText("Shared saved resume content.");
+  await expect(editor).not.toContainText("belongsOnlyToFirstJob");
+  await expect(page.getByLabel("Editable resume page")).toHaveAttribute("data-draft-dirty", "false");
+  await expect(page.getByRole("button", { name: "Save draft" })).toBeDisabled();
+});
+
 test("initial revision-zero draft arrival preserves text typed while loading", async ({ page }) => {
   await installArtifactComparisonRoutes(page);
   const initialDraft = {

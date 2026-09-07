@@ -3255,8 +3255,9 @@ export function ResumePlateEditor({
     const previous = savedDocument.current;
     if (previous.identity === reviewDocumentIdentity && previous.signature === signature) return;
     savedDocument.current = { identity: reviewDocumentIdentity, signature };
-    // The first draft can acquire an identity without changing its saved document.
-    if (previous.signature === signature) return;
+    // Only the initial revision-zero arrival continues the current artifact's
+    // editing session; identical saved documents in another draft still reset it.
+    if (previous.identity === artifactId && draft?.latestRevisionNumber === 0 && previous.signature === signature) return;
     // A saved response acknowledges its snapshot, not edits typed after it.
     // Comment-only publications and identical acknowledgements never remount
     // Plate, preserving formatting, focus and selection in the live document.
@@ -3267,7 +3268,7 @@ export function ResumePlateEditor({
         setDraftSourceVersion((currentVersion) => currentVersion + 1);
       }
     }
-  }, [currentPlateValue, initialPlateValue, reviewDocumentIdentity]);
+  }, [artifactId, currentPlateValue, draft?.latestRevisionNumber, initialPlateValue, reviewDocumentIdentity]);
 
   const currentDraftText = useMemo(
     () => (currentPlateValue ? resumeTextFromPlateValue(currentPlateValue) : ""),
