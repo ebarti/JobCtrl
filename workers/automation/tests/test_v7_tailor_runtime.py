@@ -257,6 +257,84 @@ async def test_tailor_activity_keeps_aggregate_and_partial_failure_adapters(batc
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("workers", [1, 2])
+@pytest.mark.parametrize("failure", ["before_claim", "successor_fence"])
+async def test_unscoped_tailor_activity_finishes_siblings_before_escalating_escaped_error(
+    batch_runtime, monkeypatch, workers, failure,
+):
+    conn = batch_runtime.connect()
+    job_ids = tuple(canonical_job_id(f"30000000-0000-4000-8000-{i:012d}") for i in range(1, 6))
+    for job_id in job_ids:
+        _seed_job(
+            conn, tenant_id=_TENANT_A, job_id=job_id,
+            url=f"https://example.test/{job_id}",
+            fit_score=10 if job_id == _JOB_ID else 8,
+        )
+    attempted = []
+    generated = []
+    load_target = tailor_module.SqlitePreparationTargetReader.load
+
+    def load(self, tenant_id, job_id):
+        attempted.append(job_id)
+        if job_id == _JOB_ID and failure == "before_claim":
+            raise sqlite3.OperationalError("synthetic target read failure")
+        return load_target(self, tenant_id, job_id)
+
+    def generate(job, *_args, **kwargs):
+        generated.append(job["job_id"])
+        if job["job_id"] == str(_JOB_ID):
+            current = batch_runtime.connect()
+            current.execute(
+                "UPDATE job_stage_states SET metadata_json = ? "
+                "WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'",
+                (json.dumps({"activityOwner": "successor"}), str(_TENANT_A), str(_JOB_ID)),
+            )
+            current.commit()
+            kwargs["commit_guard"]()
+            raise AssertionError("stale owner passed persistence fence")
+        return _fake_approved_result(job)
+
+    monkeypatch.setattr(tailor_module.SqlitePreparationTargetReader, "load", load)
+    monkeypatch.setattr(tailor_module, "_tailor_one_job", generate)
+    with pytest.raises(ApplicationError) as raised:
+        await ActivityEnvironment().run(
+            activities_module.tailor_activity,
+            activities_module.TailorActivityInput(
+                tenant_id=str(_TENANT_A), expected_app_dir=batch_runtime.app_dir,
+                expected_db_path=batch_runtime.db_path, workers=workers,
+                workflow_id="cohort-owner",
+            ),
+        )
+
+    # Assert durable sibling completion before checking the aggregate error:
+    # a fail-fast executor leaves the undispatched cohort pending here.
+    assert set(attempted) == set(job_ids)
+    assert set(generated) == {
+        str(job_id) for job_id in job_ids
+        if failure == "successor_fence" or job_id != _JOB_ID
+    }
+    states = conn.execute(
+        "SELECT job_id, state, attempt_count, metadata_json FROM job_stage_states "
+        "WHERE tenant_id = ? AND stage = 'tailor' ORDER BY job_id",
+        (str(_TENANT_A),),
+    ).fetchall()
+    assert [(row["state"], row["attempt_count"]) for row in states[1:]] == [("succeeded", 1)] * 4
+    terminal_ids = conn.execute(
+        "SELECT job_id FROM job_events WHERE tenant_id = ? AND stage = 'tailor' "
+        "AND event_type IN ('StageCompleted', 'StageFailed', 'StageExhausted')",
+        (str(_TENANT_A),),
+    ).fetchall()
+    assert sorted(row[0] for row in terminal_ids) == sorted(str(job_id) for job_id in job_ids[1:])
+    assert states[0]["attempt_count"] == 0
+    if failure == "successor_fence":
+        assert states[0]["state"] == "running"
+        assert json.loads(states[0]["metadata_json"]) == {"activityOwner": "successor"}
+    else:
+        assert states[0]["state"] == "pending"
+    assert "1 tailoring error(s), 0 failed quality gate(s)" in str(raised.value)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("cancel_after_commit", [False, True])
 async def test_unscoped_tailor_reuses_commit_before_crash_or_cancellation(batch_runtime, monkeypatch, cancel_after_commit):
     from jobctrl.infrastructure.preparation_recovery import CancelPreparationStateInput, cancel_preparation_state_rows

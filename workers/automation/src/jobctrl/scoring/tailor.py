@@ -500,17 +500,25 @@ def run_tailoring(
     started = time.time()
 
     def run_one(job_id: JobId) -> dict:
-        return tailor_job_by_id(
-            job_id, min_score=min_score, validation_mode=validation_mode,
-            workers=workers, retailor=retailor, snapshot=snapshot,
-            tenant_id=tenant_id, llm_model=llm_model,
-            tailor_models=tailor_models, tailor_judge_model=tailor_judge_model,
-            tailor_judge_min_score=tailor_judge_min_score,
-            pdf_renderer=pdf_renderer, llm_policy=llm_policy,
-            workflow_id=workflow_id, cancel_event=cancel_event,
-            suppress_existing_artifacts=suppress_existing_artifacts,
-            allow_low_fit_override=allow_low_fit_override,
-        )
+        try:
+            return tailor_job_by_id(
+                job_id, min_score=min_score, validation_mode=validation_mode,
+                workers=workers, retailor=retailor, snapshot=snapshot,
+                tenant_id=tenant_id, llm_model=llm_model,
+                tailor_models=tailor_models, tailor_judge_model=tailor_judge_model,
+                tailor_judge_min_score=tailor_judge_min_score,
+                pdf_renderer=pdf_renderer, llm_policy=llm_policy,
+                workflow_id=workflow_id, cancel_event=cancel_event,
+                suppress_existing_artifacts=suppress_existing_artifacts,
+                allow_low_fit_override=allow_low_fit_override,
+            )
+        except Exception as exc:  # noqa: BLE001 - finish the cohort before aggregate escalation
+            if cancel_event is not None and cancel_event.is_set():
+                raise
+            # Pre-claim errors and lost-owner fences escape the canonical item
+            # lifecycle. Count them without writing a terminal state we may no
+            # longer own, and let unaffected cohort members finish normally.
+            return {"job_id": str(job_id), "status": "error", "error": str(exc)}
 
     counts = {"approved": 0, "blocked": 0, "failed": 0, "errors": 0, "exhausted": 0}
     for _job_id, result in run_material_jobs(
