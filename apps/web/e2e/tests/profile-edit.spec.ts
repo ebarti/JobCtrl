@@ -20,11 +20,11 @@ import {
 test("Profile edit + Plate baseline editor: edit a field, save, preview HTML refreshes with a new cache key", async ({
   page,
 }) => {
-  const previewRequests: string[] = [];
-  page.on("request", (request) => {
-    const url = request.url();
-    if (url.includes("/v1/profile/preview.html")) {
-      previewRequests.push(url);
+  const successfulPreviewUrls: string[] = [];
+  page.on("response", (response) => {
+    const url = response.url();
+    if (new URL(url).pathname === "/v1/profile/preview.html" && response.ok()) {
+      successfulPreviewUrls.push(url);
     }
   });
 
@@ -34,6 +34,9 @@ test("Profile edit + Plate baseline editor: edit a field, save, preview HTML ref
   const resumeEditorView = page.getByRole("button", { name: "Resume editor" });
   await expect(profileDataView).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByText(/Full name/i).first()).toBeVisible({ timeout: 30_000 });
+  const fullNameInput = page.getByText(/Full name/i).first()
+    .locator("xpath=following-sibling::input").first();
+  const initialFullName = await fullNameInput.inputValue();
   await expect(page.getByText("Verified resume metrics", { exact: true })).toHaveCount(0);
 
   await page.getByRole("button", { name: /Experience entries/ }).click();
@@ -49,15 +52,15 @@ test("Profile edit + Plate baseline editor: edit a field, save, preview HTML ref
   await expect(page.getByText("Baseline resume editor", { exact: true })).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText("Plate HTML/CSS editor", { exact: true })).toBeVisible({ timeout: 30_000 });
   await expect(page.getByRole("button", { name: "Bold" })).toBeVisible({ timeout: 30_000 });
-  await expect.poll(() => previewRequests.some((url) => url.includes("/v1/profile/preview.html?v=0")), {
+  await expect.poll(() => successfulPreviewUrls.length, {
     timeout: 30_000,
-  }).toBe(true);
+  }).toBeGreaterThan(0);
   await expect(
     page.locator(".profile-resume-plate-editor .resume-page"),
   ).toBeVisible({ timeout: 30_000 });
   await expect(
     page.locator(".profile-resume-plate-editor .resume-name"),
-  ).toBeVisible({ timeout: 30_000 });
+  ).toHaveText(initialFullName, { timeout: 30_000 });
   const templatePresentation = await page.locator(".profile-resume-plate-editor").evaluate(async (editor) => {
     await document.fonts.ready;
     const resumePage = editor.querySelector(".resume-page");
@@ -80,13 +83,16 @@ test("Profile edit + Plate baseline editor: edit a field, save, preview HTML ref
   expect(templatePresentation.nameFontSize).toBe("29.3333px");
   expect(templatePresentation.nameTextAlign).toBe("center");
   expect(templatePresentation.paddingTop).toBeGreaterThan(62);
+  const initialPreviewKeys = new Set(successfulPreviewUrls.map((url) => new URL(url).searchParams.get("v")));
+  expect(initialPreviewKeys.has(null)).toBe(false);
 
   await profileDataView.click();
   await expect(profileDataView).toHaveAttribute("aria-pressed", "true");
-  const fullNameLabel = page.getByText(/Full name/i).first();
-  const fullNameInput = fullNameLabel.locator("xpath=following-sibling::input").first();
+  const updatedFullName = initialFullName === "QA Candidate Updated"
+    ? "QA Candidate Updated Again"
+    : "QA Candidate Updated";
   await fullNameInput.click();
-  await fullNameInput.fill("QA Candidate Updated");
+  await fullNameInput.fill(updatedFullName);
 
   const saveButton = page.getByRole("button", { name: "Save changes" });
   await expect(saveButton).toBeEnabled({ timeout: 10_000 });
@@ -95,9 +101,15 @@ test("Profile edit + Plate baseline editor: edit a field, save, preview HTML ref
   await expect(saveButton).toHaveCount(0, { timeout: 30_000 });
   await expect(page.getByRole("status").filter({ hasText: "Profile saved" })).toBeVisible();
 
-  await expect.poll(() => previewRequests.some((url) => url.includes("/v1/profile/preview.html?v=1")), {
+  await expect.poll(() => successfulPreviewUrls.some((url) => {
+    const key = new URL(url).searchParams.get("v");
+    return key !== null && !initialPreviewKeys.has(key);
+  }), {
     timeout: 30_000,
   }).toBe(true);
+  await resumeEditorView.click();
+  await expect(page.locator(".profile-resume-plate-editor .resume-name"))
+    .toHaveText(updatedFullName, { timeout: 30_000 });
 });
 
 test("Plate deletion and digit edits update the boxed Profile draft and unsaved state", async ({
