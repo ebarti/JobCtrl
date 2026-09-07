@@ -2040,6 +2040,38 @@ describe("<ApplyReviewView>", () => {
     expect(JSON.stringify(saveResumeReviewDraftRevision.mock.calls[0]![1].plateDocument)).not.toContain("helvetica");
   });
 
+  it("preserves formatting while the initial revision-zero draft is loading", async () => {
+    const draft = makeResumeReviewDraft(sampleApplyReviewQueue.items[0]!.jobKey, null);
+    let finishCreating: (() => void) | undefined;
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({ api: {
+        applyReviewQueue: vi.fn(async () => sampleApplyReviewQueue),
+        createResumeReviewDraft: vi.fn(async () => {
+          await new Promise<void>((resolve) => { finishCreating = resolve; });
+          return { ok: true as const, draft };
+        }),
+        seedResumeReviewCommentThreads: vi.fn(async () => ({
+          ok: true as const, draft, commentThreads: [], seededCount: 0, updatedCount: 0,
+        })),
+      } }),
+    });
+
+    await screen.findByRole("textbox", { name: "Tailored resume preview editor" });
+    expect(screen.getByText("loading draft")).toBeInTheDocument();
+    await chooseSelectOption("Font", "Garamond");
+    const shadow = await findResumeShadowRoot();
+    expect(shadowElementWithText(shadow, "Principal Platform Engineer").style.fontFamily).toContain("Garamond");
+    expect(screen.getByLabelText("Editable resume page")).toHaveAttribute("data-draft-dirty", "true");
+
+    finishCreating!();
+    await waitFor(() => expect(screen.queryByText("loading draft")).not.toBeInTheDocument());
+    expect(shadowElementWithText(await findResumeShadowRoot(), "Principal Platform Engineer").style.fontFamily).toContain("Garamond");
+    expect(screen.getByText("unsaved changes")).toBeInTheDocument();
+    expect(screen.getByLabelText("Editable resume page")).toHaveAttribute("data-draft-dirty", "true");
+    expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Render replacement" })).toBeDisabled();
+  });
+
   it("keeps the cached resume review draft visible while create/load is pending", async () => {
     const jobKey = sampleApplyReviewQueue.items[0]!.jobKey;
     const draft = makeResumeReviewDraft(jobKey, {

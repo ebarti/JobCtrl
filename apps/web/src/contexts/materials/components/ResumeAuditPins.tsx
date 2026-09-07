@@ -3255,6 +3255,8 @@ export function ResumePlateEditor({
     const previous = savedDocument.current;
     if (previous.identity === reviewDocumentIdentity && previous.signature === signature) return;
     savedDocument.current = { identity: reviewDocumentIdentity, signature };
+    // The first draft can acquire an identity without changing its saved document.
+    if (previous.signature === signature) return;
     // A saved response acknowledges its snapshot, not edits typed after it.
     // Comment-only publications and identical acknowledgements never remount
     // Plate, preserving formatting, focus and selection in the live document.

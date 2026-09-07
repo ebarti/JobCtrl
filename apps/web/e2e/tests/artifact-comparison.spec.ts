@@ -282,6 +282,40 @@ test("artifact full-page detail compares same-job generated artifacts", async ({
   await expect(comparison).toContainText("gcp");
 });
 
+test("initial revision-zero draft arrival preserves text typed while loading", async ({ page }) => {
+  await installArtifactComparisonRoutes(page);
+  const initialDraft = {
+    ...draft, currentRevisionId: null, latestRevisionNumber: 0,
+    latestRevision: null, commentThreads: [],
+  };
+  let finishCreating!: () => void;
+  await page.route("**/v1/jobs/*/resume-review/draft", async (route) => {
+    await new Promise<void>((resolve) => { finishCreating = resolve; });
+    await route.fulfill({ json: { ok: true, draft: initialDraft } });
+  });
+  await page.route("**/v1/resume-review/drafts/*/comment-threads", async (route) => {
+    await route.fulfill({ json: {
+      ok: true, draft: initialDraft, commentThreads: [], seededCount: 0, updatedCount: 0,
+    } });
+  });
+  await page.goto("/apply-review");
+  const editor = page.getByRole("textbox", { name: "Tailored resume preview editor" });
+  await expect(editor).toBeVisible();
+  await expect(page.getByText("loading draft", { exact: true })).toBeVisible();
+  await editor.click();
+  await editor.press("ControlOrMeta+End");
+  await editor.pressSequentially(" typedWhileLoading");
+  await expect(page.getByLabel("Editable resume page")).toHaveAttribute("data-draft-dirty", "true");
+  await expect.poll(() => Boolean(finishCreating)).toBe(true);
+  finishCreating();
+  await expect(page.getByText("loading draft", { exact: true })).not.toBeVisible();
+  await expect(editor).toContainText("typedWhileLoading");
+  await expect(page.getByText("unsaved changes", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Editable resume page")).toHaveAttribute("data-draft-dirty", "true");
+  await expect(page.getByRole("button", { name: "Save draft" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Render replacement" })).toBeDisabled();
+});
+
 test("late saved snapshot preserves newer typing and keeps rendering gated", async ({ page }) => {
   await installArtifactComparisonRoutes(page);
   let acknowledge!: () => void;

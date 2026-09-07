@@ -355,10 +355,18 @@ Update this table with actual results; do not mark proposals implemented.
 
 | Phase | PR and head | Deleted mechanism | Tests and product proof | Review / QA |
 | --- | --- | --- | --- | --- |
-| 1 | [#865](https://github.com/ebarti/JobCtrl/pull/865); implementation `6d6f28a18` | View-owned five-snapshot draft selector and reply merger removed; cache mutation publication reconciles saved state | 79 focused web tests, 13 type tests, web/API checks, web/Storybook/docs builds pass; isolated browser race/a11y fixture ready | Review found a promotion regression, reproduced and corrected with 71 affected tests and web typecheck passing; revised promotion/late-seed browser fixtures await the same review and QA gates |
+| 1 | [#865](https://github.com/ebarti/JobCtrl/pull/865); reviewed implementation `2428ce2dd` | View-owned five-snapshot draft selector and reply merger removed; cache mutation publication reconciles saved state | Original focused web/type checks and web/API/Storybook/docs builds passed; promotion fix passed 71 affected tests and all four isolated Chromium scenarios with scoped axe clean | The promotion High passed independent review and QA at `2428ce2dd`; the later pending-create Medium is addressed by the follow-up below, whose independent gates remain pending |
 | 2 | Pending | Pending | Pending | Pending |
 | 3 | Pending | Pending | Pending | Pending |
 | 4 | Pending | Pending | Pending | Pending |
+
+The Phase 1 review follow-up preserves unsaved edits when a revision-zero draft
+acquires its identity without changing the saved document. Its formatting
+regression reproduces the reset on the reviewed implementation; the corrected
+view, mutation, and reconciler suites pass 72 tests. Web typecheck/build and all
+five isolated Chromium artifact-comparison scenarios pass, including actual
+typing while draft creation is pending. Independent review and cumulative QA
+must cover this follow-up before the stack is complete.
 
 Delivery means four published PRs with the exact base chain above, necessary
 docs, passing independent gates and applicable CI, no unresolved Blocker/High
