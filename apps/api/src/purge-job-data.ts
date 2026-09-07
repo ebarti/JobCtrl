@@ -72,6 +72,14 @@ function planLines(plan: JobDataPurgePlan): string[] {
     `Registered generated log files to archive: ${plan.registeredLogFileCount}`,
     `Registered files already missing: ${plan.registeredMissingFileCount}`,
     `Active stages/workflows: ${plan.activeStageCount}/${plan.activeWorkflowCount}`,
+    `Fresh worker heartbeats for this database: ${plan.freshWorkerCount}`,
+    ...plan.provisionalWorkflows.map((workflow) =>
+      `Provisional missing-history execution: ${JSON.stringify(workflow)}`),
+    ...(plan.provisionalWorkflows.length > 0
+      ? ["Resolution: docs/local-development.md#resolve-provisional-missing-history-executions"]
+      : []),
+    "Retained auxiliary/history rows (may still reference purged jobs, runs, or signals):",
+    ...Object.entries(plan.retainedReferenceRows).map(([table, count]) => `  ${table}: ${count}`),
   ];
 }
 
@@ -96,7 +104,7 @@ function main(): void {
   const result = executeJobDataPurge(purgeOptions);
   console.log(planLines(result).join("\n"));
   if (result.noOp) {
-    console.log("\nNo live jobs, generated material, or job execution history remained; nothing was changed.");
+    console.log("\nNothing remains in the purge boundary; nothing was changed. Retained auxiliary/history rows are listed above.");
     return;
   }
   console.log(

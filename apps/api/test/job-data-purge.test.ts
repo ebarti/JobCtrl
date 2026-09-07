@@ -13,6 +13,7 @@ import {
   JOB_DATA_PURGE_CONFIRMATION,
   JobDataPurgeCommittedError,
 } from "../src/job-data-purge.js";
+import { WORKER_RUNTIME_STALE_AFTER_MS } from "../src/worker-runtime-telemetry.js";
 import { initializeExactV7Database } from "./v7-schema.js";
 
 const NOW = "2026-09-01T12:00:00Z";
@@ -301,6 +302,25 @@ function runConfirmedPurge(appDir: string): ReturnType<typeof spawnSync> {
   );
 }
 
+function runInventory(appDir: string): ReturnType<typeof spawnSync> {
+  return spawnSync("corepack", ["pnpm", "data:purge-jobs", "--app-dir", appDir], {
+    cwd: REPOSITORY_ROOT, encoding: "utf8",
+  });
+}
+
+function seedHeartbeat(fixture: Fixture, databasePath: string, lastSeenAt: string): void {
+  const db = openDatabase(fixture.dbPath);
+  try {
+    db.prepare(
+      `INSERT INTO worker_runtime_heartbeats (
+        worker_id, component, pid, hostname, app_dir, db_path, task_queue, started_at, last_seen_at
+      ) VALUES ('test-worker', 'temporal-worker', 123, 'test-host', ?, ?, 'test-queue', ?, ?)`,
+    ).run(fixture.appDir, databasePath, NOW, lastSeenAt);
+  } finally {
+    db.close();
+  }
+}
+
 describe("guarded production job-data purge", () => {
   it("backs up and purges the complete Job graph and generated files while preserving profile and search data", () => {
     const fixture = createFixture();
@@ -561,11 +581,199 @@ describe("guarded production job-data purge", () => {
       activeStageCount: 0,
       activeWorkflowCount: 1,
       jobCount: 1,
+      provisionalWorkflows: [{ workflowId: "discover-revivable-local", temporalRunId: "temporal-run-revivable" }],
     });
+    const inventory = runInventory(fixture.appDir);
+    expect(inventory.status).toBe(0);
+    expect(inventory.stdout).toContain('"workflowId":"discover-revivable-local"');
+    expect(inventory.stdout).toContain('"temporalRunId":"temporal-run-revivable"');
+    expect(inventory.stdout).toContain("#resolve-provisional-missing-history-executions");
     const command = runConfirmedPurge(fixture.appDir);
     expect(command.status).not.toBe(0);
     expect(`${command.stdout}${command.stderr}`).toMatch(/active work \(0 active stages, 1 active workflows\)/i);
     expect(rowCount(fixture.dbPath, "jobs")).toBe(1);
     expect(fs.readdirSync(path.join(fixture.appDir, "backups"))).toEqual([]);
+
+    // Exercise the exact documented SQL against a disposable absent-history
+    // fixture. The external Temporal proof is an operator precondition.
+    const guide = fs.readFileSync(path.join(REPOSITORY_ROOT, "docs/local-development.md"), "utf8");
+    const clearanceSql = guide.match(/```sql\n(UPDATE workflow_run_projections[\s\S]*?);\nSELECT changes\(\);\n```/)?.[1];
+    expect(clearanceSql).toBeDefined();
+    const db = openDatabase(fixture.dbPath);
+    const clearanceBackup = path.join(fixture.appDir, "backups", "before-clearance.db");
+    try {
+      db.prepare("VACUUM INTO ?").run(clearanceBackup);
+      const clear = db.prepare(clearanceSql!);
+      expect(clear.run({ workflow_id: "discover-revivable-local", temporal_run_id: "different-run" }).changes).toBe(0);
+      expect(clear.run({ workflow_id: DISCOVER_WORKFLOW_ID, temporal_run_id: DISCOVER_RUN_ID }).changes).toBe(0);
+      expect(clear.run({ workflow_id: "discover-revivable-local", temporal_run_id: "temporal-run-revivable" }).changes).toBe(1);
+      expect(db.prepare("SELECT status, error_code FROM workflow_run_projections WHERE workflow_id = ?")
+        .get("discover-revivable-local")).toMatchObject({ status: "terminated", error_code: "operator_verified_history_absent" });
+    } finally {
+      db.close();
+    }
+    const clearedInventory = runInventory(fixture.appDir);
+    expect(clearedInventory.status).toBe(0);
+    expect(clearedInventory.stdout).toContain("Active stages/workflows: 0/0");
+    const clearedCommand = runConfirmedPurge(fixture.appDir);
+    expect(clearedCommand.status, String(clearedCommand.stderr)).toBe(0);
+    expect(rowCount(fixture.dbPath, "jobs")).toBe(0);
+    expect(rowCount(clearanceBackup, "workflow_run_projections")).toBe(3);
+  });
+
+  it("discloses retained captures and immutable learning references through inventory, purge, and no-op", () => {
+    const fixture = createFixture();
+    const secondJobId = "00000000-0000-4000-8000-000000000903";
+    const retainedTables = [
+      "manual_capture_queue", "source_locator_candidates", "learning_recommendation_jobs",
+      "learning_recommendation_evidence_jobs", "learning_recommendation_evidence",
+      "tailoring_feedback_signal_reviews", "tailoring_feedback_signal_contradictions", "role_match_feedback_suggestions",
+    ];
+    const db = openDatabase(fixture.dbPath);
+    let before: Record<string, unknown>;
+    try {
+      db.transaction(() => {
+        db.prepare("INSERT INTO jobs (tenant_id, job_id, url, title, company, site, discovered_at) VALUES ('local', ?, ?, 'Second', 'Example', 'example', ?)")
+          .run(secondJobId, `${JOB_URL}/second`, NOW);
+        db.prepare(`INSERT INTO manual_capture_queue (item_id, originating_url, reason, retry_context_json, required_at)
+          VALUES ('pending-capture', ?, 'browser_required', ?, ?)`)
+          .run(JOB_URL, JSON.stringify({ discover_run_id: DISCOVER_RUN_ID }), NOW);
+        db.prepare(`INSERT INTO source_locator_candidates (candidate_id, candidate_url, source_kind, discovered_at)
+          VALUES ('retained-source', ?, 'ats', ?)`)
+          .run(JOB_URL, NOW);
+        db.prepare(`INSERT INTO role_match_feedback_suggestions (
+          suggestion_id, rule_kind, title_pattern, title_display, reason_code, reason, evidence_json, created_at, updated_at
+        ) VALUES ('retained-suggestion', 'exclude', 'engineer', 'Engineer', 'test', 'Test evidence', ?, ?, ?)`)
+          .run(JSON.stringify([{ job_id: JOB_ID, run_id: DISCOVER_RUN_ID }]), NOW, NOW);
+        for (const [index, jobId] of [JOB_ID, secondJobId, JOB_ID].entries()) {
+          const signalId = `signal-${index}`;
+          db.prepare(`INSERT INTO resume_review_drafts (draft_id, job_id, base_generation, created_at, updated_at)
+            VALUES (?, ?, 1, ?, ?)`)
+            .run(`draft-${index}`, jobId, NOW, NOW);
+          db.prepare(`INSERT INTO tailoring_feedback_signals (
+            signal_id, job_id, draft_id, source_kind, source_id, signal_kind, created_at
+          ) VALUES (?, ?, ?, 'review_comment', ?, 'style_preference', ?)`)
+            .run(signalId, jobId, `draft-${index}`, `comment-${index}`, NOW);
+          db.prepare(`INSERT INTO tailoring_feedback_signal_reviews (
+            review_id, signal_id, revision, decision, signal_kind, rule_key, rule_value, allowlist_version, reviewed_at
+          ) VALUES (?, ?, 1, 'accepted', 'style_preference', 'tone', 'concise', 1, ?)`)
+            .run(`review-${index}`, signalId, NOW);
+          db.prepare(`INSERT INTO learning_recommendation_evidence (
+            recommendation_id, signal_id, evidence_role, source_kind, source_id, source_revision, recorded_at
+          ) VALUES ('retained-recommendation', ?, 'supporting', 'tailoring_feedback_signal', ?, 1, ?)`)
+            .run(signalId, signalId, NOW);
+          db.prepare(`INSERT INTO learning_recommendation_evidence_jobs (recommendation_id, signal_id, job_id)
+            VALUES ('retained-recommendation', ?, ?)`)
+            .run(signalId, jobId);
+        }
+        for (const jobId of [JOB_ID, secondJobId]) {
+          db.prepare("INSERT INTO learning_recommendation_jobs (recommendation_id, job_id) VALUES ('retained-recommendation', ?)").run(jobId);
+        }
+        db.prepare(`INSERT INTO learning_recommendations (
+          recommendation_id, derivation_version, evaluation_fixture_version, context, policy_kind, signal_kind,
+          rule_key, rule_value, allowlist_version, observed_signal_count, observed_job_count,
+          minimum_signal_count, minimum_job_count, confidence_limit, input_fingerprint, derived_at
+        ) VALUES ('retained-recommendation', 1, 1, 'materials', 'tailoring_rule', 'style_preference',
+          'tone', 'concise', 1, 3, 2, 3, 2, 'sample_gated_no_population_inference', ?, ?)`)
+          .run("a".repeat(64), NOW);
+        db.prepare(`INSERT INTO tailoring_feedback_signal_contradictions (
+          contradiction_id, signal_id, signal_revision, signal_job_id,
+          contradicting_signal_id, contradicting_signal_revision, contradicting_signal_job_id, recorded_at
+        ) VALUES ('contradiction-1', 'signal-0', 1, ?, 'signal-1', 1, ?, ?)`)
+          .run(JOB_ID, secondJobId, NOW);
+      })();
+      before = Object.fromEntries(retainedTables.map((table) => [table, db.prepare(`SELECT * FROM ${table}`).all()]));
+      // This additional capture is job-owned, so it must cascade instead of
+      // inflating the disclosed retained count.
+      db.prepare(`INSERT INTO manual_capture_queue (item_id, originating_url, reason, required_at, job_id)
+        VALUES ('job-linked-capture', ?, 'browser_required', ?, ?)`)
+        .run(JOB_URL, NOW, JOB_ID);
+    } finally {
+      db.close();
+    }
+    const counts = {
+      manual_capture_queue: 1, source_locator_candidates: 1, learning_recommendation_jobs: 2,
+      learning_recommendation_evidence_jobs: 3, learning_recommendation_evidence: 3,
+      tailoring_feedback_signal_reviews: 3, tailoring_feedback_signal_contradictions: 1, role_match_feedback_suggestions: 1,
+    };
+    expect(inspectJobDataPurge({ appDir: fixture.appDir }).retainedReferenceRows).toEqual(counts);
+    const commands = [runInventory(fixture.appDir), runConfirmedPurge(fixture.appDir), runInventory(fixture.appDir), runConfirmedPurge(fixture.appDir)];
+    for (const command of commands) {
+      expect(command.status, String(command.stderr)).toBe(0);
+      expect(command.stdout).toContain("may still reference purged jobs, runs, or signals");
+      for (const [table, count] of Object.entries(counts)) expect(command.stdout).toContain(`${table}: ${count}`);
+    }
+    const noOp = commands[3]!;
+    expect(noOp.stdout).toContain("Nothing remains in the purge boundary");
+    expect(noOp.stdout).toContain("Retained auxiliary/history rows are listed above");
+    const after = openDatabase(fixture.dbPath);
+    try {
+      expect(Object.fromEntries(retainedTables.map((table) => [table, after.prepare(`SELECT * FROM ${table}`).all()])))
+        .toEqual(before!);
+      expect(after.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+      expect(after.prepare("SELECT COUNT(*) AS count FROM tailoring_feedback_signals").get()).toEqual({ count: 0 });
+      expect(after.prepare("SELECT COUNT(*) AS count FROM jobs").get()).toEqual({ count: 0 });
+    } finally {
+      after.close();
+    }
+  });
+
+  it("refuses an idle worker with a fresh heartbeat for this database before backup", () => {
+    const fixture = createFixture();
+    seedHeartbeat(fixture, fixture.dbPath, new Date().toISOString());
+    expect(inspectJobDataPurge({ appDir: fixture.appDir }).freshWorkerCount).toBe(1);
+    const command = runConfirmedPurge(fixture.appDir);
+    expect(command.status).not.toBe(0);
+    expect(`${command.stdout}${command.stderr}`).toMatch(/fresh worker heartbeat.*this database/);
+    expect(rowCount(fixture.dbPath, "jobs")).toBe(1);
+    expect(fs.readdirSync(path.join(fixture.appDir, "backups"))).toEqual([]);
+  });
+
+  it.each(["stale", "other-database"])("does not block on a %s heartbeat", (kind) => {
+    const fixture = createFixture();
+    seedHeartbeat(fixture, kind === "stale" ? fixture.dbPath : path.join(fixture.appDir, "other.db"),
+      new Date(Date.now() - (kind === "stale" ? WORKER_RUNTIME_STALE_AFTER_MS + 1_000 : 0)).toISOString());
+    expect(inspectJobDataPurge({ appDir: fixture.appDir }).freshWorkerCount).toBe(0);
+    expect(executeJobDataPurge({ appDir: fixture.appDir }).jobsDeleted).toBe(1);
+  });
+
+  it.each(["before-backup", "after-backup"])("aborts without deleting a concurrent job edit %s", (timing) => {
+    const fixture = createFixture();
+    const originalChmod = fs.chmodSync.bind(fs);
+    let injected = false;
+    vi.spyOn(fs, "chmodSync").mockImplementation((target, mode) => {
+      originalChmod(target, mode);
+      const isDatabaseBackup = path.basename(String(target)) === "jobctrl-before.db";
+      if (!injected && (timing === "after-backup" ? isDatabaseBackup : /job-data-purge-/.test(path.basename(String(target))))) {
+        injected = true;
+        const writer = openDatabase(fixture.dbPath);
+        try {
+          writer.prepare("UPDATE jobs SET title = 'Concurrent edit' WHERE job_id = ?").run(JOB_ID);
+        } finally {
+          writer.close();
+        }
+      }
+    });
+    expect(() => executeJobDataPurge({ appDir: fixture.appDir })).toThrow(/database changed during inventory or backup/);
+    expect(injected).toBe(true);
+    const live = openDatabase(fixture.dbPath);
+    try {
+      expect(live.prepare("SELECT title FROM jobs WHERE job_id = ?").get(JOB_ID)).toEqual({ title: "Concurrent edit" });
+    } finally {
+      live.close();
+    }
+    expect(rowCount(fixture.dbPath, "job_artifacts")).toBe(1);
+    expect(fs.readFileSync(path.join(fixture.appDir, "tailored_resumes", "resume-approved.pdf"), "utf8"))
+      .toBe("registered-tailored-resume");
+    expect(fs.readFileSync(path.join(fixture.appDir, "logs", "registered-apply.log"), "utf8"))
+      .toBe("registered apply log");
+    const bundles = fs.readdirSync(path.join(fixture.appDir, "backups"));
+    const backup = new Database(path.join(fixture.appDir, "backups", bundles[0]!, "jobctrl-before.db"), { readonly: true });
+    try {
+      expect(backup.prepare("SELECT title FROM jobs WHERE job_id = ?").get(JOB_ID))
+        .toEqual({ title: timing === "after-backup" ? "Purge me" : "Concurrent edit" });
+    } finally {
+      backup.close();
+    }
   });
 });

@@ -100,6 +100,23 @@ operational-attempt metrics from non-job stages are separate authorities and
 remain. Bundled Temporal history is outside this command; the pre-purge
 database and archived files remain recoverable under `backups/`.
 
+The purge inventory separately reports retained auxiliary/history rows, including
+on a no-op. These are outside the deletion boundary and can still cite removed
+jobs, runs, or feedback signals:
+
+| Retained rows | Remaining references or effect |
+| --- | --- |
+| `manual_capture_queue` with `job_id IS NULL` | Includes pending Discovery captures and their `retry_context_json`; they can still appear as required on the Discovery page. Job-linked captures cascade with their Job. |
+| `source_locator_candidates` | Retains discovered source URLs and manual-action reasons. |
+| `learning_recommendation_jobs`, `learning_recommendation_evidence_jobs` | Immutable learning provenance retains historical JobIds. |
+| `learning_recommendation_evidence`, `tailoring_feedback_signal_reviews`, `tailoring_feedback_signal_contradictions` | Append-only evidence/reviews retain signal/review references and historical JobIds even after source signals cascade away. |
+| `role_match_feedback_suggestions` | Retains `evidence_json`, which may cite purged jobs or runs. |
+
+Counts cover local rows in these retained sets, not only rows whose referenced
+source still exists. The command does not rewrite immutable learning history or
+dismiss pending captures. “Nothing remains in the purge boundary” therefore
+does not mean this auxiliary/history data is empty.
+
 ### Exact v9 runtime and compatible cutovers
 
 Schema v9 is the exact runtime contract. The native lifecycle upgrades admitted

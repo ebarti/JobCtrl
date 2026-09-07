@@ -49,6 +49,17 @@ operational attempt remains. Separately prove active work and an artifact path
 outside the owned generated-data roots fail before any backup or mutation.
 Never run this QA gate against a real user workspace.
 
+Also seed provisional missing-history workflow/run pairs and prove the CLI lists
+their exact IDs, refuses them, and permits the documented exact-row offline
+clearance only for a matching provisional pair. Simulate the Temporal verification
+precondition with disposable absent-history fixtures; never clear real rows in QA.
+Verify a fresh heartbeat for the selected database refuses before backup, while
+stale or other-database heartbeats do not. Inject a commit from another SQLite
+connection after the backup and before deletion: the command must preserve that
+write and every generated file. Seed retained pending captures, source candidates,
+learning provenance/reviews, and role-feedback evidence; verify inventory, purge,
+and no-op output disclose their retained counts and preserve their stored values.
+
 ## Pull-request CI
 
 CI is plain path-filtered GitHub Actions with no routing layer: each workflow

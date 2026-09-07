@@ -5,6 +5,7 @@ import path from "node:path";
 
 import { openDatabase, openReadOnlyDatabase, type SqliteDatabase } from "./db.js";
 import { permanentlyDeleteJobs } from "./write-model.js";
+import { WORKER_RUNTIME_STALE_AFTER_MS } from "./worker-runtime-telemetry.js";
 
 export const JOB_DATA_PURGE_CONFIRMATION = "DELETE-ALL-JOB-DATA";
 
@@ -71,6 +72,16 @@ const JOB_OPERATION_TABLES = [
   "discovery_search_units",
   "pipeline_step_projections",
   "source_quality_stats",
+] as const;
+
+const RETAINED_REFERENCE_TABLES = [
+  "source_locator_candidates",
+  "learning_recommendation_jobs",
+  "learning_recommendation_evidence_jobs",
+  "learning_recommendation_evidence",
+  "tailoring_feedback_signal_reviews",
+  "tailoring_feedback_signal_contradictions",
+  "role_match_feedback_suggestions",
 ] as const;
 
 /**
@@ -150,6 +161,9 @@ type WorkspaceAuthorities = {
 export type JobDataPurgePlan = {
   activeStageCount: number;
   activeWorkflowCount: number;
+  freshWorkerCount: number;
+  provisionalWorkflows: Array<{ workflowId: string; temporalRunId: string | null }>;
+  retainedReferenceRows: Record<string, number>;
   appDir: string;
   databaseBytes: number;
   databasePath: string;
@@ -565,11 +579,56 @@ function activeWorkCounts(db: SqliteDatabase): { activeStageCount: number; activ
   };
 }
 
-function assertNoActiveWork(db: SqliteDatabase): void {
+function provisionalWorkflows(db: SqliteDatabase): JobDataPurgePlan["provisionalWorkflows"] {
+  return db.prepare(
+    `SELECT workflow_id AS workflowId, temporal_run_id AS temporalRunId
+       FROM workflow_run_projections
+      WHERE tenant_id = ? AND LOWER(status) = 'terminated'
+        AND LOWER(COALESCE(error_code, '')) = 'reconciled_not_found'
+      ORDER BY workflow_id`,
+  ).all(LOCAL_TENANT) as JobDataPurgePlan["provisionalWorkflows"];
+}
+
+function freshWorkerCount(db: SqliteDatabase, databasePath: string): number {
+  const expectedPath = fs.realpathSync(databasePath);
+  const now = Date.now();
+  const rows = db.prepare(
+    "SELECT db_path, last_seen_at FROM worker_runtime_heartbeats WHERE component = 'temporal-worker'",
+  ).all() as Array<{ db_path: string; last_seen_at: string }>;
+  return rows.filter((row) => {
+    const workerPath = path.resolve(row.db_path);
+    const effectivePath = fs.existsSync(workerPath) ? fs.realpathSync(workerPath) : workerPath;
+    const age = now - Date.parse(row.last_seen_at);
+    return effectivePath === expectedPath && age <= WORKER_RUNTIME_STALE_AFTER_MS;
+  }).length;
+}
+
+function retainedReferenceRows(db: SqliteDatabase): Record<string, number> {
+  return {
+    manual_capture_queue: countRows(
+      db, "SELECT COUNT(*) AS count FROM manual_capture_queue WHERE tenant_id = ? AND job_id IS NULL", [LOCAL_TENANT],
+    ),
+    ...Object.fromEntries(RETAINED_REFERENCE_TABLES.map((table) => [
+      table, countRows(db, `SELECT COUNT(*) AS count FROM ${table} WHERE tenant_id = ?`, [LOCAL_TENANT]),
+    ])),
+  };
+}
+
+function assertNoActiveWork(db: SqliteDatabase, databasePath: string): void {
+  const workers = freshWorkerCount(db, databasePath);
+  if (workers > 0) {
+    throw new Error(
+      `Refusing to purge: ${workers} fresh worker heartbeat(s) for this database. Stop every JobCtrl process, verify no process has the database open, and wait at least ${WORKER_RUNTIME_STALE_AFTER_MS / 1_000} seconds after the last heartbeat.`,
+    );
+  }
   const active = activeWorkCounts(db);
   if (active.activeStageCount > 0 || active.activeWorkflowCount > 0) {
+    const provisional = provisionalWorkflows(db);
     throw new Error(
-      `Refusing to purge while JobCtrl reports active work (${active.activeStageCount} active stages, ${active.activeWorkflowCount} active workflows). Stop or cancel it first.`,
+      `Refusing to purge while JobCtrl reports active work (${active.activeStageCount} active stages, ${active.activeWorkflowCount} active workflows). Stop or cancel it first.`
+      + (provisional.length > 0
+        ? ` Provisional missing-history executions: ${JSON.stringify(provisional)}. Follow docs/local-development.md#resolve-provisional-missing-history-executions before retrying; cancellation cannot clear an absent execution.`
+        : ""),
     );
   }
 }
@@ -612,6 +671,9 @@ function buildPlan(db: SqliteDatabase, appDir: string): JobDataPurgePlan {
   const active = activeWorkCounts(db);
   return {
     ...active,
+    freshWorkerCount: freshWorkerCount(db, databasePath),
+    provisionalWorkflows: provisionalWorkflows(db),
+    retainedReferenceRows: retainedReferenceRows(db),
     appDir,
     databaseBytes: fs.statSync(databasePath).size,
     databasePath,
@@ -763,6 +825,9 @@ export function executeJobDataPurge(options: JobDataPurgeOptions = {}): JobDataP
   let backupDirectory: string | null = null;
   let databaseBackupPath: string | null = null;
   try {
+    // Compare on this connection: another connection's commit changes this
+    // value, even when it only edits job data excluded from preservation hashes.
+    const plannedDataVersion = db.pragma("data_version", { simple: true });
     const plan = buildPlan(db, appDir);
     const hasGeneratedEntries = plan.generatedEntries > 0;
     const hasRegisteredLogFiles = plan.registeredLogFileCount > 0;
@@ -786,7 +851,7 @@ export function executeJobDataPurge(options: JobDataPurgeOptions = {}): JobDataP
       };
     }
 
-    assertNoActiveWork(db);
+    assertNoActiveWork(db, databasePath);
     const registeredFiles = classifyRegisteredFiles(appDir, registeredArtifactPaths(db));
     const preservedBefore = preservationSnapshot(db, appDir);
     assertWorkspaceAuthorities(authorities);
@@ -800,7 +865,12 @@ export function executeJobDataPurge(options: JobDataPurgeOptions = {}): JobDataP
     let jobsDeleted = 0;
     const transaction = db.transaction(() => {
       assertWorkspaceAuthorities(authorities);
-      assertNoActiveWork(db);
+      // BEGIN IMMEDIATE now excludes later writers. Refuse any write since
+      // inventory began, including writes during or after VACUUM INTO.
+      if (db.pragma("data_version", { simple: true }) !== plannedDataVersion) {
+        throw new Error("Refusing to purge: the database changed during inventory or backup. Nothing was deleted; stop all writers and rerun the inventory and confirmed command.");
+      }
+      assertNoActiveWork(db, databasePath);
       assertPreserved(preservedBefore, preservationSnapshot(db, appDir));
       for (const directoryName of GENERATED_DIRECTORY_NAMES) {
         stageGeneratedDirectory(appDir, backupDirectory!, directoryName, staged);
