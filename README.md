@@ -254,13 +254,16 @@ evidence, qualifications, and the complete capability matrix.
   glyphs, punctuation spacing, typography, and line wrapping, while a separate
   invisible text layer keeps the download searchable and extractable. The
   export action does not register a JobCtrl artifact or change Apply approval
-  state. On Profile, direct canonical text edits to the name,
-  executive profile, position summaries, and experience bullets enter the same
-  validated form draft as the boxed editor and follow its normal autosave.
+  state. On Profile, edits to names and contact text, address parts, summaries,
+  role titles, companies, locations and dates, education, bullets and individual
+  skills enter the same form draft as the boxed editor and follow its normal
+  validation and autosave. Clearing a field temporarily still allows typing and undo.
   Plate projects only fields changed from the mounted baseline; unrelated boxed
   edits are preserved, and a same-field or structural conflict is surfaced
   instead of being overwritten;
-  formatting and composite layout lines remain local to the mounted document.
+  fields sharing a display line retain their individual owners. Formatting and
+  link presentation remain local to the mounted document; edit professional
+  URLs in Profile data.
   The Profile editor also owns resume experience order: move roles up or down,
   or apply the explicit newest-first sort, and the saved sequence is used by
   baseline and tailored resumes.

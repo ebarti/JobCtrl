@@ -140,8 +140,9 @@ scoped axe checks: the trigger and value must use the resume toolbar's matching
 foreground/background in both light and dark app themes, including the themed
 Apply review toolbar.
 
-For Profile Plate text projection, edit an experience bullet or non-empty
-position summary in the Plate document, switch to **Profile data**, and verify
+For Profile Plate text projection, edit the fifth experience title, company,
+location and date, a bullet and summary, education fields, an individual skill
+and its label, and address text; switch to **Profile data** and verify
 the matching boxed field contains the same unsaved value and the normal Profile
 dirty/save controls appear. Include deletion plus digits or punctuation so the
 check exercises Plate's model-change path rather than a native browser input
@@ -149,13 +150,23 @@ event. Saving must persist that exact field through the normal Profile mutation.
 While both panes are open, make an unrelated boxed edit before editing Plate
 and verify both changes survive. If the boxed editor removes or changes the
 same bullet first, the Plate projection must preserve the boxed structure and
-surface a conflict. A formatting-only change or edit to a composite
-company/location/title/date line must not create a guessed profile-field edit.
+surface a conflict. Clear a required title, continue typing, and undo it: an
+incomplete intermediate draft must not freeze projection. Type spaces and
+punctuation in right-aligned location/date cells and retain the caret's order.
+Fields in composite lines must have individual source bindings; include a pipe
+inside an institution/location and a comma inside a single skill. Reorder roles
+before projecting a title and prove identity, not array position, owns the edit.
+A formatting-only change must not create a guessed profile-field edit.
 Profile object-draft regression tests also verify unknown nested fields and raw
 numeric strings survive in the outgoing request. Backend schema normalization
 is unchanged. The isolated profile browser fixture uses real GET/PATCH and
 SQLite persistence for supported values/order, with deterministic preview HTML
 bound to each current stored profile; it must not start Python or provider work.
+Hold the fifth-title autosave before SQLite commit and, separately, after commit
+but before its response. Continue typing a newer title while the save is pending.
+Releasing the older response must preserve the same newer value in Plate and
+Profile data, including after the next autosave and reload. Neither optimistic
+query updates nor successful older responses may refresh an active draft preview.
 
 Verify the Size control displays its relative value as a percentage (100% at
 the resume default) with high-contrast text rather than exposing the internal

@@ -1,5 +1,6 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
+import { ProfileSchema } from "@jobctrl/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -181,6 +182,67 @@ describe("<ProfileForm>", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(
       "Some resume editor changes were not applied because the matching Profile data changed.",
     );
+  });
+
+  it("saves the fifth role's title and every mapped scalar field by identity, preserving unrelated data", async () => {
+    const user = userEvent.setup();
+    const initial = structuredClone(sampleProfileResponse);
+    const profile = ProfileSchema.parse(initial.profile);
+    profile.resume.experience_entries = Array.from({ length: 5 }, (_, index) => ({
+      id: `role-${index + 1}`, title: `Role ${index + 1}`, company: "Fixture", location: "Remote",
+      date_range: "Jan 2020 - Present", summary: "Original summary", bullets: [`Evidence ${index + 1}`], achievement_evidence: [],
+    }));
+    profile.resume.education_entries = [{ id: "edu-1", degree: "BSc", institution: "Old University", location: "Old City", date: "2019" }];
+    profile.resume.skill_categories = [{ id: "skill-1", label: "Tools", items: ["CI, CD", "Java"] }];
+    initial.profile = { ...profile, futureData: { keep: ["unchanged"] } };
+    let controller: ProfilePlateTextController | null = null;
+    const updateProfile = vi.fn(async (request) => ({ ...initial, profile: JSON.parse(request.profileText) }));
+    renderWithProviders(<ProfileForm initial={initial} onPlateTextControllerChange={(value) => { controller = value; }} />,
+      { ports: buildTestPorts({ api: { updateProfile } }), withRouter: true });
+    await openExperienceEntries(user);
+    await user.click(screen.getByRole("button", { name: "Move Fixture - Role 5 up" }));
+    const changes = [
+      ["experience:role-5:title", "Role 5", "Principal Engineer"],
+      ["experience:role-5:company", "Fixture", "New Company"],
+      ["experience:role-5:location", "Remote", "New City | Hybrid"],
+      ["experience:role-5:date_range", "Jan 2020 - Present", "Feb 2021 - Dec 2025"],
+      ["education:edu-1:degree", "BSc", "MSc"], ["education:edu-1:institution", "Old University", "New University"],
+      ["education:edu-1:location", "Old City", "New City"], ["education:edu-1:date", "2019", "2021"],
+      ["skills:skill-1:label", "Tools", "Languages"], ["skills:skill-1:item:1", "CI, CD", "Build, Release"],
+      ["personal:city", profile.personal.city ?? "", "Profile City"],
+      ["personal:phone", profile.personal.phone ?? "", "+44 1234 567890"],
+    ].map(([semanticId, baseline, desired]) => ({ semanticId: semanticId!, baselineTexts: [baseline!], plateTexts: [desired!] }));
+    act(() => controller?.apply(changes));
+    expect(screen.getAllByLabelText("Title", { exact: true })[3]).toHaveValue("Principal Engineer");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(1));
+    const saved = JSON.parse(updateProfile.mock.calls[0]![0].profileText);
+    expect(saved.resume.experience_entries.map((entry: { id: string }) => entry.id)).toEqual(["role-1", "role-2", "role-3", "role-5", "role-4"]);
+    expect(saved.resume.experience_entries[3]).toMatchObject({ id: "role-5", title: "Principal Engineer", company: "New Company", location: "New City | Hybrid", date_range: "Feb 2021 - Dec 2025", bullets: ["Evidence 5"] });
+    expect(saved.resume.experience_entries[4]).toEqual(profile.resume.experience_entries[3]);
+    expect(saved.resume.education_entries[0]).toEqual({ id: "edu-1", degree: "MSc", institution: "New University", location: "New City", date: "2021" });
+    expect(saved.resume.skill_categories[0]).toEqual({ id: "skill-1", label: "Languages", items: ["Build, Release", "Java"] });
+    expect(saved.personal).toMatchObject({ city: "Profile City", phone: "+44 1234 567890" });
+    expect(saved.futureData).toEqual({ keep: ["unchanged"] });
+  });
+
+  it("undoes a title edit, including deletion, but preserves a newer boxed title as a conflict", async () => {
+    const user = userEvent.setup();
+    let controller: ProfilePlateTextController | null = null;
+    renderWithProviders(<ProfileForm initial={sampleProfileResponse} onPlateTextControllerChange={(value) => { controller = value; }} />, { withRouter: true });
+    await openExperienceEntries(user);
+    const title = screen.getByLabelText("Title", { exact: true });
+    const original = (title as HTMLInputElement).value;
+    const change = { semanticId: "experience:exp-1:title", baselineTexts: [original], plateTexts: [""] };
+    act(() => controller?.apply([change]));
+    expect(title).toHaveValue("");
+    act(() => controller?.apply([]));
+    expect(title).toHaveValue(original);
+    fireEvent.change(title, { target: { value: "Newer boxed title" } });
+    act(() => controller?.apply([{ ...change, plateTexts: ["Conflicting Plate title"] }]));
+    expect(title).toHaveValue("Newer boxed title");
+    expect(screen.getByRole("alert")).toHaveTextContent("Some resume editor changes were not applied");
   });
 
   it("keeps the address field editable when Google Maps is not configured", async () => {
@@ -464,6 +526,7 @@ describe("<ProfileForm>", () => {
 
   it("keeps newer edits when an autosave response returns for an older snapshot", async () => {
     vi.useFakeTimers();
+    const onPreviewSourceChange = vi.fn();
     let resolveUpdate: ((response: typeof sampleProfileResponse) => void) | undefined;
     const updateProfile = vi.fn(
       (request) =>
@@ -472,9 +535,10 @@ describe("<ProfileForm>", () => {
           resolveUpdate = resolve;
         }),
     );
-    renderWithProviders(<ProfileForm initial={sampleProfileResponse} section="target-search" />, {
+    renderWithProviders(<ProfileForm initial={sampleProfileResponse} section="target-search" onPreviewSourceChange={onPreviewSourceChange} />, {
       ports: buildTestPorts({ api: { updateProfile } }),
     });
+    expect(onPreviewSourceChange).toHaveBeenCalledTimes(1);
 
     const targetRole = screen.getByLabelText("Target roles 1");
     fireEvent.change(targetRole, {
@@ -501,6 +565,7 @@ describe("<ProfileForm>", () => {
 
     expect(targetRole).toHaveValue("VP of Engineering");
     expect(screen.getByText("Saved; newer changes pending")).toBeInTheDocument();
+    expect(onPreviewSourceChange).toHaveBeenCalledTimes(1);
   });
 
   it("does not reset dirty edits when a saved autosave snapshot reaches the initial props", async () => {

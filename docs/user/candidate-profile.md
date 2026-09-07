@@ -60,13 +60,17 @@ the same rule: its entry list, selected evidence, and gaps/reusable-stories
 inspector stack instead of compressing the three-pane desktop workspace.
 
 The Plate toolbars on `/profile` and `/preferences` include **Export PDF**. On
-`/profile`, direct text edits with an unambiguous canonical owner—full name,
-executive profile, position summary, or experience bullet—update the same form
-draft shown by the boxed editor and follow its normal validation, undo, and
-autosave path. Combined display lines such as company/location/title/date and
-formatting-only changes are not split heuristically into profile facts; they
-remain local to the mounted Plate document. The Preferences Plate editor also
-remains a presentation-only draft.
+`/profile`, edits to names, address parts, email, phone, executive profile,
+experience titles, companies, locations, dates, summaries and bullets, education,
+and individual skills update the same draft shown by **Profile data**. Each
+field is bound to its saved entry identity, including fields sharing a display
+line; separators inside names or skills are preserved. Edits follow the normal
+validation, undo, and autosave path. Temporarily clearing a required field does
+not prevent further editing or undo; incomplete data still cannot be saved.
+Conflicting boxed edits or a mismatched preview are preserved and reported.
+Formatting, section headings, and link presentation remain document-local;
+edit professional URLs in **Profile data**. The Preferences Plate editor remains
+a presentation-only draft.
 
 The resume presentation follows the experience sequence saved in Profile. Each
 role has **Move up** and **Move down** controls for a custom sequence, and

@@ -50,6 +50,19 @@ describe("<ProfileEditor>", () => {
     expect(resumeSemanticTextChangesFromPlateValues(baseline, baseline)).toEqual([]);
   });
 
+  it("projects a bound title with its canonical spelling without rewriting its composite heading", () => {
+    const baseline = [{ type: "resume_block", tagName: "div", semanticId: "experience:role-5:heading", children: [
+      { type: "resume_inline", tagName: "span", profileField: "experience:role-5:title", profileSource: "Engineer’s Lead", children: [{ text: "Engineer's Lead" }] },
+      { type: "resume_inline", tagName: "span", profileField: "experience:role-5:company", profileSource: "Fixture", children: [{ text: "Fixture" }] },
+    ] }];
+    const edited = structuredClone(baseline);
+    edited[0]!.children[0]!.children[0]!.text = "Principal Engineer";
+    expect(resumeSemanticTextChangesFromPlateValues(baseline, baseline)).toEqual([]);
+    expect(resumeSemanticTextChangesFromPlateValues(baseline, edited)).toEqual([
+      { semanticId: "experience:role-5:title", baselineTexts: ["Engineer’s Lead"], plateTexts: ["Principal Engineer"] },
+    ]);
+  });
+
   it("serializes resume theme tokens without losing print precision", () => {
     const style = resumeTemplatePreviewStyle({
       ...sampleResumeTemplateListResponse.effectiveDefaultVersion.theme,

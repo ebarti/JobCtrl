@@ -609,4 +609,141 @@ test.describe("structured profile persistence", () => {
     await injectAxe(page);
     await checkA11y(page, ".profile-data-workspace", { includedImpacts: ["critical", "serious"] });
   });
+
+  for (const committedBeforeResponse of [false, true]) {
+    test(`newer fifth-title typing survives autosave held ${committedBeforeResponse ? "after" : "before"} commit`, async ({ page, baseURL }) => {
+      const stored = await (await page.request.get(`${apiOrigin}/v1/profile`)).json();
+      stored.profile.resume.experience_entries = Array.from({ length: 5 }, (_, index) => ({
+        id: `race-role-${index + 1}`, company: "Fixture", title: `Original Role ${index + 1}`,
+        location: "London", date_range: "Jan 2020 - Present", summary: "Synthetic scope.", bullets: [`Evidence ${index + 1}.`],
+      }));
+      expect((await page.request.patch(`${apiOrigin}/v1/profile`, {
+        headers: { origin: new URL(baseURL!).origin, "sec-fetch-site": "same-origin" },
+        data: { profileText: JSON.stringify(stored.profile), styleText: JSON.stringify(stored.style), templateText: stored.templateText },
+      })).status()).toBe(200);
+      await page.goto("/profile");
+      await page.getByRole("button", { name: /^Experience entries/ }).click();
+      await page.getByRole("button", { name: "Resume editor", exact: true }).click();
+      const title = page.getByRole("textbox", { name: "Baseline resume editor editor" })
+        .locator('[data-resume-profile-field="experience:race-role-5:title"]');
+      const boxed = page.locator("#structured-profile-resume-experience-entries-4-title");
+      await expect(title).toHaveText("Original Role 5");
+      const replace = async (text: string) => {
+        await title.locator('[data-slate-string="true"]').first().click();
+        await title.evaluate((element) => {
+          const range = document.createRange(); range.selectNodeContents(element);
+          const selection = window.getSelection(); selection?.removeAllRanges(); selection?.addRange(range);
+        });
+        await page.keyboard.press("Backspace");
+        await page.keyboard.type(text);
+        await expect(title).toHaveText(text);
+        await expect(boxed).toHaveValue(text);
+      };
+      let release!: () => void;
+      let captured!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      const arrival = new Promise<void>((resolve) => { captured = resolve; });
+      let held = false;
+      await page.route("**/v1/profile", async (route) => {
+        if (route.request().method() !== "PATCH" || held) return route.continue();
+        held = true;
+        const response = committedBeforeResponse ? await route.fetch() : null;
+        captured();
+        await gate;
+        if (response) await route.fulfill({ response });
+        else await route.continue();
+      });
+      try {
+        await replace("Autosaved Title A");
+        await arrival;
+        await replace("Newer unsaved Title B");
+        release();
+        await expect(page.getByText("Saved; newer changes pending", { exact: true })).toBeAttached();
+        await expect(title).toHaveText("Newer unsaved Title B");
+        await expect(boxed).toHaveValue("Newer unsaved Title B");
+        await expect.poll(async () => {
+          const saved = await (await page.request.get(`${apiOrigin}/v1/profile`)).json();
+          return saved.profile.resume.experience_entries[4].title;
+        }, { timeout: 15_000 }).toBe("Newer unsaved Title B");
+        await page.reload();
+        await page.getByRole("button", { name: "Resume editor", exact: true }).click();
+        await expect(title).toHaveText("Newer unsaved Title B");
+      } finally {
+        release();
+      }
+    });
+  }
+
+  test("Plate title and composite fields synchronize through real save and reload", async ({ page, baseURL }) => {
+    test.setTimeout(90_000);
+    const failures: string[] = [];
+    page.on("pageerror", (error) => failures.push(error.message));
+    const stored = await (await page.request.get(`${apiOrigin}/v1/profile`)).json();
+    stored.profile.personal.address = "42 Fixture Road";
+    stored.profile.personal.city = "London";
+    stored.profile.personal.postal_code = "W1";
+    stored.profile.personal.country = "UK";
+    stored.profile.resume.experience_entries = Array.from({ length: 5 }, (_, index) => ({
+      id: `sync-role-${index + 1}`, company: "Fixture Company", title: `Original Role ${index + 1}`,
+      location: "London | Remote", date_range: "Jan 2020 - Present", summary: "Synthetic scope.", bullets: [`Synthetic achievement ${index + 1}.`],
+    }));
+    stored.profile.resume.education_entries = [{ id: "sync-edu", degree: "BSc", institution: "Fixture | University", location: "London", date: "2019" }];
+    stored.profile.resume.skill_categories = [{ id: "sync-skills", label: "Tools: Core", items: ["CI, CD", "Java"] }];
+    const seed = await page.request.patch(`${apiOrigin}/v1/profile`, {
+      headers: { origin: new URL(baseURL!).origin, "sec-fetch-site": "same-origin" },
+      data: { profileText: JSON.stringify(stored.profile), styleText: JSON.stringify(stored.style), templateText: stored.templateText },
+    });
+    expect(seed.status()).toBe(200);
+    const seededProfile = await seed.json();
+    await page.goto("/profile");
+    await page.getByRole("button", { name: /^Experience entries/ }).click();
+    await page.getByRole("button", { name: "Resume editor", exact: true }).click();
+    const editor = page.getByRole("textbox", { name: "Baseline resume editor editor" });
+    const replace = async (field: string, value: string) => {
+      const target = editor.locator(`[data-resume-profile-field="${field}"]`);
+      await expect(target).toHaveCount(1);
+      await target.locator('[data-slate-string="true"]').first().click();
+      await target.evaluate((element) => {
+        const range = document.createRange();
+        range.selectNodeContents(element);
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+      });
+      await page.keyboard.press("Backspace");
+      await page.keyboard.type(value);
+      await expect(target).toHaveText(value);
+    };
+    await replace("experience:sync-role-5:title", "Principal Engineer");
+    await expect(page.locator("#structured-profile-resume-experience-entries-4-title")).toHaveValue("Principal Engineer");
+    await replace("experience:sync-role-5:company", "Changed Company");
+    await replace("experience:sync-role-5:location", "Paris | Hybrid");
+    await replace("experience:sync-role-5:date_range", "Feb 2021 - Dec 2025");
+    await replace("education:sync-edu:degree", "MSc");
+    await replace("education:sync-edu:institution", "Changed | University");
+    await replace("education:sync-edu:location", "Paris");
+    await replace("education:sync-edu:date", "2021");
+    await replace("skills:sync-skills:label", "Languages: Core");
+    await replace("skills:sync-skills:item:1", "Build, Release");
+    await replace("personal:city", "Paris");
+    await page.getByRole("button", { name: "Profile data", exact: true }).click();
+    await expect(page.locator("#structured-profile-resume-experience-entries-4-title")).toHaveValue("Principal Engineer");
+    await expect(page.getByRole("alert")).toHaveCount(0);
+    const save = page.getByRole("button", { name: "Save changes", exact: true });
+    if (await save.isVisible()) await save.click();
+    await expect(page.getByText("Profile saved", { exact: true })).toBeVisible();
+    await page.reload();
+    const result = await (await page.request.get(`${apiOrigin}/v1/profile`)).json();
+    expect(result.profile.resume.experience_entries[4]).toMatchObject({ title: "Principal Engineer", company: "Changed Company", location: "Paris | Hybrid", date_range: "Feb 2021 - Dec 2025" });
+    expect(result.profile.resume.experience_entries[0]).toEqual(seededProfile.profile.resume.experience_entries[0]);
+    expect(result.profile.resume.education_entries[0]).toEqual({ id: "sync-edu", degree: "MSc", institution: "Changed | University", location: "Paris", date: "2021" });
+    expect(result.profile.resume.skill_categories[0]).toEqual({ id: "sync-skills", label: "Languages: Core", items: ["Build, Release", "Java"] });
+    expect(result.profile.personal.city).toBe("Paris");
+    await page.getByRole("button", { name: "Resume editor", exact: true }).click();
+    await expect(editor.locator('[data-resume-profile-field="experience:sync-role-5:title"]')).toHaveText("Principal Engineer");
+    await expect(editor.locator('[data-resume-profile-field="skills:sync-skills:item:1"]')).toHaveText("Build, Release");
+    await injectAxe(page);
+    await checkA11y(page, ".profile-workspace", { includedImpacts: ["critical", "serious"] });
+    expect(failures).toEqual([]);
+  });
 });

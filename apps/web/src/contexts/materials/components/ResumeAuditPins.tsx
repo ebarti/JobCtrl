@@ -161,6 +161,8 @@ interface ResumePlateDomElement extends TElement {
   readonly pageNumber?: number | undefined;
   readonly semanticId?: string | null | undefined;
   readonly tagName: string;
+  readonly profileField?: string | null | undefined;
+  readonly profileSource?: string | null | undefined;
   readonly textAlign?: ResumeEditorTextAlign | null | undefined;
 }
 
@@ -958,6 +960,7 @@ function resumePlateChildrenFromDom(element: Element): Descendant[] {
 
 function resumePlateNodeFromDom(node: Node): Descendant | null {
   if (node.nodeType === Node.TEXT_NODE) {
+    if (node.parentElement?.hasAttribute("data-resume-profile-separator")) return { text: node.textContent ?? "" };
     return resumePlateTextNode(node.textContent ?? "");
   }
   if (!(node instanceof HTMLElement)) return null;
@@ -976,6 +979,8 @@ function resumePlateNodeFromDom(node: Node): Descendant | null {
     lineNumber: parsePositiveInteger(node.getAttribute("data-resume-line-number")) ?? undefined,
     pageNumber: parsePositiveInteger(node.getAttribute("data-resume-page")) ?? undefined,
     semanticId: node.getAttribute("data-resume-layout-target") || null,
+    profileField: node.getAttribute("data-resume-profile-field"),
+    profileSource: node.getAttribute("data-resume-profile-source"),
     tagName: hasAnyResumeClass(className, RESUME_PLATE_BLOCK_CLASS_TOKENS) ? "div" : tagName,
     type: isInline ? "resume_inline" : "resume_block",
   };
@@ -1107,6 +1112,10 @@ function resumeSemanticTextSnapshotFromPlateValue(
     texts.push(...resumeSemanticTextsFromPlateNode(node));
     textsBySemanticId.set(semanticId, texts);
   };
+  const hasProfileField = (node: Descendant): boolean => {
+    if ("text" in node) return false;
+    return typeof node.profileField === "string" || node.children.some(hasProfileField);
+  };
 
   const visit = (node: Descendant): void => {
     if ("text" in node) return;
@@ -1125,8 +1134,9 @@ function resumeSemanticTextSnapshotFromPlateValue(
       });
       return;
     }
-    const semanticId = typeof node.semanticId === "string" ? node.semanticId.trim() : "";
-    if (semanticId) {
+    const fieldId = typeof node.profileField === "string" ? node.profileField : "";
+    const semanticId = fieldId || (typeof node.semanticId === "string" ? node.semanticId.trim() : "");
+    if (semanticId && (fieldId || !node.children.some(hasProfileField))) {
       append(semanticId, node);
     }
     node.children.forEach(visit);
@@ -1143,6 +1153,15 @@ export function resumeSemanticTextChangesFromPlateValues(
   const baseline = resumeSemanticTextSnapshotFromPlateValue(baselineValue);
   const current = resumeSemanticTextSnapshotFromPlateValue(plateValue);
   const semanticIds = new Set([...baseline.keys(), ...current.keys()]);
+  const profileSources = new Map<string, string[]>();
+  const collectSources = (node: Descendant): void => {
+    if ("text" in node) return;
+    if (typeof node.profileField === "string" && typeof node.profileSource === "string") {
+      profileSources.set(node.profileField, [...(profileSources.get(node.profileField) ?? []), node.profileSource]);
+    }
+    node.children.forEach(collectSources);
+  };
+  baselineValue.forEach(collectSources);
 
   return Array.from(semanticIds).flatMap((semanticId) => {
     const baselineTexts = baseline.get(semanticId) ?? [];
@@ -1153,7 +1172,7 @@ export function resumeSemanticTextChangesFromPlateValues(
     ) {
       return [];
     }
-    return [{ semanticId, baselineTexts, plateTexts }];
+    return [{ semanticId, baselineTexts: profileSources.get(semanticId) ?? baselineTexts, plateTexts }];
   });
 }
 
@@ -2134,6 +2153,7 @@ function ResumeBlockElement(props: PlateElementProps<ResumePlateDomElement>): JS
       ...props.attributes,
       className: className || undefined,
       "data-resume-layout-target": element.semanticId ?? undefined,
+      "data-resume-profile-field": element.profileField ?? undefined,
       "data-resume-line-number": element.lineNumber,
       "data-resume-page": element.pageNumber,
       onClick: handleSelect,
@@ -2162,6 +2182,7 @@ function ResumeInlineElement(props: PlateElementProps<ResumePlateDomElement>): J
       ...props.attributes,
       className: element.className,
       "data-resume-layout-target": element.semanticId ?? undefined,
+      "data-resume-profile-field": element.profileField ?? undefined,
       "data-resume-line-number": element.lineNumber,
       href: isLink ? element.href : undefined,
       rel: isExternalLink ? "noreferrer" : undefined,
