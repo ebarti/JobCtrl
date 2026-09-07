@@ -355,7 +355,7 @@ Update this table with actual results; do not mark proposals implemented.
 
 | Phase | PR and head | Deleted mechanism | Tests and product proof | Review / QA |
 | --- | --- | --- | --- | --- |
-| 1 | [#865](https://github.com/ebarti/JobCtrl/pull/865); reviewed implementation `2428ce2dd` | View-owned five-snapshot draft selector and reply merger removed; cache mutation publication reconciles saved state | Original focused web/type checks and web/API/Storybook/docs builds passed; promotion fix passed 71 affected tests and all four isolated Chromium scenarios with scoped axe clean | The promotion High passed independent review and QA at `2428ce2dd`; the later pending-create Medium is addressed by the follow-up below, whose independent gates remain pending |
+| 1 | [#865](https://github.com/ebarti/JobCtrl/pull/865); reviewed implementation `2428ce2dd` | View-owned five-snapshot draft selector and reply merger removed; cache mutation publication reconciles saved state | Original focused web/type checks and web/API/Storybook/docs builds passed; promotion fix passed 71 affected tests and all four isolated Chromium scenarios with scoped axe clean | The promotion High passed independent review and QA at `2428ce2dd`; the pending-create and cached-job isolation corrections passed independent review at `55fa84f0`; cumulative synchronized-head QA remains pending |
 | 2 | Pending | Pending | Pending | Pending |
 | 3 | Pending | Pending | Pending | Pending |
 | 4 | Pending | Pending | Pending | Pending |
@@ -366,8 +366,9 @@ regression reproduces the reset on the reviewed implementation; the corrected
 view, mutation, and reconciler suites pass 73 tests. Web typecheck/build and all
 six isolated Chromium artifact-comparison scenarios pass, including actual
 typing while draft creation is pending and switching cached jobs with identical
-saved documents without carrying over local edits. Independent review and cumulative QA
-must cover this follow-up before the stack is complete.
+saved documents without carrying over local edits. Independent review passed at
+`55fa84f0`, including the unchanged cached-job counterexample and 73 focused
+tests. Cumulative synchronized-head QA remains required before completion.
 
 Delivery means four published PRs with the exact base chain above, necessary
 docs, passing independent gates and applicable CI, no unresolved Blocker/High
