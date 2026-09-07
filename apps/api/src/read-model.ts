@@ -3169,6 +3169,7 @@ function profileEvidencePointers(db: SqliteDatabase, tenantId: string): ProfileE
       });
     }
   }
+  const canonicalEvidenceIds = new Set(pointers.map((pointer) => pointer.evidenceId));
   if (tableExists(db, "candidate_profile_experience_entries") && tableExists(db, "candidate_profile_experience_bullets")) {
     const rows = allRows<{
       entry_id: string;
@@ -3198,9 +3199,11 @@ function profileEvidencePointers(db: SqliteDatabase, tenantId: string): ProfileE
       const entryId = safeAuditText(bullet.entry_id, 160);
       const sourceText = safeAuditText(bullet.bullet_text, 1200);
       if (!entryId || !sourceText) continue;
+      const evidenceId = legacyBulletEvidenceId(entryId, Number(bullet.bullet_index ?? 0) + 1);
+      if (canonicalEvidenceIds.has(evidenceId)) continue;
       pointers.push({
         entryId,
-        evidenceId: legacyBulletEvidenceId(entryId, Number(bullet.bullet_index ?? 0) + 1),
+        evidenceId,
         sourceText,
         normalizedSourceText: normalizeEvidenceText(sourceText),
         senioritySignal: hasSenioritySignal([bullet.title, bullet.company, sourceText]),

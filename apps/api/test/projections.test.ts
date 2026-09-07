@@ -2481,6 +2481,104 @@ describe("apply_run_projections without legacy apply_runs table", () => {
     }
   });
 
+  it("keeps accepted artifact and requirement evidence bound to the same achievement after bullet sorting", async () => {
+    const { dbPath, cleanup } = withTempDb();
+    const sourceA = "Reduced incidents 40%.";
+    const sourceB = "Built APIs.";
+    const appOptions = { dbPath, configPath: path.join(path.dirname(dbPath), "config.json") };
+    try {
+      seedSchema(dbPath);
+      const app = buildApp(appOptions);
+      try {
+        const initial = await app.inject({
+          method: "PATCH", url: "/v1/profile", payload: { profile: {
+            personal: { full_name: "Sortable Evidence Candidate", email: "sort@example.com" },
+            resume: {
+              executive_profile: { baseline_text: "Platform engineer." },
+              experience_entries: [{ id: "role_1", title: "Engineer", company: "Acme", date_range: "2024-2025", bullets: [sourceA, sourceB] }],
+              education_entries: [], skill_categories: [], tailoring_rules: {},
+            },
+          } },
+        });
+        expect(initial.statusCode, initial.body).toBe(200);
+        const profile = initial.json().profile;
+        const evidenceId = profile.resume.experience_entries[0].achievement_evidence[0].id;
+        expect(evidenceId).toBe("role_1_bullet_1");
+
+        const db = new Database(dbPath);
+        try {
+          db.prepare(`INSERT INTO job_materials
+            (tenant_id, job_id, generation, status, created_at, updated_at)
+            VALUES ('local', ?, 1, 'complete', '2026-07-05T12:00:00Z', '2026-07-05T12:10:00Z')`).run(EVENT_JOB_ID);
+          db.prepare(`INSERT INTO job_materials_artifacts (
+            tenant_id, job_id, generation, artifact_type, artifact_id, status, path,
+            render_format, size_bytes, metadata_json, created_at
+          ) VALUES ('local', ?, 1, 'tailored_resume', 'sorted-resume', 'approved', '/tmp/synthetic-resume.txt', 'text', 12, ?, '2026-07-05T12:05:00Z')`).run(
+            EVENT_JOB_ID, JSON.stringify({ validation_mode: "normal", attempts: 1, quality_checks: { passed: true } }),
+          );
+          db.prepare(`INSERT INTO job_bullet_provenance (
+            tenant_id, job_id, generation, bullet_id, artifact_id, section, source_id,
+            evidence_ids_json, requirement_ids_json, matched_keywords_json, transform_type,
+            control, rationale, generated_text, position, created_at
+          ) VALUES ('local', ?, 1, 'experience:role_1#0', 'sorted-resume', 'experience', 'role_1', ?, '["req-reliability"]', '[]', 'reframe', 'rephrase_allowed', 'Used source achievement.', ?, 0, '2026-07-05T12:10:00Z')`).run(
+            EVENT_JOB_ID, JSON.stringify([evidenceId]), sourceA,
+          );
+          db.prepare(`INSERT INTO job_requirement_fit_reports (
+            tenant_id, job_id, score_version, employer_analysis_generation,
+            profile_snapshot_version, scoring_policy_version, formula_version,
+            resolved_fit_score, fit_band, confidence, summary_json, created_at
+          ) VALUES ('local', ?, 2, 1, 1, 1, 'v1', 8, 'strong', 'high', '{}', '2026-07-05T12:20:00Z')`).run(EVENT_JOB_ID);
+          db.prepare(`INSERT INTO job_requirement_fit_items (
+            tenant_id, job_id, score_version, requirement_id, requirement_text,
+            tier, weight, job_evidence_span, fit_json, contribution_json,
+            tailoring_json, artifact_coverage_json, position
+          ) VALUES ('local', ?, 2, 'req-reliability', 'Improve reliability', 'must_have', 1, 'reliability', ?, '{}', '{}', '{}', 0)`).run(
+            EVENT_JOB_ID, JSON.stringify({ kind: "matched", evidence_ids: [evidenceId], strength: "direct" }),
+          );
+        } finally {
+          db.close();
+        }
+
+        profile.resume.experience_entries[0].bullets = [sourceB, sourceA];
+        const reordered = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile } });
+        expect(reordered.statusCode, reordered.body).toBe(200);
+        const nextProfile = reordered.json().profile;
+        nextProfile.personal.preferred_name = "Sort Candidate";
+        const savedAgain = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile: nextProfile } });
+        expect(savedAgain.statusCode, savedAgain.body).toBe(200);
+      } finally {
+        await app.close();
+      }
+
+      const reopened = buildApp(appOptions);
+      try {
+        const loaded = await reopened.inject({ method: "GET", url: "/v1/profile" });
+        expect(loaded.statusCode, loaded.body).toBe(200);
+        expect(loaded.json().profile.resume.experience_entries[0].achievement_evidence).toEqual([
+          expect.objectContaining({ id: "role_1_bullet_2", source_text: sourceB, metrics: [] }),
+          expect.objectContaining({ id: "role_1_bullet_1", source_text: sourceA, metrics: ["40%"] }),
+        ]);
+        const artifact = await reopened.inject({ method: "GET", url: "/v1/artifacts/sorted-resume" });
+        expect(artifact.statusCode, artifact.body).toBe(200);
+        expect(artifact.json().tailoringExplanation.bulletProvenance).toMatchObject([
+          { evidenceIds: ["role_1_bullet_1"], sourceText: [sourceA], generatedText: sourceA },
+        ]);
+        const evidenceMap = await reopened.inject({ method: "GET", url: "/v1/evidence-map" });
+        expect(evidenceMap.statusCode, evidenceMap.body).toBe(200);
+        const achievement = evidenceMap.json().entries.find((entry: { evidenceId: string }) => entry.evidenceId === "role_1_bullet_1");
+        expect(achievement).toMatchObject({
+          title: sourceA, story: { action: sourceA, outcome: sourceA, metrics: ["40%"] },
+          resumeUsages: [{ artifactId: "sorted-resume", bulletId: "experience:role_1#0" }],
+          requirementUsages: [{ requirementId: "req-reliability", requirementFitKind: "matched" }],
+        });
+      } finally {
+        await reopened.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
   it("excludes soft-deleted and hidden jobs from the career evidence map", async () => {
     // Regression for the R5 evidence-usage index: soft delete only writes a
     // jobctrl_deleted_jobs tombstone (and hide only writes jobctrl_hidden_jobs),

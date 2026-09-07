@@ -254,7 +254,7 @@ export function StructuredProfileEditor({
   onProfileChange,
   onStyleChange,
 }: StructuredProfileEditorProps) {
-  const focusTargetsRef = useRef(new Map<string, HTMLInputElement | HTMLSelectElement>());
+  const focusTargetsRef = useRef(new Map<string, HTMLElement>());
   const pendingFocusKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -273,7 +273,7 @@ export function StructuredProfileEditor({
     }
   }, [profile]);
 
-  const registerFocusTarget = (key: string) => (element: HTMLInputElement | HTMLSelectElement | null) => {
+  const registerFocusTarget = (key: string) => (element: HTMLElement | null) => {
     if (element) {
       focusTargetsRef.current.set(key, element);
     } else {
@@ -449,6 +449,22 @@ export function StructuredProfileEditor({
       const path = `resume.experience_entries.${entryIndex}.bullets`;
       setPathValue(draft, path, [...editableTextArrayAt(draft, path), ""]);
     });
+  };
+
+  const bulletFocusKey = (entryIndex: number, bulletIndex: number, control: "up" | "down" | "text") =>
+    JSON.stringify(["bullet", entryIndex, bulletIndex, control]);
+
+  const moveBullet = (entryIndex: number, bulletIndex: number, offset: -1 | 1) => {
+    const path = `resume.experience_entries.${entryIndex}.bullets`;
+    const bullets = editableTextArrayAt(profile, path);
+    const targetIndex = bulletIndex + offset;
+    if (targetIndex < 0 || targetIndex >= bullets.length) {
+      return;
+    }
+    const reachedEnd = offset === -1 ? targetIndex === 0 : targetIndex === bullets.length - 1;
+    focusAfterDraftUpdate(bulletFocusKey(entryIndex, targetIndex, reachedEnd ? "text" : offset === -1 ? "up" : "down"));
+    [bullets[bulletIndex], bullets[targetIndex]] = [bullets[targetIndex]!, bullets[bulletIndex]!];
+    updateProfilePath(path, bullets);
   };
 
   const removeBullet = (entryIndex: number, bulletIndex: number) => {
@@ -1650,6 +1666,7 @@ export function StructuredProfileEditor({
                               </div>
                               <Textarea
                                 aria-label={`Bullet ${bulletIndex + 1}`}
+                                ref={registerFocusTarget(bulletFocusKey(index, bulletIndex, "text"))}
                                 value={bullet}
                                 onChange={(event) =>
                                   updateProfilePath(
@@ -1658,17 +1675,47 @@ export function StructuredProfileEditor({
                                   )
                                 }
                               />
-                              <Button
-                                className="icon-button"
-                                aria-label={`Remove bullet ${bulletIndex + 1}`}
-                                size="icon"
-                                title="Remove bullet"
-                                type="button"
-                                variant="ghost"
-                                onClick={() => removeBullet(index, bulletIndex)}
+                              <div
+                                aria-label={`Actions for bullet ${bulletIndex + 1} in ${entryLabel}`}
+                                className="bullet-row-actions"
+                                role="group"
                               >
-                                <IconTrash size={14} aria-hidden="true" />
-                              </Button>
+                                <Button
+                                  aria-label={`Move bullet ${bulletIndex + 1} up`}
+                                  disabled={bulletIndex === 0}
+                                  onClick={() => moveBullet(index, bulletIndex, -1)}
+                                  ref={registerFocusTarget(bulletFocusKey(index, bulletIndex, "up"))}
+                                  size="icon"
+                                  title="Move bullet up"
+                                  type="button"
+                                  variant="outline"
+                                >
+                                  <IconArrowUp aria-hidden="true" data-icon="inline-start" />
+                                </Button>
+                                <Button
+                                  aria-label={`Move bullet ${bulletIndex + 1} down`}
+                                  disabled={bulletIndex === bullets.length - 1}
+                                  onClick={() => moveBullet(index, bulletIndex, 1)}
+                                  ref={registerFocusTarget(bulletFocusKey(index, bulletIndex, "down"))}
+                                  size="icon"
+                                  title="Move bullet down"
+                                  type="button"
+                                  variant="outline"
+                                >
+                                  <IconArrowDown aria-hidden="true" data-icon="inline-start" />
+                                </Button>
+                                <Button
+                                  className="icon-button"
+                                  aria-label={`Remove bullet ${bulletIndex + 1}`}
+                                  size="icon"
+                                  title="Remove bullet"
+                                  type="button"
+                                  variant="ghost"
+                                  onClick={() => removeBullet(index, bulletIndex)}
+                                >
+                                  <IconTrash size={14} aria-hidden="true" />
+                                </Button>
+                              </div>
                             </Field>
                           );
                         })}

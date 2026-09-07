@@ -9632,6 +9632,76 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it.each([false, true])("preserves reordered bullet evidence occurrences across later saves (authored: %s)", async (withAuthored) => {
+    const app = buildApp(options);
+    try {
+      const profile = validProfileFixture("Sortable Bullet Candidate");
+      const entries = (profile.resume as Record<string, unknown>).experience_entries as Array<Record<string, unknown>>;
+      entries[0]!.bullets = ["Reduced incidents 40%.", "Built APIs.", "Reduced incidents 40%."];
+      const initial = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile } });
+      expect(initial.statusCode, initial.body).toBe(200);
+      const materialized = initial.json().profile;
+      const entry = materialized.resume.experience_entries[0];
+      if (withAuthored) {
+        Object.assign(entry.achievement_evidence[1], { id: "authored_api", tags: ["authored"] });
+      }
+      const original = Object.fromEntries(entry.achievement_evidence.map((item: { id: string }) => [item.id, item]));
+      entry.bullets = [" ", " Built APIs. ", "Reduced incidents 40%.", "Reduced incidents 40%.", ""];
+      materialized.resume.tailoring_rules.required_bullets_by_experience_id = { role_1: ["Built APIs."] };
+      const reordered = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile: materialized } });
+      expect(reordered.statusCode, reordered.body).toBe(200);
+      const nextProfile = reordered.json().profile;
+      nextProfile.personal.preferred_name = "Sort Candidate";
+      const savedAgain = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile: nextProfile } });
+      expect(savedAgain.statusCode, savedAgain.body).toBe(200);
+      const loaded = await app.inject({ method: "GET", url: "/v1/profile" });
+      expect(loaded.statusCode, loaded.body).toBe(200);
+      const result = loaded.json().profile;
+      expect(Object.fromEntries(result.resume.experience_entries[0].achievement_evidence.map((item: { id: string }) => [item.id, item]))).toEqual(original);
+      expect(result.resume.tailoring_rules.required_bullets_by_experience_id).toEqual({ role_1: ["Built APIs."] });
+
+      result.resume.experience_entries[0].bullets = ["Built APIs.", "Reduced incidents 55%."];
+      const edited = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile: result } });
+      expect(edited.statusCode, edited.body).toBe(200);
+      expect(edited.json().profile.resume_constraints.real_metrics).toEqual(["55%"]);
+      expect(edited.json().profile.resume.experience_entries[0].achievement_evidence).toHaveLength(2);
+      const apiId = withAuthored ? "authored_api" : "role_1_bullet_2";
+      expect(edited.json().profile.resume.experience_entries[0].achievement_evidence).toContainEqual(original[apiId]);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it.each([false, true])("preserves authored and derived evidence sharing one sorted bullet (authored first: %s)", async (authoredFirst) => {
+    const app = buildApp(options);
+    try {
+      const profile = validProfileFixture("Shared Bullet Evidence Candidate");
+      const entries = (profile.resume as Record<string, unknown>).experience_entries as Array<Record<string, unknown>>;
+      entries[0]!.bullets = ["Reduced incidents 40%.", "Built APIs."];
+      const initial = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile } });
+      expect(initial.statusCode, initial.body).toBe(200);
+      const materialized = initial.json().profile;
+      const entry = materialized.resume.experience_entries[0];
+      const authored = { ...entry.achievement_evidence[0], id: "authored_incidents", tags: ["authored"] };
+      const original = authoredFirst ? [authored, ...entry.achievement_evidence] : [...entry.achievement_evidence, authored];
+      entry.achievement_evidence = original;
+      entry.bullets.reverse();
+
+      const reordered = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile: materialized } });
+      expect(reordered.statusCode, reordered.body).toBe(200);
+      expect(reordered.json().profile.resume.experience_entries[0].achievement_evidence).toEqual(original);
+      const nextProfile = reordered.json().profile;
+      nextProfile.personal.preferred_name = "Shared Candidate";
+      const savedAgain = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile: nextProfile } });
+      expect(savedAgain.statusCode, savedAgain.body).toBe(200);
+      const loaded = await app.inject({ method: "GET", url: "/v1/profile" });
+      expect(loaded.statusCode, loaded.body).toBe(200);
+      expect(loaded.json().profile.resume.experience_entries[0].achievement_evidence).toEqual(original);
+    } finally {
+      await app.close();
+    }
+  });
+
   it("derives achievement metrics and preserves old flat values as unassigned legacy data", async () => {
     const app = buildApp(options);
     const profile = validProfileFixture("Scoped Metric Candidate");

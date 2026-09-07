@@ -175,6 +175,32 @@ describe("<ProfileForm>", () => {
     expect(initial).toEqual(original);
   });
 
+  it("keeps a moved bullet's Plate edits on the same source when saving the reordered profile", async () => {
+    const user = userEvent.setup();
+    let controller: ProfilePlateTextController | null = null;
+    const updateProfile = vi.fn(async (request) => ({
+      ...sampleProfileResponse, profile: JSON.parse(request.profileText),
+    }));
+    renderWithProviders(<ProfileForm initial={sampleProfileResponse} onPlateTextControllerChange={(value) => {
+      controller = value;
+    }} />, { ports: buildTestPorts({ api: { updateProfile } }), withRouter: true });
+    await openExperienceEntries(user);
+    await user.click(screen.getByRole("button", { name: "Move bullet 1 down" }));
+    expect(screen.getByLabelText("Bullet 1")).toHaveValue("Led the SRE org.");
+    expect(screen.getByLabelText("Bullet 2")).toHaveValue("Scaled the platform 10x.");
+    act(() => controller?.apply([{
+      semanticId: "experience:exp-1:bullet:1",
+      baselineTexts: ["Scaled the platform 10x."],
+      plateTexts: ["Scaled the platform 12x."],
+    }]));
+    expect(screen.getByLabelText("Bullet 1")).toHaveValue("Led the SRE org.");
+    expect(screen.getByLabelText("Bullet 2")).toHaveValue("Scaled the platform 12x.");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(1));
+    expect(JSON.parse(updateProfile.mock.calls[0]![0].profileText).resume.experience_entries[0].bullets)
+      .toEqual(["Led the SRE org.", "Scaled the platform 12x."]);
+  });
+
   it("preserves and surfaces a structural Profile conflict instead of overwriting it from Plate", async () => {
     const user = userEvent.setup();
     let plateController: ProfilePlateTextController | null = null;

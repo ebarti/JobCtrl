@@ -75,9 +75,12 @@ a presentation-only draft.
 The resume presentation follows the experience sequence saved in Profile. Each
 role has **Move up** and **Move down** controls for a custom sequence, and
 **Sort newest first** applies the date-based order explicitly, with current
-roles first. The reordered list follows the normal Profile save and autosave
-path. Roles without achievement bullets render compactly instead of reserving
-space for an empty bullet list. Education entries place the institution and
+roles first. Each bullet also has **Move up** and **Move down** controls within
+its role. Reordering preserves the bullet text, required selection, and the
+achievement identities used by existing evidence links. The reordered lists
+follow the normal Profile save and autosave path. Roles without achievement
+bullets render compactly instead of reserving space for an empty bullet list.
+Education entries place the institution and
 completion year on the first row and the degree directly underneath.
 
 The download is rendered from the document currently mounted in the browser,

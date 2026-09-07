@@ -168,6 +168,12 @@ Fields in composite lines must have individual source bindings; include a pipe
 inside an institution/location and a comma inside a single skill. Reorder roles
 before projecting a title and prove identity, not array position, owns the edit.
 A formatting-only change must not create a guessed profile-field edit.
+Move bullets up and down within a role using mouse and keyboard, including the
+first/last boundaries, then autosave and reload. Verify the baseline preview's
+order, required selections, metrics, and historical achievement links still
+refer to the same source text. Cover duplicate and blank draft bullets, mixed
+authored/derived evidence, another save after reordering, and desktop/mobile
+controls without overflow or accessibility regressions.
 Profile object-draft regression tests also verify unknown nested fields and raw
 numeric strings survive in the outgoing request. Backend schema normalization
 is unchanged. The isolated profile browser fixture uses real GET/PATCH and

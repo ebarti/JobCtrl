@@ -266,7 +266,9 @@ evidence, qualifications, and the complete capability matrix.
   URLs in Profile data.
   The Profile editor also owns resume experience order: move roles up or down,
   or apply the explicit newest-first sort, and the saved sequence is used by
-  baseline and tailored resumes.
+  baseline and tailored resumes. Within a role, move individual bullets up or
+  down to set their order; required selections and achievement evidence stay
+  attached to the same text when reordered.
 - Inspect the evidence map to see which profile achievements and skills are
   reused in generated materials, requirement-fit decisions, and recorded gaps.
   Job and artifact audit surfaces show those references as human-readable

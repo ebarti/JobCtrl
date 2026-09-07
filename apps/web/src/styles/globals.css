@@ -7843,9 +7843,18 @@ input[type="radio"] {
 .bullet-row-top {
   grid-area: meta;
   display: flex;
+  flex-wrap: wrap;
   min-width: 0;
   align-items: center;
   gap: 12px;
+}
+
+.bullet-row-actions {
+  grid-area: remove;
+  display: flex;
+  align-items: center;
+  align-self: start;
+  gap: 4px;
 }
 
 .bullet-label {

@@ -248,6 +248,47 @@ def test_save_rederives_materialized_achievement_evidence_when_bullets_change(tm
     assert refreshed.resume_constraints.real_metrics == ("55%",)
 
 
+@pytest.mark.parametrize("with_authored", [False, True])
+def test_save_preserves_reordered_bullet_evidence_and_required_controls(tmp_path, with_authored):
+    repo, conn, _ = _new_repo(tmp_path)
+    raw = _valid_profile()
+    raw["resume"]["experience_entries"][0]["bullets"] = [
+        "Reduced incidents 40%.", "Built APIs.", "Reduced incidents 40%."
+    ]
+    repo.save(LOCAL_TENANT, Profile.from_dict(LOCAL_TENANT, raw))
+    loaded = repo.load(LOCAL_TENANT)
+    assert loaded is not None
+    updated = loaded.to_dict()
+    entry = updated["resume"]["experience_entries"][0]
+    if with_authored:
+        entry["achievement_evidence"][1].update(id="authored_api", tags=["authored"])
+    original = {item["id"]: item for item in entry["achievement_evidence"]}
+    entry["bullets"] = ["Built APIs.", "Reduced incidents 40%.", "Reduced incidents 40%."]
+
+    repo.save(LOCAL_TENANT, Profile.from_dict(LOCAL_TENANT, updated))
+    loaded = repo.load(LOCAL_TENANT)
+    assert loaded is not None
+    updated = loaded.to_dict()
+    updated["personal"]["preferred_name"] = "Jordan"
+    repo.save(LOCAL_TENANT, Profile.from_dict(LOCAL_TENANT, updated))
+    loaded = repo.load(LOCAL_TENANT)
+    assert loaded is not None
+    result = loaded.to_dict()
+    assert {item["id"]: item for item in result["resume"]["experience_entries"][0]["achievement_evidence"]} == original
+    assert result["resume"]["tailoring_rules"]["required_bullets_by_experience_id"] == {"role_1": ["Built APIs."]}
+    assert {
+        row["evidence_id"]: (row["source_text"], json.loads(row["metrics_json"]))
+        for row in conn.execute("SELECT evidence_id, source_text, metrics_json FROM candidate_profile_achievement_evidence")
+    } == {key: (item["source_text"], item["metrics"]) for key, item in original.items()}
+
+    # A later edit and deletion refresh only the changed achievement; the moved
+    # API bullet and remaining incident evidence keep their established IDs.
+    result["resume"]["experience_entries"][0]["bullets"] = ["Built APIs.", "Reduced incidents 55%."]
+    snapshot = repo.save(LOCAL_TENANT, Profile.from_dict(LOCAL_TENANT, result))
+    assert snapshot.as_dict()["resume_constraints"]["real_metrics"] == ["55%"]
+    assert conn.execute("SELECT COUNT(*) FROM candidate_profile_achievement_evidence").fetchone()[0] == 2
+
+
 def test_save_rederives_precanonical_materialized_evidence_when_bullet_changes(tmp_path):
     repo, conn, _ = _new_repo(tmp_path)
     raw = _valid_profile()
