@@ -356,7 +356,13 @@ async def discovery_enrichment_activity(
         )
     )
 
-    cancel_event = threading.Event()
+    from jobctrl.enrichment.activities import _ActivityCancellationEvent
+
+    # Finishing the source producers cancels the live consumer before the
+    # terminal enrichment pass. That activity stop is a handoff, not a user
+    # cancellation of the job. Actual workflow cancellation is settled by the
+    # exact-run cancellation reconciler after the workflow records its outcome.
+    cancel_event = _ActivityCancellationEvent(terminal_on_cancel=not payload.stream_while_discovering)
     on_job_enriched = _build_per_job_handoff(payload)
     try:
         info = activity.info()
@@ -389,7 +395,7 @@ async def discovery_enrichment_activity(
             starting_message="discovery enrichment starting",
             progress_message="discovery enrichment still running",
             poll_interval=1.0 if payload.stream_while_discovering else 15.0,
-            on_cancel=cancel_event.set,
+            on_cancel=cancel_event.request_stop,
             activity_name="discover:enrichment",
         )
         activity.heartbeat({"status": result.get("status", "ok")})

@@ -66,6 +66,9 @@ When isolated auth is absent, setup and generation retain one-time reuse
 of a regular Codex CLI `auth.json`; the explicit Codex provider verify action
 uses the same copy-once behavior before checking the isolated login. Existing
 JobCtrl-owned auth is not overwritten, and the normal Codex home is unchanged.
+SDK processes clear ambient credential values and pin refresh/revocation URLs
+to OpenAI's default HTTPS endpoints. These URL overrides cannot be blank:
+Codex consumes an empty value literally and cannot build a refresh request.
 The auth file stays outside `codex_home/workspace/`; the permissions profile
 denies root reads and grants prompt-driven reads only to that workspace subtree,
 minimal runtime paths, and the one canonical Codex executable required to start
@@ -778,6 +781,12 @@ TypeScript Temporal SDK and without trigger-coupled reapers:
   in the audit stream. This is what lets a `kill -9`'d or restarted worker heal
   itself without confusing a later execution that reuses the deterministic
   workflow ID.
+- **Preparation recovery** — startup and heartbeat also reconcile eligible
+  saved enrichment, score, and material backlogs. Bounded, durable reservations
+  start one preparation stage at a time; no fresh discovery is required. The
+  controller preserves retry budgets and stop decisions and never starts Apply.
+  [Operations & Events](pipeline/operations.md#automatic-preparation-recovery)
+  owns dispatch, cooldown, and cancellation semantics.
 - **Dispatch-time open row** — the default starter writes a `WorkflowStarted`
   event immediately after a workflow start returns from Temporal. The in-workflow
   start marker remains as a duplicate-safe upsert, but a workflow killed or

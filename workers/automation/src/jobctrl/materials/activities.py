@@ -51,6 +51,7 @@ class TailorActivityInput:
     tailor_judge_min_score: float | None = None
     llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
     workflow_id: str | None = None
+    recovery_workflow_id: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "job_ids", _canonical_job_ids(self.job_ids))
@@ -242,8 +243,9 @@ def _run_selected_tailoring(
 ) -> dict[str, Any]:
     from jobctrl.domain.tenant import TenantId
     from jobctrl.scoring.tailor import tailor_job_by_id
+    from jobctrl.pipeline.automatic_preparation import automatic_recovery_job_ids
 
-    job_ids = _limited_job_ids(payload.job_ids, payload.limit)
+    job_ids = _limited_job_ids(automatic_recovery_job_ids(payload, "tailor"), payload.limit)
     if payload.dry_run:
         return {
             "status": "ok",
@@ -285,6 +287,7 @@ def _run_selected_tailoring(
             tailor_judge_min_score=payload.tailor_judge_min_score,
             workflow_id=payload.workflow_id,
             cancel_event=cancel_event,
+            **({"recovery_workflow_id": payload.recovery_workflow_id} if payload.recovery_workflow_id else {}),
         )
 
     for job_id, result in _run_selected_material_jobs(
@@ -429,6 +432,7 @@ class CoverActivityInput:
     job_ids: tuple[JobId, ...] = ()
     llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
     workflow_id: str | None = None
+    recovery_workflow_id: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "job_ids", _canonical_job_ids(self.job_ids))
@@ -595,8 +599,9 @@ def _run_selected_cover(
 ) -> dict[str, Any]:
     from jobctrl.domain.tenant import TenantId
     from jobctrl.scoring.cover_letter import cover_letter_by_id
+    from jobctrl.pipeline.automatic_preparation import automatic_recovery_job_ids
 
-    job_ids = _limited_job_ids(payload.job_ids, payload.limit)
+    job_ids = _limited_job_ids(automatic_recovery_job_ids(payload, "cover"), payload.limit)
     if payload.dry_run:
         return {
             "status": "ok",
@@ -629,6 +634,7 @@ def _run_selected_cover(
             tenant_id=TenantId(payload.tenant_id),
             workflow_id=payload.workflow_id,
             cancel_event=cancel_event,
+            **({"recovery_workflow_id": payload.recovery_workflow_id} if payload.recovery_workflow_id else {}),
         )
 
     for job_id, result in _run_selected_material_jobs(

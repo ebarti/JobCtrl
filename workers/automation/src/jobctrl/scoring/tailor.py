@@ -71,6 +71,8 @@ from jobctrl.infrastructure.materials import (
 from jobctrl.infrastructure.preparation import SqlitePreparationTargetReader
 from jobctrl.infrastructure.preparation_recovery import (
     assert_material_activity_commit_allowed,
+    claim_preparation_reservation,
+    owns_preparation_reservation,
     stage_completed_by_activity_owner,
 )
 from jobctrl.infrastructure.scoring import (
@@ -605,6 +607,7 @@ def tailor_job_by_id(
     allow_low_fit_override: bool = False,
     workflow_id: str | None = None,
     cancel_event: threading.Event | None = None,
+    recovery_workflow_id: str | None = None,
 ) -> dict:
     """Tailor one active, eligible JobId for its tenant-scoped preparation step.
 
@@ -617,6 +620,10 @@ def tailor_job_by_id(
         raise RuntimeError("tailor activity canceled before dispatch")
     stable_job_id = canonical_job_id(str(job_id))
     conn = get_connection()
+    if recovery_workflow_id and not owns_preparation_reservation(
+        conn, tenant_id=tenant_id, job_id=stable_job_id, stage="tailor", workflow_id=recovery_workflow_id,
+    ):
+        raise RuntimeError("tailor activity no longer owns its queued reservation")
     target_reader = SqlitePreparationTargetReader(conn)
     target = target_reader.load(tenant_id, stable_job_id)
     if target is None:
@@ -683,6 +690,7 @@ def tailor_job_by_id(
         min_score=min_score,
         retailor=retailor,
         allow_low_fit_override=allow_low_fit_override,
+        recovery_workflow_id=recovery_workflow_id,
     )
     if job is None:
         if _record_tailor_enrichment_block(
@@ -733,48 +741,56 @@ def tailor_job_by_id(
 
     if cancel_event is not None and cancel_event.is_set():
         raise RuntimeError("tailor activity canceled before dispatch")
-    ensure_job_stage_rows(
-        conn,
-        stable_job_id,
-        tenant_id=tenant_id,
-        discovered_at=job.get("discovered_at"),
-    )
-    started_at = utc_now()
-    prior_attempts = _tailor_attempt_count(
-        conn,
-        tenant_id=tenant_id,
-        job_id=stable_job_id,
-    )
-    current_attempt = prior_attempts + 1
-    metadata = _tailor_activity_metadata(
-        SqliteMaterialsRepository(conn),
-        tenant_id=tenant_id,
-        job_id=stable_job_id,
-        workflow_id=workflow_id,
-        retailor=retailor,
-    )
-    set_stage_state(
-        conn,
-        stable_job_id,
-        "tailor",
-        "running",
-        tenant_id=tenant_id,
-        # Owner recovery increments an interrupted running row, so the start
-        # write must preserve the completed count instead of pre-incrementing.
-        attempt_count=prior_attempts,
-        started_at=started_at,
-        metadata=metadata,
-        validate_transition=False,
-    )
-    record_job_event(
-        conn,
-        stable_job_id,
-        "tailor",
-        "StageStarted",
-        tenant_id=tenant_id,
-        message="Tailoring started",
-    )
-    conn.commit()
+    if recovery_workflow_id:
+        conn.commit()
+    with claim_preparation_reservation(
+        conn, tenant_id=tenant_id, job_id=stable_job_id,
+        stage="tailor", workflow_id=recovery_workflow_id, cancel_event=cancel_event,
+    ):
+        ensure_job_stage_rows(
+            conn,
+            stable_job_id,
+            tenant_id=tenant_id,
+            discovered_at=job.get("discovered_at"),
+        )
+        started_at = utc_now()
+        prior_attempts = _tailor_attempt_count(
+            conn,
+            tenant_id=tenant_id,
+            job_id=stable_job_id,
+        )
+        current_attempt = prior_attempts + 1
+        metadata = _tailor_activity_metadata(
+            SqliteMaterialsRepository(conn),
+            tenant_id=tenant_id,
+            job_id=stable_job_id,
+            workflow_id=workflow_id,
+            retailor=retailor,
+        )
+        if recovery_workflow_id:
+            metadata.update(automaticRecovery=True, workflowId=recovery_workflow_id, temporalRunId=workflow_id)
+        set_stage_state(
+            conn,
+            stable_job_id,
+            "tailor",
+            "running",
+            tenant_id=tenant_id,
+            # Owner recovery increments an interrupted running row, so the start
+            # write must preserve the completed count instead of pre-incrementing.
+            attempt_count=prior_attempts,
+            started_at=started_at,
+            metadata=metadata,
+            validate_transition=False,
+        )
+        record_job_event(
+            conn,
+            stable_job_id,
+            "tailor",
+            "StageStarted",
+            tenant_id=tenant_id,
+            message="Tailoring started",
+        )
+        conn.commit()
 
     def commit_guard() -> None:
         assert_material_activity_commit_allowed(
@@ -1347,6 +1363,7 @@ def _load_tailor_eligible_job_by_id(
     min_score: int,
     retailor: bool,
     allow_low_fit_override: bool = False,
+    recovery_workflow_id: str | None = None,
 ) -> dict | None:
     stable_job_id = canonical_job_id(str(job_id))
     if not str(job.get("full_description") or "").strip():
@@ -1407,7 +1424,10 @@ def _load_tailor_eligible_job_by_id(
         attempt_count = int(tailor_stage["attempt_count"] or 0)
         if tailor_state == "exhausted" or attempt_count >= MAX_ATTEMPTS:
             return None
-        if not retailor and tailor_state not in {
+        owns_queue = tailor_state == "queued" and owns_preparation_reservation(
+            conn, tenant_id=tenant_id, job_id=stable_job_id, stage="tailor", workflow_id=recovery_workflow_id,
+        )
+        if not retailor and not owns_queue and tailor_state not in {
             "pending",
             "running",
             "failed",

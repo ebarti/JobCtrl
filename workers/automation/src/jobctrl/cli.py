@@ -2328,6 +2328,7 @@ def worker(
         from jobctrl.apply.auto_apply import reconcile_auto_apply_loop
 
         identity = current_runtime_identity()
+        await _reconcile_automatic_preparation(client, queue, identity)
         startup_auto_apply = await reconcile_auto_apply_loop(
             client,
             task_queue=queue,
@@ -2467,6 +2468,7 @@ async def _worker_heartbeat_loop(
                 from jobctrl.infrastructure.runtime_identity import current_runtime_identity
 
                 identity = current_runtime_identity()
+                await _reconcile_automatic_preparation(temporal_client, task_queue, identity)
                 auto_apply = await reconcile_auto_apply_loop(
                     temporal_client,
                     task_queue=task_queue,
@@ -2478,6 +2480,22 @@ async def _worker_heartbeat_loop(
             else:
                 if auto_apply.changed:
                     console.print(f"[yellow]Auto-apply loop {auto_apply.action}: {auto_apply.workflow_id}.[/yellow]")
+
+
+async def _reconcile_automatic_preparation(client: Any, task_queue: str, identity: Any) -> None:
+    from jobctrl.pipeline.automatic_preparation import reconcile_automatic_preparation
+
+    try:
+        queued = await reconcile_automatic_preparation(
+            client,
+            task_queue=task_queue,
+            expected_app_dir=str(identity.app_dir),
+            expected_db_path=str(identity.db_path),
+        )
+        if queued:
+            console.print(f"[yellow]Automatically recovering preparation for {queued} job(s).[/yellow]")
+    except Exception:
+        log.warning("Automatic preparation recovery failed; will retry", exc_info=True)
 
 
 def _worker_heartbeat_iteration(

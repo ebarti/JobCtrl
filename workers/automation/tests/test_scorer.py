@@ -180,8 +180,7 @@ def _stage_row(conn: sqlite3.Connection, url: str, stage: str) -> sqlite3.Row | 
 def _seed_pending_job(conn: sqlite3.Connection, url: str) -> None:
     job_id = _job_id(url)
     conn.execute(
-        "INSERT INTO jobs (tenant_id, job_id, url, title, site, discovered_at) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO jobs (tenant_id, job_id, url, title, site, discovered_at) VALUES (?, ?, ?, ?, ?, ?)",
         (LOCAL_TENANT, job_id, url, "Engineer", "Acme", "2024-01-01T00:00:00+00:00"),
     )
     conn.execute(
@@ -298,9 +297,7 @@ def profile_snapshot(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_score_job_writes_only_to_job_scores(
-    conn: sqlite3.Connection, profile_snapshot
-) -> None:
+def test_score_job_writes_only_to_job_scores(conn: sqlite3.Connection, profile_snapshot) -> None:
     url = "https://example.com/job/single"
     _seed_pending_job(conn, url)
     repo = SqliteScoreRepository(conn)
@@ -315,9 +312,7 @@ def test_score_job_writes_only_to_job_scores(
         }
     )
 
-    job_dict = dict(
-        conn.execute("SELECT * FROM jobs WHERE tenant_id = ? AND url = ?", (LOCAL_TENANT, url)).fetchone()
-    )
+    job_dict = dict(conn.execute("SELECT * FROM jobs WHERE tenant_id = ? AND url = ?", (LOCAL_TENANT, url)).fetchone())
     outcome = scorer_module.score_job(
         profile_snapshot,
         job_dict,
@@ -368,9 +363,7 @@ def test_score_job_with_explicit_sqlite_repository_uses_persisted_policy(
         }
     )
 
-    job_dict = dict(
-        conn.execute("SELECT * FROM jobs WHERE tenant_id = ? AND url = ?", (LOCAL_TENANT, url)).fetchone()
-    )
+    job_dict = dict(conn.execute("SELECT * FROM jobs WHERE tenant_id = ? AND url = ?", (LOCAL_TENANT, url)).fetchone())
     outcome = scorer_module.score_job(
         profile_snapshot,
         job_dict,
@@ -683,9 +676,7 @@ def test_score_job_prompt_uses_company_not_source(
 # ---------------------------------------------------------------------------
 
 
-def test_run_scoring_persists_via_repository_only(
-    conn: sqlite3.Connection, profile_snapshot, monkeypatch
-) -> None:
+def test_run_scoring_persists_via_repository_only(conn: sqlite3.Connection, profile_snapshot, monkeypatch) -> None:
     url = "https://example.com/job/batch"
     _seed_pending_job(conn, url)
     repo = SqliteScoreRepository(conn)
@@ -1038,6 +1029,78 @@ def test_run_scoring_refreshes_stale_posting_analysis_before_persisting_fit_repo
     assert report.employer_analysis_generation == 2
 
 
+@pytest.mark.parametrize("automatic_recovery", [False, True])
+def test_selected_score_retains_requirement_fit_persistence(
+    conn: sqlite3.Connection,
+    profile_snapshot,
+    monkeypatch,
+    automatic_recovery: bool,
+) -> None:
+    url = "https://example.com/job/selected-score-requirement-evidence"
+    _seed_pending_job(conn, url)
+    job_id = _job_id(url)
+    workflow_id = "prepare-auto-local-score-evidence-regression"
+    owner = "score-evidence-execution"
+    if automatic_recovery:
+        set_stage_state(
+            conn,
+            job_id,
+            "score",
+            "queued",
+            metadata={"automaticPreparation": {"workflowId": workflow_id}},
+            validate_transition=False,
+        )
+        conn.commit()
+    llm = _ScriptedLlm(
+        {
+            "score": 8,
+            "technical_fit": 8,
+            "experience_fit": 7,
+            "role_fit": 8,
+            "fit_band": "strong",
+            "confidence": "high",
+            "eligibility": {"status": "eligible", "hard_blockers": [], "warnings": []},
+            "matched_signals": [],
+            "missing_signals": ["Python platform experience"],
+            "transferable_signals": [],
+            "keywords": ["python"],
+            "reasoning": "No supplied profile evidence matches the posting requirement.",
+            "requirement_assessments": [
+                {
+                    "requirement_id": "req-python-platform",
+                    "requirement_text": "Own Python platform reliability.",
+                    "tier": "must_have",
+                    "weight": 0.9,
+                    "job_evidence_span": "Need Python.",
+                    "fit": {"kind": "missing", "reason": "No profile evidence."},
+                }
+            ],
+        }
+    )
+    monkeypatch.setattr(scorer_module, "get_connection", lambda: conn)
+
+    outcome = scorer_module.score_job_by_id(
+        job_id,
+        profile_snapshot=profile_snapshot,
+        resume_text="Engineer with Python.",
+        criteria=ScoringCriteria(),
+        llm_port=llm,
+        workflow_id=owner if automatic_recovery else None,
+        recovery_workflow_id=workflow_id if automatic_recovery else None,
+        enforce_workflow_ownership=automatic_recovery,
+    )
+
+    assert outcome.ok
+    assert outcome.score is not None
+    report = SqliteRequirementFitReportRepository(conn).load(LOCAL_TENANT, job_id, score_version=outcome.score.version)
+    assert report is not None
+    assert report.employer_analysis_generation == 1
+    assert report.resolved_fit_score == outcome.score.fit_score
+    assert report.assessments[0].requirement_id == "req-python-platform"
+    assert report.assessments[0].fit.kind == "missing"
+    assert _stage_row(conn, url, "score")["state"] == "succeeded"
+
+
 def test_run_scoring_generates_employer_analysis_before_prompt(
     conn: sqlite3.Connection,
     profile_snapshot,
@@ -1167,8 +1230,7 @@ def test_run_scoring_records_safe_per_leg_causes_when_analysis_ensemble_fails(
     assert llm.calls == 0
     stage_row = _stage_row(conn, url, "score")
     assert stage_row["error_message"] == (
-        "Employer analysis failed: all ensemble legs failed "
-        "(claude:model-a: TimeoutError; codex:model-b: ValueError)"
+        "Employer analysis failed: all ensemble legs failed (claude:model-a: TimeoutError; codex:model-b: ValueError)"
     )
     assert "provider timed out" not in stage_row["error_message"]
     assert "private raw output" not in stage_row["error_message"]
@@ -1228,9 +1290,7 @@ def test_run_scoring_reuses_same_content_score_for_duplicate_jobs(
 
     assert summary["scored"] == 2
     assert summary["errors"] == 0
-    assert sorted(summary["scoredJobIds"]) == sorted(
-        [str(_job_id(first_url)), str(_job_id(duplicate_url))]
-    )
+    assert sorted(summary["scoredJobIds"]) == sorted([str(_job_id(first_url)), str(_job_id(duplicate_url))])
     assert llm.calls == 1
     first_score = repo.load(LOCAL_TENANT, _job_id(first_url))
     duplicate_score = repo.load(LOCAL_TENANT, _job_id(duplicate_url))

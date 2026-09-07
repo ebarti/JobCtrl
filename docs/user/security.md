@@ -314,6 +314,9 @@ or verify that login.
 | CAPTCHA key | `CAPSOLVER_API_KEY` saved from Settings to Keychain on macOS, or supplied by the environment elsewhere; read by the owned local solver, not the model. |
 | Job-site passwords | Optional local profile value typed through a focused-field credential tool, never returned to the model. |
 
+Codex token refresh and revocation use OpenAI's default HTTPS endpoints;
+inherited endpoint overrides cannot redirect those credentials elsewhere.
+
 `config.json` contains non-secret Settings values and is replaced atomically
 with owner-only mode `0600`. The extension capability token is also `0600`.
 This limits accidental access by other local accounts, but it is not encryption
