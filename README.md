@@ -294,6 +294,10 @@ evidence, qualifications, and the complete capability matrix.
   their existing retry budget without another discovery search. Explicit
   cancellations, safety blocks, and completed results are preserved; recovery
   does not start Apply. See [preparation recovery](docs/architecture/pipeline/operations.md#automatic-preparation-recovery).
+  Fetch diagnostics distinguish temporary network failures from unsafe
+  destinations. Recognized historical DNS failures receive at most five
+  destination checks; a retry requires both the posting and failed request to
+  validate as public and keeps the original attempt limit.
 - Inspect Discover, preparation, and Apply through the same Runs vocabulary,
   timeline, terminal-state rules, and cancellation control. Repeated cancel
   requests are harmless, the requester/source remains in the run timeline, and

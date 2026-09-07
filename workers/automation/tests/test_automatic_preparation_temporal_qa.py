@@ -170,6 +170,63 @@ async def history_types(client, workflow_id):
 
 
 @pytest.mark.asyncio
+async def test_recorded_dns_failure_rechecks_then_uses_normal_enrich_and_score_workflows(world, monkeypatch):
+    from jobctrl.pipeline import public_fetch_recovery
+    from jobctrl.infrastructure.network.fetch_failures import PublicFetchFailureKind
+    from jobctrl.infrastructure.network.url_safety import PublicUrlDecision
+    from .test_public_fetch_recovery import _seed
+
+    job_id = _seed(world.conn, number=21)
+    blocked_id = _seed(world.conn, number=22, typed=True, request_url="https://still-blocked.example.test/button")
+    world.conn.execute("UPDATE jobs SET site='RemoteOK' WHERE job_id=?", (str(job_id),))
+    world.conn.execute(
+        "INSERT INTO job_locators (tenant_id,job_id,locator_kind,locator_value,is_current,first_seen_at,last_seen_at) "
+        "VALUES ('local',?,'posting_url',?,1,'2026-09-01','2026-09-01')",
+        (str(job_id), "https://jobs.example.test/21"),
+    )
+    # This saved cohort predates the heartbeat, including the unstarted Score
+    # rows; keep normal cooldowns rather than simulating freshly created work.
+    world.conn.execute("UPDATE job_stage_states SET updated_at='2026-09-01T10:00:00+00:00'")
+    world.conn.commit()
+    attempts_before = world.conn.execute("SELECT attempts_json FROM job_enrichments WHERE job_id=?", (str(job_id),)).fetchone()[0]
+    original_failure = tuple(world.conn.execute("SELECT * FROM job_events WHERE job_id=? AND event_type='StageFailed'", (str(job_id),)).fetchone())
+    blocked_attempts = world.conn.execute("SELECT attempts_json FROM job_enrichments WHERE job_id=?", (str(blocked_id),)).fetchone()[0]
+    checked_urls = []
+
+    async def check(urls):
+        checked_urls.append(urls)
+        request = PublicUrlDecision(False, "still non-public", PublicFetchFailureKind.DNS_NON_PUBLIC) if "still-blocked" in urls[1] else PublicUrlDecision(True)
+        return PublicUrlDecision(True), request
+
+    monkeypatch.setattr(public_fetch_recovery, "_check_destinations", check)
+    async with local_env() as env:
+        queue = f"fetch-condition-{uuid.uuid4()}"
+        assert await tick(env.client, world, queue) == 1
+        enrich_id = reserved_id(world, job_id, "enrich")
+        async with worker(env.client, queue):
+            result = await asyncio.wait_for(env.client.get_workflow_handle(enrich_id).result(), 25)
+            assert result["stages_completed"] == ["enrich"], result
+        assert _stage(world.conn, job_id, "enrich")["attempt_count"] == 2
+        attempts_after = json.loads(world.conn.execute("SELECT attempts_json FROM job_enrichments WHERE job_id=?", (str(job_id),)).fetchone()[0])
+        assert attempts_after[:1] == json.loads(attempts_before)
+        assert tuple(world.conn.execute("SELECT * FROM job_events WHERE job_id=? AND event_type='StageFailed' ORDER BY event_id LIMIT 1", (str(job_id),)).fetchone()) == original_failure
+        await wait_idle(env.client)
+        assert await tick(env.client, world, queue) == 1
+        score_id = reserved_id(world, job_id, "score")
+        async with worker(env.client, queue):
+            result = await asyncio.wait_for(env.client.get_workflow_handle(score_id).result(), 25)
+            assert result["stages_completed"] == ["score"], result
+        assert _stage(world.conn, job_id, "score")["state"] == "succeeded"
+        assert world.llm.calls == 1 and len(world.scrape_calls) == 1
+        assert len(checked_urls) == 2 and all(len(urls) == 2 for urls in checked_urls)
+        assert _stage(world.conn, blocked_id, "enrich")["state"] == "failed"
+        assert world.conn.execute("SELECT attempts_json FROM job_enrichments WHERE job_id=?", (str(blocked_id),)).fetchone()[0] == blocked_attempts
+        assert {run.workflow_type async for run in env.client.list_workflows()} == {"JobPipelineWorkflow"}
+        assert await history_types(env.client, enrich_id) == ["record_workflow_started", "check_spend_budget", "enrich", "record_workflow_outcome"]
+        assert await history_types(env.client, score_id) == ["record_workflow_started", "check_spend_budget", "score", "record_workflow_outcome"]
+
+
+@pytest.mark.asyncio
 async def test_recovery_enrichment_advances_to_real_score_after_worker_replacement(world):
     job_id = _job(world.conn)
     from jobctrl.domain.enrichment import JobEnrichment, ExtractionTier, EnrichmentError

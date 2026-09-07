@@ -14,6 +14,7 @@ from urllib.parse import urlsplit
 import certifi
 
 from jobctrl.infrastructure.network.url_safety import Resolver, validate_public_http_url
+from jobctrl.infrastructure.network.fetch_failures import PublicFetchFailureKind
 
 AddrInfo = tuple[int, int, int, str, tuple[Any, ...]]
 SocketFactory = Callable[[int, int, int], socket.socket]
@@ -21,6 +22,14 @@ SocketFactory = Callable[[int, int, int], socket.socket]
 
 class UnsafePublicDestinationError(ValueError):
     """Raised when an HTTP request would connect to a non-public destination."""
+
+    def __init__(
+        self, message: str, *, failure_kind: PublicFetchFailureKind = PublicFetchFailureKind.UNSAFE_DESTINATION,
+        destination_url: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.failure_kind = failure_kind
+        self.destination_url = destination_url
 
 
 def build_public_http_opener(
@@ -107,18 +116,24 @@ def resolve_public_addrinfos(
     hostname = _normalize_host(host)
     literal = _ip_literal(hostname)
     if literal is not None and not literal.is_global:
-        raise UnsafePublicDestinationError(f"URL host is not a public address: {hostname}")
+        raise UnsafePublicDestinationError(
+            f"URL host is not a public address: {hostname}", failure_kind=PublicFetchFailureKind.NON_PUBLIC_LITERAL,
+        )
 
     try:
         ascii_host = hostname.encode("idna").decode("ascii")
     except UnicodeError as exc:
-        raise UnsafePublicDestinationError("URL host is not a valid IDNA hostname") from exc
+        raise UnsafePublicDestinationError(
+            "URL host is not a valid IDNA hostname", failure_kind=PublicFetchFailureKind.INVALID_URL,
+        ) from exc
 
     resolve = resolver or socket.getaddrinfo
     try:
         raw_infos = resolve(ascii_host, port, type=socket.SOCK_STREAM)
     except OSError as exc:
-        raise UnsafePublicDestinationError(f"URL host could not be resolved: {exc}") from exc
+        raise UnsafePublicDestinationError(
+            f"URL host could not be resolved: {exc}", failure_kind=PublicFetchFailureKind.DNS_FAILURE,
+        ) from exc
 
     addrinfos: list[AddrInfo] = []
     addresses: list[ipaddress.IPv4Address | ipaddress.IPv6Address] = []
@@ -138,11 +153,15 @@ def resolve_public_addrinfos(
         addrinfos.append((family, socktype, proto, canonname, sockaddr))
 
     if not addrinfos:
-        raise UnsafePublicDestinationError("URL host did not resolve to an IP address")
+        raise UnsafePublicDestinationError(
+            "URL host did not resolve to an IP address", failure_kind=PublicFetchFailureKind.DNS_FAILURE,
+        )
 
     for address in addresses:
         if not address.is_global:
-            raise UnsafePublicDestinationError(f"URL host resolves to a non-public address: {address}")
+            raise UnsafePublicDestinationError(
+                f"URL host resolves to a non-public address: {address}", failure_kind=PublicFetchFailureKind.DNS_NON_PUBLIC,
+            )
 
     return tuple(addrinfos)
 
@@ -165,7 +184,11 @@ class PublicDestinationRedirectHandler(urllib.request.HTTPRedirectHandler):
         decision = validate_public_http_url(newurl, resolver=self._resolver)
         if not decision.allowed:
             reason = decision.reason or "URL is not a public HTTP(S) destination"
-            raise UnsafePublicDestinationError(f"unsafe redirect target {newurl}: {reason}")
+            raise UnsafePublicDestinationError(
+                f"unsafe redirect target {newurl}: {reason}",
+                failure_kind=decision.failure_kind or PublicFetchFailureKind.UNSAFE_DESTINATION,
+                destination_url=newurl,
+            )
         redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
         if redirected is not None and _origin(req.full_url) != _origin(newurl):
             _remove_sensitive_redirect_headers(redirected)

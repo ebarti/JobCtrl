@@ -15,6 +15,7 @@
  * rows per request.
  */
 import fs from "node:fs";
+import { parseFetchFailure } from "./fetch-failure.js";
 
 import type { JobId } from "@jobctrl/domain-types";
 
@@ -1932,6 +1933,30 @@ function jobEventToAuditEntry(
       });
     case "StageStarted":
       return stageAuditEntry(base, "info", stage, payload, "Stage started", "Work started for this stage.");
+    case "EnrichmentFetchRechecked": {
+      const failure = parseFetchFailure({
+        kind: payload.failureKind, requestHost: payload.requestHost,
+        observedAt: null, recoveryStatus: payload.recoveryStatus,
+        checkCount: payload.checkCount, checkedAt: base.occurredAt,
+        nextCheckAt: payload.nextCheckAt,
+      });
+      const ready = failure?.recoveryStatus === "retry_ready";
+      return makeAuditEntry({
+        ...base, category: "pipeline", tone: ready ? "success" : "info", actor: "system",
+        title: ready ? "Fetch condition cleared" : "Fetch destinations rechecked",
+        description: ready
+          ? "Both destinations now validate as public. Enrichment can retry within its existing attempt limit and request guards."
+          : "JobCtrl checked destination resolution without fetching a page. The recorded failure and attempt history were preserved.",
+        details: auditDetails(
+          ["Request host", failure?.requestHost ?? ""], ["Recorded cause", failure?.kind.replaceAll("_", " ") ?? ""],
+          ["Recovery", failure?.recoveryStatus?.replaceAll("_", " ") ?? ""],
+          ["Destination checks", failure ? String(failure.checkCount) : ""],
+          ["Posting validates as public", yesNo(payloadBoolean(payload, "postingAllowed"))],
+          ["Request validates as public", yesNo(payloadBoolean(payload, "requestAllowed"))],
+          ["Next check", failure?.nextCheckAt ?? ""],
+        ),
+      });
+    }
     case "StageCompleted":
       return stageAuditEntry(base, "success", stage, payload, "Stage completed", "Work completed for this stage.");
     case "StageFailed":
@@ -2130,6 +2155,7 @@ function stageAuditEntry(
   title: string,
   description: string,
 ): JobAuditEntry {
+  const fetchFailure = stage === "enrich" ? parseFetchFailure(payload.fetchFailure) : null;
   return makeAuditEntry({
     ...base,
     category: "pipeline",
@@ -2149,6 +2175,9 @@ function stageAuditEntry(
       ["Extraction tier", payloadText(payload, "tier", "extractionTier", "extraction_tier")],
       ["Description chars", payloadText(payload, "descriptionChars", "description_chars")],
       ["Apply URL found", yesNo(payloadBoolean(payload, "applicationUrlFound", "application_url_found"))],
+      ["Fetch cause", fetchFailure?.kind.replaceAll("_", " ") ?? ""],
+      ["Request host", fetchFailure?.requestHost ?? ""],
+      ["Fetch failure observed", fetchFailure?.observedAt ?? ""],
     ),
   });
 }
@@ -4586,6 +4615,7 @@ function parseStages(stagesJson: string | undefined): StageSummary[] {
       blockedBy: Array.isArray(item.blocked_by) ? item.blocked_by.map((it) => String(it)) : [],
       nextAction: presentation.nextAction,
       applyUrlOutcome: parseApplyUrlOutcome(item.apply_url_outcome),
+      fetchFailure: stage === "enrich" ? parseFetchFailure(item.fetch_failure) : null,
     });
   }
   return STAGES.map((stage) => byStage.get(stage) ?? defaultStage(stage, "pending"));
@@ -4617,7 +4647,9 @@ function reconcileStageRetryability(
   return stages.map((stage) => {
     if (!["failed", "exhausted"].includes(stage.state)) return stage;
     if (stage.failureReason === "attempt_budget_exhausted") return stage;
-    if (stage.stage === "enrich") return { ...stage, retryable: true };
+    // Structured fetch diagnostics carry canonical retry policy. The legacy
+    // Enrich fallback must not turn a destination denial/recheck stop into a retry.
+    if (stage.stage === "enrich") return stage.fetchFailure ? stage : { ...stage, retryable: true };
     if (retryability.get(stage.stage) !== false) return stage;
     return { ...stage, retryable: false, nextAction: null };
   });

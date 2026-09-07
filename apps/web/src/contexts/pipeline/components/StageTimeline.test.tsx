@@ -476,7 +476,7 @@ describe("<StageTimeline>", () => {
     expect(browserCapabilities).not.toHaveBeenCalled();
   });
 
-  it("explains a blocked page request without hiding the fetch-guard evidence", async () => {
+  it("labels legacy failures without inventing a cause and keeps their evidence", async () => {
     const user = userEvent.setup();
     const postingUrl = "https://www.linkedin.com/jobs/view/456";
     renderWithProviders(
@@ -493,10 +493,10 @@ describe("<StageTimeline>", () => {
     );
 
     expect(screen.getByRole("alert")).toHaveTextContent(
-      /read-only public-fetch policy/i,
+      /older failure has no structured cause/i,
     );
     expect(screen.getByRole("alert")).toHaveTextContent(
-      /blocked that request/i,
+      /every retried request must still pass the public-destination checks/i,
     );
     expect(
       screen.getByRole("link", { name: "Open posting for manual capture" }),
@@ -510,6 +510,33 @@ describe("<StageTimeline>", () => {
     expect(screen.getByLabelText("enrich diagnostics")).toHaveTextContent(
       "Unsupported public route method: POST",
     );
+  });
+
+  it.each([
+    ["dns_non_public", "waiting", /resolved to a non-public address at the recorded failure time/i],
+    ["dns_non_public", "checks_exhausted", /five automatic destination checks finished/i],
+    ["dns_non_public", "stopped", /rechecks stopped.*different safety restriction/i],
+    ["timeout", null, /timed out.*eligible attempts retry automatically/i],
+    ["connection", null, /connection was interrupted or unavailable/i],
+    ["non_public_literal", null, /literal non-public IP address.*not retried automatically/i],
+  ] as const)("explains typed %s (%s) from persisted diagnostics", async (kind, recoveryStatus, explanation) => {
+    const user = userEvent.setup();
+    renderWithProviders(<StageTimeline stages={[{
+      ...makeStage("enrich", "failed"), errorCode: "DETAIL_UNSAFE_URL",
+      fetchFailure: {
+        kind, requestHost: "signin.example.test", observedAt: "2026-09-01T10:00:00Z",
+        recoveryStatus, checkCount: recoveryStatus === "checks_exhausted" ? 5 : recoveryStatus ? 1 : 0,
+        checkedAt: recoveryStatus ? "2026-09-07T18:00:00Z" : null,
+        nextCheckAt: recoveryStatus === "waiting" ? "2026-09-07T18:02:00Z" : null,
+        retryEligibleAt: null,
+      },
+    }]} />);
+    expect(screen.getByRole("alert")).toHaveTextContent(explanation);
+    expect(screen.getByRole("alert")).toHaveTextContent("signin.example.test");
+    await user.click(screen.getByRole("button", { name: "Technical details" }));
+    expect(screen.getByLabelText("enrich diagnostics")).toHaveTextContent(kind.replaceAll("_", " "));
+    expect(screen.getByLabelText("enrich diagnostics")).toHaveTextContent("2026-09-01T10:00:00Z");
+    if (recoveryStatus === "waiting") expect(screen.getByLabelText("enrich diagnostics")).toHaveTextContent("2026-09-07T18:02:00Z");
   });
 
   it("does not offer recovery for a successful stage with stale diagnostic fields", () => {

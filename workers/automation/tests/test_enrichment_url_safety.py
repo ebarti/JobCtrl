@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import socket
+import urllib.error
 from contextlib import contextmanager
 from types import SimpleNamespace
 from typing import Iterator
@@ -281,6 +282,90 @@ def test_public_route_guard_aborts_when_pinned_fetch_rejects_rebound_dns() -> No
     assert route.fulfilled is None
     assert guard.blocked_url == "https://jobs.example/role"
     assert "non-public address" in str(guard.blocked_reason)
+
+
+@pytest.mark.parametrize("failure", [TimeoutError("timed out"), ConnectionResetError("connection reset")])
+def test_public_transport_failure_is_retryable_without_becoming_an_unsafe_destination(monkeypatch, failure) -> None:
+    from jobctrl.infrastructure.network import url_safety
+
+    monkeypatch.setattr(socket, "getaddrinfo", _resolver_for("93.184.216.34"))
+
+    def fetcher(*_args):
+        raise urllib.error.URLError(failure)
+
+    monkeypatch.setattr(url_safety, "_fetch_public_route_request", fetcher)
+
+    class Page(_RouteOnlyPage):
+        url = "https://jobs.example/role"
+
+        def goto(self, *_args, **_kwargs):
+            route = _FulfillRoute()
+            self.handler(route, SimpleNamespace(url=self.url, method="GET", headers={}))
+            assert route.aborted and not route.continued and route.fulfilled is None
+            raise RuntimeError("net::ERR_BLOCKED_BY_CLIENT")
+
+    result = scrape_detail_page(Page(), Page.url, session=offline_session())
+
+    assert result["security_outcome"] is None
+    assert result["full_description"] is None
+    assert detail._detail_failure_retryable(result)
+
+
+def test_temporary_dns_failure_stops_navigation_but_is_retryable(monkeypatch) -> None:
+    def unavailable(*_args, **_kwargs):
+        raise socket.gaierror(socket.EAI_AGAIN, "temporary failure in name resolution")
+
+    monkeypatch.setattr(socket, "getaddrinfo", unavailable)
+    result = scrape_detail_page(_ExplodingPage(), "https://jobs.example/role", session=offline_session())
+
+    assert result["security_outcome"] is None
+    assert result["full_description"] is None
+    assert detail._detail_failure_retryable(result)
+
+
+def test_rejected_redirect_records_its_actual_target_for_later_destination_recheck() -> None:
+    import urllib.request
+
+    from jobctrl.infrastructure.network.fetch_failures import PublicFetchFailureKind
+    from jobctrl.infrastructure.network.public_http import PublicDestinationRedirectHandler
+
+    rejected_url = "https://signin.example.test/button?scope=public"
+    redirect = PublicDestinationRedirectHandler(resolver=_resolver_for("192.0.0.88"))
+    page = _RouteOnlyPage()
+
+    def fetcher(url, _method, _headers):
+        redirect.redirect_request(urllib.request.Request(url), None, 302, "Found", {}, rejected_url)
+        pytest.fail("non-public redirect must not be fetched")
+
+    guard = PublicHttpUrlRouteGuard(
+        page, resolver=_resolver_for("93.184.216.34"), fetch_public_requests=True, request_fetcher=fetcher,
+    ).install()
+    route = _FulfillRoute()
+    page.handler(route, SimpleNamespace(url="https://jobs.example/role", method="GET", headers={}))
+    assert route.aborted and not route.continued and route.fulfilled is None
+    assert guard.blocked_url == rejected_url
+    assert guard.failure_kind is PublicFetchFailureKind.DNS_NON_PUBLIC
+
+
+@pytest.mark.parametrize("private_first", [False, True])
+def test_transport_failure_never_replaces_a_page_safety_denial(private_first) -> None:
+    from jobctrl.infrastructure.network.fetch_failures import PublicFetchFailureKind
+
+    page = _RouteOnlyPage()
+
+    def fetcher(*_args):
+        raise TimeoutError("transient timeout")
+
+    guard = PublicHttpUrlRouteGuard(
+        page, resolver=_resolver_for("93.184.216.34"), fetch_public_requests=True, request_fetcher=fetcher,
+    ).install()
+    urls = ["http://127.0.0.1/private", "https://jobs.example/role"]
+    for url in urls if private_first else reversed(urls):
+        route = _FulfillRoute()
+        page.handler(route, SimpleNamespace(url=url, method="GET", headers={}))
+        assert route.aborted and not route.continued and route.fulfilled is None
+    assert guard.blocked_url == "http://127.0.0.1/private"
+    assert guard.failure_kind is PublicFetchFailureKind.NON_PUBLIC_LITERAL
 
 
 class _RedirectToLoopbackPage:

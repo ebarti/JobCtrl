@@ -1,4 +1,5 @@
 import type {
+  EnrichmentFetchRechecked,
   StageBlocked,
   StageCanceled,
   StageCompleted,
@@ -76,6 +77,11 @@ export const stageExhaustedHandler = (
 
 export const stageResetHandler = (event: StageReset): readonly InvalidationItem[] => [
   invalidate(jobsKeys.lists(event.tenantId)),
+  invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
+  pipelineOperationsInvalidation(event.tenantId),
+];
+
+export const enrichmentFetchRecheckedHandler = (event: EnrichmentFetchRechecked): readonly InvalidationItem[] => [
   invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
   pipelineOperationsInvalidation(event.tenantId),
 ];

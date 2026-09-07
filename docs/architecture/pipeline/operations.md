@@ -50,6 +50,24 @@ approved materials are reused. Attempts are preserved, capped by the smaller
 of the stage limit and five, and delayed by `min(1800, 60 * 2^attempts)` seconds.
 Both dispatch and the workflow enforce the normal spend preflight.
 
+`pipeline/public_fetch_recovery.py` is a narrow exception for a still-current
+non-retryable `DETAIL_UNSAFE_URL`: the canonical stage, enrichment attempt, and
+latest `StageFailed` event must agree. It accepts typed `dns_non_public` evidence
+or exact recognized legacy DNS/transport error shapes; arbitrary error text
+cannot enable recovery. The worker checks at most five candidates per pass and
+five times per failure, starting after one minute with exponential backoff.
+Checks only resolve the posting and the recorded failed request; they do not
+fetch pages. A ten-second check deadline leaves unresolved conditions blocked.
+Both destinations must validate as public, then a write transaction rechecks
+the complete candidate snapshot and version before returning the stage to
+pending. Existing attempt counts and cooldowns remain effective. Private
+literals, cancellations, new owners, stale/superseded attempts, deleted/closed
+jobs, and exhausted budgets are excluded. `EnrichmentFetchRechecked` records
+the cause, host, results, count, and next check; the immutable original failure
+remains. A successful recheck emits `StageReset` with reason
+`public_fetch_condition_resolved`, after which normal guarded dispatch owns
+the retry.
+
 Owned scoring persists the requirement-fit report alongside its score evidence.
 After a rescore restores a missing report, dependency reconciliation releases
 only the retryable `REQUIREMENT_FIT_MISSING` Tailor block when the report matches

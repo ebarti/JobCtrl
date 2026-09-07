@@ -12,6 +12,12 @@ from email.message import Message
 from typing import Any, Callable
 from urllib.parse import urlsplit
 
+from jobctrl.infrastructure.network.fetch_failures import (
+    PublicFetchFailureKind,
+    PublicResponseLimitError,
+    classify_public_fetch_failure,
+)
+
 
 Resolver = Callable[..., list[tuple[Any, Any, Any, Any, tuple[Any, ...]]]]
 RouteRequestFetcher = Callable[[str, str, Mapping[str, str]], "RouteFulfillment"]
@@ -43,6 +49,7 @@ _HOP_BY_HOP_RESPONSE_HEADERS = {
 class PublicUrlDecision:
     allowed: bool
     reason: str | None = None
+    failure_kind: PublicFetchFailureKind | None = None
 
 
 @dataclass(frozen=True)
@@ -61,28 +68,28 @@ def validate_public_http_url(url: str, *, resolver: Resolver | None = None) -> P
     """
 
     if not isinstance(url, str) or not url.strip():
-        return PublicUrlDecision(False, "URL must be a non-empty string")
+        return PublicUrlDecision(False, "URL must be a non-empty string", PublicFetchFailureKind.INVALID_URL)
 
     try:
         parsed = urlsplit(url.strip())
         port = parsed.port
     except ValueError as exc:
-        return PublicUrlDecision(False, f"URL is invalid: {exc}")
+        return PublicUrlDecision(False, f"URL is invalid: {exc}", PublicFetchFailureKind.INVALID_URL)
 
     scheme = parsed.scheme.lower()
     if scheme not in {"http", "https"}:
-        return PublicUrlDecision(False, "URL scheme must be http or https")
+        return PublicUrlDecision(False, "URL scheme must be http or https", PublicFetchFailureKind.INVALID_URL)
 
     if parsed.username is not None or parsed.password is not None:
-        return PublicUrlDecision(False, "URL must not contain embedded credentials")
+        return PublicUrlDecision(False, "URL must not contain embedded credentials", PublicFetchFailureKind.INVALID_URL)
 
     hostname = parsed.hostname
     if not hostname:
-        return PublicUrlDecision(False, "URL host is required")
+        return PublicUrlDecision(False, "URL host is required", PublicFetchFailureKind.INVALID_URL)
 
     host = hostname.rstrip(".")
     if not host:
-        return PublicUrlDecision(False, "URL host is required")
+        return PublicUrlDecision(False, "URL host is required", PublicFetchFailureKind.INVALID_URL)
 
     literal = _ip_literal(host)
     if literal is not None:
@@ -91,13 +98,13 @@ def validate_public_http_url(url: str, *, resolver: Resolver | None = None) -> P
     try:
         ascii_host = host.encode("idna").decode("ascii")
     except UnicodeError:
-        return PublicUrlDecision(False, "URL host is not a valid IDNA hostname")
+        return PublicUrlDecision(False, "URL host is not a valid IDNA hostname", PublicFetchFailureKind.INVALID_URL)
 
     resolve = resolver or socket.getaddrinfo
     try:
         infos = resolve(ascii_host, port or (443 if scheme == "https" else 80), type=socket.SOCK_STREAM)
     except OSError as exc:
-        return PublicUrlDecision(False, f"URL host could not be resolved: {exc}")
+        return PublicUrlDecision(False, f"URL host could not be resolved: {exc}", PublicFetchFailureKind.DNS_FAILURE)
 
     addresses: list[ipaddress.IPv4Address | ipaddress.IPv6Address] = []
     for info in infos:
@@ -110,13 +117,14 @@ def validate_public_http_url(url: str, *, resolver: Resolver | None = None) -> P
             addresses.append(parsed_address)
 
     if not addresses:
-        return PublicUrlDecision(False, "URL host did not resolve to an IP address")
+        return PublicUrlDecision(False, "URL host did not resolve to an IP address", PublicFetchFailureKind.DNS_FAILURE)
 
     for address in addresses:
         if not _is_public_address(address):
             return PublicUrlDecision(
                 False,
                 f"URL host resolves to a non-public address: {address}",
+                PublicFetchFailureKind.DNS_NON_PUBLIC,
             )
 
     return PublicUrlDecision(True)
@@ -140,6 +148,14 @@ class PublicHttpUrlRouteGuard:
         self._handler: Callable[[Any, Any], None] | None = None
         self.blocked_url: str | None = None
         self.blocked_reason: str | None = None
+        self.failure_kind: PublicFetchFailureKind | None = None
+
+    def _record_failure(self, url: str, reason: str, kind: PublicFetchFailureKind) -> None:
+        if self.failure_kind is not None and self.failure_kind.priority >= kind.priority:
+            return
+        self.blocked_url = url
+        self.blocked_reason = reason
+        self.failure_kind = kind
 
     @property
     def blocked(self) -> bool:
@@ -152,7 +168,10 @@ class PublicHttpUrlRouteGuard:
 
         def handler(playwright_route: Any, request: Any) -> None:
             request_url = str(getattr(request, "url", ""))
-            request_scheme = urlsplit(request_url).scheme.lower()
+            try:
+                request_scheme = urlsplit(request_url).scheme.lower()
+            except ValueError:
+                request_scheme = ""
             if request_scheme in _IGNORABLE_BROWSER_LOCAL_SCHEMES:
                 # Adopted Chrome profiles may start installed extensions while
                 # the job page loads. Keep local extension resources blocked,
@@ -162,8 +181,11 @@ class PublicHttpUrlRouteGuard:
                 return
             decision = validate_public_http_url(request_url, resolver=self._resolver)
             if not decision.allowed:
-                self.blocked_url = request_url
-                self.blocked_reason = decision.reason or "URL is not a public HTTP(S) destination"
+                self._record_failure(
+                    request_url,
+                    decision.reason or "URL is not a public HTTP(S) destination",
+                    decision.failure_kind or PublicFetchFailureKind.UNSAFE_DESTINATION,
+                )
                 playwright_route.abort("blockedbyclient")
                 return
             if not self._fetch_public_requests:
@@ -183,8 +205,10 @@ class PublicHttpUrlRouteGuard:
             try:
                 fulfillment = self._request_fetcher(request_url, method, dict(headers))
             except Exception as exc:
-                self.blocked_url = request_url
-                self.blocked_reason = str(exc) or "Public route fetch failed"
+                self._record_failure(
+                    getattr(exc, "destination_url", None) or request_url,
+                    str(exc) or "Public route fetch failed", classify_public_fetch_failure(exc),
+                )
                 playwright_route.abort("blockedbyclient")
                 return
             playwright_route.fulfill(
@@ -209,7 +233,7 @@ class PublicHttpUrlRouteGuard:
 def _decision_for_ip(host: str, address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> PublicUrlDecision:
     if _is_public_address(address):
         return PublicUrlDecision(True)
-    return PublicUrlDecision(False, f"URL host is not a public address: {host}")
+    return PublicUrlDecision(False, f"URL host is not a public address: {host}", PublicFetchFailureKind.NON_PUBLIC_LITERAL)
 
 
 def _ip_literal(value: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
@@ -286,5 +310,5 @@ def _response_headers(headers: Message | Mapping[str, str]) -> dict[str, str]:
 def _read_limited(response: Any) -> bytes:
     body = response.read(_ROUTE_FETCH_MAX_BYTES + 1)
     if len(body) > _ROUTE_FETCH_MAX_BYTES:
-        raise ValueError("Public route response exceeded the maximum allowed size")
+        raise PublicResponseLimitError("Public route response exceeded the maximum allowed size")
     return bytes(body)

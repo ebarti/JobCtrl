@@ -25,6 +25,7 @@ from jobctrl import database
 from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.infrastructure.enrichment.sqlite_repository import SqliteEnrichmentRepository
+from jobctrl.pipeline.public_fetch_recovery import reconcile_public_fetch_failures
 from jobctrl.state import record_job_event, set_stage_state
 
 _STAGES = ("score", "tailor", "cover", "enrich")
@@ -74,6 +75,7 @@ async def reconcile_automatic_preparation(
     await _reconcile_stopped_enrichment_owners(client, conn)
     await _reconcile_stopped_activity_owners(client, conn)
     await _reconcile_interrupted_reservations(client, conn)
+    await reconcile_public_fetch_failures(conn)
     batch = reserve_recovery_batch(conn, min_score=read_min_fit_score(default=7))
     if batch is None:
         return 0
@@ -495,7 +497,10 @@ def _candidates(conn: sqlite3.Connection, *, min_score: int) -> dict[str, list[d
                COALESCE(s.attempt_count, 0) AS attempt_count,
                COALESCE(s.max_attempts, 5) AS max_attempts,
                COALESCE(s.retryable, 1) AS retryable, s.error_code,
-               COALESCE(s.updated_at, j.discovered_at) AS updated_at
+               COALESCE(s.updated_at, j.discovered_at) AS updated_at,
+               CASE WHEN s.stage = 'enrich' AND s.state = 'pending'
+                 AND json_extract(s.metadata_json, '$.fetchRecovery.status') = 'retry_ready'
+                 THEN json_extract(s.metadata_json, '$.fetchRecovery.retryEligibleAt') END AS retry_eligible_at
         FROM jobs j
         LEFT JOIN job_enrichments e ON e.tenant_id = j.tenant_id AND e.job_id = j.job_id
         JOIN job_stage_states s ON s.tenant_id = j.tenant_id AND s.job_id = j.job_id
@@ -539,6 +544,14 @@ def _retry_due(row: dict[str, Any], now: datetime) -> bool:
     attempts = int(row["attempt_count"])
     if attempts >= min(5, int(row["max_attempts"])):
         return False
+    if row.get("retry_eligible_at"):
+        try:
+            eligible_at = datetime.fromisoformat(str(row["retry_eligible_at"]).replace("Z", "+00:00"))
+            if eligible_at.tzinfo is None:
+                return False
+            return now >= eligible_at
+        except ValueError:
+            return False
     try:
         updated = datetime.fromisoformat(str(row["updated_at"]).replace("Z", "+00:00"))
         if updated.tzinfo is None:

@@ -6,6 +6,7 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 import json
 import sqlite3
+import socket
 from types import SimpleNamespace
 
 import pytest
@@ -128,6 +129,51 @@ async def _tick(client):
         expected_app_dir="/test/app",
         expected_db_path="/test/app/recovery.db",
     )
+
+
+def test_legacy_dns_block_recovers_only_after_both_destinations_validate_without_resetting_attempts(conn, monkeypatch):
+    from jobctrl.domain.enrichment.aggregate import JobEnrichment
+    from jobctrl.domain.enrichment.value_objects import EnrichmentError, ExtractionTier
+    from jobctrl.infrastructure.enrichment.sqlite_repository import SqliteEnrichmentRepository
+
+    job_id = _job(conn, retryable=False)
+    message = "URL host resolves to a non-public address: 192.0.0.88"
+    aggregate = JobEnrichment.empty(tenant_id=LOCAL_TENANT, job_id=job_id, updated_at=_OLD)
+    aggregate = aggregate.start_attempt(extraction_tier=ExtractionTier.CSS_SELECTORS, started_at=_OLD)
+    aggregate = aggregate.fail_attempt(
+        error=EnrichmentError(code="DETAIL_UNSAFE_URL", message=message, retryable=False), finished_at=_OLD
+    )
+    repository = SqliteEnrichmentRepository(conn)
+    repository.save(aggregate)
+    set_stage_state(
+        conn, job_id, "enrich", "failed", attempt_count=1, finished_at=_OLD,
+        error_code="DETAIL_UNSAFE_URL", error_message=message, retryable=False, validate_transition=False,
+    )
+    record_job_event(
+        conn, job_id, "enrich", "StageFailed", occurred_at=_OLD, message=message,
+        payload={"errorCode": "DETAIL_UNSAFE_URL", "errorMessage": message, "retryable": False,
+                 "securityOutcome": "unsafe_url", "blockedUrl": "https://signin.example.test/button?private=value",
+                 "attemptNumber": 1},
+    )
+    conn.execute("UPDATE job_stage_states SET updated_at=? WHERE job_id=? AND stage='enrich'", (_OLD, str(job_id)))
+    conn.commit()
+    before_attempts = conn.execute("SELECT attempts_json FROM job_enrichments WHERE job_id=?", (str(job_id),)).fetchone()[0]
+    hosts = []
+
+    def public_dns(host, port, **_kwargs):
+        hosts.append(host)
+        return [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("93.184.216.34", port))]
+
+    monkeypatch.setattr(socket, "getaddrinfo", public_dns)
+    client = _Client()
+    asyncio.run(_tick(client))
+
+    assert len(client.starts) == 1
+    assert client.starts[0][1].stages == ["enrich"]
+    assert set(hosts) == {"example.test", "signin.example.test"}
+    assert _stage(conn, job_id)["attempt_count"] == 1
+    assert conn.execute("SELECT attempts_json FROM job_enrichments WHERE job_id=?", (str(job_id),)).fetchone()[0] == before_attempts
+    assert conn.execute("SELECT count(*) FROM job_events WHERE job_id=? AND event_type='StageFailed'", (str(job_id),)).fetchone()[0] == 1
 
 
 def test_failed_enrichment_is_reserved_once_with_attempt_history(conn):

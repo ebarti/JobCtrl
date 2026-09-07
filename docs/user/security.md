@@ -136,6 +136,17 @@ as analytics or telemetry `POST`s without replaying them and without rejecting
 the otherwise safe page. A private, loopback, metadata, rebinding, or otherwise
 non-public destination remains fatal for the whole extraction.
 
+Fetch failures retain a typed cause and observation time. A timeout, connection
+failure, or unavailable DNS lookup can retry within the normal attempt limit.
+A hostname that resolved to a non-public address stays blocked for that attempt.
+While the worker is idle, eligible saved failures receive at most five DNS-only
+rechecks with backoff. Both the original posting and the recorded failed request
+must currently validate as public before normal guarded enrichment can resume.
+Literal non-public addresses, invalid URLs, TLS failures, response-size limits,
+and unknown safety failures do not get this recovery. A new request still runs
+every destination, redirect, DNS-pinning, and read-only method guard. Existing
+attempts and failure events remain in the audit history.
+
 Apply adds a stricter browser capability: every intercepted HTTP(S) request
 from its owned Chrome page targets must remain on the canonical origin of the
 approved application URL. The check is enforced in the browser-level CDP guard

@@ -32,6 +32,7 @@ import { advanceReadyNativeRecoveryManifests } from "./discovery-execution-recov
 import { normalizeJobLocation } from "./location-normalization.js";
 import { getMarketCompensationEstimate } from "./market-compensation-estimates.js";
 import { getPostedCompensationFact } from "./posted-compensation-facts.js";
+import { fetchFailureFromStageMetadata } from "./fetch-failure.js";
 
 const STAGE_ORDER: readonly string[] = STAGES;
 const CLOSED_ACTIVE_STATES = ["closed", "expired", "removed", "location_incompatible"] as const;
@@ -2523,6 +2524,7 @@ interface NormalizedStage {
   blocked_by: string[];
   next_action: string | null;
   apply_url_outcome: NormalizedApplyUrlOutcome | null;
+  fetch_failure: ReturnType<typeof fetchFailureFromStageMetadata>;
 }
 
 const APPLY_URL_OUTCOME_DETAILS: Readonly<
@@ -2626,6 +2628,7 @@ function loadStages(db: SqliteDatabase, tenantId: string, jobId: string): Normal
         blocked_by: [],
         next_action: null,
         apply_url_outcome: null,
+        fetch_failure: null,
       };
     }
     let blockedBy: string[] = [];
@@ -2655,6 +2658,7 @@ function loadStages(db: SqliteDatabase, tenantId: string, jobId: string): Normal
       blocked_by: blockedBy,
       next_action: nullableString(row.next_action),
       apply_url_outcome: applyUrlOutcomeFromStageMetadata(row.metadata_json),
+      fetch_failure: stage === "enrich" ? fetchFailureFromStageMetadata(row.metadata_json) : null,
     };
   });
 }

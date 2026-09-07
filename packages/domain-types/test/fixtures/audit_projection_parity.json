@@ -61,7 +61,7 @@
         "retryable": 1,
         "blocked_by_json": null,
         "next_action": null,
-        "metadata_json": "{\"applyUrlOutcomeCode\":\"APPLY_URL_LINKEDIN_ONSITE\",\"applyUrlOutcomeMessage\":\"untrusted raw message\",\"applyUrlOutcomeRetryable\":true,\"authenticatedApplyUrlMethod\":\"linkedin_onsite_apply\"}"
+        "metadata_json": "{\"applyUrlOutcomeCode\": \"APPLY_URL_LINKEDIN_ONSITE\", \"applyUrlOutcomeMessage\": \"untrusted raw message\", \"applyUrlOutcomeRetryable\": true, \"authenticatedApplyUrlMethod\": \"linkedin_onsite_apply\", \"fetchFailure\": {\"kind\": \"dns_non_public\", \"requestHost\": \"signin.example.test\", \"observedAt\": \"2026-09-01T10:00:00+00:00\", \"requestUrl\": \"https://signin.example.test/private?token=must-not-project\", \"exception\": \"must-not-project\"}, \"fetchRecovery\": {\"status\": \"retry_ready\", \"checkCount\": 1, \"checkedAt\": \"2026-09-07T18:00:00Z\", \"nextCheckAt\": null, \"retryEligibleAt\": \"2026-09-07T18:00:00Z\"}}"
       },
       {
         "stage": "score",
@@ -814,7 +814,8 @@
           "stage": "discover",
           "started_at": "2026-06-08T10:00:00+00:00",
           "state": "succeeded",
-          "updated_at": "2026-06-08T10:00:05+00:00"
+          "updated_at": "2026-06-08T10:00:05+00:00",
+          "fetch_failure": null
         },
         {
           "apply_url_outcome": {
@@ -835,7 +836,17 @@
           "stage": "enrich",
           "started_at": "2026-06-08T10:01:00+00:00",
           "state": "succeeded",
-          "updated_at": "2026-06-08T10:01:10+00:00"
+          "updated_at": "2026-06-08T10:01:10+00:00",
+          "fetch_failure": {
+            "kind": "dns_non_public",
+            "requestHost": "signin.example.test",
+            "observedAt": "2026-09-01T10:00:00+00:00",
+            "recoveryStatus": "retry_ready",
+            "checkCount": 1,
+            "checkedAt": "2026-09-07T18:00:00Z",
+            "nextCheckAt": null,
+            "retryEligibleAt": "2026-09-07T18:00:00Z"
+          }
         },
         {
           "apply_url_outcome": null,
@@ -851,7 +862,8 @@
           "stage": "score",
           "started_at": "2026-06-08T12:05:00+00:00",
           "state": "succeeded",
-          "updated_at": "2026-06-08T12:05:30+00:00"
+          "updated_at": "2026-06-08T12:05:30+00:00",
+          "fetch_failure": null
         },
         {
           "apply_url_outcome": null,
@@ -867,7 +879,8 @@
           "stage": "tailor",
           "started_at": "2026-06-08T12:10:00+00:00",
           "state": "succeeded",
-          "updated_at": "2026-06-08T12:12:00+00:00"
+          "updated_at": "2026-06-08T12:12:00+00:00",
+          "fetch_failure": null
         },
         {
           "apply_url_outcome": null,
@@ -883,7 +896,8 @@
           "stage": "cover",
           "started_at": "2026-06-08T12:15:00+00:00",
           "state": "succeeded",
-          "updated_at": "2026-06-08T12:16:00+00:00"
+          "updated_at": "2026-06-08T12:16:00+00:00",
+          "fetch_failure": null
         },
         {
           "apply_url_outcome": null,
@@ -899,7 +913,8 @@
           "stage": "apply",
           "started_at": "2026-06-08T13:00:00+00:00",
           "state": "succeeded",
-          "updated_at": "2026-06-08T13:00:30+00:00"
+          "updated_at": "2026-06-08T13:00:30+00:00",
+          "fetch_failure": null
         }
       ],
       "tenant_id": "local"

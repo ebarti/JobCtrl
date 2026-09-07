@@ -120,6 +120,11 @@ worker-owned `JobUrlImportWorkflow`. It returns either the canonical imported
 `jobKey` or a typed `manual_capture_required` outcome with the pending queue
 item and reason. The API never fetches the remote page itself.
 
+Job-detail Enrich stages expose optional `fetchFailure` diagnostics (cause,
+host, observed time, bounded recheck status/count/times). The audit history
+includes `EnrichmentFetchRechecked`; raw request URLs remain outside this
+diagnostic DTO. See [fetch diagnostics](api/jobs-and-materials.md#jobs-and-evidence).
+
 ## Compensation
 
 Posted compensation, market estimates, source controls, and refresh actions are

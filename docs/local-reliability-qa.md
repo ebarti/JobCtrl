@@ -67,6 +67,17 @@ canceled, exhausted, non-retryable, or budget-exhausted rows must remain blocked
 from automatic resumption.
 Dashboard source-health and digest QA must show JobStreaming names while
 retaining the underlying quarantine, failure counts, and stable source IDs.
+For fetch-condition recovery, seed the exact legacy `DETAIL_UNSAFE_URL` DNS
+failure and a typed equivalent with matching canonical attempts/events. Prove
+both posting and failed-request destinations must pass fresh public checks,
+normal worker dispatch preserves attempts/cooldown, and private, canceled,
+changed-owner, deleted, closed, exhausted, and unrelated rows remain untouched.
+Check the five-recheck cap, immutable failure history, and API/worker projection
+parity. Exercise DNS rebinding and private redirects through the real guard,
+and confirm a later timeout cannot replace stronger destination-denial evidence.
+The job drawer must show the typed cause, historical observation, current
+recheck result, and manual fallback without claiming the original denial was a
+permanent site policy or suppressing technical evidence.
 For summary metric grounding, seed a baseline tenure estimate with no supporting
 achievement and a separately pinned verified metric. The normal Tailor use case
 must reject the tenure claim even with an unrelated citation, retain that failure
