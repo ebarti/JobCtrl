@@ -10,6 +10,7 @@ import { buildTestPorts } from "../../../test/testPorts.js";
 import { renderWithProviders } from "../../../test/render.js";
 import {
   ProfileForm,
+  type ProfilePlateTextChange,
   type ProfilePlateTextController,
 } from "./profile-form.js";
 
@@ -20,6 +21,29 @@ async function openExperienceEntries(user: ReturnType<typeof userEvent.setup>) {
   if (disclosure.getAttribute("aria-expanded") === "false") {
     await user.click(disclosure);
   }
+}
+
+async function renderSkillProjection(items: string[]) {
+  const user = userEvent.setup();
+  const initial = structuredClone(sampleProfileResponse);
+  const profile = ProfileSchema.parse(initial.profile);
+  profile.resume.skill_categories = [{ id: "skill-1", label: "Languages", items }];
+  initial.profile = profile;
+  let controller: ProfilePlateTextController | null = null;
+  const updateProfile = vi.fn(async (request) => ({ ...initial, profile: JSON.parse(request.profileText) }));
+  renderWithProviders(<ProfileForm initial={initial} onPlateTextControllerChange={(value) => { controller = value; }} />,
+    { ports: buildTestPorts({ api: { updateProfile } }), withRouter: true });
+  const disclosure = await screen.findByRole("button", { name: /^Skill categories\b/ });
+  if (disclosure.getAttribute("aria-expanded") === "false") await user.click(disclosure);
+  await waitFor(() => expect(controller).not.toBeNull());
+  return {
+    user,
+    updateProfile,
+    applyChanges: (changes: readonly ProfilePlateTextChange[]) => act(() => controller?.apply(changes)),
+    apply: (text: string | null) => act(() => controller?.apply(text === null ? [] : [{
+      semanticId: "skills:skill-1:item:2", baselineTexts: ["JavaScript"], plateTexts: [text],
+    }])),
+  };
 }
 
 describe("<ProfileForm>", () => {
@@ -226,6 +250,104 @@ describe("<ProfileForm>", () => {
     expect(saved.personal).toMatchObject({ city: "Profile City", phone: "+44 1234 567890" });
     expect(saved.futureData).toEqual({ keep: ["unchanged"] });
   });
+
+  it("keeps projecting and saving a skill through a duplicate sibling value, including undo", async () => {
+    const { user, updateProfile, apply } = await renderSkillProjection(["Java", "JavaScript"]);
+    for (const text of ["Java", "Java ", "Java X"]) {
+      apply(text);
+      expect(screen.getByLabelText("Skill 1")).toHaveValue("Java");
+      expect(screen.getByLabelText("Skill 2")).toHaveValue(text.trim());
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    }
+    apply(null);
+    expect(screen.getByLabelText("Skill 2")).toHaveValue("JavaScript");
+    apply("Java");
+    apply("Java X");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(1));
+    expect(JSON.parse(updateProfile.mock.calls[0]![0].profileText).resume.skill_categories[0].items)
+      .toEqual(["Java", "Java X"]);
+  });
+
+  it("preserves a boxed skill edit instead of moving the Plate edit to its duplicate sibling", async () => {
+    const { user, updateProfile, apply } = await renderSkillProjection(["Java", "JavaScript"]);
+    apply("Java");
+    fireEvent.change(screen.getByLabelText("Skill 2"), { target: { value: "Kotlin" } });
+    apply("Java X");
+    expect(screen.getByLabelText("Skill 1")).toHaveValue("Java");
+    expect(screen.getByLabelText("Skill 2")).toHaveValue("Kotlin");
+    expect(screen.getByRole("alert")).toHaveTextContent("Some resume editor changes were not applied");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(1));
+    expect(JSON.parse(updateProfile.mock.calls[0]![0].profileText).resume.skill_categories[0].items)
+      .toEqual(["Java", "Kotlin"]);
+  });
+
+  it.each([false, true])("keeps duplicate skill tracking across sibling preview edits (reversed: %s)", async (reversed) => {
+    const { apply, applyChanges } = await renderSkillProjection(["Java", "JavaScript", "Python"]);
+    apply("Java");
+    for (const [java, python] of [["Java", "Python X"], ["Java", "Python XY"], ["Java X", "Python XY"]]) {
+      const changes = [
+        { semanticId: "skills:skill-1:item:2", baselineTexts: ["JavaScript"], plateTexts: [java!] },
+        { semanticId: "skills:skill-1:item:3", baselineTexts: ["Python"], plateTexts: [python!] },
+      ];
+      applyChanges(reversed ? changes.reverse() : changes);
+      expect(screen.getByLabelText("Skill 1")).toHaveValue("Java");
+      expect(screen.getByLabelText("Skill 2")).toHaveValue(java);
+      expect(screen.getByLabelText("Skill 3")).toHaveValue(python);
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    }
+  });
+
+  it("follows an unambiguous skill when removing an earlier sibling changes its index", async () => {
+    const { user, apply } = await renderSkillProjection(["Java", "JavaScript", "Python"]);
+    apply("JavaScript X");
+    await user.click(screen.getByRole("button", { name: "Remove skill 1" }));
+    apply("JavaScript XY");
+    expect(screen.getByLabelText("Skill 1")).toHaveValue("JavaScript XY");
+    expect(screen.getByLabelText("Skill 2")).toHaveValue("Python");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("preserves the trailing duplicate when the edited skill is removed", async () => {
+    const { user, apply } = await renderSkillProjection(["Java", "JavaScript", "Java"]);
+    apply("Java");
+    await user.click(screen.getByRole("button", { name: "Remove skill 2" }));
+    apply("Java X");
+    expect(screen.getByLabelText("Skill 1")).toHaveValue("Java");
+    expect(screen.getByLabelText("Skill 2")).toHaveValue("Java");
+    expect(screen.getByRole("alert")).toHaveTextContent("Some resume editor changes were not applied");
+  });
+
+  it("preserves duplicate siblings when the edited skill is removed and another is added", async () => {
+    const { user, apply } = await renderSkillProjection(["Java", "JavaScript", "Java"]);
+    apply("Java");
+    await user.click(screen.getByRole("button", { name: "Remove skill 2" }));
+    await user.click(screen.getByRole("button", { name: "Add skill" }));
+    fireEvent.change(screen.getByLabelText("Skill 3"), { target: { value: "Python" } });
+    apply("Java X");
+    expect(screen.getByLabelText("Skill 1")).toHaveValue("Java");
+    expect(screen.getByLabelText("Skill 2")).toHaveValue("Java");
+    expect(screen.getByLabelText("Skill 3")).toHaveValue("Python");
+    expect(screen.getByRole("alert")).toHaveTextContent("Some resume editor changes were not applied");
+  });
+
+  it.each(["unmapped:education:edu-1:details", "unmapped:personal:full_name"])(
+    "directs an unmapped preview edit to Profile data without blaming a conflicting edit: %s",
+    async (semanticId) => {
+      let controller: ProfilePlateTextController | null = null;
+      renderWithProviders(<ProfileForm initial={sampleProfileResponse} onPlateTextControllerChange={(value) => { controller = value; }} />,
+        { withRouter: true });
+      const fullName = await screen.findByLabelText("Full name");
+      const originalName = (fullName as HTMLInputElement).value;
+      await waitFor(() => expect(controller).not.toBeNull());
+      act(() => controller?.apply([{ semanticId, baselineTexts: ["Preview text"], plateTexts: ["Edited preview text"] }]));
+      expect(screen.getByRole("alert")).toHaveTextContent("Some parts of the preview cannot be edited here. Edit those fields in Profile data instead.");
+      expect(screen.getByRole("alert")).not.toHaveTextContent("Profile data changed");
+      expect(fullName).toHaveValue(originalName);
+      expect(screen.queryByRole("button", { name: "Save changes" })).not.toBeInTheDocument();
+    },
+  );
 
   it("undoes a title edit, including deletion, but preserves a newer boxed title as a conflict", async () => {
     const user = userEvent.setup();

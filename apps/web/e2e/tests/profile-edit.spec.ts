@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 
-import { test, expect } from "@playwright/test";
+import { test, expect, type Locator } from "@playwright/test";
 import { checkA11y, injectAxe } from "axe-playwright";
 import type { ProviderId } from "@jobctrl/contracts";
 import { getDocument, OPS } from "pdfjs-dist/legacy/build/pdf.mjs";
@@ -530,6 +530,38 @@ test.describe("structured profile persistence", () => {
   test.skip(process.env["JOBCTRL_E2E_ISOLATED"] !== "1", "Requires the owned, no-subprocess API fixture");
   const apiOrigin = `http://127.0.0.1:${process.env["JOBCTRL_E2E_API_PORT"]}`;
 
+  async function selectPlateFieldContents(field: Locator): Promise<void> {
+    // Deliver the native range change to Slate before the next keyboard edit.
+    await field.evaluate((element) => new Promise<void>((resolve) => {
+      const onChange = () => {
+        const selection = window.getSelection();
+        if (selection && !selection.isCollapsed && element.contains(selection.anchorNode) &&
+          element.contains(selection.focusNode) && selection.toString() === element.textContent) {
+          document.removeEventListener("selectionchange", onChange);
+          resolve();
+        }
+      };
+      document.addEventListener("selectionchange", onChange);
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+    }));
+  }
+
+  async function waitForWorkspaceAnimations(workspace: Locator): Promise<void> {
+    // Audit settled toolbar colors rather than an intermediate loading transition.
+    await workspace.evaluate(async (element) => {
+      for (;;) {
+        const animations = element.getAnimations({ subtree: true }).filter((animation) =>
+          animation.playState === "running" && Number.isFinite(animation.effect?.getComputedTiming().endTime));
+        if (animations.length === 0) return;
+        await Promise.all(animations.map((animation) => animation.finished.catch(() => undefined)));
+      }
+    });
+  }
+
   test.beforeEach(async ({ context, page, baseURL }) => {
     const allowed = new Set([new URL(baseURL!).origin, apiOrigin]);
     await context.route("**/*", (route) => allowed.has(new URL(route.request().url()).origin)
@@ -555,6 +587,53 @@ test.describe("structured profile persistence", () => {
     expect(seed.status()).toBe(200);
   });
 
+  test("skill edits survive duplicate intermediate values through real save and reload", async ({ page, baseURL }, testInfo) => {
+    const failures: string[] = [];
+    page.on("pageerror", (error) => failures.push(error.message));
+    page.on("console", (message) => { if (message.type() === "error") failures.push(message.text()); });
+    const stored = await (await page.request.get(`${apiOrigin}/v1/profile`)).json();
+    stored.profile.resume.skill_categories = [{ id: "duplicate-skills", label: "Languages", items: ["Java", "JavaScript"] }];
+    const seed = await page.request.patch(`${apiOrigin}/v1/profile`, {
+      headers: { origin: new URL(baseURL!).origin, "sec-fetch-site": "same-origin" },
+      data: { profileText: JSON.stringify(stored.profile), styleText: JSON.stringify(stored.style), templateText: stored.templateText },
+    });
+    expect(seed.status()).toBe(200);
+    await page.goto("/profile");
+    await expect(page).toHaveURL(/\/profile$/);
+    await expect(page).toHaveTitle(/JobCtrl/);
+    await page.getByRole("button", { name: "Resume editor", exact: true }).click();
+    const editor = page.getByRole("textbox", { name: "Baseline resume editor editor" });
+    const target = editor.locator('[data-resume-profile-field="skills:duplicate-skills:item:2"]');
+    await expect(target).toHaveText("JavaScript");
+    await target.locator('[data-slate-string="true"]').click();
+    await selectPlateFieldContents(target);
+    await page.keyboard.press("Backspace");
+    await page.keyboard.type("Java");
+    await expect(target).toHaveText("Java");
+    await page.keyboard.type(" X");
+    await expect(target).toHaveText("Java X");
+    await expect(page.getByRole("alert")).toHaveCount(0);
+    await page.getByRole("button", { name: "Profile data", exact: true }).click();
+    const disclosure = page.getByRole("button", { name: /^Skill categories\b/ });
+    if (await disclosure.getAttribute("aria-expanded") === "false") await disclosure.click();
+    await expect(page.getByLabel("Skill 1", { exact: true })).toHaveValue("Java");
+    await expect(page.getByLabel("Skill 2", { exact: true })).toHaveValue("Java X");
+    const save = page.getByRole("button", { name: "Save changes", exact: true });
+    if (await save.isVisible()) await save.click();
+    await expect.poll(async () => {
+      const saved = await (await page.request.get(`${apiOrigin}/v1/profile`)).json();
+      return saved.profile.resume.skill_categories[0].items;
+    }).toEqual(["Java", "Java X"]);
+    await page.reload();
+    await page.getByRole("button", { name: "Resume editor", exact: true }).click();
+    await expect(target).toHaveText("Java X");
+    await expect(editor.locator('[data-resume-profile-field="skills:duplicate-skills:item:1"]')).toHaveText("Java");
+    await expect(page.locator("vite-error-overlay")).toHaveCount(0);
+    await expect(page.getByRole("alert")).toHaveCount(0);
+    await page.screenshot({ path: testInfo.outputPath("skill-duplicate-saved.png") });
+    expect(failures).toEqual([]);
+  });
+
   test("boxed and Plate edits retain their fields and order through real save and reload", async ({ page }) => {
     await page.goto("/profile");
     await page.getByLabel("Full name", { exact: true }).fill("Structured Saved Candidate");
@@ -570,7 +649,22 @@ test.describe("structured profile persistence", () => {
       const selection = window.getSelection();
       return Boolean(selection && element.contains(selection.anchorNode) && element.contains(selection.focusNode));
     })).toBe(true);
+    // Slate observes the native selectionchange after the DOM caret moves.
+    // Wait for that delivery before issuing the next keyboard edit.
+    await bullet.evaluate((element) => {
+      element.removeAttribute("data-end-caret-delivered");
+      const onChange = () => {
+        const selection = window.getSelection();
+        if (selection?.isCollapsed && element.contains(selection.anchorNode) &&
+          selection.anchorOffset === selection.anchorNode?.textContent?.length) {
+          document.removeEventListener("selectionchange", onChange);
+          element.setAttribute("data-end-caret-delivered", "true");
+        }
+      };
+      document.addEventListener("selectionchange", onChange);
+    });
     await page.keyboard.press(process.platform === "darwin" ? "Meta+ArrowRight" : "End");
+    await expect(bullet).toHaveAttribute("data-end-caret-delivered", "true");
     await expect.poll(() => bullet.evaluate((element) => {
       const selection = window.getSelection();
       return Boolean(selection?.isCollapsed && element.contains(selection.anchorNode) &&
@@ -595,6 +689,7 @@ test.describe("structured profile persistence", () => {
     await expect(editor.locator('[data-resume-layout-target="experience:structured-first:bullet:1"]')).toContainText("Built 10 synthetic systems; revised 12x.");
     await expect(editor.locator("li").first()).toContainText("Second entry unique achievement.");
     await injectAxe(page);
+    await waitForWorkspaceAnimations(page.locator(".profile-workspace"));
     await checkA11y(page, ".profile-workspace", { includedImpacts: ["critical", "serious"] });
   });
 
@@ -642,10 +737,7 @@ test.describe("structured profile persistence", () => {
       await expect(title).toHaveText("Original Role 5");
       const replace = async (text: string) => {
         await title.locator('[data-slate-string="true"]').first().click();
-        await title.evaluate((element) => {
-          const range = document.createRange(); range.selectNodeContents(element);
-          const selection = window.getSelection(); selection?.removeAllRanges(); selection?.addRange(range);
-        });
+        await selectPlateFieldContents(title);
         await page.keyboard.press("Backspace");
         await page.keyboard.type(text);
         await expect(title).toHaveText(text);
@@ -715,13 +807,7 @@ test.describe("structured profile persistence", () => {
       const target = editor.locator(`[data-resume-profile-field="${field}"]`);
       await expect(target).toHaveCount(1);
       await target.locator('[data-slate-string="true"]').first().click();
-      await target.evaluate((element) => {
-        const range = document.createRange();
-        range.selectNodeContents(element);
-        const selection = window.getSelection();
-        selection?.removeAllRanges();
-        selection?.addRange(range);
-      });
+      await selectPlateFieldContents(target);
       await page.keyboard.press("Backspace");
       await page.keyboard.type(value);
       await expect(target).toHaveText(value);
@@ -755,6 +841,7 @@ test.describe("structured profile persistence", () => {
     await expect(editor.locator('[data-resume-profile-field="experience:sync-role-5:title"]')).toHaveText("Principal Engineer");
     await expect(editor.locator('[data-resume-profile-field="skills:sync-skills:item:1"]')).toHaveText("Build, Release");
     await injectAxe(page);
+    await waitForWorkspaceAnimations(page.locator(".profile-workspace"));
     await checkA11y(page, ".profile-workspace", { includedImpacts: ["critical", "serious"] });
     expect(failures).toEqual([]);
   });

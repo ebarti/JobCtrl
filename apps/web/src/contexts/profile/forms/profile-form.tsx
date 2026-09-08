@@ -91,6 +91,9 @@ function serializeProfileValues(values: ProfileFormValues): string {
 
 interface AppliedPlateTarget {
   readonly bulletIndex?: number;
+  readonly skillItemIndex?: number;
+  readonly skillItems?: readonly string[];
+  readonly skillItemWasUnique?: boolean;
   readonly texts: readonly string[];
 }
 
@@ -101,6 +104,7 @@ interface PlateProfileProjectionState {
 
 interface PlateProfileProjectionResult {
   readonly conflictCount: number;
+  readonly unmappedCount: number;
   readonly profile: JsonRecord | null;
   readonly state: PlateProfileProjectionState;
 }
@@ -144,6 +148,7 @@ function profileWithPlateChanges(
   const appliedTargets = new Map(previousState?.appliedTargets ?? []);
   const unchangedResult = (conflictCount = 0): PlateProfileProjectionResult => ({
     conflictCount,
+    unmappedCount: 0,
     profile: profileDraft,
     state: { activeChanges, appliedTargets },
   });
@@ -165,6 +170,8 @@ function profileWithPlateChanges(
   const isTextArray = (value: unknown): value is string[] => Array.isArray(value) && value.every((item) => typeof item === "string");
   let changed = false;
   let conflictCount = 0;
+  let unmappedCount = 0;
+  const appliedSkillItems = new Map<string, { items: string[]; index: number }>();
   const effectiveChanges = [...activeChanges.values()];
   for (const [semanticId, previousChange] of previousState?.activeChanges ?? []) {
     if (
@@ -282,9 +289,20 @@ function profileWithPlateChanges(
           conflictCount += 1;
           continue;
         }
-        const expected = appliedTargets.get(change.semanticId)?.texts ?? change.baselineTexts;
+        const previousTarget = appliedTargets.get(change.semanticId);
+        const expected = previousTarget?.texts ?? change.baselineTexts;
         const indexes = matchingTextSequenceIndexes(items, expected);
-        const index = indexes.length === 1 ? indexes[0] : undefined;
+        const previousIndex = previousTarget?.skillItemIndex;
+        const incomingItems = getPathValue(profileDraft, `${prefix}.items`);
+        // Keep following an edit through transient duplicates. If that item was
+        // changed elsewhere, a remaining duplicate is not its replacement.
+        const index = previousIndex !== undefined && isTextArray(incomingItems) &&
+          plateTextArraysEqual(incomingItems, previousTarget?.skillItems ?? []) &&
+          plateTextArraysEqual(items.slice(previousIndex, previousIndex + 1), expected)
+          ? previousIndex
+          : indexes.length === 1 && previousTarget?.skillItemWasUnique !== false
+            ? indexes[0]
+            : undefined;
         if (index === undefined) {
           appliedTargets.delete(change.semanticId);
           conflictCount += 1;
@@ -294,12 +312,13 @@ function profileWithPlateChanges(
           items[index] = value;
           setPathValue(updatedProfile, `${prefix}.items`, items);
         });
+        appliedSkillItems.set(change.semanticId, { items, index });
       }
       continue;
     }
 
     if (change.semanticId.startsWith("unmapped:")) {
-      conflictCount += 1;
+      unmappedCount += 1;
       continue;
     }
 
@@ -365,8 +384,23 @@ function profileWithPlateChanges(
     }
   }
 
+  // All edits in this projection share the resulting snapshot. Capturing it
+  // mid-pass would mistake a sibling preview edit for a later boxed change.
+  for (const [semanticId, { items, index }] of appliedSkillItems) {
+    const appliedTarget = appliedTargets.get(semanticId);
+    if (appliedTarget) {
+      appliedTargets.set(semanticId, {
+        ...appliedTarget,
+        skillItemIndex: index,
+        skillItems: [...items],
+        skillItemWasUnique: matchingTextSequenceIndexes(items, appliedTarget.texts).length === 1,
+      });
+    }
+  }
+
   return {
     conflictCount,
+    unmappedCount,
     profile: changed ? updatedProfile : profileDraft,
     state: { activeChanges, appliedTargets },
   };
@@ -440,11 +474,12 @@ export function ProfileForm({
         plateProfileProjectionRef.current,
       );
       plateProfileProjectionRef.current = projection.state;
-      if (projection.conflictCount > 0) {
+      if (projection.conflictCount > 0 || projection.unmappedCount > 0) {
         setStatusTone("warning");
-        setStatusMessage(
-          "Some resume editor changes were not applied because the matching Profile data changed. Save or discard those Profile changes, then reopen the resume editor.",
-        );
+        setStatusMessage([
+          ...(projection.conflictCount > 0 ? ["Some resume editor changes were not applied because the matching Profile data changed. Save or discard those Profile changes, then reopen the resume editor."] : []),
+          ...(projection.unmappedCount > 0 ? ["Some parts of the preview cannot be edited here. Edit those fields in Profile data instead."] : []),
+        ].join(" "));
       } else {
         clearTransientStatus();
       }
