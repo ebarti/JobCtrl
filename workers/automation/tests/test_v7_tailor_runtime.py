@@ -260,7 +260,7 @@ async def test_tailor_activity_keeps_aggregate_and_partial_failure_adapters(batc
 @pytest.mark.parametrize("workers", [1, 2])
 @pytest.mark.parametrize("failure", ["before_claim", "successor_fence"])
 async def test_unscoped_tailor_activity_finishes_siblings_before_escalating_escaped_error(
-    batch_runtime, monkeypatch, workers, failure,
+    batch_runtime, monkeypatch, caplog, workers, failure,
 ):
     conn = batch_runtime.connect()
     job_ids = tuple(canonical_job_id(f"30000000-0000-4000-8000-{i:012d}") for i in range(1, 6))
@@ -332,6 +332,15 @@ async def test_unscoped_tailor_activity_finishes_siblings_before_escalating_esca
     else:
         assert states[0]["state"] == "pending"
     assert "1 tailoring error(s), 0 failed quality gate(s)" in str(raised.value)
+    escaped_errors = [
+        record.getMessage() for record in caplog.records
+        if record.name == tailor_module.__name__ and record.levelname == "ERROR"
+    ]
+    cause = (
+        "synthetic target read failure" if failure == "before_claim"
+        else "tailor activity no longer owns artifact persistence"
+    )
+    assert escaped_errors == [f"Tailoring failed for job {_JOB_ID}: {cause}"]
 
 
 @pytest.mark.asyncio

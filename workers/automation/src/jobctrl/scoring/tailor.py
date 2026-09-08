@@ -518,6 +518,7 @@ def run_tailoring(
             # Pre-claim errors and lost-owner fences escape the canonical item
             # lifecycle. Count them without writing a terminal state we may no
             # longer own, and let unaffected cohort members finish normally.
+            log.error("Tailoring failed for job %s: %s", job_id, exc)
             return {"job_id": str(job_id), "status": "error", "error": str(exc)}
 
     counts = {"approved": 0, "blocked": 0, "failed": 0, "errors": 0, "exhausted": 0}
