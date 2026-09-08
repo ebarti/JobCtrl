@@ -12,6 +12,10 @@ from temporalio import activity
 from jobctrl.domain.identifiers import canonical_job_id
 
 
+class PreparationReservationLost(RuntimeError):
+    """One job's reservation was revoked before its attempt began."""
+
+
 def owns_preparation_reservation(conn, *, tenant_id, job_id, stage, workflow_id) -> bool:
     """A queued automatic stage is admitted only by its reserved workflow."""
     if not workflow_id:
@@ -38,10 +42,12 @@ def claim_preparation_reservation(conn, *, tenant_id, job_id, stage, workflow_id
         return
     conn.execute("BEGIN IMMEDIATE")
     try:
-        if (cancel_event is not None and cancel_event.is_set()) or not owns_preparation_reservation(
+        if cancel_event is not None and cancel_event.is_set():
+            raise RuntimeError(f"{stage} activity canceled before dispatch")
+        if not owns_preparation_reservation(
             conn, tenant_id=tenant_id, job_id=job_id, stage=stage, workflow_id=workflow_id
         ):
-            raise RuntimeError(f"{stage} activity no longer owns its queued reservation")
+            raise PreparationReservationLost(f"{stage} activity no longer owns its queued reservation")
         yield
         conn.commit()
     except BaseException:

@@ -623,7 +623,7 @@ def tailor_job_by_id(
     if recovery_workflow_id and not owns_preparation_reservation(
         conn, tenant_id=tenant_id, job_id=stable_job_id, stage="tailor", workflow_id=recovery_workflow_id,
     ):
-        raise RuntimeError("tailor activity no longer owns its queued reservation")
+        return {"job_id": str(stable_job_id), "status": "skipped", "reason": "reservation_lost"}
     target_reader = SqlitePreparationTargetReader(conn)
     target = target_reader.load(tenant_id, stable_job_id)
     if target is None:

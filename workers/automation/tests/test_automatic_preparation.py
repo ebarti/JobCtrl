@@ -707,3 +707,54 @@ def test_enrichment_owner_recovery_fences_late_worker_and_counts_attempt(conn, s
         assert aggregate.is_failed
         assert aggregate.last_attempt.error.code == "ENRICH_ACTIVITY_OWNER_STOPPED"
     assert client.describes == [(batch.workflow_id, run_id)]
+
+
+@pytest.mark.parametrize("scraper_release", [False, True])
+def test_unclaimed_enrichment_failure_keeps_one_stopped_reservation(conn, scraper_release):
+    from jobctrl.enrichment.detail import _release_unstarted_enrichment_cohort
+
+    job_id = _job(conn)
+    batch = recovery.reserve_recovery_batch(conn, now=_NOW)
+    conn.execute(
+        "UPDATE job_stage_states SET metadata_json = json_set(metadata_json, '$.temporalRunId', 'run-1') "
+        "WHERE job_id = ? AND stage = 'enrich'", (str(job_id),),
+    )
+    conn.commit()
+    if scraper_release:
+        _release_unstarted_enrichment_cohort(
+            conn, (job_id,), tenant_id=LOCAL_TENANT,
+            workflow_id=batch.workflow_id, workflow_run_id="run-1",
+        )
+    client = _Client()
+    client.statuses[batch.workflow_id] = WorkflowExecutionStatus.FAILED
+    client.statuses[(batch.workflow_id, "run-1")] = WorkflowExecutionStatus.FAILED
+    for _ in range(4):
+        asyncio.run(_tick(client))
+        conn.execute("UPDATE job_stage_states SET updated_at = ?", (_OLD,))
+        conn.commit()
+    row = _stage(conn, job_id)
+    assert row["state"] == "blocked"
+    assert row["error_code"] == "PREPARATION_RECOVERY_STOPPED"
+    assert row["attempt_count"] == 1
+    assert client.starts == []
+    assert conn.execute("SELECT COUNT(*) FROM job_events WHERE event_type = 'StageQueued'").fetchone()[0] == 1
+
+
+@pytest.mark.parametrize("workers", [1, 2])
+def test_material_reservation_loss_at_claim_is_isolated_to_one_job(workers):
+    from jobctrl.infrastructure.preparation_recovery import PreparationReservationLost
+    from jobctrl.materials.executor import run_material_jobs
+
+    revoked, next_job = [canonical_job_id(f"10000000-0000-4000-8000-{i:012d}") for i in (1, 2)]
+    attempted = []
+
+    def run_one(job_id):
+        if job_id == revoked:
+            raise PreparationReservationLost("reservation revoked during admission")
+        attempted.append(job_id)
+        return {"status": "approved"}
+
+    result = run_material_jobs((revoked, next_job), workers=workers, cancel_event=None, stage="tailor", run_one=run_one)
+    assert attempted == [next_job]
+    assert result[0][1]["reason"] == "reservation_lost"
+    assert result[1][1]["status"] == "approved"

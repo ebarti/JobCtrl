@@ -776,7 +776,7 @@ def score_job_by_id(
             or (cancel_event is not None and cancel_event.is_set())
         ):
             conn.rollback()
-            raise RuntimeError("Score activity no longer owns its queued reservation")
+            return ScoreJobOutcome(ok=False, score=None, error="Score reservation no longer owned")
         owned_metadata = _score_activity_metadata(
             conn,
             tenant_id=tenant_id,
@@ -838,7 +838,7 @@ def score_job_by_id(
             job=job,
             source_score=reusable_repost_score,
         )
-        if outcome.ok and outcome.score is not None and not enforce_workflow_ownership:
+        if outcome.ok and outcome.score is not None:
             _record_score_stage_succeeded(
                 conn,
                 job=job,
@@ -846,10 +846,17 @@ def score_job_by_id(
                 tenant_id=tenant_id,
                 started_at=utc_now(),
                 validate_transition=False,
+                metadata=owned_metadata,
+                cancel_event=cancel_event,
             )
         return outcome
     if existing is not None and not rescore:
-        if not enforce_workflow_ownership:
+        if enforce_workflow_ownership:
+            _record_score_stage_succeeded(
+                conn, job=job, score=existing, tenant_id=tenant_id,
+                metadata=owned_metadata, cancel_event=cancel_event,
+            )
+        else:
             _ensure_existing_score_stage_succeeded(
                 conn,
                 job=job,
@@ -951,44 +958,11 @@ def score_job_by_id(
         require_employer_analysis=require_employer_analysis,
     )
     if outcome.ok and outcome.score is not None:
-        if enforce_workflow_ownership:
-            conn.execute("BEGIN IMMEDIATE")
-            if not _score_activity_may_write(conn, tenant_id, stable_job_id, workflow_id, cancel_event):
-                conn.rollback()
-                return outcome
-        finished_at = utc_now()
-        set_stage_state(
-            conn,
-            stable_job_id,
-            "score",
-            "succeeded",
-            tenant_id=tenant_id,
-            attempt_count=(
-                _score_attempt_count(conn, tenant_id=tenant_id, job_id=stable_job_id) + 1
-                if enforce_workflow_ownership
-                else 1
-            ),
-            started_at=started_at,
-            finished_at=finished_at,
-            metadata=metadata,
+        _record_score_stage_succeeded(
+            conn, job=job, score=outcome.score, tenant_id=tenant_id,
+            started_at=started_at, metadata=metadata, cancel_event=cancel_event,
+            validate_transition=True,
         )
-        record_job_event(
-            conn,
-            stable_job_id,
-            "score",
-            "StageCompleted",
-            tenant_id=tenant_id,
-            message=f"Fit score {outcome.score.fit_score.value}/10",
-            payload={"keywords": list(outcome.score.matched_keywords)},
-        )
-        _sync_score_eligibility_stage_state(
-            conn,
-            tenant_id=tenant_id,
-            job_id=outcome.score.job_id,
-            score=outcome.score,
-            now=finished_at,
-        )
-        conn.commit()
     else:
         _record_score_stage_failed(
             conn,
@@ -1119,8 +1093,16 @@ def _record_score_stage_succeeded(
     started_at: str | None = None,
     finished_at: str | None = None,
     validate_transition: bool = False,
+    metadata: dict[str, Any] | None = None,
+    cancel_event: Any | None = None,
 ) -> None:
     job_id = canonical_job_id(str(score.job_id))
+    owned = bool(metadata and metadata.get("automaticRecovery"))
+    if owned:
+        conn.execute("BEGIN IMMEDIATE")
+        if not _score_activity_may_write(conn, tenant_id, job_id, metadata.get("activityOwner"), cancel_event):
+            conn.rollback()
+            return
     finished_at = finished_at or utc_now()
     ensure_job_stage_rows(
         conn,
@@ -1134,10 +1116,11 @@ def _record_score_stage_succeeded(
         "score",
         "succeeded",
         tenant_id=tenant_id,
-        attempt_count=1,
+        attempt_count=_score_attempt_count(conn, tenant_id=tenant_id, job_id=job_id) + 1 if owned else 1,
         started_at=started_at or finished_at,
         finished_at=finished_at,
         validate_transition=validate_transition,
+        metadata=metadata,
     )
     record_job_event(
         conn,

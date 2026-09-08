@@ -197,6 +197,10 @@ async def _reconcile_stopped_enrichment_owners(client: Any, conn: sqlite3.Connec
                     state = "succeeded"
                     attempts = max(attempts, aggregate.attempt_count)
                 else:
+                    # An unclaimed row consumed no attempt. Leave its durable
+                    # reservation for timeout recovery or closed-batch blocking.
+                    if row["state"] == "queued":
+                        continue
                     if row["state"] == "running" and (aggregate is None or not aggregate.is_failed):
                         aggregate = aggregate or JobEnrichment.empty(
                             tenant_id=LOCAL_TENANT, job_id=job_id, updated_at=now

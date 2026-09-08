@@ -3406,6 +3406,11 @@ def _release_unstarted_enrichment_cohort(
                 or metadata.get("leaseEpoch") != activity_lease.epoch
             ):
                 continue
+            # Automatic reservations are settled from exact Temporal history.
+            # Releasing one here would let a preflight failure retry forever
+            # without consuming an attempt. Keep it queued for that decision.
+            if metadata.get("automaticPreparation"):
+                continue
             set_stage_state(
                 conn,
                 job_id,
@@ -3414,7 +3419,7 @@ def _release_unstarted_enrichment_cohort(
                 tenant_id=tenant_id,
                 attempt_count=int(row[1] or 0),
                 retryable=True,
-                metadata={"recoveryReason": "workflow_selection_unprocessed"},
+                metadata={**metadata, "recoveryReason": "workflow_selection_unprocessed"},
                 validate_transition=False,
                 expected_version=int(row[3] or 0),
             )

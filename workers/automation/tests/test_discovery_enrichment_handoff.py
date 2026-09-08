@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+
+import pytest
 from types import SimpleNamespace
 
 from jobctrl.database import init_db
@@ -18,7 +20,8 @@ from jobctrl.enrichment.detail import (
 from jobctrl.state import ensure_job_stage_rows
 
 
-def test_live_activity_stop_preserves_the_terminal_enrichment_cohort(tmp_path, monkeypatch):
+@pytest.mark.parametrize("workflow_canceled", [False, True])
+def test_live_activity_stop_preserves_the_terminal_enrichment_cohort(tmp_path, monkeypatch, workflow_canceled):
     conn = init_db(tmp_path / "handoff.db")
     job_id = JobId("10000000-0000-4000-8000-000000000001")
     execution = DiscoveryExecutionRef(tenant_id="local", workflow_id="discover-local", temporal_run_id="run-1")
@@ -72,6 +75,22 @@ def test_live_activity_stop_preserves_the_terminal_enrichment_cohort(tmp_path, m
     ).fetchone()
     assert tuple(stage) == ("pending", 0)
     assert conn.execute("SELECT COUNT(*) FROM job_events WHERE event_type = 'StageCanceled'").fetchone()[0] == 0
+    if workflow_canceled:
+        from jobctrl.cli import _reconcile_canceled_enrichment_cohorts
+        from jobctrl.pipeline.automatic_preparation import reserve_recovery_batch
+
+        conn.execute(
+            "INSERT INTO workflow_run_projections "
+            "(workflow_id, tenant_id, workflow_type, status, temporal_run_id) "
+            "VALUES (?, 'local', 'DiscoverWorkflow', 'canceled', ?)",
+            (execution.workflow_id, execution.temporal_run_id),
+        )
+        conn.commit()
+        assert _reconcile_canceled_enrichment_cohorts(conn, tenant_id="local") == 1
+        assert reserve_recovery_batch(conn) is None
+        conn.close()
+        return
+
     # The real terminal selector can reclaim the released job under the same run.
     _queue_enrichment_cohort(
         conn,

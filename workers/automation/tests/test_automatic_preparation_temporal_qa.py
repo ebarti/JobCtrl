@@ -1085,3 +1085,76 @@ async def test_cancel_fences_uncommitted_report_and_retains_committed_pair(evide
         if committed:
             verify_report(world, job_id)
         assert (await history_types(env.client, workflow_id)).count("cancel_preparation_state") == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage", ["score", "tailor"])
+async def test_revoked_job_after_batch_filter_does_not_strand_other_jobs(world, monkeypatch, stage):
+    revoked = seed_for_stage(world, 1, stage)
+    other = seed_for_stage(world, 2, stage)
+    original_filter = recovery.automatic_recovery_job_ids
+
+    def revoke_after_filter(payload, selected_stage):
+        selected = original_filter(payload, selected_stage)
+        conn = database.get_connection()
+        set_stage_state(conn, revoked, stage, "canceled", validate_transition=False)
+        conn.commit()
+        assert selected == (revoked, other)
+        return selected
+
+    monkeypatch.setattr(recovery, "automatic_recovery_job_ids", revoke_after_filter)
+    if stage == "tailor":
+        def stop_at_generation(job, *args, **kwargs):
+            kwargs["commit_guard"]()
+            raise RuntimeError("synthetic generation provider unavailable")
+
+        monkeypatch.setattr(tailor, "_tailor_one_job", stop_at_generation)
+        monkeypatch.setattr(tailor, "TAILORED_DIR", world.app / "tailored")
+        original_tailor = tailor.tailor_job_by_id
+
+        def tailor_with_inputs(job_id, **kwargs):
+            return original_tailor(job_id, **kwargs, snapshot=_profile_snapshot(LOCAL_TENANT), pdf_renderer=object())
+
+        monkeypatch.setattr(tailor, "tailor_job_by_id", tailor_with_inputs)
+    queue = f"qa-revoked-{uuid.uuid4()}"
+    async with local_env() as env:
+        assert await tick(env.client, world, queue) == 2
+        workflow_id = reserved_id(world, other, stage)
+        async with worker(env.client, queue):
+            await asyncio.wait_for(env.client.get_workflow_handle(workflow_id).result(), 25)
+        assert _stage(world.conn, revoked, stage)["state"] == "canceled"
+        assert _stage(world.conn, other, stage)["state"] == ("succeeded" if stage == "score" else "failed")
+        assert _stage(world.conn, other, stage)["attempt_count"] == 1
+        await wait_idle(env.client)
+        await recovery._reconcile_stopped_activity_owners(env.client, world.conn)
+        await recovery._reconcile_interrupted_reservations(env.client, world.conn)
+        assert _stage(world.conn, other, stage)["error_code"] != "PREPARATION_RECOVERY_STOPPED"
+
+
+@pytest.mark.asyncio
+async def test_real_enrichment_batch_failure_before_first_claim_stops_recovery(world, monkeypatch):
+    from jobctrl.domain.errors import TransientNetworkError
+
+    job_id = seed_for_stage(world, 1, "enrich")
+
+    def fail_site_before_claim(*args, **kwargs):
+        raise TransientNetworkError("synthetic network outage before the first job claim")
+
+    monkeypatch.setattr(detail, "scrape_site_batch", fail_site_before_claim)
+    queue = f"qa-enrich-preflight-{uuid.uuid4()}"
+    async with local_env() as env:
+        assert await tick(env.client, world, queue) == 1
+        workflow_id = reserved_id(world, job_id, "enrich")
+        async with worker(env.client, queue):
+            await asyncio.wait_for(env.client.get_workflow_handle(workflow_id).result(), 25)
+        await wait_idle(env.client)
+        for _ in range(3):
+            world.conn.execute("UPDATE job_stage_states SET updated_at='2026-01-01T00:00:00Z'")
+            world.conn.commit()
+            assert await tick(env.client, world, queue) == 0
+        row = _stage(world.conn, job_id, "enrich")
+        assert row["state"] == "blocked"
+        assert row["error_code"] == "PREPARATION_RECOVERY_STOPPED"
+        assert row["attempt_count"] == 1
+        executions = [run async for run in env.client.list_workflows()]
+        assert len(executions) == 1

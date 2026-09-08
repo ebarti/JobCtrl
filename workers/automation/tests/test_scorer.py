@@ -513,10 +513,12 @@ def test_score_job_by_url_syncs_existing_blocked_score_to_downstream_stages(
     assert all("candidate requires sponsorship" in row["error_message"] for row in rows)
 
 
+@pytest.mark.parametrize("automatic_recovery", [False, True])
 def test_score_job_by_url_reuses_direct_score_for_reference_repost(
     conn: sqlite3.Connection,
     profile_snapshot,
     monkeypatch,
+    automatic_recovery,
 ) -> None:
     direct_url = "https://es.indeed.com/viewjob?jk=direct-ai-security"
     repost_url = "https://www.linkedin.com/jobs/view/reference-ai-security"
@@ -588,8 +590,21 @@ def test_score_job_by_url_reuses_direct_score_for_reference_repost(
         }
     )
 
-    outcome = scorer_module.score_job_by_url(
-        repost_url,
+    owned_args = {}
+    if automatic_recovery:
+        set_stage_state(
+            conn, _job_id(repost_url), "score", "queued", attempt_count=2,
+            metadata={"automaticPreparation": {"workflowId": "prepare-auto-local-score-reuse"}},
+            validate_transition=False,
+        )
+        conn.commit()
+        owned_args = {
+            "workflow_id": "reuse-run", "recovery_workflow_id": "prepare-auto-local-score-reuse",
+            "enforce_workflow_ownership": True,
+        }
+    outcome = scorer_module.score_job_by_id(
+        _job_id(repost_url),
+        **owned_args,
         profile_snapshot=profile_snapshot,
         resume_text="AI security leader.",
         criteria=criteria,
@@ -602,6 +617,9 @@ def test_score_job_by_url_reuses_direct_score_for_reference_repost(
     repost_score = repo.load(LOCAL_TENANT, _job_id(repost_url))
     assert repost_score is not None
     assert repost_score.fit_score.value == 9
+    stage = _stage_row(conn, repost_url, "score")
+    assert stage["state"] == "succeeded"
+    assert stage["attempt_count"] == (3 if automatic_recovery else 1)
     event = conn.execute(
         """
         SELECT event_type, message
@@ -1616,3 +1634,47 @@ def test_score_job_by_url_increments_score_attempts_on_failure(
         )
         assert outcome.ok is False
         assert _score_attempt_count(conn, url) == expected
+
+
+@pytest.mark.parametrize("cancel_before_finish", [False, True])
+def test_owned_existing_score_finishes_with_eligibility_and_owner_fence(
+    conn, profile_snapshot, monkeypatch, cancel_before_finish,
+):
+    url = "https://example.test/existing-owned-score"
+    _seed_pending_job(conn, url)
+    job_id = _job_id(url)
+    repository = SqliteScoreRepository(conn)
+    repository.save(JobScore.initial(
+        tenant_id=LOCAL_TENANT, job_id=job_id, fit_score=FitScore.create(3),
+        breakdown=ScoreBreakdown(reasoning="Below threshold."),
+        matched_keywords=MatchedKeywords.from_iterable([]), scored_at="2026-09-01T00:00:00Z",
+    ))
+    set_stage_state(
+        conn, job_id, "score", "queued", attempt_count=2,
+        metadata={"automaticPreparation": {"workflowId": "prepare-auto-local-score-existing"}},
+        validate_transition=False,
+    )
+    conn.commit()
+    monkeypatch.setattr(scorer_module, "get_connection", lambda: conn)
+    if cancel_before_finish:
+        def revoke_before_finish(**kwargs):
+            set_stage_state(conn, job_id, "score", "canceled", attempt_count=2, validate_transition=False)
+            conn.commit()
+            return None
+        monkeypatch.setattr(scorer_module, "_preferred_direct_score_for_repost", revoke_before_finish)
+    result = scorer_module.score_job_by_id(
+        job_id, repository=repository, profile_snapshot=profile_snapshot, resume_text="Engineer.",
+        criteria=ScoringCriteria(), workflow_id="owned-run",
+        recovery_workflow_id="prepare-auto-local-score-existing", enforce_workflow_ownership=True,
+    )
+    assert result.ok
+    row = _stage_row(conn, url, "score")
+    assert row["state"] == ("canceled" if cancel_before_finish else "succeeded")
+    assert row["attempt_count"] == (2 if cancel_before_finish else 3)
+    completed = conn.execute(
+        "SELECT COUNT(*) FROM job_events WHERE job_id = ? AND stage = 'score' AND event_type = 'StageCompleted'",
+        (str(job_id),),
+    ).fetchone()[0]
+    assert completed == int(not cancel_before_finish)
+    if not cancel_before_finish:
+        assert _stage_row(conn, url, "tailor")["state"] == "skipped"

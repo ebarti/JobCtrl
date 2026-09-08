@@ -8,6 +8,7 @@ from typing import Any, Callable
 
 from jobctrl.domain.errors import LlmTransientError
 from jobctrl.domain.identifiers import JobId
+from jobctrl.infrastructure.preparation_recovery import PreparationReservationLost
 
 
 def run_material_jobs(
@@ -28,11 +29,17 @@ def run_material_jobs(
         if cancel_event is not None and cancel_event.is_set():
             raise LlmTransientError(f"{stage} activity canceled")
 
+    def run_owned_job(job_id: JobId) -> dict[str, Any]:
+        try:
+            return run_one(job_id)
+        except PreparationReservationLost:
+            return {"job_id": str(job_id), "status": "skipped", "reason": "reservation_lost"}
+
     if worker_count == 1:
         results: list[tuple[JobId, dict[str, Any]]] = []
         for job_id in job_ids:
             ensure_active()
-            results.append((job_id, run_one(job_id)))
+            results.append((job_id, run_owned_job(job_id)))
         return results
 
     ensure_active()
@@ -40,7 +47,7 @@ def run_material_jobs(
     # stage events emitted inside the material runners keep run ownership.
     from jobctrl.infrastructure.workflow_run_context import carry_workflow_run_context
 
-    run_one_owned = carry_workflow_run_context(run_one)
+    run_one_owned = carry_workflow_run_context(run_owned_job)
     executor = ThreadPoolExecutor(
         max_workers=worker_count,
         thread_name_prefix=f"selected-{stage}",
