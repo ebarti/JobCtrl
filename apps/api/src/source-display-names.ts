@@ -8,7 +8,16 @@ const JOBSTREAMING_SOURCE_DISPLAY_NAMES: Readonly<Record<string, string>> = {
 };
 
 export function canonicalSourceDisplayName(sourceId: string, fallback: string): string {
-  return JOBSTREAMING_SOURCE_DISPLAY_NAMES[sourceId] ?? fallback;
+  const knownName = JOBSTREAMING_SOURCE_DISPLAY_NAMES[sourceId];
+  if (knownName) return knownName;
+  if (!sourceId.startsWith("jobspy:")) return fallback;
+  // Match the worker's title-casing rule for other configured board slugs.
+  const board = sourceId.slice("jobspy:".length)
+    .replace(/[-_]/g, " ")
+    .trim()
+    .toLowerCase()
+    .replace(/[a-z]+/g, (word) => word.charAt(0).toUpperCase() + word.slice(1));
+  return `JobStreaming ${board}`;
 }
 
 /** Resolve names once per read while retaining stable source identities. */

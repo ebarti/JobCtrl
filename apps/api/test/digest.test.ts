@@ -42,6 +42,7 @@ interface DigestParityFixture {
     dailyBudgetUsd: number;
   };
   jobs: FixtureJob[];
+  sourceRegistry: Array<{ sourceId: string; displayName: string }>;
   sourceQuality: Array<{
     sourceId: string;
     recommendedState: string;
@@ -87,6 +88,7 @@ interface DigestParityFixture {
       count: number;
       sources: Array<{
         sourceId: string;
+        displayName?: string;
         recommendedState: string;
         consecutiveFailures: number;
       }>;
@@ -118,18 +120,12 @@ describe("daily digest read model", () => {
       seedDigestDatabase(dbPath, tempDir);
       const db = new Database(dbPath);
       try {
-        db.prepare("UPDATE source_quality_stats SET source_id = ? WHERE source_id = ?")
-          .run("jobspy:linkedin", "workday:unstable-example");
-        db.prepare(`INSERT INTO source_registry_entries (
-          tenant_id, source_id, kind, display_name, owner, priority, state, policy_id, created_at, updated_at
-        ) VALUES ('local', 'jobspy:linkedin', 'broad_board', 'JobStreaming LinkedIn', 'system', 'lead_generator', 'experimental', 'broad_board_lead_generator', ?, ?)`)
-          .run(fixture.now, fixture.now);
-
-        const source = buildDashboardSummary(db).sourceHealth.find((item) => item.sourceId === "jobspy:linkedin");
-        expect(source).toMatchObject({ displayName: "JobStreaming LinkedIn", recommendedState: "quarantined", consecutiveFailures: 3 });
-        expect(buildDigest(db).blockedSources.sources).toContainEqual({
-          sourceId: "jobspy:linkedin", displayName: "JobStreaming LinkedIn", recommendedState: "quarantined", consecutiveFailures: 3,
-        });
+        const summary = buildDashboardSummary(db);
+        for (const source of fixture.expected.blockedSources.sources) {
+          expect(summary.sourceHealth.find((item) => item.sourceId === source.sourceId))
+            .toMatchObject(source);
+        }
+        expect(buildDigest(db).blockedSources).toEqual(fixture.expected.blockedSources);
       } finally {
         db.close();
       }
@@ -187,8 +183,14 @@ describe("daily digest read model", () => {
 
       const response = await app.inject({ method: "GET", url: "/v1/digest" });
       expect(response.statusCode).toBe(200);
-      const digest = response.json() as { ok: true; since: string | null; newMatches: { count: number } };
+      const digest = response.json() as {
+        ok: true;
+        since: string | null;
+        newMatches: { count: number };
+        blockedSources: DigestParityFixture["expected"]["blockedSources"];
+      };
 
+      expect(digest.blockedSources).toEqual(fixture.expected.blockedSources);
       expect(digest.ok).toBe(true);
       expect(digest.since).toBe(fixture.expected.since);
       expect(digest.newMatches.count).toBe(fixture.expected.newMatches.count);
@@ -466,6 +468,12 @@ function insertMaterialArtifact(
 }
 
 function seedSourceQuality(db: Database.Database): void {
+  for (const source of fixture.sourceRegistry) {
+    db.prepare(`INSERT INTO source_registry_entries (
+      tenant_id, source_id, kind, display_name, owner, priority, state, policy_id, created_at, updated_at
+    ) VALUES ('local', ?, 'broad_board', ?, 'system', 'lead_generator', 'experimental', 'broad_board_lead_generator', ?, ?)`)
+      .run(source.sourceId, source.displayName, fixture.now, fixture.now);
+  }
   const insert = db.prepare(
     `INSERT INTO source_quality_stats (
        tenant_id, source_id, window_start, window_end, run_count,
