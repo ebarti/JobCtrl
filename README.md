@@ -236,8 +236,10 @@ evidence, qualifications, and the complete capability matrix.
 - Generate tailored resumes, cover letters, PDFs, and review artifacts. Resume
   tailoring selects the smallest job-relevant set of profile achievements;
   per-role bullet limits are ceilings, and each metric stays bound to the
-  achievement that contains it. Required roles with no achievement evidence
-  retain their existing role details without generated bullets.
+  achievement that contains it. Required roles with neither achievement evidence
+  nor required bullet pins retain their existing role details without generated
+  bullets. A pinned bullet still needs supporting evidence from its own role;
+  restore that evidence or remove the pin before tailoring.
 - Triage jobs through the real **Active**, **Deleted**, and **Hidden** queues.
   The default Active view keeps source and warning columns available but hidden,
   uses destructive styling for deletion, and opens a row through its focused

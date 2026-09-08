@@ -1700,11 +1700,13 @@ def build_master_tailor_prompt(
     require_resume_master(profile)
     resume = get_resume_master(profile)
     required_experience_ids = get_required_experience_entry_ids(profile)
+    required_bullets = get_required_bullets_by_experience_id(profile)
     evidence_entry_ids = {
         item["experience_entry_id"] for item in get_achievement_evidence(profile)
     }
-    required_roles_without_evidence = [
-        entry_id for entry_id in required_experience_ids if entry_id not in evidence_entry_ids
+    required_roles_allowing_empty_bullets = [
+        entry_id for entry_id in required_experience_ids
+        if entry_id not in evidence_entry_ids and not required_bullets.get(entry_id)
     ]
     required_skill_ids = get_required_skill_category_ids(profile)
     all_experience_entries = get_experience_entries(profile)
@@ -1749,7 +1751,6 @@ def build_master_tailor_prompt(
         for entry in education_entries
     ]
 
-    required_bullets = get_required_bullets_by_experience_id(profile)
     tailoring_policy = get_tailoring_policy(profile)
     writing_style = get_writing_style(profile)
     custom_tailoring_prompt = get_custom_tailoring_prompt(profile)
@@ -1855,9 +1856,10 @@ HARD RULES:
 - If a required role has target-covered or explicitly pinned evidence, include
   only those bullets and no positioning-only filler. If it has neither, include
   exactly one positioning bullet citing an achievement from that role when one exists
-- For REQUIRED EXPERIENCE IDS WITHOUT ACHIEVEMENT EVIDENCE, return bullets: []
+- For REQUIRED EXPERIENCE IDS ALLOWING EMPTY BULLETS, return bullets: []
   and title: "". The code preserves the source role details. Do not invent a
-  positioning bullet or cite an achievement from another role
+  positioning bullet or cite an achievement from another role. This exception
+  applies only to roles with neither achievement evidence nor required bullet pins
 - non_requirement_reason is a required fallback classification. Choose pinned,
   positioning, or structure. When coverage_edge_ids is non-empty it is ignored;
   when coverage_edge_ids is empty it must truthfully classify the claim
@@ -1908,8 +1910,8 @@ WRITING STYLE:
 REQUIRED EXPERIENCE IDS:
 {json.dumps(required_experience_ids, ensure_ascii=False)}
 
-REQUIRED EXPERIENCE IDS WITHOUT ACHIEVEMENT EVIDENCE:
-{json.dumps(required_roles_without_evidence, ensure_ascii=False)}
+REQUIRED EXPERIENCE IDS ALLOWING EMPTY BULLETS:
+{json.dumps(required_roles_allowing_empty_bullets, ensure_ascii=False)}
 
 REQUIRED SKILL CATEGORY IDS:
 {json.dumps(required_skill_ids, ensure_ascii=False)}

@@ -47,8 +47,10 @@ last accepted resume.
    use skills that already exist in the profile. The generator selects the
    smallest sufficient achievement set: a maximum bullet count is a ceiling,
    not a quota, and optional inventory does not become required content. Required
-   roles with no achievement evidence retain their existing role details without
-   generated bullets.
+   roles with neither achievement evidence nor required bullet pins retain their
+   existing role details without generated bullets. If a required bullet remains
+   pinned after its supporting achievement is removed, restore that role's
+   evidence or remove the pin before tailoring; pins are still mandatory.
 3. **Validate the assembled resume, not just model JSON.** Deterministic checks
    run over the actual candidate text for grounding, preserved employers,
    education, section structure, prohibited claims, metrics, seniority, and

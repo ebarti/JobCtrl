@@ -440,10 +440,13 @@ profile contract:
   several bullets.
 - A covered or explicitly pinned role cannot carry positioning-only filler. A
   required role with neither receives exactly one positioning bullet when it
-  has achievement evidence. A required role with no achievement evidence keeps
-  its fixed role details and an empty bullet list; the generator must not invent
-  a claim or borrow another role's achievement. An optional unsupported role is
-  omitted.
+  has achievement evidence. A required role with neither achievement evidence
+  nor required bullet pins keeps its fixed role details and an empty bullet list;
+  the generator must not invent a claim or borrow another role's achievement.
+  Pinned bullets remain mandatory, so roles with pins are excluded from the
+  prompt's empty-bullet exception. A pin without supporting evidence from its own
+  role requires a profile correction: restore the evidence or remove the pin.
+  An optional unsupported role is omitted.
 - Generated title must be empty or exactly match the source title.
 - Each required skill category ID must appear exactly once.
 - Unknown or duplicate skill category IDs are rejected.
