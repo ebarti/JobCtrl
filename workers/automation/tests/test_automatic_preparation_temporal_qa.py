@@ -24,6 +24,7 @@ from jobctrl.domain.scoring import ScoringCriteria
 from jobctrl.domain.materials.use_cases import TailorResumeUseCase
 from jobctrl.enrichment import detail
 from jobctrl.enrichment.activities import enrich_activity, cancel_enrichment_cohort_activity
+from jobctrl.infrastructure.discovery import live_browser
 from jobctrl.infrastructure.preparation_recovery import (
     recover_preparation_state_activity,
     cancel_preparation_state_activity,
@@ -75,6 +76,30 @@ def world(tmp_path, monkeypatch):
     def reject_playwright():
         pytest.fail("Temporal enrichment must use the live Chrome transport")
 
+    # Keep the real readiness check but isolate its HTTP transport too: page
+    # capture and robots doubles alone still allow a request to the owner's API.
+    api_url = "http://127.0.0.1:1"
+    network_attempts = []
+
+    def reject_network(*args, **kwargs):
+        network_attempts.append((args, kwargs))
+        raise AssertionError("recovery QA must not contact a real browser API")
+
+    def browser_transport(method, url, data, headers, timeout):
+        assert (method, url, data) == (
+            "GET", f"{api_url}/v1/discovery/browser-extension/status", None,
+        )
+        assert "Authorization" not in headers
+        return 200, b'{"ok":true,"connected":true}'
+
+    def browser_client(execution, **kwargs):
+        return live_browser.LiveChromeDiscoveryClient(
+            execution, **kwargs, app_dir=tmp_path,
+            api_base_url=api_url, transport=browser_transport,
+        )
+
+    monkeypatch.setattr(live_browser, "_urllib_transport", reject_network)
+    monkeypatch.setattr(detail, "LiveChromeDiscoveryClient", browser_client)
     monkeypatch.setattr(detail, "sync_playwright", reject_playwright)
     monkeypatch.setattr(detail, "LiveChromeRobotsCache", lambda _browser: AllowAllRobots())
     monkeypatch.setattr(detail, "PolitenessGateway", offline_gateway)
@@ -114,6 +139,7 @@ def world(tmp_path, monkeypatch):
     yield SimpleNamespace(conn=connection, path=db_path, app=tmp_path, llm=llm, scrape_calls=scrape_calls)
     shutdown_activity_executors()
     database.close_connection(db_path)
+    assert network_attempts == []
 
 
 def seed_for_stage(world, number, stage):
