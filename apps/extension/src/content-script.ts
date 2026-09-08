@@ -690,10 +690,14 @@ export function captureRenderedPageSnapshot(): DiscoveryBrowserTaskResult {
   if (!bodyText.trim() && !bodyHtml.trim()) {
     return discoveryFailure("unsupported_page", new Error("The rendered page exposed no readable content."), true);
   }
+  const navigation = performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined;
+  const responseStatus = navigation?.responseStatus;
   return {
     status: "succeeded",
     finalUrl: finalUrl.href,
-    statusCode: null,
+    statusCode: responseStatus && Number.isInteger(responseStatus) && responseStatus >= 100 && responseStatus <= 599
+      ? responseStatus
+      : null,
     contentType: document.contentType?.slice(0, 300) ?? "text/html",
     title: document.title.slice(0, 500),
     browserUserAgent: navigator.userAgent.slice(0, 500),

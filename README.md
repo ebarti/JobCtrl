@@ -410,8 +410,8 @@ Four extension executors provide bounded concurrency. Active leases heartbeat
 independently, and worker cancellation or the task's hard timeout aborts the
 request and closes an inactive tab when one exists. Direct HTTP/API requests
 disable redirect following; rendered-page tabs use exact-origin request rules
-that block cross-origin navigation/fetch redirects before Chrome dispatches
-them.
+that block cross-origin main-frame redirects before Chrome dispatches them,
+while leaving the page's own fetch/XHR requests under Chrome's normal policy.
 
 ## Responsible Use
 

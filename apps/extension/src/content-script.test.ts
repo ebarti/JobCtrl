@@ -35,6 +35,26 @@ afterEach(() => {
 });
 
 describe("deterministic autofill content script", () => {
+  it.each([200, 404, 410])("preserves navigation HTTP %s in a rendered snapshot", async (status) => {
+    const { captureRenderedPageSnapshot } = await import("./content-script");
+    document.body.innerHTML = "<main>Job not found</main>";
+    Object.defineProperty(performance, "getEntriesByType", {
+      configurable: true,
+      value: vi.fn(() => [{ responseStatus: status }]),
+    });
+    expect(captureRenderedPageSnapshot()).toMatchObject({ status: "succeeded", statusCode: status });
+  });
+
+  it.each([0, undefined])("keeps unavailable navigation status explicit (%s)", async (status) => {
+    const { captureRenderedPageSnapshot } = await import("./content-script");
+    document.body.innerHTML = "<main>Job details</main>";
+    Object.defineProperty(performance, "getEntriesByType", {
+      configurable: true,
+      value: vi.fn(() => [{ responseStatus: status }]),
+    });
+    expect(captureRenderedPageSnapshot()).toMatchObject({ status: "succeeded", statusCode: null });
+  });
+
   it("waits for the signed-in LinkedIn job detail instead of snapshotting its loading shell", async () => {
     const { waitForRenderedPageReady } = await import("./content-script");
     document.body.innerHTML = '<main><div role="progressbar">Loading</div></main>';

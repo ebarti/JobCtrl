@@ -75,7 +75,7 @@ describe("Discovery browser executor", () => {
         update: vi.fn(async () => {
           listener?.({ tabId: 45, frameId: 0, url: "https://other.example/", error: "net::ERR_BLOCKED_BY_CLIENT" });
           listener?.({ tabId: 44, frameId: 1, url: "https://other.example/", error: "net::ERR_BLOCKED_BY_CLIENT" });
-          listener?.({ tabId: 44, frameId: 0, url: "https://example.com/jobs/1", error: "net::ERR_BLOCKED_BY_CLIENT" });
+          listener?.({ tabId: 44, frameId: 0, url: "https://example.com/jobs/1", error: "net::ERR_ABORTED" });
           return { id: 44 };
         }),
         remove,
@@ -94,6 +94,35 @@ describe("Discovery browser executor", () => {
     expect(remove).toHaveBeenCalledWith(44);
     expect(removeListener).toHaveBeenCalledWith(listener);
   });
+
+  it.each(["net::ERR_CONNECTION_REFUSED", "net::ERR_CONNECTION_TIMED_OUT", "net::ERR_NAME_NOT_RESOLVED", "net::ERR_CERT_AUTHORITY_INVALID"])(
+    "reports %s without waiting for the hard task timeout", async (error) => {
+      let listener: ((details: BrowserNavigationError) => void) | undefined;
+      const remove = vi.fn(async () => undefined);
+      const removeListener = vi.fn();
+      const browser = {
+        webNavigation: { onErrorOccurred: { addListener: vi.fn((callback) => { listener = callback; }), removeListener } },
+        declarativeNetRequest: { updateSessionRules: vi.fn(async () => undefined) },
+        tabs: {
+          create: vi.fn(async () => ({ id: 44 })),
+          update: vi.fn(async () => ({ id: 44 })),
+          remove,
+          sendMessage: vi.fn(async () => {
+            listener?.({ tabId: 44, frameId: 0, url: "https://example.com/jobs/1", error });
+            throw new Error("No content script on Chrome error page");
+          }),
+        },
+      } as unknown as BrowserApi;
+      const result = await executeDiscoveryBrowserTask(browser, {
+        ok: true, status: "task", taskId: "failed-navigation", leaseId: "fixture-lease",
+        timeoutMs: 60_000, request: { mode: "rendered_page", url: "https://example.com/jobs/1" },
+      });
+      expect(result).toMatchObject({ status: "failed", errorCode: "navigation_failed", retryable: true, message: expect.stringContaining(error) });
+      expect(browser.tabs.sendMessage).toHaveBeenCalledOnce();
+      expect(remove).toHaveBeenCalledWith(44);
+      expect(removeListener).toHaveBeenCalledWith(listener);
+    }, 1_000,
+  );
 
   it("cleans up the inactive tab and redirect guard after a retryable hydration failure", async () => {
     const remove = vi.fn(async () => undefined);

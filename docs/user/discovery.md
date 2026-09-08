@@ -185,7 +185,8 @@ lease. HTTP/API execution disables redirect following, which is required
 because vendor API roots can be JSON/plain text or redirect away and therefore
 cannot reliably host a content script. Before rendered-page navigation, the
 extension installs a tab-scoped rule pair that allows the task's exact origin
-and blocks all other HTTP(S) main-frame and Discovery-fetch destinations.
+and blocks all other HTTP(S) main-frame destinations. The page's own fetch/XHR
+requests remain under Chrome's normal policy.
 Cross-origin redirects are therefore blocked before the redirected request is
 sent in either mode. Request bodies are limited to 2 MB of UTF-8 data, and
 response text/HTML is streamed and stopped at 4 MB per field.

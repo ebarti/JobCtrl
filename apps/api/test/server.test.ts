@@ -8293,6 +8293,21 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("returns db_not_found before bulk retry preview or dispatch for an uninitialized app", async () => {
+    const dispatch = vi.fn(async () => ({ status: "queued", actionId: "must-not-run" }));
+    const dbPath = path.join(tempDir, "uninitialized.db");
+    const app = buildApp({ ...options, dbPath, actionDispatcher: dispatch });
+    const response = await app.inject({
+      method: "POST", url: "/v1/jobs/bulk-retry-failed",
+      payload: { allMatching: true, runAfter: true },
+    });
+    expect(response.statusCode, response.body).toBe(503);
+    expect(response.json()).toMatchObject({ ok: false, error: "db_not_found" });
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(fs.existsSync(dbPath)).toBe(false);
+    await app.close();
+  });
+
   it("does not dispatch pending bulk Enrich while the live-profile extension is offline", async () => {
     const dispatch = vi.fn(async () => ({ status: "queued", actionId: "must-not-run" }));
     const jobUrl = "https://example.com/jobs/bulk-pending-enrich";

@@ -123,8 +123,8 @@ Key facts about the four activities:
   closes a temporary tab when one exists. The API revalidates public DNS
   immediately before lease. HTTP/API tasks execute in the extension service
   worker with redirect following disabled; rendered-page tasks use tab-scoped
-  DNR rules to block cross-origin main-frame or Discovery-fetch redirects before
-  dispatch. LinkedIn detail enrichment through the user's owner-authenticated
+  DNR rules to block cross-origin main-frame redirects before dispatch, leaving
+  page-owned fetch/XHR under Chrome's normal policy. LinkedIn detail enrichment through the user's owner-authenticated
   live session does not inherit the anonymous crawler's robots denial, but it
   retains the same public-destination validation, pacing, request budget,
   exact-origin, audit, and no-submit boundaries.

@@ -51,6 +51,7 @@ export async function executeDiscoveryBrowserTask(
   let ruleIds: number[] = [];
   let navigationListener: ((details: BrowserNavigationError) => void) | null = null;
   let blockedRedirect = false;
+  let navigationError: string | null = null;
   try {
     if (task.request.mode === "http_request") {
       return await executeExtensionHttpRequest(task.request, controller.signal);
@@ -65,14 +66,17 @@ export async function executeDiscoveryBrowserTask(
     tabId = tab.id;
     navigationListener = (details) => {
       if (details.tabId !== tabId || details.frameId !== 0 || controller.signal.aborted) return;
-      if (details.error !== "net::ERR_BLOCKED_BY_CLIENT") return;
-      try {
-        if (new URL(details.url).origin === destination.origin) return;
-      } catch {
-        return;
+      // Chrome can abort an earlier navigation while the destination continues.
+      if (details.error === "net::ERR_ABORTED") return;
+      if (details.error === "net::ERR_BLOCKED_BY_CLIENT") {
+        try {
+          blockedRedirect = new URL(details.url).origin !== destination.origin;
+        } catch {
+          // An invalid error URL still denotes a failed task navigation.
+        }
       }
-      blockedRedirect = true;
-      controller.abort(new Error("Chrome blocked a Discovery redirect outside the validated source origin."));
+      navigationError = `Chrome could not navigate to the Discovery page: ${details.error}`;
+      controller.abort(new Error(navigationError));
     };
     browser.webNavigation.onErrorOccurred.addListener(navigationListener);
     const rules = redirectGuardRules(task, tabId, destination.origin);
@@ -100,6 +104,7 @@ export async function executeDiscoveryBrowserTask(
     if (blockedRedirect) {
       return failed("unsafe_redirect", "Chrome blocked a Discovery redirect outside the validated source origin.", false);
     }
+    if (navigationError) return failed("navigation_failed", navigationError, true);
     if (controller.signal.aborted) {
       const message =
         abortKind === "timeout"

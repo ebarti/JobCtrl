@@ -1665,26 +1665,20 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     if (!body) {
       return undefined;
     }
-    if (body.runAfter) {
-      const previewDb = openDatabase(options.dbPath);
-      let includesEnrich = false;
-      try {
-        includesEnrich = retryFailedJobTargets(previewDb, body).some(
+    return withWritableDb(reply, options.dbPath, async (db) => {
+      if (body.runAfter) {
+        const includesEnrich = retryFailedJobTargets(db, body).some(
           (target) => target.stage === "enrich",
         );
-      } finally {
-        previewDb.close();
+        if (includesEnrich && !discoveryBrowserBroker.status().connected) {
+          void reply.code(503);
+          return discoveryExtensionUnavailableResponse();
+        }
+        const workerReady = requireWorkerReady(reply, options.dbPath, requireHealthyWorkerForActions);
+        if (!workerReady) {
+          return undefined;
+        }
       }
-      if (includesEnrich && !discoveryBrowserBroker.status().connected) {
-        void reply.code(503);
-        return discoveryExtensionUnavailableResponse();
-      }
-      const workerReady = requireWorkerReady(reply, options.dbPath, requireHealthyWorkerForActions);
-      if (!workerReady) {
-        return undefined;
-      }
-    }
-    return withWritableDb(reply, options.dbPath, async (db) => {
       const reset = retryFailedJobs(db, body);
       const actions: ActionRunResponse[] = [];
       const runnableGroups = body.runAfter

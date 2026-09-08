@@ -91,6 +91,37 @@ def test_client_requires_live_extension_in_users_chrome_profile(tmp_path: Path) 
         client.ensure_available()
 
 
+@pytest.mark.parametrize("http_status", [404, 410])
+def test_rendered_navigation_status_marks_removed_posting_nonretryable(tmp_path: Path, http_status: int) -> None:
+    from jobctrl.domain.enrichment.snapshot_services import ActiveStateVerifier
+    from jobctrl.enrichment.detail import _detail_failure_retryable, _live_result_to_detail_page
+
+    transport = _ScriptedTransport(tmp_path)
+
+    def removed_transport(method, url, data, headers, timeout):
+        status, raw = transport(method, url, data, headers, timeout)
+        if method == "GET" and "/v1/extension/discovery/tasks/" in url:
+            payload = json.loads(raw)
+            payload["result"].update(
+                statusCode=http_status, contentType="text/html", bodyText="Job not found",
+                bodyHtml="<main>Job not found</main>",
+            )
+            raw = json.dumps(payload).encode()
+        return status, raw
+
+    client = LiveChromeDiscoveryClient(
+        _execution(), source_family="enrichment", app_dir=tmp_path, transport=removed_transport,
+    )
+    result = client.rendered_page("https://example.com/jobs?q=platform")
+    page = _live_result_to_detail_page(result, result.final_url)
+    active_state, method = ActiveStateVerifier().verify(page)
+    assert page.status == http_status
+    assert (active_state.value, method) == ("removed", "http_status")
+    assert not _detail_failure_retryable({
+        "http_status": result.status_code, "active_state": active_state.value, "verification_method": method,
+    })
+
+
 def test_integrated_ats_discovery_rejects_a_direct_transport_override() -> None:
     with pytest.raises(ConfigurationError, match="live Chrome extension transport"):
         run_scheduled_ats_sources(

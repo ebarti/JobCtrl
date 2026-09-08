@@ -2369,8 +2369,8 @@ Consequences:
   invalidates stale completion;
 - the API validates public DNS at creation and immediately before lease.
   Service-worker HTTP/API fetches disable redirect following; tab-scoped
-  exact-origin DNR rules block cross-origin main-frame and Discovery-fetch
-  redirects for rendered pages before dispatch;
+  exact-origin DNR rules block cross-origin main-frame redirects for rendered
+  pages before dispatch, leaving page-owned fetch/XHR under Chrome's normal policy;
 - Chrome owns cookies, session, proxy, and user agent. Browser-owned headers do
   not cross the worker task contract, and the returned browser user agent is
   used for robots evaluation;

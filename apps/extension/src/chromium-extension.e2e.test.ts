@@ -29,6 +29,35 @@ interface FakeDiscoverySource {
 }
 
 describe("Chromium loaded extension privacy boundary", () => {
+  it.each([404, 410])("reports HTTP %s from a rendered posting's navigation", async (status) => {
+    const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-extension-status-e2e-"));
+    let api: FakeLoopbackApi | null = null;
+    let context: BrowserContext | null = null;
+    const jobUrl = "https://careers.jobctrl.test/removed-job";
+    try {
+      context = await launchExtensionContext(userDataDir);
+      if (!context) return;
+      await context.route("https://careers.jobctrl.test/**", (route) => route.fulfill({
+        status, contentType: "text/html", body: "<!doctype html><title>Unavailable role</title><main>Job not found</main>",
+      }));
+      api = await installFakeLoopbackApi(context, jobUrl, 15_000, "rendered_page");
+      const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent("serviceworker", { timeout: 10_000 }));
+      const controller = await context.newPage();
+      await controller.goto(`chrome-extension://${new URL(worker.url()).host}/popup.html`);
+      await sendExtensionMessage(controller, { type: "saveToken", token: "status-fixture-token" });
+      await waitFor(() => api?.discoveryCompletions.length === 1, 20_000);
+      expect(api.discoveryCompletions[0]).toMatchObject({ result: {
+        status: "succeeded", finalUrl: jobUrl, statusCode: status,
+        bodyText: expect.stringContaining("Job not found"),
+      } });
+      expect(context.pages().some((page) => page.url() === jobUrl)).toBe(false);
+    } finally {
+      await api?.close();
+      await context?.close();
+      fs.rmSync(userDataDir, { recursive: true, force: true });
+    }
+  }, 60_000);
+
   it("captures a hydrated LinkedIn SDUI detail in an inactive extension tab", async () => {
     const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-extension-rendered-e2e-"));
     let api: FakeLoopbackApi | null = null;
