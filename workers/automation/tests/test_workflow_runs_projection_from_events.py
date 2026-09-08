@@ -33,7 +33,10 @@ from jobctrl.domain.events.workflow import (
 )
 from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.infrastructure.projections.projection_builder import ProjectionBuilder
-from jobctrl.infrastructure.projections.sqlite_projection_store import _ensure_column
+from jobctrl.infrastructure.projections.sqlite_projection_store import (
+    _ensure_column,
+    ensure_projection_tables,
+)
 from jobctrl.state import record_job_event
 
 
@@ -139,15 +142,10 @@ def test_started_event_opens_row(conn: sqlite3.Connection) -> None:
     }
 
 
-def test_legacy_workflow_projection_schema_is_migrated_before_fold(
+def test_explicit_legacy_workflow_projection_schema_utility_runs_before_fold(
     conn: sqlite3.Connection,
 ) -> None:
-    """Existing local DBs may have the old workflow projection table shape.
-
-    The finalize activity records a WorkflowStarted event, then immediately
-    refreshes projections. If the table is not upgraded before the refresh, the
-    activity fails and Temporal retries forever before source discovery starts.
-    """
+    """Compatibility fixtures upgrade explicitly; runtime requires exact v9."""
     _replace_workflow_projection_schema_with_legacy_shape(conn)
     _record(
         conn,
@@ -164,6 +162,7 @@ def test_legacy_workflow_projection_schema_is_migrated_before_fold(
     )
     conn.commit()
 
+    ensure_projection_tables(conn)
     ProjectionBuilder(conn_factory=lambda: conn).refresh()
 
     columns = {

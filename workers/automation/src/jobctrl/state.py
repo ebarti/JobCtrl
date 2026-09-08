@@ -57,12 +57,6 @@ MAX_ATTEMPTS: dict[str, int | None] = {
     "apply": config.DEFAULTS["max_apply_attempts"],
 }
 
-DISCOVERY_SOURCE_PROGRESS: tuple[tuple[str, str], ...] = (
-    ("jobspy", "Broad boards"),
-    ("ats_api", "Canonical ATS APIs"),
-    ("workday", "Workday scraper"),
-    ("smartextract", "Smart extract"),
-)
 _DEPENDENCY_BLOCKER_MESSAGES: dict[str, tuple[tuple[str, tuple[str, ...]], ...]] = {
     "enrich": (("score", ("Enrichment has not completed.",)),),
     "score": (("tailor", ("score has not completed.",)),),
@@ -130,79 +124,12 @@ def _duration_ms(started_at: str | None, finished_at: str | None) -> int | None:
     return max(0, int((finish - start).total_seconds() * 1000))
 
 
-def _parse_timestamp(value: str | None) -> datetime | None:
-    if not value:
-        return None
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
-
-
 def _table_exists(conn, table_name: str) -> bool:
     row = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
         (table_name,),
     ).fetchone()
     return row is not None
-
-
-def _source_from_discovery_run_id(run_id: str) -> str:
-    parts = run_id.split(":")
-    if len(parts) >= 3 and parts[0] == "discovery":
-        return parts[1]
-    return ""
-
-
-def _discovery_source_label(source: str) -> str:
-    for source_id, label in DISCOVERY_SOURCE_PROGRESS:
-        if source_id == source:
-            return label
-    return source.replace("_", " ").title() if source else "Discovery"
-
-
-def _orphaned_discovery_run_internal_message(source: str) -> str:
-    if source:
-        return f"Discovery source {source} was left running by a prior worker and has been marked failed for retry."
-    return "Discovery run was left running by a prior worker and has been marked failed for retry."
-
-
-def _orphaned_discovery_run_message(source: str) -> str:
-    if source:
-        return f"{_discovery_source_label(source)} is ready to run again."
-    return "Discover is ready to run again."
-
-
-def _orphaned_pipeline_stage_message(source: str, detail: str) -> str:
-    if source:
-        return f"{_discovery_source_label(source)} is not running. {detail}"
-    return f"Discover is not running. {detail}"
-
-
-def _orphaned_discovery_progress_payload(source: str, message: str) -> dict[str, Any]:
-    source_index = next(
-        (index for index, (source_id, _label) in enumerate(DISCOVERY_SOURCE_PROGRESS) if source_id == source),
-        -1,
-    )
-    if source_index < 0:
-        return {}
-    total = len(DISCOVERY_SOURCE_PROGRESS) + 1
-    completed = max(0, min(source_index, total))
-    percent = max(0, min(100, round((completed / total) * 100)))
-    label = _discovery_source_label(source)
-    return {
-        "progress": {
-            "completed": completed,
-            "total": total,
-            "percent": percent,
-            "currentStep": label,
-            "status": "failed",
-            "message": message,
-        }
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -1137,34 +1064,6 @@ def _clean_blocker_reasons(value: list[str] | tuple[str, ...] | None) -> list[st
         seen.add(key)
         out.append(text)
     return out
-
-
-def _material_generation_completed_stage(conn, job_url: str, stage: str) -> int | None:
-    if stage == "tailor":
-        required_artifacts = ("tailored_resume", "resume_pdf")
-    elif stage == "cover":
-        required_artifacts = ("cover_letter",)
-    else:
-        return None
-
-    placeholders = ", ".join("?" for _ in required_artifacts)
-    row = conn.execute(
-        f"""
-        SELECT generation
-        FROM job_materials_artifacts
-        WHERE job_url = ?
-          AND status = 'approved'
-          AND artifact_type IN ({placeholders})
-        GROUP BY generation
-        HAVING COUNT(DISTINCT artifact_type) = ?
-        ORDER BY generation DESC
-        LIMIT 1
-        """,
-        (job_url, *required_artifacts, len(required_artifacts)),
-    ).fetchone()
-    if row is None:
-        return None
-    return int(row["generation"] if hasattr(row, "keys") and "generation" in row.keys() else row[0])
 
 
 def record_job_event(

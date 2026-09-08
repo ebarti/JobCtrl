@@ -293,5 +293,5 @@ export const PROJECTION_TABLES = [
 ] as const;
 export type ProjectionTable = (typeof PROJECTION_TABLES)[number];
 
-/** Watermark name shared between TS and Python projection refreshers. */
+/** Family name in `<runtime>:<family>:<tenant>` cursors; legacy keys stay unused. */
 export const PROJECTION_WATERMARK_NAME = "operations_projections";

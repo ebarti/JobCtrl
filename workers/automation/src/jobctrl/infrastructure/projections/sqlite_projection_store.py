@@ -1,7 +1,8 @@
 """SQLite adapter for the Operations read-model projections (Phase 9 / S-32).
 
-The store owns the Operations projection schema and provides helpers used by
-``ProjectionBuilder`` and the test fixtures.
+The store writes the Operations projections on an already-admitted exact-schema
+connection. The explicit schema compatibility utility remains available to
+fixtures; construction never performs schema setup or commits caller writes.
 
 Table layout (all keyed by ``tenant_id`` to support the future
 multi-tenant rollout per ddd-target.md §9):
@@ -587,7 +588,6 @@ class SqliteProjectionStore:
 
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._conn = conn
-        ensure_projection_tables(conn)
 
     # ----------------------------------------------------------- write side
 

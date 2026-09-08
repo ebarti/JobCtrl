@@ -33,14 +33,3 @@ export function createEndpointMethods(
   }
   return methods as EndpointClientMethods;
 }
-
-export function createEndpointDelegates(
-  client: EndpointClientMethods,
-): EndpointClientMethods {
-  const delegates: Record<string, (...args: unknown[]) => Promise<unknown>> = {};
-  for (const endpoint of Object.values(ENDPOINTS)) {
-    const method = client[endpoint.name] as (...args: unknown[]) => Promise<unknown>;
-    delegates[endpoint.name] = (...args) => method.apply(client, args);
-  }
-  return delegates as EndpointClientMethods;
-}
