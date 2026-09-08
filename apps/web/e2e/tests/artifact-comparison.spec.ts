@@ -406,6 +406,51 @@ test("late saved snapshot preserves newer typing and keeps rendering gated", asy
   await expect(page.getByRole("button", { name: "Render replacement" })).toBeDisabled();
 });
 
+test("late save acknowledgement preserves an undo to the prior baseline", async ({ page }) => {
+  await installArtifactComparisonRoutes(page);
+  let acknowledge!: () => void;
+  let savedText = "";
+  let saveCount = 0;
+  await page.route("**/v1/resume-review/drafts/*/revisions", async (route) => {
+    const body = route.request().postDataJSON();
+    savedText = body.editedText;
+    saveCount += 1;
+    if (saveCount === 2) await new Promise<void>((resolve) => { acknowledge = resolve; });
+    const savedDraft = {
+      ...draft, currentRevisionId: `revision-${saveCount + 1}`, latestRevisionNumber: saveCount + 1,
+      latestRevision: { ...draft.latestRevision, revisionId: `revision-${saveCount + 1}`, revisionNumber: saveCount + 1,
+        editedText: body.editedText, plateDocument: body.plateDocument },
+    };
+    await route.fulfill({ json: { ok: true, draft: savedDraft, revision: savedDraft.latestRevision } });
+  });
+  await page.goto("/apply-review");
+  const editor = page.getByRole("textbox", { name: "Tailored resume preview editor" });
+  await expect(editor).toBeVisible();
+  await editor.click();
+  await editor.press("ControlOrMeta+End");
+  // First persist a browser-edited document, including Slate normalization.
+  await editor.pressSequentially(" baseline");
+  await expect.poll(() => saveCount).toBe(1);
+  await expect(page.getByLabel("Editable resume page")).toHaveAttribute("data-draft-dirty", "false");
+  const originalEditor = await editor.elementHandle();
+  const baselineText = await editor.innerText();
+  await editor.pressSequentially("X");
+  await expect(editor).toContainText("X");
+  // Exercise the production autosave timer, holding its response during the undo.
+  await expect.poll(() => Boolean(acknowledge)).toBe(true);
+  await editor.press("Backspace");
+  await expect(editor).toHaveText(baselineText, { useInnerText: true });
+  await expect(page.getByLabel("Editable resume page")).toHaveAttribute("data-draft-dirty", "false");
+  acknowledge();
+  await expect(page.getByRole("button", { name: "Save draft" })).toBeEnabled();
+  await expect(editor).toHaveText(baselineText, { useInnerText: true });
+  expect(await editor.evaluate((element, original) => element === original, originalEditor)).toBe(true);
+  await expect(editor).toBeFocused();
+  await expect(page.getByLabel("Editable resume page")).toHaveAttribute("data-draft-dirty", "true");
+  await expect(page.getByRole("button", { name: "Render replacement" })).toBeDisabled();
+  expect(savedText).toContain("X");
+});
+
 test("a delayed seed snapshot cannot replace a rendered saved revision", async ({ page }) => {
   await installArtifactComparisonRoutes(page, false);
   let finishSeed!: () => void;

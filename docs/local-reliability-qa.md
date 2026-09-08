@@ -130,8 +130,19 @@ subprocesses. It requires `JOBCTRL_DOCS_SCREENSHOTS=1`, the existing owned
 screenshot-directory marker, and matching contained app/database/config/state/
 temporary paths before setup, API construction and teardown. Use the existing
 `createOwnedDocsScreenshotDirectory` and `createDocsScreenshotEnvironment`
-helpers with fresh ports; isolate telemetry and dotenv loading in the child
-environment. This mode never reuses a listening server. It retains real seeded
+helpers with fresh ports. Extend the returned child environment with
+`JOBCTRL_E2E_ISOLATED=1`, `JOBCTRL_DIR=JOBCTRL_E2E_APP_DIR`,
+`JOBCTRL_DB_PATH=JOBCTRL_E2E_DB_PATH`, and
+`JOBCTRL_CONFIG_PATH=JOBCTRL_E2E_CONFIG_PATH` (assign the corresponding values,
+not the variable names). Set `TMPDIR` to a child of the owned app directory,
+such as `<appDir>/tmp`; do not retain the helper's forwarded host `TMPDIR`.
+The Playwright configuration supplies
+`JOBCTRL_E2E_STATE_FILE=<appDir>/.jobctrl-e2e-state.json`; set that value yourself
+if invoking the ownership guard directly. Keep the helper's contained
+`JOBCTRL_E2E_SERVICE_HOME`. On macOS, create the owned directory beneath a short
+temporary parent such as a fresh directory under `/private/tmp` so the contained
+tsx IPC socket path fits the operating system's path limit. Isolate telemetry
+and dotenv loading in the child environment. This mode never reuses a listening server. It retains real seeded
 API/SQLite reads and writes; browser responses can control only the feature
 requests needed by an individual race fixture.
 

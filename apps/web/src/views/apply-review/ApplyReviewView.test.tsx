@@ -2040,6 +2040,44 @@ describe("<ApplyReviewView>", () => {
     expect(JSON.stringify(saveResumeReviewDraftRevision.mock.calls[0]![1].plateDocument)).not.toContain("helvetica");
   });
 
+  it("preserves a return to the prior baseline while a saved snapshot is pending", async () => {
+    const draft = makeResumeReviewDraft();
+    let acknowledge: (() => void) | undefined;
+    const saveResumeReviewDraftRevision = vi.fn(async (_draftId, body) => {
+      await new Promise<void>((resolve) => { acknowledge = resolve; });
+      const saved = makeResumeReviewDraft(draft.jobKey, {
+        ...body, revisionId: "saved-2", revisionNumber: 2,
+      });
+      return { ok: true as const, draft: saved, revision: saved.latestRevision! };
+    });
+    renderWithProviders(<ApplyReviewView />, {
+      ports: buildTestPorts({ api: {
+        applyReviewQueue: vi.fn(async () => sampleApplyReviewQueue),
+        createResumeReviewDraft: vi.fn(async () => ({ ok: true as const, draft })),
+        saveResumeReviewDraftRevision,
+        seedResumeReviewCommentThreads: vi.fn(async () => ({
+          ok: true as const, draft, commentThreads: [], seededCount: 0, updatedCount: 0,
+        })),
+      } }),
+    });
+    const editor = await screen.findByRole("textbox", { name: "Tailored resume preview editor" });
+    await chooseSelectOption("Font", "Garamond");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled());
+    await userEvent.click(screen.getByRole("button", { name: "Save draft" }));
+    await waitFor(() => expect(acknowledge).toBeDefined());
+    await chooseSelectOption("Font", "Resume");
+    await waitFor(() => expect(screen.getByLabelText("Editable resume page")).toHaveAttribute("data-draft-dirty", "false"));
+    await userEvent.click(editor);
+    acknowledge!();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled());
+    expect(screen.getByRole("textbox", { name: "Tailored resume preview editor" })).toBe(editor);
+    expect(editor).toHaveFocus();
+    expect(screen.getByLabelText("Editable resume page")).toHaveAttribute("data-draft-dirty", "true");
+    expect(shadowElementWithText(await findResumeShadowRoot(), "Principal Platform Engineer").style.fontFamily).not.toContain("Garamond");
+    expect(JSON.stringify(saveResumeReviewDraftRevision.mock.calls[0]![1].plateDocument)).toContain("garamond");
+    expect(screen.getByRole("button", { name: "Render replacement" })).toBeDisabled();
+  });
+
   it("keeps unsaved edits scoped when selecting an identical cached draft", async () => {
     const first = sampleApplyReviewQueue.items[0]!;
     const other = sampleApplyReviewQueue.items[1]!;
