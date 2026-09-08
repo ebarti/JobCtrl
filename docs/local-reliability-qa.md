@@ -9,6 +9,13 @@ contract; do not add cross-stack checks "just in case." For an approved
 unreleased stack, run focused checks per phase, finish canonical docs in the
 final PR, then run product QA on the cumulative stack.
 
+For contained changes, select the relevant test files or cases within the
+owning suite. Add regression coverage for affected invariants; avoid tests
+that merely repeat implementation details or assert incidental documentation wording.
+Once the required checks pass, broaden or repeat them only when new changes,
+failures, or unresolved risks justify it. Required plan, release, and high-risk
+gates still apply.
+
 ## Required Commands
 
 | Change | Minimum starting point |
@@ -20,7 +27,9 @@ final PR, then run product QA on the cumulative stack.
 | Browser flow | `corepack pnpm --filter @jobctrl/web e2e -- tests/<flow>.spec.ts` |
 | Public demo browser workspace | `corepack pnpm --filter @jobctrl/web e2e:demo-workspace` |
 | Public demo edge | `corepack pnpm demo-edge:check`, `corepack pnpm demo-edge:test`, and `corepack pnpm demo-edge:dry-run` |
-| Python worker | `uv --project workers/automation run --locked --all-extras ruff check .` and `uv --project workers/automation run --locked --all-extras pytest -q` |
+| Python worker | `uv --project workers/automation run --locked --all-extras ruff check <changed-paths>` and `uv --project workers/automation run --locked --all-extras pytest -q <test-files>`; use the full suites for worker-wide changes |
+| Agent instructions or contributor workflow | Conflict/link review, applicable config/tool checks, and the independent review required by `AGENTS.md` |
+| Published documentation | [Documentation verification](developer/documentation-standards.md#verification) |
 | SQLite schema or native migration | Focused Python schema/candidate tests, `corepack pnpm api:check`, `corepack pnpm api:test`, `corepack pnpm launcher:check`, and `corepack pnpm launcher:test` |
 | Any patch | `git diff --check` |
 

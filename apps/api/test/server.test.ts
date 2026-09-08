@@ -26,7 +26,6 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { resolveApiConfig } from "../src/config.js";
-import { SUPPORTED_SCHEMA_VERSION } from "../src/db.js";
 import {
   CredentialStoreUnavailableError,
   KeychainCredentialStore,

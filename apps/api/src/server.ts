@@ -29,7 +29,6 @@ import {
   CancelJobActionRequestSchema,
   CompensationSourcePolicyUpdateRequestSchema,
   CorrectScoreRequestSchema,
-  MIN_TAILORING_FIT_SCORE,
   PIPELINE_ACTION_JOB_KEY,
   type PipelineStageRunResponse,
   CredentialKeys,
@@ -71,7 +70,6 @@ import {
   RunJobStageRequestSchema,
   RoleMatchFeedbackDecisionSchema,
   RetailorJobRequestSchema,
-  RpcMethods,
   ResumeTemplateDefaultSelectionRequestSchema,
   ResumeTemplateVersionSaveRequestSchema,
   ResumeCommentReplyRequestSchema,
@@ -89,7 +87,6 @@ import {
   SourceLocatorDecisionSchema,
   SourceStatePatchSchema,
   SourceUpsertRequestSchema,
-  STAGES,
   TailorJobRequestSchema,
   type Stage,
   WorkflowRunsListQuerySchema,
@@ -4528,33 +4525,6 @@ function columnNames(db: ApiDb, tableName: string): Set<string> {
   return new Set(
     (db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>).map((row) => row.name),
   );
-}
-
-function parseJsonRecord(raw: string | null): Record<string, unknown> {
-  if (!raw) return {};
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    return isRecord(parsed) ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isStage(value: unknown): value is Stage {
-  return typeof value === "string" && STAGES.includes(value as Stage);
-}
-
-function textValue(value: unknown): string {
-  return typeof value === "string" ? value : "";
-}
-
-function numberValue(value: unknown): number | null {
-  const parsed = typeof value === "number" ? value : Number.parseInt(textValue(value), 10);
-  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function labelForStage(stage: Stage): string {

@@ -15,7 +15,6 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any
 
-from jobctrl.database import ensure_profile_tables
 from jobctrl.domain.events import (
     ProfileImportedPayload,
     ProfileUpdatedPayload,
@@ -63,14 +62,11 @@ class SqliteProfileRepository:
         publisher: EventPublisher,
         pdf_parser: PdfParserPort | None = None,
         profile_id: str = DEFAULT_PROFILE_ID,
-        initialize_schema: bool = True,
     ) -> None:
         self._conn = conn
         self._publisher = publisher
         self._pdf_parser = pdf_parser
         self._profile_id = profile_id or DEFAULT_PROFILE_ID
-        if initialize_schema:
-            ensure_profile_tables(self._conn)
 
     # ------------------------------------------------------------------
     # Load / save

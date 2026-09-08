@@ -1,5 +1,6 @@
+import { JobCtrlApiClient } from "@jobctrl/api-client";
+
 import { ConsoleTelemetryAdapter } from "../shared/adapters/local/ConsoleTelemetryAdapter.js";
-import { FetchApiClientAdapter } from "../shared/adapters/local/FetchApiClientAdapter.js";
 import { LocalSessionAdapter } from "../shared/adapters/local/LocalSessionAdapter.js";
 import { LocalStorageAdapter } from "../shared/adapters/local/LocalStorageAdapter.js";
 import { NavigatorClipboardAdapter } from "../shared/adapters/local/NavigatorClipboardAdapter.js";
@@ -55,7 +56,7 @@ export function resolveAppMode(value: unknown): AppMode {
 
 /** Preserves the original local composition in one named, directly testable factory. */
 export function createLocalPorts(apiBaseUrl = ""): Ports {
-  const api = new FetchApiClientAdapter(apiBaseUrl);
+  const api = new JobCtrlApiClient(apiBaseUrl);
   return {
     api,
     eventStream: new SseEventStreamAdapter(apiBaseUrl),
