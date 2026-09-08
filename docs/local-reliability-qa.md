@@ -93,6 +93,53 @@ product path and confirm the bridge reports task activity and the workflow
 reaches a truthful terminal or actionable failed state. Do not use an
 application form and do not submit anything.
 
+For automatic preparation recovery, seed canonical failed enrichment and a
+saved enriched/unscored job, then exercise worker startup/heartbeat without a
+Discover command. Prove enrichment can advance to a persisted score, a restart
+or lost dispatch acknowledgement retains one execution, and retries preserve
+attempts and cooldowns. Include canceled/unsafe/blocked/exhausted, deleted,
+closed, and other-tenant jobs; preserve accepted scores/materials and prove no
+Apply dispatch. The historical discovery consumer-stop fixture must require
+positive evidence from the exact completed run and reject user cancellations.
+Use the real Temporal recovery fixture to prove worker replacement, late
+provider results after cancellation, and exact stopped-owner settlement.
+Missing workflow history must retain ownership; a recovered enrichment lease
+must reject a late predecessor write.
+For an automatic batch interrupted by an activity timeout, include one consumed
+job and one reservation that never started. Prove the latter returns to pending
+with unchanged attempt counters and can enter a new workflow after cooldown,
+including when the earlier cleanup already marked it `PREPARATION_RECOVERY_STOPPED`.
+Require the exact execution's timeout and durable attempt progress; cancellation,
+termination, missing history, mismatched cohorts, and preflight-only failures
+must not release reservations. Include copied timeout history in a reset
+descendant and a mismatched scheduled activity owner. Recheck protected rows
+while holding the write lock.
+An owned Score must persist a requirement-fit report for its exact score version,
+and real Tailor prerequisite evaluation must consume it. Reproduce a historical
+missing report, rescore only that job through the normal workflow, preserve the
+old score, and prove both explicit and automatic Tailor continuation. Automatic
+continuation must respect the real cooldown. Incoherent or empty reports and
+canceled, exhausted, non-retryable, or budget-exhausted rows must remain blocked
+from automatic resumption.
+Dashboard source-health and digest QA must show JobStreaming names while
+retaining the underlying quarantine, failure counts, and stable source IDs.
+For fetch-condition recovery, seed the exact legacy `DETAIL_UNSAFE_URL` DNS
+failure and a typed equivalent with matching canonical attempts/events. Prove
+both posting and failed-request destinations must pass fresh public checks,
+normal worker dispatch preserves attempts/cooldown, and private, canceled,
+changed-owner, deleted, closed, exhausted, and unrelated rows remain untouched.
+Check the five-recheck cap, immutable failure history, and API/worker projection
+parity. Exercise DNS rebinding and private redirects through the real guard,
+and confirm a later timeout cannot replace stronger destination-denial evidence.
+The job drawer must show the typed cause, historical observation, current
+recheck result, and manual fallback without claiming the original denial was a
+permanent site policy or suppressing technical evidence.
+For summary metric grounding, seed a baseline tenure estimate with no supporting
+achievement and a separately pinned verified metric. The normal Tailor use case
+must reject the tenure claim even with an unrelated citation, retain that failure
+in the audit, accept a grounded qualitative rewrite, and preserve the pinned
+metric and original profile. Retry instructions remain code-owned guidance.
+
 ## Pull-request CI
 
 CI is plain path-filtered GitHub Actions with no routing layer: each workflow
@@ -152,8 +199,17 @@ highlight boxes. The action must not save the
 profile, template, or review draft; call a generation endpoint; register or
 replace an artifact; or change Apply approval state.
 
-For Profile Plate text projection, edit an experience bullet or non-empty
-position summary in the Plate document, switch to **Profile data**, and verify
+For Profile Plate text projection, first click an experience bullet's actual
+text while the editor has no selection. Confirm the native caret stays inside
+that line when its audit highlight appears; moving to the line end and typing
+must update that bullet, not the resume header. Include the Font selector in
+scoped axe checks: the trigger and value must use the resume toolbar's matching
+foreground/background in both light and dark app themes, including the themed
+Apply review toolbar.
+
+For Profile Plate text projection, edit the fifth experience title, company,
+location and date, a bullet and summary, education fields, an individual skill
+and its label, and address text; switch to **Profile data** and verify
 the matching boxed field contains the same unsaved value and the normal Profile
 dirty/save controls appear. Include deletion plus digits or punctuation so the
 check exercises Plate's model-change path rather than a native browser input
@@ -161,8 +217,30 @@ event. Saving must persist that exact field through the normal Profile mutation.
 While both panes are open, make an unrelated boxed edit before editing Plate
 and verify both changes survive. If the boxed editor removes or changes the
 same bullet first, the Plate projection must preserve the boxed structure and
-surface a conflict. A formatting-only change or edit to a composite
-company/location/title/date line must not create a guessed profile-field edit.
+surface a conflict. Clear a required title, continue typing, and undo it: an
+incomplete intermediate draft must not freeze projection. Type spaces and
+punctuation in right-aligned location/date cells and retain the caret's order.
+Fields in composite lines must have individual source bindings; include a pipe
+inside an institution/location and a comma inside a single skill. Reorder roles
+before projecting a title and prove identity, not array position, owns the edit.
+A formatting-only change must not create a guessed profile-field edit.
+Move bullets up and down within a role using mouse and keyboard, including the
+first/last boundaries, then autosave and reload. Verify the baseline preview's
+order, required selections, metrics, and historical achievement links still
+refer to the same source text. Cover duplicate and blank draft bullets, mixed
+authored/derived evidence, another save after reordering, and desktop/mobile
+controls without overflow or accessibility regressions.
+Profile object-draft regression tests also verify unknown nested fields and raw
+numeric strings survive in the outgoing request. Backend schema normalization
+is unchanged. The isolated profile browser fixture uses real GET/PATCH and
+SQLite persistence for supported values/order, with deterministic preview HTML
+bound to each current stored profile; it must not start Python or provider work.
+Hold the fifth-title autosave before SQLite commit and, separately, after commit
+but before its response. Continue typing a newer title while the save is pending.
+Releasing the older response must preserve the same newer value in Plate and
+Profile data, including after the next autosave and reload. Neither optimistic
+query updates nor successful older responses may refresh an active draft preview.
+
 Verify the Size control displays its relative value as a percentage (100% at
 the resume default) with high-contrast text rather than exposing the internal
 unitless scale. Verify experience entries render newest-first and education
@@ -171,6 +249,36 @@ experience manually, save, reload, and verify both the boxed order and Plate
 order preserve the saved sequence. Apply **Sort newest first** and verify it
 restores current/latest roles first. A role with a summary but no bullets must
 not render an empty list or the full bullet-bearing entry gap.
+
+For saved review-draft reconciliation, run the artifact-comparison browser
+fixture with controlled response ordering: save A, type B, receive A; then
+render a saved revision before releasing an older comment-seed snapshot.
+Verify B remains editable/dirty, focus remains in Plate, rendering stays gated
+until the later edit is saved, and the rendered revision/comparison do not
+regress. Focused mutation fixtures also cover draft replacement with restarted
+revision numbering, independent replies/feedback, and tenant/job switches.
+
+The isolated browser mode (`JOBCTRL_E2E_ISOLATED=1`) uses the test-only API
+entry point with synthetic capability/credential responses and denied provider
+subprocesses. It requires `JOBCTRL_DOCS_SCREENSHOTS=1`, the existing owned
+screenshot-directory marker, and matching contained app/database/config/state/
+temporary paths before setup, API construction and teardown. Use the existing
+`createOwnedDocsScreenshotDirectory` and `createDocsScreenshotEnvironment`
+helpers with fresh ports. Extend the returned child environment with
+`JOBCTRL_E2E_ISOLATED=1`, `JOBCTRL_DIR=JOBCTRL_E2E_APP_DIR`,
+`JOBCTRL_DB_PATH=JOBCTRL_E2E_DB_PATH`, and
+`JOBCTRL_CONFIG_PATH=JOBCTRL_E2E_CONFIG_PATH` (assign the corresponding values,
+not the variable names). Set `TMPDIR` to a child of the owned app directory,
+such as `<appDir>/tmp`; do not retain the helper's forwarded host `TMPDIR`.
+The Playwright configuration supplies
+`JOBCTRL_E2E_STATE_FILE=<appDir>/.jobctrl-e2e-state.json`; set that value yourself
+if invoking the ownership guard directly. Keep the helper's contained
+`JOBCTRL_E2E_SERVICE_HOME`. On macOS, create the owned directory beneath a short
+temporary parent such as a fresh directory under `/private/tmp` so the contained
+tsx IPC socket path fits the operating system's path limit. Isolate telemetry
+and dotenv loading in the child environment. This mode never reuses a listening server. It retains real seeded
+API/SQLite reads and writes; browser responses can control only the feature
+requests needed by an individual race fixture.
 
 ## Pick The Right Checklist
 
@@ -308,6 +416,17 @@ false completed/failed terminal event for the interrupted owner. Also hold a
 blocking activity thread past its cancellation grace window: the abandoned
 generation must be recorded and fenced, and the next activity must run on fresh
 bounded executor capacity without restarting the worker.
+
+For batch Tailor changes, exercise the actual `tailor_activity` without job IDs
+as well as the selected path. Seed more eligible jobs than workers and cancel
+during synthetic generation: only dispatched jobs may emit `StageStarted`, no
+later item may start, and late work must preserve successor ownership and the
+last accepted artifact. Verify commit-before-cancel and crash-after-commit
+recovery without another generation, prerequisite blocks without attempt
+spending, fifth-attempt exhaustion, tenant/limit/model policy, and approved-only
+Cover scope. Use owned pre-import fixtures and the relevant Temporal workflow
+matrix; the generic durable-timer demo does not prove these material invariants.
+
 Repeated Tailor validation/model-repair failures must also keep the inner LLM
 attempt count separate from the durable stage execution count. Each activity
 execution advances the durable count once; the fifth durable failure retains
@@ -639,6 +758,12 @@ rollback before calling the public deployment healthy.
 
 ### Provider setup gate
 
+For the isolated Codex SDK environment, merge hostile ambient credential and
+auth-endpoint overrides as the real SDK does. Credential values must remain
+cleared, while refresh/revocation requests must build valid HTTPS URLs for
+OpenAI's default endpoints. Empty URLs must not mask an expired or rejected
+saved login as a request-builder failure.
+
 When provider auth, Settings credentials, model routing, or employer analysis
 changes, prove each sanctioned provider independently: Codex persisted CLI auth,
 Claude API/cloud auth, Google Gemini key, Google standard ADC, and an existing
@@ -714,6 +839,35 @@ requirement-covered achievements exceed that maximum: Tailor must block before
 any generator call, keep the durable attempt count unchanged, and report the
 role, required count, and ceiling. Never run this check against a real
 application or submit anything.
+
+For candidate evaluation, use scripted generation and voice responses through
+the real Materials use case. Count plan/profile-evidence construction once per
+execution and provenance, grounding, fit, coverage and text assembly once per
+candidate. No voice or a no-op voice reply must reuse the accepted evidence;
+changed voice text must receive fresh deterministic and paid review. A rejected
+rewrite retains the base text, provenance and verdict, with a separate voice
+audit. Assert that the final artifact bytes come from the evaluated normalized
+payload and that final fit retains its `post_voice_shipped` lifecycle label.
+A fabricated high-fit candidate must make zero judge/adversarial calls. Follow
+a fabricated or judge-rejected candidate with invalid JSON and prove the run
+stays rejected, its history remains inspectable, and the previous accepted
+artifact bytes survive. Retain the transaction and render-failure fixtures that
+protect the previous accepted generation and provenance.
+Include a required experience entry with no source bullets or achievement
+evidence: Tailor must accept an empty bullet list while the assembled artifact
+preserves its employer, title, and dates. The same empty list must fail for a
+role with achievement evidence; an invented positioning bullet must still fail
+its evidence check. Keep this case in the real Materials use-case fixture so
+field validation, claim validation, assembly, and accepted provenance all run.
+Also return parsed JSON with `skill_category_updates: null` before a valid
+candidate: field validation must reject it before assembly, preserve its audit
+and continue bounded repair. Exhausting that malformed response must leave the
+previous accepted artifact intact. Read the rejected `.txt` for both missing
+required fields and malformed nested fields: it must contain the selected JSON
+and validation errors, with nonzero registered size, without invoking assembly
+on invalid fields. A changed voice rewrite in lenient mode must
+retain `SKIPPED` with reason `lenient_validation_mode` in both voice and final
+judge metadata, without judge/adversarial calls or paid-model attribution.
 
 For direct URL import, exercise the Jobs-page dialog through the product API
 and worker boundary. A readable JSON-LD posting must create one canonical job,

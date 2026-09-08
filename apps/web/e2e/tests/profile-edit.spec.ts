@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 
-import { test, expect } from "@playwright/test";
+import { test, expect, type Locator } from "@playwright/test";
+import { checkA11y, injectAxe } from "axe-playwright";
 import type { ProviderId } from "@jobctrl/contracts";
 import { getDocument, OPS } from "pdfjs-dist/legacy/build/pdf.mjs";
 
@@ -19,11 +20,11 @@ import {
 test("Profile edit + Plate baseline editor: edit a field, save, preview HTML refreshes with a new cache key", async ({
   page,
 }) => {
-  const previewRequests: string[] = [];
-  page.on("request", (request) => {
-    const url = request.url();
-    if (url.includes("/v1/profile/preview.html")) {
-      previewRequests.push(url);
+  const successfulPreviewUrls: string[] = [];
+  page.on("response", (response) => {
+    const url = response.url();
+    if (new URL(url).pathname === "/v1/profile/preview.html" && response.ok()) {
+      successfulPreviewUrls.push(url);
     }
   });
 
@@ -33,6 +34,9 @@ test("Profile edit + Plate baseline editor: edit a field, save, preview HTML ref
   const resumeEditorView = page.getByRole("button", { name: "Resume editor" });
   await expect(profileDataView).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByText(/Full name/i).first()).toBeVisible({ timeout: 30_000 });
+  const fullNameInput = page.getByText(/Full name/i).first()
+    .locator("xpath=following-sibling::input").first();
+  const initialFullName = await fullNameInput.inputValue();
   await expect(page.getByText("Verified resume metrics", { exact: true })).toHaveCount(0);
 
   await page.getByRole("button", { name: /Experience entries/ }).click();
@@ -48,15 +52,15 @@ test("Profile edit + Plate baseline editor: edit a field, save, preview HTML ref
   await expect(page.getByText("Baseline resume editor", { exact: true })).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText("Plate HTML/CSS editor", { exact: true })).toBeVisible({ timeout: 30_000 });
   await expect(page.getByRole("button", { name: "Bold" })).toBeVisible({ timeout: 30_000 });
-  await expect.poll(() => previewRequests.some((url) => url.includes("/v1/profile/preview.html?v=0")), {
+  await expect.poll(() => successfulPreviewUrls.length, {
     timeout: 30_000,
-  }).toBe(true);
+  }).toBeGreaterThan(0);
   await expect(
     page.locator(".profile-resume-plate-editor .resume-page"),
   ).toBeVisible({ timeout: 30_000 });
   await expect(
     page.locator(".profile-resume-plate-editor .resume-name"),
-  ).toBeVisible({ timeout: 30_000 });
+  ).toHaveText(initialFullName, { timeout: 30_000 });
   const templatePresentation = await page.locator(".profile-resume-plate-editor").evaluate(async (editor) => {
     await document.fonts.ready;
     const resumePage = editor.querySelector(".resume-page");
@@ -79,13 +83,16 @@ test("Profile edit + Plate baseline editor: edit a field, save, preview HTML ref
   expect(templatePresentation.nameFontSize).toBe("29.3333px");
   expect(templatePresentation.nameTextAlign).toBe("center");
   expect(templatePresentation.paddingTop).toBeGreaterThan(62);
+  const initialPreviewKeys = new Set(successfulPreviewUrls.map((url) => new URL(url).searchParams.get("v")));
+  expect(initialPreviewKeys.has(null)).toBe(false);
 
   await profileDataView.click();
   await expect(profileDataView).toHaveAttribute("aria-pressed", "true");
-  const fullNameLabel = page.getByText(/Full name/i).first();
-  const fullNameInput = fullNameLabel.locator("xpath=following-sibling::input").first();
+  const updatedFullName = initialFullName === "QA Candidate Updated"
+    ? "QA Candidate Updated Again"
+    : "QA Candidate Updated";
   await fullNameInput.click();
-  await fullNameInput.fill("QA Candidate Updated");
+  await fullNameInput.fill(updatedFullName);
 
   const saveButton = page.getByRole("button", { name: "Save changes" });
   await expect(saveButton).toBeEnabled({ timeout: 10_000 });
@@ -94,9 +101,15 @@ test("Profile edit + Plate baseline editor: edit a field, save, preview HTML ref
   await expect(saveButton).toHaveCount(0, { timeout: 30_000 });
   await expect(page.getByRole("status").filter({ hasText: "Profile saved" })).toBeVisible();
 
-  await expect.poll(() => previewRequests.some((url) => url.includes("/v1/profile/preview.html?v=1")), {
+  await expect.poll(() => successfulPreviewUrls.some((url) => {
+    const key = new URL(url).searchParams.get("v");
+    return key !== null && !initialPreviewKeys.has(key);
+  }), {
     timeout: 30_000,
   }).toBe(true);
+  await resumeEditorView.click();
+  await expect(page.locator(".profile-resume-plate-editor .resume-name"))
+    .toHaveText(updatedFullName, { timeout: 30_000 });
 });
 
 test("Plate deletion and digit edits update the boxed Profile draft and unsaved state", async ({
@@ -511,4 +524,325 @@ test("Model Selection requires a ready provider and saves one provider preferenc
   expect(
     await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
   ).toBe(true);
+});
+
+test.describe("structured profile persistence", () => {
+  test.skip(process.env["JOBCTRL_E2E_ISOLATED"] !== "1", "Requires the owned, no-subprocess API fixture");
+  const apiOrigin = `http://127.0.0.1:${process.env["JOBCTRL_E2E_API_PORT"]}`;
+
+  async function selectPlateFieldContents(field: Locator): Promise<void> {
+    // Deliver the native range change to Slate before the next keyboard edit.
+    await field.evaluate((element) => new Promise<void>((resolve) => {
+      const onChange = () => {
+        const selection = window.getSelection();
+        if (selection && !selection.isCollapsed && element.contains(selection.anchorNode) &&
+          element.contains(selection.focusNode) && selection.toString() === element.textContent) {
+          document.removeEventListener("selectionchange", onChange);
+          resolve();
+        }
+      };
+      document.addEventListener("selectionchange", onChange);
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+    }));
+  }
+
+  async function waitForWorkspaceAnimations(workspace: Locator): Promise<void> {
+    // Audit settled toolbar colors rather than an intermediate loading transition.
+    await workspace.evaluate(async (element) => {
+      for (;;) {
+        const animations = element.getAnimations({ subtree: true }).filter((animation) =>
+          animation.playState === "running" && Number.isFinite(animation.effect?.getComputedTiming().endTime));
+        if (animations.length === 0) return;
+        await Promise.all(animations.map((animation) => animation.finished.catch(() => undefined)));
+      }
+    });
+  }
+
+  test.beforeEach(async ({ context, page, baseURL }) => {
+    const allowed = new Set([new URL(baseURL!).origin, apiOrigin]);
+    await context.route("**/*", (route) => allowed.has(new URL(route.request().url()).origin)
+      ? route.continue() : route.abort("blockedbyclient"));
+    for (const [endpoint, response] of [
+      ["credentials", sampleCredentialsResponse],
+      ["providers/status", sampleProviderStatusResponse],
+      ["providers/models", sampleProviderModelsResponse],
+    ] as const) await page.route(`**/v1/${endpoint}`, (route) => route.fulfill({ json: response }));
+    const stored = await (await page.request.get(`${apiOrigin}/v1/profile`)).json();
+    stored.profile.personal.full_name = "Structured Fixture Candidate";
+    stored.profile.experience.target_locations = "";
+    stored.profile.resume.experience_entries = [
+      { id: "structured-first", company: "First Fixture", title: "Platform Lead", location: "", date_range: "Jan 2022 - Present", summary: "First fixture summary.", bullets: ["Built 10 synthetic systems.", "Second unique first-entry bullet."] },
+      { id: "structured-second", company: "Second Fixture", title: "Engineer", location: "", date_range: "Jan 2020 - Dec 2021", summary: "Second fixture summary.", bullets: ["Second entry unique achievement."] },
+    ];
+    const seed = await page.request.patch(`${apiOrigin}/v1/profile`, {
+      headers: { origin: new URL(baseURL!).origin, "sec-fetch-site": "same-origin" },
+      data: {
+        profileText: JSON.stringify(stored.profile), styleText: JSON.stringify(stored.style), templateText: stored.templateText,
+      },
+    });
+    expect(seed.status()).toBe(200);
+  });
+
+  test("skill edits survive duplicate intermediate values through real save and reload", async ({ page, baseURL }, testInfo) => {
+    const failures: string[] = [];
+    page.on("pageerror", (error) => failures.push(error.message));
+    page.on("console", (message) => { if (message.type() === "error") failures.push(message.text()); });
+    const stored = await (await page.request.get(`${apiOrigin}/v1/profile`)).json();
+    stored.profile.resume.skill_categories = [{ id: "duplicate-skills", label: "Languages", items: ["Java", "JavaScript"] }];
+    const seed = await page.request.patch(`${apiOrigin}/v1/profile`, {
+      headers: { origin: new URL(baseURL!).origin, "sec-fetch-site": "same-origin" },
+      data: { profileText: JSON.stringify(stored.profile), styleText: JSON.stringify(stored.style), templateText: stored.templateText },
+    });
+    expect(seed.status()).toBe(200);
+    await page.goto("/profile");
+    await expect(page).toHaveURL(/\/profile$/);
+    await expect(page).toHaveTitle(/JobCtrl/);
+    await page.getByRole("button", { name: "Resume editor", exact: true }).click();
+    const editor = page.getByRole("textbox", { name: "Baseline resume editor editor" });
+    const target = editor.locator('[data-resume-profile-field="skills:duplicate-skills:item:2"]');
+    await expect(target).toHaveText("JavaScript");
+    await target.locator('[data-slate-string="true"]').click();
+    await selectPlateFieldContents(target);
+    await page.keyboard.press("Backspace");
+    await page.keyboard.type("Java");
+    await expect(target).toHaveText("Java");
+    await page.keyboard.type(" X");
+    await expect(target).toHaveText("Java X");
+    await expect(page.getByRole("alert")).toHaveCount(0);
+    await page.getByRole("button", { name: "Profile data", exact: true }).click();
+    const disclosure = page.getByRole("button", { name: /^Skill categories\b/ });
+    if (await disclosure.getAttribute("aria-expanded") === "false") await disclosure.click();
+    await expect(page.getByLabel("Skill 1", { exact: true })).toHaveValue("Java");
+    await expect(page.getByLabel("Skill 2", { exact: true })).toHaveValue("Java X");
+    const save = page.getByRole("button", { name: "Save changes", exact: true });
+    if (await save.isVisible()) await save.click();
+    await expect.poll(async () => {
+      const saved = await (await page.request.get(`${apiOrigin}/v1/profile`)).json();
+      return saved.profile.resume.skill_categories[0].items;
+    }).toEqual(["Java", "Java X"]);
+    await page.reload();
+    await page.getByRole("button", { name: "Resume editor", exact: true }).click();
+    await expect(target).toHaveText("Java X");
+    await expect(editor.locator('[data-resume-profile-field="skills:duplicate-skills:item:1"]')).toHaveText("Java");
+    await expect(page.locator("vite-error-overlay")).toHaveCount(0);
+    await expect(page.getByRole("alert")).toHaveCount(0);
+    await page.screenshot({ path: testInfo.outputPath("skill-duplicate-saved.png") });
+    expect(failures).toEqual([]);
+  });
+
+  test("boxed and Plate edits retain their fields and order through real save and reload", async ({ page }) => {
+    await page.goto("/profile");
+    await page.getByLabel("Full name", { exact: true }).fill("Structured Saved Candidate");
+    await page.getByRole("button", { name: "Resume editor", exact: true }).click();
+    const editor = page.getByRole("textbox", { name: "Baseline resume editor editor" });
+    const bullet = editor.locator('[data-resume-layout-target="experience:structured-first:bullet:1"]');
+    await expect(bullet).toContainText("Built 10 synthetic systems.");
+    // Click actual text rather than the full-width line container, then keep
+    // keyboard input on that selection instead of refocusing the editor root.
+    await bullet.locator('[data-slate-string="true"]').click();
+    await expect(editor).toBeFocused();
+    await expect.poll(() => bullet.evaluate((element) => {
+      const selection = window.getSelection();
+      return Boolean(selection && element.contains(selection.anchorNode) && element.contains(selection.focusNode));
+    })).toBe(true);
+    // Slate observes the native selectionchange after the DOM caret moves.
+    // Wait for that delivery before issuing the next keyboard edit.
+    await bullet.evaluate((element) => {
+      element.removeAttribute("data-end-caret-delivered");
+      const onChange = () => {
+        const selection = window.getSelection();
+        if (selection?.isCollapsed && element.contains(selection.anchorNode) &&
+          selection.anchorOffset === selection.anchorNode?.textContent?.length) {
+          document.removeEventListener("selectionchange", onChange);
+          element.setAttribute("data-end-caret-delivered", "true");
+        }
+      };
+      document.addEventListener("selectionchange", onChange);
+    });
+    await page.keyboard.press(process.platform === "darwin" ? "Meta+ArrowRight" : "End");
+    await expect(bullet).toHaveAttribute("data-end-caret-delivered", "true");
+    await expect.poll(() => bullet.evaluate((element) => {
+      const selection = window.getSelection();
+      return Boolean(selection?.isCollapsed && element.contains(selection.anchorNode) &&
+        selection.anchorOffset === selection.anchorNode?.textContent?.length);
+    })).toBe(true);
+    await page.keyboard.press("Backspace");
+    await page.keyboard.type("; revised 12x.");
+    await expect(bullet).toContainText("Built 10 synthetic systems; revised 12x.");
+    await page.getByRole("button", { name: "Profile data", exact: true }).click();
+    await expect(page.getByLabel("Full name", { exact: true })).toHaveValue("Structured Saved Candidate");
+    await page.getByRole("button", { name: /^Experience entries/ }).click();
+    await expect(page.getByLabel("Bullet 1", { exact: true }).first()).toHaveValue("Built 10 synthetic systems; revised 12x.");
+    await page.getByRole("button", { name: "Move First Fixture - Platform Lead down" }).click();
+    await page.getByRole("button", { name: "Save changes", exact: true }).click();
+    await expect(page.getByText("Profile saved", { exact: true })).toBeVisible();
+    await page.reload();
+    await expect(page.getByLabel("Full name", { exact: true })).toHaveValue("Structured Saved Candidate");
+    const stored = await (await page.request.get(`${apiOrigin}/v1/profile`)).json();
+    expect(stored.profile.resume.experience_entries.map((entry: { id: string }) => entry.id)).toEqual(["structured-second", "structured-first"]);
+    expect(stored.profile.resume.experience_entries[1].bullets).toEqual(["Built 10 synthetic systems; revised 12x.", "Second unique first-entry bullet."]);
+    await page.getByRole("button", { name: "Resume editor", exact: true }).click();
+    await expect(editor.locator('[data-resume-layout-target="experience:structured-first:bullet:1"]')).toContainText("Built 10 synthetic systems; revised 12x.");
+    await expect(editor.locator("li").first()).toContainText("Second entry unique achievement.");
+    await injectAxe(page);
+    await waitForWorkspaceAnimations(page.locator(".profile-workspace"));
+    await checkA11y(page, ".profile-workspace", { includedImpacts: ["critical", "serious"] });
+  });
+
+  test("preferences keep intermediate numeric input and persist profile and style fields", async ({ page }) => {
+    await page.goto("/preferences");
+    const salary = page.getByLabel("Salary range min", { exact: true });
+    await salary.fill("");
+    await expect(salary).toHaveValue("");
+    await salary.fill("165001");
+    await page.getByRole("button", { name: /^Resume style/ }).click();
+    const scale = page.getByLabel("Page scale", { exact: true });
+    await scale.fill("");
+    await expect(scale).toHaveValue("");
+    await scale.fill("0.91");
+    await page.getByRole("button", { name: "Save changes", exact: true }).click();
+    await expect(page.getByText("Preferences saved", { exact: true })).toBeVisible();
+    await page.reload();
+    await expect(salary).toHaveValue("165001");
+    await page.getByRole("button", { name: /^Resume style/ }).click();
+    await expect(scale).toHaveValue("0.91");
+    const stored = await (await page.request.get(`${apiOrigin}/v1/profile`)).json();
+    expect(stored.profile.compensation.salary_range_min).toBe("165001");
+    expect(stored.style.page_scale).toBe(0.91);
+    await injectAxe(page);
+    await checkA11y(page, ".profile-data-workspace", { includedImpacts: ["critical", "serious"] });
+  });
+
+  for (const committedBeforeResponse of [false, true]) {
+    test(`newer fifth-title typing survives autosave held ${committedBeforeResponse ? "after" : "before"} commit`, async ({ page, baseURL }) => {
+      const stored = await (await page.request.get(`${apiOrigin}/v1/profile`)).json();
+      stored.profile.resume.experience_entries = Array.from({ length: 5 }, (_, index) => ({
+        id: `race-role-${index + 1}`, company: "Fixture", title: `Original Role ${index + 1}`,
+        location: "London", date_range: "Jan 2020 - Present", summary: "Synthetic scope.", bullets: [`Evidence ${index + 1}.`],
+      }));
+      expect((await page.request.patch(`${apiOrigin}/v1/profile`, {
+        headers: { origin: new URL(baseURL!).origin, "sec-fetch-site": "same-origin" },
+        data: { profileText: JSON.stringify(stored.profile), styleText: JSON.stringify(stored.style), templateText: stored.templateText },
+      })).status()).toBe(200);
+      await page.goto("/profile");
+      await page.getByRole("button", { name: /^Experience entries/ }).click();
+      await page.getByRole("button", { name: "Resume editor", exact: true }).click();
+      const title = page.getByRole("textbox", { name: "Baseline resume editor editor" })
+        .locator('[data-resume-profile-field="experience:race-role-5:title"]');
+      const boxed = page.locator("#structured-profile-resume-experience-entries-4-title");
+      await expect(title).toHaveText("Original Role 5");
+      const replace = async (text: string) => {
+        await title.locator('[data-slate-string="true"]').first().click();
+        await selectPlateFieldContents(title);
+        await page.keyboard.press("Backspace");
+        await page.keyboard.type(text);
+        await expect(title).toHaveText(text);
+        await expect(boxed).toHaveValue(text);
+      };
+      let release!: () => void;
+      let captured!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      const arrival = new Promise<void>((resolve) => { captured = resolve; });
+      let held = false;
+      await page.route("**/v1/profile", async (route) => {
+        if (route.request().method() !== "PATCH" || held) return route.continue();
+        held = true;
+        const response = committedBeforeResponse ? await route.fetch() : null;
+        captured();
+        await gate;
+        if (response) await route.fulfill({ response });
+        else await route.continue();
+      });
+      try {
+        await replace("Autosaved Title A");
+        await arrival;
+        await replace("Newer unsaved Title B");
+        release();
+        await expect(page.getByText("Saved; newer changes pending", { exact: true })).toBeAttached();
+        await expect(title).toHaveText("Newer unsaved Title B");
+        await expect(boxed).toHaveValue("Newer unsaved Title B");
+        await expect.poll(async () => {
+          const saved = await (await page.request.get(`${apiOrigin}/v1/profile`)).json();
+          return saved.profile.resume.experience_entries[4].title;
+        }, { timeout: 15_000 }).toBe("Newer unsaved Title B");
+        await page.reload();
+        await page.getByRole("button", { name: "Resume editor", exact: true }).click();
+        await expect(title).toHaveText("Newer unsaved Title B");
+      } finally {
+        release();
+      }
+    });
+  }
+
+  test("Plate title and composite fields synchronize through real save and reload", async ({ page, baseURL }) => {
+    test.setTimeout(90_000);
+    const failures: string[] = [];
+    page.on("pageerror", (error) => failures.push(error.message));
+    const stored = await (await page.request.get(`${apiOrigin}/v1/profile`)).json();
+    stored.profile.personal.address = "42 Fixture Road";
+    stored.profile.personal.city = "London";
+    stored.profile.personal.postal_code = "W1";
+    stored.profile.personal.country = "UK";
+    stored.profile.resume.experience_entries = Array.from({ length: 5 }, (_, index) => ({
+      id: `sync-role-${index + 1}`, company: "Fixture Company", title: `Original Role ${index + 1}`,
+      location: "London | Remote", date_range: "Jan 2020 - Present", summary: "Synthetic scope.", bullets: [`Synthetic achievement ${index + 1}.`],
+    }));
+    stored.profile.resume.education_entries = [{ id: "sync-edu", degree: "BSc", institution: "Fixture | University", location: "London", date: "2019" }];
+    stored.profile.resume.skill_categories = [{ id: "sync-skills", label: "Tools: Core", items: ["CI, CD", "Java"] }];
+    const seed = await page.request.patch(`${apiOrigin}/v1/profile`, {
+      headers: { origin: new URL(baseURL!).origin, "sec-fetch-site": "same-origin" },
+      data: { profileText: JSON.stringify(stored.profile), styleText: JSON.stringify(stored.style), templateText: stored.templateText },
+    });
+    expect(seed.status()).toBe(200);
+    const seededProfile = await seed.json();
+    await page.goto("/profile");
+    await page.getByRole("button", { name: /^Experience entries/ }).click();
+    await page.getByRole("button", { name: "Resume editor", exact: true }).click();
+    const editor = page.getByRole("textbox", { name: "Baseline resume editor editor" });
+    const replace = async (field: string, value: string) => {
+      const target = editor.locator(`[data-resume-profile-field="${field}"]`);
+      await expect(target).toHaveCount(1);
+      await target.locator('[data-slate-string="true"]').first().click();
+      await selectPlateFieldContents(target);
+      await page.keyboard.press("Backspace");
+      await page.keyboard.type(value);
+      await expect(target).toHaveText(value);
+    };
+    await replace("experience:sync-role-5:title", "Principal Engineer");
+    await expect(page.locator("#structured-profile-resume-experience-entries-4-title")).toHaveValue("Principal Engineer");
+    await replace("experience:sync-role-5:company", "Changed Company");
+    await replace("experience:sync-role-5:location", "Paris | Hybrid");
+    await replace("experience:sync-role-5:date_range", "Feb 2021 - Dec 2025");
+    await replace("education:sync-edu:degree", "MSc");
+    await replace("education:sync-edu:institution", "Changed | University");
+    await replace("education:sync-edu:location", "Paris");
+    await replace("education:sync-edu:date", "2021");
+    await replace("skills:sync-skills:label", "Languages: Core");
+    await replace("skills:sync-skills:item:1", "Build, Release");
+    await replace("personal:city", "Paris");
+    await page.getByRole("button", { name: "Profile data", exact: true }).click();
+    await expect(page.locator("#structured-profile-resume-experience-entries-4-title")).toHaveValue("Principal Engineer");
+    await expect(page.getByRole("alert")).toHaveCount(0);
+    const save = page.getByRole("button", { name: "Save changes", exact: true });
+    if (await save.isVisible()) await save.click();
+    await expect(page.getByText("Profile saved", { exact: true })).toBeVisible();
+    await page.reload();
+    const result = await (await page.request.get(`${apiOrigin}/v1/profile`)).json();
+    expect(result.profile.resume.experience_entries[4]).toMatchObject({ title: "Principal Engineer", company: "Changed Company", location: "Paris | Hybrid", date_range: "Feb 2021 - Dec 2025" });
+    expect(result.profile.resume.experience_entries[0]).toEqual(seededProfile.profile.resume.experience_entries[0]);
+    expect(result.profile.resume.education_entries[0]).toEqual({ id: "sync-edu", degree: "MSc", institution: "Changed | University", location: "Paris", date: "2021" });
+    expect(result.profile.resume.skill_categories[0]).toEqual({ id: "sync-skills", label: "Languages: Core", items: ["Build, Release", "Java"] });
+    expect(result.profile.personal.city).toBe("Paris");
+    await page.getByRole("button", { name: "Resume editor", exact: true }).click();
+    await expect(editor.locator('[data-resume-profile-field="experience:sync-role-5:title"]')).toHaveText("Principal Engineer");
+    await expect(editor.locator('[data-resume-profile-field="skills:sync-skills:item:1"]')).toHaveText("Build, Release");
+    await injectAxe(page);
+    await waitForWorkspaceAnimations(page.locator(".profile-workspace"));
+    await checkA11y(page, ".profile-workspace", { includedImpacts: ["critical", "serious"] });
+    expect(failures).toEqual([]);
+  });
 });

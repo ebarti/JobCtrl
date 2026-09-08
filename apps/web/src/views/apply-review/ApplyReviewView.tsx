@@ -43,6 +43,7 @@ import { useResumeReviewDraftQuery } from "../../contexts/operations/hooks/useRe
 import { useResumeTemplatesQuery } from "../../contexts/profile/hooks/useResumeTemplatesQuery.js";
 import { formatDateTime } from "../../shared/lib/formatters.js";
 import { usePorts } from "../../shared/providers/PortsProvider.js";
+import { useTenantId } from "../../shared/providers/TenantProvider.js";
 import { Alert, AlertDescription, AlertTitle } from "../../shared/ui/alert.js";
 import { Button, buttonVariants } from "../../shared/ui/button.js";
 import {
@@ -1066,49 +1067,38 @@ function ResumeLineReview({
   readonly onSelectLine: (line: PdfAuditLineSelection | null) => void;
 }) {
   const { api } = usePorts();
+  const tenantId = useTenantId();
   const createDraft = useCreateResumeReviewDraftMutation();
   const saveDraftRevision = useSaveResumeReviewDraftRevisionMutation();
   const seedCommentThreads = useSeedResumeReviewCommentThreadsMutation();
   const replyToComment = useReplyToResumeReviewCommentMutation();
   const renderDraft = useRenderResumeReviewDraftMutation();
   const requestedDraftKey = useRef<string | null>(null);
-  const renderBaselineArtifactId = useRef<string | null>(null);
+  const renderBaseline = useRef<{ tenantId: typeof tenantId; jobKey: string; artifactId: string | null } | null>(null);
+  const renderBaselineArtifactId = renderBaseline.current?.tenantId === tenantId
+    && renderBaseline.current.jobKey === item.jobKey ? renderBaseline.current.artifactId : null;
   const pdfArtifactId = item.materialsPreview.resumePdfArtifactId;
   const auditArtifactId = item.materialsPreview.resumeTextArtifactId ?? pdfArtifactId;
   const lineTargets = useMemo(() => resumeLineTargets(item.materialsPreview.resumeText), [item.materialsPreview.resumeText]);
-  const draftSeedKey = pdfArtifactId && auditArtifactId ? `${item.jobKey}:${auditArtifactId}:${pdfArtifactId}` : null;
+  const draftSeedKey = pdfArtifactId && auditArtifactId ? `${tenantId}:${item.jobKey}:${auditArtifactId}:${pdfArtifactId}` : null;
   const draftQuery = useResumeReviewDraftQuery(item.jobKey, false);
-  const queriedDraft =
-    draftQuery.data?.draft.jobKey === item.jobKey ? draftQuery.data.draft : null;
-  const createdDraft =
-    createDraft.data?.draft.jobKey === item.jobKey ? createDraft.data.draft : null;
-  const savedDraft =
-    saveDraftRevision.data?.draft.jobKey === item.jobKey ? saveDraftRevision.data.draft : null;
-  const seededDraft =
-    seedCommentThreads.data?.draft.jobKey === item.jobKey ? seedCommentThreads.data.draft : null;
-  const renderedDraftResult =
-    renderDraft.data?.draft.jobKey === item.jobKey ? renderDraft.data : null;
-  const renderedDraft =
-    renderedDraftResult?.draft ?? null;
-  const baseDraft = useMemo(
-    () => selectLatestResumeReviewDraft([renderedDraft, seededDraft, savedDraft, createdDraft, queriedDraft]),
-    [createdDraft, queriedDraft, renderedDraft, savedDraft, seededDraft],
-  );
-  const draft = useMemo(
-    () => mergeDraftThread(baseDraft, replyToComment.data?.thread ?? null),
-    [baseDraft, replyToComment.data?.thread],
-  );
+  const draft = draftQuery.data?.draft.jobKey === item.jobKey ? draftQuery.data.draft : null;
+  const renderedDraftResult = renderDraft.context?.tenantId === tenantId
+    && renderDraft.data?.draft.jobKey === item.jobKey ? renderDraft.data : null;
+  const currentDraftRenderResult = renderedDraftResult?.draft.draftId === draft?.draftId
+    ? renderedDraftResult : null;
   const draftError = createDraft.error instanceof Error ? createDraft.error.message : null;
   const saveError = saveDraftRevision.error instanceof Error ? saveDraftRevision.error.message : null;
   const seedError = seedCommentThreads.error instanceof Error ? seedCommentThreads.error.message : null;
   const replyError = replyToComment.error instanceof Error ? replyToComment.error.message : null;
   const renderError = renderDraft.error instanceof Error ? renderDraft.error.message : null;
-  const draftLoading = createDraft.isPending && !baseDraft;
+  const draftLoading = createDraft.isPending && !draft;
   const renderDraftAsync = renderDraft.mutateAsync;
   const handleRenderDraft = useCallback(async () => {
     if (!draft?.currentRevisionId) return false;
-    renderBaselineArtifactId.current =
-      renderBaselineArtifactId.current ?? draftBaseArtifactId(draft) ?? auditArtifactId;
+    renderBaseline.current = { tenantId, jobKey: item.jobKey,
+      artifactId: comparisonDraftTarget(renderedDraftResult, draft, renderBaselineArtifactId, auditArtifactId, pdfArtifactId)?.acceptedArtifactId
+        ?? draftBaseArtifactId(draft) ?? auditArtifactId };
     const result = await renderDraftAsync({
       draftId: draft.draftId,
       jobId: item.jobKey,
@@ -1117,23 +1107,22 @@ function ResumeLineReview({
       },
     });
     return result.ok;
-  }, [auditArtifactId, draft?.currentRevisionId, draft?.draftId, item.jobKey, renderDraftAsync]);
+  }, [auditArtifactId, draft, item.jobKey, pdfArtifactId, renderBaselineArtifactId, renderDraftAsync, renderedDraftResult, tenantId]);
   const comparisonTarget = useMemo(
     () =>
       comparisonDraftTarget(
         renderedDraftResult,
         draft,
-        renderBaselineArtifactId.current ?? draftBaseArtifactId(draft) ?? auditArtifactId,
+        renderBaselineArtifactId ?? draftBaseArtifactId(draft) ?? auditArtifactId,
+        auditArtifactId,
+        pdfArtifactId,
       ),
-    [auditArtifactId, draft, renderedDraftResult],
+    [auditArtifactId, draft, pdfArtifactId, renderBaselineArtifactId, renderedDraftResult],
   );
 
   useEffect(() => {
     onComparisonTargetChange?.(comparisonTarget);
   }, [comparisonTarget, onComparisonTargetChange]);
-  useEffect(() => {
-    renderBaselineArtifactId.current = null;
-  }, [item.jobKey]);
 
   useEffect(() => {
     if (!draftSeedKey || !pdfArtifactId || !auditArtifactId) return;
@@ -1174,7 +1163,7 @@ function ResumeLineReview({
         profileSourceFields={item.materialsPreview.profileSourceFields}
         renderError={renderError}
         renderPending={renderDraft.isPending}
-        renderResult={renderDraft.data ?? null}
+        renderResult={currentDraftRenderResult}
         resumeText={item.materialsPreview.resumeText}
         saveError={saveError ?? seedError}
         savePending={saveDraftRevision.isPending}
@@ -1225,35 +1214,27 @@ function ResumeLineReview({
   );
 }
 
-function mergeDraftThread(
-  draft: ResumeReviewDraft | null,
-  thread: ResumeCommentThread | null,
-): ResumeReviewDraft | null {
-  if (!draft || !thread || thread.draftId !== draft.draftId) return draft;
-  const seen = new Set<string>();
-  const commentThreads = draft.commentThreads.map((existing) => {
-    if (existing.threadId !== thread.threadId) return existing;
-    seen.add(thread.threadId);
-    return thread;
-  });
-  if (!seen.has(thread.threadId)) {
-    commentThreads.unshift(thread);
-  }
-  return { ...draft, commentThreads };
-}
-
 function comparisonDraftTarget(
   renderResult: ResumeReviewDraftRenderResponse | null,
   draft: ResumeReviewDraft | null,
   acceptedArtifactId: string | null,
+  currentTextArtifactId: string | null,
+  currentPdfArtifactId: string | null,
 ): ArtifactComparisonDraftTarget | null {
-  if (!renderResult?.ok) {
-    return null;
-  }
+  if (!renderResult?.ok) return null;
+  const source = renderResult.draft;
+  // Promotion creates the next editable draft. The completed render still
+  // owns its comparison until this job moves to unrelated artifact identities.
+  const isSource = currentTextArtifactId === draftBaseArtifactId(source)
+    && currentPdfArtifactId === source.baseResumePdfArtifactId;
+  const isRendered = currentTextArtifactId === renderResult.artifacts.resumeText.artifactId
+    && currentPdfArtifactId === renderResult.artifacts.resumePdf.artifactId;
+  if (!isSource && !isRendered) return null;
+  const renderedDraft = draft?.draftId === source.draftId ? draft : source;
   return {
-    acceptedArtifactId: acceptedArtifactId ?? draftBaseArtifactId(draft),
+    acceptedArtifactId: acceptedArtifactId ?? draftBaseArtifactId(source),
     artifactId: renderResult.artifacts.resumeText.artifactId,
-    riskLabels: uniqueRiskLabels(draft?.commentThreads ?? []),
+    riskLabels: uniqueRiskLabels(renderedDraft.commentThreads),
   };
 }
 
@@ -1271,20 +1252,6 @@ function uniqueRiskLabels(commentThreads: readonly ResumeCommentThread[]): strin
     result.push(label);
   }
   return result;
-}
-
-function selectLatestResumeReviewDraft(
-  drafts: ReadonlyArray<ResumeReviewDraft | null>,
-): ResumeReviewDraft | null {
-  return drafts
-    .filter((draft): draft is ResumeReviewDraft => Boolean(draft))
-    .sort((left, right) => resumeReviewDraftRank(right) - resumeReviewDraftRank(left))[0] ?? null;
-}
-
-function resumeReviewDraftRank(draft: ResumeReviewDraft): number {
-  const stateRank = draft.state === "promoted" ? 3 : draft.state === "rendered" ? 2 : 1;
-  const updatedAt = Date.parse(draft.updatedAt);
-  return draft.latestRevisionNumber * 1_000_000_000_000 + stateRank * 1_000_000_000 + (Number.isFinite(updatedAt) ? updatedAt : 0);
 }
 
 function ResumeReviewSurface({

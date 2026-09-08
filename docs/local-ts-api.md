@@ -42,6 +42,11 @@ when implementing or debugging a specific endpoint.
 | Workflow operations | `/v1/pipeline/actions/run-stage`, `/v1/pipeline/operations`, `/v1/workflow-runs`, `/v1/health` | `202` for accepted asynchronous work; `200` for projection-backed and runtime-backed reads/sync commands |
 | Realtime | `/v1/events/stream` | Server-Sent Events with replay and reconnect support |
 
+Dashboard source-health and digest blocked-source entries retain stable
+`sourceId` values and may include `displayName` from the source registry.
+Clients prefer that name, including current JobStreaming board labels for
+historical source keys. Names do not change source-health or quarantine facts.
+
 ## Profile And Preferences
 
 Profile data, preferences, discovery controls, settings, and credentials have
@@ -114,6 +119,11 @@ role-match feedback are covered in
 worker-owned `JobUrlImportWorkflow`. It returns either the canonical imported
 `jobKey` or a typed `manual_capture_required` outcome with the pending queue
 item and reason. The API never fetches the remote page itself.
+
+Job-detail Enrich stages expose optional `fetchFailure` diagnostics (cause,
+host, observed time, bounded recheck status/count/times). The audit history
+includes `EnrichmentFetchRechecked`; raw request URLs remain outside this
+diagnostic DTO. See [fetch diagnostics](api/jobs-and-materials.md#jobs-and-evidence).
 
 ## Live Discovery Browser Bridge
 

@@ -8,6 +8,7 @@ from pathlib import Path
 
 from jobctrl.domain.events import (
     DOMAIN_EVENT_TYPES,
+    EnrichmentFetchRecheckedPayload,
     DiscoveryExecutionRefLike,
     DuplicateJobLinkedPayload,
     DuplicateJobLinkRejectedPayload,
@@ -99,3 +100,7 @@ def test_pipeline_step_payload_fields_match_typescript() -> None:
         PipelineStepCompletedPayload, "PipelineStepCompletedPayload"
     )
     _assert_payload_field_parity(PipelineStepFailedPayload, "PipelineStepFailedPayload")
+
+
+def test_fetch_recheck_payload_fields_match_typescript() -> None:
+    _assert_payload_field_parity(EnrichmentFetchRecheckedPayload, "EnrichmentFetchRecheckedPayload")

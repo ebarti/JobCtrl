@@ -651,16 +651,55 @@ function achievementEvidenceForEntry(entry: Record<string, unknown>, entryId: st
   if (explicitEvidence.length === 0) {
     return derivedEvidence;
   }
-  if (explicitEvidence.every((evidence) => isMaterializedLegacyBulletEvidence(evidence, entryId))) {
-    return derivedEvidence;
-  }
-  const derivedById = new Map(derivedEvidence.map((evidence) => [text(evidence.id), evidence]));
-  return explicitEvidence.flatMap((evidence) => {
-    if (!isMaterializedLegacyBulletEvidence(evidence, entryId)) {
-      return [evidence];
+  const materialized = explicitEvidence.map((evidence) => isMaterializedLegacyBulletEvidence(evidence, entryId));
+  const allDerived = materialized.every(Boolean);
+  const available = new Set(derivedEvidence.map((_, index) => index));
+  const matched = new Map<number, number>();
+  // Claim unchanged occurrences before refreshing edited bullets. Position is
+  // only an allocation hint: a saved evidence ID already owns its source text.
+  // Authored records may share a source with derived records, so reserve their
+  // otherwise-unclaimed sources only after matching materialized occurrences.
+  const matchingOrder = explicitEvidence.map((_, index) => index)
+    .sort((left, right) => Number(materialized[right]) - Number(materialized[left]));
+  matchingOrder.forEach((index) => {
+    const evidence = explicitEvidence[index]!;
+    const bulletIndex = [...available].find((candidate) =>
+      text(derivedEvidence[candidate]!.source_text) === text(evidence.source_text).trim());
+    if (bulletIndex !== undefined) {
+      matched.set(index, bulletIndex);
+      available.delete(bulletIndex);
     }
-    const replacement = derivedById.get(text(evidence.id));
-    return replacement ? [replacement] : [];
+  });
+  explicitEvidence.forEach((evidence, index) => {
+    if (!materialized[index] || matched.has(index)) return;
+    const preferred = allDerived ? index : (legacyBulletEvidenceIndex(text(evidence.id), entryId) ?? 0) - 1;
+    const bulletIndex = available.has(preferred) ? preferred : available.values().next().value;
+    if (bulletIndex !== undefined) {
+      matched.set(index, bulletIndex);
+      available.delete(bulletIndex);
+    }
+  });
+  const replacements = new Map<number, Record<string, unknown>>();
+  const byBullet = new Map<number, Record<string, unknown>>();
+  for (const [index, bulletIndex] of matched) {
+    if (!materialized[index]) continue;
+    const replacement = { ...derivedEvidence[bulletIndex], id: text(explicitEvidence[index]!.id) };
+    replacements.set(index, replacement);
+    byBullet.set(bulletIndex, replacement);
+  }
+  if (!allDerived) {
+    return explicitEvidence.flatMap((evidence, index) =>
+      materialized[index] ? (replacements.has(index) ? [replacements.get(index)!] : []) : [evidence]);
+  }
+  const reservedIds = new Set(explicitEvidence.map((evidence) => text(evidence.id)));
+  return derivedEvidence.map((evidence, index) => {
+    const replacement = byBullet.get(index);
+    if (replacement) return replacement;
+    let suffix = index + 1;
+    while (reservedIds.has(legacyBulletEvidenceId(entryId, suffix))) suffix += 1;
+    const id = legacyBulletEvidenceId(entryId, suffix);
+    reservedIds.add(id);
+    return { ...evidence, id };
   });
 }
 
@@ -669,7 +708,7 @@ function legacyBulletAchievementEvidenceForEntry(
   entryId: string,
 ): Array<Record<string, unknown>> {
   const scope = legacyBulletEvidenceScope(entry);
-  return asTextArray(entry.bullets).map((bullet, index) => {
+  return asTextArray(entry.bullets).map((bullet) => bullet.trim()).filter(Boolean).map((bullet, index) => {
     const sourceText = bullet.trim();
     const normalized = legacyBulletEvidenceNormalizedText(entry, sourceText);
     return {

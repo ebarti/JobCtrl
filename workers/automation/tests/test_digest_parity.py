@@ -157,6 +157,12 @@ def _create_schema(conn: sqlite3.Connection) -> None:
             last_updated_at        TEXT,
             PRIMARY KEY (tenant_id, job_id)
         );
+        CREATE TABLE source_registry_entries (
+            tenant_id TEXT NOT NULL DEFAULT 'local',
+            source_id TEXT NOT NULL,
+            display_name TEXT NOT NULL,
+            PRIMARY KEY (tenant_id, source_id)
+        );
         CREATE TABLE source_quality_stats (
             tenant_id                         TEXT NOT NULL DEFAULT 'local',
             source_id                         TEXT NOT NULL,
@@ -363,6 +369,12 @@ def _seed_fixture(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
                 "INSERT INTO job_stage_states (job_url, stage, state, updated_at) VALUES (?, 'apply', ?, ?)",
                 (job["jobId"], job["currentState"], fixture["now"]),
             )
+
+    for source in fixture["sourceRegistry"]:
+        conn.execute(
+            "INSERT INTO source_registry_entries (tenant_id, source_id, display_name) VALUES ('local', ?, ?)",
+            (source["sourceId"], source["displayName"]),
+        )
 
     for source in fixture["sourceQuality"]:
         conn.execute(

@@ -32,6 +32,82 @@ spendful workflow and reuses this **same** preflight — the `check_spend_budget
 activity + the `dailyBudgetUsd` ledger — before its LLM candidate extraction.
 There is no second spend table or preflight.
 
+## Automatic Preparation Recovery
+
+The worker checks saved preparation state at startup and on its 15-second
+heartbeat. `pipeline/automatic_preparation.py` resumes pending or retryable
+failed Enrich, Score, Tailor, and Cover work without running Discover or Apply.
+It waits while Temporal reports another discovery, import, or preparation
+workflow, or canonical stage rows are queued/running. An unavailable Temporal
+inventory prevents dispatch.
+
+Each recovery workflow handles one stage for at most 25 local jobs. Canonical
+queue predicates determine description, score, policy, threshold, and approved
+material prerequisites. A later heartbeat selects the next eligible stage.
+Recovery excludes explicit cancellation, blocked/non-retryable and exhausted
+states, deleted jobs, and closed/incompatible postings. Existing scores and
+approved materials are reused. Attempts are preserved, capped by the smaller
+of the stage limit and five, and delayed by `min(1800, 60 * 2^attempts)` seconds.
+Both dispatch and the workflow enforce the normal spend preflight.
+
+`pipeline/public_fetch_recovery.py` is a narrow exception for a still-current
+non-retryable `DETAIL_UNSAFE_URL`: the canonical stage, enrichment attempt, and
+latest `StageFailed` event must agree. It accepts typed `dns_non_public` evidence
+or exact recognized legacy DNS/transport error shapes; arbitrary error text
+cannot enable recovery. The worker checks at most five candidates per pass and
+five times per failure, starting after one minute with exponential backoff.
+Checks only resolve the posting and the recorded failed request; they do not
+fetch pages. A ten-second check deadline leaves unresolved conditions blocked.
+Both destinations must validate as public, then a write transaction rechecks
+the complete candidate snapshot and version before returning the stage to
+pending. Existing attempt counts and cooldowns remain effective. Private
+literals, cancellations, new owners, stale/superseded attempts, deleted/closed
+jobs, and exhausted budgets are excluded. `EnrichmentFetchRechecked` records
+the cause, host, results, count, and next check; the immutable original failure
+remains. A successful recheck emits `StageReset` with reason
+`public_fetch_condition_resolved`, after which normal guarded dispatch owns
+the retry.
+
+Owned scoring persists the requirement-fit report alongside its score evidence.
+After a rescore restores a missing report, dependency reconciliation releases
+only the retryable `REQUIREMENT_FIT_MISSING` Tailor block when the report matches
+the latest score, posting analysis, and score profile version and has requirement
+items. It preserves attempt limits and cancellation, requires no current approved
+resume, and lets normal eligibility and cooldown checks admit subsequent work.
+
+A SQLite transaction reserves the exact cohort in `queued` stage metadata and
+records `StageQueued` with its prior state and attempt count. The frozen cohort
+and deterministic workflow ID survive a worker restart or lost start
+acknowledgement. Temporal uses `USE_EXISTING` and `REJECT_DUPLICATE` to prevent
+a second execution of that reservation. Selected activities recheck ownership,
+deletion, cancellation, prerequisites, and attempt limits before processing.
+Automatic runs use one Temporal activity attempt; durable job state and the
+heartbeat own later retries. After a started activity times out, the exact
+Temporal history and a charged attempt from that cohort allow unconsumed
+reservations to return to pending without spending or resetting their attempts.
+This also releases the former `PREPARATION_RECOVERY_STOPPED` outcome when the
+same proof exists. Current eligibility and cooldowns still apply. Cancellation
+requests, termination, missing history, and batches without a consumed attempt
+retain their stopped/block outcome, preventing a preflight retry loop.
+History copied into a reset descendant cannot establish a timeout in that new
+run; the recorded original run and the scheduled activity owner must both match.
+
+Before checking for busy stage rows, the worker describes each interrupted
+automatic activity's exact Temporal execution. A closed owner restores its
+committed result or records one bounded failed attempt; canceled work stays
+canceled. Missing history leaves ownership intact. Enrichment also advances
+its execution lease so a disconnected predecessor cannot commit late results.
+Scoring and material generation fence both admission and persistence against
+cancellation or changed ownership, without holding a database lock during
+provider calls.
+
+Stopping discovery's streaming enrichment consumer for its terminal pass is an
+internal handoff, not a user cancellation. The consumer releases unfinished
+work to that pass. Historical incorrectly canceled rows are repaired only when
+their exact successful Discover execution claimed terminal enrichment after
+the stop; any recorded workflow cancellation request or terminal cancellation
+lease prevents repair.
+
 ## Standing Auto-Apply Loop
 
 Auto apply is a settings-reconciled continuous Apply workflow, not a hidden UI
@@ -263,6 +339,15 @@ owner-scoped reconciliation is a mandatory workflow step; the workflow cannot
 publish a terminal outcome while its rows still claim that owner. This is not
 a second scheduler or a polling reaper—Temporal durably delivers one
 idempotent reconciliation decision.
+
+Unscoped Tailor freezes its eligible tenant cohort, profile snapshot and model
+policy once, then uses the same per-JobId lifecycle as selected Tailor. A job's
+`StageStarted` is recorded when a worker dispatches that job, not when the batch
+is selected. The bounded material executor stops admitting later jobs after
+cancellation; in-flight work must still pass the canonical cancellation and
+activity-owner checks before material or terminal-state writes. Selected runs
+keep partial results and approved IDs for Cover, while the unscoped adapter
+retains aggregate failure and durable-exhaustion escalation.
 
 ### Two durable progress authorities
 

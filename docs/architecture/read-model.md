@@ -219,6 +219,10 @@ clock; it never sends or acts.
 The evidence map derives from canonical profile evidence, requirement-fit,
 bullet-provenance, and coverage rows. It creates no second generation pipeline
 and uses conservative defaults for older databases missing optional metadata.
+Reordering profile bullets preserves canonical achievement IDs and their source
+associations. Material audit lookups prefer canonical evidence over positional
+compatibility pointers so an earlier usage link continues to identify the same
+achievement after reordering.
 
 Outcome conversion stores integer counts. The API derives rates and medians at
 read time using one minimum-sample threshold, so small groups keep counts but

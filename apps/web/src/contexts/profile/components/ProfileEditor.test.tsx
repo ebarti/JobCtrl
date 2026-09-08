@@ -50,6 +50,19 @@ describe("<ProfileEditor>", () => {
     expect(resumeSemanticTextChangesFromPlateValues(baseline, baseline)).toEqual([]);
   });
 
+  it("projects a bound title with its canonical spelling without rewriting its composite heading", () => {
+    const baseline = [{ type: "resume_block", tagName: "div", semanticId: "experience:role-5:heading", children: [
+      { type: "resume_inline", tagName: "span", profileField: "experience:role-5:title", profileSource: "Engineer’s Lead", children: [{ text: "Engineer's Lead" }] },
+      { type: "resume_inline", tagName: "span", profileField: "experience:role-5:company", profileSource: "Fixture", children: [{ text: "Fixture" }] },
+    ] }];
+    const edited = structuredClone(baseline);
+    edited[0]!.children[0]!.children[0]!.text = "Principal Engineer";
+    expect(resumeSemanticTextChangesFromPlateValues(baseline, baseline)).toEqual([]);
+    expect(resumeSemanticTextChangesFromPlateValues(baseline, edited)).toEqual([
+      { semanticId: "experience:role-5:title", baselineTexts: ["Engineer’s Lead"], plateTexts: ["Principal Engineer"] },
+    ]);
+  });
+
   it("serializes resume theme tokens without losing print precision", () => {
     const style = resumeTemplatePreviewStyle({
       ...sampleResumeTemplateListResponse.effectiveDefaultVersion.theme,
@@ -68,6 +81,45 @@ describe("<ProfileEditor>", () => {
       "--resume-template-page-block-size": "297mm",
       "--resume-template-page-inline-size": "210mm",
     });
+  });
+
+  it("preserves a native bullet caret when selecting its audit line", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(
+      '<main class="resume-page"><ul><li data-resume-line-number="1" data-resume-layout-target="experience:exp-1:bullet:1">Built synthetic systems.</li></ul></main>',
+      { headers: { "content-type": "text/html" } },
+    )));
+    renderWithProviders(<ProfileEditor />, {
+      ports: buildTestPorts({ api: {
+        profile: async () => sampleProfileResponse,
+        profilePreviewHtmlUrl: () => "/v1/profile/preview.html?v=0",
+        settings: async () => sampleSettingsResponse,
+      } }),
+      withRouter: true,
+    });
+    await user.click(await screen.findByRole("button", { name: "Resume editor" }));
+    const editor = await screen.findByRole("textbox", { name: "Baseline resume editor editor" });
+    const leaf = await screen.findByText("Built synthetic systems.");
+    const bullet = leaf.closest("li")!;
+    // jsdom omits inherited isContentEditable and native pointer selection.
+    Object.defineProperty(bullet, "isContentEditable", { configurable: true, value: true });
+    editor.focus();
+    const text = leaf.firstChild!;
+    const range = document.createRange();
+    range.setStart(text, 6);
+    range.collapse(true);
+    const selection = document.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    fireEvent.click(leaf);
+
+    await waitFor(() => expect(bullet).toHaveClass("jobctrl-selected-line"));
+    expect(selection.anchorNode).toBe(text);
+    expect(selection.anchorOffset).toBe(6);
+    expect(selection.focusNode).toBe(text);
+    await user.keyboard("12!");
+    expect(bullet).toHaveTextContent("Built 12!synthetic systems.");
   });
 
   it("renders the Profile baseline resume through the Plate editor pane", async () => {

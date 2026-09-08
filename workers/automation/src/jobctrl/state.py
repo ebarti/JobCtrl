@@ -385,9 +385,7 @@ def reconcile_dependency_blockers(
             terminal_clause = ""
             params: list[Any] = [str(tenant_id), downstream, *messages]
             if terminal_codes:
-                terminal_clause = (
-                    f" OR downstream.error_code IN ({', '.join('?' for _ in terminal_codes)})"
-                )
+                terminal_clause = f" OR downstream.error_code IN ({', '.join('?' for _ in terminal_codes)})"
                 params.extend(terminal_codes)
             job_filter = ""
             if stable_job_id is not None:
@@ -445,7 +443,92 @@ def reconcile_dependency_blockers(
                     },
                 )
                 repaired += 1
+    if "score" in completed_stages:
+        repaired += _reconcile_requirement_fit_blockers(conn, tenant_id=tenant_id, job_id=stable_job_id, now=updated_at)
     return repaired
+
+
+def _reconcile_requirement_fit_blockers(
+    conn,
+    *,
+    tenant_id: TenantId,
+    job_id: JobId | None,
+    now: str,
+) -> int:
+    """Release the missing-evidence condition only after its canonical repair."""
+    scope = "tenant_id = ? AND stage = 'tailor' AND state = 'blocked' "
+    scope += "AND error_code = 'REQUIREMENT_FIT_MISSING' AND retryable = 1"
+    params: list[Any] = [str(tenant_id)]
+    if job_id is not None:
+        scope += " AND job_id = ?"
+        params.append(str(job_id))
+    if conn.execute(f"SELECT 1 FROM job_stage_states WHERE {scope} LIMIT 1", params).fetchone() is None:
+        return 0
+    # Recheck under the same write transaction used for the state transition;
+    # a concurrent cancellation must never be converted back to pending.
+    if not conn.in_transaction:
+        conn.execute("BEGIN IMMEDIATE")
+    rows = conn.execute(
+        f"""
+        SELECT job_id, attempt_count, max_attempts, version
+          FROM job_stage_states AS blocked
+         WHERE {scope}
+           AND attempt_count < max_attempts
+           AND json_array_length(blocked_by_json) = 1
+           AND json_extract(blocked_by_json, '$[0]') = 'score'
+           AND EXISTS (
+               SELECT 1 FROM job_stage_states AS upstream
+                WHERE upstream.tenant_id = blocked.tenant_id
+                  AND upstream.job_id = blocked.job_id
+                  AND upstream.stage = 'score' AND upstream.state = 'succeeded'
+           )
+           AND EXISTS (
+               SELECT 1 FROM job_scores AS score
+               JOIN job_requirement_fit_reports AS report
+                 ON report.tenant_id = score.tenant_id AND report.job_id = score.job_id
+                AND report.score_version = score.version
+                WHERE score.tenant_id = blocked.tenant_id AND score.job_id = blocked.job_id
+                  AND score.version = (SELECT MAX(version) FROM job_scores
+                       WHERE tenant_id = blocked.tenant_id AND job_id = blocked.job_id)
+                  AND report.employer_analysis_generation = (SELECT MAX(generation)
+                       FROM job_employer_analysis
+                       WHERE tenant_id = blocked.tenant_id AND job_id = blocked.job_id)
+                  AND report.profile_snapshot_version =
+                       json_extract(score.trace_json, '$.profile_snapshot_version')
+                  AND EXISTS (SELECT 1 FROM job_requirement_fit_items AS item
+                       WHERE item.tenant_id = report.tenant_id AND item.job_id = report.job_id
+                         AND item.score_version = report.score_version)
+           )
+           AND NOT EXISTS (SELECT 1 FROM job_materials_artifacts AS artifact
+                WHERE artifact.tenant_id = blocked.tenant_id AND artifact.job_id = blocked.job_id
+                  AND artifact.artifact_type = 'tailored_resume' AND artifact.status = 'approved'
+                  AND artifact.superseded_at IS NULL)
+        """,
+        params,
+    ).fetchall()
+    for row in rows:
+        stable_job_id = canonical_job_id(str(row["job_id"]))
+        set_stage_state(
+            conn,
+            stable_job_id,
+            "tailor",
+            "pending",
+            tenant_id=tenant_id,
+            attempt_count=int(row["attempt_count"]),
+            max_attempts=int(row["max_attempts"]),
+            expected_version=int(row["version"]),
+        )
+        record_job_event(
+            conn,
+            stable_job_id,
+            "tailor",
+            "StageReset",
+            tenant_id=tenant_id,
+            message="Tailoring unblocked after requirement-fit evidence was restored.",
+            occurred_at=now,
+            payload={"reason": "requirement_fit_restored", "upstreamStage": "score"},
+        )
+    return len(rows)
 
 
 def reconcile_tailor_terminal_dependents(
@@ -489,15 +572,11 @@ def reconcile_tailor_terminal_dependents(
         upstream_error_code = str(terminal["error_code"] or "") or None
         error_code = f"UPSTREAM_TAILOR_{upstream_state.upper()}"
         next_action = (
-            "Reset Tailor's attempt budget and retry Tailor."
-            if upstream_state == "exhausted"
-            else "Retry Tailor."
+            "Reset Tailor's attempt budget and retry Tailor." if upstream_state == "exhausted" else "Retry Tailor."
         )
         for downstream in ("cover", "apply"):
             display_name = "Cover letter" if downstream == "cover" else "Apply"
-            message = (
-                f"{display_name} cannot start because Tailor is {upstream_state}."
-            )
+            message = f"{display_name} cannot start because Tailor is {upstream_state}."
             metadata_json = _json_dumps(
                 {
                     "reason": "upstream_tailor_terminal",
@@ -627,9 +706,7 @@ def reconcile_score_eligibility_blockers(
         stage = str(row["stage"])
         state = str(row["state"])
         if state in _TERMINAL_DOWNSTREAM_STATES and not (
-            state == "skipped"
-            and str(row["error_code"] or "")
-            == SCORE_THRESHOLD_SKIPPED_ERROR_CODE
+            state == "skipped" and str(row["error_code"] or "") == SCORE_THRESHOLD_SKIPPED_ERROR_CODE
         ):
             continue
         attempt_count = int(row["attempt_count"] or 0)
@@ -699,10 +776,7 @@ def reconcile_score_threshold_skips(
             now=updated_at,
         )
 
-    message = (
-        f"Fit score {normalized_fit_score}/10 is below the materials threshold "
-        f"{normalized_min_score}/10."
-    )
+    message = f"Fit score {normalized_fit_score}/10 is below the materials threshold {normalized_min_score}/10."
     next_action = "Lower the materials threshold or record a higher current score."
     metadata = {
         "reason": "score_below_threshold",
@@ -1108,12 +1182,7 @@ def record_job_event(
     identity aliases are removed so untrusted content cannot spoof the
     persisted or published JobId.
     """
-    if not (
-        event_type
-        and event_type.isascii()
-        and event_type.isalnum()
-        and event_type[0].isupper()
-    ):
+    if not (event_type and event_type.isascii() and event_type.isalnum() and event_type[0].isupper()):
         raise ValueError("event_type must be a PascalCase ASCII identifier")
     stable_job_id = canonical_job_id(str(job_id)) if job_id is not None else None
     current_payload = dict(payload or {})

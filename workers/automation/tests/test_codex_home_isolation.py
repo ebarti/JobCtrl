@@ -15,6 +15,7 @@ import stat
 import tomllib
 from pathlib import Path
 from typing import Any
+from urllib.request import Request
 
 import pytest
 
@@ -58,6 +59,15 @@ def _profile_filesystem_permissions(overrides: tuple[str, ...]) -> dict[str, obj
     )
     parsed = tomllib.loads(profile_override)
     return parsed["permissions"][adapter._CODEX_PERMISSION_PROFILE]["filesystem"]
+
+
+def _assert_isolated_auth_env(env: dict[str, str]) -> None:
+    credential_keys = set(setup_probes.CODEX_NEUTRALIZED_AUTH_ENV) - {
+        "CODEX_REFRESH_TOKEN_URL_OVERRIDE", "CODEX_REVOKE_TOKEN_URL_OVERRIDE",
+    }
+    assert all(env[key] == "" for key in credential_keys)
+    assert env["CODEX_REFRESH_TOKEN_URL_OVERRIDE"] == "https://auth.openai.com/oauth/token"
+    assert env["CODEX_REVOKE_TOKEN_URL_OVERRIDE"] == "https://auth.openai.com/oauth/revoke"
 
 
 def test_config_overrides_select_workspace_only_permission_profile() -> None:
@@ -169,7 +179,33 @@ def test_isolated_codex_env_is_minimal_for_jobctrl_home(tmp_path: Path) -> None:
 
     assert env["CODEX_HOME"] == str(codex_home)
     assert env["HOME"] == str(process_home)
-    assert all(env[key] == "" for key in setup_probes.CODEX_NEUTRALIZED_AUTH_ENV)
+    _assert_isolated_auth_env(env)
+
+
+@pytest.mark.parametrize(
+    ("env_key", "expected_path"),
+    (
+        ("CODEX_REFRESH_TOKEN_URL_OVERRIDE", "/oauth/token"),
+        ("CODEX_REVOKE_TOKEN_URL_OVERRIDE", "/oauth/revoke"),
+    ),
+)
+def test_sdk_auth_endpoints_remain_valid_and_ignore_ambient_redirects(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    env_key: str,
+    expected_path: str,
+) -> None:
+    monkeypatch.setenv(env_key, "https://untrusted.invalid/collect")
+    overrides = adapter._isolated_codex_env(tmp_path / "codex", tmp_path / "home")
+    child_env = {**os.environ, **overrides}  # the SDK merges overrides into ambient env
+
+    # Build the request without sending it: an empty override fails here before
+    # authentication can report an expired/rejected saved login.
+    request = Request(child_env[env_key], data=b"synthetic", method="POST")
+
+    assert request.type == "https"
+    assert request.host == "auth.openai.com"
+    assert request.selector == expected_path
 
 
 def test_bundled_codex_uses_persisted_auth_and_neutralizes_raw_keys(
@@ -202,8 +238,8 @@ def test_bundled_codex_uses_persisted_auth_and_neutralizes_raw_keys(
         "CODEX_API_KEY": "",
         "CODEX_ACCESS_TOKEN": "",
         "CODEX_AGENT_IDENTITY_AUTH": "",
-        "CODEX_REFRESH_TOKEN_URL_OVERRIDE": "",
-        "CODEX_REVOKE_TOKEN_URL_OVERRIDE": "",
+        "CODEX_REFRESH_TOKEN_URL_OVERRIDE": "https://auth.openai.com/oauth/token",
+        "CODEX_REVOKE_TOKEN_URL_OVERRIDE": "https://auth.openai.com/oauth/revoke",
     }
 
 
@@ -236,10 +272,7 @@ def test_bundled_codex_factory_uses_persisted_credentials(
     assert codex.config.codex_bin == str(binary.resolve())
     assert codex.config.config_overrides == adapter._codex_config_overrides(binary.resolve())
     assert codex.config.env["OPENAI_API_KEY"] == ""
-    assert all(
-        codex.config.env[key] == ""
-        for key in setup_probes.CODEX_NEUTRALIZED_AUTH_ENV
-    )
+    _assert_isolated_auth_env(codex.config.env)
 
 
 @pytest.mark.parametrize("factory_name", ["_load_async_codex_factory", "_load_catalog_async_codex_factory"])

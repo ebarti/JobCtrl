@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { checkA11y, injectAxe } from "axe-playwright";
 
 import {
   makeArtifactDetail,
@@ -10,6 +11,11 @@ import {
   sampleDraftResumeArtifact,
   sampleResumeTemplateListResponse,
 } from "../../src/test/fixtures/projections.js";
+
+test.beforeEach(async ({ context, baseURL }) => {
+  const allowed = new Set([new URL(baseURL!).origin, `http://127.0.0.1:${process.env["JOBCTRL_E2E_API_PORT"] ?? "8767"}`]);
+  await context.route("**/*", (route) => allowed.has(new URL(route.request().url()).origin) ? route.continue() : route.abort("blockedbyclient"));
+});
 
 const jobKey = sampleApplyReviewQueue.items[0]!.jobKey;
 const acceptedArtifact = {
@@ -104,11 +110,25 @@ function artifactDetail(artifactId: string) {
   return makeArtifactDetail({ ...acceptedArtifact, artifactId });
 }
 
-async function installArtifactComparisonRoutes(page: Page) {
+async function installArtifactComparisonRoutes(page: Page, advanceDraftAfterRender = true) {
+  let renderCompleted = false;
+  const nextDraft = {
+    ...draft, draftId: "draft-after-promotion", baseGeneration: 3,
+    baseResumeTextArtifactId: draftArtifact.artifactId, baseResumePdfArtifactId: "resume-review-pdf",
+    state: "active", currentRevisionId: null, latestRevisionNumber: 0,
+    latestRevision: null, commentThreads: [],
+  };
+  const currentDraft = () => renderCompleted && advanceDraftAfterRender ? nextDraft : draft;
   await page.route("**/v1/apply/review-queue", async (route) => {
     await route.fulfill({
       contentType: "application/json",
-      body: JSON.stringify(sampleApplyReviewQueue),
+      body: JSON.stringify(renderCompleted && advanceDraftAfterRender ? {
+        ...sampleApplyReviewQueue,
+        items: sampleApplyReviewQueue.items.map((item) => item.jobKey === jobKey ? {
+          ...item, materialsPreview: { ...item.materialsPreview,
+            resumeTextArtifactId: draftArtifact.artifactId, resumePdfArtifactId: "resume-review-pdf" },
+        } : item),
+      } : sampleApplyReviewQueue),
     });
   });
   await page.route("**/v1/resume-templates", async (route) => {
@@ -120,7 +140,7 @@ async function installArtifactComparisonRoutes(page: Page) {
   await page.route("**/v1/jobs/*/resume-review/draft", async (route) => {
     await route.fulfill({
       contentType: "application/json",
-      body: JSON.stringify({ ok: true, draft }),
+      body: JSON.stringify({ ok: true, draft: currentDraft() }),
     });
   });
   await page.route(
@@ -130,20 +150,21 @@ async function installArtifactComparisonRoutes(page: Page) {
         contentType: "application/json",
         body: JSON.stringify({
           ok: true,
-          draft,
-          commentThreads: draft.commentThreads,
-          seededCount: draft.commentThreads.length,
+          draft: currentDraft(),
+          commentThreads: currentDraft().commentThreads,
+          seededCount: currentDraft().commentThreads.length,
           updatedCount: 0,
         }),
       });
     },
   );
   await page.route("**/v1/resume-review/drafts/*/render", async (route) => {
+    renderCompleted = true;
     await route.fulfill({
       contentType: "application/json",
       body: JSON.stringify({
         ok: true,
-        draft: { ...draft, state: "rendered" },
+        draft: { ...draft, state: advanceDraftAfterRender ? "promoted" : "rendered" },
         validation: { passed: true, errors: [], warnings: [] },
         artifacts: {
           resumeText: {
@@ -174,7 +195,11 @@ async function installArtifactComparisonRoutes(page: Page) {
   await page.route("**/v1/artifacts/*/preview.html*", async (route) => {
     await route.fulfill({
       contentType: "text/html",
-      body: "<main><h1>Principal Platform Engineer</h1><p>Owned platform reliability work for incident response.</p></main>",
+      body: `<main><section class="resume-page" data-resume-page="1">
+        <h1 data-resume-line-number="1" data-resume-layout-target="personal:full_name">Principal Platform Engineer</h1>
+        <h2 data-resume-line-number="2" data-resume-layout-target="section:experience">Experience</h2>
+        <p data-resume-line-number="3" data-resume-layout-target="experience:line:3">Owned platform reliability work for incident response.</p>
+      </section></main>`,
     });
   });
   await page.route("**/v1/artifacts/*", async (route) => {
@@ -212,9 +237,16 @@ test("apply review compares accepted artifact with rendered draft artifact", asy
   await expect(comparison).toContainText("declared lost");
   await expect(comparison).toContainText("gcp");
   await expect(comparison).toContainText("claim risk");
+  await expect(comparison).toContainText("Accepted resume");
+  await expect(comparison).toContainText("Rendered draft resume");
+  await expect(page.getByText("draft ready", { exact: true })).toBeVisible();
+  await expect(renderButton).toBeDisabled();
+  await expect(page.getByText("replacement rendered", { exact: true })).toHaveCount(0);
   await expect(
     page.getByRole("region", { name: "Tailored resume preview" }),
   ).toBeVisible();
+  await injectAxe(page);
+  await checkA11y(page, ".apply-review-resume-review", { includedImpacts: ["critical", "serious"] });
 });
 
 test("artifact full-page detail compares same-job generated artifacts", async ({
@@ -248,4 +280,195 @@ test("artifact full-page detail compares same-job generated artifacts", async ({
   await expect(comparison).toContainText("+declared");
   await expect(comparison).toContainText("declared lost");
   await expect(comparison).toContainText("gcp");
+});
+
+test("switching identical cached drafts does not carry unsaved text to another job", async ({ page }) => {
+  await installArtifactComparisonRoutes(page);
+  const first = sampleApplyReviewQueue.items[0]!;
+  const other = sampleApplyReviewQueue.items[1]!;
+  const second = { ...first, jobKey: other.jobKey, title: other.title,
+    materialsPreview: { ...first.materialsPreview,
+      resumeTextArtifactId: "other-job-text", resumePdfArtifactId: "other-job-pdf" },
+  };
+  const plateDocument = [{ type: "resume_block", tagName: "main", className: "resume-page", pageNumber: 1,
+    children: [{ type: "resume_block", tagName: "p", lineNumber: 3, pageNumber: 1,
+      semanticId: "experience:line:3", children: [{ text: "Shared saved resume content." }] }],
+  }];
+  const draftA = { ...draft, latestRevision: { ...draft.latestRevision, plateDocument }, commentThreads: [] };
+  const draftB = { ...draftA, draftId: "other-job-draft", jobKey: second.jobKey,
+    baseResumeTextArtifactId: "other-job-text", baseResumePdfArtifactId: "other-job-pdf",
+    latestRevision: { ...draftA.latestRevision, draftId: "other-job-draft", jobKey: second.jobKey },
+  };
+  const loadedJobs = new Set<string>();
+  await page.route("**/v1/apply/review-queue", route => route.fulfill({
+    json: { ...sampleApplyReviewQueue, items: [first, second] },
+  }));
+  await page.route("**/v1/jobs/*/resume-review/draft", async (route) => {
+    const requestedJob = decodeURIComponent(new URL(route.request().url()).pathname.split("/")[3]!);
+    await route.fulfill({ json: { ok: true, draft: requestedJob === first.jobKey ? draftA : draftB } });
+    loadedJobs.add(requestedJob);
+  });
+  await page.route("**/v1/resume-review/drafts/*/comment-threads", route => route.fulfill({ json: {
+    ok: true, draft: route.request().url().includes(draftB.draftId) ? draftB : draftA,
+    commentThreads: [], seededCount: 0, updatedCount: 0,
+  } }));
+  await page.goto("/apply-review");
+  const editor = page.getByRole("textbox", { name: "Tailored resume preview editor" });
+  const queue = page.getByLabel("Application review queue");
+  await expect(editor).toContainText("Shared saved resume content.");
+  await expect.poll(() => loadedJobs.has(first.jobKey)).toBe(true);
+  await queue.getByRole("button", { name: new RegExp(second.title) }).click();
+  await expect.poll(() => loadedJobs.has(second.jobKey)).toBe(true);
+  await expect(page.getByLabel("Editable resume page")).toHaveAttribute("data-draft-dirty", "false");
+  await queue.getByRole("button", { name: new RegExp(first.title) }).click();
+  await editor.click();
+  await editor.press("ControlOrMeta+End");
+  await editor.pressSequentially(" belongsOnlyToFirstJob");
+  await expect(page.getByLabel("Editable resume page")).toHaveAttribute("data-draft-dirty", "true");
+  await queue.getByRole("button", { name: new RegExp(second.title) }).click();
+  await expect(editor).toContainText("Shared saved resume content.");
+  await expect(editor).not.toContainText("belongsOnlyToFirstJob");
+  await expect(page.getByLabel("Editable resume page")).toHaveAttribute("data-draft-dirty", "false");
+  await expect(page.getByRole("button", { name: "Save draft" })).toBeDisabled();
+});
+
+test("initial revision-zero draft arrival preserves text typed while loading", async ({ page }) => {
+  await installArtifactComparisonRoutes(page);
+  const initialDraft = {
+    ...draft, currentRevisionId: null, latestRevisionNumber: 0,
+    latestRevision: null, commentThreads: [],
+  };
+  let finishCreating!: () => void;
+  await page.route("**/v1/jobs/*/resume-review/draft", async (route) => {
+    await new Promise<void>((resolve) => { finishCreating = resolve; });
+    await route.fulfill({ json: { ok: true, draft: initialDraft } });
+  });
+  await page.route("**/v1/resume-review/drafts/*/comment-threads", async (route) => {
+    await route.fulfill({ json: {
+      ok: true, draft: initialDraft, commentThreads: [], seededCount: 0, updatedCount: 0,
+    } });
+  });
+  await page.goto("/apply-review");
+  const editor = page.getByRole("textbox", { name: "Tailored resume preview editor" });
+  await expect(editor).toBeVisible();
+  await expect(page.getByText("loading draft", { exact: true })).toBeVisible();
+  await editor.click();
+  await editor.press("ControlOrMeta+End");
+  await editor.pressSequentially(" typedWhileLoading");
+  await expect(page.getByLabel("Editable resume page")).toHaveAttribute("data-draft-dirty", "true");
+  await expect.poll(() => Boolean(finishCreating)).toBe(true);
+  finishCreating();
+  await expect(page.getByText("loading draft", { exact: true })).not.toBeVisible();
+  await expect(editor).toContainText("typedWhileLoading");
+  await expect(page.getByText("unsaved changes", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Editable resume page")).toHaveAttribute("data-draft-dirty", "true");
+  await expect(page.getByRole("button", { name: "Save draft" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Render replacement" })).toBeDisabled();
+});
+
+test("late saved snapshot preserves newer typing and keeps rendering gated", async ({ page }) => {
+  await installArtifactComparisonRoutes(page);
+  let acknowledge!: () => void;
+  let savedText = "";
+  let savedDraft = draft;
+  await page.route("**/v1/resume-review/drafts/*/revisions", async (route) => {
+    const body = route.request().postDataJSON();
+    savedText = body.editedText;
+    await new Promise<void>((resolve) => { acknowledge = resolve; });
+    savedDraft = {
+      ...draft,
+      currentRevisionId: "revision-2",
+      latestRevisionNumber: 2,
+      latestRevision: { ...draft.latestRevision, revisionId: "revision-2", revisionNumber: 2,
+        editedText: body.editedText, plateDocument: body.plateDocument },
+    };
+    await route.fulfill({ json: { ok: true, draft: savedDraft, revision: savedDraft.latestRevision } });
+  });
+  await page.goto("/apply-review");
+  const editor = page.getByRole("textbox", { name: "Tailored resume preview editor" });
+  await expect(editor).toBeVisible();
+  await editor.click();
+  await editor.press("ControlOrMeta+End");
+  await editor.pressSequentially(" snapshotA");
+  await expect(page.getByRole("button", { name: "Save draft" })).toBeEnabled();
+  await page.getByRole("button", { name: "Save draft" }).click();
+  await expect.poll(() => Boolean(acknowledge)).toBe(true);
+  await editor.click();
+  await editor.press("ControlOrMeta+End");
+  await editor.pressSequentially(" laterB");
+  acknowledge();
+  await expect(page.getByText("unsaved changes", { exact: true })).toBeVisible();
+  await expect(editor).toContainText("laterB");
+  await expect(editor).toBeFocused();
+  expect(savedText).toContain("snapshotA");
+  expect(savedText).not.toContain("laterB");
+  await expect(page.getByRole("button", { name: "Save draft" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Render replacement" })).toBeDisabled();
+});
+
+test("late save acknowledgement preserves an undo to the prior baseline", async ({ page }) => {
+  await installArtifactComparisonRoutes(page);
+  let acknowledge!: () => void;
+  let savedText = "";
+  let saveCount = 0;
+  await page.route("**/v1/resume-review/drafts/*/revisions", async (route) => {
+    const body = route.request().postDataJSON();
+    savedText = body.editedText;
+    saveCount += 1;
+    if (saveCount === 2) await new Promise<void>((resolve) => { acknowledge = resolve; });
+    const savedDraft = {
+      ...draft, currentRevisionId: `revision-${saveCount + 1}`, latestRevisionNumber: saveCount + 1,
+      latestRevision: { ...draft.latestRevision, revisionId: `revision-${saveCount + 1}`, revisionNumber: saveCount + 1,
+        editedText: body.editedText, plateDocument: body.plateDocument },
+    };
+    await route.fulfill({ json: { ok: true, draft: savedDraft, revision: savedDraft.latestRevision } });
+  });
+  await page.goto("/apply-review");
+  const editor = page.getByRole("textbox", { name: "Tailored resume preview editor" });
+  await expect(editor).toBeVisible();
+  await editor.click();
+  await editor.press("ControlOrMeta+End");
+  // First persist a browser-edited document, including Slate normalization.
+  await editor.pressSequentially(" baseline");
+  await expect.poll(() => saveCount).toBe(1);
+  await expect(page.getByLabel("Editable resume page")).toHaveAttribute("data-draft-dirty", "false");
+  const originalEditor = await editor.elementHandle();
+  const baselineText = await editor.innerText();
+  await editor.pressSequentially("X");
+  await expect(editor).toContainText("X");
+  // Exercise the production autosave timer, holding its response during the undo.
+  await expect.poll(() => Boolean(acknowledge)).toBe(true);
+  await editor.press("Backspace");
+  await expect(editor).toHaveText(baselineText, { useInnerText: true });
+  await expect(page.getByLabel("Editable resume page")).toHaveAttribute("data-draft-dirty", "false");
+  acknowledge();
+  await expect(page.getByRole("button", { name: "Save draft" })).toBeEnabled();
+  await expect(editor).toHaveText(baselineText, { useInnerText: true });
+  expect(await editor.evaluate((element, original) => element === original, originalEditor)).toBe(true);
+  await expect(editor).toBeFocused();
+  await expect(page.getByLabel("Editable resume page")).toHaveAttribute("data-draft-dirty", "true");
+  await expect(page.getByRole("button", { name: "Render replacement" })).toBeDisabled();
+  expect(savedText).toContain("X");
+});
+
+test("a delayed seed snapshot cannot replace a rendered saved revision", async ({ page }) => {
+  await installArtifactComparisonRoutes(page, false);
+  let finishSeed!: () => void;
+  const lateThread = { ...draft.commentThreads[0]!, threadId: "late-seed-witness",
+    semanticId: null, lineAnchor: null, sourcePinId: null, anchorResolved: false,
+    commentBody: "Late seed response published" };
+  const seededDraft = { ...draft, commentThreads: [...draft.commentThreads, lateThread] };
+  await page.route("**/v1/resume-review/drafts/*/comment-threads", async (route) => {
+    await new Promise<void>((resolve) => { finishSeed = resolve; });
+    await route.fulfill({ json: { ok: true, draft: seededDraft, commentThreads: seededDraft.commentThreads, seededCount: 1, updatedCount: 0 } });
+  });
+  await page.goto("/apply-review");
+  await expect.poll(() => Boolean(finishSeed)).toBe(true);
+  await page.getByRole("button", { name: "Render replacement" }).click();
+  await expect(page.getByText("replacement rendered", { exact: true })).toBeVisible();
+  finishSeed();
+  // This new thread is observable only after the late mutation publishes into the cache.
+  await expect(page.getByText("Late seed response published", { exact: true })).toBeVisible();
+  await expect(page.getByText("replacement rendered", { exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Artifact comparison" })).toContainText("+covered");
 });

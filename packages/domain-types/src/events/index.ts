@@ -229,6 +229,9 @@ export {
   type StageResetPayload,
   type StageReset,
   createStageReset,
+  type EnrichmentFetchRecheckedPayload,
+  type EnrichmentFetchRechecked,
+  createEnrichmentFetchRechecked,
   type StageBlockedPayload,
   type StageBlocked,
   createStageBlocked,
@@ -440,6 +443,7 @@ import type {
 } from "./apply.js";
 import type {
   StageBlocked,
+  EnrichmentFetchRechecked,
   StageCanceled,
   StageCompleted,
   StageExhausted,
@@ -551,6 +555,7 @@ export type DomainEventUnion =
   | StageFailed
   | StageExhausted
   | StageReset
+  | EnrichmentFetchRechecked
   | StageBlocked
   | StageSkipped
   | StageCanceled
@@ -655,6 +660,7 @@ export const DOMAIN_EVENT_TYPES = [
   "StageFailed",
   "StageExhausted",
   "StageReset",
+  "EnrichmentFetchRechecked",
   "StageBlocked",
   "StageSkipped",
   "StageCanceled",

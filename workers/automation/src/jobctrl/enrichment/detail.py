@@ -100,6 +100,7 @@ from jobctrl.infrastructure.enrichment.linkedin_apply_resolver import (
     linkedin_apply_resolver_enabled,
 )
 from jobctrl.infrastructure.network.proxy import ProxyConfig, parse_proxy
+from jobctrl.infrastructure.network.fetch_failures import PublicFetchFailureKind
 from jobctrl.infrastructure.llm import get_llm_adapter
 from jobctrl.domain.discovery.source_registry import ENRICHMENT_CRAWL_POLICY
 from jobctrl.domain.ports.politeness import (
@@ -146,19 +147,43 @@ def _new_enrichment_budget() -> RunBudgetCounter:
     return RunBudgetCounter(ENRICHMENT_CRAWL_POLICY.max_requests_per_run)
 
 
-def _mark_unsafe_url_block(
+def _mark_public_fetch_failure(
     result: dict,
     decision: PublicUrlDecision,
     *,
     blocked_url: str,
     t0: float,
 ) -> dict:
-    result["status"] = "blocked"
-    result["security_outcome"] = _SECURITY_OUTCOME_UNSAFE_URL
+    kind = decision.failure_kind or PublicFetchFailureKind.UNSAFE_DESTINATION
+    result["status"] = "blocked" if kind.destination_denied else "error"
+    result["security_outcome"] = _SECURITY_OUTCOME_UNSAFE_URL if kind.destination_denied else None
+    result["fetch_failure_kind"] = kind.value
     result["blocked_url"] = blocked_url
     result["error"] = decision.reason or "URL is not a public HTTP(S) destination"
     result["elapsed"] = time.time() - t0
     return result
+
+
+def _route_failure_decision(guard: PublicHttpUrlRouteGuard) -> PublicUrlDecision:
+    return PublicUrlDecision(False, guard.blocked_reason, getattr(guard, "failure_kind", None))
+
+
+def _fetch_failure_metadata(result: dict, *, observed_at: str) -> dict[str, object] | None:
+    try:
+        kind = PublicFetchFailureKind(result.get("fetch_failure_kind"))
+    except (TypeError, ValueError):
+        return None
+    request_url = str(result.get("blocked_url") or "")
+    try:
+        request_host = urlparse(request_url).hostname or ""
+    except ValueError:
+        request_host = ""
+    return {
+        "kind": kind.value,
+        "requestUrl": request_url,
+        "requestHost": request_host,
+        "observedAt": observed_at,
+    }
 
 
 def _enrichment_session(
@@ -491,7 +516,7 @@ def scrape_detail_page(page, url: str, *, session: PolitenessSession | None = No
 
     initial_safety = validate_public_http_url(url)
     if not initial_safety.allowed:
-        return _mark_unsafe_url_block(result, initial_safety, blocked_url=url, t0=t0)
+        return _mark_public_fetch_failure(result, initial_safety, blocked_url=url, t0=t0)
 
     if session is None:
         session = _default_enrichment_session()
@@ -528,7 +553,7 @@ def scrape_detail_page_via_live_chrome(
     t0 = time.time()
     initial_safety = validate_public_http_url(url)
     if not initial_safety.allowed:
-        return _mark_unsafe_url_block(result, initial_safety, blocked_url=url, t0=t0)
+        return _mark_public_fetch_failure(result, initial_safety, blocked_url=url, t0=t0)
     with session.guard(url) as decision:
         if not decision.allowed:
             result["status"] = "blocked"
@@ -539,7 +564,7 @@ def scrape_detail_page_via_live_chrome(
         live_result = browser.rendered_page(url, timeout_seconds=60.0)
     final_safety = validate_public_http_url(live_result.final_url)
     if not final_safety.allowed:
-        return _mark_unsafe_url_block(
+        return _mark_public_fetch_failure(
             result,
             final_safety,
             blocked_url=live_result.final_url or url,
@@ -578,8 +603,8 @@ def _scrape_detail_page_body(page, url: str, result: dict, t0: float) -> dict:
                 pass
         except Exception as exc:
             if route_guard.blocked:
-                decision = PublicUrlDecision(False, route_guard.blocked_reason)
-                return _mark_unsafe_url_block(
+                decision = _route_failure_decision(route_guard)
+                return _mark_public_fetch_failure(
                     result,
                     decision,
                     blocked_url=route_guard.blocked_url or url,
@@ -591,8 +616,8 @@ def _scrape_detail_page_body(page, url: str, result: dict, t0: float) -> dict:
             return result
 
         if route_guard.blocked:
-            decision = PublicUrlDecision(False, route_guard.blocked_reason)
-            return _mark_unsafe_url_block(
+            decision = _route_failure_decision(route_guard)
+            return _mark_public_fetch_failure(
                 result,
                 decision,
                 blocked_url=route_guard.blocked_url or url,
@@ -601,7 +626,7 @@ def _scrape_detail_page_body(page, url: str, result: dict, t0: float) -> dict:
 
         final_safety = validate_public_http_url(str(getattr(page, "url", "") or ""))
         if not final_safety.allowed:
-            return _mark_unsafe_url_block(
+            return _mark_public_fetch_failure(
                 result,
                 final_safety,
                 blocked_url=str(getattr(page, "url", "") or url),
@@ -610,8 +635,8 @@ def _scrape_detail_page_body(page, url: str, result: dict, t0: float) -> dict:
 
         detail_page = _page_to_detail_page(page, url, status=status_code)
         if route_guard.blocked:
-            decision = PublicUrlDecision(False, route_guard.blocked_reason)
-            return _mark_unsafe_url_block(
+            decision = _route_failure_decision(route_guard)
+            return _mark_public_fetch_failure(
                 result,
                 decision,
                 blocked_url=route_guard.blocked_url or url,
@@ -685,6 +710,11 @@ def _detail_failure_retryable(cascade_result: dict) -> bool:
     """
     if cascade_result.get("security_outcome") == _SECURITY_OUTCOME_UNSAFE_URL:
         return False
+    if cascade_result.get("fetch_failure_kind"):
+        try:
+            return PublicFetchFailureKind(cascade_result["fetch_failure_kind"]).retryable
+        except ValueError:
+            return False
     status = cascade_result.get("http_status")
     if isinstance(status, int):
         if status in _RETRYABLE_STATUSES:
@@ -1984,6 +2014,7 @@ def scrape_site_batch(
                         )
                         failed = aggregate.fail_attempt(error=err, finished_at=finished_at)
                         repo.save(failed, commit=activity_lease is None)
+                        fetch_failure = _fetch_failure_metadata(cascade_result, observed_at=finished_at)
                         set_stage_state(
                             conn,
                             job_id,
@@ -1996,6 +2027,7 @@ def scrape_site_batch(
                             error_message=err.message,
                             retryable=retryable,
                             next_action=f"jobctrl retry enrich {url}" if retryable else None,
+                            metadata={"fetchFailure": fetch_failure} if fetch_failure else None,
                             tenant_id=tenant_id,
                             expected_version=claim_version,
                         )
@@ -2012,6 +2044,7 @@ def scrape_site_batch(
                                 "retryable": retryable,
                                 "securityOutcome": cascade_result.get("security_outcome"),
                                 "blockedUrl": cascade_result.get("blocked_url"),
+                                "fetchFailure": fetch_failure,
                                 "attemptNumber": failed.attempt_count,
                                 "status": status,
                                 "tier": tier,
@@ -3557,6 +3590,11 @@ def _release_unstarted_enrichment_cohort(
                 or metadata.get("activityAttempt") != activity_lease.activity_attempt
                 or metadata.get("leaseEpoch") != activity_lease.epoch
             ):
+                continue
+            # Automatic reservations are settled from exact Temporal history.
+            # Releasing one here would let a preflight failure retry forever
+            # without consuming an attempt. Keep it queued for that decision.
+            if metadata.get("automaticPreparation"):
                 continue
             set_stage_state(
                 conn,

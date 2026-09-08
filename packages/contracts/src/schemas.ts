@@ -2569,6 +2569,24 @@ export const APPLY_URL_OUTCOME_CODES = [
 ] as const;
 export type ApplyUrlOutcomeCode = (typeof APPLY_URL_OUTCOME_CODES)[number];
 
+export const PUBLIC_FETCH_FAILURE_KINDS = [
+  "invalid_url", "non_public_literal", "dns_non_public", "dns_failure", "unsafe_destination",
+  "timeout", "connection", "tls", "response_limit", "fetch_error",
+] as const;
+export type PublicFetchFailureKind = (typeof PUBLIC_FETCH_FAILURE_KINDS)[number];
+
+/** Persisted fetch diagnostics; URL queries and credentials never enter this read shape. */
+export interface EnrichmentFetchFailure {
+  kind: PublicFetchFailureKind;
+  requestHost: string | null;
+  observedAt: string | null;
+  recoveryStatus: "waiting" | "retry_ready" | "checks_exhausted" | "stopped" | null;
+  checkCount: number;
+  checkedAt: string | null;
+  nextCheckAt: string | null;
+  retryEligibleAt: string | null;
+}
+
 export interface StageSummary {
   stage: Stage;
   state: StageState;
@@ -2595,6 +2613,7 @@ export interface StageSummary {
     retryable: boolean;
     method: string | null;
   } | null;
+  fetchFailure?: EnrichmentFetchFailure | null;
 }
 
 export interface ScoreBreakdown {
@@ -3735,6 +3754,8 @@ export interface SourcePolitenessOutcomes {
 
 export interface SourceHealthSummary {
   sourceId: string;
+  /** Registry/provider name, independent of the stable source key. */
+  displayName?: string;
   recommendedState: string;
   runCount: number;
   failedRunCount: number;
@@ -3782,6 +3803,7 @@ export interface DailyDigest {
     count: number;
     sources: Array<{
       sourceId: string;
+      displayName?: string;
       recommendedState: string;
       consecutiveFailures: number;
     }>;

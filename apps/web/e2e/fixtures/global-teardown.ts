@@ -28,10 +28,14 @@ function findRepoRoot(start: string): string | null {
 }
 
 interface State {
-  workspace?: { appDir?: string };
+  workspace?: { appDir?: string; dbPath?: string };
 }
 
 export default async function globalTeardown(): Promise<void> {
+  if (process.env["JOBCTRL_E2E_ISOLATED"] === "1") {
+    const { assertIsolatedE2eWorkspace } = createRequire(import.meta.url)("./isolated-workspace.cjs") as { assertIsolatedE2eWorkspace(): Promise<string> };
+    await assertIsolatedE2eWorkspace();
+  }
   const repoRoot = findRepoRoot(process.cwd());
   if (!repoRoot) {
     return;
@@ -49,6 +53,10 @@ export default async function globalTeardown(): Promise<void> {
       return;
     }
     throw error;
+  }
+  if (process.env["JOBCTRL_E2E_ISOLATED"] === "1") {
+    const { assertExpectedWorkspace } = createRequire(import.meta.url)("./isolated-workspace.cjs") as { assertExpectedWorkspace(workspace: State["workspace"]): void };
+    assertExpectedWorkspace(state.workspace);
   }
   const dir = state.workspace?.appDir;
   if (dir && fs.existsSync(dir)) {

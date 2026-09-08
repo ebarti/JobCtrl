@@ -9,6 +9,18 @@ import { renderWithProviders } from "../../test/render.js";
 import { DigestPanel } from "./DigestPanel.js";
 
 describe("DigestPanel", () => {
+  it("uses the registry name for blocked sources without hiding the block", async () => {
+    server.use(http.get("*/v1/digest", () => HttpResponse.json({
+      ...sampleDailyDigest,
+      blockedSources: { count: 1, sources: [{ sourceId: "jobspy:linkedin", displayName: "JobStreaming LinkedIn", recommendedState: "quarantined", consecutiveFailures: 3 }] },
+    })));
+    renderWithProviders(<DigestPanel />);
+
+    expect(await screen.findByText("JobStreaming LinkedIn")).toBeInTheDocument();
+    expect(screen.queryByText("jobspy:linkedin")).not.toBeInTheDocument();
+    expect(within(screen.getByRole("link", { name: /blocked sources/i })).getByText("1")).toBeInTheDocument();
+  });
+
   it("renders digest rows with exact URL-owned deep links", async () => {
     renderWithProviders(<DigestPanel />);
 

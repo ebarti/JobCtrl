@@ -1,4 +1,6 @@
-import { LOCAL_TENANT } from "@jobctrl/domain-types";
+import type { ResumeReviewDraft, ResumeReviewDraftResponse } from "@jobctrl/contracts";
+import { buildTestPorts, FakeSessionPort } from "../../../test/testPorts.js";
+import { LOCAL_TENANT, type TenantId } from "@jobctrl/domain-types";
 import { http, HttpResponse } from "msw";
 import { act } from "react";
 import { waitFor } from "@testing-library/react";
@@ -19,6 +21,49 @@ import {
 } from "./useApplyReviewMutations.js";
 
 describe("apply review mutations", () => {
+  it("publishes delayed responses to their original tenant/job without losing the newer saved revision", async () => {
+    const jobId = "job-race";
+    const draft: ResumeReviewDraft = {
+      draftId: "draft-race", jobKey: jobId, baseGeneration: 1,
+      baseResumeTextArtifactId: null, baseResumePdfArtifactId: null, rendererFormat: "html_css",
+      state: "active", currentRevisionId: null, latestRevisionNumber: 0,
+      createdAt: "2026-09-06T10:00:00.000Z", updatedAt: "2026-09-06T10:00:00.000Z",
+      latestRevision: null, commentThreads: [], feedbackSignals: [],
+    };
+    let finishCreate!: () => void;
+    let finishSeed!: () => void;
+    const ports = buildTestPorts({ api: {
+      createResumeReviewDraft: vi.fn(async () => {
+        await new Promise<void>((resolve) => { finishCreate = resolve; });
+        return { ok: true as const, draft };
+      }),
+      seedResumeReviewCommentThreads: vi.fn(async () => {
+        await new Promise<void>((resolve) => { finishSeed = resolve; });
+        return { ok: true as const, draft, commentThreads: [], seededCount: 0, updatedCount: 0 };
+      }),
+    } });
+    const { result, queryClient, rerender } = renderHookWithProviders(() => ({
+      create: useCreateResumeReviewDraftMutation(), seed: useSeedResumeReviewCommentThreadsMutation(),
+    }), { ports });
+    await act(async () => {
+      result.current.create.mutate({ jobId });
+      result.current.seed.mutate({ jobId, draftId: draft.draftId, body: { threads: [] } });
+    });
+    await waitFor(() => expect(finishSeed).toBeDefined());
+    const switchedTenant = "tenant-switched" as TenantId;
+    Object.assign(ports, { session: new FakeSessionPort({ tenantId: switchedTenant, userId: null }) });
+    rerender();
+    const rendered = { ...draft, latestRevisionNumber: 2, state: "rendered" as const };
+    queryClient.setQueryData(applyReviewKeys.draft(LOCAL_TENANT, jobId), { ok: true, draft: rendered });
+    const otherJob = { ok: true, draft: { ...draft, jobKey: "other-job" } };
+    queryClient.setQueryData(applyReviewKeys.draft(LOCAL_TENANT, "other-job"), otherJob);
+    await act(async () => { finishSeed(); finishCreate(); });
+    await waitFor(() => expect(result.current.create.isSuccess && result.current.seed.isSuccess).toBe(true));
+    expect(queryClient.getQueryData<ResumeReviewDraftResponse>(applyReviewKeys.draft(LOCAL_TENANT, jobId))?.draft).toEqual(rendered);
+    expect(queryClient.getQueryData(applyReviewKeys.draft(LOCAL_TENANT, "other-job"))).toEqual(otherJob);
+    expect(queryClient.getQueryData(applyReviewKeys.draft(switchedTenant, jobId))).toBeUndefined();
+  });
+
   it("records review decisions and invalidates review surfaces", async () => {
     const { result, queryClient } = renderHookWithProviders(() => useApplyReviewDecisionMutation());
     const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");

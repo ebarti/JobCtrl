@@ -3,12 +3,56 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from contextlib import contextmanager
 import json
 from typing import Any
 
 from temporalio import activity
 
 from jobctrl.domain.identifiers import canonical_job_id
+
+
+class PreparationReservationLost(RuntimeError):
+    """One job's reservation was revoked before its attempt began."""
+
+
+def owns_preparation_reservation(conn, *, tenant_id, job_id, stage, workflow_id) -> bool:
+    """A queued automatic stage is admitted only by its reserved workflow."""
+    if not workflow_id:
+        return False
+    return (
+        conn.execute(
+            "SELECT 1 FROM job_stage_states s WHERE tenant_id = ? AND job_id = ? AND stage = ? "
+            "AND state = 'queued' AND retryable = 1 AND attempt_count < MIN(5, max_attempts) "
+            "AND json_extract(metadata_json, '$.automaticPreparation.workflowId') = ? "
+            "AND NOT EXISTS (SELECT 1 FROM jobctrl_deleted_jobs d "
+            "WHERE d.tenant_id = s.tenant_id AND d.job_id = s.job_id "
+            "AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at)))",
+            (str(tenant_id), str(job_id), stage, workflow_id),
+        ).fetchone()
+        is not None
+    )
+
+
+@contextmanager
+def claim_preparation_reservation(conn, *, tenant_id, job_id, stage, workflow_id, cancel_event):
+    """Fence the queued-to-running transition, releasing the lock before I/O."""
+    if not workflow_id:
+        yield
+        return
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        if cancel_event is not None and cancel_event.is_set():
+            raise RuntimeError(f"{stage} activity canceled before dispatch")
+        if not owns_preparation_reservation(
+            conn, tenant_id=tenant_id, job_id=job_id, stage=stage, workflow_id=workflow_id
+        ):
+            raise PreparationReservationLost(f"{stage} activity no longer owns its queued reservation")
+        yield
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
 
 
 @dataclass(frozen=True)
@@ -74,10 +118,10 @@ def cancel_preparation_state_rows(
     conn: Any,
     payload: CancelPreparationStateInput,
 ) -> CancelPreparationStateOutput:
-    """Cancel only unfinished selected material rows still owned by this run."""
+    """Cancel only unfinished selected preparation rows still owned by this run."""
 
-    if payload.stage not in {"tailor", "cover"}:
-        raise ValueError("material cancellation supports tailor or cover")
+    if payload.stage not in {"score", "tailor", "cover"}:
+        raise ValueError("preparation cancellation supports score, tailor, or cover")
     from jobctrl.domain.tenant import TenantId
     from jobctrl.state import record_job_event, set_stage_state, utc_now
 
@@ -113,12 +157,16 @@ def cancel_preparation_state_rows(
             if state not in {"pending", "queued", "running"}:
                 continue
             job_id = canonical_job_id(str(row["job_id"]))
-            if state == "running" and owner == payload.workflow_id and _material_commit_exists(
-                conn,
-                payload=payload,
-                tenant_id=tenant_id,
-                job_id=job_id,
-                metadata=metadata,
+            if (
+                state == "running"
+                and owner == payload.workflow_id
+                and _preparation_commit_exists(
+                    conn,
+                    payload=payload,
+                    tenant_id=tenant_id,
+                    job_id=job_id,
+                    metadata=metadata,
+                )
             ):
                 _restore_committed(
                     conn,
@@ -264,8 +312,7 @@ def assert_material_activity_commit_allowed(
     if not workflow_id:
         return
     row = conn.execute(
-        "SELECT state, metadata_json FROM job_stage_states "
-        "WHERE tenant_id = ? AND job_id = ? AND stage = ?",
+        "SELECT state, metadata_json FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = ?",
         (tenant_id, job_id, stage),
     ).fetchone()
     if (
@@ -286,17 +333,12 @@ def _preparation_commit_exists(
 ) -> bool:
     if payload.stage == "score":
         score_row = conn.execute(
-            "SELECT COALESCE(MAX(version), 0) AS version FROM job_scores "
-            "WHERE tenant_id = ? AND job_id = ?",
+            "SELECT COALESCE(MAX(version), 0) AS version FROM job_scores WHERE tenant_id = ? AND job_id = ?",
             (payload.tenant_id, str(job_id)),
         ).fetchone()
         current_version = int(score_row["version"] if score_row else 0)
         prior_version = int(metadata.get("priorScoreVersion") or 0)
-        return (
-            current_version > prior_version
-            if bool(metadata.get("rescore"))
-            else current_version > 0
-        )
+        return current_version > prior_version if bool(metadata.get("rescore")) else current_version > 0
     return _material_commit_exists(
         conn,
         payload=payload,
@@ -323,10 +365,7 @@ def _material_commit_exists(
         if materials is None or not materials.is_resume_approved:
             return False
         prior_generation = int(metadata.get("priorApprovedGeneration") or 0)
-        return (
-            not bool(metadata.get("retailor"))
-            or int(materials.generation) > prior_generation
-        )
+        return not bool(metadata.get("retailor")) or int(materials.generation) > prior_generation
     if payload.stage == "cover":
         return bool(
             materials is not None
@@ -397,11 +436,7 @@ def _fail_uncommitted(conn, *, payload, tenant_id, job_id, row, finished_at) -> 
         error_code=error_code,
         error_message="The activity stopped before committing its result.",
         retryable=not exhausted,
-        next_action=(
-            f"retry {payload.stage} --reset-attempts"
-            if exhausted
-            else f"retry {payload.stage}"
-        ),
+        next_action=(f"retry {payload.stage} --reset-attempts" if exhausted else f"retry {payload.stage}"),
         metadata={
             "recoveredFromWorkflowId": payload.workflow_id,
             "reason": "orphaned_activity_failed",

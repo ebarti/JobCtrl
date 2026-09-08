@@ -813,6 +813,7 @@ class SqliteProjectionStore:
                             "retryable": stage.retryable,
                             "blocked_by": list(stage.blocked_by),
                             "next_action": stage.next_action,
+                            "fetch_failure": stage.fetch_failure,
                             "apply_url_outcome": (
                                 {
                                     "code": stage.apply_url_outcome.code,

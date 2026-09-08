@@ -6,6 +6,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 const managedEnvironmentKeys = [
   "CI",
   "JOBCTRL_DOCS_SCREENSHOTS",
+  "JOBCTRL_E2E_ISOLATED",
   "JOBCTRL_E2E_APP_DIR",
   "JOBCTRL_E2E_DB_PATH",
   "JOBCTRL_E2E_CONFIG_PATH",
@@ -108,6 +109,13 @@ describe("Playwright server isolation", () => {
 
     expect(firstState).not.toBe(secondState);
     expect(first.outputDir).not.toBe(second.outputDir);
+  });
+
+  test("isolated product QA uses the guarded test server and never reuses servers", async () => {
+    const config = await loadPlaywrightConfig({ JOBCTRL_E2E_ISOLATED: "1", JOBCTRL_DOCS_SCREENSHOTS: "1" });
+    if (!Array.isArray(config.webServer)) throw new Error("Missing E2E servers");
+    expect(config.webServer[0]?.command).toContain("test/e2e-server.ts");
+    expect(config.webServer.map((server) => server.reuseExistingServer)).toEqual([false, false]);
   });
 
   test("ordinary local E2E may still reuse explicitly selected ports", async () => {

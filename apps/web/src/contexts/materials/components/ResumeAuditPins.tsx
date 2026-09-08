@@ -161,6 +161,8 @@ interface ResumePlateDomElement extends TElement {
   readonly pageNumber?: number | undefined;
   readonly semanticId?: string | null | undefined;
   readonly tagName: string;
+  readonly profileField?: string | null | undefined;
+  readonly profileSource?: string | null | undefined;
   readonly textAlign?: ResumeEditorTextAlign | null | undefined;
 }
 
@@ -958,6 +960,7 @@ function resumePlateChildrenFromDom(element: Element): Descendant[] {
 
 function resumePlateNodeFromDom(node: Node): Descendant | null {
   if (node.nodeType === Node.TEXT_NODE) {
+    if (node.parentElement?.hasAttribute("data-resume-profile-separator")) return { text: node.textContent ?? "" };
     return resumePlateTextNode(node.textContent ?? "");
   }
   if (!(node instanceof HTMLElement)) return null;
@@ -976,6 +979,8 @@ function resumePlateNodeFromDom(node: Node): Descendant | null {
     lineNumber: parsePositiveInteger(node.getAttribute("data-resume-line-number")) ?? undefined,
     pageNumber: parsePositiveInteger(node.getAttribute("data-resume-page")) ?? undefined,
     semanticId: node.getAttribute("data-resume-layout-target") || null,
+    profileField: node.getAttribute("data-resume-profile-field"),
+    profileSource: node.getAttribute("data-resume-profile-source"),
     tagName: hasAnyResumeClass(className, RESUME_PLATE_BLOCK_CLASS_TOKENS) ? "div" : tagName,
     type: isInline ? "resume_inline" : "resume_block",
   };
@@ -1107,6 +1112,10 @@ function resumeSemanticTextSnapshotFromPlateValue(
     texts.push(...resumeSemanticTextsFromPlateNode(node));
     textsBySemanticId.set(semanticId, texts);
   };
+  const hasProfileField = (node: Descendant): boolean => {
+    if ("text" in node) return false;
+    return typeof node.profileField === "string" || node.children.some(hasProfileField);
+  };
 
   const visit = (node: Descendant): void => {
     if ("text" in node) return;
@@ -1125,8 +1134,9 @@ function resumeSemanticTextSnapshotFromPlateValue(
       });
       return;
     }
-    const semanticId = typeof node.semanticId === "string" ? node.semanticId.trim() : "";
-    if (semanticId) {
+    const fieldId = typeof node.profileField === "string" ? node.profileField : "";
+    const semanticId = fieldId || (typeof node.semanticId === "string" ? node.semanticId.trim() : "");
+    if (semanticId && (fieldId || !node.children.some(hasProfileField))) {
       append(semanticId, node);
     }
     node.children.forEach(visit);
@@ -1143,6 +1153,15 @@ export function resumeSemanticTextChangesFromPlateValues(
   const baseline = resumeSemanticTextSnapshotFromPlateValue(baselineValue);
   const current = resumeSemanticTextSnapshotFromPlateValue(plateValue);
   const semanticIds = new Set([...baseline.keys(), ...current.keys()]);
+  const profileSources = new Map<string, string[]>();
+  const collectSources = (node: Descendant): void => {
+    if ("text" in node) return;
+    if (typeof node.profileField === "string" && typeof node.profileSource === "string") {
+      profileSources.set(node.profileField, [...(profileSources.get(node.profileField) ?? []), node.profileSource]);
+    }
+    node.children.forEach(collectSources);
+  };
+  baselineValue.forEach(collectSources);
 
   return Array.from(semanticIds).flatMap((semanticId) => {
     const baselineTexts = baseline.get(semanticId) ?? [];
@@ -1153,7 +1172,7 @@ export function resumeSemanticTextChangesFromPlateValues(
     ) {
       return [];
     }
-    return [{ semanticId, baselineTexts, plateTexts }];
+    return [{ semanticId, baselineTexts: profileSources.get(semanticId) ?? baselineTexts, plateTexts }];
   });
 }
 
@@ -2111,7 +2130,22 @@ function ResumeBlockElement(props: PlateElementProps<ResumePlateDomElement>): JS
     .filter(Boolean)
     .join(" ");
   const handleSelect = element.lineNumber && lineEntry
-    ? () => onSelectLine(selectionFromPlateLine(lineEntry.line, lineEntry.index, layoutBoxes))
+    ? (event: MouseEvent<HTMLElement>) => {
+        const selection = event.currentTarget.ownerDocument.getSelection();
+        // Publish the native caret before selecting the audit line rerenders
+        // Slate, whose layout effect would otherwise restore a stale range.
+        if (
+          event.currentTarget.isContentEditable &&
+          !(event.target instanceof Element && event.target.closest('[contenteditable="false"]')) &&
+          selection?.anchorNode && selection.focusNode &&
+          event.currentTarget.contains(selection.anchorNode) &&
+          event.currentTarget.contains(selection.focusNode)
+        ) {
+          const range = props.editor.api.toSlateRange(selection, { exactMatch: true, suppressThrow: true });
+          if (range) props.editor.tf.select(range);
+        }
+        onSelectLine(selectionFromPlateLine(lineEntry.line, lineEntry.index, layoutBoxes));
+      }
     : undefined;
   return createElement(
     safeResumePlateTag(element.tagName),
@@ -2119,6 +2153,7 @@ function ResumeBlockElement(props: PlateElementProps<ResumePlateDomElement>): JS
       ...props.attributes,
       className: className || undefined,
       "data-resume-layout-target": element.semanticId ?? undefined,
+      "data-resume-profile-field": element.profileField ?? undefined,
       "data-resume-line-number": element.lineNumber,
       "data-resume-page": element.pageNumber,
       onClick: handleSelect,
@@ -2147,6 +2182,7 @@ function ResumeInlineElement(props: PlateElementProps<ResumePlateDomElement>): J
       ...props.attributes,
       className: element.className,
       "data-resume-layout-target": element.semanticId ?? undefined,
+      "data-resume-profile-field": element.profileField ?? undefined,
       "data-resume-line-number": element.lineNumber,
       href: isLink ? element.href : undefined,
       rel: isExternalLink ? "noreferrer" : undefined,
@@ -3248,10 +3284,30 @@ export function ResumePlateEditor({
   }, [draft?.latestRevision?.plateDocument, htmlState]);
   const [currentPlateValue, setCurrentPlateValue] = useState<Value | null>(initialPlateValue);
 
+  const reviewDocumentIdentity = draft ? `${draft.draftId}:${draft.baseGeneration}` : artifactId;
+  const savedDocument = useRef({ identity: reviewDocumentIdentity, signature: resumePlateValueSignature(initialPlateValue) });
+  const submittedDocument = useRef<{ identity: string; signature: string } | null>(null);
   useEffect(() => {
-    setCurrentPlateValue(initialPlateValue);
-    setDraftSourceVersion((currentVersion) => currentVersion + 1);
-  }, [initialPlateValue]);
+    const signature = resumePlateValueSignature(initialPlateValue);
+    const previous = savedDocument.current;
+    if (previous.identity === reviewDocumentIdentity && previous.signature === signature) return;
+    savedDocument.current = { identity: reviewDocumentIdentity, signature };
+    // Only the initial revision-zero arrival continues the current artifact's
+    // editing session; identical saved documents in another draft still reset it.
+    if (previous.identity === artifactId && draft?.latestRevisionNumber === 0 && previous.signature === signature) return;
+    // A saved response acknowledges its snapshot, not edits typed after it.
+    // Comment-only publications and identical acknowledgements never remount
+    // Plate, preserving formatting, focus and selection in the live document.
+    const currentSignature = resumePlateValueSignature(currentPlateValue);
+    const acknowledgesSubmission = submittedDocument.current?.identity === reviewDocumentIdentity
+      && submittedDocument.current.signature === signature;
+    if (previous.identity !== reviewDocumentIdentity || (!acknowledgesSubmission && currentSignature === previous.signature)) {
+      if (currentSignature !== signature) {
+        setCurrentPlateValue(initialPlateValue);
+        setDraftSourceVersion((currentVersion) => currentVersion + 1);
+      }
+    }
+  }, [artifactId, currentPlateValue, draft?.latestRevisionNumber, initialPlateValue, reviewDocumentIdentity]);
 
   const currentDraftText = useMemo(
     () => (currentPlateValue ? resumeTextFromPlateValue(currentPlateValue) : ""),
@@ -3265,6 +3321,14 @@ export function ResumePlateEditor({
     () => resumePlateValueSignature(currentPlateValue),
     [currentPlateValue],
   );
+  const handleSaveDraft = useCallback((source: "autosave" | "manual") => {
+    if (!currentPlateValue || !onSaveDraft) return;
+    submittedDocument.current = {
+      identity: reviewDocumentIdentity,
+      signature: resumePlateValueSignature(normalizeResumePlateValue(currentPlateValue)),
+    };
+    onSaveDraft({ editedText: currentDraftText, plateDocument: currentPlateValue, source });
+  }, [currentDraftText, currentPlateValue, onSaveDraft, reviewDocumentIdentity]);
   const documentKey = `${artifactId}:${draft?.draftId ?? "no-draft"}:${htmlUrl ?? "no-html"}:${draftSourceVersion}:${editorVersion}`;
   const canFormat = formattingApiReady && Boolean(currentPlateValue);
   const draftDirty = Boolean(currentPlateValue && currentDraftSignature !== initialDraftSignature);
@@ -3410,11 +3474,7 @@ export function ResumePlateEditor({
     const handle = window.setTimeout(() => {
       if (!currentPlateValue || lastAutosaveSignature.current === currentDraftSignature) return;
       lastAutosaveSignature.current = currentDraftSignature;
-      onSaveDraft({
-        editedText: currentDraftText,
-        plateDocument: currentPlateValue,
-        source: "autosave",
-      });
+      handleSaveDraft("autosave");
     }, autosaveDelayMs);
     return () => window.clearTimeout(handle);
   }, [
@@ -3425,6 +3485,7 @@ export function ResumePlateEditor({
     draft,
     draftDirty,
     draftLoading,
+    handleSaveDraft,
     onSaveDraft,
     savePending,
   ]);
@@ -3486,14 +3547,7 @@ export function ResumePlateEditor({
           disabled={saveDisabled}
           size="sm"
           type="button"
-          onClick={() => {
-            if (!currentPlateValue) return;
-            onSaveDraft?.({
-              editedText: currentDraftText,
-              plateDocument: currentPlateValue,
-              source: "manual",
-            });
-          }}
+          onClick={() => handleSaveDraft("manual")}
         >
           Save draft
         </Button>

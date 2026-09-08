@@ -62,6 +62,7 @@ class StageProjection:
     blocked_by: tuple[str, ...] = ()
     next_action: str | None = None
     apply_url_outcome: ApplyUrlOutcomeProjection | None = None
+    fetch_failure: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)

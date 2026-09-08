@@ -36,6 +36,7 @@ from jobctrl.domain.materials.value_objects import ValidationResult
 from jobctrl.domain.profile.snapshot import ProfileSnapshot
 from jobctrl.resume_profile import (
     experience_updates_by_id,
+    get_achievement_evidence,
     get_education_entries,
     get_experience_entries,
     get_max_experience_bullets,
@@ -212,6 +213,9 @@ def _validate_master_json_fields(
     all_experience_ids = {entry.get("id") for entry in experience_entries}
     required_experience_ids = set(get_required_experience_entry_ids(profile)) & all_experience_ids
     required_bullets_by_entry = get_required_bullets_by_experience_id(profile)
+    evidence_entry_ids = {
+        item["experience_entry_id"] for item in get_achievement_evidence(profile)
+    }
     required_skill_ids = set(get_required_skill_category_ids(profile))
     max_bullets = get_max_experience_bullets(profile)
 
@@ -230,7 +234,10 @@ def _validate_master_json_fields(
             errors.append(f"Duplicate experience update: {entry_id}")
             continue
         seen_experience_ids.add(entry_id)
-        if not isinstance(bullets, list) or not bullets:
+        if not isinstance(bullets, list) or (
+            not bullets
+            and (entry_id in evidence_entry_ids or required_bullets_by_entry.get(entry_id))
+        ):
             errors.append(f"Experience update '{entry_id}' must include bullets")
             continue
         effective_bullets = [str(bullet).strip() for bullet in bullets if str(bullet).strip()]

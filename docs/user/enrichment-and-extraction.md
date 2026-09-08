@@ -53,6 +53,19 @@ A failed fetch or exhausted cascade records a retryable attempt without
 manufacturing a snapshot. Failure remains isolated to that job, so useful
 results from the rest of the source batch survive.
 
+While the worker is running, unfinished enrichment and retryable failures are
+picked up automatically without a new discovery search. Recovery waits for
+existing preparation to finish, keeps each job's attempt history, and retries
+with increasing delays within its existing attempt limit. Once a description
+is available, scoring and eligible material generation follow through the same
+saved-job recovery path. A score cannot be produced from an empty description.
+
+Canceled jobs, unsafe destinations, blocked work, deleted or closed postings,
+and exhausted retries remain stopped. Recovery preserves saved scores and
+approved materials and never starts Apply. If a source still requires manual
+capture or authenticated access, retries cannot substitute for that access;
+the stage's failure or block remains visible.
+
 Application-target discovery has its own explicit outcome and retry policy:
 
 | Outcome | What it means | Automatic retry |

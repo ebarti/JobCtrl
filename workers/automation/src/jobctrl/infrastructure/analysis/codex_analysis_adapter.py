@@ -122,6 +122,10 @@ def _isolated_codex_env(codex_home: Path, process_home: Path) -> dict[str, str]:
         "CODEX_HOME": str(codex_home),
         "HOME": str(process_home),
         **{key: "" for key in CODEX_NEUTRALIZED_AUTH_ENV},
+        # Codex consumes endpoint overrides literally, including empty strings.
+        # Pin provider defaults so refresh works without inheriting a redirect.
+        "CODEX_REFRESH_TOKEN_URL_OVERRIDE": "https://auth.openai.com/oauth/token",
+        "CODEX_REVOKE_TOKEN_URL_OVERRIDE": "https://auth.openai.com/oauth/revoke",
     }
     if os.name == "nt":
         env["USERPROFILE"] = str(process_home)

@@ -30,6 +30,7 @@ class ScoreActivityInput:
     current_policy_only: bool = False
     llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
     workflow_id: str | None = None
+    recovery_workflow_id: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "job_ids", _canonical_job_ids(self.job_ids))
@@ -210,8 +211,9 @@ def _run_selected_scores(
 ) -> dict[str, Any]:
     from jobctrl.domain.tenant import TenantId
     from jobctrl.scoring.scorer import score_job_by_id
+    from jobctrl.pipeline.automatic_preparation import automatic_recovery_job_ids
 
-    job_ids = _limited_job_ids(payload.job_ids, payload.limit)
+    job_ids = _limited_job_ids(automatic_recovery_job_ids(payload, "score"), payload.limit)
     if payload.dry_run:
         return {
             "status": "ok",
@@ -241,6 +243,15 @@ def _run_selected_scores(
             rescore=payload.rescore,
             llm_model=payload.llm_model,
             workflow_id=payload.workflow_id,
+            **(
+                {
+                    "enforce_workflow_ownership": True,
+                    "cancel_event": cancel_event,
+                    "recovery_workflow_id": payload.recovery_workflow_id,
+                }
+                if payload.recovery_workflow_id
+                else {}
+            ),
         )
 
     worker_count = max(1, int(payload.workers or 1))

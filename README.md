@@ -234,7 +234,10 @@ evidence, qualifications, and the complete capability matrix.
 - Generate tailored resumes, cover letters, PDFs, and review artifacts. Resume
   tailoring selects the smallest job-relevant set of profile achievements;
   per-role bullet limits are ceilings, and each metric stays bound to the
-  achievement that contains it.
+  achievement that contains it. Required roles with neither achievement evidence
+  nor required bullet pins retain their existing role details without generated
+  bullets. A pinned bullet still needs supporting evidence from its own role;
+  restore that evidence or remove the pin before tailoring.
 - Triage jobs through the real **Active**, **Deleted**, and **Hidden** queues.
   The default Active view keeps source and warning columns available but hidden,
   uses destructive styling for deletion, and opens a row through its focused
@@ -249,16 +252,21 @@ evidence, qualifications, and the complete capability matrix.
   glyphs, punctuation spacing, typography, and line wrapping, while a separate
   invisible text layer keeps the download searchable and extractable. The
   export action does not register a JobCtrl artifact or change Apply approval
-  state. On Profile, direct canonical text edits to the name,
-  executive profile, position summaries, and experience bullets enter the same
-  validated form draft as the boxed editor and follow its normal autosave.
+  state. On Profile, edits to names and contact text, address parts, summaries,
+  role titles, companies, locations and dates, education, bullets and individual
+  skills enter the same form draft as the boxed editor and follow its normal
+  validation and autosave. Clearing a field temporarily still allows typing and undo.
   Plate projects only fields changed from the mounted baseline; unrelated boxed
   edits are preserved, and a same-field or structural conflict is surfaced
   instead of being overwritten;
-  formatting and composite layout lines remain local to the mounted document.
+  fields sharing a display line retain their individual owners. Formatting and
+  link presentation remain local to the mounted document; edit professional
+  URLs in Profile data.
   The Profile editor also owns resume experience order: move roles up or down,
   or apply the explicit newest-first sort, and the saved sequence is used by
-  baseline and tailored resumes.
+  baseline and tailored resumes. Within a role, move individual bullets up or
+  down to set their order; required selections and achievement evidence stay
+  attached to the same text when reordered.
 - Inspect the evidence map to see which profile achievements and skills are
   reused in generated materials, requirement-fit decisions, and recorded gaps.
   Job and artifact audit surfaces show those references as human-readable
@@ -281,6 +289,15 @@ evidence, qualifications, and the complete capability matrix.
   failure reason, and Retry resets that budget. Runs keeps the durable workflow
   history; Jobs and route-level
   detail workspaces keep record-specific evidence and actions adjacent.
+- Recover unfinished enrichment, scoring, and material generation
+  automatically. While the worker is running, eligible saved jobs resume within
+  their existing retry budget without another discovery search. Explicit
+  cancellations, safety blocks, and completed results are preserved; recovery
+  does not start Apply. See [preparation recovery](docs/architecture/pipeline/operations.md#automatic-preparation-recovery).
+  Fetch diagnostics distinguish temporary network failures from unsafe
+  destinations. Recognized historical DNS failures receive at most five
+  destination checks; a retry requires both the posting and failed request to
+  validate as public and keeps the original attempt limit.
 - Inspect Discover, preparation, and Apply through the same Runs vocabulary,
   timeline, terminal-state rules, and cancellation control. Repeated cancel
   requests are harmless, the requester/source remains in the run timeline, and

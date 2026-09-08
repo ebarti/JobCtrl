@@ -41,6 +41,7 @@ import re
 import sqlite3
 import threading
 import urllib.parse
+from jobctrl.infrastructure.projections.fetch_failure import fetch_failure_from_stage_metadata
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -2261,6 +2262,7 @@ class ProjectionBuilder:
                     blocked_by=tuple(str(item) for item in blocked_by) if isinstance(blocked_by, list) else (),
                     next_action=_row_nullable_str(row, "next_action"),
                     apply_url_outcome=_apply_url_outcome_from_stage_metadata(_row_nullable_str(row, "metadata_json")),
+                    fetch_failure=fetch_failure_from_stage_metadata(_row_nullable_str(row, "metadata_json")) if stage == "enrich" else None,
                 )
             )
         return result
