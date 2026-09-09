@@ -1,5 +1,5 @@
 {
-  "description": "Shared TS<->Python daily digest parity fixture. Both runtimes seed the same projection-style SQLite rows, read the same digest_state watermark, and assert identical digest counts. The fixture uses UTC timestamps to lock the digest day-boundary decision: the watermark and follow-up cutoff are timestamp-based, not local calendar buckets.",
+  "description": "Shared TS<->Python daily digest parity fixture. Both runtimes seed the same projection-style SQLite rows, read the same digest_state watermark, and assert identical digest counts and source display names, including registry names, current JobStreaming labels for known and other boards, and missing or stale registry rows. The fixture uses UTC timestamps to lock the digest day-boundary decision: the watermark and follow-up cutoff are timestamp-based, not local calendar buckets.",
   "now": "2026-07-05T12:00:00.000Z",
   "since": "2026-07-01T00:00:00.000Z",
   "minFitScore": 7,
@@ -166,9 +166,52 @@
       "activeState": "closed"
     }
   ],
+  "sourceRegistry": [
+    {
+      "sourceId": "workday:unstable-example",
+      "displayName": "Workday Example"
+    },
+    {
+      "sourceId": "jobspy:linkedin",
+      "displayName": "JobSpy LinkedIn"
+    },
+    {
+      "sourceId": "jobspy:indeed",
+      "displayName": "JobSpy Indeed"
+    },
+    {
+      "sourceId": "jobspy:bayt",
+      "displayName": "JobSpy Bayt"
+    }
+  ],
   "sourceQuality": [
     {
       "sourceId": "workday:unstable-example",
+      "recommendedState": "quarantined",
+      "consecutiveFailures": 3
+    },
+    {
+      "sourceId": "jobspy:bayt",
+      "recommendedState": "quarantined",
+      "consecutiveFailures": 3
+    },
+    {
+      "sourceId": "jobspy:google",
+      "recommendedState": "quarantined",
+      "consecutiveFailures": 3
+    },
+    {
+      "sourceId": "jobspy:indeed",
+      "recommendedState": "quarantined",
+      "consecutiveFailures": 3
+    },
+    {
+      "sourceId": "jobspy:linkedin",
+      "recommendedState": "quarantined",
+      "consecutiveFailures": 3
+    },
+    {
+      "sourceId": "jobspy:zip-recruiter",
       "recommendedState": "quarantined",
       "consecutiveFailures": 3
     }
@@ -269,12 +312,43 @@
       "highFitCount": 2
     },
     "blockedSources": {
-      "count": 2,
+      "count": 7,
       "sources": [
+        {
+          "sourceId": "jobspy:bayt",
+          "recommendedState": "quarantined",
+          "consecutiveFailures": 3,
+          "displayName": "JobStreaming Bayt"
+        },
+        {
+          "sourceId": "jobspy:google",
+          "recommendedState": "quarantined",
+          "consecutiveFailures": 3,
+          "displayName": "JobStreaming Google"
+        },
+        {
+          "sourceId": "jobspy:indeed",
+          "recommendedState": "quarantined",
+          "consecutiveFailures": 3,
+          "displayName": "JobStreaming Indeed"
+        },
+        {
+          "sourceId": "jobspy:linkedin",
+          "recommendedState": "quarantined",
+          "consecutiveFailures": 3,
+          "displayName": "JobStreaming LinkedIn"
+        },
+        {
+          "sourceId": "jobspy:zip-recruiter",
+          "recommendedState": "quarantined",
+          "consecutiveFailures": 3,
+          "displayName": "JobStreaming ZipRecruiter"
+        },
         {
           "sourceId": "workday:unstable-example",
           "recommendedState": "quarantined",
-          "consecutiveFailures": 3
+          "consecutiveFailures": 3,
+          "displayName": "Workday Example"
         },
         {
           "sourceId": "greenhouse:ops-only",

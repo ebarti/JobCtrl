@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from jobctrl.database import ensure_profile_tables
 from jobctrl.domain.profile.aggregate import Profile
 from jobctrl.domain.profile.ports import ProfileImportResult
 from jobctrl.domain.profile.snapshot import ProfileSnapshot
@@ -46,6 +47,7 @@ def _valid_profile() -> dict:
 def _repo(tmp_path: Path) -> SqliteProfileRepository:
     conn = sqlite3.connect(tmp_path / "jobctrl.db")
     conn.row_factory = sqlite3.Row
+    ensure_profile_tables(conn)
     return SqliteProfileRepository(
         conn,
         publisher=InProcessEventBus(),

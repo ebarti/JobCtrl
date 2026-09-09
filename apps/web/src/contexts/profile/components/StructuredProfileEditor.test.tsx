@@ -4,6 +4,7 @@ import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import { sampleProfileResponse } from "../../../test/fixtures/projections.js";
+import { recordAt, type JsonRecord } from "../lib/json-record.js";
 import { StructuredProfileEditor } from "./StructuredProfileEditor.js";
 
 type ProfileFixture = Record<string, unknown> & {
@@ -47,28 +48,28 @@ vi.mock("./GoogleAddressSearchField.js", () => ({
 }));
 
 function StatefulEditor({
-  initialProfile = sampleProfileResponse.profile,
+  initialProfile = recordAt(sampleProfileResponse, "profile"),
   mode,
   onLatestProfile = () => undefined,
 }: {
-  initialProfile?: unknown;
+  initialProfile?: JsonRecord;
   mode?: "profile" | "preferences";
   onLatestProfile?: (value: string) => void;
 }) {
-  const [profileText, setProfileText] = useState(JSON.stringify(initialProfile, null, 2));
-  const [styleText, setStyleText] = useState(JSON.stringify(sampleProfileResponse.style, null, 2));
-  const updateProfile = (value: string) => {
-    onLatestProfile(value);
-    setProfileText(value);
+  const [profile, setProfile] = useState(initialProfile);
+  const [style, setStyle] = useState(recordAt(sampleProfileResponse, "style"));
+  const updateProfile = (value: JsonRecord) => {
+    onLatestProfile(JSON.stringify(value));
+    setProfile(value);
   };
   const modeProps = mode ? { mode } : {};
   return (
     <StructuredProfileEditor
       {...modeProps}
-      profileText={profileText}
-      styleText={styleText}
-      onProfileTextChange={updateProfile}
-      onStyleTextChange={setStyleText}
+      profile={profile}
+      style={style}
+      onProfileChange={updateProfile}
+      onStyleChange={setStyle}
     />
   );
 }
@@ -425,6 +426,93 @@ describe("<StructuredProfileEditor>", () => {
     expect(
       JSON.parse(latestProfile).resume.experience_entries.map((entry: { id: string }) => entry.id),
     ).toEqual(["current", "recent", "older"]);
+  });
+
+  it("moves bullets without changing text, evidence, required selections, or other profile data", async () => {
+    const user = userEvent.setup();
+    const initialProfile = structuredClone(sampleProfileResponse.profile) as JsonRecord;
+    const resume = initialProfile["resume"] as JsonRecord;
+    const entries = resume["experience_entries"] as JsonRecord[];
+    entries[0]!["bullets"] = ["  Repeated achievement.  ", "", "Reduced latency 40%.", "  Repeated achievement.  "];
+    entries[0]!["achievement_evidence"] = [{ id: "latency-proof", source_text: "Reduced latency 40%.", metrics: ["40%"], user_confirmed: true }];
+    entries[0]!["futureEntryData"] = { preserve: ["exactly", 7] };
+    (resume["tailoring_rules"] as JsonRecord)["required_bullets_by_experience_id"] = {
+      "exp-1": ["Reduced latency 40%."],
+    };
+    let latestProfile = JSON.stringify(initialProfile);
+    render(<StatefulEditor initialProfile={initialProfile} onLatestProfile={(value) => { latestProfile = value; }} />);
+    await user.click(screen.getByRole("button", { name: /Experience entries/ }));
+
+    expect(screen.getByRole("button", { name: "Move bullet 1 up" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Move bullet 4 down" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Move bullet 3 up" }));
+    expect(screen.getByLabelText("Bullet 2")).toHaveValue("Reduced latency 40%.");
+    const movedRow = screen.getByLabelText("Bullet 2").closest(".bullet-row") as HTMLElement;
+    expect(within(movedRow).getByRole("checkbox", { name: "Required" })).toBeChecked();
+    expect(screen.getByRole("button", { name: "Move bullet 2 up" })).toHaveFocus();
+
+    await user.keyboard("{Enter}");
+    expect(screen.getByLabelText("Bullet 1")).toHaveValue("Reduced latency 40%.");
+    expect(screen.getByLabelText("Bullet 1")).toHaveFocus();
+    await user.click(screen.getByRole("button", { name: "Move bullet 1 down" }));
+    expect(screen.getByRole("button", { name: "Move bullet 2 down" })).toHaveFocus();
+    await user.keyboard("{Enter}");
+    await user.keyboard("{Enter}");
+    expect(screen.getByLabelText("Bullet 4")).toHaveFocus();
+
+    const expected = structuredClone(initialProfile);
+    ((expected["resume"] as JsonRecord)["experience_entries"] as JsonRecord[])[0]!["bullets"] = [
+      "  Repeated achievement.  ", "", "  Repeated achievement.  ", "Reduced latency 40%.",
+    ];
+    expect(JSON.parse(latestProfile)).toEqual(expected);
+  });
+
+  it("keeps empty and single-bullet entries safe at both ordering boundaries", async () => {
+    const user = userEvent.setup();
+    const initialProfile = structuredClone(sampleProfileResponse.profile) as JsonRecord;
+    ((initialProfile["resume"] as JsonRecord)["experience_entries"] as JsonRecord[])[0]!["bullets"] = [];
+    const onLatestProfile = vi.fn();
+    render(<StatefulEditor initialProfile={initialProfile} onLatestProfile={onLatestProfile} />);
+    await user.click(screen.getByRole("button", { name: /Experience entries/ }));
+    expect(screen.queryByRole("button", { name: /Move bullet/ })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Add bullet" }));
+    expect(screen.getByLabelText("Bullet 1")).toHaveValue("");
+    expect(screen.getByRole("button", { name: "Move bullet 1 up" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Move bullet 1 down" })).toBeDisabled();
+    onLatestProfile.mockClear();
+    await user.click(screen.getByRole("button", { name: "Move bullet 1 up" }));
+    await user.click(screen.getByRole("button", { name: "Move bullet 1 down" }));
+    expect(onLatestProfile).not.toHaveBeenCalled();
+  });
+
+  it("keeps repeated keyboard moves inside the originating unsaved role", async () => {
+    const user = userEvent.setup();
+    let latestProfile = "";
+    const { container } = render(<StatefulEditor onLatestProfile={(value) => { latestProfile = value; }} />);
+    await user.click(screen.getByRole("button", { name: /Experience entries/ }));
+    await user.click(screen.getByRole("button", { name: "Add experience" }));
+    await user.click(screen.getByRole("button", { name: "Add experience" }));
+    const sections = [...container.querySelectorAll<HTMLElement>(".experience-repeat-section")];
+    const first = sections.at(-2)!;
+    const second = sections.at(-1)!;
+    for (const [section, prefix] of [[first, "A"], [second, "B"]] as const) {
+      await user.click(within(section).getByRole("button", { name: "Add bullet" }));
+      await user.click(within(section).getByRole("button", { name: "Add bullet" }));
+      for (let index = 0; index < 3; index += 1) {
+        fireEvent.change(within(section).getByRole("textbox", { name: `Bullet ${index + 1}` }), {
+          target: { value: `${prefix}${index + 1}` },
+        });
+      }
+    }
+
+    await user.click(within(first).getByRole("button", { name: "Move bullet 3 up" }));
+    expect(within(first).getByRole("button", { name: "Move bullet 2 up" })).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(within(first).getByRole("textbox", { name: "Bullet 1" })).toHaveFocus();
+    const entries = JSON.parse(latestProfile).resume.experience_entries;
+    expect(entries.slice(-2).map((entry: { id: string }) => entry.id)).toEqual(["", ""]);
+    expect(entries.at(-2).bullets).toEqual(["A3", "A1", "A2"]);
+    expect(entries.at(-1).bullets).toEqual(["B1", "B2", "B3"]);
   });
 
   it("renders bullet standards as a combined fixed set", () => {

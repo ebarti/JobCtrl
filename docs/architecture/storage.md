@@ -20,7 +20,7 @@ Unless overridden by `JOBCTRL_DIR`, the local authority root is
 | `codex_home/` | Stable JobCtrl-owned Codex state; auth is outside the prompt-readable `workspace/` subtree. |
 | `claude_home/`, `provider-packs/`, `provider-runtime/` | Isolated and separately acquired provider runtime state. |
 | `tailored_resumes/`, `cover_letters/`, `logs/` | Generated material and logs registered by SQLite metadata where applicable. |
-| `browser-profiles/`, `extension-capability-token`, `chrome-workers/`, `apply-workers/` | Consented copied profiles, extension pairing, and browser/apply execution state. Browser-adoption metadata is in `config.json`. |
+| `browser-profiles/`, `extension-capability-token`, `chrome-workers/`, `apply-workers/` | Consented copied profiles for separate compatibility capabilities, extension pairing, and browser/apply execution state. Integrated Discovery uses the current Chrome profile through the extension and never stores a copy; its bridge task bodies/results are API-process-memory-only. Browser-adoption metadata is in `config.json`. |
 | `backups/` and legacy `resume.*` / style files | User-created database snapshots, guarded job-data-purge recovery bundles, and pre-migration resume inputs. |
 
 Developer supervisors additionally use checkout-local `.dev/` process, log,
@@ -70,7 +70,7 @@ The remaining tables group by owner:
 | Compensation | `job_posted_compensation_facts`, per-job `job_market_compensation_estimates`, versioned `compensation_role_families` and mappings, immutable direct/price-level/extrapolated benchmark facts, relational extrapolation inputs, and `compensation_market_refresh_state` |
 | Scoring | `job_scores`, versioned/indexed `job_score_keywords`, `scoring_policies`, `job_score_staleness` |
 | Read-model projections | `job_list_projections`, `job_detail_projections`, `dashboard_projections`, `apply_run_projections`, `workflow_run_projections`, `pipeline_step_projections`, `artifact_list_projections`, `event_watermarks`, `digest_state` |
-| Discovery & preparation | `discovery_runs`, `discovery_execution_jobs`, `discovery_search_units`, `discovery_search_unit_jobs`, `discovery_search_unit_filtered_events`, `discovery_settings`, `discovery_feedback`, `discovery_quarantine_entries`, `job_canonical_identities`, `job_source_observations`, `job_duplicate_links`, legacy `preparation_work_items`, `manual_capture_queue`, `posting_snapshot_sets`, `source_registry_entries`, `source_locator_candidates` |
+| Discovery & preparation | `discovery_runs`, `discovery_execution_jobs`, `discovery_execution_recoveries`, `discovery_search_units`, `discovery_search_unit_jobs`, `discovery_search_unit_filtered_events`, `discovery_settings`, `discovery_feedback`, `discovery_quarantine_entries`, `job_canonical_identities`, `job_source_observations`, `job_duplicate_links`, legacy `preparation_work_items`, `manual_capture_queue`, `posting_snapshot_sets`, `source_registry_entries`, `source_locator_candidates` |
 | Apply review, repeat protection, and outcomes | `application_review_decisions`, `application_repeat_overrides`, `application_repeat_override_consumptions`, `application_repeat_audit`, `application_outcomes`, `application_email_evidence`, `application_outcome_suggestions` |
 | Explicit-feedback learning | `tailoring_feedback_signals`, `tailoring_feedback_signal_reviews`, `tailoring_feedback_signal_contradictions`, `learning_recommendations`, `learning_recommendation_evidence`, `learning_recommendation_evidence_jobs`, `learning_recommendation_jobs`, `learning_recommendation_reviews`, `learning_recommendation_tombstones` |
 | Policies & operations | `tailoring_policies`, `llm_spend`, `worker_runtime_heartbeats`, `jobctrl_deleted_jobs` |
@@ -139,6 +139,11 @@ no mixed-version runtime, rolling deployment, dual-write path, or permanent
 compatibility layer: the TypeScript API and Python worker accept exact v9 and
 reject direct v6/v7/v8 operation. Runtime projections read registered persisted
 artifacts only and do not reconstruct legacy URL-shaped fallback rows.
+
+SQLite repository and projection constructors do not initialize schema or
+commit caller work. Exact-v9 creation/admission owns that boundary before runtime
+refresh begins; each refresh owns only its derived writes and consumer cursor
+inside a transaction or the caller's savepoint.
 
 V9 adds one optional per-position summary to normalized Candidate Profile
 experience rows. Existing rows receive the empty-string default; empty values

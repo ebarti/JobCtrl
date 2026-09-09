@@ -10,6 +10,7 @@ import { DemoFeatureFlagAdapter } from "../../../demo/ports.js";
 import { renderWithProviders } from "../../../test/render.js";
 import {
   sampleDashboardSummary,
+  sampleDiscoveryBrowserBridgeStatusResponse,
   sampleHealthResponse,
   sampleSettingsResponse,
 } from "../../../test/fixtures/projections.js";
@@ -123,6 +124,35 @@ describe("StageTriggerPanel", () => {
     );
     await user.click(
       screen.getByRole("button", { name: "Worker unavailable" }),
+    );
+    expect(runPipelineStages).not.toHaveBeenCalled();
+  });
+
+  it("blocks Discovery when the paired extension is not connected in Chrome", async () => {
+    const runPipelineStages = vi.fn();
+    renderWithProviders(<StageTriggerPanel />, {
+      ports: buildTestPorts({
+        api: {
+          discoveryBrowserBridgeStatus: vi.fn(async () => ({
+            ...sampleDiscoveryBrowserBridgeStatusResponse,
+            connected: false,
+            lastSeenAt: null,
+            extensionVersion: null,
+          })),
+          runPipelineStages,
+        },
+      }),
+    });
+
+    expect(
+      await screen.findByRole("button", { name: "Extension offline" }),
+    ).toBeDisabled();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Discovery requires the paired JobCtrl extension in your current Chrome profile",
+    );
+    expect(screen.getByRole("link", { name: "Browser settings" })).toHaveAttribute(
+      "href",
+      "/settings/browser",
     );
     expect(runPipelineStages).not.toHaveBeenCalled();
   });

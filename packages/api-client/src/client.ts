@@ -69,6 +69,7 @@ import type {
   DiscoverySettingsUpdateRequest,
   DiscoveryFeedbackRequest,
   DiscoveryFeedbackResponse,
+  DiscoveryBrowserBridgeStatusResponse,
   DiscoveryPreviewResponse,
   EndpointClientMethods,
   EvidenceMapResponse,
@@ -1017,6 +1018,10 @@ export class JobCtrlApiClient {
 
   extensionCapabilityToken(): Promise<ExtensionCapabilityTokenResponse> {
     return this.get("/v1/extension/pairing-token");
+  }
+
+  discoveryBrowserBridgeStatus(): Promise<DiscoveryBrowserBridgeStatusResponse> {
+    return this.get("/v1/discovery/browser-extension/status");
   }
 
   rotateExtensionCapabilityToken(): Promise<ExtensionCapabilityTokenResponse> {

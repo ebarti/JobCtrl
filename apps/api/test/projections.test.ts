@@ -15,7 +15,10 @@ import Database from "better-sqlite3";
 import { BUILT_IN_RESUME_TEMPLATE_THEME } from "../src/resume-templates.js";
 import { buildApp } from "../src/server.js";
 import { initializeExactV7Database } from "./v7-schema.js";
-import { REFRESH_EVENT_BATCH_LIMIT, refreshProjections, setWatermark } from "../src/projections.js";
+import {
+  REFRESH_EVENT_BATCH_LIMIT, refreshProjections, setWatermark,
+  refreshContactProjections, refreshContactResearchProjections, refreshOutreachProjections,
+} from "../src/projections.js";
 import { recoveryKeyDigest } from "../src/discovery-execution-recovery.js";
 import { PROJECTION_WATERMARK_NAME } from "../src/contracts.js";
 
@@ -2478,6 +2481,104 @@ describe("apply_run_projections without legacy apply_runs table", () => {
     }
   });
 
+  it("keeps accepted artifact and requirement evidence bound to the same achievement after bullet sorting", async () => {
+    const { dbPath, cleanup } = withTempDb();
+    const sourceA = "Reduced incidents 40%.";
+    const sourceB = "Built APIs.";
+    const appOptions = { dbPath, configPath: path.join(path.dirname(dbPath), "config.json") };
+    try {
+      seedSchema(dbPath);
+      const app = buildApp(appOptions);
+      try {
+        const initial = await app.inject({
+          method: "PATCH", url: "/v1/profile", payload: { profile: {
+            personal: { full_name: "Sortable Evidence Candidate", email: "sort@example.com" },
+            resume: {
+              executive_profile: { baseline_text: "Platform engineer." },
+              experience_entries: [{ id: "role_1", title: "Engineer", company: "Acme", date_range: "2024-2025", bullets: [sourceA, sourceB] }],
+              education_entries: [], skill_categories: [], tailoring_rules: {},
+            },
+          } },
+        });
+        expect(initial.statusCode, initial.body).toBe(200);
+        const profile = initial.json().profile;
+        const evidenceId = profile.resume.experience_entries[0].achievement_evidence[0].id;
+        expect(evidenceId).toBe("role_1_bullet_1");
+
+        const db = new Database(dbPath);
+        try {
+          db.prepare(`INSERT INTO job_materials
+            (tenant_id, job_id, generation, status, created_at, updated_at)
+            VALUES ('local', ?, 1, 'complete', '2026-07-05T12:00:00Z', '2026-07-05T12:10:00Z')`).run(EVENT_JOB_ID);
+          db.prepare(`INSERT INTO job_materials_artifacts (
+            tenant_id, job_id, generation, artifact_type, artifact_id, status, path,
+            render_format, size_bytes, metadata_json, created_at
+          ) VALUES ('local', ?, 1, 'tailored_resume', 'sorted-resume', 'approved', '/tmp/synthetic-resume.txt', 'text', 12, ?, '2026-07-05T12:05:00Z')`).run(
+            EVENT_JOB_ID, JSON.stringify({ validation_mode: "normal", attempts: 1, quality_checks: { passed: true } }),
+          );
+          db.prepare(`INSERT INTO job_bullet_provenance (
+            tenant_id, job_id, generation, bullet_id, artifact_id, section, source_id,
+            evidence_ids_json, requirement_ids_json, matched_keywords_json, transform_type,
+            control, rationale, generated_text, position, created_at
+          ) VALUES ('local', ?, 1, 'experience:role_1#0', 'sorted-resume', 'experience', 'role_1', ?, '["req-reliability"]', '[]', 'reframe', 'rephrase_allowed', 'Used source achievement.', ?, 0, '2026-07-05T12:10:00Z')`).run(
+            EVENT_JOB_ID, JSON.stringify([evidenceId]), sourceA,
+          );
+          db.prepare(`INSERT INTO job_requirement_fit_reports (
+            tenant_id, job_id, score_version, employer_analysis_generation,
+            profile_snapshot_version, scoring_policy_version, formula_version,
+            resolved_fit_score, fit_band, confidence, summary_json, created_at
+          ) VALUES ('local', ?, 2, 1, 1, 1, 'v1', 8, 'strong', 'high', '{}', '2026-07-05T12:20:00Z')`).run(EVENT_JOB_ID);
+          db.prepare(`INSERT INTO job_requirement_fit_items (
+            tenant_id, job_id, score_version, requirement_id, requirement_text,
+            tier, weight, job_evidence_span, fit_json, contribution_json,
+            tailoring_json, artifact_coverage_json, position
+          ) VALUES ('local', ?, 2, 'req-reliability', 'Improve reliability', 'must_have', 1, 'reliability', ?, '{}', '{}', '{}', 0)`).run(
+            EVENT_JOB_ID, JSON.stringify({ kind: "matched", evidence_ids: [evidenceId], strength: "direct" }),
+          );
+        } finally {
+          db.close();
+        }
+
+        profile.resume.experience_entries[0].bullets = [sourceB, sourceA];
+        const reordered = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile } });
+        expect(reordered.statusCode, reordered.body).toBe(200);
+        const nextProfile = reordered.json().profile;
+        nextProfile.personal.preferred_name = "Sort Candidate";
+        const savedAgain = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile: nextProfile } });
+        expect(savedAgain.statusCode, savedAgain.body).toBe(200);
+      } finally {
+        await app.close();
+      }
+
+      const reopened = buildApp(appOptions);
+      try {
+        const loaded = await reopened.inject({ method: "GET", url: "/v1/profile" });
+        expect(loaded.statusCode, loaded.body).toBe(200);
+        expect(loaded.json().profile.resume.experience_entries[0].achievement_evidence).toEqual([
+          expect.objectContaining({ id: "role_1_bullet_2", source_text: sourceB, metrics: [] }),
+          expect.objectContaining({ id: "role_1_bullet_1", source_text: sourceA, metrics: ["40%"] }),
+        ]);
+        const artifact = await reopened.inject({ method: "GET", url: "/v1/artifacts/sorted-resume" });
+        expect(artifact.statusCode, artifact.body).toBe(200);
+        expect(artifact.json().tailoringExplanation.bulletProvenance).toMatchObject([
+          { evidenceIds: ["role_1_bullet_1"], sourceText: [sourceA], generatedText: sourceA },
+        ]);
+        const evidenceMap = await reopened.inject({ method: "GET", url: "/v1/evidence-map" });
+        expect(evidenceMap.statusCode, evidenceMap.body).toBe(200);
+        const achievement = evidenceMap.json().entries.find((entry: { evidenceId: string }) => entry.evidenceId === "role_1_bullet_1");
+        expect(achievement).toMatchObject({
+          title: sourceA, story: { action: sourceA, outcome: sourceA, metrics: ["40%"] },
+          resumeUsages: [{ artifactId: "sorted-resume", bulletId: "experience:role_1#0" }],
+          requirementUsages: [{ requirementId: "req-reliability", requirementFitKind: "matched" }],
+        });
+      } finally {
+        await reopened.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
   it("excludes soft-deleted and hidden jobs from the career evidence map", async () => {
     // Regression for the R5 evidence-usage index: soft delete only writes a
     // jobctrl_deleted_jobs tombstone (and hide only writes jobctrl_hidden_jobs),
@@ -4017,14 +4118,259 @@ describe("dashboard outcome-conversion projection", () => {
   });
 });
 
-describe("shared watermark discipline", () => {
+describe("direct projection publication", () => {
+  it.each([
+    { family: "contacts", refresh: refreshContactProjections, canonical: "contacts",
+      tables: ["contact_projections"], failureTable: "contact_projections", idColumn: "contact_id" },
+    { family: "research", refresh: refreshContactResearchProjections, canonical: "contact_research_tasks",
+      tables: ["contact_research_task_projections"], failureTable: "contact_research_task_projections", idColumn: "task_id" },
+    { family: "outreach and follow-ups", refresh: refreshOutreachProjections, canonical: "outreach_threads",
+      tables: ["outreach_thread_projections", "due_follow_up_projections"], failureTable: "due_follow_up_projections", idColumn: "thread_id" },
+  ])("rolls back partial $family publication and preserves caller rollback", ({ refresh, canonical, tables, failureTable, idColumn }) => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      initializeExactV7Database(dbPath);
+      const db = new Database(dbPath);
+      const observer = new Database(dbPath);
+      try {
+        const originalAt = "2026-09-01T00:00:00Z";
+        const changedAt = "2026-09-01T01:00:00Z";
+        for (const id of ["a", "b"]) {
+          db.prepare(`INSERT INTO contacts (tenant_id, contact_id, created_at, updated_at)
+            VALUES ('local', ?, ?, ?)`).run(id, originalAt, originalAt);
+          db.prepare(`INSERT INTO contact_research_tasks (tenant_id, task_id, updated_at)
+            VALUES ('local', ?, ?)`).run(id, originalAt);
+          db.prepare(`INSERT INTO outreach_threads (tenant_id, thread_id, contact_id,
+            created_at, updated_at, follow_up_due_at, follow_up_basis, follow_up_state)
+            VALUES ('local', ?, ?, ?, ?, ?, 'manual', 'scheduled')`).run(id, id, originalAt, originalAt, changedAt);
+        }
+        const snapshot = (connection = db): unknown[] => tables.map(
+          (table) => connection.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all(),
+        );
+        refresh(db);
+        const before = snapshot();
+        for (const table of tables) {
+          expect(db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get()).toEqual({ count: 2 });
+        }
+        db.prepare(`UPDATE ${canonical} SET updated_at = ?`).run(changedAt);
+        // Row a has already been written when row b fails. For outreach the
+        // entire thread table has been written before the follow-up failure.
+        db.exec(`CREATE TEMP TRIGGER fail_direct_projection BEFORE INSERT ON ${failureTable}
+          WHEN NEW.${idColumn} = 'b'
+          BEGIN SELECT RAISE(ABORT, 'direct projection fixture failure'); END`);
+        expect(() => refresh(db)).toThrow("direct projection fixture failure");
+        expect(db.inTransaction).toBe(false);
+        expect(snapshot(observer)).toEqual(before);
+        db.exec("DROP TRIGGER fail_direct_projection");
+
+        db.exec("BEGIN IMMEDIATE");
+        db.prepare(`UPDATE ${canonical} SET updated_at = '2026-09-01T02:00:00Z'`).run();
+        refresh(db);
+        expect(db.inTransaction).toBe(true);
+        expect(snapshot()).not.toEqual(before);
+        expect(snapshot(observer)).toEqual(before);
+        db.exec("ROLLBACK");
+        expect(snapshot()).toEqual(before);
+        expect(db.prepare(`SELECT DISTINCT updated_at FROM ${canonical}`).all()).toEqual([{ updated_at: changedAt }]);
+
+        refresh(db);
+        expect(db.inTransaction).toBe(false);
+        expect(snapshot(observer)).toEqual(snapshot());
+        for (const table of tables) {
+          expect(observer.prepare(`SELECT DISTINCT updated_at FROM ${table}`).all()).toEqual([{ updated_at: changedAt }]);
+        }
+      } finally {
+        observer.close();
+        db.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+describe("consumer watermark discipline", () => {
+  const watermarkName = `typescript:${PROJECTION_WATERMARK_NAME}:local`;
   function readWatermarkRow(
     db: InstanceType<typeof Database>,
   ): { last_event_id: number; updated_at: string } | undefined {
     return db
       .prepare("SELECT last_event_id, updated_at FROM event_watermarks WHERE projection_name = ?")
-      .get(PROJECTION_WATERMARK_NAME) as { last_event_id: number; updated_at: string } | undefined;
+      .get(watermarkName) as { last_event_id: number; updated_at: string } | undefined;
   }
+
+  it("replays local changes without consuming legacy opaque-tenant cursors", () => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      seedSchema(dbPath);
+      const db = new Database(dbPath);
+      try {
+        refreshProjections(db);
+        db.prepare("UPDATE jobs SET title = 'Changed' WHERE job_id = ?").run(EVENT_JOB_ID);
+        const eventId = Number(db.prepare(
+          `INSERT INTO job_events (tenant_id, job_id, identity_version, event_type, occurred_at, payload_json)
+           VALUES ('local', ?, 1, 'JobUpdated', '2026-09-01T00:00:00Z', '{}')`,
+        ).run(EVENT_JOB_ID).lastInsertRowid);
+        const legacyRows = ["python:local", "typescript:local"].map((tenantId, index) => ({
+          projection_name: `${PROJECTION_WATERMARK_NAME}:${tenantId}`,
+          last_event_id: 10_000 + index,
+          updated_at: "2026-08-31T00:00:00Z",
+        }));
+        for (const row of legacyRows) {
+          db.prepare(`INSERT OR REPLACE INTO event_watermarks (projection_name, last_event_id, updated_at)
+            VALUES (?, ?, ?)`).run(row.projection_name, row.last_event_id, row.updated_at);
+        }
+        refreshProjections(db);
+        expect(db.prepare("SELECT title FROM job_list_projections WHERE job_id = ?").get(EVENT_JOB_ID)).toEqual({ title: "Changed" });
+        expect(db.prepare("SELECT last_event_id FROM event_watermarks WHERE projection_name = ?").get(
+          `typescript:${PROJECTION_WATERMARK_NAME}:local`,
+        )).toEqual({ last_event_id: eventId });
+        for (const row of legacyRows) {
+          expect(db.prepare("SELECT * FROM event_watermarks WHERE projection_name = ?").get(row.projection_name)).toEqual(row);
+        }
+      } finally {
+        db.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it.each([
+    ["evidence_usage_projections", false],
+    ["evidence_usage_projections", true],
+    ["event_watermarks", false],
+    ["event_watermarks", true],
+  ] as const)("rolls back a failed %s replacement (caller transaction: %s)", (failureTable, nested) => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      seedSchema(dbPath);
+      const db = new Database(dbPath);
+      try {
+        db.exec(`
+          INSERT INTO candidate_profile_skill_categories
+            (tenant_id, profile_id, category_id, position_index, label)
+          VALUES ('local', 'default', 'fixture', 0, 'Fixture');
+          INSERT INTO candidate_profile_skill_items
+            (tenant_id, profile_id, category_id, item_index, item_text)
+          VALUES ('local', 'default', 'fixture', 0, 'Python');
+        `);
+        const event = db.prepare(
+          `INSERT INTO job_events (tenant_id, job_id, identity_version, event_type, occurred_at, payload_json)
+           VALUES ('local', ?, 1, 'JobDiscovered', '2026-09-01T00:00:00Z', '{}')`,
+        );
+        event.run(EVENT_JOB_ID);
+        refreshProjections(db);
+        const snapshot = (connection = db): unknown[] =>
+          ["job_list_projections", "job_detail_projections", "dashboard_projections",
+            "evidence_usage_projections", "event_watermarks"].map(
+            (table) => connection.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all(),
+          );
+        const before = snapshot();
+        expect(db.prepare("SELECT COUNT(*) AS count FROM evidence_usage_projections").get()).toEqual({ count: 1 });
+        db.exec(`CREATE TEMP TRIGGER fail_projection BEFORE INSERT ON ${failureTable}
+          BEGIN SELECT RAISE(ABORT, 'projection fixture failure'); END`);
+        const update = (): void => {
+          db.prepare("UPDATE jobs SET title = 'Changed' WHERE job_id = ?").run(EVENT_JOB_ID);
+          event.run(EVENT_JOB_ID);
+          expect(() => refreshProjections(db)).toThrow("projection fixture failure");
+          expect(db.inTransaction).toBe(nested);
+          expect(snapshot()).toEqual(before);
+        };
+        if (nested) db.transaction(update).immediate();
+        else update();
+        const observer = new Database(dbPath);
+        try {
+          expect(observer.prepare("SELECT title FROM jobs WHERE job_id = ?").get(EVENT_JOB_ID)).toEqual({ title: "Changed" });
+          expect(snapshot(observer)).toEqual(before);
+        } finally {
+          observer.close();
+        }
+        db.exec("DROP TRIGGER fail_projection");
+        refreshProjections(db);
+        expect(db.inTransaction).toBe(false);
+        expect(db.prepare("SELECT title FROM job_list_projections WHERE job_id = ?").get(EVENT_JOB_ID)).toEqual({ title: "Changed" });
+        expect(readWatermarkRow(db)?.last_event_id).toBe(2);
+        const settled = snapshot();
+        refreshProjections(db);
+        expect(snapshot()).toEqual(settled);
+      } finally {
+        db.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it.each([false, true])("leaves a successful nested refresh under caller commit/rollback control (%s)", (commit) => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      seedSchema(dbPath);
+      const db = new Database(dbPath);
+      const observer = new Database(dbPath);
+      try {
+        refreshProjections(db);
+        const before = observer.prepare("SELECT title FROM job_list_projections WHERE job_id = ?").get(EVENT_JOB_ID);
+        db.exec("BEGIN IMMEDIATE");
+        db.prepare("UPDATE jobs SET title = 'Changed' WHERE job_id = ?").run(EVENT_JOB_ID);
+        db.prepare(
+          `INSERT INTO job_events (tenant_id, job_id, identity_version, event_type, occurred_at, payload_json)
+           VALUES ('local', ?, 1, 'JobDiscovered', '2026-09-01T00:00:00Z', '{}')`,
+        ).run(EVENT_JOB_ID);
+        refreshProjections(db);
+        expect(db.inTransaction).toBe(true);
+        expect(observer.prepare("SELECT title FROM job_list_projections WHERE job_id = ?").get(EVENT_JOB_ID)).toEqual(before);
+        db.exec(commit ? "COMMIT" : "ROLLBACK");
+        expect(observer.prepare("SELECT title FROM job_list_projections WHERE job_id = ?").get(EVENT_JOB_ID)).toEqual(commit ? { title: "Changed" } : before);
+        expect(readWatermarkRow(db)?.last_event_id ?? 0).toBe(commit ? 1 : 0);
+      } finally {
+        observer.close();
+        db.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("bounds events within each tenant and leaves other consumer cursors untouched", () => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      seedSchema(dbPath);
+      const db = new Database(dbPath);
+      try {
+        const event = db.prepare(
+          `INSERT INTO job_events (tenant_id, job_id, identity_version, event_type, occurred_at, payload_json)
+           VALUES (?, NULL, 1, 'CandidateProfileUpdated', '2026-09-01T00:00:00Z', '{}')`,
+        );
+        db.transaction(() => {
+          for (let i = 0; i < REFRESH_EVENT_BATCH_LIMIT; i += 1) event.run("foreign");
+        })();
+        const foreignLast = REFRESH_EVENT_BATCH_LIMIT;
+        const localLast = Number(event.run("local").lastInsertRowid);
+        setWatermark(db, PROJECTION_WATERMARK_NAME, localLast);
+        setWatermark(db, `python:${PROJECTION_WATERMARK_NAME}:local`, localLast);
+        refreshProjections(db, "local");
+        expect(readWatermarkRow(db)?.last_event_id).toBe(localLast);
+        expect(db.prepare("SELECT last_event_id FROM event_watermarks WHERE projection_name = ?").get(
+          `typescript:${PROJECTION_WATERMARK_NAME}:foreign`,
+        )).toBeUndefined();
+        // Stop below the cap for the foreign pass so no asynchronous work
+        // outlives this fixture. The local pass had to skip the full foreign cap.
+        setWatermark(db, `typescript:${PROJECTION_WATERMARK_NAME}:foreign`, 1);
+        refreshProjections(db, "foreign");
+        expect(db.prepare("SELECT projection_name, last_event_id FROM event_watermarks ORDER BY projection_name").all()).toEqual([
+          { projection_name: PROJECTION_WATERMARK_NAME, last_event_id: localLast },
+          { projection_name: `python:${PROJECTION_WATERMARK_NAME}:local`, last_event_id: localLast },
+          { projection_name: `typescript:${PROJECTION_WATERMARK_NAME}:foreign`, last_event_id: foreignLast },
+          { projection_name: watermarkName, last_event_id: localLast },
+        ]);
+      } finally {
+        db.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
 
   it("advances a ready native recovery proof with the pipeline-step fold", () => {
     const { dbPath, cleanup } = withTempDb();
@@ -4114,16 +4460,16 @@ describe("shared watermark discipline", () => {
     try {
       seedSchema(dbPath);
       const db = new Database(dbPath);
-      setWatermark(db, PROJECTION_WATERMARK_NAME, 10);
+      setWatermark(db, watermarkName, 10);
       const afterAdvance = readWatermarkRow(db)!;
       expect(afterAdvance.last_event_id).toBe(10);
 
-      setWatermark(db, PROJECTION_WATERMARK_NAME, 5);
+      setWatermark(db, watermarkName, 5);
       const afterStaleWrite = readWatermarkRow(db)!;
       expect(afterStaleWrite.last_event_id).toBe(10);
       expect(afterStaleWrite.updated_at).toBe(afterAdvance.updated_at);
 
-      setWatermark(db, PROJECTION_WATERMARK_NAME, 15);
+      setWatermark(db, watermarkName, 15);
       expect(readWatermarkRow(db)!.last_event_id).toBe(15);
       db.close();
     } finally {

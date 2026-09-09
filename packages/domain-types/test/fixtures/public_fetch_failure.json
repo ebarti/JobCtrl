@@ -1,0 +1,407 @@
+[
+  {
+    "name": "allowlisted recovery with private raw request",
+    "metadata": {
+      "fetchFailure": {
+        "kind": "dns_non_public",
+        "requestHost": "signin.example.test",
+        "observedAt": "2026-09-01T10:00:00+00:00",
+        "requestUrl": "https://signin.example.test/private?token=must-not-project",
+        "exception": "must-not-project"
+      },
+      "fetchRecovery": {
+        "status": "retry_ready",
+        "checkCount": 1,
+        "checkedAt": "2026-09-07T18:00:00Z",
+        "nextCheckAt": null,
+        "retryEligibleAt": "2026-09-07T18:00:00Z"
+      }
+    },
+    "expected": {
+      "kind": "dns_non_public",
+      "requestHost": "signin.example.test",
+      "observedAt": "2026-09-01T10:00:00+00:00",
+      "recoveryStatus": "retry_ready",
+      "checkCount": 1,
+      "checkedAt": "2026-09-07T18:00:00Z",
+      "nextCheckAt": null,
+      "retryEligibleAt": "2026-09-07T18:00:00Z"
+    }
+  },
+  {
+    "name": "host query",
+    "metadata": {
+      "fetchFailure": {
+        "kind": "dns_non_public",
+        "requestHost": "example.test/?token=secret",
+        "observedAt": "2026-09-01T10:00:00+00:00",
+        "requestUrl": "https://signin.example.test/private?token=must-not-project",
+        "exception": "must-not-project"
+      },
+      "fetchRecovery": {
+        "status": "retry_ready",
+        "checkCount": 1,
+        "checkedAt": "2026-09-07T18:00:00Z",
+        "nextCheckAt": null,
+        "retryEligibleAt": "2026-09-07T18:00:00Z"
+      }
+    },
+    "expected": {
+      "kind": "dns_non_public",
+      "requestHost": null,
+      "observedAt": "2026-09-01T10:00:00+00:00",
+      "recoveryStatus": "retry_ready",
+      "checkCount": 1,
+      "checkedAt": "2026-09-07T18:00:00Z",
+      "nextCheckAt": null,
+      "retryEligibleAt": "2026-09-07T18:00:00Z"
+    }
+  },
+  {
+    "name": "host newline",
+    "metadata": {
+      "fetchFailure": {
+        "kind": "dns_non_public",
+        "requestHost": "example.test\n",
+        "observedAt": "2026-09-01T10:00:00+00:00",
+        "requestUrl": "https://signin.example.test/private?token=must-not-project",
+        "exception": "must-not-project"
+      },
+      "fetchRecovery": {
+        "status": "retry_ready",
+        "checkCount": 1,
+        "checkedAt": "2026-09-07T18:00:00Z",
+        "nextCheckAt": null,
+        "retryEligibleAt": "2026-09-07T18:00:00Z"
+      }
+    },
+    "expected": {
+      "kind": "dns_non_public",
+      "requestHost": null,
+      "observedAt": "2026-09-01T10:00:00+00:00",
+      "recoveryStatus": "retry_ready",
+      "checkCount": 1,
+      "checkedAt": "2026-09-07T18:00:00Z",
+      "nextCheckAt": null,
+      "retryEligibleAt": "2026-09-07T18:00:00Z"
+    }
+  },
+  {
+    "name": "invalid calendar day",
+    "metadata": {
+      "fetchFailure": {
+        "kind": "dns_non_public",
+        "requestHost": "signin.example.test",
+        "observedAt": "2026-02-30T10:00:00Z",
+        "requestUrl": "https://signin.example.test/private?token=must-not-project",
+        "exception": "must-not-project"
+      },
+      "fetchRecovery": {
+        "status": "retry_ready",
+        "checkCount": 1,
+        "checkedAt": "2026-09-07T18:00:00Z",
+        "nextCheckAt": null,
+        "retryEligibleAt": "2026-09-07T18:00:00Z"
+      }
+    },
+    "expected": {
+      "kind": "dns_non_public",
+      "requestHost": "signin.example.test",
+      "observedAt": null,
+      "recoveryStatus": "retry_ready",
+      "checkCount": 1,
+      "checkedAt": "2026-09-07T18:00:00Z",
+      "nextCheckAt": null,
+      "retryEligibleAt": "2026-09-07T18:00:00Z"
+    }
+  },
+  {
+    "name": "24 hour time",
+    "metadata": {
+      "fetchFailure": {
+        "kind": "dns_non_public",
+        "requestHost": "signin.example.test",
+        "observedAt": "2026-09-01T24:00:00Z",
+        "requestUrl": "https://signin.example.test/private?token=must-not-project",
+        "exception": "must-not-project"
+      },
+      "fetchRecovery": {
+        "status": "retry_ready",
+        "checkCount": 1,
+        "checkedAt": "2026-09-07T18:00:00Z",
+        "nextCheckAt": null,
+        "retryEligibleAt": "2026-09-07T18:00:00Z"
+      }
+    },
+    "expected": {
+      "kind": "dns_non_public",
+      "requestHost": "signin.example.test",
+      "observedAt": null,
+      "recoveryStatus": "retry_ready",
+      "checkCount": 1,
+      "checkedAt": "2026-09-07T18:00:00Z",
+      "nextCheckAt": null,
+      "retryEligibleAt": "2026-09-07T18:00:00Z"
+    }
+  },
+  {
+    "name": "overflowing offset",
+    "metadata": {
+      "fetchFailure": {
+        "kind": "dns_non_public",
+        "requestHost": "signin.example.test",
+        "observedAt": "2026-09-01T10:00:00+00:99",
+        "requestUrl": "https://signin.example.test/private?token=must-not-project",
+        "exception": "must-not-project"
+      },
+      "fetchRecovery": {
+        "status": "retry_ready",
+        "checkCount": 1,
+        "checkedAt": "2026-09-07T18:00:00Z",
+        "nextCheckAt": null,
+        "retryEligibleAt": "2026-09-07T18:00:00Z"
+      }
+    },
+    "expected": {
+      "kind": "dns_non_public",
+      "requestHost": "signin.example.test",
+      "observedAt": null,
+      "recoveryStatus": "retry_ready",
+      "checkCount": 1,
+      "checkedAt": "2026-09-07T18:00:00Z",
+      "nextCheckAt": null,
+      "retryEligibleAt": "2026-09-07T18:00:00Z"
+    }
+  },
+  {
+    "name": "naive time",
+    "metadata": {
+      "fetchFailure": {
+        "kind": "dns_non_public",
+        "requestHost": "signin.example.test",
+        "observedAt": "2026-09-01T10:00:00",
+        "requestUrl": "https://signin.example.test/private?token=must-not-project",
+        "exception": "must-not-project"
+      },
+      "fetchRecovery": {
+        "status": "retry_ready",
+        "checkCount": 1,
+        "checkedAt": "2026-09-07T18:00:00Z",
+        "nextCheckAt": null,
+        "retryEligibleAt": "2026-09-07T18:00:00Z"
+      }
+    },
+    "expected": {
+      "kind": "dns_non_public",
+      "requestHost": "signin.example.test",
+      "observedAt": null,
+      "recoveryStatus": "retry_ready",
+      "checkCount": 1,
+      "checkedAt": "2026-09-07T18:00:00Z",
+      "nextCheckAt": null,
+      "retryEligibleAt": "2026-09-07T18:00:00Z"
+    }
+  },
+  {
+    "name": "invalid recovery count True",
+    "metadata": {
+      "fetchFailure": {
+        "kind": "dns_non_public",
+        "requestHost": "signin.example.test",
+        "observedAt": "2026-09-01T10:00:00+00:00",
+        "requestUrl": "https://signin.example.test/private?token=must-not-project",
+        "exception": "must-not-project"
+      },
+      "fetchRecovery": {
+        "status": "retry_ready",
+        "checkCount": true,
+        "checkedAt": "2026-09-07T18:00:00Z",
+        "nextCheckAt": null,
+        "retryEligibleAt": "2026-09-07T18:00:00Z"
+      }
+    },
+    "expected": {
+      "kind": "dns_non_public",
+      "requestHost": "signin.example.test",
+      "observedAt": "2026-09-01T10:00:00+00:00",
+      "recoveryStatus": null,
+      "checkCount": 0,
+      "checkedAt": null,
+      "nextCheckAt": null,
+      "retryEligibleAt": null
+    }
+  },
+  {
+    "name": "invalid recovery count 0",
+    "metadata": {
+      "fetchFailure": {
+        "kind": "dns_non_public",
+        "requestHost": "signin.example.test",
+        "observedAt": "2026-09-01T10:00:00+00:00",
+        "requestUrl": "https://signin.example.test/private?token=must-not-project",
+        "exception": "must-not-project"
+      },
+      "fetchRecovery": {
+        "status": "retry_ready",
+        "checkCount": 0,
+        "checkedAt": "2026-09-07T18:00:00Z",
+        "nextCheckAt": null,
+        "retryEligibleAt": "2026-09-07T18:00:00Z"
+      }
+    },
+    "expected": {
+      "kind": "dns_non_public",
+      "requestHost": "signin.example.test",
+      "observedAt": "2026-09-01T10:00:00+00:00",
+      "recoveryStatus": null,
+      "checkCount": 0,
+      "checkedAt": null,
+      "nextCheckAt": null,
+      "retryEligibleAt": null
+    }
+  },
+  {
+    "name": "invalid recovery count 6",
+    "metadata": {
+      "fetchFailure": {
+        "kind": "dns_non_public",
+        "requestHost": "signin.example.test",
+        "observedAt": "2026-09-01T10:00:00+00:00",
+        "requestUrl": "https://signin.example.test/private?token=must-not-project",
+        "exception": "must-not-project"
+      },
+      "fetchRecovery": {
+        "status": "retry_ready",
+        "checkCount": 6,
+        "checkedAt": "2026-09-07T18:00:00Z",
+        "nextCheckAt": null,
+        "retryEligibleAt": "2026-09-07T18:00:00Z"
+      }
+    },
+    "expected": {
+      "kind": "dns_non_public",
+      "requestHost": "signin.example.test",
+      "observedAt": "2026-09-01T10:00:00+00:00",
+      "recoveryStatus": null,
+      "checkCount": 0,
+      "checkedAt": null,
+      "nextCheckAt": null,
+      "retryEligibleAt": null
+    }
+  },
+  {
+    "name": "invalid recovery count 1.5",
+    "metadata": {
+      "fetchFailure": {
+        "kind": "dns_non_public",
+        "requestHost": "signin.example.test",
+        "observedAt": "2026-09-01T10:00:00+00:00",
+        "requestUrl": "https://signin.example.test/private?token=must-not-project",
+        "exception": "must-not-project"
+      },
+      "fetchRecovery": {
+        "status": "retry_ready",
+        "checkCount": 1.5,
+        "checkedAt": "2026-09-07T18:00:00Z",
+        "nextCheckAt": null,
+        "retryEligibleAt": "2026-09-07T18:00:00Z"
+      }
+    },
+    "expected": {
+      "kind": "dns_non_public",
+      "requestHost": "signin.example.test",
+      "observedAt": "2026-09-01T10:00:00+00:00",
+      "recoveryStatus": null,
+      "checkCount": 0,
+      "checkedAt": null,
+      "nextCheckAt": null,
+      "retryEligibleAt": null
+    }
+  },
+  {
+    "name": "invalid recovery count 1",
+    "metadata": {
+      "fetchFailure": {
+        "kind": "dns_non_public",
+        "requestHost": "signin.example.test",
+        "observedAt": "2026-09-01T10:00:00+00:00",
+        "requestUrl": "https://signin.example.test/private?token=must-not-project",
+        "exception": "must-not-project"
+      },
+      "fetchRecovery": {
+        "status": "retry_ready",
+        "checkCount": "1",
+        "checkedAt": "2026-09-07T18:00:00Z",
+        "nextCheckAt": null,
+        "retryEligibleAt": "2026-09-07T18:00:00Z"
+      }
+    },
+    "expected": {
+      "kind": "dns_non_public",
+      "requestHost": "signin.example.test",
+      "observedAt": "2026-09-01T10:00:00+00:00",
+      "recoveryStatus": null,
+      "checkCount": 0,
+      "checkedAt": null,
+      "nextCheckAt": null,
+      "retryEligibleAt": null
+    }
+  },
+  {
+    "name": "unknown failure untrusted cause with private payload",
+    "metadata": {
+      "fetchFailure": {
+        "kind": "untrusted cause with private payload",
+        "requestHost": "signin.example.test",
+        "observedAt": "2026-09-01T10:00:00+00:00",
+        "requestUrl": "https://signin.example.test/private?token=must-not-project",
+        "exception": "must-not-project"
+      }
+    },
+    "expected": null
+  },
+  {
+    "name": "unknown failure None",
+    "metadata": {
+      "fetchFailure": {
+        "kind": null,
+        "requestHost": "signin.example.test",
+        "observedAt": "2026-09-01T10:00:00+00:00",
+        "requestUrl": "https://signin.example.test/private?token=must-not-project",
+        "exception": "must-not-project"
+      }
+    },
+    "expected": null
+  },
+  {
+    "name": "unknown failure []",
+    "metadata": {
+      "fetchFailure": {
+        "kind": [],
+        "requestHost": "signin.example.test",
+        "observedAt": "2026-09-01T10:00:00+00:00",
+        "requestUrl": "https://signin.example.test/private?token=must-not-project",
+        "exception": "must-not-project"
+      }
+    },
+    "expected": null
+  },
+  {
+    "name": "unknown failure {}",
+    "metadata": {
+      "fetchFailure": {
+        "kind": {},
+        "requestHost": "signin.example.test",
+        "observedAt": "2026-09-01T10:00:00+00:00",
+        "requestUrl": "https://signin.example.test/private?token=must-not-project",
+        "exception": "must-not-project"
+      }
+    },
+    "expected": null
+  },
+  {
+    "name": "missing typed failure",
+    "metadata": {},
+    "expected": null
+  }
+]

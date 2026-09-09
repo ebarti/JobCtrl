@@ -122,6 +122,10 @@ def _isolated_codex_env(codex_home: Path, process_home: Path) -> dict[str, str]:
         "CODEX_HOME": str(codex_home),
         "HOME": str(process_home),
         **{key: "" for key in CODEX_NEUTRALIZED_AUTH_ENV},
+        # Codex consumes endpoint overrides literally, including empty strings.
+        # Pin provider defaults so refresh works without inheriting a redirect.
+        "CODEX_REFRESH_TOKEN_URL_OVERRIDE": "https://auth.openai.com/oauth/token",
+        "CODEX_REVOKE_TOKEN_URL_OVERRIDE": "https://auth.openai.com/oauth/revoke",
     }
     if os.name == "nt":
         env["USERPROFILE"] = str(process_home)
@@ -305,32 +309,6 @@ class CodexAnalysisAdapter:
             )
             analysis = JobAnalysis.model_validate_json(outcome.final_response)
             return JobAnalysisDraft(model_id=self._model, **analysis.model_dump())
-
-
-def _optional_int(value: Any) -> int | None:
-    """Coerce an SDK usage field to ``int``, or ``None`` when absent/unparseable."""
-    if value is None:
-        return None
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _usage_from_result(result: Any) -> tuple[int | None, int | None]:
-    """Best-effort ``(input_tokens, output_tokens)`` from a Codex ``TurnResult``.
-
-    Codex reports cumulative token usage on ``result.usage.total``. Returns
-    ``(None, None)`` when the SDK surfaced no usage so the span omits token
-    counts rather than fabricating them.
-    """
-    total = getattr(getattr(result, "usage", None), "total", None)
-    if total is None:
-        return None, None
-    return (
-        _optional_int(getattr(total, "input_tokens", None)),
-        _optional_int(getattr(total, "output_tokens", None)),
-    )
 
 
 __all__ = [

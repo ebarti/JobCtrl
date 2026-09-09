@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 
 import { listApplyReviewQueue } from "../src/application-feedback.js";
-import { buildDigest, readDigestState } from "../src/read-model.js";
+import { buildDashboardSummary, buildDigest, readDigestState } from "../src/read-model.js";
 import { BUILT_IN_RESUME_TEMPLATE_THEME } from "../src/resume-templates.js";
 import { buildApp } from "../src/server.js";
 import { describe, expect, it } from "vitest";
@@ -42,6 +42,7 @@ interface DigestParityFixture {
     dailyBudgetUsd: number;
   };
   jobs: FixtureJob[];
+  sourceRegistry: Array<{ sourceId: string; displayName: string }>;
   sourceQuality: Array<{
     sourceId: string;
     recommendedState: string;
@@ -87,6 +88,7 @@ interface DigestParityFixture {
       count: number;
       sources: Array<{
         sourceId: string;
+        displayName?: string;
         recommendedState: string;
         consecutiveFailures: number;
       }>;
@@ -112,6 +114,26 @@ const fixturePath = path.resolve(
 const fixture = JSON.parse(fs.readFileSync(fixturePath, "utf8")) as DigestParityFixture;
 
 describe("daily digest read model", () => {
+  it("carries registry source names into health and digest without changing failure evidence", () => {
+    const { dbPath, tempDir, cleanup } = makeTempDb();
+    try {
+      seedDigestDatabase(dbPath, tempDir);
+      const db = new Database(dbPath);
+      try {
+        const summary = buildDashboardSummary(db);
+        for (const source of fixture.expected.blockedSources.sources) {
+          expect(summary.sourceHealth.find((item) => item.sourceId === source.sourceId))
+            .toMatchObject(source);
+        }
+        expect(buildDigest(db).blockedSources).toEqual(fixture.expected.blockedSources);
+      } finally {
+        db.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
   it("builds the shared local digest fixture without advancing the acknowledge watermark", () => {
     const { dbPath, tempDir, cleanup } = makeTempDb();
     try {
@@ -161,8 +183,14 @@ describe("daily digest read model", () => {
 
       const response = await app.inject({ method: "GET", url: "/v1/digest" });
       expect(response.statusCode).toBe(200);
-      const digest = response.json() as { ok: true; since: string | null; newMatches: { count: number } };
+      const digest = response.json() as {
+        ok: true;
+        since: string | null;
+        newMatches: { count: number };
+        blockedSources: DigestParityFixture["expected"]["blockedSources"];
+      };
 
+      expect(digest.blockedSources).toEqual(fixture.expected.blockedSources);
       expect(digest.ok).toBe(true);
       expect(digest.since).toBe(fixture.expected.since);
       expect(digest.newMatches.count).toBe(fixture.expected.newMatches.count);
@@ -440,6 +468,12 @@ function insertMaterialArtifact(
 }
 
 function seedSourceQuality(db: Database.Database): void {
+  for (const source of fixture.sourceRegistry) {
+    db.prepare(`INSERT INTO source_registry_entries (
+      tenant_id, source_id, kind, display_name, owner, priority, state, policy_id, created_at, updated_at
+    ) VALUES ('local', ?, 'broad_board', ?, 'system', 'lead_generator', 'experimental', 'broad_board_lead_generator', ?, ?)`)
+      .run(source.sourceId, source.displayName, fixture.now, fixture.now);
+  }
   const insert = db.prepare(
     `INSERT INTO source_quality_stats (
        tenant_id, source_id, window_start, window_end, run_count,

@@ -673,6 +673,9 @@ export class DemoApiClientAdapter implements ApiClientPort {
   importResume = this.local("importResume");
   updateSettings = this.local("updateSettings");
   extensionCapabilityToken = this.unsupported("extensionCapabilityToken");
+  discoveryBrowserBridgeStatus = this.unsupported(
+    "discoveryBrowserBridgeStatus",
+  );
   rotateExtensionCapabilityToken = this.unsupported(
     "rotateExtensionCapabilityToken",
   );

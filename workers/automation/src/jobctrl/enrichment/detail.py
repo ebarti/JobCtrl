@@ -25,15 +25,18 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sqlite3
 import threading
 import time
 import uuid
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import nullcontext
 from datetime import datetime, timezone
 from urllib.parse import urljoin, urlparse
 
+from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
 
 from jobctrl import database as db_module
@@ -69,6 +72,7 @@ from jobctrl.domain.enrichment.value_objects import (
 )
 from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.errors import ConfigurationError, TransientNetworkError
+from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 from jobctrl.infrastructure.enrichment import SqliteEnrichmentRepository
 from jobctrl.infrastructure.enrichment.execution_lease import (
@@ -76,6 +80,12 @@ from jobctrl.infrastructure.enrichment.execution_lease import (
     fence_enrichment_execution_lease,
 )
 from jobctrl.infrastructure.discovery.sqlite_identity_resolver import SqliteJobIdentityResolver
+from jobctrl.infrastructure.discovery.live_browser import (
+    LiveBrowserResult,
+    LiveBrowserTaskError,
+    LiveChromeDiscoveryClient,
+    LiveChromeRobotsCache,
+)
 from jobctrl.infrastructure.enrichment.sqlite_repository import (
     SqlitePostingSnapshotSetRepository,
 )
@@ -90,6 +100,7 @@ from jobctrl.infrastructure.enrichment.linkedin_apply_resolver import (
     linkedin_apply_resolver_enabled,
 )
 from jobctrl.infrastructure.network.proxy import ProxyConfig, parse_proxy
+from jobctrl.infrastructure.network.fetch_failures import PublicFetchFailureKind
 from jobctrl.infrastructure.llm import get_llm_adapter
 from jobctrl.domain.discovery.source_registry import ENRICHMENT_CRAWL_POLICY
 from jobctrl.domain.ports.politeness import (
@@ -122,8 +133,9 @@ class _OwnerAuthenticatedRobots:
     enforced — enforcing an anonymous robots verdict on the owner's own account
     would break a user-authorized flow. This is **not** a controls bypass: the
     per-host rate limit and the per-run request budget still apply through the
-    shared gateway, and this port is used only for the persistent authenticated
-    context, never for an anonymous fetch.
+    shared gateway, and this port is used only for the selected live Chrome
+    profile (or the legacy persistent authenticated context), never for an
+    anonymous fetch.
     """
 
     def evaluate(self, url: str, user_agent: str) -> RobotsVerdict:  # noqa: ARG002
@@ -135,19 +147,43 @@ def _new_enrichment_budget() -> RunBudgetCounter:
     return RunBudgetCounter(ENRICHMENT_CRAWL_POLICY.max_requests_per_run)
 
 
-def _mark_unsafe_url_block(
+def _mark_public_fetch_failure(
     result: dict,
     decision: PublicUrlDecision,
     *,
     blocked_url: str,
     t0: float,
 ) -> dict:
-    result["status"] = "blocked"
-    result["security_outcome"] = _SECURITY_OUTCOME_UNSAFE_URL
+    kind = decision.failure_kind or PublicFetchFailureKind.UNSAFE_DESTINATION
+    result["status"] = "blocked" if kind.destination_denied else "error"
+    result["security_outcome"] = _SECURITY_OUTCOME_UNSAFE_URL if kind.destination_denied else None
+    result["fetch_failure_kind"] = kind.value
     result["blocked_url"] = blocked_url
     result["error"] = decision.reason or "URL is not a public HTTP(S) destination"
     result["elapsed"] = time.time() - t0
     return result
+
+
+def _route_failure_decision(guard: PublicHttpUrlRouteGuard) -> PublicUrlDecision:
+    return PublicUrlDecision(False, guard.blocked_reason, getattr(guard, "failure_kind", None))
+
+
+def _fetch_failure_metadata(result: dict, *, observed_at: str) -> dict[str, object] | None:
+    try:
+        kind = PublicFetchFailureKind(result.get("fetch_failure_kind"))
+    except (TypeError, ValueError):
+        return None
+    request_url = str(result.get("blocked_url") or "")
+    try:
+        request_host = urlparse(request_url).hostname or ""
+    except ValueError:
+        request_host = ""
+    return {
+        "kind": kind.value,
+        "requestUrl": request_url,
+        "requestHost": request_host,
+        "observedAt": observed_at,
+    }
 
 
 def _enrichment_session(
@@ -410,6 +446,37 @@ def _page_to_detail_page(page, url: str, status: int | None = None) -> DetailPag
     )
 
 
+def _live_result_to_detail_page(result: LiveBrowserResult, url: str) -> DetailPage:
+    """Build the same extraction value object from the extension snapshot."""
+
+    html = result.body_html or result.body_text
+    soup = BeautifulSoup(html, "html.parser")
+    json_ld: list[object] = []
+    for element in soup.select('script[type="application/ld+json"]'):
+        try:
+            json_ld.append(json.loads(element.get_text()))
+        except (TypeError, json.JSONDecodeError):
+            continue
+    main = next(
+        (
+            candidate
+            for selector in ("main", "article", '[role="main"]', "#content", ".content")
+            if (candidate := soup.select_one(selector)) is not None
+            and len(candidate.get_text(" ", strip=True)) > 200
+        ),
+        soup.body or soup,
+    )
+    return DetailPage(
+        url=url,
+        final_url=result.final_url,
+        page_title=result.title,
+        html=_clean_content_html(str(main)),
+        json_ld=tuple(json_ld),
+        status=result.status_code,
+        fetched_at=datetime.now(timezone.utc).isoformat(),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Cascade orchestration over a Playwright Page (legacy batch entry points)
 # ---------------------------------------------------------------------------
@@ -449,7 +516,7 @@ def scrape_detail_page(page, url: str, *, session: PolitenessSession | None = No
 
     initial_safety = validate_public_http_url(url)
     if not initial_safety.allowed:
-        return _mark_unsafe_url_block(result, initial_safety, blocked_url=url, t0=t0)
+        return _mark_public_fetch_failure(result, initial_safety, blocked_url=url, t0=t0)
 
     if session is None:
         session = _default_enrichment_session()
@@ -461,6 +528,55 @@ def scrape_detail_page(page, url: str, *, session: PolitenessSession | None = No
             result["elapsed"] = time.time() - t0
             return result
         return _scrape_detail_page_body(page, url, result, t0)
+
+
+def scrape_detail_page_via_live_chrome(
+    browser: LiveChromeDiscoveryClient,
+    url: str,
+    *,
+    session: PolitenessSession,
+) -> dict:
+    """Run enrichment in the user's active Chrome profile via the extension."""
+
+    result: dict = {
+        "full_description": None,
+        "application_url": None,
+        "status": "error",
+        "tier_used": None,
+        "error": None,
+        "active_state": None,
+        "verification_method": None,
+        "http_status": None,
+        "security_outcome": None,
+        "blocked_url": None,
+    }
+    t0 = time.time()
+    initial_safety = validate_public_http_url(url)
+    if not initial_safety.allowed:
+        return _mark_public_fetch_failure(result, initial_safety, blocked_url=url, t0=t0)
+    with session.guard(url) as decision:
+        if not decision.allowed:
+            result["status"] = "blocked"
+            result["politeness_outcome"] = decision.outcome.value
+            result["error"] = decision.reason
+            result["elapsed"] = time.time() - t0
+            return result
+        live_result = browser.rendered_page(url, timeout_seconds=60.0)
+    final_safety = validate_public_http_url(live_result.final_url)
+    if not final_safety.allowed:
+        return _mark_public_fetch_failure(
+            result,
+            final_safety,
+            blocked_url=live_result.final_url or url,
+            t0=t0,
+        )
+    detail_page = _live_result_to_detail_page(live_result, url)
+    return _extract_detail_page(
+        detail_page,
+        result,
+        t0,
+        status_code=live_result.status_code,
+    )
 
 
 def _scrape_detail_page_body(page, url: str, result: dict, t0: float) -> dict:
@@ -487,8 +603,8 @@ def _scrape_detail_page_body(page, url: str, result: dict, t0: float) -> dict:
                 pass
         except Exception as exc:
             if route_guard.blocked:
-                decision = PublicUrlDecision(False, route_guard.blocked_reason)
-                return _mark_unsafe_url_block(
+                decision = _route_failure_decision(route_guard)
+                return _mark_public_fetch_failure(
                     result,
                     decision,
                     blocked_url=route_guard.blocked_url or url,
@@ -500,8 +616,8 @@ def _scrape_detail_page_body(page, url: str, result: dict, t0: float) -> dict:
             return result
 
         if route_guard.blocked:
-            decision = PublicUrlDecision(False, route_guard.blocked_reason)
-            return _mark_unsafe_url_block(
+            decision = _route_failure_decision(route_guard)
+            return _mark_public_fetch_failure(
                 result,
                 decision,
                 blocked_url=route_guard.blocked_url or url,
@@ -510,7 +626,7 @@ def _scrape_detail_page_body(page, url: str, result: dict, t0: float) -> dict:
 
         final_safety = validate_public_http_url(str(getattr(page, "url", "") or ""))
         if not final_safety.allowed:
-            return _mark_unsafe_url_block(
+            return _mark_public_fetch_failure(
                 result,
                 final_safety,
                 blocked_url=str(getattr(page, "url", "") or url),
@@ -519,8 +635,8 @@ def _scrape_detail_page_body(page, url: str, result: dict, t0: float) -> dict:
 
         detail_page = _page_to_detail_page(page, url, status=status_code)
         if route_guard.blocked:
-            decision = PublicUrlDecision(False, route_guard.blocked_reason)
-            return _mark_unsafe_url_block(
+            decision = _route_failure_decision(route_guard)
+            return _mark_public_fetch_failure(
                 result,
                 decision,
                 blocked_url=route_guard.blocked_url or url,
@@ -528,6 +644,18 @@ def _scrape_detail_page_body(page, url: str, result: dict, t0: float) -> dict:
             )
     finally:
         route_guard.close()
+
+    return _extract_detail_page(detail_page, result, t0, status_code=status_code)
+
+
+def _extract_detail_page(
+    detail_page: DetailPage,
+    result: dict,
+    t0: float,
+    *,
+    status_code: int | None,
+) -> dict:
+    """Run the shared deterministic/LLM extraction cascade over one snapshot."""
 
     active_state, verification_method = ActiveStateVerifier().verify(detail_page)
     result["active_state"] = active_state.value
@@ -582,6 +710,11 @@ def _detail_failure_retryable(cascade_result: dict) -> bool:
     """
     if cascade_result.get("security_outcome") == _SECURITY_OUTCOME_UNSAFE_URL:
         return False
+    if cascade_result.get("fetch_failure_kind"):
+        try:
+            return PublicFetchFailureKind(cascade_result["fetch_failure_kind"]).retryable
+        except ValueError:
+            return False
     status = cascade_result.get("http_status")
     if isinstance(status, int):
         if status in _RETRYABLE_STATUSES:
@@ -900,7 +1033,7 @@ def _record_enrich_robots_blocked(
     if activity_lease is not None:
         _fence_execution_enrichment_lease(conn, activity_lease)
     ensure_job_stage_rows(conn, job_id, tenant_id=tenant_id)
-    blocked_conditions = ["authenticated_linkedin_browser_unavailable"] if _is_linkedin_job(site, url) else []
+    blocked_conditions = ["discovery_browser_extension_unavailable"] if _is_linkedin_job(site, url) else []
     set_stage_state(
         conn,
         job_id,
@@ -1239,6 +1372,8 @@ def _record_enrich_job_failure(
     the row was already marked succeeded earlier in the loop).
     """
     message = f"{type(exc).__name__}: {exc}"[:500]
+    error_code = exc.code if isinstance(exc, LiveBrowserTaskError) else "ENRICH_INTERNAL_ERROR"
+    retryable = exc.retryable if isinstance(exc, LiveBrowserTaskError) else True
     try:
         from jobctrl.state import record_job_event, set_stage_state, utc_now
 
@@ -1258,6 +1393,8 @@ def _record_enrich_job_failure(
             conn,
             job_id,
             message,
+            error_code=error_code,
+            retryable=retryable,
             finished_at=finished_at,
             tenant_id=tenant_id,
             commit=activity_lease is None,
@@ -1267,9 +1404,9 @@ def _record_enrich_job_failure(
             job_id,
             "enrich",
             "failed",
-            error_code="ENRICH_INTERNAL_ERROR",
+            error_code=error_code,
             error_message=message,
-            retryable=True,
+            retryable=retryable,
             finished_at=finished_at,
             validate_transition=False,
             tenant_id=tenant_id,
@@ -1283,9 +1420,9 @@ def _record_enrich_job_failure(
             level="error",
             message=message,
             payload={
-                "errorCode": "ENRICH_INTERNAL_ERROR",
+                "errorCode": error_code,
                 "errorMessage": message,
-                "retryable": True,
+                "retryable": retryable,
             },
             tenant_id=tenant_id,
         )
@@ -1303,6 +1440,8 @@ def _record_enrich_aggregate_failure(
     message: str,
     *,
     finished_at: str,
+    error_code: str,
+    retryable: bool,
     tenant_id: TenantId = LOCAL_TENANT,
     commit: bool = True,
 ) -> None:
@@ -1315,9 +1454,9 @@ def _record_enrich_aggregate_failure(
         return
 
     error = EnrichmentError(
-        code="ENRICH_INTERNAL_ERROR",
+        code=error_code,
         message=message,
-        retryable=True,
+        retryable=retryable,
     )
     aggregate = existing or JobEnrichment.empty(
         tenant_id=tenant_id,
@@ -1353,6 +1492,7 @@ def scrape_site_batch(
     activity_lease: EnrichmentExecutionLease | None = None,
     workflow_id: str | None = None,
     workflow_run_id: str | None = None,
+    discovery_execution: DiscoveryExecutionRef | None = None,
 ) -> dict:
     """Process all jobs for one site using a shared browser context.
 
@@ -1401,8 +1541,23 @@ def scrape_site_batch(
 
     repo = SqliteEnrichmentRepository(conn)
 
+    live_browser = None
+    if discovery_execution is not None:
+        source_slug = re.sub(r"[^a-z0-9]+", "-", str(site).casefold()).strip("-")
+        live_browser = LiveChromeDiscoveryClient(
+            discovery_execution,
+            source_family="enrichment",
+            source_id=f"enrichment:{source_slug or 'unknown'}",
+            cancel_event=cancel_event,
+        )
+        # Fail before mutating any job lifecycle state when the selected live
+        # Chrome profile is unavailable. Normal workflow/API entry points also
+        # preflight this boundary, but the worker remains fail-closed if the
+        # extension disconnects between dispatch and activity execution.
+        live_browser.ensure_available()
+
     try:
-        with sync_playwright() as p:
+        with (nullcontext(None) if live_browser is not None else sync_playwright()) as p:
             browser = None
             resolver: LinkedInApplyUrlResolver | None = None
             authenticated_page = None
@@ -1413,7 +1568,18 @@ def scrape_site_batch(
             # owner's own LinkedIn account. Anonymous rows keep the normal
             # gateway and never share the authenticated browser/profile.
             owner_authenticated_session: PolitenessSession | None = None
-            anonymous_gateway = gateway or PolitenessGateway()
+            base_gateway = gateway or PolitenessGateway()
+            anonymous_gateway = base_gateway
+            if live_browser is not None:
+                anonymous_gateway = anonymous_gateway.with_robots(
+                    LiveChromeRobotsCache(live_browser)
+                )
+                owner_authenticated_session = _enrichment_session(
+                    base_gateway.with_robots(_OwnerAuthenticatedRobots()),
+                    run_budget,
+                    conn,
+                    site=site,
+                )
             anonymous_session = _enrichment_session(
                 anonymous_gateway,
                 run_budget,
@@ -1435,6 +1601,11 @@ def scrape_site_batch(
 
             def _page_and_session_for(url: str) -> tuple[object, PolitenessSession, object | None]:
                 nonlocal resolver, authenticated_page, owner_authenticated_session
+                if live_browser is not None:
+                    if _is_linkedin_job(site, url):
+                        assert owner_authenticated_session is not None
+                        return None, owner_authenticated_session, None
+                    return None, anonymous_session, None
                 if resolver is None and linkedin_apply_resolver_enabled() and _is_linkedin_job(site, url):
                     candidate = LinkedInApplyUrlResolver(
                         proxy=_PROXY_CONFIG,
@@ -1596,10 +1767,18 @@ def scrape_site_batch(
                         started_at=started_at,
                     )
 
+                    if live_browser is None:
+                        scraped = scrape_detail_page(page, url, session=session)
+                    else:
+                        scraped = scrape_detail_page_via_live_chrome(
+                            live_browser,
+                            url,
+                            session=session,
+                        )
                     cascade_result = _apply_discovery_description_fallback(
                         conn,
                         job_id,
-                        scrape_detail_page(page, url, session=session),
+                        scraped,
                         tenant_id=tenant_id,
                     )
                     if (
@@ -1835,6 +2014,7 @@ def scrape_site_batch(
                         )
                         failed = aggregate.fail_attempt(error=err, finished_at=finished_at)
                         repo.save(failed, commit=activity_lease is None)
+                        fetch_failure = _fetch_failure_metadata(cascade_result, observed_at=finished_at)
                         set_stage_state(
                             conn,
                             job_id,
@@ -1847,6 +2027,7 @@ def scrape_site_batch(
                             error_message=err.message,
                             retryable=retryable,
                             next_action=f"jobctrl retry enrich {url}" if retryable else None,
+                            metadata={"fetchFailure": fetch_failure} if fetch_failure else None,
                             tenant_id=tenant_id,
                             expected_version=claim_version,
                         )
@@ -1863,6 +2044,7 @@ def scrape_site_batch(
                                 "retryable": retryable,
                                 "securityOutcome": cascade_result.get("security_outcome"),
                                 "blockedUrl": cascade_result.get("blocked_url"),
+                                "fetchFailure": fetch_failure,
                                 "attemptNumber": failed.attempt_count,
                                 "status": status,
                                 "tier": tier,
@@ -1904,7 +2086,7 @@ def scrape_site_batch(
                 except StaleEnrichmentExecutionLease as exc:
                     conn.rollback()
                     raise TransientNetworkError(str(exc)) from exc
-                except TransientNetworkError:
+                except (ConfigurationError, TransientNetworkError):
                     _reset_interrupted_enrich_stage(
                         conn,
                         job_id,
@@ -3235,7 +3417,10 @@ def _systemic_enrichment_error(site_errors: dict[str, dict[str, str]]) -> Except
     broken_env = bool(site_errors) and all(
         _looks_like_broken_browser_env(info.get("error_message")) for info in site_errors.values()
     )
-    if broken_env:
+    configuration_failure = bool(site_errors) and all(
+        info.get("error_class") == "ConfigurationError" for info in site_errors.values()
+    )
+    if broken_env or configuration_failure:
         return ConfigurationError(message)
     return TransientNetworkError(message)
 
@@ -3406,6 +3591,11 @@ def _release_unstarted_enrichment_cohort(
                 or metadata.get("leaseEpoch") != activity_lease.epoch
             ):
                 continue
+            # Automatic reservations are settled from exact Temporal history.
+            # Releasing one here would let a preflight failure retry forever
+            # without consuming an attempt. Keep it queued for that decision.
+            if metadata.get("automaticPreparation"):
+                continue
             set_stage_state(
                 conn,
                 job_id,
@@ -3414,7 +3604,10 @@ def _release_unstarted_enrichment_cohort(
                 tenant_id=tenant_id,
                 attempt_count=int(row[1] or 0),
                 retryable=True,
-                metadata={"recoveryReason": "workflow_selection_unprocessed"},
+                metadata={
+                    **metadata,
+                    "recoveryReason": "workflow_selection_unprocessed",
+                },
                 validate_transition=False,
                 expected_version=int(row[3] or 0),
             )
@@ -3723,6 +3916,7 @@ def _run_detail_scraper(
     activity_lease: EnrichmentExecutionLease | None = None,
     workflow_id: str | None = None,
     workflow_run_id: str | None = None,
+    discovery_execution: DiscoveryExecutionRef | None = None,
 ) -> dict:
     """Group pending jobs by site and process each batch.
 
@@ -3739,6 +3933,17 @@ def _run_detail_scraper(
     # ``detail_scraped_at IS NULL`` gate was redundant AND blocked the
     # post-``reset_job_stage("enrich")`` re-pickup.
     stable_tenant_id = TenantId(str(tenant_id))
+    # Every Temporal-backed enrichment attempt has an execution identity, even
+    # when it was started by a job retry rather than the parent Discover
+    # workflow. Bind those attempts to the same live-extension broker so a
+    # retry never falls back to the copied-profile compatibility path.
+    browser_execution = discovery_execution
+    if browser_execution is None and workflow_id and workflow_run_id:
+        browser_execution = DiscoveryExecutionRef(
+            tenant_id=str(stable_tenant_id),
+            workflow_id=workflow_id,
+            temporal_run_id=workflow_run_id,
+        )
     if reset_linkedin_candidates and not job_ids and not recovery_key:
         recovery_key = f"local-enrich:{uuid.uuid4().hex}"
     # A later enrichment workflow must reconsider robots-blocked rows, but only
@@ -3849,7 +4054,7 @@ def _run_detail_scraper(
             activity_lease=activity_lease,
         )
 
-    if reset_linkedin_candidates:
+    if reset_linkedin_candidates and browser_execution is None:
         try:
             _reset_authenticated_linkedin_retry_candidates(
                 conn,
@@ -4001,6 +4206,7 @@ def _run_detail_scraper(
                         activity_lease=activity_lease,
                         workflow_id=workflow_id,
                         workflow_run_id=workflow_run_id,
+                        discovery_execution=browser_execution,
                     )
                 else:
                     stats = scrape_site_batch(
@@ -4017,6 +4223,7 @@ def _run_detail_scraper(
                         activity_lease=activity_lease,
                         workflow_id=workflow_id,
                         workflow_run_id=workflow_run_id,
+                        discovery_execution=browser_execution,
                     )
             finally:
                 db_module.close_connection(database_path)
@@ -4099,6 +4306,7 @@ def _run_detail_scraper(
                         activity_lease=activity_lease,
                         workflow_id=workflow_id,
                         workflow_run_id=workflow_run_id,
+                        discovery_execution=browser_execution,
                     )
                 else:
                     stats = scrape_site_batch(
@@ -4115,6 +4323,7 @@ def _run_detail_scraper(
                         activity_lease=activity_lease,
                         workflow_id=workflow_id,
                         workflow_run_id=workflow_run_id,
+                        discovery_execution=browser_execution,
                     )
             except TransientNetworkError:
                 if cancel_event is not None and cancel_event.is_set():
@@ -4293,6 +4502,7 @@ def run_enrichment(
     activity_lease: EnrichmentExecutionLease | None = None,
     workflow_id: str | None = None,
     workflow_run_id: str | None = None,
+    discovery_execution: DiscoveryExecutionRef | None = None,
 ) -> dict:
     """Main entry point for detail page enrichment.
 
@@ -4312,6 +4522,18 @@ def run_enrichment(
     """
     conn = init_db()
 
+    # Bind every Temporal-backed Enrich invocation to the selected live Chrome
+    # extension before any legacy URL-repair branch can choose a transport.
+    # Job-scoped retries do not carry the parent Discover execution explicitly,
+    # but their workflow/run identity is still the exact broker authority.
+    browser_execution = discovery_execution
+    if browser_execution is None and workflow_id and workflow_run_id:
+        browser_execution = DiscoveryExecutionRef(
+            tenant_id=str(LOCAL_TENANT),
+            workflow_id=workflow_id,
+            temporal_run_id=workflow_run_id,
+        )
+
     url_stats = resolve_all_urls(conn)
     log.info(
         "URL resolution: %d resolved, %d absolute, %d failed",
@@ -4321,7 +4543,7 @@ def run_enrichment(
     )
 
     wttj_count = conn.execute("SELECT COUNT(*) FROM jobs WHERE site = 'WelcomeToTheJungle'").fetchone()[0]
-    if wttj_count > 0:
+    if wttj_count > 0 and browser_execution is None:
         sample = conn.execute("SELECT url FROM jobs WHERE site = 'WelcomeToTheJungle' LIMIT 1").fetchone()
         if sample and not sample[0].startswith("http"):
             updated = resolve_wttj_urls(conn)
@@ -4340,6 +4562,7 @@ def run_enrichment(
             activity_lease=activity_lease,
             workflow_id=workflow_id,
             workflow_run_id=workflow_run_id,
+            discovery_execution=browser_execution,
         )
     return _run_detail_scraper(
         conn,
@@ -4352,6 +4575,7 @@ def run_enrichment(
         activity_lease=activity_lease,
         workflow_id=workflow_id,
         workflow_run_id=workflow_run_id,
+        discovery_execution=browser_execution,
     )
 
 

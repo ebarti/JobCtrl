@@ -259,7 +259,7 @@ View composition (Dashboard, Jobs, Artifacts) is treated separately in §4.5.
 | Queries | `useProfileQuery()` → `profileKeys.profile(tenantId)`; `useSettingsQuery()` → `profileKeys.settings(tenantId)`; `useCredentialsQuery()` → `profileKeys.credentials(tenantId)`; `useResumeTemplatesQuery()` → `profileKeys.resumeTemplates(tenantId)`. |
 | Mutations | `useUpdateProfileMutation()`, `useUpdateSettingsMutation()`, `useUpdateCredentialMutation()`, `useDeleteCredentialMutation()`, `useImportResumeMutation()` (the wizard's confirm step), `useSaveResumeTemplateMutation()`, and `useSetDefaultResumeTemplateMutation()`. All invalidate the corresponding query key. |
 | Forms | TanStack Form with Zod resolvers (§4.6). |
-| Baseline resume editor | `useProfileHtmlPreviewUrl()` returns `apiClient.profilePreviewHtmlUrl(cacheKey)` where `cacheKey = useProfileMutationCount()` (a derived value from the React Query mutation observer). The Profile editor fetches that generated HTML into the Plate editor whenever the cache key changes. Plate semantic IDs project direct name, executive-profile, position-summary, and experience-bullet text edits into the existing TanStack Profile draft; composite display rows and rich formatting remain document-local. Experience move controls and the explicit newest-first action reorder the canonical `resume.experience_entries` array in that same draft; assemblers and renderers preserve the saved sequence instead of applying an implicit output-time sort. (Resolves §6 question 7.) |
+| Baseline resume editor | The Profile form advances a saved preview source and revision only on clean initialization, save, or reset. Optimistic query changes and older save responses cannot replace a newer Plate/shared draft; the Preferences template preview still uses `useProfileHtmlPreviewUrl()` with `useProfileMutationCount()`. The Profile context binds the returned baseline HTML to canonical field and entry identities before Plate import. Name/contact text, address parts, summary, individual experience and education fields, bullets, and skill fields project into the existing TanStack draft. Composite fields are bound from validated saved values and markup, never guessed by splitting text; raw baseline values support punctuation and date normalization. Projection checks only the targeted draft structure so temporarily incomplete fields remain editable; complete validation still runs on save. Rich formatting and link presentation remain document-local. Experience move controls and the explicit newest-first action reorder the canonical `resume.experience_entries` array in that same draft; assemblers and renderers preserve the saved sequence instead of applying an implicit output-time sort. (Resolves §6 question 7.) |
 | Notes | The wizard is **a nested route**, not a `useState` step counter. Each step is its own component / route; navigation uses `Link` so steps are bookmarkable, browser-back works, and refresh recovers. Step state (uploaded file metadata, draft profile) lives in a Zustand `profileImportStore` with `persist` middleware so a refresh does not lose the upload. (Resolves §6 question 8.) Settings and credentials hooks are co-located here because their backend endpoints are part of the Profile context's API surface. The settings/preferences forms include the daily LLM budget (`dailyBudgetUsd` — the spend ceiling; `0` means unlimited) and an apply-approval-gate control (`applyApprovalRequired`) whose off state renders an explicit `role="alert"` warning that claims can skip review while final browser submit remains manual and owned email sends retain exact approval. |
 
 ### 4.4.5 Scoring
@@ -554,11 +554,11 @@ changes geometry, not typography.
   state is not server-derived." Examples we anticipate: a `commandPalette`
   open/close (cmd-k UX), a `confirmDialog` queue.
 
-Six Zustand stores exist today: `ui-preferences`, `toasts`, and
-`command-palette` (transient), plus `profile-import` and
-`stage-trigger-config` and `saved-table-views` (persisted). Four carry
-`persist` middleware — `jh:ui-preferences`, `jh:profile-import`,
-`jh:stage-trigger-config`, and `jh:saved-table-views`.
+Zustand stores hold `ui-preferences`, `toasts`, `profile-import`,
+`outreach-import`, `stage-trigger-config`, and `saved-table-views`.
+The toast queue is transient. Persisted stores use `jh:ui-preferences`,
+`jh:profile-import`, `jh:outreach-import`, `jh:stage-trigger-config`, and
+`jh:saved-table-views`.
 
 **Why this split (not "all Zustand" or "all context"):**
 

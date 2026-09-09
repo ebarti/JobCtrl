@@ -18,7 +18,7 @@ import {
   CollapsibleTrigger,
 } from "../../../shared/ui/collapsible.js";
 import { TailorJobButton } from "../../materials/components/RetailorCurrentPolicyButton.js";
-import { useBrowserCapabilitiesQuery } from "../../operations/hooks/useBrowserCapabilitiesQuery.js";
+import { useDiscoveryBrowserBridgeQuery } from "../../operations/hooks/useDiscoveryBrowserBridgeQuery.js";
 import { useRetryStageMutation } from "../hooks/useRetryStageMutation.js";
 import { StageBadge } from "./StageBadge.js";
 
@@ -37,8 +37,9 @@ export function StageTimeline({
     <ol aria-label="Preparation stages" className="timeline stage-timeline">
       {stages.map((stage) => {
         const diagnostics = stageDiagnostics(stage);
-        const guidance = stageGuidance(stage);
-        const manualCaptureUrl = guidance ? publicPostingUrl(postingUrl) : null;
+        const postingPageUrl = publicPostingUrl(postingUrl);
+        const guidance = stageGuidance(stage, postingPageUrl);
+        const manualCaptureUrl = guidance ? postingPageUrl : null;
         return (
           <li
             className="timeline-row stage-timeline__item"
@@ -73,7 +74,7 @@ export function StageTimeline({
                   stage.errorCode === "ENRICH_ROBOTS_DISALLOWED" &&
                   jobId &&
                   isLinkedInJobUrl(manualCaptureUrl) ? (
-                    <AuthenticatedLinkedInRetry jobId={jobId} />
+                    <LiveProfileLinkedInRetry jobId={jobId} />
                   ) : null}
                   <p>
                     <strong>Manual capture fallback.</strong> Open the posting
@@ -153,23 +154,17 @@ function StageDiagnosticDisclosure({
   );
 }
 
-function AuthenticatedLinkedInRetry({ jobId }: { jobId: string }): JSX.Element {
-  const capabilities = useBrowserCapabilitiesQuery();
+function LiveProfileLinkedInRetry({ jobId }: { jobId: string }): JSX.Element {
+  const bridge = useDiscoveryBrowserBridgeQuery();
   const retryStage = useRetryStageMutation();
-  const authenticatedLinkedIn = capabilities.data?.capabilities.find(
-    (capability) => capability.id === "authenticated-linkedin-browser",
-  );
-  const ready =
-    authenticatedLinkedIn?.status === "ready" &&
-    authenticatedLinkedIn.enabled &&
-    authenticatedLinkedIn.profileCopyReady;
+  const ready = bridge.data?.connected === true && bridge.data.installationBound;
 
-  if (capabilities.isPending) {
+  if (bridge.isPending) {
     return (
       <div className="flex flex-col items-start gap-2">
-        <p>Checking the authenticated LinkedIn browser capability.</p>
+        <p>Checking the paired extension in your current Chrome profile.</p>
         <Button disabled size="sm" variant="outline">
-          Checking authenticated browser
+          Checking Chrome extension
         </Button>
       </div>
     );
@@ -179,8 +174,9 @@ function AuthenticatedLinkedInRetry({ jobId }: { jobId: string }): JSX.Element {
     return (
       <div className="flex flex-col items-start gap-2">
         <p>
-          Authenticated retry needs an enabled LinkedIn browser and an
-          explicitly consented JobCtrl-owned profile copy.
+          Open the paired JobCtrl extension in the Chrome profile where you are
+          signed in to LinkedIn. JobCtrl reads that live profile directly; it
+          does not create or launch a copy.
         </p>
         <Button
           nativeButton={false}
@@ -188,7 +184,7 @@ function AuthenticatedLinkedInRetry({ jobId }: { jobId: string }): JSX.Element {
           size="sm"
           variant="outline"
         >
-          Set up authenticated LinkedIn browser
+          Connect this Chrome profile
         </Button>
       </div>
     );
@@ -197,10 +193,11 @@ function AuthenticatedLinkedInRetry({ jobId }: { jobId: string }): JSX.Element {
   return (
     <div className="flex flex-col items-start gap-2">
       <p>
-        Retry this LinkedIn job with the consented JobCtrl-owned profile. Host
-        pacing and the current run request budget still apply. The stage reset
-        and new attempt remain in audit history, and this preparation retry
-        never reaches application submission.
+        Retry this LinkedIn job through the extension in your current signed-in
+        Chrome profile. Host pacing and the current run request budget still
+        apply. No browser profile is copied or launched, the stage reset and new
+        attempt remain in audit history, and this preparation retry never
+        reaches application submission.
       </p>
       <Button
         disabled={retryStage.isPending}
@@ -214,12 +211,13 @@ function AuthenticatedLinkedInRetry({ jobId }: { jobId: string }): JSX.Element {
         size="sm"
       >
         {retryStage.isPending
-          ? "Retrying with authenticated browser"
-          : "Retry with authenticated browser"}
+          ? "Retrying through this Chrome profile"
+          : "Retry through this Chrome profile"}
       </Button>
       {retryStage.isError ? (
         <p role="alert">
-          The authenticated retry could not start. Try again from this job.
+          The live-profile retry could not start. Check that the extension is
+          connected, then try again from this job.
         </p>
       ) : null}
     </div>
@@ -302,11 +300,25 @@ function stageDiagnostics(stage: StageSummary): Array<[string, string]> {
       stage.applyUrlOutcome.retryable ? "available" : "not automatic",
     ]);
   }
+  if (stage.stage === "enrich" && stage.fetchFailure) {
+    const failure = stage.fetchFailure;
+    diagnostics.push(["fetch cause", failure.kind.replaceAll("_", " ")]);
+    if (failure.requestHost) diagnostics.push(["request host", failure.requestHost]);
+    if (failure.observedAt) diagnostics.push(["observed at", failure.observedAt]);
+    if (failure.recoveryStatus) {
+      diagnostics.push(["fetch recovery", failure.recoveryStatus.replaceAll("_", " ")]);
+      diagnostics.push(["destination checks", `${failure.checkCount}/5`]);
+    }
+    if (failure.checkedAt) diagnostics.push(["last checked", failure.checkedAt]);
+    if (failure.nextCheckAt) diagnostics.push(["next check", failure.nextCheckAt]);
+    if (failure.retryEligibleAt) diagnostics.push(["retry eligible at", failure.retryEligibleAt]);
+  }
   return diagnostics;
 }
 
 function stageGuidance(
   stage: StageSummary,
+  postingUrl: string | null,
 ): { title: string; explanation: string } | null {
   if (
     stage.stage !== "enrich" ||
@@ -315,17 +327,52 @@ function stageGuidance(
     return null;
   }
   if (stage.errorCode === "ENRICH_ROBOTS_DISALLOWED") {
+    if (isLinkedInJobUrl(postingUrl)) {
+      return {
+        title: "LinkedIn enrichment needs your live Chrome session",
+        explanation:
+          "A previous anonymous enrichment attempt stopped at LinkedIn's robots policy. Retry through the paired extension to read the posting in your current signed-in Chrome profile.",
+      };
+    }
     return {
       title: "Automated enrichment is blocked by site policy",
       explanation:
         "The site's robots policy does not allow JobCtrl to fetch this posting automatically, so JobCtrl did not fetch it.",
     };
   }
+  if (stage.fetchFailure) {
+    const failure = stage.fetchFailure;
+    const target = failure.requestHost ? `The request to ${failure.requestHost}` : "A page request";
+    if (failure.kind === "dns_non_public") {
+      const recovery = failure.recoveryStatus === "checks_exhausted"
+        ? "The five automatic destination checks finished without clearing the condition."
+        : failure.recoveryStatus === "stopped"
+          ? "Automatic rechecks stopped because a current destination check found a different safety restriction."
+          : failure.recoveryStatus === "retry_ready"
+            ? "Both destinations now validate as public. A guarded retry is ready within the existing attempt limit."
+            : "Eligible failures are rechecked automatically. Both the posting and the failed request must validate as public before a guarded retry.";
+      return { title: "A destination failed its DNS safety check", explanation:
+        `${target} resolved to a non-public address at the recorded failure time and was blocked. ${recovery}` };
+    }
+    const descriptions = {
+      timeout: ["A page request timed out", "timed out. Eligible attempts retry automatically within the existing attempt limit."],
+      connection: ["A page connection failed", "failed because the connection was interrupted or unavailable. Eligible attempts retry automatically within the existing attempt limit."],
+      dns_failure: ["A destination could not be resolved", "could not complete DNS resolution. Eligible attempts retry automatically within the existing attempt limit."],
+      tls: ["A secure connection failed", "failed its TLS connection. Automatic retry is stopped; the connection must meet the normal certificate checks."],
+      response_limit: ["A page response exceeded the size limit", "exceeded the public-fetch response limit, so extraction stopped."],
+      fetch_error: ["A page request failed", "failed without a recognized transient cause. This failure is not retried automatically."],
+      invalid_url: ["A page request contained an invalid destination", "did not have an allowed public HTTP(S) URL and was blocked."],
+      non_public_literal: ["A page request targeted a non-public address", "targeted a literal non-public IP address and was blocked. This destination is not retried automatically."],
+      unsafe_destination: ["A page request failed its destination check", "failed the public-destination checks and was blocked. Automatic retry is stopped."],
+    } as const;
+    const [title, reason] = descriptions[failure.kind];
+    return { title, explanation: `${target} ${reason}` };
+  }
   if (stage.errorCode === "DETAIL_UNSAFE_URL") {
     return {
-      title: "JobCtrl's read-only fetch guard stopped this page",
+      title: "An earlier fetch attempt was stopped",
       explanation:
-        "The posting tried a page request outside JobCtrl's read-only public-fetch policy. JobCtrl blocked that request instead of weakening the safety boundary.",
+        "This older failure has no structured cause. Recognized DNS and network failures can recover automatically; every retried request must still pass the public-destination checks.",
     };
   }
   return null;

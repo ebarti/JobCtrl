@@ -406,6 +406,10 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     pipelineKeys.operations(LOCAL_TENANT),
   ],
+  EnrichmentFetchRechecked: [
+    jobsKeys.detail(LOCAL_TENANT, JOB_ID),
+    pipelineKeys.operations(LOCAL_TENANT),
+  ],
   StageBlocked: [
     jobsKeys.lists(LOCAL_TENANT),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),

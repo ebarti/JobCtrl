@@ -35,6 +35,10 @@ function findRepoRoot(start: string): string {
 }
 
 export default async function globalSetup(): Promise<void> {
+  if (process.env["JOBCTRL_E2E_ISOLATED"] === "1") {
+    const { assertIsolatedE2eWorkspace } = createRequire(import.meta.url)("./isolated-workspace.cjs") as { assertIsolatedE2eWorkspace(): Promise<string> };
+    await assertIsolatedE2eWorkspace();
+  }
   const repoRoot = findRepoRoot(process.cwd());
   const stateFile = e2eStateFilePath();
   const targetDir = process.env["JOBCTRL_E2E_APP_DIR"];
@@ -52,6 +56,11 @@ export default async function globalSetup(): Promise<void> {
     fs.mkdirSync(targetDir, { recursive: true });
   }
 
+  if (process.env["JOBCTRL_E2E_ISOLATED"] === "1") {
+    fs.mkdirSync(process.env["TMPDIR"]!, { recursive: true });
+    fs.mkdirSync(process.env["JOBCTRL_E2E_SERVICE_HOME"]!, { recursive: true });
+  }
+
   const stdout = execFileSync(
     "corepack",
     [
@@ -66,6 +75,10 @@ export default async function globalSetup(): Promise<void> {
     { cwd: repoRoot, stdio: ["ignore", "pipe", "inherit"], encoding: "utf-8" },
   );
   const report = JSON.parse(stdout.trim()) as SeedReport;
+  if (process.env["JOBCTRL_E2E_ISOLATED"] === "1") {
+    const { assertExpectedWorkspace } = createRequire(import.meta.url)("./isolated-workspace.cjs") as { assertExpectedWorkspace(workspace: SeedReport): void };
+    assertExpectedWorkspace(report);
+  }
 
   fs.mkdirSync(path.dirname(stateFile), { recursive: true });
   fs.writeFileSync(stateFile, JSON.stringify({ workspace: report, stateFile }, null, 2));

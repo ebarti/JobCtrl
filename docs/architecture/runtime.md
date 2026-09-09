@@ -66,6 +66,9 @@ When isolated auth is absent, setup and generation retain one-time reuse
 of a regular Codex CLI `auth.json`; the explicit Codex provider verify action
 uses the same copy-once behavior before checking the isolated login. Existing
 JobCtrl-owned auth is not overwritten, and the normal Codex home is unchanged.
+SDK processes clear ambient credential values and pin refresh/revocation URLs
+to OpenAI's default HTTPS endpoints. These URL overrides cannot be blank:
+Codex consumes an empty value literally and cannot build a refresh request.
 The auth file stays outside `codex_home/workspace/`; the permissions profile
 denies root reads and grants prompt-driven reads only to that workspace subtree,
 minimal runtime paths, and the one canonical Codex executable required to start
@@ -210,7 +213,7 @@ to the ports in `shared/providers/PortsProvider.tsx`
 
 | Port | Local-mode adapter | Hosted-mode adapter (named, not built) |
 |---|---|---|
-| `ApiClientPort` | `FetchApiClientAdapter` (wraps `@jobctrl/api-client`) | Same adapter; baseUrl from env, `Authorization: Bearer <jwt>` injected by hosted `AuthInterceptor`. |
+| `ApiClientPort` | `JobCtrlApiClient` from `@jobctrl/api-client` | Transport with hosted authentication when implemented. |
 | `EventStreamPort` | `SseEventStreamAdapter` (`new EventSource(...)`) | `WebSocketEventStreamAdapter` if SSE proves limiting. |
 | `StoragePort` | `LocalStorageAdapter` | `IndexedDbAdapter` when client-side cache exceeds 5 MB. |
 | `SessionPort` | `LocalSessionAdapter` (returns `LOCAL_TENANT`) | `JwtSessionAdapter` (Auth0 / Cognito). |
@@ -399,6 +402,19 @@ autofill reads a separate sanitized profile DTO from the Candidate Profile read
 path; it does not expose profile passwords, resume content, generated
 artifacts, or apply submission authority.
 
+Discovery adds an installation-identity layer above the token: an explicit
+token save binds one extension-local UUID in a mode-`0600` app-dir file, and
+every heartbeat, lease-control, and completion request must present it. The
+status read model exposes only the last eight characters. A different Chrome
+profile holding the token receives `409` unless the user explicitly replaces
+the selection there. Four extension executors match the broker's four-task
+admission cap. Active lease-control polls keep readiness fresh and propagate
+worker cancellation; execution owns an independent hard timeout and tab
+cleanup when a task renders a page. The API validates task DNS at creation and
+lease. HTTP/API tasks execute in the extension service worker with redirects
+disabled; rendered-page tasks install tab-scoped exact-origin DNR rules before
+navigating.
+
 ### Provider Credential Boundary
 
 Provider credential storage crosses the TypeScript/Python process boundary; it
@@ -457,7 +473,12 @@ Discovery page, including target search, runtime, scheduling, and Apply gates.
 `config.json` owns non-secret values under Settings, including cross-process
 controls, provider configuration, model IDs, AI execution policy, browser
 adoption metadata, and apply limits. Keychain owns actual secrets, while the
-copied browser profile and extension token remain protected separate artifacts.
+copied browser profile, extension token, and selected installation ID remain
+protected separate artifacts.
+The copied-profile artifact is not part of integrated Discovery. Its browser
+authority is the installed extension's current heartbeat in the user's running
+Chrome profile; the API holds its execution-bound task leases and response
+bodies in process memory only.
 
 Normal settings resolve from the saved owner and then the built-in default;
 explicit per-workflow model input may override a saved provider preference.
@@ -684,7 +705,13 @@ Production workflows live alongside the activities:
   from `DiscoveryRunProgress`, then runs discovery enrichment and starts
   preparation root workflows in batches of 25. Source-family failures are attributed
   to concrete source ids for source-quality quarantine and fail the workflow
-  after the remaining planned source families complete.
+  after the remaining planned source families complete. Every job-source
+  acquisition owned by this workflow—including JobStreaming provider sessions,
+  ATS/Workday requests, Smart Extract renders, robots reads, and detail pages—is
+  delegated through the API's bounded broker to the paired extension in the
+  user's current Chrome profile. The execution reference is part of every task;
+  the worker has no direct-HTTP, Playwright, adopted-browser, or copied-profile
+  fallback for this workflow.
 - `ApplyWorkflow` (`jobctrl/apply/workflow.py`) — single-activity,
   **per-job** workflow with live retry capped at one attempt and dry-run retry
   capped at two attempts. `apply_activity` re-raises transient failures so the
@@ -778,6 +805,12 @@ TypeScript Temporal SDK and without trigger-coupled reapers:
   in the audit stream. This is what lets a `kill -9`'d or restarted worker heal
   itself without confusing a later execution that reuses the deterministic
   workflow ID.
+- **Preparation recovery** — startup and heartbeat also reconcile eligible
+  saved enrichment, score, and material backlogs. Bounded, durable reservations
+  start one preparation stage at a time; no fresh discovery is required. The
+  controller preserves retry budgets and stop decisions and never starts Apply.
+  [Operations & Events](pipeline/operations.md#automatic-preparation-recovery)
+  owns dispatch, cooldown, and cancellation semantics.
 - **Dispatch-time open row** — the default starter writes a `WorkflowStarted`
   event immediately after a workflow start returns from Temporal. The in-workflow
   start marker remains as a duplicate-safe upsert, but a workflow killed or

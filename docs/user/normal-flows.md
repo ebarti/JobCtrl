@@ -145,6 +145,11 @@ concurrency, optional source selection, and dry-run mode, then start the run.
 The source picker accepts up to 50 sources; leave it on **All runnable sources**
 to use the complete enabled registry.
 
+Before launch, keep Chrome running with the paired JobCtrl extension connected
+in the profile you want Discovery to use. Pipelines shows that live readiness
+and disables Discover while it is offline. The run uses that profile directly;
+it does not use a profile copy or a silent direct-network/Playwright fallback.
+
 </WorkflowSurfacePanel>
 
 <WorkflowSurfacePanel surface="cli">
@@ -154,6 +159,9 @@ Start the same Discover workflow from the terminal:
 ```bash
 jobctrl run discover
 ```
+
+The CLI reaches the same fail-closed extension prerequisite even though it does
+not have the Pipelines button preflight.
 
 Per-stage commands (`jobctrl enrich`, `score`, `tailor`, `cover`) and the
 single-job path (`jobctrl job <url> --dry-run`) start the same underlying
@@ -534,7 +542,7 @@ jobctrl capability enable auto-apply-browser --browser-path /path/to/Chrome
 ```
 
 Otherwise the reconciler leaves the loop stopped and reports the capability as
-disabled. Browser adoption does not pair the optional extension or copy an
+disabled. Browser adoption does not pair the Discovery extension or copy an
 authenticated profile; those remain separate explicit actions. The Runs page
 shows the standing apply loop. With
 `applyApprovalRequired` still on, that loop claims only jobs already approved

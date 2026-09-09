@@ -1,5 +1,6 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
+import { ProfileSchema } from "@jobctrl/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -9,6 +10,7 @@ import { buildTestPorts } from "../../../test/testPorts.js";
 import { renderWithProviders } from "../../../test/render.js";
 import {
   ProfileForm,
+  type ProfilePlateTextChange,
   type ProfilePlateTextController,
 } from "./profile-form.js";
 
@@ -19,6 +21,29 @@ async function openExperienceEntries(user: ReturnType<typeof userEvent.setup>) {
   if (disclosure.getAttribute("aria-expanded") === "false") {
     await user.click(disclosure);
   }
+}
+
+async function renderSkillProjection(items: string[]) {
+  const user = userEvent.setup();
+  const initial = structuredClone(sampleProfileResponse);
+  const profile = ProfileSchema.parse(initial.profile);
+  profile.resume.skill_categories = [{ id: "skill-1", label: "Languages", items }];
+  initial.profile = profile;
+  let controller: ProfilePlateTextController | null = null;
+  const updateProfile = vi.fn(async (request) => ({ ...initial, profile: JSON.parse(request.profileText) }));
+  renderWithProviders(<ProfileForm initial={initial} onPlateTextControllerChange={(value) => { controller = value; }} />,
+    { ports: buildTestPorts({ api: { updateProfile } }), withRouter: true });
+  const disclosure = await screen.findByRole("button", { name: /^Skill categories\b/ });
+  if (disclosure.getAttribute("aria-expanded") === "false") await user.click(disclosure);
+  await waitFor(() => expect(controller).not.toBeNull());
+  return {
+    user,
+    updateProfile,
+    applyChanges: (changes: readonly ProfilePlateTextChange[]) => act(() => controller?.apply(changes)),
+    apply: (text: string | null) => act(() => controller?.apply(text === null ? [] : [{
+      semanticId: "skills:skill-1:item:2", baselineTexts: ["JavaScript"], plateTexts: [text],
+    }])),
+  };
 }
 
 describe("<ProfileForm>", () => {
@@ -111,6 +136,71 @@ describe("<ProfileForm>", () => {
     expect(screen.getByLabelText("Bullet 2")).toHaveValue("Led the SRE org.");
   });
 
+  it("serializes only edited fields while preserving unknown nested data through Plate projection", async () => {
+    const user = userEvent.setup();
+    const initial = structuredClone(sampleProfileResponse);
+    const profile = initial.profile as Record<string, unknown>;
+    profile["futureProfile"] = { nested: ["keep", { flag: true }] };
+    const resume = profile["resume"] as Record<string, unknown>;
+    const rules = resume["tailoring_rules"] as Record<string, unknown>;
+    rules["max_bullets_per_role"] = "07";
+    const entries = resume["experience_entries"] as Array<Record<string, unknown>>;
+    entries[0]!["futureEntry"] = { source: "synthetic-preserved" };
+    initial.style = { ...(initial.style as Record<string, unknown>), futureStyle: { nested: [3, 1] } };
+    const original = structuredClone(initial);
+    let plateController: ProfilePlateTextController | null = null;
+    const updateProfile = vi.fn(async (request) => ({
+      ...initial, profile: JSON.parse(request.profileText), style: JSON.parse(request.styleText),
+    }));
+    renderWithProviders(<ProfileForm initial={initial} onPlateTextControllerChange={(controller) => {
+      plateController = controller;
+    }} />, { ports: buildTestPorts({ api: { updateProfile } }), withRouter: true });
+
+    fireEvent.change(await screen.findByLabelText("Full name"), { target: { value: "Boxed synthetic name" } });
+    act(() => plateController?.apply([{
+      semanticId: "experience:exp-1:bullet:1", baselineTexts: ["Scaled the platform 10x."],
+      plateTexts: ["Scaled the platform 12x.", "Second synthetic bullet."],
+    }]));
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(1));
+    const request = updateProfile.mock.calls[0]![0];
+    expect(Object.keys(request).sort()).toEqual(["profileText", "styleText", "templateText"]);
+    const expected = structuredClone(original.profile) as Record<string, unknown>;
+    (expected["personal"] as Record<string, unknown>)["full_name"] = "Boxed synthetic name";
+    const expectedEntries = (expected["resume"] as Record<string, unknown>)["experience_entries"] as Array<Record<string, unknown>>;
+    expectedEntries[0]!["bullets"] = ["Scaled the platform 12x.", "Second synthetic bullet.", "Led the SRE org."];
+    expect(JSON.parse(request.profileText)).toEqual(expected);
+    expect(JSON.parse(request.styleText)).toEqual(original.style);
+    expect(request.templateText).toEqual(original.templateText);
+    expect(initial).toEqual(original);
+  });
+
+  it("keeps a moved bullet's Plate edits on the same source when saving the reordered profile", async () => {
+    const user = userEvent.setup();
+    let controller: ProfilePlateTextController | null = null;
+    const updateProfile = vi.fn(async (request) => ({
+      ...sampleProfileResponse, profile: JSON.parse(request.profileText),
+    }));
+    renderWithProviders(<ProfileForm initial={sampleProfileResponse} onPlateTextControllerChange={(value) => {
+      controller = value;
+    }} />, { ports: buildTestPorts({ api: { updateProfile } }), withRouter: true });
+    await openExperienceEntries(user);
+    await user.click(screen.getByRole("button", { name: "Move bullet 1 down" }));
+    expect(screen.getByLabelText("Bullet 1")).toHaveValue("Led the SRE org.");
+    expect(screen.getByLabelText("Bullet 2")).toHaveValue("Scaled the platform 10x.");
+    act(() => controller?.apply([{
+      semanticId: "experience:exp-1:bullet:1",
+      baselineTexts: ["Scaled the platform 10x."],
+      plateTexts: ["Scaled the platform 12x."],
+    }]));
+    expect(screen.getByLabelText("Bullet 1")).toHaveValue("Led the SRE org.");
+    expect(screen.getByLabelText("Bullet 2")).toHaveValue("Scaled the platform 12x.");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(1));
+    expect(JSON.parse(updateProfile.mock.calls[0]![0].profileText).resume.experience_entries[0].bullets)
+      .toEqual(["Led the SRE org.", "Scaled the platform 12x."]);
+  });
+
   it("preserves and surfaces a structural Profile conflict instead of overwriting it from Plate", async () => {
     const user = userEvent.setup();
     let plateController: ProfilePlateTextController | null = null;
@@ -142,6 +232,165 @@ describe("<ProfileForm>", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(
       "Some resume editor changes were not applied because the matching Profile data changed.",
     );
+  });
+
+  it("saves the fifth role's title and every mapped scalar field by identity, preserving unrelated data", async () => {
+    const user = userEvent.setup();
+    const initial = structuredClone(sampleProfileResponse);
+    const profile = ProfileSchema.parse(initial.profile);
+    profile.resume.experience_entries = Array.from({ length: 5 }, (_, index) => ({
+      id: `role-${index + 1}`, title: `Role ${index + 1}`, company: "Fixture", location: "Remote",
+      date_range: "Jan 2020 - Present", summary: "Original summary", bullets: [`Evidence ${index + 1}`], achievement_evidence: [],
+    }));
+    profile.resume.education_entries = [{ id: "edu-1", degree: "BSc", institution: "Old University", location: "Old City", date: "2019" }];
+    profile.resume.skill_categories = [{ id: "skill-1", label: "Tools", items: ["CI, CD", "Java"] }];
+    initial.profile = { ...profile, futureData: { keep: ["unchanged"] } };
+    let controller: ProfilePlateTextController | null = null;
+    const updateProfile = vi.fn(async (request) => ({ ...initial, profile: JSON.parse(request.profileText) }));
+    renderWithProviders(<ProfileForm initial={initial} onPlateTextControllerChange={(value) => { controller = value; }} />,
+      { ports: buildTestPorts({ api: { updateProfile } }), withRouter: true });
+    await openExperienceEntries(user);
+    await user.click(screen.getByRole("button", { name: "Move Fixture - Role 5 up" }));
+    const changes = [
+      ["experience:role-5:title", "Role 5", "Principal Engineer"],
+      ["experience:role-5:company", "Fixture", "New Company"],
+      ["experience:role-5:location", "Remote", "New City | Hybrid"],
+      ["experience:role-5:date_range", "Jan 2020 - Present", "Feb 2021 - Dec 2025"],
+      ["education:edu-1:degree", "BSc", "MSc"], ["education:edu-1:institution", "Old University", "New University"],
+      ["education:edu-1:location", "Old City", "New City"], ["education:edu-1:date", "2019", "2021"],
+      ["skills:skill-1:label", "Tools", "Languages"], ["skills:skill-1:item:1", "CI, CD", "Build, Release"],
+      ["personal:city", profile.personal.city ?? "", "Profile City"],
+      ["personal:phone", profile.personal.phone ?? "", "+44 1234 567890"],
+    ].map(([semanticId, baseline, desired]) => ({ semanticId: semanticId!, baselineTexts: [baseline!], plateTexts: [desired!] }));
+    act(() => controller?.apply(changes));
+    expect(screen.getAllByLabelText("Title", { exact: true })[3]).toHaveValue("Principal Engineer");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(1));
+    const saved = JSON.parse(updateProfile.mock.calls[0]![0].profileText);
+    expect(saved.resume.experience_entries.map((entry: { id: string }) => entry.id)).toEqual(["role-1", "role-2", "role-3", "role-5", "role-4"]);
+    expect(saved.resume.experience_entries[3]).toMatchObject({ id: "role-5", title: "Principal Engineer", company: "New Company", location: "New City | Hybrid", date_range: "Feb 2021 - Dec 2025", bullets: ["Evidence 5"] });
+    expect(saved.resume.experience_entries[4]).toEqual(profile.resume.experience_entries[3]);
+    expect(saved.resume.education_entries[0]).toEqual({ id: "edu-1", degree: "MSc", institution: "New University", location: "New City", date: "2021" });
+    expect(saved.resume.skill_categories[0]).toEqual({ id: "skill-1", label: "Languages", items: ["Build, Release", "Java"] });
+    expect(saved.personal).toMatchObject({ city: "Profile City", phone: "+44 1234 567890" });
+    expect(saved.futureData).toEqual({ keep: ["unchanged"] });
+  });
+
+  it("keeps projecting and saving a skill through a duplicate sibling value, including undo", async () => {
+    const { user, updateProfile, apply } = await renderSkillProjection(["Java", "JavaScript"]);
+    for (const text of ["Java", "Java ", "Java X"]) {
+      apply(text);
+      expect(screen.getByLabelText("Skill 1")).toHaveValue("Java");
+      expect(screen.getByLabelText("Skill 2")).toHaveValue(text.trim());
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    }
+    apply(null);
+    expect(screen.getByLabelText("Skill 2")).toHaveValue("JavaScript");
+    apply("Java");
+    apply("Java X");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(1));
+    expect(JSON.parse(updateProfile.mock.calls[0]![0].profileText).resume.skill_categories[0].items)
+      .toEqual(["Java", "Java X"]);
+  });
+
+  it("preserves a boxed skill edit instead of moving the Plate edit to its duplicate sibling", async () => {
+    const { user, updateProfile, apply } = await renderSkillProjection(["Java", "JavaScript"]);
+    apply("Java");
+    fireEvent.change(screen.getByLabelText("Skill 2"), { target: { value: "Kotlin" } });
+    apply("Java X");
+    expect(screen.getByLabelText("Skill 1")).toHaveValue("Java");
+    expect(screen.getByLabelText("Skill 2")).toHaveValue("Kotlin");
+    expect(screen.getByRole("alert")).toHaveTextContent("Some resume editor changes were not applied");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(1));
+    expect(JSON.parse(updateProfile.mock.calls[0]![0].profileText).resume.skill_categories[0].items)
+      .toEqual(["Java", "Kotlin"]);
+  });
+
+  it.each([false, true])("keeps duplicate skill tracking across sibling preview edits (reversed: %s)", async (reversed) => {
+    const { apply, applyChanges } = await renderSkillProjection(["Java", "JavaScript", "Python"]);
+    apply("Java");
+    for (const [java, python] of [["Java", "Python X"], ["Java", "Python XY"], ["Java X", "Python XY"]]) {
+      const changes = [
+        { semanticId: "skills:skill-1:item:2", baselineTexts: ["JavaScript"], plateTexts: [java!] },
+        { semanticId: "skills:skill-1:item:3", baselineTexts: ["Python"], plateTexts: [python!] },
+      ];
+      applyChanges(reversed ? changes.reverse() : changes);
+      expect(screen.getByLabelText("Skill 1")).toHaveValue("Java");
+      expect(screen.getByLabelText("Skill 2")).toHaveValue(java);
+      expect(screen.getByLabelText("Skill 3")).toHaveValue(python);
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    }
+  });
+
+  it("follows an unambiguous skill when removing an earlier sibling changes its index", async () => {
+    const { user, apply } = await renderSkillProjection(["Java", "JavaScript", "Python"]);
+    apply("JavaScript X");
+    await user.click(screen.getByRole("button", { name: "Remove skill 1" }));
+    apply("JavaScript XY");
+    expect(screen.getByLabelText("Skill 1")).toHaveValue("JavaScript XY");
+    expect(screen.getByLabelText("Skill 2")).toHaveValue("Python");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("preserves the trailing duplicate when the edited skill is removed", async () => {
+    const { user, apply } = await renderSkillProjection(["Java", "JavaScript", "Java"]);
+    apply("Java");
+    await user.click(screen.getByRole("button", { name: "Remove skill 2" }));
+    apply("Java X");
+    expect(screen.getByLabelText("Skill 1")).toHaveValue("Java");
+    expect(screen.getByLabelText("Skill 2")).toHaveValue("Java");
+    expect(screen.getByRole("alert")).toHaveTextContent("Some resume editor changes were not applied");
+  });
+
+  it("preserves duplicate siblings when the edited skill is removed and another is added", async () => {
+    const { user, apply } = await renderSkillProjection(["Java", "JavaScript", "Java"]);
+    apply("Java");
+    await user.click(screen.getByRole("button", { name: "Remove skill 2" }));
+    await user.click(screen.getByRole("button", { name: "Add skill" }));
+    fireEvent.change(screen.getByLabelText("Skill 3"), { target: { value: "Python" } });
+    apply("Java X");
+    expect(screen.getByLabelText("Skill 1")).toHaveValue("Java");
+    expect(screen.getByLabelText("Skill 2")).toHaveValue("Java");
+    expect(screen.getByLabelText("Skill 3")).toHaveValue("Python");
+    expect(screen.getByRole("alert")).toHaveTextContent("Some resume editor changes were not applied");
+  });
+
+  it.each(["unmapped:education:edu-1:details", "unmapped:personal:full_name"])(
+    "directs an unmapped preview edit to Profile data without blaming a conflicting edit: %s",
+    async (semanticId) => {
+      let controller: ProfilePlateTextController | null = null;
+      renderWithProviders(<ProfileForm initial={sampleProfileResponse} onPlateTextControllerChange={(value) => { controller = value; }} />,
+        { withRouter: true });
+      const fullName = await screen.findByLabelText("Full name");
+      const originalName = (fullName as HTMLInputElement).value;
+      await waitFor(() => expect(controller).not.toBeNull());
+      act(() => controller?.apply([{ semanticId, baselineTexts: ["Preview text"], plateTexts: ["Edited preview text"] }]));
+      expect(screen.getByRole("alert")).toHaveTextContent("Some parts of the preview cannot be edited here. Edit those fields in Profile data instead.");
+      expect(screen.getByRole("alert")).not.toHaveTextContent("Profile data changed");
+      expect(fullName).toHaveValue(originalName);
+      expect(screen.queryByRole("button", { name: "Save changes" })).not.toBeInTheDocument();
+    },
+  );
+
+  it("undoes a title edit, including deletion, but preserves a newer boxed title as a conflict", async () => {
+    const user = userEvent.setup();
+    let controller: ProfilePlateTextController | null = null;
+    renderWithProviders(<ProfileForm initial={sampleProfileResponse} onPlateTextControllerChange={(value) => { controller = value; }} />, { withRouter: true });
+    await openExperienceEntries(user);
+    const title = screen.getByLabelText("Title", { exact: true });
+    const original = (title as HTMLInputElement).value;
+    const change = { semanticId: "experience:exp-1:title", baselineTexts: [original], plateTexts: [""] };
+    act(() => controller?.apply([change]));
+    expect(title).toHaveValue("");
+    act(() => controller?.apply([]));
+    expect(title).toHaveValue(original);
+    fireEvent.change(title, { target: { value: "Newer boxed title" } });
+    act(() => controller?.apply([{ ...change, plateTexts: ["Conflicting Plate title"] }]));
+    expect(title).toHaveValue("Newer boxed title");
+    expect(screen.getByRole("alert")).toHaveTextContent("Some resume editor changes were not applied");
   });
 
   it("keeps the address field editable when Google Maps is not configured", async () => {
@@ -425,6 +674,7 @@ describe("<ProfileForm>", () => {
 
   it("keeps newer edits when an autosave response returns for an older snapshot", async () => {
     vi.useFakeTimers();
+    const onPreviewSourceChange = vi.fn();
     let resolveUpdate: ((response: typeof sampleProfileResponse) => void) | undefined;
     const updateProfile = vi.fn(
       (request) =>
@@ -433,9 +683,10 @@ describe("<ProfileForm>", () => {
           resolveUpdate = resolve;
         }),
     );
-    renderWithProviders(<ProfileForm initial={sampleProfileResponse} section="target-search" />, {
+    renderWithProviders(<ProfileForm initial={sampleProfileResponse} section="target-search" onPreviewSourceChange={onPreviewSourceChange} />, {
       ports: buildTestPorts({ api: { updateProfile } }),
     });
+    expect(onPreviewSourceChange).toHaveBeenCalledTimes(1);
 
     const targetRole = screen.getByLabelText("Target roles 1");
     fireEvent.change(targetRole, {
@@ -462,6 +713,7 @@ describe("<ProfileForm>", () => {
 
     expect(targetRole).toHaveValue("VP of Engineering");
     expect(screen.getByText("Saved; newer changes pending")).toBeInTheDocument();
+    expect(onPreviewSourceChange).toHaveBeenCalledTimes(1);
   });
 
   it("does not reset dirty edits when a saved autosave snapshot reaches the initial props", async () => {

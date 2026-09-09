@@ -49,6 +49,7 @@ import {
 } from "./contracts.js";
 import { allRows, getRow, type SqliteDatabase } from "./db.js";
 import { emptyPolitenessOutcomes, politenessOutcomesBySource } from "./source-politeness.js";
+import { canonicalSourceDisplayName } from "./source-display-names.js";
 import type { SourcePolitenessOutcomes } from "@jobctrl/contracts";
 import { refreshProjections } from "./projections.js";
 import { InputError, resolveJobId } from "./write-model.js";
@@ -1607,17 +1608,6 @@ function sourcePriority(value: string): SourcePriorityValue {
   return SOURCE_PRIORITY_VALUES.includes(value as SourcePriorityValue)
     ? (value as SourcePriorityValue)
     : "standard";
-}
-
-const JOBSTREAMING_SOURCE_DISPLAY_NAMES: Readonly<Record<string, string>> = {
-  "jobspy:glassdoor": "JobStreaming Glassdoor",
-  "jobspy:indeed": "JobStreaming Indeed",
-  "jobspy:linkedin": "JobStreaming LinkedIn",
-  "jobspy:zip-recruiter": "JobStreaming ZipRecruiter",
-};
-
-function canonicalSourceDisplayName(sourceId: string, fallback: string): string {
-  return JOBSTREAMING_SOURCE_DISPLAY_NAMES[sourceId] ?? fallback;
 }
 
 function sourceKindFromId(sourceId: string): SourceKindValue {

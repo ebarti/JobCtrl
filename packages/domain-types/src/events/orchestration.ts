@@ -99,6 +99,28 @@ export function createStageReset(
   return createDomainEvent("StageReset", tenantId, payload);
 }
 
+export interface EnrichmentFetchRecheckedPayload {
+  readonly jobId: string;
+  readonly stage: string;
+  readonly failureEventId: number;
+  readonly failureKind: string;
+  readonly requestHost: string;
+  readonly recoveryStatus: string;
+  readonly checkCount: number;
+  readonly nextCheckAt: string | null;
+  readonly postingAllowed: boolean;
+  readonly requestAllowed: boolean;
+}
+
+export type EnrichmentFetchRechecked = DomainEvent<"EnrichmentFetchRechecked", EnrichmentFetchRecheckedPayload>;
+
+export function createEnrichmentFetchRechecked(
+  tenantId: TenantId,
+  payload: EnrichmentFetchRecheckedPayload,
+): EnrichmentFetchRechecked {
+  return createDomainEvent("EnrichmentFetchRechecked", tenantId, payload);
+}
+
 // -- StageBlocked -----------------------------------------------------------
 
 export interface StageBlockedPayload {

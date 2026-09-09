@@ -29,7 +29,6 @@ import {
   CancelJobActionRequestSchema,
   CompensationSourcePolicyUpdateRequestSchema,
   CorrectScoreRequestSchema,
-  MIN_TAILORING_FIT_SCORE,
   PIPELINE_ACTION_JOB_KEY,
   type PipelineStageRunResponse,
   CredentialKeys,
@@ -40,6 +39,9 @@ import {
   DigestAcknowledgeRequestSchema,
   DiscoverySettingsUpdateRequestSchema,
   DiscoveryFeedbackRequestSchema,
+  DiscoveryBrowserExtensionClaimSchema,
+  DiscoveryBrowserTaskCompletionSchema,
+  DiscoveryBrowserTaskCreateSchema,
   GenerateMaterialsRequestSchema,
   GenerateInterviewPrepRequestSchema,
   EnsureCurrentResumeMaterialsRequestSchema,
@@ -71,7 +73,6 @@ import {
   RunJobStageRequestSchema,
   RoleMatchFeedbackDecisionSchema,
   RetailorJobRequestSchema,
-  RpcMethods,
   ResumeTemplateDefaultSelectionRequestSchema,
   ResumeTemplateVersionSaveRequestSchema,
   ResumeCommentReplyRequestSchema,
@@ -85,11 +86,13 @@ import {
   type ExtensionAuthStatusResponse,
   type ExtensionAutofillProfileResponse,
   type ExtensionCaptureIngestRequest,
+  type DiscoveryBrowserBridgeStatusResponse,
+  type DiscoveryBrowserTaskLeaseResponse,
+  type DiscoveryBrowserTaskStatusResponse,
   type ManualCaptureImportRequest,
   SourceLocatorDecisionSchema,
   SourceStatePatchSchema,
   SourceUpsertRequestSchema,
-  STAGES,
   TailorJobRequestSchema,
   type Stage,
   WorkflowRunsListQuerySchema,
@@ -108,6 +111,10 @@ import {
   ScheduleFollowUpRequestSchema,
   OutreachThreadQuerySchema,
 } from "./contracts.js";
+import {
+  DiscoveryBrowserBroker,
+  DiscoveryBrowserBrokerError,
+} from "./discovery-browser-broker.js";
 import {
   ContactInputError,
   ContactNotFoundError,
@@ -160,7 +167,7 @@ import {
   updateCompensationSourcePolicy,
 } from "./compensation-source-policy.js";
 import {
-  AUTHENTICATED_LINKEDIN_BROWSER_UNAVAILABLE,
+  DISCOVERY_BROWSER_EXTENSION_UNAVAILABLE,
   commandForResolvedBlockCondition,
 } from "./blocked-condition-recovery.js";
 import { databaseExists, openDatabase } from "./db.js";
@@ -194,8 +201,13 @@ import {
   recordRepeatApplicationOverride,
 } from "./repeat-application.js";
 import {
+  claimDiscoveryInstallationId,
+  clearDiscoveryInstallationId,
+  DiscoveryInstallationConflictError,
+  DiscoveryInstallationSelectionRequiredError,
   ensureLocalCapabilityToken,
   isAuthorizedLocalCapabilityToken,
+  readDiscoveryInstallationId,
   rotateLocalCapabilityToken,
 } from "./extension-auth.js";
 import {
@@ -327,6 +339,7 @@ import {
   permanentlyDeleteJobs,
   queueRetriedJobsForWorkflow,
   resetJobStage,
+  retryFailedJobTargets,
   retryFailedJobs,
   type RetryFailedJobTarget,
   restoreJob,
@@ -367,6 +380,13 @@ const FIRST_PARTY_PAIRING_SEC_FETCH_SITE_VALUES = new Set(["same-origin", "same-
 const EXTENSION_API_PREFIX = "/v1/extension/";
 const EXTENSION_PAIRING_TOKEN_PATH = "/v1/extension/pairing-token";
 const EXTENSION_PAIRING_TOKEN_ROTATE_PATH = "/v1/extension/pairing-token/rotate";
+// The Zod contract applies the semantic string limits. These route-local byte
+// ceilings sit above the corresponding UTF-8/JSON worst case so Fastify does
+// not reject a valid bounded task before the contract parser sees it.
+const DISCOVERY_BROWSER_TASK_BODY_LIMIT_BYTES = 13 * 1024 * 1024;
+const DISCOVERY_BROWSER_RESULT_BODY_LIMIT_BYTES = 50 * 1024 * 1024;
+const DISCOVERY_INSTALLATION_HEADER = "x-jobctrl-extension-installation";
+const DISCOVERY_EXTENSION_VERSION_HEADER = "x-jobctrl-extension-version";
 const SEC_FETCH_HEADER_NAMES = ["sec-fetch-site", "sec-fetch-mode", "sec-fetch-dest", "sec-fetch-user"] as const;
 
 export interface BuildAppOptions {
@@ -387,6 +407,7 @@ export interface BuildAppOptions {
   /** Test seam for provider status and verification over the long-lived RPC worker. */
   providerDispatcher?: JsonRpcDispatcher;
   manualCaptureImporter?: ManualCaptureImporter;
+  discoveryBrowserBroker?: DiscoveryBrowserBroker;
   jobUrlImporter?: JobUrlImporter;
   /** Test seam for the pre-dispatch public-destination guard. */
   jobUrlValidator?: PublicUrlValidator;
@@ -419,17 +440,17 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   const providerDispatcher =
     options.providerDispatcher ??
     createRuntimeJsonRpcDispatcherFactory(pythonRuntime)(actionContext);
-  let authenticatedBrowserContinuation: Promise<void> | null = null;
+  let discoveryBrowserContinuation: Promise<void> | null = null;
   let profileContinuation: Promise<void> | null = null;
-  const continueAuthenticatedBrowserPreparation = (): Promise<void> => {
-    if (authenticatedBrowserContinuation) return authenticatedBrowserContinuation;
-    const continuation = dispatchAuthenticatedBrowserContinuation(actionDispatcher, actionContext)
+  const continueDiscoveryBrowserPreparation = (): Promise<void> => {
+    if (discoveryBrowserContinuation) return discoveryBrowserContinuation;
+    const continuation = dispatchDiscoveryBrowserContinuation(actionDispatcher, actionContext)
       .finally(() => {
-        if (authenticatedBrowserContinuation === continuation) {
-          authenticatedBrowserContinuation = null;
+        if (discoveryBrowserContinuation === continuation) {
+          discoveryBrowserContinuation = null;
         }
       });
-    authenticatedBrowserContinuation = continuation;
+    discoveryBrowserContinuation = continuation;
     return continuation;
   };
   const continueProfilePreparation = (): Promise<void> => {
@@ -448,6 +469,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   };
   const manualCaptureImporter =
     options.manualCaptureImporter ?? createWorkerManualCaptureImporter({ pythonRuntime });
+  const discoveryBrowserBroker = options.discoveryBrowserBroker ?? new DiscoveryBrowserBroker();
   const jobUrlImporter = options.jobUrlImporter ?? createWorkerJobUrlImporter({ pythonRuntime });
   const jobUrlValidator = options.jobUrlValidator ?? validatePublicHttpUrl;
   const gmailFeedbackScanner =
@@ -464,12 +486,6 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     // database. Do not launch the Python RPC bootstrap or any continuation
     // reader against a path that the initializer still owns.
     if (!databaseExists(options.dbPath)) return;
-    void reconcileAuthenticatedBrowserContinuation(
-      providerDispatcher,
-      continueAuthenticatedBrowserPreparation,
-    ).catch((error: unknown) => {
-      app.log.error({ err: error }, "Failed to reconcile browser-triggered preparation during startup");
-    });
     void continueProfilePreparation().catch((error: unknown) => {
       app.log.error({ err: error }, "Failed to reconcile profile-triggered preparation during startup");
     });
@@ -574,6 +590,8 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       void reply.code(403);
       return { ok: false, error: "untrusted_extension_pairing_request" };
     }
+    clearDiscoveryInstallationId(appDir);
+    discoveryBrowserBroker.disconnectExtension();
     const token = rotateLocalCapabilityToken(appDir);
     void reply.header("cache-control", "no-store");
     return {
@@ -586,6 +604,235 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
 
   app.get("/v1/extension/auth/status", async (): Promise<ExtensionAuthStatusResponse> => extensionAuthStatus());
   app.post("/v1/extension/auth/status", async (): Promise<ExtensionAuthStatusResponse> => extensionAuthStatus());
+
+  app.get(
+    "/v1/discovery/browser-extension/status",
+    async (_request, reply): Promise<DiscoveryBrowserBridgeStatusResponse> => {
+      void reply.header("cache-control", "no-store");
+      const installationId = readDiscoveryInstallationId(appDir);
+      return {
+        ...discoveryBrowserBroker.status(),
+        installationBound: installationId !== null,
+        installationIdSuffix: installationId?.slice(-8) ?? null,
+      };
+    },
+  );
+
+  app.post("/v1/extension/discovery/claim", async (request, reply) => {
+    const body = parseBody(reply, DiscoveryBrowserExtensionClaimSchema, request.body ?? {});
+    if (!body) return undefined;
+    try {
+      const claim = claimDiscoveryInstallationId(
+        appDir,
+        body.installationId,
+        body.replace,
+      );
+      if (claim.changed) {
+        discoveryBrowserBroker.disconnectExtension();
+      }
+      discoveryBrowserBroker.touchExtension(body.extensionVersion);
+      try {
+        await continueDiscoveryBrowserPreparation();
+      } catch (error) {
+        request.log.error(
+          { err: error },
+          "Failed to continue preparation after the live-profile extension connected",
+        );
+      }
+      return { ok: true, installationBound: true, selected: true };
+    } catch (error) {
+      if (error instanceof DiscoveryInstallationConflictError) {
+        void reply.code(409);
+        return {
+          ok: false,
+          error: "discovery_extension_installation_conflict",
+          message:
+            "Another Chrome profile is selected for Discovery. Pair from this profile again to replace it.",
+        };
+      }
+      if (error instanceof DiscoveryInstallationSelectionRequiredError) {
+        void reply.code(409);
+        return {
+          ok: false,
+          error: "discovery_extension_selection_required",
+          message:
+            "Open the JobCtrl extension in the Chrome profile you want to use and save the pairing token there.",
+        };
+      }
+      throw error;
+    }
+  });
+
+  app.get("/v1/extension/discovery/tasks/next", async (request, reply) => {
+    const extension = requireSelectedDiscoveryExtension(request, reply, appDir);
+    if (!extension) return undefined;
+    const wasConnected = discoveryBrowserBroker.status().connected;
+    const query = request.query as { extensionVersion?: unknown };
+    const extensionVersion =
+      extension.version ||
+      (typeof query.extensionVersion === "string" ? query.extensionVersion.trim().slice(0, 80) : "unknown");
+    const response: DiscoveryBrowserTaskLeaseResponse = discoveryBrowserBroker.leaseNext(
+      extensionVersion || "unknown",
+    );
+    if (!wasConnected) {
+      void continueDiscoveryBrowserPreparation().catch((error: unknown) => {
+        request.log.error(
+          { err: error },
+          "Failed to continue preparation after the live-profile extension reconnected",
+        );
+      });
+    }
+    if (response.status === "task") {
+      const destination = await jobUrlValidator(response.request.url);
+      const currentExtension = requireSelectedDiscoveryExtension(request, reply, appDir);
+      if (!currentExtension) return undefined;
+      if (
+        !discoveryBrowserBroker.leaseActive(
+          response.taskId,
+          response.leaseId,
+          currentExtension.version,
+        )
+      ) {
+        void reply.header("cache-control", "no-store");
+        return { ok: true, status: "idle" } satisfies DiscoveryBrowserTaskLeaseResponse;
+      }
+      if (!destination.allowed) {
+        discoveryBrowserBroker.completeTask(response.taskId, response.leaseId, {
+          status: "failed",
+          errorCode: "unsafe_redirect",
+          message:
+            destination.reason ??
+            "Discovery destination was no longer public when Chrome requested its lease.",
+          retryable: false,
+        });
+        void reply.header("cache-control", "no-store");
+        return { ok: true, status: "idle" } satisfies DiscoveryBrowserTaskLeaseResponse;
+      }
+    }
+    void reply.header("cache-control", "no-store");
+    return response;
+  });
+
+  app.get("/v1/extension/discovery/tasks/:taskId/lease", async (request, reply) => {
+    const extension = requireSelectedDiscoveryExtension(request, reply, appDir);
+    if (!extension) return undefined;
+    const query = request.query as { leaseId?: unknown };
+    const leaseId = typeof query.leaseId === "string" ? query.leaseId.trim() : "";
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(leaseId)) {
+      void reply.code(400);
+      return { ok: false, error: "invalid_discovery_browser_lease" };
+    }
+    const active = discoveryBrowserBroker.leaseActive(
+      decodeRouteParam((request.params as { taskId: string }).taskId),
+      leaseId,
+      extension.version,
+    );
+    void reply.header("cache-control", "no-store");
+    return { ok: true, active };
+  });
+
+  app.post(
+    "/v1/extension/discovery/tasks",
+    { bodyLimit: DISCOVERY_BROWSER_TASK_BODY_LIMIT_BYTES },
+    async (request, reply) => {
+      if (!isTrustedDiscoveryBrowserWorkerRequest(request)) {
+        void reply.code(403);
+        return {
+          ok: false,
+          error: "discovery_browser_worker_required",
+          message: "Only the local Discovery worker can create browser tasks.",
+        };
+      }
+      const body = parseBody(reply, DiscoveryBrowserTaskCreateSchema, request.body ?? {});
+      if (!body) return undefined;
+      const destination = await jobUrlValidator(body.request.url);
+      if (!destination.allowed) {
+        void reply.code(400);
+        return {
+          ok: false,
+          error: "unsafe_discovery_browser_url",
+          message: destination.reason ?? "Discovery browser requests require a public HTTP(S) URL.",
+        };
+      }
+      try {
+        void reply.code(202);
+        return discoveryBrowserBroker.createTask(body);
+      } catch (error) {
+        return sendDiscoveryBrowserBrokerError(reply, error);
+      }
+    },
+  );
+
+  app.get("/v1/extension/discovery/tasks/:taskId", async (request, reply) => {
+    if (!isTrustedDiscoveryBrowserWorkerRequest(request)) {
+      void reply.code(403);
+      return {
+        ok: false,
+        error: "discovery_browser_worker_required",
+        message: "Only the local Discovery worker can read browser task results.",
+      };
+    }
+    try {
+      const response: DiscoveryBrowserTaskStatusResponse = discoveryBrowserBroker.taskStatus(
+        decodeRouteParam((request.params as { taskId: string }).taskId),
+      );
+      void reply.header("cache-control", "no-store");
+      return response;
+    } catch (error) {
+      return sendDiscoveryBrowserBrokerError(reply, error);
+    }
+  });
+
+  app.post(
+    "/v1/extension/discovery/tasks/:taskId/result",
+    { bodyLimit: DISCOVERY_BROWSER_RESULT_BODY_LIMIT_BYTES },
+    async (request, reply) => {
+      let currentExtension = requireSelectedDiscoveryExtension(request, reply, appDir);
+      if (!currentExtension) return undefined;
+      const body = parseBody(reply, DiscoveryBrowserTaskCompletionSchema, request.body ?? {});
+      if (!body) return undefined;
+      if (body.result.status === "succeeded") {
+        const destination = await jobUrlValidator(body.result.finalUrl);
+        currentExtension = requireSelectedDiscoveryExtension(request, reply, appDir);
+        if (!currentExtension) return undefined;
+        if (!destination.allowed) {
+          void reply.code(400);
+          return {
+            ok: false,
+            error: "unsafe_discovery_browser_redirect",
+            message: destination.reason ?? "The browser task redirected outside the public HTTP(S) boundary.",
+          };
+        }
+      }
+      try {
+        discoveryBrowserBroker.touchExtension(currentExtension.version);
+        discoveryBrowserBroker.completeTask(
+          decodeRouteParam((request.params as { taskId: string }).taskId),
+          body.leaseId,
+          body.result,
+        );
+        return { ok: true };
+      } catch (error) {
+        return sendDiscoveryBrowserBrokerError(reply, error);
+      }
+    },
+  );
+
+  app.delete("/v1/extension/discovery/tasks/:taskId", async (request, reply) => {
+    if (!isTrustedDiscoveryBrowserWorkerRequest(request)) {
+      void reply.code(403);
+      return {
+        ok: false,
+        error: "discovery_browser_worker_required",
+        message: "Only the local Discovery worker can cancel browser tasks.",
+      };
+    }
+    discoveryBrowserBroker.cancelTask(
+      decodeRouteParam((request.params as { taskId: string }).taskId),
+    );
+    void reply.code(204);
+    return undefined;
+  });
 
   app.get(
     "/v1/extension/autofill/profile",
@@ -989,6 +1236,15 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     if (!firstStage) {
       void reply.code(400);
       return undefined;
+    }
+    if (body.stages.includes("discover") && !discoveryBrowserBroker.status().connected) {
+      void reply.code(503);
+      return {
+        ok: false,
+        error: "discovery_extension_unavailable",
+        message:
+          "Open Chrome with the paired JobCtrl extension before starting browser-backed Discovery or Enrich. JobCtrl uses the user's current Chrome profile and does not use a copied profile.",
+      };
     }
     const command: ActionCommandPayload = {
       action: "run_stage" as const,
@@ -1409,13 +1665,20 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     if (!body) {
       return undefined;
     }
-    if (body.runAfter) {
-      const workerReady = requireWorkerReady(reply, options.dbPath, requireHealthyWorkerForActions);
-      if (!workerReady) {
-        return undefined;
-      }
-    }
     return withWritableDb(reply, options.dbPath, async (db) => {
+      if (body.runAfter) {
+        const includesEnrich = retryFailedJobTargets(db, body).some(
+          (target) => target.stage === "enrich",
+        );
+        if (includesEnrich && !discoveryBrowserBroker.status().connected) {
+          void reply.code(503);
+          return discoveryExtensionUnavailableResponse();
+        }
+        const workerReady = requireWorkerReady(reply, options.dbPath, requireHealthyWorkerForActions);
+        if (!workerReady) {
+          return undefined;
+        }
+      }
       const reset = retryFailedJobs(db, body);
       const actions: ActionRunResponse[] = [];
       const runnableGroups = body.runAfter
@@ -1478,6 +1741,14 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       const targets = pendingPreparationTargets(db, body);
       const actions: ActionRunResponse[] = [];
       const runnableGroups = groupRunnableBulkRetryTargets(targets);
+
+      if (
+        targets.some((target) => target.stage === "enrich") &&
+        !discoveryBrowserBroker.status().connected
+      ) {
+        void reply.code(503);
+        return discoveryExtensionUnavailableResponse();
+      }
 
       if (targets.length > 0) {
         const workerReady = requireWorkerReady(reply, options.dbPath, requireHealthyWorkerForActions);
@@ -1743,6 +2014,14 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       void reply.code(400);
       return { ok: false, error: "unsupported_retry_run_after_stage", stage: body.stage };
     }
+    if (
+      body.runAfter &&
+      body.stage === "enrich" &&
+      !discoveryBrowserBroker.status().connected
+    ) {
+      void reply.code(503);
+      return discoveryExtensionUnavailableResponse();
+    }
     return withWritableDb(reply, options.dbPath, async (db) => {
       if (body.runAfter) {
         const workerReady = requireWorkerReady(reply, options.dbPath, requireHealthyWorkerForActions);
@@ -1781,6 +2060,10 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     if (!PREPARATION_PICKUP_STAGES.has(body.stage)) {
       void reply.code(400);
       return { ok: false, error: "unsupported_job_stage_run", stage: body.stage };
+    }
+    if (body.stage === "enrich" && !discoveryBrowserBroker.status().connected) {
+      void reply.code(503);
+      return discoveryExtensionUnavailableResponse();
     }
     const stages = retryContinuationStages(body.stage);
     return withWritableDb(reply, options.dbPath, async (db) => {
@@ -2615,13 +2898,6 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         capabilityId,
         ...body,
       });
-      if (capabilityId === "authenticated-linkedin-browser" && authenticatedLinkedInBrowserReady(result)) {
-        try {
-          await continueAuthenticatedBrowserPreparation();
-        } catch (error) {
-          request.log.error({ err: error }, "Failed to continue preparation after browser capability became ready");
-        }
-      }
       return result;
     },
   );
@@ -2643,15 +2919,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     async (request, reply) => {
       const body = parseBody(reply, BrowserProfileCopyRequestSchema, request.body ?? {});
       if (!body) return undefined;
-      const result = await dispatchBrowserCapabilities(reply, providerDispatcher, "browser_profile_copy", body);
-      if (authenticatedLinkedInBrowserReady(result)) {
-        try {
-          await continueAuthenticatedBrowserPreparation();
-        } catch (error) {
-          request.log.error({ err: error }, "Failed to continue preparation after browser profile copy became ready");
-        }
-      }
-      return result;
+      return dispatchBrowserCapabilities(reply, providerDispatcher, "browser_profile_copy", body);
     },
   );
 
@@ -3464,33 +3732,13 @@ async function dispatchProviderModelCatalog(
   return parsed.data;
 }
 
-function authenticatedLinkedInBrowserReady(result: unknown): boolean {
-  if (!result || typeof result !== "object" || !("ok" in result) || result.ok !== true) {
-    return false;
-  }
-  const capabilities = "capabilities" in result ? result.capabilities : undefined;
-  if (!Array.isArray(capabilities)) return false;
-  return capabilities.some((capability) => (
-    capability
-    && typeof capability === "object"
-    && "id" in capability
-    && capability.id === "authenticated-linkedin-browser"
-    && "status" in capability
-    && capability.status === "ready"
-    && "enabled" in capability
-    && capability.enabled === true
-    && "profileCopyReady" in capability
-    && capability.profileCopyReady === true
-  ));
-}
-
-async function dispatchAuthenticatedBrowserContinuation(
+async function dispatchDiscoveryBrowserContinuation(
   actionDispatcher: ActionDispatcher,
   actionContext: ActionDispatchContext,
 ): Promise<void> {
   const command = commandForResolvedBlockCondition(
     actionContext.dbPath,
-    AUTHENTICATED_LINKEDIN_BROWSER_UNAVAILABLE,
+    DISCOVERY_BROWSER_EXTENSION_UNAVAILABLE,
   );
   if (!command) return;
   await actionDispatcher(command, actionContext);
@@ -3525,19 +3773,6 @@ async function dispatchPendingProfileContinuations(
     } finally {
       handledDb.close();
     }
-  }
-}
-
-async function reconcileAuthenticatedBrowserContinuation(
-  providerDispatcher: JsonRpcDispatcher,
-  continuePreparation: () => Promise<void>,
-): Promise<void> {
-  const response = await providerDispatcher.call("browser_capabilities_list", {});
-  if (response.error) return;
-  const parsed = BrowserCapabilitiesResultSchema.safeParse(response.result);
-  if (!parsed.success) return;
-  if (authenticatedLinkedInBrowserReady({ ok: true, ...parsed.data })) {
-    await continuePreparation();
   }
 }
 
@@ -3583,7 +3818,27 @@ function extensionAuthStatus(): ExtensionAuthStatusResponse {
   return {
     ok: true,
     authenticated: true,
-    capabilities: ["capture", "autofill_read"],
+    capabilities: ["capture", "autofill_read", "discovery_browser"],
+  };
+}
+
+function isTrustedDiscoveryBrowserWorkerRequest(request: FastifyRequest): boolean {
+  return (
+    request.headers.origin === undefined &&
+    request.headers.referer === undefined &&
+    SEC_FETCH_HEADER_NAMES.every((name) => request.headers[name] === undefined)
+  );
+}
+
+function sendDiscoveryBrowserBrokerError(reply: FastifyReply, error: unknown): unknown {
+  if (!(error instanceof DiscoveryBrowserBrokerError)) {
+    throw error;
+  }
+  void reply.code(error.statusCode);
+  return {
+    ok: false,
+    error: error.code,
+    message: error.message,
   };
 }
 
@@ -3649,6 +3904,47 @@ function hasTrustedExtensionToken(request: FastifyRequest, appDir: string): bool
 
 function hasTrustedLocalCapabilityToken(request: FastifyRequest, appDir: string): boolean {
   return !hasBrowserRequestMetadata(request) && isAuthorizedLocalCapabilityToken(request.headers.authorization, appDir);
+}
+
+function requireSelectedDiscoveryExtension(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  appDir: string,
+): { installationId: string; version: string } | null {
+  const installationId = singleRequestHeader(
+    request.headers[DISCOVERY_INSTALLATION_HEADER],
+  );
+  const version = singleRequestHeader(
+    request.headers[DISCOVERY_EXTENSION_VERSION_HEADER],
+  )?.trim().slice(0, 80) || "unknown";
+  if (
+    !installationId ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      installationId,
+    )
+  ) {
+    void reply.code(400).send({
+      ok: false,
+      error: "invalid_discovery_extension_installation",
+      message: "Discovery extension requests require a valid installation identity.",
+    });
+    return null;
+  }
+  const selected = readDiscoveryInstallationId(appDir);
+  if (!selected || selected !== installationId) {
+    void reply.code(409).send({
+      ok: false,
+      error: "discovery_extension_not_selected",
+      message: "This Chrome profile is not selected for Discovery.",
+    });
+    return null;
+  }
+  return { installationId, version };
+}
+
+function singleRequestHeader(value: string | string[] | undefined): string | null {
+  const values = Array.isArray(value) ? value : value ? [value] : [];
+  return values.length === 1 ? values[0]?.trim() || null : null;
 }
 
 function isAuthorizedExtensionApiRequest(request: FastifyRequest, appDir: string): boolean {
@@ -4530,33 +4826,6 @@ function columnNames(db: ApiDb, tableName: string): Set<string> {
   );
 }
 
-function parseJsonRecord(raw: string | null): Record<string, unknown> {
-  if (!raw) return {};
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    return isRecord(parsed) ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isStage(value: unknown): value is Stage {
-  return typeof value === "string" && STAGES.includes(value as Stage);
-}
-
-function textValue(value: unknown): string {
-  return typeof value === "string" ? value : "";
-}
-
-function numberValue(value: unknown): number | null {
-  const parsed = typeof value === "number" ? value : Number.parseInt(textValue(value), 10);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
 function labelForStage(stage: Stage): string {
   return `${stage.charAt(0).toUpperCase()}${stage.slice(1)}`;
 }
@@ -4612,6 +4881,19 @@ function stageRunStatus(actions: ActionRunResponse[]): string {
     return firstStatus;
   }
   return "accepted";
+}
+
+function discoveryExtensionUnavailableResponse(): {
+  ok: false;
+  error: "discovery_extension_unavailable";
+  message: string;
+} {
+  return {
+    ok: false,
+    error: "discovery_extension_unavailable",
+    message:
+      "Open Chrome with the paired JobCtrl extension. Browser-backed Discovery and Enrich use the user's current Chrome profile and never a copied profile.",
+  };
 }
 
 function resolveExistingJob(

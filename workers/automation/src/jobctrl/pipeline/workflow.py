@@ -89,6 +89,7 @@ class JobPipelineWorkflowInput:
     model: str = "default"
     llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
     continuous: bool = False
+    automatic_recovery: bool = False
 
     def __post_init__(self) -> None:
         if self.job_id is not None:
@@ -267,12 +268,12 @@ class JobPipelineWorkflow:
             try:
                 result = await _execute_stage(stage, stage_payload)
             except CancelledError:
-                if stage in {"tailor", "cover"}:
+                if stage in {"tailor", "cover"} or (stage == "score" and payload.automatic_recovery):
                     await _cancel_material_stage_state(stage, stage_payload)
                 raise
             except ActivityError as exc:
                 if _activity_error_was_cancelled(exc):
-                    if stage in {"tailor", "cover"}:
+                    if stage in {"tailor", "cover"} or (stage == "score" and payload.automatic_recovery):
                         await _cancel_material_stage_state(stage, stage_payload)
                     raise CancelledError("Workflow canceled by request.") from exc
                 if stage in {"score", "tailor", "cover"}:
@@ -444,10 +445,11 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
                 job_ids=_selected_job_ids(payload),
                 workflow_id=workflow_id,
                 workflow_run_id=workflow_run_id,
+                recovery_workflow_id=workflow_id if payload.automatic_recovery else None,
             ),
             start_to_close_timeout=_activity_timeout(payload),
             heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
-            retry_policy=_ENRICH_RETRY,
+            retry_policy=replace(_ENRICH_RETRY, maximum_attempts=1) if payload.automatic_recovery else _ENRICH_RETRY,
         )
     if stage == "score":
         return await workflow.execute_activity(
@@ -464,10 +466,11 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
                 current_policy_only=payload.score_current_policy_only,
                 llm_model=payload.llm_model,
                 workflow_id=activity_owner,
+                recovery_workflow_id=workflow_id if payload.automatic_recovery else None,
             ),
             start_to_close_timeout=_activity_timeout(payload),
             heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
-            retry_policy=_SCORE_RETRY,
+            retry_policy=replace(_SCORE_RETRY, maximum_attempts=1) if payload.automatic_recovery else _SCORE_RETRY,
         )
     if stage == "tailor":
         return await workflow.execute_activity(
@@ -494,10 +497,11 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
                 tailor_judge_min_score=payload.tailor_judge_min_score,
                 llm_model=payload.llm_model,
                 workflow_id=activity_owner,
+                recovery_workflow_id=workflow_id if payload.automatic_recovery else None,
             ),
             start_to_close_timeout=_activity_timeout(payload),
             heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
-            retry_policy=_TAILOR_RETRY,
+            retry_policy=replace(_TAILOR_RETRY, maximum_attempts=1) if payload.automatic_recovery else _TAILOR_RETRY,
         )
     if stage == "cover":
         return await workflow.execute_activity(
@@ -514,10 +518,11 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
                 job_ids=_selected_job_ids(payload),
                 llm_model=payload.llm_model,
                 workflow_id=activity_owner,
+                recovery_workflow_id=workflow_id if payload.automatic_recovery else None,
             ),
             start_to_close_timeout=_activity_timeout(payload),
             heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
-            retry_policy=_COVER_RETRY,
+            retry_policy=replace(_COVER_RETRY, maximum_attempts=1) if payload.automatic_recovery else _COVER_RETRY,
         )
     if stage == "apply":
         apply_job_id = _apply_child_job_id(payload)
@@ -623,6 +628,7 @@ def _pipeline_input_summary(payload: JobPipelineWorkflowInput) -> dict[str, Any]
         "limit": payload.limit,
         "jobId": str(payload.job_id) if payload.job_id is not None else None,
         "jobIds": [str(job_id) for job_id in payload.job_ids],
+        **({"automaticRecovery": True} if payload.automatic_recovery else {}),
     }
 
 

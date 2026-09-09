@@ -51,6 +51,8 @@ from jobctrl.infrastructure.materials import (
 )
 from jobctrl.infrastructure.preparation_recovery import (
     assert_material_activity_commit_allowed,
+    claim_preparation_reservation,
+    owns_preparation_reservation,
 )
 from jobctrl.infrastructure.preparation.sqlite_repository import SqlitePreparationTargetReader
 from jobctrl.infrastructure.scoring import SqliteScoreRepository
@@ -191,6 +193,7 @@ def cover_letter_by_id(
     tenant_id: TenantId = LOCAL_TENANT,
     workflow_id: str | None = None,
     cancel_event: threading.Event | None = None,
+    recovery_workflow_id: str | None = None,
 ) -> dict:
     """Generate exactly one eligible cover letter by tenant-scoped JobId."""
     stable_job_id = canonical_job_id(str(job_id))
@@ -214,6 +217,7 @@ def cover_letter_by_id(
         job_id=stable_job_id,
         job=job,
         min_score=min_score,
+        recovery_workflow_id=recovery_workflow_id,
     )
     if eligibility_reason is not None:
         return _skipped_result(
@@ -265,49 +269,57 @@ def cover_letter_by_id(
         pdf_renderer = _build_pdf_renderer()
 
     url = str(job.get("url") or "")
-    ensure_job_stage_rows(
-        conn,
-        stable_job_id,
-        tenant_id=tenant_id,
-        discovered_at=job.get("discovered_at"),
-    )
-    started_at = utc_now()
-    prior_attempts = _cover_attempt_count(
-        conn,
-        tenant_id=tenant_id,
-        job_id=stable_job_id,
-    )
-    current_attempt = prior_attempts + 1
-    set_stage_state(
-        conn,
-        stable_job_id,
-        "cover",
-        "running",
-        tenant_id=tenant_id,
-        # Owner recovery advances an interrupted execution. Preserve the
-        # completed count while running so timeout and normal completion each
-        # count this execution exactly once.
-        attempt_count=prior_attempts,
-        started_at=started_at,
-        metadata=(
-            {
-                "activityOwner": workflow_id,
-                "attemptCountBasis": "completed",
-            }
-            if workflow_id
-            else None
-        ),
-        validate_transition=False,
-    )
-    record_job_event(
-        conn,
-        stable_job_id,
-        "cover",
-        "StageStarted",
-        tenant_id=tenant_id,
-        message="Cover letter generation started",
-    )
-    conn.commit()
+    if recovery_workflow_id:
+        conn.commit()
+    with claim_preparation_reservation(
+        conn, tenant_id=tenant_id, job_id=stable_job_id,
+        stage="cover", workflow_id=recovery_workflow_id, cancel_event=cancel_event,
+    ):
+        ensure_job_stage_rows(
+            conn,
+            stable_job_id,
+            tenant_id=tenant_id,
+            discovered_at=job.get("discovered_at"),
+        )
+        started_at = utc_now()
+        prior_attempts = _cover_attempt_count(
+            conn,
+            tenant_id=tenant_id,
+            job_id=stable_job_id,
+        )
+        current_attempt = prior_attempts + 1
+        set_stage_state(
+            conn,
+            stable_job_id,
+            "cover",
+            "running",
+            tenant_id=tenant_id,
+            # Owner recovery advances an interrupted execution. Preserve the
+            # completed count while running so timeout and normal completion each
+            # count this execution exactly once.
+            attempt_count=prior_attempts,
+            started_at=started_at,
+            metadata=(
+                {
+                    "activityOwner": workflow_id,
+                    "attemptCountBasis": "completed",
+                    **({"automaticRecovery": True, "workflowId": recovery_workflow_id, "temporalRunId": workflow_id}
+                       if recovery_workflow_id else {}),
+                }
+                if workflow_id
+                else None
+            ),
+            validate_transition=False,
+        )
+        record_job_event(
+            conn,
+            stable_job_id,
+            "cover",
+            "StageStarted",
+            tenant_id=tenant_id,
+            message="Cover letter generation started",
+        )
+        conn.commit()
 
     def commit_guard() -> None:
         assert_material_activity_commit_allowed(
@@ -536,6 +548,7 @@ def _cover_eligibility_reason(
     job_id: JobId,
     job: dict,
     min_score: int,
+    recovery_workflow_id: str | None = None,
 ) -> str | None:
     """Return the durable admission reason that prevents cover generation."""
     if not str(job.get("full_description") or "").strip():
@@ -596,7 +609,10 @@ def _cover_eligibility_reason(
             return None
         if cover_state == "exhausted" or attempt_count >= _COVER_MAX_ATTEMPTS:
             return "cover_exhausted"
-        if cover_state not in {"pending", "running", "failed", "stale"}:
+        owns_queue = cover_state == "queued" and owns_preparation_reservation(
+            conn, tenant_id=tenant_id, job_id=job_id, stage="cover", workflow_id=recovery_workflow_id,
+        )
+        if cover_state not in {"pending", "running", "failed", "stale"} and not owns_queue:
             return "cover_not_retryable"
 
     score = SqliteScoreRepository(conn).load(tenant_id, job_id)

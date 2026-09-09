@@ -8,11 +8,13 @@ import {
 } from "./contracts.js";
 import { openDatabase } from "./db.js";
 
-export const AUTHENTICATED_LINKEDIN_BROWSER_UNAVAILABLE =
+export const DISCOVERY_BROWSER_EXTENSION_UNAVAILABLE =
+  "discovery_browser_extension_unavailable" as const;
+const LEGACY_AUTHENTICATED_LINKEDIN_BROWSER_UNAVAILABLE =
   "authenticated_linkedin_browser_unavailable" as const;
 
 export type ResolvedBlockCondition =
-  typeof AUTHENTICATED_LINKEDIN_BROWSER_UNAVAILABLE;
+  typeof DISCOVERY_BROWSER_EXTENSION_UNAVAILABLE;
 
 interface BlockConditionRecoveryRule {
   stage: Stage;
@@ -30,7 +32,7 @@ interface BlockedStageRow {
 }
 
 const RECOVERY_RULES: Record<ResolvedBlockCondition, BlockConditionRecoveryRule> = {
-  [AUTHENTICATED_LINKEDIN_BROWSER_UNAVAILABLE]: {
+  [DISCOVERY_BROWSER_EXTENSION_UNAVAILABLE]: {
     stage: "enrich",
     stages: ["enrich", "score", "tailor", "cover"],
     errorCode: "ENRICH_ROBOTS_DISALLOWED",
@@ -144,7 +146,12 @@ function rowMatchesCondition(
       return true;
     }
     const conditions = (metadata as { blockedConditions?: unknown }).blockedConditions;
-    return Array.isArray(conditions) && conditions.includes(condition);
+    return Array.isArray(conditions) && (
+      conditions.includes(condition) ||
+      // Preserve recovery for rows written before Enrich moved from the copied
+      // LinkedIn profile capability to the selected live-profile extension.
+      conditions.includes(LEGACY_AUTHENTICATED_LINKEDIN_BROWSER_UNAVAILABLE)
+    );
   } catch {
     return true;
   }

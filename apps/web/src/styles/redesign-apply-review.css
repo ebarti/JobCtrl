@@ -672,6 +672,7 @@
   background: var(--muted);
 }
 
+.apply-review-html-line-review .resume-format-select [data-slot="select-trigger"],
 .apply-review-html-line-review .resume-format-select select,
 .apply-review-html-line-review .resume-format-select input {
   border-color: var(--input);

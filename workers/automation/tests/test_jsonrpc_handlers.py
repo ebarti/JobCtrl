@@ -39,6 +39,7 @@ from jobctrl.infrastructure.rpc.handlers import register_default_handlers
 from jobctrl.infrastructure.rpc.server import JsonRpcServer
 from jobctrl.interview.workflow import InterviewPrepWorkflow, InterviewPrepWorkflowInput
 from jobctrl.materials import activities as materials_activities_mod
+from jobctrl.materials import executor as materials_executor_mod
 from jobctrl.materials.activities import CoverActivityInput, TailorActivityInput, cover_activity, tailor_activity
 from jobctrl.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
 from jobctrl.pipeline import workflow as workflow_mod
@@ -2396,7 +2397,7 @@ def test_selected_tailor_activity_uses_bounded_requested_workers(monkeypatch) ->
         JobId("50000000-0000-4000-8000-000000000012"),
         JobId("50000000-0000-4000-8000-000000000013"),
     )
-    real_executor = materials_activities_mod.ThreadPoolExecutor
+    real_executor = materials_executor_mod.ThreadPoolExecutor
     observed_workers: list[int] = []
 
     def recording_executor(*, max_workers: int, thread_name_prefix: str):
@@ -2406,7 +2407,7 @@ def test_selected_tailor_activity_uses_bounded_requested_workers(monkeypatch) ->
             thread_name_prefix=thread_name_prefix,
         )
 
-    monkeypatch.setattr(materials_activities_mod, "ThreadPoolExecutor", recording_executor)
+    monkeypatch.setattr(materials_executor_mod, "ThreadPoolExecutor", recording_executor)
     monkeypatch.setattr(
         "jobctrl.scoring.tailor.tailor_job_by_id",
         lambda _job_id, **_kwargs: {"status": "approved"},
@@ -2431,7 +2432,7 @@ def test_selected_cover_activity_uses_bounded_requested_workers(monkeypatch) -> 
         JobId("50000000-0000-4000-8000-000000000022"),
         JobId("50000000-0000-4000-8000-000000000023"),
     )
-    real_executor = materials_activities_mod.ThreadPoolExecutor
+    real_executor = materials_executor_mod.ThreadPoolExecutor
     observed_workers: list[int] = []
 
     def recording_executor(*, max_workers: int, thread_name_prefix: str):
@@ -2441,7 +2442,7 @@ def test_selected_cover_activity_uses_bounded_requested_workers(monkeypatch) -> 
             thread_name_prefix=thread_name_prefix,
         )
 
-    monkeypatch.setattr(materials_activities_mod, "ThreadPoolExecutor", recording_executor)
+    monkeypatch.setattr(materials_executor_mod, "ThreadPoolExecutor", recording_executor)
     monkeypatch.setattr(
         "jobctrl.scoring.cover_letter.cover_letter_by_id",
         lambda _job_id, **_kwargs: {"status": "ok", "generated": 1},

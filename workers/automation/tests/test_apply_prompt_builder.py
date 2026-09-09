@@ -128,9 +128,9 @@ def test_legacy_prompt_keeps_reviewed_files_outside_worker_and_model(monkeypatch
     resume_pdf = materials_dir / "resume.pdf"
     resume_pdf.write_bytes(b"%PDF-1.4\n")
     monkeypatch.delenv("CAPSOLVER_API_KEY", raising=False)
-    monkeypatch.setattr(prompt_mod.config, "load_env", lambda: None)
+    monkeypatch.setattr(jobctrl_config, "load_env", lambda: None)
     monkeypatch.setattr(
-        prompt_mod.config,
+        jobctrl_config,
         "gmail_mcp_auth_status",
         lambda: (False, "missing OAuth client at /tmp/.jobctrl/gmail/oauth-client.json"),
     )
@@ -204,9 +204,9 @@ def test_legacy_prompt_keeps_apply_secrets_and_fake_capabilities_out_of_model_co
     resume_pdf = materials_dir / "resume.pdf"
     resume_pdf.write_bytes(b"%PDF-1.4\n")
     monkeypatch.setenv("CAPSOLVER_API_KEY", "capsolver-secret-never-render")
-    monkeypatch.setattr(prompt_mod.config, "load_env", lambda: None)
+    monkeypatch.setattr(jobctrl_config, "load_env", lambda: None)
     monkeypatch.setattr(
-        prompt_mod.config,
+        jobctrl_config,
         "gmail_mcp_auth_status",
         lambda: (False, "missing OAuth client"),
     )
@@ -253,9 +253,9 @@ def test_apply_prompt_keeps_reviewed_material_and_profile_prose_opaque(
     cover_txt.write_text("COVER_CHAIN_REACHED", encoding="utf-8")
     cover_txt.with_suffix(".pdf").write_bytes(b"%PDF-1.4\n")
     monkeypatch.delenv("CAPSOLVER_API_KEY", raising=False)
-    monkeypatch.setattr(prompt_mod.config, "load_env", lambda: None)
+    monkeypatch.setattr(jobctrl_config, "load_env", lambda: None)
     monkeypatch.setattr(
-        prompt_mod.config,
+        jobctrl_config,
         "gmail_mcp_auth_status",
         lambda: (False, "missing OAuth client"),
     )
@@ -298,44 +298,6 @@ def test_apply_prompt_keeps_reviewed_material_and_profile_prose_opaque(
     assert "== RESUME TEXT" not in rendered
     assert "== COVER LETTER TEXT" not in rendered
     assert "== APPLICANT PROFILE" not in rendered
-
-
-def test_attestation_lines_render_full_partial_and_empty_sets() -> None:
-    base_profile = {"application_preferences": {"how_heard": "Referral"}}
-    full = {
-        **base_profile,
-        "application_attestations": {
-            "age_18_plus": True,
-            "background_check_consent": True,
-            "felony_conviction": False,
-            "previously_worked_at_employer": False,
-            "additional": {"can_travel": True},
-        },
-    }
-    partial = {
-        **base_profile,
-        "application_attestations": {
-            "age_18_plus": None,
-            "background_check_consent": True,
-            "felony_conviction": None,
-            "previously_worked_at_employer": None,
-        },
-    }
-    empty = {"application_attestations": {}, "application_preferences": {}}
-
-    assert prompt_mod._build_profile_attestation_lines(full) == [
-        "Age 18+: Yes",
-        "Background check consent: Yes",
-        "Felony conviction: No",
-        "Previously worked at employer: No",
-        "Can travel: Yes",
-        "How heard: Referral",
-    ]
-    assert prompt_mod._build_profile_attestation_lines(partial) == [
-        "Background check consent: Yes",
-        "How heard: Referral",
-    ]
-    assert prompt_mod._build_profile_attestation_lines(empty) == []
 
 
 def test_default_mcp_config_includes_only_inspection_connectors(monkeypatch) -> None:

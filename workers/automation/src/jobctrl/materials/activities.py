@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field, replace
 import threading
 import time
-from typing import Any, Callable
+from typing import Any
 
 from temporalio import activity
 
@@ -23,6 +22,7 @@ from jobctrl.infrastructure.temporal.pipeline_step_lifecycle import (
     begin_pipeline_step_attempt,
     pdf_pipeline_step_item_key,
 )
+from jobctrl.materials.executor import run_material_jobs as _run_selected_material_jobs
 from jobctrl.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
 
 
@@ -33,8 +33,6 @@ from jobctrl.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
 
 @dataclass(frozen=True)
 class TailorActivityInput:
-    # ``tenant_id`` is currently informational; runners read from
-    # ``LOCAL_TENANT`` until tenant scoping lands.
     tenant_id: str
     expected_app_dir: str | None = None
     expected_db_path: str | None = None
@@ -53,6 +51,7 @@ class TailorActivityInput:
     tailor_judge_min_score: float | None = None
     llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
     workflow_id: str | None = None
+    recovery_workflow_id: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "job_ids", _canonical_job_ids(self.job_ids))
@@ -172,6 +171,7 @@ async def tailor_activity(payload: TailorActivityInput) -> TailorActivityOutput:
                 "tailor",
                 _run_tailor,
                 {
+                    "tenant_id": payload.tenant_id,
                     "min_score": payload.min_score,
                     "workers": payload.workers,
                     "validation_mode": payload.validation_mode,
@@ -183,6 +183,8 @@ async def tailor_activity(payload: TailorActivityInput) -> TailorActivityOutput:
                     "llm_model": payload.llm_model,
                     "workflow_id": payload.workflow_id,
                     "cancel_event": cancel_event,
+                    "suppress_existing_artifacts": payload.suppress_existing_artifacts,
+                    "allow_low_fit_override": payload.allow_low_fit_override,
                 },
                 mode="workflow",
                 pass_number=1,
@@ -241,8 +243,9 @@ def _run_selected_tailoring(
 ) -> dict[str, Any]:
     from jobctrl.domain.tenant import TenantId
     from jobctrl.scoring.tailor import tailor_job_by_id
+    from jobctrl.pipeline.automatic_preparation import automatic_recovery_job_ids
 
-    job_ids = _limited_job_ids(payload.job_ids, payload.limit)
+    job_ids = _limited_job_ids(automatic_recovery_job_ids(payload, "tailor"), payload.limit)
     if payload.dry_run:
         return {
             "status": "ok",
@@ -284,6 +287,7 @@ def _run_selected_tailoring(
             tailor_judge_min_score=payload.tailor_judge_min_score,
             workflow_id=payload.workflow_id,
             cancel_event=cancel_event,
+            **({"recovery_workflow_id": payload.recovery_workflow_id} if payload.recovery_workflow_id else {}),
         )
 
     for job_id, result in _run_selected_material_jobs(
@@ -428,6 +432,7 @@ class CoverActivityInput:
     job_ids: tuple[JobId, ...] = ()
     llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
     workflow_id: str | None = None
+    recovery_workflow_id: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "job_ids", _canonical_job_ids(self.job_ids))
@@ -594,8 +599,9 @@ def _run_selected_cover(
 ) -> dict[str, Any]:
     from jobctrl.domain.tenant import TenantId
     from jobctrl.scoring.cover_letter import cover_letter_by_id
+    from jobctrl.pipeline.automatic_preparation import automatic_recovery_job_ids
 
-    job_ids = _limited_job_ids(payload.job_ids, payload.limit)
+    job_ids = _limited_job_ids(automatic_recovery_job_ids(payload, "cover"), payload.limit)
     if payload.dry_run:
         return {
             "status": "ok",
@@ -628,6 +634,7 @@ def _run_selected_cover(
             tenant_id=TenantId(payload.tenant_id),
             workflow_id=payload.workflow_id,
             cancel_event=cancel_event,
+            **({"recovery_workflow_id": payload.recovery_workflow_id} if payload.recovery_workflow_id else {}),
         )
 
     for job_id, result in _run_selected_material_jobs(
@@ -666,79 +673,6 @@ def _run_selected_cover(
             }
         ],
     }
-
-
-def _run_selected_material_jobs(
-    job_ids: tuple[JobId, ...],
-    *,
-    workers: int,
-    cancel_event: threading.Event | None,
-    stage: str,
-    run_one: Callable[[JobId], dict[str, Any]],
-) -> list[tuple[JobId, dict[str, Any]]]:
-    """Run selected material jobs with bounded, deterministic fan-out."""
-
-    if not job_ids:
-        return []
-    worker_count = min(max(1, int(workers or 1)), len(job_ids))
-
-    def ensure_active() -> None:
-        if cancel_event is not None and cancel_event.is_set():
-            raise LlmTransientError(f"{stage} activity canceled")
-
-    if worker_count == 1:
-        results: list[tuple[JobId, dict[str, Any]]] = []
-        for job_id in job_ids:
-            ensure_active()
-            results.append((job_id, run_one(job_id)))
-        return results
-
-    ensure_active()
-    # Pool threads lose the activity's run context; re-bind it so per-job
-    # stage events emitted inside the material runners keep run ownership.
-    from jobctrl.infrastructure.workflow_run_context import carry_workflow_run_context
-
-    run_one_owned = carry_workflow_run_context(run_one)
-    executor = ThreadPoolExecutor(
-        max_workers=worker_count,
-        thread_name_prefix=f"selected-{stage}",
-    )
-    in_flight: dict[Future[dict[str, Any]], JobId] = {}
-    completed: dict[JobId, dict[str, Any]] = {}
-    next_index = 0
-
-    def fill_worker_slots() -> None:
-        nonlocal next_index
-        while next_index < len(job_ids) and len(in_flight) < worker_count:
-            ensure_active()
-            job_id = job_ids[next_index]
-            next_index += 1
-            in_flight[executor.submit(run_one_owned, job_id)] = job_id
-
-    try:
-        fill_worker_slots()
-        while in_flight:
-            ensure_active()
-            done, _pending = wait(
-                tuple(in_flight),
-                timeout=0.1,
-                return_when=FIRST_COMPLETED,
-            )
-            for future in done:
-                job_id = in_flight.pop(future)
-                completed[job_id] = future.result()
-            fill_worker_slots()
-        return [(job_id, completed[job_id]) for job_id in job_ids]
-    finally:
-        canceled = cancel_event is not None and cancel_event.is_set()
-        if canceled:
-            for future in in_flight:
-                future.cancel()
-        # A cooperative cancellation must release the parent activity thread
-        # promptly. Already-running calls may finish in the background, but
-        # their per-item commit guard observes the same token and durable owner
-        # row before any artifact or terminal-state write.
-        executor.shutdown(wait=not canceled, cancel_futures=True)
 
 
 _SUCCESS_STATUSES = {"ok", "partial", "skipped", "already_done"}

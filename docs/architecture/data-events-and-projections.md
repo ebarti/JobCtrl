@@ -115,11 +115,11 @@ still begins at the owning domain/application boundary.
    process-wide `InProcessEventBus`.
 3. That notification currently occurs before the caller commits. The wildcard
    `ProjectionBuilder` subscriber refreshes through the publishing thread's
-   thread-local SQLite connection and defers its own commit when a transaction
-   is already open.
+   thread-local SQLite connection inside a savepoint when a transaction is
+   already open. The publisher retains commit and rollback ownership.
 4. A projection-handler error is logged and does not erase the canonical write
-   or durable event. Because the watermark has not advanced successfully, a
-   later explicit/bootstrap refresh can catch the read model up.
+   or durable event. The savepoint rolls back partial derived rows and the
+   cursor together, so a later explicit/bootstrap refresh can catch up.
 
 The in-process bus is therefore a low-latency notification mechanism, not the
 durability guarantee. `job_events` plus projection watermarks provide recovery.
@@ -148,8 +148,15 @@ There are two materializers over the same SQLite read-model spine:
 - TypeScript `refreshProjections` in `apps/api/src/projections.ts` refreshes
   before reads and after TypeScript-owned writes.
 
-They share the monotonic `event_watermarks.operations_projections` cursor and
-derive overlapping projections from the same canonical state. Some families
+They derive overlapping projections from the same canonical state, but each
+consumer and tenant has an independent monotonic cursor in `event_watermarks`:
+`typescript:operations_projections:<tenant>` and
+`python:operations_projections:<tenant>`. Neither consumer can acknowledge
+events on behalf of the other. Runtime-first names cannot collide with legacy
+`operations_projections` or `operations_projections:<tenant>` keys, even when
+an opaque tenant ID contains colons. Those legacy cursors and their timestamps
+are retained but unused; the first consumer-specific pass replays history so it
+repairs terminal events previously skipped behind that shared cursor. Some families
 have a narrower owner: apply-run and workflow-run projections are materialized
 on the Python side and read by TypeScript. Shared fixtures and parity tests
 guard the projection families written by both runtimes.
@@ -160,9 +167,16 @@ exhaustiveness and parity tests. Documentation may list event families for
 orientation, but it does not own a numeric total; adding an event updates the
 registries, producer/consumer folds, and tests rather than a prose count.
 
-A projection refresh uses events newer than the watermark to mark dirty
-entities/families, rebuilds their denormalized rows, and advances the watermark
-only after the rebuild path reaches its successful end. First-run and
+A projection refresh reads its tenant's events newer than its cursor to mark
+dirty entities/families, rebuilds their denormalized rows, and advances the
+cursor in one transaction. Standalone passes acquire `BEGIN IMMEDIATE` before
+reading the snapshot. Nested passes use a savepoint and leave the enclosing
+transaction to its caller. Any failure rolls back the entire pass, including
+replacement deletes. TypeScript applies its per-pass event bound after tenant
+filtering. Direct contact, contact-research, and outreach refreshes use the same
+transaction boundary; outreach threads and due follow-ups publish together.
+Permanent job deletion rebuilds affected aggregates synchronously
+and retains these cursors; it does not replay unrelated history. First-run and
 schema-recovery paths also detect missing/stale projection rows and rebuild from
 canonical state even when old events are already watermarked.
 
