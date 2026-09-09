@@ -10,7 +10,7 @@ the application and public CI do not depend on the private maintainer package.
 
 An enrolled maintainer host installs the reviewed release under
 `~/.local/share/devflow/releases/<revision>` using devflow's managed installer.
-The skill link is `~/.agents/skills/devflow`. Installation records exact target
+The private installation manifest records the active skill link, exact target
 paths and shared consumers before changing anything. Other repositories' review
 skills, Claude adapters and model settings remain their existing owners.
 
