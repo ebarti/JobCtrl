@@ -69,6 +69,7 @@ import {
   createStageExhausted,
   createStageFailed,
   createStageReset,
+  createEnrichmentFetchRechecked,
   createStageSkipped,
   createStageStarted,
   createTailoredArtifactsSuppressed,
@@ -628,6 +629,11 @@ export const eventByType = {
     stage: "tailor",
     resetAttempts: true,
     resetAt: NOW,
+  }),
+  EnrichmentFetchRechecked: createEnrichmentFetchRechecked(LOCAL_TENANT, {
+    jobId: JOB_ID, stage: "enrich", failureEventId: 1, failureKind: "dns_non_public",
+    requestHost: "signin.example.test", recoveryStatus: "waiting", checkCount: 1,
+    nextCheckAt: NOW, postingAllowed: true, requestAllowed: false,
   }),
   StageBlocked: createStageBlocked(LOCAL_TENANT, {
     jobId: JOB_ID,

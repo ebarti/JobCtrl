@@ -42,7 +42,7 @@ from jobctrl.domain.enrichment import (
     StaleEnrichmentExecutionLease,
 )
 from jobctrl.domain.identifiers import JobId
-from jobctrl.domain.tenant import LOCAL_TENANT
+from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 from jobctrl.infrastructure.enrichment.execution_lease import (
     claim_enrichment_execution_lease,
     fence_enrichment_execution_lease,
@@ -1512,6 +1512,14 @@ def run_discovery_source_family(
                 run_kwargs["discovery_execution"] = discovery_execution
                 run_kwargs["activity_attempt"] = activity_attempt
                 run_kwargs["activity_owner_token"] = activity_owner_token
+                from jobctrl.infrastructure.discovery.live_browser import (
+                    live_jobstreaming_registry,
+                )
+
+                run_kwargs["adapter_registry"] = live_jobstreaming_registry(
+                    discovery_execution,
+                    cancel_event=cancel_event,
+                )
             _add_supported_discovery_kwargs(
                 run_discovery,
                 run_kwargs,
@@ -1781,7 +1789,7 @@ def run_discovery_enrichment_stage(
         "cancel_event": cancel_event,
         "on_job_enriched": on_job_enriched,
     }
-    if stream_while_discovering:
+    if discovery_execution is not None:
         drain_kwargs["discovery_execution"] = discovery_execution
     if recovery_key:
         drain_kwargs["recovery_key"] = recovery_key
@@ -2043,6 +2051,7 @@ def _run_enrich(
     activity_lease: EnrichmentExecutionLease | None = None,
     workflow_id: str | None = None,
     workflow_run_id: str | None = None,
+    discovery_execution: DiscoveryExecutionRef | None = None,
 ) -> dict:
     """Stage: Detail enrichment — scrape full descriptions and apply URLs."""
     if cancel_event is not None and cancel_event.is_set():
@@ -2064,6 +2073,8 @@ def _run_enrich(
         enrich_kwargs["workflow_id"] = workflow_id
     if workflow_run_id:
         enrich_kwargs["workflow_run_id"] = workflow_run_id
+    if discovery_execution is not None:
+        enrich_kwargs["discovery_execution"] = discovery_execution
     if cancel_event is None:
         stats = run_enrichment(**enrich_kwargs)
     else:
@@ -2117,6 +2128,9 @@ def _run_tailor(
     tailor_judge_min_score: float | None = None,
     cancel_event: threading.Event | None = None,
     workflow_id: str | None = None,
+    tenant_id: str = "local",
+    suppress_existing_artifacts: bool = False,
+    allow_low_fit_override: bool = False,
 ) -> dict:
     """Stage: Resume tailoring — generate tailored resumes for high-fit jobs."""
     if cancel_event is not None and cancel_event.is_set():
@@ -2124,6 +2138,10 @@ def _run_tailor(
     from jobctrl.scoring.tailor import run_tailoring
     result = run_tailoring(
         min_score=min_score,
+        tenant_id=TenantId(tenant_id),
+        cancel_event=cancel_event,
+        suppress_existing_artifacts=suppress_existing_artifacts,
+        allow_low_fit_override=allow_low_fit_override,
         limit=limit,
         validation_mode=validation_mode,
         workers=workers,
@@ -2686,6 +2704,7 @@ def _run_discovery_enrichment_until_idle(
             }
             if discovery_execution is not None:
                 enrich_kwargs["job_ids"] = scoped_job_ids
+                enrich_kwargs["discovery_execution"] = discovery_execution
             if recovery_key:
                 enrich_kwargs["recovery_key"] = recovery_key
             if activity_lease is not None:

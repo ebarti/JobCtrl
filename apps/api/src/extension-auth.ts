@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 const TOKEN_FILENAME = "extension-capability-token";
+const DISCOVERY_INSTALLATION_FILENAME = "extension-discovery-installation-id";
 const TOKEN_BYTES = 32;
 const TOKEN_FILE_MODE = 0o600;
 const APP_DIR_MODE = 0o700;
@@ -11,6 +12,11 @@ export interface LocalCapabilityToken {
   token: string;
   tokenPath: string;
   created: boolean;
+}
+
+export interface DiscoveryInstallationClaim {
+  installationId: string;
+  changed: boolean;
 }
 
 export function localCapabilityTokenPath(appDir: string): string {
@@ -28,6 +34,72 @@ export function ensureLocalCapabilityToken(appDir: string): LocalCapabilityToken
 
 export function rotateLocalCapabilityToken(appDir: string): LocalCapabilityToken {
   return writeFreshLocalCapabilityToken(appDir);
+}
+
+export function readDiscoveryInstallationId(appDir: string): string | null {
+  const value = readTokenFile(path.join(appDir, DISCOVERY_INSTALLATION_FILENAME));
+  return value && isUuid(value) ? value : null;
+}
+
+export function claimDiscoveryInstallationId(
+  appDir: string,
+  installationId: string,
+  replace: boolean,
+): DiscoveryInstallationClaim {
+  if (!isUuid(installationId)) {
+    throw new Error("Discovery extension installation id must be a UUID.");
+  }
+  const current = readDiscoveryInstallationId(appDir);
+  if (current === installationId) {
+    return { installationId, changed: false };
+  }
+  if (!current && !replace) {
+    throw new DiscoveryInstallationSelectionRequiredError();
+  }
+  if (current && !replace) {
+    throw new DiscoveryInstallationConflictError();
+  }
+  fs.mkdirSync(appDir, { recursive: true, mode: APP_DIR_MODE });
+  const targetPath = path.join(appDir, DISCOVERY_INSTALLATION_FILENAME);
+  const temporaryPath = `${targetPath}.${process.pid}.${randomBytes(8).toString("hex")}.tmp`;
+  try {
+    fs.writeFileSync(temporaryPath, `${installationId}\n`, { mode: TOKEN_FILE_MODE, flag: "wx" });
+    fs.renameSync(temporaryPath, targetPath);
+    fs.chmodSync(targetPath, TOKEN_FILE_MODE);
+  } finally {
+    try {
+      fs.unlinkSync(temporaryPath);
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
+        throw error;
+      }
+    }
+  }
+  return { installationId, changed: true };
+}
+
+export function clearDiscoveryInstallationId(appDir: string): void {
+  try {
+    fs.unlinkSync(path.join(appDir, DISCOVERY_INSTALLATION_FILENAME));
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
+      throw error;
+    }
+  }
+}
+
+export class DiscoveryInstallationConflictError extends Error {
+  constructor() {
+    super("Another Chrome extension installation is already selected for Discovery.");
+    this.name = "DiscoveryInstallationConflictError";
+  }
+}
+
+export class DiscoveryInstallationSelectionRequiredError extends Error {
+  constructor() {
+    super("Select a Chrome profile for Discovery from the extension popup.");
+    this.name = "DiscoveryInstallationSelectionRequiredError";
+  }
 }
 
 export function isAuthorizedLocalCapabilityToken(
@@ -82,4 +154,10 @@ function constantTimeEqual(left: string, right: string): boolean {
     return false;
   }
   return timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    value,
+  );
 }

@@ -190,6 +190,52 @@ const activeJobQuery: JobListQuery = {
 };
 
 describe("exact-v7 read model job ids", () => {
+  it.each(["waiting", "stopped", "checks_exhausted"])("projects canonical %s fetch recovery without raw request URLs or invented retryability", (status) => {
+    const db = seededDatabase();
+    const failure = {
+      kind: "dns_non_public", requestHost: "signin.example.test", observedAt: NOW,
+      requestUrl: "https://signin.example.test/private?token=must-not-project",
+    };
+    const count = status === "checks_exhausted" ? 5 : 1;
+    const recovery = { status, checkCount: count, checkedAt: NOW, nextCheckAt: status === "waiting" ? "2026-07-31T12:02:00Z" : null };
+    db.prepare(`INSERT INTO job_stage_states (
+      tenant_id, job_id, stage, state, updated_at, attempt_count, max_attempts, error_code, retryable, metadata_json
+    ) VALUES ('local', ?, 'enrich', 'failed', ?, 1, 5, 'DETAIL_UNSAFE_URL', 0, ?)`).run(
+      JOB_ID, NOW, JSON.stringify({ fetchFailure: failure, fetchRecovery: recovery }),
+    );
+    const event = db.prepare(`INSERT INTO job_events (
+      tenant_id, job_id, identity_version, stage, event_type, occurred_at, payload_json
+    ) VALUES ('local', ?, 1, 'enrich', ?, ?, ?)`);
+    event.run(JOB_ID, "StageFailed", NOW, JSON.stringify({ fetchFailure: failure, blockedUrl: failure.requestUrl }));
+    event.run(JOB_ID, "EnrichmentFetchRechecked", NOW, JSON.stringify({
+      failureKind: failure.kind, requestHost: failure.requestHost, recoveryStatus: status, checkCount: count,
+      postingAllowed: true, requestAllowed: false, nextCheckAt: recovery.nextCheckAt, requestUrl: failure.requestUrl,
+    }));
+    const detail = getJobDetail(db, JOB_ID)!;
+    expect(detail.stages.find((stage) => stage.stage === "enrich")).toMatchObject({
+      state: "failed", attemptCount: 1, retryable: false, fetchFailure: {
+        kind: "dns_non_public", requestHost: "signin.example.test", observedAt: NOW,
+        recoveryStatus: status, checkCount: count, nextCheckAt: recovery.nextCheckAt,
+      },
+    });
+    const audit = detail.auditHistory.filter((entry) => ["Fetch destinations rechecked", "Stage failed: Enrich"].includes(entry.title));
+    expect(audit).toHaveLength(2);
+    expect(JSON.stringify(audit)).toContain("signin.example.test");
+    expect(JSON.stringify(audit)).toContain("dns non public");
+    if (recovery.nextCheckAt) expect(JSON.stringify(audit)).toContain(recovery.nextCheckAt);
+    expect(JSON.stringify([...audit, ...detail.stages])).not.toContain("must-not-project");
+  });
+
+  it.each([["timeout", true], ["non_public_literal", false]] as const)("keeps the canonical retry policy for %s", (kind, retryable) => {
+    const db = seededDatabase();
+    db.prepare(`INSERT INTO job_stage_states (
+      tenant_id, job_id, stage, state, updated_at, error_code, retryable, metadata_json
+    ) VALUES ('local', ?, 'enrich', 'failed', ?, 'DETAIL_ERROR', ?, ?)`).run(
+      JOB_ID, NOW, Number(retryable), JSON.stringify({ fetchFailure: { kind, requestHost: "fixture.example.test", observedAt: NOW } }),
+    );
+    expect(getJobDetail(db, JOB_ID)!.stages.find((stage) => stage.stage === "enrich")).toMatchObject({ retryable });
+  });
+
   it("keeps same-UUID tenants isolated while preserving URL locators and material/template state", () => {
     const db = seededDatabase();
     const before = schemaManifest(db, EXACT_V9_SCHEMA_MANIFEST.version);

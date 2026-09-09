@@ -38,6 +38,15 @@ LinkedIn on-site application flow is a successful terminal outcome even though
 there is no external URL. Raw resolver errors and browser-local paths are not
 projected.
 
+Enrich stages can also include `fetchFailure`: an allow-listed `kind`,
+`requestHost`, `observedAt`, `recoveryStatus`, `checkCount`, `checkedAt`,
+`nextCheckAt`, and `retryEligibleAt`. Recovery status is `waiting`,
+`retry_ready`, `checks_exhausted`, or `stopped`; absent recovery has a zero
+count and null times/status. The diagnostic excludes raw request URLs, query
+strings, and unknown metadata. Both projection writers produce the same shape.
+The job audit preserves typed failure evidence and `EnrichmentFetchRechecked`
+results. Historical success does not turn an old failure into a current block.
+
 `jobKey` resolves at the browser API boundary to the tenant-scoped stable
 `JobId`. Canonical clients send that ID; the explicit API/import boundary may
 also accept a posting or application URL as an external locator and resolve it

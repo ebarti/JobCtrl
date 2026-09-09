@@ -41,10 +41,12 @@ is the canonical decision matrix.
 | Daily digest and digest acknowledge state | **Server** (Query + mutation) | `GET /v1/digest` is a passive local read. Only explicit acknowledge advances `digest_state`; digest deep links carry filters/sort in the URL. |
 | Jobs list response | **Server** (Query) | Same. |
 | Job detail | **Server** (Query) | Same. |
+| Saved resume review draft | **Server** (Query) | The apply-context reconciler publishes create/save/seed/render/reply responses to the initiating tenant/job key. Draft identity and base generation precede revision/state/time ordering; threads, replies and feedback signals merge independently by their IDs. |
+| Unsaved resume review edits | **Mounted Plate session** | Acknowledging saved snapshot A updates the baseline while later text or formatting B stays dirty. Comment-only updates do not reset focus or selection. |
 | Artifacts list / detail | **Server** (Query) | Same. |
 | Apply run live timeline | **Server** (Query) — appended via `setQueryData` from SSE | High-frequency; see §7.5. |
 | Resume import wizard step state (uploaded file metadata, parsed draft) | **Client** (Zustand+persist) | Cross-step, refresh-safe, but not URL-bound (the URL identifies *which step*, not *the data*). |
-| Form drafts (profile, settings) | **Form library state** (TanStack Form) | Owned by the form until submit; mutates the server via the mutation hook. Direct Profile Plate edits with an unambiguous semantic owner project into this same draft rather than creating a second profile store. |
+| Form drafts (profile, settings) | **Form library state** (TanStack Form) | Profile and resume style stay object-valued until the existing string-valued update request; validation does not replace the edited object with normalized schema output. Owned by the form until submit; mutates the server via the mutation hook. Direct Profile Plate edits with an unambiguous semantic owner project into this same draft rather than creating a second profile store. |
 | Connection status to API (the inline "live"/"offline" status) | **Server** (Query: `useHealthQuery({ refetchInterval: ... })`) | Polling the health endpoint, not a manual `useState`. |
 
 ### 5.2 URL ↔ Query Cache Binding

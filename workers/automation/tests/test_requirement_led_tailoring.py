@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from jobctrl.domain.identifiers import canonical_job_id
@@ -19,12 +21,12 @@ from jobctrl.domain.materials.policy import (
     RevisionGatePolicy,
     adapt_requirement_led_controls,
 )
-from jobctrl.domain.materials.provenance import BulletProvenance
 from jobctrl.domain.materials.claim_grounding import (
     GROUNDED_COVERAGE_BASIS,
     ground_claim_mappings,
 )
 from jobctrl.domain.materials.quality import build_tailoring_plan
+from jobctrl.domain.materials.services import ContentValidator
 from jobctrl.domain.materials.requirement_coverage import (
     AchievementNode,
     CoverageEdge,
@@ -53,8 +55,10 @@ from jobctrl.domain.materials.requirement_coverage import (
 from jobctrl.domain.materials.use_cases import (
     _claim_mapping_validation_errors,
     _post_generation_fit_gate,
+    build_master_tailor_prompt,
 )
-from jobctrl.domain.materials.value_objects import ControlRule, TransformType
+from jobctrl.domain.profile.aggregate import Profile
+from jobctrl.domain.profile.snapshot import ProfileSnapshot
 from jobctrl.domain.scoring import (
     FitScore,
     RequirementFitAssessment,
@@ -557,6 +561,88 @@ def test_claim_mapping_gate_rejects_positioning_filler_when_role_has_job_evidenc
     assert any("positioning-only bullet" in error for error in errors)
 
 
+@pytest.mark.parametrize("has_evidence", (False, True))
+def test_required_role_can_have_no_bullets_only_without_achievement_evidence(
+    has_evidence: bool,
+) -> None:
+    profile = _profile()
+    if not has_evidence:
+        entry = profile["resume"]["experience_entries"][0]
+        entry["bullets"] = []
+        entry["achievement_evidence"] = []
+    plan = build_tailoring_plan(
+        profile, _senior_job(), employer_analysis=_employer_analysis("python")
+    )
+    payload = _mapped_payload(bullets=[], bullet_mappings=[])
+
+    fields = ContentValidator().validate_json_fields(payload, profile)
+    claims = _claim_mapping_validation_errors(payload=payload, tailoring_plan=plan)
+
+    assert fields.passed is not has_evidence
+    assert bool(claims) is has_evidence
+
+
+@pytest.mark.parametrize("has_evidence", (False, True))
+@pytest.mark.parametrize("has_pinned_bullet", (False, True))
+def test_prompt_empty_bullet_roles_agree_with_field_validation(
+    has_evidence: bool, has_pinned_bullet: bool,
+) -> None:
+    profile = _profile()
+    entry = profile["resume"]["experience_entries"][0]
+    if has_pinned_bullet:
+        profile["resume"]["tailoring_rules"]["required_bullets_by_experience_id"] = {
+            entry["id"]: [entry["bullets"][0]],
+        }
+    if not has_evidence:
+        entry["bullets"] = []
+        entry["achievement_evidence"] = []
+    snapshot = ProfileSnapshot.from_profile(Profile.from_dict(LOCAL_TENANT, profile))
+    prompt = build_master_tailor_prompt(snapshot)
+    empty_bullet_roles = json.loads(
+        prompt.split("REQUIRED EXPERIENCE IDS ALLOWING EMPTY BULLETS:\n")[1]
+        .split("\n\n", 1)[0]
+    )
+    fields = ContentValidator().validate_json_fields(
+        _mapped_payload(bullets=[], bullet_mappings=[]), snapshot.as_dict(),
+    )
+
+    assert fields.passed is (not has_evidence and not has_pinned_bullet)
+    assert (entry["id"] in empty_bullet_roles) is fields.passed
+    if has_pinned_bullet:
+        assert snapshot.as_dict()["resume"]["tailoring_rules"][
+            "required_bullets_by_experience_id"
+        ] == profile["resume"]["tailoring_rules"]["required_bullets_by_experience_id"]
+
+
+def test_required_role_without_evidence_rejects_a_generated_positioning_bullet() -> None:
+    profile = _profile()
+    entry = profile["resume"]["experience_entries"][0]
+    entry["bullets"] = []
+    entry["achievement_evidence"] = []
+    plan = build_tailoring_plan(
+        profile, _senior_job(), employer_analysis=_employer_analysis("python")
+    )
+    bullet = "Led an unsupported platform transformation."
+    payload = _mapped_payload(
+        bullets=[bullet],
+        bullet_mappings=[{
+            "claim_id": "unsupported",
+            "location": "experience.acme_swe.bullets[0]",
+            "text": bullet,
+            "claim_label": "positioning",
+            "coverage_edge_ids": [],
+            "requirement_ids": [],
+            "evidence_ids": [],
+            "non_requirement_reason": "positioning",
+            "review_required": False,
+        }],
+    )
+
+    errors = _claim_mapping_validation_errors(payload=payload, tailoring_plan=plan)
+
+    assert any("exactly one primary achievement" in error for error in errors)
+
+
 def test_claim_metric_must_be_supported_by_that_bullets_mapped_achievement() -> None:
     profile = _profile()
     profile["resume_constraints"]["real_metrics"] = ["$123k"]
@@ -957,18 +1043,11 @@ def test_logistics_requirement_stays_auditable_but_cannot_fail_resume_coverage()
         },
         tailoring_plan=plan,
         attempt=1,
-        shipped_rows=(
-            BulletProvenance(
-                bullet_id="bullet-1",
-                section="experience",
-                source_id="acme_swe",
-                evidence_ids=("ev_latency",),
-                requirement_ids=("req_python",),
-                matched_keywords=("Python API reliability",),
-                transform_type=TransformType.REPHRASE,
-                control=ControlRule.REPHRASE_ALLOWED,
-                rationale="Grounded rephrasing of the recorded achievement.",
-                generated_text=generated_bullet,
+        grounding=ground_claim_mappings(
+            (summary_mapping, mapping),
+            (
+                ("summary-1", "Senior backend engineer."),
+                ("bullet-1", generated_bullet),
             ),
         ),
     )

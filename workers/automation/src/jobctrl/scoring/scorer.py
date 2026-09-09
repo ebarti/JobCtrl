@@ -730,6 +730,9 @@ def score_job_by_id(
     analyze_use_case: AnalyzeJobUseCaseLike | None = None,
     require_employer_analysis: bool = True,
     workflow_id: str | None = None,
+    enforce_workflow_ownership: bool = False,
+    cancel_event: Any | None = None,
+    recovery_workflow_id: str | None = None,
 ) -> ScoreJobOutcome:
     """Score exactly one enriched job by tenant-scoped canonical JobId.
 
@@ -756,6 +759,48 @@ def score_job_by_id(
     if not job.get("full_description"):
         return ScoreJobOutcome(ok=False, score=None, error=f"Job is not enriched: {stable_job_id}")
 
+    owned_metadata = None
+    if enforce_workflow_ownership:
+        if not workflow_id or not recovery_workflow_id:
+            raise ValueError("Owned scoring requires the reserved workflow and activity owner")
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT state, json_extract(metadata_json, '$.automaticPreparation.workflowId') "
+            "FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'score'",
+            (str(tenant_id), str(stable_job_id)),
+        ).fetchone()
+        if (
+            row is None
+            or row[0] != "queued"
+            or row[1] != recovery_workflow_id
+            or (cancel_event is not None and cancel_event.is_set())
+        ):
+            conn.rollback()
+            return ScoreJobOutcome(ok=False, score=None, error="Score reservation no longer owned")
+        owned_metadata = _score_activity_metadata(
+            conn,
+            tenant_id=tenant_id,
+            job_id=stable_job_id,
+            workflow_id=workflow_id,
+            rescore=rescore,
+        )
+        owned_metadata["automaticRecovery"] = True
+        owned_metadata["workflowId"] = recovery_workflow_id
+        owned_metadata["temporalRunId"] = workflow_id
+        set_stage_state(
+            conn,
+            stable_job_id,
+            "score",
+            "running",
+            tenant_id=tenant_id,
+            attempt_count=_score_attempt_count(conn, tenant_id=tenant_id, job_id=stable_job_id),
+            started_at=utc_now(),
+            metadata=owned_metadata,
+            validate_transition=False,
+        )
+        record_job_event(conn, stable_job_id, "score", "StageStarted", tenant_id=tenant_id, message="Scoring started")
+        conn.commit()
+
     if profile_snapshot is None:
         profile_snapshot = get_profile_repository().load_snapshot(tenant_id)
     if resume_text is None:
@@ -767,6 +812,12 @@ def score_job_by_id(
         criteria = LocalScoringCriteriaProvider().load(profile_snapshot)
     if repository is None:
         repository = SqliteScoreRepository(conn)
+    if enforce_workflow_ownership:
+        # Resolve the SQLite companion before the ownership decorator hides
+        # its concrete type from the use-case factory's default wiring.
+        if requirement_fit_repository is None and isinstance(repository, SqliteScoreRepository):
+            requirement_fit_repository = SqliteRequirementFitReportRepository(repository.connection)
+        repository = _OwnedScoreRepository(repository, conn, workflow_id, cancel_event)
     if policy_repository is None:
         policy_repository = SqliteScoringPolicyRepository(conn)
     existing = repository.load(tenant_id, stable_job_id)
@@ -795,56 +846,66 @@ def score_job_by_id(
                 tenant_id=tenant_id,
                 started_at=utc_now(),
                 validate_transition=False,
+                metadata=owned_metadata,
+                cancel_event=cancel_event,
             )
         return outcome
     if existing is not None and not rescore:
-        _ensure_existing_score_stage_succeeded(
-            conn,
-            job=job,
-            score=existing,
-            tenant_id=tenant_id,
-        )
+        if enforce_workflow_ownership:
+            _record_score_stage_succeeded(
+                conn, job=job, score=existing, tenant_id=tenant_id,
+                metadata=owned_metadata, cancel_event=cancel_event,
+            )
+        else:
+            _ensure_existing_score_stage_succeeded(
+                conn,
+                job=job,
+                score=existing,
+                tenant_id=tenant_id,
+            )
         return ScoreJobOutcome(ok=True, score=existing)
-    ensure_job_stage_rows(
-        conn,
-        stable_job_id,
-        tenant_id=tenant_id,
-        discovered_at=job.get("discovered_at"),
-    )
+    if not enforce_workflow_ownership:
+        ensure_job_stage_rows(
+            conn,
+            stable_job_id,
+            tenant_id=tenant_id,
+            discovered_at=job.get("discovered_at"),
+        )
     started_at = utc_now()
-    metadata = _score_activity_metadata(
+    metadata = owned_metadata or _score_activity_metadata(
         conn,
         tenant_id=tenant_id,
         job_id=stable_job_id,
         workflow_id=workflow_id,
         rescore=rescore,
     )
-    set_stage_state(
-        conn,
-        stable_job_id,
-        "score",
-        "running",
-        tenant_id=tenant_id,
-        # Preserve the attempt counter across re-selection — see
-        # _score_attempt_count; a bare running write would reset it to 0.
-        attempt_count=_score_attempt_count(
+    if not enforce_workflow_ownership:
+        set_stage_state(
             conn,
+            stable_job_id,
+            "score",
+            "running",
             tenant_id=tenant_id,
-            job_id=stable_job_id,
-        ),
-        started_at=started_at,
-        metadata=metadata,
-        validate_transition=False,
-    )
-    record_job_event(
-        conn,
-        stable_job_id,
-        "score",
-        "StageStarted",
-        tenant_id=tenant_id,
-        message="Scoring started",
-    )
-    conn.commit()
+            # Preserve the attempt counter across re-selection — see
+            # _score_attempt_count; a bare running write would reset it to 0.
+            attempt_count=_score_attempt_count(
+                conn,
+                tenant_id=tenant_id,
+                job_id=stable_job_id,
+            ),
+            started_at=started_at,
+            metadata=metadata,
+            validate_transition=False,
+        )
+        record_job_event(
+            conn,
+            stable_job_id,
+            "score",
+            "StageStarted",
+            tenant_id=tenant_id,
+            message="Scoring started",
+        )
+        conn.commit()
 
     if employer_analysis is None:
         try:
@@ -875,6 +936,7 @@ def score_job_by_id(
                 started_at=started_at,
                 metadata=metadata,
                 error=error,
+                cancel_event=cancel_event,
             )
             return ScoreJobOutcome(ok=False, score=None, error=error)
 
@@ -896,35 +958,11 @@ def score_job_by_id(
         require_employer_analysis=require_employer_analysis,
     )
     if outcome.ok and outcome.score is not None:
-        finished_at = utc_now()
-        set_stage_state(
-            conn,
-            stable_job_id,
-            "score",
-            "succeeded",
-            tenant_id=tenant_id,
-            attempt_count=1,
-            started_at=started_at,
-            finished_at=finished_at,
-            metadata=metadata,
+        _record_score_stage_succeeded(
+            conn, job=job, score=outcome.score, tenant_id=tenant_id,
+            started_at=started_at, metadata=metadata, cancel_event=cancel_event,
+            validate_transition=True,
         )
-        record_job_event(
-            conn,
-            stable_job_id,
-            "score",
-            "StageCompleted",
-            tenant_id=tenant_id,
-            message=f"Fit score {outcome.score.fit_score.value}/10",
-            payload={"keywords": list(outcome.score.matched_keywords)},
-        )
-        _sync_score_eligibility_stage_state(
-            conn,
-            tenant_id=tenant_id,
-            job_id=outcome.score.job_id,
-            score=outcome.score,
-            now=finished_at,
-        )
-        conn.commit()
     else:
         _record_score_stage_failed(
             conn,
@@ -933,8 +971,50 @@ def score_job_by_id(
             started_at=started_at,
             metadata=metadata,
             error=outcome.error or "Scoring failed",
+            cancel_event=cancel_event,
         )
     return outcome
+
+
+class _OwnedScoreRepository:
+    """Fence the actual score commit after provider I/O, under a write lock."""
+
+    def __init__(self, repository, conn, owner, cancel_event):
+        self._repository = repository
+        self._conn = conn
+        self._owner = owner
+        self._cancel_event = cancel_event
+
+    def __getattr__(self, name):
+        return getattr(self._repository, name)
+
+    def save(self, score):
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            if not _score_activity_may_write(
+                self._conn,
+                score.tenant_id,
+                score.job_id,
+                self._owner,
+                self._cancel_event,
+            ):
+                raise RuntimeError("Score activity no longer owns score persistence")
+            self._repository.save(score)
+            self._conn.commit()
+        except BaseException:
+            self._conn.rollback()
+            raise
+
+
+def _score_activity_may_write(conn, tenant_id, job_id, owner, cancel_event) -> bool:
+    if cancel_event is not None and cancel_event.is_set():
+        return False
+    row = conn.execute(
+        "SELECT state, json_extract(metadata_json, '$.activityOwner') FROM job_stage_states "
+        "WHERE tenant_id = ? AND job_id = ? AND stage = 'score'",
+        (str(tenant_id), str(job_id)),
+    ).fetchone()
+    return row is not None and row[0] == "running" and row[1] == owner
 
 
 def _ensure_existing_score_stage_succeeded(
@@ -1013,8 +1093,16 @@ def _record_score_stage_succeeded(
     started_at: str | None = None,
     finished_at: str | None = None,
     validate_transition: bool = False,
+    metadata: dict[str, Any] | None = None,
+    cancel_event: Any | None = None,
 ) -> None:
     job_id = canonical_job_id(str(score.job_id))
+    owned = bool(metadata and metadata.get("automaticRecovery"))
+    if owned:
+        conn.execute("BEGIN IMMEDIATE")
+        if not _score_activity_may_write(conn, tenant_id, job_id, metadata.get("activityOwner"), cancel_event):
+            conn.rollback()
+            return
     finished_at = finished_at or utc_now()
     ensure_job_stage_rows(
         conn,
@@ -1028,10 +1116,11 @@ def _record_score_stage_succeeded(
         "score",
         "succeeded",
         tenant_id=tenant_id,
-        attempt_count=1,
+        attempt_count=_score_attempt_count(conn, tenant_id=tenant_id, job_id=job_id) + 1 if owned else 1,
         started_at=started_at or finished_at,
         finished_at=finished_at,
         validate_transition=validate_transition,
+        metadata=metadata,
     )
     record_job_event(
         conn,
@@ -1059,12 +1148,18 @@ def _record_score_stage_failed(
     job: dict[str, Any],
     tenant_id: TenantId,
     started_at: str,
-    metadata: dict[str, Any],
+    metadata: dict[str, Any] | None,
     error: str,
+    cancel_event: Any | None = None,
 ) -> None:
     """Persist one bounded, retryable scoring attempt failure."""
 
     job_id = canonical_job_id(str(job["job_id"]))
+    if metadata and metadata.get("automaticRecovery"):
+        conn.execute("BEGIN IMMEDIATE")
+        if not _score_activity_may_write(conn, tenant_id, job_id, metadata.get("activityOwner"), cancel_event):
+            conn.rollback()
+            return
     finished_at = utc_now()
     set_stage_state(
         conn,
@@ -1262,8 +1357,7 @@ def _is_usable_employer_analysis(
     expected_snapshot_hash = compute_snapshot_hash(build_jd_snapshot(job))
     if analysis.snapshot_hash != expected_snapshot_hash:
         log.info(
-            "Ignoring employer analysis generation %s for tenant=%s job=%s because its "
-            "posting snapshot is stale",
+            "Ignoring employer analysis generation %s for tenant=%s job=%s because its posting snapshot is stale",
             analysis.generation,
             tenant_id,
             job_id,

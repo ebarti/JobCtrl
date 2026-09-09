@@ -184,12 +184,14 @@ jobctrl runs
 Start with a dry run. JobCtrl does not submit in dry-run mode, and live
 submission remains behind the configured approval gate.
 
-## Optional Browser Capabilities
+## Discovery Extension And Optional Managed-Browser Capabilities
 
-The bundled managed browser covers discovery, enrichment, PDF rendering, and
-other headless core workflows. Install or adopt a system Chrome/Chromium
-profile only when you explicitly enable an authenticated-browser or auto-apply
-capability that needs it.
+Integrated Discovery requires the JobCtrl extension installed and paired in the
+Chrome profile you normally use. It executes Discovery's bounded page/API work
+directly in that currently running profile, so it does not copy the profile or
+launch a separate browser. Job-scoped Enrich retries use the same extension
+path. PDF rendering and Apply may still use their separate managed/adopted
+browser capabilities; those settings are never a Discovery or Enrich fallback.
 
 Open **Settings → Browser & extension** to enable an optional system-browser
 capability, or to pair the extension. JobCtrl passively detects supported
@@ -200,10 +202,12 @@ it explicitly; JobCtrl resolves it again at enable time and fails closed if it
 is no longer available. **Advanced: enter executable path** remains the manual
 fallback when no supported installation is listed.
 
-The optional extension can save the current job page and review deterministic
+The extension also saves the current job page and reviews deterministic
 profile-backed autofill suggestions. It talks only to JobCtrl's loopback API
 and cannot submit an application by itself. Pair it from the same Settings tab
-using the local browser-extension token.
+using the local browser-extension token, then wait for the separate live status
+to show connected before starting Discover. A displayed token alone does not
+prove the installed extension is active.
 
 ## Update, Roll Back, Or Remove JobCtrl
 

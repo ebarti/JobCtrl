@@ -147,6 +147,54 @@ def test_get_achievement_evidence_rederives_materialized_legacy_bullets():
     assert evidence[0]["metrics"] == ["55%"]
 
 
+@pytest.mark.parametrize("with_authored", [False, True])
+def test_reordering_bullets_preserves_evidence_occurrences_and_refreshes_later_edits(with_authored):
+    profile = _valid_profile_dict()
+    entry = profile["resume"]["experience_entries"][0]
+    entry["bullets"] = ["Reduced incidents 40%.", "Built APIs.", "Reduced incidents 40%."]
+    entry["achievement_evidence"] = get_achievement_evidence(profile)
+    if with_authored:
+        entry["achievement_evidence"][1].update(id="authored_api", tags=["authored"])
+    original = {item["id"]: item for item in entry["achievement_evidence"]}
+    entry["bullets"] = [" ", "  Built APIs.  ", "Reduced incidents 40%.", "Reduced incidents 40%.", ""]
+
+    reordered = get_achievement_evidence(profile)
+
+    assert {item["id"]: item for item in reordered} == original
+    entry["achievement_evidence"] = reordered
+    profile["personal"]["preferred_name"] = "Jordan"
+    assert get_achievement_evidence(profile) == reordered
+
+    entry["bullets"] = ["Built APIs.", "Reduced incidents 55%.", "Reduced incidents 40%."]
+    updated = get_achievement_evidence(profile)
+    incidents = [item for item in updated if item["id"] != ("authored_api" if with_authored else "role_1_bullet_2")]
+    assert sorted(item["metrics"] for item in incidents) == [["40%"], ["55%"]]
+    assert len({item["id"] for item in updated}) == 3
+    entry["achievement_evidence"] = updated
+    entry["bullets"] = ["Built APIs.", "Reduced incidents 40%."]
+    assert all(item["metrics"] != ["55%"] for item in get_achievement_evidence(profile))
+
+
+@pytest.mark.parametrize("authored_first", [False, True])
+def test_reordering_preserves_authored_and_derived_evidence_sharing_one_bullet(authored_first):
+    profile = _valid_profile_dict()
+    entry = profile["resume"]["experience_entries"][0]
+    entry["bullets"] = ["Reduced incidents 40%.", "Built APIs."]
+    materialized = get_achievement_evidence(profile)
+    authored = {**materialized[0], "id": "authored_incidents", "tags": ["authored"]}
+    entry["achievement_evidence"] = (
+        [authored, *materialized] if authored_first else [*materialized, authored]
+    )
+    original = entry["achievement_evidence"]
+    entry["bullets"] = list(reversed(entry["bullets"]))
+
+    reordered = get_achievement_evidence(profile)
+
+    assert reordered == original
+    entry["achievement_evidence"] = reordered
+    assert get_achievement_evidence(profile) == original
+
+
 def test_from_dict_rejects_missing_resume_block():
     with pytest.raises(InvalidProfileError) as exc:
         Profile.from_dict(LOCAL_TENANT, {"personal": {"full_name": "X"}})

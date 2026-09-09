@@ -2,7 +2,6 @@ import type {
   BrowserCapabilityId,
   BrowserCapabilityItem,
   DetectedBrowserId,
-  DetectedBrowserProfileId,
 } from "@jobctrl/contracts";
 import { Fragment, useState } from "react";
 
@@ -22,7 +21,6 @@ import {
   CardHeader,
   CardTitle,
 } from "../../../shared/ui/card.js";
-import { Checkbox } from "../../../shared/ui/checkbox.js";
 import {
   Collapsible,
   CollapsibleContent,
@@ -34,8 +32,6 @@ import {
   FieldError,
   FieldGroup,
   FieldLabel,
-  FieldLegend,
-  FieldSet,
 } from "../../../shared/ui/field.js";
 import { Input } from "../../../shared/ui/input.js";
 import {
@@ -49,7 +45,6 @@ import {
 import { Separator } from "../../../shared/ui/separator.js";
 import { StatusBadge } from "../../../shared/ui/status-badge.js";
 import {
-  useCopyLinkedInBrowserProfileMutation,
   useDisableBrowserCapabilityMutation,
   useEnableBrowserCapabilityMutation,
 } from "../hooks/useBrowserCapabilityMutations.js";
@@ -67,7 +62,6 @@ export function BrowserCapabilitiesPanel() {
   const query = useBrowserCapabilitiesQuery();
   const enable = useEnableBrowserCapabilityMutation();
   const disable = useDisableBrowserCapabilityMutation();
-  const copyProfile = useCopyLinkedInBrowserProfileMutation();
   const [executablePaths, setExecutablePaths] = useState<
     Record<string, string>
   >({});
@@ -77,10 +71,6 @@ export function BrowserCapabilitiesPanel() {
   const [manualPathErrors, setManualPathErrors] = useState<
     Record<string, string>
   >({});
-  const [selectedProfileId, setSelectedProfileId] =
-    useState<DetectedBrowserProfileId | null>(null);
-  const [sourceProfilePath, setSourceProfilePath] = useState("");
-  const [profileConsent, setProfileConsent] = useState(false);
   const [message, setMessage] = useState("");
 
   async function enableDetectedCapability(
@@ -131,51 +121,6 @@ export function BrowserCapabilitiesPanel() {
     }
   }
 
-  async function copyDetectedLinkedInProfile(
-    detectedBrowserId: DetectedBrowserId,
-    detectedProfileId: DetectedBrowserProfileId,
-    label: string,
-  ) {
-    if (!profileConsent) {
-      setMessage("Grant the separate profile-copy consent first.");
-      return;
-    }
-    setProfileConsent(false);
-    try {
-      await copyProfile.mutateAsync({
-        detectedBrowserId,
-        detectedProfileId,
-        consent: true,
-        consentMethod: "explicit-ui-v1",
-      });
-      setMessage(`${label} was copied into JobCtrl-owned storage.`);
-    } catch {
-      setMessage("The detected browser profile could not be copied.");
-    }
-  }
-
-  async function copyManualLinkedInProfile() {
-    const selectedPath = sourceProfilePath.trim();
-    setSourceProfilePath("");
-    setProfileConsent(false);
-    if (!selectedPath || !profileConsent)
-      return setMessage(
-        "Enter a profile directory and grant the separate copy consent.",
-      );
-    try {
-      await copyProfile.mutateAsync({
-        sourceProfilePath: selectedPath,
-        consent: true,
-        consentMethod: "explicit-ui-v1",
-      });
-      setMessage("The selected profile was copied into JobCtrl-owned storage.");
-    } catch {
-      setMessage(
-        "The selected profile could not be copied. Its source path was cleared.",
-      );
-    }
-  }
-
   function renderCapabilityControls(capability: BrowserCapabilityItem) {
     if (capability.id === "core-browser") {
       return (
@@ -196,21 +141,6 @@ export function BrowserCapabilitiesPanel() {
     const selectItems = detectedBrowsers.map((browser) => ({
       label: browser.label,
       value: browser.id,
-    }));
-    const detectedProfiles = detectedBrowsers.flatMap((browser) =>
-      browser.profiles.map((profile) => ({
-        ...profile,
-        browserId: browser.id,
-        displayLabel: `${browser.label} · ${profile.label}`,
-      })),
-    );
-    const selectedProfile =
-      detectedProfiles.find((profile) => profile.id === selectedProfileId) ??
-      detectedProfiles[0] ??
-      null;
-    const profileSelectItems = detectedProfiles.map((profile) => ({
-      label: profile.displayLabel,
-      value: profile.id,
     }));
     const manualError = manualPathErrors[capabilityId] ?? "";
 
@@ -374,134 +304,16 @@ export function BrowserCapabilitiesPanel() {
           </Collapsible>
         ) : null}
 
-        {capabilityId === "authenticated-linkedin-browser" &&
-        capability.enabled ? (
-          <div className="flex flex-col gap-4">
-            <Separator />
-            <FieldSet>
-              <FieldLegend>Separate authenticated profile copy</FieldLegend>
-              <FieldGroup>
-                {selectedProfile ? (
-                  <Field>
-                    <FieldLabel htmlFor="linkedin-detected-profile">
-                      Detected browser profile
-                    </FieldLabel>
-                    <Select
-                      items={profileSelectItems}
-                      value={selectedProfile.id}
-                      disabled={demo || copyProfile.isPending}
-                      onValueChange={(value) => {
-                        if (value?.startsWith("profile-")) {
-                          setSelectedProfileId(value as DetectedBrowserProfileId);
-                        }
-                      }}
-                    >
-                      <SelectTrigger
-                        id="linkedin-detected-profile"
-                        aria-label="Detected browser profile for authenticated LinkedIn"
-                        className="max-w-xl"
-                      >
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent alignItemWithTrigger={false}>
-                        <SelectGroup>
-                          {profileSelectItems.map((profile) => (
-                            <SelectItem key={profile.value} value={profile.value}>
-                              {profile.label}
-                            </SelectItem>
-                          ))}
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
-                    <FieldDescription>
-                      Detected locally. No folder navigation or path entry is
-                      required.
-                    </FieldDescription>
-                  </Field>
-                ) : (
-                  <FieldDescription>
-                    No standard Chrome or Chromium profile was detected. Use
-                    the advanced path only for a non-standard profile location.
-                  </FieldDescription>
-                )}
-                <Field orientation="horizontal">
-                  <Checkbox
-                    id="linkedin-profile-consent"
-                    name="linkedin-profile-consent"
-                    checked={profileConsent}
-                    onCheckedChange={setProfileConsent}
-                  />
-                  <FieldLabel htmlFor="linkedin-profile-consent">
-                    I explicitly consent to copy this profile into JobCtrl-owned
-                    storage.
-                  </FieldLabel>
-                </Field>
-                {selectedProfile ? (
-                  <Button
-                    className="w-fit max-w-xs whitespace-normal"
-                    type="button"
-                    disabled={copyProfile.isPending || !profileConsent}
-                    onClick={() =>
-                      void copyDetectedLinkedInProfile(
-                        selectedProfile.browserId,
-                        selectedProfile.id,
-                        selectedProfile.displayLabel,
-                      )
-                    }
-                  >
-                    Copy {selectedProfile.label} profile
-                  </Button>
-                ) : null}
-                <Collapsible defaultOpen={!selectedProfile}>
-                  <CollapsibleTrigger
-                    render={<Button variant="ghost" size="sm" type="button" />}
-                  >
-                    Advanced profile path
-                  </CollapsibleTrigger>
-                  <CollapsibleContent className="pt-3">
-                    <Field>
-                      <FieldLabel htmlFor="linkedin-profile-source">
-                        Existing browser user-data directory
-                      </FieldLabel>
-                      <Input
-                        id="linkedin-profile-source"
-                        name="linkedin-profile-source"
-                        type="password"
-                        autoComplete="off"
-                        value={sourceProfilePath}
-                        onChange={(event) =>
-                          setSourceProfilePath(event.target.value)
-                        }
-                      />
-                      <FieldDescription>
-                        Request-only fallback for non-standard locations. Cleared
-                        after submission and never returned or logged.
-                      </FieldDescription>
-                    </Field>
-                    <Button
-                      className="mt-3 w-fit max-w-xs whitespace-normal"
-                      variant="outline"
-                      type="button"
-                      disabled={
-                        copyProfile.isPending ||
-                        !profileConsent ||
-                        !sourceProfilePath.trim()
-                      }
-                      onClick={() => void copyManualLinkedInProfile()}
-                    >
-                      Copy profile from manual path
-                    </Button>
-                  </CollapsibleContent>
-                </Collapsible>
-              </FieldGroup>
-            </FieldSet>
-          </div>
-        ) : null}
       </div>
     );
   }
 
-  const capabilities = query.data?.capabilities ?? [];
+  const capabilities = (query.data?.capabilities ?? []).filter(
+    // LinkedIn/Discovery authentication belongs to the selected extension in
+    // the user's live Chrome profile. Keep the legacy backend capability
+    // readable for compatibility, but never offer profile copying in Settings.
+    (capability) => capability.id !== "authenticated-linkedin-browser",
+  );
 
   return (
     <Card
@@ -513,8 +325,9 @@ export function BrowserCapabilitiesPanel() {
           <h2 id="browser-capabilities-title">Browser capabilities</h2>
         </CardTitle>
         <CardDescription>
-          Review managed, optional, and consent-required browser access. Nothing
-          is enabled or launched until you confirm.
+          Review the managed browser and optional Apply browser. Discovery and
+          LinkedIn enrichment use the paired extension in your live Chrome
+          profile, configured separately below.
         </CardDescription>
         <CardAction>
           <StatusBadge icon={false} tone="muted">

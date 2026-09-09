@@ -53,6 +53,7 @@ import {
   sampleDailyDigest,
   sampleDashboardSummary,
   sampleDiscoverySettingsResponse,
+  sampleDiscoveryBrowserBridgeStatusResponse,
   sampleExtensionCapabilityTokenResponse,
   sampleEvidenceMapResponse,
   sampleHealthResponse,
@@ -945,6 +946,9 @@ export const handlers = [
   http.patch("*/v1/settings", () => HttpResponse.json(sampleSettingsResponse)),
   http.get("*/v1/extension/pairing-token", () =>
     HttpResponse.json(sampleExtensionCapabilityTokenResponse),
+  ),
+  http.get("*/v1/discovery/browser-extension/status", () =>
+    HttpResponse.json(sampleDiscoveryBrowserBridgeStatusResponse),
   ),
   http.post("*/v1/extension/pairing-token/rotate", () =>
     HttpResponse.json({

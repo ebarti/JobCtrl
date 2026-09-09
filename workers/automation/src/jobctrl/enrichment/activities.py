@@ -28,8 +28,11 @@ class _ActivityCancellationEvent(threading.Event):
 
     terminal_cancellation_requested: bool
 
-    def __init__(self) -> None:
+    def __init__(self, *, terminal_on_cancel: bool = True) -> None:
         super().__init__()
+        # A producer-lifetime consumer is canceled internally when producers
+        # finish. Its parent workflow, not this local stop, owns user cancel.
+        self._terminal_on_cancel = terminal_on_cancel
         self.terminal_cancellation_requested = False
 
     def request_stop(self) -> None:
@@ -37,7 +40,9 @@ class _ActivityCancellationEvent(threading.Event):
             details = activity.cancellation_details()
         except RuntimeError:
             details = None
-        self.terminal_cancellation_requested = bool(details is None or details.cancel_requested)
+        self.terminal_cancellation_requested = self._terminal_on_cancel and bool(
+            details is None or details.cancel_requested
+        )
         self.set()
 
 
@@ -53,6 +58,7 @@ class EnrichActivityInput:
     job_ids: tuple[JobId, ...] = ()
     workflow_id: str | None = None
     workflow_run_id: str | None = None
+    recovery_workflow_id: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "job_ids", _canonical_job_ids(self.job_ids))
@@ -250,8 +256,11 @@ def _run_selected_enrichment(
 ) -> dict[str, Any]:
     from jobctrl.database import get_connection
     from jobctrl.enrichment.detail import _run_detail_scraper
+    from jobctrl.pipeline.automatic_preparation import automatic_recovery_job_ids
 
-    job_ids = _limited_job_ids(payload.job_ids, payload.limit)
+    job_ids = _limited_job_ids(automatic_recovery_job_ids(payload, "enrich"), payload.limit)
+    if not job_ids:
+        return {"status": "ok", "elapsed": 0.0, "errors": {}, "stages": [{"stage": "enrich", "enrichedJobIds": []}]}
     if payload.dry_run:
         return {
             "status": "ok",
@@ -276,6 +285,18 @@ def _run_selected_enrichment(
         activity_owner_token=activity_owner_token,
         conn=conn,
     )
+    if payload.recovery_workflow_id and payload.workflow_run_id:
+        # The reservation exists before Temporal allocates a run ID. Bind it
+        # inside the owning activity, before the normal exact-run selector,
+        # so a fast activity cannot outrun the dispatch acknowledgement.
+        conn.execute(
+            "UPDATE job_stage_states SET metadata_json = "
+            "json_set(metadata_json, '$.temporalRunId', ?) "
+            "WHERE tenant_id = ? AND stage = 'enrich' AND state = 'queued' "
+            "AND json_extract(metadata_json, '$.automaticPreparation.workflowId') = ?",
+            (payload.workflow_run_id, payload.tenant_id, payload.recovery_workflow_id),
+        )
+        conn.commit()
     t0 = time.time()
     scraper_kwargs: dict[str, Any] = {
         "max_per_site": payload.limit or None,

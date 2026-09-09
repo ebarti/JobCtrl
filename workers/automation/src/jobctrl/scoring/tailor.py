@@ -28,7 +28,6 @@ import logging
 import sqlite3
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from jobctrl import database as db_module
@@ -72,6 +71,8 @@ from jobctrl.infrastructure.materials import (
 from jobctrl.infrastructure.preparation import SqlitePreparationTargetReader
 from jobctrl.infrastructure.preparation_recovery import (
     assert_material_activity_commit_allowed,
+    claim_preparation_reservation,
+    owns_preparation_reservation,
     stage_completed_by_activity_owner,
 )
 from jobctrl.infrastructure.scoring import (
@@ -456,348 +457,90 @@ def run_tailoring(
     tailor_judge_min_score: float | None = None,
     llm_model: str | None = DEFAULT_PIPELINE_LLM_MODEL_SPEC,
     workflow_id: str | None = None,
+    cancel_event: threading.Event | None = None,
+    suppress_existing_artifacts: bool = False,
+    allow_low_fit_override: bool = False,
 ) -> dict:
-    """Generate tailored resumes for high-scoring jobs.
+    """Freeze an eligible cohort, then use the canonical per-job lifecycle.
 
-    Each job is processed inside a :class:`ThreadPoolExecutor` task; the
-    use case (LLM call + materials persistence) runs in the worker thread.
-    SQLite connections are not safe to share across threads, so each
-    worker builds its own use case (and therefore its own thread-local
-    connection via ``get_connection()``). The main thread keeps a separate
-    connection only for the per-job stage-state writes around the worker
-    pool's lifetime.
+    Profile and LLM policy are captured once. Workers own their SQLite
+    connections; legacy repository/port parameters remain accepted but are
+    never shared across threads.
     """
+    from jobctrl.materials.executor import run_material_jobs
+
     if snapshot is None:
         from jobctrl.infrastructure.profile import get_profile_repository
 
         snapshot = get_profile_repository().load_snapshot(tenant_id)
-
     conn = get_connection()
-    # ``repository`` is accepted for test injection but MUST NOT be passed
-    # into worker-thread tasks — sqlite connections are thread-bound.
-    if repository is None:
-        repository = SqliteMaterialsRepository(conn)
     min_score = db_module.effective_tailoring_min_score(min_score)
-
     jobs = get_jobs_by_stage(
-        conn=conn,
-        stage="pending_tailor",
-        min_score=min_score,
-        limit=limit,
-        retailor=retailor,
+        conn=conn, stage="pending_tailor", min_score=min_score,
+        limit=0, retailor=retailor,
     )
-    jobs = [
-        job
+    job_ids = tuple(dict.fromkeys(
+        canonical_job_id(str(job["job_id"]))
         for job in jobs
         if str(job.get("tenant_id") or tenant_id) == str(tenant_id)
-    ]
-    if workflow_id:
-        jobs = [
-            job
-            for job in jobs
-            if not stage_completed_by_activity_owner(
-                conn,
-                tenant_id=str(tenant_id),
-                job_id=str(canonical_job_id(str(job["job_id"]))),
-                stage="tailor",
-                workflow_id=workflow_id,
-            )
-        ]
-
-    if not jobs:
-        if retailor:
-            log.info("No jobs eligible for tailoring or re-tailoring with score >= %d.", min_score)
-        else:
-            log.info("No untailored jobs with score >= %d.", min_score)
+        and (not workflow_id or not stage_completed_by_activity_owner(
+            conn, tenant_id=str(tenant_id), job_id=str(job["job_id"]),
+            stage="tailor", workflow_id=workflow_id,
+        ))
+    ))
+    if limit > 0:
+        job_ids = job_ids[:limit]
+    if not job_ids:
         return {"approved": 0, "failed": 0, "errors": 0, "elapsed": 0.0}
 
-    TAILORED_DIR.mkdir(parents=True, exist_ok=True)
-    worker_count = max(1, workers)
-    log.info(
-        "Tailoring resumes for %d jobs (score >= %d) with %d worker(s)%s...",
-        len(jobs),
-        min_score,
-        worker_count,
-        " [re-tailor enabled]" if retailor else "",
+    llm_policy = _build_llm_policy(
+        tailor_models=tailor_models, tailor_judge_model=tailor_judge_model,
+        tailor_judge_min_score=tailor_judge_min_score, llm_model=llm_model,
     )
-    t0 = time.time()
-    results: list[dict] = []
-    stats: dict[str, int] = {"approved": 0, "failed_validation": 0, "failed_judge": 0, "error": 0}
-
-    # ``use_case`` is built lazily per-worker inside _tailor_one_job so the
-    # repository connection lives in the worker thread that uses it. The
-    # main-thread ``repository`` constructed above is intentionally
-    # ignored by the workers (sqlite connections are thread-bound).
     if pdf_renderer is None:
         pdf_renderer = _build_pdf_renderer()
-    llm_policy = _build_llm_policy(
-        tailor_models=tailor_models,
-        tailor_judge_model=tailor_judge_model,
-        tailor_judge_min_score=tailor_judge_min_score,
-        llm_model=llm_model,
-    )
+    started = time.time()
 
-    started_ats: dict[str, str] = {}
-    stage_attempts: dict[str, int] = {}
-    activity_metadata: dict[str, dict[str, object]] = {}
-    for job in jobs:
-        stable_job_id = canonical_job_id(str(job["job_id"]))
-        stage_key = str(stable_job_id)
-        ensure_job_stage_rows(
-            conn,
-            stable_job_id,
-            tenant_id=tenant_id,
-            discovered_at=job.get("discovered_at"),
-        )
-        started_at = utc_now()
-        started_ats[stage_key] = started_at
-        prior_attempts = _tailor_attempt_count(
-            conn,
-            tenant_id=tenant_id,
-            job_id=stable_job_id,
-        )
-        current_attempt = prior_attempts + 1
-        stage_attempts[stage_key] = current_attempt
-        # The runner owns the restart policy: a job that failed last time is
-        # eligible for retailoring per ``get_jobs_by_stage``, so the
-        # transition Failed -> Running needs to be permitted even though
-        # the canonical state machine table only allows Failed -> Pending
-        # (via Reset). Skip validation here; the writer is the runner.
-        metadata = _tailor_activity_metadata(
-            repository,
-            tenant_id=tenant_id,
-            job_id=stable_job_id,
-            workflow_id=workflow_id,
-            retailor=retailor,
-        )
-        activity_metadata[stage_key] = metadata or {}
-        set_stage_state(
-            conn,
-            stable_job_id,
-            "tailor",
-            "running",
-            tenant_id=tenant_id,
-            # Running exposes the completed durable count. Normal completion
-            # or owner recovery advances this execution exactly once.
-            attempt_count=prior_attempts,
-            started_at=started_at,
-            metadata=metadata,
-            validate_transition=False,
-        )
-        record_job_event(
-            conn,
-            stable_job_id,
-            "tailor",
-            "StageStarted",
-            tenant_id=tenant_id,
-            message="Tailoring started",
-        )
+    def run_one(job_id: JobId) -> dict:
+        try:
+            return tailor_job_by_id(
+                job_id, min_score=min_score, validation_mode=validation_mode,
+                workers=workers, retailor=retailor, snapshot=snapshot,
+                tenant_id=tenant_id, llm_model=llm_model,
+                tailor_models=tailor_models, tailor_judge_model=tailor_judge_model,
+                tailor_judge_min_score=tailor_judge_min_score,
+                pdf_renderer=pdf_renderer, llm_policy=llm_policy,
+                workflow_id=workflow_id, cancel_event=cancel_event,
+                suppress_existing_artifacts=suppress_existing_artifacts,
+                allow_low_fit_override=allow_low_fit_override,
+            )
+        except Exception as exc:  # noqa: BLE001 - finish the cohort before aggregate escalation
+            if cancel_event is not None and cancel_event.is_set():
+                raise
+            # Pre-claim errors and lost-owner fences escape the canonical item
+            # lifecycle. Count them without writing a terminal state we may no
+            # longer own, and let unaffected cohort members finish normally.
+            log.error("Tailoring failed for job %s: %s", job_id, exc)
+            return {"job_id": str(job_id), "status": "error", "error": str(exc)}
 
-    # Pool threads lose the activity's run context; re-bind it so events the
-    # per-job tailoring worker records keep run ownership.
-    from jobctrl.infrastructure.workflow_run_context import carry_workflow_run_context
-
-    tailor_one_owned = carry_workflow_run_context(_tailor_one_job)
-    future_to_job: dict = {}
-    with ThreadPoolExecutor(max_workers=worker_count) as executor:
-        for job in jobs:
-            future = executor.submit(
-                tailor_one_owned,
-                job,
-                "",  # legacy resume_text param — unused
-                snapshot,
-                validation_mode,
-                # use_case=None: worker builds its own with a thread-local
-                # SQLite connection. Passing the main-thread use case would
-                # crash with "SQLite objects created in a thread can only
-                # be used in that same thread".
-                use_case=None,
-                pdf_renderer=pdf_renderer,
-                retailor=retailor,
-                tenant_id=tenant_id,
-                llm_policy=llm_policy,
-                audit_execution_id=workflow_id,
-                durable_attempt=stage_attempts[
-                    str(canonical_job_id(str(job["job_id"])))
-                ],
-            )
-            future_to_job[future] = job
-
-        for completed, future in enumerate(as_completed(future_to_job), start=1):
-            job = future_to_job[future]
-            try:
-                result = future.result()
-            except (TailoringPrerequisiteError, ArtifactBudgetInfeasibleError) as error:
-                result = {
-                    "job_id": str(canonical_job_id(str(job["job_id"]))),
-                    "url": job["url"],
-                    "title": job["title"],
-                    "site": job.get("site"),
-                    "status": "blocked_prerequisite",
-                    "attempts": 0,
-                    "path": None,
-                    "pdf_path": None,
-                    "materials": None,
-                    "prerequisite_error": error,
-                }
-            except Exception as e:
-                result = {
-                    "job_id": str(canonical_job_id(str(job["job_id"]))),
-                    "url": job["url"],
-                    "title": job["title"],
-                    "site": job.get("site"),
-                    "status": "error",
-                    "attempts": 0,
-                    "path": None,
-                    "pdf_path": None,
-                    "materials": None,
-                    "error": str(e),
-                }
-                log.error("%d/%d [ERROR] %s -- %s", completed, len(jobs), job["title"][:40], e)
-
-            result.setdefault("job_id", str(canonical_job_id(str(job["job_id"]))))
-            results.append(result)
-            stats[result.get("status", "error")] = stats.get(result.get("status", "error"), 0) + 1
-
-            elapsed = time.time() - t0
-            rate = completed / elapsed if elapsed > 0 else 0
-            log.info(
-                "%d/%d [%s] attempts=%s | %.1f jobs/min | %s",
-                completed,
-                len(jobs),
-                str(result.get("status", "error")).upper(),
-                result.get("attempts", "?"),
-                rate * 60,
-                str(result.get("title", "?"))[:40],
-            )
-
-    # Stage state writes — Phase 6 keeps state.set_stage_state() the
-    # canonical way to advance the pipeline state machine. The legacy
-    # ``UPDATE jobs SET tailored_resume_path / tailored_at /
-    # tailor_attempts`` writes are GONE per the no-strangler directive —
-    # those columns are read-only fallbacks now.
-    finished_at = utc_now()
-    _success_statuses = {"approved"}
-    durable_exhausted = 0
-    for r in results:
-        stable_job_id = canonical_job_id(str(r["job_id"]))
-        stage_key = str(stable_job_id)
-        url = r["url"]
-        current_attempt = stage_attempts[stage_key]
-        generation_attempts = r.get("attempts") or 1
-        prerequisite_error = r.get("prerequisite_error")
-        if isinstance(prerequisite_error, TailoringPrerequisiteError):
-            _record_tailor_requirement_fit_block(
-                conn,
-                job_id=stable_job_id,
-                tenant_id=tenant_id,
-                error=prerequisite_error,
-                attempt_count=current_attempt - 1,
-                metadata=activity_metadata.get(stage_key) or None,
-            )
-        elif isinstance(prerequisite_error, ArtifactBudgetInfeasibleError):
-            _record_tailor_artifact_budget_block(
-                conn,
-                job_id=stable_job_id,
-                tenant_id=tenant_id,
-                error=prerequisite_error,
-                attempt_count=current_attempt - 1,
-                metadata=activity_metadata.get(stage_key) or None,
-            )
-        elif r.get("status") in _success_statuses:
-            set_stage_state(
-                conn,
-                stable_job_id,
-                "tailor",
-                "succeeded",
-                tenant_id=tenant_id,
-                attempt_count=current_attempt,
-                started_at=started_ats.get(stage_key),
-                finished_at=finished_at,
-                metadata=activity_metadata.get(stage_key) or None,
-            )
-            record_job_event(
-                conn,
-                stable_job_id,
-                "tailor",
-                "StageCompleted",
-                tenant_id=tenant_id,
-                message=f"Tailoring {r.get('status')}",
-                payload={
-                    "attempts": current_attempt,
-                    "generationAttempts": generation_attempts,
-                },
-            )
-            _mark_cover_pending_after_tailor_success_by_id(
-                conn,
-                stable_job_id,
-                tenant_id=tenant_id,
-                reason="tailor_stage_completed",
-            )
+    counts = {"approved": 0, "blocked": 0, "failed": 0, "errors": 0, "exhausted": 0}
+    for _job_id, result in run_material_jobs(
+        job_ids, workers=workers, cancel_event=cancel_event,
+        stage="tailor", run_one=run_one,
+    ):
+        status = str(result.get("status") or "error")
+        if status == "exhausted":
+            counts["exhausted"] += 1
+            status = str(result.get("inner_status") or "exhausted")
+        if status in {"approved", "already_done"}:
+            counts["approved"] += 1
+        elif status in {"skipped", "not_eligible", "blocked_prerequisite"}:
+            counts["blocked"] += 1
+        elif status == "error":
+            counts["errors"] += 1
         else:
-            exhausted = current_attempt >= MAX_ATTEMPTS
-            durable_exhausted += int(exhausted)
-            error_code, error_message, failure_reason = _tailor_failure_details(r)
-            set_stage_state(
-                conn,
-                stable_job_id,
-                "tailor",
-                "exhausted" if exhausted else "failed",
-                tenant_id=tenant_id,
-                attempt_count=current_attempt,
-                max_attempts=MAX_ATTEMPTS,
-                started_at=started_ats.get(stage_key),
-                finished_at=finished_at,
-                error_code=error_code,
-                error_message=error_message,
-                retryable=not exhausted,
-                next_action=(
-                    f"jobctrl retry tailor {url} --reset-attempts" if exhausted else f"jobctrl retry tailor {url}"
-                ),
-                validate_transition=False,
-            )
-            record_job_event(
-                conn,
-                stable_job_id,
-                "tailor",
-                "StageExhausted" if exhausted else "StageFailed",
-                tenant_id=tenant_id,
-                level="error",
-                message=error_message,
-                payload={
-                    "attempts": current_attempt,
-                    "generationAttempts": generation_attempts,
-                    "generationStatus": str(r.get("status") or "error"),
-                    "failureReason": failure_reason,
-                    "retryable": not exhausted,
-                },
-            )
-    conn.commit()
-
-    elapsed = time.time() - t0
-    log.info(
-        "Tailoring done in %.1fs: %d approved, %d failed_validation, %d failed_judge, %d errors",
-        elapsed,
-        stats.get("approved", 0),
-        stats.get("failed_validation", 0),
-        stats.get("failed_judge", 0),
-        stats.get("error", 0),
-    )
-
-    errors = stats.get("error", 0)
-    failed = sum(
-        count
-        for status, count in stats.items()
-        if status not in {"approved", "blocked_prerequisite", "error"}
-    )
-    return {
-        "approved": stats.get("approved", 0),
-        "blocked": stats.get("blocked_prerequisite", 0),
-        "failed": failed,
-        "errors": errors,
-        "exhausted": durable_exhausted,
-        "elapsed": elapsed,
-    }
+            counts["failed"] += 1
+    return {**counts, "elapsed": time.time() - started}
 
 
 def tailor_job_by_url(
@@ -859,10 +602,12 @@ def tailor_job_by_id(
     tailor_judge_model: str | None = None,
     tailor_judge_min_score: float | None = None,
     pdf_renderer: PdfRendererPort | None = None,
+    llm_policy: TailoringLlmPolicy | None = None,
     suppress_existing_artifacts: bool = False,
     allow_low_fit_override: bool = False,
     workflow_id: str | None = None,
     cancel_event: threading.Event | None = None,
+    recovery_workflow_id: str | None = None,
 ) -> dict:
     """Tailor one active, eligible JobId for its tenant-scoped preparation step.
 
@@ -871,8 +616,14 @@ def tailor_job_by_id(
     one JobId, and all target, score, materials, state, and event access stays
     scoped to that identity.
     """
+    if cancel_event is not None and cancel_event.is_set():
+        raise RuntimeError("tailor activity canceled before dispatch")
     stable_job_id = canonical_job_id(str(job_id))
     conn = get_connection()
+    if recovery_workflow_id and not owns_preparation_reservation(
+        conn, tenant_id=tenant_id, job_id=stable_job_id, stage="tailor", workflow_id=recovery_workflow_id,
+    ):
+        return {"job_id": str(stable_job_id), "status": "skipped", "reason": "reservation_lost"}
     target_reader = SqlitePreparationTargetReader(conn)
     target = target_reader.load(tenant_id, stable_job_id)
     if target is None:
@@ -939,6 +690,7 @@ def tailor_job_by_id(
         min_score=min_score,
         retailor=retailor,
         allow_low_fit_override=allow_low_fit_override,
+        recovery_workflow_id=recovery_workflow_id,
     )
     if job is None:
         if _record_tailor_enrichment_block(
@@ -980,55 +732,65 @@ def tailor_job_by_id(
     TAILORED_DIR.mkdir(parents=True, exist_ok=True)
     if pdf_renderer is None:
         pdf_renderer = _build_pdf_renderer()
-    llm_policy = _build_llm_policy(
+    llm_policy = llm_policy or _build_llm_policy(
         tailor_models=tailor_models,
         tailor_judge_model=tailor_judge_model,
         tailor_judge_min_score=tailor_judge_min_score,
         llm_model=llm_model,
     )
 
-    ensure_job_stage_rows(
-        conn,
-        stable_job_id,
-        tenant_id=tenant_id,
-        discovered_at=job.get("discovered_at"),
-    )
-    started_at = utc_now()
-    prior_attempts = _tailor_attempt_count(
-        conn,
-        tenant_id=tenant_id,
-        job_id=stable_job_id,
-    )
-    current_attempt = prior_attempts + 1
-    metadata = _tailor_activity_metadata(
-        SqliteMaterialsRepository(conn),
-        tenant_id=tenant_id,
-        job_id=stable_job_id,
-        workflow_id=workflow_id,
-        retailor=retailor,
-    )
-    set_stage_state(
-        conn,
-        stable_job_id,
-        "tailor",
-        "running",
-        tenant_id=tenant_id,
-        # Owner recovery increments an interrupted running row, so the start
-        # write must preserve the completed count instead of pre-incrementing.
-        attempt_count=prior_attempts,
-        started_at=started_at,
-        metadata=metadata,
-        validate_transition=False,
-    )
-    record_job_event(
-        conn,
-        stable_job_id,
-        "tailor",
-        "StageStarted",
-        tenant_id=tenant_id,
-        message="Tailoring started",
-    )
-    conn.commit()
+    if cancel_event is not None and cancel_event.is_set():
+        raise RuntimeError("tailor activity canceled before dispatch")
+    if recovery_workflow_id:
+        conn.commit()
+    with claim_preparation_reservation(
+        conn, tenant_id=tenant_id, job_id=stable_job_id,
+        stage="tailor", workflow_id=recovery_workflow_id, cancel_event=cancel_event,
+    ):
+        ensure_job_stage_rows(
+            conn,
+            stable_job_id,
+            tenant_id=tenant_id,
+            discovered_at=job.get("discovered_at"),
+        )
+        started_at = utc_now()
+        prior_attempts = _tailor_attempt_count(
+            conn,
+            tenant_id=tenant_id,
+            job_id=stable_job_id,
+        )
+        current_attempt = prior_attempts + 1
+        metadata = _tailor_activity_metadata(
+            SqliteMaterialsRepository(conn),
+            tenant_id=tenant_id,
+            job_id=stable_job_id,
+            workflow_id=workflow_id,
+            retailor=retailor,
+        )
+        if recovery_workflow_id:
+            metadata.update(automaticRecovery=True, workflowId=recovery_workflow_id, temporalRunId=workflow_id)
+        set_stage_state(
+            conn,
+            stable_job_id,
+            "tailor",
+            "running",
+            tenant_id=tenant_id,
+            # Owner recovery increments an interrupted running row, so the start
+            # write must preserve the completed count instead of pre-incrementing.
+            attempt_count=prior_attempts,
+            started_at=started_at,
+            metadata=metadata,
+            validate_transition=False,
+        )
+        record_job_event(
+            conn,
+            stable_job_id,
+            "tailor",
+            "StageStarted",
+            tenant_id=tenant_id,
+            message="Tailoring started",
+        )
+        conn.commit()
 
     def commit_guard() -> None:
         assert_material_activity_commit_allowed(
@@ -1601,6 +1363,7 @@ def _load_tailor_eligible_job_by_id(
     min_score: int,
     retailor: bool,
     allow_low_fit_override: bool = False,
+    recovery_workflow_id: str | None = None,
 ) -> dict | None:
     stable_job_id = canonical_job_id(str(job_id))
     if not str(job.get("full_description") or "").strip():
@@ -1661,7 +1424,10 @@ def _load_tailor_eligible_job_by_id(
         attempt_count = int(tailor_stage["attempt_count"] or 0)
         if tailor_state == "exhausted" or attempt_count >= MAX_ATTEMPTS:
             return None
-        if not retailor and tailor_state not in {
+        owns_queue = tailor_state == "queued" and owns_preparation_reservation(
+            conn, tenant_id=tenant_id, job_id=stable_job_id, stage="tailor", workflow_id=recovery_workflow_id,
+        )
+        if not retailor and not owns_queue and tailor_state not in {
             "pending",
             "running",
             "failed",

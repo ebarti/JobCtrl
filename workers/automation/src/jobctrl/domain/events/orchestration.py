@@ -74,6 +74,24 @@ def create_stage_reset(tenant_id: TenantId, payload: StageResetPayload) -> Domai
 
 
 @dataclass(frozen=True)
+class EnrichmentFetchRecheckedPayload:
+    job_id: str
+    stage: str
+    failure_event_id: int
+    failure_kind: str
+    request_host: str
+    recovery_status: str
+    check_count: int
+    next_check_at: str | None
+    posting_allowed: bool
+    request_allowed: bool
+
+
+def create_enrichment_fetch_rechecked(tenant_id: TenantId, payload: EnrichmentFetchRecheckedPayload) -> DomainEvent:
+    return create_domain_event("EnrichmentFetchRechecked", tenant_id, asdict(payload))
+
+
+@dataclass(frozen=True)
 class StageBlockedPayload:
     job_id: str
     stage: str

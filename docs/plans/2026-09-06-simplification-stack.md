@@ -1,0 +1,450 @@
+# Preserve behavior while removing duplicated state and execution
+
+Status: all four implementations delivered as open PRs on 6 September 2026.
+Independent implementation review and synthetic QA passed for every phase.
+Review corrections and cumulative synthetic QA also passed on 7 September
+2026 at code head `f1c8aae101a727001802d44a3433a6fdb0e28c08`.
+The final published head's CI status is tracked in [PR #869's live checks](https://github.com/ebarti/JobCtrl/pull/869/checks).
+Native stack #867 remains open and unmerged; merging is a separate action.
+
+## Starting point and delivery order
+
+Cleanup PRs [#862](https://github.com/ebarti/JobCtrl/pull/862) and
+[#863](https://github.com/ebarti/JobCtrl/pull/863) are merged. The starting
+`main` commit is `782d3d5ff3c4eac17c8ff1c9be91f89a420bdc07`; the canonical
+checkout was fast-forwarded to that commit and verified clean. Implementation
+uses the existing dedicated task worktree, never the main checkout. Preserve
+all unrelated local changes and exclude them from commits.
+
+| Phase | Branch | PR base | Change |
+| --- | --- | --- | --- |
+| 1 | `refactor/review-draft-authority` | `main` | One owner for saved review-draft reconciliation |
+| 2 | `refactor/structured-profile-draft` | Phase 1 | Object-valued profile and style editing |
+| 3 | `refactor/canonical-batch-tailor` | Phase 2 | Batch selection delegates to the existing per-job lifecycle |
+| 4 | `refactor/evaluated-tailor-candidates` | Phase 3 | Carry candidate evaluation evidence through selection |
+
+This order makes each change independently reviewable within the requested
+linear stack. It does not introduce dependencies between frontend contexts or
+between frontend and worker implementations. Phase 4 builds on Phase 3's
+single lifecycle for acceptance and persistence.
+
+Use `gh stack` non-interactively. Create each child only after its parent's
+focused validation and independent gates pass. Verify its base against the
+published parent head. Each PR must contain only that phase's code, necessary
+regressions, owning documentation, and plan progress. Do not create an extra
+PR solely for this plan. Use Conventional Commit titles and commit messages.
+
+## Objective and protected behavior
+
+Remove duplicated ownership and repeated transformations while preserving
+the product's saved facts and accepted artifacts. Success is measured by
+deleted mechanisms plus regression evidence, not by file splitting or a line
+count alone.
+
+The relevant facts have distinct owners:
+
+| Fact | Owner and invariant |
+| --- | --- |
+| Saved profile | Profile aggregate; unedited and unknown fields survive an edit/save round trip |
+| Saved review draft | Server draft identity and revision; the apply context publishes its reconciled query-cache representation |
+| Unsaved editor value | Mounted editor/form session; a late acknowledgement cannot replace later local edits |
+| Accepted material | Materials generation and artifact lineage; a failed replacement leaves the accepted generation reviewable |
+| Candidate evidence | One concrete candidate value for one exact payload/text; evidence must change whenever its text changes |
+| Execution ownership | Existing workflow/attempt and transaction fences; stale or canceled owners cannot publish |
+
+Read [frontend state ownership](../architecture/frontend/state-and-ports.md),
+the [tailoring contract](../architecture/tailoring.md),
+[pipeline operations](../architecture/pipeline/operations.md), and the
+[QA matrix](../local-reliability-qa.md) at their respective phase boundaries.
+Follow root and web `AGENTS.md` instructions.
+
+Excluded work: a generic gate/workflow framework, global candidate caching,
+new services, schema migrations, wire-contract changes, automatic retry-policy
+redesign, single-leg analysis promotion, a broad shared Plate lifecycle
+extraction, unrelated persistence/SSE cleanup, and dependency upgrades.
+
+## Phase 1: one saved-draft reconciliation owner
+
+### Evidence and replacement
+
+`ApplyReviewView` combines a cached draft with retained create/save/seed/render
+mutation responses and merges replies separately. Those mutations already
+write draft responses to the query cache, creating two reconciliation paths.
+
+Move response publication into one pure apply-context reconciler used by all
+draft mutations. The view reads the job-scoped cache and retains only local
+pending/error/unsaved state and necessary render/comparison metadata. Delete
+the view's multi-snapshot selector and thread merger.
+
+Ordering must be explicit. Revision numbers are local to a draft: establish
+`draftId` and `baseGeneration` identity before comparing revision, state and
+time. Preserve the existing intended same-draft rendered-state precedence.
+An older request must not restore a replaced draft; a new generation's first
+revision must not be rejected behind a previous generation's higher revision.
+Use the available request/generation identity to resolve this boundary rather
+than inventing chronological ordering for opaque IDs.
+
+Threads, replies and feedback signals evolve independently of the document
+revision. Reconcile by their existing IDs and update/state information so a
+late full snapshot cannot erase a newer reply or signal. Preserve unchanged
+references where appropriate, without relying on structural sharing to guard
+unsaved edits.
+
+The review Plate editor currently resets from incoming saved-value identity.
+Add the smallest acknowledged-save/document-identity guard required to keep
+typed value B when the save response for A arrives. Preserve formatting as
+well as text. Do not use this as a reason to extract the entire shared editor.
+
+### Ownership
+
+- `apps/web/src/contexts/apply/hooks/useApplyReviewMutations.ts` and its tests;
+  a colocated pure draft reconciler and focused tests.
+- `apps/web/src/views/apply-review/ApplyReviewView.tsx` and its existing tests.
+- Only the relevant review-session reset/acknowledgement path in
+  `apps/web/src/contexts/materials/components/ResumeAuditPins.tsx`.
+- Existing artifact-comparison browser fixtures and frontend state/QA docs.
+- Test-only isolated API entry point and guarded E2E mode, reusing the existing
+  marked screenshot workspace/environment helpers. Ordinary E2E action stubs
+  do not intercept API startup capability dispatch, so the isolated process
+  injects synthetic provider/credential ports and denies other subprocesses
+  before running the required browser proof.
+
+### Acceptance evidence
+
+1. Controlled reversed completion of create/save/seed/render never regresses
+   the selected saved revision or resurrects an obsolete draft.
+2. New-generation revision 1 can replace an older-generation revision 9;
+   delayed responses for the old generation cannot reverse it.
+3. Reply then stale full snapshot preserves replies, thread state and feedback
+   signals; independent replies do not depend on document revision ordering.
+4. Requests completing after a job/tenant switch update only their original
+   cache key and do not change the new selection/comparison baseline.
+5. Save A, type B, receive A: B and its dirty/save state survive. Unrelated
+   thread updates preserve unsaved formatting, focus and editor selection.
+6. Render-on-approval uses the selected saved revision. Accepted-artifact
+   comparison, unmatched comments, reload restoration and failure states work.
+   When promotion advances queue artifacts and creates a new revision-0 active
+   draft, completed-render evidence retains its original accepted baseline and
+   risk labels while the editor shows the new draft state. Unrelated artifact
+   identities clear the comparison; late seed QA waits for a published thread.
+
+Required browser path: extend and run
+`apps/web/e2e/tests/artifact-comparison.spec.ts` with synthetic responses that
+prove the relevant ordering/edit preservation, not only static rendering.
+
+## Phase 2: keep editable profile values structured
+
+### Evidence and replacement
+
+The profile form currently stringifies API objects, parses them in the
+structured editor, stringifies every edit, and parses again for validation and
+Plate projection. A raw JSON editor is no longer a product requirement.
+
+Keep editable `profile` and `style` as immutable object values in TanStack
+Form. Keep actual template text as text. Serialize only when constructing the
+existing string-valued update request. Use `safeParse` for validation while
+preserving the edited original object; do not replace it with parsed/coerced
+schema output that strips unknown data or erases incomplete typing states.
+
+Adapt the existing semantic Plate projector to object input/output. Preserve
+its source identity, conflict detection, target tracking and selective undo;
+do not substitute whole-profile replacement or array-index matching.
+
+### Ownership
+
+- `apps/web/src/contexts/profile/forms/profile-form.tsx` and its tests.
+- `apps/web/src/contexts/profile/components/StructuredProfileEditor.tsx`,
+  focused tests, accessibility test and story.
+- Relevant `ProfileEditor` integration tests; touch its production code only
+  if required by the representation change.
+- Existing `apps/web/e2e/tests/profile-edit.spec.ts` and owning frontend/QA docs.
+- Product QA exposed a shared Plate click race: synchronize the actual native
+  range into Slate before publishing audit-line selection. Keep noneditable,
+  invalid and cross-editor ranges guarded. Scope Font selector colors to the
+  existing toolbar themes; preserve normal browser typing and axe checks.
+- Narrow test-only API/launcher prevention: shared API fixtures explicitly
+  fake/deny irrelevant dispatch, launcher tests copy the script into disposable
+  roots with controlled shell environments, and Python payload setup uses
+  isolated interpreter flags plus owned paths. Product runtime policy is unchanged.
+
+### Acceptance evidence
+
+1. The outgoing save request preserves unknown nested fields, unedited fields
+   and the current request schema/field names. Profile and style serialize at
+   the boundary. Existing server validation/normalization remains unchanged;
+   this does not add storage for unsupported fields.
+2. Incomplete numeric/date input remains editable; invalid chronological dates
+   prevent save with the existing useful validation feedback.
+3. An unrelated boxed edit plus a Plate edit both survive. Conflicting edits
+   to the same field are surfaced and do not overwrite the boxed value.
+4. Deletion, splitting, reordering and undo retain source-bound targeting;
+   punctuation/digits and formatting-only changes preserve current semantics.
+5. A stale autosave response or refreshed initial prop cannot erase newer
+   local edits. Real SQLite save/reload retains supported synthetic values and
+   ordering. The isolated preview seam generates escaped, semantically bound
+   HTML from each current stored profile; no Python/PDF renderer is needed.
+6. `/profile` and `/preferences` retain applicable controls, accessibility,
+   dirty state and user-visible validation; no profile persistence behavior
+   or discovery-setting behavior changes.
+
+## Phase 3: delegate batch Tailor to the canonical lifecycle
+
+### Evidence and replacement
+
+Selected-job preparation already uses `tailor_job_by_id`, including its
+ownership/cancellation fences, attempts, prerequisites and commit recovery.
+Unscoped `run_tailoring` duplicates execution maps and stage writes and does
+not receive the enclosing cooperative cancellation event through generation.
+
+Retain the current bounded cohort selector, one captured profile/policy
+snapshot and a bounded executor. Delegate each selected JobId to
+`tailor_job_by_id` with existing model/judge/tenant/threshold/retailor options,
+workflow identity and cancellation token. Delete the duplicate lifecycle's
+start/attempt/terminal-write loop and maps. If sharing the existing selected
+executor requires extraction, use one concrete application helper callable
+from both routes; avoid a dependency from the runner back into activities.
+
+Keep aggregation adapters explicit: the unscoped activity escalates aggregate
+errors/failures/exhaustion for its existing retry contract; selected work can
+return partial success and approved IDs. Preserve no-work keys, elapsed/count
+fields, completed-owner filtering and callable signatures. Do not begin
+sharing injected repositories across worker threads. Map `already_done`,
+prerequisite skips and exhausted `inner_status` deliberately.
+
+Stage-start events should reflect actual item dispatch rather than claiming
+all selected jobs are running before workers start. Preserve any required
+durable queued cohort and document this cancellation-correctness change.
+
+### Ownership
+
+- `workers/automation/src/jobctrl/scoring/tailor.py`.
+- `workers/automation/src/jobctrl/pipeline/runner.py`.
+- `workers/automation/src/jobctrl/materials/activities.py` and a narrowly
+  extracted application executor only if needed.
+- Existing Tailor, material activity/recovery, workflow and UoW test families;
+  pipeline operations and QA documentation.
+
+### Acceptance evidence
+
+1. Exercise `tailor_activity` without `job_ids`, not only the per-job helper.
+   Compare its resulting canonical state with the selected entry path.
+2. With more jobs than workers, cancellation during a fake generation stops
+   later dispatch; canceled/stale owners cannot write material or terminal
+   success/failure. A successor owner's work remains intact.
+3. Commit-before-cancel stays succeeded. Crash-after-commit retry reuses the
+   accepted generation without another model call.
+4. Prerequisite blocks do not increment attempts; the fifth durable failure
+   remains exhausted; explicit reset and downstream blocking keep their rules.
+5. Preserve tenant isolation, limits, saved thresholds, model/judge choices,
+   retailor selection, mixed results and approved-only downstream Cover scope.
+6. Preserve the last accepted artifact on cancellation, rejection, exception
+   and rollback. Empty frozen cohorts do not invoke an unscoped fallback.
+
+Use the existing synthetic material/activity fixtures and relevant preparation
+cancellation/recovery matrix. The generic `scripts/reliability-demo.sh` drives
+only the durable-timer probe, so it does not exercise the changed batch Tailor
+lifecycle and is not part of this phase's proof. Run the exact activity, material
+recovery/UoW and relevant Temporal workflow fixtures instead, under reviewed
+owned pre-import environments. Never substitute an existing user runtime.
+
+## Phase 4: carry evidence with each evaluated candidate
+
+### Evidence and replacement
+
+The generation loop computes validation, provenance and fit, then selection
+and voice/audit reconstruct evidence for unchanged text. Fabrication checks
+also occur after paid review even when deterministic rejection is possible.
+
+Extend the existing concrete `_TailorCandidate` in Materials to retain the
+exact payload/text, validation, provenance, fabrication findings, grounding/
+coverage, fit, verdict and audit information that belong to that candidate.
+Build execution-invariant profile evidence/plan once. Selection returns the
+evaluated value; unchanged selected text carries its evidence forward.
+
+```text
+payload -> deterministic evaluation -> eligible candidate -> paid review
+                                      -> selected candidate + its evidence
+                                         -> unchanged: reuse
+                                         -> changed voice: evaluate anew
+                                            -> rejection: retain accepted base
+```
+
+Move deterministic fabrication blockers before judge/adversarial calls while
+preserving distinct validation, fit, semantic, rendering and fabrication
+responsibilities. A voice rewrite is a new candidate and must pass its full
+required evaluation. Do not reuse evidence for different text, weaken gates,
+alter ranking/retry policy, or hide audit warnings to achieve fewer calls.
+
+### Ownership
+
+- `workers/automation/src/jobctrl/domain/materials/use_cases.py`, extending
+  the existing value rather than adding a generic evaluation framework.
+- `test_materials_use_cases.py`, `test_tailor_voice_audit_integration.py`,
+  and relevant materials acceptance/provenance/UoW fixtures.
+- Tailoring contract and QA documentation, including changed gate ordering.
+
+### Acceptance evidence
+
+1. Counting fakes establish one evaluation of unchanged base text/provenance,
+   with no repeated evaluation at selection or no-op voice/audit boundaries.
+2. A deterministically fabricated candidate makes zero paid judge/adversarial
+   calls; typed repair guidance and bounded repair behavior remain coherent.
+3. Changed voice text receives complete evaluation; rejection retains the
+   accepted base text/evidence and labels the rejected attempt accurately.
+4. Persisted provenance, fit/coverage and artifact bytes refer to the selected
+   candidate; warning lifecycle and judge/audit details remain inspectable.
+5. Candidate ranking, lenient/strict behavior, all-candidates-fail outcomes,
+   prerequisite handling and safe retry guidance retain existing contracts.
+6. Acceptance or rendering failure preserves the previous accepted generation
+   and provenance atomically.
+
+## Validation, isolation and delivery gates
+
+All four phases are **Tier 3** because their changed executable paths touch
+saved user edits, artifact approval/preservation or execution ownership. Each
+phase requires focused tests plus an independent reviewer and QA `Gate: PASS`.
+Use the same reviewer and QA agents throughout, and rerun failed gates after
+fixes. Do not start the next phase with unresolved Blocker/High findings.
+
+All executable validation must use synthetic/disposable data. Establish
+`JOBCTRL_DIR` and relevant database/config/telemetry environment variables in
+the child process environment **before any application import or bootstrap**.
+Before opening a database or starting a product path, assert the resolved
+paths are inside the owned disposable root. Fail closed if that check fails.
+Use the repository's existing isolation fixtures and fake providers. Do not
+read, copy or mutate a real user database, profile, settings, generated
+material, browser profile, credentials or live Temporal/API state. Do not
+start application submission, real discovery or paid model operations.
+
+For process/browser QA, inspect fixture configuration first, use dedicated
+ports and only terminate process trees captured by that fixture. Do not reuse
+an existing server or default supervisor tracking directory. Preserve existing
+dependency locks; use the provisioned Python environment with `--no-sync`
+when necessary, and record that choice. No tests may rewrite unrelated work.
+
+For phases 1 and 2, the command set is:
+
+- `corepack pnpm web:check` and `corepack pnpm --filter @jobctrl/web test`
+  (focused file selection during implementation; complete web suite for the
+  final frontend phase).
+- `corepack pnpm --filter @jobctrl/web test-d` and `corepack pnpm web:build`.
+- Run the reviewed owned-environment browser runner with child command
+  `corepack pnpm --filter @jobctrl/web exec playwright test --config=e2e/playwright.config.ts tests/artifact-comparison.spec.ts --project=chromium --retries=0 --output=<owned-results>`.
+  Phase 2 uses
+  `corepack pnpm --filter @jobctrl/web exec playwright test --config=e2e/playwright.config.ts tests/profile-edit.spec.ts --grep 'structured profile persistence' --project=chromium --retries=0 --output=<owned-results>`.
+  After the shared Plate caret correction, cumulative frontend QA selects both
+  files with `--grep 'structured profile persistence|apply review compares accepted artifact|artifact full-page detail|late saved snapshot|a delayed seed snapshot'`
+  (six Chromium scenarios).
+  The runner establishes the guarded environment and output path before any
+  import; these fixtures prove the changed race/preservation behavior.
+- Build Storybook and run the relevant browser/a11y coverage for touched
+  mounted editors/stories. Existing critical/serious violations cannot be
+  silently carried into the changed flow.
+
+For phases 3 and 4, run Ruff over the touched Python source/tests and focused
+pytest families listed above with the isolated environment already set. The
+final Python phase uses the exact published head's full GitHub Python CI matrix
+for the full-suite requirement: Python 3.11, 3.12 and 3.13 each run locked
+all-extras Ruff, the complete worker pytest suite and package build. Verify all
+three lanes independently. Local validation runs the guarded changed-path/materials and real
+Temporal fixtures; CI results must not be described as a local full-suite run.
+Include the existing workflow,
+activity cancellation/recovery and materials transaction matrix that proves
+the changed boundary, plus the exact unscoped activity and candidate-counting
+product fixtures. Tests that only call a replacement helper do not prove the
+removed entry path.
+
+Every phase runs `git diff --check`. Owning docs for active high-risk behavior
+change in that phase; do not defer cancellation or gate-order truth. Run
+`corepack pnpm docs:build` for changed site content/links. On the final branch,
+run the cumulative web and Python gates and the required synthetic product
+scenarios; reuse already passing unaffected results rather than inventing
+unrelated checks. Confirm all applicable GitHub checks pass on published heads.
+
+The coordinator owns plan maintenance and gate dispatch. One implementation
+owner handles the four sequential changes, focused validation, commits and PR
+publication. The same independent reviewers handle fixes and reruns without
+broadening scope. A newly discovered prerequisite is included
+only when necessary for these acceptance criteria; otherwise record it outside
+this stack without implementing it.
+
+## Completion record
+
+Update this table with actual results; do not mark proposals implemented.
+
+| Phase | PR and head | Deleted mechanism | Tests and product proof | Review / QA |
+| --- | --- | --- | --- | --- |
+| 1 | [#865](https://github.com/ebarti/JobCtrl/pull/865); reviewed implementation `2428ce2dd` | View-owned five-snapshot draft selector and reply merger removed; cache mutation publication reconciles saved state | Original focused web/type checks and web/API/Storybook/docs builds passed; promotion fix passed 71 affected tests and all four isolated Chromium scenarios with scoped axe clean | The promotion High passed independent review and QA at `2428ce2dd`; the pending-create and cached-job isolation corrections passed independent review at `55fa84f0`; cumulative synchronized-head QA passed at `f1c8aae1` as recorded below |
+| 2 | [#866](https://github.com/ebarti/JobCtrl/pull/866); validated head `a8bb11f3e` | Form/editor/projector JSON round trips removed; object drafts preserve original values and serialize at the request boundary | 61 focused tests; full web 323 files/2020 tests, 13 type tests, web/API checks and web/Storybook builds pass. Docs build and pure preview-fixture test pass. Full API suite deliberately run through the reviewed owned pre-import environment: 59 files/828 tests PASS. | PR #866 records final independent review and QA PASS at `a8bb11f3e`: six cumulative browser scenarios and three scoped axe scans passed, with all applicable CI successful. The later [published review](https://github.com/ebarti/JobCtrl/pull/866#pullrequestreview-5126582837) also reports Gate PASS, but did not rerun those browser scenarios; their evidence remains the author-reported isolated run. Diagnostic profile coverage includes real save/reload, entry order and scoped axe after fixing the native-caret publication race and toolbar Select colors. Full web suite and web types/build/Storybook rechecked after the shared owner correction; the new native-caret regression and affected Profile/Apply suites pass 96 tests. Renderer-class and line-end fixtures retain explicit caret assertions |
+| 3 | [#868](https://github.com/ebarti/JobCtrl/pull/868) | Duplicate batch attempt/start/terminal-write loop removed; frozen cohorts dispatch through the canonical per-job lifecycle and shared bounded executor | Reviewed owned pre-import core matrix: admission PASS and 162 tests PASS. Exact real Temporal activity/workflow matrix: admission PASS, 20 cases PASS, captured process-group cleanup PASS. Focused Ruff and docs build PASS. Full CI exposed two stale executor instrumentation targets; corrected `test_selected_tailor_activity_uses_bounded_requested_workers` and `test_selected_cover_activity_uses_bounded_requested_workers` both PASS under the same admission guard, preserving their real activity calls and worker-limit assertions. The unrelated durable-timer demo is not a Tailor proof and was not run. | Independent review and QA passed at `bffe0af8`. [Python CI run 34000773050](https://github.com/ebarti/JobCtrl/actions/runs/34000773050) completed successfully on that head: Python 3.11, 3.12 and 3.13 each passed lint, full tests and package build. The later escaped-item-error correction passed independent review at `e0c49970`; cumulative guarded QA and published-code-head CI passed at `f1c8aae1`, as recorded below. |
+| 4 | [#869](https://github.com/ebarti/JobCtrl/pull/869); implementation head `8b06a201` | Candidate tuple decomposition and repeated selected/voice-baseline provenance, grounding, fit and text assembly removed; fabrication runs before paid review | Reviewed guarded cumulative matrix: admission PASS and 192 tests PASS across seven materials/runtime files plus the exact requirement-led fit regression. Unchanged real Temporal matrix: admission PASS, 20 cases PASS and owned process-group cleanup PASS. Ruff, static Mermaid validation and docs build PASS. Counting fixtures cover absent/no-op/accepted/rejected voice; mixed rejected/parse-failure fixtures preserve prior accepted artifacts. Review regressions reproduce and fix malformed nested JSON entering assembly and lenient voice review falsely labeled PASS; all three added cases pass. Prior six-scenario frontend QA with three scoped axe checks and two JSON-RPC worker-bound tests carry forward. | Independent reviewer and QA PASS at `8b06a201`, zero remaining findings; fresh QA passes 192 tests. Published-head CI is tracked in [live checks](https://github.com/ebarti/JobCtrl/pull/869/checks). |
+
+All four implementations are published in native stack #867:
+[#865](https://github.com/ebarti/JobCtrl/pull/865) →
+[#866](https://github.com/ebarti/JobCtrl/pull/866) →
+[#868](https://github.com/ebarti/JobCtrl/pull/868) →
+[#869](https://github.com/ebarti/JobCtrl/pull/869). The final completion-receipt
+commit changes only this plan, so the implementation gates carry forward.
+Final full-suite CI results must be verified on that published head. Routine
+CI skips two unrelated system-browser smoke tests in
+`test_apply_chrome_dry_run_guard.py` because `JOBCTRL_RUN_SYSTEM_BROWSER_TESTS`
+is opt-in; those unchanged browser paths were not run locally.
+
+The Phase 1 review follow-up preserves unsaved edits when a revision-zero draft
+acquires its identity without changing the saved document. Its formatting
+regression reproduces the reset on the reviewed implementation; the corrected
+view, mutation, and reconciler suites pass 73 tests. Web typecheck/build and all
+six isolated Chromium artifact-comparison scenarios pass, including actual
+typing while draft creation is pending and switching cached jobs with identical
+saved documents without carrying over local edits. Independent review passed at
+`55fa84f0`, including the unchanged cached-job counterexample and 73 focused
+tests. Cumulative synchronized-head QA passed at `f1c8aae1`.
+
+## Review-correction completion on 7 September 2026
+
+The synchronized code head is
+`f1c8aae101a727001802d44a3433a6fdb0e28c08`. Independent remediation reviews
+passed for each phase, including pending-create typing and cached-job isolation,
+structured-profile fixture accuracy, escaped batch item failures, and rejected
+candidate inspection. The historical phase results above retain their original
+head and evidence attribution.
+
+Independent cumulative product QA returned **Gate: PASS** on that exact head:
+
+- **198 guarded core/materials tests** passed, including canonical batch Tailor,
+  candidate rejection and inspection, accepted-artifact preservation, recovery,
+  unit-of-work and bounded-worker activity paths.
+- **20 real Temporal cases** passed with 14 balanced ephemeral-server lifecycles,
+  covering cancellation, owner fencing, retry/restart recovery and frozen cohorts.
+- **Eight real Chromium flows** passed: six artifact comparison/editor cases,
+  including both review-draft regressions, and two structured-profile persistence
+  cases. **Three scoped axe checks** passed.
+- No cumulative QA case failed or was skipped. Owned pre-import admission,
+  independently parsed JUnit results, captured process/port cleanup, clean exact
+  checkout and `git diff --check` all passed. All providers and data were synthetic.
+
+[Python CI run 34110669959](https://github.com/ebarti/JobCtrl/actions/runs/34110669959)
+passed on `f1c8aae1`: Python 3.11, 3.12 and 3.13 each passed lint, **3,742 tests**
+with two unchanged opt-in system-browser skips, and both sdist and wheel builds.
+[TypeScript CI run 34110669878](https://github.com/ebarti/JobCtrl/actions/runs/34110669878)
+passed API, web unit/types/build, Storybook, extension and browser E2E checks.
+The latest applicable workflows also passed on synchronized #865 `6da9a318`,
+#866 `67dc2478` and #868 `c11d1e73`; superseded cancelled runs are not current
+failures. Intentional DCO/deployment skips remain distinct from test results.
+
+The closing plan update changes prose only. Code review and synthetic product
+QA evidence carry forward from `f1c8aae1`; automated results for the current
+published documentation head are available in
+[PR #869's live checks](https://github.com/ebarti/JobCtrl/pull/869/checks).
+The stack remains open and unmerged. The separate #860 authenticated-provider
+Discover + Enrich operational High remains unverified; synthetic browser/transport
+QA does not close it, and no live-provider or application-submission run is
+included in this completion record.
+
+Delivery means four published PRs with the exact base chain above, necessary
+docs, passing independent gates and applicable CI, no unresolved Blocker/High
+findings, a clean canonical main checkout, and all pre-existing unrelated work
+preserved. Report any remaining Medium/Low observation with its concrete
+impact. If required validation cannot run, leave that phase explicitly
+unverified rather than calling the stack complete. Keep this plan active while
+the delivered PRs remain unmerged; archive it after the implementation lands.

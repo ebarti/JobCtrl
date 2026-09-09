@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -41,6 +42,7 @@ from jobctrl.discovery.workflow import (
     DiscoverWorkflowResult,
     _AUTOMATIC_COMPENSATION_REFRESH_PATCH,
     _activity_error_was_cancelled,
+    _cancel_owned_enrichment,
     _run_automatic_compensation_refresh_activity,
 )
 from jobctrl.infrastructure.temporal.finalize import WorkflowOutcomeInput, WorkflowStartedInput
@@ -141,11 +143,18 @@ async def test_discover_workflow_records_canceled_outcome(monkeypatch: pytest.Mo
     async def fake_check_spend(_payload) -> None:
         return None
 
+    async def fake_cleanup(_activity, payload, **_kwargs):
+        assert payload.workflow_id == "discover-local"
+        assert payload.workflow_run_id == "temporal-run-test"
+        _EVENTS.append(("enrichment_cleanup", payload.tenant_id))
+
     monkeypatch.setattr(workflow_instance, "_execute", fake_execute)
     monkeypatch.setattr("jobctrl.discovery.workflow._check_spend", fake_check_spend)
     monkeypatch.setattr("jobctrl.discovery.workflow.emit_workflow_started", fake_started)
     monkeypatch.setattr("jobctrl.discovery.workflow.emit_workflow_outcome", fake_outcome)
     monkeypatch.setattr("jobctrl.discovery.workflow.workflow.now", lambda: "2026-01-01T00:00:00Z")
+    monkeypatch.setattr("jobctrl.discovery.workflow.workflow.patched", lambda _patch: True)
+    monkeypatch.setattr("jobctrl.discovery.workflow.workflow.execute_activity", fake_cleanup)
     monkeypatch.setattr(
         "jobctrl.discovery.workflow.workflow.info",
         lambda: SimpleNamespace(workflow_id="discover-local", run_id="temporal-run-test"),
@@ -156,8 +165,19 @@ async def test_discover_workflow_records_canceled_outcome(monkeypatch: pytest.Mo
 
     assert _EVENTS == [
         ("workflow_started", "DiscoverWorkflow"),
+        ("enrichment_cleanup", "local"),
         ("workflow_outcome", "canceled"),
     ]
+
+
+@pytest.mark.asyncio
+async def test_old_discovery_cancellation_history_does_not_schedule_new_cleanup(monkeypatch):
+    monkeypatch.setattr("jobctrl.discovery.workflow.workflow.patched", lambda _patch: False)
+    monkeypatch.setattr("jobctrl.discovery.workflow.workflow.execute_activity", lambda *_args, **_kwargs: pytest.fail("old replay must not add cleanup"))
+    await _cancel_owned_enrichment(
+        DiscoverWorkflowInput(tenant_id="local"),
+        DiscoveryExecutionRef("local", "discover-local", "old-run"),
+    )
 
 
 @pytest.mark.asyncio
@@ -210,6 +230,7 @@ def _discovery_activities():
         _discovery_enrichment,
         _automatic_compensation_refresh,
         _discovery_preparation_fanout,
+        _cancel_enrichment_cohort,
     ]
 
 
@@ -228,6 +249,12 @@ async def _check_spend_budget(_payload) -> SpendBudgetStatus:
 @activity.defn(name="record_workflow_started")
 async def _record_workflow_started(payload: WorkflowStartedInput) -> None:
     _EVENTS.append(("workflow_started", payload.workflow_type))
+
+
+@activity.defn(name="cancel_enrichment_cohort")
+async def _cancel_enrichment_cohort(payload) -> int:
+    _EVENTS.append(("enrichment_cleanup", payload.tenant_id))
+    return 0
 
 
 @activity.defn(name="record_workflow_outcome")
@@ -738,6 +765,92 @@ async def test_discover_workflow_starts_enrichment_before_source_family_complete
     kinds = [event[0] for event in _EVENTS]
     assert kinds.index("live_enrichment_started") < kinds.index("source_completed")
     assert kinds.index("live_enrichment_canceled") < kinds.index("terminal_enrichment")
+
+
+@pytest.mark.asyncio
+async def test_discovery_source_finish_during_capture_reclaims_real_sqlite_job(monkeypatch, tmp_path):
+    """Real Temporal cancellation must drain the interrupted job, not cancel it."""
+    from jobctrl import database
+    from jobctrl.discovery import activities as discovery_activities
+    from jobctrl.domain.errors import TransientNetworkError
+    from jobctrl.enrichment import detail
+    from .politeness_helpers import offline_gateway, AllowAllRobots
+    from .test_discover_reliability import _seed_pending, _long_description
+
+    _reset_state()
+    db_path = tmp_path / "race.db"
+    database.init_db(db_path)
+    monkeypatch.setattr(database, "DB_PATH", db_path)
+    capture_started = threading.Event()
+    handed_off = []
+    job_ids = []
+    captures = []
+
+    @activity.defn(name="plan_discovery_sources")
+    async def one_source(_payload: PlanDiscoverySourcesInput) -> PlanDiscoverySourcesOutput:
+        return PlanDiscoverySourcesOutput(families=["jobspy"], progress_total=1, start_count=0)
+
+    @activity.defn(name="discovery_source_family")
+    async def source(payload: DiscoverySourceActivityInput) -> DiscoverySourceActivityOutput:
+        conn = database.get_connection()
+        execution = payload.discovery_execution
+        assert execution is not None
+        job_id = _seed_pending(conn, "https://example.test/temporal-capture-race", "Example")
+        job_ids.append(job_id)
+        conn.execute(
+            "INSERT INTO discovery_execution_jobs (tenant_id, discover_workflow_id, discover_run_id, "
+            "job_id, cohort_kind, source_family, work_plan_state, linked_at) "
+            "VALUES ('local', ?, ?, ?, 'observed_this_run', 'jobspy', 'pending', '2026-09-04T20:00:00Z')",
+            (execution.workflow_id, execution.temporal_run_id, str(job_id)),
+        )
+        conn.commit()
+        assert await asyncio.to_thread(capture_started.wait, 10)
+        return DiscoverySourceActivityOutput(family="jobspy", status="ok", result={"new": 1})
+
+    def capture(browser, _url, **_kwargs):
+        captures.append("capture")
+        if len(captures) == 1:
+            capture_started.set()
+            assert browser.cancel_event.wait(10)
+            raise TransientNetworkError("rendered_page interrupted by producer stop")
+        return {
+            "status": "ok", "tier_used": 1, "full_description": _long_description(),
+            "application_url": None, "error": None, "elapsed": 0.1,
+            "active_state": "active", "verification_method": "fixture", "http_status": 200,
+        }
+
+    monkeypatch.setattr(discovery_activities, "_build_per_job_handoff", lambda _payload: handed_off.append)
+    monkeypatch.setattr(runner, "run_discovery_hygiene", lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr(runner, "_DISCOVERY_ENRICH_POLL_INTERVAL", 0.05)
+    monkeypatch.setattr(detail, "PolitenessGateway", lambda: offline_gateway())
+    monkeypatch.setattr(detail, "LiveChromeRobotsCache", lambda _browser: AllowAllRobots())
+    monkeypatch.setattr(detail, "LiveChromeDiscoveryClient", lambda *_args, **kwargs: SimpleNamespace(
+        ensure_available=lambda: None, cancel_event=kwargs["cancel_event"],
+    ))
+    monkeypatch.setattr(detail, "scrape_detail_page_via_live_chrome", capture)
+    activities = [
+        _check_spend_budget, _record_workflow_started, _record_workflow_outcome,
+        one_source, source, discovery_activities.discovery_enrichment_activity,
+        _automatic_compensation_refresh, _discovery_preparation_fanout, _cancel_enrichment_cohort,
+    ]
+    queue = f"discover-sqlite-capture-race-{uuid.uuid4()}"
+    try:
+        async with time_skipping_env() as env:
+            async with Worker(env.client, task_queue=queue, workflows=[DiscoverWorkflow], activities=activities, workflow_runner=UnsandboxedWorkflowRunner()):
+                result = await asyncio.wait_for(env.client.execute_workflow(
+                    DiscoverWorkflow.run, DiscoverWorkflowInput(tenant_id="local", limit=1),
+                    id=f"{queue}-wf", task_queue=queue,
+                ), timeout=30)
+
+        assert result.enrichment_status == "ok"
+        assert len(captures) == 2
+        assert handed_off == job_ids
+        conn = database.get_connection()
+        row = conn.execute("SELECT state FROM job_stage_states WHERE job_id = ? AND stage = 'enrich'", (str(job_ids[0]),)).fetchone()
+        assert row[0] == "succeeded"
+        assert conn.execute("SELECT COUNT(*) FROM job_events WHERE job_id = ? AND event_type = 'StageCanceled'", (str(job_ids[0]),)).fetchone()[0] == 0
+    finally:
+        database.close_connection(db_path)
 
 
 @pytest.mark.asyncio
@@ -1274,6 +1387,7 @@ async def test_parallel_family_cancellation_cancels_the_run(monkeypatch: pytest.
         _record_workflow_outcome,
         _plan_discovery_sources,
         _blocking_cancelable_source,
+        _cancel_enrichment_cohort,
         _discovery_enrichment,
         _automatic_compensation_refresh,
         _discovery_preparation_fanout,

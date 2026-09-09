@@ -26,6 +26,8 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { resolveApiConfig } from "../src/config.js";
+import { DiscoveryBrowserBroker } from "../src/discovery-browser-broker.js";
+import { claimDiscoveryInstallationId } from "../src/extension-auth.js";
 import {
   CredentialStoreUnavailableError,
   KeychainCredentialStore,
@@ -118,6 +120,17 @@ beforeEach(() => {
   options = {
     dbPath: path.join(tempDir, "jobctrl.db"),
     configPath: path.join(tempDir, "config.json"),
+    providerDispatcher: {
+      call: vi.fn(async (method) => {
+        if (method !== "browser_capabilities_list") throw new Error(`Unexpected provider RPC in API fixture: ${method}`);
+        return { jsonrpc: "2.0" as const, id: 1, result: { capabilities: [], detectedBrowsers: [] } };
+      }),
+      close: vi.fn(async () => undefined),
+    },
+    pythonRuntime: {
+      id: "api-fixture-deny-python",
+      resolve: () => { throw new Error("Python execution is outside the API fixture"); },
+    },
     actionDispatcher: vi.fn(async (): Promise<ActionDispatchResult> => ({ status: "queued", runId: "run-profile-retailor" })),
     resumePdfRenderer: async ({ htmlPath, pdfPath }) => {
       fs.writeFileSync(pdfPath, `%PDF-1.4 rendered\n${fs.readFileSync(htmlPath, "utf8")}`);
@@ -988,7 +1001,7 @@ describe("local TypeScript API", () => {
       expect(extensionStatus.json()).toMatchObject({
         ok: true,
         authenticated: true,
-        capabilities: ["capture", "autofill_read"],
+        capabilities: ["capture", "autofill_read", "discovery_browser"],
       });
 
       const invalidToken = await app.inject({
@@ -7763,7 +7776,13 @@ describe("local TypeScript API", () => {
       runId: `pending-${command.stage}-workflow`,
       firstExecutionRunId: `pending-${command.stage}-execution`,
     }));
-    const app = buildApp({ ...options, actionDispatcher: dispatch });
+    const discoveryBrowserBroker = new DiscoveryBrowserBroker();
+    discoveryBrowserBroker.touchExtension("0.1.1");
+    const app = buildApp({
+      ...options,
+      actionDispatcher: dispatch,
+      discoveryBrowserBroker,
+    });
 
     const response = await app.inject({
       method: "POST",
@@ -8173,7 +8192,13 @@ describe("local TypeScript API", () => {
 
   it("dispatches run-after preparation retry through the job-scoped pipeline path", async () => {
     const dispatch = vi.fn(async () => ({ status: "queued", actionId: "act-test" }));
-    const app = buildApp({ ...options, actionDispatcher: dispatch });
+    const discoveryBrowserBroker = new DiscoveryBrowserBroker();
+    discoveryBrowserBroker.touchExtension("0.1.1");
+    const app = buildApp({
+      ...options,
+      actionDispatcher: dispatch,
+      discoveryBrowserBroker,
+    });
     const jobKey = encodeURIComponent("https://example.com/jobs/failed-score");
 
     const retryResponse = await app.inject({
@@ -8195,6 +8220,167 @@ describe("local TypeScript API", () => {
       }),
       expect.objectContaining({ appDir: tempDir, dbPath: options.dbPath }),
     );
+
+    await app.close();
+  });
+
+  it("does not reset Enrich when the live-profile extension is offline", async () => {
+    const dispatch = vi.fn(async () => ({ status: "queued", actionId: "must-not-run" }));
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
+    const jobUrl = "https://example.com/jobs/failed-score";
+    const beforeDb = new Database(options.dbPath, { readonly: true });
+    const before = beforeDb.prepare(
+      "SELECT state, error_code, version FROM job_stage_states WHERE tenant_id = 'local' AND job_id = ? AND stage = 'enrich'",
+    ).get(jobIdFor(jobUrl));
+    beforeDb.close();
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${encodeURIComponent(jobUrl)}/actions/retry-stage`,
+      payload: { stage: "enrich", runAfter: true },
+    });
+
+    expect(response.statusCode, response.body).toBe(503);
+    expect(response.json()).toMatchObject({
+      ok: false,
+      error: "discovery_extension_unavailable",
+    });
+    expect(response.json().message).toContain("never a copied profile");
+    expect(dispatch).not.toHaveBeenCalled();
+    const afterDb = new Database(options.dbPath, { readonly: true });
+    const after = afterDb.prepare(
+      "SELECT state, error_code, version FROM job_stage_states WHERE tenant_id = 'local' AND job_id = ? AND stage = 'enrich'",
+    ).get(jobIdFor(jobUrl));
+    afterDb.close();
+    expect(after).toEqual(before);
+
+    await app.close();
+  });
+
+  it("does not bulk-reset failed Enrich rows when the live-profile extension is offline", async () => {
+    const dispatch = vi.fn(async () => ({ status: "queued", actionId: "must-not-run" }));
+    const jobUrl = "https://example.com/jobs/bulk-failed-enrich";
+    const seedDb = new Database(options.dbPath);
+    insertJob(seedDb, {
+      url: jobUrl,
+      title: "Bulk Failed Enrich Engineer",
+      site: "ExampleCo",
+    });
+    insertStage(seedDb, jobUrl, "discover", "succeeded");
+    insertStage(seedDb, jobUrl, "enrich", "failed", "DETAIL_ERROR");
+    seedDb.prepare(
+      `UPDATE job_stage_states
+          SET attempt_count = 2,
+              error_message = 'prior diagnostic',
+              metadata_json = ?,
+              blocked_by_json = ?,
+              version = 7
+        WHERE tenant_id = 'local' AND job_id = ? AND stage = 'enrich'`,
+    ).run(
+      JSON.stringify({ priorEvidence: "preserve-me" }),
+      JSON.stringify(["browser-dependency"]),
+      jobIdFor(jobUrl),
+    );
+    seedDb.prepare(
+      `INSERT INTO job_events (
+         tenant_id, job_id, identity_version, stage, event_type, level,
+         message, occurred_at, payload_json
+       ) VALUES ('local', ?, 1, 'enrich', 'StageFailed', 'error',
+                 'prior diagnostic', '2026-09-02T10:00:00.000Z', ?)`,
+    ).run(jobIdFor(jobUrl), JSON.stringify({ retryable: true }));
+    seedDb.close();
+
+    const readPersistedState = () => {
+      const db = new Database(options.dbPath, { readonly: true });
+      const stage = db.prepare(
+        `SELECT state, attempt_count, error_code, error_message, retryable,
+                blocked_by_json, metadata_json, version
+           FROM job_stage_states
+          WHERE tenant_id = 'local' AND job_id = ? AND stage = 'enrich'`,
+      ).get(jobIdFor(jobUrl));
+      const eventCount = db.prepare(
+        `SELECT COUNT(*) AS count FROM job_events
+          WHERE tenant_id = 'local' AND job_id = ? AND stage = 'enrich'`,
+      ).get(jobIdFor(jobUrl)) as { count: number };
+      db.close();
+      return { stage, eventCount: eventCount.count };
+    };
+    const before = readPersistedState();
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/jobs/bulk-retry-failed",
+      payload: {
+        allMatching: false,
+        jobKeys: [jobUrl],
+        runAfter: true,
+      },
+    });
+
+    expect(response.statusCode, response.body).toBe(503);
+    expect(response.json()).toMatchObject({
+      ok: false,
+      error: "discovery_extension_unavailable",
+    });
+    expect(readPersistedState()).toEqual(before);
+    expect(dispatch).not.toHaveBeenCalled();
+
+    await app.close();
+  });
+
+  it("returns db_not_found before bulk retry preview or dispatch for an uninitialized app", async () => {
+    const dispatch = vi.fn(async () => ({ status: "queued", actionId: "must-not-run" }));
+    const dbPath = path.join(tempDir, "uninitialized.db");
+    const app = buildApp({ ...options, dbPath, actionDispatcher: dispatch });
+    const response = await app.inject({
+      method: "POST", url: "/v1/jobs/bulk-retry-failed",
+      payload: { allMatching: true, runAfter: true },
+    });
+    expect(response.statusCode, response.body).toBe(503);
+    expect(response.json()).toMatchObject({ ok: false, error: "db_not_found" });
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(fs.existsSync(dbPath)).toBe(false);
+    await app.close();
+  });
+
+  it("does not dispatch pending bulk Enrich while the live-profile extension is offline", async () => {
+    const dispatch = vi.fn(async () => ({ status: "queued", actionId: "must-not-run" }));
+    const jobUrl = "https://example.com/jobs/bulk-pending-enrich";
+    const seedDb = new Database(options.dbPath);
+    insertJob(seedDb, {
+      url: jobUrl,
+      title: "Bulk Pending Enrich Engineer",
+      site: "ExampleCo",
+    });
+    insertStage(seedDb, jobUrl, "discover", "succeeded");
+    insertStage(seedDb, jobUrl, "enrich", "pending");
+    seedDb.close();
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/jobs/bulk-run-pending-preparation",
+      payload: {
+        allMatching: false,
+        jobKeys: [jobUrl],
+      },
+    });
+
+    expect(response.statusCode, response.body).toBe(503);
+    expect(response.json()).toMatchObject({
+      ok: false,
+      error: "discovery_extension_unavailable",
+    });
+    expect(dispatch).not.toHaveBeenCalled();
+    const afterDb = new Database(options.dbPath, { readonly: true });
+    const after = afterDb.prepare(
+      `SELECT state, attempt_count, error_code, metadata_json
+         FROM job_stage_states
+        WHERE tenant_id = 'local' AND job_id = ? AND stage = 'enrich'`,
+    ).get(jobIdFor(jobUrl));
+    afterDb.close();
+    expect(after).toMatchObject({ state: "pending", attempt_count: 0 });
 
     await app.close();
   });
@@ -8742,7 +8928,13 @@ describe("local TypeScript API", () => {
 
   it("dispatches source-scoped Discover stage runs", async () => {
     const dispatch = vi.fn(async () => ({ status: "queued" }));
-    const app = buildApp({ ...options, actionDispatcher: dispatch });
+    const discoveryBrowserBroker = new DiscoveryBrowserBroker();
+    discoveryBrowserBroker.touchExtension("0.1.1");
+    const app = buildApp({
+      ...options,
+      actionDispatcher: dispatch,
+      discoveryBrowserBroker,
+    });
 
     const response = await app.inject({
       method: "POST",
@@ -9107,14 +9299,18 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
-  it("rejects direct top-level enrich runs because Discovery owns detail enrichment", async () => {
+  it.each([
+    { stages: ["enrich"] },
+    { stages: ["discover", "enrich"] },
+    { stages: ["score", "enrich"] },
+  ])("rejects top-level Enrich in $stages because Discovery owns detail enrichment", async ({ stages }) => {
     const dispatch = vi.fn(async () => ({ status: "queued" }));
     const app = buildApp({ ...options, actionDispatcher: dispatch });
 
     const response = await app.inject({
       method: "POST",
       url: "/v1/pipeline/actions/run-stage",
-      payload: { stages: ["enrich"], dryRun: true },
+      payload: { stages, dryRun: true },
     });
 
     expect(response.statusCode, response.body).toBe(400);
@@ -9644,6 +9840,76 @@ describe("local TypeScript API", () => {
     ]);
 
     await app.close();
+  });
+
+  it.each([false, true])("preserves reordered bullet evidence occurrences across later saves (authored: %s)", async (withAuthored) => {
+    const app = buildApp(options);
+    try {
+      const profile = validProfileFixture("Sortable Bullet Candidate");
+      const entries = (profile.resume as Record<string, unknown>).experience_entries as Array<Record<string, unknown>>;
+      entries[0]!.bullets = ["Reduced incidents 40%.", "Built APIs.", "Reduced incidents 40%."];
+      const initial = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile } });
+      expect(initial.statusCode, initial.body).toBe(200);
+      const materialized = initial.json().profile;
+      const entry = materialized.resume.experience_entries[0];
+      if (withAuthored) {
+        Object.assign(entry.achievement_evidence[1], { id: "authored_api", tags: ["authored"] });
+      }
+      const original = Object.fromEntries(entry.achievement_evidence.map((item: { id: string }) => [item.id, item]));
+      entry.bullets = [" ", " Built APIs. ", "Reduced incidents 40%.", "Reduced incidents 40%.", ""];
+      materialized.resume.tailoring_rules.required_bullets_by_experience_id = { role_1: ["Built APIs."] };
+      const reordered = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile: materialized } });
+      expect(reordered.statusCode, reordered.body).toBe(200);
+      const nextProfile = reordered.json().profile;
+      nextProfile.personal.preferred_name = "Sort Candidate";
+      const savedAgain = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile: nextProfile } });
+      expect(savedAgain.statusCode, savedAgain.body).toBe(200);
+      const loaded = await app.inject({ method: "GET", url: "/v1/profile" });
+      expect(loaded.statusCode, loaded.body).toBe(200);
+      const result = loaded.json().profile;
+      expect(Object.fromEntries(result.resume.experience_entries[0].achievement_evidence.map((item: { id: string }) => [item.id, item]))).toEqual(original);
+      expect(result.resume.tailoring_rules.required_bullets_by_experience_id).toEqual({ role_1: ["Built APIs."] });
+
+      result.resume.experience_entries[0].bullets = ["Built APIs.", "Reduced incidents 55%."];
+      const edited = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile: result } });
+      expect(edited.statusCode, edited.body).toBe(200);
+      expect(edited.json().profile.resume_constraints.real_metrics).toEqual(["55%"]);
+      expect(edited.json().profile.resume.experience_entries[0].achievement_evidence).toHaveLength(2);
+      const apiId = withAuthored ? "authored_api" : "role_1_bullet_2";
+      expect(edited.json().profile.resume.experience_entries[0].achievement_evidence).toContainEqual(original[apiId]);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it.each([false, true])("preserves authored and derived evidence sharing one sorted bullet (authored first: %s)", async (authoredFirst) => {
+    const app = buildApp(options);
+    try {
+      const profile = validProfileFixture("Shared Bullet Evidence Candidate");
+      const entries = (profile.resume as Record<string, unknown>).experience_entries as Array<Record<string, unknown>>;
+      entries[0]!.bullets = ["Reduced incidents 40%.", "Built APIs."];
+      const initial = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile } });
+      expect(initial.statusCode, initial.body).toBe(200);
+      const materialized = initial.json().profile;
+      const entry = materialized.resume.experience_entries[0];
+      const authored = { ...entry.achievement_evidence[0], id: "authored_incidents", tags: ["authored"] };
+      const original = authoredFirst ? [authored, ...entry.achievement_evidence] : [...entry.achievement_evidence, authored];
+      entry.achievement_evidence = original;
+      entry.bullets.reverse();
+
+      const reordered = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile: materialized } });
+      expect(reordered.statusCode, reordered.body).toBe(200);
+      expect(reordered.json().profile.resume.experience_entries[0].achievement_evidence).toEqual(original);
+      const nextProfile = reordered.json().profile;
+      nextProfile.personal.preferred_name = "Shared Candidate";
+      const savedAgain = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile: nextProfile } });
+      expect(savedAgain.statusCode, savedAgain.body).toBe(200);
+      const loaded = await app.inject({ method: "GET", url: "/v1/profile" });
+      expect(loaded.statusCode, loaded.body).toBe(200);
+      expect(loaded.json().profile.resume.experience_entries[0].achievement_evidence).toEqual(original);
+    } finally {
+      await app.close();
+    }
   });
 
   it("derives achievement metrics and preserves old flat values as unassigned legacy data", async () => {
@@ -11218,7 +11484,7 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
-  it("continues pending preparation when the authenticated browser becomes ready", async () => {
+  it("continues blocked LinkedIn preparation when the selected live-profile extension connects", async () => {
     const typedBlockedUrl = "https://www.linkedin.com/jobs/view/condition-blocked";
     const legacyBlockedUrl = "https://linkedin.com/jobs/view/legacy-condition-blocked";
     const unrelatedBlockedUrl = "https://example.com/jobs/robots-blocked";
@@ -11242,7 +11508,7 @@ describe("local TypeScript API", () => {
               metadata_json = ?
         WHERE tenant_id = 'local' AND job_id = ? AND stage = 'enrich'`,
     ).run(
-      JSON.stringify({ blockedConditions: ["authenticated_linkedin_browser_unavailable"] }),
+      JSON.stringify({ blockedConditions: ["discovery_browser_extension_unavailable"] }),
       jobIdFor(typedBlockedUrl),
     );
     db.prepare(
@@ -11262,52 +11528,28 @@ describe("local TypeScript API", () => {
     ).run(jobIdFor(legacyBlockedUrl));
     db.close();
 
-    const readyResult = {
-      capabilities: [
-        {
-          id: "core-browser",
-          status: "ready",
-          detail: "Managed browser is ready.",
-          mutable: false,
-          enabled: true,
-          profileCopyReady: false,
-        },
-        {
-          id: "auto-apply-browser",
-          status: "disabled",
-          detail: "Disabled by default.",
-          mutable: true,
-          enabled: false,
-          profileCopyReady: false,
-        },
-        {
-          id: "authenticated-linkedin-browser",
-          status: "ready",
-          detail: "Authenticated browser is ready.",
-          mutable: true,
-          enabled: true,
-          profileCopyReady: true,
-        },
-      ],
-      detectedBrowsers: [],
-    };
-    const providerDispatcher: JsonRpcDispatcher = {
-      call: vi.fn(async () => ({ jsonrpc: "2.0" as const, id: 1, result: readyResult })),
-      close: vi.fn(async () => undefined),
-    };
     const dispatch = vi.fn(async (): Promise<ActionDispatchResult> => ({
       status: "queued",
       runId: "run-browser-ready-continuation",
     }));
-    const app = buildApp({ ...options, providerDispatcher, actionDispatcher: dispatch });
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
+    const token = fs.readFileSync(
+      path.join(tempDir, "extension-capability-token"),
+      "utf8",
+    ).trim();
 
     const response = await app.inject({
       method: "POST",
-      url: "/v1/browser-capabilities/authenticated-linkedin-browser/profile-copy",
+      url: "/v1/extension/discovery/claim",
+      headers: {
+        authorization: `Bearer ${token}`,
+        origin: CHROME_EXTENSION_ORIGIN,
+        "sec-fetch-site": "none",
+      },
       payload: {
-        detectedBrowserId: "google-chrome",
-        consent: true,
-        consentMethod: "explicit-ui-v1",
+        installationId: "00000000-0000-4000-8000-000000000100",
+        extensionVersion: "0.1.1",
+        replace: true,
       },
     });
 
@@ -11322,7 +11564,7 @@ describe("local TypeScript API", () => {
         dryRun: false,
         limit: 2,
         minScore: 6,
-        reason: "condition_resolved:authenticated_linkedin_browser_unavailable",
+        reason: "condition_resolved:discovery_browser_extension_unavailable",
       }),
       { appDir: tempDir, configPath: options.configPath, dbPath: options.dbPath },
     );
@@ -11330,7 +11572,7 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
-  it("recovers browser-triggered preparation on API startup after the readiness request was interrupted", async () => {
+  it("recovers blocked preparation when the selected extension reconnects after API startup", async () => {
     const blockedUrl = "https://www.linkedin.com/jobs/view/startup-condition-recovery";
     const db = new Database(options.dbPath);
     insertJob(db, { url: blockedUrl, title: "Startup recovery target", site: "linkedin" });
@@ -11346,54 +11588,37 @@ describe("local TypeScript API", () => {
     );
     db.close();
 
-    const providerDispatcher: JsonRpcDispatcher = {
-      call: vi.fn(async () => ({
-        jsonrpc: "2.0" as const,
-        id: 1,
-        result: {
-          capabilities: [
-            {
-              id: "core-browser",
-              status: "ready",
-              detail: "Managed browser is ready.",
-              mutable: false,
-              enabled: true,
-              profileCopyReady: false,
-            },
-            {
-              id: "auto-apply-browser",
-              status: "disabled",
-              detail: "Disabled by default.",
-              mutable: true,
-              enabled: false,
-              profileCopyReady: false,
-            },
-            {
-              id: "authenticated-linkedin-browser",
-              status: "ready",
-              detail: "Authenticated browser is ready.",
-              mutable: true,
-              enabled: true,
-              profileCopyReady: true,
-            },
-          ],
-          detectedBrowsers: [],
-        },
-      })),
-      close: vi.fn(async () => undefined),
-    };
+    const installationId = "00000000-0000-4000-8000-000000000101";
+    claimDiscoveryInstallationId(tempDir, installationId, true);
     const dispatched = deferred<ActionDispatchResult>();
     const dispatch = vi.fn<ActionDispatcher>(() => dispatched.promise);
-    const app = buildApp({ ...options, providerDispatcher, actionDispatcher: dispatch });
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
 
     await app.listen({ host: "127.0.0.1", port: 0 });
+    expect(dispatch).not.toHaveBeenCalled();
+    const token = fs.readFileSync(
+      path.join(tempDir, "extension-capability-token"),
+      "utf8",
+    ).trim();
+    const poll = await app.inject({
+      method: "GET",
+      url: "/v1/extension/discovery/tasks/next?extensionVersion=0.1.1",
+      headers: {
+        authorization: `Bearer ${token}`,
+        origin: CHROME_EXTENSION_ORIGIN,
+        "sec-fetch-site": "none",
+        "x-jobctrl-extension-installation": installationId,
+        "x-jobctrl-extension-version": "0.1.1",
+      },
+    });
+    expect(poll.statusCode, poll.body).toBe(200);
     await vi.waitFor(() => expect(dispatch).toHaveBeenCalledTimes(1));
     const command = dispatch.mock.calls[0]?.[0];
     expect(command).toMatchObject({
       action: "run_stage",
       jobIds: [jobIdFor(blockedUrl)],
       stages: ["enrich", "score", "tailor", "cover"],
-      reason: "condition_resolved:authenticated_linkedin_browser_unavailable",
+      reason: "condition_resolved:discovery_browser_extension_unavailable",
     });
 
     const claimedDb = new Database(options.dbPath, { readonly: true });
@@ -11409,7 +11634,7 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
-  it("coalesces concurrent browser-ready recovery requests into one dispatch", async () => {
+  it("coalesces concurrent live-extension connection recovery requests into one dispatch", async () => {
     const blockedUrl = "https://www.linkedin.com/jobs/view/concurrent-condition-recovery";
     const db = new Database(options.dbPath);
     insertJob(db, { url: blockedUrl, title: "Concurrent recovery target", site: "linkedin" });
@@ -11420,53 +11645,29 @@ describe("local TypeScript API", () => {
               metadata_json = ?
         WHERE tenant_id = 'local' AND job_id = ? AND stage = 'enrich'`,
     ).run(
-      JSON.stringify({ blockedConditions: ["authenticated_linkedin_browser_unavailable"] }),
+      JSON.stringify({ blockedConditions: ["discovery_browser_extension_unavailable"] }),
       jobIdFor(blockedUrl),
     );
     db.close();
-    const readyResult = {
-      capabilities: [
-        {
-          id: "core-browser",
-          status: "ready",
-          detail: "Managed browser is ready.",
-          mutable: false,
-          enabled: true,
-          profileCopyReady: false,
-        },
-        {
-          id: "auto-apply-browser",
-          status: "disabled",
-          detail: "Disabled by default.",
-          mutable: true,
-          enabled: false,
-          profileCopyReady: false,
-        },
-        {
-          id: "authenticated-linkedin-browser",
-          status: "ready",
-          detail: "Authenticated browser is ready.",
-          mutable: true,
-          enabled: true,
-          profileCopyReady: true,
-        },
-      ],
-      detectedBrowsers: [],
-    };
-    const providerDispatcher: JsonRpcDispatcher = {
-      call: vi.fn(async () => ({ jsonrpc: "2.0" as const, id: 1, result: readyResult })),
-      close: vi.fn(async () => undefined),
-    };
     const dispatched = deferred<ActionDispatchResult>();
     const dispatch = vi.fn<ActionDispatcher>(() => dispatched.promise);
-    const app = buildApp({ ...options, providerDispatcher, actionDispatcher: dispatch });
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
+    const token = fs.readFileSync(
+      path.join(tempDir, "extension-capability-token"),
+      "utf8",
+    ).trim();
     const request = () => app.inject({
       method: "POST",
-      url: "/v1/browser-capabilities/authenticated-linkedin-browser/profile-copy",
+      url: "/v1/extension/discovery/claim",
+      headers: {
+        authorization: `Bearer ${token}`,
+        origin: CHROME_EXTENSION_ORIGIN,
+        "sec-fetch-site": "none",
+      },
       payload: {
-        detectedBrowserId: "google-chrome",
-        consent: true,
-        consentMethod: "explicit-ui-v1",
+        installationId: "00000000-0000-4000-8000-000000000102",
+        extensionVersion: "0.1.1",
+        replace: true,
       },
     });
 

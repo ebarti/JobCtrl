@@ -9,6 +9,7 @@ from pathlib import Path
 from jobctrl.domain.events import (
     ApplicationEmailFeedbackIngestedPayload,
     DOMAIN_EVENT_TYPES,
+    EnrichmentFetchRecheckedPayload,
     DiscoveryExecutionRefLike,
     DuplicateJobLinkedPayload,
     DuplicateJobLinkRejectedPayload,
@@ -108,3 +109,5 @@ def test_application_email_feedback_payload_fields_match_typescript() -> None:
         ApplicationEmailFeedbackIngestedPayload,
         "ApplicationEmailFeedbackIngestedPayload",
     )
+def test_fetch_recheck_payload_fields_match_typescript() -> None:
+    _assert_payload_field_parity(EnrichmentFetchRecheckedPayload, "EnrichmentFetchRecheckedPayload")

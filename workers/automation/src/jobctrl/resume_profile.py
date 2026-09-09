@@ -355,17 +355,55 @@ def _reconciled_achievement_evidence(entry: dict, entry_id: str, items: list[dic
     if not entry_id:
         return items
     derived_items = _legacy_bullet_achievement_evidence_for_entry(entry, entry_id)
-    if all(_is_materialized_legacy_bullet_evidence(item, entry_id) for item in items):
-        return derived_items
-    derived_by_id = {str(item["id"]): item for item in derived_items}
-    reconciled: list[dict] = []
-    for item in items:
-        if not _is_materialized_legacy_bullet_evidence(item, entry_id):
-            reconciled.append(item)
+    materialized = [_is_materialized_legacy_bullet_evidence(item, entry_id) for item in items]
+    all_derived = all(materialized)
+    available = dict.fromkeys(range(len(derived_items)))
+    matched: dict[int, int] = {}
+    # Match each unchanged occurrence first; persisted IDs own source text, not
+    # the current display position. Authored records may share a derived source,
+    # so reserve their otherwise-unclaimed sources after materialized matches.
+    for index in sorted(range(len(items)), key=lambda candidate: not materialized[candidate]):
+        item = items[index]
+        bullet_index = next(
+            (candidate for candidate in available if derived_items[candidate]["source_text"] == item["source_text"]),
+            None,
+        )
+        if bullet_index is not None:
+            matched[index] = bullet_index
+            del available[bullet_index]
+    for index, item in enumerate(items):
+        if not materialized[index] or index in matched:
             continue
-        replacement = derived_by_id.get(str(item["id"]))
-        if replacement is not None:
-            reconciled.append(replacement)
+        preferred = index if all_derived else (_legacy_bullet_evidence_index(item["id"], entry_id) or 0) - 1
+        bullet_index = preferred if preferred in available else next(iter(available), None)
+        if bullet_index is not None:
+            matched[index] = bullet_index
+            del available[bullet_index]
+    replacements: dict[int, dict] = {}
+    by_bullet: dict[int, dict] = {}
+    for index, bullet_index in matched.items():
+        if materialized[index]:
+            replacement = {**derived_items[bullet_index], "id": items[index]["id"]}
+            replacements[index] = replacement
+            by_bullet[bullet_index] = replacement
+    if not all_derived:
+        return [
+            replacements[index] if materialized[index] else item
+            for index, item in enumerate(items)
+            if not materialized[index] or index in replacements
+        ]
+    reserved_ids = {item["id"] for item in items}
+    reconciled: list[dict] = []
+    for index, item in enumerate(derived_items):
+        if index in by_bullet:
+            reconciled.append(by_bullet[index])
+            continue
+        suffix = index + 1
+        while legacy_bullet_evidence_id(entry_id, suffix) in reserved_ids:
+            suffix += 1
+        evidence_id = legacy_bullet_evidence_id(entry_id, suffix)
+        reserved_ids.add(evidence_id)
+        reconciled.append({**item, "id": evidence_id})
     return reconciled
 
 

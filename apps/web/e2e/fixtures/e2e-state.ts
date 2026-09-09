@@ -1,9 +1,10 @@
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 import Database from "better-sqlite3";
 
 interface E2eState {
-  workspace?: { dbPath?: string };
+  workspace?: { appDir?: string; dbPath?: string };
 }
 
 /** Canonical ID emitted for QA_PLATFORM_JOB_URL by the exact-v7 QA seed. */
@@ -16,6 +17,10 @@ export function e2eStateFilePath(): string {
       "JOBCTRL_E2E_STATE_FILE is not set; playwright.config.ts should isolate the run before setup.",
     );
   }
+  if (process.env["JOBCTRL_E2E_ISOLATED"] === "1") {
+    const { assertInside } = createRequire(import.meta.url)("./isolated-workspace.cjs") as { assertInside(root: string, candidate: string): void };
+    assertInside(fs.realpathSync(process.env["JOBCTRL_E2E_APP_DIR"]!), configured);
+  }
   return path.resolve(configured);
 }
 
@@ -27,6 +32,10 @@ export function loadE2eDbPath(): string {
     throw new Error(
       "E2E state file is missing workspace.dbPath; global-setup did not run.",
     );
+  }
+  if (process.env["JOBCTRL_E2E_ISOLATED"] === "1") {
+    const { assertExpectedWorkspace } = createRequire(import.meta.url)("./isolated-workspace.cjs") as { assertExpectedWorkspace(workspace: E2eState["workspace"]): void };
+    assertExpectedWorkspace(state.workspace);
   }
   return state.workspace.dbPath;
 }

@@ -11,9 +11,11 @@ import {
   type ResumePlateSemanticTextChange,
 } from "../../materials/components/ResumeAuditPins.js";
 import { ProfileForm, type ProfilePlateTextController } from "../forms/profile-form.js";
+import type { ProfileConfigResponse } from "../../operations/types.js";
 import { useProfileHtmlPreviewUrl } from "../hooks/useProfileHtmlPreviewUrl.js";
 import { useProfileQuery } from "../hooks/useProfileQuery.js";
 import { useResumeTemplatesQuery } from "../hooks/useResumeTemplatesQuery.js";
+import { bindProfilePreviewFields } from "../lib/profile-preview-fields.js";
 import {
   resolveEffectiveResumeTemplateVersion,
   resumeTemplatePreviewStyle,
@@ -32,12 +34,16 @@ export interface ProfileEditorProps {
 }
 
 export function ProfileEditor({ section = "profile" }: ProfileEditorProps) {
-  const { storage } = usePorts();
+  const { api, storage } = usePorts();
   const profileQuery = useProfileQuery();
   const resumeTemplatesQuery = useResumeTemplatesQuery();
   const { url: profileHtmlPreviewUrl } = useProfileHtmlPreviewUrl();
   const layoutRef = useRef<HTMLDivElement>(null);
   const plateTextControllerRef = useRef<ProfilePlateTextController | null>(null);
+  const [previewSource, setPreviewSource] = useState<{
+    profile: ProfileConfigResponse["profile"];
+    revision: number;
+  } | null>(null);
   const [workspaceView, setWorkspaceView] = useState<ProfileWorkspaceView>("profile-data");
   const [editorWidth, setEditorWidth] = useState(() => {
     const saved = storage.get<number>(SPLIT_STORAGE_KEY);
@@ -52,6 +58,13 @@ export function ProfileEditor({ section = "profile" }: ProfileEditorProps) {
     [effectiveResumeTemplateVersion],
   );
   const showPreview = section === "profile";
+  // The form advances this snapshot only on a clean save/reset. Query cache
+  // optimism and older save responses must not replace newer Plate typing.
+  const handlePreviewSourceChange = useCallback((saved: ProfileConfigResponse) => {
+    setPreviewSource((previous) => ({ profile: saved.profile, revision: (previous?.revision ?? -1) + 1 }));
+  }, []);
+  const bindPreviewFields = useCallback((html: string) =>
+    bindProfilePreviewFields(html, previewSource?.profile), [previewSource?.profile]);
   const layoutStyle = {
     "--profile-editor-width": `${editorWidth}%`,
   } as CSSProperties;
@@ -148,6 +161,7 @@ export function ProfileEditor({ section = "profile" }: ProfileEditorProps) {
             <ProfileForm
               initial={profileQuery.data}
               onPlateTextControllerChange={handlePlateTextControllerChange}
+              onPreviewSourceChange={handlePreviewSourceChange}
               section={section}
             />
           )
@@ -241,7 +255,9 @@ export function ProfileEditor({ section = "profile" }: ProfileEditorProps) {
               <strong data-typography="component-title">Edit the baseline resume</strong>
               <span data-typography="body">
                 Select resume text, then use the labelled bold, italic, underline, link, font,
-                size, and alignment controls.
+                size, and alignment controls. Profile text fields follow the normal save and
+                autosave flow. Formatting and link presentation stay in this document;
+                edit professional URLs in Profile data.
               </span>
             </div>
             <ResumeStandalonePlateEditor
@@ -249,7 +265,8 @@ export function ProfileEditor({ section = "profile" }: ProfileEditorProps) {
                 ? { transformKey: effectiveResumeTemplateVersion.versionId }
                 : {})}
               className="profile-resume-plate-editor"
-              htmlUrl={profileHtmlPreviewUrl}
+              htmlUrl={previewSource ? api.profilePreviewHtmlUrl(previewSource.revision) : null}
+              htmlTransform={bindPreviewFields}
               pdfFilename="baseline-resume.pdf"
               previewStyle={resumePreviewStyle}
               title="Baseline resume editor"
