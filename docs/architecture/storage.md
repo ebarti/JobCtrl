@@ -21,7 +21,7 @@ Unless overridden by `JOBCTRL_DIR`, the local authority root is
 | `claude_home/`, `provider-packs/`, `provider-runtime/` | Isolated and separately acquired provider runtime state. |
 | `tailored_resumes/`, `cover_letters/`, `logs/` | Generated material and logs registered by SQLite metadata where applicable. |
 | `browser-profiles/`, `extension-capability-token`, `chrome-workers/`, `apply-workers/` | Consented copied profiles for separate compatibility capabilities, extension pairing, and browser/apply execution state. Integrated Discovery uses the current Chrome profile through the extension and never stores a copy; its bridge task bodies/results are API-process-memory-only. Browser-adoption metadata is in `config.json`. |
-| `backups/` and legacy `resume.*` / style files | User-created database snapshots and pre-migration resume inputs. |
+| `backups/` and legacy `resume.*` / style files | User-created database snapshots, guarded job-data-purge recovery bundles, and pre-migration resume inputs. |
 
 Developer supervisors additionally use checkout-local `.dev/` process, log,
 and Temporal files; those are not installed-user authorities but remain
@@ -86,6 +86,36 @@ preferred model IDs, and Levels.fyi/Glassdoor enablement, access-basis, and
 licensed-feed coverage policy. Public Levels.fyi Markdown needs no credential.
 Credentials, feed paths/URLs, feed contents, and provider payloads do not belong
 in the settings file.
+
+The guarded job-data purge uses aggregate ownership rather than table age. The
+Job graph, generated Materials, Apply/job projections, and the job/Discovery
+execution ledger (runs, search units, membership/recovery rows, pipeline steps,
+job-workflow projections, lifecycle/stage events, source-quality summaries, and
+operational-attempt metrics whose stage is `discover`, `enrich`, `score`,
+`tailor`, `cover`, or `apply`) are one deletion boundary because retaining the
+latter can recreate a projection, bias source scheduling, or retry work for a
+deleted Job. Candidate Profile, Discovery settings, source registry,
+templates/policies, contacts/outreach, unrelated workflow history, and
+operational-attempt metrics from non-job stages are separate authorities and
+remain. Bundled Temporal history is outside this command; the pre-purge
+database and archived files remain recoverable under `backups/`.
+
+The purge inventory separately reports retained auxiliary/history rows, including
+on a no-op. These are outside the deletion boundary and can still cite removed
+jobs, runs, or feedback signals:
+
+| Retained rows | Remaining references or effect |
+| --- | --- |
+| `manual_capture_queue` with `job_id IS NULL` | Includes pending Discovery captures and their `retry_context_json`; they can still appear as required on the Discovery page. Job-linked captures cascade with their Job. |
+| `source_locator_candidates` | Retains discovered source URLs and manual-action reasons. |
+| `learning_recommendation_jobs`, `learning_recommendation_evidence_jobs` | Immutable learning provenance retains historical JobIds. |
+| `learning_recommendation_evidence`, `tailoring_feedback_signal_reviews`, `tailoring_feedback_signal_contradictions` | Append-only evidence/reviews retain signal/review references and historical JobIds even after source signals cascade away. |
+| `role_match_feedback_suggestions` | Retains `evidence_json`, which may cite purged jobs or runs. |
+
+Counts cover local rows in these retained sets, not only rows whose referenced
+source still exists. The command does not rewrite immutable learning history or
+dismiss pending captures. “Nothing remains in the purge boundary” therefore
+does not mean this auxiliary/history data is empty.
 
 ### Exact v9 runtime and compatible cutovers
 

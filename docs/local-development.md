@@ -155,6 +155,88 @@ processes launch. Use the printed web URL rather than assuming `5173`, because
 Vite can bind a higher port when another local JobCtrl web server is already
 using the requested port.
 
+### Purge A Source Workspace's Job Data
+
+This internal maintenance command is intended for disposable test workspaces
+and deliberate local reset work. `corepack pnpm data:purge-jobs` is read-only
+unless it receives the exact confirmation phrase. Use it first to resolve and
+count the target workspace:
+
+```bash
+corepack pnpm data:purge-jobs --app-dir /path/to/disposable-jobctrl-dir
+```
+
+Before execution, stop every JobCtrl process using that workspace and verify
+that no API or worker from another worktree still has `jobctrl.db` open (for
+example, `lsof /path/to/disposable-jobctrl-dir/jobctrl.db`). A fresh worker
+heartbeat for this database blocks deletion; wait at least 45 seconds after
+the last heartbeat once the worker is stopped. Heartbeats do not detect every
+API or other writer, so the process check remains required. Any database commit
+by another connection between inventory and the deletion lock aborts the run
+without deleting or moving files. Stop the writer and repeat inventory before
+retrying. Then run:
+
+```bash
+corepack pnpm data:purge-jobs --app-dir /path/to/disposable-jobctrl-dir \
+  --confirm DELETE-ALL-JOB-DATA
+```
+
+The command backs up first, purges the exact-v9 local Job graph, archives live
+generated resume/cover-letter entries and registered job logs, removes the
+job/Discovery execution ledger, source-quality summaries, job-stage operational
+attempts, and projection-rebuilding lifecycle events, compacts SQLite, and
+checks that profile/templates/Discovery settings/Settings fingerprints did not
+change. It preserves unrelated Profile, source-control, contact/outreach,
+maintenance-workflow history, and non-job operational attempts. It is not a
+Temporal-history or secure-erasure command. The owning boundary is documented
+in [Storage](architecture/storage.md).
+
+#### Resolve Provisional Missing-History Executions
+
+The inventory and refusal message list workflow/run IDs for `terminated` +
+`reconciled_not_found` rows. They are provisional: the worker may have reached
+the wrong Temporal server or lost access to the authoritative history. An absent
+execution cannot be canceled. Restore access to the correct history and let the
+reconciler settle it normally whenever that history still exists.
+
+For a deliberate reset after permanent local history loss only:
+
+1. Stop JobCtrl API, workers, launchers, and any other writer. Verify no process
+   has this `jobctrl.db` open. Keep the worker stopped throughout this procedure.
+2. Verify the workspace's configured Temporal address and namespace against the
+   intended history store. Inspect that namespace's complete workflow inventory
+   and each exact workflow/run ID listed by the purge. The namespace must be
+   empty and every listed execution must be absent. An unreachable server, an
+   empty result from a different namespace, or a permissions error is not proof.
+   Do not restore older Temporal history after this clearance.
+3. Open this workspace database in `sqlite3` and create a separate pre-clearance
+   backup with `.backup '/absolute/private/path/jobctrl-before-clearance.db'`.
+   Keep it with the later purge recovery bundle; the purge's own backup is taken
+   after this clearance. Set named parameters `:workflow_id` and
+   `:temporal_run_id` to one exact inventoried pair (SQL NULL for a null run ID),
+   and execute the guarded statement below. Confirm `changes()` is exactly one;
+   zero means the identity or state changed and requires a fresh inventory.
+4. Close SQLite, rerun inventory, and execute the confirmed purge while all
+   writers remain stopped. Repeat the guarded clearance only for other exact
+   pairs independently verified in step 2. Active stages and ordinary active
+   workflows still block the command.
+
+```sql
+UPDATE workflow_run_projections
+SET error_code = 'operator_verified_history_absent',
+    error_message = 'Operator verified the configured Temporal namespace empty before an offline job-data purge.'
+WHERE tenant_id = 'local'
+  AND workflow_id = :workflow_id
+  AND temporal_run_id IS :temporal_run_id
+  AND LOWER(status) = 'terminated'
+  AND LOWER(COALESCE(error_code, '')) = 'reconciled_not_found';
+SELECT changes();
+```
+
+This maintenance-only clearance preserves the terminal status and records why
+the absent execution no longer blocks the reset. It does not assert that an
+unreachable execution finished, and it must not be used during normal operation.
+
 Run individual components only when troubleshooting a specific process:
 
 ```bash
