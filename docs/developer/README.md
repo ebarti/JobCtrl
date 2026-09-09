@@ -12,21 +12,16 @@ change.
 **Read this if** you are contributing code or documentation and need to know
 where to begin.
 
-## First Pass
+## Start At The Changed Boundary
 
-1. Read [Contributing](../../CONTRIBUTING.md) for pull-request scope, commit
-   conventions, privacy rules, and the baseline validation expectation.
-2. Use [Local Development](../local-development.md) to install, run, and
-   inspect the source stack.
-3. Find the source owner in the
-   [Repository & Ownership Map](repository-and-ownership-map.md) before editing.
-4. Read [System Overview](../architecture/index.md) for the whole-system
-   shape, then follow the focused reference that owns your boundary.
-5. Choose checks and product-path coverage from
-   [Reliability & QA](../local-reliability-qa.md).
-6. Recheck [Threat Model & Security Engineering](security.md) for any change that can
-   touch credentials, user data, browser state, network access, or application
-   submission.
+Use [Contributing](../../CONTRIBUTING.md) for public PR conventions and
+[Local Development](../local-development.md) for setup/runtime commands.
+Configured maintainer agents use the [pinned workflow](workflow.md).
+Find the [source owner](repository-and-ownership-map.md), then read only the
+architecture reference below that owns the change. Choose the smallest proof
+through [Reliability & QA](../local-reliability-qa.md). Read the
+[security contract](security.md) when credentials, user data, browser state,
+network access or application submission are affected.
 
 ::: tip Here to use JobCtrl, not change it?
 Start with [Getting Started](../user/getting-started.md). It covers setup,

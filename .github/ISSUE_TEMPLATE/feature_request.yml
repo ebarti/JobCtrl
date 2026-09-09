@@ -48,6 +48,13 @@ body:
       description: Note whether this touches local data, credentials, generated materials, browser automation, apply submission, telemetry, or third-party services.
     validations:
       required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance and related context
+      description: Observable success criteria, relevant code or docs, related issues or PRs, and dependencies. Public intake does not authorize implementation, data changes, or submission.
+    validations:
+      required: false
   - type: checkboxes
     id: confirmation
     attributes:

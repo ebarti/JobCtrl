@@ -46,14 +46,10 @@ JOBCTRL_DIR=/tmp/jobctrl-qa corepack pnpm dev
   unreleased stack, update canonical docs in the final PR and run QA afterward.
 - Do not commit local user data, `.env` files, resumes, PDFs, logs, browser
   profiles, SQLite databases, or generated application materials.
-- Heavy CI workflows run automatically for same-repository pull requests, but
-  not for pull requests from public forks. Run the relevant local validation
-  before opening a PR; maintainers run manual workflows or local checks for
-  fork contributions after reviewing the change.
-- GitHub Stacks leave dependency-heavy Python and TypeScript jobs skipped on
-  non-top layers. The cumulative top layer runs the full Python compatibility
-  matrix, packages, web builds, product tests, and browser/Storybook suites.
-  Use targeted local validation while reviewing a lower layer.
+- CI eligibility follows each executable workflow's events and path filters,
+  including fork PRs and each stack layer. GitHub may require maintainer approval
+  before running fork workflows. There is no top-of-stack scheduler; see
+  [the CI reference](docs/local-development.md#pull-request-ci).
 
 ## Developer Certificate of Origin Sign-Off
 
@@ -78,9 +74,10 @@ git rebase --signoff origin/main
 
 ## Validation
 
-For coding agents, [AGENTS.md](AGENTS.md) owns instruction priority, autonomous
-execution, delegation, and validation tiers. `CLAUDE.md` links to that same
-file; frontend work also follows [apps/web/AGENTS.md](apps/web/AGENTS.md).
+Configured maintainer agent work uses the pinned workflow described in
+[AGENTS.md](AGENTS.md) and [workflow setup](docs/developer/workflow.md).
+The private maintainer package is not required to build, test or contribute.
+Frontend changes also follow [apps/web/AGENTS.md](apps/web/AGENTS.md).
 
 Run the touched-surface commands in
 [Reliability & QA](docs/local-reliability-qa.md) plus `git diff --check`. Add the

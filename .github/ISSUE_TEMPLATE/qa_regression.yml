@@ -54,6 +54,13 @@ body:
       description: Mention local commands or browser QA steps. Summarize private output instead of pasting it.
     validations:
       required: false
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance and related context
+      description: Observable success criteria, relevant code or docs, related issues or PRs, and dependencies. Public intake does not authorize implementation, data changes, or submission.
+    validations:
+      required: false
   - type: checkboxes
     id: release
     attributes:

@@ -1,120 +1,137 @@
 import assert from "node:assert/strict";
-import fs from "node:fs/promises";
+import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import docsScreenshotWorkspace from "../apps/web/e2e/fixtures/docs-screenshot-workspace.cjs";
+import ownedWorkspace from "../apps/web/e2e/fixtures/owned-workspace.cjs";
 
 const {
-  DIRECTORY_PREFIX,
   OWNERSHIP_MARKER,
-  assertOwnedDocsScreenshotDirectory,
   canonicalTemporaryRoot,
   canonicalTemporaryRoots,
-  createOwnedDocsScreenshotDirectory,
-  prepareOwnedDocsScreenshotDirectory,
-} = docsScreenshotWorkspace;
+  createOwnedE2eWorkspace,
+  assertOwnedE2eWorkspace,
+  removeOwnedE2eWorkspace,
+  configureE2eWorkspace,
+  workspaceEnvironment,
+  assertE2eWorkspaceEnvironment,
+} = ownedWorkspace;
 const repoRoot = path.resolve(fileURLToPath(new URL("../", import.meta.url)));
 
-test("docs screenshot workspaces reject the exact temporary root", async () => {
-  for (const temporaryRoot of await canonicalTemporaryRoots()) {
-    await assert.rejects(
-      createOwnedDocsScreenshotDirectory(temporaryRoot),
-      /must be a strict descendant/,
-    );
-    await assert.rejects(
-      assertOwnedDocsScreenshotDirectory(temporaryRoot),
-      /must be a strict descendant/,
-    );
-    await assert.rejects(
-      prepareOwnedDocsScreenshotDirectory(temporaryRoot),
-      /must be a strict descendant/,
-    );
-  }
+function parentFixture(t) {
+  const parent = fs.mkdtempSync(
+    path.join(canonicalTemporaryRoot(), "jobctrl-workspace-test-"),
+  );
+  t.after(() => fs.rmSync(parent, { force: true, recursive: true }));
+  return parent;
+}
+
+test("workspace overrides cannot adopt the system temp root or an external directory", (t) => {
+  const parent = parentFixture(t);
+  const file = path.join(parent, "not-a-directory");
+  fs.writeFileSync(file, "preserved");
+  for (const root of canonicalTemporaryRoots())
+    assert.throws(() => createOwnedE2eWorkspace(root), /strict descendant/);
+  assert.throws(() => createOwnedE2eWorkspace(repoRoot), /strict descendant/);
+  assert.throws(() => createOwnedE2eWorkspace(file), /must be a directory/);
+  assert.equal(fs.readFileSync(file, "utf8"), "preserved");
 });
 
-test("docs screenshot workspace parents must be existing temp directories", async (t) => {
-  const temporaryRoot = await canonicalTemporaryRoot();
-  const fixtureRoot = await fs.mkdtemp(
-    path.join(temporaryRoot, "jobctrl-docs-guard-test-"),
-  );
-  t.after(() => fs.rm(fixtureRoot, { force: true, recursive: true }));
-  const filePath = path.join(fixtureRoot, "not-a-directory");
-  await fs.writeFile(filePath, "fixture", "utf8");
+test("ordinary runs create unique children and preserve the supplied parent sentinel", (t) => {
+  const parent = parentFixture(t);
+  const sentinel = path.join(parent, "caller-data");
+  fs.writeFileSync(sentinel, "preserved");
+  const firstEnv = { JOBCTRL_E2E_APP_DIR: parent };
+  const secondEnv = { JOBCTRL_E2E_APP_DIR: parent };
+  const first = configureE2eWorkspace(firstEnv);
+  const second = configureE2eWorkspace(secondEnv);
+  assert.notEqual(first.appDir, second.appDir);
+  assert.notEqual(first.token, second.token);
+  assert.equal(path.dirname(first.appDir), parent);
+  assert.deepEqual(configureE2eWorkspace(firstEnv), first);
+  removeOwnedE2eWorkspace(first);
+  assertOwnedE2eWorkspace(second);
+  assert.equal(fs.readFileSync(sentinel, "utf8"), "preserved");
+});
 
-  await assert.rejects(
-    createOwnedDocsScreenshotDirectory(filePath),
-    /must be a directory/,
+test("caller DB/config/state overrides cannot select foreign data", (t) => {
+  const parent = parentFixture(t);
+  for (const name of [
+    "JOBCTRL_E2E_DB_PATH",
+    "JOBCTRL_E2E_CONFIG_PATH",
+    "JOBCTRL_E2E_STATE_FILE",
+    "JOBCTRL_E2E_SERVICE_HOME",
+  ])
+    assert.throws(
+      () =>
+        configureE2eWorkspace({
+          JOBCTRL_E2E_APP_DIR: parent,
+          [name]: path.join(parent, "sentinel"),
+        }),
+      /allocated workspace/,
+    );
+  assert.deepEqual(fs.readdirSync(parent), []);
+});
+
+test("copied ownership markers cannot authorize another directory or changed inode", (t) => {
+  const parent = parentFixture(t);
+  const first = createOwnedE2eWorkspace(parent);
+  const second = createOwnedE2eWorkspace(parent);
+  const sentinel = path.join(second.appDir, "must-survive");
+  fs.writeFileSync(sentinel, "preserved");
+  fs.copyFileSync(
+    path.join(first.appDir, OWNERSHIP_MARKER),
+    path.join(second.appDir, OWNERSHIP_MARKER),
   );
-  await assert.rejects(
-    createOwnedDocsScreenshotDirectory(repoRoot),
-    /must be a strict descendant/,
+  assert.throws(() => removeOwnedE2eWorkspace(second), /marker does not match/);
+  assert.throws(
+    () => removeOwnedE2eWorkspace({ ...first, appDir: second.appDir }),
+    /identity changed/,
+  );
+  assert.equal(fs.readFileSync(sentinel, "utf8"), "preserved");
+});
+
+test("directory, parent and marker symlinks never authorize cleanup", (t) => {
+  const parent = parentFixture(t);
+  const first = createOwnedE2eWorkspace(parent);
+  const second = createOwnedE2eWorkspace(parent);
+  fs.writeFileSync(path.join(second.appDir, "sentinel"), "preserved");
+  const alias = path.join(parent, "parent-alias");
+  fs.symlinkSync(second.appDir, alias, "dir");
+  assert.throws(() => createOwnedE2eWorkspace(alias), /symlink/);
+  fs.renameSync(first.appDir, first.appDir + "-retained");
+  fs.symlinkSync(second.appDir, first.appDir, "dir");
+  assert.throws(() => removeOwnedE2eWorkspace(first), /symlink/);
+  const marker = path.join(second.appDir, OWNERSHIP_MARKER);
+  fs.renameSync(marker, marker + ".retained");
+  fs.symlinkSync(marker + ".retained", marker);
+  assert.throws(() => removeOwnedE2eWorkspace(second));
+  assert.equal(
+    fs.readFileSync(path.join(second.appDir, "sentinel"), "utf8"),
+    "preserved",
   );
 });
 
-test("docs screenshot workspace parents reject symlink escapes", async (t) => {
-  const temporaryRoot = await canonicalTemporaryRoot();
-  const fixtureRoot = await fs.mkdtemp(
-    path.join(temporaryRoot, "jobctrl-docs-symlink-test-"),
+test("required independent capability and contained paths cannot be replaced by state", (t) => {
+  const workspace = createOwnedE2eWorkspace(parentFixture(t));
+  const env = workspaceEnvironment(workspace);
+  assert.deepEqual(assertE2eWorkspaceEnvironment(env), workspace);
+  assert.throws(
+    () =>
+      assertE2eWorkspaceEnvironment({
+        ...env,
+        JOBCTRL_E2E_WORKSPACE: undefined,
+      }),
+    /ownership capability/,
   );
-  t.after(() => fs.rm(fixtureRoot, { force: true, recursive: true }));
-  const escape = path.join(fixtureRoot, "escape");
-  try {
-    await fs.symlink(repoRoot, escape, "dir");
-  } catch (error) {
-    if (
-      error instanceof Error &&
-      "code" in error &&
-      typeof error.code === "string" &&
-      ["EACCES", "ENOTSUP", "EPERM"].includes(error.code)
-    ) {
-      t.skip(`Directory symlinks are unavailable: ${error.code}`);
-      return;
-    }
-    throw error;
-  }
-
-  await assert.rejects(
-    createOwnedDocsScreenshotDirectory(escape),
-    /must be a strict descendant/,
-  );
-});
-
-test("docs screenshot workspaces are unique owned children", async (t) => {
-  const temporaryRoot = await canonicalTemporaryRoot();
-  const parent = await fs.mkdtemp(
-    path.join(temporaryRoot, "jobctrl-docs-parent-test-"),
-  );
-  t.after(() => fs.rm(parent, { force: true, recursive: true }));
-  const parentSentinel = path.join(parent, "caller-parent.txt");
-  await fs.writeFile(parentSentinel, "preserved", "utf8");
-
-  const first = await createOwnedDocsScreenshotDirectory(parent);
-  const second = await createOwnedDocsScreenshotDirectory(parent);
-  const defaultChild = await createOwnedDocsScreenshotDirectory();
-  t.after(() => fs.rm(defaultChild, { force: true, recursive: true }));
-
-  assert.notEqual(first, second);
-  assert.equal(path.dirname(first), parent);
-  assert.equal(path.dirname(second), parent);
-  assert.equal(await fs.readFile(parentSentinel, "utf8"), "preserved");
-  assert.equal(path.dirname(defaultChild), temporaryRoot);
-  assert.ok(path.basename(first).startsWith(DIRECTORY_PREFIX));
-  assert.ok(path.basename(defaultChild).startsWith(DIRECTORY_PREFIX));
-  assert.equal(await assertOwnedDocsScreenshotDirectory(first), first);
-
-  const unowned = await fs.mkdtemp(path.join(parent, DIRECTORY_PREFIX));
-  const sentinel = path.join(unowned, "must-survive.txt");
-  await fs.writeFile(sentinel, "caller-owned", "utf8");
-  await assert.rejects(
-    prepareOwnedDocsScreenshotDirectory(unowned),
-    /lacks a valid ownership marker/,
-  );
-  assert.equal(await fs.readFile(sentinel, "utf8"), "caller-owned");
-
-  await fs.rm(path.join(first, OWNERSHIP_MARKER));
-  await assert.rejects(
-    assertOwnedDocsScreenshotDirectory(first),
-    /lacks a valid ownership marker/,
-  );
+  for (const name of [
+    "JOBCTRL_E2E_APP_DIR",
+    "JOBCTRL_E2E_DB_PATH",
+    "JOBCTRL_E2E_STATE_FILE",
+    "TMPDIR",
+  ])
+    assert.throws(
+      () => assertE2eWorkspaceEnvironment({ ...env, [name]: repoRoot }),
+      /environment mismatch/,
+    );
 });

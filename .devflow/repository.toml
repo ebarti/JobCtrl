@@ -1,0 +1,5 @@
+schema_version = 1
+
+[repository]
+id = "github:ebarti/jobctrl"
+default_branch = "main"
