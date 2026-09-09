@@ -508,6 +508,11 @@ corepack pnpm extension:build
 corepack pnpm extension:e2e
 ```
 
+The extension E2E suite requires headed Chromium. On Linux without a display,
+run `xvfb-run --auto-servernum corepack pnpm extension:e2e`; the CI browser
+installation uses Playwright's `--with-deps` option to install Xvfb. A missing
+browser or display fails the required tests.
+
 `corepack pnpm extension:build` writes the unpacked extension bundle to
 `dist/extension/`; load that directory in Chrome/Chromium developer mode for
 manual QA, or reload its existing unpacked-extension card after rebuilding.
