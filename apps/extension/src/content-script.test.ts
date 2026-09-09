@@ -100,6 +100,24 @@ describe("deterministic autofill content script", () => {
     expect(sleep).toHaveBeenCalledTimes(2);
   });
 
+  it("allows a cold inactive LinkedIn page to hydrate beyond twelve seconds", async () => {
+    const { waitForRenderedPageReady } = await import("./content-script");
+    document.body.innerHTML = '<div id="JobDetails_AboutTheJob_123"><h2>About the job</h2></div>';
+    let elapsed = 0;
+
+    await waitForRenderedPageReady(document, "https://www.linkedin.com/jobs/view/123/", {
+      now: () => elapsed,
+      sleep: async (milliseconds: number) => {
+        elapsed += milliseconds;
+        if (elapsed >= 15_000) {
+          document.querySelector("#JobDetails_AboutTheJob_123")!.innerHTML += `<p>${"Build and operate reliable infrastructure. ".repeat(10)}</p>`;
+        }
+      },
+    });
+
+    expect(elapsed).toBe(15_000);
+  });
+
   it("uses a short stability window for non-LinkedIn rendered pages", async () => {
     const { waitForRenderedPageReady } = await import("./content-script");
     document.body.innerHTML = "<main>Stable public job detail</main>";

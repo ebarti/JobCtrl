@@ -122,6 +122,33 @@ def test_rendered_navigation_status_marks_removed_posting_nonretryable(tmp_path:
     })
 
 
+def test_live_sdui_description_survives_snapshot_cleaning_and_extracts_without_llm() -> None:
+    from jobctrl.domain.enrichment.services import CssSelectorExtractor
+    from jobctrl.enrichment.detail import _live_result_to_detail_page
+
+    description = "Build reliable services. Own design, implementation, testing, and operations. " * 5
+    url = "https://www.linkedin.com/jobs/view/123/"
+    html = (
+        '<div aria-label="Primary content">'
+        '<div id="JobDetails_AboutTheJob_123" componentkey="JobDetails_AboutTheJob_123">'
+        '<h2>About the job</h2><div>' + description + '</div></div>'
+        '<div id="JobDetails_AboutTheCompany_123">Unrelated company marketing</div>'
+        '<a aria-label="Apply on company website" href="https://careers.example.com/job/123">Apply</a>'
+        '</div>'
+    )
+    captured = LiveBrowserResult(
+        final_url=url, status_code=200, content_type="text/html", title="Software Engineer",
+        body_text="About the job " + description, body_html=html,
+    )
+    extracted = CssSelectorExtractor().extract(_live_result_to_detail_page(captured, url))
+    assert extracted.ok
+    assert extracted.full_description is not None
+    assert extracted.full_description.text == "About the job " + description.strip()
+    assert "Unrelated company marketing" not in extracted.full_description.text
+    assert extracted.application_url is not None
+    assert extracted.application_url.value == "https://careers.example.com/job/123"
+
+
 def test_integrated_ats_discovery_rejects_a_direct_transport_override() -> None:
     with pytest.raises(ConfigurationError, match="live Chrome extension transport"):
         run_scheduled_ats_sources(

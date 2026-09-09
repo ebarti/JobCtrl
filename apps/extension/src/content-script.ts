@@ -733,7 +733,9 @@ export async function waitForRenderedPageReady(
   pageUrl = location.href,
   options: RenderedPageReadinessOptions = {},
 ): Promise<void> {
-  const timeoutMs = Math.max(250, options.timeoutMs ?? 12_000);
+  // Cold signed-in pages can hydrate slowly in inactive tabs. Leave room for
+  // that work inside the executor's separate hard task deadline.
+  const timeoutMs = Math.max(250, options.timeoutMs ?? 30_000);
   const pollIntervalMs = Math.max(25, options.pollIntervalMs ?? 250);
   const minimumStableMs = Math.max(pollIntervalMs, options.minimumStableMs ?? 750);
   const sleep = options.sleep ?? ((milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds)));

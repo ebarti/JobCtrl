@@ -62,7 +62,9 @@ attempt; preserve the failed target's retryability. Extension unavailability and
 cancellation must still abort the attempt.
 Also lease a rendered-page task against a delayed LinkedIn SDUI fixture:
 `JobDetails_AboutTheJob_*` must remain unready while empty, then return its
-populated description. Background-tab polling uses a monotonic deadline, not
+populated description even when cold hydration takes longer than 12 seconds.
+Preserve that section through snapshot cleaning and deterministic extraction,
+excluding neighboring company and recommendation content. Background-tab polling uses a monotonic deadline, not
 a count of requested sleep intervals; a never-ready page fails and cleans up.
 Finish source intake while a live Enrich capture is in flight and prove the
 terminal pass reclaims and processes its job instead of leaving it canceled.

@@ -127,6 +127,7 @@ def _find_job_posting(data: Any) -> dict | None:
 
 
 _DESCRIPTION_SELECTORS = (
+    '[id^="JobDetails_AboutTheJob_"]',
     "#job-description",
     "#job_description",
     "#jobDescriptionText",

@@ -58,7 +58,7 @@ describe("Chromium loaded extension privacy boundary", () => {
     }
   }, 60_000);
 
-  it("captures a hydrated LinkedIn SDUI detail in an inactive extension tab", async () => {
+  it("captures a cold LinkedIn SDUI detail that hydrates after twelve seconds in an inactive tab", async () => {
     const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-extension-rendered-e2e-"));
     let api: FakeLoopbackApi | null = null;
     let context: BrowserContext | null = null;
@@ -71,15 +71,15 @@ describe("Chromium loaded extension privacy boundary", () => {
       await context.route("https://www.linkedin.com/**", async (route) => {
         await route.fulfill({ contentType: "text/html", body: `<!doctype html><title>Fixture role</title>
           <main><div id="JobDetails_AboutTheJob_123" componentkey="JobDetails_AboutTheJob_123"><h2>About the job</h2></div></main>
-          <script>setTimeout(() => { document.querySelector('#JobDetails_AboutTheJob_123').append(${JSON.stringify(description)}); }, 300);</script>` });
+          <script>setTimeout(() => { document.querySelector('#JobDetails_AboutTheJob_123').append(${JSON.stringify(description)}); }, 15_000);</script>` });
       });
-      api = await installFakeLoopbackApi(context, jobUrl, 15_000, "rendered_page");
+      api = await installFakeLoopbackApi(context, jobUrl, 45_000, "rendered_page");
       const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent("serviceworker", { timeout: 10_000 }));
       const controller = await context.newPage();
       await controller.goto(`chrome-extension://${new URL(worker.url()).host}/popup.html`);
       await sendExtensionMessage(controller, { type: "saveToken", token: "rendered-fixture-token" });
 
-      await waitFor(() => api?.discoveryCompletions.length === 1, 20_000);
+      await waitFor(() => api?.discoveryCompletions.length === 1, 50_000);
 
       expect(api.discoveryCompletions[0]).toMatchObject({ result: {
         status: "succeeded", finalUrl: jobUrl,
