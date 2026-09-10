@@ -299,6 +299,10 @@ Python package when packaging behavior changes. Maintainer workflow setup is
 
 ## Pull-request CI
 
+The repository requires maintainer approval for workflow runs from all external
+fork contributors. Review the proposed changes before approving a run. Issue
+labels and Project status do not approve code execution.
+
 CI is plain path-filtered GitHub Actions with no routing layer: each workflow
 under `.github/workflows/` declares the paths it owns and runs whole when a
 pull request or a `main` push touches them. `typescript.yml` runs the API, web,

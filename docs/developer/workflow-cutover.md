@@ -1,7 +1,7 @@
 # Workflow Cutover Accounting
 
 Baseline: `a1526649a395b9febb4c20ef30dd946945014a21`. The workflow package is
-pinned at `d0a5842ea3dbd8f84283089378721e57108d3135` (version `0.1.0`).
+pinned at `41c4ba770b6a34905c2a3ff1b52e2f73d4e1825f` (version `0.2.0`).
 
 ## Instruction Ownership
 
@@ -18,15 +18,16 @@ pinned at `d0a5842ea3dbd8f84283089378721e57108d3135` (version `0.1.0`).
 
 The conservative instruction path includes root AGENTS, scoped web AGENTS,
 QA router, devflow common entry and its largest role. Baseline: **11,830 words**;
-current: **1,851 words**, with a **457-word QA router**. The limits are 2,000
+current: **1,893 words**, with a **457-word QA router**. The limits are 2,000
 and 600 words respectively. Product-specific
 catalogs load only for the affected invariant; this measures neither the native
 host/system prompt nor full model context.
 
 The current package does not generate a universal legacy compatibility router.
 No shared review/fix targets were rewritten, and no global model settings were
-changed. Existing attempts retain their recorded authority/version; missing
-native-launch or protected-merge conformance stays explicit in
+changed. Historical attempt records remain readable, but old caller-asserted
+authority cannot authorize further execution after the security upgrade. Missing
+trusted-intake, human-validation, native-launch or protected-merge conformance stays explicit in
 [workflow setup](workflow.md#activation-boundaries).
 
 ## Backlog Dispositions

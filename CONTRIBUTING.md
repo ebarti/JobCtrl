@@ -47,8 +47,8 @@ JOBCTRL_DIR=/tmp/jobctrl-qa corepack pnpm dev
 - Do not commit local user data, `.env` files, resumes, PDFs, logs, browser
   profiles, SQLite databases, or generated application materials.
 - CI eligibility follows each executable workflow's events and path filters,
-  including fork PRs and each stack layer. GitHub may require maintainer approval
-  before running fork workflows. There is no top-of-stack scheduler; see
+  including fork PRs and each stack layer. All external fork contributors require
+  maintainer approval before their workflows run. There is no top-of-stack scheduler; see
   [the CI reference](docs/local-development.md#pull-request-ci).
 
 ## Developer Certificate of Origin Sign-Off
@@ -76,7 +76,7 @@ git rebase --signoff origin/main
 
 Configured maintainer agent work uses the pinned workflow described in
 [AGENTS.md](AGENTS.md) and [workflow setup](docs/developer/workflow.md).
-The private maintainer package is not required to build, test or contribute.
+The maintainer package is not required to build, test or contribute.
 Frontend changes also follow [apps/web/AGENTS.md](apps/web/AGENTS.md).
 
 Run the touched-surface commands in

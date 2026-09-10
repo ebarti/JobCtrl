@@ -43,6 +43,8 @@ export function labelsForIssue(issue) {
   if (current.has('type: security-contact') || additions.has('type: security-contact')) {
     additions.add('area: security');
     additions.add('privacy: review-needed');
+  } else if (/\b(?:security|vulnerabilit(?:y|ies)|secrets?|credentials?|tokens?|api keys?|private data)\b/i.test(title)) {
+    additions.add('privacy: review-needed');
   }
   if (/^- \[[xX]\] This appears to block a public release, source install, or documented first-run flow\.$/m.test(form.get('Release impact') ?? '')) {
     additions.add('release: possible-blocker');

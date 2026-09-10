@@ -5,7 +5,8 @@
 For configured maintainer work, use the installed `devflow` skill and the immutable
 pin in `.devflow/workflow.lock`. Use `scripts/devflow` wherever the skill says
 `devflow`. Run `scripts/devflow doctor --json` before admission; resume
-recorded work with its existing ID and captured version. Read only the selected
+recorded work with its existing ID. Historical attempts require current verified
+admission before execution. Read only the selected
 role reference. Devflow owns intake, execution state, independent findings/gates,
 recovery and delivery; do not load a second lifecycle from legacy review/fix
 skills. Missing installation or host capability is a diagnostic, never a passing
