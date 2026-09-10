@@ -77,7 +77,7 @@ Two knobs that look like Temporal concurrency but are not:
   compatibility-named `jobspy.py`). JobStreaming owns each board adapter's
   internal transport/pagination and cancellation-aware waits. Parallelising
   durable units is a filed
-  [backlog item](../../backlog.md), not current behavior.
+  [investigation in #899](https://github.com/ebarti/JobCtrl/issues/899), not current behavior.
 
 ## Where Fan-out Happens (And Why)
 

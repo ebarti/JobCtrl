@@ -1,7 +1,8 @@
 # Stable Job Identity, Workflow Parity, And Feedback Learning
 
 - **Date:** 2026-07-29
-- **Status:** Accepted — implementation in progress
+- **Status:** Revalidated on 2026-09-10 — core identity, projection and feedback
+  foundations delivered; bounded residual work is tracked in GitHub Issues.
 - **Delivery shape:** Small stacked review PRs assembled into one release. PR
   boundaries are not database versions, and intermediate branches are not
   installed independently.
@@ -9,6 +10,23 @@
   preparation, and Apply one coherent run experience, replace broad realtime
   invalidation where exact patches are possible, and let JobCtrl learn from
   reviewed user feedback without silently rewriting prior decisions.
+
+## Revalidated Status
+
+At baseline `a1526649a395b9febb4c20ef30dd946945014a21`, stable job identity,
+canonical artifact projection, source/employer separation, indexed scoring
+keywords and reviewed feedback recommendations are implemented. Workflow
+history and cancellation surfaces also exist. The original plan below is
+retained as delivery context, not a claim that these foundations remain unbuilt.
+
+Remaining work is scoped to application-URL authority
+([#891](https://github.com/ebarti/JobCtrl/issues/891)), eligible realtime list
+patches ([#890](https://github.com/ebarti/JobCtrl/issues/890)), the typed dry-run
+completion event ([#896](https://github.com/ebarti/JobCtrl/issues/896)) and
+live-worker browser proof ([#894](https://github.com/ebarti/JobCtrl/issues/894)).
+The existing Gmail defect remains in [#780](https://github.com/ebarti/JobCtrl/issues/780).
+This source revalidation does not substitute for those runtime checks. Full
+historical dispositions are in [migration index #881](https://github.com/ebarti/JobCtrl/issues/881).
 
 ## Product outcome
 

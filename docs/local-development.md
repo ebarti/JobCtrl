@@ -557,7 +557,7 @@ The documentation under `docs/` (minus internal planning docs) is also a
 static VitePress site, configured in `docs/.vitepress/config.ts`. The site
 publishes the user guide, developer guide, architecture docs, and reference
 docs behind a hero landing page (`docs/index.md`); `docs/plans/`,
-`docs/incidents/`, `docs/backlog.md`, and the repo-facing `docs/README.md`
+`docs/incidents/`, and the repo-facing `docs/README.md`
 map stay repository-only, and links that point at unpublished or repo-root
 files are rewritten to GitHub URLs at build time.
 
