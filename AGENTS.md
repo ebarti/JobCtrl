@@ -2,11 +2,16 @@
 
 ## Workflow
 
+The installed `using-devflow` entry skill supplies instructions at the start of a
+conversation. Questions and opening a chat do not start work. A direct work
+request, concrete bug report, named issue, or bounded backlog batch authorizes
+the agent to capture or reuse its issues and begin without another approval step.
+
 For configured maintainer work, use the installed `devflow` skill and the immutable
 pin in `.devflow/workflow.lock`. Use `scripts/devflow` wherever the skill says
-`devflow`. Run `scripts/devflow doctor --json` before admission; resume
-recorded work with its existing ID. Historical attempts require current verified
-admission before execution. Read only the selected
+`devflow`. Once work is requested, run `scripts/devflow doctor --json`; continue
+recorded work with its existing ID. Historical attempts without a recorded user
+request need re-admission under the current request. Read only the selected
 role reference. Devflow owns intake, execution state, independent findings/gates,
 recovery and delivery; do not load a second lifecycle from legacy review/fix
 skills. Missing installation or host capability is a diagnostic, never a passing
