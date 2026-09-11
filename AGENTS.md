@@ -12,14 +12,18 @@ pin in `.devflow/workflow.lock`. Use `scripts/devflow` wherever the skill says
 `devflow`. Once work is requested, run `scripts/devflow doctor --json`; continue
 recorded work with its existing ID. Historical attempts without a recorded user
 request need re-admission under the current request. Read only the selected
-role reference. Devflow owns intake, execution state, independent findings/gates,
-recovery and delivery; do not load a second lifecycle from legacy review/fix
+role and required subagent coordination references. The original conversation
+coordinates bounded implementation/repair and required independent review/QA
+subagents. Verify role identity and resolved model/effort before activation;
+the coordinator's active model does not set role policy. Devflow owns intake,
+execution state, independent findings/gates, recovery and delivery; do not load
+a second lifecycle from legacy review/fix
 skills. Missing installation or host capability is a diagnostic, never a passing
 gate. Setup and cutover limits: `docs/developer/workflow.md`.
 
 Public contributors and clients without the workflow host use `CONTRIBUTING.md`
 and the same product/check requirements. `CLAUDE.md` remains linked here; the
-native host-specific task bridge does not become a requirement to use JobCtrl.
+host-specific subagent bridge does not become a requirement to use JobCtrl.
 
 Use a dedicated task branch/worktree, preserve unrelated dirty work, and use
 Conventional Commits. Merge, release, deployment and external communication

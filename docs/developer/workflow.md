@@ -45,8 +45,8 @@ is sufficient authorization within its scope. Questions and requests for
 explanation do not create issues or start implementation. Respect requests for
 investigation only.
 
-Load the installed skill and only the current role reference; use `scripts/devflow`
-for its `devflow` commands. Capture each requested work item with
+Load the installed skill, current role and required subagent coordination reference;
+use `scripts/devflow` for its `devflow` commands. Capture each requested work item with
 `scripts/devflow backlog capture --request-file <json>
 --json`, reusing its existing issue or a stable work ID with a short public-safe
 outcome, acceptance and context. Follow-ups stay on that issue. Public issue
@@ -81,11 +81,43 @@ reject zero executed test cases, failures and skipped cases. Case counts do not
 measure individual assertion calls; independent QA must still prove meaningful
 behavior. The `diff` recipe compares committed changes with `origin/main`; a PR
 with a different base needs a matching focused recipe before admission. An unavailable browser or
-native task cannot stand in for passing product proof.
+subagent cannot stand in for passing product proof.
+
+## Coordinator And Role Assignments
+
+In devflow 0.4.0, the original user conversation coordinates the outcome.
+Implementation and repairs belong to a bounded `implementation_worker`; required
+review and QA use independent subagents with distinct verified identities.
+Review-only and delivery-only work enter at their actual phase without inventing
+implementation completion. Tier 0 skips independent gates according to the QA
+router. New work uses supported `agents` tools, without creating visible peer tasks.
+
+Role model/effort resolves from explicit user role/session overrides, configured
+role files, saved subagent defaults, then saved global defaults. The coordinator's
+active model overrides do not leak into roles. The package's subagent reference
+owns exact settings, startup evidence and native-tool arguments; do not duplicate
+that dispatch policy in JobCtrl or rewrite global role settings.
+
+The command sequence is `host assign`, then `host prepare` to journal action begin
+before native spawn, followed by `host record` and `host startup`. The bootstrap
+child only reports its own session metadata location and waits. The coordinator
+must verify the parent, canonical agent identity and actual model/effort before
+product activation. Missing or mismatched settings block activation; unknown
+service tier remains unknown. Session evidence stays private and uncommitted.
+
+`host activate` prepares the bounded follow-up; `host prepare` begins it before
+native dispatch, and `host record` stores actual inventory to mark it running.
+`candidate capture` uses the verified running implementation identity, then
+`host result` binds completion to that output candidate before verification.
+Review/QA use `gate record`. Reuse the same available roles for repairs. Changed
+policy or unavailability needs an explicitly recorded, observed replacement that
+preserves earlier identities and evidence. Reconcile an ambiguous spawn; inventory
+absence alone never authorizes a duplicate.
 
 ## Activation Boundaries
 
-Version 0.3.0 supports managed execution from agent-recorded user requests.
+Version 0.4.0 retains managed execution from agent-recorded user requests and
+adds verified subagent execution under the original coordinator.
 `doctor` reports the direct-request mode and checks the installed runtime, profile
 and tools. `READY` describes local runtime readiness; the separate `capabilities`
 report shows whether GitHub capture and other tool-dependent operations can run.
@@ -96,11 +128,14 @@ Issue events, labels and background activity cannot authorize new work.
 Read-only recovery and reconciliation of already dispatched actions remain
 available without restarting them.
 
-Visible owner/review/QA tasks use the native host bridge
-only with an explicit user launch instruction. Hosts without that capability
-cannot claim a devflow role gate; existing bootstrap review evidence must remain
-identified as bootstrap evidence. This adoption does not rewrite global role
-models or silently migrate existing work attempts.
+Hosts without the required subagent capability or observed startup settings cannot
+claim a devflow role gate; existing bootstrap review evidence remains identified
+as bootstrap evidence. Historical attempts without `execution_mode` remain
+`native_thread`, retaining their original control contract, receipts and evidence.
+The current runtime reads that history without relabeling it or delegating to an
+older release. Updating these maintainer instructions alone does not install or
+activate 0.4.0: the reviewed immutable repository pin and matching installed
+release must agree before execution.
 
 Automatic merge remains disabled until separately authorized target protection
 passes live conformance, including strict freshness, the required
