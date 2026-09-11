@@ -24,10 +24,13 @@ The old `devflow` name forwards to the entry. No hooks or scheduler are installe
 `{"name":"devflow-coordinating"}` in `skill.json`, then run
 `scripts/devflow skill resolve --request-file skill.json --json` to return the
 selected release's file. JSON input is not a positional argument.
-For continuation, include the existing `--work-id`; read that immutable path
+For ordinary continuation, include the existing `--work-id`; read that immutable path
 rather than substituting newer global skill text. Missing historical stages
 require compatible recovery or a recorded upgrade. `next` names each action's
 owning skill and the separate assigned role skill.
+For an explicitly authorized upgrade of an already Done PR whose checkout still
+has an older pin, follow the completed-PR procedure below before ordinary doctor
+or pinned-stage resolution.
 
 Review/QA handoffs include each check's evidence ID, artifact hash and explicit
 private state root. Retained JSON lives at `<state-root>/artifacts/<hash>` and
@@ -38,7 +41,7 @@ while retaining its existing pin and activation. Paths in recorded argv
 describe past execution; a removed temporary report does not require rerunning a
 passing check when its retained evidence and candidate inputs match.
 
-Run from a JobCtrl checkout:
+For ordinary work, run from a JobCtrl checkout:
 
 ```sh
 scripts/devflow doctor --json
@@ -102,8 +105,15 @@ reacquired before execution. Conflict repair needs a new candidate and current
 affected proof. An unchanged delivery-only continuation can reuse valid evidence.
 Include a reviewed workflow snapshot explicitly when upgrading its pin. If the
 owned checkout retains the older pin, the completed-PR procedure captures its
-existing profile and custom recipes with a continuation-specific upgrade binding;
-integrate the repository pin through the admitted repair.
+existing profile and custom recipes with a continuation-specific upgrade binding.
+Use the reviewed installed release's own launcher with the owned `--repository`
+and existing `--state-dir` for this capture and `work reopen`, before ordinary
+doctor. A pre-admission historical-pin `BLOCKED` is expected and does not authorize
+ordinary execution. After reopening, run `doctor --work-id <existing-id>` through
+that reviewed release and require `READY` before activating a worker; the active
+work snapshot now selects the admitted release. Doctor without the work ID still
+selects the old branch lock. Missing tools, invalid profiles/releases and failed
+admission remain blockers. Integrate the repository pin through the admitted repair.
 After an admitted pin/profile/instruction change, import the worker's actual
 partial output and observe its availability before amending the snapshot. Rebind
 and activate that same worker under the new snapshot before current candidate
