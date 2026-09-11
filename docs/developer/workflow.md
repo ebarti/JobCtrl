@@ -93,6 +93,25 @@ When an active attempt's pin or profile changed, capture the current workflow an
 effective model settings with `snapshot capture`, then include `workflow_snapshot`
 in `work amend`. The CLI validates the new snapshot and retains the old evidence.
 
+If the original regular-PR endpoint is already Done and a new user request
+requires repair or update of that same PR, use `work reopen` through the pinned
+coordinating skill's completed-PR procedure. Record fresh request authority,
+the existing PR/source/target identity and actual continuation entry phase.
+The same work, attempt and original delivery remain in history; the claim is
+reacquired before execution. Conflict repair needs a new candidate and current
+affected proof. An unchanged delivery-only continuation can reuse valid evidence.
+Include a reviewed workflow snapshot explicitly when upgrading its pin. If the
+owned checkout retains the older pin, the completed-PR procedure captures its
+existing profile and custom recipes with a continuation-specific upgrade binding;
+integrate the repository pin through the admitted repair.
+After an admitted pin/profile/instruction change, import the worker's actual
+partial output and observe its availability before amending the snapshot. Rebind
+and activate that same worker under the new snapshot before current candidate
+capture and completion; retain the earlier activation and output as history.
+The managed endpoint remains the same PR; a separately authorized native merge
+keeps its actual receipt and independent integrated-tree readback. Reopening
+cannot clear unresolved operations or invent missing producer results.
+
 Choose recipes through the [QA router](../local-reliability-qa.md) and owning
 contracts. Persist acceptance-to-contract-to-check coverage; mirrored registries
 and cross-process schemas require their parity proof when affected. Add a focused
