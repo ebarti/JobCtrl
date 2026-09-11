@@ -115,6 +115,12 @@ kind = "static"
 description = "Shared domain contracts typecheck"
 argv = ["corepack", "pnpm", "--filter", "@jobctrl/domain-types", "check"]
 
+[checks.domain-event-parity]
+kind = "junit"
+description = "Python and TypeScript domain event registries and shared payload fields stay aligned"
+argv = ["uv", "--project", "workers/automation", "run", "--locked", "--all-extras", "pytest", "-q", "workers/automation/tests/test_domain_event_parity.py", "--junitxml={report_path}"]
+timeout_seconds = 300
+
 [checks.dry-run-realtime]
 kind = "junit"
 description = "Dry-run completion passes the event parser, SSE listener and exhaustive invalidation router"
