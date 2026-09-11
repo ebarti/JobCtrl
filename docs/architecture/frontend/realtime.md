@@ -302,6 +302,16 @@ Two patterns exist; both have a place:
 The router never resets component-owned filters, selection, pagination, or
 scroll position. A query update changes data under the existing view state.
 
+### Dry-run completion
+
+`DryRunCompleted` uses the launcher's persisted `run_id` to invalidate apply-run
+and workflow-run list/detail reads. Its apply-owned handler also refreshes the
+review queue, job list/detail and Dashboard, where apply history is bundled.
+It does not patch a job as applied or invalidate submission analytics. The
+projection remains responsible for the `dry_run_complete` status and review
+eligibility; other stage events and later reads remain independent freshness
+backstops.
+
 ### Runtime snapshot polling complements SSE
 
 `usePipelineOperationsQuery` reads `GET /v1/pipeline/operations` under

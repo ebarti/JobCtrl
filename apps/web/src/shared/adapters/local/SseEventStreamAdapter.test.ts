@@ -5,6 +5,8 @@ import {
 } from "@jobctrl/domain-types";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { eventByType } from "../../../test/fixtures/events.js";
+
 import { SseEventStreamAdapter } from "./SseEventStreamAdapter.js";
 
 class FakeEventSource {
@@ -115,6 +117,19 @@ describe("SseEventStreamAdapter", () => {
       occurredAt: null,
       payload,
     });
+  });
+
+  it("subscribes to and delivers the launcher dry-run payload unchanged", () => {
+    const subscription = new SseEventStreamAdapter().subscribe({ tenantId: LOCAL_TENANT });
+    const source = onlySource();
+    const handler = vi.fn();
+    subscription.on(handler);
+    const event = eventByType.DryRunCompleted;
+    expect(source.listenerCount("DryRunCompleted")).toBe(1);
+    source.emit("DryRunCompleted", JSON.stringify(event));
+    expect(handler).toHaveBeenCalledExactlyOnceWith(event);
+    subscription.close();
+    expect(source.listenerCount("DryRunCompleted")).toBe(0);
   });
 
   it.each([

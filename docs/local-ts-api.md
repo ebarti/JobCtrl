@@ -311,6 +311,9 @@ The browser opens one long-lived `GET` request. A reconnect may include
 ### Response Framing
 
 Frames include an `id`, typed `event`, JSON `data`, and a reconnect cadence.
+`DryRunCompleted` is a distinct typed apply event: it refreshes dry-run status
+without implying submission. Its [payload contract](api/complete-contract.md#dry-run-completion)
+retains the launcher's snake_case lifecycle fields.
 Clients validate the payload before dispatching it to the invalidation router.
 
 ### Tenant Filtering (COALESCE On The Row, Not The Request)
