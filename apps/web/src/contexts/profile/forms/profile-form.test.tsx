@@ -646,6 +646,46 @@ describe("<ProfileForm>", () => {
     expect(profile.experience.target_seniority_floor).toBe("director");
   });
 
+  it("discards later edits to the last persisted save after fresh initial props arrive", async () => {
+    const user = userEvent.setup();
+    const updateProfile = vi.fn(async (request) => ({
+      ...sampleProfileResponse,
+      profile: JSON.parse(request.profileText),
+    }));
+    const { rerender } = renderWithProviders(
+      <ProfileForm initial={sampleProfileResponse} section="target-search" />,
+      { ports: buildTestPorts({ api: { updateProfile } }) },
+    );
+
+    const targetRole = screen.getByLabelText("Target roles 1");
+    fireEvent.change(targetRole, { target: { value: "Director of Engineering" } });
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(1));
+    const request = updateProfile.mock.calls[0]![0];
+    expect(JSON.parse(request.profileText).experience.target_role).toBe("Director of Engineering");
+    const savedResponse = await updateProfile.mock.results[0]!.value;
+    expect(await screen.findByText("Discovery settings saved")).toBeInTheDocument();
+    rerender(<ProfileForm initial={savedResponse} section="target-search" />);
+
+    expect(targetRole).toHaveValue("Director of Engineering");
+    expect(screen.queryByRole("button", { name: "Save changes" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Discard changes" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Unsaved changes")).not.toBeInTheDocument();
+
+    fireEvent.change(targetRole, { target: { value: "VP of Engineering" } });
+    expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Discard changes" })).toBeEnabled();
+    expect(screen.getByText("Unsaved changes")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Discard changes" }));
+
+    expect(targetRole).toHaveValue("Director of Engineering");
+    expect(screen.queryByRole("button", { name: "Save changes" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Discard changes" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Unsaved changes")).not.toBeInTheDocument();
+    expect(updateProfile).toHaveBeenCalledTimes(1);
+  });
+
   it("autosaves edited target search settings after five seconds", async () => {
     vi.useFakeTimers();
     const updateProfile = vi.fn(async (request) => ({
@@ -672,7 +712,7 @@ describe("<ProfileForm>", () => {
     expect(JSON.parse(request.profileText).experience.target_role).toBe("Director of Engineering");
   });
 
-  it("keeps newer edits when an autosave response returns for an older snapshot", async () => {
+  it("keeps newer edits on a late autosave response and discards them to the persisted snapshot", async () => {
     vi.useFakeTimers();
     const onPreviewSourceChange = vi.fn();
     let resolveUpdate: ((response: typeof sampleProfileResponse) => void) | undefined;
@@ -683,7 +723,7 @@ describe("<ProfileForm>", () => {
           resolveUpdate = resolve;
         }),
     );
-    renderWithProviders(<ProfileForm initial={sampleProfileResponse} section="target-search" onPreviewSourceChange={onPreviewSourceChange} />, {
+    const { rerender } = renderWithProviders(<ProfileForm initial={sampleProfileResponse} section="target-search" onPreviewSourceChange={onPreviewSourceChange} />, {
       ports: buildTestPorts({ api: { updateProfile } }),
     });
     expect(onPreviewSourceChange).toHaveBeenCalledTimes(1);
@@ -703,17 +743,41 @@ describe("<ProfileForm>", () => {
       target: { value: "VP of Engineering" },
     });
     const request = updateProfile.mock.calls[0]?.[0];
+    expect(JSON.parse(request.profileText).experience.target_role).toBe("Director of Engineering");
+    const savedResponse = {
+      ...sampleProfileResponse,
+      profile: JSON.parse(request.profileText),
+    };
     await act(async () => {
-      resolveUpdate?.({
-        ...sampleProfileResponse,
-        profile: JSON.parse(request.profileText),
-      });
+      resolveUpdate?.(savedResponse);
       await Promise.resolve();
     });
 
     expect(targetRole).toHaveValue("VP of Engineering");
     expect(screen.getByText("Saved; newer changes pending")).toBeInTheDocument();
     expect(onPreviewSourceChange).toHaveBeenCalledTimes(1);
+
+    rerender(<ProfileForm initial={savedResponse} section="target-search" onPreviewSourceChange={onPreviewSourceChange} />);
+
+    expect(targetRole).toHaveValue("VP of Engineering");
+    expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Discard changes" })).toBeEnabled();
+    expect(screen.getByText("Unsaved changes")).toBeInTheDocument();
+    expect(onPreviewSourceChange).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "Discard changes" }));
+
+    expect(targetRole).toHaveValue("Director of Engineering");
+    expect(screen.queryByRole("button", { name: "Save changes" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Discard changes" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Unsaved changes")).not.toBeInTheDocument();
+    expect(screen.queryByText("Saved; newer changes pending")).not.toBeInTheDocument();
+    expect(onPreviewSourceChange).toHaveBeenLastCalledWith(savedResponse);
+
+    await act(async () => {
+      vi.advanceTimersByTime(5_000);
+      await Promise.resolve();
+    });
+    expect(updateProfile).toHaveBeenCalledTimes(1);
   });
 
   it("does not reset dirty edits when a saved autosave snapshot reaches the initial props", async () => {
