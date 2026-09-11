@@ -1,0 +1,99 @@
+schema_version = 1
+
+# Select recipes for the accepted outcome. These are command definitions, not
+# a requirement to run every suite. Add a focused recipe for uncovered behavior.
+[checks.diff]
+kind = "static"
+description = "Committed PR changes against main have no whitespace errors or conflict markers"
+argv = ["git", "diff", "--check", "origin/main...HEAD"]
+
+[checks.docs]
+kind = "static"
+description = "Published documentation builds and internal links resolve"
+argv = ["corepack", "pnpm", "docs:build"]
+timeout_seconds = 300
+
+[checks.scripts]
+kind = "junit"
+description = "Repository tooling preserves its tested lifecycle and safety contracts"
+argv = ["sh", "-c", "exec node --test --test-reporter=junit --test-reporter-destination=\"$1\" scripts/*.test.mjs", "devflow-scripts", "{report_path}"]
+timeout_seconds = 600
+
+[checks.api-types]
+kind = "static"
+description = "TypeScript API contracts typecheck"
+argv = ["corepack", "pnpm", "api:check"]
+
+[checks.api]
+kind = "junit"
+description = "API routes, projections, persistence and dispatch meet their tested contracts"
+argv = ["corepack", "pnpm", "--filter", "@jobctrl/api", "exec", "vitest", "run", "--reporter=junit", "--outputFile={report_path}"]
+timeout_seconds = 600
+
+[checks.web-types]
+kind = "static"
+description = "Web application and frontend architecture typecheck"
+argv = ["corepack", "pnpm", "web:check"]
+
+[checks.web]
+kind = "junit"
+description = "Frontend state, mutations, forms and components meet their tested contracts"
+argv = ["corepack", "pnpm", "--filter", "@jobctrl/web", "exec", "vitest", "run", "--reporter=junit", "--outputFile={report_path}"]
+timeout_seconds = 600
+
+[checks.web-build]
+kind = "static"
+description = "Production web bundle builds"
+argv = ["corepack", "pnpm", "web:build"]
+
+[checks.web-type-tests]
+kind = "static"
+description = "Frontend compile-time contracts pass their type assertions"
+argv = ["corepack", "pnpm", "web:test-d"]
+
+[checks.web-dashboard]
+kind = "junit"
+description = "Dashboard navigation and KPI controls work against this run's synthetic workspace"
+argv = ["env", "PLAYWRIGHT_JUNIT_OUTPUT_FILE={report_path}", "corepack", "pnpm", "--filter", "@jobctrl/web", "exec", "playwright", "test", "--config=e2e/playwright.config.ts", "tests/dashboard.spec.ts", "--reporter=junit"]
+timeout_seconds = 600
+
+[checks.extension-types]
+kind = "static"
+description = "Extension messages and capabilities typecheck"
+argv = ["corepack", "pnpm", "extension:check"]
+
+[checks.extension]
+kind = "junit"
+description = "Extension boundaries and message behavior pass unit regressions"
+argv = ["corepack", "pnpm", "--filter", "@jobctrl/extension", "exec", "vitest", "run", "--reporter=junit", "--outputFile={report_path}"]
+timeout_seconds = 300
+
+[checks.extension-browser]
+kind = "junit"
+description = "Built extension exercises real Chromium assertions with no skipped required tests"
+argv = ["corepack", "pnpm", "--filter", "@jobctrl/extension", "e2e", "--reporter=junit", "--outputFile={report_path}"]
+timeout_seconds = 600
+
+[checks.python-lint]
+kind = "static"
+description = "Worker code passes the repository's locked Ruff rules"
+argv = ["corepack", "pnpm", "python:lint"]
+
+[checks.python]
+kind = "junit"
+description = "Worker regression suite executes without failures or skipped required tests"
+argv = ["uv", "--project", "workers/automation", "run", "--locked", "--all-extras", "pytest", "-q", "-m", "not system_browser", "--junitxml={report_path}"]
+timeout_seconds = 2700
+
+[checks.python-system-browser]
+kind = "junit"
+description = "Explicit synthetic Chrome dry-run safety smoke executes both opt-in browser cases"
+argv = ["env", "JOBCTRL_RUN_SYSTEM_BROWSER_TESTS=1", "uv", "--project", "workers/automation", "run", "--locked", "--all-extras", "pytest", "-q", "-m", "system_browser", "workers/automation/tests/test_apply_chrome_dry_run_guard.py", "--junitxml={report_path}"]
+min_executed = 2
+timeout_seconds = 600
+
+[checks.aggregate-types]
+kind = "static"
+description = "Cross-stack static checks pass; separate web product suites remain explicit"
+argv = ["corepack", "pnpm", "check"]
+timeout_seconds = 900

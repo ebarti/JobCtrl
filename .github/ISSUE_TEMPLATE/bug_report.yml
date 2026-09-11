@@ -8,7 +8,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Do not include real resumes, profile facts, generated materials, browser profiles, SQLite databases, API keys, raw logs, local paths, or vulnerability details. Use synthetic data or the `pnpm qa:seed` fixtures when possible.
+        Do not include real resumes, profile facts, generated materials, browser profiles, SQLite databases, API keys, raw logs, local paths, or vulnerability details. Use synthetic data or the `corepack pnpm qa:seed` fixtures when possible.
   - type: dropdown
     id: area
     attributes:
@@ -67,7 +67,14 @@ body:
     attributes:
       label: Checks already run
       description: Commands, tests, or QA steps already tried. Summarize results instead of pasting private logs.
-      placeholder: "`pnpm check`, `pnpm test`, `python3 scripts/release_check.py`, etc."
+      placeholder: "Focused test commands, browser steps, and observed results."
+    validations:
+      required: false
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance and related context
+      description: Observable success criteria, relevant code or docs, related issues or PRs, and dependencies. Public intake does not authorize implementation, data changes, or submission.
     validations:
       required: false
   - type: checkboxes

@@ -1,0 +1,46 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = []
+# ///
+"""Run JobCtrl's installed workflow pin; never download or upgrade the package."""
+
+import os
+from pathlib import Path
+import re
+import sys
+import tomllib
+
+
+def runtime(repository: Path, install_root: Path) -> tuple[list[str], dict[str, str]]:
+    lock_path = repository / ".devflow/workflow.lock"
+    if lock_path.is_symlink() or (repository / ".devflow").is_symlink():
+        raise ValueError("Workflow profile must contain regular files")
+    lock = tomllib.loads(lock_path.read_text())
+    revision = lock.get("revision", "")
+    if lock.get("schema_version") != 1 or not re.fullmatch(r"[0-9a-f]{40}", revision):
+        raise ValueError("Workflow lock requires schema 1 and a full commit pin")
+    release = install_root / "releases" / revision
+    if not (release / ".devflow-release.json").is_file():
+        raise ValueError(f"Workflow {revision} is not installed; see docs/developer/workflow.md")
+    environment = dict(os.environ)
+    environment.pop("VIRTUAL_ENV", None)
+    environment["PYTHONDONTWRITEBYTECODE"] = "1"
+    environment["UV_PROJECT_ENVIRONMENT"] = str(install_root / "environments" / revision)
+    return ["uv", "run", "--frozen", "--project", str(release), "devflow",
+            "--repository", str(repository), "--release-root", str(install_root)], environment
+
+
+def main() -> int:
+    try:
+        repository = Path(__file__).resolve().parent.parent
+        install_root = Path(os.environ.get("DEVFLOW_INSTALL_ROOT", "~/.local/share/devflow")).expanduser().absolute()
+        argv, environment = runtime(repository, install_root)
+        os.execvpe(argv[0], [*argv, *sys.argv[1:]], environment)
+    except (OSError, ValueError, TypeError) as error:
+        print(f"devflow: BLOCKED: {error}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,12 +1,11 @@
-import { chromium, type BrowserContext, type Page, type Request, type Route, type Worker } from "@playwright/test";
+import { type BrowserContext, type Page, type Request, type Route, type Worker } from "@playwright/test";
 import fs from "node:fs";
 import { createServer, type Server } from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const DIST = path.resolve(fileURLToPath(new URL(".", import.meta.url)), "../../../dist/extension");
+import { launchExtensionContext } from "./chromium-extension-test-context.js";
 const LOOPBACK_ORIGIN = "http://127.0.0.1:8766";
 
 interface RecordedRequest {
@@ -36,7 +35,6 @@ describe("Chromium loaded extension privacy boundary", () => {
     const jobUrl = "https://careers.jobctrl.test/removed-job";
     try {
       context = await launchExtensionContext(userDataDir);
-      if (!context) return;
       await context.route("https://careers.jobctrl.test/**", (route) => route.fulfill({
         status, contentType: "text/html", body: "<!doctype html><title>Unavailable role</title><main>Job not found</main>",
       }));
@@ -66,7 +64,6 @@ describe("Chromium loaded extension privacy boundary", () => {
     const description = "Design and operate reliable distributed systems. ".repeat(10);
     try {
       context = await launchExtensionContext(userDataDir);
-      if (!context) return;
       // Public-shaped fixture only: no real site, profile, or account is used.
       await context.route("https://www.linkedin.com/**", async (route) => {
         await route.fulfill({ contentType: "text/html", body: `<!doctype html><title>Fixture role</title>
@@ -102,7 +99,6 @@ describe("Chromium loaded extension privacy boundary", () => {
     try {
       source = await startFakeDiscoverySource();
       context = await launchExtensionContext(userDataDir);
-      if (!context) return;
       const jobUrl = `${source.baseUrl.replace("careers.jobctrl.test", "www.linkedin.com")}/jobs/view/cross-origin-fixture`;
       api = await installFakeLoopbackApi(context, jobUrl, 15_000, "rendered_page");
       const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent("serviceworker", { timeout: 10_000 }));
@@ -131,9 +127,6 @@ describe("Chromium loaded extension privacy boundary", () => {
     try {
       source = await startFakeDiscoverySource();
       context = await launchExtensionContext(userDataDir);
-      if (!context) {
-        return;
-      }
       api = await installFakeLoopbackApi(context, `${source.baseUrl}/api/jobs`);
       const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent("serviceworker", { timeout: 10_000 }));
       const extensionId = new URL(worker.url()).host;
@@ -236,7 +229,6 @@ describe("Chromium loaded extension privacy boundary", () => {
     try {
       source = await startFakeDiscoverySource();
       context = await launchExtensionContext(userDataDir);
-      if (!context) return;
       api = await installFakeLoopbackApi(context, `${source.baseUrl}/hang`, 1_000);
       const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent("serviceworker", { timeout: 10_000 }));
       const controller = await context.newPage();
@@ -266,7 +258,6 @@ describe("Chromium loaded extension privacy boundary", () => {
     try {
       source = await startFakeDiscoverySource();
       context = await launchExtensionContext(userDataDir);
-      if (!context) return;
       api = await installFakeLoopbackApi(context, `${source.baseUrl}/redirect-private`, 60_000, mode);
       const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent("serviceworker", { timeout: 10_000 }));
       const controller = await context.newPage();
@@ -285,34 +276,6 @@ describe("Chromium loaded extension privacy boundary", () => {
     }
   }, 60_000);
 });
-
-async function launchExtensionContext(userDataDir: string): Promise<BrowserContext | null> {
-  try {
-    return await chromium.launchPersistentContext(userDataDir, {
-      headless: false,
-      args: [
-        `--disable-extensions-except=${DIST}`,
-        `--load-extension=${DIST}`,
-        "--host-resolver-rules=MAP careers.jobctrl.test 127.0.0.1, MAP www.linkedin.com 127.0.0.1",
-      ],
-    });
-  } catch (error) {
-    if (isHeadedBrowserUnavailable(error)) {
-      console.warn(`Skipping headed Chromium extension e2e: ${error instanceof Error ? error.message : String(error)}`);
-      return null;
-    }
-    throw error;
-  }
-}
-
-function isHeadedBrowserUnavailable(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return (
-    message.includes("Missing X server") ||
-    message.includes("no DISPLAY") ||
-    message.includes("Host system is missing dependencies")
-  );
-}
 
 async function sendExtensionMessage(page: Page, message: unknown): Promise<unknown> {
   return page.evaluate(

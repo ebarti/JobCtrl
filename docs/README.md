@@ -97,6 +97,7 @@ has one defining page; other pages summarize it briefly and link to that owner.
 - [`developer/documentation-standards.md`](developer/documentation-standards.md):
   concept ownership, page structure, terminology, diagrams, and stable surfaces.
 - [`local-reliability-qa.md`](local-reliability-qa.md): validation-path chooser.
+- [`developer/workflow.md`](developer/workflow.md): pinned maintainer workflow setup, recovery and activation boundaries.
 - [`developer/qa/regression-catalog.md`](developer/qa/regression-catalog.md):
   risk families, invariants, and regression proof.
 - [`developer/qa/browser-smoke.md`](developer/qa/browser-smoke.md): browser smoke
@@ -159,7 +160,7 @@ These documents remain in the repository but are not separate site sections:
 
 - [`requirements.md`](requirements.md): product and technical invariants.
 - [`decisions.md`](decisions.md): accepted architecture decision records.
-- [`backlog.md`](backlog.md): detailed engineering backlog and deferred work.
+- [`backlog.md`](backlog.md): GitHub issue entry and accounted historical backlog dispositions.
 - [`claims-ledger.md`](claims-ledger.md): launch-claim evidence and status.
 - [`plans/`](plans/): active proposals and immutable implemented-plan history.
 - [`incidents/`](incidents/): incident records and corrective actions.

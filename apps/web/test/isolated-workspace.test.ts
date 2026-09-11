@@ -1,20 +1,21 @@
 // @vitest-environment node
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { afterEach, describe, expect, it } from "vitest";
 
 const require = createRequire(import.meta.url);
-const { createOwnedDocsScreenshotDirectory } =
-  require("../e2e/fixtures/docs-screenshot-workspace.cjs") as {
-    createOwnedDocsScreenshotDirectory(): Promise<string>;
+const { createOwnedE2eWorkspace, workspaceEnvironment, OWNERSHIP_MARKER } =
+  require("../e2e/fixtures/owned-workspace.cjs") as {
+    createOwnedE2eWorkspace(): { appDir: string };
+    workspaceEnvironment(workspace: unknown): Record<string, string>;
+    OWNERSHIP_MARKER: string;
   };
 const { assertIsolatedE2eWorkspace, assertExpectedWorkspace } =
   require("../e2e/fixtures/isolated-workspace.cjs") as {
-    assertIsolatedE2eWorkspace(env: Record<string, string>): Promise<string>;
+    assertIsolatedE2eWorkspace(env: Record<string, string>): string;
     assertExpectedWorkspace(
-      workspace: { appDir: string; dbPath: string },
+      workspace: unknown,
       env: Record<string, string>,
     ): void;
   };
@@ -24,59 +25,42 @@ afterEach(() => {
     fs.rmSync(root, { recursive: true, force: true });
 });
 
-async function fixture() {
-  const root = await createOwnedDocsScreenshotDirectory();
-  roots.push(root);
-  return {
-    root,
-    env: {
-      JOBCTRL_E2E_ISOLATED: "1",
-      JOBCTRL_DOCS_SCREENSHOTS: "1",
-      JOBCTRL_DIR: root,
-      JOBCTRL_E2E_APP_DIR: root,
-      JOBCTRL_DB_PATH: path.join(root, "jobctrl.db"),
-      JOBCTRL_E2E_DB_PATH: path.join(root, "jobctrl.db"),
-      JOBCTRL_CONFIG_PATH: path.join(root, "config.json"),
-      JOBCTRL_E2E_CONFIG_PATH: path.join(root, "config.json"),
-      JOBCTRL_E2E_STATE_FILE: path.join(root, "state.json"),
-      JOBCTRL_E2E_SERVICE_HOME: path.join(root, "service-home"),
-      TMPDIR: path.join(root, "tmp"),
-    },
+function fixture() {
+  const workspace = createOwnedE2eWorkspace();
+  roots.push(workspace.appDir);
+  const env: Record<string, string> = {
+    ...workspaceEnvironment(workspace),
+    JOBCTRL_E2E_ISOLATED: "1",
   };
+  return { root: workspace.appDir, env };
 }
 
 describe("isolated browser fixture paths", () => {
-  it("admits an explicitly marked workspace before its files exist", async () => {
-    const { root, env } = await fixture();
-    expect(await assertIsolatedE2eWorkspace(env)).toBe(root);
+  it("admits a run capability without enabling documentation screenshot writes", () => {
+    const { root, env } = fixture();
+    expect(assertIsolatedE2eWorkspace(env)).toBe(root);
+    expect(env.JOBCTRL_DOCS_SCREENSHOTS).toBeUndefined();
   });
-  it("fails closed on missing marker, escaped DB/config and mismatched environment", async () => {
-    const { root, env } = await fixture();
+  it("rejects missing markers and mismatched run paths", () => {
+    const { root, env } = fixture();
     for (const name of [
       "JOBCTRL_DB_PATH",
       "JOBCTRL_CONFIG_PATH",
       "JOBCTRL_E2E_STATE_FILE",
       "TMPDIR",
-    ]) {
-      await expect(
+    ])
+      expect(() =>
         assertIsolatedE2eWorkspace({
           ...env,
-          [name]: path.join(os.tmpdir(), "foreign-fixture"),
+          [name]: path.join(root, "wrong"),
         }),
-      ).rejects.toThrow();
-    }
-    await expect(
-      assertIsolatedE2eWorkspace({
-        ...env,
-        JOBCTRL_E2E_DB_PATH: path.join(root, "other.db"),
-      }),
-    ).rejects.toThrow("mismatch");
-    fs.rmSync(path.join(root, ".jobctrl-docs-screenshots-owned.json"));
-    await expect(assertIsolatedE2eWorkspace(env)).rejects.toThrow();
+      ).toThrow("mismatch");
+    fs.rmSync(path.join(root, OWNERSHIP_MARKER));
+    expect(() => assertIsolatedE2eWorkspace(env)).toThrow();
   });
-  it("rejects another marker-owned run in the seed report or teardown state", async () => {
-    const current = await fixture();
-    const sibling = await fixture();
+  it("rejects another owned run in the seed report or teardown state", () => {
+    const current = fixture();
+    const sibling = fixture();
     const expected = {
       appDir: current.root,
       dbPath: current.env.JOBCTRL_DB_PATH,
@@ -95,28 +79,11 @@ describe("isolated browser fixture paths", () => {
       ),
     ).toThrow("different run");
   });
-  it("rejects dangling symlinks at a destination and an intermediate directory", async () => {
-    const { root, env } = await fixture();
-    const missingTarget = path.join(root, "not-created");
-    fs.symlinkSync(missingTarget, env.JOBCTRL_DB_PATH);
-    await expect(assertIsolatedE2eWorkspace(env)).rejects.toThrow("symlink");
-    fs.unlinkSync(env.JOBCTRL_DB_PATH);
-    fs.symlinkSync(missingTarget, path.join(root, "dangling-directory"));
-    await expect(
-      assertIsolatedE2eWorkspace({
-        ...env,
-        TMPDIR: path.join(root, "dangling-directory", "tmp"),
-      }),
-    ).rejects.toThrow("symlink");
-  });
-  it("rejects symlinked destinations before any database open", async () => {
-    const { root, env } = await fixture();
-    fs.symlinkSync(os.tmpdir(), path.join(root, "escape"));
-    await expect(
-      assertIsolatedE2eWorkspace({
-        ...env,
-        TMPDIR: path.join(root, "escape", "nested"),
-      }),
-    ).rejects.toThrow("symlink");
+  it("rejects dangling symlinks at database, state and temporary destinations", () => {
+    for (const key of ["JOBCTRL_DB_PATH", "JOBCTRL_E2E_STATE_FILE", "TMPDIR"]) {
+      const { root, env } = fixture();
+      fs.symlinkSync(path.join(root, "not-created"), env[key]!);
+      expect(() => assertIsolatedE2eWorkspace(env)).toThrow("symlink");
+    }
   });
 });

@@ -20,7 +20,6 @@ Non-negotiable implementation rules:
 - Colocate focused tests/stories, reuse the shared MSW handlers, cover changed
   query/mutation success and rollback, and preserve the event/stage parity tests.
 - Keep Storybook free of critical/serious axe violations. Any pre-existing
-  production deferral must be recorded in `docs/backlog.md`.
+  production deferral must be recorded in a linked GitHub issue (see `docs/backlog.md`).
 
-Choose verification through the root risk tiers and
-`docs/local-reliability-qa.md`.
+Use the root workflow entry and `docs/local-reliability-qa.md` for verification.

@@ -175,4 +175,4 @@ jobs:
           corepack pnpm extension:check
           corepack pnpm extension:test
           corepack pnpm extension:build
-          corepack pnpm extension:e2e
+          xvfb-run --auto-servernum corepack pnpm extension:e2e

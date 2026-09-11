@@ -21,13 +21,17 @@ jobs:
     timeout-minutes: 5
 
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
       - name: Apply triage labels
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             const owner = context.repo.owner;
             const repo = context.repo.repo;
-            const issueNumber = context.payload.issue?.number ?? Number(core.getInput("issue_number"));
+            const issueNumber = context.payload.issue?.number ?? Number(context.payload.inputs?.issue_number);
 
             const { data: issue } = await github.rest.issues.get({
               owner,
@@ -134,67 +138,8 @@ jobs:
               }
             }
 
-            const body = issue.body ?? "";
-            const title = issue.title ?? "";
-            const userBody = body
-              .replace(/### Data-safety confirmation[\s\S]*?(?=\n### |$)/gi, "")
-              .replace(/### Public issue confirmation[\s\S]*?(?=\n### |$)/gi, "")
-              .replace(/### Confirmation[\s\S]*?(?=\n### |$)/gi, "");
-            const haystack = `${title}\n${userBody}`.toLowerCase();
-            const titleText = title.toLowerCase();
-            const currentLabels = new Set(issue.labels.map((label) => label.name));
-            const labelsToAdd = new Set();
-
-            if (![...currentLabels].some((label) => label.startsWith("status: "))) {
-              labelsToAdd.add("status: needs triage");
-            }
-
-            const typeRules = [
-              ["type: security-contact", /\[security contact\]|security contact request|minimal public summary/],
-              ["type: qa-regression", /\[qa\]|expected invariant|regression surface|what broke\?/],
-              ["type: documentation", /\[docs\]|page or file|documentation problem|broken link/],
-              ["type: feature", /\[feature\]|problem to solve|proposed behavior|data, safety, or automation impact/],
-              ["type: bug", /\[bug\]|what happened\?|expected behavior|reproduction steps/],
-              ["type: question", /\[question\]|question or support|contributor workflow/],
-            ];
-
-            for (const [label, pattern] of typeRules) {
-              if (pattern.test(haystack) && ![...currentLabels].some((existing) => existing.startsWith("type: "))) {
-                labelsToAdd.add(label);
-                break;
-              }
-            }
-
-            const areaRules = [
-              ["area: web", /web app|dashboard|jobs|apply review|artifacts|profile|settings|frontend|react|vite/],
-              ["area: api", /typescript api|api route|json-rpc|sse|server|read model|endpoint/],
-              ["area: cli-worker", /python worker|worker|cli|jobctrl doctor|temporal|automation engine/],
-              ["area: browser-extension", /browser extension|extension|capture|autofill|ats/],
-              ["area: docs", /documentation|docs site|readme|docs\//],
-              ["area: setup", /setup|install|pnpm dev:setup|environment|first run/],
-              ["area: github", /github workflow|github workflows|actions|ci|dco|pull request|issue template/],
-              ["area: security", /security|vulnerability|credential|secret|token|private contact/],
-            ];
-
-            for (const [label, pattern] of areaRules) {
-              if (pattern.test(haystack)) {
-                labelsToAdd.add(label);
-              }
-            }
-
-            if (/release blocker|blocks a public release|public release|first-run flow|source install/.test(haystack)) {
-              labelsToAdd.add("release: possible-blocker");
-            }
-
-            if (
-              labelsToAdd.has("type: security-contact") ||
-              /\b(security|vulnerability|secret|credential|token|api key|private data)\b/.test(titleText) ||
-              /\b(secret|credential|token|api key|private contact|exploit detail)\b/.test(haystack)
-            ) {
-              labelsToAdd.add("privacy: review-needed");
-            }
-
-            const finalLabels = [...labelsToAdd].filter((label) => !currentLabels.has(label));
+            const { labelsForIssue } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/issue-triage.mjs`);
+            const finalLabels = labelsForIssue(issue);
             for (const label of finalLabels) {
               await ensureLabel(label);
             }
