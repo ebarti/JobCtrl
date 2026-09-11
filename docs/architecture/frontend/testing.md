@@ -166,8 +166,8 @@ high-risk surfaces; the current source-derived inventory lives in
 `docs/local-reliability-qa.md`. Storybook's a11y addon enforces **zero critical
 and serious axe violations** across stories. A story that exercises a
 pre-existing production defect may set `parameters.a11y.test = "off"` only
-with a matching entry in the "Frontend Accessibility Backlog" in
-`docs/backlog.md`, which owns the live deferral inventory.
+with a matching [GitHub issue](https://github.com/ebarti/JobCtrl/issues) recording
+the story path, affected production file and defect type.
 
 ## 10.8 Primitive Ownership And Non-Goals
 
@@ -204,12 +204,10 @@ runs, in order:
 9. `pnpm --filter @jobctrl/web storybook:test` (Storybook test runner —
    play functions + `@storybook/addon-a11y` axe checks).
 
-Not yet gated in CI (run locally / pre-merge; tracked in `docs/backlog.md`):
-the web Vitest unit + integration suite — including the event-handler and
-stage-state parity tests (§10.2) — and ESLint. Chromatic / Loki visual
-regression is named-not-built (§10.5). The
-frontend's parity tests are the analogue of the backend's
-`scripts/check-domain-type-parity.py`; today their CI-enforced half is the
-`pnpm -r check` typecheck, with the runtime backstop running locally.
+ESLint and dependency-boundary enforcement remain tracked in
+[#895](https://github.com/ebarti/JobCtrl/issues/895). Chromatic / Loki visual
+regression is named-not-built (§10.5). The frontend's parity tests are the
+analogue of the backend's `scripts/check-domain-type-parity.py`; both the
+typecheck and the web Vitest runtime backstop run in CI.
 
 ---

@@ -1,60 +1,46 @@
 # Roadmap
 
-This roadmap is the public, contributor-facing view. The detailed engineering
-backlog lives in [docs/backlog.md](docs/backlog.md); delivered work is
-recorded in the git log and in [docs/plans/implemented/](docs/plans/implemented/).
+JobCtrl's public direction is a reliable local job-search workflow with
+inspectable evidence and explicit user control. [GitHub Issues](https://github.com/ebarti/JobCtrl/issues)
+own scope, acceptance criteria, dependencies and current status. The
+[migration index #881](https://github.com/ebarti/JobCtrl/issues/881) records the
+disposition of earlier backlog entries; an issue is not an execution commitment.
 
-## Now
+## Reliability And Trust
 
-- Operate and harden the native Apple-silicon distribution: keep the signed
-  curl and Homebrew channels aligned to one immutable release, preserve
-  update/rollback safety, and monitor clean-machine installation evidence.
-- Tighten public documentation for local-first setup, configuration, normal
-  flows, safety boundaries, and architecture onboarding.
-- Keep the local stack reliable: Temporal dev server, TypeScript API, Vite web
-  app, Python worker, SSE updates, and projection-backed read models.
-- Continue hardening high-risk workflows: discovery preparation, resume
-  tailoring evidence, Apply Review draft promotion, dry-run apply, retries,
-  cancellation, and generated artifact inspection.
-- Keep screenshot and QA fixtures synthetic so public docs can be refreshed
-  without exposing real job-search data.
+- Reconcile signed-distribution acceptance against the published release bytes
+  and clean-machine evidence ([#884](https://github.com/ebarti/JobCtrl/issues/884)).
+- Complete native credential stores and persistent-secret migration
+  ([#888](https://github.com/ebarti/JobCtrl/issues/888)), define sensitive-artifact
+  retention ([#887](https://github.com/ebarti/JobCtrl/issues/887)), and attribute
+  LLM usage and ceilings to workflow lanes ([#886](https://github.com/ebarti/JobCtrl/issues/886)).
+- Prove the remaining Apply Review audit, workflow status and profile-discard
+  QA paths ([#892](https://github.com/ebarti/JobCtrl/issues/892),
+  [#894](https://github.com/ebarti/JobCtrl/issues/894),
+  [#893](https://github.com/ebarti/JobCtrl/issues/893)).
 
-## Next
+## Evidence And Everyday Use
 
-- **Planned — native cross-platform secret stores.** Add Windows Credential
-  Manager and Linux Secret Service/keyring adapters with parity to the shipped
-  macOS Keychain path: the same allowlisted provider settings, explicit
-  environment precedence, presence-only API responses, restart-to-activate
-  lifecycle, bounded failure behavior, and no secret values in logs or HTTP.
-  Completion requires mocked adapter contract tests plus read/write/delete host
-  validation on supported Windows and Linux runners.
-- Improve workflow-run parity for non-apply pipeline stages so Discover,
-  preparation, and Apply have one consistent run history and cancellation model.
-- Reduce broad SSE invalidation with targeted cache patches for jobs, artifacts,
-  and dashboard projections.
-- Finish data-model cleanup around URL-shaped job identifiers, projection
-  fallbacks, source/employer persistence, and searchable scoring keywords.
-- Complete the auditable user-feedback learning loop: unify shipped score
-  calibration and approved role-match exclusions with structured
-  tailoring-review feedback, preserve provenance-backed signals, and require an
-  explicit user action before a versioned policy or preference changes.
-  Outcome associations remain sample-gated and non-causal.
-- Strengthen frontend tooling: linting, dependency-boundary checks, type-level
-  tests, Playwright e2e in CI, and visual regression from Storybook or the docs
-  screenshot flow.
-- Add saved table views and column-visibility preferences for high-density job
-  and source-review workflows.
+- Design a coherent profile-evidence interview and selective resume-composition
+  program ([#883](https://github.com/ebarti/JobCtrl/issues/883)), including editable
+  target-search suggestions ([#902](https://github.com/ebarti/JobCtrl/issues/902))
+  and evidence-backed coaching ([#903](https://github.com/ebarti/JobCtrl/issues/903)).
+- Finish eligible realtime list patches and the remaining application-URL
+  cleanup ([#890](https://github.com/ebarti/JobCtrl/issues/890),
+  [#891](https://github.com/ebarti/JobCtrl/issues/891)); measure local performance
+  before choosing optimizations ([#889](https://github.com/ebarti/JobCtrl/issues/889)).
+- Add saved views for source review ([#901](https://github.com/ebarti/JobCtrl/issues/901)),
+  import vCard contacts with provenance ([#900](https://github.com/ebarti/JobCtrl/issues/900)),
+  and enforce frontend boundaries with linting ([#895](https://github.com/ebarti/JobCtrl/issues/895)).
 
-## Later
+## Decisions Before Implementation
 
-- Extend the bundled distribution to additional platforms after the
-  Apple-silicon release has enough field evidence to carry the same signing,
-  update/rollback, and clean-machine guarantees forward.
-- Add export/import flows for local workspaces and generated artifacts.
-- Design hosted deployment only after the local product loop is reliable:
-  authentication, tenant isolation, Postgres, object storage, managed workflow
-  services, secret vaulting, hosted browser isolation, audit logs, retention, and
-  billing.
-- Revisit cloud frontend adapters such as TanStack Start, authenticated sessions,
-  hosted event streams, and CDN-cached projection reads when public deployment
-  becomes a concrete goal.
+- Define the complete local/custom LLM-provider contract
+  ([#897](https://github.com/ebarti/JobCtrl/issues/897)).
+- Resolve public-demo access and consent withdrawal
+  ([#885](https://github.com/ebarti/JobCtrl/issues/885)).
+- Define portable workspace export and import
+  ([#904](https://github.com/ebarti/JobCtrl/issues/904)).
+
+Delivered behavior belongs in the [README](README.md) and owning documentation;
+delivery evidence remains in the git log and [plan records](docs/plans/).

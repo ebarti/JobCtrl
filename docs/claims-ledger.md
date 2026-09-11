@@ -2,7 +2,7 @@
 
 > **Repository-only.** This file is intentionally excluded from the published
 > docs site (registered in `docs/.vitepress/config.ts` `UNPUBLISHED_FILES` +
-> `srcExclude`, mirroring `docs/backlog.md`). It is a launch-governance
+> `srcExclude`). It is a launch-governance
 > artifact, not user documentation.
 >
 > Implements Phase A / GATE G1 of

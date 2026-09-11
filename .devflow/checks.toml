@@ -102,7 +102,7 @@ timeout_seconds = 900
 [checks.dry-run-diff]
 kind = "static"
 description = "Dry-run completion PR changes against the workflow dependency have no whitespace errors"
-argv = ["git", "diff", "--check", "origin/chore/devflow-subagent-coordinator...HEAD"]
+argv = ["git", "diff", "--check", "origin/main...HEAD"]
 
 [checks.domain-events]
 kind = "junit"

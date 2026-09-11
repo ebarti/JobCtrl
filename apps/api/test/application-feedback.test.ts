@@ -777,6 +777,11 @@ describe("application feedback API", () => {
         WHERE job_id = ?
           AND artifact_type IN ('tailored_resume', 'tailored_resume_txt', 'resume_txt')`,
     ).run(READY_JOB_ID);
+    db.prepare(
+      `UPDATE job_materials_artifacts
+          SET metadata_json = ?
+        WHERE job_id = ? AND artifact_id = 'apply-ready-resume-pdf'`,
+    ).run(JSON.stringify(requirementLedAuditMetadata()), READY_JOB_ID);
     insertMaterialSet(db, READY_JOB_ID, 2, "candidate");
     db.prepare(
       `INSERT INTO job_materials_artifacts (
@@ -800,10 +805,41 @@ describe("application feedback API", () => {
     expect(response.statusCode, response.body).toBe(200);
     expect(queueItem(response.json(), READY_JOB_ID)).toMatchObject({
       materialsPreview: {
+        materialsGeneration: 1,
         resumeText: null,
         resumeTextArtifactId: null,
         resumePdfArtifactId: "apply-ready-resume-pdf",
+        resumePdfLayoutBoxes: [
+          {
+            semanticId: "experience:acme:bullet:1",
+            pageNumber: 1,
+            textExcerpt: "Owned platform reliability improvements for incident response.",
+          },
+        ],
+        requirementLedAudit: { requirementCount: 2, achievementCount: 3, coverageEdgeCount: 1 },
       },
+    });
+
+    await app.close();
+  });
+
+  it("returns an empty resume preview when no resume artifact or failed audit exists", async () => {
+    const db = new Database(options.dbPath);
+    db.prepare("UPDATE jobs SET tailored_resume_path = NULL WHERE url = ?").run(READY_JOB);
+    db.prepare("DELETE FROM job_materials_artifacts WHERE job_id = ?").run(READY_JOB_ID);
+    db.close();
+    const app = buildApp(options);
+
+    const response = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(queueItem(response.json(), READY_JOB_ID)?.materialsPreview).toMatchObject({
+      materialsGeneration: null,
+      resumeText: null,
+      resumeTextArtifactId: null,
+      resumePdfArtifactId: null,
+      resumePdfLayoutBoxes: [],
+      requirementLedAudit: null,
     });
 
     await app.close();
@@ -1093,6 +1129,7 @@ describe("application feedback API", () => {
       resumeText: null,
       resumeTextArtifactId: null,
       resumePdfArtifactId: null,
+      resumePdfLayoutBoxes: [],
     });
     expect(item?.materialsPreview.requirementLedAudit?.revision).toMatchObject({
       score: 4,

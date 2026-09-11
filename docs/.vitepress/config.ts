@@ -77,7 +77,6 @@ function structuredDataHeadForPage(relativePath: string): HeadConfig[] {
 // browsing docs/); the site's homepage is the hero landing page in index.md.
 const UNPUBLISHED_PREFIXES = ["docs/plans/", "docs/incidents/"];
 const UNPUBLISHED_FILES = new Set([
-  "docs/backlog.md",
   "docs/claims-ledger.md",
   "docs/decisions.md",
   "docs/delivered.md",
@@ -307,7 +306,7 @@ const SIDEBAR: DefaultTheme.SidebarItem[] = [
 /**
  * Rewrites markdown links that resolve outside the published docs set
  * (repo-root files like ../README.md, or intentionally unpublished internal
- * docs like plans/ and backlog.md) into absolute GitHub URLs, so the deployed
+ * docs like plans/ and claims-ledger.md) into absolute GitHub URLs, so the deployed
  * site never ships a relative link that 404s. Links inside the published set
  * are left for VitePress to resolve and dead-link-check as usual.
  */
@@ -370,7 +369,6 @@ export default withMermaid(
     srcExclude: [
       "plans/**",
       "incidents/**",
-      "backlog.md",
       "claims-ledger.md",
       "decisions.md",
       "delivered.md",

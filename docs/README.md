@@ -160,7 +160,7 @@ These documents remain in the repository but are not separate site sections:
 
 - [`requirements.md`](requirements.md): product and technical invariants.
 - [`decisions.md`](decisions.md): accepted architecture decision records.
-- [`backlog.md`](backlog.md): GitHub issue entry and accounted historical backlog dispositions.
+- [GitHub Issues](https://github.com/ebarti/JobCtrl/issues): actionable work; [migration index #881](https://github.com/ebarti/JobCtrl/issues/881) accounts for the historical backlog.
 - [`claims-ledger.md`](claims-ledger.md): launch-claim evidence and status.
 - [`plans/`](plans/): active proposals and immutable implemented-plan history.
 - [`incidents/`](incidents/): incident records and corrective actions.

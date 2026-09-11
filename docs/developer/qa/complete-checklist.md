@@ -10,8 +10,11 @@ Read the relevant section when the QA router identifies one of these risks.
 Jump to the [regression matrix](#high-risk-regression-areas) for the risk →
 coverage table, or the
 [Temporal fault-injection matrix](#temporal-fault-injection-matrix) for
-per-workflow failure behavior. The known-failing web e2e baseline these gates
-run against is recorded in the [backlog](../../backlog.md).
+per-workflow failure behavior. Record regressions in a linked
+[GitHub issue](https://github.com/ebarti/JobCtrl/issues) with the affected path,
+invariant, reproducer and acceptance criteria. Historical backlog dispositions
+live in [migration index #881](https://github.com/ebarti/JobCtrl/issues/881);
+they do not exempt a failing web E2E spec from its applicable gate.
 
 ## Selecting Checks
 
@@ -954,7 +957,7 @@ resolved token values against each real surface.
 No Storybook story currently defers the a11y check: no `*.stories.ts` or
 `*.stories.tsx` file under `apps/web/src/` sets `a11y.test` to `"off"` or
 `a11y.disable` to `true`. Any future escape-hatch use must have a matching
-entry in [`docs/backlog.md`](../../backlog.md) "Frontend Accessibility Backlog" with
+entry in [GitHub Issues](https://github.com/ebarti/JobCtrl/issues) with
 the story path, affected production file, and defect type.
 
 ### Storybook gate
