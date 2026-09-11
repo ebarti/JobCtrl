@@ -35,7 +35,7 @@ export interface DryRunCompletedPayload {
   readonly finished_at: string;
   readonly duration_ms: number | null;
   readonly dry_run: true;
-  readonly worker_id: string | null;
+  readonly worker_id: number | null;
   readonly model: string | null;
   readonly coverage: "full" | "partial";
   readonly blocked_channels: readonly string[];

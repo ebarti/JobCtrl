@@ -1769,7 +1769,7 @@ Each frame:
 `{ tenantId, occurredAt, payload }` envelope. Canonical `payload.jobId` identifies
 the job. Lifecycle keys are preserved as emitted: `run_id`,
 `result: "dry_run_complete"`, `finished_at`, nullable `duration_ms`,
-`dry_run: true`, nullable `worker_id` and `model`. Evidence fields are
+`dry_run: true`, nullable numeric `worker_id` and nullable string `model`. Evidence fields are
 `coverage` (`full` or `partial`), `blocked_channels` (strings),
 `allowed_navigations` (evidence objects), nullable `materials_generation`,
 `application_url`, and `profile_version`.

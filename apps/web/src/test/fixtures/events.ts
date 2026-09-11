@@ -561,7 +561,7 @@ export const eventByType = {
     finished_at: NOW,
     duration_ms: 4000,
     dry_run: true,
-    worker_id: "worker-1",
+    worker_id: 0,
     model: "test-model",
     coverage: "partial",
     blocked_channels: ["form_submit"],

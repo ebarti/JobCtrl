@@ -70,7 +70,7 @@ describe("parseDomainEvent", () => {
     const result = parseDomainEvent({ eventType: "DryRunCompleted", data: JSON.stringify(event) });
     expect(result).toEqual({ ok: true, envelope: event });
     if (result.ok) {
-      expect(result.envelope.payload).toMatchObject({ run_id: "run-1", result: "dry_run_complete", dry_run: true });
+      expect(result.envelope.payload).toMatchObject({ run_id: "run-1", result: "dry_run_complete", dry_run: true, worker_id: 0 });
       expect(result.envelope.payload).not.toHaveProperty("runId");
     }
   });

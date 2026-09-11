@@ -10,6 +10,7 @@ test("DryRunCompleted alone refreshes apply history without submitting the job",
   const db = new Database(loadE2eDbPath());
   const mutations: string[] = [];
   const streamEvents: string[] = [];
+  const dryRunPayloads: unknown[] = [];
   let dashboardReads = 0;
   let streamConnections = 0;
   page.on("request", (request) => {
@@ -23,7 +24,12 @@ test("DryRunCompleted alone refreshes apply history without submitting the job",
   // Observe the real Chromium EventSource connection without replacing its transport.
   const cdp = await page.context().newCDPSession(page);
   await cdp.send("Network.enable");
-  cdp.on("Network.eventSourceMessageReceived", (event) => streamEvents.push(event.eventName));
+  cdp.on("Network.eventSourceMessageReceived", (event) => {
+    streamEvents.push(event.eventName);
+    if (event.eventName === "DryRunCompleted") {
+      dryRunPayloads.push(JSON.parse(event.data).payload);
+    }
+  });
 
   try {
     db.prepare(`INSERT INTO apply_run_projections
@@ -65,7 +71,7 @@ test("DryRunCompleted alone refreshes apply history without submitting the job",
         result: "dry_run_complete",
         finished_at: FINISHED_AT,
         duration_ms: 4000,
-        worker_id: "synthetic-worker",
+        worker_id: 0,
         model: "synthetic-model",
         dry_run: true,
         coverage: "partial",
@@ -82,6 +88,7 @@ test("DryRunCompleted alone refreshes apply history without submitting the job",
     ]));
     await expect(run.getByText("dry_run_complete", { exact: true })).toBeVisible({ timeout: 5000 });
     expect(streamEvents).toContain("DryRunCompleted");
+    expect(dryRunPayloads).toEqual([expect.objectContaining({ run_id: RUN_ID, worker_id: 0 })]);
     expect(streamConnections).toBe(connectionsBefore);
     expect(page.url()).toBe(originalUrl);
     expect(await page.evaluate(() => performance.getEntriesByType("navigation").length)).toBe(navigations);

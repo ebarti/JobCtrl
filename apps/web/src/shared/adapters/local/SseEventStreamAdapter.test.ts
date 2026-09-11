@@ -128,6 +128,7 @@ describe("SseEventStreamAdapter", () => {
     expect(source.listenerCount("DryRunCompleted")).toBe(1);
     source.emit("DryRunCompleted", JSON.stringify(event));
     expect(handler).toHaveBeenCalledExactlyOnceWith(event);
+    expect(handler.mock.calls[0]?.[0].payload.worker_id).toBe(0);
     subscription.close();
     expect(source.listenerCount("DryRunCompleted")).toBe(0);
   });
