@@ -177,6 +177,9 @@ active roles, preserve the work/attempt/candidate/actions, and retain original
 results. Resume an interrupted role within the same activation through the
 coordinating skill's host protocol. Before an upgrade changes inputs, collect its
 actual partial/BLOCKED result without further product work and persist it.
+For a completed producer whose original result has malformed evidence linkage,
+preserve its artifact and use the journaled `host recover-result` protocol to
+obtain the same producer's correction without changing its original judgement.
 Amend the same attempt with the reviewed replacement workflow/profile, retaining
 old snapshots and receipts; resume the failed stage from `next`. Do not delete
 history or create another outcome to conceal a failed run.
