@@ -97,3 +97,32 @@ kind = "static"
 description = "Cross-stack static checks pass; separate web product suites remain explicit"
 argv = ["corepack", "pnpm", "check"]
 timeout_seconds = 900
+
+
+[checks.dry-run-diff]
+kind = "static"
+description = "Dry-run completion PR changes against the workflow dependency have no whitespace errors"
+argv = ["git", "diff", "--check", "origin/chore/devflow-subagent-coordinator...HEAD"]
+
+[checks.domain-events]
+kind = "junit"
+description = "Domain event factories, payloads and enumeration preserve terminal event semantics"
+argv = ["corepack", "pnpm", "--filter", "@jobctrl/domain-types", "exec", "vitest", "run", "test", "--reporter=junit", "--outputFile={report_path}"]
+timeout_seconds = 300
+
+[checks.domain-types]
+kind = "static"
+description = "Shared domain contracts typecheck"
+argv = ["corepack", "pnpm", "--filter", "@jobctrl/domain-types", "check"]
+
+[checks.dry-run-realtime]
+kind = "junit"
+description = "Dry-run completion passes the event parser, SSE listener and exhaustive invalidation router"
+argv = ["corepack", "pnpm", "--filter", "@jobctrl/web", "exec", "vitest", "run", "src/shared/ports/lib/parseDomainEvent.test.ts", "src/shared/adapters/local/SseEventStreamAdapter.test.ts", "src/contexts/operations/invalidation-router.test.ts", "src/contexts/operations/every-event-has-handler.test.ts", "src/contexts/apply/components/RunStatusBadge.test.tsx", "--reporter=junit", "--outputFile={report_path}"]
+timeout_seconds = 300
+
+[checks.dry-run-browser]
+kind = "junit"
+description = "A synthetic emitted dry-run event refreshes browser status without recording submission"
+argv = ["env", "PLAYWRIGHT_JUNIT_OUTPUT_FILE={report_path}", "JOBCTRL_E2E_API_PORT=18966", "JOBCTRL_E2E_WEB_PORT=18967", "corepack", "pnpm", "--filter", "@jobctrl/web", "exec", "playwright", "test", "--config=e2e/playwright.config.ts", "tests/dry-run-completed.spec.ts", "--reporter=junit"]
+timeout_seconds = 600
