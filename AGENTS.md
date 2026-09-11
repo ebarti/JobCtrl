@@ -2,24 +2,26 @@
 
 ## Workflow
 
-The installed `using-devflow` entry skill supplies instructions at the start of a
-conversation. Questions and opening a chat do not start work. A direct work
-request, concrete bug report, named issue, or bounded backlog batch authorizes
-the agent to capture or reuse its issues and begin without another approval step.
+Before responding or taking task action, read the installed `using-devflow`
+entry skill and its applicable stage. Reapply routing when intent changes.
+Design discussion uses its method without starting work. A direct work request,
+concrete bug report, named issue or bounded batch authorizes its scope without
+another approval step.
 
-For configured maintainer work, use the installed `devflow` skill and the immutable
-pin in `.devflow/workflow.lock`. Use `scripts/devflow` wherever the skill says
-`devflow`. Once work is requested, run `scripts/devflow doctor --json`; continue
-recorded work with its existing ID. Historical attempts without a recorded user
-request need re-admission under the current request. Read only the selected
-role and required subagent coordination references. The original conversation
-coordinates bounded implementation/repair and required independent review/QA
-subagents. Verify role identity and resolved model/effort before activation;
-the coordinator's active model does not set role policy. Devflow owns intake,
-execution state, independent findings/gates, recovery and delivery; do not load
-a second lifecycle from legacy review/fix
-skills. Missing installation or host capability is a diagnostic, never a passing
-gate. Setup and cutover limits: `docs/developer/workflow.md`.
+For configured maintainer work, use the immutable pin in
+`.devflow/workflow.lock` and `scripts/devflow` for workflow commands. Run
+`doctor --json`; resolve the selected stage with `skill resolve`, including the
+existing work ID for continuation. Definition, planning, coordination,
+implementation, review, verification and delivery are separate skills. `next`
+names the skill owning each action. Read only that stage and its needed resources.
+
+The original conversation coordinates bounded implementation/repair and
+independent review/QA subagents. Verify identity and resolved settings before
+activation. Persist implementation completion before registered verification and
+every independent PASS/FAIL/BLOCKED before repair or rerun. Reuse the same work,
+attempt and available roles; reconcile uncertain actions before retrying.
+Devflow owns the lifecycle. Missing capability is a diagnostic, never a passing
+gate. Setup, version and recovery boundaries: `docs/developer/workflow.md`.
 
 Public contributors and clients without the workflow host use `CONTRIBUTING.md`
 and the same product/check requirements. `CLAUDE.md` remains linked here; the

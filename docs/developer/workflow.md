@@ -14,10 +14,18 @@ The private installation manifest records the active skill links, exact target
 paths and shared consumers before changing anything. Other repositories' review
 skills, Claude adapters and model settings remain their existing owners.
 
-The instruction-only `using-devflow` entry skill is read at the start of each
-conversation through a small global instruction. Opening a chat does not run
-commands, scan issues, or resume work. The detailed `devflow` skill is used when
-the user requests repository work. No hooks or background scheduler are installed.
+The `using-devflow` entry is required before response/action and when intent
+changes. Its separately discoverable stages are defining-work, planning,
+coordinating, implementing, reviewing, verifying and delivering (each prefixed
+`devflow-`). A design-only conversation uses a method without creating work.
+The old `devflow` name forwards to the entry. No hooks or scheduler are installed.
+
+`skill list` reports the installed catalog. `skill resolve` with a JSON request
+such as `{"name":"devflow-coordinating"}` returns the selected release's file.
+For continuation, include the existing `--work-id`; read that immutable path
+rather than substituting newer global skill text. Missing historical stages
+require compatible recovery or a recorded upgrade. `next` names each action's
+owning skill and the separate assigned role skill.
 
 Run from a JobCtrl checkout:
 
@@ -45,7 +53,7 @@ is sufficient authorization within its scope. Questions and requests for
 explanation do not create issues or start implementation. Respect requests for
 investigation only.
 
-Load the installed skill, current role and required subagent coordination reference;
+Load the selected pinned stage and its needed resources;
 use `scripts/devflow` for its `devflow` commands. Capture each requested work item with
 `scripts/devflow backlog capture --request-file <json>
 --json`, reusing its existing issue or a stable work ID with a short public-safe
@@ -74,7 +82,9 @@ When an active attempt's pin or profile changed, capture the current workflow an
 effective model settings with `snapshot capture`, then include `workflow_snapshot`
 in `work amend`. The CLI validates the new snapshot and retains the old evidence.
 
-Choose recipes through the [QA router](../local-reliability-qa.md). Add a focused
+Choose recipes through the [QA router](../local-reliability-qa.md) and owning
+contracts. Persist acceptance-to-contract-to-check coverage; mirrored registries
+and cross-process schemas require their parity proof when affected. Add a focused
 recipe before work admission when the relevant test file or scenario is missing;
 recipe definitions do not require running all suites. Required JUnit recipes
 reject zero executed test cases, failures and skipped cases. Case counts do not
@@ -85,7 +95,7 @@ subagent cannot stand in for passing product proof.
 
 ## Coordinator And Role Assignments
 
-In devflow 0.4.0, the original user conversation coordinates the outcome.
+In devflow 0.5.0, the original user conversation coordinates the outcome.
 Implementation and repairs belong to a bounded `implementation_worker`; required
 review and QA use independent subagents with distinct verified identities.
 Review-only and delivery-only work enter at their actual phase without inventing
@@ -94,7 +104,7 @@ router. New work uses supported `agents` tools, without creating visible peer ta
 
 Role model/effort resolves from explicit user role/session overrides, configured
 role files, saved subagent defaults, then saved global defaults. The coordinator's
-active model overrides do not leak into roles. The package's subagent reference
+active model overrides do not leak into roles. The coordinating skill's host protocol
 owns exact settings, startup evidence and native-tool arguments; do not duplicate
 that dispatch policy in JobCtrl or rewrite global role settings.
 
@@ -109,15 +119,18 @@ service tier remains unknown. Session evidence stays private and uncommitted.
 native dispatch, and `host record` stores actual inventory to mark it running.
 `candidate capture` uses the verified running implementation identity, then
 `host result` binds completion to that output candidate before verification.
-Review/QA use `gate record`. Reuse the same available roles for repairs. Changed
+Review/QA save their original gate JSON and import every PASS/FAIL/BLOCKED through
+`gate record`, bound to the activation action, before repair or rerun. Late
+results remain historical and cannot prove the current candidate. Reuse the same
+available roles for repairs. Changed
 policy or unavailability needs an explicitly recorded, observed replacement that
 preserves earlier identities and evidence. Reconcile an ambiguous spawn; inventory
 absence alone never authorizes a duplicate.
 
 ## Activation Boundaries
 
-Version 0.4.0 retains managed execution from agent-recorded user requests and
-adds verified subagent execution under the original coordinator.
+Version 0.5.0 adds mandatory stage routing, durable result handoffs and resumable
+external operations to conversational admission and verified subagents.
 `doctor` reports the direct-request mode and checks the installed runtime, profile
 and tools. `READY` describes local runtime readiness; the separate `capabilities`
 report shows whether GitHub capture and other tool-dependent operations can run.
@@ -134,7 +147,7 @@ as bootstrap evidence. Historical attempts without `execution_mode` remain
 `native_thread`, retaining their original control contract, receipts and evidence.
 The current runtime reads that history without relabeling it or delegating to an
 older release. Updating these maintainer instructions alone does not install or
-activate 0.4.0: the reviewed immutable repository pin and matching installed
+activate 0.5.0: the reviewed immutable repository pin and matching installed
 release must agree before execution.
 
 Automatic merge remains disabled until separately authorized target protection
@@ -149,3 +162,21 @@ their updates. CI approval does not replace the user's request for agent work.
 
 See the [cutover accounting](workflow-cutover.md) for removed process owners,
 retained product checks and the historical backlog dispositions.
+
+## Failure And Delivery Checkpoints
+
+Branch publication uses the journaled `push_branch` action with exact expected
+source and remote head. Definite rejection retries the same action after repair;
+uncertain success reconciles before another mutation. Delivery retains every
+finding, requires an actual linked follow-up for every accepted deferral, and
+records available usage or explicit unknown/unavailable accounting.
+Missing data never implies zero cost.
+
+When the user requests stopping at the first workflow failure, stop and observe
+active roles, preserve the work/attempt/candidate/actions, and retain original
+results. Resume an interrupted role within the same activation through the
+coordinating skill's host protocol. Before an upgrade changes inputs, collect its
+actual partial/BLOCKED result without further product work and persist it.
+Amend the same attempt with the reviewed replacement workflow/profile, retaining
+old snapshots and receipts; resume the failed stage from `next`. Do not delete
+history or create another outcome to conceal a failed run.
