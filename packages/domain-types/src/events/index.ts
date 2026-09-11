@@ -183,6 +183,9 @@ export {
   type EmailApplicationCandidateRecordedPayload,
   type EmailApplicationCandidateRecorded,
   createEmailApplicationCandidateRecorded,
+  type DryRunCompletedPayload,
+  type DryRunCompleted,
+  createDryRunCompleted,
   type ApplicationSubmittedPayload,
   type ApplicationSubmitted,
   createApplicationSubmitted,
@@ -432,6 +435,7 @@ import type {
 import type {
   ApplicationEmailFeedbackIngested,
   ApplicationFailed,
+  DryRunCompleted,
   ApplicationSubmitted,
   EmailApplicationCandidateRecorded,
   ApplyRunEventRecorded,
@@ -545,6 +549,7 @@ export type DomainEventUnion =
   | ApplyRunEventRecorded
   | EmailApplicationCandidateRecorded
   | ApplicationEmailFeedbackIngested
+  | DryRunCompleted
   | ApplicationSubmitted
   | ApplicationFailed
   | ApplyReviewDecisionRecorded
@@ -650,6 +655,7 @@ export const DOMAIN_EVENT_TYPES = [
   "ApplyRunEventRecorded",
   "EmailApplicationCandidateRecorded",
   "ApplicationEmailFeedbackIngested",
+  "DryRunCompleted",
   "ApplicationSubmitted",
   "ApplicationFailed",
   "ApplyReviewDecisionRecorded",

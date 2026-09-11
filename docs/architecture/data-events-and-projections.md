@@ -186,6 +186,12 @@ projection responsibilities, use [Apply Feedback & Projections](read-model.md);
 for workflow/event recovery, use
 [Operations & Events](pipeline/operations.md#domain-events-projections-and-sse).
 
+The apply launcher emits `DryRunCompleted` when a run finishes without submitting.
+The apply-run projection maps it to `dry_run_complete`; the shared event registry
+and apply-owned browser handler refresh the corresponding reads. This event is
+separate from `ApplicationSubmitted` and does not establish an applied job or a
+submission outcome.
+
 ## SSE Is Invalidation, Not State Transfer
 
 `apps/api/src/event-stream.ts` polls committed `job_events` rows, preserves

@@ -337,6 +337,16 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     analyticsKeys.all(LOCAL_TENANT),
   ],
   EmailApplicationCandidateRecorded: [applyReviewKeys.queue(LOCAL_TENANT)],
+  DryRunCompleted: [
+    applyRunsKeys.lists(LOCAL_TENANT),
+    applyRunsKeys.detail(LOCAL_TENANT, RUN_ID),
+    workflowRunsKeys.lists(LOCAL_TENANT),
+    workflowRunsKeys.detail(LOCAL_TENANT, RUN_ID),
+    applyReviewKeys.queue(LOCAL_TENANT),
+    jobsKeys.detail(LOCAL_TENANT, JOB_ID),
+    jobsKeys.lists(LOCAL_TENANT),
+    dashboardKeys.summary(LOCAL_TENANT),
+  ],
   ApplicationSubmitted: [
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     jobsKeys.lists(LOCAL_TENANT),
@@ -550,6 +560,23 @@ describe("invalidationRouter", () => {
   let queryClient: QueryClient;
   let invalidateSpy: ReturnType<typeof vi.spyOn>;
   let setQueryDataSpy: ReturnType<typeof vi.spyOn>;
+
+  it("keeps dry-run completion separate from submission and other runs", () => {
+    const client = new QueryClient();
+    const event = eventByType.DryRunCompleted;
+    const jobKey = jobsKeys.detail(LOCAL_TENANT, JOB_ID);
+    const analyticsKey = analyticsKeys.all(LOCAL_TENANT);
+    const otherRunKey = applyRunsKeys.detail(LOCAL_TENANT, "other-run");
+    client.setQueryData(jobKey, { status: "ready", appliedAt: null });
+    client.setQueryData(analyticsKey, { submitted: 0 });
+    client.setQueryData(otherRunKey, { status: "in_progress" });
+    invalidationRouter.handle(event, client);
+    expect(client.getQueryData(jobKey)).toEqual({ status: "ready", appliedAt: null });
+    expect(client.getQueryState(jobKey)?.isInvalidated).toBe(true);
+    expect(client.getQueryState(analyticsKey)?.isInvalidated).toBe(false);
+    expect(client.getQueryState(otherRunKey)?.isInvalidated).toBe(false);
+    client.clear();
+  });
 
   beforeEach(() => {
     queryClient = new QueryClient();

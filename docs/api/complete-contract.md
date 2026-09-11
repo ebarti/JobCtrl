@@ -1763,6 +1763,21 @@ Each frame:
   decode to a JSON object before dispatch.
 - `data: <payload_json>` — the payload, ready for `JSON.parse`.
 
+### Dry-run completion
+
+`event: DryRunCompleted` carries the existing launcher payload inside the SSE
+`{ tenantId, occurredAt, payload }` envelope. Canonical `payload.jobId` identifies
+the job. Lifecycle keys are preserved as emitted: `run_id`,
+`result: "dry_run_complete"`, `finished_at`, nullable `duration_ms`,
+`dry_run: true`, nullable numeric `worker_id` and nullable string `model`. Evidence fields are
+`coverage` (`full` or `partial`), `blocked_channels` (strings),
+`allowed_navigations` (evidence objects), nullable `materials_generation`,
+`application_url`, and `profile_version`.
+
+The shared event factory and browser use these names without camelCase
+normalization. The event invalidates affected projection reads and remains
+separate from `ApplicationSubmitted`: it never establishes submission.
+
 ### Tenant filtering (COALESCE on the row, not the request)
 
 The server filters `job_events` with the COALESCE on the _event row's_

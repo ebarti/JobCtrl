@@ -3,6 +3,7 @@ import type {
   ApplicationFailed,
   ApplicationOutcomeRecorded,
   ApplicationSubmitted,
+  DryRunCompleted,
   ApplyReviewDecisionRecorded,
   ApplyRunEventRecorded,
   ApplyRunStarted,
@@ -93,6 +94,20 @@ export const emailApplicationCandidateRecordedHandler = (
   event: EmailApplicationCandidateRecorded,
 ): readonly InvalidationItem[] => [
   invalidate(applyReviewKeys.queue(event.tenantId)),
+];
+
+// Dry-run completion refreshes projections; it never patches submission state.
+export const dryRunCompletedHandler = (
+  event: DryRunCompleted,
+): readonly InvalidationItem[] => [
+  invalidate(applyRunsKeys.lists(event.tenantId)),
+  invalidate(applyRunsKeys.detail(event.tenantId, event.payload.run_id)),
+  invalidate(workflowRunsKeys.lists(event.tenantId)),
+  invalidate(workflowRunsKeys.detail(event.tenantId, event.payload.run_id)),
+  invalidate(applyReviewKeys.queue(event.tenantId)),
+  invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
+  invalidate(jobsKeys.lists(event.tenantId)),
+  invalidate(dashboardKeys.summary(event.tenantId)),
 ];
 
 export const applicationSubmittedHandler = (

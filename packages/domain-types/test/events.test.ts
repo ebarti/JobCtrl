@@ -47,6 +47,7 @@ import {
   createApplicationEmailFeedbackIngested,
   createApplicationOutcomeRecorded,
   createApplicationSubmitted,
+  createDryRunCompleted,
   createApplyReviewDecisionRecorded,
   createApplyRunStarted,
   createOutcomeSuggestionDecided,
@@ -574,6 +575,30 @@ describe("Preparation events", () => {
 });
 
 describe("Apply events", () => {
+  it.each([0, 2, null])("DryRunCompleted preserves worker_id %s and the dry-run verdict", (workerId) => {
+    const event = createDryRunCompleted(LOCAL_TENANT, {
+      jobId: "j1",
+      run_id: "r1",
+      result: "dry_run_complete",
+      dry_run: true,
+      finished_at: "2026-09-11T10:00:00Z",
+      duration_ms: null,
+      worker_id: workerId,
+      model: null,
+      coverage: "partial",
+      blocked_channels: [],
+      allowed_navigations: [],
+      materials_generation: null,
+      application_url: null,
+      profile_version: null,
+    });
+    expect(event.eventType).toBe("DryRunCompleted");
+    expect(event.tenantId).toBe(LOCAL_TENANT);
+    expect(event.payload).toMatchObject({ run_id: "r1", result: "dry_run_complete", dry_run: true });
+    expect(event.payload.worker_id).toBe(workerId);
+    expect(event.payload).not.toHaveProperty("appliedAt");
+    expect(DOMAIN_EVENT_TYPES).toContain(event.eventType);
+  });
   it("ApplicationSubmitted has required fields", () => {
     const event = createApplicationSubmitted(LOCAL_TENANT, {
       jobId: "j1",
