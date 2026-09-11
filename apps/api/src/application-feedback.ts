@@ -1921,14 +1921,12 @@ function resumeMaterialPreviewForJob(db: SqliteDatabase, jobId: JobId): ResumeMa
 
   const failedAudit = failedRequirementLedAuditForJob(db, jobId);
   return {
-    materialsGeneration: failedAudit?.generation ?? pdfCandidates[0]?.generation ?? null,
+    materialsGeneration: failedAudit?.generation ?? null,
     resumeText: null,
     resumeTextArtifactId: null,
-    resumePdfArtifactId: pdfCandidates[0]?.artifactId ?? null,
-    resumePdfLayoutBoxes: pdfCandidates[0]?.artifactId
-      ? resumeLayoutBoxesForArtifact(db, pdfCandidates[0].artifactId)
-      : [],
-    requirementLedAudit: failedAudit?.audit ?? (pdfCandidates[0] ? requirementLedAuditForCandidates(db, jobId, pdfCandidates[0]) : null),
+    resumePdfArtifactId: null,
+    resumePdfLayoutBoxes: [],
+    requirementLedAudit: failedAudit?.audit ?? null,
     resumeTemplate: resumeTemplateStateForJob(db, jobId),
   };
 }
