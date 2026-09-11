@@ -515,10 +515,9 @@ storage-and-privacy inventory:
 
 Everything in [What It Does](#what-it-does) above is **shipped and runs on
 your machine today** through the installed distribution or a source build.
-Workspace export/import and any hosted or multi-user deployment (accounts,
-billing, hosted browsers, object storage, cloud sync) live in
-[ROADMAP.md](ROADMAP.md). Nothing presented as current depends on a hosted
-JobCtrl service.
+Planned public work, including workspace export/import, lives in
+[ROADMAP.md](ROADMAP.md) and [GitHub Issues](https://github.com/ebarti/JobCtrl/issues).
+Nothing presented as current depends on a hosted JobCtrl service.
 
 ## Local Data And Safety
 
@@ -863,8 +862,9 @@ workflow: [CONTRIBUTING.md](CONTRIBUTING.md).
 - [Reliability & QA](https://jobctrl.dev/local-reliability-qa) — regression
   matrix and QA gates.
 - [Decisions](docs/decisions.md) — accepted architecture decisions.
-- [docs/backlog.md](docs/backlog.md) · [docs/plans/](docs/plans/) — backlog
-  and implementation records.
+- [GitHub Issues](https://github.com/ebarti/JobCtrl/issues) · [migration index #881](https://github.com/ebarti/JobCtrl/issues/881)
+  — actionable work and historical backlog dispositions.
+- [docs/plans/](docs/plans/) — implementation plans and delivery records.
 
 ## License
 

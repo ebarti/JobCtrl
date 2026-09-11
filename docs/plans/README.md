@@ -11,7 +11,10 @@ at the top of `docs/`.
 Accepted public implementation plans are listed below. Bundled distribution
 and the public live demo are delivered and archived
 under `implemented/`; their separately deferred operational and privacy
-follow-ups live in `docs/publish-checklist.md` and `docs/backlog.md`. Add new
+follow-ups live in `docs/publish-checklist.md` and
+[GitHub Issues](https://github.com/ebarti/JobCtrl/issues). The
+[migration index #881](https://github.com/ebarti/JobCtrl/issues/881) owns historical
+backlog dispositions. Add new
 accepted-but-not-yet-delivered public product plans at the top level.
 
 This is a public repository. Owner-only launch/growth strategy, campaign
@@ -31,10 +34,18 @@ docs to describe the delivered behavior. Delivery history lives in the git log
 
 ## Active Plans
 
-- [Preserve Behavior While Removing Duplicated State And Execution](2026-09-06-simplification-stack.md)
-  — accepted; four stacked PRs for review drafts, profile editing and Tailor.
+Current accepted scope and dependencies live in [GitHub Issues](https://github.com/ebarti/JobCtrl/issues).
+The [profile evidence and selective resume composition program](https://github.com/ebarti/JobCtrl/issues/883)
+is a design proposal; its implementation requires the decisions and acceptance
+criteria recorded there.
+
+## Revalidated Delivery Records
+
+- [Preserve Behavior While Removing Duplicated State And Execution](implemented/2026-09-06-simplification-stack.md)
+  — delivered in #865, #866, #868 and #869, all merged on 2026-09-08.
 - [Stable Job Identity, Workflow Parity, And Feedback Learning](2026-07-29-stable-job-identity-workflow-feedback-learning.md)
-  — accepted; implementation in progress as small stacked PRs.
+  — core foundations delivered; remaining URL cleanup, realtime patches and
+  browser proof are linked from its revalidated status banner.
 
 ## Historical Spec Ledger
 
@@ -90,7 +101,7 @@ and frontend plans were renamed from working titles (`ddd-target-plan.md`,
 | 2026-07-05 | [Product Rename to JobCtrl](implemented/2026-07-05-rename-jobctrl-plan.md) | Implemented — #261 (plan), #349; hardening #350; #351 closeout; R0.1 updates the final public spelling to JobCtrl |
 | 2026-07-05 | [Crawl Politeness Hardening](implemented/2026-07-05-crawl-politeness-plan.md) | Implemented — #272 (plan), #297-#316; pacing-test hardening #334; ADR 2026-07-06 |
 | 2026-07-08 | [Web UI/UX Revamp — Left-Rail Shell + JobCtrl Design System](implemented/2026-07-08-web-ui-revamp-plan.md) | Implemented — #356; design-system docs follow-up continues separately in #357 |
-| 2026-07-10 | [Bundled JobCtrl Distribution](implemented/2026-07-10-bundled-jobctrl-distribution-plan.md) | Implemented / closed with operational follow-ups — #394, #396, and #399–#405; signed/notarized `v2.0.7`, GitHub Release, R2, Homebrew, and PyPI are live; published-artifact acceptance remains in the release checklist/backlog; ADR 2026-07-10 |
+| 2026-07-10 | [Bundled JobCtrl Distribution](implemented/2026-07-10-bundled-jobctrl-distribution-plan.md) | Implemented / closed with operational follow-ups — #394, #396, and #399–#405; signed/notarized `v2.0.7`, GitHub Release, R2, Homebrew, and PyPI are live; published-artifact acceptance is tracked in [#884](https://github.com/ebarti/JobCtrl/issues/884); ADR 2026-07-10 |
 | 2026-07-11 | [Public JobCtrl Live Demo](implemented/2026-07-11-public-live-demo-plan.md) | Implemented / public — #407–#417; consent-gated analytics #497; analytics-optional access and withdrawal/erasure remain separately scoped privacy follow-ups |
 | 2026-07-13 | [Discovery Pipeline Operations Visibility](implemented/2026-07-13-discovery-pipeline-operations-visibility-plan.md) | Implemented — cumulative integration #464 incorporated the reviewed #459–#462 stack; production follow-ups #465–#467 |
 | 2026-07-14 | [End-to-End Product Redesign](implemented/2026-07-14-end-to-end-product-redesign.md) | Implemented — cumulative integration #464 incorporated the reviewed #453–#463 stack; production follow-ups #465–#467 |

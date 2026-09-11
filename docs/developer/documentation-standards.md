@@ -32,7 +32,7 @@ only enough context to orient the reader, then link to the owner.
 | Backend and frontend architectural rules | The numbered [backend](../architecture/domain-model/index.md) and [frontend](../architecture/frontend/index.md) references |
 | Product and technical invariants | [Requirements](../requirements.md) |
 | Accepted architectural choices | [Decisions](../decisions.md) |
-| Public direction and detailed deferred work | [`ROADMAP.md`](../../ROADMAP.md) and [`docs/backlog.md`](../backlog.md), respectively |
+| Public direction and detailed deferred work | [`ROADMAP.md`](../../ROADMAP.md) and [GitHub Issues](https://github.com/ebarti/JobCtrl/issues), respectively; [migration index #881](https://github.com/ebarti/JobCtrl/issues/881) owns historical backlog dispositions |
 | Active delivery work and implemented records | [`docs/plans/`](../plans/) |
 
 This ownership rule does not forbid a short recap. It forbids maintaining two
