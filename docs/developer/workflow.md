@@ -20,12 +20,23 @@ coordinating, implementing, reviewing, verifying and delivering (each prefixed
 `devflow-`). A design-only conversation uses a method without creating work.
 The old `devflow` name forwards to the entry. No hooks or scheduler are installed.
 
-`skill list` reports the installed catalog. `skill resolve` with a JSON request
-such as `{"name":"devflow-coordinating"}` returns the selected release's file.
+`skill list` reports the installed catalog. Save a JSON request such as
+`{"name":"devflow-coordinating"}` in `skill.json`, then run
+`scripts/devflow skill resolve --request-file skill.json --json` to return the
+selected release's file. JSON input is not a positional argument.
 For continuation, include the existing `--work-id`; read that immutable path
 rather than substituting newer global skill text. Missing historical stages
 require compatible recovery or a recorded upgrade. `next` names each action's
 owning skill and the separate assigned role skill.
+
+Review/QA handoffs include each check's evidence ID, artifact hash and explicit
+private state root. Retained JSON lives at `<state-root>/artifacts/<hash>` and
+contains the command output and available JUnit report. Verify the hash and use
+the pinned verification skill's check-evidence reference when present. An older
+compatible pin can inspect the verified artifact with standard file/JSON tools
+while retaining its existing pin and activation. Paths in recorded argv
+describe past execution; a removed temporary report does not require rerunning a
+passing check when its retained evidence and candidate inputs match.
 
 Run from a JobCtrl checkout:
 
