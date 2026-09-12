@@ -572,9 +572,12 @@ export const eventByType = {
   }),
   ApplicationSubmitted: createApplicationSubmitted(LOCAL_TENANT, {
     jobId: JOB_ID,
-    runId: RUN_ID,
-    appliedAt: NOW,
-    verificationConfidence: 0.92,
+    run_id: RUN_ID,
+    result: "applied",
+    finished_at: NOW,
+    duration_ms: 4000,
+    worker_id: 0,
+    model: "test-model",
   }),
   ApplicationFailed: createApplicationFailed(LOCAL_TENANT, {
     jobId: JOB_ID,
