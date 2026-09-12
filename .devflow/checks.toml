@@ -148,14 +148,14 @@ argv = ["/bin/bash", "-n", "scripts/dev"]
 [checks.optional-extension-worker]
 kind = "junit"
 description = "All acquisition families preserve guarded connected/offline persistence, profile consent, broker failures, checkpoints and stale-owner fences"
-argv = ["env", "-u", "UV_EXCLUDE_NEWER", "-u", "UV_EXCLUDE_NEWER_PACKAGE", "uv", "run", "--project", "workers/automation", "--locked", "--all-extras", "--exclude-newer", "false", "pytest", "-q", "workers/automation/tests/test_optional_extension.py", "workers/automation/tests/test_live_browser_discovery.py", "workers/automation/tests/test_enrichment_politeness_gate.py", "workers/automation/tests/test_discovery_production_wiring.py", "workers/automation/tests/test_workday_gateway_routing.py", "workers/automation/tests/test_smartextract_discovery.py", "workers/automation/tests/test_discovery_search_units.py", "--junitxml={report_path}"]
+argv = ["env", "-u", "UV_PROJECT_ENVIRONMENT", "-u", "VIRTUAL_ENV", "-u", "UV_EXCLUDE_NEWER", "-u", "UV_EXCLUDE_NEWER_PACKAGE", "uv", "run", "--project", "workers/automation", "--locked", "--all-extras", "--exclude-newer", "false", "pytest", "-q", "workers/automation/tests/test_optional_extension.py", "workers/automation/tests/test_live_browser_discovery.py", "workers/automation/tests/test_enrichment_politeness_gate.py", "workers/automation/tests/test_discovery_production_wiring.py", "workers/automation/tests/test_workday_gateway_routing.py", "workers/automation/tests/test_smartextract_discovery.py", "workers/automation/tests/test_discovery_search_units.py", "--junitxml={report_path}"]
 min_executed = 115
 timeout_seconds = 300
 
 [checks.optional-extension-api]
 kind = "junit"
 description = "Offline discovery and enrichment launch/retry routes dispatch while worker readiness and broker authorization stay enforced"
-argv = ["corepack", "pnpm", "--filter", "@jobctrl/api", "exec", "vitest", "run", "test/server.test.ts", "--reporter=junit", "--outputFile={report_path}"]
+argv = ["env", "-u", "UV_PROJECT_ENVIRONMENT", "-u", "VIRTUAL_ENV", "corepack", "pnpm", "--filter", "@jobctrl/api", "exec", "vitest", "run", "test/server.test.ts", "--reporter=junit", "--outputFile={report_path}"]
 min_executed = 249
 timeout_seconds = 300
 
@@ -169,6 +169,12 @@ timeout_seconds = 300
 [checks.optional-extension-browser]
 kind = "junit"
 description = "Owned Chromium UI and real fixture API accept offline Discovery and show connected preference; dispatch is stubbed and worker persistence is covered separately"
-argv = ["env", "UV_EXCLUDE_NEWER=false", "UV_LOCKED=1", "PLAYWRIGHT_JUNIT_OUTPUT_FILE={report_path}", "JOBCTRL_E2E_ISOLATED=1", "JOBCTRL_E2E_API_PORT=18976", "JOBCTRL_E2E_WEB_PORT=18977", "corepack", "pnpm", "--filter", "@jobctrl/web", "exec", "playwright", "test", "--config=e2e/playwright.config.ts", "tests/optional-extension.spec.ts", "--project=chromium", "--reporter=junit"]
+argv = ["env", "-u", "UV_PROJECT_ENVIRONMENT", "-u", "VIRTUAL_ENV", "UV_EXCLUDE_NEWER=false", "UV_LOCKED=1", "PLAYWRIGHT_JUNIT_OUTPUT_FILE={report_path}", "JOBCTRL_E2E_ISOLATED=1", "JOBCTRL_E2E_API_PORT=18976", "JOBCTRL_E2E_WEB_PORT=18977", "corepack", "pnpm", "--filter", "@jobctrl/web", "exec", "playwright", "test", "--config=e2e/playwright.config.ts", "tests/optional-extension.spec.ts", "--project=chromium", "--reporter=junit"]
 min_executed = 1
 timeout_seconds = 600
+
+[checks.optional-extension-python-lint]
+kind = "static"
+description = "Worker Ruff uses the repository environment without inheriting the workflow tool environment"
+argv = ["env", "-u", "UV_PROJECT_ENVIRONMENT", "-u", "VIRTUAL_ENV", "-u", "UV_EXCLUDE_NEWER", "-u", "UV_EXCLUDE_NEWER_PACKAGE", "uv", "run", "--project", "workers/automation", "--locked", "--all-extras", "--exclude-newer", "false", "ruff", "check", "."]
+timeout_seconds = 300
