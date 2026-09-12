@@ -718,6 +718,10 @@ def _public_provider_session(transport: Any, *, cancel_event: threading.Event | 
     else:
         raise ConfigurationError("Unsupported anonymous Discovery provider transport")
 
+    # Requests otherwise discovers local netrc credentials before send() and
+    # again when rebuilding redirect auth. Anonymous acquisition must not adopt
+    # them; explicit provider headers/auth and cookies retain Requests semantics.
+    session.trust_env = False
     if getattr(session, "_jobctrl_public_guarded", False):
         return session
     original_send = session.send
@@ -732,7 +736,13 @@ def _public_provider_session(transport: Any, *, cancel_event: threading.Event | 
                 failure_kind=decision.failure_kind or PublicFetchFailureKind.UNSAFE_DESTINATION,
                 destination_url=request.url,
             )
-        if requests.utils.select_proxy(request.url, kwargs.get("proxies") or {}):
+        proxies = kwargs.get("proxies") or {}
+        # trust_env=False also disables automatic environment proxy selection.
+        # Check it explicitly on every hop so it cannot silently become direct.
+        environment_proxies = requests.utils.get_environ_proxies(request.url, no_proxy=proxies.get("no_proxy"))
+        if requests.utils.select_proxy(request.url, proxies) or requests.utils.select_proxy(
+            request.url, environment_proxies
+        ):
             raise ConfigurationError("Anonymous Discovery cannot pin destination DNS through a proxy")
         if cancel_event is not None and cancel_event.is_set():
             raise TransientNetworkError("Discovery acquisition canceled")

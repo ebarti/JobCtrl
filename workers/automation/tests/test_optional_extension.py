@@ -363,7 +363,7 @@ def test_jobstreaming_selected_transport_keeps_checkpoint_and_execution_cohort(
 
 
 @pytest.fixture
-def public_provider_network(monkeypatch):
+def public_provider_network(monkeypatch, tmp_path):
     """Controlled DNS and a hard socket sentinel: no source traffic is possible."""
     import socket
 
@@ -376,8 +376,20 @@ def public_provider_network(monkeypatch):
     monkeypatch.setattr(socket, "getaddrinfo", resolve)
     monkeypatch.setattr(socket, "socket", no_socket)
     monkeypatch.setattr(socket, "create_connection", no_socket)
-    for variable in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
+    for variable in (
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+        "NO_PROXY",
+        "no_proxy",
+    ):
         monkeypatch.delenv(variable, raising=False)
+    empty_netrc = tmp_path / "empty-netrc"
+    empty_netrc.write_text("")
+    monkeypatch.setenv("NETRC", str(empty_netrc))
     return resolve
 
 
@@ -403,6 +415,129 @@ def _provider_response(request, status=200, *, body=b"", headers=None):
     response._content = body
     response.raw = BytesIO(body)
     return response
+
+
+@pytest.fixture(params=["environment", "default"])
+def owned_provider_netrc(monkeypatch, tmp_path, offline_provider_registry, request):
+    """A real synthetic netrc entry, with no access to personal credential files."""
+    import requests.sessions
+    import requests.utils
+
+    netrc = tmp_path / "fixture-netrc"
+    netrc.write_text("default login fixture-user password fixture-secret\n")
+    netrc.chmod(0o600)
+    if request.param == "environment":
+        monkeypatch.setenv("NETRC", str(netrc))
+    else:
+        monkeypatch.delenv("NETRC")
+        expanduser = requests.utils.os.path.expanduser
+        monkeypatch.setattr(
+            requests.utils.os.path,
+            "expanduser",
+            lambda path: str(netrc) if path in ("~/.netrc", "~/_netrc") else expanduser(path),
+        )
+    lookups = []
+    get_netrc_auth = requests.sessions.get_netrc_auth
+
+    def lookup(url, *args, **kwargs):
+        lookups.append(url)
+        return get_netrc_auth(url, *args, **kwargs)
+
+    monkeypatch.setattr(requests.sessions, "get_netrc_auth", lookup)
+    return lookups
+
+
+def _anonymous_provider_session(provider, site_name):
+    if site_name == "bdjobs":
+        return provider._detail_session()
+    if site_name in ("glassdoor", "zip_recruiter"):
+        return provider._get_detail_session()
+    return provider.session
+
+
+@pytest.mark.parametrize("site_name", ["linkedin", "glassdoor", "zip_recruiter", "bdjobs"])
+def test_anonymous_provider_sessions_do_not_read_netrc(
+    monkeypatch, offline_provider_registry, owned_provider_netrc, site_name
+):
+    import requests
+    from jobstreaming import Site
+
+    sent = []
+
+    def send(_adapter, request, **_kwargs):
+        sent.append(request.headers.get("Authorization"))
+        redirects = {"/start": "https://jobs.example/middle", "/middle": "https://other.example/final"}
+        location = redirects.get(request.path_url)
+        return _provider_response(request, 302 if location else 200, headers={"Location": location} if location else {})
+
+    monkeypatch.setattr(requests.adapters.HTTPAdapter, "send", send)
+    provider = offline_provider_registry.create(Site(site_name))
+    try:
+        session = _anonymous_provider_session(provider, site_name)
+        response = session.get("https://jobs.example/start", allow_redirects=True)
+        assert response.status_code == 200 and len(response.history) == 2
+        assert sent == [None, None, None]
+        assert owned_provider_netrc == []
+
+        # Provider protocol auth survives same-origin redirects; Requests still
+        # removes it at an origin change without consulting ambient credentials.
+        session.headers["Authorization"] = "Bearer provider-fixture"
+        session.get("https://jobs.example/start", allow_redirects=True)
+        assert sent[3:] == ["Bearer provider-fixture", "Bearer provider-fixture", None]
+        assert owned_provider_netrc == []
+    finally:
+        provider.close()
+
+
+def test_recreated_google_sessions_do_not_read_netrc(monkeypatch, offline_provider_registry, owned_provider_netrc):
+    import requests
+    from jobstreaming import ScraperInput, Site
+
+    sent = []
+    monkeypatch.setattr(
+        requests.adapters.HTTPAdapter,
+        "send",
+        lambda _adapter, request, **_kw: (
+            sent.append(request.headers.get("Authorization")) or _provider_response(request)
+        ),
+    )
+    provider = offline_provider_registry.create(Site.GOOGLE)
+    query = ScraperInput(site_type=[Site.GOOGLE], search_term="fixture", results_wanted=1)
+    try:
+        assert provider.scrape(query).jobs == ()
+        initial = provider.session
+        assert provider.scrape(query).jobs == ()
+        assert provider.session is not initial
+        assert sent == [None, None]
+        assert owned_provider_netrc == []
+    finally:
+        provider.close()
+
+
+@pytest.mark.parametrize("auth_source", ["request", "session"])
+def test_anonymous_provider_preserves_explicit_auth(
+    monkeypatch, offline_provider_registry, owned_provider_netrc, auth_source
+):
+    import requests
+    from jobstreaming import Site
+
+    sent = []
+
+    def send(_adapter, request, **_kwargs):
+        sent.append(request.headers.get("Authorization"))
+        return _provider_response(request)
+
+    monkeypatch.setattr(requests.adapters.HTTPAdapter, "send", send)
+    provider = offline_provider_registry.create(Site.LINKEDIN)
+    try:
+        auth = ("explicit-fixture", "explicit-password")
+        if auth_source == "session":
+            provider.session.auth = auth
+        provider.session.get("https://jobs.example/start", **({"auth": auth} if auth_source == "request" else {}))
+        assert sent == [requests.auth._basic_auth_str(*auth)]
+        assert owned_provider_netrc == []
+    finally:
+        provider.close()
 
 
 @pytest.mark.parametrize("redirect", [False, True])
@@ -623,14 +758,62 @@ def test_real_provider_socket_path_blocks_private_dns_and_rebinding(
 
 
 @pytest.mark.parametrize("proxy", ["http://proxy.example:8080", "socks5://proxy.example:1080"])
-def test_anonymous_provider_rejects_proxy_routing_before_socket_io(offline_provider_registry, proxy):
+@pytest.mark.parametrize("site_name", ["linkedin", "glassdoor"])
+def test_anonymous_provider_rejects_proxy_routing_before_socket_io(offline_provider_registry, proxy, site_name):
     from jobstreaming import Site
     from jobctrl.domain.errors import ConfigurationError
 
-    provider = offline_provider_registry.create(Site.LINKEDIN, proxies=[proxy])
+    provider = offline_provider_registry.create(Site(site_name), proxies=[proxy])
     try:
         with pytest.raises(ConfigurationError, match="cannot pin destination DNS through a proxy"):
-            provider.session.get("https://jobs.example/start")
+            _anonymous_provider_session(provider, site_name).get("https://jobs.example/start")
+    finally:
+        provider.close()
+
+
+@pytest.mark.parametrize("site_name", ["linkedin", "glassdoor"])
+@pytest.mark.parametrize(
+    "variable", ["HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"]
+)
+def test_anonymous_provider_rejects_environment_proxy_routing(
+    monkeypatch, offline_provider_registry, variable, site_name
+):
+    from jobstreaming import Site
+    from jobctrl.domain.errors import ConfigurationError
+
+    provider = offline_provider_registry.create(Site(site_name))
+    try:
+        session = _anonymous_provider_session(provider, site_name)
+        monkeypatch.setenv(variable, "http://proxy.example:8080")
+        scheme = "http" if variable.lower() == "http_proxy" else "https"
+        with pytest.raises(ConfigurationError, match="cannot pin destination DNS through a proxy"):
+            session.get(f"{scheme}://jobs.example/start")
+    finally:
+        provider.close()
+
+
+@pytest.mark.parametrize("site_name", ["linkedin", "glassdoor"])
+def test_anonymous_provider_rechecks_environment_proxy_after_no_proxy_redirect(
+    monkeypatch, offline_provider_registry, site_name
+):
+    import requests
+    from jobstreaming import Site
+    from jobctrl.domain.errors import ConfigurationError
+
+    sent = []
+
+    def send(_adapter, request, **_kwargs):
+        sent.append(request.url)
+        return _provider_response(request, 302, headers={"Location": "https://other.example/final"})
+
+    monkeypatch.setattr(requests.adapters.HTTPAdapter, "send", send)
+    monkeypatch.setenv("HTTPS_PROXY", "http://proxy.example:8080")
+    monkeypatch.setenv("NO_PROXY", "jobs.example")
+    provider = offline_provider_registry.create(Site(site_name))
+    try:
+        with pytest.raises(ConfigurationError, match="cannot pin destination DNS through a proxy"):
+            _anonymous_provider_session(provider, site_name).get("https://jobs.example/start", allow_redirects=True)
+        assert sent == ["https://jobs.example/start"]
     finally:
         provider.close()
 
