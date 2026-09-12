@@ -22,7 +22,7 @@
     "lint:test": "node --test scripts/lint-boundaries.test.mjs"
   },
   "dependencies": {
-    "@base-ui/react": "^1.6.0",
+    "@base-ui/react": "^1.7.0",
     "@fontsource-variable/geist": "^5.2.9",
     "@fontsource-variable/jetbrains-mono": "5.2.8",
     "@jobctrl/api-client": "workspace:*",
