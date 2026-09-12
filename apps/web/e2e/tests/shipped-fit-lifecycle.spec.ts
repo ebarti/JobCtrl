@@ -21,8 +21,9 @@ for (const lifecycle of ["post_voice_shipped", "post_acceptance_audit"] as const
       const response = await queueResponse;
       expect(response.status()).toBe(200);
       const queue = await response.json() as ApplyReviewQueueResponse;
-      const item = queue.items.find((candidate) => candidate.jobKey === QA_PLATFORM_JOB_ID)!;
-      const audit = item.materialsPreview.requirementLedAudit!;
+      const item = queue.items.find((candidate) => candidate.jobKey === QA_PLATFORM_JOB_ID);
+      expect(item, "The synthetic audit job must remain eligible after earlier browser fixtures").toBeDefined();
+      const audit = item!.materialsPreview.requirementLedAudit!;
       expect(audit.shippedFit).toMatchObject({
         lifecycle, score: lifecycle === "post_voice_shipped" ? 6 : 5,
         mustHaveCoverage: lifecycle === "post_voice_shipped" ? 1 : 0.5, passed: false,
