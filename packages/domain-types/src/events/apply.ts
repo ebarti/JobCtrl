@@ -9,11 +9,15 @@ import { type DomainEvent, createDomainEvent } from "./base.js";
 
 // -- ApplicationSubmitted ---------------------------------------------------
 
+/** Launcher payload as persisted and delivered by SSE (lifecycle keys stay snake_case). */
 export interface ApplicationSubmittedPayload {
   readonly jobId: string;
-  readonly runId: string;
-  readonly appliedAt: string;
-  readonly verificationConfidence: number;
+  readonly run_id: string;
+  readonly result: "applied";
+  readonly finished_at: string;
+  readonly duration_ms: number | null;
+  readonly worker_id: number | null;
+  readonly model: string | null;
 }
 
 export type ApplicationSubmitted = DomainEvent<"ApplicationSubmitted", ApplicationSubmittedPayload>;

@@ -302,6 +302,14 @@ Two patterns exist; both have a place:
 The router never resets component-owned filters, selection, pagination, or
 scroll position. A query update changes data under the existing view state.
 
+### Submission completion
+
+`ApplicationSubmitted` retains the launcher's persisted `run_id` through SSE
+parsing. Its apply-owned handler uses that identity for both apply-run and
+workflow-run detail invalidation, so open run details refetch their terminal
+projection. Job list/detail, run lists, Dashboard and submission analytics also
+refresh; other runs and tenants keep their detail caches.
+
 ### Dry-run completion
 
 `DryRunCompleted` uses the launcher's persisted `run_id` to invalidate apply-run

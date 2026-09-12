@@ -116,9 +116,9 @@ export const applicationSubmittedHandler = (
   invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
   invalidate(jobsKeys.lists(event.tenantId)),
   invalidate(applyRunsKeys.lists(event.tenantId)),
-  invalidate(applyRunsKeys.detail(event.tenantId, event.payload.runId)),
+  invalidate(applyRunsKeys.detail(event.tenantId, event.payload.run_id)),
   invalidate(workflowRunsKeys.lists(event.tenantId)),
-  invalidate(workflowRunsKeys.detail(event.tenantId, event.payload.runId)),
+  invalidate(workflowRunsKeys.detail(event.tenantId, event.payload.run_id)),
   invalidate(dashboardKeys.summary(event.tenantId)),
   invalidate(analyticsKeys.all(event.tenantId)),
 ];

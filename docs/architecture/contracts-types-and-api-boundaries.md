@@ -55,6 +55,12 @@ TypeScript vocabulary stays in `domain-types`, while Python aggregates remain
 authoritative for their behavior and invariants. The contract package exposes
 only the wire-safe shapes API consumers need.
 
+`ApplicationSubmitted` models the existing launcher payload in the shared event
+union: `run_id`, `result: "applied"`, `finished_at`, nullable `duration_ms`,
+nullable numeric `worker_id`, and nullable `model`, plus canonical `jobId`.
+The SSE envelope and browser parser preserve these lifecycle field names;
+consumers use `run_id` to identify the submitted run.
+
 `DryRunCompleted` models the existing launcher payload in the shared event union.
 Its lifecycle fields (`run_id`, `finished_at`, `dry_run`, and evidence bindings)
 retain their persisted snake_case names; SSE adds canonical `jobId`/`tenantId`
