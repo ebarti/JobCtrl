@@ -25,14 +25,14 @@ describe("cancelJobAction", () => {
     db = new Database(dbPath);
     db.prepare(
       `INSERT INTO jobs (
-         tenant_id, job_id, url, application_url,
+         tenant_id, job_id, url,
          detail_scraped_at, detail_error,
          fit_score, score_reasoning, scored_at,
          tailored_resume_path, tailored_at, tailor_attempts,
          cover_letter_path, cover_letter_at, cover_attempts,
          applied_at, apply_status, apply_error, apply_attempts,
          agent_id, apply_task_id
-       ) VALUES (?, ?, ?, ?, ?, 'retired-detail-error', 10, 'retired-score', ?,
+       ) VALUES (?, ?, ?, ?, 'retired-detail-error', 10, 'retired-score', ?,
                  '/tmp/retired-resume.txt', ?, 4,
                  '/tmp/retired-cover.txt', ?, 3,
                  ?, 'retired-status', 'retired-apply-error', 2,
@@ -41,7 +41,6 @@ describe("cancelJobAction", () => {
       TENANT_ID,
       JOB_ID,
       JOB_URL,
-      `${JOB_URL}/apply`,
       RETIRED_AT,
       RETIRED_AT,
       RETIRED_AT,

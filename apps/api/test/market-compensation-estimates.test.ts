@@ -49,7 +49,8 @@ function seedDatabase(dbPath: string): void {
     "Short description",
     "Full private description that must never appear",
   );
-  db.prepare("UPDATE jobs SET application_url = ? WHERE tenant_id = 'local' AND job_id = ?").run(
+  db.prepare(`INSERT INTO job_enrichments (application_url, job_id, tenant_id, current_status, updated_at)
+    VALUES (?, ?, 'local', 'pending', '2026-08-01T00:00:00Z')`).run(
     ESTIMATED_APPLICATION_URL,
     ESTIMATED_JOB_ID,
   );

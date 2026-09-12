@@ -314,9 +314,8 @@ def resolve_all_urls(conn: sqlite3.Connection) -> dict:
         else:
             failed += 1
 
-    # Note: legacy ``jobs.application_url`` is NO LONGER updated here.
-    # New enrichment writes target ``job_enrichments.application_url``;
-    # the legacy column is read-only fallback for un-backfilled rows.
+    # Application targets belong to ``job_enrichments.application_url``;
+    # changing a posting locator does not rewrite the application target.
     conn.commit()
     return {
         "resolved": resolved,
@@ -742,9 +741,10 @@ def _discovery_description_fallback(
     """Return discovery-owned content that is usable as enrichment fallback."""
     row = conn.execute(
         """
-        SELECT full_description, description, application_url
-        FROM jobs
-        WHERE tenant_id = ? AND job_id = ?
+        SELECT j.full_description, j.description, e.application_url
+        FROM jobs j LEFT JOIN job_enrichments e
+          ON e.tenant_id = j.tenant_id AND e.job_id = j.job_id
+        WHERE j.tenant_id = ? AND j.job_id = ?
         """,
         (str(tenant_id), str(job_id)),
     ).fetchone()

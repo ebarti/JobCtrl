@@ -621,7 +621,6 @@ def _refresh_existing_jobspy_job(
             site = COALESCE(NULLIF(?, ''), site),
             strategy = COALESCE(NULLIF(?, ''), strategy),
             full_description = COALESCE(NULLIF(?, ''), full_description),
-            application_url = COALESCE(NULLIF(?, ''), application_url),
             detail_scraped_at = COALESCE(?, detail_scraped_at)
         WHERE tenant_id = ? AND job_id = ?
         """,
@@ -634,12 +633,28 @@ def _refresh_existing_jobspy_job(
             site,
             strategy,
             full_description,
-            application_url,
             detail_scraped_at,
             str(LOCAL_TENANT),
             str(identity.job_id),
         ),
     )
+    if application_url:
+        # A discovery lead can fill an absent target without replacing accepted
+        # enrichment. Retain every observed endpoint for tenant-scoped lookup.
+        conn.execute(
+            """INSERT INTO job_enrichments (
+                 tenant_id, job_id, current_status, application_url, updated_at
+               ) VALUES (?, ?, 'pending', ?, ?)
+               ON CONFLICT (tenant_id, job_id) DO UPDATE SET
+                 application_url = COALESCE(NULLIF(job_enrichments.application_url, ''), excluded.application_url)
+            """,
+            (str(LOCAL_TENANT), str(identity.job_id), application_url, updated_at),
+        )
+        conn.execute(
+            """INSERT INTO job_application_locators (tenant_id, job_id, application_url)
+               VALUES (?, ?, ?) ON CONFLICT DO NOTHING""",
+            (str(LOCAL_TENANT), str(identity.job_id), application_url),
+        )
     if cursor.rowcount:
         from jobctrl.state import record_job_event
 

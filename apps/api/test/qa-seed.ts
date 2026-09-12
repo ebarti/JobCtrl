@@ -1,3 +1,4 @@
+import { seedApplicationUrl } from "./seed-enrichment.js";
 import fs from "node:fs";
 import { createHash } from "node:crypto";
 import os from "node:os";
@@ -1921,10 +1922,10 @@ function seedWorkerHeartbeat(db: Database.Database, dbPath: string): void {
 function insertJob(db: Database.Database, job: QaJobSeed): void {
   db.prepare(
     `INSERT INTO jobs (
-      url, tenant_id, job_id, title, company, site, strategy, location, salary, discovered_at, application_url,
+      url, tenant_id, job_id, title, company, site, strategy, location, salary, discovered_at,
       description, full_description, detail_scraped_at, fit_score, score_reasoning,
       scored_at, tailored_resume_path, tailored_at
-    ) VALUES (?, 'local', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, 'local', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     job.url,
     qaJobId(job.url),
@@ -1935,7 +1936,6 @@ function insertJob(db: Database.Database, job: QaJobSeed): void {
     job.location ?? "Remote",
     "",
     QA_NOW,
-    job.applicationUrl ?? job.url,
     job.description ?? "QA job description",
     job.fullDescription ?? job.description ?? "QA job description",
     QA_NOW,
@@ -1945,6 +1945,7 @@ function insertJob(db: Database.Database, job: QaJobSeed): void {
     null,
     null,
   );
+  seedApplicationUrl(db, "local", qaJobId(job.url), job.applicationUrl ?? job.url);
 }
 
 function qaJobId(jobUrl: string): string {

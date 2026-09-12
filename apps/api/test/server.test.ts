@@ -1,3 +1,4 @@
+import { seedApplicationUrl } from "./seed-enrichment.js";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -7692,7 +7693,7 @@ describe("local TypeScript API", () => {
       `INSERT INTO job_enrichments (
          tenant_id, job_id, current_status, full_description, application_url,
          enriched_at, extraction_tier, attempts_json, updated_at
-       ) VALUES ('local', ?, 'pending', NULL, NULL, NULL, NULL, '[]', ?)`,
+       ) VALUES ('local', ?, 'pending', NULL, NULL, NULL, NULL, '[]', ?) ON CONFLICT (tenant_id, job_id) DO UPDATE SET application_url = NULL`,
     ).run(jobIdFor(pendingEnrichUrl), "2026-08-05T23:15:00.000Z");
     insertJob(seedDb, {
       url: pendingScoreUrl,
@@ -8034,7 +8035,11 @@ describe("local TypeScript API", () => {
          job_id, tenant_id, current_status, full_description,
          application_url, enriched_at, extraction_tier,
          attempts_json, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT (tenant_id, job_id) DO UPDATE SET current_status = excluded.current_status,
+         full_description = excluded.full_description, application_url = excluded.application_url,
+         enriched_at = excluded.enriched_at, extraction_tier = excluded.extraction_tier,
+         attempts_json = excluded.attempts_json, updated_at = excluded.updated_at`,
     ).run(
       jobIdFor("https://example.com/jobs/failed-score"),
       "local",
@@ -8117,6 +8122,10 @@ describe("local TypeScript API", () => {
   });
 
   it("retry-enrich is a no-op when no job_enrichments row exists", async () => {
+    const seedDb = new Database(options.dbPath);
+    seedDb.prepare("DELETE FROM job_enrichments WHERE tenant_id = 'local' AND job_id = ?")
+      .run(jobIdFor("https://example.com/jobs/blocked-tailor"));
+    seedDb.close();
     // Confirm ``resetEnrichmentAggregate`` doesn't crash when the
     // aggregate row was never written. Exact-v7 reset is a 0-row aggregate
     // update and never falls back to retired wide job columns.
@@ -12209,8 +12218,8 @@ function seedExactV7CompensationDatabase(
   if (job) {
     db.prepare(
       `INSERT INTO jobs (
-        tenant_id, job_id, url, title, site, strategy, location, discovered_at, application_url
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        tenant_id, job_id, url, title, site, strategy, location, discovered_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       "local",
       job.jobId,
@@ -12220,8 +12229,8 @@ function seedExactV7CompensationDatabase(
       "test",
       "Remote",
       "2026-04-29T10:00:00+00:00",
-      `${job.postingUrl}/apply`,
     );
+    seedApplicationUrl(db, "local", job.jobId, `${job.postingUrl}/apply`);
   }
   db.close();
 }
@@ -12655,10 +12664,10 @@ function insertJob(
 ): void {
   db.prepare(
     `INSERT INTO jobs (
-      tenant_id, job_id, url, title, site, company, strategy, location, salary, discovered_at, application_url,
+      tenant_id, job_id, url, title, site, company, strategy, location, salary, discovered_at,
       description, full_description, detail_scraped_at, fit_score, score_reasoning,
       scored_at, tailored_resume_path, tailored_at
-    ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     jobIdFor(job.url),
     job.url,
@@ -12669,7 +12678,6 @@ function insertJob(
     "Remote",
     "",
     "2026-04-29T10:00:00+00:00",
-    job.url,
     job.description ?? "Short description",
     job.fullDescription ?? "Long description",
     "2026-04-29T10:01:00+00:00",
@@ -12679,6 +12687,7 @@ function insertJob(
     job.tailoredPath ?? null,
     job.tailoredPath ? "2026-04-29T10:03:00+00:00" : null,
   );
+  seedApplicationUrl(db, "local", jobIdFor(job.url), job.url);
 }
 
 function jobIdFor(jobUrl: string): string {
@@ -12695,7 +12704,8 @@ function insertEnrichment(
     `INSERT INTO job_enrichments (
        tenant_id, job_id, current_status, full_description, application_url,
        enriched_at, extraction_tier, attempts_json, updated_at
-     ) VALUES ('local', ?, 'enriched', ?, ?, ?, 'css_selectors', '[]', ?)`,
+     ) VALUES ('local', ?, 'enriched', ?, ?, ?, 'css_selectors', '[]', ?)
+     ON CONFLICT (tenant_id, job_id) DO UPDATE SET current_status = excluded.current_status, full_description = excluded.full_description, application_url = excluded.application_url, enriched_at = excluded.enriched_at, extraction_tier = excluded.extraction_tier, updated_at = excluded.updated_at`,
   ).run(
     jobIdFor(jobUrl),
     fullDescription,

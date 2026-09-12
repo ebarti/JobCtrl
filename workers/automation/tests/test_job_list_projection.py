@@ -44,8 +44,8 @@ def _seed_job(
         """
         INSERT INTO jobs (
             tenant_id, job_id, url, title, site, strategy, location, salary,
-            discovered_at, application_url, description
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            discovered_at, description
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             str(LOCAL_TENANT),
@@ -57,9 +57,13 @@ def _seed_job(
             "Remote",
             "$$$",
             "2026-05-04T12:00:00+00:00",
-            url,
             "Short job description",
         ),
+    )
+    conn.execute(
+        "INSERT INTO job_enrichments(tenant_id,job_id,current_status,application_url,updated_at) "
+        "VALUES (?,?,'pending',?,?)",
+        (str(LOCAL_TENANT), str(job_id), url, "2026-05-04T12:00:00+00:00"),
     )
     conn.commit()
     return job_id

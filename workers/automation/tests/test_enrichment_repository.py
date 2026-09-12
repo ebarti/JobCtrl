@@ -367,3 +367,31 @@ def test_shared_url_never_crosses_tenant_job_identity_on_save_load_or_update(
     assert other.full_description is not None
     assert other.full_description.text == "other description"
     assert repo.load(LOCAL_TENANT, other_job_id) is None
+
+
+def test_save_keeps_old_application_aliases_shared_urls_and_transaction_boundaries(conn: sqlite3.Connection) -> None:
+    from dataclasses import replace
+
+    from jobctrl.infrastructure.job_locators import resolve_job_locator
+
+    first_id = _job_id(tenant_id=LOCAL_TENANT, url='https://post/first')
+    second_id = _job_id(tenant_id=LOCAL_TENANT, url='https://post/second')
+    for job_id, posting in [(first_id, 'https://post/first'), (second_id, 'https://post/second')]:
+        _insert_job(conn, tenant_id=LOCAL_TENANT, job_id=job_id, url=posting)
+    repo = SqliteEnrichmentRepository(conn)
+    original = _enriched(tenant_id=LOCAL_TENANT, job_id=first_id)
+    repo.save(original)
+    changed = replace(original, application_url=ApplicationUrl(value='https://canonical/new'))
+    repo.save(changed, commit=False)
+    assert resolve_job_locator(conn, 'local', 'https://canonical/new') == (str(first_id), 'https://post/first')
+    conn.rollback()
+    assert resolve_job_locator(conn, 'local', 'https://canonical/new') is None
+    repo.save(changed)
+    assert resolve_job_locator(conn, 'local', 'https://example.test/apply') == (str(first_id), 'https://post/first')
+    repo.save(_enriched(tenant_id=LOCAL_TENANT, job_id=second_id))
+    assert resolve_job_locator(conn, 'local', 'https://example.test/apply') is None
+    assert repo.load(LOCAL_TENANT, first_id).application_url.value == 'https://canonical/new'
+    assert repo.load(LOCAL_TENANT, second_id).application_url.value == 'https://example.test/apply'
+    conn.execute('DELETE FROM jobs WHERE tenant_id=? AND job_id=?', (str(LOCAL_TENANT), str(first_id)))
+    assert conn.execute('SELECT COUNT(*) FROM job_application_locators WHERE job_id=?', (str(first_id),)).fetchone()[0] == 0
+    assert resolve_job_locator(conn, 'local', 'https://example.test/apply') == (str(second_id), 'https://post/second')

@@ -501,18 +501,31 @@ def _update_detail_columns(conn: sqlite3.Connection, job: dict, url: str, now: s
         """
         UPDATE jobs
         SET full_description = COALESCE(?, full_description),
-            application_url = COALESCE(?, application_url),
             detail_scraped_at = COALESCE(?, detail_scraped_at),
             detail_error = COALESCE(?, detail_error)
-        WHERE url = ?
+        WHERE tenant_id = ? AND url = ?
         """,
         (
             full_description,
-            url,
             now if full_description else None,
             job.get("detail_error"),
+            str(LOCAL_TENANT),
             url,
         ),
+    )
+    conn.execute(
+        """INSERT INTO job_enrichments (tenant_id, job_id, current_status, application_url, updated_at)
+           SELECT tenant_id, job_id, 'pending', ?, ? FROM jobs WHERE tenant_id = ? AND url = ?
+           ON CONFLICT (tenant_id, job_id) DO UPDATE SET
+             application_url = COALESCE(NULLIF(job_enrichments.application_url, ''), excluded.application_url)
+        """,
+        (url, now, str(LOCAL_TENANT), url),
+    )
+    conn.execute(
+        """INSERT INTO job_application_locators (tenant_id, job_id, application_url)
+           SELECT tenant_id, job_id, ? FROM jobs WHERE tenant_id = ? AND url = ?
+           ON CONFLICT DO NOTHING""",
+        (url, str(LOCAL_TENANT), url),
     )
 
 

@@ -1,3 +1,4 @@
+import { resolveJobLocator } from "./job-locators.js";
 import crypto from "node:crypto";
 
 import type {
@@ -147,27 +148,7 @@ function resolveJobIdentity(
   tenantId: string,
   jobLocator: string,
 ): ResolvedJobIdentity | null {
-  const row = getRow<{ job_id?: string; url?: string }>(
-    db,
-    `SELECT job_id, url
-       FROM jobs
-      WHERE tenant_id = ?
-        AND (
-          job_id = ?
-          OR url = ?
-          OR application_url = ?
-          OR EXISTS (
-            SELECT 1
-              FROM job_locators
-             WHERE job_locators.tenant_id = jobs.tenant_id
-               AND job_locators.job_id = jobs.job_id
-               AND job_locators.locator_value = ?
-          )
-        )
-      LIMIT 1`,
-    [tenantId, jobLocator, jobLocator, jobLocator, jobLocator],
-  );
-  return row?.job_id && row.url ? { jobId: row.job_id, jobUrl: row.url } : null;
+  return resolveJobLocator(db, tenantId, jobLocator);
 }
 
 export function resetJobStage(
@@ -875,6 +856,16 @@ function purgeJobRows(db: SqliteDatabase, tenantId: string, jobId: string): void
     [tenantId, jobId, jobId],
   );
   for (const locatorValue of locatorValues) {
+    // An application form can belong to several jobs. Retain another job's
+    // duplicate-rejection evidence when a shared locator survives this purge.
+    if (getRow(db, `SELECT 1 FROM jobs j WHERE j.tenant_id = ? AND j.job_id != ? AND (
+      j.url = ? OR EXISTS (SELECT 1 FROM job_enrichments e WHERE e.tenant_id = j.tenant_id
+        AND e.job_id = j.job_id AND e.application_url = ?)
+      OR EXISTS (SELECT 1 FROM job_application_locators a WHERE a.tenant_id = j.tenant_id
+        AND a.job_id = j.job_id AND a.application_url = ?)
+      OR EXISTS (SELECT 1 FROM job_locators l WHERE l.tenant_id = j.tenant_id
+        AND l.job_id = j.job_id AND l.locator_value = ?)
+    ) LIMIT 1`, [tenantId, jobId, locatorValue, locatorValue, locatorValue, locatorValue])) continue;
     deleteExactV7Rows(
       db,
       "job_rejected_duplicate_links",
@@ -892,11 +883,18 @@ function jobLocatorValues(db: SqliteDatabase, tenantId: string, jobId: string): 
   const values = new Set<string>();
   const job = getRow<{ url: string | null; application_url: string | null }>(
     db,
-    "SELECT url, application_url FROM jobs WHERE tenant_id = ? AND job_id = ?",
+    "SELECT j.url, e.application_url FROM jobs j LEFT JOIN job_enrichments e ON e.tenant_id = j.tenant_id AND e.job_id = j.job_id WHERE j.tenant_id = ? AND j.job_id = ?",
     [tenantId, jobId],
   );
   for (const value of [job?.url, job?.application_url]) {
     if (value?.trim()) values.add(value);
+  }
+  for (const row of allRows<{ application_url: string }>(
+    db,
+    "SELECT application_url FROM job_application_locators WHERE tenant_id = ? AND job_id = ?",
+    [tenantId, jobId],
+  )) {
+    if (row.application_url.trim()) values.add(row.application_url);
   }
   for (const row of allRows<{ locator_value: string }>(
     db,

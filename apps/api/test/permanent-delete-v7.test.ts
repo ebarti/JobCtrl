@@ -1,3 +1,4 @@
+import { seedApplicationUrl } from "./seed-enrichment.js";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -7,7 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { openDatabase } from "../src/db.js";
 import { rebuildTenantDeleteProjections } from "../src/projections.js";
-import { schemaManifest, EXACT_V9_SCHEMA_MANIFEST } from "../src/schema-manifest.js";
+import { schemaManifest, EXACT_V10_SCHEMA_MANIFEST } from "../src/schema-manifest.js";
 import { permanentlyDeleteJob } from "../src/write-model.js";
 import { initializeExactV7Database } from "./v7-schema.js";
 
@@ -38,9 +39,10 @@ function exactDatabase(): Database.Database {
 
 function insertJob(db: Database.Database, tenantId: string, jobId: string, url: string): void {
   db.prepare(
-    `INSERT INTO jobs (tenant_id, job_id, url, title, company, site, discovered_at, application_url)
-     VALUES (?, ?, ?, ?, 'Example', 'example', ?, ?)`,
-  ).run(tenantId, jobId, url, `Job ${jobId.slice(-3)}`, NOW, `${url}/apply`);
+    `INSERT INTO jobs (tenant_id, job_id, url, title, company, site, discovered_at)
+     VALUES (?, ?, ?, ?, 'Example', 'example', ?)`,
+  ).run(tenantId, jobId, url, `Job ${jobId.slice(-3)}`, NOW);
+  seedApplicationUrl(db, tenantId, jobId, `${url}/apply`);
 }
 
 function countRows(db: Database.Database, tableName: string, whereSql: string, params: unknown[] = []): number {
@@ -265,7 +267,13 @@ describe("exact-v7 permanent job deletion", () => {
   it("purges only the local Job aggregate, preserves independent history, and permits rediscovery", () => {
     const db = exactDatabase();
     seedExactV7DeleteGraph(db);
-    const manifestBefore = schemaManifest(db, EXACT_V9_SCHEMA_MANIFEST.version);
+    const sharedApplication = "https://apply.example.test/shared-form";
+    db.prepare("INSERT INTO job_application_locators VALUES ('local', ?, ?)").run(JOB_ID, sharedApplication);
+    db.prepare("INSERT INTO job_application_locators VALUES ('local', ?, ?)").run(ANCHOR_JOB_ID, sharedApplication);
+    db.prepare(`INSERT INTO job_rejected_duplicate_links (
+      tenant_id, owner_job_id, candidate_url, reason, rejected_at
+    ) VALUES ('local', ?, ?, 'shared form belongs to surviving job', ?)`).run(ANCHOR_JOB_ID, sharedApplication, NOW);
+    const manifestBefore = schemaManifest(db, EXACT_V10_SCHEMA_MANIFEST.version);
     const otherJobsBefore = rowSnapshot(db, "jobs", "tenant_id = ? AND job_id = ?", [OTHER_TENANT, JOB_ID]);
     const otherLocatorsBefore = rowSnapshot(db, "job_locators", "tenant_id = ? AND job_id = ?", [OTHER_TENANT, JOB_ID]);
     const otherEvidenceBefore = rowSnapshot(db, "evidence_usage_projections", "tenant_id = ?", [OTHER_TENANT]);
@@ -273,6 +281,9 @@ describe("exact-v7 permanent job deletion", () => {
 
     expect(db.pragma("foreign_keys", { simple: true })).toBe(1);
     expect(permanentlyDeleteJob(db, JOB_URL)).toEqual({ ok: true, count: 1, jobKeys: [JOB_ID] });
+    expect(countRows(db, "job_rejected_duplicate_links", "tenant_id = ? AND candidate_url = ?", ["local", sharedApplication])).toBe(1);
+    expect(db.prepare("SELECT job_id FROM job_application_locators WHERE application_url = ?").all(sharedApplication))
+      .toEqual([{ job_id: ANCHOR_JOB_ID }]);
 
     for (const tableName of [
       "jobs",
@@ -368,7 +379,7 @@ describe("exact-v7 permanent job deletion", () => {
       ]);
     }
     expect(db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
-    expect(schemaManifest(db, EXACT_V9_SCHEMA_MANIFEST.version)).toEqual(manifestBefore);
+    expect(schemaManifest(db, EXACT_V10_SCHEMA_MANIFEST.version)).toEqual(manifestBefore);
 
     expect(rowSnapshot(db, "jobs", "tenant_id = ? AND job_id = ?", [OTHER_TENANT, JOB_ID])).toEqual(otherJobsBefore);
     expect(rowSnapshot(db, "job_locators", "tenant_id = ? AND job_id = ?", [OTHER_TENANT, JOB_ID])).toEqual(otherLocatorsBefore);

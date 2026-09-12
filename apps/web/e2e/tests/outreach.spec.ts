@@ -22,6 +22,24 @@ const SENSITIVE_VALUES = [
   "Hi Casey, I saw the platform role and wanted to introduce myself.",
 ];
 
+test.afterEach(() => {
+  const db = new Database(loadE2eDbPath());
+  try {
+    db.transaction(() => {
+      db.prepare(
+        "DELETE FROM application_outcomes WHERE tenant_id = 'local' AND outcome_id = 'outcome-e2e-outreach' AND job_id = ?",
+      ).run(QA_PLATFORM_JOB_ID);
+      // A later canonical metadata refresh must not inherit this fixture's
+      // applied status. Rebuild through the normal API from remaining facts.
+      db.prepare(
+        "DELETE FROM job_list_projections WHERE tenant_id = 'local' AND job_id = ?",
+      ).run(QA_PLATFORM_JOB_ID);
+    })();
+  } finally {
+    db.close();
+  }
+});
+
 function tableExists(db: Database.Database, table: string): boolean {
   const row = db
     .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")

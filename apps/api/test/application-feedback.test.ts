@@ -1,3 +1,4 @@
+import { seedApplicationUrl } from "./seed-enrichment.js";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -549,7 +550,7 @@ describe("application feedback API", () => {
 
   it("uses the posting URL as the review apply target when direct application URL is missing", async () => {
     const db = new Database(options.dbPath);
-    db.prepare("UPDATE jobs SET application_url = NULL WHERE url = ?").run(READY_JOB);
+    db.prepare("UPDATE job_enrichments SET application_url = NULL WHERE job_id = (SELECT job_id FROM jobs WHERE url = ?)").run(READY_JOB);
     db.close();
     const app = buildApp(options);
 
@@ -1559,6 +1560,8 @@ describe("application feedback API", () => {
 
   it("rejects submit approval when the displayed review binding is stale", async () => {
     const db = new Database(options.dbPath);
+    db.prepare("INSERT INTO job_application_locators VALUES ('local', ?, ?)")
+      .run(READY_JOB_ID, "https://example.com/old-apply");
     db.prepare(
       "INSERT INTO candidate_profiles (tenant_id, profile_id, version, updated_at) VALUES ('local', 'default', ?, ?)",
     ).run(7, NOW);
@@ -1598,9 +1601,10 @@ describe("application feedback API", () => {
     expect(staleProfile.statusCode, staleProfile.body).toBe(409);
     expect(staleProfile.json()).toMatchObject({ ok: false, error: "approval_stale_profile" });
 
+    // A retained locator finds the job but cannot authorize its retired target.
     const staleUrl = await app.inject({
       method: "POST",
-      url: `/v1/jobs/${readyKey}/apply-review/decision`,
+      url: `/v1/jobs/${encodeURIComponent("https://example.com/old-apply")}/apply-review/decision`,
       payload: {
         decision: "approve_submit",
         materialsGeneration: 1,
@@ -2477,10 +2481,10 @@ function insertJob(
 ): void {
   db.prepare(
     `INSERT INTO jobs (
-       tenant_id, job_id, url, title, site, strategy, location, salary, discovered_at, application_url,
+       tenant_id, job_id, url, title, site, strategy, location, salary, discovered_at,
        description, full_description, detail_scraped_at, fit_score, score_reasoning,
        scored_at, tailored_resume_path, tailored_at, apply_status, applied_at
-     ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     job.jobId,
     job.url,
@@ -2490,7 +2494,6 @@ function insertJob(
     "Remote",
     "",
     NOW,
-    job.url,
     "Short description",
     "Full description",
     NOW,
@@ -2502,6 +2505,7 @@ function insertJob(
     job.appliedAt ? "applied" : null,
     job.appliedAt ?? null,
   );
+  seedApplicationUrl(db, "local", job.jobId, job.url);
   for (const stage of ["discover", "enrich", "score", "tailor", "cover"]) {
     insertStage(db, job.jobId, stage, "succeeded");
   }
