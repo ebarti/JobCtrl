@@ -37,7 +37,7 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     dashboardKeys.summary(LOCAL_TENANT),
     digestKeys.all(LOCAL_TENANT),
   ],
-  JobUpdated: [jobsKeys.lists(LOCAL_TENANT), jobsKeys.detail(LOCAL_TENANT, JOB_ID)],
+  JobUpdated: [dashboardKeys.summary(LOCAL_TENANT), jobsKeys.detail(LOCAL_TENANT, JOB_ID)],
   JobDeleted: [
     jobsKeys.lists(LOCAL_TENANT),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
@@ -147,7 +147,6 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     discoveryKeys.sourceQuality(LOCAL_TENANT),
   ],
   JobActiveStateChanged: [
-    jobsKeys.lists(LOCAL_TENANT),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     discoveryKeys.sourceQuality(LOCAL_TENANT),
     dashboardKeys.summary(LOCAL_TENANT),
@@ -183,7 +182,6 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
   ResumeApproved: [
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     jobsKeys.lists(LOCAL_TENANT),
-    artifactsKeys.lists(LOCAL_TENANT),
     dashboardKeys.summary(LOCAL_TENANT),
   ],
   ResumeFailed: [

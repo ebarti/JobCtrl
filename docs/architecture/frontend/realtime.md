@@ -204,21 +204,15 @@ patch instructions. The router lives in
 registered aggregate-owned handler:
 
 ```ts
-export const jobActiveStateChangedHandler = (event) => [
-  patchQuery(jobsKeys.detail(event.tenantId, event.payload.jobId),
-    (current) => patchJobActiveState(current, event.payload)),
-  invalidate(jobsKeys.lists(event.tenantId)),
-  invalidate(dashboardKeys.summary(event.tenantId)),
+export const jobUpdatedHandler = (event) => [
+  reconcileQuery(jobsKeys.lists(event.tenantId), (current, key) =>
+    reconcileJobUpdatedPage(current, key[4], event.payload)),
+  invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
 ];
 
-export const resumeApprovedHandler = (event) => [
-  patchQuery(jobsKeys.detail(event.tenantId, event.payload.jobId),
-    (current) => patchResumeApproved(current, event.payload)),
-  patchQuery(artifactsKeys.detail(event.tenantId, event.payload.artifactId),
-    (current) => patchResumeApproved(current, event.payload)),
-  invalidate(jobsKeys.lists(event.tenantId)),
-  invalidate(artifactsKeys.lists(event.tenantId)),
-];
+// reconcileQuery inspects existing tenant-scoped pages. Its updater returns
+// undefined when membership/order cannot be determined, causing exact-page
+// invalidation. Eligible pages update without refetching or replacing metadata.
 
 // Workflow lifecycle handlers patch the existing detail, then invalidate the
 // list/dashboard reads whose membership or aggregation may have changed.
@@ -228,7 +222,7 @@ export const resumeApprovedHandler = (event) => [
 In practice the per-event handler functions are authored in each aggregate
 context's `handlers.ts` (seven files: `discovery`, `enrichment`, `profile`,
 `scoring`, `materials`, `apply`, `pipeline`) and registered centrally in
-`invalidation-router.ts`, which exports `invalidate`, `patchQuery`,
+`invalidation-router.ts`, which exports `invalidate`, `patchQuery`, `reconcileQuery`,
 `patchApplyRunEvent`, and `useInvalidationRouter`. The illustration above
 inlines representative handlers for
 clarity; Operations itself has no `handlers.ts`.
@@ -287,11 +281,25 @@ Two patterns exist; both have a place:
 
 **Exact patch rules:**
 
-- `JobActiveStateChanged` patches an open job detail immediately; job lists and
-  Dashboard invalidate because active-state filters and aggregates can change.
-- `ResumeApproved` changes status only on an artifact already present in an
-  open job/artifact detail. It never creates a missing artifact; list pages
-  invalidate so persisted registration and filtering remain authoritative.
+- `JobUpdated` patches existing job-list title/company labels only when the
+  query's search, company filter and sort do not depend on those changed fields.
+  Unknown fields or malformed values retain exact-page invalidation. Dashboard
+  activity and stuck-work labels update immediately; its bundled activity,
+  aggregates and runtime data still require a bounded summary refresh. Apply-run
+  labels remain owned by their separately refreshed server projection.
+- `JobActiveStateChanged` patches job pages when the active/closed queue boundary
+  does not change, or when the query is for all, deleted or hidden jobs. A change
+  between active and closed classes invalidates active/closed pages, including
+  pages without the job, because page boundaries and totals can move.
+- `ResumeApproved` changes status on an artifact already present in a detail or
+  an eligible unfiltered, non-status-sorted artifact page. Artifact pages still
+  invalidate: approval can also register a PDF and suppress an older generation.
+  Status/search-filtered pages, missing artifacts and suppressed rows wait for
+  the canonical response. `PdfRendered` lacks the path/size/status needed to
+  patch a complete artifact, so bounded invalidation remains necessary.
+- List reconciliation never creates missing query entries, invents rows, alters
+  pagination totals or reorders a partial page. Already-invalidated or fetching
+  queries retain exact invalidation instead of making a partial update fresh.
 - `Workflow*` lifecycle events patch the matching run detail by exact workflow
   identity and append a deduplicated timeline entry. Run lists, Dashboard, and
   operations invalidate because status membership and aggregation can change.

@@ -134,6 +134,12 @@ export type InvalidationItem =
       readonly updater: (current: unknown) => unknown;
     }
   | {
+      readonly kind: "reconcile-query";
+      readonly queryKey: QueryKey;
+      readonly invalidateAfterPatch: boolean;
+      readonly updater: (current: unknown, queryKey: QueryKey) => unknown;
+    }
+  | {
       readonly kind: "apply-run-event-append";
       readonly tenantId: TenantId;
       readonly runId: string;
@@ -158,6 +164,19 @@ export const patchQuery = (
   queryKey,
   exact,
   updater,
+});
+
+// Returning undefined means the event cannot truthfully reconcile this query.
+// Only existing queries are inspected; fallback invalidation is exact per page.
+export const reconcileQuery = (
+  queryKey: QueryKey,
+  updater: (current: unknown, queryKey: QueryKey) => unknown,
+  options: { readonly invalidateAfterPatch?: boolean } = {},
+): InvalidationItem => ({
+  kind: "reconcile-query",
+  queryKey,
+  updater,
+  invalidateAfterPatch: options.invalidateAfterPatch ?? false,
 });
 
 export const patchApplyRunEvent = (
@@ -310,6 +329,25 @@ export const invalidationRouter: InvalidationRouter = {
           { queryKey: item.queryKey, exact: item.exact },
           item.updater,
         );
+        continue;
+      }
+      if (item.kind === "reconcile-query") {
+        for (const query of queryClient.getQueryCache().findAll({ queryKey: item.queryKey })) {
+          const current = query.state.data;
+          // Reconcile explicit invalidation and responses in flight on the server.
+          const next = query.state.isInvalidated || query.state.fetchStatus === "fetching"
+            ? undefined
+            : item.updater(current, query.queryKey);
+          if (next !== undefined && next !== current) {
+            // A partial event patch does not refresh unrelated fields.
+            queryClient.setQueryData(query.queryKey, next, {
+              updatedAt: query.state.dataUpdatedAt,
+            });
+          }
+          if (next === undefined || item.invalidateAfterPatch) {
+            void queryClient.invalidateQueries({ queryKey: query.queryKey, exact: true });
+          }
+        }
         continue;
       }
       // High-frequency `ApplyRunEventRecorded` events patch the apply-run

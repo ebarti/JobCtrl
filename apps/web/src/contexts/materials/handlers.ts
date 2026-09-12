@@ -23,17 +23,19 @@ import { dashboardKeys } from "../operations/dashboardKeys.js";
 import {
   invalidate,
   patchQuery,
+  reconcileQuery,
   type InvalidationItem,
 } from "../operations/invalidation-router.js";
 import { jobsKeys } from "../operations/jobsKeys.js";
-import { patchResumeApproved } from "../operations/realtimePatches.js";
+import { patchResumeApproved, reconcileResumeApprovedPage } from "../operations/realtimePatches.js";
 import { profileKeys } from "../profile/queryKeys.js";
+import type { ArtifactsListInput } from "../operations/types.js";
 
 export const resumeApprovedHandler = (
   event: ResumeApproved,
 ): readonly InvalidationItem[] => [
-  // Patch only already-registered detail rows. This event does not carry the
-  // complete artifact summary needed to insert or refilter an artifact page.
+  // Patch already-registered rows. Approval can also register PDFs and suppress
+  // older artifacts, so every artifact page still needs canonical reconciliation.
   patchQuery(
     jobsKeys.detail(event.tenantId, event.payload.jobId),
     (current) => patchResumeApproved(current, event.payload),
@@ -44,7 +46,11 @@ export const resumeApprovedHandler = (
   ),
   invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
   invalidate(jobsKeys.lists(event.tenantId)),
-  invalidate(artifactsKeys.lists(event.tenantId)),
+  reconcileQuery(
+    artifactsKeys.lists(event.tenantId),
+    (current, key) => reconcileResumeApprovedPage(current, key[4] as ArtifactsListInput, event.payload),
+    { invalidateAfterPatch: true },
+  ),
   invalidate(dashboardKeys.summary(event.tenantId)),
 ];
 
