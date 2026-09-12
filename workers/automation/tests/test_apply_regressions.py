@@ -1111,8 +1111,7 @@ def test_acquire_job_promotes_prior_apply_run_into_row_dict(tmp_path, monkeypatc
 
 def test_acquire_job_finds_new_path_enriched_job(tmp_path, monkeypatch):
     """``acquire_job`` must find jobs whose ``application_url`` lives
-    only in ``job_enrichments`` (the new write path leaves
-    ``jobs.application_url`` NULL)."""
+    only in canonical ``job_enrichments`` on exact v10."""
     from jobctrl.domain.enrichment import (
         ApplicationUrl,
         ExtractionTier,
@@ -1141,11 +1140,7 @@ def test_acquire_job_finds_new_path_enriched_job(tmp_path, monkeypatch):
             finished_at="t1",
         )
     )
-    legacy = conn.execute(
-        "SELECT application_url FROM jobs WHERE tenant_id = ? AND job_id = ?",
-        (LOCAL_TENANT, job_id),
-    ).fetchone()
-    assert legacy["application_url"] is None
+    assert "application_url" not in {row["name"] for row in conn.execute("PRAGMA table_info(jobs)")}
 
     try:
         monkeypatch.setattr("jobctrl.apply.launcher.get_connection", lambda: get_connection(db_path))

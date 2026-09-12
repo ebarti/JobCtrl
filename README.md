@@ -624,15 +624,15 @@ This writes `~/.jobctrl/backups/jobctrl-<timestamp>.db` via SQLite
 `VACUUM INTO` and never deletes anything (`--output <path>` to choose a
 target).
 
-The native exact-v9 update performs its own paired migration safeguard. It
-stops JobCtrl and backs up both `jobctrl.db` and bundled Temporal state. An
-admitted v6 installation is quiesced and transformed through a private exact-v7
-and then exact-v8 intermediate before v9 is sealed; an exact-v7 installation
-starts at the private v8 step, while an exact-v8 installation receives only
-the additive optional position-summary column. Intermediates are never
-installed. Any failed build, verification, activation, or readiness check
-restores the previous pair. The API and worker run exact v9 only; there is no
-mixed-version, dual-write, or permanent fallback runtime.
+The native exact-v10 update performs its own paired migration safeguard. It
+stops JobCtrl and backs up both `jobctrl.db` and bundled Temporal state. Admitted
+v6/v7/v8 sources pass through private intermediate schemas; exact v9 transfers
+application URLs directly into canonical enrichment and lookup aliases before
+removing the legacy job column. Existing canonical targets win, and legacy-only
+values remain usable. Intermediates are never installed. Any failed build,
+verification, activation, or readiness check restores the previous pair. The
+API and worker run exact v10 only; there is no mixed-version or dual-write runtime.
+See the [storage contract](docs/architecture/storage.md) for preservation rules.
 
 <details>
 <summary><b>Restore steps</b></summary>

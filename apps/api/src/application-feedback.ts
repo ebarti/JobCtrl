@@ -926,9 +926,10 @@ function applyTargetUrl(row: ReviewQueueRow): string | null {
 function currentApplicationUrl(db: SqliteDatabase, jobId: JobId): string | null {
   const row = getRow<{ application_url: string | null; url: string }>(
     db,
-    `SELECT application_url, url
-       FROM jobs
-      WHERE tenant_id = ? AND job_id = ?`,
+    `SELECT e.application_url, j.url
+       FROM jobs j LEFT JOIN job_enrichments e
+         ON e.tenant_id = j.tenant_id AND e.job_id = j.job_id
+      WHERE j.tenant_id = ? AND j.job_id = ?`,
     [DEFAULT_TENANT, jobId],
   );
   return cleanBlockerText(row?.application_url ?? null) || cleanBlockerText(row?.url ?? null) || null;

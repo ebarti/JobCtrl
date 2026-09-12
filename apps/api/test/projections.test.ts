@@ -1,3 +1,4 @@
+import { seedApplicationUrl } from "./seed-enrichment.js";
 /**
  * PR 4 of the Temporal stack: the TS API reads ``apply_run_projections``
  * directly. The bespoke ``apply_runs`` / ``apply_run_events`` tables
@@ -44,8 +45,8 @@ function seedSchema(dbPath: string): void {
   seedBuiltInResumeTemplate(db);
   db.prepare(
     `INSERT INTO jobs (
-       tenant_id, job_id, url, title, site, fit_score, score_reasoning, application_url
-     ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?)`,
+       tenant_id, job_id, url, title, site, fit_score, score_reasoning
+     ) VALUES ('local', ?, ?, ?, ?, ?, ?)`,
   ).run(
     EVENT_JOB_ID,
     EVENT_JOB_URL,
@@ -53,8 +54,8 @@ function seedSchema(dbPath: string): void {
     "ExampleCo",
     9,
     "Legacy reasoning kept for old callers.",
-    "https://example.com/apply/event",
   );
+  seedApplicationUrl(db, "local", EVENT_JOB_ID, "https://example.com/apply/event");
   db.prepare(
     "INSERT INTO job_scores (tenant_id, job_id, version, fit_score, breakdown_json, keywords_json, scored_at) VALUES ('local', ?, ?, ?, ?, ?, ?)",
   ).run(

@@ -781,6 +781,11 @@ function runRefreshPassInTransaction(db: SqliteDatabase, tenantId: string): bool
       if (job.job_id) dirtyJobs.add(job.job_id);
     }
   }
+  // Migration preserves projection rows and cursors; reconcile canonical target
+  // changes even when no new domain event follows the stopped-runtime cutover.
+  for (const jobId of staleApplicationUrlProjectionJobs(db, tenantId)) {
+    dirtyJobs.add(jobId);
+  }
   for (const jobId of staleDeletedProjectionJobs(db, tenantId)) {
     dirtyJobs.add(jobId);
   }
@@ -2279,7 +2284,7 @@ function loadEnrichment(db: SqliteDatabase, tenantId: string, jobId: string): En
   if (!row) return empty;
   return {
     fullDescription: row.full_description,
-    applicationUrl: row.application_url,
+    applicationUrl: row.application_url || null,
     enrichedAt: row.enriched_at,
     currentStatus: row.current_status,
   };
@@ -2338,6 +2343,15 @@ function loadDeletedAt(db: SqliteDatabase, tenantId: string, jobId: string): str
     [tenantId, jobId],
   );
   return row ? nullableString(row.deleted_at) : null;
+}
+
+function staleApplicationUrlProjectionJobs(db: SqliteDatabase, tenantId: string): string[] {
+  return allRows<{ job_id: string }>(db, `
+    SELECT p.job_id FROM job_list_projections p
+    JOIN jobs j ON j.tenant_id = p.tenant_id AND j.job_id = p.job_id
+    LEFT JOIN job_enrichments e ON e.tenant_id = j.tenant_id AND e.job_id = j.job_id
+    WHERE p.tenant_id = ? AND p.application_url IS NOT NULLIF(e.application_url, '')
+  `, [tenantId]).map((row) => row.job_id);
 }
 
 function staleDeletedProjectionJobs(db: SqliteDatabase, tenantId: string): string[] {
@@ -2703,7 +2717,7 @@ function rebuildJobProjections(db: SqliteDatabase, tenantId: string, jobId: stri
 
   const title = stringField(job.title) || "Untitled";
   const site = stringField(job.site);
-  const applicationUrl = enrichment.applicationUrl ?? nullableString(job.application_url);
+  const applicationUrl = enrichment.applicationUrl;
   const employer = stringField(job.company).trim() || "Unknown company";
 
   const firstActionable =

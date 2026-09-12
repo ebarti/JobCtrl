@@ -980,6 +980,7 @@ class ProjectionBuilder:
                 # ``jobs`` table not yet created (very-fresh DB) — nothing
                 # to backfill.
                 pass
+        dirty_job_ids.update(self._stale_application_url_projection_jobs())
         dirty_job_ids.update(self._stale_deleted_projection_jobs())
         dirty_job_ids.update(self._stale_artifact_projection_jobs())
         dirty_job_ids.update(self._stale_stage_projection_jobs())
@@ -1468,7 +1469,7 @@ class ProjectionBuilder:
 
         title = _row_str(job_row, "title")
         site = _row_str(job_row, "site")
-        application_url = enrichment.get("application_url") or _row_nullable_str(job_row, "application_url")
+        application_url = enrichment.get("application_url")
         employer = _canonical_employer(job_row)
 
         # currentStage/State: the list view exposes only product stages.
@@ -2701,6 +2702,18 @@ class ProjectionBuilder:
         if row is None:
             return None
         return _row_nullable_str(row, "deleted_at")
+
+    def _stale_application_url_projection_jobs(self) -> set[str]:
+        # Migration retains projection rows/cursors; canonical target changes
+        # must reconcile even without an event after the cutover.
+        rows = self._conn.execute(
+            """SELECT p.job_id FROM job_list_projections p
+               JOIN jobs j ON j.tenant_id = p.tenant_id AND j.job_id = p.job_id
+               LEFT JOIN job_enrichments e ON e.tenant_id = j.tenant_id AND e.job_id = j.job_id
+               WHERE p.tenant_id = ? AND p.application_url IS NOT NULLIF(e.application_url, '')""",
+            (str(self._tenant_id),),
+        ).fetchall()
+        return {str(row[0]) for row in rows}
 
     def _stale_deleted_projection_jobs(self) -> set[str]:
         try:

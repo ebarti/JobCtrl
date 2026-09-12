@@ -312,7 +312,7 @@ function jobIdentity(db: SqliteDatabase, jobId: string): JobIdentityRow | null {
   return getRow<JobIdentityRow>(
     db,
     `SELECT j.job_id, j.url, j.title, ${company} AS company,
-            COALESCE(${enrichment} j.application_url, j.url) AS application_url
+            ${enrichment ? `COALESCE(${enrichment} j.url)` : "j.url"} AS application_url
        FROM jobs j WHERE j.tenant_id = ? AND j.job_id = ?`,
     params,
   ) ?? null;

@@ -107,13 +107,13 @@ locking; selector resolution holds a shared selection lock through supervisor
 readiness. Before a candidate is promoted, the old process tree is quiesced
 with the registry's PID/PGID identity checks and both `JOBCTRL_DIR/jobctrl.db`
 and `JOBCTRL_DIR/temporal.db` receive online, hash-verified paired backups.
-The current runtime admits only exact schema v9. A stopped v6 database uses the
-existing Temporal quiescence proof and private v7/v8 intermediates before v9;
-a stopped exact-v7 database starts with the private v8 step; and an exact-v8
-database receives only the additive optional position-summary column. An
-exact-v9 database needs no schema transition. Neither Python nor the TypeScript
-API runs against an intermediate schema, and recovery removes staged candidates
-before restoring the retained pair.
+The current runtime admits only exact schema v10. A stopped v6 database retains
+the Temporal quiescence proof and private v7/v8/v9 intermediates; exact v7 and v8
+start at their next intermediate. Exact v9 transfers application URL authority
+to enrichment and retains historical lookup aliases before removing the legacy
+job column. Exact v10 needs no schema transition. Neither Python nor the
+TypeScript API runs against an intermediate schema. Recovery removes all staged
+candidates and their sidecars before restoring the retained database pair.
 Policy finalization happens only after the candidate has passed readiness and
 the paired backup is durable, so a failed health gate cannot revoke the only
 runnable release. A pre-finalization failure restores the full pair and

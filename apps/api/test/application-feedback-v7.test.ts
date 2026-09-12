@@ -1,3 +1,4 @@
+import { seedApplicationUrl } from "./seed-enrichment.js";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -21,7 +22,7 @@ import {
   recordManualApplicationOutcome,
 } from "../src/application-feedback.js";
 import { InputError } from "../src/write-model.js";
-import { hasExactV9SchemaManifest } from "../src/schema-manifest.js";
+import { hasExactV10SchemaManifest } from "../src/schema-manifest.js";
 import { initializeExactV7Database } from "./v7-schema.js";
 
 const JOB_ID = "00000000-0000-4000-8000-000000000071";
@@ -49,9 +50,10 @@ function seededDatabase(): Database.Database {
 
   for (const tenantId of ["local", OTHER_TENANT]) {
     db.prepare(
-      `INSERT INTO jobs (tenant_id, job_id, url, title, company, discovered_at, application_url)
-       VALUES (?, ?, ?, 'Feedback Engineer', 'Example', '2026-07-31T12:00:00Z', ?)`,
-    ).run(tenantId, JOB_ID, `${JOB_URL}/${tenantId}`, JOB_URL);
+      `INSERT INTO jobs (tenant_id, job_id, url, title, company, discovered_at)
+       VALUES (?, ?, ?, 'Feedback Engineer', 'Example', '2026-07-31T12:00:00Z')`,
+    ).run(tenantId, JOB_ID, `${JOB_URL}/${tenantId}`);
+    seedApplicationUrl(db, tenantId, JOB_ID, JOB_URL);
     db.prepare(
       `INSERT INTO job_list_projections (
          tenant_id, job_id, title, employer, source, application_url, fit_score,
@@ -143,11 +145,11 @@ describe("application feedback exact v7 identity", () => {
 
   it("does not mutate the exact-v7 schema and refuses an invalid job id", () => {
     const db = seededDatabase();
-    expect(hasExactV9SchemaManifest(db)).toBe(true);
+    expect(hasExactV10SchemaManifest(db)).toBe(true);
 
     expect(() =>
       recordManualApplicationOutcome(db, "not-a-canonical-job-id", { kind: "interview" }),
     ).toThrow(InputError);
-    expect(hasExactV9SchemaManifest(db)).toBe(true);
+    expect(hasExactV10SchemaManifest(db)).toBe(true);
   });
 });

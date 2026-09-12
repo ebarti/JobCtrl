@@ -27,7 +27,6 @@ def _insert_job(conn, **overrides):
         "strategy": "test",
         "discovered_at": "2026-04-29T10:00:00+00:00",
         "full_description": None,
-        "application_url": None,
         "detail_error": None,
         "fit_score": None,
         "tailored_resume_path": None,
@@ -42,12 +41,12 @@ def _insert_job(conn, **overrides):
         """
         INSERT INTO jobs (
             tenant_id, job_id, url, title, site, strategy, discovered_at, full_description,
-            application_url, detail_error, fit_score, tailored_resume_path,
+            detail_error, fit_score, tailored_resume_path,
             tailor_attempts, cover_letter_path, cover_attempts, apply_status,
             applied_at
         ) VALUES (
             :tenant_id, :job_id, :url, :title, :site, :strategy, :discovered_at, :full_description,
-            :application_url, :detail_error, :fit_score, :tailored_resume_path,
+            :detail_error, :fit_score, :tailored_resume_path,
             :tailor_attempts, :cover_letter_path, :cover_attempts, :apply_status,
             :applied_at
         )

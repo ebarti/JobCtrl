@@ -45,6 +45,14 @@ EXACT_V9_MANIFEST = SchemaManifest(
 )
 
 
+EXACT_V10_MANIFEST = SchemaManifest(
+    version=10,
+    object_count=274,
+    table_count=118,
+    fingerprint="d5c1676fff6e81c987055bf4db6d725c582c74b834f4bf92c9eef3f5980f3641",
+)
+
+
 class SchemaManifestError(RuntimeError):
     """Raised before writes when a database is not an exact known schema."""
 

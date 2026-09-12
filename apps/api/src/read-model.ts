@@ -1,3 +1,4 @@
+import { resolveJobLocator } from "./job-locators.js";
 /**
  * TS read-model — projection-backed (Phase 9 / S-33).
  *
@@ -2394,32 +2395,12 @@ function findJobListRow(db: SqliteDatabase, jobKey: string): JobListProjectionRo
     [DEFAULT_TENANT, jobKey],
   );
   if (direct) return direct;
-  // URLs remain locators; canonical job ids remain the relation key.
-  return (
-    getRow<JobListProjectionRow>(
-      db,
-      `SELECT ${jobProjectionSelect()}
-         FROM job_list_projections
-        WHERE job_list_projections.tenant_id = ?
-          AND (
-            job_list_projections.application_url = ?
-            OR EXISTS (
-              SELECT 1 FROM jobs j
-               WHERE j.tenant_id = job_list_projections.tenant_id
-                 AND j.job_id = job_list_projections.job_id
-                 AND (j.url = ? OR j.application_url = ?)
-            )
-            OR EXISTS (
-              SELECT 1 FROM job_locators l
-               WHERE l.tenant_id = job_list_projections.tenant_id
-                 AND l.job_id = job_list_projections.job_id
-                 AND l.locator_value = ?
-            )
-          )
-        LIMIT 1`,
-      [DEFAULT_TENANT, jobKey, jobKey, jobKey, jobKey],
-    ) ?? null
-  );
+  const identity = resolveJobLocator(db, DEFAULT_TENANT, jobKey);
+  return identity ? getRow<JobListProjectionRow>(
+    db,
+    `SELECT ${jobProjectionSelect()} FROM job_list_projections WHERE tenant_id = ? AND job_id = ?`,
+    [DEFAULT_TENANT, identity.jobId],
+  ) ?? null : null;
 }
 
 export function listArtifacts(db: SqliteDatabase, query: ArtifactListQuery): PaginatedResponse<ArtifactSummary> {

@@ -2,12 +2,19 @@ import { openDatabase, openReadOnlyDatabase } from "../../src/db.js";
 
 const databasePath = process.argv[2];
 if (!databasePath) {
-  throw new Error("exact-v9 reopen probe requires a database path");
+  throw new Error("exact-v10 reopen probe requires a database path");
 }
 
 for (const open of [openDatabase, openReadOnlyDatabase]) {
   const database = open(databasePath);
   try {
+    if (database.pragma("user_version", { simple: true }) !== 10) {
+      throw new Error("TypeScript API did not reopen schema v10");
+    }
+    const columns = database.prepare("PRAGMA table_info(jobs)").all() as Array<{ name: string }>;
+    if (columns.some((column) => column.name === "application_url")) {
+      throw new Error("TypeScript API admitted the removed jobs.application_url column");
+    }
     const row = database
       .prepare("SELECT job_id, url FROM jobs ORDER BY tenant_id, job_id LIMIT 1")
       .get() as { job_id?: unknown; url?: unknown } | undefined;

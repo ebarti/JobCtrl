@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from jobctrl.infrastructure.gmail.feedback import ensure_application_feedback_tables
+from tests.v6_feedback_fixture import ensure_application_feedback_tables
 from jobctrl.infrastructure.migrations.schema_v7 import (
     create_unstamped_exact_v7_candidate,
 )

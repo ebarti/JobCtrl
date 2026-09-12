@@ -362,7 +362,7 @@ def test_get_stats_ready_to_apply_reflects_materials_writes(conn: sqlite3.Connec
     """``ready_to_apply`` requires tailored text, resume PDF, and application_url."""
     job_id = _seed_selector_job(conn, "job")
     conn.execute(
-        "UPDATE jobs SET application_url = 'https://example.com/apply' "
+        "UPDATE job_enrichments SET application_url = 'https://example.com/apply' "
         "WHERE tenant_id = ? AND job_id = ?",
         (LOCAL_TENANT, job_id),
     )
@@ -391,7 +391,7 @@ def test_get_stats_ready_to_apply_excludes_text_only_tailored_materials(
 ) -> None:
     job_id = _seed_selector_job(conn, "text-only")
     conn.execute(
-        "UPDATE jobs SET application_url = 'https://example.com/apply' "
+        "UPDATE job_enrichments SET application_url = 'https://example.com/apply' "
         "WHERE tenant_id = ? AND job_id = ?",
         (LOCAL_TENANT, job_id),
     )

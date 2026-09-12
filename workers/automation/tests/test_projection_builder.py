@@ -51,8 +51,8 @@ def _seed_job(
         """
         INSERT INTO jobs (
             tenant_id, job_id, url, title, company, site, strategy, location,
-            salary, discovered_at, application_url, description
-        ) VALUES (?, ?, ?, ?, ?, ?, 'jobspy', ?, ?, ?, ?, ?)
+            salary, discovered_at, description
+        ) VALUES (?, ?, ?, ?, ?, ?, 'jobspy', ?, ?, ?, ?)
         """,
         (
             str(LOCAL_TENANT),
@@ -64,9 +64,13 @@ def _seed_job(
             location,
             salary,
             utc_now(),
-            url,
             description,
         ),
+    )
+    conn.execute(
+        "INSERT INTO job_enrichments(tenant_id,job_id,current_status,application_url,updated_at) "
+        "VALUES (?,?,'pending',?,?)",
+        (str(LOCAL_TENANT), str(job_id), url, utc_now()),
     )
     conn.commit()
     return job_id
@@ -1530,8 +1534,9 @@ def test_score_audit_backfill_runs_at_most_once(conn: sqlite3.Connection) -> Non
         correction_json=None,
     )
     conn.execute(
-        "INSERT INTO job_list_projections (tenant_id, job_id, title, fit_score) VALUES ('local', ?, 'Engineer', 6)",
-        (str(later_job_id),),
+        "INSERT INTO job_list_projections (tenant_id, job_id, title, fit_score, application_url) "
+        "VALUES ('local', ?, 'Engineer', 6, ?)",
+        (str(later_job_id), later),
     )
     record_job_event(conn, later_job_id, "score", "JobScored", payload=_INERT_CONTEXT)
     latest_event_id = conn.execute("SELECT MAX(event_id) FROM job_events").fetchone()[0]

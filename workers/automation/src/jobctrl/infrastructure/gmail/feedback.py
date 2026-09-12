@@ -15,7 +15,9 @@ from pathlib import Path
 from typing import Any, Protocol
 from urllib.parse import urlparse
 
+from jobctrl.database import close_connection, open_exact_v10_database
 from jobctrl.infrastructure.gmail.client import GmailClient
+from jobctrl.infrastructure.migrations.schema_manifest import EXACT_V10_MANIFEST, SchemaManifestError, assert_exact_manifest
 
 TENANT_ID = "local"
 PROVIDER = "gmail"
@@ -123,8 +125,7 @@ def scan_gmail_feedback(
         default=DEFAULT_WINDOW_DAYS,
     )
 
-    conn = sqlite3.connect(str(db_path))
-    conn.row_factory = sqlite3.Row
+    conn = open_exact_v10_database(db_path)
     conn.execute("PRAGMA busy_timeout=10000")
     gmail = client or GmailClient()
     try:
@@ -241,108 +242,14 @@ def scan_gmail_feedback(
 
         return summary
     finally:
-        conn.close()
+        close_connection(db_path)
 
 
 def ensure_application_feedback_tables(conn: sqlite3.Connection) -> None:
-    """Create the feedback tables with the TypeScript API's table shape."""
-
-    conn.executescript(
-        """
-        CREATE TABLE IF NOT EXISTS application_review_decisions (
-          tenant_id    TEXT NOT NULL DEFAULT 'local',
-          decision_id  TEXT NOT NULL,
-          job_key      TEXT NOT NULL,
-          decision     TEXT NOT NULL,
-          reason       TEXT,
-          decided_by   TEXT NOT NULL DEFAULT 'user',
-          decided_at   TEXT NOT NULL,
-          materials_generation INTEGER,
-          profile_version INTEGER,
-          application_url TEXT,
-          partial_override_run_id TEXT,
-          email_recipient TEXT,
-          email_attachment_artifact_id TEXT,
-          PRIMARY KEY (tenant_id, decision_id)
-        );
-        CREATE INDEX IF NOT EXISTS idx_application_review_decisions_job
-          ON application_review_decisions(tenant_id, job_key, decided_at DESC);
-
-        CREATE TABLE IF NOT EXISTS application_outcomes (
-          tenant_id     TEXT NOT NULL DEFAULT 'local',
-          outcome_id    TEXT NOT NULL,
-          job_key       TEXT NOT NULL,
-          kind          TEXT NOT NULL,
-          source        TEXT NOT NULL,
-          note          TEXT,
-          occurred_at   TEXT NOT NULL,
-          recorded_at   TEXT NOT NULL,
-          suggestion_id TEXT,
-          evidence_id   TEXT,
-          created_by    TEXT NOT NULL DEFAULT 'user',
-          PRIMARY KEY (tenant_id, outcome_id)
-        );
-        CREATE INDEX IF NOT EXISTS idx_application_outcomes_job
-          ON application_outcomes(tenant_id, job_key, occurred_at DESC, recorded_at DESC);
-
-        CREATE TABLE IF NOT EXISTS application_email_evidence (
-          tenant_id            TEXT NOT NULL DEFAULT 'local',
-          evidence_id          TEXT NOT NULL,
-          job_key              TEXT NOT NULL,
-          provider             TEXT NOT NULL DEFAULT 'gmail',
-          provider_message_id  TEXT NOT NULL,
-          provider_thread_id   TEXT,
-          from_address         TEXT,
-          to_addresses_json    TEXT NOT NULL DEFAULT '[]',
-          subject              TEXT,
-          snippet              TEXT,
-          received_at          TEXT,
-          linked_at            TEXT NOT NULL,
-          link_confidence      REAL NOT NULL DEFAULT 0,
-          link_signals_json    TEXT NOT NULL DEFAULT '[]',
-          body_text            TEXT,
-          body_sha256          TEXT,
-          body_stored_at       TEXT,
-          PRIMARY KEY (tenant_id, evidence_id),
-          UNIQUE (tenant_id, provider, provider_message_id)
-        );
-        CREATE INDEX IF NOT EXISTS idx_application_email_evidence_job
-          ON application_email_evidence(tenant_id, job_key, received_at DESC);
-
-        CREATE TABLE IF NOT EXISTS application_outcome_suggestions (
-          tenant_id          TEXT NOT NULL DEFAULT 'local',
-          suggestion_id      TEXT NOT NULL,
-          job_key            TEXT NOT NULL,
-          evidence_id        TEXT,
-          suggested_kind     TEXT NOT NULL,
-          confidence         REAL NOT NULL DEFAULT 0,
-          rationale          TEXT NOT NULL DEFAULT '',
-          status             TEXT NOT NULL DEFAULT 'pending',
-          created_at         TEXT NOT NULL,
-          decided_at         TEXT,
-          decision           TEXT,
-          decision_reason    TEXT,
-          decided_outcome_id TEXT,
-          PRIMARY KEY (tenant_id, suggestion_id)
-        );
-        CREATE INDEX IF NOT EXISTS idx_application_outcome_suggestions_job
-          ON application_outcome_suggestions(tenant_id, job_key, status, created_at DESC);
-        CREATE INDEX IF NOT EXISTS idx_application_outcome_suggestions_status
-          ON application_outcome_suggestions(tenant_id, status, created_at DESC);
-        """
-    )
-    _ensure_columns(
-        conn,
-        "application_review_decisions",
-        {
-            "materials_generation": "INTEGER",
-            "profile_version": "INTEGER",
-            "application_url": "TEXT",
-            "partial_override_run_id": "TEXT",
-            "email_recipient": "TEXT",
-            "email_attachment_artifact_id": "TEXT",
-        },
-    )
+    """Validate the current feedback owner without creating or altering schema."""
+    if conn.execute("PRAGMA user_version").fetchone()[0] != EXACT_V10_MANIFEST.version:
+        raise SchemaManifestError("Gmail feedback requires the exact current database schema")
+    assert_exact_manifest(conn, EXACT_V10_MANIFEST)
 
 
 def classify_outcome(*, subject: str, snippet: str, body_text: str) -> Classification:
@@ -439,7 +346,7 @@ def _store_linked_message(
     conn.execute(
         """
         INSERT INTO application_email_evidence (
-            tenant_id, evidence_id, job_key, provider, provider_message_id,
+            tenant_id, evidence_id, job_id, provider, provider_message_id,
             provider_thread_id, from_address, to_addresses_json, subject, snippet,
             received_at, linked_at, link_confidence, link_signals_json,
             body_text, body_sha256, body_stored_at
@@ -489,7 +396,7 @@ def _store_suggestion(
     cursor = conn.execute(
         """
         INSERT OR IGNORE INTO application_outcome_suggestions (
-            tenant_id, suggestion_id, job_key, evidence_id, suggested_kind,
+            tenant_id, suggestion_id, job_id, evidence_id, suggested_kind,
             confidence, rationale, status, created_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
@@ -519,12 +426,9 @@ def _record_safe_event(
     signals: tuple[str, ...],
     occurred_at: datetime,
 ) -> None:
-    if not _table_exists(conn, "job_events"):
-        return
-    columns = _columns(conn, "job_events")
     payload = {
         "tenantId": TENANT_ID,
-        "jobKey": job_key,
+        "jobId": job_key,
         "evidenceId": evidence_id,
         "suggestionId": suggestion_id,
         "provider": PROVIDER,
@@ -534,7 +438,9 @@ def _record_safe_event(
         "linkSignals": list(signals),
     }
     values: dict[str, Any] = {
-        "job_url": job_key,
+        "tenant_id": TENANT_ID,
+        "job_id": job_key,
+        "identity_version": 1,
         "stage": "apply",
         "event_type": "ApplicationEmailFeedbackIngested",
         "level": "info",
@@ -542,9 +448,7 @@ def _record_safe_event(
         "occurred_at": _iso(occurred_at),
         "payload_json": json.dumps(payload, sort_keys=True),
     }
-    names = [name for name in values if name in columns]
-    if not names:
-        return
+    names = list(values)
     conn.execute(
         f"INSERT INTO job_events ({', '.join(names)}) VALUES ({', '.join('?' for _ in names)})",
         tuple(values[name] for name in names),
@@ -617,41 +521,32 @@ def _load_application_anchors(conn: sqlite3.Connection, *, limit: int) -> list[A
 
 
 def _job_anchors(conn: sqlite3.Connection) -> list[ApplicationAnchor]:
-    if not _table_exists(conn, "jobs"):
-        return []
-    columns = _columns(conn, "jobs")
-    title_expr = _column_expr(columns, "title")
-    company_expr = _first_column_expr(columns, ["company", "site", "employer"])
-    application_url_expr = _column_expr(columns, "application_url")
-    applied_at_expr = _column_expr(columns, "applied_at")
-    discovered_at_expr = _column_expr(columns, "discovered_at")
-    apply_status_expr = _column_expr(columns, "apply_status")
     rows = conn.execute(
-        f"""
-        SELECT url AS job_key, {title_expr} AS title, {company_expr} AS company,
-               {application_url_expr} AS application_url,
-               COALESCE(NULLIF({applied_at_expr}, ''), NULLIF({discovered_at_expr}, '')) AS anchor_at
-        FROM jobs
-        WHERE NULLIF({applied_at_expr}, '') IS NOT NULL
-           OR lower(COALESCE({apply_status_expr}, '')) = 'applied'
         """
+        SELECT j.job_id AS job_key, COALESCE(j.title, '') AS title,
+               COALESCE(j.company, j.site, '') AS company,
+               COALESCE(e.application_url, '') AS application_url,
+               COALESCE(NULLIF(j.applied_at, ''), NULLIF(j.discovered_at, '')) AS anchor_at
+        FROM jobs j
+        LEFT JOIN job_enrichments e ON e.tenant_id = j.tenant_id AND e.job_id = j.job_id
+        WHERE j.tenant_id = ? AND (
+            NULLIF(j.applied_at, '') IS NOT NULL OR lower(COALESCE(j.apply_status, '')) = 'applied'
+        )
+        """,
+        (TENANT_ID,),
     ).fetchall()
     return [_anchor_from_row(row) for row in rows if _anchor_from_row(row) is not None]
 
 
 def _outcome_anchors(conn: sqlite3.Connection) -> list[ApplicationAnchor]:
-    if not _table_exists(conn, "application_outcomes") or not _table_exists(conn, "jobs"):
-        return []
-    columns = _columns(conn, "jobs")
-    title_expr = _column_expr(columns, "title", prefix="j")
-    company_expr = _first_column_expr(columns, ["company", "site", "employer"], prefix="j")
-    application_url_expr = _column_expr(columns, "application_url", prefix="j")
     rows = conn.execute(
-        f"""
-        SELECT o.job_key AS job_key, {title_expr} AS title, {company_expr} AS company,
-               {application_url_expr} AS application_url, o.occurred_at AS anchor_at
+        """
+        SELECT o.job_id AS job_key, COALESCE(j.title, '') AS title,
+               COALESCE(j.company, j.site, '') AS company,
+               COALESCE(e.application_url, '') AS application_url, o.occurred_at AS anchor_at
         FROM application_outcomes o
-        LEFT JOIN jobs j ON j.url = o.job_key
+        JOIN jobs j ON j.tenant_id = o.tenant_id AND j.job_id = o.job_id
+        LEFT JOIN job_enrichments e ON e.tenant_id = j.tenant_id AND e.job_id = j.job_id
         WHERE o.tenant_id = ?
           AND o.kind IN (
             'applied_confirmation', 'recruiter_reply', 'interview',
@@ -664,26 +559,23 @@ def _outcome_anchors(conn: sqlite3.Connection) -> list[ApplicationAnchor]:
 
 
 def _apply_run_anchors(conn: sqlite3.Connection) -> list[ApplicationAnchor]:
-    if not _table_exists(conn, "apply_run_projections") or not _table_exists(conn, "jobs"):
-        return []
-    columns = _columns(conn, "jobs")
-    title_expr = _column_expr(columns, "title", prefix="j")
-    company_expr = _first_column_expr(columns, ["company", "site", "employer"], prefix="j")
-    application_url_expr = _column_expr(columns, "application_url", prefix="j")
     rows = conn.execute(
-        f"""
-        SELECT a.job_id AS job_key, {title_expr} AS title, {company_expr} AS company,
-               {application_url_expr} AS application_url,
+        """
+        SELECT a.job_id AS job_key, COALESCE(j.title, '') AS title,
+               COALESCE(j.company, j.site, '') AS company,
+               COALESCE(e.application_url, '') AS application_url,
                COALESCE(NULLIF(a.finished_at, ''), NULLIF(a.started_at, '')) AS anchor_at
         FROM apply_run_projections a
-        LEFT JOIN jobs j ON j.url = a.job_id
-        WHERE COALESCE(a.dry_run, 0) = 0
+        JOIN jobs j ON j.tenant_id = a.tenant_id AND j.job_id = a.job_id
+        LEFT JOIN job_enrichments e ON e.tenant_id = j.tenant_id AND e.job_id = j.job_id
+        WHERE a.tenant_id = ? AND COALESCE(a.dry_run, 0) = 0
           AND (
             lower(COALESCE(a.status, '')) IN ('succeeded', 'success', 'complete', 'completed')
             OR lower(COALESCE(a.result, '')) LIKE '%applied%'
             OR lower(COALESCE(a.result, '')) LIKE '%submitted%'
           )
-        """
+        """,
+        (TENANT_ID,),
     ).fetchall()
     return [_anchor_from_row(row) for row in rows if _anchor_from_row(row) is not None]
 
@@ -860,40 +752,6 @@ def _columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
         row["name"] if isinstance(row, sqlite3.Row) else row[1]
         for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()
     }
-
-
-def _ensure_columns(
-    conn: sqlite3.Connection,
-    table_name: str,
-    additions: dict[str, str],
-) -> None:
-    columns = _columns(conn, table_name)
-    for column, definition in additions.items():
-        if column not in columns:
-            conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column} {definition}")
-
-
-def _column_expr(columns: set[str], column: str, *, prefix: str | None = None) -> str:
-    if column not in columns:
-        return "''"
-    qualified = f"{prefix}.{column}" if prefix else column
-    return f"COALESCE({qualified}, '')"
-
-
-def _first_column_expr(
-    columns: set[str],
-    names: list[str],
-    *,
-    prefix: str | None = None,
-) -> str:
-    available = [
-        f"{prefix}.{name}" if prefix else name
-        for name in names
-        if name in columns
-    ]
-    if not available:
-        return "''"
-    return "COALESCE(" + ", ".join(available + ["''"]) + ")"
 
 
 def _text(value: Any) -> str:

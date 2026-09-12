@@ -87,33 +87,51 @@ licensed-feed coverage policy. Public Levels.fyi Markdown needs no credential.
 Credentials, feed paths/URLs, feed contents, and provider payloads do not belong
 in the settings file.
 
-### Exact v9 runtime and compatible cutovers
+### Exact v10 runtime and compatible cutovers
 
-Schema v9 is the exact runtime contract. The native lifecycle upgrades admitted
-v6, exact-v7, and exact-v8 installations only while the application is stopped.
-It creates a paired backup of `jobctrl.db` and Temporal state before building an
-isolated candidate. A v6 source first runs the existing identity rewrite into
-an owner-private exact-v7 intermediate and then applies v8; an exact-v7 source
-starts at the private v8 step. Both paths then add v9, while an exact-v8 source
-receives only the additive optional `summary` column on Candidate Profile
-experience rows. Intermediates are deleted and never become live. The v6 path
-retains the Temporal quiescence proof required before URL-rooted job rows and
-foreign references are mapped to stable tenant-scoped JobIds.
+Schema v10 is the exact runtime contract. The native lifecycle upgrades admitted
+v6, exact-v7, exact-v8, and exact-v9 installations only while the application is
+stopped. It first creates a paired backup of `jobctrl.db` and Temporal state.
+A v6 source retains the Temporal quiescence proof and identity rewrite through
+private exact-v7/v8/v9 intermediates; newer sources start at their next schema
+step. Only the final exact-v10 candidate can become live. Intermediate databases
+and their sidecars are removed after success and during failure recovery.
 
-Activation happens only after exact-manifest, row/reference, foreign-key,
-integrity, source-preservation, file-permission, digest, and paired-state
-verification succeeds. The verified v9 candidate replaces the live database
-atomically. Any failed build, verification, activation, or readiness check
-restores the paired backup and leaves the previous version runnable. There is
-no mixed-version runtime, rolling deployment, dual-write path, or permanent
-compatibility layer: the TypeScript API and Python worker accept exact v9 and
-reject direct v6/v7/v8 operation. Runtime projections read registered persisted
-artifacts only and do not reconstruct legacy URL-shaped fallback rows.
+V10 removes `jobs.application_url`. `job_enrichments.application_url` is the
+canonical application target. A nonempty canonical value wins; otherwise the
+migration promotes a nonempty legacy value. A missing enrichment receives a
+pending row, without claiming that enrichment succeeded. Other enrichment fields,
+lifecycle state, tenant/job identities, dependent rows, and sequences stay intact.
+Null and empty values are absent; retained strings keep their exact bytes.
 
-SQLite repository and projection constructors do not initialize schema or
-commit caller work. Exact-v9 creation/admission owns that boundary before runtime
-refresh begins; each refresh owns only its derived writes and consumer cursor
-inside a transaction or the caller's savepoint.
+`job_application_locators` retains the union of nonempty legacy and canonical
+URLs under a tenant/job/URL key. These aliases support historical lookup only;
+clearing the canonical target does not make projections or approval validation
+read an old alias. New enrichment saves retain their application URL as an alias.
+Discovery can fill an absent canonical target and retain an observed alias, but
+cannot replace a nonempty canonical enrichment URL. Posting locator uniqueness
+remains unchanged. Application endpoints may be shared, so application lookup
+returns a job only when exactly one job in the requested tenant matches. Posting
+identity takes priority over an application alias. Deleting a job cascades only
+its own aliases.
+
+Activation requires exact-manifest, retained-data, exact URL-transfer,
+foreign-key, integrity, source-preservation, permissions, digest, and paired-state
+verification. The receipt's comparable data digests cover every retained cell and
+sequence; the complete changed enrichment rows and alias set are verified
+separately before sealing. Any failed build, verification, activation, or readiness
+check restores the paired backup and leaves the previous version runnable.
+The TypeScript API and Python worker accept exact v10 and reject direct v6/v7/v8/v9
+operation; runtime constructors do not migrate schema or commit caller work.
+Each projection refresh owns only derived writes and its consumer cursor inside a
+transaction or the caller's savepoint. Refresh compares existing projected targets
+with canonical enrichment even without a new event, so preserved projection rows
+and watermarks cannot hide a URL promoted during migration.
+
+The remaining URL consumers are classified in the
+[application URL authority inventory](application-url-authority.md). Historical
+v6 preparation and v7/v8/v9 schema/executor definitions remain frozen to admit
+previous installations, and do not provide a current-runtime fallback.
 
 V9 adds one optional per-position summary to normalized Candidate Profile
 experience rows. Existing rows receive the empty-string default; empty values

@@ -591,16 +591,23 @@ function sensitiveFactSentinels(db: SqliteDatabase): string[] {
   for (const value of Object.values(profile ?? {})) addSensitiveFact(facts, value);
   const jobs = allRows<Record<string, unknown>>(
     db,
-    `SELECT title, company, application_url
-       FROM jobs
-      WHERE tenant_id = ?
-      ORDER BY discovered_at DESC
+    `SELECT j.title, j.company, e.application_url
+       FROM jobs j LEFT JOIN job_enrichments e
+         ON e.tenant_id = j.tenant_id AND e.job_id = j.job_id
+      WHERE j.tenant_id = ?
+      ORDER BY j.discovered_at DESC
       LIMIT 25`,
     [DEFAULT_TENANT],
   );
   for (const job of jobs) {
     for (const value of Object.values(job)) addSensitiveFact(facts, value);
   }
+  const aliases = allRows<{ application_url: string }>(db,
+    `SELECT application_url FROM job_application_locators
+      WHERE tenant_id = ? AND job_id IN (
+        SELECT job_id FROM jobs WHERE tenant_id = ? ORDER BY discovered_at DESC LIMIT 25
+      )`, [DEFAULT_TENANT, DEFAULT_TENANT]);
+  for (const alias of aliases) addSensitiveFact(facts, alias.application_url);
   return [...facts];
 }
 

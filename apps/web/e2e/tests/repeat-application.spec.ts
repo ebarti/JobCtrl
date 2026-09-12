@@ -133,7 +133,6 @@ test("repeat application block and reasoned override reach only the simulated su
       ...target,
       job_id: PRIOR_JOB_ID,
       url: PRIOR,
-      application_url: `${PRIOR}/apply`,
       company: "GitLab",
       apply_status: "applied",
       applied_at: CONFIRMED_AT,
@@ -143,6 +142,9 @@ test("repeat application block and reasoned override reach only the simulated su
       `INSERT OR REPLACE INTO jobs (${columns.map((column) => `"${column}"`).join(", ")})
        VALUES (${columns.map(() => "?").join(", ")})`,
     ).run(...columns.map((column) => prior[column]));
+    db.prepare(`INSERT INTO job_enrichments (
+      tenant_id, job_id, current_status, application_url, updated_at
+    ) VALUES ('local', ?, 'pending', ?, ?)`).run(PRIOR_JOB_ID, `${PRIOR}/apply`, CONFIRMED_AT);
     db.prepare(
       `INSERT INTO job_events
        (tenant_id, job_id, identity_version, stage, event_type, level, message, occurred_at, payload_json)
@@ -394,6 +396,7 @@ print(job["url"])
     db.prepare("DELETE FROM job_list_projections WHERE tenant_id = 'local' AND job_id = ?").run(
       PRIOR_JOB_ID,
     );
+    db.prepare("DELETE FROM job_enrichments WHERE tenant_id = 'local' AND job_id = ?").run(PRIOR_JOB_ID);
     db.prepare("DELETE FROM jobs WHERE tenant_id = 'local' AND job_id = ?").run(PRIOR_JOB_ID);
     if (originalTargetJob) {
       db.prepare(
