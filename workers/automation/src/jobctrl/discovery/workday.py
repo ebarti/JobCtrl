@@ -48,6 +48,7 @@ from jobctrl.infrastructure.discovery.live_browser import (
     LiveChromeDiscoveryClient,
     LiveChromeRobotsCache,
     PoliteLiveChromeHttpClient,
+    prefer_live_browser,
 )
 from jobctrl.state import record_job_event
 
@@ -234,6 +235,8 @@ def _employer_client(employer: dict) -> GatewayHttpClient | PoliteLiveChromeHttp
                 if politeness.discovery_execution is not None
                 else None
             )
+            if browser is not None:
+                browser = prefer_live_browser(browser, cancel_event=politeness.cancel_event)
             active_gateway = (
                 politeness.gateway.with_robots(LiveChromeRobotsCache(browser))
                 if browser is not None

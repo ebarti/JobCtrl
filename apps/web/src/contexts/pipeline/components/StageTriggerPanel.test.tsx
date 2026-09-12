@@ -128,33 +128,50 @@ describe("StageTriggerPanel", () => {
     expect(runPipelineStages).not.toHaveBeenCalled();
   });
 
-  it("blocks Discovery when the paired extension is not connected in Chrome", async () => {
-    const runPipelineStages = vi.fn();
+  it.each(["offline", "connected", "unavailable"] as const)("allows Discovery with %s extension status", async (status) => {
+    const user = userEvent.setup();
+    const runPipelineStages = vi.fn(async (): Promise<PipelineStageRunResponse> => ({
+      ok: true,
+      action: "run_stage",
+      status: "queued",
+      jobKey: "pipeline",
+      count: 0,
+      command: {
+        stages: ["discover"], limit: 1000, workers: 1, minScore: 7,
+        validationMode: "normal", dryRun: false, rescore: false,
+        retailor: false, headless: false, model: "default",
+        llmModel: DEFAULT_PIPELINE_LLM_MODEL, tailorModels: [], continuous: false,
+      },
+      actions: [],
+    }));
+    const discoveryBrowserBridgeStatus = vi.fn(async () => {
+      if (status === "unavailable") throw new Error("fixture status unavailable");
+      return { ...sampleDiscoveryBrowserBridgeStatusResponse, connected: status === "connected" };
+    });
     renderWithProviders(<StageTriggerPanel />, {
       ports: buildTestPorts({
         api: {
-          discoveryBrowserBridgeStatus: vi.fn(async () => ({
-            ...sampleDiscoveryBrowserBridgeStatusResponse,
-            connected: false,
-            lastSeenAt: null,
-            extensionVersion: null,
-          })),
+          discoveryBrowserBridgeStatus,
           runPipelineStages,
         },
       }),
     });
 
-    expect(
-      await screen.findByRole("button", { name: "Extension offline" }),
-    ).toBeDisabled();
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      "Discovery requires the paired JobCtrl extension in your current Chrome profile",
-    );
+    const button = await screen.findByRole("button", { name: "Run Discover" });
+    expect(button).toBeEnabled();
+    expect(await screen.findByText(status === "connected"
+      ? /Connected extension preferred for Discovery and Enrich/
+      : status === "offline"
+        ? /Extension offline. Discovery and Enrich can run with anonymous access/
+        : /Extension status unavailable. Discovery and Enrich can run with anonymous access/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Browser settings" })).toHaveAttribute(
       "href",
       "/settings/browser",
     );
-    expect(runPipelineStages).not.toHaveBeenCalled();
+    const checksBeforeSubmit = discoveryBrowserBridgeStatus.mock.calls.length;
+    await user.click(button);
+    await waitFor(() => expect(runPipelineStages).toHaveBeenCalledOnce());
+    expect(discoveryBrowserBridgeStatus).toHaveBeenCalledTimes(checksBeforeSubmit);
   });
 
   it("rechecks worker runtime health immediately before dispatching a stage run", async () => {
@@ -679,7 +696,7 @@ describe("StageTriggerPanel", () => {
       await screen.findByRole("button", { name: "Run Discover" }),
     );
 
-    expect(await screen.findByRole("status")).toHaveTextContent(
+    expect(await screen.findByRole("status", { name: "" })).toHaveTextContent(
       "Starting Discover... waiting for local worker response.",
     );
   });
@@ -718,7 +735,7 @@ describe("StageTriggerPanel", () => {
       await screen.findByRole("button", { name: "Run Discover" }),
     );
 
-    expect(await screen.findByRole("status")).toHaveTextContent(
+    expect(await screen.findByRole("status", { name: "" })).toHaveTextContent(
       "Discover in progress: Discovery source workday started (#538).",
     );
   });
@@ -748,7 +765,7 @@ describe("StageTriggerPanel", () => {
       }),
     });
 
-    expect(await screen.findByRole("status")).toHaveTextContent(
+    expect(await screen.findByRole("status", { name: "" })).toHaveTextContent(
       "Discover in progress: Discovery source smart extract started (#539).",
     );
   });
@@ -776,7 +793,7 @@ describe("StageTriggerPanel", () => {
       }),
     });
 
-    expect(await screen.findByRole("status")).toHaveTextContent(
+    expect(await screen.findByRole("status", { name: "" })).toHaveTextContent(
       "Discover 60% complete (3/5): Workday scraper complete.",
     );
     expect(
@@ -820,7 +837,7 @@ describe("StageTriggerPanel", () => {
       }),
     });
 
-    const status = await screen.findByRole("status");
+    const status = await screen.findByRole("status", { name: "" });
     expect(status).toHaveTextContent(
       "Discover 8% complete: Broad boards 35/72 searches done: Head of Platform in Spain (remote); 13 new, 46 dupes, 412 filtered, 0 errors, 1000 found, 1 resumed.",
     );
@@ -853,7 +870,7 @@ describe("StageTriggerPanel", () => {
       }),
     });
 
-    expect(await screen.findByRole("status")).toHaveTextContent(
+    expect(await screen.findByRole("status", { name: "" })).toHaveTextContent(
       "Discover 100% complete with warnings (1/1): Discovery finished with warnings. Recoverable scoring and tailoring work is retried automatically; items that exhaust retry attempts need attention from the job details.",
     );
     expect(
@@ -930,7 +947,7 @@ describe("StageTriggerPanel", () => {
       }),
     });
 
-    expect(await screen.findByRole("status")).toHaveTextContent(
+    expect(await screen.findByRole("status", { name: "" })).toHaveTextContent(
       "Discover not running. Last progress 60% (3/5): Smart extract is ready to run again.",
     );
     expect(

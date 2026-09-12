@@ -192,10 +192,12 @@ class LiveChromeDiscoveryClient:
         self._token: str | None = None
 
     def ensure_available(self) -> None:
-        status = self._api_json("GET", "/v1/discovery/browser-extension/status", authenticated=False)
-        if not bool(status.get("connected")):
+        status = self._api_json(
+            "GET", "/v1/discovery/browser-extension/status", authenticated=False, timeout_seconds=1.0
+        )
+        if status.get("connected") is not True:
             raise ConfigurationError(
-                "Discovery requires the paired JobCtrl extension to be running in the user's Chrome profile."
+                "The paired JobCtrl extension is not connected in the user's Chrome profile."
             )
 
     def request(
@@ -376,6 +378,7 @@ class LiveChromeDiscoveryClient:
         payload: Mapping[str, Any] | None = None,
         authenticated: bool,
         allow_empty: bool = False,
+        timeout_seconds: float = 5.0,
     ) -> dict[str, Any]:
         headers = {"Accept": "application/json"}
         if authenticated:
@@ -390,7 +393,7 @@ class LiveChromeDiscoveryClient:
                 f"{self.api_base_url}{path}",
                 data,
                 headers,
-                5.0,
+                timeout_seconds,
             )
         except (OSError, urllib.error.URLError) as exc:
             raise TransientNetworkError("The local JobCtrl API is unavailable for Discovery browser work") from exc
@@ -560,12 +563,36 @@ class PoliteLiveChromeHttpClient:
             return self._client.rendered_page(url, timeout_seconds=timeout or self._default_timeout)
 
 
+def prefer_live_browser(
+    client: LiveChromeDiscoveryClient,
+    *,
+    cancel_event: threading.Event | None = None,
+) -> LiveChromeDiscoveryClient | None:
+    """Choose once at setup; acquisition errors never trigger another transport.
+
+    Only the loopback availability probe can select anonymous acquisition. A
+    selected extension still enforces token authentication and execution fences
+    on every task, and a later disconnect fails that acquisition normally.
+    """
+
+    if cancel_event is not None and cancel_event.is_set():
+        raise TransientNetworkError("Discovery acquisition canceled")
+    available = True
+    try:
+        client.ensure_available()
+    except (ConfigurationError, TransientNetworkError):
+        available = False
+    if cancel_event is not None and cancel_event.is_set():
+        raise TransientNetworkError("Discovery acquisition canceled")
+    return client if available else None
+
+
 def live_jobstreaming_registry(
     execution: DiscoveryExecutionRef,
     *,
     cancel_event: threading.Event | None = None,
 ) -> Any:
-    """Return the provider registry with every adapter bound to live Chrome."""
+    """Prefer live Chrome per adapter setup; keep provider HTTP when offline."""
 
     from jobstreaming import default_registry
 
@@ -581,6 +608,8 @@ def live_jobstreaming_registry(
                 source_id=f"jobspy:{_site.value}",
                 cancel_event=cancel_event,
             )
+            if prefer_live_browser(client, cancel_event=cancel_event) is None:
+                return adapter
             session = LiveChromeSession(client)
             original_session = getattr(adapter, "session", None)
             if original_session is not None:
@@ -656,4 +685,5 @@ __all__ = [
     "LiveChromeSession",
     "PoliteLiveChromeHttpClient",
     "live_jobstreaming_registry",
+    "prefer_live_browser",
 ]

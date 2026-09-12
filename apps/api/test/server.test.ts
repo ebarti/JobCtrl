@@ -8208,8 +8208,41 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
-  it("does not reset Enrich when the live-profile extension is offline", async () => {
-    const dispatch = vi.fn(async () => ({ status: "queued", actionId: "must-not-run" }));
+  it.each(["discover", "enrich"] as const)("dispatches %s with the optional extension offline", async (stage) => {
+    const dispatch = vi.fn(async () => ({ status: "queued", actionId: "optional-dispatch" }));
+    const jobUrl = "https://example.com/jobs/optional-enrich";
+    const db = new Database(options.dbPath);
+    insertJob(db, { url: jobUrl, title: "Optional Extension Engineer", site: "Example" });
+    insertStage(db, jobUrl, "discover", "succeeded");
+    insertStage(db, jobUrl, "enrich", "pending");
+    db.close();
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
+    const bridge = await app.inject({ method: "GET", url: "/v1/discovery/browser-extension/status" });
+    expect(bridge.json()).toMatchObject({ connected: false });
+    const response = await app.inject({
+      method: "POST",
+      url: stage === "discover" ? "/v1/pipeline/actions/run-stage" : `/v1/jobs/${jobIdFor(jobUrl)}/actions/run-stage`,
+      payload: stage === "discover" ? { stages: ["discover"], dryRun: true } : { stage: "enrich" },
+    });
+    expect(response.statusCode, response.body).toBe(202);
+    expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ stage }), expect.anything());
+    await app.close();
+  });
+
+  it("still blocks offline Discovery when its worker is unavailable", async () => {
+    const dispatch = vi.fn(async () => ({ status: "queued" }));
+    const app = buildApp({ ...options, actionDispatcher: dispatch, requireHealthyWorkerForActions: true });
+    const response = await app.inject({
+      method: "POST", url: "/v1/pipeline/actions/run-stage", payload: { stages: ["discover"], dryRun: true },
+    });
+    expect(response.statusCode, response.body).toBe(503);
+    expect(response.json()).toMatchObject({ error: "worker_runtime_unavailable" });
+    expect(dispatch).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it("resets and dispatches Enrich when the optional extension is offline", async () => {
+    const dispatch = vi.fn(async () => ({ status: "queued", actionId: "offline-enrich" }));
     const app = buildApp({ ...options, actionDispatcher: dispatch });
     const jobUrl = "https://example.com/jobs/failed-score";
     const beforeDb = new Database(options.dbPath, { readonly: true });
@@ -8224,25 +8257,24 @@ describe("local TypeScript API", () => {
       payload: { stage: "enrich", runAfter: true },
     });
 
-    expect(response.statusCode, response.body).toBe(503);
-    expect(response.json()).toMatchObject({
-      ok: false,
-      error: "discovery_extension_unavailable",
-    });
-    expect(response.json().message).toContain("never a copied profile");
-    expect(dispatch).not.toHaveBeenCalled();
+    expect(response.statusCode, response.body).toBe(202);
+    expect(response.json()).toMatchObject({ ok: true, status: "queued" });
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ stage: "enrich" }), expect.anything(),
+    );
     const afterDb = new Database(options.dbPath, { readonly: true });
     const after = afterDb.prepare(
       "SELECT state, error_code, version FROM job_stage_states WHERE tenant_id = 'local' AND job_id = ? AND stage = 'enrich'",
     ).get(jobIdFor(jobUrl));
     afterDb.close();
-    expect(after).toEqual(before);
+    expect(after).not.toEqual(before);
+    expect(after).toMatchObject({ state: "pending", error_code: null });
 
     await app.close();
   });
 
-  it("does not bulk-reset failed Enrich rows when the live-profile extension is offline", async () => {
-    const dispatch = vi.fn(async () => ({ status: "queued", actionId: "must-not-run" }));
+  it("resets and dispatches failed bulk Enrich while the optional extension is offline", async () => {
+    const dispatch = vi.fn(async () => ({ status: "queued", actionId: "offline-enrich" }));
     const jobUrl = "https://example.com/jobs/bulk-failed-enrich";
     const seedDb = new Database(options.dbPath);
     insertJob(seedDb, {
@@ -8302,13 +8334,13 @@ describe("local TypeScript API", () => {
       },
     });
 
-    expect(response.statusCode, response.body).toBe(503);
-    expect(response.json()).toMatchObject({
-      ok: false,
-      error: "discovery_extension_unavailable",
-    });
-    expect(readPersistedState()).toEqual(before);
-    expect(dispatch).not.toHaveBeenCalled();
+    expect(response.statusCode, response.body).toBe(202);
+    expect(response.json()).toMatchObject({ ok: true, status: "queued" });
+    expect(readPersistedState().stage).toMatchObject({ state: "pending", attempt_count: 2 });
+    expect(readPersistedState().eventCount).toBeGreaterThan(before.eventCount);
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ stage: "enrich", jobIds: [jobIdFor(jobUrl)] }), expect.anything(),
+    );
 
     await app.close();
   });
@@ -8328,8 +8360,8 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
-  it("does not dispatch pending bulk Enrich while the live-profile extension is offline", async () => {
-    const dispatch = vi.fn(async () => ({ status: "queued", actionId: "must-not-run" }));
+  it("dispatches pending bulk Enrich while the optional extension is offline", async () => {
+    const dispatch = vi.fn(async () => ({ status: "queued", actionId: "offline-enrich" }));
     const jobUrl = "https://example.com/jobs/bulk-pending-enrich";
     const seedDb = new Database(options.dbPath);
     insertJob(seedDb, {
@@ -8351,12 +8383,11 @@ describe("local TypeScript API", () => {
       },
     });
 
-    expect(response.statusCode, response.body).toBe(503);
-    expect(response.json()).toMatchObject({
-      ok: false,
-      error: "discovery_extension_unavailable",
-    });
-    expect(dispatch).not.toHaveBeenCalled();
+    expect(response.statusCode, response.body).toBe(202);
+    expect(response.json()).toMatchObject({ ok: true, status: "queued" });
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ stage: "enrich" }), expect.anything(),
+    );
     const afterDb = new Database(options.dbPath, { readonly: true });
     const after = afterDb.prepare(
       `SELECT state, attempt_count, error_code, metadata_json

@@ -642,6 +642,40 @@ def test_live_profile_linkedin_enrichment_skips_anonymous_robots_without_copying
         close_connection(db_path)
 
 
+@pytest.mark.parametrize("allow_robots", [True, False])
+def test_temporal_enrich_offline_keeps_anonymous_policy_and_never_opens_opted_in_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tier1_extraction: None, allow_robots: bool
+) -> None:
+    from .live_browser_helpers import FixtureBrowserBroker
+
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+    url = "https://www.linkedin.com/jobs/view/optional-extension"
+    broker = FixtureBrowserBroker(tmp_path, lambda _url: pytest.fail("offline broker must not acquire pages"), connected=False)
+    spy = _SpyPlaywright()
+    monkeypatch.setattr(detail, "LiveChromeDiscoveryClient", broker.client)
+    monkeypatch.setattr(detail, "sync_playwright", lambda: spy)
+    monkeypatch.setattr(detail, "linkedin_apply_resolver_enabled", lambda: True)
+    monkeypatch.setattr(detail, "LinkedInApplyUrlResolver", lambda **_kw: pytest.fail("integrated fallback opened a copied profile"))
+    monkeypatch.setattr(detail, "PolitenessGateway", lambda: offline_gateway(robots=AllowAllRobots() if allow_robots else DenyAllRobots()))
+    try:
+        _seed_pending(conn, url, "linkedin")
+        stats = detail._run_detail_scraper(
+            conn, workers=1, job_ids=(_job_id(conn, url),),
+            workflow_id="optional-enrich", workflow_run_id="optional-enrich-run",
+        )
+        assert stats["ok"] == int(allow_robots)
+        assert stats["site_errors"] == {}
+        assert spy.goto_calls == ([url] if allow_robots else [])
+        assert broker.status_checks == 1
+        assert broker.visited == []
+        assert _enrich_stage(conn, url)["state"] == ("succeeded" if allow_robots else "blocked")
+        if not allow_robots:
+            assert _enrich_stage(conn, url)["error_code"] == "ENRICH_ROBOTS_DISALLOWED"
+    finally:
+        close_connection(db_path)
+
+
 def test_temporal_enrich_retry_synthesizes_live_extension_execution_and_skips_copy_prepass(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tier1_extraction: None
 ) -> None:

@@ -150,7 +150,7 @@ def test_live_sdui_description_survives_snapshot_cleaning_and_extracts_without_l
 
 
 def test_integrated_ats_discovery_rejects_a_direct_transport_override() -> None:
-    with pytest.raises(ConfigurationError, match="live Chrome extension transport"):
+    with pytest.raises(ConfigurationError, match="transport selection and source policy"):
         run_scheduled_ats_sources(
             None,  # type: ignore[arg-type] - the invariant fails before storage access
             (),
@@ -247,6 +247,7 @@ def test_workday_client_uses_live_extension_transport_for_integrated_execution(
 ) -> None:
     from jobctrl.discovery import workday
 
+    monkeypatch.setattr(LiveChromeDiscoveryClient, "ensure_available", lambda _self: None)
     execution = _execution()
     monkeypatch.setattr(workday, "_politeness", None)
     monkeypatch.setattr(workday, "get_connection", lambda: None)
@@ -272,6 +273,7 @@ def test_smartextract_run_passes_live_extension_client_to_every_target(
 ) -> None:
     from jobctrl.discovery import smartextract
 
+    monkeypatch.setattr(LiveChromeDiscoveryClient, "ensure_available", lambda _self: None)
     execution = _execution()
     captured: list[PoliteLiveChromeHttpClient | None] = []
     monkeypatch.setattr(smartextract, "init_db", lambda: object())

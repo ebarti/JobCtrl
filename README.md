@@ -211,13 +211,12 @@ evidence, qualifications, and the complete capability matrix.
   application URLs are locators resolved only at explicit capture/import/API
   boundaries, so a URL change cannot detach scores, materials, outcomes, or
   workflow history. Source and employer remain separate persisted facts.
-- Fetch politely: integrated Discovery delegates every broad-board, ATS API,
-  Workday, Smart Extract, `robots.txt`, and detail-enrichment acquisition to the
-  paired extension in the user's currently running Chrome profile. Chrome owns
-  its live cookies, session, proxy, and user agent; JobCtrl keeps per-host
-  pacing, run budgets, robots evaluation, public-destination checks, and audit
-  outcomes around that transport. Discovery never copies or launches a profile
-  and has no direct-network fallback when the extension is offline (details in
+- Fetch politely: Discovery and detail enrichment prefer the paired extension
+  when it is connected, using the user's current Chrome session. Without it,
+  they use public HTTP and anonymous Playwright under the existing source,
+  robots, pacing, budget, and destination controls. Transport is chosen before
+  acquisition; a site failure never triggers a second transport. Integrated
+  work never copies a profile (details in
   [Local Data And Safety](#local-data-and-safety)).
 - Capture a current browser job page through the optional local browser
   extension, which feeds the existing manual-capture import path.
@@ -387,13 +386,14 @@ jobctrl capability enable auto-apply-browser --browser-path /path/to/Chrome
 ```
 
 LinkedIn Discovery and Enrich do not adopt that executable or copy a browser
-profile. They use the paired extension in the user's currently running Chrome
-profile, including job-scoped retries of previously blocked Enrich work.
+profile. They prefer a connected paired extension in the user's current Chrome profile.
+Without it they use anonymous access; LinkedIn rows blocked by anonymous robots
+rules can be retried after connecting the extension.
 
 ### Browser Extension Discovery, Capture, And Autofill
 
-The Manifest V3 extension is integrated Discovery's required live-browser
-transport and also a local capture/assist surface:
+The optional Manifest V3 extension is Discovery's preferred live-browser
+transport when connected and also a local capture/assist surface:
 source startup builds it whenever the product web component is selected, or
 build it separately with `corepack pnpm extension:build`. Open
 `chrome://extensions`, enable **Developer mode**, load `dist/extension/` with
@@ -412,8 +412,8 @@ can run in the extension service worker; capture and autofill API calls remain
 loopback-only, and no remote request is created without a leased Discovery
 task.
 
-The same installed extension is the required browser transport for integrated
-Discovery. While Chrome is running, it heartbeats over loopback and executes
+The same installed extension is preferred for integrated Discovery and Enrich
+when connected. While Chrome is running, it heartbeats over loopback and executes
 bounded HTTP/API tasks in the extension service worker plus rendered-page tasks
 in temporary inactive tabs inside the profile where the extension is installed.
 Both use the user's live profile—not an exported or copied snapshot—so later
@@ -427,8 +427,9 @@ it reports **Extension update incomplete** and disables pairing actions until
 the unpacked extension is reloaded; it never renders that mixed-version state
 as ready. After reload, an already stored token can select the current profile
 with **Use this Chrome profile for Discovery** without being copied again.
-Pipelines disables Discover while that heartbeat is absent, and the API also
-rejects the launch instead of falling back to Playwright or a copied profile.
+Pipelines shows extension status while allowing Discovery and Enrich launches
+offline. Each acquisition setup chooses the connected extension or anonymous
+access; an acquisition failure does not switch transports.
 Four extension executors provide bounded concurrency. Active leases heartbeat
 independently, and worker cancellation or the task's hard timeout aborts the
 request and closes an inactive tab when one exists. Direct HTTP/API requests
@@ -579,10 +580,12 @@ not make a manually copied or force-added private file safe to publish. Use
 [Data, Privacy & Safety](https://jobctrl.dev/user/data-and-safety) and
 [SECURITY.md](SECURITY.md).
 
-Integrated Discovery and its detail-enrichment drain use the paired extension
-in the user's current Chrome profile for every job-source page, job-source API,
-and `robots.txt` request. Chrome therefore owns the effective cookies, session,
-proxy, and browser user agent. JobCtrl still applies the source policy's
+Integrated Discovery and its detail-enrichment drain prefer the paired extension
+when connected, including for job-source pages, APIs, and `robots.txt`. Chrome
+then owns the effective cookies, session, proxy, and browser user agent. An
+offline or unavailable extension selects guarded public HTTP or anonymous
+Playwright before acquisition. Anonymous access follows ordinary robots rules;
+it never opens a copied profile or evades a failed extension request. JobCtrl still applies the source policy's
 per-host pacing, concurrency, and run budget before delegation; fetches and
 final destinations must remain public HTTP(S), and the browser-reported user
 agent is used for ordinary robots evaluation. LinkedIn detail enrichment inside
@@ -607,7 +610,7 @@ posting content to configured LLM providers; see the
 [data-flow notice](docs/user/data-and-safety.md#external-services).
 
 The configurable `JobCtrl/<version> (+<contact>)` crawl identity remains the
-identity for standalone/non-extension gateway operations and is reported by
+identity for non-extension gateway operations and is reported by
 `jobctrl doctor`; it is not substituted for Chrome's own user agent during a
 live-profile Discovery run. Existing copied-profile capabilities remain for
 separately consented compatibility paths, but `DiscoverWorkflow` never reads or
@@ -838,9 +841,9 @@ Enable explicitly adopts it for Apply; an advanced manual executable path
 remains available. Settings does not offer LinkedIn profile copying. Browser
 enable/disable and pairing-token rotation are live, and extension pairing
 remains separate from Apply-browser adoption. Integrated Discovery and Enrich
-require a live heartbeat from the extension installed in the user's
-already-running Chrome profile and never use an adopted executable or copied
-profile.
+prefer the extension with a current heartbeat in the user's already-running
+Chrome profile. They can run anonymously without it and never use an adopted
+executable or copied profile.
 
 ## Development
 

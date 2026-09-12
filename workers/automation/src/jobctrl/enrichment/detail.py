@@ -85,6 +85,7 @@ from jobctrl.infrastructure.discovery.live_browser import (
     LiveBrowserTaskError,
     LiveChromeDiscoveryClient,
     LiveChromeRobotsCache,
+    prefer_live_browser,
 )
 from jobctrl.infrastructure.enrichment.sqlite_repository import (
     SqlitePostingSnapshotSetRepository,
@@ -1550,11 +1551,7 @@ def scrape_site_batch(
             source_id=f"enrichment:{source_slug or 'unknown'}",
             cancel_event=cancel_event,
         )
-        # Fail before mutating any job lifecycle state when the selected live
-        # Chrome profile is unavailable. Normal workflow/API entry points also
-        # preflight this boundary, but the worker remains fail-closed if the
-        # extension disconnects between dispatch and activity execution.
-        live_browser.ensure_available()
+        live_browser = prefer_live_browser(live_browser, cancel_event=cancel_event)
 
     try:
         with (nullcontext(None) if live_browser is not None else sync_playwright()) as p:
@@ -1606,7 +1603,12 @@ def scrape_site_batch(
                         assert owner_authenticated_session is not None
                         return None, owner_authenticated_session, None
                     return None, anonymous_session, None
-                if resolver is None and linkedin_apply_resolver_enabled() and _is_linkedin_job(site, url):
+                if (
+                    discovery_execution is None
+                    and resolver is None
+                    and linkedin_apply_resolver_enabled()
+                    and _is_linkedin_job(site, url)
+                ):
                     candidate = LinkedInApplyUrlResolver(
                         proxy=_PROXY_CONFIG,
                         user_agent=None,
@@ -3935,8 +3937,8 @@ def _run_detail_scraper(
     stable_tenant_id = TenantId(str(tenant_id))
     # Every Temporal-backed enrichment attempt has an execution identity, even
     # when it was started by a job retry rather than the parent Discover
-    # workflow. Bind those attempts to the same live-extension broker so a
-    # retry never falls back to the copied-profile compatibility path.
+    # workflow. Retain it for broker authorization when connected and to keep
+    # anonymous retries out of the copied-profile compatibility path.
     browser_execution = discovery_execution
     if browser_execution is None and workflow_id and workflow_run_id:
         browser_execution = DiscoveryExecutionRef(
@@ -4522,8 +4524,8 @@ def run_enrichment(
     """
     conn = init_db()
 
-    # Bind every Temporal-backed Enrich invocation to the selected live Chrome
-    # extension before any legacy URL-repair branch can choose a transport.
+    # Retain every Temporal-backed Enrich invocation's execution identity before
+    # any legacy URL-repair branch can choose a transport.
     # Job-scoped retries do not carry the parent Discover execution explicitly,
     # but their workflow/run identity is still the exact broker authority.
     browser_execution = discovery_execution

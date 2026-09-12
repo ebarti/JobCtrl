@@ -519,7 +519,7 @@ which executes the per-story `play()` interactions and the
 ## Browser Extension
 
 The Manifest V3 browser extension lives under `apps/extension`. It is the local
-capture/autofill client and integrated-Discovery browser transport for the
+capture/autofill client and optional integrated-Discovery browser transport for the
 TypeScript API, not a hosted/browser-store package.
 
 ```bash
@@ -569,6 +569,18 @@ selected-installation heartbeat as product-path evidence. A current popup with
 an already stored token reports whether this exact installation is selected and
 offers **Use this Chrome profile for Discovery**, so recovery does not require
 copying the token again.
+
+Discovery and Enrich also run without loading the extension. Each acquisition
+setup prefers the selected installation only when its bounded status probe
+reports connected; otherwise it uses the existing public HTTP or anonymous
+Playwright path. Site, robots, DNS, access, and cancellation failures do not
+switch transport. Integrated fallback never enables copied-profile access.
+
+The focused `e2e/tests/optional-extension.spec.ts` browser check uses the owned
+synthetic workspace and real API/UI. Its dispatcher acknowledges launches
+without running a worker or contacting job sites. Persisted production worker
+fixtures in `test_optional_extension.py` and `test_enrichment_politeness_gate.py`
+cover acquisition in both modes separately.
 
 ## Docs Site
 

@@ -11,9 +11,11 @@ from jobctrl.infrastructure.discovery.live_browser import LiveChromeDiscoveryCli
 
 
 class FixtureBrowserBroker:
-    def __init__(self, app_dir: Path, result_for: Callable[[str], dict]) -> None:
+    def __init__(self, app_dir: Path, result_for: Callable[[str], dict], *, connected: bool = True) -> None:
         self.app_dir = app_dir
         self.result_for = result_for
+        self.connected = connected
+        self.status_checks = 0
         self.tasks: dict[str, str] = {}
         self.visited: list[str] = []
         (app_dir / "extension-capability-token").write_text("fixture-token", encoding="utf-8")
@@ -25,7 +27,8 @@ class FixtureBrowserBroker:
         self, method: str, url: str, data: bytes | None, _headers: Mapping[str, str], _timeout: float
     ) -> tuple[int, bytes]:
         if url.endswith("/status"):
-            return 200, b'{"connected":true}'
+            self.status_checks += 1
+            return 200, json.dumps({"connected": self.connected}).encode()
         if method == "POST":
             task = json.loads(data or b"{}")
             self.tasks[task["taskId"]] = task["request"]["url"]

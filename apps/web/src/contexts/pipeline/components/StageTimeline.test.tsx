@@ -433,9 +433,9 @@ describe("<StageTimeline>", () => {
     expect(discoveryBrowserBridgeStatus).not.toHaveBeenCalled();
   });
 
-  it("never offers the live-profile retry unless the robots-blocked state is current", () => {
+  it.each([true, false])("does not gate ordinary failures on extension readiness (connected=%s)", (connected) => {
     const discoveryBrowserBridgeStatus = vi.fn(async () =>
-      discoveryBrowserBridge(true),
+      discoveryBrowserBridge(connected),
     );
     renderWithProviders(
       <StageTimeline

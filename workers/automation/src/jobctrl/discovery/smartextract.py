@@ -56,6 +56,7 @@ from jobctrl.infrastructure.discovery.live_browser import (
     LiveChromeDiscoveryClient,
     LiveChromeRobotsCache,
     PoliteLiveChromeHttpClient,
+    prefer_live_browser,
 )
 from jobctrl.infrastructure.discovery.production_wiring import DurableJobEventPublisher
 from jobctrl.infrastructure.discovery.sqlite_repository import SqliteJobRepository
@@ -1458,6 +1459,8 @@ def _run_all(
             source_id=source_id,
             cancel_event=cancel_event,
         )
+        if prefer_live_browser(client, cancel_event=cancel_event) is None:
+            return None
         session = _smart_extract_session(source_id=source_id, run_id=run_id, browser=client)
         return PoliteLiveChromeHttpClient(session, client, default_timeout=60.0)
 

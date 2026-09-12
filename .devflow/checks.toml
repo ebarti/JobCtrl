@@ -132,3 +132,43 @@ kind = "junit"
 description = "A synthetic emitted dry-run event refreshes browser status without recording submission"
 argv = ["env", "PLAYWRIGHT_JUNIT_OUTPUT_FILE={report_path}", "JOBCTRL_E2E_API_PORT=18966", "JOBCTRL_E2E_WEB_PORT=18967", "corepack", "pnpm", "--filter", "@jobctrl/web", "exec", "playwright", "test", "--config=e2e/playwright.config.ts", "tests/dry-run-completed.spec.ts", "--reporter=junit"]
 timeout_seconds = 600
+
+[checks.optional-extension-launcher]
+kind = "junit"
+description = "Web startup builds once before replacement, preserves running processes on failure, and leaves excluded modes unchanged"
+argv = ["node", "--test", "--test-reporter=junit", "--test-reporter-destination={report_path}", "scripts/dev-lifecycle.test.mjs"]
+min_executed = 17
+timeout_seconds = 300
+
+[checks.optional-extension-launcher-syntax]
+kind = "static"
+description = "The development launcher parses with macOS Bash 3.2"
+argv = ["/bin/bash", "-n", "scripts/dev"]
+
+[checks.optional-extension-worker]
+kind = "junit"
+description = "All acquisition families preserve guarded connected/offline persistence, profile consent, broker failures, checkpoints and stale-owner fences"
+argv = ["env", "-u", "UV_EXCLUDE_NEWER", "-u", "UV_EXCLUDE_NEWER_PACKAGE", "uv", "run", "--project", "workers/automation", "--locked", "--all-extras", "--exclude-newer", "false", "pytest", "-q", "workers/automation/tests/test_optional_extension.py", "workers/automation/tests/test_live_browser_discovery.py", "workers/automation/tests/test_enrichment_politeness_gate.py", "workers/automation/tests/test_discovery_production_wiring.py", "workers/automation/tests/test_workday_gateway_routing.py", "workers/automation/tests/test_smartextract_discovery.py", "workers/automation/tests/test_discovery_search_units.py", "--junitxml={report_path}"]
+min_executed = 115
+timeout_seconds = 300
+
+[checks.optional-extension-api]
+kind = "junit"
+description = "Offline discovery and enrichment launch/retry routes dispatch while worker readiness and broker authorization stay enforced"
+argv = ["corepack", "pnpm", "--filter", "@jobctrl/api", "exec", "vitest", "run", "test/server.test.ts", "--reporter=junit", "--outputFile={report_path}"]
+min_executed = 249
+timeout_seconds = 300
+
+[checks.optional-extension-web]
+kind = "junit"
+description = "Offline and connected status stays informational, launch remains enabled, and targeted LinkedIn robots guidance stays bounded"
+argv = ["corepack", "pnpm", "--filter", "@jobctrl/web", "exec", "vitest", "run", "src/contexts/pipeline/components/StageTriggerPanel.test.tsx", "src/contexts/pipeline/components/StageTimeline.test.tsx", "src/contexts/operations/components/BrowserCapabilitiesPanel.test.tsx", "src/contexts/profile/components/SettingsPanel.test.tsx", "--reporter=junit", "--outputFile={report_path}"]
+min_executed = 61
+timeout_seconds = 300
+
+[checks.optional-extension-browser]
+kind = "junit"
+description = "Owned Chromium UI and real fixture API accept offline Discovery and show connected preference; dispatch is stubbed and worker persistence is covered separately"
+argv = ["env", "UV_EXCLUDE_NEWER=false", "UV_LOCKED=1", "PLAYWRIGHT_JUNIT_OUTPUT_FILE={report_path}", "JOBCTRL_E2E_ISOLATED=1", "JOBCTRL_E2E_API_PORT=18976", "JOBCTRL_E2E_WEB_PORT=18977", "corepack", "pnpm", "--filter", "@jobctrl/web", "exec", "playwright", "test", "--config=e2e/playwright.config.ts", "tests/optional-extension.spec.ts", "--project=chromium", "--reporter=junit"]
+min_executed = 1
+timeout_seconds = 600

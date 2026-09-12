@@ -141,14 +141,21 @@ mode, then keep the operations workspace open while work proceeds. The source
 picker supports up to 50 selections and labels broad-board adapters as
 JobStreaming; the persisted `jobspy:` prefix remains only a compatibility ID.
 
-### Live Chrome prerequisite
+<a id="live-chrome-prerequisite"></a>
 
-Integrated Discovery requires the paired JobCtrl extension to be running in the
-user's current Chrome profile. The Browser & extension settings card reports a
-live heartbeat; a saved pairing token by itself is not readiness. When the
-heartbeat is absent, Pipelines disables Discover and the API rejects a launch
-before it creates a workflow. There is no Playwright, direct-HTTP, or copied-
-profile fallback.
+### Optional live Chrome connection
+
+Discovery and Enrich work with or without the extension. At each acquisition
+setup, JobCtrl prefers the selected, connected extension in your current Chrome
+profile. When it is offline or the status check is unavailable, the worker uses
+the existing public HTTP or anonymous Playwright path. A saved pairing token
+alone does not select the live transport. Pipelines reports connection status
+without blocking a run; the normal worker and stage prerequisites still apply.
+
+Transport is chosen before fetching. A site, robots, DNS, access, or cancellation
+failure never triggers another transport. A later acquisition setup may choose
+again. Anonymous access cannot use your signed-in session, and integrated
+fallback never opens a copied profile or adopts a system browser.
 
 Open the extension popup in the Chrome profile you want Discovery to use and
 save the pairing token there. That explicit action selects the extension
@@ -164,9 +171,9 @@ actions rather than presenting a false ready state. Once reloaded, a popup that
 already holds the token shows **Use this Chrome profile for Discovery** when the
 installation still needs to be selected; copying the token again is unnecessary.
 
-Every broad-board request, canonical ATS/API request, Workday request, Smart
-Extract render, `robots.txt` read, and detail-enrichment page acquisition in
-`DiscoverWorkflow` is delegated to that extension. Brokered HTTP/API requests
+This choice covers broad-board provider sessions, canonical ATS/API and Workday
+requests, Smart Extract rendering, robots reads, and detail-enrichment pages.
+On the connected path, brokered HTTP/API requests
 run in its service worker; rendered-page work opens bounded temporary inactive
 tabs. Both execute in the Chrome profile where the extension is installed, so
 current cookies, authenticated sessions, browser settings, and later profile
@@ -191,10 +198,10 @@ Cross-origin redirects are therefore blocked before the redirected request is
 sent in either mode. Request bodies are limited to 2 MB of UTF-8 data, and
 response text/HTML is streamed and stopped at 4 MB per field.
 
-A recurring Discovery schedule has the same prerequisite: Chrome must be
-running with the paired extension connected when the scheduled workflow reaches
-source acquisition. If it is not, the run fails closed and can be retried after
-Chrome reconnects.
+A recurring Discovery schedule uses the same choice at acquisition setup.
+Chrome may remain closed for anonymous access. Sites that need your signed-in
+session can remain blocked until you connect the extension or capture them
+manually; JobCtrl does not bypass their restrictions.
 
 The workspace deliberately keeps different scopes and units separate:
 

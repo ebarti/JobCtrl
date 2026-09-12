@@ -71,7 +71,7 @@ describe("<SettingsPanel>", () => {
     expect(screen.getByText("Current Chrome profile; never copied")).toBeInTheDocument();
     expect(screen.getByText("Chrome installation …00000099")).toBeInTheDocument();
     expect(
-      screen.getByText(/Saving this token in that profile selects its extension installation/),
+      screen.getByText(/Saving this token selects its extension installation/),
     ).toBeInTheDocument();
     expect(screen.getByText("Connected in Chrome")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Copy token" }));
@@ -112,7 +112,7 @@ describe("<SettingsPanel>", () => {
 
     await userEvent.click(disclosure);
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Open Chrome with the paired JobCtrl extension before running Discovery",
+      "Discovery and Enrich can run with anonymous access",
     );
   });
 

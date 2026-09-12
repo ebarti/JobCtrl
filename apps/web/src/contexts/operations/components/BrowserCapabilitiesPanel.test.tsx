@@ -112,6 +112,9 @@ describe("<BrowserCapabilitiesPanel>", () => {
 
     expect(await screen.findByText("Managed by JobCtrl")).toBeInTheDocument();
     expect(screen.getByText("Optional browser access")).toBeInTheDocument();
+    expect(screen.getByText(/Enrich prefer the connected extension/)).toHaveTextContent(
+      "without it, they use anonymous access",
+    );
     expect(
       container.querySelector('[data-browser-capability="core-browser"]'),
     ).toHaveAttribute("data-browser-access", "managed");

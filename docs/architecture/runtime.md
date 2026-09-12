@@ -415,6 +415,15 @@ lease. HTTP/API tasks execute in the extension service worker with redirects
 disabled; rendered-page tasks install tab-scoped exact-origin DNR rules before
 navigating.
 
+Acquisition transport is independent of Temporal execution ownership. One
+one-second loopback availability probe at each source/adapter/site-batch setup
+prefers the extension only for a literal `connected: true`; offline, malformed,
+or unavailable status selects the existing guarded HTTP or anonymous Playwright
+path. Cancellation and programming errors propagate. After selection, remote
+site, robots, DNS, and access failures do not select a second transport. The
+next setup may choose again after a disconnect. API launch/retry gates and
+Pipelines controls require worker readiness, not extension readiness.
+
 ### Provider Credential Boundary
 
 Provider credential storage crosses the TypeScript/Python process boundary; it
@@ -475,10 +484,11 @@ controls, provider configuration, model IDs, AI execution policy, browser
 adoption metadata, and apply limits. Keychain owns actual secrets, while the
 copied browser profile, extension token, and selected installation ID remain
 protected separate artifacts.
-The copied-profile artifact is not part of integrated Discovery. Its browser
-authority is the installed extension's current heartbeat in the user's running
+The copied-profile artifact is not part of integrated Discovery, including its
+anonymous fallback. A connected extension authorizes use of the selected live
 Chrome profile; the API holds its execution-bound task leases and response
-bodies in process memory only.
+bodies in process memory only. Standalone copied-profile compatibility retains
+its existing separate capability consent.
 
 Normal settings resolve from the saved owner and then the built-in default;
 explicit per-workflow model input may override a saved provider preference.
@@ -707,11 +717,12 @@ Production workflows live alongside the activities:
   to concrete source ids for source-quality quarantine and fail the workflow
   after the remaining planned source families complete. Every job-source
   acquisition owned by this workflow—including JobStreaming provider sessions,
-  ATS/Workday requests, Smart Extract renders, robots reads, and detail pages—is
-  delegated through the API's bounded broker to the paired extension in the
-  user's current Chrome profile. The execution reference is part of every task;
-  the worker has no direct-HTTP, Playwright, adopted-browser, or copied-profile
-  fallback for this workflow.
+  ATS/Workday requests, Smart Extract renders, robots reads, and detail pages—
+  prefers the paired, connected extension and otherwise selects guarded HTTP or
+  anonymous Playwright before fetching. The execution reference, source
+  checkpoints, leases, fences, and cohorts remain intact on both paths. Every
+  extension task retains broker authorization; anonymous fallback cannot adopt
+  a system browser or open a copied profile.
 - `ApplyWorkflow` (`jobctrl/apply/workflow.py`) — single-activity,
   **per-job** workflow with live retry capped at one attempt and dry-run retry
   capped at two attempts. `apply_activity` re-raises transient failures so the

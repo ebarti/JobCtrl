@@ -2336,7 +2336,7 @@ generation endpoint, register or replace an artifact, or change approval state.
 
 ## 2026-09-02: Integrated Discovery Uses The Extension In The User's Live Chrome Profile
 
-Status: accepted
+Status: superseded by the 2026-09-12 optional acquisition decision below.
 
 Decision: every job-source acquisition owned by `DiscoverWorkflow` is delegated
 to the installed JobCtrl extension in the user's currently running Chrome profile.
@@ -2387,3 +2387,33 @@ Consequences:
   limit; and
 - copied-profile capabilities remain available only for separately consented
   compatibility paths outside integrated Discovery.
+
+## 2026-09-12: Prefer A Connected Extension And Allow Anonymous Acquisition
+
+Status: accepted
+
+Decision: Discovery and Enrich can launch with or without a paired extension.
+Each acquisition setup makes one availability choice: a bounded one-second
+loopback status probe must return literal `connected: true` to select the
+extension. Offline, unavailable, or malformed status selects the existing
+public HTTP or anonymous Playwright path. Cancellation and programming errors
+propagate; a site, robots, DNS, access, or selected-extension failure never
+causes a second transport to acquire the same request. A subsequent setup can
+select anonymous access after an extension disconnects.
+
+Rationale: the extension supplies the user's current Chrome session when
+available, while public acquisition remains useful without installing or
+running Chrome. Choosing before acquisition makes that behavior predictable
+without using a failure as a reason to bypass access controls.
+
+Consequences: JobStreaming, ATS/API, Workday, Smart Extract, and enrichment
+retain their Discovery execution reference, source policy, persistence,
+checkpoints, leases, fences, and cohorts regardless of transport. The existing
+extension broker authentication, selected-installation ownership, bounds,
+cancellation, and authorization remain unchanged. Integrated anonymous access
+never opens the copied-profile resolver, even when standalone consent is set.
+Standalone browser capabilities keep their separate consent boundary. Anonymous
+LinkedIn detail requests obey ordinary robots policy; previously denied rows
+can still guide users to connect the extension for a signed-in retry. Pipelines
+and Settings show connection status without globally blocking launch or retry;
+worker readiness, stage eligibility, and authorization gates still apply.
