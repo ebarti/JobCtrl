@@ -8,8 +8,14 @@ const COMPANY = "Cache Context Labs";
 
 test("JobUpdated patches a filtered second page without losing selection, order or scroll", async ({
   page,
+  request,
 }, testInfo) => {
   const db = new Database(loadE2eDbPath());
+  db.pragma("foreign_keys = ON");
+  const seededJobIds: string[] = [];
+  const baselineResponse = await request.get("/v1/jobs");
+  expect(baselineResponse.ok()).toBe(true);
+  const baseline = await baselineResponse.json();
   const errors: string[] = [];
   const streamEvents: string[] = [];
   let listReads = 0;
@@ -46,6 +52,7 @@ test("JobUpdated patches a filtered second page without losing selection, order 
           Date.UTC(2026, 8, 12, 10, index),
         ).toISOString();
         insertJob.run(jobId, url, title, COMPANY, timestamp);
+        seededJobIds.push(jobId);
         insertEvent.run(
           jobId,
           "JobDiscovered",
@@ -161,7 +168,67 @@ test("JobUpdated patches a filtered second page without losing selection, order 
     expect(page.url()).toBe(urlBefore);
     expect(await page.evaluate(() => window.scrollY)).toBe(scrollBefore);
   } finally {
-    db.close();
-    // Playwright owns the page/context and closes the CDP session with it.
+    try {
+      // Other specs share this disposable workspace. Remove our canonical rows
+      // and derived rows, then replay the remaining canonical history so totals
+      // and dashboard activity no longer include the synthetic fixture.
+      await page.close();
+      db.transaction(() => {
+        for (const jobId of seededJobIds) {
+          for (const table of [
+            "job_events",
+            "job_list_projections",
+            "job_detail_projections",
+            "artifact_list_projections",
+            "jobs",
+          ]) {
+            db.prepare(
+              `DELETE FROM ${table} WHERE tenant_id = 'local' AND job_id = ?`,
+            ).run(jobId);
+          }
+        }
+        db.prepare(
+          "UPDATE event_watermarks SET last_event_id = 0 WHERE projection_name = ?",
+        ).run("typescript:operations_projections:local");
+      })();
+      const lastEvent = db
+        .prepare(
+          "SELECT COALESCE(MAX(event_id), 0) AS id FROM job_events WHERE tenant_id = 'local'",
+        )
+        .get() as { id: number };
+      await expect
+        .poll(async () => {
+          const response = await request.get("/v1/jobs");
+          expect(response.ok()).toBe(true);
+          const watermark = db
+            .prepare(
+              "SELECT last_event_id AS id FROM event_watermarks WHERE projection_name = ?",
+            )
+            .get("typescript:operations_projections:local") as { id: number };
+          return watermark.id;
+        })
+        .toBeGreaterThanOrEqual(lastEvent.id);
+      const restored = await (await request.get("/v1/jobs")).json();
+      expect(restored.pagination.total).toBe(baseline.pagination.total);
+      expect(
+        restored.items.map((item: { jobKey: string }) => item.jobKey),
+      ).toEqual(baseline.items.map((item: { jobKey: string }) => item.jobKey));
+      for (const table of [
+        "jobs",
+        "job_events",
+        "job_list_projections",
+        "job_detail_projections",
+        "artifact_list_projections",
+      ]) {
+        const remaining = db
+          .prepare(
+            `SELECT COUNT(*) AS count FROM ${table} WHERE tenant_id = 'local' AND job_id IN (${seededJobIds.map(() => "?").join(",")})`,
+          )
+          .get(...seededJobIds) as { count: number };
+        expect(remaining.count).toBe(0);
+      }
+    } finally {
+      db.close();
+    }
   }
 });
