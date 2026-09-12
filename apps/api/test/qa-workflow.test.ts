@@ -16,6 +16,7 @@ import {
   QA_PLATFORM_JOB_ID,
   QA_RISK_JOB_ID,
   removeQaWorkspace,
+  seedQaShippedFitLifecycle,
   type QaWorkspace,
 } from "./qa-seed.js";
 
@@ -55,6 +56,45 @@ afterEach(() => {
 });
 
 describe("seeded local QA workflow", () => {
+  it.each(["post_voice_shipped", "post_acceptance_audit"] as const)(
+    "projects canonical %s findings separately from the acceptance gate",
+    async (lifecycle) => {
+      if (lifecycle === "post_acceptance_audit") seedQaShippedFitLifecycle(workspace.dbPath, lifecycle);
+      const app = buildApp(options);
+      try {
+        const response = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
+        expect(response.statusCode, response.body).toBe(200);
+        const item = response.json().items.find((candidate: { jobKey: string }) => candidate.jobKey === QA_PLATFORM_JOB_ID);
+        const audit = item.materialsPreview.requirementLedAudit;
+        expect(audit.shippedFit).toEqual({
+          lifecycle,
+          score: lifecycle === "post_voice_shipped" ? 6 : 5,
+          mustHaveCoverage: lifecycle === "post_voice_shipped" ? 1 : 0.5,
+          claimedOnlyRequirementIds: ["r2"],
+          passed: false,
+          warnings: lifecycle === "post_voice_shipped"
+            ? ["Shipped grounded must-have coverage 100% (fit 6/10) is below the revision gate (80% / 7)."]
+            : ["Recorded after acceptance; this audit did not influence the accepted resume."],
+          coverageBasis: lifecycle === "post_voice_shipped" ? "grounded_shipped_text_v1" : "judge_claimed_legacy",
+        });
+        expect(audit.revision).toMatchObject({ score: 7, mustHaveCoverage: 0.5, reviewBlocked: true });
+        expect(audit.coveredRequirements).toMatchObject([{ id: "r1" }]);
+        expect(audit.uncoveredRequirements).toMatchObject([
+          { id: "r2", reason: "Adjacent developer-experience language needs review before approval." },
+        ]);
+        expect(audit.evidenceBackedClaims).toEqual(expect.arrayContaining([
+          expect.objectContaining({ evidenceIds: ["ev-platform"], requirementIds: ["r1"], claimLabels: ["evidence_reframed"] }),
+          expect.objectContaining({ evidenceIds: ["ev-incident"], requirementIds: ["r2"], reviewRequired: true }),
+        ]));
+        expect(response.body).not.toContain("RAW PROMPT SECRET");
+        expect(response.body).not.toContain("FULL PROFILE SECRET");
+        expect(response.body).not.toContain("/private/secret-resume.pdf");
+      } finally {
+        await app.close();
+      }
+    },
+  );
+
   it("soft deletes and restores all matching jobs without touching nonmatching rows", async () => {
     const app = buildApp(options);
 

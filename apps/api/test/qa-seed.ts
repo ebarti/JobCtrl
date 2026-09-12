@@ -39,6 +39,69 @@ export const QA_PLATFORM_JOB_ID = qaJobId(QA_PLATFORM_JOB_URL);
 export const QA_RISK_JOB_URL = "https://linkedin.com/jobs/view/qa-risk-manager";
 export const QA_RISK_JOB_ID = qaJobId(QA_RISK_JOB_URL);
 const QA_RESUME_TEMPLATE = "{{ personal_data }}\n\n{{ resume_body }}\n";
+const QA_SHIPPED_SUMMARY = "Owned platform reliability improvements for incident response.";
+
+export type QaShippedFitLifecycle = "post_voice_shipped" | "post_acceptance_audit";
+
+function shippedFitMetadata(lifecycle: QaShippedFitLifecycle): Record<string, unknown> {
+  return {
+    lifecycle,
+    fit_score: {
+      // r1 is the only must-have and supplies 0.9 of the total 1.6 weight.
+      score: lifecycle === "post_voice_shipped" ? 6 : 5,
+      must_have_coverage: lifecycle === "post_voice_shipped" ? 1 : 0.5,
+      covered_requirement_ids: ["r1"],
+      uncovered_requirement_ids: ["r2"],
+      claimed_only_requirement_ids: ["r2"],
+      // The historical post-acceptance audit did not record grounded coverage.
+      ...(lifecycle === "post_voice_shipped" ? { coverage_basis: "grounded_shipped_text_v1" } : {}),
+    },
+    passed: false,
+    gate_thresholds: { min_fit_score: 7, must_have_coverage: 0.8 },
+    warnings: lifecycle === "post_voice_shipped"
+      ? ["Shipped grounded must-have coverage 100% (fit 6/10) is below the revision gate (80% / 7)."]
+      : ["Recorded after acceptance; this audit did not influence the accepted resume."],
+  };
+}
+
+/** Switch only the owned seed's canonical final audit, retaining all other metadata. */
+export function seedQaShippedFitLifecycle(dbPath: string, lifecycle: QaShippedFitLifecycle): () => void {
+  const db = new Database(dbPath);
+  const originals: Array<{ table: string; rowid: number; metadata_json: string }> = [];
+  try {
+    db.transaction(() => {
+      for (const table of ["job_materials", "job_materials_artifacts"]) {
+        const rows = db.prepare(
+          `SELECT rowid, metadata_json FROM ${table} WHERE tenant_id = 'local' AND job_id = ? AND generation = 1`,
+        ).all(QA_PLATFORM_JOB_ID) as Array<{ rowid: number; metadata_json: string }>;
+        for (const row of rows) {
+          const metadata = JSON.parse(row.metadata_json) as Record<string, unknown>;
+          if (!metadata.post_generation_fit) continue;
+          originals.push({ table, ...row });
+          metadata.post_generation_fit_final = shippedFitMetadata(lifecycle);
+          db.prepare(`UPDATE ${table} SET metadata_json = ? WHERE rowid = ?`)
+            .run(JSON.stringify(metadata), row.rowid);
+        }
+      }
+      if (originals.length !== 3) throw new Error("Expected the seeded material and both resume artifacts.");
+    })();
+  } finally {
+    db.close();
+  }
+  return () => {
+    const restoreDb = new Database(dbPath);
+    try {
+      restoreDb.transaction(() => {
+        for (const row of originals) {
+          restoreDb.prepare(`UPDATE ${row.table} SET metadata_json = ? WHERE rowid = ?`)
+            .run(row.metadata_json, row.rowid);
+        }
+      })();
+    } finally {
+      restoreDb.close();
+    }
+  };
+}
 
 export function createQaPdfBytes(title: string): Buffer {
   const safeTitle = title
@@ -163,7 +226,7 @@ const QA_RESUME_HTML = `<!doctype html>
       <h1 data-resume-layout-target="personal:full_name" data-resume-line-number="1">John Doe</h1>
       <p data-resume-layout-target="personal:contact" data-resume-line-number="2">john.doe@example.com | Remote City</p>
       <h2>Profile</h2>
-      <p data-resume-layout-target="summary" data-resume-line-number="3">Platform and security engineering leader for QA validation.</p>
+      <p data-resume-layout-target="summary" data-resume-line-number="3">${QA_SHIPPED_SUMMARY}</p>
       <h2>Experience</h2>
       <p data-resume-layout-target="experience:qa_platform" data-resume-line-number="4"><strong>Director of Platform Engineering, QA Systems</strong></p>
       <ul>
@@ -224,8 +287,8 @@ export function seedQaDatabase(dbPath: string, options: QaSeedOptions = {}): voi
   const resumeHtml = path.join(artifactDir, "gitlab-platform-resume.html");
   const coverTxt = path.join(artifactDir, "gitlab-platform-cover.txt");
   const coverPdf = path.join(artifactDir, "gitlab-platform-cover.pdf");
-  fs.writeFileSync(resumeTxt, "QA tailored resume");
-  fs.writeFileSync(resumePdf, createQaPdfBytes("QA tailored resume"));
+  fs.writeFileSync(resumeTxt, QA_SHIPPED_SUMMARY);
+  fs.writeFileSync(resumePdf, createQaPdfBytes(QA_SHIPPED_SUMMARY));
   fs.writeFileSync(resumeHtml, QA_RESUME_HTML);
   fs.writeFileSync(coverTxt, "QA cover letter");
   fs.writeFileSync(coverPdf, createQaPdfBytes("QA cover letter"));
@@ -571,11 +634,13 @@ function requirementLedAuditMetadata(): Record<string, unknown> {
             requirement_id: "r1",
             text_excerpt: "Lead platform reliability improvements across critical services.",
             tier: "must_have",
+            weight: 0.9,
           },
           {
             requirement_id: "r2",
             text_excerpt: "Improve developer experience and incident-response practices.",
             tier: "nice_to_have",
+            weight: 0.7,
           },
         ],
       },
@@ -598,7 +663,7 @@ function requirementLedAuditMetadata(): Record<string, unknown> {
         section: "experience",
         label: "Director of Platform Engineering",
         source_text: ["FULL PROFILE SECRET source bullet"],
-        tailored_text: ["Owned platform reliability improvements for incident response."],
+        tailored_text: [QA_SHIPPED_SUMMARY],
         evidence_ids: ["ev-platform"],
         requirement_ids: ["r1"],
         coverage_edge_ids: ["edge-r1-ev-platform"],
@@ -639,6 +704,7 @@ function requirementLedAuditMetadata(): Record<string, unknown> {
         review_blockers: ["claim-draft: draft_requires_confirmation"],
       },
     },
+    post_generation_fit_final: shippedFitMetadata("post_voice_shipped"),
     bullet_limit_overflows: [
       {
         experience_entry_id: "qa_platform",
@@ -835,7 +901,7 @@ function insertBulletProvenance(db: Database.Database): void {
     "rephrased",
     "rephrase_allowed",
     "Reframed the bullet toward platform reliability.",
-    "Owned platform reliability improvements for incident response.",
+    QA_SHIPPED_SUMMARY,
     1,
     QA_NOW,
   );

@@ -21,6 +21,11 @@ browser behavior, and visual consistency catch different failures.
 - Type-level tests prove the public inferred shapes of read hooks and contracts.
 - Playwright uses a real API plus seeded SQLite fixtures to prove route and
   realtime behavior without a live worker or model.
+- `shipped-fit-lifecycle.spec.ts` reads canonical final-fit metadata through the
+  real review-queue API. It distinguishes post-voice gate findings from audits
+  recorded after acceptance, retains the original gate and provenance coverage,
+  and keeps historical judge-claimed coverage visibly separate from grounded
+  coverage. Its fixture restores the original metadata after each case.
 - Storybook proves state/variant rendering and shared accessibility behavior.
 
 ## Rhea And Base UI Contracts
