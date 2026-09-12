@@ -545,7 +545,7 @@ export const eventByType = {
     attachmentName: "Resume.pdf",
   }),
   ApplicationEmailFeedbackIngested: createApplicationEmailFeedbackIngested(LOCAL_TENANT, {
-    jobKey: JOB_ID,
+    jobId: JOB_ID,
     evidenceId: "evidence-1",
     suggestionId: "suggestion-1",
     provider: "gmail",

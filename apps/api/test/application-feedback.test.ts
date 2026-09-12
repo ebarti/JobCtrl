@@ -1840,7 +1840,7 @@ describe("application feedback API", () => {
       evidence: [
         {
           evidenceId: "evidence-1",
-          jobKey: READY_JOB_ID,
+          jobId: READY_JOB_ID,
           providerMessageId: "gmail-message-1",
           linkConfidence: 0.94,
           bodyText: rawBody,
@@ -1850,7 +1850,7 @@ describe("application feedback API", () => {
         {
           suggestionId: "suggestion-1",
           evidenceId: "evidence-1",
-          jobKey: READY_JOB_ID,
+          jobId: READY_JOB_ID,
           kind: "interview",
           confidence: 0.9,
           bodyText: rawBody,
@@ -1891,7 +1891,7 @@ describe("application feedback API", () => {
       evidence: [
         {
           evidenceId: "evidence-1",
-          jobKey: READY_JOB_ID,
+          jobId: READY_JOB_ID,
           providerMessageId: "gmail-message-1",
           linkConfidence: 0.94,
         },
@@ -1900,7 +1900,7 @@ describe("application feedback API", () => {
         {
           suggestionId: "suggestion-1",
           evidenceId: "evidence-1",
-          jobKey: READY_JOB_ID,
+          jobId: READY_JOB_ID,
           kind: "interview",
           confidence: 0.9,
         },

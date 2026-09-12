@@ -438,7 +438,7 @@ export type GmailOutcomeScanRequest = z.input<typeof GmailOutcomeScanRequestSche
 export const GmailOutcomeScanEvidenceSummarySchema = z
   .object({
     evidenceId: z.string(),
-    jobKey: z.string(),
+    jobId: z.string(),
     providerMessageId: z.string(),
     linkConfidence: z.number(),
   })
@@ -451,7 +451,7 @@ export const GmailOutcomeScanSuggestionSummarySchema = z
   .object({
     suggestionId: z.string(),
     evidenceId: z.string(),
-    jobKey: z.string(),
+    jobId: z.string(),
     kind: z.enum(APPLICATION_OUTCOME_KINDS),
     confidence: z.number(),
   })
