@@ -306,7 +306,8 @@ labels and Project status do not approve code execution.
 CI is plain path-filtered GitHub Actions with no routing layer: each workflow
 under `.github/workflows/` declares the paths it owns and runs whole when a
 pull request or a `main` push touches them. `typescript.yml` runs the API, web,
-Storybook, web E2E, and extension suites; `python.yml` lints and
+Storybook, web E2E, and extension suites, including `web:lint` frontend boundary
+checks; `python.yml` lints and
 runs the full pytest suite on each supported Python version; `launcher.yml`
 runs the native launcher race suite together with the cross-runtime migration
 boundary (Go opens the candidate with the locked Python migration runtime,
@@ -456,12 +457,19 @@ Run the dev server:
 corepack pnpm web:dev
 ```
 
-Typecheck and build:
+Check frontend boundaries, typecheck, and build:
 
 ```bash
+corepack pnpm web:lint
 corepack pnpm web:check
 corepack pnpm web:build
 ```
+
+`web:lint` checks production imports and browser-capability access using the
+TypeScript syntax tree. Existing boundary debt has scoped exceptions; new
+imports cannot silently widen them. See the
+[frontend boundary checks](architecture/frontend/state-and-ports.md#automated-boundary-checks)
+for the enforced rules, legitimate infrastructure access, and review limits.
 
 Run the test pyramid (Vitest unit / hook / component, type-level tests, and
 Playwright end-to-end) through the root aliases:

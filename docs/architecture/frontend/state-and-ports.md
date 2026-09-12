@@ -257,6 +257,15 @@ re-exported through `@jobctrl/contracts`; the ACL is the intended single
 import surface for feature code, though `@jobctrl/contracts` is still
 imported directly in places today.
 
+`corepack pnpm web:lint` guards this boundary in production feature source.
+Existing direct `@jobctrl/contracts` imports have exact file-and-imported-symbol
+exceptions with reasons: projection/response imports are migration debt, while
+runtime schemas and constants are intentional contract consumption. New callers
+or symbols require an explicit boundary decision; unused exceptions must be
+removed. Shared ports, adapters, and the Operations ACL legitimately consume
+contracts. Canonical `@jobctrl/domain-types` vocabulary, including tenant
+identities and domain events, remains available directly.
+
 Why an ACL (this thin):
 
 - **Single point of compile-time impact** when a backend projection
@@ -290,8 +299,33 @@ coordination goes through:
 - **The query cache and its invalidations** for data dependencies.
 - **Ports** for browser APIs (clipboard, notifications, OS-open).
 
-The only `window` access in feature code is via a port (e.g.,
-`ports.clipboard.write(text)`).
+Browser capabilities belong behind ports (e.g., `ports.clipboard.write(text)`).
+The lint checker guards direct storage, fetch, `EventSource`, clipboard, and
+browser event-bus access. Existing exceptions are scoped to the three persisted
+context stores' storage access and `ResumeAuditPins`' HTML-preview fetch; they do not
+authorize those capabilities in other feature modules.
+
+### Automated Boundary Checks
+
+`corepack pnpm web:lint` uses the TypeScript syntax tree to check dependency and
+capability boundaries:
+
+- Contexts cannot import views, and views cannot add another view's modules.
+  The existing Analytics-to-Dashboard KPI composition has an exact-edge
+  relocation exception.
+- Aggregate contexts cannot import another aggregate's hooks or stores;
+  Operations read hooks remain the shared read-side exception.
+- Views cannot use runtime Query or Zustand APIs or call the API client.
+  Type-only imports remain valid; API error values and URL-only preview helpers
+  have scoped exceptions.
+- Production code cannot import test scaffolding. Tests, stories, and generated
+  source are excluded from feature checks.
+
+The checker preserves ordinary `useState`, `useEffect`, and `useRef` use; it
+does not prove state lifetime, mutation ownership, or runtime behavior. Review
+still determines whether state belongs in a context, the URL, or a persistent
+store. Runtime/computed module imports are unsupported at these boundaries;
+use statically resolvable dependencies so ownership can be checked.
 
 ### 6.7 Driving Ports (Use Cases) — Implicit
 

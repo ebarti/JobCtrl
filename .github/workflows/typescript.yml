@@ -79,6 +79,10 @@ jobs:
           cache: pnpm
       - name: Install locked dependencies
         run: corepack pnpm install --frozen-lockfile
+      - name: Lint web boundaries
+        run: |
+          corepack pnpm web:lint
+          corepack pnpm web:lint:test
       - name: Check web
         run: corepack pnpm web:check
       - name: Test web
