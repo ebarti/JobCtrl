@@ -431,24 +431,45 @@ stop_one() {
   echo "$name: stopped"
 }
 
-cmd_start() {
+prepare_runtime() {
   load_env_file
   set_default_env
+  local name
+  for name in "$@"; do
+    [[ "$name" == "web" ]] || continue
+    echo "dev: building browser extension"
+    if ! ( cd "$ROOT" && corepack pnpm extension:build ); then
+      echo "dev: extension build failed; existing processes were left running" >&2
+      return 1
+    fi
+    echo "extension: $ROOT/dist/extension"
+    echo "extension: open chrome://extensions, enable Developer mode, and Load unpacked from that path."
+    echo "extension: if already loaded, click Reload on its card; reload open application tabs after each build."
+    return 0
+  done
+}
+
+cmd_start() {
+  local mode="$1"
+  shift
   local targets=("$@")
   if [[ ${#targets[@]} -eq 0 ]]; then
     for n in $(process_names); do targets+=("$n"); done
+  fi
+  prepare_runtime "${targets[@]}"
+  if [[ "$mode" == "restart" ]]; then
+    cmd_stop "${targets[@]}"
   fi
   for n in "${targets[@]}"; do start_one "$n"; done
   print_binding_summary "${targets[@]}"
 }
 
 cmd_run() {
-  load_env_file
-  set_default_env
   local targets=("$@")
   if [[ ${#targets[@]} -eq 0 ]]; then
     for n in $(process_names); do targets+=("$n"); done
   fi
+  prepare_runtime "${targets[@]}"
 
   trap 'run_cleanup; exit 130' INT
   trap 'run_cleanup; exit 143' TERM
@@ -482,11 +503,6 @@ cmd_stop() {
     for n in $(process_names); do targets+=("$n"); done
   fi
   for n in "${targets[@]}"; do stop_one "$n"; done
-}
-
-cmd_restart() {
-  cmd_stop "$@"
-  cmd_start "$@"
 }
 
 worker_health_status() {
@@ -579,9 +595,8 @@ main() {
   [[ "${1:-}" == "--" ]] && shift
   case "$sub" in
     run)     cmd_run "$@" ;;
-    start)   cmd_start "$@" ;;
+    start|restart) cmd_start "$sub" "$@" ;;
     stop)    cmd_stop "$@" ;;
-    restart) cmd_restart "$@" ;;
     status)  cmd_status "$@" ;;
     logs)    cmd_logs "$@" ;;
     setup)   cmd_setup ;;

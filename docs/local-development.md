@@ -80,8 +80,9 @@ corepack pnpm dev
 ```
 
 `corepack pnpm dev` is the source-development counterpart of installed
-`jobctrl start`. It starts the full local fleet in dependency order: Temporal dev server,
-TypeScript API, Vite web app, and the Python worker. Before each
+`jobctrl start`. It first builds the browser extension, then starts the full
+local fleet in dependency order: Temporal dev server, TypeScript API, Vite web
+app, and the Python worker. Before each
 component starts, the launcher stops the existing tracked JobCtrl process
 tree for that component, so rerunning `corepack pnpm dev` starts from a clean owned
 stack. It runs in the foreground so supervised terminals keep the child
@@ -102,6 +103,14 @@ both under `JOBCTRL_DIR` lets an interrupted workflow reconnect to the same
 history when the source stack is restarted from another Git worktree. To run a
 fully isolated stack, give it a separate `JOBCTRL_DIR`; do not point a shared
 `jobctrl.db` at a worktree-local Temporal database.
+
+Whenever `scripts/dev run`, `start`, or `restart` selects the product `web`
+component (including the default fleet), it runs `corepack pnpm extension:build`
+once before stopping or replacing any tracked process. A build failure aborts
+startup and leaves the existing processes and logs intact. Docs, demo, and
+component sets without `web` skip this build, as do status and stop commands.
+The launcher prints the absolute `dist/extension` path and Chrome load/reload
+instructions; loading or refreshing the extension in Chrome remains manual.
 
 ### Runtime Overrides
 
@@ -526,8 +535,10 @@ installation uses Playwright's `--with-deps` option to install Xvfb. A missing
 browser or display fails the required tests.
 
 `corepack pnpm extension:build` writes the unpacked extension bundle to
-`dist/extension/`; load that directory in Chrome/Chromium developer mode for
-manual QA, or reload its existing unpacked-extension card after rebuilding.
+`dist/extension/`. The source launcher also runs this build before starting or
+restarting the product web component. Open `chrome://extensions`, enable
+**Developer mode**, and choose **Load unpacked** with that directory for manual
+QA, or click **Reload** on its existing unpacked-extension card after rebuilding.
 Reload any application tabs that were already open so Chrome injects the newly
 built content script into them.
 Chrome can otherwise load the rebuilt popup from disk while retaining the old

@@ -131,7 +131,9 @@ corepack pnpm dev
 ```
 
 Only this option requires Git and the contributor toolchain. Keep the
-`corepack pnpm dev` terminal open while using the source build. See
+`corepack pnpm dev` terminal open while using the source build. Startup builds
+the browser extension and prints its absolute path and manual Chrome
+load/reload instructions before starting the fleet. See
 [Local Development](docs/local-development.md) for prerequisites, component
 commands, isolated workspaces, and QA.
 
@@ -392,8 +394,12 @@ profile, including job-scoped retries of previously blocked Enrich work.
 
 The Manifest V3 extension is integrated Discovery's required live-browser
 transport and also a local capture/assist surface:
-build with `corepack pnpm extension:build`, load `dist/extension/` unpacked, and pair
-it with the token shown in JobCtrl Settings. **Save job** captures the active
+source startup builds it whenever the product web component is selected, or
+build it separately with `corepack pnpm extension:build`. Open
+`chrome://extensions`, enable **Developer mode**, load `dist/extension/` with
+**Load unpacked**, and pair it with the token shown in JobCtrl Settings. After
+rebuilding, click **Reload** on its extension card and reload open application
+tabs. **Save job** captures the active
 page over loopback into the manual-capture importer (same dedupe, snapshots,
 quarantine, and source provenance as any user-mediated capture), with a
 bounded offline queue when the stack is down. Its page script is available on
