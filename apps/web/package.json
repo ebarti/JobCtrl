@@ -17,7 +17,9 @@
     "e2e:headed": "playwright test --config=e2e/playwright.config.ts --headed",
     "storybook": "storybook dev -p 6006",
     "storybook:build": "storybook build -o ../../dist/web-storybook",
-    "storybook:test": "start-server-and-test \"http-server ../../dist/web-storybook -p 6006 --silent\" http://127.0.0.1:6006 \"test-storybook --url http://127.0.0.1:6006\""
+    "storybook:test": "start-server-and-test \"http-server ../../dist/web-storybook -p 6006 --silent\" http://127.0.0.1:6006 \"test-storybook --url http://127.0.0.1:6006\"",
+    "lint": "node scripts/lint-boundaries.mjs",
+    "lint:test": "node --test scripts/lint-boundaries.test.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",
