@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import threading
 from io import BytesIO
-from types import SimpleNamespace
 
 import pytest
 
@@ -284,8 +283,9 @@ def test_smartextract_parses_and_persists_on_both_transports(tmp_path, monkeypat
 
 @pytest.mark.parametrize("connected", [True, False])
 def test_jobstreaming_selected_transport_keeps_checkpoint_and_execution_cohort(
-    tmp_path, monkeypatch, connected
+    tmp_path, monkeypatch, connected, public_provider_network
 ) -> None:
+    import requests
     import jobstreaming
     from jobstreaming import AdapterCapabilities, AdapterRegistry, JobPost, JobResponse, Location, Scraper, Site
     from jobctrl.discovery import jobspy
@@ -295,19 +295,18 @@ def test_jobstreaming_selected_transport_keeps_checkpoint_and_execution_cohort(
     body = {"title": "Director of Engineering", "description": "Lead engineering and reliable systems. " * 20}
     anonymous = []
 
-    class HttpSession:
-        headers = {}
+    def send(_adapter, request, **_kwargs):
+        anonymous.append(request.url)
+        return _provider_response(request, body=json.dumps(body).encode())
 
-        def get(self, url):
-            anonymous.append(url)
-            return SimpleNamespace(json=lambda: body)
+    monkeypatch.setattr(requests.adapters.HTTPAdapter, "send", send)
 
     class Adapter(Scraper):
         capabilities = AdapterCapabilities(filters=frozenset({"location", "is_remote", "hours_old"}))
 
         def __init__(self, **_kwargs):
             super().__init__(Site.INDEED)
-            self.session = HttpSession()
+            self.session = self.track_transport(requests.Session())
 
         def scrape(self, request, context=None):
             data = self.session.get("https://fixture.example/api/jobs").json()
@@ -361,3 +360,296 @@ def test_jobstreaming_selected_transport_keeps_checkpoint_and_execution_cohort(
         assert bool(broker.visited) is connected
     finally:
         close_connection(tmp_path / "jobs.db")
+
+
+@pytest.fixture
+def public_provider_network(monkeypatch):
+    """Controlled DNS and a hard socket sentinel: no source traffic is possible."""
+    import socket
+
+    def resolve(_host, port, **_kwargs):
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", port))]
+
+    def no_socket(*_args, **_kwargs):
+        pytest.fail("unexpected network socket in provider fixture")
+
+    monkeypatch.setattr(socket, "getaddrinfo", resolve)
+    monkeypatch.setattr(socket, "socket", no_socket)
+    monkeypatch.setattr(socket, "create_connection", no_socket)
+    for variable in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
+        monkeypatch.delenv(variable, raising=False)
+    return resolve
+
+
+@pytest.fixture
+def offline_provider_registry(monkeypatch, public_provider_network):
+    from jobctrl.domain.errors import ConfigurationError
+
+    def unavailable(_client):
+        raise ConfigurationError("fixture extension offline")
+
+    monkeypatch.setattr(live_browser.LiveChromeDiscoveryClient, "ensure_available", unavailable)
+    return live_browser.live_jobstreaming_registry(execution())
+
+
+def _provider_response(request, status=200, *, body=b"", headers=None):
+    import requests
+
+    response = requests.Response()
+    response.status_code = status
+    response.url = request.url
+    response.request = request
+    response.headers.update(headers or {})
+    response._content = body
+    response.raw = BytesIO(body)
+    return response
+
+
+@pytest.mark.parametrize("redirect", [False, True])
+def test_real_linkedin_provider_search_rejects_private_destinations(monkeypatch, offline_provider_registry, redirect):
+    import requests
+    from jobstreaming import ScraperInput, Site
+    from jobctrl.infrastructure.network.public_http import UnsafePublicDestinationError
+
+    sent = []
+
+    def send(_adapter, request, **_kwargs):
+        sent.append(request.url)
+        return _provider_response(request, 302, headers={"Location": "http://127.0.0.1:17699/private"})
+
+    monkeypatch.setattr(requests.adapters.HTTPAdapter, "send", send)
+    provider = offline_provider_registry.create(Site.LINKEDIN)
+    if not redirect:
+        provider.base_url = "http://127.0.0.1:17699"
+    try:
+        with pytest.raises(UnsafePublicDestinationError, match="not a public"):
+            provider.scrape(
+                ScraperInput(site_type=[Site.LINKEDIN], search_term="fixture", location="Remote", results_wanted=1)
+            )
+        assert len(sent) == int(redirect)
+        if redirect:
+            assert sent[0].startswith("https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?")
+    finally:
+        provider.close()
+
+
+def test_real_google_recreated_search_session_is_guarded(monkeypatch, offline_provider_registry):
+    import requests
+    from jobstreaming import ScraperInput, Site
+    from jobctrl.infrastructure.network.public_http import UnsafePublicDestinationError
+
+    sent = []
+    monkeypatch.setattr(
+        requests.adapters.HTTPAdapter,
+        "send",
+        lambda _adapter, request, **_kw: sent.append(request.url) or _provider_response(request),
+    )
+    provider = offline_provider_registry.create(Site.GOOGLE)
+    request = ScraperInput(site_type=[Site.GOOGLE], search_term="fixture", results_wanted=1)
+    try:
+        assert provider.scrape(request).jobs == ()
+        original_session = provider.session
+        assert len(sent) == 1 and sent[0].startswith("https://www.google.com/search?")
+        provider.url = "http://169.254.169.254/latest/meta-data"
+        with pytest.raises(UnsafePublicDestinationError, match="not a public"):
+            provider.scrape(request)
+        assert provider.session is not original_session
+        assert len(sent) == 1
+    finally:
+        provider.close()
+
+
+@pytest.mark.parametrize("site_name", ["glassdoor", "zip_recruiter", "bdjobs"])
+def test_real_provider_detail_sessions_preserve_options_and_remain_guarded(
+    monkeypatch, offline_provider_registry, site_name
+):
+    import requests
+    import tls_client.sessions
+    from jobstreaming import Site
+    from jobctrl.infrastructure.network.public_http import UnsafePublicDestinationError
+
+    monkeypatch.setattr(tls_client.sessions, "request", lambda *_a, **_kw: pytest.fail("unguarded native TLS request"))
+    sent = []
+
+    def send(_adapter, request, **kwargs):
+        sent.append((request, kwargs))
+        return _provider_response(request, body=b'{"posting":"fixture"}')
+
+    monkeypatch.setattr(requests.adapters.HTTPAdapter, "send", send)
+    provider = offline_provider_registry.create(Site(site_name))
+    try:
+        detail_session = provider._detail_session if site_name == "bdjobs" else provider._get_detail_session
+        session = detail_session()
+        assert detail_session() is session
+        session.headers["X-Fixture"] = "detail"
+        session.cookies.set("fixture", "present", domain="jobs.example")
+        response = session.post(
+            "https://jobs.example/detail",
+            params={"page": 2},
+            json={"id": "fixture"},
+            **({"timeout": 7} if site_name == "bdjobs" else {"timeout_seconds": 7}),
+        )
+        assert response.json() == {"posting": "fixture"}
+        assert sent[0][0].url == "https://jobs.example/detail?page=2"
+        assert json.loads(sent[0][0].body) == {"id": "fixture"}
+        assert sent[0][0].headers["X-Fixture"] == "detail"
+        if site_name == "bdjobs":
+            assert "Cookie" not in sent[0][0].headers  # provider deliberately clears its cookie jar
+        else:
+            assert "fixture=present" in sent[0][0].headers["Cookie"]
+        assert sent[0][1]["timeout"] == 7
+        with pytest.raises(UnsafePublicDestinationError, match="not a public"):
+            session.get("http://[::1]/private")
+        assert len(sent) == 1
+    finally:
+        provider.close()
+
+
+class _ProviderWireSocket:
+    """HTTP wire fixture that records numeric connects without opening sockets."""
+
+    def __init__(self, reply):
+        self.reply = reply
+        self.address = None
+        self.sent = bytearray()
+        self.timeout = None
+
+    def connect(self, address):
+        self.address = address
+
+    def settimeout(self, timeout):
+        self.timeout = timeout
+
+    def sendall(self, data):
+        self.sent.extend(data)
+
+    def makefile(self, *_args, **_kwargs):
+        return BytesIO(self.reply)
+
+    def close(self):
+        pass
+
+
+def _provider_wire(monkeypatch, replies):
+    import socket
+
+    sockets = []
+
+    def create(*_args, **_kwargs):
+        assert len(sockets) < len(replies), "unexpected extra network attempt"
+        sock = _ProviderWireSocket(replies[len(sockets)])
+        sockets.append(sock)
+        return sock
+
+    monkeypatch.setattr(socket, "socket", create)
+    return sockets
+
+
+def test_real_provider_socket_path_pins_public_redirects_and_preserves_requests_semantics(
+    monkeypatch, offline_provider_registry
+):
+    from jobstreaming import Site
+
+    sockets = _provider_wire(
+        monkeypatch,
+        [
+            b"HTTP/1.1 302 Found\r\nLocation: http://other.example/final\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            b'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 11\r\nSet-Cookie: accepted=yes; Path=/\r\nConnection: close\r\n\r\n{"ok":true}',
+        ],
+    )
+    provider = offline_provider_registry.create(Site.LINKEDIN)
+    try:
+        response = provider.session.get(
+            "http://jobs.example/start", params={"page": 2}, headers={"Authorization": "Bearer fixture"}, timeout=9
+        )
+        assert response.json() == {"ok": True}
+        assert response.url == "http://other.example/final"
+        assert [item.status_code for item in response.history] == [302]
+        assert provider.session.cookies.get("accepted") == "yes"
+        assert [sock.address for sock in sockets] == [("93.184.216.34", 80)] * 2
+        assert all(sock.timeout == 9 for sock in sockets)
+        assert b"GET /start?page=2 HTTP/1.1" in sockets[0].sent
+        assert b"Authorization: Bearer fixture" in sockets[0].sent
+        assert b"Authorization:" not in sockets[1].sent
+    finally:
+        provider.close()
+
+
+def test_real_provider_socket_path_blocks_private_redirect_before_second_connect(
+    monkeypatch, offline_provider_registry
+):
+    from jobstreaming import Site
+    from jobctrl.infrastructure.network.public_http import UnsafePublicDestinationError
+
+    sockets = _provider_wire(
+        monkeypatch,
+        [
+            b"HTTP/1.1 302 Found\r\nLocation: http://10.0.0.1/private\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        ],
+    )
+    provider = offline_provider_registry.create(Site.LINKEDIN)
+    try:
+        with pytest.raises(UnsafePublicDestinationError, match="not a public"):
+            provider.session.get("http://jobs.example/start")
+        assert len(sockets) == 1
+        assert sockets[0].address == ("93.184.216.34", 80)
+    finally:
+        provider.close()
+
+
+@pytest.mark.parametrize("change_after_validation", [False, True])
+def test_real_provider_socket_path_blocks_private_dns_and_rebinding(
+    monkeypatch, offline_provider_registry, change_after_validation
+):
+    import socket
+    from jobstreaming import Site
+    from jobctrl.infrastructure.network.public_http import UnsafePublicDestinationError
+
+    resolutions = []
+
+    def resolve(host, port, **_kwargs):
+        resolutions.append(host)
+        address = "93.184.216.34" if change_after_validation and len(resolutions) == 1 else "10.0.0.1"
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (address, port))]
+
+    monkeypatch.setattr(socket, "getaddrinfo", resolve)
+    provider = offline_provider_registry.create(Site.LINKEDIN)
+    try:
+        with pytest.raises(UnsafePublicDestinationError, match="non-public"):
+            provider.session.get("http://jobs.example/start")
+        assert len(resolutions) == (2 if change_after_validation else 1)
+    finally:
+        provider.close()
+
+
+@pytest.mark.parametrize("proxy", ["http://proxy.example:8080", "socks5://proxy.example:1080"])
+def test_anonymous_provider_rejects_proxy_routing_before_socket_io(offline_provider_registry, proxy):
+    from jobstreaming import Site
+    from jobctrl.domain.errors import ConfigurationError
+
+    provider = offline_provider_registry.create(Site.LINKEDIN, proxies=[proxy])
+    try:
+        with pytest.raises(ConfigurationError, match="cannot pin destination DNS through a proxy"):
+            provider.session.get("https://jobs.example/start")
+    finally:
+        provider.close()
+
+
+def test_anonymous_provider_cancellation_during_dns_never_reaches_socket(monkeypatch, offline_provider_registry):
+    import socket
+    from jobstreaming import Site
+
+    cancel = threading.Event()
+    registry = live_browser.live_jobstreaming_registry(execution(), cancel_event=cancel)
+    provider = registry.create(Site.LINKEDIN)
+
+    def resolve(_host, port, **_kwargs):
+        cancel.set()
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", port))]
+
+    monkeypatch.setattr(socket, "getaddrinfo", resolve)
+    try:
+        with pytest.raises(TransientNetworkError, match="canceled"):
+            provider.session.get("http://jobs.example/start")
+    finally:
+        provider.close()

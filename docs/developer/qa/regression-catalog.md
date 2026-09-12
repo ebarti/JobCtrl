@@ -17,7 +17,7 @@ individual regression to exact test files.
 | Frontend state | URL/server/client state stay in their owning layers; every event and stage state has a handler/rendering path. | Hook/component/type tests plus parity tests. |
 | Rhea/Base UI system | Tokens, cards, statuses, accessible primitive behavior, and route parity remain coherent across theme, density, and viewport. | Token/boundary tests, focused wrapper tests, route visual QA, and the browser matrix. |
 | Pipeline operations | Execution topology, privacy, refresh behavior, ETA, freshness, queue, and capacity remain truthful and separately inspectable. | API/read-model tests, deterministic fixtures, invalidation/polling tests, and browser observation. |
-| Provider/browser setup | Environment ownership and passive detection cannot silently become credential or browser adoption. Extension pairing-token presence remains distinct from one explicitly selected installation's fresh live heartbeat; another Chrome profile with the token cannot lease. Integrated Discovery uses only that installed extension in the user's current Chrome profile, with no copied-profile or direct-network fallback and no browser-owned cookie/user-agent headers in worker tasks. Hanging/canceled tasks close their tabs, active leases remain live past 45 seconds, four-way admission uses backpressure, cross-origin redirects are blocked before dispatch, and UTF-8 byte bounds stop streaming early. | Worker/API bridge tests, two-installation contention and lease-liveness tests, extension persistent-context timeout/redirect E2E, Settings/Pipelines components, and a bounded live Discovery smoke. |
+| Provider/browser setup | Environment ownership and passive detection cannot silently become credential or browser adoption. Extension pairing-token presence remains distinct from one explicitly selected installation's fresh live heartbeat; another Chrome profile with the token cannot lease. Integrated Discovery and Enrich prefer the selected connected extension or choose guarded public HTTP/anonymous Playwright before acquisition. Offline status must not block eligible dispatch. Neither mode reads a copied profile; acquisition errors and cancellation never trigger a second transport. Anonymous provider initial/redirect/recreated/detail requests retain public URL/DNS/socket checks and reject proxy routing. Connected worker tasks must not carry browser-owned cookie/user-agent headers. Hanging/canceled tasks close their tabs, active leases remain live past 45 seconds, four-way admission uses backpressure, cross-origin redirects are blocked before dispatch, and UTF-8 byte bounds stop streaming early. | Worker/API bridge tests, two-installation contention and lease-liveness tests, extension persistent-context timeout/redirect E2E, Settings/Pipelines components, and a bounded live Discovery smoke. |
 | Retry preflight | Starting a retry cannot erase failure evidence before worker readiness is known. | API state-before/state-after regression plus route smoke. |
 
 ## Temporal Fault Injection
@@ -205,17 +205,18 @@ unchanged and dispatches no work.
 
 ## Live Profile Discovery And Automatic Recovery
 
-healthy worker before starting worker-backed stages.
+Require a healthy worker before starting worker-backed stages. With the API
+running but the extension offline, prove Settings/Pipelines report that status
+while eligible Discover, job-level Enrich, and bulk Enrich launch/retry routes
+can dispatch. Worker-unavailable retries must still preserve stage state,
+attempt count, diagnostics, metadata and events before reset. The owned
+`optional-extension.spec.ts` Chromium flow checks real UI/API dispatch through
+the existing stub dispatcher; pair that proof with persisted production worker
+fixtures because the browser harness does not run a worker or contact sources.
 
-For the live-profile Discovery gate, start from a built and reloaded unpacked
-extension. With the API running but the extension stopped or carrying an old
-token, prove the Browser settings surface says offline and a Discover launch is
-rejected before Temporal dispatch. Also prove job-level and bulk Enrich
-runs/retries reject before dispatch, and that every retry rejects before its
-stage state, attempt count, diagnostics, metadata, or event history are reset.
-Pair/reload the extension, wait for
-`GET /v1/discovery/browser-extension/status` to report a fresh versioned
-heartbeat, and prove Pipelines enables Discover. The extension E2E must lease a
+Pair/reload a built extension, wait for
+`GET /v1/discovery/browser-extension/status` to report a fresh selected
+heartbeat, and prove the UI reports connected preference. The extension E2E must lease a
 synthetic public-looking API task whose origin root is non-HTML, execute it in
 the extension service worker from the same persistent Chrome context where a
 site cookie was set, return that cookie-observed response, and leave no copied
@@ -227,8 +228,9 @@ non-retryable `unsafe_redirect`, without consuming the task timeout. Render a
 fixture that hydrates its posting through a second origin and prove its
 page-owned fetch succeeds. Return a retryable task failure for one job/target
 and prove remaining Enrich, ATS, and Smart Extract targets complete in the same
-attempt; preserve the failed target's retryability. Extension unavailability and
-cancellation must still abort the attempt.
+attempt; preserve the failed target's retryability. A disconnect after extension selection and
+cancellation must still fail or stop that acquisition without another transport;
+offline status at a later setup can select guarded anonymous access.
 Also lease a rendered-page task against a delayed LinkedIn SDUI fixture:
 `JobDetails_AboutTheJob_*` must remain unready while empty, then return its
 populated description even when cold hydration takes longer than 12 seconds.
@@ -247,12 +249,20 @@ Keep an active lease alive beyond 45 seconds and prove Settings remains
 connected. Feed multibyte request/result fixtures and an oversized stream to
 prove byte bounds and early cancellation. Worker fixtures must prove every
 JobStreaming adapter session plus ATS, Workday, Smart Extract, robots, and
-integrated detail enrichment select the live bridge under an exact
-`DiscoveryExecutionRef`; browser-owned Cookie/User-Agent headers must never
-cross the worker task. Seed an unresolved legacy WelcomeToTheJungle row and
+integrated detail enrichment prefer a connected bridge and can select guarded
+anonymous acquisition under the same exact `DiscoveryExecutionRef` when offline.
+Exercise the actual installed provider/session transport, not only custom fake
+adapters: private initial URLs, private DNS and public-to-private redirects must
+stop before socket I/O; public redirects must succeed through the real adapter
+connection hook, with sockets pinned to validated numeric addresses. Change DNS
+between validation and connection, recreate a provider's search session, and
+create per-detail Requests/tls-client sessions; all must retain the guard. Verify
+headers, cookies, body/query/timeout options, cancellation and proxy rejection.
+Keep socket/DNS fixtures owned and prohibit external requests. Browser-owned
+Cookie/User-Agent headers must never cross connected worker task contracts. Seed an unresolved legacy WelcomeToTheJungle row and
 invoke the outer Temporal `run_enrichment()` entry: workflow/run identity must
-be bound before legacy URL repair, and neither Playwright nor direct networking
-may run. Reproduce a LinkedIn detail request whose anonymous
+be bound before legacy URL repair. Connected selection must not launch
+anonymous acquisition, and neither mode may use the copied-profile pre-pass. Reproduce a LinkedIn detail request whose anonymous
 `robots.txt` policy denies the crawler and prove the owner-authenticated live
 Chrome session still performs the bounded exact-origin fetch through the
 extension while pacing, request budgets, URL safety, and audit history remain

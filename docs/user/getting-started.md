@@ -186,12 +186,14 @@ submission remains behind the configured approval gate.
 
 ## Discovery Extension And Optional Managed-Browser Capabilities
 
-Integrated Discovery requires the JobCtrl extension installed and paired in the
-Chrome profile you normally use. It executes Discovery's bounded page/API work
-directly in that currently running profile, so it does not copy the profile or
-launch a separate browser. Job-scoped Enrich retries use the same extension
-path. PDF rendering and Apply may still use their separate managed/adopted
-browser capabilities; those settings are never a Discovery or Enrich fallback.
+Discovery and Enrich work with or without the JobCtrl extension. When the
+selected paired installation is connected, acquisition prefers its bounded
+page/API transport in your current Chrome profile. Otherwise it uses guarded
+public HTTP or anonymous managed Playwright. Availability is checked before
+acquisition; a failed fetch does not switch transports. Anonymous access obeys
+site restrictions and may be unable to read signed-in content. Neither mode
+copies a profile or adopts a system-browser executable. PDF rendering and Apply
+retain their separate browser capabilities and consent requirements.
 
 Open **Settings → Browser & extension** to enable an optional system-browser
 capability, or to pair the extension. JobCtrl passively detects supported

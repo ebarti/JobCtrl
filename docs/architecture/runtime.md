@@ -723,6 +723,12 @@ Production workflows live alongside the activities:
   checkpoints, leases, fences, and cohorts remain intact on both paths. Every
   extension task retains broker authorization; anonymous fallback cannot adopt
   a system browser or open a copied profile.
+  Anonymous JobStreaming binds Requests sessions at the provider transport hook,
+  including recreated/detail sessions and providers normally using tls-client.
+  Each send/redirect validates public URL/DNS; direct sockets use the shared
+  numeric-address pinning helper. Proxy routing fails closed because the worker
+  cannot pin proxy-side target resolution. Provider request/response semantics
+  remain supported; native TLS fingerprinting is not used on this path.
 - `ApplyWorkflow` (`jobctrl/apply/workflow.py`) — single-activity,
   **per-job** workflow with live retry capped at one attempt and dry-run retry
   capped at two attempts. `apply_activity` re-raises transient failures so the

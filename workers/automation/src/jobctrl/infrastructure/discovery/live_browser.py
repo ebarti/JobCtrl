@@ -1,10 +1,12 @@
-"""Execution-bound Discovery acquisition through the user's live Chrome profile.
+"""Execution-bound Discovery with preferred live Chrome and guarded provider HTTP.
 
-The paired extension owns every remote page/API request. This worker-side client
-talks only to the loopback JobCtrl API broker, so it neither launches Chrome nor
-copies a browser profile. Temporal remains the durability authority and broker
-request/result envelopes stay in process memory. Downstream extraction can
-persist posting text and send captured content to configured LLM providers.
+The live Chrome client talks only to the loopback JobCtrl API broker; its paired
+extension owns those remote page/API requests. When the extension is unavailable
+at setup, the JobStreaming registry uses anonymous provider HTTP with public
+destination checks and pinned connections. Neither path copies a browser profile.
+Temporal remains the durability authority and broker request/result envelopes
+stay in process memory. Downstream extraction can persist posting text and send
+captured content to configured LLM providers.
 """
 
 from __future__ import annotations
@@ -24,10 +26,17 @@ from typing import Any, Literal
 from urllib.parse import urlsplit
 from urllib.robotparser import RobotFileParser
 
+import requests
+from urllib3 import HTTPConnectionPool, HTTPSConnectionPool
+from urllib3.connection import HTTPConnection, HTTPSConnection
+
 from jobctrl import config
 from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
 from jobctrl.domain.errors import ConfigurationError, JobCtrlError, TransientNetworkError
 from jobctrl.domain.ports.politeness import RobotsPort, RobotsVerdict
+from jobctrl.infrastructure.network.fetch_failures import PublicFetchFailureKind
+from jobctrl.infrastructure.network.public_http import UnsafePublicDestinationError, create_public_connection
+from jobctrl.infrastructure.network.url_safety import validate_public_http_url
 
 
 DiscoveryBrowserSourceFamily = Literal[
@@ -609,6 +618,15 @@ def live_jobstreaming_registry(
                 cancel_event=cancel_event,
             )
             if prefer_live_browser(client, cancel_event=cancel_event) is None:
+                original_track = adapter.track_transport
+
+                def track_public(transport: Any) -> Any:
+                    original_track(transport)
+                    return original_track(_public_provider_session(transport, cancel_event=cancel_event))
+
+                adapter.track_transport = track_public
+                if getattr(adapter, "session", None) is not None:
+                    adapter.session = track_public(adapter.session)
                 return adapter
             session = LiveChromeSession(client)
             original_session = getattr(adapter, "session", None)
@@ -625,6 +643,112 @@ def live_jobstreaming_registry(
 
         registry.register(site, factory, replace=True)
     return registry
+
+
+class _PublicHTTPConnection(HTTPConnection):
+    def _new_conn(self) -> Any:
+        return create_public_connection((self.host, self.port), self.timeout, self.source_address)
+
+
+class _PublicHTTPSConnection(HTTPSConnection):
+    def _new_conn(self) -> Any:
+        return create_public_connection((self.host, self.port), self.timeout, self.source_address)
+
+
+class _PublicHTTPPool(HTTPConnectionPool):
+    ConnectionCls = _PublicHTTPConnection
+
+
+class _PublicHTTPSPool(HTTPSConnectionPool):
+    ConnectionCls = _PublicHTTPSConnection
+
+
+class _PublicProviderAdapter(requests.adapters.HTTPAdapter):
+    """Keep Requests pooling/TLS semantics while pinning each new socket."""
+
+    @staticmethod
+    def _guard_pools(manager: Any) -> None:
+        # PoolManager's default mapping is shared globally; only change ours.
+        manager.pool_classes_by_scheme = {"http": _PublicHTTPPool, "https": _PublicHTTPSPool}
+
+    def init_poolmanager(self, *args: Any, **kwargs: Any) -> None:
+        super().init_poolmanager(*args, **kwargs)
+        self._guard_pools(self.poolmanager)
+
+    def proxy_manager_for(self, proxy: str, **kwargs: Any) -> Any:
+        raise ConfigurationError("Anonymous Discovery cannot pin destination DNS through a proxy")
+
+
+def _public_provider_session(transport: Any, *, cancel_event: threading.Event | None) -> requests.Session:
+    """Guard native provider sends, including redirects and recreated sessions.
+
+    Requests sessions keep their provider configuration. tls-client has no
+    public-address socket hook, so those providers use Requests with compatible
+    request options, headers and cookies in anonymous mode. Configured proxy
+    routing is retained so the guard rejects it instead of silently going direct.
+    """
+    from jobstreaming.util import RequestsRotating, TLSRotating
+
+    if isinstance(transport, TLSRotating):
+        class PublicTLSCompatibleSession(RequestsRotating):
+            def request(self, method: str, url: str, **kwargs: Any) -> requests.Response:
+                kwargs.setdefault("allow_redirects", False)
+                if "timeout_seconds" in kwargs:
+                    kwargs["timeout"] = kwargs.pop("timeout_seconds")
+                kwargs.setdefault("timeout", transport.timeout_seconds)
+                if "insecure_skip_verify" in kwargs:
+                    kwargs["verify"] = not kwargs.pop("insecure_skip_verify")
+                if "proxy" in kwargs:
+                    proxy = kwargs.pop("proxy")
+                    kwargs["proxies"] = {"http": proxy, "https": proxy} if isinstance(proxy, str) else proxy
+                return super().request(method, url, **kwargs)
+
+            def get(self, url: str, **kwargs: Any) -> requests.Response:
+                return self.request("GET", url, **kwargs)
+
+            execute_request = request
+
+        session = PublicTLSCompatibleSession()
+        session.headers.update(transport.headers or {})
+        session.cookies = transport.cookies
+        session.proxies = transport.proxies
+        session.proxy_cycle = transport.proxy_cycle
+    elif isinstance(transport, requests.Session):
+        session = transport
+    else:
+        raise ConfigurationError("Unsupported anonymous Discovery provider transport")
+
+    if getattr(session, "_jobctrl_public_guarded", False):
+        return session
+    original_send = session.send
+
+    def send_public(request: requests.PreparedRequest, **kwargs: Any) -> requests.Response:
+        if cancel_event is not None and cancel_event.is_set():
+            raise TransientNetworkError("Discovery acquisition canceled")
+        decision = validate_public_http_url(request.url)
+        if not decision.allowed:
+            raise UnsafePublicDestinationError(
+                decision.reason or "URL is not a public HTTP(S) destination",
+                failure_kind=decision.failure_kind or PublicFetchFailureKind.UNSAFE_DESTINATION,
+                destination_url=request.url,
+            )
+        if requests.utils.select_proxy(request.url, kwargs.get("proxies") or {}):
+            raise ConfigurationError("Anonymous Discovery cannot pin destination DNS through a proxy")
+        if cancel_event is not None and cancel_event.is_set():
+            raise TransientNetworkError("Discovery acquisition canceled")
+        return original_send(request, **kwargs)
+
+    # Requests follows redirects through self.send(), so each hop re-enters the
+    # URL check. The connection classes resolve/check again and connect to the
+    # validated numeric address, closing the DNS check/use gap for direct fetches.
+    session.send = send_public
+    for scheme in ("http://", "https://"):
+        previous = session.adapters.get(scheme)
+        session.mount(scheme, _PublicProviderAdapter())
+        if previous is not None:
+            previous.close()
+    session._jobctrl_public_guarded = True
+    return session
 
 
 def _safe_headers(headers: Mapping[str, object]) -> dict[str, str]:

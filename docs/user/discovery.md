@@ -394,18 +394,20 @@ succeeds. Changes apply to the next employer analysis.
 
 ## Crawl Politeness
 
-Integrated Discovery keeps its politeness policy around the live-Chrome
-transport: JobCtrl applies per-host pacing/concurrency and a per-run request
-budget before delegating a bounded request, and fetches `robots.txt` through the
-same extension/profile. Chrome owns the effective cookies, proxy, and user
-agent. The extension returns that browser user agent with the robots response so
-JobCtrl evaluates the requested path under the same identity that performs the
-page fetch. An inconclusive robots result fails closed; denied, rate-limited,
-budget-exhausted, and unsafe outcomes remain first-class audit facts.
+Discovery retains source policy whichever transport is selected. Connected
+acquisition fetches pages/APIs and ordinary `robots.txt` through the same live
+extension/profile. Chrome owns its effective cookies, proxy, and user agent;
+robots evaluation uses the returned browser identity. Anonymous ATS/API and
+Workday use the guarded HTTP gateway, while Smart Extract and Enrich use
+anonymous Playwright with the public route guard. Ordinary robots denial or an
+inconclusive result prevents rendering. The signed-in LinkedIn detail carve-out
+applies only to connected live-profile requests. Pacing, budgets, and denied,
+rate-limited, exhausted or unsafe outcomes remain owned by the relevant source
+policy. Broad-board traversal has the narrower accounting boundary below.
 
 The **outbound user-agent** under **Discovery → Runtime settings** remains the
-configured identity for standalone/non-extension gateway operations such as
-opted-in contact research. Its effective form is
+configured identity for non-extension gateways and integrated anonymous
+broad-board requests, as well as opted-in contact research. Its effective form is
 `<product>/<version> (+<contact>)`—for example
 `JobCtrl/0.3 (+https://github.com/ebarti/JobCtrl)`—and `jobctrl doctor` prints
 it. Integrated live-profile Discovery does not overwrite Chrome's real user
@@ -422,16 +424,24 @@ surface:
   ride the existing `SourceRegistryEntry` rows; a registry policy editor is a
   planned addition, not yet in the UI.
 - **Broad boards** (`indeed`, `linkedin`, `glassdoor`, `zip_recruiter`) are
-  parsed by JobStreaming, but all of its provider sessions are replaced with
-  the extension transport for an integrated run. JobStreaming still owns its
-  internal per-board traversal, so JobCtrl applies budget and pacing at the
-  invocation boundary rather than pretending to count requests it does not
-  own; `jobctrl doctor` warns when those sources are enabled.
+  parsed by JobStreaming. Their sessions prefer the connected extension or use
+  guarded Requests for anonymous acquisition, including providers normally
+  using native tls-client. Initial requests, redirects, recreated search
+  sessions and detail sessions all retain public URL/DNS checks. Direct sockets
+  connect to validated public numeric addresses; public redirects retain normal
+  Requests behavior. Provider headers, cookies, payloads and timeouts remain
+  supported. JobStreaming owns internal traversal and robots behavior, so
+  JobCtrl's crawl-policy pacing and budget apply at the invocation boundary;
+  `jobctrl doctor` warns when those sources are enabled. This is not a claim of
+  per-request robots or budget accounting inside the library.
 - Live-profile Discovery uses the proxy configured in Chrome or the operating
   system. It does not inject the SQLite `proxy` value into the user's browser.
-  Standalone compatibility paths that consume the JobCtrl proxy setting still
-  reject malformed `host:port[:user:pass]` values instead of silently going
-  direct.
+  Anonymous integrated broad-board acquisition rejects HTTP(S) and SOCKS proxy
+  routing, including environment proxies, because the worker cannot pin a
+  proxy's destination DNS. It does not silently go direct after that failure.
+  Connect the extension to use Chrome's configured proxy, or remove the proxy
+  for anonymous direct access. Other compatibility paths that consume the
+  JobCtrl proxy setting still reject malformed `host:port[:user:pass]` values.
 
 ## Contact Research
 

@@ -2417,3 +2417,12 @@ LinkedIn detail requests obey ordinary robots policy; previously denied rows
 can still guide users to connect the extension for a signed-in retry. Pipelines
 and Settings show connection status without globally blocking launch or retry;
 worker readiness, stage eligibility, and authorization gates still apply.
+
+Anonymous JobStreaming uses guarded Requests transport for all integrated
+providers, including native tls-client providers: initial requests, redirects,
+replacement search sessions and per-detail sessions validate public destinations,
+and direct sockets pin numeric public addresses with the shared connector.
+Headers, cookies, bodies, query parameters and timeout options retain their
+provider semantics. Native TLS fingerprinting is not used in anonymous mode.
+Configured or environment proxy routes fail closed because the worker cannot
+pin a proxy's target DNS; connected acquisition retains Chrome's proxy behavior.

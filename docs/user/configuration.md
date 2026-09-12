@@ -34,7 +34,7 @@ Contributors running from source can use the checkout-prefixed commands in
 | Spend/capacity, scoring guidance, or compensation source policy | **Settings → General** (`/settings`) |
 | Provider secret or cloud mode | **Settings → Credentials** (`/settings/credentials`) on macOS, or `~/.jobctrl/.env` / the shell |
 | Preferred provider model or employer-analysis perspectives | **Settings → Model selection** (`/settings/models`); see [Employer Analysis Perspectives](discovery.md#employer-analysis-perspectives) for how the selection is used during Discover preparation |
-| Pairing and live Discovery browser readiness | **Settings → Browser & extension** (`/settings/browser`); integrated Discovery requires the extension's live heartbeat from the user's current Chrome profile |
+| Optional extension pairing and connection status | **Settings → Browser & extension** (`/settings/browser`); Discovery and Enrich prefer the selected connected extension and can otherwise use guarded public HTTP/anonymous Playwright. See [source limits](discovery.md#crawl-politeness). |
 
 The rest of this page is a shared-settings lookup. [Data, Privacy & Safety](data-and-safety.md)
 explains what is stored or sent; [Security](security.md) explains the controls
