@@ -128,7 +128,8 @@ apply/submit route, and deterministic autofill excludes password and resume
 content. The content script intentionally matches all HTTP(S) pages so source
 and application hosts do not require per-host releases; autofill remains passive
 until an explicit review click, while the background worker may open temporary
-inactive tabs for an explicitly started/scheduled Discover execution. The
+tabs for an explicitly started/scheduled Discover execution. LinkedIn job
+pages use an active tab in an unfocused window; other pages remain inactive. The
 manifest's HTTP(S) host permission is also wildcarded so brokered API requests
 can execute in the service worker when an API origin cannot host an injectable
 HTML page. Capture/autofill routes remain loopback-only; the service worker does
@@ -162,7 +163,12 @@ installs tab-scoped DNR rules that allow main-frame navigation
 only to the exact source origin; a cross-origin redirect is blocked before
 dispatch. A task-scoped `webNavigation.onErrorOccurred` listener observes only
 the temporary tab's top frame, reports cross-origin blocked navigation as
-non-retryable `unsafe_redirect`, and is removed during task cleanup. Page-owned
+non-retryable `unsafe_redirect`, and is removed during task cleanup. LinkedIn job tasks move their known owned `about:blank` tab into
+`windows.create({focused: false, tabId})` before target navigation, leaving that
+tab active without focusing its window. Cleanup removes only the task-owned tab,
+not the whole window, so user-added tabs survive. Late tab/window creation and
+DNR installation perform cleanup again after cancellation instead of leaking
+resources or starting a canceled navigation. Page-owned
 fetch/XHR subresources are not matched by the DNR rules. The content script and broker independently reject non-web,
 credential-bearing, lexically local, or cross-origin final targets. Response
 streaming stops at the 4 MB UTF-8 byte bound instead of buffering an unbounded

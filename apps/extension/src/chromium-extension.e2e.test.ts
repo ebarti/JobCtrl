@@ -56,7 +56,7 @@ describe("Chromium loaded extension privacy boundary", () => {
     }
   }, 60_000);
 
-  it("captures a cold LinkedIn SDUI detail that hydrates after twelve seconds in an inactive tab", async () => {
+  it("captures a cold LinkedIn SDUI detail in an unfocused window and removes the owned tab", async () => {
     const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-extension-rendered-e2e-"));
     let api: FakeLoopbackApi | null = null;
     let context: BrowserContext | null = null;
@@ -68,12 +68,30 @@ describe("Chromium loaded extension privacy boundary", () => {
       await context.route("https://www.linkedin.com/**", async (route) => {
         await route.fulfill({ contentType: "text/html", body: `<!doctype html><title>Fixture role</title>
           <main><div id="JobDetails_AboutTheJob_123" componentkey="JobDetails_AboutTheJob_123"><h2>About the job</h2></div></main>
-          <script>setTimeout(() => { document.querySelector('#JobDetails_AboutTheJob_123').append(${JSON.stringify(description)}); }, 15_000);</script>` });
+          <script>setTimeout(() => { if (!document.hidden) document.querySelector('#JobDetails_AboutTheJob_123').append(${JSON.stringify(description)}); }, 15_000);</script>` });
       });
       api = await installFakeLoopbackApi(context, jobUrl, 45_000, "rendered_page");
       const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent("serviceworker", { timeout: 10_000 }));
       const controller = await context.newPage();
       await controller.goto(`chrome-extension://${new URL(worker.url()).host}/popup.html`);
+      await controller.bringToFront();
+      // Playwright emulates focus for attached pages. This fixture verifies the
+      // actual window API/lifecycle and capture; native visibility is separately
+      // verified without page attachment in the required live product probe.
+      const before = await worker.evaluate(async () => {
+        type WindowInfo = { id: number; focused: boolean };
+        const windows = chrome.windows as unknown as {
+          getAll(): Promise<WindowInfo[]>;
+          getLastFocused(): Promise<WindowInfo>;
+          onCreated: { addListener(listener: (window: WindowInfo) => void): void };
+          onFocusChanged: { addListener(listener: (id: number) => void): void };
+        };
+        const probe = { created: [] as WindowInfo[], focusEvents: [] as number[] };
+        (globalThis as unknown as { windowProbe: typeof probe }).windowProbe = probe;
+        windows.onCreated.addListener((window) => probe.created.push({ id: window.id, focused: window.focused }));
+        windows.onFocusChanged.addListener((id) => probe.focusEvents.push(id));
+        return { ids: (await windows.getAll()).map((window) => window.id), focusedId: (await windows.getLastFocused()).id };
+      });
       await sendExtensionMessage(controller, { type: "saveToken", token: "rendered-fixture-token" });
 
       await waitFor(() => api?.discoveryCompletions.length === 1, 50_000);
@@ -84,6 +102,18 @@ describe("Chromium loaded extension privacy boundary", () => {
         bodyHtml: expect.stringContaining('id="JobDetails_AboutTheJob_123"'),
       } });
       expect(context.pages().some((page) => page.url() === jobUrl)).toBe(false);
+      const after = await worker.evaluate(async () => {
+        const windows = chrome.windows as unknown as {
+          getAll(): Promise<Array<{ id: number }>>;
+          getLastFocused(): Promise<{ id: number }>;
+        };
+        const probe = (globalThis as unknown as { windowProbe: { created: Array<{ id: number; focused: boolean }>; focusEvents: number[] } }).windowProbe;
+        return { ...probe, ids: (await windows.getAll()).map((window) => window.id), focusedId: (await windows.getLastFocused()).id };
+      });
+      expect(after.created).toEqual([{ id: expect.any(Number), focused: false }]);
+      expect(after.focusEvents).not.toContain(after.created[0]!.id);
+      expect(after.focusedId).toBe(before.focusedId);
+      expect(after.ids.sort()).toEqual(before.ids.sort());
     } finally {
       await api?.close();
       await context?.close();

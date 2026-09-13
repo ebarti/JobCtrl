@@ -124,6 +124,11 @@ PDF rendering. A missing separate application URL does not block that
 preparation. Quarantined or inactive captures do not start it, and URL import
 never starts Apply.
 
+The extension renders LinkedIn jobs in an active tab inside an unfocused
+temporary window, allowing client-rendered descriptions to hydrate without
+moving focus. The task retains its exact-origin navigation guard and closes
+only its own tab on completion, failure, timeout or cancellation.
+
 When connected, LinkedIn enrichment uses the selected extension installation in
 the user's currently running, signed-in Chrome profile. Neither connected nor
 anonymous acquisition requests or evaluates `robots.txt`. Public-destination

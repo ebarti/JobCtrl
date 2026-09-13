@@ -415,7 +415,9 @@ task.
 The same installed extension is preferred for integrated Discovery and Enrich
 when connected. While Chrome is running, it heartbeats over loopback and executes
 bounded HTTP/API tasks in the extension service worker plus rendered-page tasks
-in temporary inactive tabs inside the profile where the extension is installed.
+in temporary tabs inside the profile where the extension is installed. LinkedIn
+job pages use an active tab in an unfocused temporary window so their content
+can render without taking focus; other pages use inactive tabs.
 Both use the user's live profile—not an exported or copied snapshot—so later
 cookie and session changes take effect automatically.
 Saving the pairing token in the extension explicitly selects that extension
@@ -432,7 +434,7 @@ offline. Each acquisition setup chooses the connected extension or anonymous
 access; an acquisition failure does not switch transports.
 Four extension executors provide bounded concurrency. Active leases heartbeat
 independently, and worker cancellation or the task's hard timeout aborts the
-request and closes an inactive tab when one exists. Direct HTTP/API requests
+request and closes its owned tab when one exists. Direct HTTP/API requests
 disable redirect following; rendered-page tabs use exact-origin request rules
 that block cross-origin main-frame redirects before Chrome dispatches them,
 while leaving the page's own fetch/XHR requests under Chrome's normal policy.

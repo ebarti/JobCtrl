@@ -271,7 +271,14 @@ Seed historical robots-blocked rows and prove an audited retry succeeds in
 either mode without stranding an open transaction. Prove that a Temporal-backed standalone Enrich retry synthesizes its
 bridge execution reference, never launches or reads a copied profile, and that
 extension reconnection recovers both the current blocked-condition value and
-the legacy value without duplicate dispatch. Finally, run a bounded Discover
+the legacy value without duplicate dispatch. For LinkedIn rendered pages, verify an active task-owned tab in an unfocused
+window preserves the current window/tab and obtains the hydrated description
+with exact-origin guards installed first. Compare a hidden control using native
+Chrome without Playwright page attachment or focus emulation. Unit fixtures must
+cover failed window creation, pre-cancellation, late tab/window/rule completion,
+timeout, and user-added tabs surviving task cleanup. Loaded-extension fixtures
+must assert actual window creation and removal, while reporting their emulated
+visibility boundary separately. Finally, run a bounded Discover
 product path and confirm the bridge reports task activity and the workflow
 reaches a truthful terminal or actionable failed state. Do not use an
 application form and do not submit anything.

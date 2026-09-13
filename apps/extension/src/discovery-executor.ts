@@ -14,8 +14,9 @@ export interface DiscoveryBrowserExecutionOptions {
 }
 
 /**
- * Execute one brokered task in an inactive tab in the Chrome profile where the
- * extension is installed. A tab-scoped DNR allow/block pair is installed before
+ * Execute in the installed Chrome profile. LinkedIn jobs render in an active
+ * tab in an unfocused owned window; other pages use an inactive tab.
+ * A tab-scoped DNR allow/block pair is installed before
  * navigation, so cross-origin redirects are blocked before their request is
  * dispatched. The tab is closed on success, failure, cancellation, or timeout.
  */
@@ -52,18 +53,40 @@ export async function executeDiscoveryBrowserTask(
   let navigationListener: ((details: BrowserNavigationError) => void) | null = null;
   let blockedRedirect = false;
   let navigationError: string | null = null;
+  let finished = false;
+  const closeOwnedTab = async (id: number) => {
+    try {
+      await browser.tabs.remove(id);
+    } catch {
+      // The owner or a previous cleanup may already have closed this tab.
+    }
+  };
+  const clearRules = async () => {
+    if (ruleIds.length === 0) return;
+    try {
+      await browser.declarativeNetRequest.updateSessionRules({ removeRuleIds: ruleIds });
+    } catch {
+      // Session rules are also cleared when the extension is reloaded.
+    }
+  };
   try {
+    controller.signal.throwIfAborted();
     if (task.request.mode === "http_request") {
       return await executeExtensionHttpRequest(task.request, controller.signal);
     }
     const tab = await withAbort(
-      browser.tabs.create({ active: false, url: "about:blank" }),
+      browser.tabs.create({ active: false, url: "about:blank" }).then(async (created) => {
+        tabId = created.id ?? null;
+        // Creation can finish after withAbort has returned and finally ran.
+        if (tabId !== null && (finished || controller.signal.aborted)) await closeOwnedTab(tabId);
+        return created;
+      }),
       controller.signal,
     );
-    if (!tab.id) {
+    if (tab.id === undefined) {
       return failed("navigation_failed", "Chrome did not create a Discovery tab.", true);
     }
-    tabId = tab.id;
+    const ownedTabId = tab.id;
     navigationListener = (details) => {
       if (details.tabId !== tabId || details.frameId !== 0 || controller.signal.aborted) return;
       // Chrome can abort an earlier navigation while the destination continues.
@@ -79,22 +102,45 @@ export async function executeDiscoveryBrowserTask(
       controller.abort(new Error(navigationError));
     };
     browser.webNavigation.onErrorOccurred.addListener(navigationListener);
-    const rules = redirectGuardRules(task, tabId, destination.origin);
+    controller.signal.throwIfAborted();
+    const rules = redirectGuardRules(task, ownedTabId, destination.origin);
     ruleIds = rules.map((rule) => rule.id);
     await withAbort(
       browser.declarativeNetRequest.updateSessionRules({
         removeRuleIds: ruleIds,
         addRules: rules,
+      }).finally(() => {
+        // A late install must not outlive the cleanup that already ran.
+        if (finished || controller.signal.aborted) return clearRules();
       }),
       controller.signal,
     );
+    const host = destination.hostname.toLowerCase().replace(/\.$/, "");
+    const needsVisibleJobTab =
+      (host === "linkedin.com" || host.endsWith(".linkedin.com")) &&
+      destination.pathname.startsWith("/jobs/");
+    if (needsVisibleJobTab) {
+      controller.signal.throwIfAborted();
+      await withAbort(
+        browser.windows.create({ focused: false, tabId: ownedTabId }).finally(() => {
+          // Moving the known tab cannot authorize closing user-added tabs.
+          // Retry tab cleanup if window creation finishes after cancellation.
+          if (finished || controller.signal.aborted) return closeOwnedTab(ownedTabId);
+        }),
+        controller.signal,
+      );
+    }
+    controller.signal.throwIfAborted();
     await withAbort(
-      browser.tabs.update(tabId, { active: false, url: contextUrl }),
+      browser.tabs.update(ownedTabId, {
+        ...(needsVisibleJobTab ? {} : { active: false }),
+        url: contextUrl,
+      }),
       controller.signal,
     );
-    await waitForContentScript(browser, tabId, controller.signal);
+    await waitForContentScript(browser, ownedTabId, controller.signal);
     const result = await withAbort(
-      browser.tabs.sendMessage<DiscoveryBrowserTaskResult>(tabId, {
+      browser.tabs.sendMessage<DiscoveryBrowserTaskResult>(ownedTabId, {
         type: "jobctrl.discovery.snapshot",
       }),
       controller.signal,
@@ -122,23 +168,12 @@ export async function executeDiscoveryBrowserTask(
       true,
     );
   } finally {
+    finished = true;
     clearTimeout(timeout);
     if (navigationListener) browser.webNavigation.onErrorOccurred.removeListener(navigationListener);
     options.signal?.removeEventListener("abort", onExternalAbort);
-    if (tabId !== null) {
-      try {
-        await browser.tabs.remove(tabId);
-      } catch {
-        // Chrome may already have closed a failed or canceled navigation tab.
-      }
-    }
-    if (ruleIds.length > 0) {
-      try {
-        await browser.declarativeNetRequest.updateSessionRules({ removeRuleIds: ruleIds });
-      } catch {
-        // Session rules are also cleared when the extension is reloaded.
-      }
-    }
+    if (tabId !== null) await closeOwnedTab(tabId);
+    await clearRules();
   }
 }
 

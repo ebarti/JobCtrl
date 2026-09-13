@@ -551,7 +551,8 @@ as access to all ordinary web sites; browser-internal and extension pages remain
 outside that match. Autofill stays passive until an explicit extension action;
 the background service worker also polls for bounded Discovery tasks and
 executes HTTP/API work in the service worker and rendered-page work in temporary
-inactive tabs in the profile where the extension is loaded. Saving the token in
+tabs in the profile where the extension is loaded. LinkedIn jobs use an active
+tab moved into an unfocused window; other pages use inactive tabs. Saving the token in
 that popup explicitly selects its extension-local installation UUID for
 Discovery; merely retaining an older token does not win a race with another
 Chrome profile. The extension uses `activeTab`, `alarms`,

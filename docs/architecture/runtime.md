@@ -414,6 +414,10 @@ cleanup when a task renders a page. The API validates task DNS at creation and
 lease. HTTP/API tasks execute in the extension service worker with redirects
 disabled; rendered-page tasks install tab-scoped exact-origin DNR rules before
 navigating.
+LinkedIn job-page tasks move their known owned blank tab into an unfocused
+window so it can render as the active tab without taking focus. Other sources
+keep inactive tabs. Cancellation cleans only task-owned tabs and rules, including
+resources whose creation or installation completes after the abort.
 
 Acquisition transport is independent of Temporal execution ownership. One
 one-second loopback availability probe at each source/adapter/site-batch setup

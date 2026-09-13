@@ -2447,3 +2447,26 @@ but cannot reactivate consultation. Existing blocked jobs retry through the
 normal audited stage lifecycle in either mode, without destructive migration
 or resetting unrelated work. Current UI guidance identifies historical blocks
 and exposes the ordinary retry action.
+
+## 2026-09-13: Render LinkedIn Jobs In An Unfocused Window
+
+Status: accepted
+
+Decision: extension-rendered LinkedIn job pages use the task's known blank tab
+moved into an unfocused window. The tab is active in that window, allowing
+visibility-dependent hydration without focusing the window or changing the
+user's selected tab. Other rendered sources retain inactive tabs. The existing
+exact-origin DNR guard is installed before target navigation and final results
+must still match the source origin.
+
+Rationale: a guarded native-browser comparison left the hidden control without
+a description after thirty seconds, while the unfocused active tab rendered the
+description without a focus change. Increasing the readiness timeout or using
+raw HTML would not address the observed visibility dependency.
+
+Consequences: cleanup removes only the known task-owned tab and rule pair,
+including resources that finish creating after cancellation. It never closes a
+whole window that may contain user-added tabs. Window creation failure fails the
+task without switching acquisition transport. No new extension permission or
+personal-profile copy is needed. Browser fixtures must distinguish Playwright's
+focus emulation from native visibility proof.

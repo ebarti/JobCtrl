@@ -142,7 +142,7 @@ complete work until the user replaces the selection there. The broker is
 memory-only and admits at most four active/pending tasks for four extension
 executors. Queue waiting and lease execution use separate bounds. Each active
 lease heartbeats while Chrome works; cancellation or a hard timeout aborts the
-request, closes an inactive tab when one exists, and invalidates stale
+request, closes its owned tab when one exists, and invalidates stale
 completion. A selected extension disconnect can fail its acquisition; it does
 not trigger another transport for that fetch. The next acquisition setup may
 select anonymous access if the bounded status probe reports unavailable.

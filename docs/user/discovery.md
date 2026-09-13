@@ -152,6 +152,12 @@ the existing public HTTP or anonymous Playwright path. A saved pairing token
 alone does not select the live transport. Pipelines reports connection status
 without blocking a run; the normal worker and stage prerequisites still apply.
 
+LinkedIn job pages captured through the extension open in an active temporary
+tab inside an unfocused window. This lets the job description render without
+switching your current tab or window. JobCtrl closes only its task-owned tab
+when capture finishes, fails, times out or is canceled; any other tabs you add
+to that window remain open. Other rendered sources keep using inactive tabs.
+
 Transport is chosen before fetching. A site, DNS, access, or cancellation
 failure never triggers another transport. A later acquisition setup may choose
 again. Anonymous access cannot use your signed-in session, and integrated
@@ -174,7 +180,7 @@ installation still needs to be selected; copying the token again is unnecessary.
 This choice covers broad-board provider sessions, canonical ATS/API and Workday
 requests, Smart Extract rendering and detail-enrichment pages.
 On the connected path, brokered HTTP/API requests
-run in its service worker; rendered-page work opens bounded temporary inactive
+run in its service worker; rendered-page work opens bounded temporary
 tabs. Both execute in the Chrome profile where the extension is installed, so
 current cookies, authenticated sessions, browser settings, and later profile
 changes are used directly. JobCtrl does not copy, export, or launch that
