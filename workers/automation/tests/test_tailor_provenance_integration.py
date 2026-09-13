@@ -42,6 +42,7 @@ from jobctrl.domain.materials.use_cases import TailorResumeUseCase
 from jobctrl.domain.profile.aggregate import Profile
 from jobctrl.domain.profile.snapshot import ProfileSnapshot
 from jobctrl.domain.ports.llm import LlmMessage
+from jobctrl.domain.ports.materials import PdfRendererPort
 from jobctrl.domain.scoring import (
     FitScore,
     RequirementFitAssessment,
@@ -582,6 +583,8 @@ def _use_case(
     llm: _ScriptedLlm,
     publisher: _RecordingPublisher,
     requirement_fit_repo: _FakeRequirementFitRepo | None = None,
+    *,
+    pdf_renderer: PdfRendererPort | None = None,
 ) -> TailorResumeUseCase:
     if requirement_fit_repo is None:
         requirement_fit_repo = _FakeRequirementFitRepo(_latency_requirement_fit_report())
@@ -594,6 +597,7 @@ def _use_case(
         provenance_repository=provenance_repo,
         requirement_fit_repository=requirement_fit_repo,
         publisher=publisher,
+        pdf_renderer=pdf_renderer,
     )
 
 
@@ -642,8 +646,10 @@ def test_accepted_resume_records_provenance_and_publishes_event(tmp_path: Path) 
 
 
 @pytest.mark.parametrize("pin_only_older_role", [False, True])
+@pytest.mark.parametrize("experience_id", ["acme_swe", " \tacme_swe\n"])
 def test_required_role_without_achievements_preserves_metadata_without_invented_bullets(
-    tmp_path: Path, pin_only_older_role: bool,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    pin_only_older_role: bool, experience_id: str,
 ) -> None:
     profile = _profile_dict()
     profile["resume"]["experience_entries"].append({
@@ -667,23 +673,32 @@ def test_required_role_without_achievements_preserves_metadata_without_invented_
         _payload("Owned the API and cut latency 40% with Python by replacing synchronous calls.")
     )
     payload["experience_updates"].append({"id": "earlier_role", "title": "", "bullets": []})
+    payload["experience_updates"][0]["id"] = experience_id
     from jobctrl.domain.materials.use_cases import build_master_tailor_prompt
-    from jobctrl.infrastructure.materials.html_resume_pdf import build_resume_document, build_resume_html
+    from jobctrl.infrastructure.materials import html_resume_pdf
 
     prompt = build_master_tailor_prompt(snapshot)
     assert "Acme Corp" in prompt
     assert ContentValidator().validate_json_fields(payload, snapshot).passed
-    document = build_resume_document(payload, snapshot.as_dict())
-    assert [entry["id"] for entry in document["experience"]] == ["acme_swe", "earlier_role"]
-    html = build_resume_html(document)
-    assert "Acme Corp" in html and "Earlier Employer" in html
-    assert "Unrelated Lab" not in html
+    rendered_html: list[str] = []
+
+    def render_pdf(html_content: str, output_path: str) -> list:
+        # Only the browser-to-PDF boundary is synthetic; use the production
+        # adapter and compare its exact input with the accepted HTML sidecar.
+        rendered_html.append(html_content)
+        Path(output_path).write_bytes(b"%PDF-synthetic")
+        return []
+
+    monkeypatch.setattr(html_resume_pdf, "_render_resume_pdf_playwright", render_pdf)
     materials_repo = _FakeMaterialsRepo()
     provenance_repo = _FakeProvenanceRepo()
     publisher = _RecordingPublisher()
     llm = _ScriptedLlm([json.dumps(payload), _judge_pass()])
 
-    outcome = _use_case(materials_repo, provenance_repo, llm, publisher).execute(
+    outcome = _use_case(
+        materials_repo, provenance_repo, llm, publisher,
+        pdf_renderer=html_resume_pdf.HtmlResumePdfAdapter(),
+    ).execute(
         job=_job(), profile_snapshot=snapshot, tailored_dir=tmp_path
     )
 
@@ -696,12 +711,80 @@ def test_required_role_without_achievements_preserves_metadata_without_invented_
     assert "Software Engineer" in text
     assert "2017-2019" in text
     assert "Acme Corp" in text and "Unrelated Lab" not in text
+    assert "Owned the API and cut latency 40%" in text
+    pdf = outcome.materials.resume_pdf
+    assert pdf is not None and pdf.status is ArtifactStatus.APPROVED
+    html = Path(pdf.path).with_suffix(".html").read_text()
+    assert rendered_html == [html]
+    assert "Acme Corp" in html and "Earlier Employer" in html
+    assert "Owned the API and cut latency 40%" in html
+    assert "Unrelated Lab" not in html
+    document = html_resume_pdf.build_resume_document(payload, snapshot.as_dict())
+    assert [entry["id"] for entry in document["experience"]] == ["acme_swe", "earlier_role"]
     provenance = provenance_repo.load(LOCAL_TENANT, JOB_ID)
     assert provenance is not None
     experience_rows = [row for row in provenance.bullets if row.section == "experience"]
     assert len(experience_rows) == 1
     assert "latency" in experience_rows[0].generated_text
     assert experience_rows[0].source_id == "acme_swe"
+    assert experience_rows[0].generated_text in text
+    assert experience_rows[0].generated_text in html
+    assert "ev_latency" in experience_rows[0].evidence_ids
+
+
+@pytest.mark.parametrize(
+    ("invalid_selection", "expected_error"),
+    [
+        ("duplicate", "Duplicate experience update: acme_swe"),
+        ("unknown", "Unknown experience updates: unknown_role"),
+        ("missing_required", "Missing experience updates: earlier_role"),
+    ],
+)
+def test_invalid_role_selection_preserves_accepted_artifact_and_provenance(
+    tmp_path: Path, invalid_selection: str, expected_error: str,
+) -> None:
+    profile = _profile_dict()
+    profile["resume"]["experience_entries"].append({
+        "id": "earlier_role", "title": "Engineer", "company": "Earlier Employer",
+        "date_range": "2017-2019", "bullets": [], "achievement_evidence": [],
+    })
+    profile["resume"]["tailoring_rules"]["required_experience_entry_ids"] = ["earlier_role"]
+    snapshot = ProfileSnapshot.from_profile(Profile.from_dict(LOCAL_TENANT, profile))
+    payload = json.loads(_payload(
+        "Owned the API and cut latency 40% with Python by replacing synchronous calls."
+    ))
+    payload["experience_updates"].append({"id": "earlier_role", "title": "", "bullets": []})
+    materials_repo = _FakeMaterialsRepo()
+    provenance_repo = _FakeProvenanceRepo()
+    publisher = _RecordingPublisher()
+    accepted = _use_case(
+        materials_repo, provenance_repo,
+        _ScriptedLlm([json.dumps(payload), _judge_pass()]), publisher,
+    ).execute(job=_job(), profile_snapshot=snapshot, tailored_dir=tmp_path)
+    assert accepted.status == "approved"
+    artifact = accepted.materials.tailored_resume
+    original_text = Path(artifact.path).read_bytes()
+    original_provenance = provenance_repo.load(LOCAL_TENANT, JOB_ID)
+
+    if invalid_selection == "duplicate":
+        payload["experience_updates"].append({**payload["experience_updates"][0], "id": " acme_swe "})
+    elif invalid_selection == "unknown":
+        payload["experience_updates"][0]["id"] = " unknown_role "
+    else:
+        payload["experience_updates"] = payload["experience_updates"][:1]
+    rejected = _use_case(
+        materials_repo, provenance_repo,
+        _ScriptedLlm([json.dumps(payload)] * 4), publisher,
+    ).execute(job=_job(), profile_snapshot=snapshot, tailored_dir=tmp_path, retailor=True)
+
+    assert rejected.status == "failed_validation"
+    assert expected_error in rejected.materials.last_validation.errors
+    current = materials_repo.load_current_approved(LOCAL_TENANT, JOB_ID)
+    assert current is not None and current.tailored_resume.artifact_id == artifact.artifact_id
+    assert Path(artifact.path).read_bytes() == original_text
+    assert provenance_repo.load(LOCAL_TENANT, JOB_ID) == original_provenance
+    assert len(provenance_repo.saved) == 1
+    assert sum(getattr(event, "event_type", "") == "ResumeApproved" for event in publisher.events) == 1
 
 
 def test_accepted_resume_updates_requirement_fit_artifact_coverage(tmp_path: Path) -> None:

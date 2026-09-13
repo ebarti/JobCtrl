@@ -186,7 +186,7 @@ from jobctrl.resume_profile import (
 
 log = logging.getLogger(__name__)
 
-TAILORING_PROMPT_VERSION = "tailor.v9.selected-known-roles"
+TAILORING_PROMPT_VERSION = "tailor.v10.normalized-role-ids"
 TAILORING_SCHEMA_VERSION = "tailored-resume.v4"
 TAILORING_JUDGE_SCHEMA_VERSION = "tailor-judge.v2.final-semantic-fidelity"
 TAILORING_JUDGE_CRITERIA: tuple[str, ...] = (

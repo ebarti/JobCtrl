@@ -198,7 +198,10 @@ The system prompt contains these sections:
   bullets, and include the pruned strongest requirement-covered achievements.
   Experience pins are a minimum: additional selected known roles must carry
   target-covered or explicitly pinned evidence. A shared role selection helper
-  keeps text, HTML/PDF, and provenance aligned in profile order. Do not invent
+  keeps text, HTML/PDF, and provenance aligned in profile order. Experience
+  update IDs use the same surrounding-whitespace normalization for validation,
+  claim bindings, and rendering; padded known IDs retain their selected content,
+  while duplicate normalized IDs and unknown IDs are rejected. Do not invent
   role IDs, add/remove education or skill categories, or invent skills
   or metrics, cite one achievement per bullet, and treat max bullet count as a
   ceiling rather than a quota.
