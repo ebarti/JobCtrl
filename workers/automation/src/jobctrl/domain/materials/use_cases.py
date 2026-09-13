@@ -33,6 +33,7 @@ import re
 import uuid
 from collections.abc import Callable, Iterable, Mapping as MappingABC
 from contextlib import nullcontext
+from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from hashlib import sha1
@@ -187,7 +188,7 @@ from jobctrl.resume_profile import (
 
 log = logging.getLogger(__name__)
 
-TAILORING_PROMPT_VERSION = "tailor.v11.canonical-retry-evidence"
+TAILORING_PROMPT_VERSION = "tailor.v12.active-coverage-authority"
 TAILORING_SCHEMA_VERSION = "tailored-resume.v4"
 TAILORING_JUDGE_SCHEMA_VERSION = "tailor-judge.v3.canonical-retry-evidence"
 TAILORING_JUDGE_CRITERIA: tuple[str, ...] = (
@@ -338,6 +339,28 @@ TAILORED_RESUME_RESPONSE_SCHEMA: dict[str, Any] = {
         },
     },
 }
+
+
+def _tailored_resume_response_schema(plan: TailoringPlan) -> dict[str, Any]:
+    """Constrain provider output to the same active edge namespace as validation."""
+    schema = deepcopy(TAILORED_RESUME_RESPONSE_SCHEMA)
+    properties = schema["properties"]["generated_claim_mappings"]["items"]["properties"]
+    edges = sorted(plan.coverage_graph.edge_ids) if plan.coverage_graph is not None else []
+    if edges:
+        properties["coverage_edge_ids"]["items"]["enum"] = edges
+    else:
+        properties["coverage_edge_ids"]["maxItems"] = 0
+    pins = plan.requirement_led_controls.required_content_pins
+    if not (
+        plan.required_evidence_ids
+        or any(pins.bullets_by_experience_id.values())
+        or any(pins.skills_by_category_id.values())
+    ):
+        # Required roles preserve chronology, not arbitrary bullet-level pins.
+        for name in ("claim_label", "non_requirement_reason"):
+            properties[name]["enum"].remove("pinned")
+    return schema
+
 
 TAILORING_JUDGE_RESPONSE_SCHEMA: dict[str, Any] = {
     "title": "TailoringJudgeResult",
@@ -1929,8 +1952,11 @@ HARD RULES:
   otherwise map every explicit item with executive_profile.sentence[N], where N is zero-based
 - For a skills.<category-id> mapping, text must be the exact selected items in
   rendered order joined with ", " (comma plus one space), not the category label
-- Every achievement_evidence_id present on any COVERAGE_GRAPH edge must appear
-  in at least one bound mapping that cites that edge and its requirement_id
+- COVERAGE_GRAPH.coverage_edges is the complete active edge allowlist for this
+  round. Cite only its exact edge_id values, never infer an edge from other
+  evidence, requirement directives, or unused achievements
+- Every edge in COVERAGE_GRAPH.coverage_edges must appear in at least one bound
+  mapping citing its achievement_evidence_id and requirement_id
 - Each experience bullet must cite exactly one primary achievement evidence id
 - Use each achievement evidence id in at most one experience bullet
 - If a required role has target-covered or explicitly pinned evidence, include
@@ -1943,6 +1969,11 @@ HARD RULES:
 - non_requirement_reason is a required fallback classification. Choose pinned,
   positioning, or structure. When coverage_edge_ids is non-empty it is ignored;
   when coverage_edge_ids is empty it must truthfully classify the claim
+- A required role is not a pinned bullet. For an experience bullet, use pinned
+  only for an explicit REQUIRED BULLET or required_evidence item. When a required
+  role has no active coverage or explicit bullet pin, use positioning for its one grounded bullet,
+  even though the role itself is mandatory. Do not use pinned when the response
+  schema excludes it
 - Adjacent or draft claims must be labeled adjacent_translation or
   draft_requires_confirmation and marked review_required unless the advanced
   auto-approval policy explicitly allows the claim label
@@ -2015,7 +2046,7 @@ OUTPUT ONLY VALID JSON:
       "location": "experience.{required_experience_ids[0] if required_experience_ids else 'experience_entry_id'}.bullets[0]",
       "text": "bullet 1",
       "claim_label": "evidence_reframed",
-      "coverage_edge_ids": ["edge id from COVERAGE_GRAPH"],
+      "coverage_edge_ids": ["exact edge_id from COVERAGE_GRAPH.coverage_edges"],
       "requirement_ids": ["requirement id from TARGET_PROFILE"],
       "evidence_ids": ["achievement evidence id from TARGET_PROFILE"],
       "non_requirement_reason": "positioning",
@@ -2047,7 +2078,7 @@ def build_judge_prompt(
     skills_str = ", ".join(all_skills) if all_skills else "N/A"
 
     quality_plan_block = (
-        "\n" + tailoring_plan.to_prompt_context() + "\n"
+        "\n" + tailoring_plan.to_prompt_context(include_alternatives=True) + "\n"
         if tailoring_plan is not None
         else ""
     )
@@ -3289,7 +3320,7 @@ class TailorResumeUseCase:
         try:
             payload = self._chat_json_payload(
                 messages,
-                schema=TAILORED_RESUME_RESPONSE_SCHEMA,
+                schema=_tailored_resume_response_schema(tailoring_plan),
                 model=model,
                 temperature=self._llm_policy.candidate_temperature,
                 max_tokens=self._llm_policy.candidate_max_tokens,

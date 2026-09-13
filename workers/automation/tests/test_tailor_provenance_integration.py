@@ -864,6 +864,186 @@ class _EvidenceCorrectionLlm:
         return payload
 
 
+class _AdvertisedEdgesLlm(_EvidenceCorrectionLlm):
+    """Generate a bound bullet for every edge the real request advertises."""
+
+    def __init__(self) -> None:
+        super().__init__(["optional_a_latency"])
+        self.schemas: list[dict] = []
+
+    def chat_json(self, messages, **kwargs) -> dict:
+        if kwargs["response_schema"]["title"] == "TailoringJudgeResult":
+            return super().chat_json(messages, **kwargs)
+        self.generations.append(list(messages))
+        self.schemas.append(kwargs["response_schema"])
+        plan = json.JSONDecoder().raw_decode(
+            messages[0].content.split("TAILORING QUALITY PLAN:\n", 1)[1]
+        )[0]
+        graph = plan["coverage_graph"]
+        # Do not silently filter alternatives: that was the production failure.
+        edges = graph["coverage_edges"] + graph.get("alternative_edges", [])
+        roles = {item["achievement_evidence_id"]: item["experience_entry_id"]
+                 for item in graph["achievements"]}
+        bullet = "Owned the API and cut latency 40% with Python by replacing synchronous calls."
+        payload = json.loads(_payload(bullet))
+        template = deepcopy(payload["generated_claim_mappings"][1])
+        payload["generated_claim_mappings"][1].update(
+            coverage_edge_ids=[], requirement_ids=[], non_requirement_reason="positioning",
+        )
+        for edge in edges:
+            evidence_id = edge["achievement_evidence_id"]
+            role_id = roles[evidence_id]
+            mapping = deepcopy(template)
+            mapping.update(
+                claim_id=f"claim_{evidence_id}", location=f"experience.{role_id}.bullets[0]",
+                evidence_ids=[evidence_id], requirement_ids=[edge["requirement_id"]],
+                coverage_edge_ids=[edge["edge_id"]],
+            )
+            if role_id == "acme_swe":
+                payload["generated_claim_mappings"][1] = mapping
+            else:
+                payload["experience_updates"].append({"id": role_id, "title": "", "bullets": [bullet]})
+                payload["generated_claim_mappings"].append(mapping)
+        self.last_payload = payload
+        return payload
+
+
+def test_generator_following_all_advertised_edges_accepts_reselected_artifacts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from jobctrl.infrastructure.materials import html_resume_pdf
+
+    snapshot, fit = _retry_evidence_fixture()
+    llm = _AdvertisedEdgesLlm()
+    materials, provenance = _FakeMaterialsRepo(), _FakeProvenanceRepo()
+    pdf_inputs: list[str] = []
+
+    def render_pdf(html: str, path: str) -> list:
+        pdf_inputs.append(html)
+        Path(path).write_bytes(b"%PDF-synthetic")
+        return []
+
+    monkeypatch.setattr(html_resume_pdf, "_render_resume_pdf_playwright", render_pdf)
+    outcome = _use_case(
+        materials, provenance, llm, _RecordingPublisher(),
+        requirement_fit_repo=_FakeRequirementFitRepo(fit),
+        pdf_renderer=html_resume_pdf.HtmlResumePdfAdapter(),
+    ).execute(job=_job(), profile_snapshot=snapshot, tailored_dir=tmp_path)
+
+    assert outcome.status == "approved", [
+        candidate["validator"]["errors"]
+        for attempt in outcome.report["attempt_history"] for candidate in attempt["candidates"]
+    ]
+    assert outcome.report["attempts"] == 2
+    for messages, schema in zip(llm.generations, llm.schemas, strict=True):
+        prompt_plan = json.JSONDecoder().raw_decode(
+            messages[0].content.split("TAILORING QUALITY PLAN:\n", 1)[1]
+        )[0]
+        graph = prompt_plan["coverage_graph"]
+        active_ids = {edge["edge_id"] for edge in graph["coverage_edges"]}
+        assert "alternative_edges" not in graph
+        assert len(active_ids) == 1
+        props = schema["properties"]["generated_claim_mappings"]["items"]["properties"]
+        assert set(props["coverage_edge_ids"]["items"]["enum"]) == active_ids
+        assert "pinned" not in props["non_requirement_reason"]["enum"]
+        assert "pinned" not in props["claim_label"]["enum"]
+        assert "A required role is not a pinned bullet" in messages[0].content
+    for attempt in outcome.report["attempt_history"]:
+        graph = attempt["quality_plan"]["coverage_graph"]
+        active_ids = {edge["edge_id"] for edge in graph["coverage_edges"]}
+        assert len(graph["alternative_edges"]) == 2
+        for candidate in attempt["candidates"]:
+            assert candidate["validator"]["errors"] == []
+            cited = {edge for mapping in candidate["parsed_json"]["generated_claim_mappings"]
+                     for edge in mapping["coverage_edge_ids"]}
+            assert cited == active_ids
+    assert all('"evidence_id": "optional_b_latency"' in messages[0].content
+               for messages, _schema in llm.judges)
+    graph = outcome.report["quality_plan"]["coverage_graph"]
+    assert graph["coverage_edges"][0]["achievement_evidence_id"] == "optional_a_latency"
+    assert outcome.materials.tailored_resume.metadata["quality_plan"]["coverage_graph"] == graph
+    text = Path(outcome.materials.tailored_resume.path).read_text()
+    html = Path(outcome.materials.resume_pdf.path).with_suffix(".html").read_text()
+    assert pdf_inputs == [html]
+    assert "Synthetic optional_a" in text and "Synthetic optional_a" in html
+    assert "Synthetic optional_b" not in text and "Synthetic out_of_plan" not in text
+    saved = provenance.load(LOCAL_TENANT, JOB_ID)
+    row = next(row for row in saved.bullets if row.source_id == "optional_a")
+    assert row.evidence_ids == ("optional_a_latency",)
+    assert row.requirement_ids == (graph["coverage_edges"][0]["requirement_id"],)
+    assert row.generated_text in text and row.generated_text in html
+
+
+def test_active_projection_and_schema_preserve_alternative_and_pin_validation() -> None:
+    from jobctrl.domain.materials.quality import build_tailoring_plan
+    from jobctrl.domain.materials.requirement_coverage import (
+        GeneratedClaimMapping, reselect_coverage_graph, validate_generated_claim_mappings,
+    )
+    from jobctrl.domain.materials.use_cases import (
+        TAILORED_RESUME_RESPONSE_SCHEMA, _experience_bullet_curation_errors,
+        _tailored_resume_response_schema,
+    )
+    from .test_materials_use_cases import _assert_openai_strict_schema
+
+    snapshot, fit = _retry_evidence_fixture()
+    plan = build_tailoring_plan(
+        snapshot.as_dict(), _job(), employer_analysis=_FakeAnalyze().execute(job=_job()).analysis,
+        requirement_fit_report=fit,
+    )
+    graph = plan.coverage_graph
+    alternative = next(edge for edge in graph.alternative_edges
+                       if edge.achievement_evidence_id == "optional_a_latency")
+    mapping = GeneratedClaimMapping(
+        claim_id="optional", location="experience.optional_a.bullets[0]",
+        text="Cut API latency 40% by replacing synchronous calls with Python.",
+        claim_label="evidence_reframed", coverage_edge_ids=(alternative.edge_id,),
+        requirement_ids=(alternative.requirement_id,), evidence_ids=(alternative.achievement_evidence_id,),
+    )
+    assert validate_generated_claim_mappings((mapping,), graph, controls=plan.requirement_led_controls) == (
+        f"Generated claim optional references unknown coverage edge {alternative.edge_id}.",
+    )
+    selected = reselect_coverage_graph(graph, [alternative.achievement_evidence_id])
+    assert not validate_generated_claim_mappings((mapping,), selected, controls=plan.requirement_led_controls)
+    assert validate_generated_claim_mappings(
+        (replace(mapping, coverage_edge_ids=("invented-edge",)),), selected,
+        controls=plan.requirement_led_controls,
+    )
+    original_schema = deepcopy(TAILORED_RESUME_RESPONSE_SCHEMA)
+    for candidate_graph in (graph, selected, replace(graph, coverage_edges=())):
+        candidate_plan = replace(plan, coverage_graph=candidate_graph)
+        projection = candidate_plan.to_prompt_dict()["coverage_graph"]
+        assert {edge["edge_id"] for edge in projection["coverage_edges"]} == candidate_graph.edge_ids
+        assert "alternative_edges" not in projection
+        assert candidate_plan.to_prompt_dict(include_alternatives=True)["coverage_graph"]["alternative_edges"]
+        schema = _tailored_resume_response_schema(candidate_plan)
+        _assert_openai_strict_schema(schema)
+        props = schema["properties"]["generated_claim_mappings"]["items"]["properties"]
+        if candidate_graph.edge_ids:
+            assert set(props["coverage_edge_ids"]["items"]["enum"]) == candidate_graph.edge_ids
+        else:
+            assert props["coverage_edge_ids"]["maxItems"] == 0
+        assert "pinned" not in props["non_requirement_reason"]["enum"]
+
+    bullet = "Owned the API and cut latency 40% with Python by replacing synchronous calls."
+    payload = json.loads(_payload(bullet))
+    pinned = GeneratedClaimMapping(**{
+        **payload["generated_claim_mappings"][1], "coverage_edge_ids": [],
+        "requirement_ids": [], "non_requirement_reason": "pinned",
+    })
+    selected_plan = replace(plan, coverage_graph=selected)
+    errors = _experience_bullet_curation_errors(payload=payload, mappings=(pinned,), tailoring_plan=selected_plan)
+    assert len(errors) == 1 and "no user-required bullet" in errors[0]
+    assert not _experience_bullet_curation_errors(
+        payload=payload, mappings=(replace(pinned, non_requirement_reason="positioning"),),
+        tailoring_plan=selected_plan,
+    )
+    explicit_pin_plan = replace(selected_plan, required_evidence_ids=("ev_latency",))
+    pin_schema = _tailored_resume_response_schema(explicit_pin_plan)
+    assert "pinned" in pin_schema["properties"]["generated_claim_mappings"]["items"]["properties"]["non_requirement_reason"]["enum"]
+    assert not _experience_bullet_curation_errors(payload=payload, mappings=(pinned,), tailoring_plan=explicit_pin_plan)
+    assert TAILORED_RESUME_RESPONSE_SCHEMA == original_schema
+
+
 @pytest.mark.parametrize("feedback_field", ["retry_evidence_ids", "missing_required_evidence"])
 def test_canonical_retry_feedback_changes_selection_and_accepted_artifacts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, feedback_field: str,

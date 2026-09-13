@@ -828,6 +828,12 @@ class CoverageGraph:
             "unused_achievements": [item.to_dict() for item in self.unused_achievements],
         }
 
+    def to_prompt_dict(self) -> dict[str, Any]:
+        """Expose only this round's active claim edges to the generator."""
+        payload = self.to_dict()
+        del payload["alternative_edges"]
+        return payload
+
     def to_safe_metadata(self) -> dict[str, Any]:
         return {
             "requirement_count": len(self.requirements),

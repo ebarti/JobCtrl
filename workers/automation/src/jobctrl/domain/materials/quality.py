@@ -316,7 +316,7 @@ class TailoringPlan:
     def evidence_by_id(self) -> dict[str, EvidencePlanItem]:
         return {item.evidence_id: item for item in self.evidence_items}
 
-    def to_prompt_dict(self) -> dict[str, Any]:
+    def to_prompt_dict(self, *, include_alternatives: bool = False) -> dict[str, Any]:
         required = self.evidence_by_id
         return {
             "writing_style": dict(self.writing_style),
@@ -337,7 +337,10 @@ class TailoringPlan:
             "target_profile": self.target_profile.to_prompt_dict()
             if self.target_profile is not None
             else None,
-            "coverage_graph": self.coverage_graph.to_dict()
+            "coverage_graph": (
+                self.coverage_graph.to_dict() if include_alternatives
+                else self.coverage_graph.to_prompt_dict()
+            )
             if self.coverage_graph is not None
             else None,
             "deterministic_checks": [
@@ -352,10 +355,13 @@ class TailoringPlan:
             ],
         }
 
-    def to_prompt_context(self) -> str:
+    def to_prompt_context(self, *, include_alternatives: bool = False) -> str:
         return (
             "TAILORING QUALITY PLAN:\n"
-            + json.dumps(self.to_prompt_dict(), indent=2, ensure_ascii=False)
+            + json.dumps(
+                self.to_prompt_dict(include_alternatives=include_alternatives),
+                indent=2, ensure_ascii=False,
+            )
         )
 
     def to_metadata(self) -> dict[str, Any]:

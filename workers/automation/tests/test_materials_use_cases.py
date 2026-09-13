@@ -4428,7 +4428,9 @@ def test_later_parse_failure_cannot_promote_an_earlier_rejected_candidate(
     assert outcome.final_payload == first["parsed_json"]
     assert len(llm.calls) == len(responses)
     if failure == "fabrication":
-        assert all(call["response_schema"] == TAILORED_RESUME_RESPONSE_SCHEMA for call in llm.kwargs)
+        assert all(call["response_schema"]["title"] == TAILORED_RESUME_RESPONSE_SCHEMA["title"]
+                   for call in llm.kwargs)
+        assert llm.kwargs[0]["response_schema"] == llm.kwargs[1]["response_schema"]
         assert "judge" not in first and "adversarial_review" not in first
         assert "fabrication_detected" in history[1]["retry_reasons"]
 

@@ -55,6 +55,9 @@ last accepted resume.
    existing role details without generated bullets. If a required bullet remains
    pinned after its supporting achievement is removed, restore that role's
    evidence or remove the pin before tailoring; pins are still mandatory.
+   Requiring a role does not pin every achievement within it. Without selected
+   requirement evidence or a bullet pin, that role gets one grounded positioning
+   bullet when evidence is available.
 3. **Validate the assembled resume, not just model JSON.** Deterministic checks
    run over the actual candidate text for grounding, preserved employers,
    education, section structure, prohibited claims, metrics, seniority, and

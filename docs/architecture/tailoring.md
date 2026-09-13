@@ -348,6 +348,14 @@ The plan includes:
   retain other canonical edges seeded from that same matched/transferable fit
   evidence. They are not generated-claim authority or mandatory content until a
   bounded retry reselects them; no new evidence is inferred from review prose.
+  The generator receives a separate projection containing only active
+  `coverage_edges`; the judge, retry planner and audit retain the alternatives.
+  Every active edge must be cited with its exact requirement and achievement ID.
+  Each generation request constrains `coverage_edge_ids` to that round's active
+  IDs in the response schema, matching validation; an empty graph permits only
+  empty edge arrays. Retry re-selection updates both the projection and schema.
+  Prompt version `tailor.v12.active-coverage-authority` invalidates v11 attempts
+  that exposed inactive alternatives as generator authority.
 - `deterministic_checks`: a prompt-visible summary of important hard checks.
 
 Requirement directives are sorted by priority, weight, and requirement ID. They
@@ -471,6 +479,10 @@ profile contract:
   prompt's empty-bullet exception. A pin without supporting evidence from its own
   role requires a profile correction: restore the evidence or remove the pin.
   An optional unsupported role is omitted.
+  A required role alone does not authorize a `pinned` bullet classification:
+  its uncovered grounded bullet uses `positioning`. When no explicit evidence,
+  bullet or skill pins exist, the generation schema excludes `pinned` labels;
+  validation still checks the ownership and support of any explicit pin.
 - Generated title must be empty or exactly match the source title.
 - Each required skill category ID must appear exactly once.
 - Unknown or duplicate skill category IDs are rejected.
