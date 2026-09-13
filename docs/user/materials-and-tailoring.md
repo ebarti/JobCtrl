@@ -39,8 +39,8 @@ last accepted resume.
    employer analysis with a versioned Candidate Profile snapshot, requirement
    fit, tailoring permissions, required evidence pins, and writing style. The
    posting may guide emphasis; only profile evidence may support claims about
-   you. Each target requirement keeps only its strongest grounded achievement
-   edge, while one achievement may cover several requirements.
+   you. Each target requirement initially keeps only its strongest grounded
+   achievement edge, while one achievement may cover several requirements.
 2. **Ask each ready generator for structured content.** Configured candidate
    models receive the same plan. Their response must reference known experience
    and skill-category IDs, preserve source titles, respect bullet limits, and
@@ -69,8 +69,12 @@ last accepted resume.
    structured judge must return `PASS`, reach the configurable threshold
    (`0.82` by default), and report no unsupported claims, fabrications, or
    missing required evidence. Jobs at or above `8/10` fit also receive a
-   six-persona adversarial review. Repair instructions from rejected candidates
-   feed the bounded retry.
+   six-persona adversarial review. A judge can identify canonical evidence to
+   reconsider on a bounded retry. JobCtrl may select a comparable alternative
+   already supported by fit analysis, keeping one achievement per requirement
+   and checking the same pins and bullet budget again. Unsupported demands and
+   raw review instructions stay in the audit; they cannot add facts or override
+   the gates.
 6. **Select and persist the best clean candidate.** JobCtrl chooses the approved
    candidate with the best judge result. An optional voice pass may edit only
    lines containing a configured buzzword and is kept only when it removes one

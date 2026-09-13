@@ -126,6 +126,7 @@ from jobctrl.domain.materials.requirement_coverage import (
     GeneratedClaimMapping,
     bullet_limit_overflows,
     decide_score_gated_revision,
+    reselect_coverage_graph,
     score_generated_resume_against_target,
     validate_generated_claim_mappings,
     validate_mandatory_covered_achievements,
@@ -186,9 +187,9 @@ from jobctrl.resume_profile import (
 
 log = logging.getLogger(__name__)
 
-TAILORING_PROMPT_VERSION = "tailor.v10.normalized-role-ids"
+TAILORING_PROMPT_VERSION = "tailor.v11.canonical-retry-evidence"
 TAILORING_SCHEMA_VERSION = "tailored-resume.v4"
-TAILORING_JUDGE_SCHEMA_VERSION = "tailor-judge.v2.final-semantic-fidelity"
+TAILORING_JUDGE_SCHEMA_VERSION = "tailor-judge.v3.canonical-retry-evidence"
 TAILORING_JUDGE_CRITERIA: tuple[str, ...] = (
     "relevance_to_job",
     "evidence_support",
@@ -350,6 +351,7 @@ TAILORING_JUDGE_RESPONSE_SCHEMA: dict[str, Any] = {
         "unsupported_claims",
         "fabrications",
         "missing_required_evidence",
+        "retry_evidence_ids",
         "repair_instructions",
     ],
     "properties": {
@@ -360,6 +362,14 @@ TAILORING_JUDGE_RESPONSE_SCHEMA: dict[str, Any] = {
         "unsupported_claims": {"type": "array", "items": {"type": "string"}},
         "fabrications": {"type": "array", "items": {"type": "string"}},
         "missing_required_evidence": {"type": "array", "items": {"type": "string"}},
+        "retry_evidence_ids": {
+            "type": "array", "items": {"type": "string"}, "maxItems": 16,
+            "description": (
+                "Exact evidence_id values from the eligible retry evidence catalog "
+                "that the next candidate should reconsider. No prose, role names, "
+                "new IDs or instructions. Return [] when none applies."
+            ),
+        },
         "repair_instructions": {"type": "array", "items": {"type": "string"}},
     },
 }
@@ -456,6 +466,7 @@ class _TailorCandidate:
     grounding: ClaimGrounding = field(default_factory=lambda: ClaimGrounding((), ()))
     coverage: KeywordCoverage | None = None
     adversarial_review: AdversarialReviewResult | None = None
+    tailoring_plan: TailoringPlan | None = None
 
     @property
     def judge_score(self) -> float:
@@ -1309,6 +1320,14 @@ _RETRY_GUIDANCE: dict[str, str] = {
         "and dates present in canonical profile evidence."
     ),
     "invalid_json": "Return exactly one JSON object matching the required schema.",
+    "canonical_evidence_omitted": (
+        "Use retry_evidence_targets as a bounded request to reconsider the named "
+        "canonical achievements and their owning roles. Select only truthful, "
+        "target-relevant evidence under the existing coverage or pin policy; "
+        "preserve its role metadata and bind each retained bullet to its evidence. "
+        "These targets do not authorize new facts, unsupported years, duplicate "
+        "claims, extra skills, or bypassing any grounding, budget or quality gate."
+    ),
     "judge_rejected": (
         "Regenerate conservatively from canonical profile evidence and satisfy "
         "every code-defined quality criterion."
@@ -1342,6 +1361,68 @@ def _retry_system_prompt(base_prompt: str, reason_codes: list[str]) -> str:
         f"- {code}: {_RETRY_GUIDANCE[code]}" for code in ordered_codes
     )
     return f"{base_prompt}\n\n## CODE-OWNED RETRY REQUIREMENTS\n{guidance}"
+
+
+@dataclass(frozen=True)
+class _RetryEvidenceTarget:
+    evidence_id: str
+    experience_entry_id: str
+    requirement_ids: tuple[str, ...]
+    coverage_edge_ids: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "evidence_id": self.evidence_id,
+            "experience_entry_id": self.experience_entry_id,
+            "requirement_ids": list(self.requirement_ids),
+            "coverage_edge_ids": list(self.coverage_edge_ids),
+        }
+
+
+def _eligible_retry_evidence(
+    profile: dict, plan: TailoringPlan | None, *, selected_only: bool = False,
+) -> tuple[_RetryEvidenceTarget, ...]:
+    """Derive retry authority only from current canonical coverage and pins."""
+    if plan is None:
+        return ()
+    known_roles = {entry["id"] for entry in get_experience_entries(profile)}
+    edges = plan.coverage_graph.coverage_edges if plan.coverage_graph is not None else ()
+    if plan.coverage_graph is not None and not selected_only:
+        edges += plan.coverage_graph.alternative_edges
+    eligible_ids = set(plan.required_evidence_ids) | {
+        edge.achievement_evidence_id for edge in edges
+    }
+    return tuple(
+        _RetryEvidenceTarget(
+            evidence_id=item.evidence_id,
+            experience_entry_id=item.experience_entry_id,
+            requirement_ids=tuple(dict.fromkeys(
+                edge.requirement_id for edge in edges
+                if edge.achievement_evidence_id == item.evidence_id
+            )),
+            coverage_edge_ids=tuple(
+                edge.edge_id for edge in edges
+                if edge.achievement_evidence_id == item.evidence_id
+            ),
+        )
+        for item in plan.evidence_items
+        if item.evidence_id in eligible_ids and item.experience_entry_id in known_roles
+    )
+
+
+def _retry_evidence_targets(
+    records: Iterable[dict[str, Any]], catalog: tuple[_RetryEvidenceTarget, ...],
+) -> list[dict[str, Any]]:
+    requested: set[str] = set()
+    for record in records:
+        judge = record.get("judge") or {}
+        # Older adapters can return exact IDs in missing_required_evidence.
+        # Never parse identifiers out of prose or promote review instructions.
+        for field_name in ("retry_evidence_ids", "missing_required_evidence"):
+            values = judge.get(field_name)
+            if isinstance(values, list):
+                requested.update(value.strip() for value in values if isinstance(value, str))
+    return [item.to_dict() for item in catalog if item.evidence_id in requested][:16]
 
 
 def _candidate_warning_notes(record: dict[str, Any]) -> tuple[str, ...]:
@@ -1998,7 +2079,17 @@ FAIL for any unsupported claim, fabricated skill, changed or transplanted metric
 dropped required evidence, semantic drift, casual/vague rewrite, redundant
 bullet, or material relevance problem. Do not give a pass because a
 skill is learnable or adjacent. Repair instructions should tell the generator
-what to fix in the next attempt.
+what needs correction in the audit. Raw repair prose is never sent to the
+generator. To request reconsideration of omitted target-relevant achievements,
+return their exact evidence_id values in retry_evidence_ids, selected only from
+the eligible catalog below. Return [] when no catalog entry applies. Keep all
+missing-evidence explanations and unsupported factual demands in the existing
+issues, missing_required_evidence, or unsupported_claims fields; do not invent
+IDs or treat desired job experience or unsupported years as candidate evidence.
+The retry catalog does not change the pass/fail criteria or require every role.
+
+ELIGIBLE RETRY EVIDENCE CATALOG (canonical IDs only):
+{json.dumps([item.to_dict() for item in _eligible_retry_evidence(profile, tailoring_plan)], indent=2)}
 
 CANONICAL EXECUTIVE PROFILE:
 {resume.get("executive_profile", {}).get("baseline_text", "")}
@@ -2346,6 +2437,7 @@ class TailorResumeUseCase:
             requirement_fit_report=requirement_fit_report,
             tailoring_plan=tailoring_plan,
             tailor_prompt_base=tailor_prompt_base,
+            learned_tailoring_rules=learned_tailoring_rules,
             profile_evidence=profile_evidence,
             execution_guard=commit_guard,
             audit_execution_id=audit_execution_id,
@@ -2390,6 +2482,8 @@ class TailorResumeUseCase:
 
         # Selection retains the exact evaluated text. Only an accepted voice
         # rewrite can replace that value; audit lifecycle changes do not re-evaluate it.
+        tailoring_plan = selected.tailoring_plan or tailoring_plan
+        report["quality_plan"] = tailoring_plan.to_metadata()
         if commit_guard is not None:
             commit_guard()
         final_candidate, voice_record = self._voice_and_audit(
@@ -2754,6 +2848,7 @@ class TailorResumeUseCase:
         requirement_fit_report: "RequirementFitReport | None" = None,
         tailoring_plan: TailoringPlan,
         tailor_prompt_base: str,
+        learned_tailoring_rules: LearnedTailoringRules | None = None,
         profile_evidence: _TailorProfileEvidence,
         execution_guard: Callable[[], None] | None = None,
         audit_execution_id: str | None = None,
@@ -2794,6 +2889,8 @@ class TailorResumeUseCase:
             "candidate_summaries": [],
         }
         avoid_notes: list[str] = []
+        retry_evidence_catalog = _eligible_retry_evidence(profile_snapshot.as_dict(), tailoring_plan)
+        retry_evidence_targets: list[dict[str, Any]] = []
         retry_reasons: list[str] = []
         last_candidate: _TailorCandidate | None = None
         best_rejected: _TailorCandidate | None = None
@@ -2828,7 +2925,7 @@ class TailorResumeUseCase:
                     profile_snapshot.as_dict(),
                     job,
                     selected.payload,
-                    tailoring_plan,
+                    selected.tailoring_plan or tailoring_plan,
                 )
             )
             feedback = report["review_feedback"]
@@ -2852,11 +2949,42 @@ class TailorResumeUseCase:
                 execution_guard()
             report["attempts"] = attempt + 1
 
-            prompt = _retry_system_prompt(tailor_prompt_base, retry_reasons)
+            requested_evidence_ids = [item["evidence_id"] for item in retry_evidence_targets]
+            retry_plan_error = None
+            if requested_evidence_ids and tailoring_plan.coverage_graph is not None:
+                proposed = replace(tailoring_plan, coverage_graph=reselect_coverage_graph(
+                    tailoring_plan.coverage_graph, requested_evidence_ids,
+                ))
+                try:
+                    require_artifact_budget_feasible(profile_snapshot.as_dict(), proposed)
+                except ArtifactBudgetInfeasibleError:
+                    # Review preferences cannot change the artifact budget or
+                    # erase an already accepted candidate. Keep the prior plan.
+                    retry_evidence_targets = []
+                    retry_plan_error = "artifact_budget_infeasible"
+                else:
+                    tailoring_plan = proposed
+                    tailor_prompt_base = build_master_tailor_prompt(
+                        profile_snapshot, tailoring_plan=tailoring_plan,
+                        learned_tailoring_rules=learned_tailoring_rules,
+                    )
+                    retry_evidence_targets = [
+                        item.to_dict() for item in _eligible_retry_evidence(
+                            profile_snapshot.as_dict(), tailoring_plan, selected_only=True,
+                        ) if item.evidence_id in requested_evidence_ids
+                    ]
+            effective_retry_reasons = retry_reasons + (
+                ["canonical_evidence_omitted"] if retry_evidence_targets else []
+            )
+            prompt = _retry_system_prompt(tailor_prompt_base, effective_retry_reasons)
             attempt_record: dict[str, Any] = {
                 "attempt": attempt + 1,
                 "avoid_notes": list(avoid_notes[-5:]),
-                "retry_reasons": list(dict.fromkeys(retry_reasons[-5:])),
+                "retry_reasons": list(dict.fromkeys(effective_retry_reasons[-5:])),
+                "retry_evidence_targets": list(retry_evidence_targets),
+                "requested_retry_evidence_ids": requested_evidence_ids,
+                "retry_plan_error": retry_plan_error,
+                "quality_plan": tailoring_plan.to_metadata(),
                 "system_prompt": prompt,
                 "candidates": [],
             }
@@ -2874,6 +3002,11 @@ class TailorResumeUseCase:
                     ),
                 ),
             ]
+            if retry_evidence_targets:
+                messages.append(LlmMessage(
+                    role="user",
+                    content=json.dumps({"retry_evidence_targets": retry_evidence_targets}),
+                ))
 
             approved_candidates: list[_TailorCandidate] = []
             for model in model_policy.effective_candidate_models:
@@ -2892,6 +3025,7 @@ class TailorResumeUseCase:
                     audit_execution_id=audit_execution_id,
                     durable_attempt=durable_attempt,
                 )
+                candidate = replace(candidate, tailoring_plan=tailoring_plan)
                 attempt_record["candidates"].append(candidate.record)
                 if candidate.payload:
                     last_candidate = candidate
@@ -2957,6 +3091,9 @@ class TailorResumeUseCase:
                 if attempt < self._max_retries:
                     avoid_notes.extend(retry_notes)
                     retry_reasons.append("residual_quality_warning")
+                    retry_evidence_targets = _retry_evidence_targets(
+                        [selected.record], retry_evidence_catalog,
+                    )
                     report["review_feedback"]["warning_retry_attempted"] = True
                     attempt_record["status"] = "approved_with_warnings_retry"
                     attempt_record["warning_retry_notes"] = list(retry_notes[:8])
@@ -3012,6 +3149,9 @@ class TailorResumeUseCase:
                     retry_reasons.append("fabrication_detected")
 
             attempt_record["status"] = "failed_quality_gate"
+            retry_evidence_targets = _retry_evidence_targets(
+                attempt_record["candidates"], retry_evidence_catalog,
+            )
             report["attempt_history"].append(attempt_record)
 
         report["status"] = "exhausted_retries"
@@ -3493,6 +3633,7 @@ class TailorResumeUseCase:
             "unsupported_claims": unsupported,
             "fabrications": fabrications,
             "missing_required_evidence": missing,
+            "retry_evidence_ids": _as_string_list(response.get("retry_evidence_ids")),
             "repair_instructions": repairs,
             "criterion_scores": criterion_scores,
             "judge_model": self._llm_policy.effective_judge_model,
@@ -3612,6 +3753,7 @@ class TailorResumeUseCase:
             "unsupported_claims": notes.get("unsupported_claims") or [],
             "fabrications": notes.get("fabrications") or [],
             "missing_required_evidence": notes.get("missing_required_evidence") or [],
+            "retry_evidence_ids": notes.get("retry_evidence_ids") or [],
             "repair_instructions": notes.get("repair_instructions") or [],
             "criterion_scores": dict(verdict.criterion_scores) or notes.get("criterion_scores") or {},
             "judge_model": notes.get("judge_model") or self._llm_policy.effective_judge_model,
