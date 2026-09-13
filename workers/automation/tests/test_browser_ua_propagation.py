@@ -1,17 +1,10 @@
-"""R10 #316 High 1 — the SQLite-owned honest UA reaches every browser surface.
+"""The saved owner UA reaches browser navigation without consulting robots.
 
-Before the fix, the three Playwright surfaces (``PlaywrightDetailPageFetcher``,
-``smartextract.collect_page_intelligence``, ``detail.scrape_site_batch``) bound
-their page/context ``user_agent`` from an import-time ``default_honest_user_agent()``
-constant. That made Discovery's saved crawl identity invisible to the browser
-fetch, and — worse — the gateway would evaluate ``robots.txt`` as the *overridden*
-identity while the page fetched as the *default* one.
-
-Each test here supplies the saved Discovery identity to a gateway whose
-robots port records the identity it is evaluated with, and asserts that the browser
-context/page was stamped with the SAME overridden string the gateway used for robots
-— i.e. robots identity == fetch identity == owner override, by construction. All
-Playwright and robots traffic is faked; the suite needs no browser and no network.
+Exercise the real gateway/session path and inspect the identity passed to each
+browser context or page. An injected robots checker must remain unused even
+when configured to deny; navigation and successful page results still occur.
+Playwright, URL safety and pacing use owned offline doubles, with no browser
+or network traffic.
 """
 
 from __future__ import annotations
@@ -40,7 +33,7 @@ from jobctrl.infrastructure.network import (
 )
 from jobctrl.infrastructure.network.politeness import resolve_honest_user_agent
 
-from .politeness_helpers import DenyAllRobots, no_sleep_limiter
+from .politeness_helpers import no_sleep_limiter
 
 OWNER_PRODUCT = "AcmeJobBot"
 OWNER_CONTACT = "https://acme.example/crawler"
@@ -52,14 +45,15 @@ def _expected_ua() -> str:
 
 
 class _UASpyRobots:
-    """``RobotsPort`` that records the User-Agent it is evaluated with, allows all."""
+    """Record any forbidden consultation, with a configurable verdict."""
 
-    def __init__(self) -> None:
+    def __init__(self, verdict: RobotsVerdict = RobotsVerdict.ALLOW) -> None:
         self.seen_user_agents: list[str] = []
+        self.verdict = verdict
 
     def evaluate(self, url: str, user_agent: str) -> RobotsVerdict:  # noqa: ARG002
         self.seen_user_agents.append(user_agent)
-        return RobotsVerdict.ALLOW
+        return self.verdict
 
 
 # ---------------------------------------------------------------------------
@@ -211,23 +205,26 @@ def test_playwright_fetcher_context_uses_owner_overridden_ua(
     # playwright_fetcher imports sync_playwright lazily inside _fetch_page.
     monkeypatch.setattr("playwright.sync_api.sync_playwright", lambda: rec)
 
-    fetcher.fetch("https://example.test/jobs/1")
+    page = fetcher.fetch("https://example.test/jobs/1")
 
     expected = _expected_ua()
     assert gateway.user_agent == expected
     assert rec.context_user_agents == [expected]  # fetch identity == override
-    assert robots.seen_user_agents  # robots really ran
-    assert all(ua == expected for ua in robots.seen_user_agents)  # robots == fetch
+    assert rec.goto_urls == ["https://example.test/jobs/1"]
+    assert page.status == 200 and page.page_title == "Role"
+    assert page.final_url == "https://example.test/final"
+    assert robots.seen_user_agents == []
 
 
-def test_playwright_fetcher_does_not_construct_or_navigate_when_robots_denies(
+def test_playwright_fetcher_uses_owner_ua_without_consulting_denying_robots(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _allow_fetcher_url_safety(monkeypatch)
+    robots = _UASpyRobots(RobotsVerdict.DISALLOW)
     session = PolitenessSession(
         PolitenessGateway(
             user_agent=_saved_discovery_identity(),
-            robots=DenyAllRobots(),
+            robots=robots,
             rate_limiter=no_sleep_limiter(),
         ),
         policy=ENRICHMENT_CRAWL_POLICY,
@@ -239,11 +236,12 @@ def test_playwright_fetcher_does_not_construct_or_navigate_when_robots_denies(
 
     page = PlaywrightDetailPageFetcher(session=session).fetch("https://example.test/jobs/1")
 
-    assert page.status is None
-    assert page.html == ""
-    assert recorder.context_user_agents == []
+    assert page.status == 200 and page.page_title == "Role"
+    assert page.final_url == "https://example.test/final"
+    assert recorder.context_user_agents == [_expected_ua()]
     assert recorder.page_user_agents == []
-    assert recorder.goto_urls == []
+    assert recorder.goto_urls == ["https://example.test/jobs/1"]
+    assert robots.seen_user_agents == []
 
 
 # ---------------------------------------------------------------------------
@@ -264,23 +262,25 @@ def test_smartextract_page_uses_owner_overridden_ua(monkeypatch: pytest.MonkeyPa
     rec = _RecordingPlaywright()
     monkeypatch.setattr(smartextract, "sync_playwright", lambda: rec)
 
-    smartextract.collect_page_intelligence("https://example.test/list", session=session)
+    intel = smartextract.collect_page_intelligence("https://example.test/list", session=session)
 
     expected = _expected_ua()
     assert gateway.user_agent == expected
     assert rec.page_user_agents == [expected]  # fetch identity == override
-    assert robots.seen_user_agents
-    assert all(ua == expected for ua in robots.seen_user_agents)  # robots == fetch
+    assert rec.goto_urls == ["https://example.test/list"]
+    assert intel["page_title"] == "Role"
+    assert robots.seen_user_agents == []
 
 
-def test_smartextract_does_not_navigate_when_robots_denies(
+def test_smartextract_uses_owner_ua_without_consulting_denying_robots(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _allow_smartextract_url_safety(monkeypatch)
+    robots = _UASpyRobots(RobotsVerdict.DISALLOW)
     session = PolitenessSession(
         PolitenessGateway(
             user_agent=_saved_discovery_identity(),
-            robots=DenyAllRobots(),
+            robots=robots,
             rate_limiter=no_sleep_limiter(),
         ),
         policy=SMART_EXTRACT_EXPERIMENTAL_POLICY,
@@ -295,9 +295,10 @@ def test_smartextract_does_not_navigate_when_robots_denies(
         session=session,
     )
 
-    assert intel["page_title"] == ""
-    assert recorder.page_user_agents == [session.user_agent]
-    assert recorder.goto_urls == []
+    assert intel["page_title"] == "Role"
+    assert recorder.page_user_agents == [_expected_ua()]
+    assert recorder.goto_urls == ["https://example.test/list"]
+    assert robots.seen_user_agents == []
 
 
 # ---------------------------------------------------------------------------
@@ -326,7 +327,7 @@ def test_enrichment_batch_context_uses_owner_overridden_ua(
     )
     monkeypatch.setattr(detail, "_collect_main_content", lambda _page: "<main>role</main>")
 
-    robots = _UASpyRobots()
+    robots = _UASpyRobots(RobotsVerdict.DISALLOW)
     gateway = _spy_gateway(robots, _saved_discovery_identity())
     rec = _RecordingPlaywright()
     monkeypatch.setattr(detail, "sync_playwright", lambda: rec)
@@ -364,12 +365,13 @@ def test_enrichment_batch_context_uses_owner_overridden_ua(
         )
         conn.commit()
 
-        detail.scrape_site_batch(conn, "RemoteOK", [(job_id, "Role")], gateway=gateway)
+        stats = detail.scrape_site_batch(conn, "RemoteOK", [(job_id, "Role")], gateway=gateway)
 
         expected = _expected_ua()
         assert gateway.user_agent == expected
         assert rec.context_user_agents == [expected]  # anonymous fetch identity
-        assert robots.seen_user_agents
-        assert all(ua == expected for ua in robots.seen_user_agents)  # robots == fetch
+        assert rec.goto_urls == [url]
+        assert stats["processed"] == 1 and stats["ok"] == 1
+        assert robots.seen_user_agents == []
     finally:
         close_connection(db_path)
