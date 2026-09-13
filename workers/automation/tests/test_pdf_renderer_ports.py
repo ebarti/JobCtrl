@@ -305,6 +305,7 @@ def test_resume_preserves_profile_experience_order_and_places_education_degree_b
         },
     ]
 
+    profile["resume"]["tailoring_rules"]["required_experience_entry_ids"] = ["older", "current", "recent"]
     document = build_resume_document({}, profile)
     text = ResumeAssembler().assemble_resume_text({}, profile)
     html = build_resume_html(document)
@@ -437,6 +438,33 @@ def test_render_resume_html_to_pdf_passes_full_html_to_playwright(
     assert out.exists()
     assert captured["html"] == body
     assert "Line 70" in captured["html"]
+
+
+def test_pdf_adapter_receives_selected_optional_roles_and_mandatory_metadata(monkeypatch, tmp_path) -> None:
+    profile = _profile()
+    profile["resume"]["experience_entries"].extend([
+        {"id": "older", "title": "Engineer", "company": "Mandatory Older Co", "bullets": []},
+        {"id": "unselected", "title": "Researcher", "company": "Unselected Lab", "bullets": ["Catalogued samples."]},
+    ])
+    profile["resume"]["tailoring_rules"]["required_experience_entry_ids"] = ["older"]
+    payload = _payload()
+    payload["experience_updates"].append({"id": "older", "title": "", "bullets": []})
+    captured = []
+
+    def render(html_content, output_path):
+        captured.append(html_content)
+        Path(output_path).write_bytes(b"%PDF-owned-render-boundary")
+        return []
+
+    monkeypatch.setattr(html_resume_pdf, "_render_resume_pdf_playwright", render)
+    out = tmp_path / "selected.pdf"
+    artifact = HtmlResumePdfAdapter().render_resume_to_pdf(
+        tailored_payload=payload, profile_dict=profile, output_path=str(out), created_at="2026-09-13T00:00:00Z",
+    )
+    assert artifact.path == str(out)
+    assert captured == [out.with_suffix(".html").read_text()]
+    assert "Acme" in captured[0] and "Cut latency." in captured[0]
+    assert "Mandatory Older Co" in captured[0] and "Unselected Lab" not in captured[0]
 
 
 def test_html_resume_adapter_applies_template_to_pdf_html_and_layout_metadata(

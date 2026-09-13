@@ -28,11 +28,10 @@ from jobctrl.domain.materials.value_objects import (
 from jobctrl.resume_profile import (
     experience_updates_by_id,
     get_education_entries,
-    get_experience_entries,
     get_required_education_entry_ids,
-    get_required_experience_entry_ids,
     get_required_skill_category_ids,
     get_resume_master,
+    get_selected_experience_entries,
     get_skill_categories,
     get_tailoring_policy,
     tailored_experience_bullets,
@@ -641,18 +640,12 @@ def build_resume_document(tailored_payload: dict, profile: dict) -> ResumeDocume
     personal = profile.get("personal", {})
     tailoring_policy = get_tailoring_policy(profile)
     resume = get_resume_master(profile)
-    required_experience_ids = get_required_experience_entry_ids(profile)
     required_education_ids = get_required_education_entry_ids(profile)
     required_skill_ids = get_required_skill_category_ids(profile)
-    all_experience_entries = get_experience_entries(profile)
     all_education_entries = get_education_entries(profile)
     all_skill_categories = get_skill_categories(profile)
 
-    experience_entries = [
-        entry
-        for entry in all_experience_entries
-        if not required_experience_ids or entry.get("id") in required_experience_ids
-    ] or all_experience_entries
+    experience_entries = get_selected_experience_entries(profile, tailored_payload)
     education_entries = [
         entry
         for entry in all_education_entries

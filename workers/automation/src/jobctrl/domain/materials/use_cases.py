@@ -186,7 +186,7 @@ from jobctrl.resume_profile import (
 
 log = logging.getLogger(__name__)
 
-TAILORING_PROMPT_VERSION = "tailor.v8.summary-metric-grounding"
+TAILORING_PROMPT_VERSION = "tailor.v9.selected-known-roles"
 TAILORING_SCHEMA_VERSION = "tailored-resume.v4"
 TAILORING_JUDGE_SCHEMA_VERSION = "tailor-judge.v2.final-semantic-fidelity"
 TAILORING_JUDGE_CRITERIA: tuple[str, ...] = (
@@ -1107,7 +1107,7 @@ def _experience_bullet_curation_errors(
                     f"Required experience {entry_id} without target-covered or pinned "
                     "evidence must have exactly one positioning-only bullet."
                 )
-            elif entry_id not in required_roles and positioning:
+            elif entry_id not in required_roles:
                 errors.append(
                     f"Optional experience {entry_id} has no target-covered or pinned "
                     "evidence and must be omitted."
@@ -1709,12 +1709,8 @@ def build_master_tailor_prompt(
         if entry_id not in evidence_entry_ids and not required_bullets.get(entry_id)
     ]
     required_skill_ids = get_required_skill_category_ids(profile)
-    all_experience_entries = get_experience_entries(profile)
+    experience_entries = get_experience_entries(profile)
     all_skill_categories = get_skill_categories(profile)
-    experience_entries = [
-        entry for entry in all_experience_entries
-        if not required_experience_ids or entry.get("id") in required_experience_ids
-    ] or all_experience_entries
     skill_categories = [
         category for category in all_skill_categories
         if not required_skill_ids or category.get("id") in required_skill_ids
@@ -1824,7 +1820,10 @@ HARD RULES:
 - Return a title field for EVERY experience update; set it to "" to preserve the source title
 - Return EVERY required skill category id exactly once
 - Preserve every required bullet listed below in the matching experience entry
-- Do NOT add or remove experience entries
+- Required experience IDs are a mandatory minimum, not an exclusive selection
+- Include additional known MASTER EXPERIENCE ENTRIES only for target-covered or
+  explicitly pinned achievement evidence; omit unrelated optional roles
+- Do NOT invent experience IDs or remove required experience entries
 - Do NOT add or remove education entries
 - Do NOT add or remove skill categories
 - Do NOT rewrite historical experience titles or append job keywords to titles

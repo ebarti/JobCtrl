@@ -47,6 +47,10 @@ last accepted resume.
    use skills that already exist in the profile. The generator selects the
    smallest sufficient achievement set: a maximum bullet count is a ceiling,
    not a quota, and optional inventory does not become required content. Required
+   experience pins are a mandatory minimum: target-covered or explicitly pinned
+   achievements can select additional known roles. A bullet pin also requires
+   its owning role, even if that role has no separate role pin. Unselected optional roles are
+   omitted consistently from text, HTML/PDF, and the provenance audit. Required
    roles with neither achievement evidence nor required bullet pins retain their
    existing role details without generated bullets. If a required bullet remains
    pinned after its supporting achievement is removed, restore that role's

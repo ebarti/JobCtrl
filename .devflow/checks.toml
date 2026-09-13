@@ -199,3 +199,16 @@ description = "Discovery robots policy is ignored while source contracts, rates,
 argv = ["env", "-u", "UV_PROJECT_ENVIRONMENT", "-u", "VIRTUAL_ENV", "-u", "UV_EXCLUDE_NEWER", "-u", "UV_EXCLUDE_NEWER_PACKAGE", "uv", "run", "--project", "workers/automation", "--locked", "--all-extras", "--exclude-newer", "false", "pytest", "-q", "workers/automation/tests/test_politeness_gateway.py", "workers/automation/tests/test_politeness_ports.py", "workers/automation/tests/test_gateway_http_client.py", "workers/automation/tests/test_enrichment_politeness_gate.py", "workers/automation/tests/test_enrichment_url_safety.py", "workers/automation/tests/test_public_destination_http.py", "workers/automation/tests/test_source_registry.py", "workers/automation/tests/test_crawl_politeness_config.py", "--junitxml={report_path}"]
 min_executed = 1
 timeout_seconds = 600
+
+[checks.materials-role-selection]
+kind = "junit"
+description = "Tailor mandatory pins and selected known roles stay consistent across prompt, grounding, validation, text, HTML/PDF, provenance and accepted-artifact preservation"
+argv = ["env", "-u", "UV_PROJECT_ENVIRONMENT", "-u", "VIRTUAL_ENV", "-u", "UV_EXCLUDE_NEWER", "-u", "UV_EXCLUDE_NEWER_PACKAGE", "uv", "run", "--project", "workers/automation", "--locked", "--all-extras", "--exclude-newer", "false", "pytest", "-q", "workers/automation/tests/test_content_validator.py", "workers/automation/tests/test_resume_assembler.py", "workers/automation/tests/test_pdf_renderer_ports.py", "workers/automation/tests/test_bullet_provenance.py", "workers/automation/tests/test_requirement_led_tailoring.py", "workers/automation/tests/test_tailor_provenance_integration.py", "workers/automation/tests/test_materials_use_cases.py", "workers/automation/tests/test_materials_unit_of_work.py", "workers/automation/tests/test_tailor_retailor.py", "workers/automation/tests/test_resume_html_migration.py", "workers/automation/tests/test_materials_quality.py", "--junitxml={report_path}"]
+min_executed = 341
+timeout_seconds = 600
+[checks.provider-auth-recovery]
+kind = "junit"
+description = "Explicit provider login reuse recovers stale app-owned auth while status reads, generation isolation and credential privacy remain intact"
+argv = ["env", "-u", "UV_PROJECT_ENVIRONMENT", "-u", "VIRTUAL_ENV", "-u", "UV_EXCLUDE_NEWER", "-u", "UV_EXCLUDE_NEWER_PACKAGE", "uv", "run", "--project", "workers/automation", "--locked", "--all-extras", "--exclude-newer", "false", "pytest", "-q", "workers/automation/tests/test_setup_probes.py", "workers/automation/tests/test_codex_home_isolation.py", "--junitxml={report_path}"]
+min_executed = 1
+timeout_seconds = 300

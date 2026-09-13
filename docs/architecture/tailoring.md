@@ -195,8 +195,11 @@ The system prompt contains these sections:
   evidence; metrics are extracted from and remain scoped to their owning
   achievement.
 - Hard rules: return every required profile ID exactly once, preserve required
-  bullets, include the pruned strongest requirement-covered achievements, do not
-  add/remove experience, education, or skill categories, do not invent skills
+  bullets, and include the pruned strongest requirement-covered achievements.
+  Experience pins are a minimum: additional selected known roles must carry
+  target-covered or explicitly pinned evidence. A shared role selection helper
+  keeps text, HTML/PDF, and provenance aligned in profile order. Do not invent
+  role IDs, add/remove education or skill categories, or invent skills
   or metrics, cite one achievement per bullet, and treat max bullet count as a
   ceiling rather than a quota.
 - Writing method: retain explicit pins, select the smallest sufficient

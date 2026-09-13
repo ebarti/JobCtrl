@@ -641,8 +641,9 @@ def test_accepted_resume_records_provenance_and_publishes_event(tmp_path: Path) 
     assert provenance_events[0].payload["artifact_id"] == saved.artifact_id
 
 
+@pytest.mark.parametrize("pin_only_older_role", [False, True])
 def test_required_role_without_achievements_preserves_metadata_without_invented_bullets(
-    tmp_path: Path,
+    tmp_path: Path, pin_only_older_role: bool,
 ) -> None:
     profile = _profile_dict()
     profile["resume"]["experience_entries"].append({
@@ -655,11 +656,28 @@ def test_required_role_without_achievements_preserves_metadata_without_invented_
         "achievement_evidence": [],
     })
     profile["resume"]["tailoring_rules"]["required_experience_entry_ids"].append("earlier_role")
+    if pin_only_older_role:
+        profile["resume"]["tailoring_rules"]["required_experience_entry_ids"] = ["earlier_role"]
+        profile["resume"]["experience_entries"].append({
+            "id": "unrelated_role", "title": "Research Assistant", "company": "Unrelated Lab",
+            "date_range": "2015-2016", "bullets": ["Catalogued botanical samples."],
+        })
     snapshot = ProfileSnapshot.from_profile(Profile.from_dict(LOCAL_TENANT, profile))
     payload = json.loads(
         _payload("Owned the API and cut latency 40% with Python by replacing synchronous calls.")
     )
     payload["experience_updates"].append({"id": "earlier_role", "title": "", "bullets": []})
+    from jobctrl.domain.materials.use_cases import build_master_tailor_prompt
+    from jobctrl.infrastructure.materials.html_resume_pdf import build_resume_document, build_resume_html
+
+    prompt = build_master_tailor_prompt(snapshot)
+    assert "Acme Corp" in prompt
+    assert ContentValidator().validate_json_fields(payload, snapshot).passed
+    document = build_resume_document(payload, snapshot.as_dict())
+    assert [entry["id"] for entry in document["experience"]] == ["acme_swe", "earlier_role"]
+    html = build_resume_html(document)
+    assert "Acme Corp" in html and "Earlier Employer" in html
+    assert "Unrelated Lab" not in html
     materials_repo = _FakeMaterialsRepo()
     provenance_repo = _FakeProvenanceRepo()
     publisher = _RecordingPublisher()
@@ -677,11 +695,13 @@ def test_required_role_without_achievements_preserves_metadata_without_invented_
     assert "Earlier Employer" in text
     assert "Software Engineer" in text
     assert "2017-2019" in text
+    assert "Acme Corp" in text and "Unrelated Lab" not in text
     provenance = provenance_repo.load(LOCAL_TENANT, JOB_ID)
     assert provenance is not None
     experience_rows = [row for row in provenance.bullets if row.section == "experience"]
     assert len(experience_rows) == 1
     assert "latency" in experience_rows[0].generated_text
+    assert experience_rows[0].source_id == "acme_swe"
 
 
 def test_accepted_resume_updates_requirement_fit_artifact_coverage(tmp_path: Path) -> None:

@@ -45,6 +45,7 @@ from jobctrl.resume_profile import (
     get_required_experience_entry_ids,
     get_required_skill_category_ids,
     get_resume_master,
+    get_selected_experience_entries,
     get_skill_categories,
     get_tailoring_policy,
     require_resume_master,
@@ -258,7 +259,7 @@ def _validate_master_json_fields(
         all_text_parts.extend(str(bullet) for bullet in bullets)
 
     missing_experience_ids = required_experience_ids - seen_experience_ids
-    extra_experience_ids = seen_experience_ids - required_experience_ids
+    extra_experience_ids = seen_experience_ids - all_experience_ids
     if missing_experience_ids:
         errors.append(
             "Missing experience updates: " + ", ".join(sorted(missing_experience_ids))
@@ -518,19 +519,13 @@ def _assemble_resume_text(data: dict, profile: dict) -> str:
     personal = profile.get("personal", {})
     tailoring_policy = get_tailoring_policy(profile)
     resume = get_resume_master(profile)
-    required_experience_ids = get_required_experience_entry_ids(profile)
     required_skill_ids = get_required_skill_category_ids(profile)
     required_education_ids = set(
         get_resume_master(profile).get("tailoring_rules", {}).get("required_education_entry_ids", [])
     )
-    all_experience_entries = get_experience_entries(profile)
     all_education_entries = get_education_entries(profile)
     all_skill_categories = get_skill_categories(profile)
-    experience_entries = [
-        entry
-        for entry in all_experience_entries
-        if not required_experience_ids or entry.get("id") in required_experience_ids
-    ] or all_experience_entries
+    experience_entries = get_selected_experience_entries(profile, data)
     education_entries = [
         entry for entry in all_education_entries
         if not required_education_ids or entry.get("id") in required_education_ids

@@ -443,7 +443,7 @@ def test_reuse_and_verify_codex_connection_copies_ambient_auth_once_and_strips_r
     )
 
 
-def test_reuse_and_verify_codex_connection_does_not_overwrite_isolated_auth(
+def test_explicit_reuse_replaces_stale_isolated_auth_without_changing_source(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -463,10 +463,111 @@ def test_reuse_and_verify_codex_connection_does_not_overwrite_isolated_auth(
     )
 
     assert result == (True, "connected", "Codex CLI authentication verified")
-    assert target.read_bytes() == target_contents
+    assert target.read_bytes() != target_contents
+    assert target.read_bytes() == source.read_bytes()
     if os.name != "nt":
         assert stat.S_IMODE(target.stat().st_mode) == 0o600
     assert "ambient-token" in source.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("source_kind", ["missing", "invalid", "symlink", "unreadable"])
+def test_explicit_reuse_preserves_existing_login_when_source_is_unusable(source_kind, monkeypatch, tmp_path):
+    app_dir = tmp_path / "jobctrl"
+    target = app_dir / "codex_home/auth.json"
+    source = tmp_path / "source/auth.json"
+    _write_codex_auth(target, access_token="accepted-isolated-token")
+    target.chmod(0o644)
+    before = target.read_bytes()
+    if source_kind == "invalid":
+        source.parent.mkdir()
+        source.write_text("private-invalid-token")
+    elif source_kind == "symlink":
+        source.parent.mkdir()
+        source.symlink_to(target)
+    elif source_kind == "unreadable":
+        _write_codex_auth(source)
+        read_text = Path.read_text
+
+        def unreadable(path, *args, **kwargs):
+            if path == source:
+                raise PermissionError("private-source-error")
+            return read_text(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "read_text", unreadable)
+    monkeypatch.setattr(jobctrl.config, "APP_DIR", app_dir)
+    monkeypatch.setattr(setup_probes, "resolve_codex_binary", lambda env=None: tmp_path / "codex")
+    result = setup_probes.reuse_and_verify_codex_connection(
+        {"CODEX_HOME": str(source.parent)}, runner=lambda *_a, **_kw: SimpleNamespace(returncode=0),
+    )
+    assert result == (True, "connected", "Codex CLI authentication verified")
+    assert target.read_bytes() == before
+    assert not list(target.parent.glob(".auth-*"))
+    assert "private-invalid-token" not in repr(result)
+    if os.name != "nt":
+        assert stat.S_IMODE(target.stat().st_mode) == 0o600
+        assert stat.S_IMODE(target.parent.stat().st_mode) == 0o700
+
+
+def test_explicit_reuse_of_same_home_verifies_without_replacing_cache(monkeypatch, tmp_path):
+    app_dir = tmp_path / "jobctrl"
+    target = app_dir / "codex_home/auth.json"
+    _write_codex_auth(target)
+    before = target.read_bytes()
+    monkeypatch.setattr(jobctrl.config, "APP_DIR", app_dir)
+    monkeypatch.setattr(setup_probes, "resolve_codex_binary", lambda env=None: tmp_path / "codex")
+    monkeypatch.setattr(setup_probes.os, "replace", lambda *_a: pytest.fail("same cache must not be replaced"))
+    result = setup_probes.reuse_and_verify_codex_connection(
+        {"CODEX_HOME": str(target.parent)}, runner=lambda *_a, **_kw: SimpleNamespace(returncode=0),
+    )
+    assert result == (True, "connected", "Codex CLI authentication verified")
+    assert target.read_bytes() == before
+    if os.name != "nt":
+        assert stat.S_IMODE(target.stat().st_mode) == 0o600
+
+
+@pytest.mark.parametrize("failure", ["write", "replace", "invalid-copy"])
+def test_explicit_reuse_atomic_failure_preserves_previous_auth_and_hides_secrets(failure, monkeypatch, tmp_path):
+    app_dir = tmp_path / "jobctrl"
+    target = app_dir / "codex_home/auth.json"
+    source = tmp_path / "source/auth.json"
+    _write_codex_auth(target, access_token="accepted-isolated-token")
+    _write_codex_auth(source, access_token="current-ambient-token")
+    before = target.read_bytes()
+    monkeypatch.setattr(jobctrl.config, "APP_DIR", app_dir)
+
+    def broken_copy(original, staged):
+        staged.write(b'partial-private-token')
+        if failure == "write":
+            raise OSError("private-copy-error")
+
+    def broken_replace(*_args):
+        assert target.read_bytes() == before
+        raise OSError("private-replace-error")
+
+    if failure == "replace":
+        monkeypatch.setattr(setup_probes.os, "replace", broken_replace)
+    else:
+        monkeypatch.setattr(setup_probes.shutil, "copyfileobj", broken_copy)
+    result = setup_probes.reuse_and_verify_codex_connection(
+        {"CODEX_HOME": str(source.parent)}, runner=lambda *_a, **_kw: pytest.fail("verification after failed reuse"),
+    )
+    assert result == (False, "failed", "Codex authentication reuse failed")
+    assert target.read_bytes() == before
+    assert "current-ambient-token" in source.read_text()
+    assert not list(target.parent.glob(".auth-*"))
+    assert "private-" not in repr(result)
+
+
+def test_automatic_enrollment_keeps_existing_isolated_login(monkeypatch, tmp_path):
+    app_dir = tmp_path / "jobctrl"
+    target = app_dir / "codex_home/auth.json"
+    source = tmp_path / "source/auth.json"
+    _write_codex_auth(target, access_token="existing-token")
+    _write_codex_auth(source, access_token="different-account-token")
+    before = target.read_bytes()
+    monkeypatch.setattr(jobctrl.config, "APP_DIR", app_dir)
+    assert setup_probes.ensure_jobctrl_codex_auth({"CODEX_HOME": str(source.parent)}) == target
+    assert target.read_bytes() == before
 
 
 @pytest.mark.parametrize(

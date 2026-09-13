@@ -643,6 +643,56 @@ def test_required_role_without_evidence_rejects_a_generated_positioning_bullet()
     assert any("exactly one primary achievement" in error for error in errors)
 
 
+@pytest.mark.parametrize("empty", [False, True])
+def test_optional_role_without_target_or_pinned_evidence_must_be_omitted(empty) -> None:
+    profile = _profile()
+    profile["resume"]["experience_entries"].append({
+        "id": "older", "title": "Engineer", "company": "Older Co", "bullets": [], "achievement_evidence": [],
+    })
+    profile["resume"]["tailoring_rules"]["required_experience_entry_ids"] = ["older"]
+    plan = build_tailoring_plan(profile, _senior_job(), employer_analysis=_employer_analysis("python"))
+    bullet = "Maintained internal planning rituals."
+    mappings = [] if empty else [{
+        "claim_id": "optional-filler", "location": "experience.acme_swe.bullets[0]", "text": bullet,
+        "claim_label": "positioning", "coverage_edge_ids": [], "requirement_ids": [],
+        "evidence_ids": ["ev_latency"], "non_requirement_reason": "positioning", "review_required": False,
+    }]
+    payload = _mapped_payload(bullets=[] if empty else [bullet], bullet_mappings=mappings)
+    payload["experience_updates"].append({"id": "older", "title": "", "bullets": []})
+    errors = _claim_mapping_validation_errors(payload=payload, tailoring_plan=plan)
+    assert any("Optional experience acme_swe" in error and "must be omitted" in error for error in errors)
+
+
+def test_bullet_pin_requires_its_known_role_even_outside_explicit_role_pins() -> None:
+    from jobctrl.domain.materials.services import ResumeAssembler
+    from jobctrl.infrastructure.materials.html_resume_pdf import build_resume_document
+
+    profile = _profile()
+    profile["resume"]["experience_entries"].append({
+        "id": "older", "title": "Engineer", "company": "Older Co", "bullets": [], "achievement_evidence": [],
+    })
+    rules = profile["resume"]["tailoring_rules"]
+    rules["required_experience_entry_ids"] = ["older"]
+    pinned = profile["resume"]["experience_entries"][0]["bullets"][0]
+    rules["required_bullets_by_experience_id"] = {"acme_swe": [pinned]}
+    snapshot = ProfileSnapshot.from_profile(Profile.from_dict(LOCAL_TENANT, profile))
+    profile = snapshot.as_dict()  # This combination is accepted by the canonical Profile contract.
+    assert profile["resume"]["tailoring_rules"]["required_experience_entry_ids"] == ["older"]
+    plan = build_tailoring_plan(profile, _senior_job(), employer_analysis=_employer_analysis("python"))
+    assert set(plan.requirement_led_controls.required_content_pins.experience_entry_ids) == {"older", "acme_swe"}
+    prompt = build_master_tailor_prompt(snapshot)
+    required = json.loads(prompt.split("REQUIRED EXPERIENCE IDS:\n")[1].split("\n\n", 1)[0])
+    assert set(required) == {"older", "acme_swe"}
+    payload = _mapped_payload(bullets=[], bullet_mappings=[])
+    payload["experience_updates"] = [{"id": "older", "title": "", "bullets": []}]
+    result = ContentValidator().validate_json_fields(payload, profile)
+    assert not result.passed and any("Missing experience updates: acme_swe" in error for error in result.errors)
+    assert pinned in ResumeAssembler().assemble_resume_text(payload, profile)
+    document = build_resume_document(payload, profile)
+    role = next(entry for entry in document["experience"] if entry["id"] == "acme_swe")
+    assert pinned in [bullet["text"] for bullet in role["bullets"]]
+
+
 def test_claim_metric_must_be_supported_by_that_bullets_mapped_achievement() -> None:
     profile = _profile()
     profile["resume_constraints"]["real_metrics"] = ["$123k"]
