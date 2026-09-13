@@ -248,7 +248,7 @@ and prove the worker waits for capacity before starting its lease deadline.
 Keep an active lease alive beyond 45 seconds and prove Settings remains
 connected. Feed multibyte request/result fixtures and an oversized stream to
 prove byte bounds and early cancellation. Worker fixtures must prove every
-JobStreaming adapter session plus ATS, Workday, Smart Extract, robots, and
+JobStreaming adapter session plus ATS, Workday, Smart Extract, and
 integrated detail enrichment prefer a connected bridge and can select guarded
 anonymous acquisition under the same exact `DiscoveryExecutionRef` when offline.
 Exercise the actual installed provider/session transport, not only custom fake
@@ -262,11 +262,13 @@ Keep socket/DNS fixtures owned and prohibit external requests. Browser-owned
 Cookie/User-Agent headers must never cross connected worker task contracts. Seed an unresolved legacy WelcomeToTheJungle row and
 invoke the outer Temporal `run_enrichment()` entry: workflow/run identity must
 be bound before legacy URL repair. Connected selection must not launch
-anonymous acquisition, and neither mode may use the copied-profile pre-pass. Reproduce a LinkedIn detail request whose anonymous
-`robots.txt` policy denies the crawler and prove the owner-authenticated live
-Chrome session still performs the bounded exact-origin fetch through the
-extension while pacing, request budgets, URL safety, and audit history remain
-active. Prove that a Temporal-backed standalone Enrich retry synthesizes its
+anonymous acquisition, and neither mode may use the copied-profile pre-pass. Serve a denied or unavailable `robots.txt` alongside useful content and prove
+neither connected nor anonymous Discovery/Enrich requests or evaluates it.
+Use a legacy `honor` source policy and an exploding injected robots port to
+prove old values cannot re-enable consultation. Fetch and persist the content
+while pacing, request budgets, URL safety and audit history remain active.
+Seed historical robots-blocked rows and prove an audited retry succeeds in
+either mode without stranding an open transaction. Prove that a Temporal-backed standalone Enrich retry synthesizes its
 bridge execution reference, never launches or reads a copied profile, and that
 extension reconnection recovers both the current blocked-condition value and
 the legacy value without duplicate dispatch. Finally, run a bounded Discover

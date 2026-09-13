@@ -8,11 +8,9 @@ import pytest
 
 from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
 from jobctrl.domain.errors import ConfigurationError
-from jobctrl.domain.ports.politeness import RobotsVerdict
 from jobctrl.infrastructure.discovery.live_browser import (
     LiveBrowserResult,
     LiveChromeDiscoveryClient,
-    LiveChromeRobotsCache,
     LiveChromeSession,
     PoliteLiveChromeHttpClient,
     live_jobstreaming_registry,
@@ -348,35 +346,6 @@ def test_live_session_preserves_query_and_json_body_for_browser_task(tmp_path: P
     assert request["method"] == "POST"
     assert json.loads(request["body"]) == {"page": 2}
     assert request["headers"] == {"Accept": "application/json", "Content-Type": "application/json"}
-
-
-def test_robots_policy_is_fetched_and_cached_through_the_live_profile() -> None:
-    class _RobotsClient:
-        def __init__(self) -> None:
-            self.calls: list[str] = []
-
-        def request(self, url: str, **_kwargs: object) -> LiveBrowserResult:
-            self.calls.append(url)
-            return LiveBrowserResult(
-                final_url=url,
-                status_code=200,
-                content_type="text/plain",
-                title="",
-                body_text=(
-                    "User-agent: ChromeProbe\n"
-                    "Disallow: /private\n"
-                    "User-agent: JobCtrl\n"
-                    "Allow: /\n"
-                ),
-                browser_user_agent="ChromeProbe",
-            )
-
-    client = _RobotsClient()
-    robots = LiveChromeRobotsCache(client)  # type: ignore[arg-type]
-
-    assert robots.evaluate("https://example.com/public", "JobCtrl/1") is RobotsVerdict.ALLOW
-    assert robots.evaluate("https://example.com/private/role", "JobCtrl/1") is RobotsVerdict.DISALLOW
-    assert client.calls == ["https://example.com/robots.txt"]
 
 
 @pytest.mark.parametrize("workers", [1, 2])

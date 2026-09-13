@@ -2,7 +2,7 @@
 
 Scrapes Workday-powered career sites (TD, RBC, NVIDIA, Salesforce, etc.) via the
 Workday CXS JSON API -- the stable JSON endpoint the public career-site UI itself
-calls, treated as a documented-API-class source (robots-exempt, D2). Zero LLM,
+calls, treated as a documented API source. Zero LLM,
 zero browser -- pure HTTP through the shared politeness gateway.
 
 Employer registry is loaded from config/employers.yaml instead of being
@@ -46,7 +46,6 @@ from jobctrl.discovery.title_filter import title_matches_query
 from jobctrl.infrastructure.discovery.sqlite_repository import SqliteJobRepository
 from jobctrl.infrastructure.discovery.live_browser import (
     LiveChromeDiscoveryClient,
-    LiveChromeRobotsCache,
     PoliteLiveChromeHttpClient,
     prefer_live_browser,
 )
@@ -130,8 +129,7 @@ def strip_html(html: str) -> str:
 
 # -- Politeness gateway routing (R10) ---------------------------------------
 #
-# The Workday CXS API is treated as a documented-API-class source (robots-exempt,
-# D2): the stable JSON endpoint the public career-site UI calls, not an ad-hoc
+# The Workday CXS API is treated as a documented API source: the stable JSON endpoint the public career-site UI calls, not an ad-hoc
 # scrape target. Every fetch still routes through the shared politeness gateway
 # for the honest UA, per-host rate/concurrency pacing, and a per-employer request
 # budget. Configured once per run (mirroring the old global-opener pattern); the
@@ -237,11 +235,7 @@ def _employer_client(employer: dict) -> GatewayHttpClient | PoliteLiveChromeHttp
             )
             if browser is not None:
                 browser = prefer_live_browser(browser, cancel_event=politeness.cancel_event)
-            active_gateway = (
-                politeness.gateway.with_robots(LiveChromeRobotsCache(browser))
-                if browser is not None
-                else politeness.gateway
-            )
+            active_gateway = politeness.gateway
             session = PolitenessSession(
                 active_gateway,
                 policy=WORKDAY_API_POLICY,

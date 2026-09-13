@@ -77,7 +77,6 @@ from jobctrl.infrastructure.discovery.location_filter import (
 )
 from jobctrl.infrastructure.discovery.live_browser import (
     LiveChromeDiscoveryClient,
-    LiveChromeRobotsCache,
     PoliteLiveChromeHttpClient,
     prefer_live_browser,
 )
@@ -2052,9 +2051,7 @@ def _live_browser_ats_fetcher(
     )
     if prefer_live_browser(browser, cancel_event=cancel_event) is None:
         return None
-    active_gateway = (gateway if gateway is not None else PolitenessGateway()).with_robots(
-        LiveChromeRobotsCache(browser)
-    )
+    active_gateway = gateway if gateway is not None else PolitenessGateway()
     session = PolitenessSession(
         active_gateway,
         policy=policy,

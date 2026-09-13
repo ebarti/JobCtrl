@@ -231,8 +231,7 @@ def test_smartextract_parses_and_persists_on_both_transports(tmp_path, monkeypat
     )
 
     def result_for(url):
-        if url.endswith("robots.txt"):
-            return {"status": "succeeded", "finalUrl": url, "statusCode": 404, "bodyText": ""}
+        assert not url.endswith("robots.txt"), "acquisition must not request robots.txt"
         return {
             "status": "succeeded",
             "finalUrl": url,

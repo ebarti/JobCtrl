@@ -651,7 +651,7 @@ contacts:
 - Research **proposes** candidates for review — it never stores them automatically
   (supervised, INV-4). Each proposed candidate shows its provenance (the page it
   came from, the capture method, and a confidence), and the run shows the
-  per-source outcomes (fetched, blocked by `robots.txt`, rate-limited, or routed
+  per-source outcomes (fetched, rate-limited, historically blocked by `robots.txt`, or routed
   to manual capture because the page needs a login).
 - Review each candidate and click **confirm contact** to promote it into your
   contacts. Only then does it become a stored fact — with its research provenance

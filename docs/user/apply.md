@@ -220,10 +220,9 @@ path; solving a challenge never grants form-entry or final-submit authority.
 Integrated Discovery and Enrich prefer the paired extension when it is connected
 in the current Chrome profile. Settings does not copy that profile or expose
 the legacy authenticated-LinkedIn copied-profile capability. A LinkedIn detail
-request through that owner-authenticated live session is exempt from the
-anonymous crawler's `robots.txt` verdict. Without the extension, anonymous
-Playwright follows ordinary robots policy; a denied row can guide the user to
-connect the extension for a signed-in retry.
+request uses that live session when available and anonymous Playwright
+otherwise. Neither acquisition mode consults `robots.txt`; historical blocked
+rows remain retryable in either mode.
 Public-destination checks, exact-origin controls, per-host pacing, run request
 budgets, and audit history remain enforced. This recovery cannot fill or submit
 an application; apply still requires the normal dry-run, approval, and

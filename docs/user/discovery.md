@@ -152,7 +152,7 @@ the existing public HTTP or anonymous Playwright path. A saved pairing token
 alone does not select the live transport. Pipelines reports connection status
 without blocking a run; the normal worker and stage prerequisites still apply.
 
-Transport is chosen before fetching. A site, robots, DNS, access, or cancellation
+Transport is chosen before fetching. A site, DNS, access, or cancellation
 failure never triggers another transport. A later acquisition setup may choose
 again. Anonymous access cannot use your signed-in session, and integrated
 fallback never opens a copied profile or adopts a system browser.
@@ -172,7 +172,7 @@ already holds the token shows **Use this Chrome profile for Discovery** when the
 installation still needs to be selected; copying the token again is unnecessary.
 
 This choice covers broad-board provider sessions, canonical ATS/API and Workday
-requests, Smart Extract rendering, robots reads, and detail-enrichment pages.
+requests, Smart Extract rendering and detail-enrichment pages.
 On the connected path, brokered HTTP/API requests
 run in its service worker; rendered-page work opens bounded temporary inactive
 tabs. Both execute in the Chrome profile where the extension is installed, so
@@ -394,16 +394,18 @@ succeeds. Changes apply to the next employer analysis.
 
 ## Crawl Politeness
 
-Discovery retains source policy whichever transport is selected. Connected
-acquisition fetches pages/APIs and ordinary `robots.txt` through the same live
-extension/profile. Chrome owns its effective cookies, proxy, and user agent;
-robots evaluation uses the returned browser identity. Anonymous ATS/API and
-Workday use the guarded HTTP gateway, while Smart Extract and Enrich use
-anonymous Playwright with the public route guard. Ordinary robots denial or an
-inconclusive result prevents rendering. The signed-in LinkedIn detail carve-out
-applies only to connected live-profile requests. Pacing, budgets, and denied,
-rate-limited, exhausted or unsafe outcomes remain owned by the relevant source
-policy. Broad-board traversal has the narrower accounting boundary below.
+Discovery and Enrich do not request, evaluate, or enforce `robots.txt` in
+extension or anonymous mode. This policy applies to broad boards, ATS/API,
+Workday, Smart Extract, and detail acquisition. Older source records with
+`honor` or `exempt_documented_api` values remain readable but cannot enable
+robots enforcement. Historical robots-blocked jobs remain retryable.
+
+Connected acquisition uses the selected live extension/profile; Chrome owns its
+cookies, proxy, and user agent. Anonymous ATS/API and Workday use guarded HTTP,
+while Smart Extract and Enrich use anonymous Playwright with the public route
+guard. Public destinations, redirects, authentication boundaries, host pacing,
+concurrency, request budgets, and cancellation remain enforced in both modes.
+Broad-board traversal has the narrower accounting boundary below.
 
 The **outbound user-agent** under **Discovery → Runtime settings** remains the
 configured identity for non-extension gateways and integrated anonymous
@@ -419,8 +421,8 @@ surface:
 
 - **Per-host rate/concurrency + per-run request budget** are fields on each
   source's `SourcePolicy` (`domain/discovery/source_registry.py`), with
-  conservative fail-closed values (robots honored for page rendering, a non-zero
-  min-interval, a concurrency of one, a finite run budget). Per-source overrides
+  bounded defaults (a non-zero min-interval, a concurrency of one, and a finite
+  run budget). Per-source overrides
   ride the existing `SourceRegistryEntry` rows; a registry policy editor is a
   planned addition, not yet in the UI.
 - **Broad boards** (`indeed`, `linkedin`, `glassdoor`, `zip_recruiter`) are
@@ -430,10 +432,10 @@ surface:
   sessions and detail sessions all retain public URL/DNS checks. Direct sockets
   connect to validated public numeric addresses; public redirects retain normal
   Requests behavior. Provider headers, cookies, payloads and timeouts remain
-  supported. JobStreaming owns internal traversal and robots behavior, so
+  supported. JobStreaming owns internal traversal, so
   JobCtrl's crawl-policy pacing and budget apply at the invocation boundary;
   `jobctrl doctor` warns when those sources are enabled. This is not a claim of
-  per-request robots or budget accounting inside the library.
+  per-request budget accounting inside the library.
 - Live-profile Discovery uses the proxy configured in Chrome or the operating
   system. It does not inject the SQLite `proxy` value into the user's browser.
   Anonymous integrated broad-board acquisition rejects HTTP(S) and SOCKS proxy
@@ -453,7 +455,7 @@ only when you start a run from the UI. Its posture is conservative by design:
   nothing and just records the source-attempt audit.
 - **Login-walled / paywalled / bot-protected pages are never auto-fetched** — they
   are routed to the manual-capture path instead.
-- **Fetching reuses the crawl-politeness gateway above** (`robots.txt` + per-host
+- **Fetching reuses the crawl-politeness gateway above** (per-host
   rate limit + per-run budget + the same honest user-agent).
 - **LLM spend reuses the daily budget** (`dailyBudgetUsd`) and the same preflight
   as every other spendful workflow — there is no separate research budget.

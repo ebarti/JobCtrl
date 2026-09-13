@@ -214,7 +214,7 @@ evidence, qualifications, and the complete capability matrix.
 - Fetch politely: Discovery and detail enrichment prefer the paired extension
   when it is connected, using the user's current Chrome session. Without it,
   they use public HTTP and anonymous Playwright under the existing source,
-  robots, pacing, budget, and destination controls. Transport is chosen before
+  pacing, budget, and destination controls. Neither mode consults robots.txt. Transport is chosen before
   acquisition; a site failure never triggers a second transport. Integrated
   work never copies a profile (details in
   [Local Data And Safety](#local-data-and-safety)).
@@ -387,8 +387,8 @@ jobctrl capability enable auto-apply-browser --browser-path /path/to/Chrome
 
 LinkedIn Discovery and Enrich do not adopt that executable or copy a browser
 profile. They prefer a connected paired extension in the user's current Chrome profile.
-Without it they use anonymous access; LinkedIn rows blocked by anonymous robots
-rules can be retried after connecting the extension.
+Without it they use anonymous access. Neither mode consults robots.txt;
+historical robots-blocked rows can be retried with or without the extension.
 
 ### Browser Extension Discovery, Capture, And Autofill
 
@@ -580,22 +580,16 @@ not make a manually copied or force-added private file safe to publish. Use
 [Data, Privacy & Safety](https://jobctrl.dev/user/data-and-safety) and
 [SECURITY.md](SECURITY.md).
 
-Integrated Discovery and its detail-enrichment drain prefer the paired extension
-when connected, including for job-source pages, APIs, and `robots.txt`. Chrome
-then owns the effective cookies, session, proxy, and browser user agent. An
-offline or unavailable extension selects guarded public HTTP or anonymous
-Playwright before acquisition. Anonymous access follows ordinary robots rules;
-it never opens a copied profile or evades a failed extension request. JobCtrl still applies the source policy's
-per-host pacing, concurrency, and run budget before delegation; fetches and
-final destinations must remain public HTTP(S), and the browser-reported user
-agent is used for ordinary robots evaluation. LinkedIn detail enrichment inside
-the user's owner-authenticated live Chrome session is not classified by the
-anonymous crawler's robots verdict; the same pacing, request budget,
-destination, exact-origin, audit, and no-submit controls still apply. An
-inconclusive ordinary robots result fails closed, while an absent robots
-endpoint follows the documented warning policy. JobCtrl does not evade login,
-paywall, CAPTCHA, rate-limit, or bot-control gates, and the extension has no
-application-submission path.
+Integrated Discovery and Enrich prefer the paired extension when connected,
+including for job-source pages and APIs. Chrome then owns its cookies, session,
+proxy and user agent. An offline or unavailable extension selects guarded public
+HTTP or anonymous Playwright before acquisition. Neither mode requests,
+evaluates or enforces `robots.txt`; historical blocks remain retryable. JobCtrl
+still enforces source pacing, concurrency, request budgets, public destinations,
+redirect controls, audit history and cancellation. Integrated acquisition never
+copies a profile or switches transport after an acquisition failure. Login,
+paywall, CAPTCHA, rate-limit and bot-control gates retain their existing
+handling, and the extension has no application-submission path.
 The API validates DNS both when the worker enqueues a task and immediately
 before the extension receives its lease. Brokered HTTP/API fetches run in the
 extension service worker with Chrome credentials and redirect following

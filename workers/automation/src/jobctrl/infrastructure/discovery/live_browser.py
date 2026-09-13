@@ -23,8 +23,6 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
-from urllib.parse import urlsplit
-from urllib.robotparser import RobotFileParser
 
 import requests
 from urllib3 import HTTPConnectionPool, HTTPSConnectionPool
@@ -33,7 +31,6 @@ from urllib3.connection import HTTPConnection, HTTPSConnection
 from jobctrl import config
 from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
 from jobctrl.domain.errors import ConfigurationError, JobCtrlError, TransientNetworkError
-from jobctrl.domain.ports.politeness import RobotsPort, RobotsVerdict
 from jobctrl.infrastructure.network.fetch_failures import PublicFetchFailureKind
 from jobctrl.infrastructure.network.public_http import UnsafePublicDestinationError, create_public_connection
 from jobctrl.infrastructure.network.url_safety import validate_public_http_url
@@ -49,8 +46,6 @@ DiscoveryBrowserSourceFamily = Literal[
 ApiTransport = Callable[[str, str, bytes | None, Mapping[str, str], float], tuple[int, bytes]]
 
 _TOKEN_FILENAME = "extension-capability-token"
-_ROBOTS_TTL_SECONDS = 3_600.0
-_ROBOTS_UNREACHABLE_TTL_SECONDS = 300.0
 _FORBIDDEN_BROWSER_HEADERS = frozenset(
     {
         "connection",
@@ -97,82 +92,6 @@ class LiveBrowserTaskError(JobCtrlError):
 
 class _DiscoveryCapacityBusy(TransientNetworkError):
     """The bounded extension executor pool is full; retry admission locally."""
-
-
-@dataclass(frozen=True, slots=True)
-class _LiveRobotsEntry:
-    parser: RobotFileParser | None
-    verdict: RobotsVerdict | None
-    expires_at: float
-    browser_user_agent: str
-
-
-class LiveChromeRobotsCache(RobotsPort):
-    """Evaluate robots.txt through the same live-profile extension boundary."""
-
-    def __init__(
-        self,
-        client: LiveChromeDiscoveryClient,
-        *,
-        clock: Callable[[], float] = time.monotonic,
-    ) -> None:
-        self._client = client
-        self._clock = clock
-        self._lock = threading.Lock()
-        self._cache: dict[str, _LiveRobotsEntry] = {}
-
-    def evaluate(self, url: str, user_agent: str) -> RobotsVerdict:
-        parts = urlsplit(url)
-        if not parts.scheme or not parts.netloc:
-            return RobotsVerdict.UNKNOWN
-        host_key = f"{parts.scheme}://{parts.netloc}"
-        now = self._clock()
-        with self._lock:
-            entry = self._cache.get(host_key)
-            if entry is None or entry.expires_at <= now:
-                entry = self._fetch(host_key, user_agent)
-                self._cache[host_key] = entry
-        if entry.verdict is not None:
-            return entry.verdict
-        if entry.parser is None:
-            return RobotsVerdict.UNKNOWN
-        effective_user_agent = entry.browser_user_agent or user_agent
-        return RobotsVerdict.ALLOW if entry.parser.can_fetch(effective_user_agent, url) else RobotsVerdict.DISALLOW
-
-    def _fetch(self, host_key: str, fallback_user_agent: str) -> _LiveRobotsEntry:
-        result = self._client.request(
-            f"{host_key}/robots.txt",
-            headers={"Accept": "text/plain"},
-            timeout_seconds=5.0,
-        )
-        now = self._clock()
-        status = result.status_code
-        if status is not None and 400 <= status < 500:
-            parser = RobotFileParser()
-            parser.parse([])
-            parser.modified()
-            return _LiveRobotsEntry(
-                parser,
-                None,
-                now + _ROBOTS_TTL_SECONDS,
-                result.browser_user_agent or fallback_user_agent,
-            )
-        if status is None or status >= 500:
-            return _LiveRobotsEntry(
-                None,
-                RobotsVerdict.UNKNOWN,
-                now + _ROBOTS_UNREACHABLE_TTL_SECONDS,
-                result.browser_user_agent or fallback_user_agent,
-            )
-        parser = RobotFileParser()
-        parser.parse(result.body_text.splitlines())
-        parser.modified()
-        return _LiveRobotsEntry(
-            parser,
-            None,
-            now + _ROBOTS_TTL_SECONDS,
-            result.browser_user_agent or fallback_user_agent,
-        )
 
 
 class LiveChromeDiscoveryClient:
@@ -814,7 +733,6 @@ __all__ = [
     "LiveBrowserHttpError",
     "LiveBrowserResult",
     "LiveChromeDiscoveryClient",
-    "LiveChromeRobotsCache",
     "LiveChromeResponse",
     "LiveChromeSession",
     "PoliteLiveChromeHttpClient",

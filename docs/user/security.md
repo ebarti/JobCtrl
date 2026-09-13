@@ -66,7 +66,7 @@ posting. Extracted posting text can be stored locally, and snapshots or posting
 text can reach configured LLM providers during extraction and later stages.
 See the [data-flow notice](data-and-safety.md#external-services). Cookie values
 are never copied into worker tasks or results; the browser user-agent string is
-returned with results for robots evaluation only.
+returned with results as transport metadata; it is not used for robots checks.
 
 The Apply model receives no applicant profile or generated-material prose.
 Reviewed resume and cover-letter files remain local for the user to handle
@@ -346,24 +346,21 @@ unsupported/failed challenges, the apply path stops.
 
 ### Crawl Politeness
 
-Discovery and its enrichment drain retain their source policies on either
-transport. For connected live-Chrome acquisition:
+Discovery and Enrich do not request, evaluate, or enforce `robots.txt` in
+connected or anonymous mode. Legacy blocked outcomes remain readable and
+retryable; old source-policy values cannot reactivate enforcement.
 
-- `robots.txt` is enforced for page rendering: `2xx` parses the file, `4xx`
-  means absent, `5xx`/timeout is inconclusive and fails closed, and definitive
-  network absence fails open with a warning;
-- initial task URLs and browser-reported final URLs must be public HTTP(S);
-- per-host pacing, concurrency, and per-run request budgets limit load;
-- Chrome owns cookies, proxy, and user agent, and the returned browser user agent
-  is used for robots evaluation; and
-- denied/rate-limited/budget/unsafe destinations are recorded as outcomes, not
-  generic scrape errors.
+- Initial URLs, DNS resolution, redirects and final URLs retain their public
+  destination checks; rendered browser tasks retain exact-origin navigation guards.
+- Per-host pacing, concurrency, and per-run request budgets limit load.
+- Chrome owns its cookies, proxy and user agent; anonymous acquisition never
+  borrows a personal profile or ambient credentials.
+- Rate-limit, budget and unsafe-destination outcomes remain distinguishable from
+  generic scrape errors, and cancellation still ends owned work.
 
-Anonymous rendering follows ordinary robots rules; the signed-in LinkedIn
-detail carve-out applies only to a connected live-profile request. JobStreaming
-owns its internal board traversal and robots behavior. JobCtrl applies
-invocation-level pacing/budget there, with a public-destination guard on every
-anonymous request, rather than claiming per-request crawl-policy accounting.
+JobStreaming owns internal board traversal. JobCtrl applies invocation-level
+pacing/budget there, with a public-destination guard on every anonymous request,
+rather than claiming per-request budget accounting.
 Its provider sessions prefer the extension when connected. The configured
 `JobCtrl/<version> (+<contact>)` identity remains in use for non-extension
 gateways and integrated anonymous broad-board requests; it is never substituted

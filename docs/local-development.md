@@ -573,7 +573,7 @@ copying the token again.
 Discovery and Enrich also run without loading the extension. Each acquisition
 setup prefers the selected installation only when its bounded status probe
 reports connected; otherwise it uses the existing public HTTP or anonymous
-Playwright path. Site, robots, DNS, access, and cancellation failures do not
+Playwright path. Site, DNS, access, and cancellation failures do not
 switch transport. Integrated fallback never enables copied-profile access.
 
 The focused `e2e/tests/optional-extension.spec.ts` browser check uses the owned

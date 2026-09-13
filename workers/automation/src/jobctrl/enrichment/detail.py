@@ -84,7 +84,6 @@ from jobctrl.infrastructure.discovery.live_browser import (
     LiveBrowserResult,
     LiveBrowserTaskError,
     LiveChromeDiscoveryClient,
-    LiveChromeRobotsCache,
     prefer_live_browser,
 )
 from jobctrl.infrastructure.enrichment.sqlite_repository import (
@@ -107,7 +106,6 @@ from jobctrl.domain.discovery.source_registry import ENRICHMENT_CRAWL_POLICY
 from jobctrl.domain.ports.politeness import (
     PolitenessDecision,
     PolitenessOutcome,
-    RobotsVerdict,
 )
 from jobctrl.infrastructure.network import (
     PolitenessGateway,
@@ -124,23 +122,6 @@ log = logging.getLogger(__name__)
 
 _SECURITY_OUTCOME_UNSAFE_URL = "unsafe_url"
 _LEGACY_PUBLIC_WRITE_GUARD_ERROR_PREFIX = "Unsupported public route method:"
-
-
-class _OwnerAuthenticatedRobots:
-    """``RobotsPort`` for the owner's authenticated LinkedIn session (R10 D1/D3).
-
-    A logged-in, user-authorized browser session is not anonymous crawling, so
-    ``robots.txt`` is an owner decision here (§Owner decisions D1/D3) and is not
-    enforced — enforcing an anonymous robots verdict on the owner's own account
-    would break a user-authorized flow. This is **not** a controls bypass: the
-    per-host rate limit and the per-run request budget still apply through the
-    shared gateway, and this port is used only for the selected live Chrome
-    profile (or the legacy persistent authenticated context), never for an
-    anonymous fetch.
-    """
-
-    def evaluate(self, url: str, user_agent: str) -> RobotsVerdict:  # noqa: ARG002
-        return RobotsVerdict.ALLOW
 
 
 def _new_enrichment_budget() -> RunBudgetCounter:
@@ -348,7 +329,7 @@ def resolve_wttj_urls(conn: sqlite3.Connection) -> int:
                 pass
 
     # R10: the Algolia bootstrap is an anonymous crawl of WTTJ — gate it through
-    # the politeness gateway. A robots-deny / budget-exhaustion skips the
+    # the politeness gateway. A rate limit / budget exhaustion skips the
     # navigation entirely (records the outcome, returns no updates).
     session = _default_enrichment_session(conn, site="WelcomeToTheJungle")
     with session.guard(listing_url) as decision:
@@ -357,8 +338,7 @@ def resolve_wttj_urls(conn: sqlite3.Connection) -> int:
             return 0
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
-            # Present the gateway-resolved honest UA (the same identity robots was
-            # evaluated with in the guard above), never an import-time constant.
+            # Present the gateway-resolved honest UA, never an import-time constant.
             page = browser.new_page(user_agent=decision.user_agent)
             page.on("response", capture_algolia)
             page.goto(listing_url, timeout=60000)
@@ -497,7 +477,7 @@ def scrape_detail_page(page, url: str, *, session: PolitenessSession | None = No
 
     Every target must first pass the public-destination guard. R10 still wraps
     every allowed ``page.goto`` in a politeness-gateway verdict. A
-    robots-deny, budget-exhaustion, or unsafe destination yields
+    rate-limit, budget-exhaustion, or unsafe destination yields
     ``status="blocked"`` and performs **zero** extractor work.
     """
     result: dict = {
@@ -827,15 +807,8 @@ def _apply_authenticated_linkedin_apply_url(
             # scrape_detail_page — no additional fetch happens here.
             resolution = resolver.resolve_loaded_page(page, url)  # type: ignore[attr-defined]
         elif hasattr(resolver, "resolve"):
-            # Fresh navigation in the owner's authenticated persistent Chrome
-            # session (retry pre-pass). This is an owner-scoped, user-authorized
-            # session (§Owner decisions D1/D3): robots is an owner decision and
-            # is not enforced on the owner's own account. Pacing + the per-run
-            # request budget DO apply, so route this fresh navigation through the
-            # owner-authenticated gateway session (robots-off, rate + budget on),
-            # exactly like the batch path's gated goto. It is not anonymous
-            # crawling and must never be used for one. The recovery pre-pass
-            # always supplies the session.
+            # The standalone authenticated recovery session stays isolated from
+            # anonymous acquisition while sharing host pacing and run budgets.
             if session is not None:
                 with session.guard(url) as decision:
                     if not decision.allowed:
@@ -1012,15 +985,11 @@ def _record_enrich_robots_blocked(
     recovery_key: str | None = None,
     activity_lease: EnrichmentExecutionLease | None = None,
 ) -> None:
-    """Fold a robots-disallowed navigation into the enrichment lifecycle.
+    """Retain lifecycle compatibility for historical robots-blocked outcomes.
 
-    Robots-blocked is a first-class, non-terminal outcome — never a scrape
-    failure. The enrich stage moves to ``blocked`` (``Pending -> Blocked`` is the
-    valid transition; entering ``running`` first would strand it, so this runs
-    before any attempt starts) and the job stays enrichment-pending so a later
-    run re-evaluates robots (or the owner imports the posting manually). The
-    ``robots_disallowed`` metric is recorded separately by the caller via the
-    politeness session, so this never inflates ``attempt_count``.
+    Supported acquisition no longer produces robots decisions. Legacy callers
+    can still persist this non-terminal state without consuming an attempt;
+    the ordinary audited retry will unblock it before entering running.
     """
     from jobctrl.state import (
         ensure_job_stage_rows,
@@ -1030,7 +999,7 @@ def _record_enrich_robots_blocked(
     )
 
     finished_at = utc_now()
-    message = decision.reason or "robots.txt disallows automated fetch of this URL"
+    message = decision.reason or "A previous robots policy blocked acquisition of this URL"
     if activity_lease is not None:
         _fence_execution_enrichment_lease(conn, activity_lease)
     ensure_job_stage_rows(conn, job_id, tenant_id=tenant_id)
@@ -1043,7 +1012,7 @@ def _record_enrich_robots_blocked(
         error_code="ENRICH_ROBOTS_DISALLOWED",
         error_message=message[:500],
         retryable=True,
-        next_action=f"Import this posting manually — robots.txt disallows automated fetch: {url}",
+        next_action=f"Retry enrichment under the current acquisition policy, or import manually: {url}",
         finished_at=finished_at,
         metadata={
             "reason": "robots_disallowed",
@@ -1082,13 +1051,13 @@ def _unblock_enrich_stage_if_blocked(
 
     A robots-disallowed job folds into ``enrich = blocked`` (see
     :func:`_record_enrich_robots_blocked`) while its aggregate stays
-    enrichment-pending, so a later run re-selects it once robots allows again.
+    enrichment-pending, so a later run can re-select it without consulting robots.
     The stage state machine has no ``Blocked -> Running`` edge, so the running
     transition would raise ``ValueError`` and the job would be recorded as
     ``ENRICH_INTERNAL_ERROR`` and then excluded from the pending queue —
     stranding it forever. Running the state machine's ``Unblock``
     (``Blocked -> Pending``) first makes the subsequent ``Pending -> Running``
-    valid, honoring this feature's "a later run re-evaluates robots" promise.
+    valid while retaining the historical state and reset event in audit history.
     No-op unless the stage is currently ``blocked``.
     """
     from jobctrl.state import record_job_event, set_stage_state
@@ -1111,7 +1080,7 @@ def _unblock_enrich_stage_if_blocked(
         job_id,
         "enrich",
         "StageReset",
-        message="Re-evaluating robots for a previously robots-blocked job",
+        message="Retrying a legacy robots block for a previously robots-blocked job",
         payload={"reason": "robots_recheck", "previousState": "blocked"},
         tenant_id=tenant_id,
     )
@@ -1516,7 +1485,7 @@ def scrape_site_batch(
 
     R10: every navigation is gated by the politeness gateway. ``gateway`` and
     ``run_budget`` are supplied by :func:`_run_detail_scraper` so all site
-    batches in one run share a single robots cache + per-run request budget +
+    batches in one run share a per-run request budget +
     process-wide host limiter; a standalone caller lets them self-provision. The
     fixed per-site ``SITE_DELAYS`` sleep is gone — the host-keyed limiter paces
     each host (per-host min-interval + concurrency across threads).
@@ -1571,26 +1540,16 @@ def scrape_site_batch(
             resolver: LinkedInApplyUrlResolver | None = None
             authenticated_page = None
             anonymous_page = None
-            # The authenticated LinkedIn context is the owner's logged-in
-            # session, so robots.txt is an owner decision there (D1/D3) — pace +
-            # budget it, but do not enforce an anonymous robots verdict on the
-            # owner's own LinkedIn account. Anonymous rows keep the normal
-            # gateway and never share the authenticated browser/profile.
+            # Transport/authentication remains isolated; both modes share the
+            # same host pacing and run budget without consulting robots.txt.
             owner_authenticated_session: PolitenessSession | None = None
             base_gateway = gateway or PolitenessGateway()
-            anonymous_gateway = base_gateway
             if live_browser is not None:
-                anonymous_gateway = anonymous_gateway.with_robots(
-                    LiveChromeRobotsCache(live_browser)
-                )
                 owner_authenticated_session = _enrichment_session(
-                    base_gateway.with_robots(_OwnerAuthenticatedRobots()),
-                    run_budget,
-                    conn,
-                    site=site,
+                    base_gateway, run_budget, conn, site=site,
                 )
             anonymous_session = _enrichment_session(
-                anonymous_gateway,
+                base_gateway,
                 run_budget,
                 conn,
                 site=site,
@@ -1604,7 +1563,7 @@ def scrape_site_batch(
                 if _PROXY_CONFIG is not None:
                     launch_opts["proxy"] = _PROXY_CONFIG.playwright
                 browser = p.chromium.launch(**launch_opts)
-                context = browser.new_context(user_agent=anonymous_gateway.user_agent)
+                context = browser.new_context(user_agent=base_gateway.user_agent)
                 anonymous_page = context.new_page()
                 return anonymous_page
 
@@ -1632,7 +1591,6 @@ def scrape_site_batch(
                         authenticated_page = candidate.new_page()
                         owner_authenticated_session = _enrichment_session(
                             PolitenessGateway(
-                                robots=_OwnerAuthenticatedRobots(),
                                 rate_limiter=get_shared_rate_limiter(),
                             ),
                             run_budget,
@@ -1673,7 +1631,7 @@ def scrape_site_batch(
                 )
 
                 # Already-enriched rows need no navigation — reaffirm and skip
-                # before the gate so a robots change can't relabel finished work.
+                # before the gate so a policy change cannot relabel finished work.
                 aggregate = repo.load(tenant_id, job_id)
                 if aggregate is not None and aggregate.is_enriched:
                     stats["processed"] += 1
@@ -1733,9 +1691,8 @@ def scrape_site_batch(
                     if activity_lease is not None:
                         _fence_execution_enrichment_lease(conn, activity_lease)
                     ensure_job_stage_rows(conn, job_id, tenant_id=tenant_id)
-                    # A previously robots-blocked job re-enters here once robots
-                    # allows again; Unblock (Blocked->Pending) before the running
-                    # transition, which has no Blocked->Running edge and would
+                    # A historical robots-blocked job can re-enter here; Unblock
+                    # (Blocked->Pending) before the running transition, which has no Blocked->Running edge and would
                     # otherwise strand the job as ENRICH_INTERNAL_ERROR.
                     _unblock_enrich_stage_if_blocked(conn, job_id, tenant_id=tenant_id)
                     if activity_lease is None:
@@ -3082,14 +3039,9 @@ def _reset_authenticated_linkedin_retry_candidates(
         return 0
 
     if session is None:
-        # Owner-authenticated recovery navigations are robots-off (D1/D3), but the
-        # shared per-host limiter + the run's request budget still pace and bound
-        # them, exactly like the batch path — so build (or reuse) an
-        # owner-authenticated gateway session and route every resolve() goto
-        # through it. Sharing ``run_budget`` keeps the whole run under one budget.
+        # Share host pacing and the run budget with the other navigations.
         session = _enrichment_session(
             PolitenessGateway(
-                robots=_OwnerAuthenticatedRobots(),
                 rate_limiter=get_shared_rate_limiter(),
             ),
             run_budget or _new_enrichment_budget(),
@@ -4154,7 +4106,7 @@ def _run_detail_scraper(
         log.exception("Enrichment site batch failed: %s", site)
 
     # One gateway shared by every anonymous site batch in this run (the
-    # process-wide host limiter + robots cache are reused); ``run_budget``
+    # process-wide host limiter is reused); ``run_budget``
     # created above is the single counter shared across the recovery pre-pass and
     # every site batch, in both sequential and parallel modes.
     gateway = PolitenessGateway()

@@ -286,7 +286,7 @@ returns one of:
   deterministic page extraction, canonical Discovery ingestion, and snapshot
   capture; or
 - `{ ok: true, status: "manual_capture_required", itemId, reason }` when a
-  login, bot control, rate limit, robots decision, paywall, or ambiguous page
+  login, bot control, rate limit, paywall, or ambiguous page
   requires user-provided content.
 
 The fallback appends or reopens a pending Manual Capture item and writes no

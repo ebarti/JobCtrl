@@ -2,10 +2,10 @@
 
 The politeness gateway is the single choke point every outbound fetch —
 ``urllib``, the JobStreaming invocation boundary, and every Playwright
-navigation — routes through. It consults each source's :class:`SourcePolicy`
-plus the target host's ``robots.txt``, applies a per-host rate limit +
+navigation — routes through. Each source's :class:`SourcePolicy` defines the
+per-host rate limit +
 concurrency cap + per-run request budget, stamps an honest user-agent, and
-records robots-denial / rate-limit / budget-exhaustion as first-class
+records rate-limit / budget-exhaustion as first-class
 *outcomes* (never scrape errors).
 
 These are declarations only (P0). The concrete adapter lands in
@@ -58,7 +58,7 @@ class PolitenessOutcome(str, Enum):
     """
 
     ALLOWED = "allowed"
-    ROBOTS_DISALLOWED = "robots_disallowed"
+    ROBOTS_DISALLOWED = "robots_disallowed"  # Historical persisted outcomes only.
     RATE_LIMITED = "rate_limited"
     BUDGET_EXHAUSTED = "budget_exhausted"
 
@@ -149,7 +149,7 @@ class RunBudget(Protocol):
 
 
 class RobotsPort(Protocol):
-    """Fetch, cache, and evaluate a host's ``robots.txt`` for a user-agent."""
+    """Legacy injection interface; supported acquisition never calls it."""
 
     def evaluate(self, url: str, user_agent: str) -> RobotsVerdict:
         """Return whether ``user_agent`` may fetch ``url`` per ``robots.txt``.
@@ -234,7 +234,7 @@ class PolitenessGatewayPort(Protocol):
         policy: SourcePolicy,
         budget: RunBudget,
     ) -> PolitenessDecision:
-        """Evaluate robots + budget for ``url`` without acquiring a slot.
+        """Evaluate the budget for ``url`` without acquiring a slot.
 
         Used by browser callers as the pre-navigation verdict. Does NOT consume
         the budget or hold a rate-limit slot; :meth:`guard` does both.
@@ -249,7 +249,7 @@ class PolitenessGatewayPort(Protocol):
     ) -> AbstractContextManager[PolitenessDecision]:
         """Context manager wrapping exactly one fetch or navigation.
 
-        On entry it evaluates robots + budget; if allowed it consumes one
+        On entry it evaluates the budget and rate limit; if allowed it consumes one
         budget unit and acquires the per-host slot (blocking for pacing), then
         yields the :class:`PolitenessDecision`. On exit it releases the slot. A
         disallowed / budget-exhausted decision yields ``allowed=False`` and

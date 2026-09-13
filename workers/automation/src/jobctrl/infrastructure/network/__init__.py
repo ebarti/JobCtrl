@@ -6,7 +6,7 @@ pre-Phase-7 cross-context import smell where Enrichment imported from
 ``discovery/jobspy``.
 
 The crawl-politeness gateway (R10) is the sanctioned single choke point every
-outbound fetch routes through: robots.txt compliance, per-host rate limiting +
+outbound fetch routes through: per-host rate limiting +
 concurrency, per-run request budgets, and honest-UA stamping.
 """
 

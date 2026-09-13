@@ -167,8 +167,9 @@ fetch/XHR subresources are not matched by the DNR rules. The content script and 
 credential-bearing, lexically local, or cross-origin final targets. Response
 streaming stops at the 4 MB UTF-8 byte bound instead of buffering an unbounded
 body. JobCtrl applies host pacing,
-run budgets, and robots policy around that transport; `robots.txt` is acquired
-through the same profile and evaluated with the browser-reported user agent.
+concurrency and run budgets around that transport. Neither connected nor
+anonymous Discovery/Enrich requests or evaluates `robots.txt`; historical
+robots-blocked outcomes remain readable and retryable.
 JobStreaming remains a documented residual for request accounting because its
 internal traversal is invocation-gated, even though its provider sessions use
 the extension. Normal rendered-page subresource loading is Chrome/site-owned and

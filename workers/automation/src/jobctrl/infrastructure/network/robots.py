@@ -1,19 +1,8 @@
-"""robots.txt adapter for the crawl-politeness gateway (R10 P1).
+"""Legacy robots adapter; supported acquisition neither constructs nor calls it.
 
-Implements :class:`RobotsPort`: fetch a host's ``robots.txt`` (politely — short
-timeout, honest UA, cached per host with a TTL), parse it with the stdlib
-``urllib.robotparser``, and evaluate ``can_fetch`` for a URL. No new dependency.
-
-Unreachable-robots semantics (owner decision D6), aligned with RFC 9309:
-
-* ``4xx`` (including 404) → *unavailable* → **allow** (no restrictions).
-* ``2xx`` → parse and evaluate the directives.
-* ``5xx`` / timeout → *unreachable* → **fail-closed** (:attr:`RobotsVerdict.UNKNOWN`,
-  which the gateway treats as disallowed) cached with a short TTL so the next run
-  re-checks; a warning is logged.
-* DNS failure / connection refused → *definitive network absence* of the robots
-  endpoint → **fail-open with warning** (allow); if the host is genuinely down the
-  subsequent content fetch fails harmlessly.
+Retained for existing direct imports and adapter compatibility. This isolated
+adapter parses and caches directives, including historical unavailable/error
+semantics; its verdict cannot enable robots enforcement in the shared gateway.
 """
 
 from __future__ import annotations

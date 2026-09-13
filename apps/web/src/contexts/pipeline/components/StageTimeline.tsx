@@ -18,7 +18,6 @@ import {
   CollapsibleTrigger,
 } from "../../../shared/ui/collapsible.js";
 import { TailorJobButton } from "../../materials/components/RetailorCurrentPolicyButton.js";
-import { useDiscoveryBrowserBridgeQuery } from "../../operations/hooks/useDiscoveryBrowserBridgeQuery.js";
 import { useRetryStageMutation } from "../hooks/useRetryStageMutation.js";
 import { StageBadge } from "./StageBadge.js";
 
@@ -38,7 +37,7 @@ export function StageTimeline({
       {stages.map((stage) => {
         const diagnostics = stageDiagnostics(stage);
         const postingPageUrl = publicPostingUrl(postingUrl);
-        const guidance = stageGuidance(stage, postingPageUrl);
+        const guidance = stageGuidance(stage);
         const manualCaptureUrl = guidance ? postingPageUrl : null;
         return (
           <li
@@ -72,9 +71,8 @@ export function StageTimeline({
                   <p>{guidance.explanation}</p>
                   {stage.state === "blocked" &&
                   stage.errorCode === "ENRICH_ROBOTS_DISALLOWED" &&
-                  jobId &&
-                  isLinkedInJobUrl(manualCaptureUrl) ? (
-                    <LiveProfileLinkedInRetry jobId={jobId} />
+                  jobId ? (
+                    <LegacyEnrichmentRetry jobId={jobId} />
                   ) : null}
                   <p>
                     <strong>Manual capture fallback.</strong> Open the posting
@@ -83,7 +81,7 @@ export function StageTimeline({
                     <strong> Capture page</strong>. JobCtrl imports the visible
                     posting as an explicit, job-scoped manual override and
                     stores user-mediated provenance. It does not bypass the
-                    fetch guard or the site's robots policy, and it never
+                    destination safety checks, and it never
                     submits an application.
                   </p>
                   {manualCaptureUrl ? (
@@ -154,50 +152,16 @@ function StageDiagnosticDisclosure({
   );
 }
 
-function LiveProfileLinkedInRetry({ jobId }: { jobId: string }): JSX.Element {
-  const bridge = useDiscoveryBrowserBridgeQuery();
+function LegacyEnrichmentRetry({ jobId }: { jobId: string }): JSX.Element {
   const retryStage = useRetryStageMutation();
-  const ready = bridge.data?.connected === true && bridge.data.installationBound;
-
-  if (bridge.isPending) {
-    return (
-      <div className="flex flex-col items-start gap-2">
-        <p>Checking the paired extension in your current Chrome profile.</p>
-        <Button disabled size="sm" variant="outline">
-          Checking Chrome extension
-        </Button>
-      </div>
-    );
-  }
-
-  if (!ready) {
-    return (
-      <div className="flex flex-col items-start gap-2">
-        <p>
-          Open the paired JobCtrl extension in the Chrome profile where you are
-          signed in to LinkedIn. JobCtrl reads that live profile directly; it
-          does not create or launch a copy.
-        </p>
-        <Button
-          nativeButton={false}
-          render={<a href="/settings/browser" role="link" />}
-          size="sm"
-          variant="outline"
-        >
-          Connect this Chrome profile
-        </Button>
-      </div>
-    );
-  }
 
   return (
     <div className="flex flex-col items-start gap-2">
       <p>
-        Retry this LinkedIn job through the extension in your current signed-in
-        Chrome profile. Host pacing and the current run request budget still
-        apply. No browser profile is copied or launched, the stage reset and new
-        attempt remain in audit history, and this preparation retry never
-        reaches application submission.
+        Retry using the connected extension when available, or anonymous
+        acquisition otherwise. Host pacing and the current run request budget
+        still apply. The stage reset and new attempt remain in audit history,
+        and this preparation retry never reaches application submission.
       </p>
       <Button
         disabled={retryStage.isPending}
@@ -211,13 +175,12 @@ function LiveProfileLinkedInRetry({ jobId }: { jobId: string }): JSX.Element {
         size="sm"
       >
         {retryStage.isPending
-          ? "Retrying through this Chrome profile"
-          : "Retry through this Chrome profile"}
+          ? "Retrying enrichment"
+          : "Retry enrichment"}
       </Button>
       {retryStage.isError ? (
         <p role="alert">
-          The live-profile retry could not start. Check that the extension is
-          connected, then try again from this job.
+          Enrichment could not start. Try again from this job.
         </p>
       ) : null}
     </div>
@@ -318,7 +281,6 @@ function stageDiagnostics(stage: StageSummary): Array<[string, string]> {
 
 function stageGuidance(
   stage: StageSummary,
-  postingUrl: string | null,
 ): { title: string; explanation: string } | null {
   if (
     stage.stage !== "enrich" ||
@@ -327,17 +289,10 @@ function stageGuidance(
     return null;
   }
   if (stage.errorCode === "ENRICH_ROBOTS_DISALLOWED") {
-    if (isLinkedInJobUrl(postingUrl)) {
-      return {
-        title: "LinkedIn enrichment needs your live Chrome session",
-        explanation:
-          "A previous anonymous enrichment attempt stopped at LinkedIn's robots policy. Retry through the paired extension to read the posting in your current signed-in Chrome profile.",
-      };
-    }
     return {
-      title: "Automated enrichment is blocked by site policy",
+      title: "An earlier robots policy blocked enrichment",
       explanation:
-        "The site's robots policy does not allow JobCtrl to fetch this posting automatically, so JobCtrl did not fetch it.",
+        "JobCtrl no longer checks robots.txt. This historical block can be retried with or without a connected extension; destination safety checks still apply.",
     };
   }
   if (stage.fetchFailure) {
@@ -387,20 +342,6 @@ function publicPostingUrl(value: string | undefined): string | null {
       : null;
   } catch {
     return null;
-  }
-}
-
-function isLinkedInJobUrl(value: string | null): boolean {
-  if (!value) return false;
-  try {
-    const url = new URL(value);
-    const hostname = url.hostname.toLowerCase().replace(/\.$/, "");
-    const linkedinHost =
-      hostname === "linkedin.com" || hostname.endsWith(".linkedin.com");
-    const path = url.pathname.toLowerCase();
-    return linkedinHost && (path === "/jobs" || path.startsWith("/jobs/"));
-  } catch {
-    return false;
   }
 }
 

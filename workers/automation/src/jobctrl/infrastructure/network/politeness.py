@@ -1,24 +1,9 @@
-"""Shared crawl-politeness gateway (R10 P1) — the enforcement core.
+"""Shared acquisition pacing, concurrency and request-budget enforcement.
 
-One code path every outbound fetch routes through. It consults each source's
-:class:`SourcePolicy` plus the target host's ``robots.txt``, applies a per-host
-rate limit + concurrency cap + per-run request budget, stamps an honest
-user-agent, and records robots-denial / rate-limit / budget-exhaustion as
-first-class *outcomes* — never scrape errors — in ``operational_attempt_metrics``.
-
-Design notes:
-
-* :meth:`PolitenessGateway.check` is a pure, side-effect-free verdict (peek).
-  :meth:`PolitenessGateway.guard` is the real fetch/navigation path: it consumes
-  one budget unit and holds the per-host rate/concurrency slot for the duration.
-  Both ``urllib`` callers and Playwright callers use ``guard``; browser callers
-  wrap ``page.goto`` in it.
-* The run budget bounds *content* fetches. ``robots.txt`` fetches are bounded
-  separately by per-host caching + TTL (:mod:`.robots`) and are not double-charged
-  to the content budget, which keeps the budget meaning crisp.
-* :class:`PolitenessSession` binds the gateway + a run budget + a source's
-  recording context so P2/P3 call ``session.guard(url)`` and blocked outcomes are
-  recorded automatically.
+Discovery and Enrich do not request or evaluate robots.txt. Legacy robots
+policy values and injected ports cannot reactivate enforcement. ``check`` peeks
+at the budget; ``guard`` consumes it and holds the shared host slot. Sessions
+record rate-limit and budget outcomes without treating them as scrape failures.
 """
 
 from __future__ import annotations
@@ -31,7 +16,7 @@ from dataclasses import dataclass
 from typing import Iterator
 from urllib.parse import urlsplit
 
-from jobctrl.domain.discovery.source_registry import RobotsPolicy, SourcePolicy
+from jobctrl.domain.discovery.source_registry import SourcePolicy
 from jobctrl.domain.ports.politeness import (
     HonestUserAgent,
     PolitenessDecision,
@@ -39,12 +24,10 @@ from jobctrl.domain.ports.politeness import (
     PolitenessOutcome,
     RateLimiterPort,
     RobotsPort,
-    RobotsVerdict,
     RunBudget,
     default_honest_user_agent,
 )
 from jobctrl.infrastructure.network.rate_limiter import get_shared_rate_limiter
-from jobctrl.infrastructure.network.robots import RobotsCache
 from jobctrl.operational_metrics import record_operational_attempt_metric
 
 POLITENESS_ATTEMPT_KIND = "politeness_gate"
@@ -124,7 +107,7 @@ class PolitenessGateway(PolitenessGatewayPort):
     ) -> None:
         self._user_agent = user_agent or resolve_honest_user_agent()
         self._ua_header = self._user_agent.header_value()
-        self._robots = robots or RobotsCache()
+        # Retain the injection argument for older callers; never consult it.
         self._rate_limiter = rate_limiter or get_shared_rate_limiter()
 
     @property
@@ -136,20 +119,12 @@ class PolitenessGateway(PolitenessGatewayPort):
         return RunBudgetCounter(max_requests)
 
     def with_robots(self, robots: RobotsPort) -> PolitenessGateway:
-        """Keep this gateway's identity and limiter while replacing robots I/O."""
-
-        return PolitenessGateway(
-            user_agent=self._user_agent,
-            robots=robots,
-            rate_limiter=self._rate_limiter,
-        )
+        """Compatibility shim: replacing a legacy robots port has no effect."""
+        return self
 
     def check(self, url: str, policy: SourcePolicy, budget: RunBudget) -> PolitenessDecision:
         if budget.remaining() <= 0:
             return self._budget_exhausted()
-        robots_block = self._robots_block(url, policy)
-        if robots_block is not None:
-            return robots_block
         return PolitenessDecision(True, PolitenessOutcome.ALLOWED, self._ua_header)
 
     @contextmanager
@@ -158,11 +133,6 @@ class PolitenessGateway(PolitenessGatewayPort):
     ) -> Iterator[PolitenessDecision]:
         if budget.remaining() <= 0:
             yield self._budget_exhausted()
-            return
-        robots_block = self._robots_block(url, policy)
-        if robots_block is not None:
-            # A blocked fetch consumes no content budget and holds no slot.
-            yield robots_block
             return
         host = urlsplit(url).netloc or url
         cooldown = self._rate_limiter.hard_rate_limit_remaining(host)
@@ -189,27 +159,6 @@ class PolitenessGateway(PolitenessGatewayPort):
         """
         host = urlsplit(url).netloc or url
         return self._rate_limiter.note_retry_after(host, retry_after_seconds)
-
-    def _robots_block(self, url: str, policy: SourcePolicy) -> PolitenessDecision | None:
-        if policy.robots_policy is not RobotsPolicy.HONOR:
-            return None
-        verdict = self._robots.evaluate(url, self._ua_header)
-        if verdict is RobotsVerdict.ALLOW:
-            return None
-        if verdict is RobotsVerdict.DISALLOW:
-            return PolitenessDecision(
-                False,
-                PolitenessOutcome.ROBOTS_DISALLOWED,
-                self._ua_header,
-                reason="robots.txt disallows this path",
-            )
-        # UNKNOWN: robots unreachable => fail-closed (D6), re-checked next run.
-        return PolitenessDecision(
-            False,
-            PolitenessOutcome.ROBOTS_DISALLOWED,
-            self._ua_header,
-            reason="robots.txt unreachable; treating as disallowed (will retry)",
-        )
 
     def _budget_exhausted(self) -> PolitenessDecision:
         return PolitenessDecision(

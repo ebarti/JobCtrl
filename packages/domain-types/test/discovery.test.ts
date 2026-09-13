@@ -139,7 +139,7 @@ describe("Discovery types", () => {
   });
 
   it("exposes the crawl-politeness robots-policy literal range", () => {
-    expect(ROBOTS_POLICIES).toEqual(["honor", "exempt_documented_api"]);
+    expect(ROBOTS_POLICIES).toEqual(["ignore", "honor", "exempt_documented_api"]);
   });
 
   it("carries robots_disallowed as a manual-action reason", () => {
@@ -147,7 +147,7 @@ describe("Discovery types", () => {
   });
 
   it("SourcePolicy mirrors the Python politeness fields with honest defaults", () => {
-    expect(SMART_EXTRACT_EXPERIMENTAL_POLICY.robotsPolicy).toBe("honor");
+    expect(SMART_EXTRACT_EXPERIMENTAL_POLICY.robotsPolicy).toBe("ignore");
     expect(SMART_EXTRACT_EXPERIMENTAL_POLICY.minRequestIntervalSeconds).toBeGreaterThan(0);
     expect(SMART_EXTRACT_EXPERIMENTAL_POLICY.maxConcurrentRequestsPerHost).toBeGreaterThanOrEqual(1);
     expect(SMART_EXTRACT_EXPERIMENTAL_POLICY.maxRequestsPerRun).toBeGreaterThan(0);

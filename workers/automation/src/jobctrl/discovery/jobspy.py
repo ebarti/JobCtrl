@@ -68,9 +68,8 @@ log = logging.getLogger(__name__)
 _SOURCE_SLUG_RE = re.compile(r"[^a-z0-9]+")
 
 # Broad boards (indeed/linkedin/zip/glassdoor) are fetched by JobStreaming,
-# which owns its own tls-client/requests transport. Per owner decision D3 we
-# therefore CANNOT robots-gate JobStreaming's internal
-# per-board requests. Instead we enforce politeness at OUR invocation boundary:
+# which owns its internal traversal. JobCtrl does not account for each
+# per-board request. Instead we enforce politeness at OUR invocation boundary:
 # a per-run request budget + inter-search pacing via the shared host limiter,
 # recording a budget-exhausted outcome when the budget stops a crawl. The
 # residual (JobStreaming's internal requests are unpoliced) is documented.
@@ -1488,7 +1487,7 @@ def _full_crawl(
 
     # Politeness invocation boundary (R10, D3): pace searches + bound the run's
     # search fan-out. JobStreaming owns its internal per-board transport, so
-    # we cannot count (or robots-gate) its individual outbound requests. The
+    # we cannot count its individual outbound requests. The
     # budget here therefore counts SEARCH INVOCATIONS, not outbound requests: one
     # unit == one ``_run_one_search`` call (each of which fans out to up to two
     # ``scrape_jobs`` calls with internal board x page requests we can't police).

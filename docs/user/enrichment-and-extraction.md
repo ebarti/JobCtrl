@@ -108,7 +108,7 @@ evading a site's controls. The current capture boundary accepts user-mediated
 URLs or content, including browser-extension captures, and preserves that
 origin as provenance. Integrated Discovery prefers the connected extension in
 the user's current Chrome profile, so an existing same-site session may be used.
-Without it, acquisition uses anonymous access under the ordinary robots policy;
+Without it, acquisition uses anonymous access. Neither mode consults robots.txt;
 a page that remains inaccessible stays on the manual path.
 
 The Jobs page's **Import job** action applies the same boundary to one explicit
@@ -125,9 +125,8 @@ preparation. Quarantined or inactive captures do not start it, and URL import
 never starts Apply.
 
 When connected, LinkedIn enrichment uses the selected extension installation in
-the user's currently running, signed-in Chrome profile. Because this is an explicit
-owner-authenticated read rather than an anonymous crawler, JobCtrl does not
-apply LinkedIn's anonymous `robots.txt` verdict to that page. Public-destination
+the user's currently running, signed-in Chrome profile. Neither connected nor
+anonymous acquisition requests or evaluates `robots.txt`. Public-destination
 validation, exact-origin browser-task rules, per-host pacing, the shared run
 request budget, and audit history remain enforced. Recovery stops before the
 application form and cannot submit an application.
@@ -143,9 +142,10 @@ The outer Temporal Enrich entry retains its workflow/run identity on both
 paths, preserving leases, job ownership, and broker authorization. Integrated
 anonymous fallback never adopts a system executable, runs the legacy
 copied-profile pre-pass, or creates a browser-profile snapshot. Anonymous
-LinkedIn requests retain the ordinary robots verdict. Legacy
-blocked rows carrying the former copied-profile condition remain recoverable
-through the live extension. Legacy snapshots that coupled readable content to
+LinkedIn requests use the same no-robots policy. Historical robots-blocked
+rows remain retryable in either mode; their status and audit history are retained
+until the retry advances them. Legacy browser-conditioned rows also retain the
+connection-triggered recovery path. Legacy snapshots that coupled readable content to
 a missing application URL are repaired by appending a new immutable snapshot
 version and releasing only the stale `ENRICHMENT_QUARANTINED` Tailor blocker.
 This content-trust repair does not need a browser navigation and does not invent
@@ -219,7 +219,7 @@ user. The exact selector rules are owned by the
    crawl politeness, and per-source limits. Integrated Discovery prefers the
    connected extension and its current Chrome user agent; when unavailable at
    setup, it uses anonymous acquisition with JobCtrl's crawler identity and
-   ordinary robots policy. Copied profiles remain outside integrated Discovery.
+   same no-robots acquisition policy. Copied profiles remain outside integrated Discovery.
    Manual capture handles access that still requires the user.
 4. **Persist detail and snapshot.** The worker stores description, URLs,
    attempts, active state, provenance, confidence, and snapshot audit records

@@ -182,17 +182,15 @@ def test_public_opener_rejects_private_feed_destination_without_socket() -> None
     assert client.fetch_json("http://api.example.com/jobs") is None
 
 
-def test_robots_disallowed_returns_none_without_fetching_and_records() -> None:
+def test_legacy_robots_denial_does_not_prevent_http_content_fetch() -> None:
     opener = _RecordingOpener()
     gateway = PolitenessGateway(user_agent=HONEST_UA, robots=_DisallowRobots(), rate_limiter=HostRateLimiter())
     conn = _conn()
     client = GatewayHttpClient(_session(gateway, policy=_policy(), conn=conn), opener=opener)
 
-    assert client.fetch_json("http://host/jobs") is None
-    assert opener.requests == []  # never fetched the disallowed URL
-    row = conn.execute("SELECT * FROM operational_attempt_metrics WHERE outcome='blocked'").fetchone()
-    assert row["failure_category"] == "robots_disallowed"
-    assert row["is_scrape_failure"] == 0
+    assert client.fetch_json("http://host/jobs") == {}
+    assert [request.full_url for request in opener.requests] == ["http://host/jobs"]
+    assert conn.execute("SELECT * FROM operational_attempt_metrics WHERE outcome='blocked'").fetchone() is None
 
 
 def test_budget_exhaustion_returns_none_and_records() -> None:

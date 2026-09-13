@@ -420,7 +420,7 @@ one-second loopback availability probe at each source/adapter/site-batch setup
 prefers the extension only for a literal `connected: true`; offline, malformed,
 or unavailable status selects the existing guarded HTTP or anonymous Playwright
 path. Cancellation and programming errors propagate. After selection, remote
-site, robots, DNS, and access failures do not select a second transport. The
+site, DNS, and access failures do not select a second transport. The
 next setup may choose again after a disconnect. API launch/retry gates and
 Pipelines controls require worker readiness, not extension readiness.
 
@@ -717,7 +717,7 @@ Production workflows live alongside the activities:
   to concrete source ids for source-quality quarantine and fail the workflow
   after the remaining planned source families complete. Every job-source
   acquisition owned by this workflow—including JobStreaming provider sessions,
-  ATS/Workday requests, Smart Extract renders, robots reads, and detail pages—
+  ATS/Workday requests, Smart Extract renders and detail pages—
   prefers the paired, connected extension and otherwise selects guarded HTTP or
   anonymous Playwright before fetching. The execution reference, source
   checkpoints, leases, fences, and cohorts remain intact on both paths. Every

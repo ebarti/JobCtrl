@@ -54,7 +54,6 @@ from jobctrl.infrastructure.discovery.location_filter import (
 from jobctrl.infrastructure.discovery.live_browser import (
     LiveBrowserResult,
     LiveChromeDiscoveryClient,
-    LiveChromeRobotsCache,
     PoliteLiveChromeHttpClient,
     prefer_live_browser,
 )
@@ -85,16 +84,14 @@ def _smart_extract_session(
     run_id: str | None = None,
     browser: LiveChromeDiscoveryClient | None = None,
 ) -> PolitenessSession:
-    """Politeness session for the smart-extract crawl (robots + rate + budget).
+    """Politeness session for the smart-extract crawl (rate + concurrency + budget).
 
     Uses the process-wide host limiter so parallel site fetches share per-host
     pacing. The experimental smart-extract surface fetches one page per site, so
     the run budget is provisioned per call; recording is deferred (no conn here).
     """
     return PolitenessSession(
-        PolitenessGateway(
-            robots=LiveChromeRobotsCache(browser) if browser is not None else None,
-        ),
+        PolitenessGateway(),
         policy=SMART_EXTRACT_EXPERIMENTAL_POLICY,
         budget=RunBudgetCounter(SMART_EXTRACT_EXPERIMENTAL_POLICY.max_requests_per_run),
         context=PolitenessSourceContext(
@@ -288,7 +285,7 @@ def collect_page_intelligence(
     would look at in DevTools. Returns a structured intelligence report.
 
     R10: the navigation is public-destination checked and politeness-gated. A
-    robots-deny, unsafe destination, or budget-exhaustion performs zero
+    rate-limit, unsafe destination, or budget-exhaustion performs zero
     navigation and returns the empty intelligence report."""
     # The distributed core contains only Playwright's headless-shell archive.
     # Refuse a caller-requested headed retry before touching Playwright: a
@@ -333,9 +330,8 @@ def collect_page_intelligence(
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=headless)
         try:
-            # Present the gateway-resolved honest UA (the same identity robots is
-            # evaluated with in session.guard below), never an import-time constant —
-            # so an owner UA override reaches the browser fetch.
+            # Resolve the honest UA at use time so an owner override reaches
+            # the browser fetch.
             page = browser.new_page(user_agent=session.user_agent)
             route_guard = PublicHttpUrlRouteGuard(page, fetch_public_requests=True).install()
             page.on("response", on_response)

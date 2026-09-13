@@ -1728,7 +1728,7 @@ Consequences:
 
 ## 2026-07-06: Crawl Politeness / Third-Party-Control Compliance Layer
 
-Status: accepted
+Status: accepted; robots enforcement superseded by the 2026-09-13 decision below
 
 Decision: every outbound discovery/enrichment fetch — the `urllib` client, the
 `python-jobspy` invocation boundary, and every Playwright navigation — routes
@@ -2341,7 +2341,7 @@ Status: superseded by the 2026-09-12 optional acquisition decision below.
 Decision: every job-source acquisition owned by `DiscoverWorkflow` is delegated
 to the installed JobCtrl extension in the user's currently running Chrome profile.
 The boundary includes JobStreaming provider sessions, canonical ATS/API and
-Workday requests, Smart Extract rendering, `robots.txt`, and the integrated
+Workday requests, Smart Extract rendering, and the integrated
 detail-enrichment drain. The API mediates bounded execution-bound tasks; it does
 not launch Chrome, copy a profile, or offer a direct-network, Playwright,
 adopted-browser, or copied-profile fallback. A current extension heartbeat—not
@@ -2373,7 +2373,7 @@ Consequences:
   pages before dispatch, leaving page-owned fetch/XHR under Chrome's normal policy;
 - Chrome owns cookies, session, proxy, and user agent. Browser-owned headers do
   not cross the worker task contract, and the returned browser user agent is
-  used for robots evaluation;
+  retained as transport metadata;
 - the broker retains task payloads/results only in API process memory. Temporal
   execution identity, source checkpoints, accepted observations, and normal
   workflow persistence remain the durable authorities;
@@ -2397,7 +2397,7 @@ Each acquisition setup makes one availability choice: a bounded one-second
 loopback status probe must return literal `connected: true` to select the
 extension. Offline, unavailable, or malformed status selects the existing
 public HTTP or anonymous Playwright path. Cancellation and programming errors
-propagate; a site, robots, DNS, access, or selected-extension failure never
+propagate; a site, DNS, access, or selected-extension failure never
 causes a second transport to acquire the same request. A subsequent setup can
 select anonymous access after an extension disconnects.
 
@@ -2412,9 +2412,9 @@ checkpoints, leases, fences, and cohorts regardless of transport. The existing
 extension broker authentication, selected-installation ownership, bounds,
 cancellation, and authorization remain unchanged. Integrated anonymous access
 never opens the copied-profile resolver, even when standalone consent is set.
-Standalone browser capabilities keep their separate consent boundary. Anonymous
-LinkedIn detail requests obey ordinary robots policy; previously denied rows
-can still guide users to connect the extension for a signed-in retry. Pipelines
+Standalone browser capabilities keep their separate consent boundary. The
+2026-09-13 decision below removes robots enforcement in both modes; previously
+blocked rows remain retryable without requiring an extension connection. Pipelines
 and Settings show connection status without globally blocking launch or retry;
 worker readiness, stage eligibility, and authorization gates still apply.
 
@@ -2426,3 +2426,24 @@ Headers, cookies, bodies, query parameters and timeout options retain their
 provider semantics. Native TLS fingerprinting is not used in anonymous mode.
 Configured or environment proxy routes fail closed because the worker cannot
 pin a proxy's target DNS; connected acquisition retains Chrome's proxy behavior.
+
+## 2026-09-13: No Robots Consultation During Acquisition
+
+Status: accepted
+
+Decision: Discovery and Enrich do not request, evaluate or enforce `robots.txt`
+for any supported source or acquisition transport. This supersedes the robots
+portion of the earlier crawl-politeness decision, including its anonymous
+fail-closed default and authenticated-session exception. The shared gateway
+continues to enforce host pacing, concurrency and request budgets; destination,
+redirect, authentication and cancellation guards remain at their owning layers.
+
+Rationale: robots enforcement contradicted the acquisition contract and could
+prevent anonymous enrichment of an otherwise readable public posting.
+
+Consequences: source policy defaults to `ignore`. Historical `honor` and
+`exempt_documented_api` values and old robots-blocked outcomes remain readable
+but cannot reactivate consultation. Existing blocked jobs retry through the
+normal audited stage lifecycle in either mode, without destructive migration
+or resetting unrelated work. Current UI guidance identifies historical blocks
+and exposes the ordinary retry action.

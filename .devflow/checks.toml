@@ -192,3 +192,10 @@ description = "Full API suite checks optional Discovery transport, worker readin
 argv = ["env", "-u", "UV_PROJECT_ENVIRONMENT", "-u", "VIRTUAL_ENV", "-u", "UV_EXCLUDE_NEWER", "-u", "UV_EXCLUDE_NEWER_PACKAGE", "corepack", "pnpm", "--filter", "@jobctrl/api", "exec", "vitest", "run", "test", "--reporter=junit", "--outputFile={report_path}"]
 min_executed = 891
 timeout_seconds = 600
+
+[checks.discovery-acquisition-policy]
+kind = "junit"
+description = "Discovery robots policy is ignored while source contracts, rates, budgets, HTTP destination and enrichment URL guards remain enforced"
+argv = ["env", "-u", "UV_PROJECT_ENVIRONMENT", "-u", "VIRTUAL_ENV", "-u", "UV_EXCLUDE_NEWER", "-u", "UV_EXCLUDE_NEWER_PACKAGE", "uv", "run", "--project", "workers/automation", "--locked", "--all-extras", "--exclude-newer", "false", "pytest", "-q", "workers/automation/tests/test_politeness_gateway.py", "workers/automation/tests/test_politeness_ports.py", "workers/automation/tests/test_gateway_http_client.py", "workers/automation/tests/test_enrichment_politeness_gate.py", "workers/automation/tests/test_enrichment_url_safety.py", "workers/automation/tests/test_public_destination_http.py", "workers/automation/tests/test_source_registry.py", "workers/automation/tests/test_crawl_politeness_config.py", "--junitxml={report_path}"]
+min_executed = 1
+timeout_seconds = 600
