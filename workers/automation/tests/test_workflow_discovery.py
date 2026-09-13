@@ -774,7 +774,7 @@ async def test_discovery_source_finish_during_capture_reclaims_real_sqlite_job(m
     from jobctrl.discovery import activities as discovery_activities
     from jobctrl.domain.errors import TransientNetworkError
     from jobctrl.enrichment import detail
-    from .politeness_helpers import offline_gateway, AllowAllRobots
+    from .politeness_helpers import offline_gateway
     from .test_discover_reliability import _seed_pending, _long_description
 
     _reset_state()
@@ -823,7 +823,6 @@ async def test_discovery_source_finish_during_capture_reclaims_real_sqlite_job(m
     monkeypatch.setattr(runner, "run_discovery_hygiene", lambda *_args, **_kwargs: 0)
     monkeypatch.setattr(runner, "_DISCOVERY_ENRICH_POLL_INTERVAL", 0.05)
     monkeypatch.setattr(detail, "PolitenessGateway", lambda: offline_gateway())
-    monkeypatch.setattr(detail, "LiveChromeRobotsCache", lambda _browser: AllowAllRobots())
     monkeypatch.setattr(detail, "LiveChromeDiscoveryClient", lambda *_args, **kwargs: SimpleNamespace(
         ensure_available=lambda: None, cancel_event=kwargs["cancel_event"],
     ))

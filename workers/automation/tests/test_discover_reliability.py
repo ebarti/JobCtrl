@@ -52,7 +52,7 @@ from jobctrl.enrichment import detail
 from jobctrl.infrastructure.enrichment import SqliteEnrichmentRepository
 from jobctrl.pipeline import runner
 
-from .politeness_helpers import AllowAllRobots, offline_gateway
+from .politeness_helpers import offline_gateway
 
 
 # ---------------------------------------------------------------------------
@@ -437,7 +437,6 @@ async def test_source_completion_during_live_enrichment_is_reclaimed_by_terminal
         monkeypatch.setattr("jobctrl.database.get_connection", lambda *_args, **_kwargs: conn)
         monkeypatch.setattr(detail, "PolitenessGateway", lambda: offline_gateway())
         monkeypatch.setattr(detail, "LiveChromeDiscoveryClient", lambda *_args, **_kwargs: SimpleNamespace(ensure_available=lambda: None))
-        monkeypatch.setattr(detail, "LiveChromeRobotsCache", lambda _client: AllowAllRobots())
         monkeypatch.setattr(detail, "scrape_detail_page_via_live_chrome", lambda *_args, **_kwargs: {
             "status": "ok", "tier_used": 1, "full_description": _long_description(),
             "application_url": None, "error": None, "elapsed": 0.1,
@@ -1657,11 +1656,6 @@ def test_integrated_detail_enrichment_uses_live_extension_without_playwright(
             lambda: pytest.fail("integrated Discovery must not start Playwright"),
         )
         monkeypatch.setattr(detail, "LiveChromeDiscoveryClient", _FakeLiveChrome)
-        monkeypatch.setattr(
-            detail,
-            "LiveChromeRobotsCache",
-            lambda _browser: AllowAllRobots(),
-        )
 
         def fake_live_scrape(browser, url, *, session):
             captured["browser"] = browser
