@@ -91,6 +91,93 @@ def test_selected_extension_failure_does_not_reselect_transport(tmp_path) -> Non
     assert broker.tasks == {}
 
 
+def test_disconnected_guest_linkedin_persists_clean_description_without_llm(
+    tmp_path, monkeypatch, public_provider_network
+) -> None:
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    from jobctrl.domain.tenant import LOCAL_TENANT
+    from jobctrl.enrichment import detail
+    from jobctrl.infrastructure.enrichment.sqlite_repository import SqlitePostingSnapshotSetRepository
+    from .test_enrichment_extractors import _GUEST_DESCRIPTION, _GuestLinkedInPage, _guest_linkedin_html
+    from .test_enrichment_politeness_gate import _SpyPage
+    from .test_enrichment_queue_selectors import _seed_discovered
+
+    url = "https://www.linkedin.com/jobs/view/synthetic-guest-description"
+    navigations, llm_calls, closed = [], [], []
+
+    class Page(_GuestLinkedInPage, _SpyPage):
+        def goto(self, target, **kwargs):
+            self.url = target
+            return _SpyPage.goto(self, target, **kwargs)
+
+    page = Page(_guest_linkedin_html(oversized=True))
+    _SpyPage.__init__(page, navigations)
+    browser = SimpleNamespace(
+        close=lambda: closed.append(True),
+        new_context=lambda **_kwargs: SimpleNamespace(new_page=lambda: page),
+    )
+    playwright = SimpleNamespace(chromium=SimpleNamespace(launch=lambda **_kwargs: browser))
+    broker = FixtureBrowserBroker(
+        tmp_path, lambda _url: pytest.fail("disconnected extension must not receive page tasks"), connected=False
+    )
+
+    def reject_llm(*_args, **_kwargs):
+        llm_calls.append(True)
+        pytest.fail("known guest markup must be extracted without an LLM")
+
+    monkeypatch.setattr(detail, "LiveChromeDiscoveryClient", broker.client)
+    monkeypatch.setattr(detail, "sync_playwright", lambda: nullcontext(playwright))
+    monkeypatch.setattr(detail, "get_llm_adapter", lambda: SimpleNamespace(chat=reject_llm))
+    monkeypatch.setattr(detail, "LinkedInApplyUrlResolver", lambda **_kw: pytest.fail("personal profile opened"))
+    path = tmp_path / "guest-enrichment.db"
+    conn = init_db(path)
+    try:
+        job_id = _seed_discovered(conn, url)
+        notified = []
+        stats = detail.scrape_site_batch(
+            conn, "linkedin", [(job_id, "Synthetic engineering role")],
+            gateway=offline_gateway(), discovery_execution=execution(), on_job_enriched=notified.append,
+        )
+        assert stats["processed"] == 1
+        assert stats["partial"] == 1  # The description succeeds without an external application URL.
+        assert stats["error"] == stats["blocked"] == 0
+        assert stats["tiers"] == {1: 0, 2: 1, 3: 0}
+        assert broker.status_checks == 1
+        assert broker.visited == [] and broker.tasks == {}
+        assert navigations == [url]
+        assert page.body_fallback_calls == 1
+        assert llm_calls == []
+        assert notified == [job_id]
+        assert closed == [True]
+        assert not conn.in_transaction
+
+        # Reopen SQLite to prove the accepted description and provenance were committed.
+        close_connection(path)
+        conn = init_db(path)
+        saved = detail.SqliteEnrichmentRepository(conn).load(LOCAL_TENANT, job_id)
+        assert saved is not None and saved.is_enriched
+        assert saved.full_description.text == _GUEST_DESCRIPTION.strip()
+        assert saved.application_url is None
+        stage = conn.execute(
+            "SELECT state, error_code FROM job_stage_states WHERE job_id = ? AND stage = 'enrich'", (str(job_id),)
+        ).fetchone()
+        assert tuple(stage) == ("succeeded", None)
+        snapshots = SqlitePostingSnapshotSetRepository(conn).load(LOCAL_TENANT, job_id)
+        assert snapshots is not None and snapshots.latest_snapshot is not None
+        assert snapshots.latest_snapshot.extraction_tier == "css_selectors"
+        assert not snapshots.latest_snapshot.is_quarantined
+        event = conn.execute(
+            "SELECT payload_json FROM job_events WHERE job_id = ? AND stage = 'enrich' AND event_type = 'StageCompleted'",
+            (str(job_id),),
+        ).fetchone()
+        assert event is not None
+        assert json.loads(event[0])["descriptionChars"] == len(_GUEST_DESCRIPTION.strip())
+    finally:
+        close_connection(path)
+
+
 class JsonOpener:
     def __init__(self, result_for):
         self.result_for = result_for

@@ -11,6 +11,10 @@ The three extractors must:
 from __future__ import annotations
 
 from typing import Sequence
+from types import SimpleNamespace
+
+import pytest
+from bs4 import BeautifulSoup
 
 from jobctrl.domain.enrichment import DetailPage
 from jobctrl.domain.enrichment.services import (
@@ -19,6 +23,7 @@ from jobctrl.domain.enrichment.services import (
     LlmExtractor,
 )
 from jobctrl.domain.ports.llm import LlmMessage, LlmPort
+from jobctrl.infrastructure.enrichment.playwright_fetcher import _collect_main_content
 
 
 class _StubLlm(LlmPort):
@@ -148,6 +153,92 @@ def test_css_extractor_skips_too_short_blocks() -> None:
         html='<div class="job-description">tiny</div>',
     )
     assert not CssSelectorExtractor().extract(page).ok
+
+
+_GUEST_DESCRIPTION = (
+    "Lead a synthetic engineering team building reliable public services. "
+    "Own delivery, mentor engineers, review designs, and improve operational reliability. "
+    "Requirements include Python, distributed systems, and clear written communication. "
+) * 3
+
+
+def _guest_linkedin_html(*, oversized=False, description=_GUEST_DESCRIPTION) -> str:
+    # The public layout uses the same show-more component for unrelated content.
+    # Large pages keep the description before the collector's body truncation.
+    preamble = "<div>" + "Search results navigation. " * (1200 if oversized else 1) + "</div>"
+    tail = "<div>" + "Related roles. " * (4000 if oversized else 1) + "</div>"
+    return (
+        '<html><body><nav>Account navigation</nav><main>'
+        + preamble
+        + '<aside class="show-more-less-html__markup">'
+        + "Unrelated employer overview. " * 20
+        + '</aside><section class="description"><div class="description__text">'
+        '<div class="show-more-less-html"><div class="show-more-less-html__markup '
+        'show-more-less-html__markup--clamp-after-20 relative overflow-hidden" style="color:red">'
+        '<p>' + description + '</p><script>unrelated script</script></div>'
+        '<button>Show more</button></div><button>Show less</button></div></section>'
+        + tail
+        + '</main><footer>Unrelated footer</footer></body></html>'
+    )
+
+
+class _GuestLinkedInPage:
+    """Synthetic DOM boundary; production code still collects and cleans HTML."""
+
+    def __init__(self, html):
+        self.soup = BeautifulSoup(html, "html.parser")
+        self.body_fallback_calls = 0
+
+    @staticmethod
+    def _element(element):
+        return SimpleNamespace(
+            inner_text=lambda: element.get_text(" ", strip=True),
+            inner_html=element.decode_contents,
+        )
+
+    def query_selector(self, selector):
+        element = self.soup.select_one(selector)
+        return self._element(element) if element is not None else None
+
+    def query_selector_all(self, selector):
+        return [self._element(element) for element in self.soup.select(selector)]
+
+    def evaluate(self, script):
+        assert "document.body.cloneNode(true)" in script
+        self.body_fallback_calls += 1
+        clone = BeautifulSoup(str(self.soup.body), "html.parser")
+        for element in clone.select("nav, header, footer, script, style, noscript, svg, iframe"):
+            element.decompose()
+        return clone.body.decode_contents()
+
+
+@pytest.mark.parametrize("oversized", [False, True])
+def test_guest_linkedin_description_survives_production_collection_and_cleaning(oversized) -> None:
+    page = _GuestLinkedInPage(_guest_linkedin_html(oversized=oversized))
+    cleaned = _collect_main_content(page)
+    assert page.body_fallback_calls == int(oversized)
+    assert "Unrelated employer overview" in cleaned  # A broad show-more selector would pick this first.
+    assert "Show more" in cleaned  # The outer description wrapper includes controls.
+    assert "style=" not in cleaned
+    result = CssSelectorExtractor().extract(DetailPage(url="https://www.linkedin.com/jobs/view/fixture", html=cleaned))
+    assert result.ok
+    assert result.full_description is not None
+    assert result.full_description.text == _GUEST_DESCRIPTION.strip()
+    assert result.application_url is None
+
+
+@pytest.mark.parametrize("description", ["", "too short"])
+def test_guest_linkedin_rejects_short_description_without_using_unrelated_show_more(description) -> None:
+    page = _GuestLinkedInPage(_guest_linkedin_html(description=description))
+    result = CssSelectorExtractor().extract(DetailPage(url="https://www.linkedin.com/jobs/view/fixture", html=_collect_main_content(page)))
+    assert not result.ok
+
+
+def test_authenticated_linkedin_description_selector_remains_supported() -> None:
+    html = '<div id="JobDetails_AboutTheJob_fixture">' + _GUEST_DESCRIPTION + '</div>'
+    result = CssSelectorExtractor().extract(DetailPage(url="https://www.linkedin.com/jobs/view/fixture", html=html))
+    assert result.ok
+    assert result.full_description.text == _GUEST_DESCRIPTION.strip()
 
 
 # ---------------------------------------------------------------------------

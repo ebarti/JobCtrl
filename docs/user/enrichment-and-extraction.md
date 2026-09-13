@@ -53,6 +53,12 @@ A failed fetch or exhausted cascade records a retryable attempt without
 manufacturing a snapshot. Failure remains isolated to that job, so useful
 results from the rest of the source batch survive.
 
+LinkedIn's public guest description and authenticated job-detail layouts both
+have deterministic extraction rules. When the public description is present in
+the captured content, anonymous enrichment can save it without an LLM or an
+external application URL. Guest extraction selects the description's nested
+text block, excluding unrelated expandable content and show-more controls.
+
 While the worker is running, unfinished enrichment and retryable failures are
 picked up automatically without a new discovery search. Recovery waits for
 existing preparation to finish, keeps each job's attempt history, and retries
