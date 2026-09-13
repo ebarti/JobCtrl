@@ -56,6 +56,27 @@ root aggregates do not cover separate web unit/type/E2E/Storybook suites.
 Temporal fault injection, recovery and cumulative Rhea/Base UI scenarios now live
 in the [detailed matrix](developer/qa/complete-checklist.md).
 
+## Discovery Transaction Recovery
+
+Run the `discovery-transactions` recipe for preparation or enrichment transaction
+changes. Seed failed and exhausted Tailor rows whose downstream stages are already
+reconciled, with a scoring policy already present. Repeat the empty preparation
+selection: zero changed rows must still release SQLite's writer before another
+connection persists lifecycle/source events or the cached connection claims an
+enrichment lease. A failed dependent update must roll back the whole reconciliation;
+an inherited caller transaction must remain under that caller's control.
+
+Also repeat an already-claimed robots retry with a real enrichment lease, inject
+retry update failures and lost comparisons, and reject superseded owners. Verify
+unchanged metadata and accepted enrichment artifacts after failed persistence.
+The owned Temporal `DiscoverWorkflow` fixture runs production preparation,
+lifecycle, enrichment, and terminal event persistence with connected and offline
+acquisition, an already-retried blocked row, and a healthy peer whose description
+must persist. Its source activity, browser/broker transport, and preparation
+workflow dispatch are synthetic; it does not exercise personal Chrome, external
+sources, scoring or material generation. Pair this with the applicable live
+Discovery proof from the regression catalog before claiming runtime recovery.
+
 ## Safe QA Data
 
 Use uniquely owned synthetic workspaces. Never point QA at real profiles,

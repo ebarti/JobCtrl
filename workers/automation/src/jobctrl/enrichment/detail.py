@@ -1255,36 +1255,47 @@ def _claim_robots_retry_for_workflow(
     ).fetchone()
     if row is None or row[0] != "blocked" or row[1] != "ENRICH_ROBOTS_DISALLOWED":
         return True
-    if activity_lease is not None:
-        _fence_execution_enrichment_lease(conn, activity_lease)
+    # This helper owns its transaction. BEGIN stays outside the rollback scope:
+    # a caller's pending writes must never be committed or discarded here.
+    conn.execute("BEGIN IMMEDIATE")
     try:
-        metadata = json.loads(row[2] or "{}")
-    except (TypeError, ValueError):
-        metadata = {}
-    if not isinstance(metadata, dict):
-        metadata = {}
-    if metadata.get("lastRobotsRetryWorkflow") == recovery_key:
-        return False
-    metadata["lastRobotsRetryWorkflow"] = recovery_key
-    updated = conn.execute(
-        """
-        UPDATE job_stage_states
-        SET metadata_json = ?, updated_at = ?, version = version + 1
-        WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich'
-          AND state = 'blocked'
-          AND error_code = 'ENRICH_ROBOTS_DISALLOWED'
-          AND version = ?
-        """,
-        (
-            json.dumps(metadata, sort_keys=True),
-            datetime.now(timezone.utc).isoformat(),
-            str(tenant_id),
-            str(job_id),
-            int(row[3] or 0),
-        ),
-    )
-    conn.commit()
-    return updated.rowcount == 1
+        if activity_lease is not None:
+            _fence_execution_enrichment_lease(conn, activity_lease)
+        try:
+            metadata = json.loads(row[2] or "{}")
+        except (TypeError, ValueError):
+            metadata = {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        if metadata.get("lastRobotsRetryWorkflow") == recovery_key:
+            conn.rollback()
+            return False
+        metadata["lastRobotsRetryWorkflow"] = recovery_key
+        updated = conn.execute(
+            """
+            UPDATE job_stage_states
+            SET metadata_json = ?, updated_at = ?, version = version + 1
+            WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich'
+              AND state = 'blocked'
+              AND error_code = 'ENRICH_ROBOTS_DISALLOWED'
+              AND version = ?
+            """,
+            (
+                json.dumps(metadata, sort_keys=True),
+                datetime.now(timezone.utc).isoformat(),
+                str(tenant_id),
+                str(job_id),
+                int(row[3] or 0),
+            ),
+        )
+        if updated.rowcount != 1:
+            conn.rollback()
+            return False
+        conn.commit()
+        return True
+    except Exception:
+        conn.rollback()
+        raise
 
 
 def _record_enrich_politeness_deferral(
@@ -1432,6 +1443,7 @@ def _record_enrich_job_failure(
         conn.rollback()
         raise
     except Exception:
+        conn.rollback()
         log.exception("Failed to record enrichment job failure for %s", url)
 
 

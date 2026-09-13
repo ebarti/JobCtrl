@@ -178,3 +178,17 @@ kind = "static"
 description = "Worker Ruff uses the repository environment without inheriting the workflow tool environment"
 argv = ["env", "-u", "UV_PROJECT_ENVIRONMENT", "-u", "VIRTUAL_ENV", "-u", "UV_EXCLUDE_NEWER", "-u", "UV_EXCLUDE_NEWER_PACKAGE", "uv", "run", "--project", "workers/automation", "--locked", "--all-extras", "--exclude-newer", "false", "ruff", "check", "."]
 timeout_seconds = 300
+
+[checks.discovery-transactions]
+kind = "junit"
+description = "Repeated Discovery preparation and enrichment release SQLite writer ownership and preserve lease fencing, artifact safety and peer persistence in both acquisition modes"
+argv = ["env", "-u", "UV_PROJECT_ENVIRONMENT", "-u", "VIRTUAL_ENV", "-u", "UV_EXCLUDE_NEWER", "-u", "UV_EXCLUDE_NEWER_PACKAGE", "uv", "run", "--project", "workers/automation", "--locked", "--all-extras", "--exclude-newer", "false", "pytest", "-q", "workers/automation/tests/test_discovery_transaction_lifecycle.py", "workers/automation/tests/test_discovery_preparation_orchestration.py", "workers/automation/tests/test_enrichment_queue_selectors.py", "workers/automation/tests/test_discovery_enrichment_handoff.py", "workers/automation/tests/test_discovery_execution_reconciliation.py", "workers/automation/tests/test_discover_reliability.py", "workers/automation/tests/test_workflow_discovery.py", "--junitxml={report_path}"]
+min_executed = 10
+timeout_seconds = 600
+
+[checks.discovery-api]
+kind = "junit"
+description = "Full API suite checks optional Discovery transport, worker readiness, extension broker and startup fixtures"
+argv = ["env", "-u", "UV_PROJECT_ENVIRONMENT", "-u", "VIRTUAL_ENV", "-u", "UV_EXCLUDE_NEWER", "-u", "UV_EXCLUDE_NEWER_PACKAGE", "corepack", "pnpm", "--filter", "@jobctrl/api", "exec", "vitest", "run", "test", "--reporter=junit", "--outputFile={report_path}"]
+min_executed = 891
+timeout_seconds = 600
