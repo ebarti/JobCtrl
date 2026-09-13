@@ -91,8 +91,13 @@ def test_selected_extension_failure_does_not_reselect_transport(tmp_path) -> Non
     assert broker.tasks == {}
 
 
+@pytest.mark.parametrize(
+    ("removable_prefix", "main_container"),
+    [(False, True), (True, True), (True, False)],
+    ids=["oversized-tail", "removable-prefix-main", "removable-prefix-body"],
+)
 def test_disconnected_guest_linkedin_persists_clean_description_without_llm(
-    tmp_path, monkeypatch, public_provider_network
+    tmp_path, monkeypatch, public_provider_network, removable_prefix, main_container
 ) -> None:
     from contextlib import nullcontext
     from types import SimpleNamespace
@@ -112,7 +117,9 @@ def test_disconnected_guest_linkedin_persists_clean_description_without_llm(
             self.url = target
             return _SpyPage.goto(self, target, **kwargs)
 
-    page = Page(_guest_linkedin_html(oversized=True))
+    page = Page(_guest_linkedin_html(
+        oversized=True, removable_prefix=removable_prefix, main_container=main_container,
+    ))
     _SpyPage.__init__(page, navigations)
     browser = SimpleNamespace(
         close=lambda: closed.append(True),
@@ -147,7 +154,7 @@ def test_disconnected_guest_linkedin_persists_clean_description_without_llm(
         assert broker.status_checks == 1
         assert broker.visited == [] and broker.tasks == {}
         assert navigations == [url]
-        assert page.body_fallback_calls == 1
+        assert page.body_fallback_calls == int(not main_container)
         assert llm_calls == []
         assert notified == [job_id]
         assert closed == [True]

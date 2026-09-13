@@ -58,6 +58,10 @@ have deterministic extraction rules. When the public description is present in
 the captured content, anonymous enrichment can save it without an LLM or an
 external application URL. Guest extraction selects the description's nested
 text block, excluding unrelated expandable content and show-more controls.
+Anonymous page collection removes page chrome and noisy attributes before
+applying its 50,000-character HTML limit, so removable markup does not crowd out
+posting text or application links. JSON-LD is collected separately; meaningful
+content beyond the HTML limit remains outside CSS and LLM extraction input.
 
 While the worker is running, unfinished enrichment and retryable failures are
 picked up automatically without a new discovery search. Recovery waits for

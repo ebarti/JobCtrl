@@ -23,7 +23,7 @@ from jobctrl.domain.enrichment.services import (
     LlmExtractor,
 )
 from jobctrl.domain.ports.llm import LlmMessage, LlmPort
-from jobctrl.infrastructure.enrichment.playwright_fetcher import _collect_main_content
+from jobctrl.infrastructure.enrichment.playwright_fetcher import _collect_json_ld, _collect_main_content
 
 
 class _StubLlm(LlmPort):
@@ -162,13 +162,17 @@ _GUEST_DESCRIPTION = (
 ) * 3
 
 
-def _guest_linkedin_html(*, oversized=False, description=_GUEST_DESCRIPTION) -> str:
+def _guest_linkedin_html(
+    *, oversized=False, description=_GUEST_DESCRIPTION, removable_prefix=False, main_container=True
+) -> str:
     # The public layout uses the same show-more component for unrelated content.
-    # Large pages keep the description before the collector's body truncation.
+    # Meaningful content keeps the description within the collector's HTML limit.
     preamble = "<div>" + "Search results navigation. " * (1200 if oversized else 1) + "</div>"
+    if removable_prefix:
+        preamble = ('<div style="' + 'x' * 1200 + '">Menu</div>') * 55 + preamble
     tail = "<div>" + "Related roles. " * (4000 if oversized else 1) + "</div>"
     return (
-        '<html><body><nav>Account navigation</nav><main>'
+        '<html><body><nav>Account navigation</nav>' + ('<main>' if main_container else '<section>')
         + preamble
         + '<aside class="show-more-less-html__markup">'
         + "Unrelated employer overview. " * 20
@@ -178,7 +182,8 @@ def _guest_linkedin_html(*, oversized=False, description=_GUEST_DESCRIPTION) -> 
         '<p>' + description + '</p><script>unrelated script</script></div>'
         '<button>Show more</button></div><button>Show less</button></div></section>'
         + tail
-        + '</main><footer>Unrelated footer</footer></body></html>'
+        + ('</main>' if main_container else '</section>')
+        + '<footer>Unrelated footer</footer></body></html>'
     )
 
 
@@ -216,7 +221,7 @@ class _GuestLinkedInPage:
 def test_guest_linkedin_description_survives_production_collection_and_cleaning(oversized) -> None:
     page = _GuestLinkedInPage(_guest_linkedin_html(oversized=oversized))
     cleaned = _collect_main_content(page)
-    assert page.body_fallback_calls == int(oversized)
+    assert page.body_fallback_calls == 0
     assert "Unrelated employer overview" in cleaned  # A broad show-more selector would pick this first.
     assert "Show more" in cleaned  # The outer description wrapper includes controls.
     assert "style=" not in cleaned
@@ -225,6 +230,53 @@ def test_guest_linkedin_description_survives_production_collection_and_cleaning(
     assert result.full_description is not None
     assert result.full_description.text == _GUEST_DESCRIPTION.strip()
     assert result.application_url is None
+
+
+@pytest.mark.parametrize("main_container", [True, False], ids=["main", "body-fallback"])
+def test_collector_cleans_removable_prefix_before_capping_description_and_apply_context(main_container) -> None:
+    html = _guest_linkedin_html(oversized=True, removable_prefix=True, main_container=main_container)
+    html = html.replace('<button>Show less</button>', '<a href="/apply/synthetic">Apply</a>')
+    assert html.index("description__text") > 50000
+    page = _GuestLinkedInPage(html)
+    cleaned = _collect_main_content(page)
+    assert page.body_fallback_calls == int(not main_container)
+    assert len(cleaned) <= 50000
+    result = CssSelectorExtractor().extract(
+        DetailPage(url="https://www.linkedin.com/jobs/view/fixture", html=cleaned)
+    )
+    assert result.ok
+    assert result.full_description.text == _GUEST_DESCRIPTION.strip()
+    assert result.application_url.value == "https://www.linkedin.com/apply/synthetic"
+
+
+@pytest.mark.parametrize("main_container", [True, False], ids=["main", "body-fallback"])
+def test_collector_keeps_content_limit_when_meaningful_prefix_exceeds_cap(main_container) -> None:
+    html = _guest_linkedin_html(main_container=main_container)
+    html = html.replace('<aside', '<div>' + 'Meaningful introductory text. ' * 2000 + '</div><aside', 1)
+    page = _GuestLinkedInPage(html)
+    cleaned = _collect_main_content(page)
+    assert len(cleaned) == 50000
+    assert "Meaningful introductory text" in cleaned
+    assert _GUEST_DESCRIPTION.strip() not in cleaned
+    assert not CssSelectorExtractor().extract(DetailPage(url="https://example.com/job", html=cleaned)).ok
+
+
+def test_collector_preserves_json_ld_after_capped_content() -> None:
+    import json
+
+    posting = {"@type": "JobPosting", "description": _GUEST_DESCRIPTION, "url": "https://example.com/apply"}
+    html = _guest_linkedin_html(oversized=True, removable_prefix=True)
+    html = html.replace('</body>', '<script type="application/ld+json">' + json.dumps(posting) + '</script></body>')
+    page = _GuestLinkedInPage(html)
+    json_ld = _collect_json_ld(page)
+    cleaned = _collect_main_content(page)
+    assert json_ld == [posting]
+    assert len(cleaned) <= 50000
+    assert "application/ld+json" not in cleaned
+    result = JsonLdExtractor().extract(DetailPage(url="https://example.com/job", html=cleaned, json_ld=tuple(json_ld)))
+    assert result.ok
+    assert result.full_description.text == _GUEST_DESCRIPTION.strip()
+    assert result.application_url.value == "https://example.com/apply"
 
 
 @pytest.mark.parametrize("description", ["", "too short"])
