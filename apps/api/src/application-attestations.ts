@@ -20,4 +20,3 @@ export function missingApplicationAttestationFields(db: SqliteDatabase): string[
     .filter(([, column]) => row[column] === undefined || row[column] === null || row[column] === "")
     .map(([field]) => field);
 }
-
