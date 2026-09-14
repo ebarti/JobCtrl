@@ -154,18 +154,10 @@ function matchingRequirementFit(
   report: RequirementFitReport | null | undefined,
 ): RequirementFitAssessment | null {
   if (!report?.assessments.length) return null;
-  const byId = report.assessments.find(
-    (assessment) => assessment.requirementId === requirement.id,
-  );
-  if (byId) return byId;
-
-  const requirementText = normalizeText(requirement.text);
-  return (
-    report.assessments.find(
-      (assessment) =>
-        normalizeText(assessment.requirementText) === requirementText,
-    ) ?? null
-  );
+  return report.assessments.find((assessment) =>
+    assessment.requirementId === requirement.id &&
+    assessment.requirementText.trim().replace(/\s+/g, " ") === requirement.text.trim().replace(/\s+/g, " "),
+  ) ?? null;
 }
 
 function requirementFitAssessment(
@@ -768,6 +760,8 @@ export function EmployerAnalysisPanel({
     );
   }
 
+  const currentFitReport = requirementFitReport?.employerAnalysisGeneration === analysis.generation
+    ? requirementFitReport : null;
   const requirementsById = new Map(
     analysis.requirements.map((requirement) => [requirement.id, requirement]),
   );
@@ -827,9 +821,9 @@ export function EmployerAnalysisPanel({
             <div className="employer-analysis-requirement-list">
               {analysis.requirements.map((requirement) => (
                 <RequirementItem
-                  key={`${analysis.cache_key}:${requirement.id}:${matchingRequirementFit(requirement, requirementFitReport)?.fit.kind ?? "unknown"}`}
+                  key={`${analysis.generation}:${analysis.cache_key}:${requirement.id}:${matchingRequirementFit(requirement, currentFitReport)?.fit.kind ?? "unknown"}`}
                   requirement={requirement}
-                  requirementFitReport={requirementFitReport}
+                  requirementFitReport={currentFitReport}
                   flaggedRequirements={analysis.agreement.flagged_requirements}
                   resolveEvidenceReference={resolveEvidenceReference}
                 />

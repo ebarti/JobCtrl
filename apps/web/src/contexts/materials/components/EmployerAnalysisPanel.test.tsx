@@ -32,6 +32,31 @@ describe("<EmployerAnalysisPanel>", () => {
     expect(screen.getByRole("button", { name: /^Expand requirement:/ })).toHaveAttribute("aria-expanded", "false");
   });
 
+  it("does not bind an older score to a reused requirement ID", () => {
+    const text = "Hold a clinical oncology license";
+    render(<EmployerAnalysisPanel analysis={{ ...populatedEmployerAnalysis,
+      generation: populatedEmployerAnalysis.generation + 1,
+      requirements: [{ ...populatedEmployerAnalysis.requirements[0]!, text }],
+    }} requirementFitReport={populatedRequirementFitReport} />);
+    const card = screen.getByRole("article", { name: `Requirement: ${text}` });
+    expect(within(card).getByText("not assessed")).toBeVisible();
+    expect(within(card).queryByText("matched")).not.toBeInTheDocument();
+    expect(within(card).getByRole("button", { name: /^Collapse requirement:/ })).toHaveAttribute("aria-expanded", "true");
+    expect(within(card).queryByText("Double Down · priority 90%")).not.toBeInTheDocument();
+  });
+
+  it("resets disclosure on a same-cache generation replacement and preserves choices within a generation", async () => {
+    const user = userEvent.setup();
+    const view = render(<EmployerAnalysisPanel analysis={populatedEmployerAnalysis} requirementFitReport={populatedRequirementFitReport} />);
+    const first = populatedEmployerAnalysis.requirements[0]!;
+    await user.click(screen.getByRole("button", { name: `Expand requirement: ${first.text}` }));
+    view.rerender(<EmployerAnalysisPanel analysis={{ ...populatedEmployerAnalysis }} requirementFitReport={{ ...populatedRequirementFitReport }} />);
+    expect(screen.getByRole("button", { name: `Collapse requirement: ${first.text}` })).toHaveAttribute("aria-expanded", "true");
+    const next = { ...populatedEmployerAnalysis, generation: populatedEmployerAnalysis.generation + 1 };
+    view.rerender(<EmployerAnalysisPanel analysis={next} requirementFitReport={{ ...populatedRequirementFitReport, employerAnalysisGeneration: next.generation }} />);
+    expect(screen.getByRole("button", { name: `Expand requirement: ${first.text}` })).toHaveAttribute("aria-expanded", "false");
+  });
+
   it("renders requirements with tier + importance and quoted evidence spans", () => {
     render(<EmployerAnalysisPanel analysis={populatedEmployerAnalysis} />);
 

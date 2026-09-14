@@ -132,6 +132,11 @@ surfaces rather than looking for a separate scoring page:
   independently. Matched requirements start collapsed; transferable, missing,
   blocked, and unassessed requirements start expanded. The title, tier,
   importance, and match status remain visible when collapsed.
+  A new analysis generation resets these defaults; ordinary page updates preserve
+  your open cards. Fit evidence must match the current analysis and requirement.
+  Resume coverage must separately match the requirement recorded when that
+  resume was generated. If that source identity is unavailable or changed,
+  coverage is marked **not recorded** while the accepted resume remains available.
 - `/evidence-map` works in the opposite direction: it shows where a profile
   achievement or skill was used by requirement-fit and generated materials.
 - `/settings` owns scoring and target guidance. Guidance influences subsequent

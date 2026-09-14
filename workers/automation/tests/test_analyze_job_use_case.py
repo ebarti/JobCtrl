@@ -344,14 +344,19 @@ def test_build_jd_snapshot_is_title_plus_full_description() -> None:
 
 
 @pytest.mark.asyncio
-async def test_invalid_refresh_retains_last_accepted_analysis() -> None:
+@pytest.mark.parametrize("narrative", [
+    "Both experts converge on a platform owner.",
+    "Both experts converged on a platform owner.",
+    "The analysis concluded that the ideal candidate owns the platform.",
+])
+async def test_invalid_refresh_retains_last_accepted_analysis(narrative: str) -> None:
     from dataclasses import replace
     from jobctrl.domain.materials.analysis_content import AnalysisContentError
 
     repo = _InMemoryRepo()
     runner, _ = _runner_returning(_outcome())
     accepted = await _use_case(repo=repo, runner=runner).execute_async(job=JOB)
-    invalid = _canonical().model_copy(update={"ideal_candidate_narrative": "Both experts converge on a platform owner."})
+    invalid = _canonical().model_copy(update={"ideal_candidate_narrative": narrative})
     failing_runner, _ = _runner_returning(replace(_outcome(), canonical=invalid))
     with pytest.raises(AnalysisContentError):
         await _use_case(repo=repo, runner=failing_runner).execute_async(job=JOB, force=True)
@@ -360,7 +365,12 @@ async def test_invalid_refresh_retains_last_accepted_analysis() -> None:
 
 
 @pytest.mark.asyncio
-async def test_invalid_same_version_cache_is_revalidated_without_breaking_legacy_reads() -> None:
+@pytest.mark.parametrize("narrative", [
+    "Both experts converge on a platform owner.",
+    "Both experts converged on a platform owner.",
+    "The analysis concluded that the ideal candidate owns the platform.",
+])
+async def test_invalid_same_version_cache_is_revalidated_without_breaking_legacy_reads(narrative: str) -> None:
     from dataclasses import replace
 
     repo = _InMemoryRepo()
@@ -368,9 +378,9 @@ async def test_invalid_same_version_cache_is_revalidated_without_breaking_legacy
     use_case = _use_case(repo=repo, runner=runner)
     accepted = await use_case.execute_async(job=JOB)
     legacy = replace(accepted.analysis, canonical=accepted.analysis.canonical.model_copy(
-        update={"ideal_candidate_narrative": "Both experts converge on a platform owner."}))
+        update={"ideal_candidate_narrative": narrative}))
     repo.saved[0] = legacy
-    assert repo.load(LOCAL_TENANT, JOB["job_id"]).canonical.ideal_candidate_narrative.startswith("Both experts")
+    assert repo.load(LOCAL_TENANT, JOB["job_id"]).canonical.ideal_candidate_narrative == narrative
     refreshed = await use_case.execute_async(job=JOB)
     assert not refreshed.cached
     assert calls["count"] == 2

@@ -3,6 +3,7 @@ import fs from "node:fs";
 
 import type {
   ApplicationOutcome,
+  EmployerAnalysis,
   ApplicationOutcomeKind,
   ApplicationOutcomeListResponse,
   ApplicationOutcomeSource,
@@ -43,6 +44,7 @@ import {
   STAGES,
   STAGE_STATES,
 } from "./contracts.js";
+import { bindRequirementFitReport, requirementCoverageForArtifact, requirementIdentities, unrecordedRequirementCoverage } from "./requirement-evidence.js";
 import { missingApplicationAttestationFields } from "./application-attestations.js";
 import { buildApplyAudit } from "./apply-audit.js";
 import { allRows, getRow, type SqliteDatabase } from "./db.js";
@@ -109,6 +111,7 @@ interface ReviewQueueRow extends Record<string, unknown> {
   dry_run: number | null;
   started_at: string | null;
   finished_at: string | null;
+  employer_analysis_generation: number | null;
   employer_ideal_candidate_narrative: string | null;
   employer_requirements_json: string | null;
   requirement_fit_report_json: string | null;
@@ -163,9 +166,9 @@ export function listApplyReviewQueue(db: SqliteDatabase): ApplyReviewQueueRespon
   )`;
   const employerAnalysisCte = `,
     latest_employer_analysis AS (
-      SELECT tenant_id, job_id, ideal_candidate_narrative, requirements_json
+      SELECT tenant_id, job_id, generation, ideal_candidate_narrative, requirements_json
       FROM (
-        SELECT tenant_id, job_id, ideal_candidate_narrative, requirements_json,
+        SELECT tenant_id, job_id, generation, ideal_candidate_narrative, requirements_json,
                ROW_NUMBER() OVER (
                  PARTITION BY tenant_id, job_id
                  ORDER BY generation DESC
@@ -176,6 +179,7 @@ export function listApplyReviewQueue(db: SqliteDatabase): ApplyReviewQueueRespon
       WHERE row_num = 1
     )`;
   const employerAnalysisSelect = `,
+         latest_employer_analysis.generation AS employer_analysis_generation,
          latest_employer_analysis.ideal_candidate_narrative AS employer_ideal_candidate_narrative,
          latest_employer_analysis.requirements_json AS employer_requirements_json`;
   const rows = allRows<ReviewQueueRow>(
@@ -753,7 +757,10 @@ function reviewQueueItemFromRow(
     row.employer_ideal_candidate_narrative,
     IDEAL_CANDIDATE_TEXT_LIMIT,
   );
-  const requirementFitReport = parseRequirementFitReport(row.requirement_fit_report_json);
+  const sourceRequirements = requirementIdentities(row.employer_requirements_json);
+  const requirementFitReport = bindRequirementFitReport(
+    parseRequirementFitReport(row.requirement_fit_report_json), row.employer_analysis_generation, sourceRequirements,
+  );
   const rawIdealRequirements = parseIdealRequirementsJson(row.employer_requirements_json);
   const idealRequirements = requirementsWithTailoredResumeCoverage(
     db,
@@ -761,6 +768,7 @@ function reviewQueueItemFromRow(
     rawIdealRequirements,
     materialsPreview.resumeTextArtifactId,
     requirementFitReport,
+    sourceRequirements,
   );
   const scoreEvidenceRequirements = boundedEvidenceList([
     ...(scoreBreakdown?.matchedSignals ?? []),
@@ -1373,12 +1381,7 @@ function idealRequirementFromValue(value: unknown, index: number): ApplyReviewId
 }
 
 function emptyRequirementCoverage(): ApplyReviewIdealRequirement["coverage"] {
-  return {
-    state: "not_recorded",
-    source: "tailored_resume_bullet_provenance",
-    bulletCount: 0,
-    examples: [],
-  };
+  return unrecordedRequirementCoverage();
 }
 
 function requirementsWithTailoredResumeCoverage(
@@ -1387,67 +1390,29 @@ function requirementsWithTailoredResumeCoverage(
   requirements: readonly ApplyReviewIdealRequirement[],
   resumeTextArtifactId: string | null,
   requirementFitReport: RequirementFitReport | null,
+  sourceRequirements: readonly { id: string; text: string }[],
 ): ApplyReviewIdealRequirement[] {
-  if (!requirements.length) {
-    return [];
-  }
   const fitByRequirement = requirementFitByRequirementId(requirementFitReport);
-  if (!resumeTextArtifactId) {
-    return requirements.map((requirement) =>
-      requirementWithFitAssessment(requirement, fitByRequirement.get(requirement.id), emptyRequirementCoverage()),
-    );
-  }
-  const requirementIds = new Set(requirements.map((requirement) => requirement.id));
-  const rows = allRows<{
-    generated_text: string;
-    requirement_ids_json: string;
-  }>(
-    db,
-    `SELECT generated_text, requirement_ids_json
-       FROM job_bullet_provenance
-      WHERE tenant_id = ?
-        AND job_id = ?
-        AND artifact_id = ?
-      ORDER BY position, bullet_id`,
-    [DEFAULT_TENANT, jobId, resumeTextArtifactId],
-  );
-  if (!rows.length) {
-    return requirements.map((requirement) =>
-      requirementWithFitAssessment(requirement, fitByRequirement.get(requirement.id), emptyRequirementCoverage()),
-    );
-  }
+  const coverage = requirementCoverageForArtifact(db, jobId, resumeTextArtifactId, sourceRequirements, requirementFitReport);
+  return requirements.map((requirement) => requirementWithFitAssessment(
+    requirement, fitByRequirement.get(requirement.id), coverage.get(requirement.id) ?? emptyRequirementCoverage(),
+  ));
+}
 
-  const covered = new Map<string, { bulletCount: number; examples: string[] }>();
-  for (const row of rows) {
-    const ids = parseStringListJson(row.requirement_ids_json).filter((id) => requirementIds.has(id));
-    if (!ids.length) continue;
-    const example = cleanText(row.generated_text);
-    for (const id of ids) {
-      const current = covered.get(id) ?? { bulletCount: 0, examples: [] };
-      current.bulletCount += 1;
-      if (example && current.examples.length < 3) {
-        current.examples.push(example);
-      }
-      covered.set(id, current);
-    }
-  }
-
-  return requirements.map((requirement) => {
-    const hit = covered.get(requirement.id);
-    const assessment = fitByRequirement.get(requirement.id);
-    return requirementWithFitAssessment(
-      requirement,
-      assessment,
-      hit
-        ? {
-            state: "covered",
-            source: "tailored_resume_bullet_provenance",
-            bulletCount: hit.bulletCount,
-            examples: hit.examples,
-          }
-        : uncoveredRequirementCoverage(assessment),
-    );
-  });
+/** Job Detail uses the same selected resume and source bindings as Apply Review. */
+export function requirementFitForCurrentAnalysis(
+  db: SqliteDatabase,
+  jobId: string,
+  analysis: EmployerAnalysis | null,
+  report: RequirementFitReport | null,
+): RequirementFitReport | null {
+  const current = bindRequirementFitReport(report, analysis?.generation, analysis?.requirements ?? []);
+  if (!current || !analysis) return null;
+  const selected = resumeMaterialPreviewForJob(db, canonicalJobId(jobId));
+  const coverage = requirementCoverageForArtifact(db, jobId, selected.resumeTextArtifactId, analysis.requirements, current);
+  return { ...current, assessments: current.assessments.map((assessment) => ({
+    ...assessment, artifactCoverage: coverage.get(assessment.requirementId) ?? emptyRequirementCoverage(),
+  })) };
 }
 
 function requirementFitByRequirementId(
@@ -1477,28 +1442,6 @@ function requirementWithFitAssessment(
     tailoring: assessment?.tailoring ?? null,
     coverage,
   };
-}
-
-function uncoveredRequirementCoverage(
-  assessment: RequirementFitAssessment | undefined,
-): ApplyReviewIdealRequirement["coverage"] {
-  if (assessment?.fit.kind === "missing" || assessment?.fit.kind === "blocked") {
-    return {
-      state: "missing_from_profile",
-      source: "tailored_resume_bullet_provenance",
-      bulletCount: 0,
-      examples: [],
-    };
-  }
-  if (assessment?.fit.kind === "matched" || assessment?.fit.kind === "transferable") {
-    return {
-      state: "missing_from_resume",
-      source: "tailored_resume_bullet_provenance",
-      bulletCount: 0,
-      examples: [],
-    };
-  }
-  return emptyRequirementCoverage();
 }
 
 function cleanRequirementWeight(value: unknown): number | null {

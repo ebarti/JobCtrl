@@ -574,7 +574,12 @@ class TestAgreement:
         assert {"go", "payments"}.issubset(set(agreement.flagged_keywords))
 
 
-async def test_synthesizer_reasks_process_commentary_and_accepts_candidate_prose() -> None:
+@pytest.mark.parametrize("rejected_narrative", [
+    "Both experts converge on a distributed-systems owner.",
+    "Both experts converged on a distributed-systems owner.",
+    "The analysis concluded that the ideal candidate owns distributed systems.",
+])
+async def test_synthesizer_reasks_process_commentary_and_accepts_candidate_prose(rejected_narrative: str) -> None:
     class RepairingSynthesizer:
         def __init__(self):
             self.prompts = []
@@ -582,7 +587,7 @@ async def test_synthesizer_reasks_process_commentary_and_accepts_candidate_prose
         async def reconcile(self, system_prompt, *, drafts, jd_snapshot):
             self.prompts.append(system_prompt)
             narrative = (
-                "Both experts converge on a distributed-systems owner."
+                rejected_narrative
                 if len(self.prompts) == 1 else
                 "A distributed-systems owner who works with domain experts and builds ensemble models."
             )
@@ -598,6 +603,12 @@ async def test_synthesizer_reasks_process_commentary_and_accepts_candidate_prose
 
 @pytest.mark.parametrize("narrative", [
     "Both experts converge on a platform engineer.",
+    "Both experts converged on a platform engineer.",
+    "Both experts have converged on a platform engineer.",
+    "Both experts were converging on a platform engineer.",
+    "The analysis concluded that the ideal candidate owns the platform.",
+    "The analysis has concluded that the ideal candidate owns the platform.",
+    "The drafts agreed on the profile.",
     "The analyses agree that a platform engineer is needed.",
     "Based on the job description, the ideal candidate owns the platform.",
     "We analyzed the posting and determined the candidate profile.",
