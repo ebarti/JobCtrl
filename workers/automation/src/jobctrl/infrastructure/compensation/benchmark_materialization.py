@@ -315,6 +315,7 @@ def _estimate_from_benchmark(
             fact,
             role_label=role_label,
             target_geography=benchmark.geography,
+            target_seniority=job_seniority,
             extrapolated=benchmark.result_kind == "extrapolated",
             materialized_at=materialized_at,
         )
@@ -330,7 +331,8 @@ def _estimate_from_benchmark(
         warning_values.append("low_sample_count")
     warnings = _warning_codes(warning_values)
     freshness_score = 0.25 if "stale_source_snapshot" in warnings else 1.0
-    level_score = 1.0 if benchmark.seniority_label == job_seniority else 0.65
+    level_matches = benchmark.seniority_label == job_seniority
+    level_score = 1.0 if level_matches else 0.0
     factors = (
         _factor(
             "role",
@@ -343,7 +345,7 @@ def _estimate_from_benchmark(
             (
                 f"Matched canonical seniority {benchmark.seniority_label}."
                 if level_score == 1.0
-                else f"Used all-level fallback for {job_seniority}."
+                else f"The {benchmark.seniority_label} population does not establish pay for {job_seniority}."
             ),
         ),
         _factor(
@@ -369,16 +371,16 @@ def _estimate_from_benchmark(
     return MarketCompensationEstimate(
         tenant_id=tenant_id,
         job_id=job_id,
-        estimate_state="estimated_range",
+        estimate_state="estimated_range" if level_matches else "insufficient_evidence",
         currency="EUR",
         period="year",
         component=cast(MarketComponent, benchmark.component),
-        minimum_amount=benchmark.minimum_amount,
-        maximum_amount=benchmark.maximum_amount,
-        confidence_interval_minimum_amount=(benchmark.confidence_interval_minimum_amount),
-        confidence_interval_maximum_amount=(benchmark.confidence_interval_maximum_amount),
-        confidence_band=cast(MarketConfidenceBand, benchmark.confidence_band),
-        confidence_score=round(benchmark.confidence_score, 2),
+        minimum_amount=benchmark.minimum_amount if level_matches else None,
+        maximum_amount=benchmark.maximum_amount if level_matches else None,
+        confidence_interval_minimum_amount=(benchmark.confidence_interval_minimum_amount if level_matches else None),
+        confidence_interval_maximum_amount=(benchmark.confidence_interval_maximum_amount if level_matches else None),
+        confidence_band=cast(MarketConfidenceBand, benchmark.confidence_band) if level_matches else "none",
+        confidence_score=round(benchmark.confidence_score, 2) if level_matches else 0.0,
         source_count=len(sources),
         sample_count=sample_count,
         aggregate_bucket="reported company-role compensation",
@@ -389,7 +391,7 @@ def _estimate_from_benchmark(
         sources=sources,
         factors=factors,
         evidence=evidence,
-        insufficient_reasons=(),
+        insufficient_reasons=() if level_matches else ("weak_level_match",),
         unsupported_reasons=(),
         source_unavailable_reasons=(),
         warnings=warnings,
@@ -442,6 +444,7 @@ def _evidence_row(
     *,
     role_label: str,
     target_geography: BenchmarkGeography,
+    target_seniority: str,
     extrapolated: bool,
     materialized_at: str,
 ) -> MarketEvidenceRow:
@@ -470,7 +473,7 @@ def _evidence_row(
         release_year=int(fact.as_of_date[:4]),
         company_score=1.0 if fact.market_scope == "company" else 0.0,
         role_score=1.0,
-        level_score=1.0,
+        level_score=1.0 if fact.seniority_label == target_seniority else 0.0,
         location_score=(1.0 if not extrapolated and fact.geography == target_geography else 0.5),
         freshness_score=0.25 if fact.fresh_until <= materialized_at else 1.0,
     )

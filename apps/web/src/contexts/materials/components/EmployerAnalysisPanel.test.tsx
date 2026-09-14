@@ -12,6 +12,26 @@ import {
 import { EmployerAnalysisPanel } from "./EmployerAnalysisPanel.js";
 
 describe("<EmployerAnalysisPanel>", () => {
+  it("toggles matched and transferable requirements independently with mouse and keyboard", async () => {
+    const user = userEvent.setup();
+    const view = render(<EmployerAnalysisPanel analysis={populatedEmployerAnalysis} requirementFitReport={populatedRequirementFitReport} />);
+    const matched = screen.getByRole("article", { name: `Requirement: ${populatedEmployerAnalysis.requirements[0]!.text}` });
+    const sibling = screen.getByRole("article", { name: `Requirement: ${populatedEmployerAnalysis.requirements[1]!.text}` });
+    const trigger = within(matched).getByRole("button", { name: /^Expand requirement:/ });
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(within(matched).queryByRole("group", { name: "Fit summary" })).not.toBeInTheDocument();
+    expect(within(sibling).getByRole("button", { name: /^Collapse requirement:/ })).toHaveAttribute("aria-expanded", "true");
+    await user.click(trigger);
+    expect(within(matched).getByRole("group", { name: "Fit summary" })).toBeVisible();
+    await user.keyboard("{Enter}");
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    await user.keyboard(" ");
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    expect(within(sibling).getByRole("group", { name: "Fit summary" })).toBeVisible();
+    view.rerender(<EmployerAnalysisPanel analysis={{ ...populatedEmployerAnalysis, cache_key: "replacement-analysis" }} requirementFitReport={populatedRequirementFitReport} />);
+    expect(screen.getByRole("button", { name: /^Expand requirement:/ })).toHaveAttribute("aria-expanded", "false");
+  });
+
   it("renders requirements with tier + importance and quoted evidence spans", () => {
     render(<EmployerAnalysisPanel analysis={populatedEmployerAnalysis} />);
 
@@ -65,6 +85,9 @@ describe("<EmployerAnalysisPanel>", () => {
     const matched = screen.getByRole("article", {
       name: "Requirement: Lead platform reliability programs across multiple teams",
     });
+    await user.click(
+      within(matched).getByRole("button", { name: /^Expand requirement:/ }),
+    );
     expect(within(matched).getByText("Requirement fit")).toBeInTheDocument();
     expect(within(matched).getByText("matched")).toHaveAttribute(
       "data-status-tone",
@@ -139,7 +162,8 @@ describe("<EmployerAnalysisPanel>", () => {
     ).toBeInTheDocument();
   });
 
-  it("keeps the compact fit summary bounded while evidence stays readable", () => {
+  it("keeps the compact fit summary bounded while evidence stays readable", async () => {
+    const user = userEvent.setup();
     render(
       <EmployerAnalysisPanel
         analysis={populatedEmployerAnalysis}
@@ -163,6 +187,9 @@ describe("<EmployerAnalysisPanel>", () => {
     const matched = screen.getByRole("article", {
       name: "Requirement: Lead platform reliability programs across multiple teams",
     });
+    await user.click(
+      within(matched).getByRole("button", { name: /^Expand requirement:/ }),
+    );
     const summary = within(matched).getByRole("group", { name: "Fit summary" });
 
     expect(
@@ -219,6 +246,9 @@ describe("<EmployerAnalysisPanel>", () => {
     const matched = screen.getByRole("article", {
       name: "Requirement: Lead platform reliability programs across multiple teams",
     });
+    await user.click(
+      within(matched).getByRole("button", { name: /^Expand requirement:/ }),
+    );
     expect(
       within(matched).getByText("Evidence reference unavailable."),
     ).toBeInTheDocument();
@@ -271,6 +301,9 @@ describe("<EmployerAnalysisPanel>", () => {
     const matched = screen.getByRole("article", {
       name: "Requirement: Lead platform reliability programs across multiple teams",
     });
+    await user.click(
+      within(matched).getByRole("button", { name: /^Expand requirement:/ }),
+    );
     await user.click(
       within(matched).getByRole("button", { name: "Additional audit details" }),
     );
@@ -412,7 +445,8 @@ describe("<EmployerAnalysisPanel>", () => {
               ...transferableAssessment,
               fit: {
                 kind: "blocked",
-                blocker: "This role requires direct platform ownership evidence.",
+                blocker:
+                  "This role requires direct platform ownership evidence.",
               },
             },
           ],

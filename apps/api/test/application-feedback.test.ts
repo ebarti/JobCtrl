@@ -244,9 +244,9 @@ describe("application feedback API", () => {
         resumePdfArtifactId: "apply-ready-resume-pdf",
       },
       applyAudit: {
-        state: "preparing",
-        label: "materials preparing",
-        summary: "tailor is running. Review evidence is still available where recorded.",
+        state: "ready",
+        label: "materials ready",
+        summary: "The tailored materials are ready to review before approval.",
       },
     });
 
@@ -345,7 +345,8 @@ describe("application feedback API", () => {
 
     expect(response.statusCode, response.body).toBe(200);
     expect(queueItem(response.json(), READY_JOB_ID)?.applyAudit).toMatchObject({
-      state: "preparing",
+      state: "ready",
+      label: "materials ready",
       missingPrerequisites: [
         expect.objectContaining({
           code: "missing_profile_attestations",
@@ -362,6 +363,12 @@ describe("application feedback API", () => {
       ]),
     });
 
+    const detail = await app.inject({ method: "GET", url: `/v1/jobs/${READY_JOB_ID}` });
+    expect(detail.statusCode, detail.body).toBe(200);
+    expect(detail.json().applyAudit).toMatchObject({
+      state: "ready", label: "materials ready",
+      missingPrerequisites: expect.arrayContaining([expect.objectContaining({ code: "missing_profile_attestations" })]),
+    });
     await app.close();
   });
 
@@ -505,9 +512,9 @@ describe("application feedback API", () => {
       currentState: "pending",
       blockers: [],
       applyAudit: {
-        state: "preparing",
-        label: "materials preparing",
-        summary: "cover is pending. Review evidence is still available where recorded.",
+        state: "ready",
+        label: "materials ready",
+        summary: "The tailored materials are ready to review before approval.",
         hardBlockers: [],
       },
     });

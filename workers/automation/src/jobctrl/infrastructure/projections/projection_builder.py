@@ -111,7 +111,7 @@ PROJECTION_NAME = "operations_projections"
 # columns keep NULL criteria/trace/correction. This marker drives a single
 # targeted rebuild of those rows, independent of column creation.
 SCORE_AUDIT_BACKFILL = "score_audit_columns_v1"
-COMPENSATION_PROJECTION_VERSION = 3
+COMPENSATION_PROJECTION_VERSION = 4
 
 _APPLY_URL_OUTCOME_DETAILS: dict[str, tuple[str, bool]] = {
     "APPLY_URL_EXTERNAL_RECOVERED": (
@@ -4397,6 +4397,27 @@ def _market_estimate_from_row(
         "estimatorVersion": _row_str(row, "estimator_version"),
         "estimatedAt": _row_str(row, "estimated_at"),
     }
+    # Apply the current population contract to persisted canonical v1 estimates.
+    # Raw benchmark evidence remains inspectable even when target pay is unknown.
+    if (
+        base["estimatorVersion"].startswith("company-role-reported-compensation-canonical-benchmark-")
+        and any(warning["code"] == "benchmark_level_fallback" for warning in base["warnings"])
+    ):
+        return {
+            **base,
+            "estimateState": "insufficient_evidence",
+            "confidenceBand": "none",
+            "confidenceScore": 0,
+            "factors": [
+                {**factor, "score": 0, "band": "none", "reason": MARKET_COMPENSATION_REASON_MESSAGES["weak_level_match"]}
+                if factor["name"] == "level" else factor
+                for factor in base["factors"]
+            ],
+            "evidence": [{**evidence, "levelScore": 0} for evidence in base["evidence"]],
+            "insufficientReasons": [
+                {"code": "weak_level_match", "message": MARKET_COMPENSATION_REASON_MESSAGES["weak_level_match"]}
+            ],
+        }
     if estimate_state == "unsupported":
         return {
             **base,

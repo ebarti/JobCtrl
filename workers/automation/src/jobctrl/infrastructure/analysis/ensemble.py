@@ -40,6 +40,7 @@ from jobctrl.domain.materials.analysis import (
     JobAnalysis,
     JobAnalysisDraft,
 )
+from jobctrl.domain.materials.analysis_content import AnalysisContentError, validate_candidate_prose
 from jobctrl.domain.materials.analysis_grounding import (
     GroundingError,
     find_grounding_violations,
@@ -75,10 +76,11 @@ async def _draft_with_retry(
     for attempt in range(max_retries + 1):
         try:
             draft = await adapter.draft(system_prompt, jd_snapshot)
+            validate_candidate_prose(draft)
             snapped = ground_and_snap(draft, jd_snapshot)
             assert isinstance(snapped, JobAnalysisDraft)  # snap preserves the leg type
             return snapped
-        except (ValidationError, GroundingError) as exc:
+        except (ValidationError, GroundingError, AnalysisContentError) as exc:
             last_error = exc
             log.warning(
                 "Analysis leg %s failed (attempt %d/%d): %s",
@@ -251,11 +253,15 @@ async def _synthesize_with_retry(
     last_error: Exception | None = None
     for attempt in range(max_retries + 1):
         try:
+            retry_prompt = system_prompt
+            if isinstance(last_error, AnalysisContentError):
+                retry_prompt += f"\nYour previous output was rejected: {last_error} Return corrected candidate prose."
             canonical = await synthesizer.reconcile(
-                system_prompt, drafts=drafts, jd_snapshot=jd_snapshot
+                retry_prompt, drafts=drafts, jd_snapshot=jd_snapshot
             )
+            validate_candidate_prose(canonical)
             return ground_and_snap(canonical, jd_snapshot)
-        except (ValidationError, GroundingError) as exc:
+        except (ValidationError, GroundingError, AnalysisContentError) as exc:
             last_error = exc
             log.warning(
                 "Synthesizer failed (attempt %d/%d): %s",

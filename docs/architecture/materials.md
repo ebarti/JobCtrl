@@ -64,12 +64,24 @@ This deterministic check runs on every draft and the synthesis. The result is
 persisted in canonical `job_employer_analysis*` rows and projected identically by
 Python and TypeScript.
 
+Candidate prose has a separate acceptance check: role framing and the ideal
+candidate narrative describe only candidate capabilities and role needs.
+`analysis_content.validate_candidate_prose` rejects generation/process
+commentary on draft and synthesized output; synthesis retries include corrective
+feedback. `AnalyzeJobUseCase` repeats the check before persistence. This is a
+generation boundary, not a destructive rewrite or a restriction on reading
+historical records.
+
 ### Reuse And Lifecycle
 
 Analysis is cached by posting snapshot, prompt version, and SDK-set version.
 Re-tailoring reuses that record; an explicit force recompute writes a superseding
 generation instead of deleting history. `AnalyzeJobUseCase` can run as the first
-tailoring step or through the standalone `analyze_job` method.
+tailoring step or through the standalone `analyze_job` method. Prompt v3
+invalidates prior prompt caches; even a same-version cache hit is checked for
+invalid candidate prose before reuse. A standalone `analyze_job` request with
+`tenantId`, `jobId`, and `force: true` regenerates one affected analysis. Failed
+validation or provider execution leaves the last accepted generation intact.
 
 ## Per-Line Provenance
 

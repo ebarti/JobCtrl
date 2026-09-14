@@ -212,3 +212,25 @@ description = "Explicit provider login reuse recovers stale app-owned auth while
 argv = ["env", "-u", "UV_PROJECT_ENVIRONMENT", "-u", "VIRTUAL_ENV", "-u", "UV_EXCLUDE_NEWER", "-u", "UV_EXCLUDE_NEWER_PACKAGE", "uv", "run", "--project", "workers/automation", "--locked", "--all-extras", "--exclude-newer", "false", "pytest", "-q", "workers/automation/tests/test_setup_probes.py", "workers/automation/tests/test_codex_home_isolation.py", "--junitxml={report_path}"]
 min_executed = 1
 timeout_seconds = 300
+
+
+[checks.browser-debug-api]
+kind = "junit"
+description = "Application audit and compensation projections preserve material availability and source-population applicability"
+argv = ["corepack", "pnpm", "--filter", "@jobctrl/api", "exec", "vitest", "run", "test/apply-audit.test.ts", "test/market-compensation-estimates.test.ts", "test/application-feedback.test.ts", "test/application-feedback-v7.test.ts", "test/read-model-v7.test.ts", "--reporter=junit", "--outputFile={report_path}"]
+scenarios = ["A01", "A03"]
+timeout_seconds = 600
+
+[checks.browser-debug-web]
+kind = "junit"
+description = "Requirement disclosures and compensation/apply-review surfaces preserve evidence and truthful readiness"
+argv = ["corepack", "pnpm", "--filter", "@jobctrl/web", "exec", "vitest", "run", "src/contexts/materials/components/EmployerAnalysisPanel.test.tsx", "src/contexts/materials/components/EmployerAnalysisPanel.a11y.test.tsx", "src/contexts/enrichment/components/CompensationEvidence.test.tsx", "src/views/apply-review/ApplyReviewView.test.tsx", "src/views/jobs/JobDetailDrawer.test.tsx", "--reporter=junit", "--outputFile={report_path}"]
+scenarios = ["A01", "A02", "A03"]
+timeout_seconds = 600
+
+[checks.browser-debug-worker]
+kind = "junit"
+description = "Compensation population matching and narrative validation preserve canonical evidence and accepted analysis on failed regeneration"
+argv = ["env", "-u", "UV_PROJECT_ENVIRONMENT", "-u", "VIRTUAL_ENV", "-u", "UV_EXCLUDE_NEWER", "-u", "UV_EXCLUDE_NEWER_PACKAGE", "uv", "run", "--project", "workers/automation", "--locked", "--all-extras", "--exclude-newer", "false", "pytest", "-q", "workers/automation/tests/test_compensation_benchmark_materialization.py", "workers/automation/tests/test_automatic_compensation_refresh.py", "workers/automation/tests/test_employer_analysis_ensemble.py", "workers/automation/tests/test_analyze_job_use_case.py", "workers/automation/tests/test_employer_analysis_model.py", "workers/automation/tests/test_employer_analysis_projection.py", "workers/automation/tests/test_employer_analysis_repository.py", "--junitxml={report_path}"]
+scenarios = ["A01", "A04"]
+timeout_seconds = 600

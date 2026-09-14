@@ -132,7 +132,7 @@ interface PipelineStepProjectionFold extends PipelineStepProjectionEvent {
   lastEventId: number;
   lastUpdatedAt: string;
 }
-const COMPENSATION_PROJECTION_VERSION = 3;
+const COMPENSATION_PROJECTION_VERSION = 4;
 const DEFAULT_MAX_ATTEMPTS: Record<string, number> = {
   discover: 1,
   enrich: 3,

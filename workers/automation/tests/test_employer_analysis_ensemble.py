@@ -572,3 +572,40 @@ class TestAgreement:
         assert 0.0 <= agreement.score < 1.0
         assert "kafka" in agreement.flagged_requirements
         assert {"go", "payments"}.issubset(set(agreement.flagged_keywords))
+
+
+async def test_synthesizer_reasks_process_commentary_and_accepts_candidate_prose() -> None:
+    class RepairingSynthesizer:
+        def __init__(self):
+            self.prompts = []
+
+        async def reconcile(self, system_prompt, *, drafts, jd_snapshot):
+            self.prompts.append(system_prompt)
+            narrative = (
+                "Both experts converge on a distributed-systems owner."
+                if len(self.prompts) == 1 else
+                "A distributed-systems owner who works with domain experts and builds ensemble models."
+            )
+            return JobAnalysis.model_validate({**_grounded_dict(), "ideal_candidate_narrative": narrative})
+
+    synth = RepairingSynthesizer()
+    outcome = await run_ensemble("sys", JD, adapters=(_StubDraftAdapter("one", returns=_grounded_dict()),),
+                                 synthesizer=synth, synthesizer_system_prompt="synth", max_leg_retries=1)
+    assert len(synth.prompts) == 2
+    assert "previous output was rejected" in synth.prompts[1]
+    assert "works with domain experts" in outcome.canonical.ideal_candidate_narrative
+
+
+@pytest.mark.parametrize("narrative", [
+    "Both experts converge on a platform engineer.",
+    "The analyses agree that a platform engineer is needed.",
+    "Based on the job description, the ideal candidate owns the platform.",
+    "We analyzed the posting and determined the candidate profile.",
+])
+async def test_synthesizer_rejects_persistent_process_commentary(narrative: str) -> None:
+    from jobctrl.domain.materials.analysis_content import AnalysisContentError
+
+    with pytest.raises(AnalysisContentError):
+        await run_ensemble("sys", JD, adapters=(_StubDraftAdapter("one", returns=_grounded_dict()),),
+                           synthesizer=_StubSynthesizer(returns={**_grounded_dict(), "ideal_candidate_narrative": narrative}),
+                           synthesizer_system_prompt="synth", max_leg_retries=1)

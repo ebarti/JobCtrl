@@ -5,6 +5,8 @@ import Database from "better-sqlite3";
 import { describe, expect, it } from "vitest";
 
 import type { MarketCompensationEstimateResponse } from "../src/contracts.js";
+import { getJobDetail } from "../src/read-model.js";
+import { BUILT_IN_RESUME_TEMPLATE_THEME } from "../src/resume-templates.js";
 import { buildApp } from "../src/server.js";
 import { initializeExactV7Database } from "./v7-schema.js";
 
@@ -355,6 +357,59 @@ describe("market compensation estimates API", () => {
         "levels_fyi",
         "glassdoor",
       ]);
+    } finally {
+      await app.close();
+      cleanup();
+    }
+  });
+
+  it("rebuilds old all-level projections without claiming principal pay or deleting observations", async () => {
+    const { app, dbPath, cleanup } = withTempApp();
+    insertEstimate(dbPath, ESTIMATED_JOB_ID, {
+      estimatorVersion: "company-role-reported-compensation-canonical-benchmark-v1:direct:legacy",
+      roleTitle: "Principal Software Engineer", seniorityLabel: "unknown",
+      sourceCount: 1, sampleCount: 20, geographyScope: "country",
+      sources: [{ source_id: "levels_fyi", source_type: "reported_compensation", source_provenance: "public",
+        snapshot_version: "levels-public-spain", geography_scope: "country", sample_count: 20,
+        attribution: "Levels.fyi public market data", release_year: 2026 }],
+      evidence: [{ source_id: "levels_fyi", source_url: "https://www.levels.fyi/t/software-engineer/locations/spain",
+        company_name: "Market aggregate", role_title: "Software Engineer", level_label: "unknown", location: "ES",
+        currency: "EUR", period: "year", component: "total_compensation", minimum_amount: 112000,
+        maximum_amount: 142000, sample_count: 20, level_score: 1, role_score: 1 }],
+      warnings: ["benchmark_level_fallback"],
+      factors: [{ name: "level", score: 0.65, band: "medium", reason: "All-level fallback" }],
+    });
+    try {
+      // Seed a v3 projection so the next normal read must upgrade it without a source refresh.
+      const db = new Database(dbPath);
+      db.prepare(`INSERT INTO resume_templates (
+        tenant_id, template_id, display_name, status, built_in, created_at, updated_at
+      ) VALUES ('local', 'built_in:modern-html', 'Modern HTML', 'active', 1, ?, ?)`)
+        .run("2026-09-14T00:00:00Z", "2026-09-14T00:00:00Z");
+      db.prepare(`INSERT INTO resume_template_versions (
+        tenant_id, version_id, template_id, version_number, display_name, status,
+        theme_json, layout_json, content_hash, created_at
+      ) VALUES ('local', 'built_in:modern-html:v1', 'built_in:modern-html', 1,
+        'Modern HTML', 'active', ?, '{}', 'seed-hash', ?)`)
+        .run(JSON.stringify(BUILT_IN_RESUME_TEMPLATE_THEME), "2026-09-14T00:00:00Z");
+      getJobDetail(db, ESTIMATED_JOB_ID);
+      db.prepare(`UPDATE job_list_projections SET compensation_summary_json = json_set(compensation_summary_json,
+        '$.projectionVersion', 3, '$.market.estimateState', 'estimated_range', '$.market.displayRange', 'EUR 112000-142000/year')
+        WHERE job_id = ?`).run(ESTIMATED_JOB_ID);
+      const body = getJobDetail(db, ESTIMATED_JOB_ID)!;
+      db.close();
+      expect(body.job.compensationSummary).toMatchObject({ projectionVersion: 4, market: {
+        estimateState: "insufficient_evidence", displayRange: null, confidenceBand: "none", confidenceScore: 0,
+      } });
+      expect(body.compensationAudit?.market).toMatchObject({ recordStatus: "recorded", estimate: {
+        estimateState: "insufficient_evidence", seniorityLabel: "unknown", sampleCount: 20,
+        insufficientReasons: [{ code: "weak_level_match", message: expect.any(String) }],
+        factors: [expect.objectContaining({ name: "level", score: 0 })],
+        evidence: expect.arrayContaining([expect.objectContaining({ minimumAmount: 112000, levelScore: 0 })]),
+      } });
+      const readback = new Database(dbPath);
+      expect(readback.prepare("SELECT minimum_amount FROM job_market_compensation_estimates WHERE job_id=?").get(ESTIMATED_JOB_ID)).toEqual({ minimum_amount: 112000 });
+      readback.close();
     } finally {
       await app.close();
       cleanup();

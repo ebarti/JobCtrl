@@ -86,6 +86,7 @@ import {
   timestampAtOrAfter,
   timestampBefore,
 } from "./contracts.js";
+import { missingApplicationAttestationFields } from "./application-attestations.js";
 import { buildApplyAudit, type ApplyAuditLatestRun } from "./apply-audit.js";
 import { evaluateRepeatApplication } from "./repeat-application.js";
 import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
@@ -1156,6 +1157,7 @@ export function getJobDetail(db: SqliteDatabase, jobKey: string): JobDetail | nu
       scoreReasoning: detailRow?.score_reasoning ?? listRow.score_reasoning,
     },
     applyAudit: buildApplyAudit({
+      missingProfileData: missingApplicationAttestationFields(db),
       applicationUrl: applyAuditApplicationUrl(listRow),
       hasResume: Boolean(listRow.has_resume),
       hasCoverLetter: Boolean(listRow.has_cover_letter),

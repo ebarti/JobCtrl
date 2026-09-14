@@ -41,8 +41,6 @@ const REPAIR_STATES = new Set<StageState>([
   "skipped",
 ]);
 
-const ACTIVE_STATES = new Set<StageState>(["queued", "running"]);
-
 const APPLICATION_ATTESTATION_LABELS: Readonly<Record<string, string>> = {
   age_18_plus: "Age 18+",
   background_check_consent: "Background check consent",
@@ -104,10 +102,12 @@ export function buildApplyAudit(input: BuildApplyAuditInput): ApplyAudit {
     source(
       "profile_attestations",
       "Application attestations",
-      input.missingProfileData?.length ? "missing" : "present",
+      input.missingProfileData === undefined ? "unknown" : input.missingProfileData.length ? "missing" : "present",
       input.missingProfileData?.length
         ? missingApplicationAttestationDetail(input.missingProfileData)
-        : "Typed application attestations are complete.",
+        : input.missingProfileData === undefined
+          ? "Application attestations have not been checked."
+          : "Typed application attestations are complete.",
     ),
   ];
 
@@ -262,9 +262,7 @@ function auditState(
     return "blocked";
   }
   if (
-    facts.missingPrerequisites.length > 0 ||
-    ACTIVE_STATES.has(input.currentState) ||
-    input.currentStage !== "apply"
+    !input.hasResume || !input.hasPdf
   ) {
     return "preparing";
   }

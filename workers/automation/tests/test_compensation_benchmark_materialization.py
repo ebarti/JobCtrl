@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from pathlib import Path
+from dataclasses import replace
 
 import pytest
 
@@ -155,6 +156,57 @@ def test_direct_benchmark_materializes_every_matching_job_idempotently(
             ).fetchone()[0]
             == event_count
         )
+    finally:
+        close_connection(db_path)
+
+
+def test_all_level_benchmark_is_context_not_principal_pay_even_for_legacy_projections(tmp_path: Path) -> None:
+    from jobctrl.infrastructure.projections.projection_builder import ProjectionBuilder
+    from jobctrl.domain.tenant import LOCAL_TENANT
+
+    db_path = tmp_path / "jobctrl.db"
+    conn = init_db(db_path)
+    try:
+        _insert_job(conn, job_id=JOB_ONE, title="Principal Software Engineer")
+        all_levels = replace(_observation(country="Spain"), role_title="Software Engineer", level_label=None)
+        run_automatic_compensation_refresh(
+            conn, tenant_id="local", owner="principal-all-levels", now=NOW,
+            load_observations=lambda _targets: ReportedCompensationSourceLoad(observations=(all_levels,)),
+            load_fx_rates=_unexpected_fx, load_price_levels=lambda: (), completion_clock=lambda: NOW,
+        )
+        materialize_automatic_compensation_estimates(conn, tenant_id="local", materialized_at=NOW)
+        estimate = SqliteMarketCompensationRepository(conn).get_estimate("local", JOB_ONE)
+        assert estimate is not None
+        assert estimate.estimate_state == "insufficient_evidence"
+        assert estimate.insufficient_reasons == ("weak_level_match",)
+        assert estimate.minimum_amount is None and estimate.maximum_amount is None
+        assert estimate.confidence_band == "none"
+        assert estimate.confidence_score == 0
+        assert estimate.sample_count == 20
+        assert estimate.evidence[0].level_score == 0
+        assert estimate.evidence[0].minimum_amount == 60_000
+        assert estimate.evidence[0].maximum_amount == 90_000
+        assert estimate.evidence[0].sample_count == 20
+
+        # Reproduce a pre-fix canonical row and a stale v3 projection, without
+        # requesting provider data or changing the canonical source observations.
+        legacy_evidence = [dict(estimate.evidence[0].__dict__, level_score=1.0)]
+        conn.execute("""UPDATE job_market_compensation_estimates SET estimate_state='estimated_range',
+            minimum_amount=60000, maximum_amount=90000, confidence_band='medium', confidence_score=0.76,
+            insufficient_reasons_json='[]', selected_evidence_json=? WHERE job_id=?""",
+            (json.dumps(legacy_evidence), JOB_ONE))
+        for table in ("job_list_projections", "job_detail_projections"):
+            conn.execute(f"UPDATE {table} SET compensation_summary_json=json_set(compensation_summary_json, '$.projectionVersion', 3)")
+        conn.commit()
+        ProjectionBuilder(conn_factory=lambda: conn, tenant_id=LOCAL_TENANT).refresh()
+        summary, audit = _projected_compensation(conn, JOB_ONE)
+        assert summary["projectionVersion"] == 4
+        assert summary["market"]["estimateState"] == "insufficient_evidence"
+        assert summary["market"]["displayRange"] is None
+        assert summary["market"]["confidenceBand"] == "none"
+        assert audit["market"]["estimate"]["evidence"][0]["levelScore"] == 0
+        assert audit["market"]["estimate"]["evidence"][0]["minimumAmount"] == 60_000
+        assert conn.execute("SELECT minimum_amount FROM job_market_compensation_estimates WHERE job_id=?", (JOB_ONE,)).fetchone()[0] == 60_000
     finally:
         close_connection(db_path)
 

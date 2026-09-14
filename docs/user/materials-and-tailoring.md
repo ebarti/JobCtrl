@@ -122,6 +122,13 @@ The user-visible surfaces divide the work:
   started work. The current fields and fallback rules belong to
   [Configuration](configuration.md), not this page.
 
+**Materials ready** means the accepted resume text and submission PDF are
+available for review, including while a replacement is queued or running.
+Missing profile attestations remain visible as application prerequisites and do
+not mean material generation is running. Missing resume text or PDF reports
+**materials preparing**. Stage and apply-run failures still report repair, retain
+accepted review evidence, and preserve all approval and submission gates.
+
 Generating materials, choosing a default template, revising a resume in Apply
 Review, and approving a live submission are separate decisions. Materials
 hands accepted generations to Apply; it does not own submission approval.
