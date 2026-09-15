@@ -913,3 +913,40 @@ def test_automatic_anonymous_report_preserves_provider_and_limited_sample_scope(
         assert audit["market"]["estimate"]["benchmarkLineage"]["directInputs"][0]["sourceId"] == "euro_top_tech"
     finally:
         close_connection()
+
+
+@pytest.mark.parametrize("evidence_location", ["Remote Europe", None])
+def test_failed_automatic_refresh_retains_explicit_estimate_with_estimator_location_semantics(
+    tmp_path, evidence_location,
+) -> None:
+    from jobctrl.infrastructure.projections.projection_builder import ProjectionBuilder
+
+    conn = init_db(tmp_path / "explicit-location.db")
+    try:
+        _insert_job(conn, job_id=JOB_ONE, title="Principal Software Engineer")
+        observation = replace(_observation(country="Spain"), company_name="Example",
+            role_title="Principal Software Engineer", level_label="Principal", location=evidence_location)
+        repository = SqliteMarketCompensationRepository(conn)
+        repository.backfill_from_jobs((observation,), estimated_at=NOW)
+        ProjectionBuilder(conn_factory=lambda: conn).refresh()
+        accepted = repository.get_estimate("local", JOB_ONE)
+        assert accepted is not None and accepted.estimate_state == "estimated_range"
+        assert accepted.match_scope == "exact_company_role"
+        assert accepted.estimator_version == "company-role-reported-compensation-v4"
+        assert {row.location for row in accepted.evidence} == {evidence_location}
+        assert "location_mismatch" not in accepted.warnings
+        later = "2026-08-21T08:00:00Z"
+        run_automatic_compensation_refresh(conn, tenant_id="local", owner="failed", now=later,
+            load_observations=lambda _: ReportedCompensationSourceLoad(
+                observations=(), source_errors=("levels_fyi_public_unavailable",)),
+            load_fx_rates=_unexpected_fx, load_price_levels=lambda: (), completion_clock=lambda: later)
+        result = materialize_automatic_compensation_estimates(conn, tenant_id="local", materialized_at=later)
+        # The estimator accepted Europe-wide/unlabeled evidence at its 0.78
+        # location rule; a failed refresh must not re-judge it as a mismatch.
+        assert result.estimates_written == 0 and result.estimates_cleared == 0
+        assert repository.get_estimate("local", JOB_ONE) == accepted
+        summary, audit = _projected_compensation(conn, JOB_ONE)
+        assert summary["market"]["estimateState"] == "estimated_range"
+        assert audit["market"]["estimate"]["minimumAmount"] == accepted.minimum_amount
+    finally:
+        close_connection()
