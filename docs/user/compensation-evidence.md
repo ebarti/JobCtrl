@@ -105,7 +105,11 @@ for comparison:
    is attached to every matching active job, with lineage and warning codes. A
    source outage cannot erase a prior usable range; failed source availability
    retries after one day, while successful or insufficient slices are checked
-   again after seven days. A failed requested-level lookup is identified as
+   again after seven days. Only a failed Levels role-and-level lookup marks a
+   slice that still has a lower-level direct fallback as failed; exchange-rate,
+   price-level or derivation errors leave that slice on its normal schedule
+   and never claim that the lookup missed its source pages. A failed
+   requested-level lookup is identified as
    unavailable or insufficient evidence while retaining the actual broad
    source population as context. An empty HTTP response, blocked request, or
    unavailable company page does not establish that salary evidence does not
@@ -193,7 +197,7 @@ an access mode that the saved policy or provider terms do not permit.
 | Price-level evidence | `compensation_price_level_facts` | Append-only official geography inputs used only for an auditable bridge. |
 | Extrapolated market benchmark | `compensation_extrapolated_benchmark_facts` plus lineage tables | Append-only derived range with the exact direct anchor, price-level inputs, matched-company inputs, factor, confidence, and warnings. |
 | Per-job market estimate | `job_market_compensation_estimates` | The latest matching direct or extrapolated benchmark projected onto an active job with sanitized source/evidence lineage. |
-| Refresh state | `compensation_market_refresh_state` | Lease-fenced missing/due/failure status and the latest successful result reference for each reusable benchmark slice. |
+| Refresh state | `compensation_market_refresh_state` | Lease-fenced missing/due/failure status and the latest result reference for each reusable benchmark slice. A failed Levels role-and-level lookup keeps its lower-level direct fallback as that reference and retries after one day; other source-family failures do not mark a slice with a direct fact failed. |
 | Source policy | `config.json` through `/v1/compensation/sources` | Safe enablement/access declarations only. No credentials, feed location, provider rows, or private-account state. |
 | Jobs read model | Compensation JSON in list/detail projections | Displays already-persisted facts and estimates. `GET` routes neither fetch nor estimate. |
 
