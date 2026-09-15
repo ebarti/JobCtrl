@@ -15,6 +15,7 @@ from jobctrl.domain.compensation import (
     resolve_benchmark_geography,
     resolve_country_code,
 )
+from jobctrl.domain.compensation.benchmarks import classify_seniority
 from jobctrl.infrastructure.compensation import (
     FxRateToEur,
     canonicalize_reported_observations,
@@ -561,3 +562,18 @@ def _price_fact(*, country: str, index: float, marker: str):
         fetched_at="2026-08-12T08:00:00Z",
         fresh_until="2026-08-19T08:00:00Z",
     )
+
+
+@pytest.mark.parametrize(("value", "expected"), [
+    ("Executive", "executive"),
+    ("Executive level", "executive"),
+    ("Chief Executive Officer", "executive"),
+    ("Executive Vice President", "executive"),
+    ("Account Executive", "unknown"),
+    ("Sales Executive", "unknown"),
+    ("Executive Assistant", "unknown"),
+    ("Executive Director", "director"),
+    ("Senior Account Executive", "senior"),
+])
+def test_executive_seniority_requires_a_level_label_or_c_level_title(value, expected) -> None:
+    assert classify_seniority(value) == expected

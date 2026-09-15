@@ -735,9 +735,11 @@ def classify_role(title: str) -> RoleClassification:
 def classify_seniority(title_or_level: str | None) -> SeniorityLabel:
     tokens = set(_TOKEN_RE.findall(str(title_or_level or "").casefold()))
     normalized = _normalized_phrase(title_or_level or "")
-    if tokens & {"executive", "chief", "ceo", "cfo", "cio", "ciso", "coo", "cpo", "cto", "president", "vp"}:
+    if tokens & {"chief", "ceo", "cfo", "cio", "ciso", "coo", "cpo", "cto", "president", "vp"}:
         return "executive"
-    if "vice president" in normalized:
+    # A provider level label "Executive" names the population; a title that merely
+    # contains the word (Account Executive, Executive Assistant) does not.
+    if "vice president" in normalized or normalized in {"executive", "executives", "executive level", "exec"}:
         return "executive"
     if "director" in tokens or "head" in tokens:
         return "director"
