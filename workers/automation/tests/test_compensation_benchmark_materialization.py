@@ -97,6 +97,8 @@ def test_direct_benchmark_materializes_every_matching_job_idempotently(
         assert summary["market"]["displayRange"] == "EUR 60000-90000/year"
         audit = json.loads(projection["compensation_audit_json"])
         assert audit["market"]["estimate"]["geographyScope"] == "country"
+        assert audit["market"]["estimate"]["evidence"][0]["companyName"] == LEVELS_FYI_MARKET_AGGREGATE_COMPANY
+        assert audit["market"]["estimate"]["aggregateBucket"] == "reported company-role compensation"
         assert {source["geographyScope"] for source in audit["market"]["estimate"]["sources"]} == {"country"}
         lineage = audit["market"]["estimate"]["benchmarkLineage"]
         assert lineage["kind"] == "direct"
@@ -826,5 +828,88 @@ def test_failed_refresh_does_not_retain_changed_job_or_wrong_source_population(t
         assert current.minimum_amount is None and current.maximum_amount is None
         summary, _ = _projected_compensation(conn, JOB_ONE)
         assert summary["market"]["displayRange"] is None
+    finally:
+        close_connection()
+
+
+@pytest.mark.parametrize("change", ["none", "target_country", "missing_reference", "corrupt_fact", "mismatched_component"])
+def test_failed_explicit_refresh_checks_extrapolated_target_not_source_geography(tmp_path, monkeypatch, change):
+    from jobctrl.infrastructure.compensation import refresh
+
+    conn = init_db(tmp_path / "extrapolated-retention.db")
+    try:
+        _insert_job(conn, job_id=JOB_ONE, title="Principal Software Engineer")
+        anchor = replace(_observation(country="Germany"), role_title="Principal Software Engineer", level_label="Principal")
+        run_automatic_compensation_refresh(conn, tenant_id="local", owner="extrapolated", now=NOW,
+            load_observations=lambda _: ReportedCompensationSourceLoad(observations=(anchor,)),
+            load_fx_rates=_unexpected_fx,
+            load_price_levels=lambda: (_price_level(country="DE", index=100), _price_level(country="ES", index=90)),
+            completion_clock=lambda: NOW)
+        materialize_automatic_compensation_estimates(conn, tenant_id="local", materialized_at=NOW)
+        repository = SqliteMarketCompensationRepository(conn)
+        accepted = repository.get_estimate("local", JOB_ONE)
+        assert accepted is not None and accepted.estimate_state == "estimated_range"
+        assert (accepted.minimum_amount, accepted.maximum_amount) == (54_000, 81_000)
+        assert {row.location for row in accepted.evidence} == {"DE"}
+        _, before_audit = _projected_compensation(conn, JOB_ONE)
+        lineage = before_audit["market"]["estimate"]["benchmarkLineage"]
+        assert lineage["targetGeography"]["countryCode"] == "ES"
+        assert lineage["anchorGeography"]["countryCode"] == "DE"
+        if change == "target_country":
+            conn.execute("UPDATE jobs SET location = 'France' WHERE job_id = ?", (JOB_ONE,))
+        elif change == "missing_reference":
+            repository.save_estimate(replace(accepted,
+                estimator_version=f"{CANONICAL_BENCHMARK_ESTIMATOR_VERSION}:extrapolated:33333333-3333-4333-8333-333333333333"))
+        elif change == "corrupt_fact":
+            from jobctrl.infrastructure.compensation.sqlite_benchmark_repository import SqliteCompensationBenchmarkRepository
+            def corrupt_reference(*_args, **_kwargs):
+                raise ValueError("extrapolated fact does not match its immutable content hash")
+            monkeypatch.setattr(SqliteCompensationBenchmarkRepository, "get_extrapolated", corrupt_reference)
+        elif change == "mismatched_component":
+            repository.save_estimate(replace(accepted, component="base_salary"))
+        monkeypatch.setattr(refresh, "get_connection", lambda: conn)
+        monkeypatch.setattr(refresh, "load_default_reported_compensation_observations", lambda **_: ReportedCompensationSourceLoad(
+            observations=(), source_errors=("levels_fyi_public_unavailable",)))
+        refresh.refresh_compensation_facts(tenant_id="local", job_id=JOB_ONE, include_euro_top_tech=False)
+        current = repository.get_estimate("local", JOB_ONE)
+        summary, audit = _projected_compensation(conn, JOB_ONE)
+        if change == "none":
+            assert current == accepted
+            assert audit["market"]["estimate"]["benchmarkLineage"] == lineage
+            assert audit["market"]["estimate"]["evidence"][0]["location"] == "DE"
+            assert summary["market"]["displayRange"] == "EUR 54000-81000/year"
+        else:
+            assert current is not None and current.estimate_state == "source_unavailable"
+            assert summary["market"]["displayRange"] is None
+    finally:
+        close_connection()
+
+
+def test_automatic_anonymous_report_preserves_provider_and_limited_sample_scope(tmp_path):
+    conn = init_db(tmp_path / "anonymous-source.db")
+    try:
+        _insert_job(conn, job_id=JOB_ONE, title="Principal Infrastructure Engineer")
+        observation = replace(_observation(country="Spain"), source_id="euro_top_tech",
+            company_name="Euro Top Tech community", role_title="Principal Infrastructure Engineer",
+            level_label="Principal / Director", sample_count=1, minimum_amount=156_000, maximum_amount=156_000,
+            source_url="https://www.eurotoptech.com/data", attribution="Euro Top Tech community reports")
+        run_automatic_compensation_refresh(conn, tenant_id="local", owner="anonymous", now=NOW,
+            load_observations=lambda _: ReportedCompensationSourceLoad(observations=(observation,)),
+            load_fx_rates=_unexpected_fx, load_price_levels=lambda: (), completion_clock=lambda: NOW)
+        materialize_automatic_compensation_estimates(conn, tenant_id="local", materialized_at=NOW)
+        estimate = SqliteMarketCompensationRepository(conn).get_estimate("local", JOB_ONE)
+        assert estimate is not None and estimate.estimate_state == "estimated_range"
+        assert (estimate.minimum_amount, estimate.maximum_amount) == (156_000, 156_000)
+        assert estimate.confidence_band == "low" and estimate.confidence_score <= 0.45
+        assert estimate.aggregate_bucket == "reported regional source sample"
+        assert estimate.evidence[0].company_name == "Euro Top Tech community"
+        assert estimate.evidence[0].source_id == "euro_top_tech"
+        assert estimate.evidence[0].company_score == 0
+        assert estimate.evidence[0].sample_count == 1
+        assert estimate.evidence[0].source_url == observation.source_url
+        summary, audit = _projected_compensation(conn, JOB_ONE)
+        assert summary["market"]["confidenceBand"] == "low"
+        assert audit["market"]["estimate"]["evidence"][0]["companyName"] == "Euro Top Tech community"
+        assert audit["market"]["estimate"]["benchmarkLineage"]["directInputs"][0]["sourceId"] == "euro_top_tech"
     finally:
         close_connection()

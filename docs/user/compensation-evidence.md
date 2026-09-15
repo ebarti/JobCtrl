@@ -90,7 +90,10 @@ for comparison:
    per company within the target country; exact market evidence takes
    precedence.
    Reports with unidentified employers are described as a limited source
-   sample, never as an identified company cohort.
+   sample, never as an identified company cohort. Automatic canonical reports
+   preserve their actual provider identity and carry the same qualification;
+   an anonymous community sample remains low confidence even with direct
+   lineage. A genuine provider aggregate retains its aggregate label.
 7. **Check the source population.** An all-level or unknown-level benchmark is
    contextual evidence for a job with a known seniority, not an estimate of that
    seniority's pay. Without matching level evidence, the estimate is
@@ -111,7 +114,10 @@ for comparison:
    Retention compares the saved and current job's canonical role and level,
    independent of automatic/explicit estimator label spellings or an empty
    failed observation set. Changed role/country or unsupported prior source
-   population prevents reuse.
+   population prevents reuse. For a canonical geographic extrapolation, its
+   validated target geography determines applicability; its anchor source
+   geography remains unchanged in the evidence. Missing, corrupt or mismatched
+   lineage cannot authorize retention.
 
 Employer-posted facts may be parsed when Discovery ingests or refreshes a job
 and are also reparsed during an explicit compensation refresh. When the

@@ -375,6 +375,7 @@ class MarketCompensationEstimate:
 
 def accepted_estimate_matches_job(
     estimate: MarketCompensationEstimate | None, *, title: str, location: str | None,
+    target_country_code: str | None = None,
 ) -> bool:
     """Check retained evidence against current job inputs across estimator encodings."""
 
@@ -387,11 +388,15 @@ def accepted_estimate_matches_job(
         return False
     country = resolve_country_code(location)
     source_countries = {resolve_country_code(row.location) for row in estimate.evidence}
-    if country is not None and source_countries != {country}:
-        return False
-    if country is None and (not _normalize_location(location) or
-                           {_normalize_location(row.location) for row in estimate.evidence} != {_normalize_location(location)}):
-        return False
+    if target_country_code is not None:
+        if country != target_country_code:
+            return False
+    else:
+        if country is not None and source_countries != {country}:
+            return False
+        if country is None and (not _normalize_location(location) or
+                               {_normalize_location(row.location) for row in estimate.evidence} != {_normalize_location(location)}):
+            return False
     # Old accepted results may themselves contain a wrongly promoted mixed
     # source bucket. Retention must not perpetuate that unsupported population.
     return requested.seniority_label == "unknown" or all(

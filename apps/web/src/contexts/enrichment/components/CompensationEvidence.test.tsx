@@ -459,3 +459,31 @@ it("describes unidentified community reports as a source sample", () => {
   expect(screen.getByText(/Employers are not identified for every report/)).toBeVisible();
   expect(screen.queryByText(/This limited company cohort/)).not.toBeInTheDocument();
 });
+
+it.each([true, false])("keeps canonical source population disclosure with anonymous=%s", (anonymous) => {
+  const { market } = recordedAudit();
+  if (!market.benchmarkLineage) throw new Error("fixture requires canonical lineage");
+  const sourceId = anonymous ? "euro_top_tech" : "levels_fyi";
+  const displayName = anonymous ? "Euro Top Tech" : "Levels.fyi";
+  const companyName = anonymous ? "Euro Top Tech community" : "Levels.fyi market aggregate";
+  renderCompensation({ audit: {
+    ...sampleCompensationAudit,
+    market: { ok: true, recordStatus: "recorded", estimate: {
+      ...market, matchScope: "market_baseline_fallback",
+      benchmarkLineage: { ...market.benchmarkLineage, kind: "direct", priceLevelInputs: [] },
+      sources: [{ ...market.sources[0]!, sourceId, displayName }],
+      evidence: [{ ...market.evidence[0]!, sourceId, displayName, companyName, location: "ES" }],
+    } },
+  } });
+  if (anonymous) {
+    expect(screen.getByText("Regional salary comparison")).toBeVisible();
+    expect(screen.getByText(/Reported compensation from Euro Top Tech in ES/)).toBeVisible();
+    expect(screen.getByText(/Employers are not identified for every report/)).toBeVisible();
+    expect(screen.getByText(/limited source sample/)).toBeVisible();
+    expect(screen.queryByText("Levels.fyi market aggregate")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Based on a direct benchmark/)).not.toBeInTheDocument();
+  } else {
+    expect(screen.getByText(/Based on a direct benchmark for the matched role family and geography/)).toBeVisible();
+    expect(screen.queryByText(/Employers are not identified for every report/)).not.toBeInTheDocument();
+  }
+});

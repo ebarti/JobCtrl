@@ -1082,10 +1082,10 @@ function MarketPanel({
     estimate.evidence.length > 0 &&
     estimate.evidence.every((row) => row.companyName !== "Levels.fyi market aggregate");
   const cohortCompanies = peerCohort ? [...new Set(estimate.evidence.map((row) => row.companyName))].join(", ") : "";
-  const cohortLocations = peerCohort ? [...new Set(estimate.evidence.map((row) => row.location).filter(Boolean))].join("; ") : "";
-  const unidentifiedEmployers = peerCohort && estimate.evidence.some((row) =>
+  const cohortLocations = estimate ? [...new Set(estimate.evidence.map((row) => row.location).filter(Boolean))].join("; ") : "";
+  const unidentifiedEmployers = estimate?.evidence.some((row) =>
     /(?: community$|^unknown(?: company)?$)/i.test(row.companyName.trim()));
-  const cohortSources = peerCohort ? [...new Set(estimate.sources.map((source) => source.displayName))].join(", ") : "";
+  const cohortSources = estimate ? [...new Set(estimate.sources.map((source) => source.displayName))].join(", ") : "";
   const unmatchedLevel = estimate?.estimateState === "insufficient_evidence" &&
     estimate.insufficientReasons.some((reason) => reason.code === "weak_level_match")
     ? estimate.factors.find((factor) => factor.name === "level")?.reason : null;
@@ -1156,7 +1156,7 @@ function MarketPanel({
     >
       <header className="compensation-result-header">
         <h4 className="eyebrow" data-typography="label">
-          {peerCohort && hasRange ? "Regional salary comparison" : "Market salary estimate"}
+          {(peerCohort || unidentifiedEmployers) && hasRange ? "Regional salary comparison" : "Market salary estimate"}
         </h4>
         <b className="compensation-result-value">{outcome.value}</b>
         <StatusBadge tone={outcome.tone}>{outcome.badge}</StatusBadge>

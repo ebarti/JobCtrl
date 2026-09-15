@@ -8,7 +8,6 @@ from dataclasses import dataclass, replace
 from typing import Any, cast
 
 from jobctrl.domain.compensation import (
-    LEVELS_FYI_MARKET_AGGREGATE_COMPANY,
     BenchmarkGeography,
     DirectBenchmarkFact,
     MarketCompensationEstimate,
@@ -24,7 +23,6 @@ from jobctrl.domain.compensation import (
     sanitize_market_source_snapshot,
 )
 from jobctrl.domain.compensation.market import (
-    accepted_estimate_matches_job,
     MARKET_SOURCE_IDS,
     MARKET_WARNING_CODES,
     MarketComponent,
@@ -174,7 +172,7 @@ def materialize_automatic_compensation_estimates(
                     market_repository.save_estimate(peer_estimate)
                     written += 1
                 continue
-            if accepted_estimate_matches_job(current, title=title, location=location):
+            if market_repository.can_retain_estimate(current, title=title, location=location):
                 # An unavailable/weak refresh cannot replace accepted role-level
                 # evidence. Stale source dates remain visible on the retained result.
                 with_benchmark += 1
@@ -393,6 +391,8 @@ def _estimate_from_benchmark(
         for fact in benchmark.source_facts
     )
     sample_count = sum(fact.sample_count for fact in benchmark.source_facts)
+    anonymous_reports = any(fact.source_id == "euro_top_tech" and fact.market_scope == "market"
+                            for fact in benchmark.source_facts)
     warning_values = list(benchmark.warnings)
     if benchmark.seniority_label != job_seniority:
         warning_values.append("benchmark_level_fallback")
@@ -452,11 +452,11 @@ def _estimate_from_benchmark(
         maximum_amount=benchmark.maximum_amount if level_matches else None,
         confidence_interval_minimum_amount=(benchmark.confidence_interval_minimum_amount if level_matches else None),
         confidence_interval_maximum_amount=(benchmark.confidence_interval_maximum_amount if level_matches else None),
-        confidence_band=cast(MarketConfidenceBand, benchmark.confidence_band) if level_matches else "none",
-        confidence_score=round(benchmark.confidence_score, 2) if level_matches else 0.0,
+        confidence_band=("low" if anonymous_reports else cast(MarketConfidenceBand, benchmark.confidence_band)) if level_matches else "none",
+        confidence_score=round(min(0.45, benchmark.confidence_score) if anonymous_reports else benchmark.confidence_score, 2) if level_matches else 0.0,
         source_count=len(sources),
         sample_count=sample_count,
-        aggregate_bucket="reported company-role compensation",
+        aggregate_bucket="reported regional source sample" if anonymous_reports else "reported company-role compensation",
         geography_scope=benchmark.geography.scope,
         occupation_code=benchmark.role_family_code,
         occupation_label=role_label,
@@ -531,7 +531,8 @@ def _evidence_row(
         company_name=(
             fact.normalized_company
             if fact.market_scope == "company" and fact.normalized_company
-            else LEVELS_FYI_MARKET_AGGREGATE_COMPANY
+            else "Euro Top Tech community" if source_id == "euro_top_tech"
+            else f"{_SOURCE_DISPLAY_NAMES[source_id]} market aggregate"
         ),
         role_title=role_label,
         location=_geography_label(fact.geography),
