@@ -715,9 +715,15 @@ def test_automatic_uses_exact_principal_peers_before_all_level_market_and_retain
         assert {row.company_name for row in estimate.evidence} == {"peer cloud"}
         assert estimate.evidence[0].level_label == "principal"
         assert estimate.evidence[0].source_url == peer.source_url
+        # Same-country peer facts are same-location evidence, not a mismatch.
+        assert estimate.match_scope == "same_location_role_fallback"
+        assert "location_mismatch" not in estimate.warnings
+        assert estimate.evidence[0].location == "Spain"
+        assert estimate.evidence[0].location_score >= 0.78
         summary, audit = _projected_compensation(conn, JOB_ONE)
         assert summary["market"]["benchmarkKind"] is None
         assert audit["market"]["estimate"]["benchmarkLineage"] is None
+        assert audit["market"]["estimate"]["matchScope"] == "same_location_role_fallback"
         # The next failed refresh cannot demote accepted peers to generic context,
         # even after its evidence freshness window ends.
         later = "2026-08-21T08:00:00Z"

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
@@ -265,7 +266,7 @@ def _peer_estimate(
         source_id=cast(Any, fact.source_id), source_provenance=cast(Any, fact.source_provenance),
         company_name=fact.normalized_company or "unknown company",
         role_title=fact.role_family_code.replace("_", " "), level_label=fact.seniority_label,
-        location=_geography_label(fact.geography), currency="EUR", period="year",
+        location=_peer_location_label(fact.geography, location), currency="EUR", period="year",
         component=cast(Any, fact.component), minimum_amount=fact.eur_annual_minimum_amount,
         maximum_amount=fact.eur_annual_maximum_amount, sample_count=fact.sample_count,
         release_year=int(fact.as_of_date[:4]), snapshot_version=fact.source_snapshot_id,
@@ -591,6 +592,28 @@ def _geography_label(geography: BenchmarkGeography) -> str:
     if geography.scope == "country_subdivision":
         return f"{geography.subdivision_code}, {geography.country_code}"
     return geography.country_code
+
+
+def _peer_location_label(geography: BenchmarkGeography, job_location: str) -> str:
+    """Label same-country peer evidence with the job's own spelling of that country.
+
+    Peer facts are selected by the job's country code, but the market estimator
+    scores locations textually and reads a bare ISO code such as ``ES`` as a
+    mismatch against ``Madrid, Spain``. Reusing the job's country wording keeps
+    the evidence truthful (it is the same country) and lets the estimator score
+    the cohort as same-location. Unmatched wording falls back to the ISO code.
+    """
+
+    country_label = next(
+        (part.strip() for part in re.split(r"[,/|()]|\s[-\u2013\u2014]\s", job_location)
+         if part.strip() and resolve_country_code(part) == geography.country_code),
+        geography.country_code,
+    )
+    if geography.scope == "locality":
+        return f"{geography.locality}, {country_label}"
+    if geography.scope == "country_subdivision":
+        return f"{geography.subdivision_code}, {country_label}"
+    return country_label
 
 
 def _active_job_rows(
