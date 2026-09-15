@@ -68,10 +68,12 @@ Candidate prose has a separate acceptance check: role framing and the ideal
 candidate narrative describe only candidate capabilities and role needs.
 `analysis_content.validate_candidate_prose` rejects generation/process
 commentary, including past-tense expert agreement or analysis conclusions, on
-draft and synthesized output; synthesis retries include corrective
-feedback. `AnalyzeJobUseCase` repeats the check before persistence. This is a
-generation boundary, not a destructive rewrite or a restriction on reading
-historical records.
+draft and synthesized output. It matches a process subject at a sentence or
+clause start, so domain prose about the candidate's own models, assessments, or
+analyses is accepted. Draft and synthesis retries include the rejection as
+corrective feedback. `AnalyzeJobUseCase` repeats the check before persistence.
+This is a generation boundary, not a destructive rewrite or a restriction on
+reading historical records.
 
 ### Reuse And Lifecycle
 
