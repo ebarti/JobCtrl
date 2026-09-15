@@ -22,7 +22,7 @@ a regression test or an explicit reproducible scenario.
 | Surface | Starting command / selected recipe |
 | --- | --- |
 | API | `corepack pnpm api:check`, focused `api:test` / `api` |
-| Web | `corepack pnpm web:check`, focused `web:test`, `web:build`; types/stories/browser when affected |
+| Web | `corepack pnpm web:lint`, `corepack pnpm web:check`, focused `web:test`, `web:build`; types/stories/browser when affected |
 | Extension | `extension:check`, `extension:test`, `extension:build`, `extension:e2e` through Corepack |
 | Worker | Locked focused Ruff/pytest; full worker suite for worker-wide changes |
 | Scripts | `node --test scripts/<name>.test.mjs` |

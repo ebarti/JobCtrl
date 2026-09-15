@@ -21,5 +21,10 @@ Non-negotiable implementation rules:
   query/mutation success and rollback, and preserve the event/stage parity tests.
 - Keep Storybook free of critical/serious axe violations. Any pre-existing
   production deferral must be recorded in a linked [GitHub issue](https://github.com/ebarti/JobCtrl/issues).
+- Run `corepack pnpm web:lint` before opening a PR. It enforces the dependency
+  direction, Operations read-kernel access, browser-port, and context-owned
+  API/query/store rules above from TypeScript syntax and resolved symbols, and
+  the TypeScript CI web job blocks on it. Scoped exemptions live in
+  `apps/web/boundary-exemptions.json` and fail when stale.
 
 Use `docs/local-reliability-qa.md` for verification.

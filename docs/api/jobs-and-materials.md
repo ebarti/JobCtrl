@@ -50,8 +50,14 @@ results. Historical success does not turn an old failure into a current block.
 `jobKey` resolves at the browser API boundary to the tenant-scoped stable
 `JobId`. Canonical clients send that ID; the explicit API/import boundary may
 also accept a posting or application URL as an external locator and resolve it
-to the same ID. Internal command payloads and foreign references remain
-ID-shaped. `GET /v1/jobs` accepts
+to the same ID. Posting identity (the `JobId`, posting URL, or a retained
+posting locator) resolves first. An application URL resolves only when exactly
+one job in the tenant owns it as its canonical enrichment target or retained
+alias; a shared application endpoint matching several jobs resolves to no job,
+and the route answers `job_not_found`. The
+[application URL authority inventory](../architecture/application-url-authority.md)
+lists every reader of these values. Internal command payloads and foreign
+references remain ID-shaped. `GET /v1/jobs` accepts
 `normalizedScoreKeyword` using the exact key returned by
 `GET /v1/scoring/keywords`; current filtering never mixes historical score
 versions into the result.

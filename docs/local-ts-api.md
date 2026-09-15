@@ -171,12 +171,16 @@ promptly via a task-scoped navigation-error listener. Response streaming stops
 at its byte limit rather than buffering an unbounded body. Rotating the pairing
 token clears the selected
 installation and immediately marks the old extension disconnected. `POST
-/v1/pipeline/actions/run-stage` returns `503
-discovery_extension_unavailable` before workflow dispatch when Discover is one
-of the requested stages and the heartbeat is offline. Top-level `enrich`,
+/v1/pipeline/actions/run-stage` and the job-level and bulk Enrich run/retry
+routes do not require an extension heartbeat: worker-ready, eligible requests
+dispatch with the extension offline and return the normal `202`
+queued/accepted response, while worker readiness
+(`503 worker_runtime_unavailable`), stage eligibility, and authorization gates
+still apply. Each acquisition setup then prefers the connected extension after
+a bounded status probe and otherwise selects guarded public HTTP or anonymous
+Playwright; a fetch failure never switches transport. Top-level `enrich`,
 including mixed-stage requests containing it, is rejected with `400` by the
-request schema; Discovery owns the pipeline enrichment drain. Job-level and
-bulk Enrich run/retry routes perform the same extension heartbeat preflight.
+request schema; Discovery owns the pipeline enrichment drain.
 
 ## Compensation
 
