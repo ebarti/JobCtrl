@@ -74,9 +74,6 @@ git rebase --signoff origin/main
 
 ## Validation
 
-Configured maintainer agent work uses the installed Devflow skills described in
-[AGENTS.md](AGENTS.md) and [workflow setup](docs/developer/workflow.md).
-The maintainer package is not required to build, test or contribute.
 Frontend changes also follow [apps/web/AGENTS.md](apps/web/AGENTS.md).
 
 Run the touched-surface commands in

@@ -1,7 +1,7 @@
 # Reliability & QA
 
-Choose the smallest proof for the accepted outcome. Devflow guides execution and
-records observations; this page selects JobCtrl's risk and product checks.
+Choose the smallest proof for the accepted outcome. This page selects JobCtrl's
+risk and product checks.
 Explicit plans may raise the requirement. Never reduce security, privacy, data,
 migration, release or submission proof to save time.
 

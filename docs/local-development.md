@@ -303,8 +303,7 @@ consent read, and exact denied/granted cookie boundary.
 Choose the touched-surface recipe and required gates through
 [Reliability & QA](local-reliability-qa.md). The root aggregates do not include
 the separate web unit, type-level, Playwright or Storybook suites. Build the
-Python package when packaging behavior changes. Maintainer workflow setup is
-[documented separately](developer/workflow.md).
+Python package when packaging behavior changes.
 
 ## Pull-request CI
 

@@ -2,26 +2,6 @@
 
 ## Workflow
 
-Use the installed `devflow` entry skill and the role needed for the current
-request. Reapply routing when intent changes. Discussion alone starts no work;
-a direct work request authorizes its scope without another approval step.
-
-Use host tools, Git, `gh` and project commands directly. For substantive work,
-reuse a concise work record through the installed Devflow state helper. Keep
-records and evidence outside the repository. On continuation, reconcile them
-with the actual checkout and remote state before retrying uncertain actions.
-
-Delegated implementation defaults to Sol/high (`gpt-5.6-sol`, effort `high`),
-using a configurable worker and a fresh, concise brief with one outcome, owned
-files, dependencies and exact verification steps with expected results.
-Explicit user/project model choices take precedence; other roles retain their
-selected settings. Handle small work directly. Setup and usage:
-`docs/developer/workflow.md`.
-
-Public contributors and clients without the workflow host use `CONTRIBUTING.md`
-and the same product/check requirements. `CLAUDE.md` remains linked here; the
-workflow tools do not become a requirement to use JobCtrl.
-
 Use a dedicated task branch/worktree, preserve unrelated dirty work, and use
 Conventional Commits. Merge, release, deployment and external communication
 still require the user's scoped authorization. Preserve the user's model
