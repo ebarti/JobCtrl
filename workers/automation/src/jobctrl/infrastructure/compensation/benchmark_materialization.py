@@ -180,8 +180,11 @@ def materialize_automatic_compensation_estimates(
                 unchanged += 1
                 continue
         if projection_input is None and state is not None and state.refresh_status == "failed":
+            # Date the placeholder from the failed refresh itself so an unchanged
+            # failed state materializes to the same row and produces no write.
             unavailable = estimate_market_compensation(job_id=job_id, tenant_id=tenant_id,
-                company=company, title=title, location=location, observations=(), estimated_at=canonical_now)
+                company=company, title=title, location=location, observations=(),
+                estimated_at=state.last_checked_at or canonical_now)
             unavailable = replace(unavailable, estimate_state="source_unavailable", insufficient_reasons=(),
                 source_unavailable_reasons=("missing_reported_observation",),
                 estimator_version=f"{CANONICAL_BENCHMARK_ESTIMATOR_VERSION}:unavailable")

@@ -956,3 +956,28 @@ def test_failed_automatic_refresh_retains_explicit_estimate_with_estimator_locat
         assert audit["market"]["estimate"]["minimumAmount"] == accepted.minimum_amount
     finally:
         close_connection()
+
+
+def test_unchanged_failed_state_does_not_rewrite_the_unavailable_placeholder(tmp_path) -> None:
+    conn = init_db(tmp_path / "unavailable-idempotent.db")
+    try:
+        _insert_job(conn, job_id=JOB_ONE, title="Principal Software Engineer")
+        source_load = ReportedCompensationSourceLoad(observations=(), source_errors=("levels_fyi_public_unavailable",))
+        run_automatic_compensation_refresh(conn, tenant_id="local", owner="failed", now=NOW,
+            load_observations=lambda _: source_load, load_fx_rates=_unexpected_fx,
+            load_price_levels=lambda: (), completion_clock=lambda: NOW)
+        first = materialize_automatic_compensation_estimates(conn, tenant_id="local", materialized_at=NOW)
+        repository = SqliteMarketCompensationRepository(conn)
+        placeholder = repository.get_estimate("local", JOB_ONE)
+        assert first.estimates_written == 1 and first.projections_refreshed >= 1
+        assert placeholder is not None and placeholder.estimate_state == "source_unavailable"
+        assert placeholder.estimator_version == f"{CANONICAL_BENCHMARK_ESTIMATOR_VERSION}:unavailable"
+        assert placeholder.estimated_at == "2026-08-12T08:00:00.000000Z"
+        events_before = conn.execute("SELECT COUNT(*) FROM job_events WHERE job_id = ?", (JOB_ONE,)).fetchone()[0]
+        second = materialize_automatic_compensation_estimates(conn, tenant_id="local", materialized_at="2026-08-12T09:00:00Z")
+        assert second.estimates_written == 0 and second.estimates_unchanged == 1
+        assert second.projections_refreshed == 0
+        assert repository.get_estimate("local", JOB_ONE) == placeholder
+        assert conn.execute("SELECT COUNT(*) FROM job_events WHERE job_id = ?", (JOB_ONE,)).fetchone()[0] == events_before
+    finally:
+        close_connection()
