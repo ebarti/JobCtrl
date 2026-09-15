@@ -64,11 +64,12 @@ for comparison:
    `10x` review bound, with a prominent `factor_out_of_bounds` warning.
 5. **Check the source population.** An all-level or unknown-level benchmark is
    contextual evidence for a job with a known seniority, not an estimate of that
-   seniority's pay. Without matching level evidence, the estimate is
-   `insufficient_evidence` with `weak_level_match`, no target range or target
-   confidence, and zero level-match support. The observed range, source
-   population, reported sample counts, and lineage remain inspectable. Exact
-   level evidence remains eligible; no upward salary adjustment is invented.
+   seniority's pay. Without matching level evidence, the automatic canonical
+   benchmark records the estimate as `insufficient_evidence` with
+   `weak_level_match`, no target range or target confidence, and zero
+   level-match support. The observed range, source population, reported sample
+   counts, and lineage remain inspectable. Exact level evidence remains
+   eligible; no upward salary adjustment is invented.
 6. **Materialize the last good result.** The latest direct or extrapolated fact
    is attached to every matching active job, with lineage and warning codes. A
    source outage cannot erase a prior usable range; failed source availability
@@ -84,9 +85,10 @@ Discover, after terminal enrichment and before terminal preparation fan-out.
 The existing explicit compensation refresh remains available for focused
 company-role evidence maintenance. Opening Jobs or Apply Review remains a
 passive read of persisted evidence; it does not fetch or recalculate salary.
-Older saved all-level fallback estimates are reclassified under the same
-applicability contract when their versioned projections rebuild, preserving
-canonical observations and evidence rows.
+Older saved canonical-benchmark estimates that relied on an all-level fallback
+are reclassified under the same applicability contract on those passive reads
+and when their versioned projections rebuild, preserving canonical observations
+and evidence rows.
 
 ## What You Can See And Control
 
