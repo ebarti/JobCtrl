@@ -2,30 +2,25 @@
 
 ## Workflow
 
-Before responding or taking task action, read the installed `using-devflow`
-entry skill and its applicable stage. Reapply routing when intent changes.
-Design discussion uses its method without starting work. A direct work request,
-concrete bug report, named issue or bounded batch authorizes its scope without
-another approval step.
+Use the installed `devflow` entry skill and the role needed for the current
+request. Reapply routing when intent changes. Discussion alone starts no work;
+a direct work request authorizes its scope without another approval step.
 
-For configured maintainer work, use the immutable pin in
-`.devflow/workflow.lock` and `scripts/devflow` for workflow commands. Run
-`doctor --json`; resolve the selected stage with `skill resolve`, including the
-existing work ID for continuation. Definition, planning, coordination,
-implementation, review, verification and delivery are separate skills. `next`
-names the skill owning each action. Read only that stage and its needed resources.
+Use host tools, Git, `gh` and project commands directly. For substantive work,
+reuse a concise work record through the installed Devflow state helper. Keep
+records and evidence outside the repository. On continuation, reconcile them
+with the actual checkout and remote state before retrying uncertain actions.
 
-The original conversation coordinates bounded implementation/repair and
-independent review/QA subagents. Verify identity and resolved settings before
-activation. Persist implementation completion before registered verification and
-every independent PASS/FAIL/BLOCKED before repair or rerun. Reuse the same work,
-attempt and available roles; reconcile uncertain actions before retrying.
-Devflow owns the lifecycle. Missing capability is a diagnostic, never a passing
-gate. Setup, version and recovery boundaries: `docs/developer/workflow.md`.
+Delegated implementation defaults to Sol/high (`gpt-5.6-sol`, effort `high`),
+using a configurable worker and a fresh, concise brief with one outcome, owned
+files, dependencies and exact verification steps with expected results.
+Explicit user/project model choices take precedence; other roles retain their
+selected settings. Handle small work directly. Setup and usage:
+`docs/developer/workflow.md`.
 
 Public contributors and clients without the workflow host use `CONTRIBUTING.md`
 and the same product/check requirements. `CLAUDE.md` remains linked here; the
-host-specific subagent bridge does not become a requirement to use JobCtrl.
+workflow tools do not become a requirement to use JobCtrl.
 
 Use a dedicated task branch/worktree, preserve unrelated dirty work, and use
 Conventional Commits. Merge, release, deployment and external communication

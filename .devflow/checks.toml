@@ -2,6 +2,7 @@ schema_version = 1
 
 # Select recipes for the accepted outcome. These are command definitions, not
 # a requirement to run every suite. Add a focused recipe for uncovered behavior.
+# Run argv directly, substituting an owned artifact path for {report_path}.
 [checks.diff]
 kind = "static"
 description = "Committed PR changes against main have no whitespace errors or conflict markers"

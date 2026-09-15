@@ -1,7 +1,7 @@
 # Reliability & QA
 
-Choose the smallest proof for the accepted outcome. The installed devflow skill
-owns execution and evidence; this page selects JobCtrl's risk and product checks.
+Choose the smallest proof for the accepted outcome. Devflow guides execution and
+records observations; this page selects JobCtrl's risk and product checks.
 Explicit plans may raise the requirement. Never reduce security, privacy, data,
 migration, release or submission proof to save time.
 
@@ -33,9 +33,9 @@ normal gates. Human-found major UI regressions need a fixture or explicit scenar
 | Docs | `corepack pnpm docs:build`, diff check |
 | Cross-stack | `corepack pnpm check`, `corepack pnpm test`, affected separate web suites |
 
-Executable workflow recipes live in `.devflow/checks.toml`; select or add a focused
-recipe before admission. JUnit recipes require executed test cases and reject
-skipped required cases. Exit zero or a build alone is not product QA.
+Focused commands live in `.devflow/checks.toml`. Run the selected `argv` directly,
+substituting an owned artifact path for `{report_path}`. Required tests must
+execute; zero tests, skipped required cases or a build alone are not product QA.
 
 <a id="pick-the-right-checklist"></a>
 <a id="high-risk-regression-areas"></a>

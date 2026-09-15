@@ -16,7 +16,7 @@ where to begin.
 
 Use [Contributing](../../CONTRIBUTING.md) for public PR conventions and
 [Local Development](../local-development.md) for setup/runtime commands.
-Configured maintainer agents use the [pinned workflow](workflow.md).
+Configured maintainer agents use the [Devflow skills](workflow.md).
 Find the [source owner](repository-and-ownership-map.md), then read only the
 architecture reference below that owns the change. Choose the smallest proof
 through [Reliability & QA](../local-reliability-qa.md). Read the
