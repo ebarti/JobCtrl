@@ -2451,7 +2451,7 @@ test("Job Detail requirement-fit card has visual regression coverage", async ({
     .locator(".employer-analysis-requirement")
     .filter({ hasText: PRIMARY_REQUIREMENT_TEXT });
   await expect(drawerRequirement).toHaveCount(1);
-  const disclosure = drawerRequirement.getByRole("button", { name: /^Expand requirement:/ });
+  const disclosure = drawerRequirement.getByRole("button", { name: /^Show evidence/ });
   await expect(disclosure).toHaveAttribute("aria-expanded", "false");
   await expect(drawerRequirement.locator('[data-slot="requirement-fit-summary"]')).not.toBeVisible();
   await disclosure.click();

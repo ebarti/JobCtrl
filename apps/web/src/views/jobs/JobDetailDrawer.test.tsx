@@ -530,7 +530,7 @@ describe("<JobDetailDrawer>", () => {
       name: "Requirement: Lead platform reliability programs across multiple teams",
     });
     const disclosure = within(matchedRequirement).getByRole("button", {
-      name: /^Expand requirement:/,
+      name: /^Show evidence/,
     });
     expect(disclosure).toHaveAttribute("aria-expanded", "false");
     expect(
@@ -1030,7 +1030,7 @@ describe("<JobDetailDrawer>", () => {
       name: "Requirement: Lead platform reliability programs across multiple teams",
     });
     const disclosure = within(requirement).getByRole("button", {
-      name: /^Expand requirement:/,
+      name: /^Show evidence/,
     });
     expect(disclosure).toHaveAttribute("aria-expanded", "false");
     expect(
