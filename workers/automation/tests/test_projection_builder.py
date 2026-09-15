@@ -810,13 +810,15 @@ def test_projects_compensation_summary_and_audit_json(conn: sqlite3.Connection) 
     assert summary["posted"]["range"]["annualizedMaximumEur"] == 82_800
     assert summary["market"]["recordStatus"] == "recorded"
     assert summary["market"]["sourceKind"] == "reported_company_role_market"
-    # Country-matching Madrid evidence takes precedence over the broader Europe row.
-    assert summary["market"]["displayRange"] == "EUR 112000-136000/year"
+    # Both rows are the job's own company at the requested level: exact-company
+    # evidence is kept across geographies and blended, so a same-country generic
+    # row never displaces it.
+    assert summary["market"]["displayRange"] == "EUR 112000-142000/year"
     assert summary["market"]["range"]["annualizedMinimumEur"] == 112_000
-    assert summary["market"]["range"]["annualizedMaximumEur"] == 136_000
-    assert summary["market"]["confidenceScore"] == 0.72
-    assert summary["market"]["sourceCount"] == 1
-    assert summary["market"]["sampleCount"] == 3
+    assert summary["market"]["range"]["annualizedMaximumEur"] == 142_000
+    assert summary["market"]["confidenceScore"] == 0.78
+    assert summary["market"]["sourceCount"] == 2
+    assert summary["market"]["sampleCount"] == 7
 
     detail = conn.execute(
         """
@@ -829,12 +831,15 @@ def test_projects_compensation_summary_and_audit_json(conn: sqlite3.Connection) 
     assert detail is not None
     audit = json.loads(detail["compensation_audit_json"])
     assert audit["posted"]["fact"]["sourceText"] == "USD 70000-90000/year"
-    assert {source["sourceId"] for source in audit["market"]["estimate"]["sources"]} == {"glassdoor"}
-    assert [
+    assert {source["sourceId"] for source in audit["market"]["estimate"]["sources"]} == {"levels_fyi", "glassdoor"}
+    assert sorted(
         (item["sourceId"], item["location"], item["levelLabel"],
          item["minimumAmount"], item["maximumAmount"], item["sampleCount"])
         for item in audit["market"]["estimate"]["evidence"]
-    ] == [("glassdoor", "Madrid, Spain", "Senior", 112_000, 136_000, 3)]
+    ) == [
+        ("glassdoor", "Madrid, Spain", "Senior", 112_000, 136_000, 3),
+        ("levels_fyi", "Remote Europe", "Senior", 118_000, 142_000, 4),
+    ]
     assert audit["market"]["estimate"]["companyName"] == "ExampleCo"
     assert audit["market"]["estimate"]["matchScope"] == "exact_company_role"
     assert "Glassdoor" in json.dumps(audit)

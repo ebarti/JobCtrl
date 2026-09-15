@@ -582,13 +582,22 @@ def estimate_market_compensation(
         level_matches = [row for row in usable_rows
                          if resolve_reported_seniority(row.role_title, row.level_label) == requested_seniority
                          and _role_score(normalized_role, row.role_title) >= 0.55]
-        if level_matches:
-            # Preserve role and level while widening geography. Generic aggregates
-            # and exact-company rows for a different level cannot crowd these out.
-            country = resolve_country_code(location)
-            country_matches = [row for row in level_matches if country and resolve_country_code(row.location) == country]
-            local_matches = [row for row in level_matches if _location_score(location, row.location) >= 0.78]
-            usable_rows = country_matches or local_matches or level_matches
+        # Company-role evidence stays primary: the job's own company rows for the
+        # requested level are kept whatever their geography. Among the remaining
+        # level matches the narrowest geography with evidence wins (country, then
+        # the wider region), so generic aggregates and exact-company rows for a
+        # different level cannot crowd out regional level evidence. Level matches
+        # from another region never replace same-region context on their own; the
+        # requested level is then withheld instead of borrowed.
+        company_matches = [row for row in level_matches
+                           if _company_score(normalized_company, row.company_name) >= 0.95]
+        country = resolve_country_code(location)
+        country_matches = [row for row in level_matches if country and resolve_country_code(row.location) == country]
+        local_matches = [row for row in level_matches if _location_score(location, row.location) >= 0.78]
+        regional_matches = country_matches or local_matches
+        if company_matches or regional_matches:
+            kept = {id(row) for row in company_matches}
+            usable_rows = company_matches + [row for row in regional_matches if id(row) not in kept]
 
     selected_rows, match_scope, scope_warning = _select_rows(
         usable_rows,

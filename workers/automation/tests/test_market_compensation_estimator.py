@@ -590,3 +590,36 @@ def test_mixed_provider_bucket_is_not_exact_level_without_source_title_support(
         assert next(factor.score for factor in estimate.factors if factor.name == "level") == (0.95 if compatible else 0)
     if not compatible:
         assert estimate.minimum_amount is None and estimate.maximum_amount is None
+
+
+def test_exact_company_level_evidence_survives_geography_widening() -> None:
+    rows = (
+        _levels(company="ExampleCo", role="Senior Software Developer", level="Senior",
+                location="Remote Europe", minimum=118_000, maximum=142_000),
+        _levels(company=LEVELS_FYI_MARKET_AGGREGATE_COMPANY, role="Software Developer", level="Senior",
+                location="Spain", minimum=40_000, maximum=70_000, tier="unknown"),
+    )
+    estimate = estimate_market_compensation(job_id=TEST_JOB_ID, company="ExampleCo",
+        title="Senior Software Developer", location="Madrid, Spain", observations=rows,
+        estimated_at="2026-06-19T10:00:00Z")
+    assert estimate.estimate_state == "estimated_range"
+    assert estimate.match_scope == "exact_company_role"
+    assert (estimate.minimum_amount, estimate.maximum_amount) == (118_000, 142_000)
+    assert [row.company_name for row in estimate.evidence] == ["ExampleCo"]
+
+
+def test_level_matches_from_another_region_do_not_displace_same_country_context() -> None:
+    rows = (
+        _levels(company=LEVELS_FYI_MARKET_AGGREGATE_COMPANY, role="Software Engineer", level="all levels",
+                location="Spain", minimum=40_000, maximum=70_000, tier="unknown"),
+        _levels(company="Big US Corp", role="Software Engineer", level="Principal Engineer",
+                location="United States", minimum=300_000, maximum=350_000, tier="unknown"),
+    )
+    estimate = estimate_market_compensation(job_id=TEST_JOB_ID, company="Different Company",
+        title="Principal Software Engineer", location="Madrid, Spain", observations=rows,
+        estimated_at="2026-06-19T10:00:00Z")
+    assert estimate.estimate_state == "insufficient_evidence"
+    assert "weak_level_match" in estimate.insufficient_reasons
+    assert estimate.minimum_amount is None and estimate.maximum_amount is None
+    assert {row.location for row in estimate.evidence} == {"Spain"}
+    assert "location_mismatch" not in estimate.warnings

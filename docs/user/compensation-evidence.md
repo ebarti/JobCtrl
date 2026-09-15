@@ -63,7 +63,14 @@ for comparison:
    factor and numeric range remain visible even outside the supported `0.1x` to
    `10x` review bound, with a prominent `factor_out_of_bounds` warning.
 5. **Look for the requested level.** Public Levels.fyi lookups keep role and
-   seniority while widening a locality to its country. They follow a bounded
+   seniority while widening a locality to its country. The job's own company
+   rows for the requested level are kept whatever their geography and stay the
+   primary evidence. Among other rows, the narrowest geography with level
+   evidence is used: the country first, then the wider region. Level evidence
+   from another region never replaces same-region context on its own; the
+   requested level is withheld instead. A title that merely contains the word
+   executive, such as Account Executive, is not executive seniority; only an
+   explicit executive level label or a C-level title is. They follow a bounded
    set of salary links published by the provider to regional level pages and
    company career-level tables. Returned source labels establish the level;
    requesting a filtered URL never turns all-level data into Principal,
@@ -96,7 +103,8 @@ for comparison:
    lineage. A genuine provider aggregate retains its aggregate label.
 7. **Check the source population.** An all-level or unknown-level benchmark is
    contextual evidence for a job with a known seniority, not an estimate of that
-   seniority's pay. Without matching level evidence, the estimate is
+   seniority's pay. Without matching level evidence, both the automatic
+   canonical benchmark and the explicit refresh record the estimate as
    `insufficient_evidence` with `weak_level_match`, no target range or target
    confidence, and zero level-match support. The observed range, source
    population, reported sample counts, and lineage remain inspectable. Exact
