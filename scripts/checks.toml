@@ -17,7 +17,7 @@ timeout_seconds = 300
 [checks.scripts]
 kind = "junit"
 description = "Repository tooling preserves its tested lifecycle and safety contracts"
-argv = ["sh", "-c", "exec node --test --test-reporter=junit --test-reporter-destination=\"$1\" scripts/*.test.mjs", "devflow-scripts", "{report_path}"]
+argv = ["sh", "-c", "exec node --test --test-reporter=junit --test-reporter-destination=\"$1\" scripts/*.test.mjs", "jobctrl-scripts", "{report_path}"]
 timeout_seconds = 600
 
 [checks.api-types]
@@ -102,7 +102,7 @@ timeout_seconds = 900
 
 [checks.dry-run-diff]
 kind = "static"
-description = "Dry-run completion PR changes against the workflow dependency have no whitespace errors"
+description = "Dry-run completion PR changes against main have no whitespace errors"
 argv = ["git", "diff", "--check", "origin/main...HEAD"]
 
 [checks.domain-events]

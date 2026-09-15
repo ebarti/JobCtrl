@@ -4,9 +4,8 @@
 
 Use a dedicated task branch/worktree, preserve unrelated dirty work, and use
 Conventional Commits. Merge, release, deployment and external communication
-still require the user's scoped authorization. Preserve the user's model
-settings and explicit role overrides. For checks and required independent gates,
-use `docs/local-reliability-qa.md`.
+still require the user's scoped authorization. For project verification
+requirements, use `docs/local-reliability-qa.md`.
 
 ## Reference Routing
 
@@ -21,9 +20,7 @@ Start with `docs/README.md`, then read only the owning reference:
 - Dependencies/scripts: `package.json`, `workers/automation/pyproject.toml`.
 - Web changes: also read `apps/web/AGENTS.md`.
 
-Standalone capabilities update every owning document. Approved unreleased stacks
-may defer canonical docs and cumulative product QA to the final PR; active
-high-risk paths retain their immediate documentation and verification gates.
+Standalone capabilities update every owning document.
 
 ## Local Runtime And Data
 

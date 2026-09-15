@@ -7,19 +7,15 @@ migration, release or submission proof to save time.
 
 | Risk | Required proof and independent gates |
 | --- | --- |
-| 0: prose/comments/format only, no contract effect | `git diff --check`; docs build for published content/links; no artificial tests or role tasks |
+| 0: prose/comments/format only, no contract effect | `git diff --check`; docs build for published content/links |
 | 1: contained internal/tooling/instruction change | Touched checks, diff check, one independent review; instruction changes include conflict/link review |
 | 2: UI/CLI/API/integration/workflow behavior | Tier 1 plus actual product-path QA; review and QA PASS |
 | 3: privacy/security/user data/migrations/releases/submission | Applicable full risk matrix, meaningful regression fixture, operational/product proof; review and QA PASS |
 
-No unresolved Blocker/High may remain. Missing required proof is BLOCKED. Fix and
-rerun the failed gate with the same reviewer/QA identity. Repeat passing checks
-only after relevant changes or unresolved risk. Report commands, results, limits
-and the delivered ref. Contract-only high-risk groundwork needs independent
-review and safety checks; record product QA as mandatory at first execution.
-Approved unreleased stacks use focused checks and review per phase, then canonical
-docs and cumulative product QA in the final PR. Active high-risk paths keep their
-normal gates. Human-found major UI regressions need a fixture or explicit scenario.
+No unresolved Blocker/High may remain, and required scenarios need observed
+results. Contract-only high-risk changes require independent review and safety
+checks, with product verification before first use. Major UI regressions require
+a regression test or an explicit reproducible scenario.
 
 <a id="required-commands"></a>
 
@@ -33,7 +29,7 @@ normal gates. Human-found major UI regressions need a fixture or explicit scenar
 | Docs | `corepack pnpm docs:build`, diff check |
 | Cross-stack | `corepack pnpm check`, `corepack pnpm test`, affected separate web suites |
 
-Focused commands live in `.devflow/checks.toml`. Run the selected `argv` directly,
+Focused commands live in `scripts/checks.toml`. Run the selected `argv` directly,
 substituting an owned artifact path for `{report_path}`. Required tests must
 execute; zero tests, skipped required cases or a build alone are not product QA.
 

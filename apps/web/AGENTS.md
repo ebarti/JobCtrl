@@ -22,4 +22,4 @@ Non-negotiable implementation rules:
 - Keep Storybook free of critical/serious axe violations. Any pre-existing
   production deferral must be recorded in a linked [GitHub issue](https://github.com/ebarti/JobCtrl/issues).
 
-Use the root workflow entry and `docs/local-reliability-qa.md` for verification.
+Use `docs/local-reliability-qa.md` for verification.

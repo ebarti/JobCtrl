@@ -7,7 +7,7 @@ import test from 'node:test';
 
 const managedPython = spawnSync('uv', ['python', 'find', '>=3.12'], {encoding: 'utf8'});
 const python = managedPython.status === 0 ? managedPython.stdout.trim() : 'python3';
-const checks = JSON.parse(execFileSync(python, ['-I', '-S', '-c', 'import json,sys,tomllib; print(json.dumps(tomllib.load(open(sys.argv[1], "rb"))["checks"]))', new URL('../.devflow/checks.toml', import.meta.url).pathname], {encoding: 'utf8'}));
+const checks = JSON.parse(execFileSync(python, ['-I', '-S', '-c', 'import json,sys,tomllib; print(json.dumps(tomllib.load(open(sys.argv[1], "rb"))["checks"]))', new URL('./checks.toml', import.meta.url).pathname], {encoding: 'utf8'}));
 
 function fixture(t) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'jobctrl-check-recipes-')));
