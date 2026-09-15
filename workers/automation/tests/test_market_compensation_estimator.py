@@ -560,6 +560,7 @@ def test_principal_peer_cohort_wins_over_all_levels_and_senior_company_rows() ->
     assert (estimate.minimum_amount, estimate.maximum_amount) == (160_000, 180_000)
     assert estimate.match_scope == "same_location_role_fallback"
     assert estimate.confidence_band == "low"
+    assert estimate.aggregate_bucket == "reported regional company peer cohort"
     assert [(row.company_name, row.level_label, row.location) for row in estimate.evidence] == [
         ("Peer Cloud", "Principal Engineer", "Spain")]
     assert estimate.evidence[0].company_score == 0
@@ -584,6 +585,8 @@ def test_mixed_provider_bucket_is_not_exact_level_without_source_title_support(
     estimate = estimate_market_compensation(job_id=TEST_JOB_ID, company="Unrelated Company", title=target_title,
         location="Spain", observations=(observation,), estimated_at="2026-09-15T10:00:00Z")
     assert (estimate.estimate_state == "estimated_range") is compatible
+    if compatible:
+        assert estimate.aggregate_bucket == "reported regional source sample"
     if compatible or estimate.evidence:
         assert estimate.evidence[0].level_label == bucket
         assert estimate.evidence[0].role_title == source_title

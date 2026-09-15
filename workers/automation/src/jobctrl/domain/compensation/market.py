@@ -1595,12 +1595,27 @@ def _aggregate_bucket(company: str | None, title: str | None, match_scope: Marke
     return f"reported compensation for {_clean_display(company) or 'unknown company'} {_clean_display(title) or 'unknown role'}"
 
 
+def _is_unidentified_employer(row: ReportedCompensationObservation) -> bool:
+    name = _normalize_location(row.company_name)
+    return name in {"", "unknown", "unknown company"} or name.endswith(" community")
+
+
 def _estimate_aggregate_bucket(
     company: str | None,
     title: str | None,
     match_scope: MarketMatchScope,
     rows: list[ReportedCompensationObservation],
 ) -> str:
+    # The persisted bucket is the read model's source of truth for the regional
+    # comparison disclosure, so the explicit estimator names the population the
+    # same way the automatic materialization does.
+    regional_scopes = {"same_location_role_fallback", "tier_role_fallback", "market_baseline_fallback"}
+    if rows and match_scope in regional_scopes and any(_is_unidentified_employer(row) for row in rows):
+        return "reported regional source sample"
+    if rows and match_scope == "same_location_role_fallback" and all(
+        row.company_name != LEVELS_FYI_MARKET_AGGREGATE_COMPANY for row in rows
+    ):
+        return "reported regional company peer cohort"
     if rows and all(row.source_id == "posted_salary_text" for row in rows):
         if match_scope == "same_location_role_fallback":
             return "employer-posted same-location role compensation"
