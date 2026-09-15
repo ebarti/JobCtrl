@@ -57,14 +57,23 @@ Use of this data requires attribution to **Levels.fyi**.
 
     def fetch(url: str) -> str | None:
         calls.append(url)
-        return markdown
+        return markdown if url == "https://www.levels.fyi/t/software-engineer/locations/madrid-esp.md" else None
 
     observations = load_levels_fyi_public_observations(
         [LevelsFyiPublicTarget("Senior Software Engineer", "Madrid, Spain")],
         fetch_text=fetch,
     )
 
-    assert calls == ["https://www.levels.fyi/t/software-engineer/locations/madrid-esp.md"]
+    assert calls == [
+        "https://www.levels.fyi/t/software-engineer/levels/senior/locations/madrid-esp.md",
+        "https://www.levels.fyi/t/software-engineer/levels/senior/locations/madrid-esp",
+        "https://www.levels.fyi/t/software-engineer/locations/madrid-esp.md",
+        "https://www.levels.fyi/t/software-engineer/locations/madrid-esp",
+        "https://www.levels.fyi/t/software-engineer/levels/senior/locations/spain.md",
+        "https://www.levels.fyi/t/software-engineer/levels/senior/locations/spain",
+        "https://www.levels.fyi/t/software-engineer/locations/spain.md",
+        "https://www.levels.fyi/t/software-engineer/locations/spain",
+    ]
     assert len(observations) == 2
     aggregate, company = observations
     assert aggregate.company_name == LEVELS_FYI_MARKET_AGGREGATE_COMPANY
@@ -215,3 +224,104 @@ def test_nonfinite_company_value_does_not_discard_valid_page_aggregate() -> None
         70_000,
         130_000,
     )
+
+
+def _html(props: dict, links: tuple[str, ...] = ()) -> str:
+    return ('<html>' + ''.join(f'<a href="{link}">salary</a>' for link in links)
+            + '<script id="__NEXT_DATA__">' + json.dumps({"props": {"pageProps": props}}) + '</script></html>')
+
+
+def _company_props() -> dict:
+    return {
+        "jobFamily": "Software Engineer", "jobFamilySlug": "software-engineer",
+        "levels": {"company": "Example Cloud"},
+        "locationMeta": {"name": "Spain", "type": "country"},
+        "locationCurrency": "EUR", "locationExchangeRate": 0.8,
+        # These unrelated global percentiles must never be used for a level row.
+        "percentiles": {"locationName": "United States", "percentile25": 1, "percentile75": 2},
+        "averages": [
+            {"primaryLevelName": "Principal Engineer", "total": 200_000, "count": 4,
+             "levelPageUrl": "/companies/example-cloud/salaries/software-engineer/levels/principal/locations/spain"},
+            {"primaryLevelName": "Senior Engineer", "total": 120_000, "count": 9,
+             "levelPageUrl": "/companies/example-cloud/salaries/software-engineer/levels/senior/locations/spain"},
+            {"primaryLevelName": "L8", "total": 900_000, "count": 2,
+             "levelPageUrl": "/companies/example-cloud/salaries/software-engineer/levels/l8/locations/spain"},
+        ],
+    }
+
+
+def test_discovers_source_owned_company_levels_after_country_fallback() -> None:
+    regional = f"{LEVELS_FYI_BASE_URL}/t/software-engineer/locations/spain"
+    company = f"{LEVELS_FYI_BASE_URL}/companies/example-cloud/salaries/software-engineer/locations/spain"
+    pages = {regional: _html({}, (company, "https://unrelated.invalid/secret", "/companies/unrelated/salaries/sales/locations/spain")),
+             company: _html(_company_props())}
+    calls = []
+    def fetch(url: str) -> str | None:
+        calls.append(url)
+        return pages.get(url)
+    observations = load_levels_fyi_public_observations(
+        [LevelsFyiPublicTarget("Principal Software Engineer", "Madrid, Spain")], fetch_text=fetch)
+    principal = next(row for row in observations if row.level_label == "Principal Engineer")
+    assert principal.company_name == "Example Cloud"
+    assert principal.location == "Spain"
+    assert principal.currency == "EUR"
+    assert principal.minimum_amount == principal.maximum_amount == 160_000
+    assert principal.sample_count == 4
+    assert principal.source_url == company.replace("/locations/", "/levels/principal/locations/")
+    assert all("unrelated" not in call for call in calls)
+    assert all(row.level_label != "L8" for row in observations)
+    assert len(calls) <= 24
+
+
+def test_filtered_route_does_not_relabel_an_all_level_payload() -> None:
+    regional = f"{LEVELS_FYI_BASE_URL}/t/software-engineer/locations/spain"
+    filtered = f"{LEVELS_FYI_BASE_URL}/t/software-engineer/levels/senior/locations/spain"
+    schema = {"estimatedSalary": [{"name": "total", "currency": "EUR", "median": 70_000}], "sampleSize": 50}
+    props = {"jobFamily": "Software Engineer", "location": "Spain",
+             "jobFamilyLocationPageOccupationSchema": json.dumps(schema)}
+    pages = {regional: _html(props, (filtered,)), filtered: _html(props)}
+    rows = load_levels_fyi_public_observations([LevelsFyiPublicTarget("Senior Software Engineer", "Spain")],
+                                             fetch_text=pages.get)
+    assert rows and {row.level_label for row in rows} == {"all levels"}
+    props["level"] = "Senior"
+    pages[filtered] = _html(props)
+    rows = load_levels_fyi_public_observations([LevelsFyiPublicTarget("Senior Software Engineer", "Spain")],
+                                             fetch_text=pages.get)
+    assert next(row for row in rows if row.source_url == filtered).level_label == "Senior"
+
+
+def test_source_traversal_budget_counts_discovery_pages_and_empty_bodies_as_unavailable() -> None:
+    calls = []
+    outcomes = []
+    def fetch(url: str) -> str:
+        calls.append(url)
+        return ""
+    rows = load_levels_fyi_public_observations(
+        [LevelsFyiPublicTarget("Principal Software Engineer", "Madrid, Spain")], fetch_text=fetch,
+        max_pages=1, on_load_outcome=outcomes.append)
+    assert rows == () and len(calls) == 2
+    assert outcomes[0].requested_pages == 1
+    assert outcomes[0].unavailable
+
+
+def test_supported_regional_level_route_is_requested_before_generic_population() -> None:
+    level_url = f"{LEVELS_FYI_BASE_URL}/t/software-engineer/levels/senior/locations/spain"
+    schema = {"estimatedSalary": [{"name": "total", "currency": "EUR", "median": 80_000}], "sampleSize": 40}
+    props = {"jobFamily": "Software Engineer", "level": "Senior", "location": "Spain",
+             "jobFamilyLocationPageOccupationSchema": json.dumps(schema)}
+    calls = []
+    def fetch(url):
+        calls.append(url)
+        return _html(props) if url == level_url else None
+    rows = load_levels_fyi_public_observations([LevelsFyiPublicTarget("Senior Software Engineer", "Spain")], fetch_text=fetch)
+    assert calls == [level_url + ".md", level_url]
+    assert len(rows) == 1 and rows[0].level_label == "Senior"
+
+
+def test_generic_available_but_level_discovery_unavailable_is_reported_as_partial_failure() -> None:
+    outcomes = []
+    # Empty bodies on the requested level discovery path are an acquisition
+    # failure, not proof that Principal salary records do not exist.
+    load_levels_fyi_public_observations([LevelsFyiPublicTarget("Principal Software Engineer", "Spain")],
+        fetch_text=lambda _url: "", on_load_outcome=outcomes.append)
+    assert outcomes[0].level_lookup_unavailable

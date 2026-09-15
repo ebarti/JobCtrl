@@ -388,6 +388,29 @@ class SqliteCompensationBenchmarkRepository:
         row = _fetchone_mapping(self._conn.execute(sql, params))
         return _direct_from_row(row) if row is not None else None
 
+    def fresh_company_peers(
+        self, *, tenant_id: str, taxonomy_version: str, role_family_code: str,
+        seniority_label: str, country_code: str, component: str, fresh_at: str,
+    ) -> tuple[DirectBenchmarkFact, ...]:
+        """One latest non-overlapping source slice per company in the target country."""
+        cursor = self._conn.execute(
+            """
+            SELECT * FROM (
+                SELECT facts.*, ROW_NUMBER() OVER (
+                    PARTITION BY source_id, normalized_company
+                    ORDER BY (geography_scope = 'country') DESC, fetched_at DESC, fact_id DESC
+                ) AS peer_position
+                FROM compensation_direct_benchmark_facts AS facts
+                WHERE tenant_id = ? AND taxonomy_version = ? AND role_family_code = ?
+                  AND seniority_label = ? AND country_code = ? AND component = ?
+                  AND market_scope = 'company' AND fresh_until >= ?
+            ) WHERE peer_position = 1 ORDER BY normalized_company, source_id LIMIT 20
+            """,
+            (tenant_id, taxonomy_version, role_family_code, seniority_label, country_code,
+             component, canonical_benchmark_timestamp(fresh_at, "fresh_at")),
+        )
+        return tuple(_direct_from_row(row) for row in _fetchall_mappings(cursor))
+
     def latest_price_level(
         self,
         *,

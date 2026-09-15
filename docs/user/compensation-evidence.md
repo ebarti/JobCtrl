@@ -62,18 +62,44 @@ for comparison:
    weight. A cost-of-living-only range is allowed at low confidence. The raw
    factor and numeric range remain visible even outside the supported `0.1x` to
    `10x` review bound, with a prominent `factor_out_of_bounds` warning.
-5. **Check the source population.** An all-level or unknown-level benchmark is
+5. **Look for the requested level.** Public Levels.fyi lookups keep role and
+   seniority while widening a locality to its country. They follow a bounded
+   set of salary links published by the provider to regional level pages and
+   company career-level tables. Returned source labels establish the level;
+   requesting a filtered URL never turns all-level data into Principal,
+   Director, or another level. Numeric company grades without an explicit
+   seniority label remain unclassified. A refresh shares a maximum of 25
+   public page loads, including discovery pages, with at most 12 per lookup;
+   each page tries Markdown and, when needed, its public HTML through the
+   existing source policy and network gateway.
+6. **Keep regional company comparisons distinct.** When matching market-wide
+   evidence is missing, fresh company observations for the exact role and
+   seniority can support a low-confidence regional comparison. The detail
+   card names the actual companies and source geographies beside the amount.
+   This limited cohort may overrepresent high-paying employers. Company
+   observations remain company-scoped, preserve source URLs and sample
+   counts, and are never promoted into a market-wide direct fact or geographic
+   extrapolation lineage. An all-level market fact cannot displace matching
+   level evidence. The automatic path uses one non-overlapping source slice
+   per company within the target country; exact market evidence takes
+   precedence.
+7. **Check the source population.** An all-level or unknown-level benchmark is
    contextual evidence for a job with a known seniority, not an estimate of that
    seniority's pay. Without matching level evidence, the estimate is
    `insufficient_evidence` with `weak_level_match`, no target range or target
    confidence, and zero level-match support. The observed range, source
    population, reported sample counts, and lineage remain inspectable. Exact
    level evidence remains eligible; no upward salary adjustment is invented.
-6. **Materialize the last good result.** The latest direct or extrapolated fact
+8. **Materialize the last good result.** The latest direct or extrapolated fact
    is attached to every matching active job, with lineage and warning codes. A
    source outage cannot erase a prior usable range; failed source availability
    retries after one day, while successful or insufficient slices are checked
-   again after seven days.
+   again after seven days. A failed requested-level lookup is identified as
+   unavailable or insufficient evidence while retaining the actual broad
+   source population as context. An empty HTTP response, blocked request, or
+   unavailable company page does not establish that salary evidence does not
+   exist. Automatic and explicit refreshes retain a prior accepted range
+   during those failures; they never replace it with a weaker all-level span.
 
 Employer-posted facts may be parsed when Discovery ingests or refreshes a job
 and are also reparsed during an explicit compensation refresh. When the

@@ -365,7 +365,7 @@ def test_weak_market_factors_emit_low_confidence_ranges_with_wider_intervals() -
         estimated_at="2026-06-19T10:00:00Z",
     )
 
-    for estimate in (low_sample, weak_level, weak_location, source_dispersion):
+    for estimate in (low_sample, weak_location, source_dispersion):
         assert estimate.estimate_state == "estimated_range"
         assert estimate.confidence_band == "low"
         assert estimate.minimum_amount is not None
@@ -378,7 +378,10 @@ def test_weak_market_factors_emit_low_confidence_ranges_with_wider_intervals() -
     assert "low_sample_count" in low_sample.warnings
     assert any(factor.name == "sample" for factor in low_sample.factors)
 
-    assert any(factor.name == "level" for factor in weak_level.factors)
+    assert weak_level.estimate_state == "insufficient_evidence"
+    assert weak_level.minimum_amount is None
+    assert "weak_level_match" in weak_level.insufficient_reasons
+    assert next(factor for factor in weak_level.factors if factor.name == "level").score == 0
 
     assert "location_mismatch" in weak_location.warnings
     assert any(factor.name == "location" for factor in weak_location.factors)
@@ -455,10 +458,12 @@ def test_levels_public_market_fallback_uses_aggregate_instead_of_top_payer_range
         estimated_at="2026-07-12T10:00:00Z",
     )
 
-    assert estimate.estimate_state == "estimated_range"
+    assert estimate.estimate_state == "insufficient_evidence"
     assert estimate.match_scope == "same_location_role_fallback"
-    assert estimate.minimum_amount == 39_000
-    assert estimate.maximum_amount == 77_000
+    assert estimate.minimum_amount is None
+    assert estimate.evidence[0].minimum_amount == 39_000
+    assert "weak_level_match" in estimate.insufficient_reasons
+    assert estimate.maximum_amount is None
     assert [row.company_name for row in estimate.evidence] == [LEVELS_FYI_MARKET_AGGREGATE_COMPANY]
 
 
@@ -536,3 +541,22 @@ def test_posted_salary_conflict_is_explicit(
         assert "source_conflict_with_posted_salary" not in estimate.warnings
     else:
         assert expected_warning in estimate.warnings
+
+
+def test_principal_peer_cohort_wins_over_all_levels_and_senior_company_rows() -> None:
+    rows = (
+        _levels(company=LEVELS_FYI_MARKET_AGGREGATE_COMPANY, role="Software Engineer", level="all levels", minimum=40_000, maximum=70_000, location="Spain", tier="unknown"),
+        _levels(company="Different Company", role="Software Engineer", level="Senior", minimum=80_000, maximum=100_000, location="Spain", tier="unknown"),
+        _levels(company="Peer Cloud", role="Software Engineer", level="Principal Engineer", minimum=160_000, maximum=180_000, location="Spain", tier="unknown"),
+        _levels(company="Peer Cloud", role="Software Engineer", level="Principal Engineer", minimum=200_000, maximum=240_000, location="Germany", tier="unknown"),
+    )
+    estimate = estimate_market_compensation(job_id=TEST_JOB_ID, company="Different Company",
+        title="Principal Software Engineer", location="Madrid, Spain", observations=rows,
+        estimated_at="2026-06-19T10:00:00Z")
+    assert estimate.estimate_state == "estimated_range"
+    assert (estimate.minimum_amount, estimate.maximum_amount) == (160_000, 180_000)
+    assert estimate.match_scope == "same_location_role_fallback"
+    assert estimate.confidence_band == "low"
+    assert [(row.company_name, row.level_label, row.location) for row in estimate.evidence] == [
+        ("Peer Cloud", "Principal Engineer", "Spain")]
+    assert estimate.evidence[0].company_score == 0

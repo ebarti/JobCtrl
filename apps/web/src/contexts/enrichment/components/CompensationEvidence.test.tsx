@@ -426,3 +426,19 @@ describe("<CompensationAuditSection>", () => {
     ).not.toBeInTheDocument();
   });
 });
+
+
+it("labels a limited company peer comparator beside the amount", () => {
+  const { market } = recordedAudit();
+  renderCompensation({ audit: {
+    ...sampleCompensationAudit,
+    market: { ok: true, recordStatus: "recorded", estimate: {
+      ...market, estimatorVersion: "company-role-reported-compensation-v4",
+      matchScope: "same_location_role_fallback", benchmarkLineage: null,
+      evidence: [{ ...market.evidence[0]!, companyName: "Peer Cloud", location: "Spain", levelLabel: "Principal" }],
+    } },
+  } });
+  expect(screen.getByText("Regional salary comparison")).toBeVisible();
+  expect(screen.getByText(/Reported compensation at Peer Cloud in Spain/)).toBeVisible();
+  expect(screen.getByText(/may overrepresent high-paying employers/)).toBeVisible();
+});

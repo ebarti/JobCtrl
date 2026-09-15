@@ -9,9 +9,10 @@ from datetime import datetime, timezone
 from statistics import median
 from typing import Literal
 
+from jobctrl.domain.compensation.benchmarks import classify_seniority, resolve_country_code
 from jobctrl.domain.identifiers import JobId, canonical_job_id
 
-ESTIMATOR_VERSION = "company-role-reported-compensation-v3"
+ESTIMATOR_VERSION = "company-role-reported-compensation-v4"
 
 MarketEstimateState = Literal[
     "not_requested",
@@ -541,12 +542,27 @@ def estimate_market_compensation(
             estimated_at=now,
         )
 
+    company_context_rows = usable_rows
+    requested_seniority = classify_seniority(seniority_label or title)
+    if requested_seniority != "unknown":
+        level_matches = [row for row in usable_rows
+                         if classify_seniority(row.level_label or row.role_title) == requested_seniority
+                         and _role_score(normalized_role, row.role_title) >= 0.55]
+        if level_matches:
+            # Preserve role and level while widening geography. Generic aggregates
+            # and exact-company rows for a different level cannot crowd these out.
+            country = resolve_country_code(location)
+            country_matches = [row for row in level_matches if country and resolve_country_code(row.location) == country]
+            local_matches = [row for row in level_matches if _location_score(location, row.location) >= 0.78]
+            usable_rows = country_matches or local_matches or level_matches
+
     selected_rows, match_scope, scope_warning = _select_rows(
         usable_rows,
         normalized_company=normalized_company,
         normalized_role=normalized_role,
         location=location,
         inferred_level=inferred_level,
+        company_context_rows=company_context_rows,
     )
     if scope_warning:
         warnings.append(scope_warning)
@@ -573,7 +589,12 @@ def estimate_market_compensation(
 
     company_scores = tuple(_company_score(normalized_company, row.company_name) for row in selected_rows)
     role_scores = tuple(_role_score(normalized_role, row.role_title) for row in selected_rows)
-    level_scores = tuple(_level_score(inferred_level, row.level_label) for row in selected_rows)
+    level_scores = tuple(
+        0.0 if requested_seniority != "unknown"
+        and classify_seniority(row.level_label or row.role_title) != requested_seniority
+        else _level_score(inferred_level, row.level_label)
+        for row in selected_rows
+    )
     location_scores = tuple(_location_score(location, row.location) for row in selected_rows)
     freshness_scores = tuple(_freshness_score(row.release_year, now) for row in selected_rows)
     source_count = len({row.source_id for row in selected_rows})
@@ -637,7 +658,10 @@ def estimate_market_compensation(
     }.get(match_scope, f"Company evidence provides {company_percent}% support.")
     role_reason = f"Selected salary rows provide {role_percent}% role support for {title}."
     level_reason = (
-        f"The job title was classified as {inferred_level}; selected rows provide {level_percent}% seniority support."
+        f"The requested {requested_seniority} level has no matching evidence; observed source levels: "
+        + ", ".join(sorted({str(row.level_label or "unknown") for row in selected_rows})) + "."
+        if requested_seniority != "unknown" and level_score == 0
+        else f"The job title was classified as {inferred_level}; selected rows provide {level_percent}% seniority support."
     )
     factors.extend(
         [
@@ -708,7 +732,7 @@ def estimate_market_compensation(
     )
 
     minimum_score = _minimum_estimate_score(selected_rows, match_scope)
-    if confidence_score < minimum_score:
+    if confidence_score < minimum_score or (requested_seniority != "unknown" and level_score == 0):
         return _estimate(
             tenant_id=tenant_id,
             job_id=job_id,
@@ -903,6 +927,7 @@ def _select_rows(
     normalized_role: str,
     location: str | None,
     inferred_level: str | None,
+    company_context_rows: list[ReportedCompensationObservation],
 ) -> tuple[list[ReportedCompensationObservation], MarketMatchScope, MarketWarningCode | None]:
     exact = [
         row
@@ -922,7 +947,7 @@ def _select_rows(
     if adjacent:
         return adjacent, "company_adjacent_role", "company_role_fallback"
 
-    company_rows = [row for row in rows if _company_score(normalized_company, row.company_name) >= 0.95]
+    company_rows = [row for row in company_context_rows if _company_score(normalized_company, row.company_name) >= 0.95]
     company_tier, _ = _company_tier(company_rows)
     target_level = _normalize_level(inferred_level)
     if company_tier != "unknown":

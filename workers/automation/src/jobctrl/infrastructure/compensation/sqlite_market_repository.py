@@ -41,6 +41,7 @@ from jobctrl.domain.compensation import (
     MarketSourceSnapshot,
     ReportedCompensationObservation,
     estimate_market_compensation,
+    resolve_country_code,
     sanitize_market_source_snapshot,
 )
 from jobctrl.domain.events.base import DomainEvent
@@ -488,6 +489,7 @@ class SqliteMarketCompensationRepository:
         estimated_at: str | None = None,
         limit: int = 0,
         job_id: JobId | None = None,
+        preserve_accepted_on_failure: bool = False,
     ) -> int:
         if job_id is not None:
             job_id = canonical_job_id(str(job_id))
@@ -516,6 +518,22 @@ class SqliteMarketCompensationRepository:
                 component="total_compensation",
                 estimated_at=estimated_at,
             )
+            if preserve_accepted_on_failure and not estimate.evidence:
+                estimate = replace(estimate, estimate_state="source_unavailable", insufficient_reasons=(),
+                                   source_unavailable_reasons=("missing_reported_observation",))
+            if preserve_accepted_on_failure and estimate.estimate_state != "estimated_range":
+                estimate = replace(estimate, factors=tuple(
+                    replace(factor, reason=f"The requested role and level lookup could not retrieve supporting source pages. {factor.reason}")
+                    if factor.name == "level" else factor for factor in estimate.factors
+                ))
+            current = self.get_estimate(tenant_id, current_job_id) if preserve_accepted_on_failure else None
+            if (current is not None and current.estimate_state == "estimated_range"
+                    and estimate.estimate_state != "estimated_range"
+                    and current.role_title == title
+                    and current.seniority_label == estimate.seniority_label
+                    and any(resolve_country_code(item.location) == resolve_country_code(location)
+                            for item in current.evidence)):
+                continue
             self.save_estimate(estimate)
         self._conn.commit()
         return len(rows)
@@ -687,7 +705,7 @@ def load_default_reported_compensation_observations(
         if str(source_env.get("JOBCTRL_LEVELS_FYI_ACCESS_MODE") or "").strip().casefold() == "public_markdown"
         else ()
     )
-    if any(outcome.unavailable for outcome in levels_fyi_outcomes):
+    if any(outcome.unavailable or outcome.level_lookup_unavailable or outcome.reachable_pages < outcome.requested_pages for outcome in levels_fyi_outcomes):
         source_errors.append("levels_fyi_public_unavailable")
     levels_fyi = (*levels_fyi_public, *levels_fyi_licensed)
     glassdoor = _load_configured_provider_observations(

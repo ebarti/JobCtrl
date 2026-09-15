@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, cast
 
 from jobctrl.domain.compensation import (
@@ -12,6 +12,8 @@ from jobctrl.domain.compensation import (
     BenchmarkGeography,
     DirectBenchmarkFact,
     MarketCompensationEstimate,
+    ReportedCompensationObservation,
+    estimate_market_compensation,
     MarketConfidenceFactor,
     MarketEvidenceRow,
     MarketSourceSnapshot,
@@ -89,6 +91,7 @@ class _BenchmarkProjectionInput:
     warnings: tuple[str, ...]
     observed_at: str
     fresh_until: str
+    source_lookup_failed: bool = False
 
 
 def materialize_automatic_compensation_estimates(
@@ -153,6 +156,47 @@ def materialize_automatic_compensation_estimates(
             benchmark_repository,
             state,
         )
+        company = _nullable_text(row["company"]) or _nullable_text(row["site"])
+        if projection_input is None or projection_input.seniority_label != classification.seniority_label:
+            peers = benchmark_repository.fresh_company_peers(
+                tenant_id=tenant_id, taxonomy_version=classification.taxonomy_version,
+                role_family_code=classification.role_family_code, seniority_label=classification.seniority_label,
+                country_code=country_code, component=benchmark_slice.component, fresh_at=canonical_now,
+            )
+            peer_estimate = _peer_estimate(peers, benchmark_slice, job_id, title, company, location, canonical_now)
+            current = market_repository.get_estimate(tenant_id, job_id)
+            if peer_estimate is not None:
+                with_benchmark += 1
+                if current == peer_estimate:
+                    unchanged += 1
+                else:
+                    market_repository.save_estimate(peer_estimate)
+                    written += 1
+                continue
+            if (current is not None and current.estimate_state == "estimated_range"
+                    and current.role_title == title
+                    and current.normalized_role == classification.role_family_code
+                    and current.seniority_label == classification.seniority_label
+                    and any(resolve_country_code(item.location) == country_code for item in current.evidence)):
+                # An unavailable/weak refresh cannot replace accepted role-level
+                # evidence. Stale source dates remain visible on the retained result.
+                with_benchmark += 1
+                unchanged += 1
+                continue
+        if projection_input is None and state is not None and state.refresh_status == "failed":
+            unavailable = estimate_market_compensation(job_id=job_id, tenant_id=tenant_id,
+                company=company, title=title, location=location, observations=(), estimated_at=canonical_now)
+            unavailable = replace(unavailable, estimate_state="source_unavailable", insufficient_reasons=(),
+                source_unavailable_reasons=("missing_reported_observation",),
+                estimator_version=f"{CANONICAL_BENCHMARK_ESTIMATOR_VERSION}:unavailable")
+            current = market_repository.get_estimate(tenant_id, job_id)
+            if current == unavailable:
+                unchanged += 1
+            else:
+                market_repository.save_estimate(unavailable)
+                written += 1
+            without_benchmark += 1
+            continue
         if projection_input is None:
             without_benchmark += 1
             cleared += int(
@@ -165,7 +209,6 @@ def materialize_automatic_compensation_estimates(
             )
             continue
         with_benchmark += 1
-        company = _nullable_text(row["company"]) or _nullable_text(row["site"])
         try:
             estimate = _estimate_from_benchmark(
                 job_id=job_id,
@@ -217,6 +260,35 @@ def materialize_automatic_compensation_estimates(
     )
 
 
+def _peer_estimate(
+    peers: tuple[DirectBenchmarkFact, ...], benchmark_slice: CompensationBenchmarkSlice,
+    job_id: JobId, title: str, company: str | None, location: str, materialized_at: str,
+) -> MarketCompensationEstimate | None:
+    if not peers or benchmark_slice.seniority_label == "unknown":
+        return None
+    observations = tuple(ReportedCompensationObservation(
+        source_id=cast(Any, fact.source_id), source_provenance=cast(Any, fact.source_provenance),
+        company_name=fact.normalized_company or "unknown company",
+        role_title=fact.role_family_code.replace("_", " "), level_label=fact.seniority_label,
+        location=_geography_label(fact.geography), currency="EUR", period="year",
+        component=cast(Any, fact.component), minimum_amount=fact.eur_annual_minimum_amount,
+        maximum_amount=fact.eur_annual_maximum_amount, sample_count=fact.sample_count,
+        release_year=int(fact.as_of_date[:4]), snapshot_version=fact.source_snapshot_id,
+        source_url=fact.source_url, attribution=fact.attribution,
+    ) for fact in peers if fact.source_id in MARKET_SOURCE_IDS)
+    estimate = estimate_market_compensation(
+        job_id=job_id, tenant_id=benchmark_slice.tenant_id, company=company, title=title,
+        location=location, seniority_label=benchmark_slice.seniority_label,
+        observations=observations, estimated_at=max(fact.fetched_at for fact in peers),
+    )
+    if estimate.estimate_state != "estimated_range":
+        return None
+    return replace(estimate, normalized_role=benchmark_slice.role_family_code,
+                   estimator_version=f"{CANONICAL_BENCHMARK_ESTIMATOR_VERSION}:company-peers",
+                   aggregate_bucket="reported regional company peer cohort",
+                   confidence_band="low", confidence_score=min(0.45, estimate.confidence_score))
+
+
 def _projection_input(
     repository: SqliteCompensationBenchmarkRepository,
     state: CompensationRefreshState | None,
@@ -247,6 +319,7 @@ def _projection_input(
             warnings=(),
             observed_at=direct.fetched_at,
             fresh_until=direct.fresh_until,
+            source_lookup_failed=state.refresh_status == "failed",
         )
     if state.last_result_kind == "extrapolated" and state.last_extrapolated_fact_id:
         extrapolated = repository.get_extrapolated(
@@ -292,6 +365,7 @@ def _projection_input(
             warnings=tuple(warnings),
             observed_at=extrapolated.derived_at,
             fresh_until=extrapolated.fresh_until,
+            source_lookup_failed=state.refresh_status == "failed",
         )
     return None
 
@@ -345,7 +419,9 @@ def _estimate_from_benchmark(
             (
                 f"Matched canonical seniority {benchmark.seniority_label}."
                 if level_score == 1.0
-                else f"The {benchmark.seniority_label} population does not establish pay for {job_seniority}."
+                else ("The requested role and level lookup could not retrieve supporting source pages. "
+                      if benchmark.source_lookup_failed else "")
+                + f"The {benchmark.seniority_label} population does not establish pay for {job_seniority}."
             ),
         ),
         _factor(

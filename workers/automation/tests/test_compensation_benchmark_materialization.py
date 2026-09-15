@@ -49,7 +49,8 @@ def test_direct_benchmark_materializes_every_matching_job_idempotently(
             owner="discover-1",
             now=NOW,
             load_observations=lambda _targets: ReportedCompensationSourceLoad(
-                observations=(_observation(country="Spain"),)
+                observations=(_observation(country="Spain"), replace(_observation(country="Spain"),
+                    company_name="Peer Cloud", minimum_amount=180_000, maximum_amount=220_000))
             ),
             load_fx_rates=_unexpected_fx,
             load_price_levels=lambda: (),
@@ -685,3 +686,43 @@ def _price_level(*, country: str, index: float):
 
 def _unexpected_fx():
     raise AssertionError("EUR-only evidence must not fetch FX")
+
+
+def test_automatic_uses_exact_principal_peers_before_all_level_market_and_retains_on_failure(tmp_path: Path) -> None:
+    conn = init_db(tmp_path / "peers.db")
+    try:
+        _insert_job(conn, job_id=JOB_ONE, title="Principal Software Engineer")
+        generic = replace(_observation(country="Spain"), role_title="Software Engineer", level_label="all levels")
+        peer = replace(generic, company_name="Peer Cloud", level_label="Principal", sample_count=4,
+                       minimum_amount=150_000, maximum_amount=170_000,
+                       source_url="https://www.levels.fyi/companies/peer-cloud/salaries/software-engineer/levels/principal/locations/spain")
+        seen_targets = []
+        def load(targets):
+            seen_targets.extend(targets)
+            return ReportedCompensationSourceLoad(observations=(generic, peer))
+        run_automatic_compensation_refresh(conn, tenant_id="local", owner="peer-run", now=NOW,
+            load_observations=load, load_fx_rates=_unexpected_fx, load_price_levels=lambda: (), completion_clock=lambda: NOW)
+        assert seen_targets[0].seniority_label == "principal"
+        result = materialize_automatic_compensation_estimates(conn, tenant_id="local", materialized_at=NOW)
+        estimate = SqliteMarketCompensationRepository(conn).get_estimate("local", JOB_ONE)
+        assert result.estimates_written == 1
+        assert estimate is not None and estimate.estimate_state == "estimated_range"
+        assert (estimate.minimum_amount, estimate.maximum_amount) == (150_000, 170_000)
+        assert estimate.confidence_band == "low"
+        assert estimate.aggregate_bucket == "reported regional company peer cohort"
+        assert {row.company_name for row in estimate.evidence} == {"peer cloud"}
+        assert estimate.evidence[0].level_label == "principal"
+        assert estimate.evidence[0].source_url == peer.source_url
+        summary, audit = _projected_compensation(conn, JOB_ONE)
+        assert summary["market"]["benchmarkKind"] is None
+        assert audit["market"]["estimate"]["benchmarkLineage"] is None
+        # The next failed refresh cannot demote accepted peers to generic context,
+        # even after its evidence freshness window ends.
+        later = "2026-08-21T08:00:00Z"
+        run_automatic_compensation_refresh(conn, tenant_id="local", owner="failed-run", now=later,
+            load_observations=lambda _targets: ReportedCompensationSourceLoad(observations=(), source_errors=("levels_fyi_public_unavailable",)),
+            load_fx_rates=_unexpected_fx, load_price_levels=lambda: (), completion_clock=lambda: later)
+        materialize_automatic_compensation_estimates(conn, tenant_id="local", materialized_at=later)
+        assert SqliteMarketCompensationRepository(conn).get_estimate("local", JOB_ONE) == estimate
+    finally:
+        close_connection()
