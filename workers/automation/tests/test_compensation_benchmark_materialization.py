@@ -726,3 +726,105 @@ def test_automatic_uses_exact_principal_peers_before_all_level_market_and_retain
         assert SqliteMarketCompensationRepository(conn).get_estimate("local", JOB_ONE) == estimate
     finally:
         close_connection()
+
+
+@pytest.mark.parametrize(("producer", "consumer", "level", "failed_rows"), [
+    ("explicit", "explicit", "Senior", "empty"),
+    ("explicit", "explicit", "Principal", "empty"),
+    ("explicit", "explicit", "Principal", "stale"),
+    ("explicit", "explicit", "Principal", "irrelevant"),
+    ("automatic", "explicit", "Principal", "empty"),
+    ("automatic", "explicit", "Principal", "generic"),
+    ("explicit", "automatic", "Principal", "empty"),
+    ("explicit", "automatic", "Principal", "generic"),
+])
+def test_failed_refresh_retains_same_job_across_producers_and_empty_results(
+    tmp_path, monkeypatch, producer, consumer, level, failed_rows,
+) -> None:
+    from jobctrl.infrastructure.compensation import refresh
+
+    conn = init_db(tmp_path / "cross-path.db")
+    try:
+        title = f"{level} Software Engineer"
+        _insert_job(conn, job_id=JOB_ONE, title=title)
+        observation = replace(_observation(country="Spain"), role_title=title, level_label=level)
+        repository = SqliteMarketCompensationRepository(conn)
+        if producer == "automatic":
+            run_automatic_compensation_refresh(conn, tenant_id="local", owner="accepted", now=NOW,
+                load_observations=lambda _: ReportedCompensationSourceLoad(observations=(observation,)),
+                load_fx_rates=_unexpected_fx, load_price_levels=lambda: (), completion_clock=lambda: NOW)
+            materialize_automatic_compensation_estimates(conn, tenant_id="local", materialized_at=NOW)
+        else:
+            repository.backfill_from_jobs((replace(observation, company_name="Example"),), estimated_at=NOW)
+            from jobctrl.infrastructure.projections.projection_builder import ProjectionBuilder
+            ProjectionBuilder(conn_factory=lambda: conn).refresh()
+        accepted = repository.get_estimate("local", JOB_ONE)
+        assert accepted is not None and accepted.estimate_state == "estimated_range"
+        if level == "Principal":
+            assert accepted.seniority_label == ("principal" if producer == "automatic" else "staff_plus")
+        failed_observations = {
+            "empty": (),
+            "generic": (replace(observation, role_title="Software Engineer", level_label="all levels"),),
+            "stale": (replace(observation, release_year=2000),),
+            "irrelevant": (replace(observation, role_title="Senior Marketing Analyst", level_label="Senior"),),
+        }[failed_rows]
+        source_load = ReportedCompensationSourceLoad(observations=failed_observations,
+            source_errors=("levels_fyi_public_unavailable",))
+        if consumer == "explicit":
+            monkeypatch.setattr(refresh, "get_connection", lambda: conn)
+            monkeypatch.setattr(refresh, "load_default_reported_compensation_observations", lambda **_: source_load)
+            result = refresh.refresh_compensation_facts(tenant_id="local", job_id=JOB_ONE, include_euro_top_tech=False)
+            assert result["reportedObservationsLoaded"] == len(failed_observations)
+        else:
+            later = "2026-08-21T08:00:00Z"
+            run_automatic_compensation_refresh(conn, tenant_id="local", owner="failed", now=later,
+                load_observations=lambda _: source_load, load_fx_rates=_unexpected_fx,
+                load_price_levels=lambda: (), completion_clock=lambda: later)
+            materialize_automatic_compensation_estimates(conn, tenant_id="local", materialized_at=later)
+        assert repository.get_estimate("local", JOB_ONE) == accepted
+        summary, audit = _projected_compensation(conn, JOB_ONE)
+        assert summary["market"]["estimateState"] == "estimated_range"
+        assert audit["market"]["estimate"]["minimumAmount"] == accepted.minimum_amount
+    finally:
+        close_connection()
+
+
+@pytest.mark.parametrize("consumer", ["explicit", "automatic"])
+@pytest.mark.parametrize("change", ["role", "country", "unsupported_old_population"])
+def test_failed_refresh_does_not_retain_changed_job_or_wrong_source_population(tmp_path, monkeypatch, consumer, change):
+    from jobctrl.infrastructure.compensation import refresh
+
+    conn = init_db(tmp_path / "changed-job.db")
+    try:
+        _insert_job(conn, job_id=JOB_ONE, title="Director of Software Engineering")
+        observation = replace(_observation(country="Spain"), company_name="Example",
+            role_title="Director of Software Engineering", level_label="Director")
+        repository = SqliteMarketCompensationRepository(conn)
+        repository.backfill_from_jobs((observation,), estimated_at=NOW)
+        accepted = repository.get_estimate("local", JOB_ONE)
+        assert accepted is not None and accepted.estimate_state == "estimated_range"
+        if change == "role":
+            conn.execute("UPDATE jobs SET title = 'Principal Software Engineer' WHERE job_id = ?", (JOB_ONE,))
+        elif change == "country":
+            conn.execute("UPDATE jobs SET location = 'Germany' WHERE job_id = ?", (JOB_ONE,))
+        else:
+            # Replay the candidate-1 persisted defect, not its now-fixed estimator.
+            repository.save_estimate(replace(accepted, evidence=(replace(accepted.evidence[0],
+                role_title="Principal Infrastructure Engineer", level_label="Principal / Director"),)))
+        source_load = ReportedCompensationSourceLoad(observations=(), source_errors=("levels_fyi_public_unavailable",))
+        if consumer == "explicit":
+            monkeypatch.setattr(refresh, "get_connection", lambda: conn)
+            monkeypatch.setattr(refresh, "load_default_reported_compensation_observations", lambda **_: source_load)
+            refresh.refresh_compensation_facts(tenant_id="local", job_id=JOB_ONE, include_euro_top_tech=False)
+        else:
+            run_automatic_compensation_refresh(conn, tenant_id="local", owner="failed", now=NOW,
+                load_observations=lambda _: source_load, load_fx_rates=_unexpected_fx,
+                load_price_levels=lambda: (), completion_clock=lambda: NOW)
+            materialize_automatic_compensation_estimates(conn, tenant_id="local", materialized_at=NOW)
+        current = repository.get_estimate("local", JOB_ONE)
+        assert current is not None and current.estimate_state == "source_unavailable"
+        assert current.minimum_amount is None and current.maximum_amount is None
+        summary, _ = _projected_compensation(conn, JOB_ONE)
+        assert summary["market"]["displayRange"] is None
+    finally:
+        close_connection()

@@ -19,7 +19,7 @@ from html.parser import HTMLParser
 from typing import Any
 from urllib.parse import urljoin, urlsplit
 
-from jobctrl.domain.compensation.benchmarks import classify_seniority, resolve_country_code
+from jobctrl.domain.compensation.benchmarks import classify_seniority, resolve_country_code, resolve_reported_seniority
 
 from jobctrl.domain.compensation import (
     LEVELS_FYI_MARKET_AGGREGATE_COMPANY,
@@ -73,6 +73,15 @@ class _PublicSalaryPage:
     top_companies: tuple[_TopCompany, ...] = ()
     level_label: str = "all levels"
     company_name: str = LEVELS_FYI_MARKET_AGGREGATE_COMPANY
+
+
+@dataclass
+class _CachedPublicPage:
+    pages: tuple[_PublicSalaryPage, ...]
+    markdown_reachable: bool
+    html_attempted: bool = False
+    html_reachable: bool = False
+    html: str | None = None
 
 
 _ROLE_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
@@ -286,9 +295,7 @@ def load_levels_fyi_public_observations(
             queries.setdefault((canonical_url, _target_level(target), target.role_title), target)
 
     observations: dict[tuple[Any, ...], ReportedCompensationObservation] = {}
-    cache: dict[str, tuple[tuple[_PublicSalaryPage, ...], tuple[str, ...]]] = {}
-    reachable_pages = 0
-    parsed_pages = 0
+    cache: dict[str, _CachedPublicPage] = {}
     level_lookup_unavailable = False
     for target in queries.values():
         requested_level = _target_level(target)
@@ -306,29 +313,26 @@ def load_levels_fyi_public_observations(
                     break
                 markdown, markdown_reachable = _fetch_outcome(fetch_text, _markdown_url(canonical_url))
                 page = _safe_parse(parse_levels_fyi_markdown, markdown, canonical_url) if markdown else None
-                pages = (page,) if page is not None else ()
-                links: tuple[str, ...] = ()
-                html_reachable = False
-                # Generic markdown does not carry career-level links. Read the same
-                # public HTML to discover them; never infer the population from a filter.
-                if not pages or (requested_level != "unknown" and not any(
-                    classify_seniority(item.level_label) == requested_level for item in pages
-                )):
-                    public_html, html_reachable = _fetch_outcome(fetch_text, canonical_url)
-                    if public_html:
-                        html_page = _safe_parse(parse_levels_fyi_html, public_html, canonical_url)
-                        if html_page:
-                            pages = (html_page,)
-                        pages += _company_level_pages(public_html, canonical_url)
-                        links = _salary_links(public_html, canonical_url, target)
-                if requested_level != "unknown" and not html_reachable and not any(
-                    classify_seniority(item.level_label) == requested_level for item in pages
-                ):
-                    level_lookup_unavailable = True
-                reachable_pages += int(markdown_reachable or html_reachable)
-                parsed_pages += int(bool(pages))
-                cache[canonical_url] = (pages, links)
-            pages, links = cache[canonical_url]
+                cache[canonical_url] = _CachedPublicPage((page,) if page is not None else (), markdown_reachable)
+            cached = cache[canonical_url]
+            # A generic request may have needed only Markdown. Upgrade that same
+            # cache entry when a later known-level request needs HTML discovery.
+            if not cached.html_attempted and (not cached.pages or (requested_level != "unknown" and not any(
+                resolve_reported_seniority(item.role_title, item.level_label) == requested_level for item in cached.pages
+            ))):
+                cached.html_attempted = True
+                cached.html, cached.html_reachable = _fetch_outcome(fetch_text, canonical_url)
+                if cached.html:
+                    html_page = _safe_parse(parse_levels_fyi_html, cached.html, canonical_url)
+                    if html_page:
+                        cached.pages = (html_page,)
+                    cached.pages += _company_level_pages(cached.html, canonical_url)
+            pages = cached.pages
+            links = _salary_links(cached.html, canonical_url, target) if cached.html else ()
+            if requested_level != "unknown" and not cached.html_reachable and not any(
+                resolve_reported_seniority(item.role_title, item.level_label) == requested_level for item in pages
+            ):
+                level_lookup_unavailable = True
             for page in pages:
                 if not _page_matches_canonical_location(page, page.canonical_url):
                     continue
@@ -342,14 +346,17 @@ def load_levels_fyi_public_observations(
                     observations[key] = observation
             if requested_level != "unknown":
                 if any(page.company_name == LEVELS_FYI_MARKET_AGGREGATE_COMPANY
-                       and classify_seniority(page.level_label) == requested_level
+                       and resolve_reported_seniority(page.role_title, page.level_label) == requested_level
                        and _page_matches_canonical_location(page, canonical_url) for page in pages):
                     break
                 queue.extend(link for link in links if link not in visited and link not in queue)
                 queue.sort(key=lambda url: _route_priority(url, target))
 
     if on_load_outcome is not None:
-        on_load_outcome(LevelsFyiPublicLoadOutcome(len(cache), reachable_pages, parsed_pages, level_lookup_unavailable))
+        on_load_outcome(LevelsFyiPublicLoadOutcome(
+            len(cache), sum(page.markdown_reachable or page.html_reachable for page in cache.values()),
+            sum(bool(page.pages) for page in cache.values()), level_lookup_unavailable,
+        ))
     return tuple(observations.values())
 
 

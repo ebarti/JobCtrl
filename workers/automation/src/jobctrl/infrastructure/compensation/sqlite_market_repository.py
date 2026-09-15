@@ -41,9 +41,9 @@ from jobctrl.domain.compensation import (
     MarketSourceSnapshot,
     ReportedCompensationObservation,
     estimate_market_compensation,
-    resolve_country_code,
     sanitize_market_source_snapshot,
 )
+from jobctrl.domain.compensation.market import accepted_estimate_matches_job
 from jobctrl.domain.events.base import DomainEvent
 from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.ports.events import EventHandler, Subscription
@@ -527,12 +527,8 @@ class SqliteMarketCompensationRepository:
                     if factor.name == "level" else factor for factor in estimate.factors
                 ))
             current = self.get_estimate(tenant_id, current_job_id) if preserve_accepted_on_failure else None
-            if (current is not None and current.estimate_state == "estimated_range"
-                    and estimate.estimate_state != "estimated_range"
-                    and current.role_title == title
-                    and current.seniority_label == estimate.seniority_label
-                    and any(resolve_country_code(item.location) == resolve_country_code(location)
-                            for item in current.evidence)):
+            if (estimate.estimate_state != "estimated_range"
+                    and accepted_estimate_matches_job(current, title=title, location=location)):
                 continue
             self.save_estimate(estimate)
         self._conn.commit()

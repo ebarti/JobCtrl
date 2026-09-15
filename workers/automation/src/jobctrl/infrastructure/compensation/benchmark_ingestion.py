@@ -13,7 +13,7 @@ from jobctrl.domain.compensation import (
     annualize_and_convert_to_eur,
     build_direct_benchmark_fact,
     classify_role,
-    classify_seniority,
+    resolve_reported_seniority,
     normalize_company_name,
     resolve_benchmark_geography,
 )
@@ -164,7 +164,7 @@ def _canonicalize_one(
     )
     market_scope = _market_scope(observation.company_name)
     normalized_company = normalize_company_name(observation.company_name) if market_scope == "company" else None
-    seniority = classify_seniority(observation.level_label or observation.role_title)
+    seniority = resolve_reported_seniority(observation.role_title, observation.level_label)
     as_of_date = f"{observation.release_year:04d}-01-01" if observation.release_year is not None else fetched_at[:10]
     attribution = str(observation.attribution or "").strip() or f"Reported compensation source: {observation.source_id}"
     return build_direct_benchmark_fact(

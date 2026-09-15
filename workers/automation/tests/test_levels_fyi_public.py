@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import pytest
 
 from jobctrl.infrastructure.compensation.levels_fyi_public import (
     LEVELS_FYI_ATTRIBUTION,
@@ -325,3 +326,94 @@ def test_generic_available_but_level_discovery_unavailable_is_reported_as_partia
     load_levels_fyi_public_observations([LevelsFyiPublicTarget("Principal Software Engineer", "Spain")],
         fetch_text=lambda _url: "", on_load_outcome=outcomes.append)
     assert outcomes[0].level_lookup_unavailable
+
+
+def test_generic_first_cache_is_upgraded_for_principal_discovery_with_shared_budget() -> None:
+    regional = f"{LEVELS_FYI_BASE_URL}/t/software-engineer/locations/spain"
+    company = f"{LEVELS_FYI_BASE_URL}/companies/example-cloud/salaries/software-engineer/locations/spain"
+    markdown = """# Levels.fyi – Software Engineer Salary in Spain
+**Location:** Spain
+**Currency:** EUR
+## Aggregate Highlights
+- Median Total Compensation: €60,000
+- 25th / 75th Percentile: €40,000 / €80,000
+"""
+    pages = {regional + ".md": markdown, regional: _html({}, (company,)), company: _html(_company_props())}
+    generic = LevelsFyiPublicTarget("Software Engineer", "Spain")
+    principal = LevelsFyiPublicTarget("Principal Software Engineer", "Spain")
+    for targets in ((generic, principal), (principal, generic)):
+        calls, outcomes = [], []
+        def fetch(url):
+            calls.append(url)
+            return pages.get(url)
+        rows = load_levels_fyi_public_observations(targets, fetch_text=fetch, max_pages=2, on_load_outcome=outcomes.append)
+        assert {row.level_label for row in rows} == {"all levels", "Principal Engineer", "Senior Engineer"}
+        assert calls == [regional + ".md", regional, company + ".md", company]
+        assert outcomes[0].requested_pages == outcomes[0].reachable_pages == outcomes[0].parsed_pages == 2
+        assert not outcomes[0].level_lookup_unavailable
+    calls.clear()
+    rows = load_levels_fyi_public_observations((generic, principal), fetch_text=fetch, max_pages=1)
+    assert calls == [regional + ".md", regional]
+    assert {row.level_label for row in rows} == {"all levels"}
+
+    pages[regional] = ""
+    outcomes = []
+    load_levels_fyi_public_observations((generic, principal), fetch_text=fetch, on_load_outcome=outcomes.append)
+    assert outcomes[0].level_lookup_unavailable
+
+
+@pytest.mark.parametrize("path", ["explicit", "automatic"])
+def test_mixed_level_job_refresh_uses_actual_public_loader_and_materializes_principal(tmp_path, monkeypatch, path):
+    from jobctrl.database import init_db, close_connection
+    from jobctrl.infrastructure.compensation import refresh, sqlite_market_repository as market
+    from jobctrl.infrastructure.compensation.automatic_refresh import run_automatic_compensation_refresh
+    from jobctrl.infrastructure.compensation.benchmark_materialization import materialize_automatic_compensation_estimates
+
+    conn = init_db(tmp_path / "discovery.db")
+    try:
+        generic_id, principal_id = "11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"
+        for index, (job_id, title) in enumerate(((generic_id, "Software Engineer"), (principal_id, "Principal Software Engineer"))):
+            conn.execute("""INSERT INTO jobs (tenant_id, job_id, url, title, site, location, discovered_at)
+                VALUES ('local', ?, ?, ?, 'Unrelated Company', 'Spain', '2026-08-12T08:00:00Z')""",
+                (job_id, f"https://example.com/{index}", title))
+        conn.commit()
+        regional = f"{LEVELS_FYI_BASE_URL}/t/software-engineer/locations/spain"
+        company = f"{LEVELS_FYI_BASE_URL}/companies/example-cloud/salaries/software-engineer/locations/spain"
+        pages = {regional + ".md": """# Levels.fyi – Software Engineer Salary in Spain
+**Location:** Spain
+**Currency:** EUR
+## Aggregate Highlights
+- Median Total Compensation: €60,000
+- 25th / 75th Percentile: €40,000 / €80,000
+""", regional: _html({}, (company,)), company: _html(_company_props())}
+        calls, targets_seen = [], []
+        settings = tmp_path / "settings.json"
+        settings.write_text(json.dumps({"compensation_sources": {
+            "levels_fyi": {"enabled": True, "access_mode": "public_markdown"},
+        }}))
+        def fetch(url):
+            calls.append(url)
+            return pages.get(url)
+        monkeypatch.setattr(market, "_levels_fyi_public_fetcher", lambda *_, **__: fetch)
+        def load(targets):
+            targets_seen.extend(targets)
+            return market.load_default_reported_compensation_observations(levels_fyi_targets=targets,
+                include_eurotoptech=False, env={}, settings_path=settings, levels_fyi_public_max_pages=2)
+        if path == "explicit":
+            monkeypatch.setattr(refresh, "get_connection", lambda: conn)
+            monkeypatch.setattr(refresh, "load_default_reported_compensation_observations", lambda **kw: load(kw["levels_fyi_targets"]))
+            refresh.refresh_compensation_facts(tenant_id="local", include_euro_top_tech=False)
+            assert [target.role_title for target in targets_seen] == ["Software Engineer", "Principal Software Engineer"]
+        else:
+            now = "2026-08-12T08:00:00Z"
+            run_automatic_compensation_refresh(conn, tenant_id="local", owner="source-loader", now=now,
+                load_observations=load, load_fx_rates=lambda: (), load_price_levels=lambda: (), completion_clock=lambda: now)
+            materialize_automatic_compensation_estimates(conn, tenant_id="local", materialized_at=now)
+        estimate = market.SqliteMarketCompensationRepository(conn).get_estimate("local", principal_id)
+        assert estimate is not None and estimate.estimate_state == "estimated_range"
+        assert estimate.minimum_amount == estimate.maximum_amount == 160_000
+        assert estimate.evidence[0].source_url == company.replace("/locations/", "/levels/principal/locations/")
+        assert calls == [regional + ".md", regional, company + ".md", company]
+        assert conn.execute("SELECT COUNT(*) FROM job_detail_projections WHERE job_id = ?", (principal_id,)).fetchone()[0] == 1
+    finally:
+        close_connection()

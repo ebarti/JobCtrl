@@ -1083,11 +1083,16 @@ function MarketPanel({
     estimate.evidence.every((row) => row.companyName !== "Levels.fyi market aggregate");
   const cohortCompanies = peerCohort ? [...new Set(estimate.evidence.map((row) => row.companyName))].join(", ") : "";
   const cohortLocations = peerCohort ? [...new Set(estimate.evidence.map((row) => row.location).filter(Boolean))].join("; ") : "";
+  const unidentifiedEmployers = peerCohort && estimate.evidence.some((row) =>
+    /(?: community$|^unknown(?: company)?$)/i.test(row.companyName.trim()));
+  const cohortSources = peerCohort ? [...new Set(estimate.sources.map((source) => source.displayName))].join(", ") : "";
   const unmatchedLevel = estimate?.estimateState === "insufficient_evidence" &&
     estimate.insufficientReasons.some((reason) => reason.code === "weak_level_match")
     ? estimate.factors.find((factor) => factor.name === "level")?.reason : null;
   const benchmarkKind = lineage?.kind ?? market.benchmarkKind;
-  const benchmarkBasis = peerCohort
+  const benchmarkBasis = unidentifiedEmployers
+    ? `Reported compensation from ${cohortSources}${cohortLocations ? ` in ${cohortLocations}` : ""}. Employers are not identified for every report. This limited source sample is a regional comparison and may not represent the wider market.`
+    : peerCohort
     ? `Reported compensation at ${cohortCompanies}${cohortLocations ? ` in ${cohortLocations}` : ""}. This limited company cohort is a regional comparator; it may overrepresent high-paying employers.`
     : benchmarkKind === "extrapolated"
       ? "Derived from a matched role-family benchmark in another geography with an auditable adjustment."

@@ -24,6 +24,7 @@ from jobctrl.domain.compensation import (
     sanitize_market_source_snapshot,
 )
 from jobctrl.domain.compensation.market import (
+    accepted_estimate_matches_job,
     MARKET_SOURCE_IDS,
     MARKET_WARNING_CODES,
     MarketComponent,
@@ -173,11 +174,7 @@ def materialize_automatic_compensation_estimates(
                     market_repository.save_estimate(peer_estimate)
                     written += 1
                 continue
-            if (current is not None and current.estimate_state == "estimated_range"
-                    and current.role_title == title
-                    and current.normalized_role == classification.role_family_code
-                    and current.seniority_label == classification.seniority_label
-                    and any(resolve_country_code(item.location) == country_code for item in current.evidence)):
+            if accepted_estimate_matches_job(current, title=title, location=location):
                 # An unavailable/weak refresh cannot replace accepted role-level
                 # evidence. Stale source dates remain visible on the retained result.
                 with_benchmark += 1

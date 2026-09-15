@@ -24,6 +24,7 @@ from jobctrl.domain.compensation.benchmarks import (
     normalize_company_name,
     resolve_benchmark_geography,
     resolve_country_code,
+    resolve_reported_seniority,
 )
 from jobctrl.domain.compensation.market import (
     ESTIMATOR_VERSION,
@@ -100,6 +101,7 @@ __all__ = [
     "not_requested_market_estimate",
     "parse_posted_compensation",
     "resolve_country_code",
+    "resolve_reported_seniority",
     "resolve_benchmark_geography",
     "sanitize_market_source_snapshot",
 ]

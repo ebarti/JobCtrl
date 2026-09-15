@@ -756,6 +756,27 @@ def classify_seniority(title_or_level: str | None) -> SeniorityLabel:
     return "unknown"
 
 
+def resolve_reported_seniority(role_title: str | None, level_label: str | None) -> SeniorityLabel:
+    """Resolve provider alternatives using the reported role, never the requested job."""
+
+    if _normalized_phrase(level_label or "") in {"all level", "all levels", "unknown"}:
+        return "unknown"
+
+    def alternatives(value: str | None) -> set[SeniorityLabel]:
+        return {level for part in re.split(r"[/|;,]|\b(?:or|and)\b", value or "", flags=re.IGNORECASE)
+                if (level := classify_seniority(part)) != "unknown"}
+
+    levels = alternatives(level_label)
+    title_levels = alternatives(role_title)
+    if len(levels) > 1:
+        # E.g. Principal / Director describes two populations. The source title
+        # can disambiguate one; a generic or equally mixed title cannot.
+        return next(iter(title_levels)) if len(title_levels) == 1 and title_levels <= levels else "unknown"
+    if levels:
+        return next(iter(levels))
+    return next(iter(title_levels)) if len(title_levels) == 1 else "unknown"
+
+
 def resolve_country_code(location: str | None) -> str | None:
     normalized = _normalized_phrase(location or "")
     if not normalized:
@@ -1563,6 +1584,7 @@ __all__ = [
     "canonical_benchmark_timestamp",
     "classify_role",
     "classify_seniority",
+    "resolve_reported_seniority",
     "extrapolate_benchmark",
     "factor_bound_state",
     "normalize_company_name",

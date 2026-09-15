@@ -9,7 +9,9 @@ from datetime import datetime, timezone
 from statistics import median
 from typing import Literal
 
-from jobctrl.domain.compensation.benchmarks import classify_seniority, resolve_country_code
+from jobctrl.domain.compensation.benchmarks import (
+    classify_role, classify_seniority, resolve_country_code, resolve_reported_seniority,
+)
 from jobctrl.domain.identifiers import JobId, canonical_job_id
 
 ESTIMATOR_VERSION = "company-role-reported-compensation-v4"
@@ -371,6 +373,33 @@ class MarketCompensationEstimate:
     match_scope: MarketMatchScope = "none"
 
 
+def accepted_estimate_matches_job(
+    estimate: MarketCompensationEstimate | None, *, title: str, location: str | None,
+) -> bool:
+    """Check retained evidence against current job inputs across estimator encodings."""
+
+    if estimate is None or estimate.estimate_state != "estimated_range" or not estimate.role_title:
+        return False
+    requested = classify_role(title)
+    accepted = classify_role(estimate.role_title)
+    if (not requested.role_family_code or requested.role_family_code != accepted.role_family_code
+            or requested.seniority_label != accepted.seniority_label):
+        return False
+    country = resolve_country_code(location)
+    source_countries = {resolve_country_code(row.location) for row in estimate.evidence}
+    if country is not None and source_countries != {country}:
+        return False
+    if country is None and (not _normalize_location(location) or
+                           {_normalize_location(row.location) for row in estimate.evidence} != {_normalize_location(location)}):
+        return False
+    # Old accepted results may themselves contain a wrongly promoted mixed
+    # source bucket. Retention must not perpetuate that unsupported population.
+    return requested.seniority_label == "unknown" or all(
+        resolve_reported_seniority(row.role_title, row.level_label) == requested.seniority_label
+        for row in estimate.evidence
+    )
+
+
 def estimate_market_compensation(
     *,
     job_id: JobId,
@@ -546,7 +575,7 @@ def estimate_market_compensation(
     requested_seniority = classify_seniority(seniority_label or title)
     if requested_seniority != "unknown":
         level_matches = [row for row in usable_rows
-                         if classify_seniority(row.level_label or row.role_title) == requested_seniority
+                         if resolve_reported_seniority(row.role_title, row.level_label) == requested_seniority
                          and _role_score(normalized_role, row.role_title) >= 0.55]
         if level_matches:
             # Preserve role and level while widening geography. Generic aggregates
@@ -591,8 +620,8 @@ def estimate_market_compensation(
     role_scores = tuple(_role_score(normalized_role, row.role_title) for row in selected_rows)
     level_scores = tuple(
         0.0 if requested_seniority != "unknown"
-        and classify_seniority(row.level_label or row.role_title) != requested_seniority
-        else _level_score(inferred_level, row.level_label)
+        and resolve_reported_seniority(row.role_title, row.level_label) != requested_seniority
+        else _level_score(inferred_level, resolve_reported_seniority(row.role_title, row.level_label))
         for row in selected_rows
     )
     location_scores = tuple(_location_score(location, row.location) for row in selected_rows)
@@ -1331,11 +1360,9 @@ def _normalize_level(value: str | None) -> str:
 
 
 def _fallback_level_score(target_level: str, row: ReportedCompensationObservation) -> float:
-    if re.fullmatch(r"all\s+levels?", str(row.level_label or "").strip(), re.IGNORECASE):
-        return 0.5 if target_level == "executive" else 0.78
-    observed_level = _normalize_level(row.level_label)
+    observed_level = resolve_reported_seniority(row.role_title, row.level_label)
     if observed_level == "unknown":
-        observed_level = _level_from_title(row.role_title)
+        return 0.5 if target_level == "executive" else 0.78
     return _level_score(target_level, observed_level)
 
 

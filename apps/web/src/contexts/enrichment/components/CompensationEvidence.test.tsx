@@ -442,3 +442,20 @@ it("labels a limited company peer comparator beside the amount", () => {
   expect(screen.getByText(/Reported compensation at Peer Cloud in Spain/)).toBeVisible();
   expect(screen.getByText(/may overrepresent high-paying employers/)).toBeVisible();
 });
+
+it("describes unidentified community reports as a source sample", () => {
+  const { market } = recordedAudit();
+  renderCompensation({ audit: {
+    ...sampleCompensationAudit,
+    market: { ok: true, recordStatus: "recorded", estimate: {
+      ...market, matchScope: "same_location_role_fallback", benchmarkLineage: null,
+      sources: [{ ...market.sources[0]!, sourceId: "euro_top_tech", displayName: "Euro Top Tech" }],
+      evidence: [{ ...market.evidence[0]!, companyName: "Euro Top Tech community", location: "Spain",
+        roleTitle: "Principal Infrastructure Engineer", levelLabel: "Principal / Director" }],
+    } },
+  } });
+  expect(screen.getByText("Regional salary comparison")).toBeVisible();
+  expect(screen.getByText(/Reported compensation from Euro Top Tech in Spain/)).toBeVisible();
+  expect(screen.getByText(/Employers are not identified for every report/)).toBeVisible();
+  expect(screen.queryByText(/This limited company cohort/)).not.toBeInTheDocument();
+});

@@ -72,6 +72,12 @@ for comparison:
    public page loads, including discovery pages, with at most 12 per lookup;
    each page tries Markdown and, when needed, its public HTML through the
    existing source policy and network gateway.
+   Shared generic pages are expanded when a later known-level job needs
+   discovery; target order does not suppress that lookup. Mixed provider
+   categories such as `Principal / Director` are resolved against the actual
+   reported role. An explicit Principal IC title supports Principal evidence;
+   a generic or equally ambiguous title leaves the level unknown. The original
+   provider category remains visible as source context.
 6. **Keep regional company comparisons distinct.** When matching market-wide
    evidence is missing, fresh company observations for the exact role and
    seniority can support a low-confidence regional comparison. The detail
@@ -83,6 +89,8 @@ for comparison:
    level evidence. The automatic path uses one non-overlapping source slice
    per company within the target country; exact market evidence takes
    precedence.
+   Reports with unidentified employers are described as a limited source
+   sample, never as an identified company cohort.
 7. **Check the source population.** An all-level or unknown-level benchmark is
    contextual evidence for a job with a known seniority, not an estimate of that
    seniority's pay. Without matching level evidence, the estimate is
@@ -100,6 +108,10 @@ for comparison:
    unavailable company page does not establish that salary evidence does not
    exist. Automatic and explicit refreshes retain a prior accepted range
    during those failures; they never replace it with a weaker all-level span.
+   Retention compares the saved and current job's canonical role and level,
+   independent of automatic/explicit estimator label spellings or an empty
+   failed observation set. Changed role/country or unsupported prior source
+   population prevents reuse.
 
 Employer-posted facts may be parsed when Discovery ingests or refreshes a job
 and are also reparsed during an explicit compensation refresh. When the

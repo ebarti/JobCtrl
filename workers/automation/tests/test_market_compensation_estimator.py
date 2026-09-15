@@ -225,7 +225,10 @@ def test_director_title_and_same_location_fallback_are_described_truthfully() ->
     assert company_factor.reason == (
         "No direct DuckDuckGo salary row matched; comparable roles in the same location provide 45% company support."
     )
-    assert "classified as director" in level_factor.reason
+    assert estimate.estimate_state == "insufficient_evidence"
+    assert estimate.minimum_amount is None and estimate.maximum_amount is None
+    assert level_factor.score == 0
+    assert "requested director level has no matching evidence" in level_factor.reason
 
 
 def test_employer_posted_observations_never_enter_market_estimates() -> None:
@@ -560,3 +563,30 @@ def test_principal_peer_cohort_wins_over_all_levels_and_senior_company_rows() ->
     assert [(row.company_name, row.level_label, row.location) for row in estimate.evidence] == [
         ("Peer Cloud", "Principal Engineer", "Spain")]
     assert estimate.evidence[0].company_score == 0
+
+
+@pytest.mark.parametrize(("source_title", "bucket", "target_title", "compatible"), [
+    ("Principal Infrastructure Engineer", "Principal / Director", "Principal Infrastructure Engineer", True),
+    ("Principal Infrastructure Engineer", "Principal / Director", "Director of Software Engineering", False),
+    ("Director of Software Engineering", "Principal / Director", "Director of Software Engineering", True),
+    ("Director of Software Engineering", "Principal / Director", "Principal Software Engineer", False),
+    ("Software Engineer", "Principal / Director", "Director of Software Engineering", False),
+    ("Software Engineer", "Principal / Director", "Principal Software Engineer", False),
+    ("Staff Software Engineer", "Staff / Engineering Manager", "Staff Software Engineer", True),
+    ("Staff Software Engineer", "Staff / Engineering Manager", "Software Engineering Manager", False),
+    ("Software Engineering Manager", "Staff / Engineering Manager", "Software Engineering Manager", True),
+    ("Software Engineer", "Staff / Engineering Manager", "Staff Software Engineer", False),
+])
+def test_mixed_provider_bucket_is_not_exact_level_without_source_title_support(
+    source_title, bucket, target_title, compatible,
+) -> None:
+    observation = _euro_top_tech(role=source_title, level=bucket, location="Madrid, Spain", minimum=156_000, maximum=156_000)
+    estimate = estimate_market_compensation(job_id=TEST_JOB_ID, company="Unrelated Company", title=target_title,
+        location="Spain", observations=(observation,), estimated_at="2026-09-15T10:00:00Z")
+    assert (estimate.estimate_state == "estimated_range") is compatible
+    if compatible or estimate.evidence:
+        assert estimate.evidence[0].level_label == bucket
+        assert estimate.evidence[0].role_title == source_title
+        assert next(factor.score for factor in estimate.factors if factor.name == "level") == (0.95 if compatible else 0)
+    if not compatible:
+        assert estimate.minimum_amount is None and estimate.maximum_amount is None
