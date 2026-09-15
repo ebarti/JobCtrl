@@ -171,6 +171,8 @@ const SOURCE_DEFAULTS: Record<
 };
 const SAFE_AGGREGATE_BUCKETS = new Set([
   ...Object.values(SOURCE_DEFAULTS).map((source) => source.aggregateBucket),
+  "reported regional source sample",
+  "reported regional company peer cohort",
   "employer-posted same-location role compensation",
   "employer-posted trimodal tier compensation",
   "employer-posted trimodal market baseline",

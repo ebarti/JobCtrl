@@ -715,9 +715,16 @@ def test_automatic_uses_exact_principal_peers_before_all_level_market_and_retain
         assert {row.company_name for row in estimate.evidence} == {"peer cloud"}
         assert estimate.evidence[0].level_label == "principal"
         assert estimate.evidence[0].source_url == peer.source_url
+        # Same-country peer facts are same-location evidence, not a mismatch.
+        assert estimate.match_scope == "same_location_role_fallback"
+        assert "location_mismatch" not in estimate.warnings
+        assert estimate.evidence[0].location == "Spain"
+        assert estimate.evidence[0].location_score >= 0.78
         summary, audit = _projected_compensation(conn, JOB_ONE)
         assert summary["market"]["benchmarkKind"] is None
         assert audit["market"]["estimate"]["benchmarkLineage"] is None
+        assert audit["market"]["estimate"]["matchScope"] == "same_location_role_fallback"
+        assert audit["market"]["estimate"]["aggregateBucket"] == "reported regional company peer cohort"
         # The next failed refresh cannot demote accepted peers to generic context,
         # even after its evidence freshness window ends.
         later = "2026-08-21T08:00:00Z"
@@ -910,6 +917,69 @@ def test_automatic_anonymous_report_preserves_provider_and_limited_sample_scope(
         summary, audit = _projected_compensation(conn, JOB_ONE)
         assert summary["market"]["confidenceBand"] == "low"
         assert audit["market"]["estimate"]["evidence"][0]["companyName"] == "Euro Top Tech community"
+        assert audit["market"]["estimate"]["aggregateBucket"] == "reported regional source sample"
         assert audit["market"]["estimate"]["benchmarkLineage"]["directInputs"][0]["sourceId"] == "euro_top_tech"
+    finally:
+        close_connection()
+
+
+@pytest.mark.parametrize("evidence_location", ["Remote Europe", None])
+def test_failed_automatic_refresh_retains_explicit_estimate_with_estimator_location_semantics(
+    tmp_path, evidence_location,
+) -> None:
+    from jobctrl.infrastructure.projections.projection_builder import ProjectionBuilder
+
+    conn = init_db(tmp_path / "explicit-location.db")
+    try:
+        _insert_job(conn, job_id=JOB_ONE, title="Principal Software Engineer")
+        observation = replace(_observation(country="Spain"), company_name="Example",
+            role_title="Principal Software Engineer", level_label="Principal", location=evidence_location)
+        repository = SqliteMarketCompensationRepository(conn)
+        repository.backfill_from_jobs((observation,), estimated_at=NOW)
+        ProjectionBuilder(conn_factory=lambda: conn).refresh()
+        accepted = repository.get_estimate("local", JOB_ONE)
+        assert accepted is not None and accepted.estimate_state == "estimated_range"
+        assert accepted.match_scope == "exact_company_role"
+        assert accepted.estimator_version == "company-role-reported-compensation-v4"
+        assert {row.location for row in accepted.evidence} == {evidence_location}
+        assert "location_mismatch" not in accepted.warnings
+        later = "2026-08-21T08:00:00Z"
+        run_automatic_compensation_refresh(conn, tenant_id="local", owner="failed", now=later,
+            load_observations=lambda _: ReportedCompensationSourceLoad(
+                observations=(), source_errors=("levels_fyi_public_unavailable",)),
+            load_fx_rates=_unexpected_fx, load_price_levels=lambda: (), completion_clock=lambda: later)
+        result = materialize_automatic_compensation_estimates(conn, tenant_id="local", materialized_at=later)
+        # The estimator accepted Europe-wide/unlabeled evidence at its 0.78
+        # location rule; a failed refresh must not re-judge it as a mismatch.
+        assert result.estimates_written == 0 and result.estimates_cleared == 0
+        assert repository.get_estimate("local", JOB_ONE) == accepted
+        summary, audit = _projected_compensation(conn, JOB_ONE)
+        assert summary["market"]["estimateState"] == "estimated_range"
+        assert audit["market"]["estimate"]["minimumAmount"] == accepted.minimum_amount
+    finally:
+        close_connection()
+
+
+def test_unchanged_failed_state_does_not_rewrite_the_unavailable_placeholder(tmp_path) -> None:
+    conn = init_db(tmp_path / "unavailable-idempotent.db")
+    try:
+        _insert_job(conn, job_id=JOB_ONE, title="Principal Software Engineer")
+        source_load = ReportedCompensationSourceLoad(observations=(), source_errors=("levels_fyi_public_unavailable",))
+        run_automatic_compensation_refresh(conn, tenant_id="local", owner="failed", now=NOW,
+            load_observations=lambda _: source_load, load_fx_rates=_unexpected_fx,
+            load_price_levels=lambda: (), completion_clock=lambda: NOW)
+        first = materialize_automatic_compensation_estimates(conn, tenant_id="local", materialized_at=NOW)
+        repository = SqliteMarketCompensationRepository(conn)
+        placeholder = repository.get_estimate("local", JOB_ONE)
+        assert first.estimates_written == 1 and first.projections_refreshed >= 1
+        assert placeholder is not None and placeholder.estimate_state == "source_unavailable"
+        assert placeholder.estimator_version == f"{CANONICAL_BENCHMARK_ESTIMATOR_VERSION}:unavailable"
+        assert placeholder.estimated_at == "2026-08-12T08:00:00.000000Z"
+        events_before = conn.execute("SELECT COUNT(*) FROM job_events WHERE job_id = ?", (JOB_ONE,)).fetchone()[0]
+        second = materialize_automatic_compensation_estimates(conn, tenant_id="local", materialized_at="2026-08-12T09:00:00Z")
+        assert second.estimates_written == 0 and second.estimates_unchanged == 1
+        assert second.projections_refreshed == 0
+        assert repository.get_estimate("local", JOB_ONE) == placeholder
+        assert conn.execute("SELECT COUNT(*) FROM job_events WHERE job_id = ?", (JOB_ONE,)).fetchone()[0] == events_before
     finally:
         close_connection()

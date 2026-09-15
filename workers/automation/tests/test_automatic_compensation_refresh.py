@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,9 @@ from jobctrl.infrastructure.compensation.automatic_refresh import (
     refresh_automatic_compensation_benchmarks,
     run_automatic_compensation_refresh,
 )
+from jobctrl.infrastructure.compensation.benchmark_materialization import (
+    materialize_automatic_compensation_estimates,
+)
 from jobctrl.infrastructure.compensation.levels_fyi_public import LevelsFyiPublicTarget
 from jobctrl.infrastructure.compensation.refresh_state import (
     SqliteCompensationRefreshStateRepository,
@@ -25,6 +29,7 @@ from jobctrl.infrastructure.compensation.sqlite_benchmark_repository import (
 )
 from jobctrl.infrastructure.compensation.sqlite_market_repository import (
     ReportedCompensationSourceLoad,
+    SqliteMarketCompensationRepository,
 )
 
 
@@ -369,6 +374,61 @@ def test_blocked_public_source_uses_one_day_failure_retry(tmp_path: Path) -> Non
         assert state.refresh_status == "failed"
         assert state.last_error_code == "euro_top_tech_unavailable"
         assert state.next_refresh_at == "2026-08-13T08:00:00.000000Z"
+    finally:
+        close_connection(db_path)
+
+
+def test_fx_failure_does_not_mark_a_level_fallback_direct_result_as_a_failed_lookup(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "jobctrl.db"
+    conn = init_db(db_path)
+    try:
+        _insert_job(conn, title="Principal Software Engineer", location="Madrid, Spain")
+        generic = replace(
+            _observation(country="Spain", company=LEVELS_FYI_MARKET_AGGREGATE_COMPANY,
+                         level="all levels", minimum=60_000, maximum=90_000),
+            role_title="Software Engineer",
+        )
+        dollars = replace(generic, currency="USD", snapshot_version="levels-public-usd",
+                          minimum_amount=70_000, maximum_amount=100_000)
+
+        def failing_fx():
+            raise RuntimeError("ECB unavailable")
+
+        result = run_automatic_compensation_refresh(
+            conn,
+            tenant_id="local",
+            owner="discovery-1",
+            now=NOW,
+            load_observations=lambda _targets: ReportedCompensationSourceLoad(observations=(generic, dollars)),
+            load_fx_rates=failing_fx,
+            load_price_levels=lambda: (),
+            completion_clock=_clock(NOW),
+        )
+
+        # The Levels lookup succeeded; only the FX feed failed, so the lower-level
+        # direct fallback is a normal result rather than a failed lookup.
+        assert result.failed_results == 0
+        assert result.direct_results == 1
+        assert result.level_fallback_results == 1
+        assert "ecb_fx_unavailable" in result.warnings
+        state_repository = SqliteCompensationRefreshStateRepository(conn)
+        benchmark_slice = state_repository.discover_active_job_slices("local").slices[0]
+        assert benchmark_slice.seniority_label == "principal"
+        state = state_repository.get(benchmark_slice)
+        assert state is not None
+        assert state.refresh_status == "succeeded"
+        assert state.last_result_kind == "direct"
+        assert state.last_error_code is None
+        assert state.next_refresh_at == "2026-08-19T08:00:00.000000Z"
+        materialize_automatic_compensation_estimates(conn, tenant_id="local", materialized_at=NOW)
+        estimate = SqliteMarketCompensationRepository(conn).get_estimate(
+            "local", "11111111-1111-4111-8111-111111111111",
+        )
+        assert estimate is not None
+        level = next(factor for factor in estimate.factors if factor.name == "level")
+        assert "could not retrieve supporting source pages" not in level.reason
     finally:
         close_connection(db_path)
 

@@ -387,16 +387,23 @@ def accepted_estimate_matches_job(
             or requested.seniority_label != accepted.seniority_label):
         return False
     country = resolve_country_code(location)
-    source_countries = {resolve_country_code(row.location) for row in estimate.evidence}
     if target_country_code is not None:
         if country != target_country_code:
             return False
+    elif not _normalize_location(location):
+        return False
     else:
-        if country is not None and source_countries != {country}:
-            return False
-        if country is None and (not _normalize_location(location) or
-                               {_normalize_location(row.location) for row in estimate.evidence} != {_normalize_location(location)}):
-            return False
+        # Non-canonical estimates keep the estimator's own location semantics:
+        # evidence that resolves to a country must match the job country, while
+        # Europe-wide or unlabeled evidence stays accepted at the same 0.78
+        # ``_location_score`` the estimator used when it produced the range.
+        for row in estimate.evidence:
+            row_country = resolve_country_code(row.location)
+            if country is not None and row_country is not None:
+                if row_country != country:
+                    return False
+            elif _location_score(location, row.location) < 0.78:
+                return False
     # Old accepted results may themselves contain a wrongly promoted mixed
     # source bucket. Retention must not perpetuate that unsupported population.
     return requested.seniority_label == "unknown" or all(

@@ -306,7 +306,14 @@ def run_automatic_compensation_refresh(
         benchmark_slice = lease.benchmark_slice
         direct = direct_matches[benchmark_slice.key]
         if direct is not None:
-            lookup_error = load_errors[0] if load_errors and direct.seniority_label != benchmark_slice.seniority_label else None
+            # Only a failed Levels role/level lookup can turn a lower-level direct
+            # fallback into a failed slice; FX, price-level or derivation errors
+            # never did and never claim that the lookup missed its source pages.
+            lookup_error = (
+                _levels_lookup_error(load_errors)
+                if direct.seniority_label != benchmark_slice.seniority_label
+                else None
+            )
             previous = state_repository.get(benchmark_slice)
             if lookup_error and previous is not None and previous.last_result_kind != "none":
                 state_repository.mark_failed(lease, completed_at=_completion_timestamp(completion_clock),
@@ -395,6 +402,18 @@ def run_automatic_compensation_refresh(
         price_level_facts_saved=len(price_ids),
         warnings=tuple(sorted(warnings)),
     )
+
+
+LEVELS_LOOKUP_ERROR_CODES: tuple[str, ...] = (
+    "levels_fyi_public_unavailable",
+    "reported_sources_unavailable",
+)
+
+
+def _levels_lookup_error(load_errors: list[str]) -> str | None:
+    """Return the first error proving the Levels role/level lookup did not run."""
+
+    return next((code for code in load_errors if code in LEVELS_LOOKUP_ERROR_CODES), None)
 
 
 def _latest_direct_for_slice(

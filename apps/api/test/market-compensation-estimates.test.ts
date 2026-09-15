@@ -807,6 +807,33 @@ describe("market compensation estimates API", () => {
     }
   });
 
+  it.each([
+    "reported regional company peer cohort",
+    "reported regional source sample",
+  ])("serves the qualified regional aggregate bucket %j from canonical market rows", async (aggregateBucket) => {
+    const { app, dbPath, cleanup } = withTempApp();
+    insertEstimate(dbPath, ESTIMATED_JOB_ID, {
+      aggregateBucket,
+      confidenceBand: "low",
+      confidenceScore: 0.45,
+      matchScope: "same_location_role_fallback",
+    });
+    try {
+      const response = await app.inject({
+        method: "GET",
+        url: `/v1/jobs/${ESTIMATED_JOB_ID}/compensation/market`,
+      });
+
+      expect(response.statusCode, response.body).toBe(200);
+      const body = response.json() as Extract<MarketCompensationEstimateResponse, { recordStatus: "recorded" }>;
+      expect(body.estimate.aggregateBucket).toBe(aggregateBucket);
+      expect(body.estimate.matchScope).toBe("same_location_role_fallback");
+    } finally {
+      await app.close();
+      cleanup();
+    }
+  });
+
   it("serves unsupported, source-unavailable, and insufficient-evidence rows without range fields", async () => {
     const { app, dbPath, cleanup } = withTempApp();
     const db = new Database(dbPath);

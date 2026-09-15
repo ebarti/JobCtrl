@@ -1077,14 +1077,13 @@ function MarketPanel({
   const evidenceCoverage = estimate
     ? `${plural(evidenceCount, "evidence record")} ${evidenceCount === 1 ? "was" : "were"} reviewed across ${plural(providerCount, "provider")}${sampleCount === null ? "" : `, representing ${plural(sampleCount, "reported sample")}`}`
     : `Detailed evidence records are unavailable in this projection${providerCount ? `; the summary records ${plural(providerCount, "provider")}` : ""}${sampleCount === null ? "" : ` and ${plural(sampleCount, "reported sample")}`}`;
-  const peerCohort = estimate && !lineage &&
-    ["same_location_role_fallback", "tier_role_fallback", "market_baseline_fallback"].includes(estimate.matchScope) &&
-    estimate.evidence.length > 0 &&
-    estimate.evidence.every((row) => row.companyName !== "Levels.fyi market aggregate");
-  const cohortCompanies = peerCohort ? [...new Set(estimate.evidence.map((row) => row.companyName))].join(", ") : "";
+  // The persisted aggregate bucket is the source of truth for the regional
+  // comparison header and copy; company names and match scope are not inferred.
+  const peerCohort = estimate?.aggregateBucket === "reported regional company peer cohort";
+  const unidentifiedEmployers = estimate?.aggregateBucket === "reported regional source sample";
+  const cohortCompanies = estimate && peerCohort
+    ? [...new Set(estimate.evidence.map((row) => row.companyName))].join(", ") : "";
   const cohortLocations = estimate ? [...new Set(estimate.evidence.map((row) => row.location).filter(Boolean))].join("; ") : "";
-  const unidentifiedEmployers = estimate?.evidence.some((row) =>
-    /(?: community$|^unknown(?: company)?$)/i.test(row.companyName.trim()));
   const cohortSources = estimate ? [...new Set(estimate.sources.map((source) => source.displayName))].join(", ") : "";
   const unmatchedLevel = estimate?.estimateState === "insufficient_evidence" &&
     estimate.insufficientReasons.some((reason) => reason.code === "weak_level_match")
