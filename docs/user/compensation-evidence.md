@@ -136,9 +136,10 @@ Discover, after terminal enrichment and before terminal preparation fan-out.
 The existing explicit compensation refresh remains available for focused
 company-role evidence maintenance. Opening Jobs or Apply Review remains a
 passive read of persisted evidence; it does not fetch or recalculate salary.
-Older saved all-level fallback estimates are reclassified under the same
-applicability contract when their versioned projections rebuild, preserving
-canonical observations and evidence rows.
+Older saved canonical-benchmark estimates that relied on an all-level fallback
+are reclassified under the same applicability contract on those passive reads
+and when their versioned projections rebuild, preserving canonical observations
+and evidence rows.
 
 ## What You Can See And Control
 

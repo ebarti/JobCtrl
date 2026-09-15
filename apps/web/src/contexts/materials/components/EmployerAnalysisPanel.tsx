@@ -555,7 +555,7 @@ function RequirementItem({
           <CollapsibleTrigger
             render={
               <Button
-                aria-label={`${open ? "Collapse" : "Expand"} requirement: ${requirement.text}`}
+                aria-label={`${open ? "Hide" : "Show"} evidence for requirement: ${requirement.text}`}
                 size="sm"
                 type="button"
                 variant="ghost"

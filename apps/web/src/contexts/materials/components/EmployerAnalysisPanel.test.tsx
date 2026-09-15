@@ -17,10 +17,10 @@ describe("<EmployerAnalysisPanel>", () => {
     const view = render(<EmployerAnalysisPanel analysis={populatedEmployerAnalysis} requirementFitReport={populatedRequirementFitReport} />);
     const matched = screen.getByRole("article", { name: `Requirement: ${populatedEmployerAnalysis.requirements[0]!.text}` });
     const sibling = screen.getByRole("article", { name: `Requirement: ${populatedEmployerAnalysis.requirements[1]!.text}` });
-    const trigger = within(matched).getByRole("button", { name: /^Expand requirement:/ });
+    const trigger = within(matched).getByRole("button", { name: /^Show evidence/ });
     expect(trigger).toHaveAttribute("aria-expanded", "false");
     expect(within(matched).queryByRole("group", { name: "Fit summary" })).not.toBeInTheDocument();
-    expect(within(sibling).getByRole("button", { name: /^Collapse requirement:/ })).toHaveAttribute("aria-expanded", "true");
+    expect(within(sibling).getByRole("button", { name: /^Hide evidence/ })).toHaveAttribute("aria-expanded", "true");
     await user.click(trigger);
     expect(within(matched).getByRole("group", { name: "Fit summary" })).toBeVisible();
     await user.keyboard("{Enter}");
@@ -29,7 +29,7 @@ describe("<EmployerAnalysisPanel>", () => {
     expect(trigger).toHaveAttribute("aria-expanded", "true");
     expect(within(sibling).getByRole("group", { name: "Fit summary" })).toBeVisible();
     view.rerender(<EmployerAnalysisPanel analysis={{ ...populatedEmployerAnalysis, cache_key: "replacement-analysis" }} requirementFitReport={populatedRequirementFitReport} />);
-    expect(screen.getByRole("button", { name: /^Expand requirement:/ })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByRole("button", { name: /^Show evidence/ })).toHaveAttribute("aria-expanded", "false");
   });
 
   it("does not bind an older score to a reused requirement ID", () => {
@@ -41,7 +41,7 @@ describe("<EmployerAnalysisPanel>", () => {
     const card = screen.getByRole("article", { name: `Requirement: ${text}` });
     expect(within(card).getByText("not assessed")).toBeVisible();
     expect(within(card).queryByText("matched")).not.toBeInTheDocument();
-    expect(within(card).getByRole("button", { name: /^Collapse requirement:/ })).toHaveAttribute("aria-expanded", "true");
+    expect(within(card).getByRole("button", { name: /^Hide evidence/ })).toHaveAttribute("aria-expanded", "true");
     expect(within(card).queryByText("Double Down · priority 90%")).not.toBeInTheDocument();
   });
 
@@ -49,12 +49,12 @@ describe("<EmployerAnalysisPanel>", () => {
     const user = userEvent.setup();
     const view = render(<EmployerAnalysisPanel analysis={populatedEmployerAnalysis} requirementFitReport={populatedRequirementFitReport} />);
     const first = populatedEmployerAnalysis.requirements[0]!;
-    await user.click(screen.getByRole("button", { name: `Expand requirement: ${first.text}` }));
+    await user.click(screen.getByRole("button", { name: `Show evidence for requirement: ${first.text}` }));
     view.rerender(<EmployerAnalysisPanel analysis={{ ...populatedEmployerAnalysis }} requirementFitReport={{ ...populatedRequirementFitReport }} />);
-    expect(screen.getByRole("button", { name: `Collapse requirement: ${first.text}` })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("button", { name: `Hide evidence for requirement: ${first.text}` })).toHaveAttribute("aria-expanded", "true");
     const next = { ...populatedEmployerAnalysis, generation: populatedEmployerAnalysis.generation + 1 };
     view.rerender(<EmployerAnalysisPanel analysis={next} requirementFitReport={{ ...populatedRequirementFitReport, employerAnalysisGeneration: next.generation }} />);
-    expect(screen.getByRole("button", { name: `Expand requirement: ${first.text}` })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByRole("button", { name: `Show evidence for requirement: ${first.text}` })).toHaveAttribute("aria-expanded", "false");
   });
 
   it("renders requirements with tier + importance and quoted evidence spans", () => {
@@ -111,7 +111,7 @@ describe("<EmployerAnalysisPanel>", () => {
       name: "Requirement: Lead platform reliability programs across multiple teams",
     });
     await user.click(
-      within(matched).getByRole("button", { name: /^Expand requirement:/ }),
+      within(matched).getByRole("button", { name: /^Show evidence/ }),
     );
     expect(within(matched).getByText("Requirement fit")).toBeInTheDocument();
     expect(within(matched).getByText("matched")).toHaveAttribute(
@@ -213,7 +213,7 @@ describe("<EmployerAnalysisPanel>", () => {
       name: "Requirement: Lead platform reliability programs across multiple teams",
     });
     await user.click(
-      within(matched).getByRole("button", { name: /^Expand requirement:/ }),
+      within(matched).getByRole("button", { name: /^Show evidence/ }),
     );
     const summary = within(matched).getByRole("group", { name: "Fit summary" });
 
@@ -272,7 +272,7 @@ describe("<EmployerAnalysisPanel>", () => {
       name: "Requirement: Lead platform reliability programs across multiple teams",
     });
     await user.click(
-      within(matched).getByRole("button", { name: /^Expand requirement:/ }),
+      within(matched).getByRole("button", { name: /^Show evidence/ }),
     );
     expect(
       within(matched).getByText("Evidence reference unavailable."),
@@ -327,7 +327,7 @@ describe("<EmployerAnalysisPanel>", () => {
       name: "Requirement: Lead platform reliability programs across multiple teams",
     });
     await user.click(
-      within(matched).getByRole("button", { name: /^Expand requirement:/ }),
+      within(matched).getByRole("button", { name: /^Show evidence/ }),
     );
     await user.click(
       within(matched).getByRole("button", { name: "Additional audit details" }),

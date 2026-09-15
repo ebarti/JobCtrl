@@ -470,13 +470,13 @@ test("Job detail: keyboard activation opens requirement fit, stages, and artifac
   });
   await expect(primaryRequirement).toBeVisible();
   const expandRequirement = primaryRequirement.getByRole("button", {
-    name: `Expand requirement: ${requirementText}`,
+    name: `Show evidence for requirement: ${requirementText}`,
   });
   await expect(expandRequirement).toHaveAttribute("aria-expanded", "false");
   await expect(primaryRequirement.getByText("Requirement fit", { exact: true })).not.toBeVisible();
   await expandRequirement.click();
   await expect(primaryRequirement.getByRole("button", {
-    name: `Collapse requirement: ${requirementText}`,
+    name: `Hide evidence for requirement: ${requirementText}`,
   })).toHaveAttribute("aria-expanded", "true");
   await expect(primaryRequirement).toContainText("Requirement fit");
   await expect(primaryRequirement).toContainText("matched");
