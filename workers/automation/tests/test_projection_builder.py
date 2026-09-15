@@ -881,8 +881,8 @@ def test_posted_parser_reconciliation_rebuilds_settled_list_and_detail_projectio
     initial_list = json.loads(initial["compensation_summary_json"])
     initial_detail = json.loads(initial["detail_summary_json"])
     initial_audit = json.loads(initial["compensation_audit_json"])
-    assert initial_list["projectionVersion"] == 3
-    assert initial_detail["projectionVersion"] == 3
+    assert initial_list["projectionVersion"] == 4
+    assert initial_detail["projectionVersion"] == 4
     assert initial_list["posted"]["range"]["component"] == "equity"
     assert initial_audit["posted"]["fact"]["parserVersion"] == "posted-compensation-v1"
 
@@ -1258,9 +1258,9 @@ def test_projection_suppresses_historical_posted_as_market_rows(
     summary = json.loads(row["compensation_summary_json"])
     detail_summary = json.loads(row["detail_summary_json"])
     audit = json.loads(row["compensation_audit_json"])
-    assert summary["projectionVersion"] == 3
-    assert detail_summary["projectionVersion"] == 3
-    assert audit["projectionVersion"] == 3
+    assert summary["projectionVersion"] == 4
+    assert detail_summary["projectionVersion"] == 4
+    assert audit["projectionVersion"] == 4
     assert summary["market"]["recordStatus"] == "not_requested"
     assert audit["market"] == {
         "ok": True,

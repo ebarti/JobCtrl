@@ -1327,7 +1327,7 @@ def test_stakeholder_sponsorship_remains_resume_scoped_end_to_end() -> None:
         agreement=AnalysisAgreement(score=1.0),
         legs_attempted=1,
     )
-    assert analysis.prompt_version == "employer-analysis-v2"
+    assert analysis.prompt_version == "employer-analysis-v3"
     report = RequirementFitReport(
         job_id=_JOB_ID,
         score_version=1,
