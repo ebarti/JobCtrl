@@ -86,6 +86,8 @@ import {
   timestampAtOrAfter,
   timestampBefore,
 } from "./contracts.js";
+import { requirementFitForCurrentAnalysis } from "./application-feedback.js";
+import { missingApplicationAttestationFields } from "./application-attestations.js";
 import { buildApplyAudit, type ApplyAuditLatestRun } from "./apply-audit.js";
 import { evaluateRepeatApplication } from "./repeat-application.js";
 import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
@@ -1148,6 +1150,7 @@ export function getJobDetail(db: SqliteDatabase, jobKey: string): JobDetail | nu
   const jobSummary = rowToJobSummary(listRow, db);
   const latestApplyRun = latestApplyRunForJob(db, jobId);
   const activeApplyRun = activeApplyRunForJob(db, jobId);
+  const employerAnalysis = parseEmployerAnalysis(detailRow?.employer_analysis_json ?? null);
   return {
     ok: true,
     job: {
@@ -1156,6 +1159,7 @@ export function getJobDetail(db: SqliteDatabase, jobKey: string): JobDetail | nu
       scoreReasoning: detailRow?.score_reasoning ?? listRow.score_reasoning,
     },
     applyAudit: buildApplyAudit({
+      missingProfileData: missingApplicationAttestationFields(db),
       applicationUrl: applyAuditApplicationUrl(listRow),
       hasResume: Boolean(listRow.has_resume),
       hasCoverLetter: Boolean(listRow.has_cover_letter),
@@ -1178,8 +1182,10 @@ export function getJobDetail(db: SqliteDatabase, jobKey: string): JobDetail | nu
     stages,
     artifacts,
     auditHistory,
-    employerAnalysis: parseEmployerAnalysis(detailRow?.employer_analysis_json ?? null),
-    requirementFitReport: parseRequirementFitReport(detailRow?.requirement_fit_report_json ?? null),
+    employerAnalysis,
+    requirementFitReport: requirementFitForCurrentAnalysis(
+      db, jobId, employerAnalysis, parseRequirementFitReport(detailRow?.requirement_fit_report_json ?? null),
+    ),
     interviewPrep: parseInterviewPrep(detailRow?.interview_prep_json ?? null),
     compensationAudit: parseCompensationAudit(detailRow?.compensation_audit_json ?? null),
   };

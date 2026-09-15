@@ -41,6 +41,7 @@ from jobctrl.domain.materials.analysis import (
     EnsembleOutcome,
     compute_snapshot_hash,
 )
+from jobctrl.domain.materials.analysis_content import AnalysisContentError, validate_candidate_prose
 from jobctrl.domain.materials.analysis_eeo_screen import screen_eeo_red_flags
 from jobctrl.domain.materials.analysis_grounding import ground_and_snap
 from jobctrl.domain.ports.events import EventPublisher
@@ -150,9 +151,14 @@ class AnalyzeJobUseCase:
         if not force:
             cached = self._repository.get_by_cache_key(tenant_id, job_id, key)
             if cached is not None:
-                log.info("Employer analysis cache hit for %s (gen %d)", job_id, cached.generation)
-                self._publish(cached, cached=True)
-                return AnalyzeJobOutcome(analysis=cached, cached=True)
+                try:
+                    validate_candidate_prose(cached.canonical)
+                except AnalysisContentError:
+                    log.info("Employer analysis cache needs candidate-prose refresh for %s", job_id)
+                else:
+                    log.info("Employer analysis cache hit for %s (gen %d)", job_id, cached.generation)
+                    self._publish(cached, cached=True)
+                    return AnalyzeJobOutcome(analysis=cached, cached=True)
 
         outcome = await self._run_ensemble(jd_snapshot)
 
@@ -162,6 +168,7 @@ class AnalyzeJobUseCase:
         # never persist a fabricated span, and the persisted spans must be
         # content-exact / copy-paste-findable in the posting per D-15). Idempotent
         # on an already-snapped canonical; raises GroundingError on any absent span.
+        validate_candidate_prose(outcome.canonical)
         grounded_canonical = ground_and_snap(outcome.canonical, jd_snapshot)
 
         # EEO red-flag screen (AI-SPEC §6 Dimension 9): deterministically DROP

@@ -1275,3 +1275,20 @@ def test_repository_sanitizes_stale_persisted_source_json_on_read(conn: sqlite3.
     assert "/users/" not in serialized
     assert "credential" not in serialized
     assert "secret" not in serialized
+
+
+def test_failed_explicit_refresh_preserves_last_accepted_level_range(conn: sqlite3.Connection) -> None:
+    url = _seed_job(conn)
+    repository = SqliteMarketCompensationRepository(conn)
+    repository.backfill_from_jobs((_levels(),), estimated_at="2026-06-19T10:00:00Z")
+    accepted = repository.get_estimate("local", _job_id(url))
+    assert accepted is not None and accepted.estimate_state == "estimated_range"
+    generic = replace(_levels(), level_label="all levels", minimum_amount=40_000, maximum_amount=60_000)
+    repository.backfill_from_jobs((generic,), estimated_at="2026-06-20T10:00:00Z", preserve_accepted_on_failure=True)
+    assert repository.get_estimate("local", _job_id(url)) == accepted
+
+    conn.execute("UPDATE jobs SET title = 'Principal Platform Engineer' WHERE job_id = ?", (_job_id(url),))
+    repository.backfill_from_jobs((generic,), estimated_at="2026-06-21T10:00:00Z", preserve_accepted_on_failure=True)
+    changed_role = repository.get_estimate("local", _job_id(url))
+    assert changed_role is not None and changed_role.estimate_state == "insufficient_evidence"
+    assert changed_role.role_title == "Principal Platform Engineer"

@@ -74,6 +74,13 @@ requirements or keywords.
 "young/energetic", gendered language) into a requirement, keyword, or an "ideal \
 candidate" attribute.
 
+8. CANDIDATE PROSE: role_framing and ideal_candidate_narrative describe ONLY \
+the candidate's capabilities and the role's needs. Do not explain how you \
+determined the profile. Never mention experts, model agreement, draft \
+reconciliation, synthesis, or your analysis process. For example, write \
+"A platform engineer who leads cross-team reliability work", never \
+"Both experts converge on a platform engineer".
+
 Return ONLY the structured analysis.\
 """
 
@@ -101,6 +108,13 @@ from the analysis rubric; re-rank if the drafts disagree.
 5. Deduplicate keywords and keep requirement_ref links consistent with your \
 final requirement ids.
 6. Honor the same boilerplate-filtering and EEO rules as the drafts.
+
+7. CANDIDATE PROSE: role_framing and ideal_candidate_narrative must describe \
+ONLY the candidate and role. Reconciliation is your task, not output content. \
+Do not explain how the profile was determined or mention experts, models, \
+drafts, agreement, analysis, or synthesis as its basis. If a draft includes \
+process commentary, rewrite it as direct candidate capabilities and role needs. \
+Never write "Both experts converge", "The analyses agree", or similar prose.
 
 Return ONLY the reconciled canonical structured analysis.\
 """

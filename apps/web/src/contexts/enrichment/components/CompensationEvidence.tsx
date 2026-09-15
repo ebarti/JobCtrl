@@ -575,9 +575,7 @@ function factorExplanation(
       return `No direct ${company} salary record matched; broader market evidence provides ${score} support.`;
     }
   }
-  if (factor.name === "level") {
-    return `The job was classified as ${formatToken(estimate.seniorityLabel) || "an unknown level"}; selected records provide ${score} seniority support.`;
-  }
+  if (factor.name === "level") return factor.reason;
   if (factor.name === "role") {
     return `Selected records provide ${score} support for ${estimate.roleTitle || "this role"}.`;
   }
@@ -1079,9 +1077,23 @@ function MarketPanel({
   const evidenceCoverage = estimate
     ? `${plural(evidenceCount, "evidence record")} ${evidenceCount === 1 ? "was" : "were"} reviewed across ${plural(providerCount, "provider")}${sampleCount === null ? "" : `, representing ${plural(sampleCount, "reported sample")}`}`
     : `Detailed evidence records are unavailable in this projection${providerCount ? `; the summary records ${plural(providerCount, "provider")}` : ""}${sampleCount === null ? "" : ` and ${plural(sampleCount, "reported sample")}`}`;
+  // The persisted aggregate bucket is the source of truth for the regional
+  // comparison header and copy; company names and match scope are not inferred.
+  const peerCohort = estimate?.aggregateBucket === "reported regional company peer cohort";
+  const unidentifiedEmployers = estimate?.aggregateBucket === "reported regional source sample";
+  const cohortCompanies = estimate && peerCohort
+    ? [...new Set(estimate.evidence.map((row) => row.companyName))].join(", ") : "";
+  const cohortLocations = estimate ? [...new Set(estimate.evidence.map((row) => row.location).filter(Boolean))].join("; ") : "";
+  const cohortSources = estimate ? [...new Set(estimate.sources.map((source) => source.displayName))].join(", ") : "";
+  const unmatchedLevel = estimate?.estimateState === "insufficient_evidence" &&
+    estimate.insufficientReasons.some((reason) => reason.code === "weak_level_match")
+    ? estimate.factors.find((factor) => factor.name === "level")?.reason : null;
   const benchmarkKind = lineage?.kind ?? market.benchmarkKind;
-  const benchmarkBasis =
-    benchmarkKind === "extrapolated"
+  const benchmarkBasis = unidentifiedEmployers
+    ? `Reported compensation from ${cohortSources}${cohortLocations ? ` in ${cohortLocations}` : ""}. Employers are not identified for every report. This limited source sample is a regional comparison and may not represent the wider market.`
+    : peerCohort
+    ? `Reported compensation at ${cohortCompanies}${cohortLocations ? ` in ${cohortLocations}` : ""}. This limited company cohort is a regional comparator; it may overrepresent high-paying employers.`
+    : benchmarkKind === "extrapolated"
       ? "Derived from a matched role-family benchmark in another geography with an auditable adjustment."
       : benchmarkKind === "direct"
         ? "Based on a direct benchmark for the matched role family and geography."
@@ -1110,7 +1122,7 @@ function MarketPanel({
             estimate === null
               ? `${evidenceCoverage}. The recorded outcome did not include a trustworthy numeric range.`
               : evidenceCount > 0
-                ? `${evidenceCoverage}, but the evidence did not meet the threshold for a trustworthy numeric range.${legacyNote}`
+                ? `${evidenceCoverage}. ${unmatchedLevel || "The evidence did not meet the threshold for a trustworthy numeric range."}${legacyNote}`
                 : `Available evidence did not meet the threshold for a trustworthy numeric range. See the reasons below.${legacyNote}`,
         }
       : market.estimateState === "source_unavailable"
@@ -1143,7 +1155,7 @@ function MarketPanel({
     >
       <header className="compensation-result-header">
         <h4 className="eyebrow" data-typography="label">
-          Market salary estimate
+          {(peerCohort || unidentifiedEmployers) && hasRange ? "Regional salary comparison" : "Market salary estimate"}
         </h4>
         <b className="compensation-result-value">{outcome.value}</b>
         <StatusBadge tone={outcome.tone}>{outcome.badge}</StatusBadge>

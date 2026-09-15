@@ -529,6 +529,15 @@ describe("<JobDetailDrawer>", () => {
     const matchedRequirement = within(roleAnalysis).getByRole("article", {
       name: "Requirement: Lead platform reliability programs across multiple teams",
     });
+    const disclosure = within(matchedRequirement).getByRole("button", {
+      name: /^Show evidence/,
+    });
+    expect(disclosure).toHaveAttribute("aria-expanded", "false");
+    expect(
+      within(matchedRequirement).queryByRole("group", { name: "Fit summary" }),
+    ).not.toBeInTheDocument();
+    await userEvent.click(disclosure);
+    expect(disclosure).toHaveAttribute("aria-expanded", "true");
     expect(
       within(matchedRequirement).getByText(
         "Led a platform reliability transformation",
@@ -1020,6 +1029,15 @@ describe("<JobDetailDrawer>", () => {
     const requirement = await screen.findByRole("article", {
       name: "Requirement: Lead platform reliability programs across multiple teams",
     });
+    const disclosure = within(requirement).getByRole("button", {
+      name: /^Show evidence/,
+    });
+    expect(disclosure).toHaveAttribute("aria-expanded", "false");
+    expect(
+      within(requirement).queryByRole("group", { name: "Fit summary" }),
+    ).not.toBeInTheDocument();
+    await userEvent.click(disclosure);
+    expect(disclosure).toHaveAttribute("aria-expanded", "true");
     expect(
       within(requirement).getByText("Requirement fit"),
     ).toBeInTheDocument();

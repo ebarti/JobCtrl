@@ -306,14 +306,32 @@ def run_automatic_compensation_refresh(
         benchmark_slice = lease.benchmark_slice
         direct = direct_matches[benchmark_slice.key]
         if direct is not None:
+            # Only a failed Levels role/level lookup can turn a lower-level direct
+            # fallback into a failed slice; FX, price-level or derivation errors
+            # never did and never claim that the lookup missed its source pages.
+            lookup_error = (
+                _levels_lookup_error(load_errors)
+                if direct.seniority_label != benchmark_slice.seniority_label
+                else None
+            )
+            previous = state_repository.get(benchmark_slice)
+            if lookup_error and previous is not None and previous.last_result_kind != "none":
+                state_repository.mark_failed(lease, completed_at=_completion_timestamp(completion_clock),
+                                             retry_at=retry_at, error_code=lookup_error)
+                failed_results += 1
+                continue
             state_repository.mark_result(
                 lease,
                 completed_at=_completion_timestamp(completion_clock),
-                next_refresh_at=min(fresh_until, direct.fresh_until),
+                next_refresh_at=retry_at if lookup_error else min(fresh_until, direct.fresh_until),
                 result_kind="direct",
                 fact_id=direct.fact_id,
+                source_error=lookup_error,
             )
-            direct_results += 1
+            if lookup_error:
+                failed_results += 1
+            else:
+                direct_results += 1
             level_fallback_results += int(direct.seniority_label != benchmark_slice.seniority_label)
             continue
 
@@ -384,6 +402,18 @@ def run_automatic_compensation_refresh(
         price_level_facts_saved=len(price_ids),
         warnings=tuple(sorted(warnings)),
     )
+
+
+LEVELS_LOOKUP_ERROR_CODES: tuple[str, ...] = (
+    "levels_fyi_public_unavailable",
+    "reported_sources_unavailable",
+)
+
+
+def _levels_lookup_error(load_errors: list[str]) -> str | None:
+    """Return the first error proving the Levels role/level lookup did not run."""
+
+    return next((code for code in load_errors if code in LEVELS_LOOKUP_ERROR_CODES), None)
 
 
 def _latest_direct_for_slice(
@@ -485,14 +515,15 @@ def _derive_extrapolated_for_slice(
 def _levels_fyi_targets(
     slices: tuple[CompensationBenchmarkSlice, ...],
 ) -> tuple[LevelsFyiPublicTarget, ...]:
-    targets: dict[tuple[str, str], LevelsFyiPublicTarget] = {}
+    targets: dict[tuple[str, str, str], LevelsFyiPublicTarget] = {}
     for benchmark_slice in slices:
-        key = (benchmark_slice.title_hint, benchmark_slice.geography.country_code)
+        key = (benchmark_slice.title_hint, benchmark_slice.seniority_label, benchmark_slice.geography.country_code)
         targets.setdefault(
             key,
             LevelsFyiPublicTarget(
                 role_title=benchmark_slice.title_hint,
                 location=benchmark_slice.geography.country_code,
+                seniority_label=benchmark_slice.seniority_label,
             ),
         )
     return tuple(targets[key] for key in sorted(targets))

@@ -45,7 +45,7 @@ from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 # Bump whenever the analysis system prompt changes so stale cached analyses are
 # recomputed rather than silently served (D-12). The cache key combines this
 # with the JD snapshot hash and the SDK-set version.
-PROMPT_VERSION = "employer-analysis-v2"
+PROMPT_VERSION = "employer-analysis-v3"
 
 # Identifies the default ensemble model/SDK set. Bump when the default leg set
 # or model ids change so the cache invalidates (D-12). The config.json
@@ -144,7 +144,8 @@ class JobAnalysis(BaseModel):
     )
     ideal_candidate_narrative: str = Field(
         ...,
-        description="'What they're really looking for' — the role's center of gravity (D-16).",
+        description=("Describe only the candidate capabilities and role needs. "
+                     "Never narrate expert/model agreement, draft reconciliation, or how this profile was determined."),
     )
     requirements: list[Requirement] = Field(default_factory=list)
     keywords: list[ReasonedKeyword] = Field(default_factory=list)

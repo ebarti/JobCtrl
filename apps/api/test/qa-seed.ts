@@ -629,6 +629,10 @@ function requirementLedAuditMetadata(): Record<string, unknown> {
     full_profile: "FULL PROFILE SECRET",
     local_path: "/private/secret-resume.pdf",
     quality_plan: {
+      requirement_directives: [
+        { requirement_id: "r1", requirement_text: "Lead platform reliability improvements across critical services." },
+        { requirement_id: "r2", requirement_text: "Improve developer experience and incident-response practices." },
+      ],
       target_profile: {
         requirements: [
           {

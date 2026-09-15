@@ -171,6 +171,8 @@ const SOURCE_DEFAULTS: Record<
 };
 const SAFE_AGGREGATE_BUCKETS = new Set([
   ...Object.values(SOURCE_DEFAULTS).map((source) => source.aggregateBucket),
+  "reported regional source sample",
+  "reported regional company peer cohort",
   "employer-posted same-location role compensation",
   "employer-posted trimodal tier compensation",
   "employer-posted trimodal market baseline",
@@ -312,6 +314,25 @@ function mapEstimateRow(
     estimatedAt: row.estimated_at,
   };
 
+  // Older canonical benchmarks recorded the population mismatch as a warning
+  // while still emitting a target-level range. Keep the observed evidence,
+  // but enforce applicability on passive reads as well as new materialization.
+  if (
+    row.estimator_version.startsWith("company-role-reported-compensation-canonical-benchmark-") &&
+    base.warnings.some((warning) => warning.code === "benchmark_level_fallback")
+  ) {
+    return {
+      ...base,
+      estimateState: "insufficient_evidence",
+      confidenceBand: "none",
+      confidenceScore: 0,
+      factors: base.factors.map((factor) => factor.name === "level"
+        ? { ...factor, score: 0, band: "none", reason: REASON_MESSAGES.weak_level_match }
+        : factor),
+      evidence: base.evidence.map((evidence) => ({ ...evidence, levelScore: 0 })),
+      insufficientReasons: [{ code: "weak_level_match", message: REASON_MESSAGES.weak_level_match }],
+    };
+  }
   if (row.estimate_state === "unsupported") {
     return {
       ...base,

@@ -64,12 +64,27 @@ This deterministic check runs on every draft and the synthesis. The result is
 persisted in canonical `job_employer_analysis*` rows and projected identically by
 Python and TypeScript.
 
+Candidate prose has a separate acceptance check: role framing and the ideal
+candidate narrative describe only candidate capabilities and role needs.
+`analysis_content.validate_candidate_prose` rejects generation/process
+commentary, including past-tense expert agreement or analysis conclusions, on
+draft and synthesized output. It matches a process subject at a sentence or
+clause start, so domain prose about the candidate's own models, assessments, or
+analyses is accepted. Draft and synthesis retries include the rejection as
+corrective feedback. `AnalyzeJobUseCase` repeats the check before persistence.
+This is a generation boundary, not a destructive rewrite or a restriction on
+reading historical records.
+
 ### Reuse And Lifecycle
 
 Analysis is cached by posting snapshot, prompt version, and SDK-set version.
 Re-tailoring reuses that record; an explicit force recompute writes a superseding
 generation instead of deleting history. `AnalyzeJobUseCase` can run as the first
-tailoring step or through the standalone `analyze_job` method.
+tailoring step or through the standalone `analyze_job` method. Prompt v3
+invalidates prior prompt caches; even a same-version cache hit is checked for
+invalid candidate prose before reuse. A standalone `analyze_job` request with
+`tenantId`, `jobId`, and `force: true` regenerates one affected analysis. Failed
+validation or provider execution leaves the last accepted generation intact.
 
 ## Per-Line Provenance
 
@@ -179,6 +194,16 @@ Apply Review and Artifacts compare only stored audit data: coverage buckets,
 template metadata, validation/judge fields, and review risk labels. If either
 artifact lacks coverage, the UI reports `coverage not recorded`; it does not
 turn missing audit data into zero coverage.
+
+Requirement fit in Job Detail and Apply Review must belong to the current
+employer-analysis generation and match both requirement ID and full text
+(ignoring whitespace differences). Accepted-resume coverage has an independent
+binding: the selected artifact's canonical `quality_plan.requirement_directives`
+must record that ID and text, and its own artifact ID must own the bullet
+provenance. A material generation number is not an analysis generation number.
+Missing, duplicate, or changed source identities show `coverage not recorded`;
+a fresh fit report cannot authorize unrelated evidence in an older resume.
+These read guards preserve accepted artifacts and their original audit history.
 
 Shared Python/TypeScript parity fixtures seed scores, stages, analysis,
 provenance, and artifacts, then compare every dual-written projection column and

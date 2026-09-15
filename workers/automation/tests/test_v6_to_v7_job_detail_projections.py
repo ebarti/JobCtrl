@@ -334,8 +334,8 @@ def test_rebuilds_from_candidate_uuid_canonical_rows_and_ignores_v6_cache(
         assert _JOB_URL not in json.dumps({"requirement": requirement_fit, "interview": interview})
         compensation_summary = json.loads(str(row[3]))
         compensation_audit = json.loads(str(row[4]))
-        assert compensation_summary["projectionVersion"] == 3
-        assert compensation_audit["projectionVersion"] == 3
+        assert compensation_summary["projectionVersion"] == 4
+        assert compensation_audit["projectionVersion"] == 4
         assert compensation_summary["posted"]["displayRange"] == (
             "USD 70000-90000/year"
         )
@@ -465,7 +465,7 @@ def test_rebuild_never_projects_employer_posted_salary_as_market_evidence(
         row = _detail_row(candidate)
         summary = json.loads(str(row[3]))
         audit = json.loads(str(row[4]))
-        assert summary["projectionVersion"] == 3
+        assert summary["projectionVersion"] == 4
         assert summary["market"] == {
             "sourceKind": "reported_company_role_market",
             "recordStatus": "not_requested",
@@ -482,7 +482,7 @@ def test_rebuild_never_projects_employer_posted_salary_as_market_evidence(
             "displayConfidenceInterval": None,
         }
         assert audit == {
-            "projectionVersion": 3,
+            "projectionVersion": 4,
             "posted": audit["posted"],
             "market": {
                 "ok": True,

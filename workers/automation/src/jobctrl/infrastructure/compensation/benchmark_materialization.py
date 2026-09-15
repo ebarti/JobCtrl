@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, cast
 
 from jobctrl.domain.compensation import (
-    LEVELS_FYI_MARKET_AGGREGATE_COMPANY,
     BenchmarkGeography,
     DirectBenchmarkFact,
     MarketCompensationEstimate,
+    ReportedCompensationObservation,
+    estimate_market_compensation,
     MarketConfidenceFactor,
     MarketEvidenceRow,
     MarketSourceSnapshot,
@@ -89,6 +91,7 @@ class _BenchmarkProjectionInput:
     warnings: tuple[str, ...]
     observed_at: str
     fresh_until: str
+    source_lookup_failed: bool = False
 
 
 def materialize_automatic_compensation_estimates(
@@ -153,6 +156,46 @@ def materialize_automatic_compensation_estimates(
             benchmark_repository,
             state,
         )
+        company = _nullable_text(row["company"]) or _nullable_text(row["site"])
+        if projection_input is None or projection_input.seniority_label != classification.seniority_label:
+            peers = benchmark_repository.fresh_company_peers(
+                tenant_id=tenant_id, taxonomy_version=classification.taxonomy_version,
+                role_family_code=classification.role_family_code, seniority_label=classification.seniority_label,
+                country_code=country_code, component=benchmark_slice.component, fresh_at=canonical_now,
+            )
+            peer_estimate = _peer_estimate(peers, benchmark_slice, job_id, title, company, location, canonical_now)
+            current = market_repository.get_estimate(tenant_id, job_id)
+            if peer_estimate is not None:
+                with_benchmark += 1
+                if current == peer_estimate:
+                    unchanged += 1
+                else:
+                    market_repository.save_estimate(peer_estimate)
+                    written += 1
+                continue
+            if market_repository.can_retain_estimate(current, title=title, location=location):
+                # An unavailable/weak refresh cannot replace accepted role-level
+                # evidence. Stale source dates remain visible on the retained result.
+                with_benchmark += 1
+                unchanged += 1
+                continue
+        if projection_input is None and state is not None and state.refresh_status == "failed":
+            # Date the placeholder from the failed refresh itself so an unchanged
+            # failed state materializes to the same row and produces no write.
+            unavailable = estimate_market_compensation(job_id=job_id, tenant_id=tenant_id,
+                company=company, title=title, location=location, observations=(),
+                estimated_at=state.last_checked_at or canonical_now)
+            unavailable = replace(unavailable, estimate_state="source_unavailable", insufficient_reasons=(),
+                source_unavailable_reasons=("missing_reported_observation",),
+                estimator_version=f"{CANONICAL_BENCHMARK_ESTIMATOR_VERSION}:unavailable")
+            current = market_repository.get_estimate(tenant_id, job_id)
+            if current == unavailable:
+                unchanged += 1
+            else:
+                market_repository.save_estimate(unavailable)
+                written += 1
+            without_benchmark += 1
+            continue
         if projection_input is None:
             without_benchmark += 1
             cleared += int(
@@ -165,7 +208,6 @@ def materialize_automatic_compensation_estimates(
             )
             continue
         with_benchmark += 1
-        company = _nullable_text(row["company"]) or _nullable_text(row["site"])
         try:
             estimate = _estimate_from_benchmark(
                 job_id=job_id,
@@ -217,6 +259,35 @@ def materialize_automatic_compensation_estimates(
     )
 
 
+def _peer_estimate(
+    peers: tuple[DirectBenchmarkFact, ...], benchmark_slice: CompensationBenchmarkSlice,
+    job_id: JobId, title: str, company: str | None, location: str, materialized_at: str,
+) -> MarketCompensationEstimate | None:
+    if not peers or benchmark_slice.seniority_label == "unknown":
+        return None
+    observations = tuple(ReportedCompensationObservation(
+        source_id=cast(Any, fact.source_id), source_provenance=cast(Any, fact.source_provenance),
+        company_name=fact.normalized_company or "unknown company",
+        role_title=fact.role_family_code.replace("_", " "), level_label=fact.seniority_label,
+        location=_peer_location_label(fact.geography, location), currency="EUR", period="year",
+        component=cast(Any, fact.component), minimum_amount=fact.eur_annual_minimum_amount,
+        maximum_amount=fact.eur_annual_maximum_amount, sample_count=fact.sample_count,
+        release_year=int(fact.as_of_date[:4]), snapshot_version=fact.source_snapshot_id,
+        source_url=fact.source_url, attribution=fact.attribution,
+    ) for fact in peers if fact.source_id in MARKET_SOURCE_IDS)
+    estimate = estimate_market_compensation(
+        job_id=job_id, tenant_id=benchmark_slice.tenant_id, company=company, title=title,
+        location=location, seniority_label=benchmark_slice.seniority_label,
+        observations=observations, estimated_at=max(fact.fetched_at for fact in peers),
+    )
+    if estimate.estimate_state != "estimated_range":
+        return None
+    return replace(estimate, normalized_role=benchmark_slice.role_family_code,
+                   estimator_version=f"{CANONICAL_BENCHMARK_ESTIMATOR_VERSION}:company-peers",
+                   aggregate_bucket="reported regional company peer cohort",
+                   confidence_band="low", confidence_score=min(0.45, estimate.confidence_score))
+
+
 def _projection_input(
     repository: SqliteCompensationBenchmarkRepository,
     state: CompensationRefreshState | None,
@@ -247,6 +318,7 @@ def _projection_input(
             warnings=(),
             observed_at=direct.fetched_at,
             fresh_until=direct.fresh_until,
+            source_lookup_failed=state.refresh_status == "failed",
         )
     if state.last_result_kind == "extrapolated" and state.last_extrapolated_fact_id:
         extrapolated = repository.get_extrapolated(
@@ -292,6 +364,7 @@ def _projection_input(
             warnings=tuple(warnings),
             observed_at=extrapolated.derived_at,
             fresh_until=extrapolated.fresh_until,
+            source_lookup_failed=state.refresh_status == "failed",
         )
     return None
 
@@ -315,12 +388,15 @@ def _estimate_from_benchmark(
             fact,
             role_label=role_label,
             target_geography=benchmark.geography,
+            target_seniority=job_seniority,
             extrapolated=benchmark.result_kind == "extrapolated",
             materialized_at=materialized_at,
         )
         for fact in benchmark.source_facts
     )
     sample_count = sum(fact.sample_count for fact in benchmark.source_facts)
+    anonymous_reports = any(fact.source_id == "euro_top_tech" and fact.market_scope == "market"
+                            for fact in benchmark.source_facts)
     warning_values = list(benchmark.warnings)
     if benchmark.seniority_label != job_seniority:
         warning_values.append("benchmark_level_fallback")
@@ -330,7 +406,8 @@ def _estimate_from_benchmark(
         warning_values.append("low_sample_count")
     warnings = _warning_codes(warning_values)
     freshness_score = 0.25 if "stale_source_snapshot" in warnings else 1.0
-    level_score = 1.0 if benchmark.seniority_label == job_seniority else 0.65
+    level_matches = benchmark.seniority_label == job_seniority
+    level_score = 1.0 if level_matches else 0.0
     factors = (
         _factor(
             "role",
@@ -343,7 +420,9 @@ def _estimate_from_benchmark(
             (
                 f"Matched canonical seniority {benchmark.seniority_label}."
                 if level_score == 1.0
-                else f"Used all-level fallback for {job_seniority}."
+                else ("The requested role and level lookup could not retrieve supporting source pages. "
+                      if benchmark.source_lookup_failed else "")
+                + f"The {benchmark.seniority_label} population does not establish pay for {job_seniority}."
             ),
         ),
         _factor(
@@ -369,19 +448,19 @@ def _estimate_from_benchmark(
     return MarketCompensationEstimate(
         tenant_id=tenant_id,
         job_id=job_id,
-        estimate_state="estimated_range",
+        estimate_state="estimated_range" if level_matches else "insufficient_evidence",
         currency="EUR",
         period="year",
         component=cast(MarketComponent, benchmark.component),
-        minimum_amount=benchmark.minimum_amount,
-        maximum_amount=benchmark.maximum_amount,
-        confidence_interval_minimum_amount=(benchmark.confidence_interval_minimum_amount),
-        confidence_interval_maximum_amount=(benchmark.confidence_interval_maximum_amount),
-        confidence_band=cast(MarketConfidenceBand, benchmark.confidence_band),
-        confidence_score=round(benchmark.confidence_score, 2),
+        minimum_amount=benchmark.minimum_amount if level_matches else None,
+        maximum_amount=benchmark.maximum_amount if level_matches else None,
+        confidence_interval_minimum_amount=(benchmark.confidence_interval_minimum_amount if level_matches else None),
+        confidence_interval_maximum_amount=(benchmark.confidence_interval_maximum_amount if level_matches else None),
+        confidence_band=("low" if anonymous_reports else cast(MarketConfidenceBand, benchmark.confidence_band)) if level_matches else "none",
+        confidence_score=round(min(0.45, benchmark.confidence_score) if anonymous_reports else benchmark.confidence_score, 2) if level_matches else 0.0,
         source_count=len(sources),
         sample_count=sample_count,
-        aggregate_bucket="reported company-role compensation",
+        aggregate_bucket="reported regional source sample" if anonymous_reports else "reported company-role compensation",
         geography_scope=benchmark.geography.scope,
         occupation_code=benchmark.role_family_code,
         occupation_label=role_label,
@@ -389,7 +468,7 @@ def _estimate_from_benchmark(
         sources=sources,
         factors=factors,
         evidence=evidence,
-        insufficient_reasons=(),
+        insufficient_reasons=() if level_matches else ("weak_level_match",),
         unsupported_reasons=(),
         source_unavailable_reasons=(),
         warnings=warnings,
@@ -442,6 +521,7 @@ def _evidence_row(
     *,
     role_label: str,
     target_geography: BenchmarkGeography,
+    target_seniority: str,
     extrapolated: bool,
     materialized_at: str,
 ) -> MarketEvidenceRow:
@@ -455,7 +535,8 @@ def _evidence_row(
         company_name=(
             fact.normalized_company
             if fact.market_scope == "company" and fact.normalized_company
-            else LEVELS_FYI_MARKET_AGGREGATE_COMPANY
+            else "Euro Top Tech community" if source_id == "euro_top_tech"
+            else f"{_SOURCE_DISPLAY_NAMES[source_id]} market aggregate"
         ),
         role_title=role_label,
         location=_geography_label(fact.geography),
@@ -470,7 +551,7 @@ def _evidence_row(
         release_year=int(fact.as_of_date[:4]),
         company_score=1.0 if fact.market_scope == "company" else 0.0,
         role_score=1.0,
-        level_score=1.0,
+        level_score=1.0 if fact.seniority_label == target_seniority else 0.0,
         location_score=(1.0 if not extrapolated and fact.geography == target_geography else 0.5),
         freshness_score=0.25 if fact.fresh_until <= materialized_at else 1.0,
     )
@@ -514,6 +595,28 @@ def _geography_label(geography: BenchmarkGeography) -> str:
     if geography.scope == "country_subdivision":
         return f"{geography.subdivision_code}, {geography.country_code}"
     return geography.country_code
+
+
+def _peer_location_label(geography: BenchmarkGeography, job_location: str) -> str:
+    """Label same-country peer evidence with the job's own spelling of that country.
+
+    Peer facts are selected by the job's country code, but the market estimator
+    scores locations textually and reads a bare ISO code such as ``ES`` as a
+    mismatch against ``Madrid, Spain``. Reusing the job's country wording keeps
+    the evidence truthful (it is the same country) and lets the estimator score
+    the cohort as same-location. Unmatched wording falls back to the ISO code.
+    """
+
+    country_label = next(
+        (part.strip() for part in re.split(r"[,/|()]|\s[-\u2013\u2014]\s", job_location)
+         if part.strip() and resolve_country_code(part) == geography.country_code),
+        geography.country_code,
+    )
+    if geography.scope == "locality":
+        return f"{geography.locality}, {country_label}"
+    if geography.scope == "country_subdivision":
+        return f"{geography.subdivision_code}, {country_label}"
+    return country_label
 
 
 def _active_job_rows(

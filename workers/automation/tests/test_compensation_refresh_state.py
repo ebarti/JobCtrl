@@ -287,6 +287,97 @@ def test_refresh_state_rejects_a_result_from_another_geography(tmp_path: Path) -
         close_connection(db_path)
 
 
+def test_failed_level_lookup_keeps_the_fallback_fact_and_retries_on_the_retry_boundary(tmp_path: Path) -> None:
+    db_path = tmp_path / "jobctrl.db"
+    conn = init_db(db_path)
+    state_repository = SqliteCompensationRefreshStateRepository(conn)
+    try:
+        _insert_job(
+            conn,
+            job_id="11111111-1111-4111-8111-111111111111",
+            title="Principal Software Engineer",
+            location="Madrid, Spain",
+        )
+        conn.commit()
+        benchmark_slice = state_repository.discover_active_job_slices("local").slices[0]
+        assert benchmark_slice.seniority_label == "principal"
+        state_repository.ensure_slices((benchmark_slice,), now="2026-08-12T08:00:00Z")
+        lease = state_repository.claim_due(
+            (benchmark_slice,),
+            owner="run-1",
+            now="2026-08-12T08:00:00Z",
+            lease_expires_at="2026-08-12T09:00:00Z",
+        )[0]
+        fallback = SqliteCompensationBenchmarkRepository(conn).save_direct(
+            build_direct_benchmark_fact(
+                tenant_id="local",
+                role_family_code=benchmark_slice.role_family_code,
+                seniority_label="unknown",
+                geography=benchmark_slice.geography,
+                market_scope="market",
+                normalized_company=None,
+                component="total_compensation",
+                original_currency="EUR",
+                original_period="year",
+                original_minimum_amount=60_000,
+                original_maximum_amount=90_000,
+                eur_annual_minimum_amount=60_000,
+                eur_annual_maximum_amount=90_000,
+                confidence_interval_minimum_amount=54_000,
+                confidence_interval_maximum_amount=99_000,
+                confidence_score=0.8,
+                sample_count=20,
+                source_id="test-source",
+                source_provenance="manual",
+                source_snapshot_id="snapshot-es-all-levels",
+                source_url="https://example.com/source",
+                attribution="Test compensation evidence",
+                fx_reference={"rate_to_eur": 1, "reference_id": "eur-identity"},
+                as_of_date="2026-08-01",
+                fetched_at="2026-08-12T08:00:00Z",
+                fresh_until="2026-08-19T08:00:00Z",
+            )
+        )
+
+        state_repository.mark_result(
+            lease,
+            completed_at="2026-08-12T08:01:00Z",
+            next_refresh_at="2026-08-13T08:01:00Z",
+            result_kind="direct",
+            fact_id=fallback.fact_id,
+            source_error="levels_fyi_public_unavailable",
+        )
+
+        state = state_repository.get(benchmark_slice)
+        assert state is not None
+        assert state.refresh_status == "failed"
+        assert state.last_result_kind == "direct"
+        assert state.last_direct_fact_id == fallback.fact_id
+        assert state.last_extrapolated_fact_id is None
+        assert state.last_error_code == "levels_fyi_public_unavailable"
+        assert state.next_refresh_at == "2026-08-13T08:01:00.000000Z"
+        assert state.lease_owner is None
+        assert state.attempt_count == 1
+        assert (
+            state_repository.claim_due(
+                (benchmark_slice,),
+                owner="run-2",
+                now="2026-08-13T08:00:59Z",
+                lease_expires_at="2026-08-13T09:00:59Z",
+            )
+            == ()
+        )
+        retried = state_repository.claim_due(
+            (benchmark_slice,),
+            owner="run-2",
+            now="2026-08-13T08:01:00Z",
+            lease_expires_at="2026-08-13T09:01:00Z",
+        )
+        assert tuple(lease.benchmark_slice for lease in retried) == (benchmark_slice,)
+    finally:
+        close_connection(db_path)
+
+
 def _insert_job(
     conn,
     *,

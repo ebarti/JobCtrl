@@ -126,7 +126,7 @@ describe("buildApplyAudit", () => {
       missingProfileData: ["age_18_plus", "felony_conviction"],
     });
 
-    expect(audit.state).toBe("preparing");
+    expect(audit).toMatchObject({ state: "ready", label: "materials ready" });
     expect(audit.missingPrerequisites).toEqual([
       expect.objectContaining({
         code: "missing_profile_attestations",
@@ -140,6 +140,23 @@ describe("buildApplyAudit", () => {
       status: "missing",
       detail: "Application attestations missing: Age 18+, Felony conviction.",
     });
+  });
+
+  it.each(["queued", "running", "pending"] as const)(
+    "keeps accepted materials ready during a %s refresh",
+    (currentState) => {
+      const audit = buildApplyAudit({ ...READY_INPUT, currentStage: "tailor", currentState });
+      expect(audit).toMatchObject({ state: "ready", label: "materials ready", reviewEvidenceAvailable: true });
+      expect(audit.sources.find((source) => source.kind === "stage_state")?.detail).toContain(currentState);
+    },
+  );
+
+  it("keeps a missing PDF distinct from incomplete attestations", () => {
+    const audit = buildApplyAudit({ ...READY_INPUT, hasPdf: false, missingProfileData: ["age_18_plus"] });
+    expect(audit).toMatchObject({ state: "preparing", label: "materials preparing" });
+    expect(audit.missingPrerequisites.map((fact) => fact.code)).toEqual([
+      "missing_resume_pdf", "missing_profile_attestations",
+    ]);
   });
 
   it("turns legacy missing-profile failure keys into actionable labels", () => {

@@ -443,7 +443,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         expect(listProjection?.salary).toBe("USD 70000-90000/year");
         const summary = JSON.parse(listProjection?.compensation_summary_json ?? "{}");
         expect(summary).toMatchObject({
-          projectionVersion: 3,
+          projectionVersion: 4,
           warningCount: 3,
           posted: {
             recordStatus: "recorded",
@@ -550,7 +550,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
           )
           .get(EVENT_JOB_ID) as { compensation_summary_json: string };
         expect(JSON.parse(initial.compensation_summary_json)).toMatchObject({
-          projectionVersion: 3,
+          projectionVersion: 4,
           market: { recordStatus: "recorded" },
         });
 
@@ -609,12 +609,12 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         const detailSummary = JSON.parse(rebuilt.detail_summary_json);
         const audit = JSON.parse(rebuilt.compensation_audit_json);
         expect(summary).toMatchObject({
-          projectionVersion: 3,
+          projectionVersion: 4,
           market: { recordStatus: "not_requested", displayRange: null },
         });
-        expect(detailSummary.projectionVersion).toBe(3);
+        expect(detailSummary.projectionVersion).toBe(4);
         expect(audit).toMatchObject({
-          projectionVersion: 3,
+          projectionVersion: 4,
           market: { recordStatus: "not_requested" },
         });
       } finally {
@@ -2195,6 +2195,35 @@ describe("apply_run_projections without legacy apply_runs table", () => {
     try {
       seedSchema(dbPath);
       const db = new Database(dbPath);
+      const requirements = [{
+        id: "r1", text: "5+ years Python", tier: "must_have", weight: 0.9,
+        evidence_span: "5+ years Python", coverage_scope: "resume",
+      }];
+      db.prepare(`INSERT INTO job_employer_analysis (
+        tenant_id, job_id, generation, snapshot_hash, prompt_version, sdk_set_version,
+        cache_key, ideal_candidate_narrative, requirements_json, legs_attempted, legs_succeeded, created_at
+      ) VALUES ('local', ?, 2, 'fit-snapshot', 'employer-analysis-v3', 'sdk-v1',
+        'fit-current-analysis', 'Python engineer.', ?, 1, 1, '2026-05-04T12:00:00Z')`)
+        .run(jobId, JSON.stringify(requirements));
+      const resumePath = path.join(path.dirname(dbPath), "fit-resume.txt");
+      fs.writeFileSync(resumePath, "Built Python event services.");
+      db.prepare(`INSERT INTO job_materials
+        (tenant_id, job_id, generation, status, created_at, updated_at)
+        VALUES ('local', ?, 1, 'complete', '2026-05-04T12:00:00Z', '2026-05-04T12:00:00Z')`).run(jobId);
+      db.prepare(`INSERT INTO job_materials_artifacts (
+        tenant_id, job_id, generation, artifact_type, artifact_id, status, path,
+        render_format, size_bytes, metadata_json, created_at
+      ) VALUES ('local', ?, 1, 'tailored_resume', 'fit-resume', 'approved', ?, 'text', 28, ?, '2026-05-04T12:00:00Z')`)
+        .run(jobId, resumePath, JSON.stringify({ quality_plan: { requirement_directives: [
+          { requirement_id: "r1", requirement_text: "5+ years Python" },
+        ] } }));
+      db.prepare(`INSERT INTO job_bullet_provenance (
+        tenant_id, job_id, generation, bullet_id, artifact_id, section, source_id,
+        evidence_ids_json, requirement_ids_json, matched_keywords_json, transform_type,
+        control, rationale, generated_text, position, created_at, coverage_json
+      ) VALUES ('local', ?, 1, 'fit-bullet', 'fit-resume', 'experience', 'python',
+        '["ev-python"]', '["r1"]', '["Python"]', 'reframe', 'rephrase_allowed',
+        'Direct Python evidence.', 'Built Python event services.', 0, '2026-05-04T12:00:00Z', '{}')`).run(jobId);
       const insertReport = db.prepare(
         `INSERT INTO job_requirement_fit_reports (
           tenant_id, job_id, score_version, employer_analysis_generation,

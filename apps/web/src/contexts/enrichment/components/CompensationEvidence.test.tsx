@@ -426,3 +426,67 @@ describe("<CompensationAuditSection>", () => {
     ).not.toBeInTheDocument();
   });
 });
+
+
+it("labels a limited company peer comparator beside the amount", () => {
+  const { market } = recordedAudit();
+  renderCompensation({ audit: {
+    ...sampleCompensationAudit,
+    market: { ok: true, recordStatus: "recorded", estimate: {
+      ...market, estimatorVersion: "company-role-reported-compensation-v4",
+      matchScope: "same_location_role_fallback", benchmarkLineage: null,
+      aggregateBucket: "reported regional company peer cohort",
+      evidence: [{ ...market.evidence[0]!, companyName: "Peer Cloud", location: "Spain", levelLabel: "Principal" }],
+    } },
+  } });
+  expect(screen.getByText("Regional salary comparison")).toBeVisible();
+  expect(screen.getByText(/Reported compensation at Peer Cloud in Spain/)).toBeVisible();
+  expect(screen.getByText(/may overrepresent high-paying employers/)).toBeVisible();
+});
+
+it("describes unidentified community reports as a source sample", () => {
+  const { market } = recordedAudit();
+  renderCompensation({ audit: {
+    ...sampleCompensationAudit,
+    market: { ok: true, recordStatus: "recorded", estimate: {
+      ...market, matchScope: "same_location_role_fallback", benchmarkLineage: null,
+      aggregateBucket: "reported regional source sample",
+      sources: [{ ...market.sources[0]!, sourceId: "euro_top_tech", displayName: "Euro Top Tech" }],
+      evidence: [{ ...market.evidence[0]!, companyName: "Euro Top Tech community", location: "Spain",
+        roleTitle: "Principal Infrastructure Engineer", levelLabel: "Principal / Director" }],
+    } },
+  } });
+  expect(screen.getByText("Regional salary comparison")).toBeVisible();
+  expect(screen.getByText(/Reported compensation from Euro Top Tech in Spain/)).toBeVisible();
+  expect(screen.getByText(/Employers are not identified for every report/)).toBeVisible();
+  expect(screen.queryByText(/This limited company cohort/)).not.toBeInTheDocument();
+});
+
+it.each([true, false])("keeps canonical source population disclosure with anonymous=%s", (anonymous) => {
+  const { market } = recordedAudit();
+  if (!market.benchmarkLineage) throw new Error("fixture requires canonical lineage");
+  const sourceId = anonymous ? "euro_top_tech" : "levels_fyi";
+  const displayName = anonymous ? "Euro Top Tech" : "Levels.fyi";
+  const companyName = anonymous ? "Euro Top Tech community" : "Levels.fyi market aggregate";
+  renderCompensation({ audit: {
+    ...sampleCompensationAudit,
+    market: { ok: true, recordStatus: "recorded", estimate: {
+      ...market, matchScope: "market_baseline_fallback",
+      aggregateBucket: anonymous ? "reported regional source sample" : market.aggregateBucket,
+      benchmarkLineage: { ...market.benchmarkLineage, kind: "direct", priceLevelInputs: [] },
+      sources: [{ ...market.sources[0]!, sourceId, displayName }],
+      evidence: [{ ...market.evidence[0]!, sourceId, displayName, companyName, location: "ES" }],
+    } },
+  } });
+  if (anonymous) {
+    expect(screen.getByText("Regional salary comparison")).toBeVisible();
+    expect(screen.getByText(/Reported compensation from Euro Top Tech in ES/)).toBeVisible();
+    expect(screen.getByText(/Employers are not identified for every report/)).toBeVisible();
+    expect(screen.getByText(/limited source sample/)).toBeVisible();
+    expect(screen.queryByText("Levels.fyi market aggregate")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Based on a direct benchmark/)).not.toBeInTheDocument();
+  } else {
+    expect(screen.getByText(/Based on a direct benchmark for the matched role family and geography/)).toBeVisible();
+    expect(screen.queryByText(/Employers are not identified for every report/)).not.toBeInTheDocument();
+  }
+});

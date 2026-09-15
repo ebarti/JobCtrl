@@ -9,9 +9,12 @@ from datetime import datetime, timezone
 from statistics import median
 from typing import Literal
 
+from jobctrl.domain.compensation.benchmarks import (
+    classify_role, classify_seniority, resolve_country_code, resolve_reported_seniority,
+)
 from jobctrl.domain.identifiers import JobId, canonical_job_id
 
-ESTIMATOR_VERSION = "company-role-reported-compensation-v3"
+ESTIMATOR_VERSION = "company-role-reported-compensation-v4"
 
 MarketEstimateState = Literal[
     "not_requested",
@@ -370,6 +373,45 @@ class MarketCompensationEstimate:
     match_scope: MarketMatchScope = "none"
 
 
+def accepted_estimate_matches_job(
+    estimate: MarketCompensationEstimate | None, *, title: str, location: str | None,
+    target_country_code: str | None = None,
+) -> bool:
+    """Check retained evidence against current job inputs across estimator encodings."""
+
+    if estimate is None or estimate.estimate_state != "estimated_range" or not estimate.role_title:
+        return False
+    requested = classify_role(title)
+    accepted = classify_role(estimate.role_title)
+    if (not requested.role_family_code or requested.role_family_code != accepted.role_family_code
+            or requested.seniority_label != accepted.seniority_label):
+        return False
+    country = resolve_country_code(location)
+    if target_country_code is not None:
+        if country != target_country_code:
+            return False
+    elif not _normalize_location(location):
+        return False
+    else:
+        # Non-canonical estimates keep the estimator's own location semantics:
+        # evidence that resolves to a country must match the job country, while
+        # Europe-wide or unlabeled evidence stays accepted at the same 0.78
+        # ``_location_score`` the estimator used when it produced the range.
+        for row in estimate.evidence:
+            row_country = resolve_country_code(row.location)
+            if country is not None and row_country is not None:
+                if row_country != country:
+                    return False
+            elif _location_score(location, row.location) < 0.78:
+                return False
+    # Old accepted results may themselves contain a wrongly promoted mixed
+    # source bucket. Retention must not perpetuate that unsupported population.
+    return requested.seniority_label == "unknown" or all(
+        resolve_reported_seniority(row.role_title, row.level_label) == requested.seniority_label
+        for row in estimate.evidence
+    )
+
+
 def estimate_market_compensation(
     *,
     job_id: JobId,
@@ -541,12 +583,36 @@ def estimate_market_compensation(
             estimated_at=now,
         )
 
+    company_context_rows = usable_rows
+    requested_seniority = classify_seniority(seniority_label or title)
+    if requested_seniority != "unknown":
+        level_matches = [row for row in usable_rows
+                         if resolve_reported_seniority(row.role_title, row.level_label) == requested_seniority
+                         and _role_score(normalized_role, row.role_title) >= 0.55]
+        # Company-role evidence stays primary: the job's own company rows for the
+        # requested level are kept whatever their geography. Among the remaining
+        # level matches the narrowest geography with evidence wins (country, then
+        # the wider region), so generic aggregates and exact-company rows for a
+        # different level cannot crowd out regional level evidence. Level matches
+        # from another region never replace same-region context on their own; the
+        # requested level is then withheld instead of borrowed.
+        company_matches = [row for row in level_matches
+                           if _company_score(normalized_company, row.company_name) >= 0.95]
+        country = resolve_country_code(location)
+        country_matches = [row for row in level_matches if country and resolve_country_code(row.location) == country]
+        local_matches = [row for row in level_matches if _location_score(location, row.location) >= 0.78]
+        regional_matches = country_matches or local_matches
+        if company_matches or regional_matches:
+            kept = {id(row) for row in company_matches}
+            usable_rows = company_matches + [row for row in regional_matches if id(row) not in kept]
+
     selected_rows, match_scope, scope_warning = _select_rows(
         usable_rows,
         normalized_company=normalized_company,
         normalized_role=normalized_role,
         location=location,
         inferred_level=inferred_level,
+        company_context_rows=company_context_rows,
     )
     if scope_warning:
         warnings.append(scope_warning)
@@ -573,7 +639,12 @@ def estimate_market_compensation(
 
     company_scores = tuple(_company_score(normalized_company, row.company_name) for row in selected_rows)
     role_scores = tuple(_role_score(normalized_role, row.role_title) for row in selected_rows)
-    level_scores = tuple(_level_score(inferred_level, row.level_label) for row in selected_rows)
+    level_scores = tuple(
+        0.0 if requested_seniority != "unknown"
+        and resolve_reported_seniority(row.role_title, row.level_label) != requested_seniority
+        else _level_score(inferred_level, resolve_reported_seniority(row.role_title, row.level_label))
+        for row in selected_rows
+    )
     location_scores = tuple(_location_score(location, row.location) for row in selected_rows)
     freshness_scores = tuple(_freshness_score(row.release_year, now) for row in selected_rows)
     source_count = len({row.source_id for row in selected_rows})
@@ -637,7 +708,10 @@ def estimate_market_compensation(
     }.get(match_scope, f"Company evidence provides {company_percent}% support.")
     role_reason = f"Selected salary rows provide {role_percent}% role support for {title}."
     level_reason = (
-        f"The job title was classified as {inferred_level}; selected rows provide {level_percent}% seniority support."
+        f"The requested {requested_seniority} level has no matching evidence; observed source levels: "
+        + ", ".join(sorted({str(row.level_label or "unknown") for row in selected_rows})) + "."
+        if requested_seniority != "unknown" and level_score == 0
+        else f"The job title was classified as {inferred_level}; selected rows provide {level_percent}% seniority support."
     )
     factors.extend(
         [
@@ -708,7 +782,7 @@ def estimate_market_compensation(
     )
 
     minimum_score = _minimum_estimate_score(selected_rows, match_scope)
-    if confidence_score < minimum_score:
+    if confidence_score < minimum_score or (requested_seniority != "unknown" and level_score == 0):
         return _estimate(
             tenant_id=tenant_id,
             job_id=job_id,
@@ -903,6 +977,7 @@ def _select_rows(
     normalized_role: str,
     location: str | None,
     inferred_level: str | None,
+    company_context_rows: list[ReportedCompensationObservation],
 ) -> tuple[list[ReportedCompensationObservation], MarketMatchScope, MarketWarningCode | None]:
     exact = [
         row
@@ -922,7 +997,7 @@ def _select_rows(
     if adjacent:
         return adjacent, "company_adjacent_role", "company_role_fallback"
 
-    company_rows = [row for row in rows if _company_score(normalized_company, row.company_name) >= 0.95]
+    company_rows = [row for row in company_context_rows if _company_score(normalized_company, row.company_name) >= 0.95]
     company_tier, _ = _company_tier(company_rows)
     target_level = _normalize_level(inferred_level)
     if company_tier != "unknown":
@@ -1306,11 +1381,9 @@ def _normalize_level(value: str | None) -> str:
 
 
 def _fallback_level_score(target_level: str, row: ReportedCompensationObservation) -> float:
-    if re.fullmatch(r"all\s+levels?", str(row.level_label or "").strip(), re.IGNORECASE):
-        return 0.5 if target_level == "executive" else 0.78
-    observed_level = _normalize_level(row.level_label)
+    observed_level = resolve_reported_seniority(row.role_title, row.level_label)
     if observed_level == "unknown":
-        observed_level = _level_from_title(row.role_title)
+        return 0.5 if target_level == "executive" else 0.78
     return _level_score(target_level, observed_level)
 
 
@@ -1522,12 +1595,27 @@ def _aggregate_bucket(company: str | None, title: str | None, match_scope: Marke
     return f"reported compensation for {_clean_display(company) or 'unknown company'} {_clean_display(title) or 'unknown role'}"
 
 
+def _is_unidentified_employer(row: ReportedCompensationObservation) -> bool:
+    name = _normalize_location(row.company_name)
+    return name in {"", "unknown", "unknown company"} or name.endswith(" community")
+
+
 def _estimate_aggregate_bucket(
     company: str | None,
     title: str | None,
     match_scope: MarketMatchScope,
     rows: list[ReportedCompensationObservation],
 ) -> str:
+    # The persisted bucket is the read model's source of truth for the regional
+    # comparison disclosure, so the explicit estimator names the population the
+    # same way the automatic materialization does.
+    regional_scopes = {"same_location_role_fallback", "tier_role_fallback", "market_baseline_fallback"}
+    if rows and match_scope in regional_scopes and any(_is_unidentified_employer(row) for row in rows):
+        return "reported regional source sample"
+    if rows and match_scope == "same_location_role_fallback" and all(
+        row.company_name != LEVELS_FYI_MARKET_AGGREGATE_COMPANY for row in rows
+    ):
+        return "reported regional company peer cohort"
     if rows and all(row.source_id == "posted_salary_text" for row in rows):
         if match_scope == "same_location_role_fallback":
             return "employer-posted same-location role compensation"

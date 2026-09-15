@@ -41,8 +41,11 @@ from jobctrl.domain.compensation import (
     MarketSourceSnapshot,
     ReportedCompensationObservation,
     estimate_market_compensation,
+    classify_role,
     sanitize_market_source_snapshot,
 )
+from jobctrl.domain.compensation.market import accepted_estimate_matches_job
+from jobctrl.infrastructure.compensation.benchmark_lineage import load_market_benchmark_lineage
 from jobctrl.domain.events.base import DomainEvent
 from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.ports.events import EventHandler, Subscription
@@ -401,6 +404,25 @@ class SqliteMarketCompensationRepository:
             )
             return True
 
+    def can_retain_estimate(
+        self, estimate: MarketCompensationEstimate | None, *, title: str, location: str | None,
+    ) -> bool:
+        target_country = None
+        if (estimate is not None
+                and estimate.estimator_version.startswith("company-role-reported-compensation-canonical-benchmark-v")
+                and any(f":{kind}:" in estimate.estimator_version for kind in ("direct", "extrapolated"))):
+            lineage = load_market_benchmark_lineage(self._conn, tenant_id=estimate.tenant_id,
+                                                   estimator_version=estimate.estimator_version)
+            requested = classify_role(title)
+            if (lineage is None or lineage["taxonomyVersion"] != requested.taxonomy_version
+                    or lineage["roleFamilyCode"] != requested.role_family_code
+                    or lineage["seniorityLabel"] != requested.seniority_label
+                    or lineage["component"] != estimate.component):
+                return False
+            target_country = lineage["targetGeography"]["countryCode"]
+        return accepted_estimate_matches_job(estimate, title=title, location=location,
+                                            target_country_code=target_country)
+
     @contextmanager
     def _atomic_event_write(self) -> Iterator[_BufferedEventPublisher]:
         """Commit the canonical mutation and dirty event before notifying."""
@@ -488,6 +510,7 @@ class SqliteMarketCompensationRepository:
         estimated_at: str | None = None,
         limit: int = 0,
         job_id: JobId | None = None,
+        preserve_accepted_on_failure: bool = False,
     ) -> int:
         if job_id is not None:
             job_id = canonical_job_id(str(job_id))
@@ -516,6 +539,18 @@ class SqliteMarketCompensationRepository:
                 component="total_compensation",
                 estimated_at=estimated_at,
             )
+            if preserve_accepted_on_failure and not estimate.evidence:
+                estimate = replace(estimate, estimate_state="source_unavailable", insufficient_reasons=(),
+                                   source_unavailable_reasons=("missing_reported_observation",))
+            if preserve_accepted_on_failure and estimate.estimate_state != "estimated_range":
+                estimate = replace(estimate, factors=tuple(
+                    replace(factor, reason=f"The requested role and level lookup could not retrieve supporting source pages. {factor.reason}")
+                    if factor.name == "level" else factor for factor in estimate.factors
+                ))
+            current = self.get_estimate(tenant_id, current_job_id) if preserve_accepted_on_failure else None
+            if (estimate.estimate_state != "estimated_range"
+                    and self.can_retain_estimate(current, title=title, location=location)):
+                continue
             self.save_estimate(estimate)
         self._conn.commit()
         return len(rows)
@@ -687,7 +722,7 @@ def load_default_reported_compensation_observations(
         if str(source_env.get("JOBCTRL_LEVELS_FYI_ACCESS_MODE") or "").strip().casefold() == "public_markdown"
         else ()
     )
-    if any(outcome.unavailable for outcome in levels_fyi_outcomes):
+    if any(outcome.unavailable or outcome.level_lookup_unavailable or outcome.reachable_pages < outcome.requested_pages for outcome in levels_fyi_outcomes):
         source_errors.append("levels_fyi_public_unavailable")
     levels_fyi = (*levels_fyi_public, *levels_fyi_licensed)
     glassdoor = _load_configured_provider_observations(

@@ -15,6 +15,7 @@ from jobctrl.domain.compensation import (
     resolve_benchmark_geography,
     resolve_country_code,
 )
+from jobctrl.domain.compensation.benchmarks import classify_seniority
 from jobctrl.infrastructure.compensation import (
     FxRateToEur,
     canonicalize_reported_observations,
@@ -101,6 +102,30 @@ def test_reported_observations_become_content_addressed_direct_facts() -> None:
     assert fact.eur_annual_minimum_amount == 86_400
     assert fact.eur_annual_maximum_amount == 108_000
     assert fact.fx_reference["reference_id"] == "ecb-2026-08-12"
+
+
+@pytest.mark.parametrize(("title", "bucket", "seniority"), [
+    ("Principal Infrastructure Engineer", "Principal / Director", "principal"),
+    ("Director of Software Engineering", "Principal / Director", "director"),
+    ("Software Engineer", "Principal / Director", "unknown"),
+    ("Principal / Director Engineer", "Principal / Director", "unknown"),
+    ("Staff Software Engineer", "Staff / Engineering Manager", "staff"),
+    ("Software Engineering Manager", "Staff / Engineering Manager", "manager"),
+    ("Software Engineer", "Staff / Engineering Manager", "unknown"),
+    ("Senior Software Engineer", "Principal / Director", "unknown"),
+])
+def test_canonical_ingestion_resolves_mixed_bucket_from_actual_source_role(title, bucket, seniority) -> None:
+    observation = ReportedCompensationObservation(
+        source_id="euro_top_tech", source_provenance="public", company_name="Euro Top Tech community",
+        role_title=title, level_label=bucket, minimum_amount=150_000, maximum_amount=160_000,
+        location="Spain", sample_count=1,
+    )
+    result = canonicalize_reported_observations((observation,), tenant_id="local",
+        fetched_at="2026-08-12T08:00:00Z", fresh_until="2026-08-19T08:00:00Z")
+    assert result.rejected == ()
+    assert result.facts[0].seniority_label == seniority
+    assert result.facts[0].role_family_code == classify_role(title).role_family_code
+    assert observation.level_label == bucket
 
 
 def test_posted_salary_is_rejected_from_direct_market_authority() -> None:
@@ -537,3 +562,18 @@ def _price_fact(*, country: str, index: float, marker: str):
         fetched_at="2026-08-12T08:00:00Z",
         fresh_until="2026-08-19T08:00:00Z",
     )
+
+
+@pytest.mark.parametrize(("value", "expected"), [
+    ("Executive", "executive"),
+    ("Executive level", "executive"),
+    ("Chief Executive Officer", "executive"),
+    ("Executive Vice President", "executive"),
+    ("Account Executive", "unknown"),
+    ("Sales Executive", "unknown"),
+    ("Executive Assistant", "unknown"),
+    ("Executive Director", "director"),
+    ("Senior Account Executive", "senior"),
+])
+def test_executive_seniority_requires_a_level_label_or_c_level_title(value, expected) -> None:
+    assert classify_seniority(value) == expected
