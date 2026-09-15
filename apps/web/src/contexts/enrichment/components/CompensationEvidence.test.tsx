@@ -435,6 +435,7 @@ it("labels a limited company peer comparator beside the amount", () => {
     market: { ok: true, recordStatus: "recorded", estimate: {
       ...market, estimatorVersion: "company-role-reported-compensation-v4",
       matchScope: "same_location_role_fallback", benchmarkLineage: null,
+      aggregateBucket: "reported regional company peer cohort",
       evidence: [{ ...market.evidence[0]!, companyName: "Peer Cloud", location: "Spain", levelLabel: "Principal" }],
     } },
   } });
@@ -449,6 +450,7 @@ it("describes unidentified community reports as a source sample", () => {
     ...sampleCompensationAudit,
     market: { ok: true, recordStatus: "recorded", estimate: {
       ...market, matchScope: "same_location_role_fallback", benchmarkLineage: null,
+      aggregateBucket: "reported regional source sample",
       sources: [{ ...market.sources[0]!, sourceId: "euro_top_tech", displayName: "Euro Top Tech" }],
       evidence: [{ ...market.evidence[0]!, companyName: "Euro Top Tech community", location: "Spain",
         roleTitle: "Principal Infrastructure Engineer", levelLabel: "Principal / Director" }],
@@ -470,6 +472,7 @@ it.each([true, false])("keeps canonical source population disclosure with anonym
     ...sampleCompensationAudit,
     market: { ok: true, recordStatus: "recorded", estimate: {
       ...market, matchScope: "market_baseline_fallback",
+      aggregateBucket: anonymous ? "reported regional source sample" : market.aggregateBucket,
       benchmarkLineage: { ...market.benchmarkLineage, kind: "direct", priceLevelInputs: [] },
       sources: [{ ...market.sources[0]!, sourceId, displayName }],
       evidence: [{ ...market.evidence[0]!, sourceId, displayName, companyName, location: "ES" }],

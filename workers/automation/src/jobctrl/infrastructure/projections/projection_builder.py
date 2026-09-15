@@ -416,6 +416,8 @@ MARKET_SOURCE_DEFAULTS = {
 }
 MARKET_SAFE_AGGREGATE_BUCKETS = {
     "reported company-role compensation",
+    "reported regional source sample",
+    "reported regional company peer cohort",
     "reported company adjacent-role compensation",
     "same-location role compensation fallback",
     "trimodal tier role fallback",

@@ -724,6 +724,7 @@ def test_automatic_uses_exact_principal_peers_before_all_level_market_and_retain
         assert summary["market"]["benchmarkKind"] is None
         assert audit["market"]["estimate"]["benchmarkLineage"] is None
         assert audit["market"]["estimate"]["matchScope"] == "same_location_role_fallback"
+        assert audit["market"]["estimate"]["aggregateBucket"] == "reported regional company peer cohort"
         # The next failed refresh cannot demote accepted peers to generic context,
         # even after its evidence freshness window ends.
         later = "2026-08-21T08:00:00Z"
@@ -916,6 +917,7 @@ def test_automatic_anonymous_report_preserves_provider_and_limited_sample_scope(
         summary, audit = _projected_compensation(conn, JOB_ONE)
         assert summary["market"]["confidenceBand"] == "low"
         assert audit["market"]["estimate"]["evidence"][0]["companyName"] == "Euro Top Tech community"
+        assert audit["market"]["estimate"]["aggregateBucket"] == "reported regional source sample"
         assert audit["market"]["estimate"]["benchmarkLineage"]["directInputs"][0]["sourceId"] == "euro_top_tech"
     finally:
         close_connection()
