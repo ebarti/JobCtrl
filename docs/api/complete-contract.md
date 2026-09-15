@@ -182,6 +182,16 @@ row of the same generation.
 
 ## Jobs read model and lifecycle
 
+`:key` on every job-scoped route is the tenant-scoped stable `JobId`. A posting
+URL, retained posting locator, or application URL is accepted only as an
+external locator, and posting identity resolves first. An application URL
+resolves only when exactly one job in the tenant owns it as its canonical
+`job_enrichments.application_url` value or retained `job_application_locators`
+alias; a shared application endpoint resolves to no job and the route returns
+`404 { ok: false, error: "job_not_found" }`. The
+[application URL authority inventory](../architecture/application-url-authority.md)
+lists the readers of these values.
+
 `/v1/jobs` and `/v1/jobs/:key` expose the latest persisted scoring evidence
 from `job_scores` as additive read-model fields: `scoreBreakdown`,
 `scoreKeywords`, `scoreVersion`, `scoredAt`, `scoreTrace`, and

@@ -1,8 +1,12 @@
-# Application URL authority inventory
+# Application URL Authority Inventory
 
 The exact-v10 boundary removes the `jobs.application_url` column. Application
 URLs remain valid domain values; removing the legacy storage authority does not
 remove canonical targets, approval snapshots, event evidence, or API fields.
+
+**Read this if** you need to know which reader or writer still touches an
+application URL after the exact-v10 migration, or how a job is resolved from an
+application URL.
 
 | Reader or writer | Current source and behavior |
 | --- | --- |

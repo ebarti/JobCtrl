@@ -233,6 +233,7 @@ const SIDEBAR: DefaultTheme.SidebarItem[] = [
         items: [
           { text: "Concepts & Ownership", link: "/architecture/data-events-and-projections" },
           { text: "Storage Authority", link: "/architecture/storage" },
+          { text: "Application URL Authority Inventory", link: "/architecture/application-url-authority" },
           { text: "Apply Feedback Projection", link: "/architecture/read-model" },
         ],
       },

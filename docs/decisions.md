@@ -2264,6 +2264,26 @@ route preserves the paired backup, owner-private candidate and intermediate
 files, atomic activation, exact-source rollback, interrupted-transition
 cleanup, and no-mixed-runtime invariants above.
 
+Amended (2026-09-12): exact schema v10 supersedes v9 as the sole runtime
+contract. V10 removes `jobs.application_url`; `job_enrichments.application_url`
+is the canonical application target, and the new `job_application_locators`
+relation retains the union of nonempty legacy and canonical URLs as
+tenant-scoped lookup aliases. The stopped-runtime migration keeps a nonempty
+canonical value, otherwise promotes the nonempty legacy value into enrichment
+(creating a pending enrichment row when none exists), and retains differing
+historical URLs as aliases. Aliases support historical lookup only; they never
+drive projections, approval binding, or submission. Job lookup by application
+URL resolves posting identity first and otherwise returns a job only when
+exactly one job in the tenant matches, so a shared application endpoint fails
+closed. Retained v6, exact-v7, and exact-v8 sources compose their existing
+private migrations through an exact-v9 intermediate before this step; exact v9
+receives only the transfer. Every route preserves the paired backup,
+owner-private candidate and intermediate files, atomic activation,
+exact-source rollback, interrupted-transition cleanup, and no-mixed-runtime
+invariants above. `docs/architecture/storage.md` and
+`docs/architecture/application-url-authority.md` carry the migration contract
+and the reader/writer inventory.
+
 ## 2026-08-20: Profile Plate Direct-Text Projection Uses The Canonical Form Draft
 
 Status: accepted

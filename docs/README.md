@@ -121,6 +121,9 @@ has one defining page; other pages summarize it briefly and link to that owner.
   the distinction between domain state, events, projections, and telemetry.
 - [`architecture/storage.md`](architecture/storage.md): physical SQLite and file
   authorities.
+- [`architecture/application-url-authority.md`](architecture/application-url-authority.md):
+  application URL readers and writers after the exact-v10 migration, and the
+  unique-match job lookup rule.
 - [`architecture/read-model.md`](architecture/read-model.md): apply feedback and
   projection details.
 - [`architecture/scoring.md`](architecture/scoring.md): scoring algorithm,

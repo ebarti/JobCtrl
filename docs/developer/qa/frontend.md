@@ -8,6 +8,7 @@ browser behavior, and visual consistency catch different failures.
 | Layer | Command |
 | --- | --- |
 | TypeScript | `corepack pnpm web:check` |
+| Frontend boundaries | `corepack pnpm web:lint` |
 | Unit, hook, component, a11y | `corepack pnpm --filter @jobctrl/web test` |
 | Type-level contracts | `corepack pnpm --filter @jobctrl/web test-d` |
 | Production bundle | `corepack pnpm web:build` |
@@ -19,6 +20,11 @@ browser behavior, and visual consistency catch different failures.
 - Colocated Vitest/RTL/MSW tests prove selectors, query keys, hooks, mutations,
   forms, components, rollback, and critical/serious axe checks.
 - Type-level tests prove the public inferred shapes of read hooks and contracts.
+- The boundary lint proves the documented context/view dependency direction,
+  Operations read-kernel access, browser-capability ports, and context-owned
+  API/query/store usage from TypeScript syntax and resolved symbols. The
+  TypeScript CI web job blocks on it; see
+  [automated boundary checks](../../architecture/frontend/state-and-ports.md#automated-boundary-checks).
 - Playwright uses a real API plus seeded SQLite fixtures to prove route and
   realtime behavior without a live worker or model.
 - `shipped-fit-lifecycle.spec.ts` reads canonical final-fit metadata through the

@@ -401,6 +401,7 @@ corepack pnpm --filter @jobctrl/api exec vitest run \
   test/server.test.ts
 corepack pnpm --filter @jobctrl/web exec vitest run \
   src/contexts/operations/realtimePatches.test.ts \
+  src/contexts/operations/realtimeListPatches.test.ts \
   src/contexts/operations/workflowRealtimePatches.test.ts \
   src/contexts/operations/invalidation-router.test.ts \
   src/contexts/apply/components/CancelApplyButton.test.tsx \
@@ -426,6 +427,12 @@ score and accepted artifact remain unchanged until those commands are invoked.
 The gate must also prove that no feedback decision or restore automatically
 starts scoring, tailoring, Apply, or artifact work. Do not perform a real
 application submission or mutate a real user database during this QA.
+
+Run `apps/web/e2e/tests/realtime-list-context.spec.ts` for the realtime
+list-patch path. It uses the real SSE adapter to prove that second-page
+selection and scroll survive eligible list patches, that eligible lists do not
+refetch, and that undeterminable membership or ordering falls back to
+exact-page invalidation.
 
 The same product path must prove that a successful Enrich row can display an
 explicit non-blocking application-target outcome, including LinkedIn on-site
