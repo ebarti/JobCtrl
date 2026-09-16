@@ -325,7 +325,6 @@
   display: inline-flex;
   align-items: baseline;
   gap: 4px;
-  color: var(--muted-foreground);
 }
 
 .apply-review-selected-score b {
@@ -337,7 +336,7 @@
 }
 
 .apply-review-selected-score > span {
-  color: var(--muted-foreground);
+  color: inherit;
   font-size: var(--jh-type-label-size);
   font-weight: var(--jh-type-label-weight);
   letter-spacing: normal;
