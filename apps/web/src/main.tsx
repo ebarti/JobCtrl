@@ -110,9 +110,11 @@ async function mountApplication(consentClient?: DemoConsentClient): Promise<void
     }
     demoTelemetry?.error(undefined, { errorCode: "client_unexpected" });
     root.render(
-      <main role="alert">
-        <h1>Demo temporarily unavailable</h1>
-        <p>Reload to try the browser-local demo again.</p>
+      <main className="demo-consent-shell" role="alert">
+        <section className="demo-consent-card">
+          <h1>Demo temporarily unavailable</h1>
+          <p className="demo-consent-error">Reload to try the browser-local demo again.</p>
+        </section>
       </main>,
     );
     return;
@@ -135,9 +137,11 @@ async function mountApplication(consentClient?: DemoConsentClient): Promise<void
       void consentClient.recordHealth("failure", "persistent").catch(() => undefined);
     }
     root.render(
-      <main role="alert">
-        <h1>Demo update required</h1>
-        <p>{composition.initialization.message}</p>
+      <main className="demo-consent-shell" role="alert">
+        <section className="demo-consent-card">
+          <h1>Demo update required</h1>
+          <p className="demo-consent-error">{composition.initialization.message}</p>
+        </section>
       </main>,
     );
     return;

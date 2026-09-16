@@ -35,12 +35,19 @@
   position: static;
   gap: 4px 12px;
   padding: 8px 28px;
-  background: color-mix(in oklch, var(--warning) 7%, var(--background));
+  background: var(--background);
   font-size: var(--jh-type-body-size);
   line-height: var(--jh-type-body-line-height);
 }
 
 .demo-workspace-notice strong {
+  color: var(--foreground);
+}
+
+.demo-workspace-notice__warning {
+  flex-basis: 100%;
+  border-left: 2px solid var(--warning);
+  padding-left: 12px;
   color: var(--foreground);
 }
 
