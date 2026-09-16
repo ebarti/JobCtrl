@@ -2590,11 +2590,12 @@ try {
             await themedPage.locator(".mermaid svg").first().waitFor({ state: "visible" });
           }
           const style = await themedPage.evaluate(() => {
-            const root = getComputedStyle(document.documentElement);
             const action = document.querySelector(".VPButton.brand");
             return {
               dark: document.documentElement.classList.contains("dark"),
-              background: root.getPropertyValue("--background").trim(),
+              // Computed colors normalize equivalent minified spellings (.16
+              // and 0.16) and verify the token reaches the rendered surface.
+              background: getComputedStyle(document.body).backgroundColor,
               font: getComputedStyle(document.body).fontFamily,
               radius: action ? getComputedStyle(action).borderRadius : null,
               overflow: document.documentElement.scrollWidth > innerWidth + 1,
