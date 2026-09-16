@@ -1915,12 +1915,18 @@ try {
     "Does Discovery make network requests?",
     "Is product telemetry enabled by default?",
     "Does this documentation site use analytics?",
-    "Can Discovery or enrichment launch a browser?",
+    "Does Discovery use my browser profile?",
     "Does application-submission browser automation run continuously?",
     "Does JobCtrl submit applications or send employer-facing email by default?",
     "Does Outreach send messages automatically?",
   ];
   const requiredQuickAnswerStatuses = ["✓ Yes", "✕ No", "◐ Only"];
+  const requiredBrowserBoundaries = [
+    "Discovery and Enrich prefer its live profile",
+    "Without it, they use guarded public HTTP or anonymous managed Playwright",
+    "They never copy or separately launch your profile",
+    "a fetch failure does not change transport",
+  ];
   if (
     privacyContract.headerCount !== 2 ||
     privacyContract.rowCount < 8 ||
@@ -1933,8 +1939,8 @@ try {
     !privacyContract.tableText.includes(
       "during runs you start or schedules you explicitly enable",
     ) ||
-    !privacyContract.tableText.includes(
-      "Smart extraction and some detail enrichment use Playwright",
+    requiredBrowserBoundaries.some(
+      (boundary) => !privacyContract.tableText.includes(boundary),
     ) ||
     !privacyContract.hasWorkspaceScope ||
     !privacyContract.hasMacOnlyBoundary ||
