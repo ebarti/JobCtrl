@@ -64,12 +64,8 @@
   --topbar-height: 60px;
   --jh-target-min-size: 24px;
 
-  --jh-font-sans:
-    "Geist Variable", ui-sans-serif, system-ui, -apple-system,
-    BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --jh-font-heading:
-    "Geist Variable", ui-sans-serif, system-ui, -apple-system,
-    BlinkMacSystemFont, sans-serif;
+  --jh-font-sans: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --jh-font-heading: var(--jh-font-sans);
   --jh-font-mono:
     "JetBrains Mono Variable", "SFMono-Regular", ui-monospace, Menlo, Consolas,
     monospace;

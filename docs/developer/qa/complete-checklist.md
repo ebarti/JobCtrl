@@ -657,8 +657,8 @@ composite controls contain their children.
 
 The gate passes only when:
 
-- `base-rhea`, Geist, the semantic token mappings, light/dark contrast, all
-  three densities, a density-independent 16px body, the compact PageHead
+- `base-rhea`, the Helvetica Neue/Helvetica/Arial stack, the semantic token
+  mappings, light/dark contrast, all three densities, a density-independent 14px body, the compact PageHead
   hierarchy, and the shared card/status rules remain intact;
 - direct Radix imports and raw native selects are absent, Base UI overlays keep
   their focus/dismissal/portal contract, and route visuals show no clipping or

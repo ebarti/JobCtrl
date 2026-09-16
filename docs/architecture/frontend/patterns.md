@@ -488,7 +488,8 @@ Visible product icons use `@tabler/icons-react`; do not add new
 **Tailwind utility-first.** Co-located with components; no CSS-in-JS
 runtime. Tailwind CSS 4 is configured CSS-first: `globals.css` imports
 `tailwindcss`, `tw-animate-css`, `shadcn/tailwind.css`, Fontsource's
-Geist and JetBrains Mono variable fonts, and `tokens.css`; the same file
+Geist (for resume templates) and JetBrains Mono variable fonts, and
+`tokens.css`; product UI uses the system Helvetica Neue/Helvetica/Arial stack. The same file
 uses `@theme inline` to map CSS variables into standard shadcn utilities
 such as `bg-background`, `text-foreground`, `bg-card`, `border-border`,
 `ring-ring`, `bg-primary`, and `bg-popover`.
@@ -496,7 +497,7 @@ such as `bg-background`, `text-foreground`, `bg-card`, `border-border`,
 `tokens.css` is the source of the app's token values. It defines the
 light `:root` and dark `:root[data-theme="dark"]` shadcn semantic
 variables, chart tokens, sidebar/menu tokens, radius scale inputs,
-Fontsource-backed font stacks, and JobCtrl status extensions
+system product and Fontsource-backed technical font stacks, and JobCtrl status extensions
 (`success`, `warning`, `status-info`). The Tailwind config bridge
 is not part of the active contract; generated utilities come from `@theme inline`
 plus the active CSS variables.

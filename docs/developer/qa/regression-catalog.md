@@ -155,12 +155,12 @@ Before claiming "fixed" on these surfaces, add or update a regression fixture th
 
 ## Cumulative Redesign Boundaries
 
-The `base-rhea` preset, semantic tokens, Geist type, 10px radius scale,
-capped 24px cards, neutral chart ramp, violet focus/primary treatment, and
+The `base-rhea` ancestry, semantic tokens, Helvetica Neue/Helvetica/Arial type,
+square geometry, neutral chart ramp, monochrome focus/primary treatment, and
 icon/dot-plus-text domain statuses form one contract. Direct Radix imports, raw
 native selects, route-local primitive replicas, capsule statuses, and
 card-per-datum layouts are regressions even when the page compiles. Body copy is
-16px in every density; density changes geometry only. Primary routes share the
+14px in every density; density changes geometry only. Primary routes share the
 compact PageHead hierarchy. Prove the same production-shaped content across
 light/dark, all three densities, desktop, collapsed rail, and 390×844.
 

@@ -37,7 +37,7 @@ browser behavior, and visual consistency catch different failures.
 ## Visual And Base UI Contracts
 
 The frontend retains `base-rhea` component ancestry with the Swiss timetable
-visual contract in `DESIGN.md`: Geist product type, JetBrains Mono technical
+visual contract in `DESIGN.md`: Helvetica Neue/Helvetica/Arial product type, JetBrains Mono technical
 text, square geometry, neutral chart ramps, monochrome primary/focus tokens,
 and red/amber state accents. Domain status uses an icon/dot plus text rather
 than a colored capsule, and filled score/count markers pair explicit foreground

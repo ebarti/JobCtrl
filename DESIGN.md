@@ -62,47 +62,47 @@ darkColors:
 
 typography:
   page-title:
-    fontFamily: "Geist Variable"
+    fontFamily: "Helvetica Neue, Helvetica, Arial, sans-serif"
     fontSize: 28px
     fontWeight: 700
     lineHeight: 34px
   section-title:
-    fontFamily: "Geist Variable"
+    fontFamily: "Helvetica Neue, Helvetica, Arial, sans-serif"
     fontSize: 18px
     fontWeight: 700
     lineHeight: 24px
   component-title:
-    fontFamily: "Geist Variable"
+    fontFamily: "Helvetica Neue, Helvetica, Arial, sans-serif"
     fontSize: 16px
     fontWeight: 700
     lineHeight: 22px
   body:
-    fontFamily: "Geist Variable"
+    fontFamily: "Helvetica Neue, Helvetica, Arial, sans-serif"
     fontSize: 14px
     fontWeight: 400
     lineHeight: 20px
   strong-body:
-    fontFamily: "Geist Variable"
+    fontFamily: "Helvetica Neue, Helvetica, Arial, sans-serif"
     fontSize: 14px
     fontWeight: 600
     lineHeight: 20px
   control:
-    fontFamily: "Geist Variable"
+    fontFamily: "Helvetica Neue, Helvetica, Arial, sans-serif"
     fontSize: 14px
     fontWeight: 600
     lineHeight: 20px
   label:
-    fontFamily: "Geist Variable"
+    fontFamily: "Helvetica Neue, Helvetica, Arial, sans-serif"
     fontSize: 12px
     fontWeight: 600
     lineHeight: 16px
   metadata:
-    fontFamily: "Geist Variable"
+    fontFamily: "Helvetica Neue, Helvetica, Arial, sans-serif"
     fontSize: 12px
     fontWeight: 400
     lineHeight: 16px
   metric:
-    fontFamily: "Geist Variable"
+    fontFamily: "Helvetica Neue, Helvetica, Arial, sans-serif"
     fontSize: 20px
     fontWeight: 700
     lineHeight: 24px
@@ -217,7 +217,7 @@ Non-negotiables:
 | Foundation | Contract |
 | --- | --- |
 | Base rhythm | 4px; primary steps 8, 12, 16, 24, 32 |
-| Product type | Geist Variable |
+| Product type | Helvetica Neue, Helvetica, Arial, sans-serif (system stack matching the timetable mock) |
 | Technical type | JetBrains Mono Variable |
 | Typography roles | Page 28/34/700; section 18/24/700; component 16/22/700; body 14/20/400; strong/control 14/20/600; label/status/table header 12/16/600; metadata 12/16/400; metric 20/24/700 |
 | Typography ownership | Every rendered shared primitive carries a named `data-typography` role; route code composes roles instead of inventing local values. |
@@ -230,6 +230,7 @@ Non-negotiables:
 | Charts | neutral five-step ramp; reserve chroma for selected or semantic data |
 | Semantic signals | success, warning, destructive, and informational tokens on glyph/text plus accessible labels |
 | Icon family | Tabler, consistent 1.5–2px stroke |
+| Brand mark | Original stacked planes and check geometry, with filled neutral layers and a grayscale check gradient; colors invert with the theme. |
 | Shape | square controls, panels, overlays, and score markers; no capsule status taxonomy |
 
 Dark mode remaps the same semantic tokens. It does not invent a second component language.
