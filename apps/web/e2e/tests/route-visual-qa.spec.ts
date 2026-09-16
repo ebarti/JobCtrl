@@ -221,9 +221,9 @@ const VISUAL_SYSTEM_AUDIT_ROUTES = [
 ] as const;
 
 const APPROVED_ROLE_METRICS = {
-  "page-title": "24px/30px/700",
-  "section-title": "18px/24px/600",
-  "component-title": "16px/22px/600",
+  "page-title": "28px/34px/700",
+  "section-title": "18px/24px/700",
+  "component-title": "16px/22px/700",
   body: "14px/20px/400",
   "strong-body": "14px/20px/600",
   control: "14px/20px/600",
@@ -256,9 +256,9 @@ async function collectTypographyAudit(
   return page.locator(".app-shell").evaluate((shell, approvedRoleMetrics) => {
     const approved = approvedRoleMetrics as Record<string, string>;
     const metricFallback: Record<string, string> = {
-      "24px/30px/700": "page-title",
-      "18px/24px/600": "section-title",
-      "16px/22px/600": "component-title",
+      "28px/34px/700": "page-title",
+      "18px/24px/700": "section-title",
+      "16px/22px/700": "component-title",
       "14px/20px/400": "body",
       "14px/20px/600": "strong-body",
       "12px/16px/600": "label",
@@ -1833,6 +1833,33 @@ test("density modes, focus rings, filters, forms, and destructive controls remai
     role: null,
   });
 });
+test("warning actions use the contrasting focus token in both themes", async ({ page }) => {
+  test.setTimeout(60_000);
+  for (const theme of ["light", "dark"] as const) {
+    await page.goto("/jobs");
+    if (theme === "dark") {
+      await page.getByRole("button", { name: "Switch to dark theme" }).click();
+    }
+    await page
+      .getByRole("button", { name: /^Open job Senior Engineering Manager - Risk/ })
+      .press("Enter");
+    await page.getByRole("button", { name: "More job actions" }).click();
+    const stop = page.getByRole("button", { name: "Stop current stage" });
+    await expectKeyboardFocusIndicator(page, stop, `${theme} warning action`);
+    const focus = await stop.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return {
+        ring: style.getPropertyValue("--tw-ring-color").trim(),
+        expected: style.getPropertyValue("--ring").trim(),
+      };
+    });
+    expect(focus.ring).toBe(focus.expected);
+    await expect
+      .poll(() => stop.evaluate((element) => getComputedStyle(element).boxShadow))
+      .toContain(focus.ring);
+  }
+});
+
 test("Crawl sources keeps provider traversal separate from exact outcomes", async ({
   page,
 }) => {
@@ -2037,7 +2064,7 @@ test("Profile and Preferences subjects share one expandable-card hierarchy", asy
       style.borderWidths,
       `Profile card ${index + 1} border widths`,
     ).toEqual(["1px", "1px", "1px", "1px"]);
-    expect(style.borderRadius, `Profile card ${index + 1} radius`).toBe("8px");
+    expect(style.borderRadius, `Profile card ${index + 1} radius`).toBe("0px");
     if (index > 0) {
       expect(
         style.top - cardStyles[index - 1]!.bottom,
@@ -2141,7 +2168,7 @@ test("Profile and Preferences subjects share one expandable-card hierarchy", asy
       `Preferences card ${index + 1} border widths`,
     ).toEqual(["1px", "1px", "1px", "1px"]);
     expect(section.borderRadius, `Preferences card ${index + 1} radius`).toBe(
-      "8px",
+      "0px",
     );
     if (index > 0) {
       expect(

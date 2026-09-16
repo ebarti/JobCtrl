@@ -178,9 +178,17 @@
   gap: 9px;
 }
 
-.apply-review-queue-fit {
-  min-width: 1rem;
-  color: var(--muted-foreground);
+.apply-review-queue-fit,
+.apply-review-selected-score {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  min-width: 32px;
+  min-height: 32px;
+  padding: 4px;
+  border: 1px solid var(--primary);
+  background: var(--card);
+  color: var(--foreground);
   font-size: var(--jh-type-strong-body-size);
   font-variant-numeric: tabular-nums;
   font-weight: var(--jh-type-strong-body-weight);
@@ -189,17 +197,14 @@
 
 .apply-review-queue-fit[data-score-tone="positive"],
 .apply-review-selected-score[data-score-tone="positive"] {
-  color: var(--success-text);
+  background: var(--primary);
+  color: var(--primary-foreground);
 }
 
-.apply-review-queue-fit[data-score-tone="neutral"],
-.apply-review-selected-score[data-score-tone="neutral"] {
-  color: var(--warning-text);
-}
-
-.apply-review-queue-fit[data-score-tone="negative"],
-.apply-review-selected-score[data-score-tone="negative"] {
-  color: var(--destructive-text);
+.apply-review-queue-fit[data-score-tone="unknown"],
+.apply-review-selected-score[data-score-tone="unknown"] {
+  border-color: var(--border);
+  color: var(--muted-foreground);
 }
 
 .apply-review-queue-item .meta {

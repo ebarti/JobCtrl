@@ -7,7 +7,7 @@
 .job-detail-drawer {
   width: min(1440px, calc(100dvw - 304px));
   margin: 0 auto;
-  border-radius: 10px;
+  border-radius: var(--radius);
   background: var(--card);
   box-shadow: 0 24px 72px color-mix(in srgb, #000 22%, transparent);
 }
@@ -46,33 +46,21 @@
   text-transform: none;
 }
 
-.job-detail-drawer .drawer-head .fit {
-  display: block;
-  width: auto;
-  height: auto;
-  min-width: 0;
-  border: 0;
+.job-overview-score .fit {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  min-width: 48px;
+  border: 1px solid var(--fit-score-border, var(--border));
   border-radius: 0;
-  background: transparent;
+  background: var(--fit-score-bg, var(--card));
   box-shadow: none;
+  color: var(--fit-score-fg, var(--muted-foreground));
   font-size: var(--jh-type-metric-size);
   font-variant-numeric: tabular-nums;
   font-weight: var(--jh-type-metric-weight);
-  letter-spacing: normal;
   line-height: var(--jh-type-metric-line-height);
-}
-
-.job-detail-drawer .drawer-head .fit[data-score-tone="positive"] {
-  color: var(--success-text);
-}
-
-.job-detail-drawer .drawer-head .fit[data-score-tone="negative"] {
-  color: var(--destructive-text);
-}
-
-.job-detail-drawer .drawer-head .fit[data-score-tone="neutral"],
-.job-detail-drawer .drawer-head .fit[data-score-tone="unknown"] {
-  color: var(--muted-foreground);
 }
 
 .job-overview-copy {
@@ -155,7 +143,7 @@
 .job-detail-drawer .job-detail-top-actions > .tab,
 .job-detail-drawer .action-panel .tab {
   min-height: 30px;
-  border-radius: 5px;
+  border-radius: var(--radius);
   padding: 6px 9px;
   font-size: var(--jh-type-control-size);
   font-weight: var(--jh-type-control-weight);
@@ -470,7 +458,7 @@
 .job-detail-drawer .score-correction input {
   min-width: 0;
   height: 34px;
-  border-radius: 5px;
+  border-radius: var(--radius);
   background: var(--card);
   font-size: var(--jh-type-body-size);
   font-weight: var(--jh-type-body-weight);
@@ -483,7 +471,7 @@
   height: 34px;
   place-items: center;
   border: 1px solid var(--primary);
-  border-radius: 5px;
+  border-radius: var(--radius);
   background: var(--primary);
   color: var(--primary-foreground);
 }
@@ -618,7 +606,7 @@
 
 .job-detail-drawer .compensation-evidence-rows > summary b,
 .job-detail-drawer .compensation-warning-list code {
-  border-radius: 3px;
+  border-radius: var(--radius);
 }
 
 .job-detail-drawer .requirement-fit-missing {

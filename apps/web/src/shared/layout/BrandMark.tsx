@@ -36,29 +36,23 @@ function BrandGlyph() {
       aria-hidden="true"
       focusable="false"
     >
-      <defs>
-        <linearGradient id="brandCheckGradient" x1="9" y1="20" x2="25" y2="7" gradientUnits="userSpaceOnUse">
-          <stop stopColor="#8b5cf6" />
-          <stop offset="1" stopColor="#6d28d9" />
-        </linearGradient>
-      </defs>
       <polygon
         points="16,15.5 27,21 16,26.5 5,21"
-        fill="#c4b5fd"
-        stroke="#c4b5fd"
+        fill="var(--muted-foreground)"
+        stroke="var(--muted-foreground)"
         strokeWidth="2.4"
         strokeLinejoin="round"
       />
       <polygon
         points="16,11 27,16.5 16,22 5,16.5"
-        fill="#ddd6fe"
-        stroke="#ddd6fe"
+        fill="var(--sidebar)"
+        stroke="var(--muted-foreground)"
         strokeWidth="2.4"
         strokeLinejoin="round"
       />
       <path
         d="M10.5 16 L14.6 20.2 L24 8.6"
-        stroke="url(#brandCheckGradient)"
+        stroke="var(--foreground)"
         strokeWidth="3.4"
         strokeLinecap="round"
         strokeLinejoin="round"

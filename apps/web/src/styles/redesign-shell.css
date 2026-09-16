@@ -1,5 +1,5 @@
 /*
- * Rhea shell: a restrained, tool-like frame that keeps navigation and status
+ * Timetable shell: a restrained, tool-like frame that keeps navigation and status
  * visible without turning either into a stack of decorative cards. This file
  * is intentionally imported after globals.css by the redesign entrypoint.
  */
@@ -134,7 +134,7 @@ html:has(.demo-guide-launcher) {
   min-height: var(--jh-control-height);
   margin: 0 0 var(--jh-section-gap);
   padding: 4px var(--jh-internal-gap);
-  border-radius: 6px;
+  border-radius: var(--radius);
   color: var(--sidebar-foreground);
 }
 
@@ -177,7 +177,7 @@ html:has(.demo-guide-launcher) {
   gap: 8px;
   min-height: var(--jh-control-height);
   padding: 0 var(--jh-internal-gap);
-  border-radius: 6px;
+  border-radius: var(--radius);
   color: var(--sidebar-foreground);
   transition:
     background-color 120ms ease,
@@ -192,6 +192,7 @@ html:has(.demo-guide-launcher) {
 .side-rail__link.on {
   background: transparent;
   color: var(--sidebar-accent-foreground);
+  font-weight: 700;
 }
 
 .side-rail__link.on::before {
@@ -305,10 +306,15 @@ html:has(.demo-guide-launcher) {
 }
 
 .topbar__density [data-pressed] {
-  border-color: color-mix(in oklch, var(--primary) 38%, var(--input));
-  background: transparent;
-  box-shadow: inset 0 -2px 0 var(--primary);
-  color: var(--primary);
+  border-color: var(--primary);
+  background: var(--primary);
+  box-shadow: none;
+  color: var(--primary-foreground);
+}
+
+.topbar__density [data-pressed]:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
 }
 
 .topbar__theme-toggle {
@@ -369,7 +375,7 @@ html:has(.demo-guide-launcher) {
   padding: var(--jh-internal-gap);
   border: 1px solid var(--border);
   border-inline-start: 3px solid var(--destructive-text);
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--card);
   box-shadow: var(--shadow-panel);
   color: var(--foreground);
@@ -452,7 +458,7 @@ html:has(.demo-guide-launcher) {
     min-height: var(--jh-control-height);
     flex: 0 0 var(--jh-control-height);
     padding: 0;
-    border-radius: 6px;
+    border-radius: var(--radius);
   }
 
   .topbar__search {

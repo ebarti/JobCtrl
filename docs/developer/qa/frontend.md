@@ -34,12 +34,14 @@ browser behavior, and visual consistency catch different failures.
   coverage. Its fixture restores the original metadata after each case.
 - Storybook proves state/variant rendering and shared accessibility behavior.
 
-## Rhea And Base UI Contracts
+## Visual And Base UI Contracts
 
-The current frontend preset is `base-rhea`: Geist product type, JetBrains Mono
-for technical text, the 10px semantic radius scale, capped 24px cards, neutral
-chart ramps, violet primary/focus tokens, and domain status rendered as an
-icon/dot plus text rather than a colored capsule. Contrast calculations,
+The frontend retains `base-rhea` component ancestry with the Swiss timetable
+visual contract in `DESIGN.md`: Geist product type, JetBrains Mono technical
+text, square geometry, neutral chart ramps, monochrome primary/focus tokens,
+and red/amber state accents. Domain status uses an icon/dot plus text rather
+than a colored capsule, and filled score/count markers pair explicit foreground
+and background tokens. Contrast calculations,
 focused primitive behavior, and the rendered token-foundation browser gate own
 those outcomes; route code should consume semantic tokens instead of
 introducing local substitutes.

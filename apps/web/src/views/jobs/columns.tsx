@@ -640,6 +640,8 @@ export function jobColumns(
     {
       id: "title",
       label: "Title",
+      width: 260,
+      minWidth: 220,
       sortable: true,
       rowHeader: true,
       getFilterValue: (row) => row.title,

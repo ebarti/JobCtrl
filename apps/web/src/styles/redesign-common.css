@@ -5,7 +5,7 @@
 .main {
   width: 100%;
   min-width: 0;
-  padding: clamp(14px, 1.5vw, 20px) clamp(20px, 3.5vw, 40px) 64px;
+  padding: clamp(14px, 1.5vw, 20px) clamp(20px, 2vw, 28px) 64px;
 }
 
 .page-head {
@@ -77,11 +77,10 @@
 }
 
 .card {
-  border-color: color-mix(in oklch, var(--border) 88%, var(--foreground));
+  border-color: var(--border);
+  border-top: 2px solid var(--foreground);
   border-radius: calc(var(--radius) * 1.25);
-  box-shadow:
-    0 1px 2px color-mix(in oklch, var(--foreground) 5%, transparent),
-    0 8px 24px color-mix(in oklch, var(--foreground) 3%, transparent);
+  box-shadow: var(--shadow-panel);
 }
 
 .card-hd {
@@ -164,7 +163,7 @@ textarea {
   border-radius: calc(var(--radius) * 0.8);
   background: var(--card);
   padding: 8px 11px;
-  box-shadow: 0 1px 1px color-mix(in oklch, var(--foreground) 3%, transparent);
+  box-shadow: none;
   transition:
     border-color 140ms ease,
     box-shadow 140ms ease;
