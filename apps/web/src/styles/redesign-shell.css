@@ -78,6 +78,17 @@ html:has(.demo-workspace-notice) [data-slot="toast-viewport"] {
   bottom: auto;
 }
 
+/* On short screens, stacked notifications and the open guide must not compete
+ * for the same hit targets. Each region keeps its own scrollable content. */
+html:has(.demo-guide-panel) [data-slot="toast-viewport"] {
+  max-height: 30dvh;
+  overflow-y: auto;
+}
+
+html:has([data-slot="toast"]) .demo-guide-panel {
+  max-height: calc(70dvh - 32px - env(safe-area-inset-bottom));
+}
+
 html:has(.demo-guide-launcher) {
   scroll-padding-block-end: calc(64px + env(safe-area-inset-bottom));
 }

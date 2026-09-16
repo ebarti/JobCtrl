@@ -173,16 +173,43 @@ for (const width of [1440, 390, 320]) {
       .locator('[data-slot="toast"]')
       .filter({ hasText: "learningRecommendations" });
     await expect(toast).toBeVisible();
+    // Hold the real notifications open while checking stacked-toast geometry.
+    await toast.first().hover();
     await openGuide.click();
-    await expect(
-      page.getByRole("complementary", { name: "Try the synthetic workflow" }),
-    ).toBeVisible();
+    await expect(guide).toBeVisible();
+    const hideGuide = page.getByRole("button", { name: "Hide demo guide" });
+    expect(
+      await hideGuide.evaluate((element) => {
+        const bounds = element.getBoundingClientRect();
+        const hit = document.elementFromPoint(
+          bounds.x + bounds.width / 2,
+          bounds.y + bounds.height / 2,
+        );
+        return hit === element || element.contains(hit);
+      }),
+      "stacked notifications must not cover the guide close control",
+    ).toBe(true);
+    const overlap = await guide.evaluate((element) => {
+      const guideBox = element.getBoundingClientRect();
+      const viewport = document
+        .querySelector('[data-slot="toast-viewport"]')!
+        .getBoundingClientRect();
+      return (
+        viewport.bottom > guideBox.top &&
+        viewport.right > guideBox.left &&
+        viewport.left < guideBox.right
+      );
+    });
+    expect(overlap).toBe(false);
     await page
       .getByRole("button", { name: "Reset synthetic demo data" })
       .click();
     await expect(
       page.getByRole("dialog", { name: "Reset synthetic demo data?" }),
     ).toBeVisible();
+    await expect(
+      page.getByRole("dialog", { name: "Reset synthetic demo data?" }),
+    ).toHaveCSS("border-radius", "0px");
     await page.getByRole("button", { name: "Cancel", exact: true }).click();
     await expect(page.getByRole("dialog")).toHaveCount(0);
   });
@@ -266,3 +293,44 @@ for (const width of [1440, 1024, 390]) {
     });
   });
 }
+
+test("mobile score markers remain square and preserve longer numbers", async ({
+  page,
+  context,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await context.route("**/api/demo-consent", (route) =>
+    route.fulfill({ json: { choice: "granted", version: "v2" } }),
+  );
+  await context.route("**/api/demo-health", (route) =>
+    route.fulfill({ status: 204 }),
+  );
+  await context.route("**/api/demo-telemetry", (route) =>
+    route.fulfill({ status: 204 }),
+  );
+  await context.route("https://www.googletagmanager.com/**", (route) =>
+    route.fulfill({ contentType: "application/javascript", body: "" }),
+  );
+  await page.goto("/jobs");
+  const marker = page.locator(".fit:visible").first();
+  await expect(marker).toBeVisible();
+  // This is a geometry probe on the rendered shared primitive; persistence and
+  // unknown-score meaning are exercised by the independent synthetic QA lane.
+  for (const label of ["8", "-", "7.125"]) {
+    await marker.evaluate((element, value) => {
+      element.textContent = value;
+    }, label);
+    const shape = await marker.evaluate((element) => {
+      const bounds = element.getBoundingClientRect();
+      return {
+        width: bounds.width,
+        height: bounds.height,
+        overflow: element.scrollWidth > element.clientWidth,
+        radius: getComputedStyle(element).borderRadius,
+      };
+    });
+    expect(Math.abs(shape.width - shape.height)).toBeLessThanOrEqual(1);
+    expect(shape.overflow).toBe(false);
+    expect(shape.radius).toBe("0px");
+  }
+});

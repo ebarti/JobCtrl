@@ -870,10 +870,14 @@
 }
 
 /* Timetable score markers keep score tiers distinct without treating low fit as a failure. */
-.jobs-data-grid-table .fit {
-  width: 32px;
-  height: 32px;
+.fit {
+  width: max-content;
+  height: auto;
   min-width: 32px;
+  min-height: 32px;
+  aspect-ratio: 1;
+  flex-shrink: 0;
+  padding: 4px;
   border: 1px solid var(--fit-score-border, var(--border));
   border-radius: 0;
   background: var(--fit-score-bg, var(--card));
