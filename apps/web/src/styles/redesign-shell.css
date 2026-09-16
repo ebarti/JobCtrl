@@ -71,6 +71,13 @@
   scrollbar-gutter: stable;
 }
 
+/* Demo navigation occupies the bottom corner. Keep notifications above it so
+ * a hovered error toast cannot block opening or operating the guide. */
+html:has(.demo-workspace-notice) [data-slot="toast-viewport"] {
+  top: 0;
+  bottom: auto;
+}
+
 html:has(.demo-guide-launcher) {
   scroll-padding-block-end: calc(64px + env(safe-area-inset-bottom));
 }

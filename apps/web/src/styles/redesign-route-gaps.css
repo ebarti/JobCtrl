@@ -1,6 +1,7 @@
 /* The demo guide is an overlay; its elevation distinguishes it from the
  * flat consent entry and workspace notices. */
 .demo-guide-panel {
+  grid-template-columns: minmax(0, 1fr);
   border-radius: var(--radius);
   border-top: 3px solid var(--foreground);
   box-shadow:
@@ -8,6 +9,9 @@
     0 16px 40px color-mix(in oklch, var(--foreground) 11%, transparent);
 }
 
-.demo-guide-panel nav button {
+.demo-guide-panel nav [data-slot="button"] {
+  height: auto;
+  white-space: normal;
+  text-align: left;
   border-radius: var(--radius);
 }

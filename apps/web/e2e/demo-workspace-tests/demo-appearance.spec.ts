@@ -119,3 +119,71 @@ for (const colorScheme of ["light", "dark"] as const) {
     });
   }
 }
+
+for (const width of [1440, 390, 320]) {
+  test(`demo notifications leave the guide operable at ${width}px`, async ({
+    page,
+    context,
+  }) => {
+    await page.setViewportSize({ width, height: 640 });
+    await context.route("**/api/demo-consent", (route) =>
+      route.fulfill({
+        json: { choice: "granted", version: "v2" },
+      }),
+    );
+    await context.route("**/api/demo-health", (route) =>
+      route.fulfill({ status: 204 }),
+    );
+    await context.route("**/api/demo-telemetry", (route) =>
+      route.fulfill({ status: 204 }),
+    );
+    await context.route("https://www.googletagmanager.com/**", (route) =>
+      route.fulfill({
+        contentType: "application/javascript",
+        body: "",
+      }),
+    );
+    await page.goto("/dashboard");
+    const openGuide = page.getByRole("button", { name: "Open demo guide" });
+    await openGuide.click();
+    const guide = page.getByRole("complementary", {
+      name: "Try the synthetic workflow",
+    });
+    await page.getByRole("button", { name: "Hide demo guide" }).focus();
+    const geometry = await guide.evaluate((element) => {
+      const panel = element.getBoundingClientRect();
+      return {
+        overflow: element.scrollWidth > element.clientWidth,
+        offset: element.scrollLeft,
+        clipped: [...element.querySelectorAll("h2, p, a, button")]
+          .filter((child) => {
+            const bounds = child.getBoundingClientRect();
+            return bounds.left < panel.left || bounds.right > panel.right;
+          })
+          .map((child) => child.textContent),
+      };
+    });
+    expect(geometry).toEqual({ overflow: false, offset: 0, clipped: [] });
+    await page
+      .getByRole("link", { name: "Review synthetic tailored materials" })
+      .click();
+    // This capability is intentionally unavailable: retain the real error and
+    // verify it doesn't block the demo's navigation or reset controls.
+    const toast = page
+      .locator('[data-slot="toast"]')
+      .filter({ hasText: "learningRecommendations" });
+    await expect(toast).toBeVisible();
+    await openGuide.click();
+    await expect(
+      page.getByRole("complementary", { name: "Try the synthetic workflow" }),
+    ).toBeVisible();
+    await page
+      .getByRole("button", { name: "Reset synthetic demo data" })
+      .click();
+    await expect(
+      page.getByRole("dialog", { name: "Reset synthetic demo data?" }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+  });
+}

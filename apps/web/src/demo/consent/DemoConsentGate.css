@@ -23,11 +23,6 @@
   place-items: center;
   width: 38px;
   height: 38px;
-  background: var(--primary);
-  color: var(--primary-foreground);
-  font-size: var(--jh-type-label-size);
-  font-weight: var(--jh-type-label-weight);
-  line-height: var(--jh-type-label-line-height);
 }
 
 .demo-consent-card p {
