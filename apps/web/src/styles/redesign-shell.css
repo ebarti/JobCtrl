@@ -85,6 +85,10 @@ html:has(.demo-guide-panel) [data-slot="toast-viewport"] {
   overflow-y: auto;
 }
 
+html:has(.demo-guide-panel) [data-slot="toast"] {
+  flex-shrink: 0;
+}
+
 html:has([data-slot="toast"]) .demo-guide-panel {
   max-height: calc(70dvh - 32px - env(safe-area-inset-bottom));
 }

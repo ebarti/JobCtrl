@@ -120,12 +120,17 @@ for (const colorScheme of ["light", "dark"] as const) {
   }
 }
 
-for (const width of [1440, 390, 320]) {
-  test(`demo notifications leave the guide operable at ${width}px`, async ({
+for (const [width, height] of [
+  [1440, 640],
+  [390, 640],
+  [320, 640],
+  [320, 400],
+] as const) {
+  test(`demo notifications leave the guide operable at ${width}x${height}px`, async ({
     page,
     context,
   }) => {
-    await page.setViewportSize({ width, height: 640 });
+    await page.setViewportSize({ width, height });
     await context.route("**/api/demo-consent", (route) =>
       route.fulfill({
         json: { choice: "granted", version: "v2" },
@@ -177,6 +182,42 @@ for (const width of [1440, 390, 320]) {
     await toast.first().hover();
     await openGuide.click();
     await expect(guide).toBeVisible();
+    const viewport = page.locator('[data-slot="toast-viewport"]');
+    const notifications = page.locator('[data-slot="toast"]');
+    if (height === 400) {
+      await expect(notifications).toHaveCount(2);
+      await expect
+        .poll(
+          () => viewport.evaluate((element) =>
+            element.scrollHeight > element.clientHeight,
+          ),
+          { message: "short notification regions must scroll instead of shrinking the text" },
+        )
+        .toBe(true);
+    }
+    for (const notification of await notifications.all()) {
+      await notification.scrollIntoViewIfNeeded();
+      await notification.hover();
+      const description = notification.locator(
+        '[data-slot="toast-description"]',
+      );
+      await expect
+        .poll(
+          () => description.evaluate((element) => {
+            const text = element.getBoundingClientRect();
+            const box = element.closest('[data-slot="toast"]')!
+              .getBoundingClientRect();
+            const region = element.closest('[data-slot="toast-viewport"]')!
+              .getBoundingClientRect();
+            return (
+              text.top >= box.top && text.bottom <= box.bottom &&
+              text.top >= region.top && text.bottom <= region.bottom
+            );
+          }),
+          { message: "each complete notification must be readable after scrolling" },
+        )
+        .toBe(true);
+    }
     const hideGuide = page.getByRole("button", { name: "Hide demo guide" });
     expect(
       await hideGuide.evaluate((element) => {
