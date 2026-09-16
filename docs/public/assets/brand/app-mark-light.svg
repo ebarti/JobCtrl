@@ -1,10 +1,5 @@
 <svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <style>
-    :root { --ink: #0a0a0a; --paper: #ffffff; }
-    @media (prefers-color-scheme: dark) {
-      :root { --ink: #fafafa; --paper: #0d0d0d; }
-    }
-  </style>
+  <style>:root { --ink: #0a0a0a; --paper: #ffffff; }</style>
   <defs>
     <linearGradient id="c" x1="9" y1="20" x2="25" y2="7" gradientUnits="userSpaceOnUse">
       <stop stop-color="color-mix(in oklch, var(--ink) 75%, var(--paper))" />

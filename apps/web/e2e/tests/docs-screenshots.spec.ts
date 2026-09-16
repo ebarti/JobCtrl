@@ -795,7 +795,15 @@ async function verifyBrowserCaptureReady(page: Page): Promise<void> {
   const capabilityList = card.locator('[aria-busy="false"]');
   await expect(card).toBeVisible();
   await expect(capabilityList).toBeVisible({ timeout: 30_000 });
-  await expect(card.locator("[data-browser-capability]")).toHaveCount(3);
+  await expect(card.locator("[data-browser-capability]")).toHaveCount(2);
+  for (const capabilityId of ["core-browser", "auto-apply-browser"]) {
+    await expect(
+      card.locator(`[data-browser-capability="${capabilityId}"]`),
+    ).toBeVisible();
+  }
+  await expect(
+    card.locator('[data-browser-capability="authenticated-linkedin-browser"]'),
+  ).toHaveCount(0);
   await expect(
     card.getByLabel("Detected browser for Auto-apply browser"),
   ).toBeVisible();
