@@ -253,6 +253,16 @@ for (const [width, height] of [
     ).toHaveCSS("border-radius", "0px");
     await page.getByRole("button", { name: "Cancel", exact: true }).click();
     await expect(page.getByRole("dialog")).toHaveCount(0);
+    // When the final notification closes, the guide expands upward. Its close
+    // control must remain above the notice, which is in normal document flow.
+    for (const notification of await notifications.all()) {
+      await notification.scrollIntoViewIfNeeded();
+      await notification.getByRole("button", { name: "Close", exact: true }).click();
+    }
+    await expect(notifications).toHaveCount(0);
+    await hideGuide.click();
+    await expect(guide).toHaveCount(0);
+    await expect(openGuide).toBeFocused();
   });
 }
 

@@ -33,6 +33,7 @@
 
 .demo-workspace-notice {
   position: static;
+  z-index: auto;
   gap: 4px 12px;
   padding: 8px 28px;
   background: var(--background);
