@@ -424,7 +424,11 @@ export default withMermaid(
       },
     },
     themeConfig: {
-      logo: { src: "/assets/brand/app-icon.png", alt: "JobCtrl" },
+      logo: {
+        light: "/assets/brand/app-mark-light.svg",
+        dark: "/assets/brand/app-mark-dark.svg",
+        alt: "JobCtrl",
+      },
       siteTitle: 'Job<span class="jh-site-title-accent">Ctrl</span>',
       // There is one guide. Search, theme controls, and the repository link
       // remain in the header; the sidebar owns all documentation navigation.

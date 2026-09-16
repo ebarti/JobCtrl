@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import fs from "node:fs";
 import ownedWorkspace from "../apps/web/e2e/fixtures/owned-workspace.cjs";
 import { createDocsScreenshotEnvironment } from "./docs-screenshot-environment.mjs";
+import { renderDocsBrandAssets } from "./render-docs-brand-assets.mjs";
 
 const repoRoot = path.resolve(fileURLToPath(new URL("../", import.meta.url)));
 const { createOwnedE2eWorkspace, removeOwnedE2eWorkspace } = ownedWorkspace;
@@ -80,6 +81,7 @@ async function run() {
       });
     });
     if (exitCode !== 0) process.exitCode = exitCode;
+    else await renderDocsBrandAssets();
   } finally {
     if (fs.existsSync(workspace.appDir)) removeOwnedE2eWorkspace(workspace);
   }
