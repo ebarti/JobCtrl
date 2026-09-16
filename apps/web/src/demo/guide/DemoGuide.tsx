@@ -292,7 +292,7 @@ export function DemoGuide() {
           if (!isResetting) setConfirmResetOpen(next);
         }}
       >
-        <DialogContent>
+        <DialogContent className="demo-reset-dialog">
           <DialogHeader>
             <DialogTitle>Reset synthetic demo data?</DialogTitle>
             <DialogDescription>

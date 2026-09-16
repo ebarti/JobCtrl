@@ -251,6 +251,28 @@ for (const [width, height] of [
     await expect(
       page.getByRole("dialog", { name: "Reset synthetic demo data?" }),
     ).toHaveCSS("border-radius", "0px");
+    const resetDialog = page.getByRole("dialog", {
+      name: "Reset synthetic demo data?",
+    });
+    const closeReset = resetDialog.getByRole("button", {
+      name: "Close", exact: true,
+    });
+    // Actionability waits for the popup animation to settle before hit-testing.
+    await closeReset.click({ trial: true });
+    expect(
+      await resetDialog.getByRole("heading").evaluate((element) => {
+        const bounds = element.getBoundingClientRect();
+        const hit = document.elementFromPoint(
+          bounds.x + bounds.width / 2,
+          bounds.y + bounds.height / 2,
+        );
+        return hit === element || element.contains(hit);
+      }),
+      "live notifications must not obscure the reset dialog title",
+    ).toBe(true);
+    await closeReset.click();
+    await expect(resetDialog).toHaveCount(0);
+    await page.getByRole("button", { name: "Reset synthetic demo data" }).click();
     await page.getByRole("button", { name: "Cancel", exact: true }).click();
     await expect(page.getByRole("dialog")).toHaveCount(0);
     // When the final notification closes, the guide expands upward. Its close

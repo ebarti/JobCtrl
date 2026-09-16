@@ -94,6 +94,12 @@ html:has([data-slot="toast"]) .demo-guide-panel {
   max-height: calc(70dvh - 32px - env(safe-area-inset-bottom));
 }
 
+/* Keep the reset confirmation and its backdrop above background notifications. */
+[data-slot="dialog-portal"]:has(.demo-reset-dialog) {
+  position: relative;
+  z-index: 110;
+}
+
 html:has(.demo-guide-launcher) {
   scroll-padding-block-end: calc(64px + env(safe-area-inset-bottom));
 }
