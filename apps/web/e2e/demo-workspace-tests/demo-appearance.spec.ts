@@ -187,3 +187,82 @@ for (const width of [1440, 390, 320]) {
     await expect(page.getByRole("dialog")).toHaveCount(0);
   });
 }
+
+for (const width of [1440, 1024, 390]) {
+  test(`job inspector preserves material labels and stage status at ${width}px`, async ({
+    page,
+    context,
+  }) => {
+    await page.setViewportSize({ width, height: 1000 });
+    await context.route("**/api/demo-consent", (route) =>
+      route.fulfill({
+        json: { choice: "granted", version: "v2" },
+      }),
+    );
+    await context.route("**/api/demo-health", (route) =>
+      route.fulfill({ status: 204 }),
+    );
+    await context.route("**/api/demo-telemetry", (route) =>
+      route.fulfill({ status: 204 }),
+    );
+    await context.route("https://www.googletagmanager.com/**", (route) =>
+      route.fulfill({
+        contentType: "application/javascript",
+        body: "",
+      }),
+    );
+    await page.goto("/jobs/6e2f4a10-20be-4d5f-98a4-a4bb9a877a35");
+    await expect(
+      page.getByRole("heading", { name: "Platform systems lead", exact: true }),
+    ).toBeVisible();
+    const diagnostics = page.getByRole("button", {
+      name: "Progress and history",
+      exact: true,
+    });
+    if (await diagnostics.isVisible()) await diagnostics.click();
+    const inspector = page.locator(".job-detail-workspace__inspector");
+    await expect(inspector.getByText("running", { exact: true })).toBeVisible();
+    const rows = inspector.locator(".job-artifact-row");
+    await expect(rows).toHaveCount(2);
+    await expect(
+      rows.first().getByText("resume_pdf", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      rows.first().getByRole("button", { name: "Preview in browser" }),
+    ).toBeVisible();
+    await rows.first().getByText("Technical details", { exact: true }).click();
+    await expect(rows.first().locator("code")).toBeVisible();
+    const geometry = await inspector.evaluate((element) => {
+      const panel = element.getBoundingClientRect();
+      const labels = [
+        ...element.querySelectorAll<HTMLElement>(
+          ".job-artifact-row > :nth-child(2)",
+        ),
+      ];
+      const content = [
+        ...element.querySelectorAll(
+          ".stage-timeline__header, .job-artifact-row",
+        ),
+      ];
+      return {
+        overflow: element.scrollWidth > element.clientWidth,
+        clipped: content.some((child) => {
+          const box = child.getBoundingClientRect();
+          return box.left < panel.left || box.right > panel.right;
+        }),
+        // Short artifact types should take at most two text lines, never a
+        // column of individual characters beside the preview action.
+        readable: labels.every(
+          (label) =>
+            label.getBoundingClientRect().height <=
+            parseFloat(getComputedStyle(label).lineHeight) * 2 + 1,
+        ),
+      };
+    });
+    expect(geometry).toEqual({
+      overflow: false,
+      clipped: false,
+      readable: true,
+    });
+  });
+}
