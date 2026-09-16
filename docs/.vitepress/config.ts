@@ -344,7 +344,7 @@ export default withMermaid(
       ["link", { rel: "icon", type: "image/svg+xml", href: "/favicon.svg" }],
       ["link", { rel: "apple-touch-icon", sizes: "180x180", href: "/apple-touch-icon.png" }],
       ["link", { rel: "icon", type: "image/png", sizes: "512x512", href: "/assets/brand/app-icon.png" }],
-      ["meta", { name: "theme-color", content: "#6d28d9" }],
+      ["meta", { name: "theme-color", content: "#171717" }],
     ],
     transformHead: ({ pageData, title, description }) => {
       const canonicalUrl = canonicalUrlForPage(pageData.relativePath);
@@ -381,6 +381,21 @@ export default withMermaid(
     lastUpdated: true,
     rewrites: PAGE_REWRITES,
     vite: {
+      css: {
+        postcss: {
+          plugins: [{
+            postcssPlugin: "jobctrl-docs-product-theme",
+            Rule(rule) {
+              // The shared product tokens use data-theme; VitePress applies
+              // .dark before first paint. Adapt the selector at build time.
+              if (rule.selector === ':root[data-theme="dark"]' &&
+                  rule.source?.input.file?.replaceAll("\\", "/").endsWith("/apps/web/src/styles/tokens.css")) {
+                rule.selector = ":root.dark";
+              }
+            },
+          }],
+        },
+      },
       // The workspace-wide esbuild override (security pin) refuses to lower
       // destructuring to Vite 5's default legacy browser targets; a modern
       // floor keeps those transforms no-ops for this developer-facing site.

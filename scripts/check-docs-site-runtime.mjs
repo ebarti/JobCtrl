@@ -2574,6 +2574,54 @@ try {
   } else {
     console.log("ok    / search privacy");
   }
+  // Shared product tokens use a different dark-mode selector than VitePress.
+  // Exercise real first paint, controls, diagrams and search in every mode so
+  // a broken build-time adapter cannot silently ship a light-only docs theme.
+  const themeBase = `http://127.0.0.1:${port}`;
+  for (const colorScheme of ["light", "dark"]) {
+    for (const viewport of [BASE_VIEWPORT, { width: 390, height: 844 }]) {
+      const themedContext = await browser.newContext({ colorScheme, viewport });
+      const themedPage = await themedContext.newPage();
+      try {
+        for (const route of ["/", "/user/normal-flows", "/guides/at-most-once-job-application-submission"]) {
+          await themedPage.goto(`${themeBase}${route}`, { waitUntil: "networkidle" });
+          await themedPage.locator("h1").first().waitFor({ state: "visible" });
+          if (route.includes("at-most-once")) {
+            await themedPage.locator(".mermaid svg").first().waitFor({ state: "visible" });
+          }
+          const style = await themedPage.evaluate(() => {
+            const root = getComputedStyle(document.documentElement);
+            const action = document.querySelector(".VPButton.brand");
+            return {
+              dark: document.documentElement.classList.contains("dark"),
+              background: root.getPropertyValue("--background").trim(),
+              font: getComputedStyle(document.body).fontFamily,
+              radius: action ? getComputedStyle(action).borderRadius : null,
+              overflow: document.documentElement.scrollWidth > innerWidth + 1,
+            };
+          });
+          const expectedBackground = colorScheme === "dark" ? "oklch(0.16 0 0)" : "oklch(1 0 0)";
+          if (style.dark !== (colorScheme === "dark") || style.background !== expectedBackground ||
+              !style.font.startsWith('"Helvetica Neue"') || (style.radius !== null && style.radius !== "0px") || style.overflow) {
+            fail(`${route} ${colorScheme} ${viewport.width}px: shared theme/reflow mismatch (${JSON.stringify(style)})`);
+          } else {
+            console.log(`ok    ${route} ${colorScheme} ${viewport.width}px shared theme and reflow`);
+          }
+        }
+        await themedPage.getByRole("button", { name: "Search", exact: true }).click();
+        await themedPage.locator("input.search-input").fill("privacy");
+        await themedPage.locator(".VPLocalSearchBox .result").first().waitFor({ state: "visible" });
+        const firstResult = themedPage.locator(".VPLocalSearchBox .result").first();
+        const resultHref = await firstResult.getAttribute("href");
+        await firstResult.click();
+        await themedPage.waitForURL((url) => url.pathname === new URL(resultHref, themeBase).pathname);
+        await themedPage.locator(".VPLocalSearchBox").waitFor({ state: "hidden" });
+        console.log(`ok    / search result navigation ${colorScheme} ${viewport.width}px`);
+      } finally {
+        await themedContext.close();
+      }
+    }
+  }
 } finally {
   await browser.close();
   preview.kill("SIGTERM");

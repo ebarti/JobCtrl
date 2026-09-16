@@ -218,27 +218,25 @@ import {
   --topology-muted: var(--vp-c-text-2);
   --topology-accent: var(--vp-c-brand-1);
   --topology-accent-soft: var(--vp-c-brand-soft);
-  --topology-worker: #047857;
-  --topology-worker-soft: #ecfdf5;
+  --topology-worker: var(--vp-c-text-1);
+  --topology-worker-soft: var(--vp-c-bg-soft);
   display: grid;
   gap: 0.85rem;
   margin: 1.5rem 0 2rem;
   padding: clamp(0.85rem, 2.5vw, 1.35rem);
   overflow: hidden;
   border: 1px solid var(--topology-border);
-  border-radius: 1.25rem;
-  background:
-    radial-gradient(circle at 94% 0%, color-mix(in oklab, var(--topology-accent-soft), transparent 20%), transparent 30%),
-    radial-gradient(circle at 4% 68%, color-mix(in oklab, var(--topology-worker-soft), transparent 24%), transparent 34%),
-    var(--topology-panel);
-  box-shadow: 0 16px 42px color-mix(in srgb, #0f172a 11%, transparent);
+  border-top: 3px solid var(--vp-c-text-1);
+  border-radius: var(--jh-doc-radius);
+  background: var(--vp-c-bg);
+  box-shadow: none;
   color: var(--topology-text);
 }
 
 :global(.dark) .system-topology {
-  --topology-worker: #34d399;
-  --topology-worker-soft: color-mix(in oklab, #064e3b, var(--vp-c-bg) 48%);
-  box-shadow: 0 18px 48px rgb(0 0 0 / 0.3);
+  --topology-worker: var(--vp-c-text-1);
+  --topology-worker-soft: var(--vp-c-bg-soft);
+  box-shadow: none;
 }
 
 .system-topology__caption {
@@ -289,7 +287,7 @@ import {
 .system-topology__group {
   padding: clamp(0.75rem, 2vw, 1rem);
   border: 1px solid var(--topology-border);
-  border-radius: 0.95rem;
+  border-radius: var(--jh-doc-radius);
   background: color-mix(in oklab, var(--topology-panel-strong), transparent 2%);
 }
 
@@ -314,7 +312,7 @@ import {
   inline-size: 1.95rem;
   block-size: 1.95rem;
   place-items: center;
-  border-radius: 0.6rem;
+  border-radius: var(--jh-doc-radius);
   background: var(--topology-accent-soft);
   color: var(--topology-accent);
   font-size: 0.68rem;
@@ -385,7 +383,7 @@ import {
 .system-topology__destination {
   min-inline-size: 0;
   border: 1px solid var(--topology-border);
-  border-radius: 0.75rem;
+  border-radius: var(--jh-doc-radius);
   background: var(--topology-panel-strong);
 }
 
@@ -419,7 +417,7 @@ import {
 .system-topology__node-icon {
   inline-size: 2.3rem;
   block-size: 2.3rem;
-  border-radius: 0.7rem;
+  border-radius: var(--jh-doc-radius);
 }
 
 .system-topology__node--cli .system-topology__node-icon {
@@ -483,7 +481,7 @@ import {
   inline-size: fit-content;
   margin-block-start: 0.15rem;
   padding: 0.2rem 0.42rem;
-  border-radius: 999px;
+  border-radius: var(--jh-doc-radius);
   background: var(--topology-panel);
   color: var(--topology-muted);
   font-size: 0.66rem;
@@ -555,7 +553,7 @@ import {
 .system-topology__worker-icon {
   inline-size: 2.6rem;
   block-size: 2.6rem;
-  border-radius: 0.78rem;
+  border-radius: var(--jh-doc-radius);
   background: var(--topology-worker-soft);
   color: var(--topology-worker);
 }
@@ -569,7 +567,7 @@ import {
   min-block-size: 1.75rem;
   padding-inline: 0.55rem;
   border: 1px solid color-mix(in oklab, var(--topology-worker), var(--topology-border) 45%);
-  border-radius: 999px;
+  border-radius: var(--jh-doc-radius);
   background: var(--topology-worker-soft);
   color: var(--topology-worker);
   font-size: 0.65rem;
@@ -607,7 +605,7 @@ import {
 .system-topology__destination-icon {
   inline-size: 2.2rem;
   block-size: 2.2rem;
-  border-radius: 0.68rem;
+  border-radius: var(--jh-doc-radius);
 }
 
 .system-topology__destination--files .system-topology__destination-icon {
@@ -682,7 +680,7 @@ import {
 @media (max-width: 30rem) {
   .system-topology {
     padding: 0.7rem;
-    border-radius: 1rem;
+    border-radius: var(--jh-doc-radius);
   }
 
   .system-topology__entries {

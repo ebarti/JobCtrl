@@ -150,6 +150,22 @@ Use domain terms within their bounded context. Do not rename an aggregate,
 event, state, or policy in prose merely to sound friendlier; explain it once
 and keep the ubiquitous language intact.
 
+## Site Appearance
+
+The published guide follows the Swiss timetable visual contract in
+[`DESIGN.md`](../../DESIGN.md). The theme imports the product's palette,
+typography stacks and radius from `apps/web/src/styles/tokens.css`; VitePress
+adapts the dark selector at build time so its first paint uses the same tokens.
+Keep article text at a comfortable reading size instead of copying the app's
+compact control sizing. Neutral surfaces, square controls and section rules
+carry the hierarchy; preserve semantic warnings and visible focus.
+
+The homepage retains its existing entry points and feature order. Numbered
+feature markers are visual wayfinding, not a new workflow. Refresh product
+imagery through the [owned synthetic capture workflow](../local-development.md#documentation-screenshots)
+after shared branding or typography changes. Diagram palettes are curated for
+both themes; their system font also works inside serialized zoom images.
+
 ## Diagrams
 
 - Use semantic HTML/CSS for small user-facing priorities, comparisons, and

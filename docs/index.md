@@ -26,33 +26,27 @@ hero:
       link: https://github.com/ebarti/JobCtrl
 
 features:
-  - icon: 🔒
-    title: Your Workspace, Locally
+  - title: Your Workspace, Locally
     details: No account and no hosted backend. Your profile, job database, generated files, browser state, and logs stay on your machine by default.
     link: /user/data-and-safety
     linkText: See the data boundary
-  - icon: 🔎
-    title: Profile-Driven Discovery
+  - title: Profile-Driven Discovery
     details: Multi-source discovery driven by your target roles, locations, and seniority — tracking where each job came from, removing duplicates, and retiring postings that have closed.
     link: /user/discovery
     linkText: Understand discovery
-  - icon: 🎯
-    title: Explainable Scoring
+  - title: Explainable Scoring
     details: A versioned policy scores fit 1–10 from structured evidence, and a per-requirement ledger explains exactly why each score happened.
     link: /user/scoring-and-employer-analysis
     linkText: Understand scoring
-  - icon: 📝
-    title: Audited Materials
+  - title: Audited Materials
     details: Tailored resumes where every bullet traces back to its source, gates guard resumes and cover letters against invented facts, and keyword coverage is measured against the final document.
     link: /user/materials-and-tailoring
     linkText: Understand the audit trail
-  - icon: ✅
-    title: Supervised Apply
+  - title: Supervised Apply
     details: Rehearse with dry runs, keep final browser submission manual, and allow only exact-approved email applications through an owned at-most-once sender.
     link: /user/apply
     linkText: Understand apply controls
-  - icon: ⚙️
-    title: Work That Survives Interruptions
+  - title: Work That Survives Interruptions
     details: Durable workflows preserve progress through restarts, retry classified failures, and block new spendful runs when the estimated daily total exceeds a configurable threshold.
     link: /user/product-tour#runs
     linkText: See run history

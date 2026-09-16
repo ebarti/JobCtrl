@@ -110,27 +110,25 @@ const layers = [
   --security-muted: var(--vp-c-text-2);
   --security-accent: var(--vp-c-brand-1);
   --security-accent-soft: var(--vp-c-brand-soft);
-  --security-safe: #047857;
-  --security-safe-soft: #ecfdf5;
+  --security-safe: var(--vp-c-text-1);
+  --security-safe-soft: var(--vp-c-bg-soft);
   display: grid;
   gap: 0.85rem;
   margin-block: 1.5rem 2rem;
   padding: clamp(0.85rem, 2.5vw, 1.35rem);
   overflow: hidden;
   border: 1px solid var(--security-border);
-  border-radius: 1.25rem;
-  background:
-    radial-gradient(circle at 94% 0%, color-mix(in oklab, var(--security-accent-soft), transparent 18%), transparent 31%),
-    radial-gradient(circle at 2% 98%, color-mix(in oklab, var(--security-safe-soft), transparent 24%), transparent 32%),
-    var(--security-panel);
-  box-shadow: 0 16px 42px color-mix(in srgb, #0f172a 11%, transparent);
+  border-top: 3px solid var(--vp-c-text-1);
+  border-radius: var(--jh-doc-radius);
+  background: var(--vp-c-bg);
+  box-shadow: none;
   color: var(--security-text);
 }
 
 :global(.dark) .security-layers {
-  --security-safe: #34d399;
-  --security-safe-soft: color-mix(in oklab, #064e3b, var(--vp-c-bg) 48%);
-  box-shadow: 0 18px 48px rgb(0 0 0 / 0.3);
+  --security-safe: var(--vp-c-text-1);
+  --security-safe-soft: var(--vp-c-bg-soft);
+  box-shadow: none;
 }
 
 .security-layers__caption {
@@ -205,7 +203,7 @@ const layers = [
   padding: 0.72rem;
   border: 1px solid var(--security-border);
   border-inline-start: 3px solid var(--security-accent);
-  border-radius: 0.8rem;
+  border-radius: var(--jh-doc-radius);
   background: color-mix(in oklab, var(--security-card), transparent 1%);
 }
 
@@ -232,7 +230,7 @@ const layers = [
   block-size: 1.7rem;
   place-items: center;
   border: 1px solid var(--security-border);
-  border-radius: 50%;
+  border-radius: var(--jh-doc-radius);
   background: var(--security-panel);
   color: var(--security-muted);
   font-size: 0.7rem;
@@ -252,7 +250,7 @@ const layers = [
 .security-layers__icon {
   inline-size: 2.35rem;
   block-size: 2.35rem;
-  border-radius: 0.72rem;
+  border-radius: var(--jh-doc-radius);
 }
 
 .security-layers__stack > li:nth-child(5) .security-layers__icon {
@@ -286,7 +284,7 @@ const layers = [
   min-block-size: 1.75rem;
   padding-inline: 0.55rem;
   border: 1px solid color-mix(in oklab, var(--security-accent), var(--security-border) 48%);
-  border-radius: 999px;
+  border-radius: var(--jh-doc-radius);
   background: var(--security-accent-soft);
   color: var(--security-accent);
   font-size: 0.7rem;
@@ -327,14 +325,14 @@ const layers = [
   margin-inline: 1.5rem;
   padding: 0.82rem;
   border: 1px solid color-mix(in oklab, var(--security-safe), var(--security-border) 46%);
-  border-radius: 0.85rem;
+  border-radius: var(--jh-doc-radius);
   background: color-mix(in oklab, var(--security-safe-soft), var(--security-card) 55%);
 }
 
 .security-layers__action-icon {
   inline-size: 2.55rem;
   block-size: 2.55rem;
-  border-radius: 0.78rem;
+  border-radius: var(--jh-doc-radius);
   background: var(--security-safe-soft);
   color: var(--security-safe);
 }
@@ -357,7 +355,7 @@ const layers = [
   min-block-size: 1.85rem;
   padding-inline: 0.6rem;
   border: 1px solid currentColor;
-  border-radius: 999px;
+  border-radius: var(--jh-doc-radius);
   color: var(--security-safe);
   font-size: 0.7rem;
   font-weight: 800;
@@ -393,7 +391,7 @@ const layers = [
 @media (max-width: 34rem) {
   .security-layers {
     padding: 0.7rem;
-    border-radius: 1rem;
+    border-radius: var(--jh-doc-radius);
   }
 
   .security-layers__stack > li:nth-child(n) {
