@@ -9,6 +9,8 @@ import {
   test,
 } from "@playwright/test";
 
+import { QA_PLATFORM_JOB_ID } from "../fixtures/e2e-state.js";
+
 import {
   sampleCredentialsResponse,
   sampleProviderModelsResponse,
@@ -31,9 +33,7 @@ const publicHeroScreenshotPath = path.join(
   publicHeroScreenshotsDir,
   heroScreenshotName,
 );
-const platformJobUrl =
-  "https://boards.greenhouse.io/gitlab/jobs/qa-platform-director";
-const platformJobId = encodeURIComponent(platformJobUrl);
+const platformJobId = QA_PLATFORM_JOB_ID;
 const qaRunId = "qa-run-1";
 const qaArtifactId = "qa-platform-resume-pdf";
 const qaContactId = "qa-contact-hiring-manager";
@@ -467,7 +467,7 @@ async function verifySyntheticSeedIdentity(page: Page): Promise<void> {
   expect(await jobResponse.json()).toMatchObject({
     ok: true,
     job: {
-      jobKey: platformJobUrl,
+      jobKey: platformJobId,
       title: "Director of Platform Engineering",
       fitScore: 9,
       descriptionPreview:
@@ -573,7 +573,7 @@ async function verifyPipelineOperations(page: Page): Promise<void> {
   const visibleHeadings = [
     "Pipelines",
     "Live pipeline",
-    "Source families and reconciliation",
+    "Source families and enrichment reconciliation",
     ...(mobileSurface ? [] : ["Execution inspector", "Active work"]),
   ];
   for (const heading of visibleHeadings) {
@@ -598,7 +598,9 @@ async function verifyPipelineOperations(page: Page): Promise<void> {
     page.getByRole("group", { name: "Pipeline action tools" }),
   ).toBeVisible();
 
-  await expect(page.getByText("1/3 succeeded", { exact: true })).toBeVisible();
+  const sourceProgress = page.getByRole("progressbar", { name: "Source-family completion" });
+  await expect(sourceProgress).toBeVisible();
+  await expect(sourceProgress).toHaveAttribute("aria-valuetext", "1 of 3 finished");
   await expect(
     page.getByText("Enrichment pass", { exact: true }),
   ).toBeVisible();

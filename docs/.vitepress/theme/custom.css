@@ -47,6 +47,9 @@
   --vp-button-alt-text: var(--foreground);
   --vp-button-alt-hover-bg: var(--muted);
   --vp-button-alt-hover-border: var(--foreground);
+  --vp-button-alt-active-bg: var(--accent);
+  --vp-button-alt-active-text: var(--foreground);
+  --vp-button-alt-active-border: var(--foreground);
   --vp-home-hero-name-color: var(--foreground);
   --vp-code-color: var(--foreground);
   --vp-code-bg: var(--muted);
