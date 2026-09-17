@@ -271,7 +271,7 @@ print(job["url"])
 
     await page.reload();
     await expect(page.getByText("Review prior application before live submit", { exact: true })).toBeVisible();
-    await expect(page.getByText(/already used; another live attempt requires/i)).toBeVisible();
+    await expect(page.getByLabel("Repeat application protection").getByText(/already used; another live attempt requires/i)).toBeVisible();
     await expect(page.getByRole("button", { name: /Authorize live submit/i })).toBeDisabled();
 
     const refusedAfterConsumption = await request.post(
