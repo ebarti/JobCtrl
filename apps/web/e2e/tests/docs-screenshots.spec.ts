@@ -648,7 +648,7 @@ async function verifyApplyReviewCaptureReady(page: Page): Promise<void> {
     "Repeat application protection",
   ]) {
     await expect(
-      gates.getByRole("cell", { name: gate, exact: true }),
+      gates.getByRole("cell").filter({ hasText: new RegExp(`^${gate}$`) }),
     ).toBeVisible();
   }
 }

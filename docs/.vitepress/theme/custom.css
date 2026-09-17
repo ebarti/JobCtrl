@@ -1741,11 +1741,11 @@ html[data-jh-workflow-surface="cli"] .jh-channel-panel[data-jh-channel-panel="cl
   background: var(--vp-c-bg);
 }
 
-.VPLocalSearchBox .search-bar {
+html .VPLocalSearchBox .search-bar {
   border-color: var(--input);
 }
 
-.VPLocalSearchBox .search-bar:focus-within {
+html .VPLocalSearchBox .search-bar:focus-within {
   border-color: var(--input);
   outline: 2px solid var(--ring);
   outline-offset: 2px;
