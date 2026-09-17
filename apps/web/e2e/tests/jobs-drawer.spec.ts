@@ -332,6 +332,14 @@ test("Jobs compensation source-conflict evidence stays product-visible without u
   });
   await expect(warningsColumn).not.toBeChecked();
   await warningsColumn.check();
+  for (const label of [
+    "Salary min (€ / year)",
+    "Salary max (€ / year)",
+    "Market (€ / year)",
+    "Confidence",
+  ]) {
+    await columnDialog.getByRole("checkbox", { name: label, exact: true }).check();
+  }
   await page.keyboard.press("Escape");
   await expect(columnDialog).toHaveCount(0);
 
@@ -469,12 +477,16 @@ test("Job detail: keyboard activation opens requirement fit, stages, and artifac
     name: `Requirement: ${requirementText}`,
   });
   await expect(primaryRequirement).toBeVisible();
-  const expandRequirement = primaryRequirement.getByRole("button", {
-    name: `Show evidence for requirement: ${requirementText}`,
+  const collapseRequirement = primaryRequirement.getByRole("button", {
+    name: `Hide evidence for requirement: ${requirementText}`,
   });
-  await expect(expandRequirement).toHaveAttribute("aria-expanded", "false");
+  await expect(collapseRequirement).toHaveAttribute("aria-expanded", "true");
+  await expect(primaryRequirement.getByText("Requirement fit", { exact: true })).toBeVisible();
+  await collapseRequirement.click();
   await expect(primaryRequirement.getByText("Requirement fit", { exact: true })).not.toBeVisible();
-  await expandRequirement.click();
+  await primaryRequirement.getByRole("button", {
+    name: `Show evidence for requirement: ${requirementText}`,
+  }).click();
   await expect(primaryRequirement.getByRole("button", {
     name: `Hide evidence for requirement: ${requirementText}`,
   })).toHaveAttribute("aria-expanded", "true");

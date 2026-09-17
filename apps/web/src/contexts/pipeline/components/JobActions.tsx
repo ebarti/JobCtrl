@@ -114,10 +114,7 @@ export function JobActions({
             Applied
           </StatusBadge>
         ) : (
-          <MarkAppliedButton
-            className={buttonVariants({ size: "sm", variant: "success" })}
-            jobId={jobId}
-          />
+          <MarkAppliedButton jobId={jobId} />
         )}
         <MarkSkippedButton
           className={buttonVariants({ size: "sm", variant: "ghost" })}
