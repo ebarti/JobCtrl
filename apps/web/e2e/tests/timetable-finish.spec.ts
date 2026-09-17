@@ -1,12 +1,55 @@
 import { expect, test } from "@playwright/test";
+import { getViolations, injectAxe } from "axe-playwright";
 import { pipelinesDiscoveringSnapshot } from "../../src/views/pipelines/PipelinesView.fixtures.js";
 import {
   makeJobsPage,
+  makeWorkflowRunsPage,
   sampleJob,
   sampleSecondaryJob,
 } from "../../src/test/fixtures/projections.js";
 
 for (const theme of ["light", "dark"] as const) {
+  test(`timetable run stop control remains readable in ${theme}`, async ({
+    page,
+  }) => {
+    await page.route(/\/v1\/workflow-runs(?:\?.*)?$/, (route) =>
+      route.fulfill({ json: makeWorkflowRunsPage() }),
+    );
+    await page.goto("/runs");
+    const stop = page
+      .getByRole("button", { name: /^Stop workflow run for/ })
+      .first();
+    await expect(stop).toBeVisible();
+    await expect(stop).toBeEnabled();
+    if (theme === "dark")
+      await page.getByRole("button", { name: "Switch to dark theme" }).click();
+    const styles = await stop.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return {
+        borderWidth: style.borderTopWidth,
+        borderColor: style.borderTopColor,
+        color: style.color,
+        background: style.backgroundColor,
+      };
+    });
+    expect(styles.borderWidth).toBe("1px");
+    expect(styles.borderColor).toBe(styles.color);
+    expect(styles.background).not.toBe(styles.color);
+    await injectAxe(page);
+    for (const hovered of [false, true]) {
+      if (hovered) await stop.hover();
+      await stop.evaluate(async (element) => {
+        await Promise.all(element.getAnimations().map((animation) => animation.finished));
+      });
+      const violations = await getViolations(page, ".runs-row-actions");
+      expect(
+        violations.filter((violation) =>
+          ["critical", "serious"].includes(violation.impact ?? ""),
+        ),
+      ).toEqual([]);
+    }
+  });
+
   test(`timetable stale scores remain inside Fit without obscuring titles in ${theme}`, async ({
     page,
   }) => {

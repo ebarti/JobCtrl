@@ -1,5 +1,6 @@
 import type { JSX } from "react";
 
+import { cn } from "../../../shared/lib/cn.js";
 import { Button } from "../../../shared/ui/button.js";
 import { useCancelWorkflowRunMutation } from "../hooks/useCancelWorkflowRunMutation.js";
 
@@ -35,8 +36,8 @@ export function CancelWorkflowRunButton({
     <span className="workflow-cancel-action">
       <Button
         type="button"
-        {...(className ? { className } : {})}
-        variant="destructive"
+        className={cn("border-destructive-text text-destructive-text hover:bg-destructive-muted", className)}
+        variant="outline"
         size="sm"
         disabled={isPending || cancellationAccepted || alreadyTerminal}
         aria-label={ariaLabel ?? `Stop workflow run ${runId}`}

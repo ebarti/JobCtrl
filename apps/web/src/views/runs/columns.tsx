@@ -56,7 +56,6 @@ function RunActions({ row }: { readonly row: WorkflowRunSummary }) {
       {ACTIVE_WORKFLOW_RUN_STATUSES.has(row.status) ? (
         <CancelWorkflowRunButton
           runId={row.runId}
-          className="btn ghost danger-action"
           label="Stop"
           ariaLabel={`Stop workflow run for ${row.title}`}
         />
