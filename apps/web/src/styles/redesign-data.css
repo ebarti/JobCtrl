@@ -777,6 +777,24 @@
   right: 0;
 }
 
+.jobs-data-grid-table .score-cell:has(.score-stale-tag) {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.jobs-data-grid-table .score-cell > [data-typography="label"] {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.jobs-data-grid-table .score-stale-tag {
+  max-width: 100%;
+  align-items: flex-start;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .data-grid-column-filter-button {
   width: 22px;
   height: 22px;

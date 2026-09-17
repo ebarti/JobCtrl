@@ -1,7 +1,67 @@
 import { expect, test } from "@playwright/test";
 import { pipelinesDiscoveringSnapshot } from "../../src/views/pipelines/PipelinesView.fixtures.js";
+import {
+  makeJobsPage,
+  sampleJob,
+  sampleSecondaryJob,
+} from "../../src/test/fixtures/projections.js";
 
 for (const theme of ["light", "dark"] as const) {
+  test(`timetable stale scores remain inside Fit without obscuring titles in ${theme}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.route(/\/v1\/jobs(?:\?.*)?$/, async (route) => {
+      await route.fulfill({
+        json: makeJobsPage([
+          {
+            ...sampleJob,
+            scoreStaleness: {
+              isStale: true,
+              staleReason: "scoring_policy_changed",
+              currentPolicyVersion: 8,
+              targetPolicyVersion: 9,
+              markedAt: "2026-04-29T10:07:00+00:00",
+              pendingExplicitRescore: true,
+            },
+          },
+          sampleSecondaryJob,
+        ]),
+      });
+    });
+    await page.goto("/jobs");
+    const badge = page.locator(".jobs-data-grid-table .score-stale-tag");
+    await expect(badge).toBeVisible();
+    await expect(badge).toContainText("Stale score v8 -> v9");
+    if (theme === "dark")
+      await page.getByRole("button", { name: "Switch to dark theme" }).click();
+    for (const density of ["Compact", "Regular", "Comfortable"]) {
+      await page.getByRole("button", { name: density, exact: true }).click();
+      const layout = await badge.evaluate((element) => {
+        const cell = element.closest("td")!;
+        const row = cell.closest("tr")!;
+        const title = row.querySelector('th[scope="row"]')!;
+        const plainRow = [...row.parentElement!.children].find(
+          (other) => other !== row,
+        )!;
+        return {
+          warningRight: element.getBoundingClientRect().right,
+          titleLeft: title.getBoundingClientRect().left,
+          cellRight: cell.getBoundingClientRect().right,
+          overflow: cell.scrollWidth - cell.clientWidth,
+          badgeOverflow: element.scrollWidth - element.clientWidth,
+          staleHeight: row.getBoundingClientRect().height,
+          plainHeight: plainRow.getBoundingClientRect().height,
+        };
+      });
+      expect(layout.warningRight).toBeLessThanOrEqual(layout.cellRight);
+      expect(layout.warningRight).toBeLessThanOrEqual(layout.titleLeft);
+      expect(layout.overflow).toBeLessThanOrEqual(1);
+      expect(layout.badgeOverflow).toBeLessThanOrEqual(1);
+      expect(layout.plainHeight).toBeLessThan(layout.staleHeight);
+    }
+  });
+
   test(`timetable Jobs defaults fit desktop and retain column controls in ${theme}`, async ({
     page,
   }) => {
