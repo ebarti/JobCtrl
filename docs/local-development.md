@@ -697,8 +697,13 @@ PNG for private data, broken layout, clipped content, and local-path leaks, and
 inspect Pipelines for the seeded execution, three source families, two
 reconciliation steps, available worker capacity, visual stage flow,
 stop/recovery controls, and active work. Confirm Jobs shows only the
-Active/Deleted/Hidden queue tabs and that Sources/Warnings remain hidden in its
-default view. Check Apply Review's left queue plus sequential review content,
+Active/Deleted/Hidden queue tabs and that the default view keeps source,
+compensation detail, warnings, resume template, and discovery date available
+through Columns rather than widening the initial table. Check Job Detail's
+labeled metadata, six assessment cells, visible requirement evidence, and
+readable artifact labels/actions. Check Apply Review's left queue, sequential
+review content, and Submit gates table with Gate/State/Detail columns. Inspect
+Profile/Settings for strong input outlines and section rules, then check
 Artifact Detail's preview after its audit details, and the mobile
 Profile/Evidence/record-card reflows without horizontal overflow. Keep raw IDs
 and paths inside technical disclosures. Open the rendered Product Tour and

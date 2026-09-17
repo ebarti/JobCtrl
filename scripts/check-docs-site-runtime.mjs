@@ -2617,6 +2617,18 @@ try {
         }
         await themedPage.getByRole("button", { name: "Search", exact: true }).click();
         await themedPage.locator("input.search-input").fill("privacy");
+        const searchFrame = await themedPage.locator(".VPLocalSearchBox .search-bar").evaluate((element) => {
+          const style = getComputedStyle(element);
+          return {
+            border: style.borderTopColor,
+            ink: getComputedStyle(document.body).color,
+            outline: style.outlineStyle,
+            outlineWidth: style.outlineWidth,
+          };
+        });
+        if (searchFrame.border !== searchFrame.ink || searchFrame.outline !== "solid" || searchFrame.outlineWidth !== "2px") {
+          fail(`/ search ${colorScheme} ${viewport.width}px: input outline or focus ring mismatch (${JSON.stringify(searchFrame)})`);
+        }
         await themedPage.locator(".VPLocalSearchBox .result").first().waitFor({ state: "visible" });
         const firstResult = themedPage.locator(".VPLocalSearchBox .result").first();
         const resultHref = await firstResult.getAttribute("href");

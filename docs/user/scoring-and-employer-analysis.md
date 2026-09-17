@@ -129,8 +129,8 @@ surfaces rather than looking for a separate scoring page:
   title and a useful source excerpt; unresolved references are labeled
   unavailable, with the raw storage key kept under **Technical details**.
   Each requirement's **Show evidence / Hide evidence** control operates
-  independently. Matched requirements start collapsed; transferable, missing,
-  blocked, and unassessed requirements start expanded. The title, tier,
+  independently. Every requirement starts expanded, including matched,
+  transferable, missing, blocked, and unassessed requirements. The title, tier,
   importance, and match status remain visible when collapsed.
   A new analysis generation resets these defaults; ordinary page updates preserve
   your open cards. Fit evidence must match the current analysis and requirement.

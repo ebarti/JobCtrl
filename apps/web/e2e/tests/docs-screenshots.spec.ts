@@ -171,11 +171,13 @@ const desktopSurfaces: readonly ScreenshotSurface[] = [
     name: "jobs.png",
     path: `/jobs?${jobsFilterParams}`,
     proof: (page) => page.locator("table.jobs-data-grid-table"),
+    verify: verifyJobsCaptureReady,
   },
   {
     name: "job-detail.png",
     path: jobDetailPath,
     proof: (page) => page.locator(".job-detail-workspace"),
+    verify: verifyJobDetailCaptureReady,
   },
   {
     name: "job-run-timeline.png",
@@ -187,6 +189,7 @@ const desktopSurfaces: readonly ScreenshotSurface[] = [
     path: `/apply-review?jobKey=${platformJobId}`,
     proof: (page) =>
       page.getByRole("complementary", { name: "Application review queue" }),
+    verify: verifyApplyReviewCaptureReady,
   },
   {
     name: "pipelines.png",
@@ -334,6 +337,7 @@ const mobileSurfaces: readonly ScreenshotSurface[] = [
     name: "job-detail-mobile.png",
     path: jobDetailPath,
     proof: (page) => page.locator(".job-detail-workspace"),
+    verify: verifyJobDetailCaptureReady,
     viewport: mobileCaptureViewport,
   },
   {
@@ -341,6 +345,7 @@ const mobileSurfaces: readonly ScreenshotSurface[] = [
     path: `/apply-review?jobKey=${platformJobId}`,
     proof: (page) =>
       page.getByRole("complementary", { name: "Application review queue" }),
+    verify: verifyApplyReviewCaptureReady,
     viewport: mobileCaptureViewport,
   },
   {
@@ -568,6 +573,86 @@ async function nonJobActivityDetailPath(page: Page): Promise<string> {
   return `/activity/${encodeURIComponent(event.eventId)}`;
 }
 
+async function verifyJobsCaptureReady(page: Page): Promise<void> {
+  const headers = page.locator("table.jobs-data-grid-table thead");
+  for (const label of [
+    "Fit",
+    "Title",
+    "Company",
+    "Location",
+    "Stage",
+    "State",
+    "Apply",
+  ]) {
+    await expect(headers.getByText(label, { exact: true })).toBeVisible();
+  }
+  for (const label of [
+    "Sources",
+    "Salary min (€ / year)",
+    "Salary max (€ / year)",
+    "Market (€ / year)",
+    "Confidence",
+    "Warnings",
+    "Template",
+    "Discovered",
+  ]) {
+    await expect(headers.getByText(label, { exact: true })).toHaveCount(0);
+  }
+  await expect(
+    page.getByText("Director of Platform Engineering", { exact: true }),
+  ).toBeVisible();
+}
+
+async function verifyJobDetailCaptureReady(page: Page): Promise<void> {
+  const metadata = page.getByLabel("Job metadata", { exact: true });
+  await expect(metadata).toBeVisible();
+  await expect(metadata.getByText("Company", { exact: true })).toBeVisible();
+  await expect(
+    metadata.getByRole("link", { name: "Open original posting" }),
+  ).toBeVisible();
+  const metrics = page.getByLabel("Ranking summary", { exact: true });
+  await expect(metrics.locator("dt")).toHaveText([
+    "Fit score",
+    "Band",
+    "Confidence",
+    "Eligibility",
+    "Requirement fit",
+    "Must-haves",
+  ]);
+  await expect(metrics.getByText("9/10", { exact: true })).toBeVisible();
+  const requirement = page.getByRole("article", {
+    name: "Requirement: Lead platform reliability improvements across critical services.",
+    exact: true,
+  });
+  await expect(
+    requirement.getByRole("button", {
+      name: /^Hide evidence for requirement:/,
+    }),
+  ).toHaveAttribute("aria-expanded", "true");
+}
+
+async function verifyApplyReviewCaptureReady(page: Page): Promise<void> {
+  const gates = page.getByRole("table", { name: "Submit gates", exact: true });
+  await expect(gates).toBeVisible();
+  await expect(gates.getByRole("columnheader")).toHaveText([
+    "Gate",
+    "State",
+    "Detail",
+  ]);
+  for (const gate of [
+    "Approval recorded",
+    "Dry-run evidence",
+    "Materials",
+    "Profile version",
+    "Application URL",
+    "Repeat application protection",
+  ]) {
+    await expect(
+      gates.getByRole("cell", { name: gate, exact: true }),
+    ).toBeVisible();
+  }
+}
+
 async function verifyPipelineOperations(page: Page): Promise<void> {
   const mobileSurface = (page.viewportSize()?.width ?? 0) <= 900;
   const visibleHeadings = [
@@ -598,9 +683,14 @@ async function verifyPipelineOperations(page: Page): Promise<void> {
     page.getByRole("group", { name: "Pipeline action tools" }),
   ).toBeVisible();
 
-  const sourceProgress = page.getByRole("progressbar", { name: "Source-family completion" });
+  const sourceProgress = page.getByRole("progressbar", {
+    name: "Source-family completion",
+  });
   await expect(sourceProgress).toBeVisible();
-  await expect(sourceProgress).toHaveAttribute("aria-valuetext", "1 of 3 finished");
+  await expect(sourceProgress).toHaveAttribute(
+    "aria-valuetext",
+    "1 of 3 finished",
+  );
   await expect(
     page.getByText("Enrichment pass", { exact: true }),
   ).toBeVisible();

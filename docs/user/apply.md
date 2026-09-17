@@ -71,6 +71,12 @@ wrap below their binding explanation; no decision or audit section is removed.
 
 ## Approval And Automation Modes
 
+Apply Review's **Submit gates** table shows each gate, its current state, and
+the reason behind that state. It covers recorded approval, dry-run evidence,
+materials, profile version, application URL, repeat-application protection,
+and email details when applicable. Missing or stale evidence stays explicit;
+the table does not grant approval or change what the decision buttons allow.
+
 Apply can rehearse browser forms and send an exact approved email application.
 Use dry runs and narrow targets before employer-facing work. Persistence follows
 the editing surface: every value

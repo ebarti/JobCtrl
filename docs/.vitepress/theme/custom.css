@@ -1737,8 +1737,18 @@ html[data-jh-workflow-surface="cli"] .jh-channel-panel[data-jh-channel-panel="cl
 }
 
 .VPNavBarSearch .DocSearch-Button {
-  border: 1px solid var(--vp-c-divider);
+  border: 1px solid var(--input);
   background: var(--vp-c-bg);
+}
+
+.VPLocalSearchBox .search-bar {
+  border-color: var(--input);
+}
+
+.VPLocalSearchBox .search-bar:focus-within {
+  border-color: var(--input);
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
 }
 
 .VPHome .VPHero .name,
