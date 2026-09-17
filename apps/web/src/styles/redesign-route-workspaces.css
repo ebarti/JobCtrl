@@ -196,8 +196,16 @@
   flex: 0 0 auto;
 }
 
+.job-detail-workspace__inspector {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.job-detail-workspace__inspector > * {
+  min-width: 0;
+}
+
 .job-detail-workspace__inspector .job-artifact-row {
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr);
   gap: 8px 10px;
 }
 
@@ -206,10 +214,11 @@
   overflow-wrap: anywhere;
 }
 
-.job-detail-workspace__inspector
-  .job-artifact-row
-  > [data-slot="button"] {
-  min-width: max-content;
+.job-detail-workspace__inspector .job-artifact-row > [data-slot="button"] {
+  grid-column: 1 / -1;
+  justify-self: start;
+  height: auto;
+  white-space: normal;
 }
 
 .job-detail-workspace__inspector

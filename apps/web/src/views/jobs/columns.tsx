@@ -614,6 +614,7 @@ export function jobColumns(
   return [
     {
       id: "select",
+      width: 38,
       label: "Select",
       header: (context) => selectHeader(options, context),
       className: "row-check",
@@ -625,6 +626,7 @@ export function jobColumns(
     },
     {
       id: "fit_score",
+      width: 92,
       label: "Fit",
       sortable: true,
       getFilterValue: (row) => String(row.fitScore ?? "unscored"),
@@ -640,7 +642,7 @@ export function jobColumns(
     {
       id: "title",
       label: "Title",
-      width: 260,
+      width: 240,
       minWidth: 220,
       sortable: true,
       rowHeader: true,
@@ -659,6 +661,7 @@ export function jobColumns(
     },
     {
       id: "company",
+      width: 140,
       label: "Company",
       sortable: true,
       getFilterValue: (row) => row.company || "-",
@@ -795,6 +798,7 @@ export function jobColumns(
     },
     {
       id: "location",
+      width: 140,
       label: "Location",
       sortable: true,
       getFilterValue: (row) => row.location || "-",
@@ -804,6 +808,7 @@ export function jobColumns(
     },
     {
       id: "current_stage",
+      width: 112,
       label: "Stage",
       sortable: true,
       getFilterValue: (row) => row.currentStage,
@@ -816,6 +821,7 @@ export function jobColumns(
     },
     {
       id: "current_state",
+      width: 136,
       label: "State",
       sortable: true,
       getFilterValue: (row) => row.currentState,
@@ -847,6 +853,7 @@ export function jobColumns(
     },
     {
       id: "discovered_at",
+      width: 136,
       label: "Discovered",
       sortable: true,
       getFilterValue: (row) => row.discoveredAt || "-",
@@ -858,6 +865,7 @@ export function jobColumns(
     },
     {
       id: "apply_status",
+      width: 104,
       label: "Apply",
       sortable: true,
       getSortValue: (row) => row.applyStatus ?? "",

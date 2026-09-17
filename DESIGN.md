@@ -197,7 +197,7 @@ The design system is the contract that makes every JobCtrl screen feel like one 
 
 ## Product character
 
-JobCtrl is a local-first control plane for consequential work. Its interface is calm, operational, dense without being cramped, and explicit about evidence and lifecycle. The Swiss timetable visual language uses the existing shadcn Rhea-derived wrappers, Base UI behavior primitives, Tailwind CSS v4 semantic tokens, and Tabler icons. It changes appearance while preserving navigation, page structure, controls, and workflow contracts.
+JobCtrl is a local-first control plane for consequential work. Its interface is calm, operational, dense without being cramped, and explicit about evidence and lifecycle. The Swiss timetable visual language uses the existing shadcn Rhea-derived wrappers, Base UI behavior primitives, Tailwind CSS v4 semantic tokens, and Tabler icons. It changes appearance and the presentation of job metrics, evidence, and authorization gates while preserving navigation, controls, and workflow contracts.
 
 Non-negotiables:
 
@@ -206,7 +206,7 @@ Non-negotiables:
 - Large surfaces stay neutral. Near-black anchors primary actions and selection in light mode, with paired light ink in dark mode. Red is reserved for failure/destructive states and amber for pending/review states; informational and completed states remain neutral with explicit icons and labels.
 - Semantic status color appears on a small icon/dot and text. Domain status never relies on color alone or becomes a tinted capsule.
 - Controls, panels, and overlays use the shared zero-radius scale. Full rounding is reserved for intrinsically circular controls.
-- Panels use thin neutral dividers and a stronger section rule, with no resting shadow. Elevation belongs to menus, dialogs, popovers, and mobile sheets.
+- Panels use thin neutral internal dividers and a 2px foreground-ink section rule, with no resting shadow. Profile panels use a 1px ink outline. Elevation belongs to menus, dialogs, popovers, and mobile sheets.
 - Route-backed detail is a full workspace, not a modal-shaped card floating over the index.
 - Route identity uses one compact `PageHead`: a visible level-1 page title establishes the focal point, while the sidebar section and current page remain secondary breadcrumb context. A short subtitle or count stays inline when space allows. Actions align beside it on desktop and stack below it on narrow screens.
 - Missing, unknown, blocked, residual-warning, and failed-refresh states remain visible.
@@ -290,7 +290,7 @@ Status:
 
 Forms:
 
-- Inputs, selects, and textareas share square geometry, a neutral one-pixel border, and no resting shadow.
+- Inputs, selects, and textareas share square geometry, a foreground-ink one-pixel border, and no resting shadow.
 - Labels explain meaning; optional documentation links sit beside the label rather than inside helper-card chrome.
 - Adaptive grids use available width and collapse by their own container, not only the viewport.
 
@@ -333,3 +333,9 @@ Every asynchronous composite defines loading, empty, error, populated, refreshin
 - All original data, controls, audit fields, filters, and route transitions remain available.
 - All core actions work and all consequential claims expose source and lifecycle when data exists.
 - Zero critical or serious accessibility violations in supported stories.
+
+### Timetable information density
+
+Jobs starts with fit, title, company, location, stage, state, and apply status; Sources, compensation scan columns, Warnings, Template, and Discovered date remain available from Columns. Existing named and customized views retain their choices. Jobs row density adjusts padding while body text stays 14px. Secondary recording actions such as Mark as applied use an outline so the next workflow action remains visually dominant.
+
+Job detail uses a responsive six-cell summary strip and labeled header metadata. Requirement evidence starts expanded and remains collapsible. Apply Review shows canonical authorization gates in a neutral table with state glyphs and text; dry run remains primary until live-submit eligibility is satisfied. Missing evidence, stale bindings, partial evidence, and failures retain their full reasons and existing authorization rules.

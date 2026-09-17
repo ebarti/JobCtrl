@@ -102,6 +102,8 @@
 }
 
 .pipeline-live-flow__heading {
+  border-bottom: 2px solid var(--foreground);
+  padding-bottom: var(--jh-internal-gap);
   display: flex;
   min-width: 0;
   align-items: flex-start;
@@ -123,16 +125,16 @@
 .pipeline-stop-action {
   flex: 0 0 auto;
   min-height: 36px;
-  border: 1px solid color-mix(in oklch, var(--destructive) 68%, var(--border));
+  border: 1px solid var(--destructive-text);
   border-radius: var(--radius-lg);
-  background: var(--destructive);
+  background: transparent;
   padding: 8px 14px;
-  color: var(--destructive-foreground);
+  color: var(--destructive-text);
   cursor: pointer;
 }
 
 .pipeline-stop-action:hover:not(:disabled) {
-  background: color-mix(in oklch, var(--destructive) 88%, var(--foreground));
+  background: var(--destructive-muted);
 }
 
 .pipeline-stop-action:focus-visible {
@@ -384,7 +386,8 @@
 
 .pipeline-operations-inspector > h2 {
   margin: 0;
-  padding: 18px 20px 14px;
+  padding: var(--jh-panel-padding);
+  border-bottom: 2px solid var(--foreground);
 }
 
 .pipeline-operations-workspace .configuration-section {
@@ -397,21 +400,21 @@
 }
 
 .pipeline-operations-workspace .configuration-section__trigger {
-  min-height: 64px;
-  padding: 14px 18px;
+  min-height: var(--jh-row-height);
+  padding: var(--jh-internal-gap) var(--jh-panel-padding);
 }
 
 .pipeline-operations-workspace .configuration-section__body {
-  padding: 0 18px 18px;
+  padding: 0 var(--jh-panel-padding) var(--jh-panel-padding);
 }
 
 .pipeline-operations-inspector .configuration-section__trigger {
-  min-height: 58px;
-  padding-inline: 20px;
+  min-height: var(--jh-row-height);
+  padding-inline: var(--jh-panel-padding);
 }
 
 .pipeline-operations-inspector .configuration-section__body {
-  padding-inline: 20px;
+  padding-inline: var(--jh-panel-padding);
 }
 
 .pipeline-operations-workspace .configuration-section__description {

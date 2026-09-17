@@ -12,24 +12,25 @@ import {
 import { EmployerAnalysisPanel } from "./EmployerAnalysisPanel.js";
 
 describe("<EmployerAnalysisPanel>", () => {
-  it("toggles matched and transferable requirements independently with mouse and keyboard", async () => {
+  it("shows requirement evidence initially and toggles requirements independently with mouse and keyboard", async () => {
     const user = userEvent.setup();
     const view = render(<EmployerAnalysisPanel analysis={populatedEmployerAnalysis} requirementFitReport={populatedRequirementFitReport} />);
     const matched = screen.getByRole("article", { name: `Requirement: ${populatedEmployerAnalysis.requirements[0]!.text}` });
     const sibling = screen.getByRole("article", { name: `Requirement: ${populatedEmployerAnalysis.requirements[1]!.text}` });
-    const trigger = within(matched).getByRole("button", { name: /^Show evidence/ });
-    expect(trigger).toHaveAttribute("aria-expanded", "false");
-    expect(within(matched).queryByRole("group", { name: "Fit summary" })).not.toBeInTheDocument();
+    const trigger = within(matched).getByRole("button", { name: /^Hide evidence/ });
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    expect(within(matched).getByRole("group", { name: "Fit summary" })).toBeVisible();
     expect(within(sibling).getByRole("button", { name: /^Hide evidence/ })).toHaveAttribute("aria-expanded", "true");
     await user.click(trigger);
-    expect(within(matched).getByRole("group", { name: "Fit summary" })).toBeVisible();
-    await user.keyboard("{Enter}");
     expect(trigger).toHaveAttribute("aria-expanded", "false");
-    await user.keyboard(" ");
+    expect(within(matched).queryByRole("group", { name: "Fit summary" })).not.toBeInTheDocument();
+    await user.keyboard("{Enter}");
     expect(trigger).toHaveAttribute("aria-expanded", "true");
+    await user.keyboard(" ");
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
     expect(within(sibling).getByRole("group", { name: "Fit summary" })).toBeVisible();
     view.rerender(<EmployerAnalysisPanel analysis={{ ...populatedEmployerAnalysis, cache_key: "replacement-analysis" }} requirementFitReport={populatedRequirementFitReport} />);
-    expect(screen.getByRole("button", { name: /^Show evidence/ })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getAllByRole("button", { name: /^Hide evidence/ })[0]).toHaveAttribute("aria-expanded", "true");
   });
 
   it("does not bind an older score to a reused requirement ID", () => {
@@ -49,12 +50,12 @@ describe("<EmployerAnalysisPanel>", () => {
     const user = userEvent.setup();
     const view = render(<EmployerAnalysisPanel analysis={populatedEmployerAnalysis} requirementFitReport={populatedRequirementFitReport} />);
     const first = populatedEmployerAnalysis.requirements[0]!;
-    await user.click(screen.getByRole("button", { name: `Show evidence for requirement: ${first.text}` }));
+    await user.click(screen.getByRole("button", { name: `Hide evidence for requirement: ${first.text}` }));
     view.rerender(<EmployerAnalysisPanel analysis={{ ...populatedEmployerAnalysis }} requirementFitReport={{ ...populatedRequirementFitReport }} />);
-    expect(screen.getByRole("button", { name: `Hide evidence for requirement: ${first.text}` })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("button", { name: `Show evidence for requirement: ${first.text}` })).toHaveAttribute("aria-expanded", "false");
     const next = { ...populatedEmployerAnalysis, generation: populatedEmployerAnalysis.generation + 1 };
     view.rerender(<EmployerAnalysisPanel analysis={next} requirementFitReport={{ ...populatedRequirementFitReport, employerAnalysisGeneration: next.generation }} />);
-    expect(screen.getByRole("button", { name: `Show evidence for requirement: ${first.text}` })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByRole("button", { name: `Hide evidence for requirement: ${first.text}` })).toHaveAttribute("aria-expanded", "true");
   });
 
   it("renders requirements with tier + importance and quoted evidence spans", () => {
@@ -110,9 +111,6 @@ describe("<EmployerAnalysisPanel>", () => {
     const matched = screen.getByRole("article", {
       name: "Requirement: Lead platform reliability programs across multiple teams",
     });
-    await user.click(
-      within(matched).getByRole("button", { name: /^Show evidence/ }),
-    );
     expect(within(matched).getByText("Requirement fit")).toBeInTheDocument();
     expect(within(matched).getByText("matched")).toHaveAttribute(
       "data-status-tone",
@@ -188,7 +186,6 @@ describe("<EmployerAnalysisPanel>", () => {
   });
 
   it("keeps the compact fit summary bounded while evidence stays readable", async () => {
-    const user = userEvent.setup();
     render(
       <EmployerAnalysisPanel
         analysis={populatedEmployerAnalysis}
@@ -212,9 +209,6 @@ describe("<EmployerAnalysisPanel>", () => {
     const matched = screen.getByRole("article", {
       name: "Requirement: Lead platform reliability programs across multiple teams",
     });
-    await user.click(
-      within(matched).getByRole("button", { name: /^Show evidence/ }),
-    );
     const summary = within(matched).getByRole("group", { name: "Fit summary" });
 
     expect(
@@ -271,9 +265,6 @@ describe("<EmployerAnalysisPanel>", () => {
     const matched = screen.getByRole("article", {
       name: "Requirement: Lead platform reliability programs across multiple teams",
     });
-    await user.click(
-      within(matched).getByRole("button", { name: /^Show evidence/ }),
-    );
     expect(
       within(matched).getByText("Evidence reference unavailable."),
     ).toBeInTheDocument();
@@ -326,9 +317,6 @@ describe("<EmployerAnalysisPanel>", () => {
     const matched = screen.getByRole("article", {
       name: "Requirement: Lead platform reliability programs across multiple teams",
     });
-    await user.click(
-      within(matched).getByRole("button", { name: /^Show evidence/ }),
-    );
     await user.click(
       within(matched).getByRole("button", { name: "Additional audit details" }),
     );

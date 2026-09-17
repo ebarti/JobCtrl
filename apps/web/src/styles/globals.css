@@ -4795,7 +4795,8 @@ input[type="radio"] {
 }
 
 .jobs-data-grid-table {
-  min-width: 2040px;
+  min-width: 0;
+  table-layout: fixed;
 }
 
 .jobs-data-grid-table .job-compensation-column {

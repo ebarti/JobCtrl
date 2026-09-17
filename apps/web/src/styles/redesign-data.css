@@ -773,6 +773,10 @@
   background: color-mix(in oklch, var(--border) 76%, transparent);
 }
 
+.jobs-data-grid-table th:last-child .data-grid-column-resizer {
+  right: 0;
+}
+
 .data-grid-column-filter-button {
   width: 22px;
   height: 22px;
@@ -1462,4 +1466,43 @@
     overflow-x: auto;
     padding-inline: 12px;
   }
+}
+
+/* Jobs density changes geometry, never the 14px reading size. Explicit saved
+ * density takes precedence over the shell's inherited density. */
+.app-shell[data-density]
+  .filterable-data-grid:not([data-density])
+  .jobs-data-grid-table
+  :is(th, td) {
+  padding-block: max(4px, calc(var(--jh-table-cell-padding-block) - 5px));
+}
+
+.app-shell
+  .filterable-data-grid[data-density="compact"]
+  .jobs-data-grid-table
+  :is(th, td) {
+  padding-block: 4px;
+}
+
+.app-shell
+  .filterable-data-grid[data-density="regular"]
+  .jobs-data-grid-table
+  :is(th, td) {
+  padding-block: 7px;
+}
+
+.app-shell
+  .filterable-data-grid[data-density="comfy"]
+  .jobs-data-grid-table
+  :is(th, td) {
+  padding-block: 11px;
+}
+
+.jobs-data-grid-table :is(th, td) {
+  padding-inline: 8px;
+  overflow-wrap: anywhere;
+}
+
+.jobs-data-grid-table tbody :is(th, td) {
+  white-space: normal;
 }

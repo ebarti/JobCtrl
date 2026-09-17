@@ -327,7 +327,7 @@ describe("<JobsView> realtime UI state", () => {
 });
 
 describe("<JobsView> compensation source-conflict visibility", () => {
-  it("uses a compact header and hides Sources, Warnings, and Template in Default", async () => {
+  it("uses a compact header and hides optional compensation, Sources, and Template columns in Default", async () => {
     const jobs = vi.fn(async () => makeJobsPage([sampleSecondaryJob]));
     const harness = buildProviderHarness({
       ports: buildTestPorts({ api: { jobs } }),
@@ -343,6 +343,11 @@ describe("<JobsView> compensation source-conflict visibility", () => {
       screen.getByRole("heading", { name: "Jobs" }).closest(".jobs-page-head"),
     ).toBeInTheDocument();
     expect(screen.getByText("1 job")).toBeInTheDocument();
+    for (const name of [/Salary min/, /Salary max/, /Market/, /Confidence/]) {
+      expect(
+        screen.queryByRole("columnheader", { name }),
+      ).not.toBeInTheDocument();
+    }
     expect(
       screen.queryByRole("columnheader", { name: /Sources/ }),
     ).not.toBeInTheDocument();
@@ -389,8 +394,13 @@ describe("<JobsView> compensation source-conflict visibility", () => {
       );
       expect(presentation?.columns.hidden).toEqual([
         "source",
+        "compensation_min_eur",
+        "compensation_max_eur",
+        "compensation_market",
+        "compensation_confidence",
         "compensation_warnings",
         "resume_template",
+        "discovered_at",
       ]);
     });
 
@@ -412,7 +422,16 @@ describe("<JobsView> compensation source-conflict visibility", () => {
       );
       expect(
         persisted.state?.presentationByTable?.[JOBS_TABLE_ID]?.columns?.hidden,
-      ).toEqual(["source", "compensation_warnings", "resume_template"]);
+      ).toEqual([
+        "source",
+        "compensation_min_eur",
+        "compensation_max_eur",
+        "compensation_market",
+        "compensation_confidence",
+        "compensation_warnings",
+        "resume_template",
+        "discovered_at",
+      ]);
     });
 
     await user.click(

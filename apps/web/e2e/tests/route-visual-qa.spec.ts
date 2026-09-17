@@ -2063,7 +2063,7 @@ test("Profile and Preferences subjects share one expandable-card hierarchy", asy
     expect(
       style.borderWidths,
       `Profile card ${index + 1} border widths`,
-    ).toEqual(["1px", "1px", "1px", "1px"]);
+    ).toEqual(["2px", "1px", "1px", "1px"]);
     expect(style.borderRadius, `Profile card ${index + 1} radius`).toBe("0px");
     if (index > 0) {
       expect(
@@ -2166,7 +2166,7 @@ test("Profile and Preferences subjects share one expandable-card hierarchy", asy
     expect(
       section.borderWidths,
       `Preferences card ${index + 1} border widths`,
-    ).toEqual(["1px", "1px", "1px", "1px"]);
+    ).toEqual(["2px", "1px", "1px", "1px"]);
     expect(section.borderRadius, `Preferences card ${index + 1} radius`).toBe(
       "0px",
     );
@@ -2413,7 +2413,9 @@ test("Apply Review decision card keeps facts readable and decisions on one row",
           Math.min(...decisionButtons.map((rect) => rect.top))
         : 0,
       contextWidth: context?.getBoundingClientRect().width ?? 0,
-      cardHeight: element.getBoundingClientRect().height,
+      summaryHeight:
+        (element.querySelector(".apply-review-gates")?.getBoundingClientRect().top ??
+          element.getBoundingClientRect().bottom) - element.getBoundingClientRect().top,
       maxSummaryItemHeight: summaryItems.length
         ? Math.max(...summaryItems.map((rect) => rect.height))
         : 0,
@@ -2455,8 +2457,8 @@ test("Apply Review decision card keeps facts readable and decisions on one row",
     "audit summary items should remain readable",
   ).toBeLessThan(140);
   expect(
-    layout.cardHeight,
-    "decision card should remain a compact summary",
+    layout.summaryHeight,
+    "decision summary above the gates table should remain compact",
   ).toBeLessThan(720);
   expect(
     layout.scrollWidth,
@@ -2478,10 +2480,27 @@ test("Job Detail requirement-fit card has visual regression coverage", async ({
     .locator(".employer-analysis-requirement")
     .filter({ hasText: PRIMARY_REQUIREMENT_TEXT });
   await expect(drawerRequirement).toHaveCount(1);
-  const disclosure = drawerRequirement.getByRole("button", { name: /^Show evidence/ });
-  await expect(disclosure).toHaveAttribute("aria-expanded", "false");
-  await expect(drawerRequirement.locator('[data-slot="requirement-fit-summary"]')).not.toBeVisible();
+  const ranking = drawer.getByLabel("Ranking summary");
+  await expect(ranking.locator(":scope > div")).toHaveCount(6);
+  expect(
+    await ranking.evaluate(
+      (element) => getComputedStyle(element).gridTemplateColumns.split(" ").length,
+    ),
+  ).toBe(6);
+  const disclosure = drawerRequirement.getByRole("button", {
+    name: / evidence for requirement:/,
+  });
+  await expect(disclosure).toHaveAttribute("aria-expanded", "true");
+  await expect(
+    drawerRequirement.locator('[data-slot="requirement-fit-summary"]'),
+  ).toBeVisible();
   await disclosure.click();
+  await expect(disclosure).toHaveAttribute("aria-expanded", "false");
+  await expect(
+    drawerRequirement.locator('[data-slot="requirement-fit-summary"]'),
+  ).not.toBeVisible();
+  await disclosure.click();
+  await expect(disclosure).toHaveAttribute("aria-expanded", "true");
   await expect(drawerRequirement).toContainText("Requirement fit");
   await expect(drawerRequirement).toContainText("matched");
   await expect(drawerRequirement).toContainText("Score contribution");
@@ -2503,6 +2522,21 @@ test("Job Detail requirement-fit card has visual regression coverage", async ({
     "job-drawer-requirement-fit-card.png",
     "job drawer requirement-fit card",
   );
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  const mobileLayout = await ranking.evaluate((element) => ({
+    columnCount: getComputedStyle(element).gridTemplateColumns.split(" ").length,
+    overflow: element.scrollWidth - element.clientWidth,
+  }));
+  expect(mobileLayout.columnCount).toBe(1);
+  expect(mobileLayout.overflow).toBeLessThanOrEqual(1);
+  const jobMetadata = drawer.getByLabel("Job metadata");
+  await expect(jobMetadata).toBeVisible();
+  expect(
+    await jobMetadata.evaluate(
+      (element) => element.scrollWidth - element.clientWidth,
+    ),
+  ).toBeLessThanOrEqual(1);
 });
 
 test("Apply Review requirement-fit card has visual regression coverage", async ({

@@ -26,6 +26,7 @@ import { useStageTriggerStore } from "../../contexts/pipeline/stores/stage-trigg
 import type { JobsSearch } from "../../routes/-jobs.search.js";
 import {
   JOBS_TABLE_COLUMN_IDS,
+  DEFAULT_JOBS_HIDDEN_COLUMN_IDS,
   JOBS_TABLE_ID,
   DEFAULT_SAVED_TABLE_VIEW_ID,
   type SavedTablePresentation,
@@ -83,11 +84,6 @@ const SEARCH_FILTER_COLUMNS = new Set([
   "apply_status",
 ]);
 const JOB_TABLE_STAGE_FILTERS = ["discover", "apply"] as const;
-const DEFAULT_JOBS_HIDDEN_COLUMN_IDS = [
-  "source",
-  "compensation_warnings",
-  "resume_template",
-] as const;
 const DEFAULT_JOBS_PRESENTATION: SavedTablePresentation = {
   columns: {
     order: [...JOBS_TABLE_COLUMN_IDS],
@@ -425,7 +421,8 @@ export function JobsView() {
       const nextStage =
         firstAllowedValue(next.current_stage, JOB_TABLE_STAGE_FILTERS) ?? "all";
       const nextState =
-        firstAllowedValue(next.current_state, USER_FACING_STAGE_STATES) ?? "all";
+        firstAllowedValue(next.current_state, USER_FACING_STAGE_STATES) ??
+        "all";
       const applyFilter = firstAllowedValue(next.apply_status, [
         "applied",
       ] as const);

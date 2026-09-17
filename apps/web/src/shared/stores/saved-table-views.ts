@@ -17,7 +17,7 @@ import {
   type StateStorage,
 } from "zustand/middleware";
 
-export const SAVED_TABLE_VIEW_STORE_VERSION = 2;
+export const SAVED_TABLE_VIEW_STORE_VERSION = 3;
 export const SAVED_TABLE_VIEW_SCHEMA_VERSION = 1;
 export const DEFAULT_SAVED_TABLE_VIEW_ID = "default";
 export const JOBS_TABLE_ID = "jobs" satisfies TableId;
@@ -38,6 +38,17 @@ export const JOBS_TABLE_COLUMN_IDS = [
   "resume_template",
   "discovered_at",
   "apply_status",
+] as const;
+
+export const DEFAULT_JOBS_HIDDEN_COLUMN_IDS = [
+  "source",
+  "compensation_min_eur",
+  "compensation_max_eur",
+  "compensation_market",
+  "compensation_confidence",
+  "compensation_warnings",
+  "resume_template",
+  "discovered_at",
 ] as const;
 
 const STAGE_OR_ALL = [...STAGES, "all"] as const;
@@ -66,11 +77,7 @@ const TABLE_CONFIGS: Record<string, KnownTableConfig> = {
     tableId: JOBS_TABLE_ID,
     columnIds: JOBS_TABLE_COLUMN_IDS,
     fixedLeadingColumnIds: ["select"],
-    defaultHiddenColumnIds: [
-      "source",
-      "compensation_warnings",
-      "resume_template",
-    ],
+    defaultHiddenColumnIds: DEFAULT_JOBS_HIDDEN_COLUMN_IDS,
     defaultSort: { columnId: "discovered_at", direction: "desc" },
     defaultUrlFilters: {
       q: "",
@@ -154,11 +161,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-export function migrateSavedTableViewsState(
+function migrateLegacyTemplateVisibility(
   value: unknown,
   persistedVersion: number,
 ): unknown {
-  if (persistedVersion >= SAVED_TABLE_VIEW_STORE_VERSION || !isRecord(value)) {
+  if (persistedVersion >= 2 || !isRecord(value)) {
     return value;
   }
   const activeViewIdByTable = isRecord(value["activeViewIdByTable"])
@@ -188,6 +195,49 @@ export function migrateSavedTableViewsState(
           ...jobsPresentation["columns"],
           hidden: [...jobsPresentation["columns"]["hidden"], "resume_template"],
         },
+      },
+    },
+  };
+}
+
+export function migrateSavedTableViewsState(
+  value: unknown,
+  persistedVersion: number,
+): unknown {
+  const migrated = migrateLegacyTemplateVisibility(value, persistedVersion);
+  if (persistedVersion >= 3 || !isRecord(migrated)) return migrated;
+  const active = migrated["activeViewIdByTable"];
+  const presentations = migrated["presentationByTable"];
+  if (
+    !isRecord(active) ||
+    active[JOBS_TABLE_ID] !== DEFAULT_SAVED_TABLE_VIEW_ID ||
+    !isRecord(presentations)
+  )
+    return migrated;
+  const presentation = presentations[JOBS_TABLE_ID];
+  if (!isRecord(presentation) || !isRecord(presentation["columns"]))
+    return migrated;
+  const columns = presentation["columns"];
+  const oldHidden = ["source", "compensation_warnings", "resume_template"];
+  const hidden = columns["hidden"];
+  // A customized Default is a user choice, just like a named view.
+  if (
+    !Array.isArray(hidden) ||
+    hidden.length !== oldHidden.length ||
+    !oldHidden.every((id) => hidden.includes(id)) ||
+    JSON.stringify(columns["order"]) !==
+      JSON.stringify(JOBS_TABLE_COLUMN_IDS) ||
+    !isRecord(columns["widths"]) ||
+    Object.keys(columns["widths"]).length > 0
+  )
+    return migrated;
+  return {
+    ...migrated,
+    presentationByTable: {
+      ...presentations,
+      [JOBS_TABLE_ID]: {
+        ...presentation,
+        columns: { ...columns, hidden: [...DEFAULT_JOBS_HIDDEN_COLUMN_IDS] },
       },
     },
   };

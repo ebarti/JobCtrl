@@ -28,8 +28,8 @@
 }
 
 .job-overview-score-label,
-.job-overview-provenance,
 .job-overview-readiness-label,
+.job-overview-facts dt,
 .job-detail-section-heading > span,
 .job-audit-triage-kicker,
 .job-audit-metrics dt,
@@ -69,10 +69,6 @@
   gap: 5px;
 }
 
-.job-overview-provenance {
-  overflow-wrap: anywhere;
-}
-
 .job-detail-drawer .drawer-head h2 {
   margin: 0;
   color: var(--foreground);
@@ -83,12 +79,43 @@
   line-height: var(--jh-type-page-title-line-height);
 }
 
-.job-overview-location {
+.job-overview-facts {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  margin: 4px 0 0;
+  border-top: 2px solid var(--foreground);
+  border-bottom: 1px solid var(--border);
+}
+
+.job-overview-facts > div {
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px 12px 12px;
+  border-right: 1px solid var(--border);
+}
+
+.job-overview-facts > div:first-child {
+  padding-left: 0;
+}
+
+.job-overview-facts > div:last-child {
+  border-right: 0;
+}
+
+.job-overview-facts dd {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
   margin: 0;
-  color: var(--muted-foreground);
+  color: var(--foreground);
+  overflow-wrap: anywhere;
+}
+
+.job-overview-facts .external-link {
+  width: fit-content;
   font-size: var(--jh-type-metadata-size);
-  font-weight: var(--jh-type-metadata-weight);
-  line-height: var(--jh-type-metadata-line-height);
 }
 
 .job-overview-meta-row {
@@ -309,16 +336,16 @@
   line-height: var(--jh-type-component-title-line-height);
 }
 
-.job-detail-drawer .job-audit-metrics {
+:is(.job-detail-drawer, .route-page--job-detail) .job-audit-metrics {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 0;
   margin: 0;
   border-top: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
 }
 
-.job-detail-drawer .job-audit-metrics > div {
+:is(.job-detail-drawer, .route-page--job-detail) .job-audit-metrics > div {
   display: grid;
   gap: 4px;
   min-width: 0;
@@ -326,15 +353,19 @@
   border-right: 1px solid var(--border);
 }
 
-.job-detail-drawer .job-audit-metrics > div:not(:first-child) {
+:is(.job-detail-drawer, .route-page--job-detail)
+  .job-audit-metrics
+  > div:not(:first-child) {
   padding-left: 14px;
 }
 
-.job-detail-drawer .job-audit-metrics > div:nth-child(3n) {
+:is(.job-detail-drawer, .route-page--job-detail)
+  .job-audit-metrics
+  > div:nth-child(6n) {
   border-right: 0;
 }
 
-.job-detail-drawer .job-audit-metrics dd {
+:is(.job-detail-drawer, .route-page--job-detail) .job-audit-metrics dd {
   min-width: 0;
   margin: 0;
   color: var(--foreground);
@@ -904,6 +935,18 @@
     border-right: 0;
     border-bottom: 1px solid var(--border);
   }
+
+  .job-overview-facts {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .job-overview-facts > div:nth-child(3n) {
+    border-right: 0;
+  }
+
+  .job-overview-facts > div:nth-child(n + 4) {
+    border-top: 1px solid var(--border);
+  }
 }
 
 @media (max-width: 820px) {
@@ -934,19 +977,19 @@
     padding-left: 20px;
   }
 
-  .job-detail-drawer .job-audit-metrics {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  :is(.job-detail-drawer, .route-page--job-detail) .job-audit-metrics {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
-  .job-detail-drawer .job-audit-metrics > div:nth-child(3n) {
-    border-right: 1px solid var(--border);
-  }
-
-  .job-detail-drawer .job-audit-metrics > div:nth-child(2n) {
+  :is(.job-detail-drawer, .route-page--job-detail)
+    .job-audit-metrics
+    > div:nth-child(3n) {
     border-right: 0;
   }
 
-  .job-detail-drawer .job-audit-metrics > div:nth-child(n + 3) {
+  :is(.job-detail-drawer, .route-page--job-detail)
+    .job-audit-metrics
+    > div:nth-child(n + 4) {
     border-top: 1px solid var(--border);
   }
 
@@ -984,19 +1027,38 @@
 }
 
 @media (max-width: 460px) {
-  .job-detail-drawer .job-audit-metrics,
+  .job-overview-facts {
+    grid-template-columns: 1fr;
+  }
+
+  .job-overview-facts > div,
+  .job-overview-facts > div:first-child {
+    border-top: 1px solid var(--border);
+    border-right: 0;
+    padding: 9px 0;
+  }
+
+  .job-overview-facts > div:first-child {
+    border-top: 0;
+  }
+
+  :is(.job-detail-drawer, .route-page--job-detail) .job-audit-metrics,
   .job-detail-drawer .score-correction {
     grid-template-columns: 1fr;
   }
 
-  .job-detail-drawer .job-audit-metrics > div,
-  .job-detail-drawer .job-audit-metrics > div:not(:first-child) {
+  :is(.job-detail-drawer, .route-page--job-detail) .job-audit-metrics > div,
+  :is(.job-detail-drawer, .route-page--job-detail)
+    .job-audit-metrics
+    > div:not(:first-child) {
     border-right: 0;
     border-top: 1px solid var(--border);
     padding: 10px 0;
   }
 
-  .job-detail-drawer .job-audit-metrics > div:first-child {
+  :is(.job-detail-drawer, .route-page--job-detail)
+    .job-audit-metrics
+    > div:first-child {
     border-top: 0;
   }
 

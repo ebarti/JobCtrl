@@ -492,7 +492,7 @@ function RequirementItem({
   readonly resolveEvidenceReference: EmployerAnalysisPanelProps["resolveEvidenceReference"];
 }): JSX.Element {
   const assessment = requirementAssessment(requirement, requirementFitReport);
-  const [open, setOpen] = useState(assessment.label !== "matched");
+  const [open, setOpen] = useState(true);
   const flagged = isFlaggedByAgreement(requirement, flaggedRequirements);
   const primaryRows = assessment.rows.filter(
     (row): row is RequirementAssessmentTextRow =>

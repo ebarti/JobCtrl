@@ -1170,9 +1170,11 @@ describe("<ApplyReviewView>", () => {
       const icon = button.querySelector('svg[data-icon="inline-start"]');
       expect(icon).toHaveAttribute("aria-hidden", "true");
     }
-    const submitGateAlert = screen.getByText("Submit gate: approval not recorded.").closest('[role="alert"]');
-    expect(submitGateAlert).toHaveTextContent("Authorization unavailable");
-    expect(submitGateAlert?.querySelector(".tabler-icon-lock")).toHaveAttribute("aria-hidden", "true");
+    const submitGates = decision.getByRole("table", { name: "Submit gates" });
+    const approvalRow = within(submitGates).getByRole("cell", { name: "Approval recorded" }).closest("tr");
+    expect(approvalRow).toHaveTextContent("not recorded");
+    expect(approvalRow?.querySelector(".tabler-icon-clock")).toHaveAttribute("aria-hidden", "true");
+    expect(approvalRow?.querySelector(".tabler-icon-check")).not.toBeInTheDocument();
     const authorizationDetails = decision.getByText("Technical details").closest("details");
     expect(authorizationDetails).not.toHaveAttribute("open");
     expect(authorizationDetails).toHaveTextContent("Profile version");
@@ -2252,7 +2254,8 @@ describe("<ApplyReviewView>", () => {
     await findResumeShadowRoot();
     const approveDryRun = screen.getByRole("button", { name: /Authorize dry run/i });
     await waitFor(() => expect(approveDryRun).not.toBeDisabled());
-    expect(screen.getByText("Saved draft will render automatically before approval.")).toBeInTheDocument();
+    const materialsGate = screen.getByRole("cell", { name: "Materials" }).closest("tr");
+    expect(materialsGate).toHaveTextContent("Saved draft will render automatically before approval.");
     expect(screen.getByRole("button", { name: /Defer for Principal Platform Engineer/i })).not.toBeDisabled();
     expect(screen.getByRole("button", { name: /Decline for Principal Platform Engineer/i })).not.toBeDisabled();
 
@@ -3853,7 +3856,7 @@ describe("<ApplyReviewView>", () => {
       }),
     });
 
-    expect(await screen.findByText("Email application")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Email application" })).toBeInTheDocument();
     expect(screen.getAllByText("apply@example.com").length).toBeGreaterThan(0);
     expect(screen.getByText("Jordan_Resume.pdf")).toBeInTheDocument();
 

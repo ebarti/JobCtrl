@@ -36,14 +36,6 @@ function sentenceCase(value: string): string {
 
 export function JobOverview({ detail }: JobOverviewProps) {
   const { applyAudit, job } = detail;
-  const provenance = [
-    job.company || null,
-    job.postingSource ? `posting: ${job.postingSource}` : null,
-    job.discoverySource ? `discovered via: ${job.discoverySource}` : null,
-  ].filter((value): value is string => Boolean(value));
-  const locationAndSalary = [job.location, job.salary].filter(
-    (value): value is string => Boolean(value?.trim()),
-  );
   return (
     <header className="drawer-head job-overview">
       <div
@@ -58,25 +50,37 @@ export function JobOverview({ detail }: JobOverviewProps) {
         </span>
       </div>
       <div className="job-overview-copy">
-        <small className="job-overview-provenance" data-typography="metadata">
-          {provenance.join(" · ")}
-        </small>
         <h1 data-typography="page-title">{job.title}</h1>
-        {locationAndSalary.length ? (
-          <p className="job-overview-location" data-typography="metadata">
-            {locationAndSalary.join(" · ")}
-          </p>
-        ) : null}
+        <dl className="job-overview-facts" aria-label="Job metadata">
+          {job.company ? (
+            <MetadataField label="Company" value={job.company} />
+          ) : null}
+          {job.location.trim() ? (
+            <MetadataField label="Location" value={job.location} />
+          ) : null}
+          {job.salary.trim() ? (
+            <MetadataField label="Salary" value={job.salary} />
+          ) : null}
+          <div>
+            <dt data-typography="label">Posting</dt>
+            <dd data-typography="metadata">
+              <span>{job.postingSource || "not recorded"}</span>
+              <a
+                className="external-link"
+                data-typography="control"
+                href={job.url}
+                rel="noreferrer"
+                target="_blank"
+              >
+                Open original posting
+              </a>
+            </dd>
+          </div>
+          {job.discoverySource ? (
+            <MetadataField label="Discovered via" value={job.discoverySource} />
+          ) : null}
+        </dl>
         <div className="job-overview-meta-row">
-          <a
-            className="external-link"
-            data-typography="control"
-            href={job.url}
-            rel="noreferrer"
-            target="_blank"
-          >
-            Open original posting
-          </a>
           <div
             className="job-overview-readiness"
             aria-label="Apply readiness"
@@ -121,5 +125,14 @@ export function JobOverview({ detail }: JobOverviewProps) {
         </div>
       </div>
     </header>
+  );
+}
+
+function MetadataField({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <dt data-typography="label">{label}</dt>
+      <dd data-typography="metadata">{value}</dd>
+    </div>
   );
 }

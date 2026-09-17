@@ -111,8 +111,13 @@ describe("saved table views store", () => {
     });
     expect(defaultView?.columns.hidden).toEqual([
       "source",
+      "compensation_min_eur",
+      "compensation_max_eur",
+      "compensation_market",
+      "compensation_confidence",
       "compensation_warnings",
       "resume_template",
+      "discovered_at",
     ]);
     expect(legacy).toBeDefined();
     expect(legacy?.columns.order[0]).toBe("select");
@@ -184,7 +189,16 @@ describe("saved table views store", () => {
     expect(
       normalized.views.find((view) => view.id === DEFAULT_SAVED_TABLE_VIEW_ID)
         ?.columns.hidden,
-    ).toEqual(["source", "compensation_warnings", "resume_template"]);
+    ).toEqual([
+      "source",
+      "compensation_min_eur",
+      "compensation_max_eur",
+      "compensation_market",
+      "compensation_confidence",
+      "compensation_warnings",
+      "resume_template",
+      "discovered_at",
+    ]);
   });
 
   it("uses the current hidden-column baseline for a fresh Default presentation", () => {
@@ -192,7 +206,16 @@ describe("saved table views store", () => {
 
     expect(
       normalized.presentationByTable[JOBS_TABLE_ID]?.columns.hidden,
-    ).toEqual(["source", "compensation_warnings", "resume_template"]);
+    ).toEqual([
+      "source",
+      "compensation_min_eur",
+      "compensation_max_eur",
+      "compensation_market",
+      "compensation_confidence",
+      "compensation_warnings",
+      "resume_template",
+      "discovered_at",
+    ]);
   });
 
   it("migrates the version-1 Default hidden baseline without losing its order", () => {
@@ -237,6 +260,58 @@ describe("saved table views store", () => {
     expect(migrateSavedTableViewsState(versionOneState, 2)).toBe(
       versionOneState,
     );
+  });
+
+  it("updates the untouched version-2 Default but preserves explicit column choices", () => {
+    const state = {
+      activeViewIdByTable: { jobs: "default" },
+      presentationByTable: {
+        jobs: {
+          columns: {
+            order: [...JOBS_TABLE_COLUMN_IDS],
+            hidden: ["source", "compensation_warnings", "resume_template"],
+            widths: {},
+          },
+          density: "comfy",
+          grouping: null,
+          colorRules: [],
+        },
+      },
+    };
+    const migrated = normalizeSavedTableViewsState(
+      migrateSavedTableViewsState(state, 2),
+    );
+    expect(migrated.presentationByTable.jobs?.columns.hidden).toContain(
+      "compensation_market",
+    );
+    expect(migrated.presentationByTable.jobs?.density).toBe("comfy");
+    for (const custom of [
+      { ...state, activeViewIdByTable: { jobs: "my-view" } },
+      {
+        ...state,
+        presentationByTable: {
+          jobs: {
+            ...state.presentationByTable.jobs,
+            columns: { ...state.presentationByTable.jobs.columns, hidden: [] },
+          },
+        },
+      },
+      {
+        ...state,
+        presentationByTable: {
+          jobs: {
+            ...state.presentationByTable.jobs,
+            columns: {
+              ...state.presentationByTable.jobs.columns,
+              widths: { title: 340 },
+            },
+          },
+        },
+      },
+    ]) {
+      expect(migrateSavedTableViewsState(custom, 2)).toBe(custom);
+    }
+    expect(migrateSavedTableViewsState(state, 3)).toBe(state);
   });
 
   it("keeps templates unchanged until an explicit save/update action", () => {
