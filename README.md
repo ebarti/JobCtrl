@@ -237,10 +237,11 @@ evidence, qualifications, and the complete capability matrix.
   nor required bullet pins retain their existing role details without generated
   bullets. A pinned bullet still needs supporting evidence from its own role;
   restore that evidence or remove the pin before tailoring.
-- Triage jobs through the real **Active**, **Deleted**, and **Hidden** queues.
-  The default Active view keeps source and warning columns available but hidden,
-  uses destructive styling for deletion, and opens a row through its focused
-  activation control instead of adding a competing always-visible action.
+- Triage jobs in one table with the **Job state** column filter for **Active**,
+  **Deleted**, and **Hidden**. The default Active filter keeps source and warning
+  columns available but hidden, uses destructive styling for deletion, and
+  opens a row through its focused activation control instead of adding a
+  competing always-visible action.
 - Review generated resumes in Apply Review as editable rich-text documents:
   change text and formatting, add hyperlinks, save a draft, render the
   replacement PDF, and approve only the exact reviewed artifact.
