@@ -272,7 +272,7 @@ def _node_status() -> tuple[bool, str]:
     except Exception as exc:  # noqa: BLE001 - setup diagnostic
         return False, f"version check failed: {exc}"
     parts = tuple(int(p) for p in version.split(".")[:3])
-    return parts >= (20, 19, 0), version
+    return parts >= (22, 13, 0), version
 
 
 def _setup_toolchain_rows() -> list[tuple[str, bool, str]]:
@@ -280,7 +280,7 @@ def _setup_toolchain_rows() -> list[tuple[str, bool, str]]:
 
     rows: list[tuple[str, bool, str]] = []
     node_ok, node_note = _node_status()
-    rows.append(("Node.js 20.19+", node_ok, node_note))
+    rows.append(("Node.js 22.13+", node_ok, node_note))
     for command, label in (
         ("corepack", "Corepack"),
         ("uv", "uv"),

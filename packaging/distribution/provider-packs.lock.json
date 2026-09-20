@@ -56,10 +56,10 @@
         },
         {
           "package": "cryptography",
-          "version": "49.0.0",
-          "url": "https://files.pythonhosted.org/packages/19/2a/5bb823f5bedcf80718cea7fbc95ec5515cca3769633c4b01a32be7f30e7c/cryptography-49.0.0-cp39-abi3-macosx_11_0_arm64.whl",
-          "sha256": "ec5e529fb80935c94fe7b729f9972b50e351a0e6b50aa294fd5cabb109fcc29a",
-          "sizeBytes": 4025947
+          "version": "50.0.1",
+          "url": "https://files.pythonhosted.org/packages/84/a9/ee16a903f13755e914d1eecc482fe64d1f10761c3960e5d8fa6837377aff/cryptography-50.0.1-cp39-abi3-macosx_11_0_arm64.whl",
+          "sha256": "ca83d00d9e69cd5eb63f2e69c3a5a59e0cecae5ae14c6ae0b35830fe3b37bad0",
+          "sizeBytes": 4035307
         },
         {
           "package": "httpx-sse",
@@ -250,10 +250,10 @@
         },
         {
           "package": "cryptography",
-          "version": "49.0.0",
-          "url": "https://files.pythonhosted.org/packages/19/2a/5bb823f5bedcf80718cea7fbc95ec5515cca3769633c4b01a32be7f30e7c/cryptography-49.0.0-cp39-abi3-macosx_11_0_arm64.whl",
-          "sha256": "ec5e529fb80935c94fe7b729f9972b50e351a0e6b50aa294fd5cabb109fcc29a",
-          "sizeBytes": 4025947
+          "version": "50.0.1",
+          "url": "https://files.pythonhosted.org/packages/84/a9/ee16a903f13755e914d1eecc482fe64d1f10761c3960e5d8fa6837377aff/cryptography-50.0.1-cp39-abi3-macosx_11_0_arm64.whl",
+          "sha256": "ca83d00d9e69cd5eb63f2e69c3a5a59e0cecae5ae14c6ae0b35830fe3b37bad0",
+          "sizeBytes": 4035307
         },
         {
           "package": "distro",

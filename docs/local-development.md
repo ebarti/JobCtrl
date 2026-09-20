@@ -18,7 +18,7 @@ scripts/install
 ```
 
 `scripts/install` is the first-run path for new contributors. It checks for
-Node.js, Corepack, uv, and the Temporal CLI, offers
+Node.js 22.13 or newer, Corepack, uv, and the Temporal CLI, offers
 Homebrew installs for missing machine-level tools when available, then runs the
 repository dependency setup: frozen corepack pnpm install, uv sync, and Playwright
 Chromium installs for both the web package and the Python worker. This direct

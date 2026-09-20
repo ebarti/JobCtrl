@@ -130,26 +130,26 @@ ensure_node() {
   local version
   if command -v node >/dev/null 2>&1; then
     version="$(node -p 'process.versions.node' 2>/dev/null || true)"
-    if [[ -n "$version" ]] && version_at_least "$version" "20.19.0"; then
+    if [[ -n "$version" ]] && version_at_least "$version" "22.13.0"; then
       ok "Node.js $version"
       return 0
     fi
-    warn "Node.js 20.19+ is required; found ${version:-unknown}."
+    warn "Node.js 22.13+ is required; found ${version:-unknown}."
   else
-    warn "Node.js 20.19+ is required; node was not found."
+    warn "Node.js 22.13+ is required; node was not found."
   fi
 
   maybe_brew_install "Node.js" node || true
 
   if command -v node >/dev/null 2>&1; then
     version="$(node -p 'process.versions.node' 2>/dev/null || true)"
-    if [[ -n "$version" ]] && version_at_least "$version" "20.19.0"; then
+    if [[ -n "$version" ]] && version_at_least "$version" "22.13.0"; then
       ok "Node.js $version"
       return 0
     fi
   fi
 
-  record_missing "Node.js 20.19+" "install Node.js from nodejs.org, nvm, asdf, or Homebrew" 1
+  record_missing "Node.js 22.13+" "install Node.js from nodejs.org, nvm, asdf, or Homebrew" 1
 }
 
 ensure_command() {

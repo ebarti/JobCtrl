@@ -103,7 +103,7 @@ test("distribution contracts are complete and every version source resolves", as
   assert.equal(report.versions["playwright-python"], "1.58.0");
   assert.equal(report.versions["font-geist"], "5.2.9");
   assert.equal(report.versions["font-jetbrains-mono"], "5.2.8");
-  assert.equal(report.versions["pdfjs-renderer"], "5.7.284");
+  assert.equal(report.versions["pdfjs-renderer"], "6.2.108");
   assert.equal(report.versions["claude-agent-sdk"], "0.2.115");
   assert.equal(typeof report.sourceDependencyReview.hasRecordDrift, "boolean");
   for (const entry of Object.values(report.sourceDependencyReview.recordCounts)) {
