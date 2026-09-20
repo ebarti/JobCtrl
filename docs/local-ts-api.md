@@ -225,7 +225,9 @@ routes described in [Jobs & Materials](api/jobs-and-materials.md#artifacts-and-r
 Apply review is a user decision boundary, not a background side effect. The
 review queue, editable resume-review drafts, approval decisions, outcomes, and
 bounded Gmail suggestion flow are summarized in
-[Jobs & Materials](api/jobs-and-materials.md#apply-review-and-outcomes).
+[Jobs & Materials](api/jobs-and-materials.md#apply-review-and-outcomes). Gmail scan summaries
+and feedback events carry canonical `jobId` values; the wire fields are defined
+in the [complete contract](api/complete-contract.md).
 
 The queue and job-detail read models include `repeatApplication`: its current
 status, summary, evaluation time, evidence fingerprint, related confirmed prior

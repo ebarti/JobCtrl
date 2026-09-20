@@ -8,6 +8,10 @@ into competing domain models.
 **Read this if** you are adding a field, event, route, JSON-RPC method, or typed
 client call and need to know which layer owns the contract.
 
+Gmail feedback scan summaries and `ApplicationEmailFeedbackIngested` payloads
+use canonical `jobId` across Python, REST contracts, domain events, and web
+invalidation. Posting and application URLs are search hints, never identity.
+
 ## Dependency Direction
 
 The important direction is domain vocabulary → wire contract → transport. The

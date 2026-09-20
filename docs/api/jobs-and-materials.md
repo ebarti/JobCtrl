@@ -113,6 +113,10 @@ explicit workflow/action, not a read-time side effect.
 | Outcomes | job outcome routes plus `/v1/outcomes` and `/v1/analytics/outcomes` |
 | Gmail suggestions | bounded scan plus accept/reject decision routes |
 
+`POST /v1/outcomes/gmail/scan` returns bounded evidence and suggestion summaries
+with canonical `jobId` values. It never returns raw message bodies. Scan events
+use that same identity to invalidate the matching outcome detail.
+
 The latest accepted artifact remains reviewable while a replacement is being
 generated. Failed or rejected attempts stay in the audit history.
 

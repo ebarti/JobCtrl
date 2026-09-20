@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 
 from jobctrl.domain.events import (
+    ApplicationEmailFeedbackIngestedPayload,
     DOMAIN_EVENT_TYPES,
     EnrichmentFetchRecheckedPayload,
     DiscoveryExecutionRefLike,
@@ -102,5 +103,11 @@ def test_pipeline_step_payload_fields_match_typescript() -> None:
     _assert_payload_field_parity(PipelineStepFailedPayload, "PipelineStepFailedPayload")
 
 
+def test_application_email_feedback_payload_fields_match_typescript() -> None:
+    """Gmail feedback identity must stay canonical across both runtimes."""
+    _assert_payload_field_parity(
+        ApplicationEmailFeedbackIngestedPayload,
+        "ApplicationEmailFeedbackIngestedPayload",
+    )
 def test_fetch_recheck_payload_fields_match_typescript() -> None:
     _assert_payload_field_parity(EnrichmentFetchRecheckedPayload, "EnrichmentFetchRecheckedPayload")

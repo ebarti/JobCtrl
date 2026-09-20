@@ -52,6 +52,12 @@ The diagram is deliberately not an event-sourcing diagram: most aggregates are
 loaded from canonical tables, not reconstructed by replaying `job_events` on
 every command or request.
 
+Gmail feedback ingestion commits its evidence, suggestion, and durable event in
+one transaction before publishing the event to projection subscribers. After
+mail retrieval, that transaction rechecks the tenant-scoped job and provider
+message so concurrent deletion or scanning cannot leave orphaned or duplicate
+evidence. Raw message bodies stay out of event payloads and scan summaries.
+
 ## Name The Layer Before Changing It
 
 | Layer | Meaning | Authority and recovery |

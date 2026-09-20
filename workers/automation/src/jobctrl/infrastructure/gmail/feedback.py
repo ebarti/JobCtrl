@@ -16,8 +16,11 @@ from typing import Any, Protocol
 from urllib.parse import urlparse
 
 from jobctrl.database import close_connection, open_exact_v10_database
-from jobctrl.infrastructure.gmail.client import GmailClient
 from jobctrl.infrastructure.migrations.schema_manifest import EXACT_V10_MANIFEST, SchemaManifestError, assert_exact_manifest
+from jobctrl.domain.events.base import DomainEvent
+from jobctrl.domain.ports.events import EventHandler, EventPublisher, Subscription
+from jobctrl.infrastructure.gmail.client import GmailClient
+from jobctrl.state import record_job_event
 
 TENANT_ID = "local"
 PROVIDER = "gmail"
@@ -77,9 +80,27 @@ class GmailFeedbackClient(Protocol):
         """Read a full Gmail message after metadata has been linked."""
 
 
+class _BufferedEventPublisher:
+    """Hold notifications until the linked-message transaction commits."""
+
+    def __init__(self) -> None:
+        self.events: list[DomainEvent] = []
+
+    def publish(self, event: DomainEvent) -> None:
+        self.events.append(event)
+
+    def subscribe(
+        self,
+        _event_type: str | None,
+        _handler: EventHandler,
+    ) -> Subscription:
+        raise RuntimeError("buffered event publisher does not accept subscriptions")
+
+
 @dataclass(frozen=True)
 class ApplicationAnchor:
-    job_key: str
+    job_id: str
+    job_url: str
     title: str
     company: str
     application_url: str
@@ -126,9 +147,16 @@ def scan_gmail_feedback(
     )
 
     conn = open_exact_v10_database(db_path)
-    conn.execute("PRAGMA busy_timeout=10000")
-    gmail = client or GmailClient()
     try:
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA busy_timeout=10000")
+        conn.execute("PRAGMA foreign_keys=ON")
+        if conn.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
+            raise GmailFeedbackError(
+                "Gmail feedback scan requires SQLite foreign-key enforcement."
+            )
+
+        gmail = client or GmailClient()
         ensure_application_feedback_tables(conn)
         recipient = (recipient_email or _profile_email(conn)).strip().lower()
         if not recipient or not _EMAIL_RE.match(recipient):
@@ -186,38 +214,56 @@ def scan_gmail_feedback(
                     continue
 
                 full_message = gmail.read_email(message_id=message_id)
-                evidence = _store_linked_message(
-                    conn=conn,
-                    anchor=anchor,
-                    metadata=metadata,
-                    full_message=full_message,
-                    decision=decision,
-                    linked_at=now,
-                )
                 classification = classify_outcome(
-                    subject=evidence["subject"] or "",
-                    snippet=evidence["snippet"] or "",
+                    subject=_text(full_message.get("subject") or metadata.get("subject")),
+                    snippet=_text(full_message.get("snippet") or metadata.get("snippet")),
                     body_text=_text(full_message.get("body_text")),
                 )
-                suggestion = _store_suggestion(
-                    conn=conn,
-                    anchor=anchor,
-                    evidence_id=evidence["evidenceId"],
-                    provider_message_id=message_id,
-                    classification=classification,
-                    created_at=now,
-                )
-                _record_safe_event(
-                    conn,
-                    job_key=anchor.job_key,
-                    evidence_id=evidence["evidenceId"],
-                    suggestion_id=suggestion["suggestionId"],
-                    classification=classification,
-                    link_confidence=evidence["linkConfidence"],
-                    signals=decision.signals,
-                    occurred_at=now,
-                )
-                conn.commit()
+                publisher = _BufferedEventPublisher()
+                try:
+                    conn.execute("BEGIN IMMEDIATE")
+                    if not _job_exists(conn, anchor.job_id):
+                        conn.rollback()
+                        summary["unlinkedCandidateCount"] += 1
+                        continue
+                    if _provider_message_exists(conn, message_id):
+                        conn.rollback()
+                        summary["duplicateMessageCount"] += 1
+                        continue
+
+                    evidence = _store_linked_message(
+                        conn=conn,
+                        anchor=anchor,
+                        metadata=metadata,
+                        full_message=full_message,
+                        decision=decision,
+                        linked_at=now,
+                    )
+                    suggestion = _store_suggestion(
+                        conn=conn,
+                        anchor=anchor,
+                        evidence_id=evidence["evidenceId"],
+                        provider_message_id=message_id,
+                        classification=classification,
+                        created_at=now,
+                    )
+                    _record_safe_event(
+                        conn,
+                        job_id=anchor.job_id,
+                        evidence_id=evidence["evidenceId"],
+                        suggestion_id=suggestion["suggestionId"],
+                        classification=classification,
+                        link_confidence=evidence["linkConfidence"],
+                        signals=decision.signals,
+                        occurred_at=now,
+                        publisher=publisher,
+                    )
+                    conn.commit()
+                except BaseException:
+                    if conn.in_transaction:
+                        conn.rollback()
+                    raise
+                _publish_committed_events(publisher)
 
                 summary["linkedEvidenceCount"] += 1
                 if suggestion["created"]:
@@ -225,7 +271,7 @@ def scan_gmail_feedback(
                 summary["evidence"].append(
                     {
                         "evidenceId": evidence["evidenceId"],
-                        "jobKey": anchor.job_key,
+                        "jobId": anchor.job_id,
                         "providerMessageId": message_id,
                         "linkConfidence": evidence["linkConfidence"],
                     }
@@ -234,7 +280,7 @@ def scan_gmail_feedback(
                     {
                         "suggestionId": suggestion["suggestionId"],
                         "evidenceId": evidence["evidenceId"],
-                        "jobKey": anchor.job_key,
+                        "jobId": anchor.job_id,
                         "kind": classification.kind,
                         "confidence": classification.confidence,
                     }
@@ -342,7 +388,6 @@ def _store_linked_message(
     to_addresses = _email_addresses(_text(full_message.get("to") or metadata.get("to")))
     thread_id = _nullable_text(full_message.get("threadId") or metadata.get("threadId"))
     linked_at_text = _iso(linked_at)
-
     conn.execute(
         """
         INSERT INTO application_email_evidence (
@@ -355,7 +400,7 @@ def _store_linked_message(
         (
             TENANT_ID,
             evidence_id,
-            anchor.job_key,
+            anchor.job_id,
             PROVIDER,
             message_id,
             thread_id,
@@ -391,7 +436,7 @@ def _store_suggestion(
 ) -> dict[str, Any]:
     suggestion_id = _stable_id(
         "gmail-suggestion",
-        f"{anchor.job_key}|{provider_message_id}|{classification.kind}",
+        f"{anchor.job_id}|{provider_message_id}|{classification.kind}",
     )
     cursor = conn.execute(
         """
@@ -403,7 +448,7 @@ def _store_suggestion(
         (
             TENANT_ID,
             suggestion_id,
-            anchor.job_key,
+            anchor.job_id,
             evidence_id,
             classification.kind,
             classification.confidence,
@@ -418,41 +463,46 @@ def _store_suggestion(
 def _record_safe_event(
     conn: sqlite3.Connection,
     *,
-    job_key: str,
+    job_id: str,
     evidence_id: str,
     suggestion_id: str,
     classification: Classification,
     link_confidence: float,
     signals: tuple[str, ...],
     occurred_at: datetime,
+    publisher: EventPublisher,
 ) -> None:
-    payload = {
-        "tenantId": TENANT_ID,
-        "jobId": job_key,
-        "evidenceId": evidence_id,
-        "suggestionId": suggestion_id,
-        "provider": PROVIDER,
-        "suggestedKind": classification.kind,
-        "classificationConfidence": classification.confidence,
-        "linkConfidence": link_confidence,
-        "linkSignals": list(signals),
-    }
-    values: dict[str, Any] = {
-        "tenant_id": TENANT_ID,
-        "job_id": job_key,
-        "identity_version": 1,
-        "stage": "apply",
-        "event_type": "ApplicationEmailFeedbackIngested",
-        "level": "info",
-        "message": "Application email feedback ingested.",
-        "occurred_at": _iso(occurred_at),
-        "payload_json": json.dumps(payload, sort_keys=True),
-    }
-    names = list(values)
-    conn.execute(
-        f"INSERT INTO job_events ({', '.join(names)}) VALUES ({', '.join('?' for _ in names)})",
-        tuple(values[name] for name in names),
+    if not _table_exists(conn, "job_events"):
+        return
+    record_job_event(
+        conn,
+        job_id,
+        "apply",
+        "ApplicationEmailFeedbackIngested",
+        tenant_id=TENANT_ID,
+        message="Application email feedback ingested.",
+        occurred_at=_iso(occurred_at),
+        payload={
+            "evidenceId": evidence_id,
+            "suggestionId": suggestion_id,
+            "provider": PROVIDER,
+            "suggestedKind": classification.kind,
+            "classificationConfidence": classification.confidence,
+            "linkConfidence": link_confidence,
+            "linkSignals": list(signals),
+        },
+        publisher=publisher,
     )
+
+
+def _publish_committed_events(publisher: _BufferedEventPublisher) -> None:
+    if not publisher.events:
+        return
+    from jobctrl.infrastructure.events import get_default_publisher
+
+    destination = get_default_publisher()
+    for event in publisher.events:
+        destination.publish(event)
 
 
 def _link_metadata(
@@ -514,16 +564,16 @@ def _link_metadata(
 def _load_application_anchors(conn: sqlite3.Connection, *, limit: int) -> list[ApplicationAnchor]:
     anchors: dict[str, ApplicationAnchor] = {}
     for anchor in [*_job_anchors(conn), *_outcome_anchors(conn), *_apply_run_anchors(conn)]:
-        existing = anchors.get(anchor.job_key)
+        existing = anchors.get(anchor.job_id)
         if existing is None or anchor.anchor_at < existing.anchor_at:
-            anchors[anchor.job_key] = anchor
+            anchors[anchor.job_id] = anchor
     return sorted(anchors.values(), key=lambda item: item.anchor_at, reverse=True)[:limit]
 
 
 def _job_anchors(conn: sqlite3.Connection) -> list[ApplicationAnchor]:
     rows = conn.execute(
         """
-        SELECT j.job_id AS job_key, COALESCE(j.title, '') AS title,
+        SELECT j.job_id, j.url AS job_url, COALESCE(j.title, '') AS title,
                COALESCE(j.company, j.site, '') AS company,
                COALESCE(e.application_url, '') AS application_url,
                COALESCE(NULLIF(j.applied_at, ''), NULLIF(j.discovered_at, '')) AS anchor_at
@@ -541,7 +591,7 @@ def _job_anchors(conn: sqlite3.Connection) -> list[ApplicationAnchor]:
 def _outcome_anchors(conn: sqlite3.Connection) -> list[ApplicationAnchor]:
     rows = conn.execute(
         """
-        SELECT o.job_id AS job_key, COALESCE(j.title, '') AS title,
+        SELECT j.job_id, j.url AS job_url, COALESCE(j.title, '') AS title,
                COALESCE(j.company, j.site, '') AS company,
                COALESCE(e.application_url, '') AS application_url, o.occurred_at AS anchor_at
         FROM application_outcomes o
@@ -561,7 +611,7 @@ def _outcome_anchors(conn: sqlite3.Connection) -> list[ApplicationAnchor]:
 def _apply_run_anchors(conn: sqlite3.Connection) -> list[ApplicationAnchor]:
     rows = conn.execute(
         """
-        SELECT a.job_id AS job_key, COALESCE(j.title, '') AS title,
+        SELECT j.job_id, j.url AS job_url, COALESCE(j.title, '') AS title,
                COALESCE(j.company, j.site, '') AS company,
                COALESCE(e.application_url, '') AS application_url,
                COALESCE(NULLIF(a.finished_at, ''), NULLIF(a.started_at, '')) AS anchor_at
@@ -582,11 +632,13 @@ def _apply_run_anchors(conn: sqlite3.Connection) -> list[ApplicationAnchor]:
 
 def _anchor_from_row(row: sqlite3.Row) -> ApplicationAnchor | None:
     anchor_at = _parse_datetime(_text(row["anchor_at"]))
-    job_key = _text(row["job_key"])
-    if not job_key or anchor_at is None:
+    job_id = _text(row["job_id"])
+    job_url = _text(row["job_url"])
+    if not job_id or anchor_at is None:
         return None
     return ApplicationAnchor(
-        job_key=job_key,
+        job_id=job_id,
+        job_url=job_url,
         title=_text(row["title"]),
         company=_text(row["company"]),
         application_url=_text(row["application_url"]),
@@ -600,6 +652,7 @@ def _anchor_query(anchor: ApplicationAnchor) -> str:
     hints.extend(_title_tokens(anchor.title))
     hints.extend(_application_url_tokens(anchor.application_url))
     hints.extend(hint for hint in _ATS_HINTS if hint in anchor.application_url.lower())
+    hints.extend(_application_url_tokens(anchor.job_url))
     return " ".join(_dedupe(hints))
 
 
@@ -627,6 +680,19 @@ def _provider_message_exists(conn: sqlite3.Connection, provider_message_id: str)
         LIMIT 1
         """,
         (TENANT_ID, PROVIDER, provider_message_id),
+    ).fetchone()
+    return row is not None
+
+
+def _job_exists(conn: sqlite3.Connection, job_id: str) -> bool:
+    row = conn.execute(
+        """
+        SELECT 1
+        FROM jobs
+        WHERE tenant_id = ? AND job_id = ?
+        LIMIT 1
+        """,
+        (TENANT_ID, job_id),
     ).fetchone()
     return row is not None
 
@@ -752,6 +818,9 @@ def _columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
         row["name"] if isinstance(row, sqlite3.Row) else row[1]
         for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()
     }
+
+
+
 
 
 def _text(value: Any) -> str:

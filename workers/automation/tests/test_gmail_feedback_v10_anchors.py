@@ -38,7 +38,7 @@ def test_anchor_uses_canonical_enrichment_and_exact_tenant_job_identity(reader) 
             )
         anchors = reader(conn)
         assert len(anchors) == 1
-        assert anchors[0].job_key == "same-job"
+        assert anchors[0].job_id == "same-job"
         assert anchors[0].title == "local title"
         assert anchors[0].company == "local company"
         assert anchors[0].application_url == "https://local.canonical/apply"
