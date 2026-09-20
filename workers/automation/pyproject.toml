@@ -53,7 +53,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "build>=1.2",
-    "cryptography>=43.0",
+    "cryptography>=50.0.0",
     "google-auth>=2.0",
     "hatchling==1.29.0",
     "pytest>=7.0",
