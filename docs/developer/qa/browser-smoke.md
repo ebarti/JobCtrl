@@ -62,9 +62,14 @@ shared body typography role in compact, regular, and comfy density; density
 changes geometry, not typography. Every primary route keeps the
 compact eyebrow/title/subtitle/action hierarchy instead of a route-local hero.
 
-On `/jobs`, verify Active, Deleted, and Hidden are keyboard-operable Tabs and no
-Closed tab appears. An old `deleted=closed` link may show its compatibility
-context without selecting a fake queue. The default Active table hides Sources
+On `/jobs`, verify there is one table and no lifecycle tablist. The **Job state**
+column filter exposes static Active, Deleted, and Hidden options, defaults to
+Active, supports combined selections, and has no unsupported text predicate.
+Verify URL reload/back navigation and saved-view apply/reset preserve the state
+selection, page and selection reset when it changes, and totals match the full
+server-filtered result. An old `deleted=closed` link remains compatible without
+adding a Closed control. In a mixed-state view, verify selected and all-matching
+actions visibly target only eligible states. The default table hides Sources
 and Warnings, ordinary active titles omit `OPEN`, delete actions are destructive,
 and the row's Open control becomes visible on keyboard focus without competing
 with selection. At 900px and below, walk Jobs, Artifacts, Contacts, Discovery,

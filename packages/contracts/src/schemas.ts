@@ -53,6 +53,28 @@ export const ACTIVE_STATES = [
 export type ActiveState = (typeof ACTIVE_STATES)[number];
 export const JOB_DELETED_FILTERS = ["active", "closed", "deleted", "hidden", "all"] as const;
 export type JobDeletedFilter = (typeof JOB_DELETED_FILTERS)[number];
+export const JOB_STATES = ["active", "deleted", "hidden"] as const;
+export type JobState = (typeof JOB_STATES)[number];
+export const JobStatesFilterSchema = z.preprocess(
+  (value) => {
+    if (typeof value !== "string") return value;
+    const normalized = value.trim();
+    if (!normalized) return [];
+    if (normalized.startsWith("[")) {
+      try {
+        return JSON.parse(normalized) as unknown;
+      } catch {
+        return value;
+      }
+    }
+    return normalized.split(",").map((item) => item.trim());
+  },
+  z
+    .array(z.enum(JOB_STATES))
+    .min(1)
+    .max(JOB_STATES.length)
+    .transform((values) => Array.from(new Set(values))),
+);
 export const JOB_APPLY_STATUS_FILTERS = ["all", "applied"] as const;
 export type JobApplyStatusFilter = (typeof JOB_APPLY_STATUS_FILTERS)[number];
 const STAGE_OR_ALL = [...STAGES, "all"] as const;
@@ -132,6 +154,7 @@ export const SavedTableViewUrlFiltersSchema = z
     state: z.enum(STATE_OR_ALL).optional().catch(undefined),
     applyStatus: z.enum(JOB_APPLY_STATUS_FILTERS).optional().catch(undefined),
     deleted: z.enum(["active", "closed", "deleted", "hidden"]).optional().catch(undefined),
+    jobStates: JobStatesFilterSchema.optional().catch(undefined),
     pageSize: z.coerce.number().int().min(1).max(200).optional().catch(undefined),
     minFitScore: z.coerce.number().int().min(1).max(10).optional().catch(undefined),
     maxFitScore: z.coerce.number().int().min(1).max(10).optional().catch(undefined),
@@ -1511,6 +1534,7 @@ export const BulkJobMutationFilterSchema = z
     stage: z.enum(STAGES).optional().catch(undefined),
     state: z.enum(STAGE_STATES).optional().catch(undefined),
     deleted: z.enum(JOB_DELETED_FILTERS).default("active").catch("active"),
+    jobStates: JobStatesFilterSchema.optional().catch(undefined),
     applyStatus: z.enum(JOB_APPLY_STATUS_FILTERS).default("all").catch("all"),
     source: optionalText,
     company: optionalText,
@@ -2104,6 +2128,7 @@ export const JobListQuerySchema = z
     stage: z.enum(STAGES).optional().catch(undefined),
     state: z.enum(STAGE_STATES).optional().catch(undefined),
     deleted: z.enum(JOB_DELETED_FILTERS).default("active").catch("active"),
+    jobStates: JobStatesFilterSchema.optional().catch(undefined),
     applyStatus: z.enum(JOB_APPLY_STATUS_FILTERS).default("all").catch("all"),
     source: optionalText,
     company: optionalText,

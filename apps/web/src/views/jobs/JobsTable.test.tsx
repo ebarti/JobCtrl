@@ -238,6 +238,29 @@ describe("<JobsTable>", () => {
     expect(screen.getByText("tailor stage")).toBeInTheDocument();
   });
 
+  it("derives Job state from tombstones with hidden precedence", () => {
+    const active = { ...sampleJob, jobKey: "active", title: "Active row" };
+    const deleted = {
+      ...sampleJob,
+      jobKey: "deleted",
+      title: "Deleted row",
+      deletedAt: "2026-09-19T10:00:00.000Z",
+    };
+    const hidden = {
+      ...sampleJob,
+      jobKey: "hidden",
+      title: "Hidden row",
+      deletedAt: "2026-09-19T10:00:00.000Z",
+      hiddenAt: "2026-09-20T10:00:00.000Z",
+    };
+
+    renderJobsTable([active, deleted, hidden]);
+
+    expect(within(rowForTitle("Active row")).getByText("Active")).toBeInTheDocument();
+    expect(within(rowForTitle("Deleted row")).getByText("Deleted")).toBeInTheDocument();
+    expect(within(rowForTitle("Hidden row")).getByText("Hidden")).toBeInTheDocument();
+  });
+
   it("renders separate compensation scan columns", () => {
     renderJobsTable([sampleSecondaryJob]);
 

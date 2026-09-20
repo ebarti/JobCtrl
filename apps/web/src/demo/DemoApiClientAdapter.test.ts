@@ -421,6 +421,56 @@ describe("DemoApiClientAdapter", () => {
     });
   });
 
+  it("matches production job-state precedence, OR filtering, and pagination", async () => {
+    const { adapter, repository } = await createAdapter();
+    const base = repository.snapshotNow().state.readModel.jobs.list.items[0]!;
+    await replaceJobs(repository, [
+      {
+        ...structuredClone(base),
+        jobKey: "state-active",
+        title: "Active job",
+        deletedAt: null,
+        hiddenAt: null,
+      },
+      {
+        ...structuredClone(base),
+        jobKey: "state-deleted",
+        title: "Deleted job",
+        deletedAt: "2026-07-10T09:00:00.000Z",
+        hiddenAt: null,
+      },
+      {
+        ...structuredClone(base),
+        jobKey: "state-hidden",
+        title: "Hidden job",
+        deletedAt: "2026-07-10T09:00:00.000Z",
+        hiddenAt: "2026-07-11T09:00:00.000Z",
+      },
+    ]);
+
+    await expect(
+      adapter.jobs({ deleted: "active", jobStates: ["deleted"] }),
+    ).resolves.toMatchObject({
+      items: [{ jobKey: "state-deleted" }],
+      pagination: { total: 1, pages: 1 },
+      filter: { jobStates: ["deleted"] },
+    });
+    const mixed = await adapter.jobs({
+      jobStates: ["active", "hidden"],
+      sort: "title",
+      dir: "asc",
+      page: 1,
+      pageSize: 1,
+    });
+    expect(mixed.items.map((job) => job.jobKey)).toEqual(["state-active"]);
+    expect(mixed.pagination).toEqual({
+      page: 1,
+      pageSize: 1,
+      total: 2,
+      pages: 2,
+    });
+  });
+
   it("keeps the Failures KPI total equal to its failed-jobs query", async () => {
     const { adapter } = await createAdapter();
 

@@ -164,11 +164,12 @@ card-per-datum layouts are regressions even when the page compiles. Body copy is
 compact PageHead hierarchy. Prove the same production-shaped content across
 light/dark, all three densities, desktop, collapsed rail, and 390×844.
 
-Jobs has three user queues—Active, Deleted, and Hidden—even though `closed`
-remains a compatible URL/read-model value for old links. Active rows omit
-redundant posting-lifecycle copy, Sources and Warnings are hidden only in the
-default presentation, destructive actions retain destructive treatment, and
-focus-only row activation remains keyboard discoverable. At 900px and below,
+Jobs has one table with a static multi-select Job state filter for Active,
+Deleted, and Hidden; `closed` remains a compatible URL/read-model value for old
+links. Active rows omit redundant posting-lifecycle copy, Sources and Warnings
+are hidden only in the default presentation, destructive actions retain
+destructive treatment, and focus-only row activation remains keyboard
+discoverable. At 900px and below,
 Jobs, Artifacts, Contacts, Discovery, and Settings record tables must keep their
 fields and sort/filter access in labelled cards instead of overflowing the
 page. Profile and Evidence Map must stack their desktop regions. Apply Review

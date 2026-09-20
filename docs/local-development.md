@@ -696,10 +696,11 @@ the internal capture manifest was rewritten, review every desktop and mobile
 PNG for private data, broken layout, clipped content, and local-path leaks, and
 inspect Pipelines for the seeded execution, three source families, two
 reconciliation steps, available worker capacity, visual stage flow,
-stop/recovery controls, and active work. Confirm Jobs shows only the
-Active/Deleted/Hidden queue tabs and that the default view keeps source,
-compensation detail, warnings, resume template, and discovery date available
-through Columns rather than widening the initial table. Check Job Detail's
+stop/recovery controls, and active work. Confirm Jobs shows one table with a
+static Active/Deleted/Hidden **Job state** column filter defaulted to Active,
+and that the default view keeps source, compensation detail, warnings, resume
+template, and discovery date available through Columns rather than widening
+the initial table. Check Job Detail's
 labeled metadata, six assessment cells, visible requirement evidence, and
 readable artifact labels/actions. Check Apply Review's left queue, sequential
 review content, and Submit gates table with Gate/State/Detail columns. Inspect

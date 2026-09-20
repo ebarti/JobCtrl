@@ -1,6 +1,10 @@
 import type { BulkJobMutationRequest } from "@jobctrl/contracts";
 
-import type { JobsListInput } from "../../contexts/operations/types.js";
+import {
+  JOB_STATES,
+  type JobState,
+  type JobsListInput,
+} from "../../contexts/operations/types.js";
 import type { JobsSearch } from "../../routes/-jobs.search.js";
 
 export function jobsListInput(search: JobsSearch): JobsListInput {
@@ -11,6 +15,7 @@ export function jobsListInput(search: JobsSearch): JobsListInput {
     sort: search.sort,
     dir: search.dir,
     deleted: search.deleted,
+    ...(search.jobStates ? { jobStates: search.jobStates } : {}),
     applyStatus: search.applyStatus,
     minFitScore: search.minFitScore,
     maxFitScore: search.maxFitScore,
@@ -28,6 +33,7 @@ export function bulkJobFilters(
   const filter: NonNullable<BulkJobMutationRequest["filter"]> = {
     q: search.q,
     deleted: search.deleted,
+    ...(search.jobStates ? { jobStates: search.jobStates } : {}),
     applyStatus: search.applyStatus,
     source: "",
     company: "",
@@ -40,6 +46,17 @@ export function bulkJobFilters(
     return [filter];
   }
   return [{ ...filter, stage: search.stage }];
+}
+
+export function effectiveJobStates(search: JobsSearch): JobState[] {
+  if (search.jobStates) return [...search.jobStates];
+  if (search.deleted === "deleted") return ["deleted"];
+  if (search.deleted === "hidden") return ["hidden"];
+  return ["active"];
+}
+
+export function allJobStates(): JobState[] {
+  return [...JOB_STATES];
 }
 
 function applyStageFilter(

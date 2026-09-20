@@ -663,10 +663,11 @@ The gate passes only when:
 - direct Radix imports and raw native selects are absent, Base UI overlays keep
   their focus/dismissal/portal contract, and route visuals show no clipping or
   document-level overflow at desktop and 390×844;
-- Jobs exposes Active/Deleted/Hidden as real Tabs, keeps legacy `closed` only as
-  a compatible deep-link state, hides Sources/Warnings in the default view,
-  omits redundant active lifecycle copy, uses destructive deletion, and keeps
-  row activation focus-visible without a permanent duplicate action;
+- Jobs exposes one table with a static Active/Deleted/Hidden Job state column
+  filter defaulted to Active, keeps legacy `closed` only as a compatible
+  deep-link state, hides Sources/Warnings in the default view, omits redundant
+  active lifecycle copy, uses destructive deletion, and keeps row activation
+  focus-visible without a permanent duplicate action;
 - Jobs keeps workflow-recovery actions visible without opening the maintenance
   menu; Apply Review queue rows contain their content without overlapping at
   every density; and Discovery checkboxes keep a 24px hit target around a 16px

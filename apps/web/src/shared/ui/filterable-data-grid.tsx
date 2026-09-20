@@ -56,6 +56,7 @@ export interface DataGridColumn<TData> {
   getFilterValue?: (row: TData) => string;
   getFilterSearchValue?: (row: TData) => string;
   filterValues?: readonly string[];
+  filterText?: boolean;
   className?: string;
   headerClassName?: string;
   filterValueLimit?: number;
@@ -419,8 +420,9 @@ function ColumnFilterDialog<TData>({
         <DialogHeader>
           <DialogTitle>{column.label} filter</DialogTitle>
           <DialogDescription>
-            Show rows where this column matches the selected values and text
-            predicate.
+            {column.filterText === false
+              ? "Choose one or more values. With none selected, all values are shown."
+              : "Show rows where this column matches the selected values and text predicate."}
           </DialogDescription>
         </DialogHeader>
         <section className="data-grid-filter-condition">
@@ -434,33 +436,37 @@ function ColumnFilterDialog<TData>({
               Clear
             </button>
           </div>
-          <div
-            className="data-grid-filter-operator"
-            role="group"
-            aria-label={`${column.label} text operator`}
-          >
-            {(["contains", "does_not_contain"] as const).map((operator) => (
-              <button
-                key={operator}
-                type="button"
-                data-grid-control="filter-operator"
-                aria-pressed={filter.operator === operator}
-                className={filter.operator === operator ? "active" : undefined}
-                onClick={() => onOperatorChange(operator)}
+          {column.filterText === false ? null : (
+            <>
+              <div
+                className="data-grid-filter-operator"
+                role="group"
+                aria-label={`${column.label} text operator`}
               >
-                {operatorLabel(operator)}
-              </button>
-            ))}
-          </div>
-          <label className="data-grid-filter-field">
-            <span>Text predicate</span>
-            <Input
-              aria-label={`${column.label} filter text`}
-              value={filter.text}
-              placeholder={`${column.label} text`}
-              onChange={(event) => onTextChange(event.target.value)}
-            />
-          </label>
+                {(["contains", "does_not_contain"] as const).map((operator) => (
+                  <button
+                    key={operator}
+                    type="button"
+                    data-grid-control="filter-operator"
+                    aria-pressed={filter.operator === operator}
+                    className={filter.operator === operator ? "active" : undefined}
+                    onClick={() => onOperatorChange(operator)}
+                  >
+                    {operatorLabel(operator)}
+                  </button>
+                ))}
+              </div>
+              <label className="data-grid-filter-field">
+                <span>Text predicate</span>
+                <Input
+                  aria-label={`${column.label} filter text`}
+                  value={filter.text}
+                  placeholder={`${column.label} text`}
+                  onChange={(event) => onTextChange(event.target.value)}
+                />
+              </label>
+            </>
+          )}
           <label className="data-grid-filter-field">
             <span>Find values</span>
             <Input
@@ -491,7 +497,7 @@ function ColumnFilterDialog<TData>({
             {values.length > visibleValues.length ? (
               <span className="data-grid-value-overflow">
                 {values.length - visibleValues.length} more values. Use search
-                or text predicate.
+                {column.filterText === false ? "." : " or text predicate."}
               </span>
             ) : null}
           </div>

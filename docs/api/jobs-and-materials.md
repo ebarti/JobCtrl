@@ -60,7 +60,13 @@ lists every reader of these values. Internal command payloads and foreign
 references remain ID-shaped. `GET /v1/jobs` accepts
 `normalizedScoreKeyword` using the exact key returned by
 `GET /v1/scoring/keywords`; current filtering never mixes historical score
-versions into the result.
+versions into the result. It also accepts optional `jobStates` values
+(`active`, `deleted`, `hidden`; repeated values or normal comma serialization
+are accepted). These values are ORed before count and pagination. Hidden wins
+when both hide and delete tombstones exist. When `jobStates` is present it takes
+precedence over the legacy `deleted` filter; when absent, legacy links keep the
+existing `active`, `closed`, `deleted`, `hidden`, and `all` behavior. The same
+optional filter is accepted by all-matching bulk job mutations.
 
 ## Feedback Learning And Materials Policy
 

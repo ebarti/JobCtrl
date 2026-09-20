@@ -325,6 +325,7 @@ export class DemoApiClientAdapter implements ApiClientPort {
         discoveredSince: normalized.discoveredSince ?? null,
         scoredSince: normalized.scoredSince ?? null,
         deleted: normalized.deleted,
+        jobStates: normalized.jobStates ?? null,
       },
     );
   }
@@ -950,6 +951,15 @@ function filterJob(
   query: ReturnType<typeof JobListQuerySchema.parse>,
   normalizedQuery: string,
 ): boolean {
+  if (query.jobStates) {
+    const jobState = job.hiddenAt
+      ? "hidden"
+      : job.deletedAt
+        ? "deleted"
+        : "active";
+    if (!query.jobStates.includes(jobState)) return false;
+    return sharedFilterJob(job, query, normalizedQuery);
+  }
   const closed = CLOSED_ACTIVE_STATES.has(job.activeState);
   if (query.deleted === "active" && (job.deletedAt || job.hiddenAt || closed))
     return false;
