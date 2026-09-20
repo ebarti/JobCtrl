@@ -166,7 +166,7 @@ Rationale:
 
 Consequences:
 
-- Node.js `>=20.19.0` is required
+- Node.js `>=22.13.0` is required by the source web dependency graph
 - `apps/web` owns the React app
 - `pnpm test` must include web typecheck and build
 

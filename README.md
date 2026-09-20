@@ -20,7 +20,7 @@ on your machine.
 [![Release Privacy Gate](https://github.com/ebarti/JobCtrl/actions/workflows/release-check.yml/badge.svg)](https://github.com/ebarti/JobCtrl/actions/workflows/release-check.yml)
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
 ![Source Python 3.11+](https://img.shields.io/badge/source-Python%203.11%2B-3776AB)
-![Source Node 20.19+](https://img.shields.io/badge/source-Node%2020.19%2B-339933)
+![Source Node 22.13+](https://img.shields.io/badge/source-Node%2022.13%2B-339933)
 
 <img src="docs/assets/screenshots/dashboard.png" alt="JobCtrl dashboard with pipeline health, active work, review queues, and recent activity (synthetic data)" width="880" />
 

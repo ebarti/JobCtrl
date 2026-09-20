@@ -48,7 +48,7 @@ const EXPECTED_PYTHON_LICENSE_EVIDENCE = new Map([
   ["publicsuffix2@2.20191221", { license: "MIT AND MPL-2.0" }],
 ]);
 const EXPECTED_NODE_LICENSE_EVIDENCE = new Map([
-  ["@napi-rs/canvas-darwin-arm64@0.1.100", { license: "MIT", evidenceKind: "license-text" }],
+  ["@napi-rs/canvas-darwin-arm64@1.0.9", { license: "MIT", evidenceKind: "license-text" }],
   ["@radix-ui/react-use-escape-keydown@1.1.1", { license: "MIT", evidenceKind: "license-text" }],
   ["@udecode/react-hotkeys@52.0.11", { license: "MIT", evidenceKind: "license-text" }],
   ["abstract-logging@2.0.1", { license: "MIT", evidenceKind: "package-metadata-plus-canonical-text" }],
@@ -56,10 +56,10 @@ const EXPECTED_NODE_LICENSE_EVIDENCE = new Map([
   ["jotai-x@2.3.4", { license: "MIT", evidenceKind: "license-text" }],
   ["react-compiler-runtime@1.0.0", { license: "MIT", evidenceKind: "license-text" }],
   ["react-remove-scroll-bar@2.3.8", { license: "MIT", evidenceKind: "license-text" }],
-  ["slate@0.124.1", { license: "MIT", evidenceKind: "license-text" }],
-  ["slate-dom@0.124.1", { license: "MIT", evidenceKind: "license-text" }],
+  ["slate@0.126.2", { license: "MIT", evidenceKind: "license-text" }],
+  ["slate-dom@0.126.0", { license: "MIT", evidenceKind: "license-text" }],
   ["slate-hyperscript@0.125.0", { license: "MIT", evidenceKind: "license-text" }],
-  ["slate-react@0.124.2", { license: "MIT", evidenceKind: "license-text" }],
+  ["slate-react@0.126.4", { license: "MIT", evidenceKind: "license-text" }],
   ["zustand-x@6.2.1", { license: "MIT", evidenceKind: "license-text" }],
 ]);
 

@@ -75,7 +75,8 @@ scripts/install
 corepack pnpm dev
 ```
 
-Only this option requires Git and the source-development toolchain. Keep the
+Only this option requires Git, Node.js 22.13 or newer, and the rest of the
+source-development toolchain. Keep the
 `corepack pnpm dev` terminal open while using the source build and stop it with
 Ctrl-C. See [Local Development](../local-development.md) for prerequisites,
 isolated workspaces, component commands, and contributor QA.

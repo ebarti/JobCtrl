@@ -238,10 +238,11 @@ test("Plate baseline editor downloads the current unsaved document as a PDF", as
   await download.saveAs(pdfPath);
   const pdf = await readFile(pdfPath);
   expect(pdf.subarray(0, 5).toString("ascii")).toBe("%PDF-");
-  const pdfDocument = await getDocument({
+  const loadingTask = getDocument({
     data: new Uint8Array(pdf),
     verbosity: 0,
-  }).promise;
+  });
+  const pdfDocument = await loadingTask.promise;
   try {
     expect(pdfDocument.numPages).toBe(1);
     const pdfPage = await pdfDocument.getPage(1);
@@ -256,7 +257,7 @@ test("Plate baseline editor downloads the current unsaved document as a PDF", as
       .join(" ");
     expect(exportedText).toContain("Live browser PDF export proof");
   } finally {
-    await pdfDocument.destroy();
+    await loadingTask.destroy();
   }
 });
 
