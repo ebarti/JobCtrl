@@ -95,6 +95,12 @@ const SEARCH_FILTER_COLUMNS = new Set([
   "job_state",
 ]);
 const JOB_TABLE_STAGE_FILTERS = ["discover", "apply"] as const;
+const UNAVAILABLE_ACTIVE_STATES = new Set([
+  "closed",
+  "expired",
+  "removed",
+  "location_incompatible",
+]);
 const DEFAULT_JOBS_PRESENTATION: SavedTablePresentation = {
   columns: {
     order: [...JOBS_TABLE_COLUMN_IDS],
@@ -150,6 +156,13 @@ function sameJobStates(left: readonly JobState[], right: readonly JobState[]) {
   return (
     left.length === right.length &&
     left.every((state) => right.includes(state))
+  );
+}
+
+function isWorkflowEligibleJob(job: JobSummary): boolean {
+  return (
+    jobStateValue(job) === "active" &&
+    !UNAVAILABLE_ACTIVE_STATES.has(job.activeState)
   );
 }
 
@@ -577,15 +590,24 @@ export function JobsView() {
         : JOB_STATES.filter((state) => selectedKeysByState[state].length > 0),
     [allMatchingSelected, matchingJobStates, selectedKeysByState],
   );
+  const selectedWorkflowEligibleKeys = useMemo(() => {
+    if (allMatchingSelected) return [];
+    const selected = new Set(selectedKeys);
+    return (data?.items ?? [])
+      .filter(
+        (job) => selected.has(job.jobKey) && isWorkflowEligibleJob(job),
+      )
+      .map((job) => job.jobKey);
+  }, [allMatchingSelected, data?.items, selectedKeys]);
   const hasActiveMatches =
+    Boolean(data?.pagination.total) &&
     matchingJobStates.includes("active") &&
     (search.jobStates !== undefined || search.deleted !== "closed");
   const staleKeysOnPage = useMemo(
     () =>
       (data?.items ?? [])
         .filter(
-          (job) =>
-            jobStateValue(job) === "active" && job.scoreStaleness.isStale,
+          (job) => isWorkflowEligibleJob(job) && job.scoreStaleness.isStale,
         )
         .map((job) => job.jobKey),
     [data?.items],
@@ -662,11 +684,20 @@ export function JobsView() {
     }));
   };
 
-  const selectedRetryPayloads = (): BulkRetryFailedRequest[] =>
-    selectedPayloads(["active"]).map((payload) => ({
+  const selectedRetryPayloads = (): BulkRetryFailedRequest[] => {
+    const payloads = allMatchingSelected
+      ? selectedPayloads(["active"])
+      : [
+          {
+            allMatching: false as const,
+            jobKeys: selectedWorkflowEligibleKeys,
+          },
+        ];
+    return payloads.map((payload) => ({
       ...payload,
       ...retryRunOptions(stageTriggerConfigs),
     }));
+  };
 
   const pendingPreparationPayloads = (): BulkRunPendingPreparationRequest[] =>
     bulkJobFilters(search, {
@@ -770,7 +801,7 @@ export function JobsView() {
   const retryFailedSelected = () => {
     const count = allMatchingSelected
       ? (data?.pagination.total ?? 0)
-      : selectedKeysByState.active.length;
+      : selectedWorkflowEligibleKeys.length;
     if (!count) {
       return;
     }
@@ -861,7 +892,7 @@ export function JobsView() {
           allMatchingSelected={allMatchingSelected}
           hasActiveMatches={hasActiveMatches}
           selectedJobKeys={
-            allMatchingSelected ? [] : selectedKeysByState.active
+            selectedWorkflowEligibleKeys
           }
           staleCount={staleKeysOnPage.length}
           selectedStaleKeys={selectedStaleKeys}

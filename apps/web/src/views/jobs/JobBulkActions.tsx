@@ -121,7 +121,7 @@ export function JobBulkActions({
   const canActOnHidden = selectedJobStates.includes("hidden");
   const retryAllFailures = hasActiveMatches;
   const retrySelectedFailures =
-    hasActiveMatches && canActOnActive && search.state === "failed";
+    hasActiveMatches && selectedJobKeys.length > 0 && search.state === "failed";
   const selectedQualifier = allMatchingSelected ? "matching" : "selected";
   return (
     <>

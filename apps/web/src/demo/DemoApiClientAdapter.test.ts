@@ -446,6 +446,14 @@ describe("DemoApiClientAdapter", () => {
         deletedAt: "2026-07-10T09:00:00.000Z",
         hiddenAt: "2026-07-11T09:00:00.000Z",
       },
+      {
+        ...structuredClone(base),
+        jobKey: "state-closed",
+        title: "Closed job",
+        activeState: "expired",
+        deletedAt: null,
+        hiddenAt: null,
+      },
     ]);
 
     await expect(
@@ -468,6 +476,16 @@ describe("DemoApiClientAdapter", () => {
       pageSize: 1,
       total: 2,
       pages: 2,
+    });
+    await expect(
+      adapter.jobs({ deleted: "closed", jobStates: ["active"] }),
+    ).resolves.toMatchObject({
+      items: [{ jobKey: "state-active" }],
+      pagination: { total: 1 },
+    });
+    await expect(adapter.jobs({ deleted: "closed" })).resolves.toMatchObject({
+      items: [{ jobKey: "state-closed" }],
+      pagination: { total: 1 },
     });
   });
 

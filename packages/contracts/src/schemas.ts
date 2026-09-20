@@ -1540,6 +1540,8 @@ export const BulkJobMutationFilterSchema = z
     company: optionalText,
     minFitScore: optionalNumber,
     maxFitScore: optionalNumber,
+    discoveredSince: IsoTimestampSchema.optional().catch(undefined),
+    scoredSince: IsoTimestampSchema.optional().catch(undefined),
   })
   .strict();
 export type BulkJobMutationFilter = z.infer<typeof BulkJobMutationFilterSchema>;

@@ -723,6 +723,46 @@ describe("<JobsView> bulk delete integration", () => {
     expect(deleteJobs.mock.calls[0]?.[0].filter).not.toHaveProperty("jobStates");
   });
 
+  it("does not expose selected workflow actions for an unavailable posting", async () => {
+    const user = userEvent.setup();
+    const unavailableJob: JobSummary = {
+      ...sampleJob,
+      jobKey: "unavailable-expired",
+      title: "Unavailable expired posting",
+      activeState: "expired",
+      currentState: "failed",
+    };
+    const jobs = vi.fn(async () => makeJobsPage([unavailableJob]));
+    const harness = buildProviderHarness({
+      ports: buildTestPorts({ api: { jobs } }),
+    });
+    const { router, Wrapper } = buildRouter(
+      harness,
+      `${SEARCH.replace("state=all", "state=failed")}&jobStates=active`,
+    );
+
+    render(<RouterProvider router={router} />, { wrapper: Wrapper });
+
+    expect(await screen.findByText(unavailableJob.title)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Select page" }));
+    const operationsMenu = await openJobOperationsMenu(user);
+    expect(
+      within(operationsMenu).queryByRole("menuitem", {
+        name: "Retry selected",
+      }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(operationsMenu).queryByRole("menuitem", {
+        name: "Rescore selected",
+      }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(operationsMenu).queryByRole("menuitem", {
+        name: "Re-tailor selected",
+      }),
+    ).not.toBeInTheDocument();
+  });
+
   it("mutates only eligible explicitly selected rows in a mixed-state view", async () => {
     const user = userEvent.setup();
     const activeJob = {
@@ -1864,10 +1904,10 @@ describe("<JobsView> bulk delete integration", () => {
       .getState()
       .patchStageConfig("score", { workers: "14" });
     const failedSearch =
-      "?stage=all&state=failed&deleted=active&sort=discovered_at&dir=desc&page=1&pageSize=50";
+      "?stage=all&state=failed&deleted=active&jobStates=active&sort=discovered_at&dir=desc&page=1&pageSize=50";
     const calls: Array<{
       allMatching?: boolean;
-      filter?: { state?: string; deleted?: string };
+      filter?: { state?: string; deleted?: string; jobStates?: string[] };
       jobKeys?: string[];
       runAfter?: boolean;
       workers?: number;
@@ -1879,7 +1919,7 @@ describe("<JobsView> bulk delete integration", () => {
       http.post("*/v1/jobs/bulk-retry-failed", async ({ request }) => {
         const body = (await request.json()) as {
           allMatching?: boolean;
-          filter?: { state?: string; deleted?: string };
+          filter?: { state?: string; deleted?: string; jobStates?: string[] };
           jobKeys?: string[];
           runAfter?: boolean;
           workers?: number;
@@ -1909,7 +1949,11 @@ describe("<JobsView> bulk delete integration", () => {
     await waitFor(() => expect(calls.length).toBe(1));
     expect(calls[0]).toMatchObject({
       allMatching: true,
-      filter: { state: "failed", deleted: "active" },
+      filter: {
+        state: "failed",
+        deleted: "active",
+        jobStates: ["active"],
+      },
       jobKeys: [],
       runAfter: true,
       workers: 14,

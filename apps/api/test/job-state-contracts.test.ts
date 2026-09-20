@@ -22,8 +22,14 @@ describe("job state filter contracts", () => {
       BulkJobMutationFilterSchema.parse({
         deleted: "active",
         jobStates: ["deleted", "hidden"],
-      }).jobStates,
-    ).toEqual(["deleted", "hidden"]);
+        discoveredSince: "2026-09-20T10:00:00.000Z",
+        scoredSince: "2026-09-20T11:00:00.000Z",
+      }),
+    ).toMatchObject({
+      jobStates: ["deleted", "hidden"],
+      discoveredSince: "2026-09-20T10:00:00.000Z",
+      scoredSince: "2026-09-20T11:00:00.000Z",
+    });
     expect(
       SavedTableViewUrlFiltersSchema.parse({
         deleted: "closed",

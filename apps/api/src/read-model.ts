@@ -4722,8 +4722,8 @@ function normalizeMutationFilter(filter: Partial<BulkJobMutationFilter>): JobLis
     company: filter.company ?? "",
     minFitScore: filter.minFitScore,
     maxFitScore: filter.maxFitScore,
-    discoveredSince: undefined,
-    scoredSince: undefined,
+    discoveredSince: filter.discoveredSince,
+    scoredSince: filter.scoredSince,
   };
 }
 
@@ -4741,7 +4741,8 @@ function jobSqlFilter(query: JobListQuery): { where: string; params: SqliteValue
       if (jobState === "deleted") {
         return `(job_list_projections.deleted_at IS NOT NULL AND NOT ${hiddenPredicate})`;
       }
-      return `(job_list_projections.deleted_at IS NULL AND NOT ${hiddenPredicate})`;
+      params.push(...closedPredicate.params);
+      return `(job_list_projections.deleted_at IS NULL AND NOT ${hiddenPredicate} AND NOT (${closedPredicate.sql}))`;
     });
     clauses.push(`(${statePredicates.join(" OR ")})`);
   } else if (query.deleted === "active") {

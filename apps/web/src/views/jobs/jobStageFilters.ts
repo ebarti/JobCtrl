@@ -39,6 +39,8 @@ export function bulkJobFilters(
     company: "",
     minFitScore: search.minFitScore,
     maxFitScore: search.maxFitScore,
+    discoveredSince: search.discoveredSince,
+    scoredSince: search.scoredSince,
     ...(search.state !== "all" ? { state: search.state } : {}),
     ...overrides,
   };

@@ -3923,6 +3923,18 @@ describe("local TypeScript API", () => {
       jobIdFor("https://example.com/jobs/failed-score"),
     );
 
+    const activeByJobState = await app.inject({
+      method: "GET",
+      url: "/v1/jobs?deleted=closed&jobStates=active",
+    });
+    expect(activeByJobState.statusCode, activeByJobState.body).toBe(200);
+    expect(activeByJobState.json().pagination.total).toBe(2);
+    expect(
+      activeByJobState
+        .json()
+        .items.map((job: { jobKey: string }) => job.jobKey),
+    ).not.toContain(jobIdFor("https://example.com/jobs/failed-score"));
+
     const closed = await app.inject({ method: "GET", url: "/v1/jobs?deleted=closed" });
     expect(closed.statusCode, closed.body).toBe(200);
     expect(closed.json().pagination.total).toBe(1);
@@ -3932,6 +3944,28 @@ describe("local TypeScript API", () => {
       deletedAt: null,
       hiddenAt: null,
     });
+
+    const retryUnavailable = await app.inject({
+      method: "POST",
+      url: "/v1/jobs/bulk-retry-failed",
+      payload: {
+        allMatching: true,
+        filter: { state: "failed", jobStates: ["active"] },
+        jobKeys: [],
+      },
+    });
+    expect(retryUnavailable.statusCode, retryUnavailable.body).toBe(200);
+    expect(retryUnavailable.json()).toMatchObject({ ok: true, count: 0 });
+    const verificationDb = new Database(options.dbPath, { readonly: true });
+    const closedStage = verificationDb
+      .prepare(
+        "SELECT state FROM job_stage_states WHERE tenant_id = 'local' AND job_id = ? AND stage = 'score'",
+      )
+      .get(jobIdFor("https://example.com/jobs/failed-score")) as {
+      state: string;
+    };
+    verificationDb.close();
+    expect(closedStage.state).toBe("failed");
 
     const deleted = await app.inject({ method: "GET", url: "/v1/jobs?deleted=deleted" });
     expect(deleted.statusCode, deleted.body).toBe(200);
@@ -3948,6 +3982,93 @@ describe("local TypeScript API", () => {
 
     await app.close();
   });
+
+  it.each(["discoveredSince", "scoredSince"] as const)(
+    "keeps older deleted jobs outside an all-matching permanent delete scoped by %s",
+    async (filterField) => {
+      const olderUrl = "https://example.com/jobs/ready";
+      const recentUrl = "https://example.com/jobs/failed-score";
+      const cutoff = "2026-04-15T00:00:00.000Z";
+      const seedDb = new Database(options.dbPath);
+      if (filterField === "discoveredSince") {
+        seedDb
+          .prepare("UPDATE jobs SET discovered_at = ? WHERE url = ?")
+          .run("2026-04-01T00:00:00.000Z", olderUrl);
+        seedDb
+          .prepare("UPDATE jobs SET discovered_at = ? WHERE url = ?")
+          .run("2026-05-01T00:00:00.000Z", recentUrl);
+      } else {
+        seedDb
+          .prepare(
+            "UPDATE job_scores SET scored_at = ? WHERE tenant_id = 'local' AND job_id = ?",
+          )
+          .run("2026-04-01T00:00:00.000Z", jobIdFor(olderUrl));
+        seedDb
+          .prepare(
+            "UPDATE job_scores SET scored_at = ? WHERE tenant_id = 'local' AND job_id = ?",
+          )
+          .run("2026-05-01T00:00:00.000Z", jobIdFor(recentUrl));
+      }
+      seedDb.close();
+
+      const app = buildApp(options);
+      const softDelete = await app.inject({
+        method: "POST",
+        url: "/v1/jobs/bulk-delete",
+        payload: {
+          allMatching: false,
+          jobKeys: [olderUrl, recentUrl],
+        },
+      });
+      expect(softDelete.statusCode, softDelete.body).toBe(200);
+
+      const matching = await app.inject({
+        method: "GET",
+        url: `/v1/jobs?jobStates=deleted&${filterField}=${encodeURIComponent(cutoff)}`,
+      });
+      expect(matching.statusCode, matching.body).toBe(200);
+      expect(matching.json().pagination.total).toBe(1);
+      expect(
+        matching.json().items.map((job: { jobKey: string }) => job.jobKey),
+      ).toEqual([jobIdFor(recentUrl)]);
+
+      const permanentDelete = await app.inject({
+        method: "POST",
+        url: "/v1/jobs/bulk-delete-permanent",
+        payload: {
+          allMatching: true,
+          filter: {
+            jobStates: ["deleted"],
+            [filterField]: cutoff,
+          },
+          jobKeys: [],
+        },
+      });
+      expect(permanentDelete.statusCode, permanentDelete.body).toBe(200);
+      expect(permanentDelete.json()).toMatchObject({
+        ok: true,
+        count: 1,
+        jobKeys: [jobIdFor(recentUrl)],
+      });
+
+      const remainingDeleted = await app.inject({
+        method: "GET",
+        url: "/v1/jobs?jobStates=deleted",
+      });
+      expect(remainingDeleted.json().pagination.total).toBe(1);
+      expect(
+        remainingDeleted
+          .json()
+          .items.map((job: { jobKey: string }) => job.jobKey),
+      ).toEqual([jobIdFor(olderUrl)]);
+      const verificationDb = new Database(options.dbPath, { readonly: true });
+      expect(countRows(verificationDb, "jobs", "url", olderUrl)).toBe(1);
+      expect(countRows(verificationDb, "jobs", "url", recentUrl)).toBe(0);
+      verificationDb.close();
+
+      await app.close();
+    },
+  );
 
   it("permanently deletes job rows and clears delete/hide tombstones so rediscovery can add them again", async () => {
     const app = buildApp(options);

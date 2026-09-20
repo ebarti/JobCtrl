@@ -9,7 +9,6 @@ import {
   WorkflowRunsListQuerySchema,
   compareJobs,
   compareValues,
-  filterJob as sharedFilterJob,
   paginate,
   timestampAtOrAfter,
   timestampBefore,
@@ -26,6 +25,7 @@ import type { ApiClientPort } from "../shared/ports/ApiClientPort.js";
 import type { TelemetryPort } from "../shared/ports/TelemetryPort.js";
 import { isDemoArtifactUrl } from "./artifacts.js";
 import type { ApiClientResponse, DemoReadModel } from "./contracts.js";
+import { filterDemoJob } from "./job-filter.js";
 import {
   DemoLocalCommandExecutor,
   type DemoBrowserLocalCommand,
@@ -44,13 +44,6 @@ import {
 import type { DemoWorkspaceRepository } from "./workspace/DemoWorkspaceRepository.js";
 
 type CacheKey = number | string | undefined;
-
-const CLOSED_ACTIVE_STATES = new Set([
-  "closed",
-  "expired",
-  "removed",
-  "location_incompatible",
-]);
 
 const IN_MEMORY_JOB_SORT_FIELDS = new Set([
   "source",
@@ -300,7 +293,7 @@ export class DemoApiClientAdapter implements ApiClientPort {
     const normalized = JobListQuerySchema.parse(query);
     const source = await this.read((model) => model.jobs.list.items);
     const q = normalized.q.toLowerCase();
-    const items = source.filter((job) => filterJob(job, normalized, q));
+    const items = source.filter((job) => filterDemoJob(job, normalized, q));
     items.sort((left, right) =>
       compareJobs(left, right, normalized.sort, normalized.dir, {
         normalizeSqlText:
@@ -944,31 +937,6 @@ function profilePreviewUrl(
 function withCacheKey(url: `/demo/${string}`, cacheKey?: CacheKey): string {
   if (cacheKey === undefined || cacheKey === "") return url;
   return `${url}?v=${encodeURIComponent(String(cacheKey))}`;
-}
-
-function filterJob(
-  job: JobSummary,
-  query: ReturnType<typeof JobListQuerySchema.parse>,
-  normalizedQuery: string,
-): boolean {
-  if (query.jobStates) {
-    const jobState = job.hiddenAt
-      ? "hidden"
-      : job.deletedAt
-        ? "deleted"
-        : "active";
-    if (!query.jobStates.includes(jobState)) return false;
-    return sharedFilterJob(job, query, normalizedQuery);
-  }
-  const closed = CLOSED_ACTIVE_STATES.has(job.activeState);
-  if (query.deleted === "active" && (job.deletedAt || job.hiddenAt || closed))
-    return false;
-  if (query.deleted === "closed" && (job.deletedAt || job.hiddenAt || !closed))
-    return false;
-  if (query.deleted === "deleted" && (!job.deletedAt || job.hiddenAt))
-    return false;
-  if (query.deleted === "hidden" && !job.hiddenAt) return false;
-  return sharedFilterJob(job, query, normalizedQuery);
 }
 
 function filterWorkflowRun(

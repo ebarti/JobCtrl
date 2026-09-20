@@ -300,6 +300,118 @@ describe("DemoLocalCommandExecutor", () => {
     });
   });
 
+  it("permanently deletes only state-qualified all-matching demo jobs", async () => {
+    const { adapter, repository } = await harness();
+    const [activeKey, deletedKey, hiddenKey] = repository
+      .snapshotNow()
+      .state.readModel.jobs.list.items.slice(0, 3)
+      .map((job) => job.jobKey);
+    expect(activeKey).toBeDefined();
+    expect(deletedKey).toBeDefined();
+    expect(hiddenKey).toBeDefined();
+    await repository.mutate((draft) => {
+      const states = [
+        [activeKey!, null, null],
+        [deletedKey!, "2026-07-09T12:00:00.000Z", null],
+        [
+          hiddenKey!,
+          "2026-07-09T12:00:00.000Z",
+          "2026-07-10T12:00:00.000Z",
+        ],
+      ] as const;
+      for (const [jobKey, deletedAt, hiddenAt] of states) {
+        const summary = draft.state.readModel.jobs.list.items.find(
+          (job) => job.jobKey === jobKey,
+        )!;
+        const detail = draft.state.readModel.jobs.details[jobKey]!.job;
+        summary.deletedAt = deletedAt;
+        summary.hiddenAt = hiddenAt;
+        detail.deletedAt = deletedAt;
+        detail.hiddenAt = hiddenAt;
+      }
+    });
+
+    const response = await adapter.permanentlyDeleteJobs({
+      allMatching: true,
+      jobKeys: [],
+      filter: {
+        q: "",
+        deleted: "active",
+        jobStates: ["deleted", "hidden"],
+        applyStatus: "all",
+        source: "",
+        company: "",
+      },
+    });
+
+    expect(response).toMatchObject({
+      ok: true,
+      count: 2,
+      jobKeys: [deletedKey, hiddenKey],
+    });
+    const snapshot = repository.snapshotNow();
+    expect(
+      snapshot.state.readModel.jobs.list.items.map((job) => job.jobKey),
+    ).toContain(activeKey);
+    expect(snapshot.state.readModel.jobs.details[activeKey!]).toBeDefined();
+    expect(snapshot.state.readModel.jobs.details[deletedKey!]).toBeUndefined();
+    expect(snapshot.state.readModel.jobs.details[hiddenKey!]).toBeUndefined();
+  });
+
+  it("uses legacy hidden compatibility for all-matching demo unhide", async () => {
+    const { adapter, repository } = await harness();
+    const [activeKey, deletedKey, hiddenKey] = repository
+      .snapshotNow()
+      .state.readModel.jobs.list.items.slice(0, 3)
+      .map((job) => job.jobKey);
+    await repository.mutate((draft) => {
+      const states = [
+        [activeKey!, null, null],
+        [deletedKey!, "2026-07-09T12:00:00.000Z", null],
+        [
+          hiddenKey!,
+          "2026-07-09T12:00:00.000Z",
+          "2026-07-10T12:00:00.000Z",
+        ],
+      ] as const;
+      for (const [jobKey, deletedAt, hiddenAt] of states) {
+        const summary = draft.state.readModel.jobs.list.items.find(
+          (job) => job.jobKey === jobKey,
+        )!;
+        const detail = draft.state.readModel.jobs.details[jobKey]!.job;
+        summary.deletedAt = deletedAt;
+        summary.hiddenAt = hiddenAt;
+        detail.deletedAt = deletedAt;
+        detail.hiddenAt = hiddenAt;
+      }
+    });
+
+    const response = await adapter.unhideJobs({
+      allMatching: true,
+      jobKeys: [],
+      filter: {
+        q: "",
+        deleted: "hidden",
+        applyStatus: "all",
+        source: "",
+        company: "",
+      },
+    });
+
+    expect(response).toMatchObject({
+      ok: true,
+      count: 1,
+      jobKeys: [hiddenKey],
+    });
+    const jobs = repository.snapshotNow().state.readModel.jobs.list.items;
+    expect(jobs.find((job) => job.jobKey === activeKey)?.hiddenAt).toBeNull();
+    expect(jobs.find((job) => job.jobKey === deletedKey)?.deletedAt).not.toBeNull();
+    expect(jobs.find((job) => job.jobKey === hiddenKey)).toMatchObject({
+      deletedAt: expect.any(String),
+      hiddenAt: null,
+    });
+  });
+
   it("promotes a locator candidate into one candidate-derived source and replays without duplication", async () => {
     const { adapter, repository } = await harness();
     const first = await adapter.promoteSourceLocatorCandidate("locator-demo-northwind", {

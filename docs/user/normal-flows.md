@@ -311,13 +311,6 @@ evidence, source provenance, artifacts, readiness, and per-job actions.
 
 </WorkflowSurfacePanel>
 
-<WorkflowSurfacePanel surface="web">
-
-![JobCtrl Jobs table with fit scores, companies, and triage actions](../assets/screenshots/jobs.png)
-*The Jobs table ranks discovered jobs by fit score with filters, compensation columns, and bulk triage actions.*
-
-</WorkflowSurfacePanel>
-
 Use the **Job state** column filter to show **Active**, **Deleted**, **Hidden**,
 or any combination of those values in one table. The default view selects
 **Active** only. The options remain available even when the current page has no

@@ -20,6 +20,12 @@ describe("jobsListInput", () => {
       sort: "discovered_at",
       dir: "desc",
     });
+    expect(bulkJobFilters(search)).toEqual([
+      expect.objectContaining({
+        discoveredSince: "2026-07-01T00:00:00.000Z",
+        scoredSince: "2026-07-01T00:00:00.000Z",
+      }),
+    ]);
   });
 
   it("passes URL job states to list and all-matching bulk filters", () => {
