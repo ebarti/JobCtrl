@@ -2,7 +2,6 @@ name: Security contact request
 description: Ask for a private vulnerability reporting path without disclosing details publicly.
 title: "[Security contact]: "
 labels:
-  - "status: needs triage"
   - "type: security-contact"
   - "area: security"
   - "privacy: review-needed"

@@ -2,7 +2,6 @@ name: QA regression
 description: Report a visible regression in a product path, acceptance gate, or documented QA flow.
 title: "[QA]: "
 labels:
-  - "status: needs triage"
   - "type: qa-regression"
 body:
   - type: dropdown

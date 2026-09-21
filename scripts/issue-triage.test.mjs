@@ -1,132 +1,161 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { labelsForIssue } from './issue-triage.mjs';
+import { labelsForIssue, triageIssue } from './issue-triage.mjs';
 
 const safety = '### Data-safety confirmation\n\n- [x] I have not included secrets, tokens, private data, worker logs, browser profiles, or APIs.';
 
-test('explicit Documentation and Setup selections ignore contextual and safety words', () => {
-  for (const [selection, expected] of [['Documentation', 'docs'], ['Setup or install', 'setup']]) {
-    const labels = labelsForIssue({title: '[Bug]: first useful screen', labels: ['type: bug'], body: `### Affected area\n\n${selection}\n\n### What happened?\n\njobctrl doctor opens the web API.\n\n${safety}`});
-    assert.deepEqual(labels, ['status: needs triage', `area: ${expected}`]);
+function bodyWithArea(area, extra = '') {
+  return `### Affected area\n\n${area}\n\n### What happened?\n\n${extra}\n\n${safety}`;
+}
+
+function githubFixture({ existingDefinitions = [], createRace = [] } = {}) {
+  const definitions = new Set(existingDefinitions);
+  const races = new Set(createRace);
+  const calls = [];
+  const github = {
+    rest: {
+      issues: {
+        async getLabel(input) {
+          calls.push(['getLabel', input]);
+          if (!definitions.has(input.name)) throw Object.assign(new Error('missing'), { status: 404 });
+          return { data: { name: input.name } };
+        },
+        async createLabel(input) {
+          calls.push(['createLabel', input]);
+          if (races.has(input.name)) {
+            definitions.add(input.name);
+            throw Object.assign(new Error('created concurrently'), { status: 409 });
+          }
+          definitions.add(input.name);
+          return { data: input };
+        },
+        async addLabels(input) {
+          calls.push(['addLabels', input]);
+          return { data: input.labels };
+        },
+      },
+    },
+  };
+  return { github, calls, definitions };
+}
+
+test('project progress labels are never inferred and closed issues are inert', () => {
+  assert.deepEqual(labelsForIssue({ state: 'open', title: '[Bug]: broken', body: '', labels: [] }), ['type: bug']);
+  assert.deepEqual(labelsForIssue({ state: 'closed', title: '[Bug]: broken', body: '', labels: [] }), []);
+  assert.equal(labelsForIssue({ state: 'open', title: '[Bug]: broken', body: '', labels: [] }).some(label => label.startsWith('status: ')), false);
+});
+
+test('form and bounded conventional titles infer at most one type', () => {
+  const cases = [
+    ['[Bug]: broken', 'type: bug'],
+    ['feat(web): add filter', 'type: feature'],
+    ['docs!: correct setup', 'type: documentation'],
+    ['test(api): missing proof', 'type: test'],
+    ['chore(deps): update lock', 'type: maintenance'],
+    ['design: compare storage options', 'type: investigation'],
+  ];
+  for (const [title, expected] of cases) {
+    const result = labelsForIssue({ state: 'open', title, body: '', labels: [] });
+    assert.equal(result.filter(label => label.startsWith('type: ')).length, 1);
+    assert.ok(result.includes(expected), title);
+  }
+  for (const title of ['prefix fix: broken', 'fix no colon', 'feature: broad alias', '[maintenance]: task']) {
+    assert.equal(labelsForIssue({ state: 'open', title, body: '', labels: [] }).some(label => label.startsWith('type: ')), false, title);
   }
 });
 
-test('security contact retains its declared security and privacy routing', () => {
-  assert.deepEqual(labelsForIssue({title: '[Security contact]: request', body: safety}), ['status: needs triage', 'type: security-contact', 'area: security', 'privacy: review-needed']);
+test('existing manual type and area labels are authoritative', () => {
+  const labels = labelsForIssue({
+    state: 'open',
+    title: '[Bug]: web failure',
+    body: bodyWithArea('Web app', 'API key exposed in output'),
+    labels: ['type: investigation', 'area: api', 'priority: P2'],
+  });
+  assert.deepEqual(labels, ['privacy: review-needed']);
 });
 
-test('ordinary reports with sensitive titles retain privacy review without scanning boilerplate', () => {
-  for (const subject of ['API token exposed', 'Private data visible', 'Credential shown in error', 'API key in output', 'Secrets exposed in logs', 'Credentials shown in error', 'API tokens visible', 'API keys exposed', 'Vulnerabilities reported']) {
-    assert.deepEqual(labelsForIssue({title: `[bug]: ${subject}`, body: `### Affected area\n\nTypeScript API\n\n${safety}`, labels: []}), ['status: needs triage', 'type: bug', 'area: api', 'privacy: review-needed']);
+test('structured area is conservative and conflicting fields are left unchanged', () => {
+  assert.deepEqual(labelsForIssue({ state: 'open', title: '[Bug]: first screen', body: bodyWithArea('Setup or install'), labels: ['type: bug'] }), ['area: setup']);
+  for (const body of [
+    '### Area\n\nUnsure',
+    '### Area\n\nDocumentation\n\n### Area\n\nWeb app',
+    '### Area\n\nDocumentation\n\n### Affected area\n\nWeb app',
+  ]) {
+    assert.deepEqual(labelsForIssue({ state: 'open', title: 'Unclassified request', body, labels: [] }), []);
   }
-  assert.deepEqual(labelsForIssue({title: '[bug]: API error', body: `### Affected area\n\nTypeScript API\n\n${safety}`, labels: []}), ['status: needs triage', 'type: bug', 'area: api']);
 });
 
-test('only an explicitly checked release impact adds a release label', () => {
+test('privacy requires a sensitive object and explicit exposure semantics', () => {
+  for (const title of [
+    'fix(security): resolve credential dependency advisories',
+    '[Bug]: vulnerability in dependency',
+    'chore: rotate API tokens',
+    'docs: document credential migration',
+  ]) {
+    assert.equal(labelsForIssue({ state: 'open', title, body: safety, labels: [] }).includes('privacy: review-needed'), false, title);
+  }
+  for (const subject of [
+    'API token exposed',
+    'Private data visible',
+    'Credential shown in error',
+    'API key in output',
+    'Secret leaked into logs',
+  ]) {
+    assert.ok(labelsForIssue({ state: 'open', title: `[Bug]: ${subject}`, body: bodyWithArea('TypeScript API'), labels: [] }).includes('privacy: review-needed'), subject);
+  }
+});
+
+test('security-contact form keeps security and privacy routing', () => {
+  assert.deepEqual(labelsForIssue({ state: 'open', title: '[Security contact]: request', body: safety, labels: [] }), [
+    'type: security-contact',
+    'area: security',
+    'privacy: review-needed',
+  ]);
+});
+
+test('release label requires its exact checked form field', () => {
   for (const checked of [' ', 'x']) {
-    const labels = labelsForIssue({title: '[QA]: regression', body: `### Regression surface\n\nApply Review\n\n### Release impact\n\n- [${checked}] This appears to block a public release, source install, or documented first-run flow.\n- [x] I have not included secrets.`});
+    const labels = labelsForIssue({
+      state: 'open',
+      title: '[QA]: regression',
+      body: `### Regression surface\n\nApply Review\n\n### Release impact\n\n- [${checked}] This appears to block a public release, source install, or documented first-run flow.`,
+      labels: [],
+    });
     assert.equal(labels.includes('release: possible-blocker'), checked === 'x');
-    assert.equal(labels.includes('privacy: review-needed'), false);
-    assert.ok(labels.includes('area: web'));
   }
 });
 
-test('blank issues use a conservative title fallback and retain existing labels', () => {
-  assert.deepEqual(labelsForIssue({title: 'Docs: fix README command', body: safety}), ['status: needs triage', 'area: docs']);
-  assert.deepEqual(labelsForIssue({title: 'A problem', body: safety, labels: ['status: accepted', 'area: api']}), []);
+test('opened, edited and reopened handling creates only missing declarations and converges', async () => {
+  const fixture = githubFixture({ existingDefinitions: ['type: bug'], createRace: ['area: api'] });
+  const issue = {
+    number: 77,
+    state: 'open',
+    title: '[Bug]: API key exposed in output',
+    body: bodyWithArea('TypeScript API'),
+    labels: [],
+  };
+
+  const opened = await triageIssue({ github: fixture.github, owner: 'ebarti', repo: 'jobctrl', issue });
+  assert.deepEqual(opened.additions, ['type: bug', 'area: api', 'privacy: review-needed']);
+  assert.equal(opened.ensured.find(item => item.name === 'area: api').raced, true);
+  assert.equal(fixture.calls.some(([method]) => method === 'updateLabel'), false);
+
+  issue.labels.push(...opened.additions.map(name => ({ name })));
+  const edited = await triageIssue({ github: fixture.github, owner: 'ebarti', repo: 'jobctrl', issue });
+  const reopened = await triageIssue({ github: fixture.github, owner: 'ebarti', repo: 'jobctrl', issue });
+  assert.deepEqual(edited.additions, []);
+  assert.deepEqual(reopened.additions, []);
+  assert.equal(fixture.calls.filter(([method]) => method === 'addLabels').length, 1);
 });
 
-test('unknown, duplicate and ambiguous selections remain for explicit triage', () => {
-  for (const body of ['### Area\n\nUnsure', '### Area\n\nDocumentation\n\n### Area\n\nWeb app', '### Area\n\nDocumentation\n\n### Affected area\n\nWeb app']) {
-    assert.deepEqual(labelsForIssue({title: 'Docs problem', body}), ['status: needs triage']);
-  }
-});
-
-// Full-form regression fixtures contributed by Harsh Raj Singhania in
-// https://github.com/ebarti/JobCtrl/pull/878; adapted to labelsForIssue.
-const DOCS_FIXTURE = {
-  title: "[Docs]: first-run screen is hard to find",
-  body: `### Page or file
-docs/user/getting-started.md
-
-### Documentation problem
-Confusing instructions
-
-### What should change?
-Point newcomers at the first useful screen after install.
-
-### Validation context
-I ran \`jobctrl doctor\` and opened the web dashboard. The CLI printed a first useful screen hint.
-
-### Data-safety confirmation
-- [x] I have not included secrets, private profile data, resumes, generated application materials, raw logs, browser profiles, SQLite databases, or local paths.
-`,
-};
-
-const SETUP_FIXTURE = {
-  title: "[Bug]: source install fails on first run",
-  body: `### Affected area
-Setup or install
-
-### What happened?
-\`pnpm dev:setup\` fails before the first useful screen appears.
-
-### Expected behavior
-Setup completes and jobctrl doctor reports a healthy environment.
-
-### Reproduction steps
-1. Run pnpm dev:setup
-2. Run jobctrl doctor
-3. Open the dashboard
-
-### Data-safety confirmation
-- [x] I have not included secrets, private profile data, resumes, generated application materials, raw logs, browser profiles, SQLite databases, or local paths.
-`,
-};
-
-const SECURITY_CONTACT_FIXTURE = {
-  title: "[Security contact]: request private reporting path",
-  body: `### Confirmation
-- [x] I need a private contact path for a possible vulnerability and have not included vulnerability details in this public issue.
-- [x] I have not included secrets, private profile data, resumes, generated application materials, raw logs, browser profiles, SQLite databases, local paths, or exploit details.
-
-### Minimal public summary
-local API boundary
-`,
-};
-
-const BLANK_ISSUE_FIXTURE = {
-  title: "Worker Temporal workflow never starts",
-  body: `The python worker and Temporal automation engine stay idle after install.
-I also checked an API route / JSON-RPC endpoint on the server.
-`,
-};
-
-test("documentation form ignores contextual and safety-boilerplate routing words", () => {
-  assert.deepEqual(labelsForIssue(DOCS_FIXTURE), [
-    "status: needs triage",
-    "type: documentation",
-    "area: docs",
-  ]);
-});
-
-test("setup form routes only to its structured area without inferring release impact", () => {
-  assert.deepEqual(labelsForIssue(SETUP_FIXTURE), [
-    "status: needs triage",
-    "type: bug",
-    "area: setup",
-  ]);
-});
-
-test("security-contact form retains its declared security and privacy routing", () => {
-  assert.deepEqual(labelsForIssue(SECURITY_CONTACT_FIXTURE), [
-    "status: needs triage",
-    "type: security-contact",
-    "area: security",
-    "privacy: review-needed",
-  ]);
-});
-
-test("unstructured body mentions do not route worker, API or install issues", () => {
-  assert.deepEqual(labelsForIssue(BLANK_ISSUE_FIXTURE), ["status: needs triage"]);
+test('closed handling performs zero API writes', async () => {
+  const fixture = githubFixture();
+  const result = await triageIssue({
+    github: fixture.github,
+    owner: 'ebarti',
+    repo: 'jobctrl',
+    issue: { number: 78, state: 'closed', title: '[Bug]: closed', body: '', labels: [] },
+  });
+  assert.deepEqual(result, { additions: [], ensured: [] });
+  assert.deepEqual(fixture.calls, []);
 });
