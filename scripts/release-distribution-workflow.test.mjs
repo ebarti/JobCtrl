@@ -43,6 +43,11 @@ function sha256(content) {
   return createHash("sha256").update(content).digest("hex");
 }
 
+function assertShellSyntax(label, source) {
+  const result = spawnSync("bash", ["-n"], { input: source, encoding: "utf8" });
+  assert.equal(result.status, 0, `${label}: ${result.stderr}`);
+}
+
 test("release workflow binds creation, reuse, and final readback to curated notes", async () => {
   const source = await readFile(workflowUrl, "utf8");
   const workflow = loadYaml(workflowUrl);
@@ -66,6 +71,8 @@ test("release workflow binds creation, reuse, and final readback to curated note
     "publish-github-release",
     "Byte-verify every draft asset, enforce immutability, and publish",
   );
+  for (const [label, run] of Object.entries({ resolve, preflight, draft, publish }))
+    assertShellSyntax(label, run);
 
   assert.match(resolve, /release_notes_path="\.github\/releases\/\$RELEASE_TAG\.md"/);
   assert.match(resolve, /test -f "\$release_notes_path" && test ! -L "\$release_notes_path"/);
