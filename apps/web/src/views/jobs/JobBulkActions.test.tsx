@@ -381,6 +381,7 @@ describe("<JobBulkActions>", () => {
       <JobBulkActions
         search={{ ...baseSearch, state: "failed" }}
         selectedCount={2}
+        selectedJobKeys={["job-1", "job-2"]}
         hasItems
         hasAnyMatching
         loading={false}
