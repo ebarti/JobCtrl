@@ -48,8 +48,10 @@ This plan was reconciled against `main` at
   version and immutable `ProfileSnapshot` readers.
 - The browser-facing profile response does not expose that version, and the
   normal profile write route has no expected-version comparison.
-- Profile saves, the `ProfileUpdated` event, and optional preparation
-  continuation are committed through one TypeScript transaction boundary.
+- Profile/version rows and the `ProfileUpdated` event commit atomically in the
+  TypeScript write transaction. Continuation intent, dispatch, and acknowledgement
+  use the existing recoverable post-commit path; they are not part of that row
+  transaction.
 - Materials already have typed achievement evidence, requirement planning,
   grounding and fabrication gates, evaluated candidates, canonical batch
   ownership, deterministic assembly, rendered PDF inspection, and preservation
@@ -105,6 +107,24 @@ The implementation is acceptable only if all of these remain true.
   reconstruct missing generation-time decisions.
 - User edits invalidate affected grounding, coverage, metrics, and skim results
   until those checks run again against the edited artifact.
+
+### 3.4 Backward-compatible evidence-reference identity
+
+Evidence references are typed identities, not array positions or text hashes.
+Existing experience, education, skill-category, and authored achievement IDs
+remain canonical. Selective conversion adds durable leaf IDs to the normalized
+bullet and skill-item rows and exposes additive sidecar IDs beside the existing
+string arrays, so legacy readers and empty-pin behavior remain unchanged.
+
+Each legacy leaf receives its ID once during an atomic conversion/import
+migration. The stored ID survives reorder and wording edits, and duplicate text
+gets distinct IDs. Before conversion, a transient consumer such as #902 may use
+a typed reference scoped to the exact `profileVersion`, parent entry/category
+ID, and occurrence ordinal. Such a reference is valid only against that
+snapshot; it cannot be promoted, carried across a profile version, or persisted
+as a durable artifact-audit reference. Every acceptance and audit boundary
+resolves incoming references against the exact snapshot and rejects unknown,
+duplicated, stale, or wrong-kind IDs.
 
 ## 4. Draft Evidence Capture And Promotion
 
@@ -170,8 +190,10 @@ Promotion submits the selected draft items, their accepted normalized values,
 the draft revision, and `expectedProfileVersion`. The owning Profile use case
 checks the current profile version in the same transaction that writes the
 normalized rows, advances the profile version, records provenance and
-acceptance, and emits the profile event. A mismatch returns a typed stale
-conflict with no profile row, evidence row, event, or preparation side effect.
+acceptance, and records the `ProfileUpdated` event. After commit, the existing
+recoverable continuation path records intent, dispatches preparation, and
+acknowledges or retries it. A mismatch returns a typed stale conflict with no
+profile row, evidence row, event, continuation intent, or dispatch work.
 
 If the profile advanced, the draft is rebased for review. Unaffected proposals
 may be retained; overlapping accepted values, removed targets, and newly
@@ -230,6 +252,8 @@ silently blend both into one universal template.
 
 - total roles and recent-versus-older role detail;
 - total bullets and per-role bullet ceilings;
+- total selected `AchievementEvidence` items and per-role achievement-evidence
+  ceilings, independently of bullet ceilings;
 - total words and words by section;
 - rendered pages for the selected template and paper size; and
 - total skills and per-category skill ceilings.
@@ -237,8 +261,11 @@ silently blend both into one universal template.
 Hard pins and required requirement coverage are constraints, not hidden
 exceptions. When they cannot fit, planning returns typed
 `artifact_budget_infeasible` evidence listing the conflicting pins, coverage,
-and budget dimensions. It never silently drops forced content or claims a valid
-artifact that exceeds an enforced budget.
+selected-achievement requirements, and exact global/per-role budget dimensions.
+The audit records both planned and actual selected-achievement counts by role;
+assembling several achievements into one bullet does not evade the evidence
+budget. It never silently drops forced content or claims a valid artifact that
+exceeds an enforced budget.
 
 The program will choose shipped defaults only after comparative evaluation on
 the synthetic cohorts in section 8. Defaults may vary by lens, template, paper
@@ -311,6 +338,8 @@ copied into tests or issue discussions.
 | --- | --- |
 | Sparse profile | Missing facts stay missing; useful questions appear; unsupported claims are not promoted or generated. |
 | Long varied history | Global budgets select a coherent narrative and record every omission without losing unique older evidence. |
+| Achievement-dense role | Independent global and per-role achievement budgets cap selected evidence even when several achievements could be compressed into fewer bullets. |
+| Cross-role evidence pressure | Comparative runs vary achievement and bullet budgets independently and report the exact infeasible dimension instead of silently dropping coverage. |
 | Executive history | Executive lens emphasizes supported organizational and business outcomes. |
 | Staff/Principal history | Technical lens emphasizes supported architecture, tradeoffs, system outcomes, and influence. |
 | Dual-track history | Each lens produces a distinct brief from the same evidence without inventing intent. |
@@ -324,10 +353,13 @@ copied into tests or issue discussions.
 
 Comparative evaluation measures evidence validity, contradiction handling,
 requirement coverage, unsupported-claim rate, forced-content feasibility,
-actual word/page/role/bullet/skill outcomes, skim-quality rubric results, lens
-distinctness, acceptance rate, bounded cost, latency, cancellation, and
-accepted-artifact retention. Numeric defaults require recorded cohort evidence
-and explicit user approval before becoming product policy.
+actual word/page/role/bullet/skill outcomes, planned and actual selected
+achievement totals and per-role distributions, skim-quality rubric results,
+lens distinctness, acceptance rate, bounded cost, latency, cancellation, and
+accepted-artifact retention. Comparative matrices vary global achievement,
+per-role achievement, global bullet, and per-role bullet limits independently.
+Numeric defaults require recorded cohort evidence and explicit user approval
+before becoming product policy.
 
 ## 9. Dependent Delivery Slices
 
@@ -349,7 +381,8 @@ Later slices do not ship around an unaccepted contract.
 - Add Profile-owned draft repository/use cases, question planner, provenance
   and contradiction UI, and atomic expected-version promotion.
 - Exit: accepted items alone enter canonical rows and emit the normal profile
-  event; rejection, conflicts, and stale saves cause no canonical mutation.
+  event; rejection, conflicts, and stale saves cause no canonical mutation,
+  profile event, continuation intent, or dispatch work.
 
 ### Slice 3 — Selectivity, rendering, and artifact audit
 
@@ -360,7 +393,28 @@ Later slices do not ship around an unaccepted contract.
 - Exit: text, HTML, and PDF reconcile to the same selected evidence and the
   last accepted artifact survives every failed replacement scenario.
 
-### Slice 4 — Inspectable API and UI
+### Slice 4 — Residual Tailor inventory and disposition
+
+- Inventory every surviving Tailor entry point, retry/repair loop, artifact
+  suppression path, and owner after #868/#869. At minimum this includes the
+  `suppressExistingArtifacts` branch in the main Materials use case, the
+  separate `SuppressTailoredArtifactsUseCase`, HTTP/RPC/Temporal/CLI callers,
+  and the voice-adapter contract.
+- Record a `retain`, `merge into canonical batch`, or `remove` disposition for
+  every inventory row, with callers, cancellation owner, attempt/spend owner,
+  suppression semantics, and last-accepted-artifact effect. No surviving path
+  may start an independent retry series or suppress an accepted artifact before
+  a replacement is accepted.
+- Bring voice generation under the canonical attempt/token/spend budget and
+  acceptance fence. Resolve the current unbounded voice-adapter contract so a
+  late voice result cannot exceed the selected candidate budget or replace the
+  last accepted artifact.
+- Exit: repository-wide call-site evidence proves that each entry point and
+  loop has one named owner and recorded disposition; deleted paths have no live
+  callers; retained paths share the canonical batch, cancellation fence,
+  budget, audit, and accepted-artifact rules.
+
+### Slice 5 — Inspectable API and UI
 
 - Expose draft review/promotion, conversion preview, brief, selection decisions,
   budget failures, render metrics, and audit lifecycle through owning routes and
@@ -368,7 +422,7 @@ Later slices do not ship around an unaccepted contract.
 - Exit: browser interactions preserve manual editing, explicit acceptance,
   optimistic conflict handling, accessibility, and context boundaries.
 
-### Slice 5 — Cumulative synthetic end-to-end proof
+### Slice 6 — Cumulative synthetic end-to-end proof
 
 - Exercise capture, promotion, selectivity, generation, rendering, user edit,
   rejection, cancellation, stale conflict, and accepted-artifact retention
@@ -409,7 +463,10 @@ contract is accepted.
 
 This proposal is complete when its review resolves the policy model, evidence
 sufficiency, promotion transaction, lens semantics, configurable budget
-evaluation, audit ownership, delivery slices, and #902 prerequisite. Product
+evaluation, durable and version-scoped evidence identity, audit ownership,
+the residual Tailor inventory/disposition, delivery slices, and #902
+prerequisite. Product
 delivery remains incomplete until all authorized slices pass their stated
-review and QA gates and the plan is moved to `implemented/` with exact PR and
-deviation evidence.
+review and QA gates, the Tailor disposition table has repository-wide call-site
+evidence, and the plan is moved to `implemented/` with exact PR and deviation
+evidence.
