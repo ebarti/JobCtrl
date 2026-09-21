@@ -1882,9 +1882,52 @@ export const ProfileUpdateRequestSchema = z
     style: z.unknown().optional(),
     styleText: z.string().optional(),
     templateText: z.string().optional(),
+    expectedProfileVersion: z.number().int().positive().optional(),
   })
   .strict();
 export type ProfileUpdateRequest = z.infer<typeof ProfileUpdateRequestSchema>;
+
+const ProfileEvidenceIdSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(160)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/, "invalid evidence id");
+
+export const TargetRoleSuggestionRequestSchema = z
+  .object({
+    expectedProfileVersion: z.number().int().positive(),
+    maximumSuggestions: z.number().int().min(1).max(5).default(3),
+  })
+  .strict();
+export type TargetRoleSuggestionRequest = z.infer<typeof TargetRoleSuggestionRequestSchema>;
+
+export const TargetRoleSuggestionSchema = z
+  .object({
+    title: z.string().trim().min(1).max(100),
+    classification: z.enum(["direct", "adjacent"]),
+    track: z.string().trim().min(1).max(60),
+    seniority: z.string().trim().min(1).max(60),
+    evidenceIds: z.array(ProfileEvidenceIdSchema).min(1).max(8),
+    rationale: z.string().trim().min(1).max(240),
+  })
+  .strict();
+export type TargetRoleSuggestion = z.infer<typeof TargetRoleSuggestionSchema>;
+
+export const TargetRoleSuggestionResultSchema = z
+  .object({
+    profileVersion: z.number().int().positive(),
+    suggestions: z.array(TargetRoleSuggestionSchema).max(5),
+    strategy: z.enum(["model", "recent_title_fallback", "none", "model_stub"]),
+    warnings: z.array(z.string().trim().min(1).max(120)).max(8).default([]),
+  })
+  .strict();
+export type TargetRoleSuggestionResult = z.infer<typeof TargetRoleSuggestionResultSchema>;
+
+export const TargetRoleSuggestionResponseSchema = TargetRoleSuggestionResultSchema.extend({
+  ok: z.literal(true),
+}).strict();
+export type TargetRoleSuggestionResponse = z.infer<typeof TargetRoleSuggestionResponseSchema>;
 
 export const ProfileImportRequestSchema = z
   .object({
@@ -4348,6 +4391,8 @@ export interface ArtifactOpenResponse {
 
 export interface ProfileConfigResponse {
   ok: true;
+  /** Monotonic version of the canonical saved profile, or null before setup. */
+  profileVersion: number | null;
   /** Profile data. Validated against ``ProfileSchema`` server-side; the wire
    * type stays ``unknown`` so partial drafts can flow through explicit review
    * and import paths. Programmatic consumers should re-parse with

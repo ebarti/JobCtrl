@@ -97,6 +97,7 @@ export const RpcMethods = {
   RollbackTailoringPolicy: "rollback_tailoring_policy",
   RenderResumePdf: "render_resume_pdf",
   GmailFeedbackScan: "gmail_feedback_scan",
+  ProfileTargetRoleSuggestions: "profile_target_role_suggestions",
 } as const;
 export type RpcMethod = (typeof RpcMethods)[keyof typeof RpcMethods];
 
@@ -107,6 +108,17 @@ const CanonicalJobIdParam = z
     /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
     "jobId must be a canonical lowercase UUID",
   );
+
+export const ProfileTargetRoleSuggestionsParamsSchema = z
+  .object({
+    tenantId: TenantParam,
+    expectedProfileVersion: z.number().int().positive(),
+    maximumSuggestions: z.number().int().min(1).max(5).default(3),
+  })
+  .strict();
+export type ProfileTargetRoleSuggestionsParams = z.infer<
+  typeof ProfileTargetRoleSuggestionsParamsSchema
+>;
 
 /* --- complex commands (delegated to Python JSON-RPC / Temporal) ---------- */
 

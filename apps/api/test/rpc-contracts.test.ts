@@ -22,6 +22,7 @@ import {
   ManualCaptureImportParamsSchema,
   ManualCaptureImportWorkflowResultSchema,
   ProviderModelCatalogResultSchema,
+  ProfileTargetRoleSuggestionsParamsSchema,
   RederiveLearningRecommendationsParamsSchema,
   RederiveLearningRecommendationsResultSchema,
   RefreshCompensationParamsSchema,
@@ -237,6 +238,25 @@ describe("tailoring policy rollback RPC contract", () => {
 describe("cancel_run RPC contract", () => {
   it("registers cancel_run in RpcMethods", () => {
     expect(RpcMethods.CancelRun).toBe("cancel_run");
+  });
+
+  it("parses bounded profile target-role suggestion RPC parameters", () => {
+    expect(RpcMethods.ProfileTargetRoleSuggestions).toBe("profile_target_role_suggestions");
+    expect(
+      ProfileTargetRoleSuggestionsParamsSchema.parse({
+        expectedProfileVersion: 4,
+      }),
+    ).toEqual({
+      tenantId: "local",
+      expectedProfileVersion: 4,
+      maximumSuggestions: 3,
+    });
+    expect(() =>
+      ProfileTargetRoleSuggestionsParamsSchema.parse({
+        expectedProfileVersion: 0,
+        maximumSuggestions: 9,
+      }),
+    ).toThrow();
   });
 
   it("parses a known-good request payload", () => {

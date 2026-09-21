@@ -353,6 +353,40 @@ def provider_models(params: dict[str, Any]) -> dict[str, Any]:
     return provider_model_catalog()
 
 
+def profile_target_role_suggestions(params: dict[str, Any]) -> dict[str, Any]:
+    """Generate transient suggestions from the exact canonical profile version."""
+
+    expected_version = _require(params, "expectedProfileVersion")
+    maximum = params.get("maximumSuggestions", 3)
+    if (
+        not isinstance(expected_version, int)
+        or isinstance(expected_version, bool)
+        or expected_version < 1
+    ):
+        raise invalid_params("expectedProfileVersion must be a positive integer")
+    if not isinstance(maximum, int) or isinstance(maximum, bool) or not 1 <= maximum <= 5:
+        raise invalid_params("maximumSuggestions must be an integer from 1 to 5")
+
+    from jobctrl.domain.profile.target_role_suggestions import suggest_target_roles
+    from jobctrl.infrastructure.llm.llm_client import get_llm_adapter
+    from jobctrl.infrastructure.profile.factory import get_profile_repository
+    from jobctrl.llm import read_spend_budget_status
+
+    snapshot = get_profile_repository().load_snapshot(TenantId(_tenant_id(params)))
+    if snapshot.version != expected_version:
+        raise invalid_params(
+            f"stale_profile_version: expected {expected_version}, current {snapshot.version}"
+        )
+    budget = read_spend_budget_status()
+    result = suggest_target_roles(
+        snapshot,
+        llm=None if budget.exceeded else get_llm_adapter(),
+        maximum_suggestions=maximum,
+        allow_model=not budget.exceeded,
+    )
+    return result.as_dict()
+
+
 def provider_verify(params: dict[str, Any]) -> dict[str, Any]:
     """Reuse and verify Codex CLI auth without making a model-generation call."""
 
@@ -1011,6 +1045,11 @@ def register_default_handlers(server: JsonRpcServer, *, canceler: WorkflowCancel
     server.register("analyze_job", analyze_job, mode="sync")
     server.register("provider_status", provider_status, mode="sync")
     server.register("provider_models", provider_models, mode="sync")
+    server.register(
+        "profile_target_role_suggestions",
+        profile_target_role_suggestions,
+        mode="sync",
+    )
     server.register("provider_verify", provider_verify, mode="sync")
     server.register("browser_capabilities_list", browser_capabilities_list, mode="sync")
     server.register("browser_capability_enable", browser_capability_enable, mode="sync")
