@@ -2785,6 +2785,8 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     try {
       const response = await providerDispatcher.call(RpcMethods.ProfileTargetRoleSuggestions, {
         tenantId: "local",
+        expectedAppDir: actionContext.appDir,
+        expectedDbPath: actionContext.dbPath,
         expectedProfileVersion: body.expectedProfileVersion,
         maximumSuggestions: body.maximumSuggestions,
       });

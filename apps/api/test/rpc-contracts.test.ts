@@ -246,15 +246,21 @@ describe("cancel_run RPC contract", () => {
     expect(RpcMethods.ProfileTargetRoleSuggestions).toBe("profile_target_role_suggestions");
     expect(
       ProfileTargetRoleSuggestionsParamsSchema.parse({
+        expectedAppDir: "/tmp/jobctrl",
+        expectedDbPath: "/tmp/jobctrl/jobctrl.db",
         expectedProfileVersion: 4,
       }),
     ).toEqual({
       tenantId: "local",
+      expectedAppDir: "/tmp/jobctrl",
+      expectedDbPath: "/tmp/jobctrl/jobctrl.db",
       expectedProfileVersion: 4,
       maximumSuggestions: 3,
     });
     expect(() =>
       ProfileTargetRoleSuggestionsParamsSchema.parse({
+        expectedAppDir: "/tmp/jobctrl",
+        expectedDbPath: "/tmp/jobctrl/jobctrl.db",
         expectedProfileVersion: 0,
         maximumSuggestions: 9,
       }),

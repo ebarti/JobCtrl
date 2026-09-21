@@ -13,7 +13,36 @@ from jobctrl.domain.profile.snapshot import ProfileSnapshot
 
 MAX_SUGGESTIONS = 5
 MAX_PAYLOAD_CHARS = 12_000
+MAX_OUTPUT_TOKENS = 900
 _EVIDENCE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$")
+_TITLE_WORD = re.compile(r"[a-z0-9]+")
+_TITLE_STOP_WORDS = {
+    "a", "an", "and", "chief", "director", "engineer", "engineering", "executive",
+    "head", "lead", "leader", "manager", "management", "of", "officer", "principal",
+    "senior", "sr", "staff", "the", "to", "vice", "vp",
+}
+_TRACK_TITLE_MARKERS = {
+    "management": {"director", "head", "lead", "leader", "manager", "management", "vp"},
+    "executive": {"chief", "executive", "officer", "president", "vice", "vp"},
+    "ic": {"architect", "developer", "engineer", "principal", "scientist", "specialist", "staff"},
+}
+_SENIORITY_TITLE_MARKERS = {
+    "manager": {"manager"},
+    "director": {"director", "head"},
+    "vp": {"vice", "vp"},
+    "vice president": {"vice", "vp"},
+    "executive": {"chief", "executive", "officer", "president", "vice", "vp"},
+    "senior": {"senior", "sr"},
+    "staff": {"staff"},
+    "principal": {"principal"},
+}
+
+
+@dataclass(frozen=True)
+class _EvidenceSupport:
+    kind: str
+    title: str
+    tokens: frozenset[str]
 
 
 @dataclass(frozen=True)
@@ -58,6 +87,7 @@ def suggest_target_roles(
     llm: LlmPort | None,
     maximum_suggestions: int = 3,
     allow_model: bool = True,
+    fallback_warning: str = "spend_budget_exhausted",
 ) -> TargetRoleSuggestionResult:
     """Generate transient suggestions without changing the canonical profile."""
 
@@ -87,7 +117,7 @@ def suggest_target_roles(
             profile_version=snapshot.version,
             suggestions=(fallback,) if fallback else (),
             strategy="recent_title_fallback" if fallback else "none",
-            warnings=("spend_budget_exhausted",) if not allow_model else (),
+            warnings=(fallback_warning,) if not allow_model else (),
         )
 
     try:
@@ -112,7 +142,7 @@ def suggest_target_roles(
             ],
             response_schema=_provider_response_schema(maximum),
             temperature=0.0,
-            max_tokens=900,
+            max_tokens=MAX_OUTPUT_TOKENS,
             thinking_budget=0,
         )
         suggestions = _validate_model_response(
@@ -146,14 +176,14 @@ def suggest_target_roles(
 
 def _build_minimized_payload(
     snapshot: ProfileSnapshot,
-) -> tuple[dict[str, Any], dict[str, str]]:
+) -> tuple[dict[str, Any], dict[str, _EvidenceSupport]]:
     data = snapshot.as_dict()
     experience_preferences = _record(data.get("experience"))
     resume = _record(data.get("resume"))
     existing_roles = _split_values(experience_preferences.get("target_role"))
     tracks = _split_values(experience_preferences.get("target_track"))
     seniorities = _split_values(experience_preferences.get("target_seniority_floor"))
-    evidence_kinds: dict[str, str] = {}
+    evidence_support: dict[str, _EvidenceSupport] = {}
     experiences: list[dict[str, Any]] = []
     achievements: list[dict[str, Any]] = []
     skills: list[dict[str, Any]] = []
@@ -170,7 +200,11 @@ def _build_minimized_payload(
                     "dateRange": _text(entry.get("date_range"), 80),
                 }
             )
-            evidence_kinds[evidence_id] = "experience"
+            evidence_support[evidence_id] = _EvidenceSupport(
+                kind="experience",
+                title=title,
+                tokens=frozenset(_title_tokens(title)),
+            )
         for item in _records(entry.get("achievement_evidence")):
             evidence_id = _text(item.get("id"), 160)
             if not _EVIDENCE_ID.fullmatch(evidence_id):
@@ -185,7 +219,22 @@ def _build_minimized_payload(
                     "skills": [_text(value, 80) for value in _strings(item.get("tools"))[:6]],
                 }
             )
-            evidence_kinds[evidence_id] = "achievement"
+            evidence_support[evidence_id] = _EvidenceSupport(
+                kind="achievement",
+                title="",
+                tokens=frozenset(
+                    _title_tokens(
+                        " ".join(
+                            [
+                                str(item.get("action") or item.get("source_text") or ""),
+                                str(item.get("outcome") or ""),
+                                str(item.get("seniority_signal") or ""),
+                                *[str(value) for value in _strings(item.get("tools"))[:6]],
+                            ]
+                        )
+                    )
+                ),
+            )
             if len(achievements) >= 20:
                 break
         if len(achievements) >= 20:
@@ -204,7 +253,11 @@ def _build_minimized_payload(
                     "skill": _text(item, 100),
                 }
             )
-            evidence_kinds[evidence_id] = "skill"
+            evidence_support[evidence_id] = _EvidenceSupport(
+                kind="skill",
+                title="",
+                tokens=frozenset(_title_tokens(f"{category.get('label', '')} {item}")),
+            )
             if len(skills) >= 32:
                 break
         if len(skills) >= 32:
@@ -226,18 +279,18 @@ def _build_minimized_payload(
             values = payload[key]
             if values:
                 removed = values.pop()
-                evidence_kinds.pop(removed["evidenceId"], None)
+                evidence_support.pop(removed["evidenceId"], None)
                 break
         else:
             break
-    return payload, evidence_kinds
+    return payload, evidence_support
 
 
 def _validate_model_response(
     response: dict[str, Any],
     *,
     maximum: int,
-    evidence_kinds: dict[str, str],
+    evidence_kinds: dict[str, _EvidenceSupport],
     tracks: tuple[str, ...],
     seniorities: tuple[str, ...],
     existing_roles: set[str],
@@ -272,6 +325,15 @@ def _validate_model_response(
             raise ValueError("unknown evidence id")
         if classification == "adjacent" and len(evidence_ids) < 2:
             raise ValueError("adjacent suggestion needs multiple evidence references")
+        cited_evidence = tuple(evidence_kinds[evidence_id] for evidence_id in evidence_ids)
+        if not _role_is_supported(
+            title,
+            classification=classification,
+            track=track,
+            seniority=seniority,
+            evidence=cited_evidence,
+        ):
+            raise ValueError("unsupported role title or evidence")
         rationale = _required_clean_text(raw.get("rationale"), 240)
         normalized_title = title.casefold()
         if normalized_title in seen:
@@ -292,7 +354,7 @@ def _validate_model_response(
 
 def _recent_title_fallback(
     payload: dict[str, Any],
-    evidence_kinds: dict[str, str],
+    evidence_kinds: dict[str, _EvidenceSupport],
     *,
     tracks: tuple[str, ...],
     seniorities: tuple[str, ...],
@@ -301,7 +363,16 @@ def _recent_title_fallback(
     for entry in payload["experience"]:
         title = str(entry["title"])
         evidence_id = str(entry["evidenceId"])
-        if title.casefold() in existing_roles or evidence_kinds.get(evidence_id) != "experience":
+        support = evidence_kinds.get(evidence_id)
+        if title.casefold() in existing_roles or support is None or support.kind != "experience":
+            continue
+        if not _role_is_supported(
+            title,
+            classification="direct",
+            track=tracks[0],
+            seniority=seniorities[0],
+            evidence=(support,),
+        ):
             continue
         return TargetRoleSuggestion(
             title=title,
@@ -312,6 +383,76 @@ def _recent_title_fallback(
             rationale="Matches a recent canonical profile title and the saved target preferences.",
         )
     return None
+
+
+def _role_is_supported(
+    title: str,
+    *,
+    classification: str,
+    track: str,
+    seniority: str,
+    evidence: tuple[_EvidenceSupport, ...],
+) -> bool:
+    title_tokens = _title_tokens(title)
+    if not _title_matches_track(title_tokens, track):
+        return False
+    if not _title_matches_seniority(title_tokens, seniority):
+        return False
+    supported_tokens = set().union(*(item.tokens for item in evidence))
+    if not _evidence_matches_track(supported_tokens, track):
+        return False
+    if not _evidence_matches_seniority(supported_tokens, seniority):
+        return False
+    experience = tuple(item for item in evidence if item.kind == "experience")
+    if not experience:
+        return False
+    normalized_title = " ".join(title.casefold().split())
+    if classification == "direct":
+        return any(" ".join(item.title.casefold().split()) == normalized_title for item in experience)
+    if classification != "adjacent" or len(evidence) < 2:
+        return False
+    if not any(item.kind in {"achievement", "skill"} for item in evidence):
+        return False
+    domain_tokens = title_tokens - _TITLE_STOP_WORDS
+    if not domain_tokens:
+        return False
+    return bool(domain_tokens & supported_tokens)
+
+
+def _title_matches_track(title_tokens: set[str], track: str) -> bool:
+    normalized = " ".join(track.casefold().split())
+    if normalized in {"individual contributor", "individual-contributor"}:
+        normalized = "ic"
+    markers = _TRACK_TITLE_MARKERS.get(normalized)
+    if markers is None:
+        markers = _title_tokens(track)
+    return bool(title_tokens & markers)
+
+
+def _title_matches_seniority(title_tokens: set[str], seniority: str) -> bool:
+    normalized = " ".join(seniority.casefold().split())
+    markers = _SENIORITY_TITLE_MARKERS.get(normalized)
+    if markers is None:
+        markers = _title_tokens(seniority)
+    return bool(title_tokens & markers)
+
+
+def _evidence_matches_track(evidence_tokens: set[str], track: str) -> bool:
+    normalized = " ".join(track.casefold().split())
+    if normalized in {"individual contributor", "individual-contributor"}:
+        normalized = "ic"
+    markers = _TRACK_TITLE_MARKERS.get(normalized, _title_tokens(track))
+    return bool(evidence_tokens & markers)
+
+
+def _evidence_matches_seniority(evidence_tokens: set[str], seniority: str) -> bool:
+    normalized = " ".join(seniority.casefold().split())
+    markers = _SENIORITY_TITLE_MARKERS.get(normalized, _title_tokens(seniority))
+    return bool(evidence_tokens & markers)
+
+
+def _title_tokens(value: str) -> set[str]:
+    return set(_TITLE_WORD.findall(value.casefold()))
 
 
 def _provider_response_schema(maximum: int) -> dict[str, Any]:

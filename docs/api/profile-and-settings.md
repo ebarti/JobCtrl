@@ -41,6 +41,23 @@ user's selected acceptance enters the normal profile save path, where roles are
 appended and case-insensitively deduplicated instead of replacing existing
 values.
 
+The API binds the RPC request to its trusted app-directory and database
+identity; those values are never accepted from the browser. The worker checks
+that identity before loading the profile snapshot. The currently managed
+Claude, Codex, and Google SDK adapters cannot enforce this feature's requested
+output-token ceiling and conservative maximum call cost, so the production RPC
+does not invoke them. It returns only a validated exact recent-title fallback
+or zero suggestions with
+`provider_token_or_cost_bound_unsupported`. The `model` strategy remains in the
+response contract and is exercised with explicitly synthetic adapters in
+domain tests, but is not a currently available production capability.
+
+If a suggestion-derived save conflicts with a newer canonical profile, the web
+keeps the local draft but does not authorize it with the newer version. The user
+must explicitly rebase non-overlapping edits onto the refreshed snapshot,
+regenerate suggestions, review them, and then save against that new version.
+Overlapping edits remain blocked for manual resolution or discard.
+
 Each `resume.experience_entries[]` record may include `summary`. The field
 defaults to an empty string, remains optional for existing and new roles, and
 renders as non-bulleted position context between the role heading and its

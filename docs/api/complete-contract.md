@@ -83,6 +83,16 @@ profile version that changes before the response all fail closed. The route is
 read-only and does not emit a profile event. The browser-local product demo
 uses the additional honest `model_stub` strategy and
 `stubbed_model_evidence` warning for its synthetic response.
+
+The API supplies trusted app-directory and database identity to the worker,
+which checks both before reading the saved snapshot. Browser input cannot
+override either value. Current managed Claude, Codex, and Google SDK adapters
+cannot enforce the hard output-token and maximum-call-cost bounds required by
+this route, so production makes no model call and returns only an exact
+recent-title fallback or `none`, with the
+`provider_token_or_cost_bound_unsupported` warning. `strategy: "model"` remains
+reserved in the wire schema and is covered by explicitly synthetic domain
+tests; it is not currently emitted by the production RPC handler.
 Profile-data writes also record `ProfileUpdated` in `job_events`. When existing
 tailored resumes are present, the API handles that event by dispatching a
 background `tailor -> cover` pipeline run with `retailor=true`, `dryRun=false`,

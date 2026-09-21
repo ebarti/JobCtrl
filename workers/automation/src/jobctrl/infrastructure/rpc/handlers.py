@@ -356,6 +356,10 @@ def provider_models(params: dict[str, Any]) -> dict[str, Any]:
 def profile_target_role_suggestions(params: dict[str, Any]) -> dict[str, Any]:
     """Generate transient suggestions from the exact canonical profile version."""
 
+    assert_expected_runtime(
+        expected_app_dir=str(_require(params, "expectedAppDir")),
+        expected_db_path=str(_require(params, "expectedDbPath")),
+    )
     expected_version = _require(params, "expectedProfileVersion")
     maximum = params.get("maximumSuggestions", 3)
     if (
@@ -368,21 +372,22 @@ def profile_target_role_suggestions(params: dict[str, Any]) -> dict[str, Any]:
         raise invalid_params("maximumSuggestions must be an integer from 1 to 5")
 
     from jobctrl.domain.profile.target_role_suggestions import suggest_target_roles
-    from jobctrl.infrastructure.llm.llm_client import get_llm_adapter
     from jobctrl.infrastructure.profile.factory import get_profile_repository
-    from jobctrl.llm import read_spend_budget_status
 
     snapshot = get_profile_repository().load_snapshot(TenantId(_tenant_id(params)))
     if snapshot.version != expected_version:
         raise invalid_params(
             f"stale_profile_version: expected {expected_version}, current {snapshot.version}"
         )
-    budget = read_spend_budget_status()
+    # None of the managed production adapters currently enforces max_tokens.
+    # Until a provider can prove both token and call-cost ceilings, this route
+    # fails closed to the canonical exact-title/empty deterministic result.
     result = suggest_target_roles(
         snapshot,
-        llm=None if budget.exceeded else get_llm_adapter(),
+        llm=None,
         maximum_suggestions=maximum,
-        allow_model=not budget.exceeded,
+        allow_model=False,
+        fallback_warning="provider_token_or_cost_bound_unsupported",
     )
     return result.as_dict()
 

@@ -65,6 +65,14 @@ attestations, raw PDF data, and raw profile content logs are excluded. Results
 remain transient until the user edits/selects them and accepts an append through
 the normal `PATCH /v1/profile` path with `expectedProfileVersion`.
 
+The RPC also carries app-directory and database identity derived from the API's
+trusted runtime context. The worker rejects a mismatch before it reads a
+snapshot. Current managed provider SDKs do not enforce the required output-token
+and maximum-call-cost bounds, so this production route makes no provider call
+and returns only the conservative exact-title fallback or an empty result with
+`provider_token_or_cost_bound_unsupported`. Synthetic adapter tests cover the
+model response validator without claiming a production model run.
+
 ## Artifacts And Tailoring Audit
 
 Artifact list/detail/preview routes and canonical tailoring evidence are grouped

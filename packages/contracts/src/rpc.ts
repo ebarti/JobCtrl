@@ -112,6 +112,8 @@ const CanonicalJobIdParam = z
 export const ProfileTargetRoleSuggestionsParamsSchema = z
   .object({
     tenantId: TenantParam,
+    expectedAppDir: z.string().trim().min(1),
+    expectedDbPath: z.string().trim().min(1),
     expectedProfileVersion: z.number().int().positive(),
     maximumSuggestions: z.number().int().min(1).max(5).default(3),
   })

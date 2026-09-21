@@ -30,25 +30,32 @@ interface EditableSuggestion extends TargetRoleSuggestion {
 }
 
 export interface TargetRoleSuggestionsProps {
+  formBaseVersion: number | null;
   profileVersion: number | null;
   onAccept: (titles: readonly string[], expectedProfileVersion: number) => void;
+  onRebase: () => void;
 }
 
 export function TargetRoleSuggestions({
+  formBaseVersion,
   profileVersion,
   onAccept,
+  onRebase,
 }: TargetRoleSuggestionsProps) {
   const generation = useTargetRoleSuggestionsMutation();
   const [generatedVersion, setGeneratedVersion] = useState<number | null>(null);
   const [suggestions, setSuggestions] = useState<EditableSuggestion[]>([]);
   const [emptyMessage, setEmptyMessage] = useState("");
+  const [noticeMessage, setNoticeMessage] = useState("");
+  const isFormBaseStale = formBaseVersion !== profileVersion;
   const isStale = generatedVersion !== null && generatedVersion !== profileVersion;
 
   const generate = async () => {
-    if (profileVersion === null) return;
+    if (profileVersion === null || isFormBaseStale) return;
     setSuggestions([]);
     setGeneratedVersion(null);
     setEmptyMessage("");
+    setNoticeMessage("");
     generation.reset();
     try {
       const result = await generation.mutateAsync({
@@ -57,6 +64,17 @@ export function TargetRoleSuggestions({
       });
       setGeneratedVersion(result.profileVersion);
       setSuggestions(result.suggestions.map((suggestion) => ({ ...suggestion, selected: true })));
+      if (result.warnings.includes("stubbed_model_evidence")) {
+        setNoticeMessage("This demo result uses deterministic fixture evidence; no model ran.");
+      } else if (result.warnings.includes("model_unavailable_or_invalid")) {
+        setNoticeMessage("Model suggestions were unavailable, so only an exact saved title may appear.");
+      } else if (result.warnings.includes("spend_budget_exhausted")) {
+        setNoticeMessage("The model spend budget is exhausted, so only an exact saved title may appear.");
+      } else if (result.warnings.includes("provider_token_or_cost_bound_unsupported")) {
+        setNoticeMessage(
+          "The configured provider cannot enforce this feature's token and spend ceiling, so only an exact saved title may appear.",
+        );
+      }
       if (result.suggestions.length === 0) {
         setEmptyMessage(
           result.warnings.includes("authoritative_track_or_seniority_missing")
@@ -73,6 +91,7 @@ export function TargetRoleSuggestions({
     setSuggestions([]);
     setGeneratedVersion(null);
     setEmptyMessage("");
+    setNoticeMessage("");
     generation.reset();
   };
 
@@ -99,13 +118,26 @@ export function TargetRoleSuggestions({
           <Button
             type="button"
             variant="secondary"
-            disabled={profileVersion === null || generation.isPending}
+            disabled={profileVersion === null || isFormBaseStale || generation.isPending}
             onClick={() => void generate()}
           >
             {generation.isPending ? "Generating…" : "Suggest roles"}
           </Button>
         </CardAction>
       </CardHeader>
+      {isFormBaseStale ? (
+        <CardContent>
+          <Alert variant="warning">
+            <AlertDescription>
+              The saved profile changed while this form has unsaved edits. Rebase the draft onto
+              the saved profile before generating or accepting suggestions.
+            </AlertDescription>
+          </Alert>
+          <Button type="button" variant="secondary" className="mt-3" onClick={onRebase}>
+            Rebase edits onto saved profile
+          </Button>
+        </CardContent>
+      ) : null}
       {generation.error ? (
         <CardContent>
           <Alert variant="destructive">
@@ -129,6 +161,13 @@ export function TargetRoleSuggestions({
           </Alert>
         </CardContent>
       ) : null}
+      {noticeMessage ? (
+        <CardContent>
+          <Alert variant="info">
+            <AlertDescription>{noticeMessage}</AlertDescription>
+          </Alert>
+        </CardContent>
+      ) : null}
       {suggestions.length ? (
         <CardContent>
           <FieldGroup>
@@ -137,7 +176,7 @@ export function TargetRoleSuggestions({
                 <Checkbox
                   aria-label={`Select ${suggestion.title}`}
                   checked={suggestion.selected}
-                  disabled={isStale}
+                  disabled={isStale || isFormBaseStale}
                   onCheckedChange={(checked) => {
                     setSuggestions((current) => current.map((item, itemIndex) =>
                       itemIndex === index ? { ...item, selected: checked === true } : item));
@@ -151,7 +190,7 @@ export function TargetRoleSuggestions({
                     id={`target-role-suggestion-${index}`}
                     aria-label={`Suggested role ${index + 1}`}
                     value={suggestion.title}
-                    disabled={isStale}
+                    disabled={isStale || isFormBaseStale}
                     maxLength={100}
                     onChange={(event) => {
                       setSuggestions((current) => current.map((item, itemIndex) =>
@@ -171,7 +210,7 @@ export function TargetRoleSuggestions({
                     type="button"
                     variant="ghost"
                     size="sm"
-                    disabled={isStale}
+                    disabled={isStale || isFormBaseStale}
                     onClick={() => setSuggestions((current) => current.filter((_, itemIndex) => itemIndex !== index))}
                   >
                     Reject {suggestion.title}
@@ -184,7 +223,11 @@ export function TargetRoleSuggestions({
       ) : null}
       {suggestions.length ? (
         <CardFooter className="gap-2 border-t">
-          <Button type="button" disabled={isStale || selectedCount === 0} onClick={accept}>
+          <Button
+            type="button"
+            disabled={isStale || isFormBaseStale || selectedCount === 0}
+            onClick={accept}
+          >
             Add selected roles
           </Button>
           <Button type="button" variant="secondary" onClick={dismiss}>
