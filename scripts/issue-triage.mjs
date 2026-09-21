@@ -39,6 +39,7 @@ const EXPOSURE_PATTERNS = [
 const NEGATED_EXPOSURE_PATTERNS = [
   new RegExp(String.raw`\b(?:no|never)\s+${SENSITIVE_OBJECT_SOURCE}\b.{0,40}\b${NEGATED_EXPOSURE_ACTION_SOURCE}\b`, 'i'),
   new RegExp(String.raw`\b${SENSITIVE_OBJECT_SOURCE}\b.{0,30}\b(?:is|are|was|were|has|have|had)?\s*(?:not|never)\s+${NEGATED_EXPOSURE_ACTION_SOURCE}\b`, 'i'),
+  new RegExp(String.raw`\b(?:not|never)\s+${NEGATED_EXPOSURE_ACTION_SOURCE}\b.{0,40}\b${SENSITIVE_OBJECT_SOURCE}\b`, 'i'),
   new RegExp(String.raw`\bwithout\s+(?:ever\s+)?${NEGATED_EXPOSURE_ACTION_SOURCE}\b.{0,40}\b${SENSITIVE_OBJECT_SOURCE}\b`, 'i'),
   new RegExp(String.raw`\bno\s+${SENSITIVE_OBJECT_SOURCE}\b.{0,40}\b(?:appears?|shows? up|is|was|were)?\s*(?:in|into|on|via)\s+(?:the\s+)?${EXPOSURE_SURFACE_SOURCE}\b`, 'i'),
   new RegExp(String.raw`\b${SENSITIVE_OBJECT_SOURCE}\b.{0,30}\b(?:does|do|did|is|are|was|were|has|have|had)\s+(?:not|never)\s+(?:appear|show up|be)?\s*(?:in|into|on|via)\s+(?:the\s+)?${EXPOSURE_SURFACE_SOURCE}\b`, 'i'),
@@ -83,10 +84,10 @@ function privacyText(issue, form) {
 }
 
 function isExplicitExposure(issue, form) {
-  const segments = privacyText(issue, form).split(/\n+|(?<=[.!?])\s+/);
-  return segments.some(segment =>
-    !NEGATED_EXPOSURE_PATTERNS.some(pattern => pattern.test(segment))
-    && EXPOSURE_PATTERNS.some(pattern => pattern.test(segment)));
+  const clauses = privacyText(issue, form).split(/\n+|(?<=[.!?;,])\s+|\s+(?:and|or|but|however|while|whereas)\s+/i);
+  return clauses.some(clause =>
+    !NEGATED_EXPOSURE_PATTERNS.some(pattern => pattern.test(clause))
+    && EXPOSURE_PATTERNS.some(pattern => pattern.test(clause)));
 }
 
 function checkedReleaseImpact(form) {

@@ -148,6 +148,10 @@ test('privacy requires a sensitive object and explicit exposure semantics', () =
     '[Bug]: no API key appears in logs',
     '[Bug]: API key does not appear in logs',
     '[Bug]: API key was never in logs',
+    '[Bug]: This change does not expose API keys',
+    '[Bug]: We do not expose credentials',
+    '[Bug]: Never expose tokens in logs',
+    '[Bug]: The fix never leaks private data',
     'chore: update credential output formatting',
     'fix: credential response schema validation',
     'docs: describe API token output fields',
@@ -164,8 +168,54 @@ test('privacy requires a sensitive object and explicit exposure semantics', () =
     'Secret leaked into logs',
     'API token exposed without redaction',
     'API key appears in logs',
+    'This change exposes API keys',
+    'We expose credentials',
+    'This change exposes tokens in logs',
+    'The fix leaks private data',
   ]) {
     assert.ok(labelsForIssue({ state: 'open', title: `[Bug]: ${subject}`, body: bodyWithArea('TypeScript API'), labels: [] }).includes('privacy: review-needed'), subject);
+  }
+});
+
+test('production triage adapter respects contextual exposure negation in both phrase orders', async () => {
+  const cases = [
+    ['API token is not exposed', false],
+    ['No credentials were logged', false],
+    ['API key does not appear in logs', false],
+    ['This change does not expose API keys', false],
+    ['We do not expose credentials', false],
+    ['Never expose tokens in logs', false],
+    ['The fix never leaks private data', false],
+    ['API token is exposed', true],
+    ['Credentials were logged', true],
+    ['API key appears in logs', true],
+    ['This change exposes API keys', true],
+    ['We expose credentials', true],
+    ['This change exposes tokens in logs', true],
+    ['The fix leaks private data', true],
+  ];
+  let number = 200;
+  for (const [subject, expectedPrivacy] of cases) {
+    const issue = {
+      number: number++,
+      state: 'open',
+      title: `[Bug]: ${subject}`,
+      body: bodyWithArea('TypeScript API'),
+      labels: [{ name: 'priority: P2' }],
+    };
+    const fixture = githubFixture({
+      issue,
+      existingDefinitions: ['type: bug', 'area: api', 'privacy: review-needed'],
+    });
+    const result = await triageIssue({
+      github: fixture.github,
+      owner: 'ebarti',
+      repo: 'jobctrl',
+      issueNumber: issue.number,
+    });
+    assert.equal(result.additions.includes('privacy: review-needed'), expectedPrivacy, subject);
+    assert.equal(fixture.issue.labels.some(label => label.name === 'privacy: review-needed'), expectedPrivacy, subject);
+    assert.equal(fixture.calls.filter(([method]) => method === 'addLabels').length, 1, subject);
   }
 });
 
