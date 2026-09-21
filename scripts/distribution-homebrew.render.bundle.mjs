@@ -11584,7 +11584,7 @@ render_script = """async (input) => {
     for (const value of pixels) if (value !== 0) nonZeroPixelBytes += 1;
     if (nonZeroPixelBytes === 0) await new Promise((resolve) => requestAnimationFrame(() => resolve()));
   }
-  await document.destroy();
+  await loadingTask.destroy();
   return { width: canvas.width, height: canvas.height, nonZeroPixelBytes, readbackAttempts, text };
 }"""
 
