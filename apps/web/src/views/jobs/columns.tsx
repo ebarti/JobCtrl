@@ -671,8 +671,8 @@ export function jobColumns(
     {
       id: "title",
       label: "Title",
-      width: 240,
-      minWidth: 220,
+      width: 230,
+      minWidth: 210,
       sortable: true,
       rowHeader: true,
       getFilterValue: (row) => row.title,
@@ -690,7 +690,7 @@ export function jobColumns(
     },
     {
       id: "company",
-      width: 140,
+      width: 130,
       label: "Company",
       sortable: true,
       getFilterValue: (row) => row.company || "-",
@@ -702,7 +702,8 @@ export function jobColumns(
     },
     {
       id: "job_state",
-      width: 104,
+      width: 144,
+      minWidth: 144,
       label: "Job state",
       getFilterValue: jobStateLabel,
       filterValues: JOB_STATE_FILTER_VALUES,

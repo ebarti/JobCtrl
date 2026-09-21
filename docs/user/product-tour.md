@@ -89,6 +89,8 @@ and observing that execution.
 
 ### Jobs
 
+![JobCtrl single-table Jobs workspace with a Job state filter, fit evidence, saved views, and bulk actions](../assets/screenshots/jobs.png)
+
 Jobs is the URL-backed triage table. Search, stage/state/apply filters, sorting,
 pagination, saved views, selection, columns, and bulk actions remain available
 before opening one record. The **Job state** column filter shows **Active**,

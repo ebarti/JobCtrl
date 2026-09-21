@@ -311,6 +311,13 @@ evidence, source provenance, artifacts, readiness, and per-job actions.
 
 </WorkflowSurfacePanel>
 
+<WorkflowSurfacePanel surface="web">
+
+![JobCtrl single-table Jobs workspace with the Active Job state filter and distinct stage progress](../assets/screenshots/jobs.png)
+*The Jobs table keeps lifecycle state and pipeline stage distinct while preserving filters, saved views, and bulk triage actions.*
+
+</WorkflowSurfacePanel>
+
 Use the **Job state** column filter to show **Active**, **Deleted**, **Hidden**,
 or any combination of those values in one table. The default view selects
 **Active** only. The options remain available even when the current page has no

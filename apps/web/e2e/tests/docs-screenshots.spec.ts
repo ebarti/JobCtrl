@@ -579,9 +579,10 @@ async function verifyJobsCaptureReady(page: Page): Promise<void> {
     "Fit",
     "Title",
     "Company",
+    "Job state",
     "Location",
     "Stage",
-    "State",
+    "Stage state",
     "Apply",
   ]) {
     await expect(headers.getByText(label, { exact: true })).toBeVisible();

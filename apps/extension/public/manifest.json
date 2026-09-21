@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "JobCtrl",
   "description": "Run JobCtrl Discovery in this Chrome profile, capture postings, and review autofill suggestions.",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "action": {
     "default_popup": "popup.html"
   },
