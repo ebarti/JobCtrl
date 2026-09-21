@@ -3,6 +3,7 @@ import { useId } from "react";
 
 import { RefreshAllCompensationButton } from "../../contexts/enrichment/index.js";
 import { RetailorCurrentPolicyButton } from "../../contexts/materials/components/RetailorCurrentPolicyButton.js";
+import type { JobState } from "../../contexts/operations/types.js";
 import { RescoreCurrentPolicyButton } from "../../contexts/scoring/components/RescoreCurrentPolicyButton.js";
 import { ResetStaleScoresButton } from "../../contexts/scoring/components/ResetStaleScoresButton.js";
 import type { JobsSearch } from "../../routes/-jobs.search.js";
@@ -20,20 +21,13 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from "../../shared/ui/dropdown-menu.js";
-import { Tabs, TabsList, TabsTrigger } from "../../shared/ui/tabs.js";
-
-const JOB_QUEUES = [
-  { label: "Active", value: "active" },
-  { label: "Deleted", value: "deleted" },
-  { label: "Hidden", value: "hidden" },
-] as const satisfies readonly {
-  label: string;
-  value: JobsSearch["deleted"];
-}[];
 
 export interface JobBulkActionsProps {
   search: JobsSearch;
   selectedCount: number;
+  selectedJobStates?: readonly JobState[];
+  allMatchingSelected?: boolean;
+  hasActiveMatches?: boolean;
   selectedJobKeys?: readonly string[];
   staleCount?: number;
   selectedStaleKeys?: readonly string[];
@@ -43,11 +37,12 @@ export interface JobBulkActionsProps {
   loading: boolean;
   retryLoading?: boolean;
   pendingPreparationLoading?: boolean;
-  onSetDeleted: (deleted: JobsSearch["deleted"]) => void;
   onSelectPage: () => void;
   onSelectAllMatching: () => void;
   onClearSelection: () => void;
-  onPrimaryAction: () => void;
+  onDeleteSelected?: () => void;
+  onRestoreSelected?: () => void;
+  onUnhideSelected?: () => void;
   onHideSelected: () => void;
   onPermanentlyDeleteSelected: () => void;
   onRetryFailedSelected?: () => void;
@@ -60,6 +55,15 @@ export interface JobBulkActionsProps {
 export function JobBulkActions({
   search,
   selectedCount,
+  selectedJobStates = search.jobStates ??
+    (search.deleted === "deleted"
+      ? ["deleted"]
+      : search.deleted === "hidden"
+        ? ["hidden"]
+        : ["active"]),
+  allMatchingSelected = false,
+  hasActiveMatches =
+    (search.jobStates?.includes("active") ?? search.deleted === "active"),
   selectedJobKeys = [],
   staleCount = 0,
   selectedStaleKeys = [],
@@ -69,11 +73,12 @@ export function JobBulkActions({
   loading,
   retryLoading = loading,
   pendingPreparationLoading = loading,
-  onSetDeleted,
   onSelectPage,
   onSelectAllMatching,
   onClearSelection,
-  onPrimaryAction,
+  onDeleteSelected = () => {},
+  onRestoreSelected = () => {},
+  onUnhideSelected = () => {},
   onHideSelected,
   onPermanentlyDeleteSelected,
   onRetryFailedSelected = () => {},
@@ -111,40 +116,15 @@ export function JobBulkActions({
     retryAvailability,
     pendingPreparationAvailability,
   ].some((availability) => availability.isDemo && !availability.available);
-  const restoring = search.deleted === "deleted";
-  const hidden = search.deleted === "hidden";
-  const legacyClosed = search.deleted === "closed";
-  const retryAllFailures = search.deleted === "active";
-  const retrySelectedFailures = retryAllFailures && search.state === "failed";
-  const primaryLabel = hidden
-    ? "Unhide selected"
-    : restoring
-      ? "Restore selected"
-      : "Delete selected";
+  const canActOnActive = selectedJobStates.includes("active");
+  const canActOnDeleted = selectedJobStates.includes("deleted");
+  const canActOnHidden = selectedJobStates.includes("hidden");
+  const retryAllFailures = hasActiveMatches;
+  const retrySelectedFailures =
+    hasActiveMatches && selectedJobKeys.length > 0 && search.state === "failed";
+  const selectedQualifier = allMatchingSelected ? "matching" : "selected";
   return (
     <>
-      <div className="jobs-queue-navigation">
-        {legacyClosed ? (
-          <span className="jobs-legacy-queue-context" role="status">
-            Viewing posting availability exceptions from a legacy link.
-          </span>
-        ) : null}
-        <Tabs
-          className="jobs-queue-tabs-root"
-          onValueChange={(value) => {
-            onSetDeleted(value as JobsSearch["deleted"]);
-          }}
-          value={legacyClosed ? undefined : search.deleted}
-        >
-          <TabsList aria-label="Job queues" className="jobs-queue-tabs" loop>
-            {JOB_QUEUES.map((queue) => (
-              <TabsTrigger key={queue.value} value={queue.value}>
-                {queue.label}
-              </TabsTrigger>
-            ))}
-          </TabsList>
-        </Tabs>
-      </div>
       <div
         className="bulk-bar jobs-bulk-actions"
         data-selection-active={selectedCount ? "true" : "false"}
@@ -291,7 +271,7 @@ export function JobBulkActions({
                   />
                 ) : null}
               </DropdownMenuGroup>
-              {!restoring && !hidden && !legacyClosed ? (
+              {hasActiveMatches ? (
                 <DropdownMenuGroup>
                   <DropdownMenuLabel>Preparation</DropdownMenuLabel>
                   <RescoreCurrentPolicyButton
@@ -344,43 +324,64 @@ export function JobBulkActions({
               ) : null}
               <DropdownMenuGroup>
                 <DropdownMenuLabel>Selection management</DropdownMenuLabel>
-                {!hidden ? (
+                {canActOnActive ? (
                   <DropdownMenuItem
                     disabled={!selectedCount || loading}
                     onClick={onHideSelected}
                   >
-                    Hide selected
+                    Hide {selectedQualifier} active
                   </DropdownMenuItem>
                 ) : null}
-                {restoring || hidden ? (
+                {canActOnDeleted || canActOnHidden ? (
                   <DropdownMenuItem
                     className="text-destructive focus:bg-destructive/10 focus:text-destructive"
                     disabled={!selectedCount || loading}
                     onClick={onPermanentlyDeleteSelected}
                   >
-                    Permanently delete selected
+                    Permanently delete {selectedQualifier} removed
                   </DropdownMenuItem>
                 ) : null}
               </DropdownMenuGroup>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
-        {selectedCount ? (
+        {selectedCount && selectedJobStates.length ? (
           <div
             aria-label="Selected job lifecycle actions"
             className="jobs-action-group jobs-lifecycle-actions"
             role="group"
           >
-            <Button
-              aria-label={restoring ? "Restore selected" : undefined}
-              size="sm"
-              type="button"
-              variant={restoring || hidden ? "default" : "destructive"}
-              disabled={loading}
-              onClick={onPrimaryAction}
-            >
-              {primaryLabel}
-            </Button>
+            {canActOnActive ? (
+              <Button
+                size="sm"
+                type="button"
+                variant="destructive"
+                disabled={loading}
+                onClick={onDeleteSelected}
+              >
+                Delete {selectedQualifier} active
+              </Button>
+            ) : null}
+            {canActOnDeleted ? (
+              <Button
+                size="sm"
+                type="button"
+                disabled={loading}
+                onClick={onRestoreSelected}
+              >
+                Restore {selectedQualifier} deleted
+              </Button>
+            ) : null}
+            {canActOnHidden ? (
+              <Button
+                size="sm"
+                type="button"
+                disabled={loading}
+                onClick={onUnhideSelected}
+              >
+                Unhide {selectedQualifier} hidden
+              </Button>
+            ) : null}
           </div>
         ) : null}
       </div>

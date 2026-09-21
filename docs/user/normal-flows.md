@@ -290,9 +290,9 @@ postings become normalized, provenance-bearing job records before scoring.
 
 <WorkflowSurfacePanel surface="web">
 
-The Jobs view supports filters, sorting, pagination, deep links, deleted and
-hidden views, fit-score ranges, stage state, source provenance, compensation
-evidence, and route-level job workspaces.
+The Jobs view supports filters, sorting, pagination, deep links, job-state and
+fit-score filters, stage state, source provenance, compensation evidence, and
+route-level job workspaces.
 
 </WorkflowSurfacePanel>
 
@@ -313,19 +313,25 @@ evidence, source provenance, artifacts, readiness, and per-job actions.
 
 <WorkflowSurfacePanel surface="web">
 
-![JobCtrl Jobs table with fit scores, companies, and triage actions](../assets/screenshots/jobs.png)
-*The Jobs table ranks discovered jobs by fit score with filters, compensation columns, and bulk triage actions.*
+![JobCtrl single-table Jobs workspace with the Active Job state filter and distinct stage progress](../assets/screenshots/jobs.png)
+*The Jobs table keeps lifecycle state and pipeline stage distinct while preserving filters, saved views, and bulk triage actions.*
 
 </WorkflowSurfacePanel>
 
-Use the **Active**, **Deleted**, and **Hidden** tabs to move between real job
-queues; **Closed** is not a normal user-facing queue. Active postings do not
-repeat an `OPEN` label beside every title. The default view keeps **Sources**
-and **Warnings** available in column controls but hides them until needed.
-Delete and permanent-delete actions use destructive styling, while restore and
-unhide remain recovery actions. Opening a row uses its keyboard-focusable row
-action, so the table does not add a redundant visible **Open** control to every
-record.
+Use the **Job state** column filter to show **Active**, **Deleted**, **Hidden**,
+or any combination of those values in one table. The default view selects
+**Active** only. The options remain available even when the current page has no
+row in that state, and the server applies them before totals and pagination.
+Hidden takes precedence if a job has both hide and delete tombstones. **Closed**
+is not a normal user-facing state; old links that use it remain compatible.
+Active postings do not repeat an `OPEN` label beside every title. The default
+view keeps **Sources** and **Warnings** available in column controls but hides
+them until needed. Mixed-state selections expose only the actions eligible for
+each state: delete or hide active jobs, restore deleted jobs, unhide hidden jobs,
+and permanently remove deleted or hidden jobs. Delete and permanent-delete
+actions use destructive styling, while restore and unhide remain recovery
+actions. Opening a row uses its keyboard-focusable row action, so the table does
+not add a redundant visible **Open** control to every record.
 
 At 900px and below, the Jobs, Artifacts, Contacts, Discovery, and Settings data
 tables reflow into labelled record cards. Their sorting and filtering controls

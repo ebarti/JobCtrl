@@ -6,6 +6,8 @@ import {
 } from "@jobctrl/contracts";
 import { z } from "zod";
 
+import { JobStatesFilterSchema } from "../contexts/operations/types.js";
+
 const STAGE_OR_ALL = [...STAGES, "all"] as const;
 const STATE_OR_ALL = [...STAGE_STATES, "all"] as const;
 const optionalScore = z
@@ -30,6 +32,7 @@ export const jobsSearchSchema = z.object({
   state: z.enum(STATE_OR_ALL).default("all"),
   applyStatus: z.enum(JOB_APPLY_STATUS_FILTERS).default("all"),
   deleted: jobsQueue,
+  jobStates: JobStatesFilterSchema.optional().catch(undefined),
   sort: z.enum(JOB_SORT_FIELDS).default("discovered_at"),
   dir: z.enum(["asc", "desc"]).default("desc"),
   page: z.number().int().min(1).default(1),

@@ -4716,38 +4716,50 @@ function normalizeMutationFilter(filter: Partial<BulkJobMutationFilter>): JobLis
     stage: filter.stage,
     state: filter.state,
     deleted: filter.deleted ?? "active",
+    jobStates: filter.jobStates,
     applyStatus: filter.applyStatus ?? "all",
     source: filter.source ?? "",
     company: filter.company ?? "",
     minFitScore: filter.minFitScore,
     maxFitScore: filter.maxFitScore,
-    discoveredSince: undefined,
-    scoredSince: undefined,
+    discoveredSince: filter.discoveredSince,
+    scoredSince: filter.scoredSince,
   };
 }
 
 function jobSqlFilter(query: JobListQuery): { where: string; params: SqliteValue[] } {
   const clauses: string[] = ["job_list_projections.tenant_id = ?"];
   const params: SqliteValue[] = [DEFAULT_TENANT];
+  const hiddenPredicate = "EXISTS (SELECT 1 FROM jobctrl_hidden_jobs h WHERE h.tenant_id = job_list_projections.tenant_id AND h.job_id = job_list_projections.job_id AND h.unhidden_at IS NULL)";
   const closedPredicate = closedActiveStatePredicate(
     "job_list_projections.tenant_id",
     "job_list_projections.job_id",
   );
-  if (query.deleted === "active") {
+  if (query.jobStates) {
+    const statePredicates = query.jobStates.map((jobState) => {
+      if (jobState === "hidden") return hiddenPredicate;
+      if (jobState === "deleted") {
+        return `(job_list_projections.deleted_at IS NOT NULL AND NOT ${hiddenPredicate})`;
+      }
+      params.push(...closedPredicate.params);
+      return `(job_list_projections.deleted_at IS NULL AND NOT ${hiddenPredicate} AND NOT (${closedPredicate.sql}))`;
+    });
+    clauses.push(`(${statePredicates.join(" OR ")})`);
+  } else if (query.deleted === "active") {
     clauses.push("job_list_projections.deleted_at IS NULL");
-    clauses.push("NOT EXISTS (SELECT 1 FROM jobctrl_hidden_jobs h WHERE h.tenant_id = job_list_projections.tenant_id AND h.job_id = job_list_projections.job_id AND h.unhidden_at IS NULL)");
+    clauses.push(`NOT ${hiddenPredicate}`);
     clauses.push(`NOT (${closedPredicate.sql})`);
     params.push(...closedPredicate.params);
   } else if (query.deleted === "closed") {
     clauses.push("job_list_projections.deleted_at IS NULL");
-    clauses.push("NOT EXISTS (SELECT 1 FROM jobctrl_hidden_jobs h WHERE h.tenant_id = job_list_projections.tenant_id AND h.job_id = job_list_projections.job_id AND h.unhidden_at IS NULL)");
+    clauses.push(`NOT ${hiddenPredicate}`);
     clauses.push(closedPredicate.sql);
     params.push(...closedPredicate.params);
   } else if (query.deleted === "deleted") {
     clauses.push("job_list_projections.deleted_at IS NOT NULL");
-    clauses.push("NOT EXISTS (SELECT 1 FROM jobctrl_hidden_jobs h WHERE h.tenant_id = job_list_projections.tenant_id AND h.job_id = job_list_projections.job_id AND h.unhidden_at IS NULL)");
+    clauses.push(`NOT ${hiddenPredicate}`);
   } else if (query.deleted === "hidden") {
-    clauses.push("EXISTS (SELECT 1 FROM jobctrl_hidden_jobs h WHERE h.tenant_id = job_list_projections.tenant_id AND h.job_id = job_list_projections.job_id AND h.unhidden_at IS NULL)");
+    clauses.push(hiddenPredicate);
   }
   if (query.stage) {
     clauses.push("job_list_projections.current_stage = ?");
@@ -4975,6 +4987,7 @@ function jobFilterPayload(query: JobListQuery): Record<string, unknown> {
     discoveredSince: query.discoveredSince ?? null,
     scoredSince: query.scoredSince ?? null,
     deleted: query.deleted,
+    jobStates: query.jobStates ?? null,
   };
 }
 

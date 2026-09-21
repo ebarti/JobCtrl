@@ -40,6 +40,7 @@ import type {
   JobDetail,
   JobApplicationOutcomeListResponse,
   JobListQuery,
+  JobState,
   JobSortField,
   JobSummary,
   ManualCaptureImportRequest,
@@ -88,6 +89,7 @@ import type {
   WorkflowRunTimelineEvent,
   WorkflowRunsListQuery,
 } from "@jobctrl/contracts";
+import { JOB_STATES, JobStatesFilterSchema } from "@jobctrl/contracts";
 import type { DomainEventUnion } from "@jobctrl/domain-types";
 
 export type {
@@ -132,6 +134,7 @@ export type {
   JobDetail,
   JobApplicationOutcomeListResponse,
   JobListQuery,
+  JobState,
   JobSortField,
   JobSummary,
   ManualCaptureImportRequest,
@@ -180,6 +183,8 @@ export type {
   WorkflowRunTimelineEvent,
   WorkflowRunsListQuery,
 };
+
+export { JOB_STATES, JobStatesFilterSchema };
 
 export type JobId = string;
 

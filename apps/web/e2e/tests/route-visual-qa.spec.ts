@@ -1701,7 +1701,7 @@ test("density modes, focus rings, filters, forms, and destructive controls remai
     .check();
   await expect(page.getByText("1 selected")).toBeVisible();
   const deleteSelected = page.getByRole("button", {
-    name: /^delete selected$/i,
+    name: /^delete selected active$/i,
   });
   await expect(deleteSelected).toBeVisible();
 

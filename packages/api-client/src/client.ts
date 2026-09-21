@@ -165,7 +165,13 @@ import {
 
 import { createEndpointMethods } from "./endpoint-client.js";
 
-type QueryValue = boolean | number | string | null | undefined;
+type QueryValue =
+  | boolean
+  | number
+  | string
+  | readonly string[]
+  | null
+  | undefined;
 const DEFAULT_NODE_BASE_URL = "http://127.0.0.1:8766";
 
 export class JobCtrlApiError extends Error {

@@ -89,16 +89,18 @@ and observing that execution.
 
 ### Jobs
 
-![JobCtrl Jobs workspace with filters, saved views, fit evidence, and bulk actions](../assets/screenshots/jobs.png)
+![JobCtrl single-table Jobs workspace with a Job state filter, fit evidence, saved views, and bulk actions](../assets/screenshots/jobs.png)
 
-Jobs is the URL-backed triage table. Search, stage/state/apply/deleted filters,
-sorting, pagination, saved views, selection, columns, and bulk actions remain
-available before opening one record. **Active**, **Deleted**, and **Hidden** are
-the visible queues; legacy closed-posting filters do not become a fourth tab.
-The normal Active row omits redundant `OPEN` copy, and deletion is destructive.
-The default view focuses on fit, title, company, location, stage, state, and Apply
-status. Source, compensation detail, warnings, resume template, and discovery
-date remain available through **Columns** and saved views. A
+Jobs is the URL-backed triage table. Search, stage/state/apply filters, sorting,
+pagination, saved views, selection, columns, and bulk actions remain available
+before opening one record. The **Job state** column filter shows **Active**,
+**Deleted**, **Hidden**, or a combination in the same table and defaults to
+Active; legacy closed-posting links remain compatible without adding another
+control. The normal Active row omits redundant `OPEN` copy, and deletion is
+destructive. The default view focuses on fit, title, company, Job state,
+location, stage, stage state, and Apply status. Source, compensation detail,
+warnings, resume template, and discovery date remain available through
+**Columns** and saved views. A
 focus-only row action opens the record without filling the table with visible
 **Open** buttons.
 

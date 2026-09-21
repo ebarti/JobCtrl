@@ -261,16 +261,29 @@ body accepts `jobKeys` for selected stale scores or an empty list for all active
 stale scores, plus optional `limit` for bounded resets. The backend command
 that consumes those reset jobs is `jobctrl score --rescore` or the batch
 API action with `stage: "score"` and `rescore: true`.
-The jobs list `deleted` filter accepts `active`, `closed`, `deleted`, `hidden`,
-or `all`. Closed jobs are non-deleted postings whose active-state verification
+The jobs list and all-matching bulk filters accept optional `jobStates` values
+`active`, `deleted`, and `hidden`. Multiple values have OR semantics and are
+applied before count and pagination. The displayed Job state is derived from
+tombstones: hidden means an active hide tombstone and takes precedence when
+both tombstones exist; deleted means a delete tombstone without an active hide
+tombstone; otherwise the displayed state is Active. A closed or otherwise
+unavailable posting inspected through a legacy `deleted=closed` link therefore
+still displays Active. Filter eligibility is stricter: `jobStates=active`
+requires no delete or hide tombstone and excludes postings whose active-state
+verification marked them closed, expired, removed, or location-incompatible.
+When `jobStates` is present it takes precedence over the legacy `deleted` filter.
+The legacy `deleted` filter still accepts `active`, `closed`, `deleted`,
+`hidden`, or `all` when `jobStates` is absent, preserving old URLs and saved
+views. Closed jobs are non-deleted postings whose active-state verification
 marked them unavailable, expired, removed, or location-incompatible; they are
-excluded from active lists, dashboard totals, and worker queues while remaining
-inspectable from the Closed tab. Deleted jobs are temporary removals: discovery
-clears the delete tombstone when the same posting is observed again. Hidden jobs
-use a separate `jobctrl_hidden_jobs` tombstone and remain suppressed from
-active/deleted/closed lists, dashboard totals, artifacts, workflow runs, and
-activity until an unhide mutation clears that hidden tombstone. Soft delete
-and restore are exposed at `DELETE /v1/jobs/:key` and
+excluded from both `jobStates=active` and legacy `deleted=active` lists,
+dashboard totals, and worker queues while remaining inspectable through old
+links. Deleted jobs are temporary removals:
+discovery clears the delete tombstone when the same posting is observed again.
+Hidden jobs use a separate `jobctrl_hidden_jobs` tombstone and remain suppressed
+from legacy active/deleted/closed lists, dashboard totals, artifacts, workflow
+runs, and activity until an unhide mutation clears that hidden tombstone. Soft
+delete and restore are exposed at `DELETE /v1/jobs/:key` and
 `POST /v1/jobs/:key/restore`, plus bulk `POST /v1/jobs/bulk-delete` and
 `POST /v1/jobs/bulk-restore`. The API exposes
 bulk hide/unhide routes at `POST /v1/jobs/bulk-hide` and

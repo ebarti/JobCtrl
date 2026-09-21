@@ -108,8 +108,8 @@ critical flows:
 2. **Job Detail workspace** → click a row → the full route workspace opens with
    score, stages, artifacts, and a back action; returning preserves the URL filter.
 3. **Soft-delete + restore** → bulk-select 3 jobs → delete → confirm
-   removal from active list → switch to "deleted" tab → restore → confirm
-   re-appearance.
+   removal from the Active-filtered list → set the **Job state** column filter
+   to **Deleted** → restore → confirm re-appearance.
 4. **Profile edit + Plate baseline editor** → load profile → edit a field →
    save → baseline resume HTML is refetched with a new cache key and remains
    rendered in the Profile Plate editor.

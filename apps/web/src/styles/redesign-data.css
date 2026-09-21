@@ -21,26 +21,6 @@
   margin-bottom: var(--jh-internal-gap);
 }
 
-.jobs-queue-navigation {
-  display: grid;
-  gap: var(--jh-internal-gap);
-  padding-inline: var(--jh-panel-padding);
-}
-
-.jobs-legacy-queue-context {
-  padding-top: var(--jh-internal-gap);
-  color: var(--muted-foreground);
-}
-
-.jobs-queue-tabs-root,
-.jobs-queue-tabs {
-  width: 100%;
-}
-
-.jobs-queue-tabs {
-  min-height: var(--jh-control-height);
-}
-
 .jobs-bulk-actions {
   display: flex;
   min-height: var(--jh-row-height);
@@ -104,14 +84,6 @@
 @media (max-width: 720px) {
   .jobs-page-head {
     margin-bottom: var(--jh-internal-gap);
-  }
-
-  .jobs-queue-navigation {
-    padding-inline: var(--jh-panel-padding);
-  }
-
-  .jobs-queue-tabs {
-    overflow-x: auto;
   }
 
   .jobs-bulk-actions {

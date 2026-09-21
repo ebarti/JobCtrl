@@ -1,6 +1,7 @@
 import {
   JOB_APPLY_STATUS_FILTERS,
   JOB_SORT_FIELDS,
+  JOB_STATES,
   STAGES,
   STAGE_STATES,
   type JobSortField,
@@ -17,7 +18,7 @@ import {
   type StateStorage,
 } from "zustand/middleware";
 
-export const SAVED_TABLE_VIEW_STORE_VERSION = 3;
+export const SAVED_TABLE_VIEW_STORE_VERSION = 4;
 export const SAVED_TABLE_VIEW_SCHEMA_VERSION = 1;
 export const DEFAULT_SAVED_TABLE_VIEW_ID = "default";
 export const JOBS_TABLE_ID = "jobs" satisfies TableId;
@@ -26,6 +27,7 @@ export const JOBS_TABLE_COLUMN_IDS = [
   "fit_score",
   "title",
   "company",
+  "job_state",
   "source",
   "compensation_min_eur",
   "compensation_max_eur",
@@ -205,39 +207,74 @@ export function migrateSavedTableViewsState(
   persistedVersion: number,
 ): unknown {
   const migrated = migrateLegacyTemplateVisibility(value, persistedVersion);
-  if (persistedVersion >= 3 || !isRecord(migrated)) return migrated;
-  const active = migrated["activeViewIdByTable"];
-  const presentations = migrated["presentationByTable"];
+  const hiddenMigrated = (() => {
+    if (persistedVersion >= 3 || !isRecord(migrated)) return migrated;
+    const active = migrated["activeViewIdByTable"];
+    const presentations = migrated["presentationByTable"];
+    if (
+      !isRecord(active) ||
+      active[JOBS_TABLE_ID] !== DEFAULT_SAVED_TABLE_VIEW_ID ||
+      !isRecord(presentations)
+    )
+      return migrated;
+    const presentation = presentations[JOBS_TABLE_ID];
+    if (!isRecord(presentation) || !isRecord(presentation["columns"]))
+      return migrated;
+    const columns = presentation["columns"];
+    const oldHidden = ["source", "compensation_warnings", "resume_template"];
+    const hidden = columns["hidden"];
+    // A customized Default is a user choice, just like a named view.
+    if (
+      !Array.isArray(hidden) ||
+      hidden.length !== oldHidden.length ||
+      !oldHidden.every((id) => hidden.includes(id)) ||
+      ![
+        JOBS_TABLE_COLUMN_IDS,
+        JOBS_TABLE_COLUMN_IDS.filter((id) => id !== "job_state"),
+      ].some(
+        (order) =>
+          JSON.stringify(columns["order"]) === JSON.stringify(order),
+      ) ||
+      !isRecord(columns["widths"]) ||
+      Object.keys(columns["widths"]).length > 0
+    )
+      return migrated;
+    return {
+      ...migrated,
+      presentationByTable: {
+        ...presentations,
+        [JOBS_TABLE_ID]: {
+          ...presentation,
+          columns: { ...columns, hidden: [...DEFAULT_JOBS_HIDDEN_COLUMN_IDS] },
+        },
+      },
+    };
+  })();
+
+  if (persistedVersion >= 4 || !isRecord(hiddenMigrated)) return hiddenMigrated;
+  const active = hiddenMigrated["activeViewIdByTable"];
+  const presentations = hiddenMigrated["presentationByTable"];
   if (
     !isRecord(active) ||
     active[JOBS_TABLE_ID] !== DEFAULT_SAVED_TABLE_VIEW_ID ||
     !isRecord(presentations)
   )
-    return migrated;
+    return hiddenMigrated;
   const presentation = presentations[JOBS_TABLE_ID];
   if (!isRecord(presentation) || !isRecord(presentation["columns"]))
-    return migrated;
+    return hiddenMigrated;
   const columns = presentation["columns"];
-  const oldHidden = ["source", "compensation_warnings", "resume_template"];
-  const hidden = columns["hidden"];
-  // A customized Default is a user choice, just like a named view.
-  if (
-    !Array.isArray(hidden) ||
-    hidden.length !== oldHidden.length ||
-    !oldHidden.every((id) => hidden.includes(id)) ||
-    JSON.stringify(columns["order"]) !==
-      JSON.stringify(JOBS_TABLE_COLUMN_IDS) ||
-    !isRecord(columns["widths"]) ||
-    Object.keys(columns["widths"]).length > 0
-  )
-    return migrated;
+  const legacyOrder = JOBS_TABLE_COLUMN_IDS.filter((id) => id !== "job_state");
+  if (JSON.stringify(columns["order"]) !== JSON.stringify(legacyOrder)) {
+    return hiddenMigrated;
+  }
   return {
-    ...migrated,
+    ...hiddenMigrated,
     presentationByTable: {
       ...presentations,
       [JOBS_TABLE_ID]: {
         ...presentation,
-        columns: { ...columns, hidden: [...DEFAULT_JOBS_HIDDEN_COLUMN_IDS] },
+        columns: { ...columns, order: [...JOBS_TABLE_COLUMN_IDS] },
       },
     },
   };
@@ -349,6 +386,13 @@ function normalizeUrlFilters(value: unknown): SavedTableViewUrlFilters {
   }
   if (isOneOf(source["deleted"], JOB_DELETED_VIEW_FILTERS)) {
     next.deleted = source["deleted"];
+  }
+  if (Array.isArray(source["jobStates"])) {
+    const rawJobStates = source["jobStates"];
+    const jobStates = JOB_STATES.filter((jobState) =>
+      rawJobStates.includes(jobState),
+    );
+    if (jobStates.length) next.jobStates = jobStates;
   }
   for (const key of ["pageSize", "minFitScore", "maxFitScore"] as const) {
     const numeric = Number(source[key]);

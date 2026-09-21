@@ -14,6 +14,7 @@ import {
   listActivity,
   listJobs,
   listScoringKeywords,
+  matchingJobKeys,
 } from "../src/read-model.js";
 import { BUILT_IN_RESUME_TEMPLATE_THEME } from "../src/resume-templates.js";
 import { EXACT_V10_SCHEMA_MANIFEST, schemaManifest } from "../src/schema-manifest.js";
@@ -624,6 +625,54 @@ describe("exact-v7 read model job ids", () => {
     );
     expect(activity.items.some((item) => item.jobKey === HIDDEN_JOB_ID || item.jobKey === DELETED_JOB_ID)).toBe(false);
     expect(getJobDetail(db, "not-a-canonical-job-id")).toBeNull();
+  });
+
+  it("filters canonical job states before count, pagination, and bulk selection", () => {
+    const db = seededDatabase();
+    db.prepare(
+      `INSERT INTO jobctrl_deleted_jobs (tenant_id, job_id, deleted_at)
+       VALUES ('local', ?, ?)`,
+    ).run(HIDDEN_JOB_ID, NOW);
+
+    const active = listJobs(db, {
+      ...activeJobQuery,
+      deleted: "hidden",
+      jobStates: ["active"],
+    });
+    const deleted = listJobs(db, {
+      ...activeJobQuery,
+      deleted: "active",
+      jobStates: ["deleted"],
+    });
+    const hidden = listJobs(db, {
+      ...activeJobQuery,
+      deleted: "deleted",
+      jobStates: ["hidden"],
+    });
+    const mixedFirstPage = listJobs(db, {
+      ...activeJobQuery,
+      pageSize: 1,
+      jobStates: ["active", "hidden"],
+    });
+
+    expect(active.items.map((job) => job.jobKey)).toEqual([JOB_ID]);
+    expect(deleted.items.map((job) => job.jobKey)).toEqual([DELETED_JOB_ID]);
+    expect(hidden.items.map((job) => job.jobKey)).toEqual([HIDDEN_JOB_ID]);
+    expect(mixedFirstPage.pagination).toMatchObject({
+      page: 1,
+      pageSize: 1,
+      total: 2,
+      pages: 2,
+    });
+    expect(mixedFirstPage.filter).toMatchObject({
+      jobStates: ["active", "hidden"],
+    });
+    expect(
+      matchingJobKeys(db, {
+        deleted: "active",
+        jobStates: ["deleted", "hidden"],
+      }).sort(),
+    ).toEqual([DELETED_JOB_ID, HIDDEN_JOB_ID].sort());
   });
 
   it("filters and aggregates only projection-visible normalized score keywords", () => {

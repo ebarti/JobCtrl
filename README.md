@@ -72,7 +72,7 @@ credentials, resumes, application data, logs, or other personal information.
 
 ## Get Started
 
-JobCtrl `0.1.1` is the current early-access application release. The public
+JobCtrl `0.2.0` is the current early-access application release. The public
 version began at `0.1.0` after the pre-launch `2.0.x` numbering was withdrawn so
 the version communicates the product's actual maturity; this did not downgrade
 the product, data, database schema, launcher protocol, or security controls.
@@ -145,14 +145,14 @@ Full first-run guide: [jobctrl.dev/user/getting-started](https://jobctrl.dev/use
 
 | | |
 | --- | --- |
-| [<img src="docs/assets/screenshots/pipelines.png" alt="Pipelines workspace with launch controls, a visual stage flow, and diagnostics (synthetic data)" width="440" />](docs/assets/screenshots/pipelines.png) | [<img src="docs/assets/screenshots/jobs.png" alt="Jobs table with fit scores, stages, and filters (synthetic data)" width="440" />](docs/assets/screenshots/jobs.png) |
-| **Pipelines** — launch bounded work and inspect cohorts, backlog, capacity, ETA, and active tasks | **Jobs** — import a public posting URL, then filter and triage the canonical job alongside discovered results |
+| [<img src="docs/assets/screenshots/pipelines.png" alt="Pipelines workspace with launch controls, a visual stage flow, and diagnostics (synthetic data)" width="440" />](docs/assets/screenshots/pipelines.png) | [<img src="docs/assets/screenshots/jobs.png" alt="Single-table Jobs workspace with the Job state filter, fit scores, stages, and bulk actions (synthetic data)" width="440" />](docs/assets/screenshots/jobs.png) |
+| **Pipelines** — launch bounded work and inspect cohorts, backlog, capacity, ETA, and active tasks | **Jobs** — filter Active, Deleted, and Hidden records in one table while keeping stage progress distinct |
 | [<img src="docs/assets/screenshots/job-detail.png" alt="Route-level Job Detail workspace with requirement evidence and audit history (synthetic data)" width="440" />](docs/assets/screenshots/job-detail.png) | [<img src="docs/assets/screenshots/apply-review.png" alt="Application Review workspace editing a tailored resume with audit evidence (synthetic data)" width="440" />](docs/assets/screenshots/apply-review.png) |
 | **Job detail** — one bookmarkable workspace for fit, provenance, materials, progress, and history | **Apply Review** — edit and approve the exact resume and evidence binding that ships |
 
 Full tour with captions: [Product Tour](https://jobctrl.dev/user/product-tour).
 Documentation screenshots must be generated from synthetic data — refresh
-them with `pnpm docs:screenshots`
+them with `corepack pnpm docs:screenshots`
 ([how it works](https://jobctrl.dev/local-development#documentation-screenshots)).
 
 ## How It Compares
@@ -239,10 +239,11 @@ evidence, qualifications, and the complete capability matrix.
   nor required bullet pins retain their existing role details without generated
   bullets. A pinned bullet still needs supporting evidence from its own role;
   restore that evidence or remove the pin before tailoring.
-- Triage jobs through the real **Active**, **Deleted**, and **Hidden** queues.
-  The default Active view keeps source and warning columns available but hidden,
-  uses destructive styling for deletion, and opens a row through its focused
-  activation control instead of adding a competing always-visible action.
+- Triage jobs in one table with the **Job state** column filter for **Active**,
+  **Deleted**, and **Hidden**. The default Active filter keeps source and warning
+  columns available but hidden, uses destructive styling for deletion, and
+  opens a row through its focused activation control instead of adding a
+  competing always-visible action.
 - Review generated resumes in Apply Review as editable rich-text documents:
   change text and formatting, add hyperlinks, save a draft, render the
   replacement PDF, and approve only the exact reviewed artifact.

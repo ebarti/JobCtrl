@@ -9,12 +9,13 @@ import { ScoreBadge } from "../../contexts/scoring/components/ScoreBadge.js";
 import { ScoreStalenessBadge } from "../../contexts/scoring/components/ScoreStalenessBadge.js";
 import { StageBadge } from "../../contexts/pipeline/components/StageBadge.js";
 import { UserFacingStageBadge } from "../../contexts/pipeline/components/UserFacingStageBadge.js";
-import type { JobSummary } from "../../contexts/operations/types.js";
+import type { JobState, JobSummary } from "../../contexts/operations/types.js";
 import type {
   DataGridColumn,
   DataGridCellContext,
   DataGridHeaderContext,
 } from "../../shared/ui/filterable-data-grid.js";
+import { Badge } from "../../shared/ui/badge.js";
 import { Checkbox } from "../../shared/ui/checkbox.js";
 import { RelativeTime } from "../../shared/ui/relative-time.js";
 import { TitleStack } from "../../shared/ui/title-stack.js";
@@ -27,6 +28,34 @@ export interface JobColumnsOptions {
 }
 
 const JOB_TABLE_STAGE_FILTERS = ["discover", "apply"] as const;
+export const JOB_STATE_FILTER_VALUES = [
+  "Active",
+  "Deleted",
+  "Hidden",
+] as const;
+
+export function jobStateValue(
+  job: Pick<JobSummary, "deletedAt" | "hiddenAt">,
+): JobState {
+  if (job.hiddenAt) return "hidden";
+  if (job.deletedAt) return "deleted";
+  return "active";
+}
+
+export function jobStateLabel(
+  job: Pick<JobSummary, "deletedAt" | "hiddenAt">,
+) {
+  return JOB_STATE_LABEL_BY_VALUE[jobStateValue(job)];
+}
+
+const JOB_STATE_LABEL_BY_VALUE: Record<
+  JobState,
+  (typeof JOB_STATE_FILTER_VALUES)[number]
+> = {
+  active: "Active",
+  deleted: "Deleted",
+  hidden: "Hidden",
+};
 
 type CompensationSummary = NonNullable<JobSummary["compensationSummary"]>;
 type MarketSummary = CompensationSummary["market"];
@@ -642,8 +671,8 @@ export function jobColumns(
     {
       id: "title",
       label: "Title",
-      width: 240,
-      minWidth: 220,
+      width: 230,
+      minWidth: 210,
       sortable: true,
       rowHeader: true,
       getFilterValue: (row) => row.title,
@@ -661,7 +690,7 @@ export function jobColumns(
     },
     {
       id: "company",
-      width: 140,
+      width: 130,
       label: "Company",
       sortable: true,
       getFilterValue: (row) => row.company || "-",
@@ -670,6 +699,16 @@ export function jobColumns(
           {row.company || "-"}
         </span>
       ),
+    },
+    {
+      id: "job_state",
+      width: 144,
+      minWidth: 144,
+      label: "Job state",
+      getFilterValue: jobStateLabel,
+      filterValues: JOB_STATE_FILTER_VALUES,
+      filterText: false,
+      render: (row) => <Badge variant="category">{jobStateLabel(row)}</Badge>,
     },
     {
       id: "source",
@@ -822,7 +861,7 @@ export function jobColumns(
     {
       id: "current_state",
       width: 136,
-      label: "State",
+      label: "Stage state",
       sortable: true,
       getFilterValue: (row) => row.currentState,
       getFilterSearchValue: (row) =>
