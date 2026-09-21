@@ -50,7 +50,12 @@ does not invoke them. It returns only a validated exact recent-title fallback
 or zero suggestions with
 `provider_token_or_cost_bound_unsupported`. The `model` strategy remains in the
 response contract and is exercised with explicitly synthetic adapters in
-domain tests, but is not a currently available production capability.
+domain tests, but is not a currently available production capability. Those
+tests cover specific fabricated, cross-track, and unsupported-seniority cases;
+the synthetic title validator does not yet reject every unsupported qualifier
+attached to an evidenced title token. Production remains on the exact-title or
+zero path until both that semantic gap and the provider token/cost bounds are
+closed.
 
 If a suggestion-derived save conflicts with a newer canonical profile, the web
 keeps the local draft but does not authorize it with the newer version. The user

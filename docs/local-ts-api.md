@@ -71,7 +71,11 @@ snapshot. Current managed provider SDKs do not enforce the required output-token
 and maximum-call-cost bounds, so this production route makes no provider call
 and returns only the conservative exact-title fallback or an empty result with
 `provider_token_or_cost_bound_unsupported`. Synthetic adapter tests cover the
-model response validator without claiming a production model run.
+model response validator without claiming a production model run. Their
+fabricated-title coverage is not exhaustive: an unsupported qualifier can
+still pass when another title token overlaps cited evidence. The production
+handler remains safe because model generation is disabled; broader inference
+requires semantic-validator hardening in addition to bounded provider support.
 
 ## Artifacts And Tailoring Audit
 

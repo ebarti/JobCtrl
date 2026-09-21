@@ -784,6 +784,52 @@ describe("<ProfileForm>", () => {
     expect(updateProfile).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps a second autosave version-agnostic after a late manual-save response", async () => {
+    vi.useFakeTimers();
+    let resolveFirstSave: ((response: typeof sampleProfileResponse) => void) | undefined;
+    const updateProfile = vi.fn()
+      .mockImplementationOnce((request) => new Promise<typeof sampleProfileResponse>((resolve) => {
+        resolveFirstSave = (response) => resolve({
+          ...response,
+          profile: JSON.parse(request.profileText),
+        });
+      }))
+      .mockImplementationOnce(async (request) => ({
+        ...sampleProfileResponse,
+        profileVersion: 5,
+        profile: JSON.parse(request.profileText),
+      }));
+    renderWithProviders(<ProfileForm initial={sampleProfileResponse} section="target-search" />, {
+      ports: buildTestPorts({ api: { updateProfile } }),
+    });
+
+    const targetRole = screen.getByLabelText("Target roles 1");
+    fireEvent.change(targetRole, { target: { value: "Director of Engineering" } });
+    await act(async () => {
+      vi.advanceTimersByTime(5_000);
+      await Promise.resolve();
+    });
+    expect(updateProfile).toHaveBeenCalledTimes(1);
+    expect(updateProfile.mock.calls[0]![0]).not.toHaveProperty("expectedProfileVersion");
+
+    fireEvent.change(targetRole, { target: { value: "VP of Engineering" } });
+    await act(async () => {
+      resolveFirstSave?.({ ...sampleProfileResponse, profileVersion: 4 });
+      await Promise.resolve();
+    });
+    expect(screen.getByText("Saved; newer changes pending")).toBeInTheDocument();
+
+    await act(async () => {
+      vi.advanceTimersByTime(5_000);
+      await Promise.resolve();
+    });
+    expect(updateProfile).toHaveBeenCalledTimes(2);
+    expect(updateProfile.mock.calls[1]![0]).not.toHaveProperty("expectedProfileVersion");
+    expect(JSON.parse(updateProfile.mock.calls[1]![0].profileText).experience.target_role).toBe(
+      "VP of Engineering",
+    );
+  });
+
   it("does not reset dirty edits when a saved autosave snapshot reaches the initial props", async () => {
     const initial = JSON.parse(JSON.stringify(sampleProfileResponse));
     initial.profile.experience = { target_role: "Director of Engineering" };
@@ -892,6 +938,182 @@ describe("<ProfileForm>", () => {
     expect(JSON.parse(request.profileText).experience.target_role).toBe(
       "VP Engineering; Head of Platform",
     );
+  });
+
+  it("keeps later manual edits version-agnostic after a delayed guarded suggestion save", async () => {
+    const user = userEvent.setup();
+    let resolveFirstSave: ((response: typeof sampleProfileResponse) => void) | undefined;
+    const targetRoleSuggestions = vi.fn(async () => ({
+      ok: true as const,
+      profileVersion: 3,
+      suggestions: [
+        {
+          title: "Head of Platform",
+          classification: "adjacent" as const,
+          track: "Management",
+          seniority: "Director",
+          evidenceIds: ["experience:exp-1", "exp-1_bullet_1"],
+          rationale: "Saved delivery evidence supports adjacent scope.",
+        },
+      ],
+      strategy: "model" as const,
+      warnings: ["stubbed_model_evidence"],
+    }));
+    const updateProfile = vi.fn()
+      .mockImplementationOnce((request) => new Promise<typeof sampleProfileResponse>((resolve) => {
+        resolveFirstSave = (response) => resolve({
+          ...response,
+          profile: JSON.parse(request.profileText),
+        });
+      }))
+      .mockImplementationOnce(async (request) => ({
+        ...sampleProfileResponse,
+        profileVersion: 5,
+        profile: JSON.parse(request.profileText),
+      }));
+    renderWithProviders(<ProfileForm initial={sampleProfileResponse} section="target-search" />, {
+      ports: buildTestPorts({ api: { targetRoleSuggestions, updateProfile } }),
+    });
+
+    await user.click(screen.getByRole("button", { name: "Suggest roles" }));
+    await user.click(await screen.findByRole("button", { name: "Add selected roles" }));
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(1));
+    expect(updateProfile.mock.calls[0]![0].expectedProfileVersion).toBe(3);
+
+    fireEvent.change(screen.getByLabelText("Target location 1"), {
+      target: { value: "Madrid" },
+    });
+    await act(async () => {
+      resolveFirstSave?.({ ...sampleProfileResponse, profileVersion: 4 });
+      await Promise.resolve();
+    });
+    expect(screen.getByText("Saved; newer changes pending")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(2));
+    const retry = updateProfile.mock.calls[1]![0];
+    expect(retry).not.toHaveProperty("expectedProfileVersion");
+    expect(JSON.parse(retry.profileText).experience).toMatchObject({
+      target_role: "Head of Platform",
+      target_locations: "Madrid",
+    });
+  });
+
+  it("keeps a suggestion accepted during an earlier guarded save version-guarded", async () => {
+    const user = userEvent.setup();
+    let resolveFirstSave: ((response: typeof sampleProfileResponse) => void) | undefined;
+    const suggestion = (title: string, profileVersion: number): TargetRoleSuggestionResponse => ({
+      ok: true,
+      profileVersion,
+      suggestions: [
+        {
+          title,
+          classification: "adjacent",
+          track: "Management",
+          seniority: "Director",
+          evidenceIds: ["experience:exp-1", "exp-1_bullet_1"],
+          rationale: "Saved delivery evidence supports adjacent scope.",
+        },
+      ],
+      strategy: "model",
+      warnings: ["stubbed_model_evidence"],
+    });
+    const targetRoleSuggestions = vi.fn()
+      .mockResolvedValueOnce(suggestion("Head of Platform", 3))
+      .mockResolvedValueOnce(suggestion("Director of Infrastructure", 3))
+      .mockResolvedValueOnce(suggestion("Director of Infrastructure", 4));
+    const updateProfile = vi.fn()
+      .mockImplementationOnce((request) => new Promise<typeof sampleProfileResponse>((resolve) => {
+        resolveFirstSave = (response) => resolve({
+          ...response,
+          profile: JSON.parse(request.profileText),
+        });
+      }))
+      .mockImplementationOnce(async (request) => ({
+        ...sampleProfileResponse,
+        profileVersion: 5,
+        profile: JSON.parse(request.profileText),
+      }));
+    const ports = buildTestPorts({ api: { targetRoleSuggestions, updateProfile } });
+    const { rerender } = renderWithProviders(
+      <ProfileForm initial={sampleProfileResponse} section="target-search" />,
+      { ports },
+    );
+
+    await user.click(screen.getByRole("button", { name: "Suggest roles" }));
+    await user.click(await screen.findByRole("button", { name: "Add selected roles" }));
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(1));
+
+    await user.click(screen.getByRole("button", { name: "Suggest roles" }));
+    await user.click(await screen.findByRole("button", { name: "Add selected roles" }));
+    const savedA = { ...sampleProfileResponse, profileVersion: 4 };
+    await act(async () => {
+      resolveFirstSave?.(savedA);
+      await Promise.resolve();
+    });
+    rerender(<ProfileForm initial={{
+      ...savedA,
+      profile: JSON.parse(updateProfile.mock.calls[0]![0].profileText),
+    }} section="target-search" />);
+
+    expect(screen.getByDisplayValue("Head of Platform")).toBeInTheDocument();
+    expect(screen.queryByDisplayValue("Director of Infrastructure")).not.toBeInTheDocument();
+    expect(screen.getByText(/Stale suggested roles were removed/i)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(updateProfile).toHaveBeenCalledTimes(1);
+    expect(screen.getByText(/regenerate suggestions, and review them before saving/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Suggest roles" }));
+    await user.click(await screen.findByRole("button", { name: "Add selected roles" }));
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(2));
+    const saveB = updateProfile.mock.calls[1]![0];
+    expect(saveB.expectedProfileVersion).toBe(4);
+    expect(JSON.parse(saveB.profileText).experience.target_role).toBe(
+      "Head of Platform; Director of Infrastructure",
+    );
+  });
+
+  it("treats a form replacement of an accepted role as version-agnostic manual intent", async () => {
+    const user = userEvent.setup();
+    const targetRoleSuggestions = vi.fn(async () => ({
+      ok: true as const,
+      profileVersion: 3,
+      suggestions: [
+        {
+          title: "Head of Platform",
+          classification: "adjacent" as const,
+          track: "Management",
+          seniority: "Director",
+          evidenceIds: ["experience:exp-1", "exp-1_bullet_1"],
+          rationale: "Saved delivery evidence supports adjacent scope.",
+        },
+      ],
+      strategy: "model" as const,
+      warnings: ["stubbed_model_evidence"],
+    }));
+    const updateProfile = vi.fn(async (request) => ({
+      ...sampleProfileResponse,
+      profileVersion: 4,
+      profile: JSON.parse(request.profileText),
+    }));
+    renderWithProviders(<ProfileForm initial={sampleProfileResponse} section="target-search" />, {
+      ports: buildTestPorts({ api: { targetRoleSuggestions, updateProfile } }),
+    });
+
+    await user.click(screen.getByRole("button", { name: "Suggest roles" }));
+    await user.click(await screen.findByRole("button", { name: "Add selected roles" }));
+    const acceptedRole = screen.getByLabelText("Target roles 1");
+    await user.clear(acceptedRole);
+    await user.type(acceptedRole, "Manual Architect");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(1));
+
+    const request = updateProfile.mock.calls[0]![0];
+    expect(request).not.toHaveProperty("expectedProfileVersion");
+    expect(JSON.parse(request.profileText).experience.target_role).toBe("Manual Architect");
   });
 
   it("requires a conflict-aware rebase and regeneration after a stale suggestion save", async () => {

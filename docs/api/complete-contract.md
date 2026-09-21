@@ -92,7 +92,12 @@ this route, so production makes no model call and returns only an exact
 recent-title fallback or `none`, with the
 `provider_token_or_cost_bound_unsupported` warning. `strategy: "model"` remains
 reserved in the wire schema and is covered by explicitly synthetic domain
-tests; it is not currently emitted by the production RPC handler.
+tests; it is not currently emitted by the production RPC handler. That
+synthetic validator rejects the covered unknown-evidence, track, seniority, and
+title probes, but its title-qualifier vocabulary is not exhaustive (for
+example, an unsupported qualifier can accompany an otherwise evidenced title
+token). Broader model-backed inference remains blocked until that semantic
+validation is hardened as well as the provider token/cost bounds above.
 Profile-data writes also record `ProfileUpdated` in `job_events`. When existing
 tailored resumes are present, the API handles that event by dispatching a
 background `tailor -> cover` pipeline run with `retailor=true`, `dryRun=false`,
