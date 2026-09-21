@@ -158,7 +158,38 @@ async function getIssue(github, owner, repo, issueNumber) {
   return data;
 }
 
-async function triageLatestIssue({ github, owner, repo, issueNumber }) {
+async function readLabelEvents(github, owner, repo, issueNumber) {
+  if (typeof github.paginate !== 'function' || typeof github.rest.issues.listEvents !== 'function') {
+    return { ok: false, events: [] };
+  }
+  try {
+    const events = await github.paginate(github.rest.issues.listEvents, {
+      owner,
+      repo,
+      issue_number: issueNumber,
+      per_page: 100,
+    });
+    return { ok: true, events };
+  } catch {
+    return { ok: false, events: [] };
+  }
+}
+
+function labelsProvenAddedByRun({ before, after, additions, automationLogin }) {
+  if (!before.ok || !after.ok) return new Set();
+  const beforeIds = new Set(before.events.filter(event => event.id != null).map(event => String(event.id)));
+  const proven = new Set();
+  for (const name of additions) {
+    const labeled = after.events.filter(event => event.event === 'labeled' && event.label?.name === name);
+    const newlyObserved = labeled.filter(event => event.id != null && !beforeIds.has(String(event.id)));
+    const latest = labeled.at(-1);
+    if (newlyObserved.length !== 1 || latest?.id == null || String(latest.id) !== String(newlyObserved[0].id)) continue;
+    if (latest.actor?.login === automationLogin && latest.actor?.type === 'Bot') proven.add(name);
+  }
+  return proven;
+}
+
+async function triageLatestIssue({ github, owner, repo, issueNumber, automationLogin }) {
   let issue = await getIssue(github, owner, repo, issueNumber);
   let additions = labelsForIssue(issue);
   if (additions.length === 0) return { additions: [], ensured: [] };
@@ -182,6 +213,7 @@ async function triageLatestIssue({ github, owner, repo, issueNumber }) {
     additions = latestAdditions;
   }
 
+  const eventsBeforeWrite = await readLabelEvents(github, owner, repo, issueNumber);
   await github.rest.issues.addLabels({
     owner,
     repo,
@@ -190,13 +222,22 @@ async function triageLatestIssue({ github, owner, repo, issueNumber }) {
   });
 
   const afterWrite = await getIssue(github, owner, repo, issueNumber);
+  const eventsAfterWrite = await readLabelEvents(github, owner, repo, issueNumber);
   const addedNames = new Set(additions);
   const withoutThisRun = {
     ...afterWrite,
     labels: (afterWrite.labels ?? []).filter(label => !addedNames.has(typeof label === 'string' ? label : label.name)),
   };
   const stillExpected = new Set(labelsForIssue(withoutThisRun));
-  const compensated = additions.filter(name => !stillExpected.has(name));
+  const stale = additions.filter(name => !stillExpected.has(name));
+  const provenAddedByRun = labelsProvenAddedByRun({
+    before: eventsBeforeWrite,
+    after: eventsAfterWrite,
+    additions,
+    automationLogin,
+  });
+  const compensated = stale.filter(name => provenAddedByRun.has(name));
+  const compensationSkipped = stale.filter(name => !provenAddedByRun.has(name));
   const compensationFailures = [];
   for (const name of compensated) {
     try {
@@ -208,15 +249,15 @@ async function triageLatestIssue({ github, owner, repo, issueNumber }) {
   if (compensationFailures.length > 0) {
     throw new AggregateError(compensationFailures, `Failed to compensate ${compensationFailures.length} stale triage label(s).`);
   }
-  return { additions, ensured, compensated };
+  return { additions, ensured, compensated, compensationSkipped };
 }
 
-export async function triageIssue({ github, owner, repo, issueNumber, issue }) {
+export async function triageIssue({ github, owner, repo, issueNumber, issue, automationLogin = 'github-actions[bot]' }) {
   const number = issueNumber ?? issue?.number;
   if (!Number.isInteger(number) || number <= 0) throw new Error('A positive issue number is required.');
   const key = `${owner}/${repo}#${number}`.toLowerCase();
   const previous = issueTriageQueues.get(key) ?? Promise.resolve();
-  const current = previous.catch(() => {}).then(() => triageLatestIssue({ github, owner, repo, issueNumber: number }));
+  const current = previous.catch(() => {}).then(() => triageLatestIssue({ github, owner, repo, issueNumber: number, automationLogin }));
   issueTriageQueues.set(key, current);
   try {
     return await current;

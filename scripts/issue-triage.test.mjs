@@ -9,12 +9,30 @@ function bodyWithArea(area, extra = '') {
   return `### Affected area\n\n${area}\n\n### What happened?\n\n${extra}\n\n${safety}`;
 }
 
-function githubFixture({ issue, existingDefinitions = [], createRace = [], onGetLabel, onAddLabels } = {}) {
+function githubFixture({
+  issue,
+  existingDefinitions = [],
+  createRace = [],
+  onGetLabel,
+  onBeforeAddLabels,
+  onAddLabels,
+  provenance = 'bot-owned',
+} = {}) {
   const definitions = new Set(existingDefinitions);
   const races = new Set(createRace);
   const calls = [];
+  const events = [];
+  let nextEventId = 1;
   let currentIssue = structuredClone(issue);
+  const recordLabel = (name, actor = { login: 'github-actions[bot]', type: 'Bot' }) => {
+    events.push({ id: nextEventId++, event: 'labeled', label: { name }, actor });
+  };
   const github = {
+    async paginate(method, input) {
+      calls.push(['paginate', input]);
+      const response = await method(input);
+      return response.data;
+    },
     rest: {
       issues: {
         async get(input) {
@@ -38,11 +56,22 @@ function githubFixture({ issue, existingDefinitions = [], createRace = [], onGet
         },
         async addLabels(input) {
           calls.push(['addLabels', input]);
+          onBeforeAddLabels?.(currentIssue, input, { recordLabel });
           for (const name of input.labels) {
-            if (!currentIssue.labels.some(label => (label.name ?? label) === name)) currentIssue.labels.push({ name });
+            if (currentIssue.labels.some(label => (label.name ?? label) === name)) continue;
+            currentIssue.labels.push({ name });
+            if (provenance === 'bot-owned') recordLabel(name);
+            else if (provenance === 'ambiguous') {
+              recordLabel(name);
+              recordLabel(name);
+            }
           }
-          onAddLabels?.(currentIssue, input);
+          onAddLabels?.(currentIssue, input, { recordLabel });
           return { data: input.labels };
+        },
+        async listEvents(input) {
+          calls.push(['listEvents', input]);
+          return { data: structuredClone(events) };
         },
         async removeLabel(input) {
           calls.push(['removeLabel', input]);
@@ -56,6 +85,7 @@ function githubFixture({ issue, existingDefinitions = [], createRace = [], onGet
     github,
     calls,
     definitions,
+    events,
     get issue() { return currentIssue; },
     editIssue(changes) { Object.assign(currentIssue, structuredClone(changes)); },
   };
@@ -261,12 +291,61 @@ test('a close at the add-label boundary compensates only labels added by that ru
   assert.deepEqual(result.compensated, ['type: bug', 'area: web']);
   assert.deepEqual(fixture.issue.labels.map(label => label.name).sort(), ['origin: manual', 'priority: P1']);
   assert.deepEqual(fixture.calls.filter(([method]) => method === 'removeLabel').map(([, input]) => input.name), ['type: bug', 'area: web']);
+  assert.equal(fixture.calls.filter(([method]) => method === 'listEvents').length, 2);
+});
+
+test('same-label human race is preserved because the new assignment is not bot-owned', async () => {
+  const issue = {
+    number: 82,
+    state: 'open',
+    title: '[Bug]: human wins label race',
+    body: '',
+    labels: [{ name: 'priority: P1' }],
+  };
+  const fixture = githubFixture({
+    issue,
+    existingDefinitions: ['type: bug'],
+    onBeforeAddLabels(currentIssue, _input, { recordLabel }) {
+      currentIssue.labels.push({ name: 'type: bug' });
+      recordLabel('type: bug', { login: 'maintainer', type: 'User' });
+      currentIssue.state = 'closed';
+    },
+  });
+  const result = await triageIssue({ github: fixture.github, owner: 'ebarti', repo: 'jobctrl', issueNumber: issue.number });
+  assert.deepEqual(result.compensated, []);
+  assert.deepEqual(result.compensationSkipped, ['type: bug']);
+  assert.deepEqual(fixture.issue.labels.map(label => label.name).sort(), ['priority: P1', 'type: bug']);
+  assert.equal(fixture.calls.some(([method]) => method === 'removeLabel'), false);
+});
+
+test('missing or ambiguous label provenance fails safe without manual or unrelated label loss', async () => {
+  for (const provenance of ['missing', 'ambiguous']) {
+    const issue = {
+      number: provenance === 'missing' ? 83 : 84,
+      state: 'open',
+      title: '[Bug]: provenance cannot prove ownership',
+      body: '',
+      labels: [{ name: 'priority: P1' }, { name: 'origin: manual' }],
+    };
+    const fixture = githubFixture({
+      issue,
+      existingDefinitions: ['type: bug'],
+      provenance,
+      onAddLabels(currentIssue) { currentIssue.state = 'closed'; },
+    });
+    const result = await triageIssue({ github: fixture.github, owner: 'ebarti', repo: 'jobctrl', issueNumber: issue.number });
+    assert.deepEqual(result.compensated, [], provenance);
+    assert.deepEqual(result.compensationSkipped, ['type: bug'], provenance);
+    assert.deepEqual(fixture.issue.labels.map(label => label.name).sort(), ['origin: manual', 'priority: P1', 'type: bug'], provenance);
+    assert.equal(fixture.calls.some(([method]) => method === 'removeLabel'), false, provenance);
+  }
 });
 
 test('workflow serializes each issue and passes only the issue number to fresh triage reads', async () => {
   const workflow = await readFile(new URL('../.github/workflows/issue-triage.yml', import.meta.url), 'utf8');
   assert.match(workflow, /group: issue-triage-\$\{\{ github\.repository \}\}-\$\{\{ github\.event\.issue\.number \|\| inputs\.issue_number \}\}/);
   assert.match(workflow, /cancel-in-progress: false/);
-  assert.match(workflow, /triageIssue\(\{ github, owner, repo, issueNumber \}\)/);
+  assert.match(workflow, /const automationLogin = 'github-actions\[bot\]'/);
+  assert.match(workflow, /triageIssue\(\{ github, owner, repo, issueNumber, automationLogin \}\)/);
   assert.doesNotMatch(workflow, /const \{ data: issue \}/);
 });
