@@ -384,16 +384,7 @@ Later slices do not ship around an unaccepted contract.
   event; rejection, conflicts, and stale saves cause no canonical mutation,
   profile event, continuation intent, or dispatch work.
 
-### Slice 3 — Selectivity, rendering, and artifact audit
-
-- Add explicit `selective_v1` conversion, inventory, Resume Brief, narrative
-  planning, budget enforcement, deterministic selection/assembly, actual
-  render metrics, skim checks, and persisted audit.
-- Reuse #830 achievement fidelity and #868/#869 batch/candidate ownership.
-- Exit: text, HTML, and PDF reconcile to the same selected evidence and the
-  last accepted artifact survives every failed replacement scenario.
-
-### Slice 4 — Residual Tailor inventory and disposition
+### Slice 3 — Tailor inventory and accepted disposition
 
 - Inventory every surviving Tailor entry point, retry/repair loop, artifact
   suppression path, and owner after #868/#869. At minimum this includes the
@@ -412,7 +403,22 @@ Later slices do not ship around an unaccepted contract.
 - Exit: repository-wide call-site evidence proves that each entry point and
   loop has one named owner and recorded disposition; deleted paths have no live
   callers; retained paths share the canonical batch, cancellation fence,
-  budget, audit, and accepted-artifact rules.
+  budget, audit, and accepted-artifact rules. The disposition table and its
+  ownership/suppression/retry/voice decisions require review acceptance before
+  any `selective_v1`, assembly, rendering, or Tailor-path implementation begins.
+
+### Slice 4 — Selectivity, cleanup, rendering, and artifact audit
+
+- Implement the accepted Slice 3 dispositions: remove or merge redundant entry
+  points and loops before adding behavior to retained owners.
+- Add explicit `selective_v1` conversion, inventory, Resume Brief, narrative
+  planning, budget enforcement, deterministic selection/assembly, actual
+  render metrics, skim checks, and persisted audit only through those retained
+  owners.
+- Reuse #830 achievement fidelity and #868/#869 batch/candidate ownership.
+- Exit: the accepted disposition is reflected in live call sites; text, HTML,
+  and PDF reconcile to the same selected evidence; and the last accepted
+  artifact survives every failed replacement scenario.
 
 ### Slice 5 — Inspectable API and UI
 
