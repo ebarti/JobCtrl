@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
-import { mkdir, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
@@ -26,10 +27,9 @@ function itemSnapshot(item, projectMemberships = []) {
     url: item.html_url,
     labels: (item.labels ?? []).map(labelName).sort(),
     assignees: (item.assignees ?? []).map(assignee => assignee.login).sort(),
-    projectMemberships: projectMemberships.map(membership => ({
-      id: membership.id,
-      statuses: [...membership.statuses].sort(),
-    })),
+    projectMemberships: projectMemberships
+      .map(membership => ({ id: membership.id, statuses: [...membership.statuses].sort() }))
+      .sort((left, right) => left.id.localeCompare(right.id)),
   };
 }
 
@@ -100,48 +100,161 @@ export function buildCataloguePlan(remoteLabels) {
 
 async function writeSnapshot(snapshotPath, snapshot) {
   await mkdir(path.dirname(snapshotPath), { recursive: true });
-  await writeFile(snapshotPath, `${JSON.stringify(snapshot, null, 2)}\n`, { flag: 'w' });
+  const temporaryPath = `${snapshotPath}.${process.pid}.tmp`;
+  await writeFile(temporaryPath, `${JSON.stringify(snapshot, null, 2)}\n`, { flag: 'w' });
+  await rename(temporaryPath, snapshotPath);
 }
 
-export async function runCatalogueSync({ adapter, apply = false, snapshotPath, now = () => new Date() }) {
-  const before = await paginateRest((page, perPage) => adapter.listLabelsPage(page, perPage));
-  const plan = buildCataloguePlan(before);
-  const execution = { attemptedWrites: 0, succeeded: [], failed: [], skipped: [] };
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(item => item === undefined ? 'null' : canonicalJson(item)).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value).filter(key => value[key] !== undefined).sort().map(key => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
 
-  if (apply) {
-    for (const operation of plan.create) {
-      execution.attemptedWrites += 1;
-      try {
-        await adapter.createLabel(operation);
-        execution.succeeded.push({ action: 'create', name: operation.name });
-      } catch (error) {
-        execution.failed.push({ action: 'create', name: operation.name, error: error.message });
-      }
-    }
-    for (const operation of plan.update) {
-      execution.attemptedWrites += 1;
-      try {
-        await adapter.updateLabel(operation.name, operation.after);
-        execution.succeeded.push({ action: 'update', name: operation.name });
-      } catch (error) {
-        execution.failed.push({ action: 'update', name: operation.name, error: error.message });
-      }
-    }
+function reviewId(review) {
+  return createHash('sha256').update(canonicalJson(review)).digest('hex');
+}
+
+function catalogueReview(before, plan) {
+  const remote = new Map(before.map(label => [label.name, label]));
+  return {
+    mode: 'catalogue',
+    labels: Object.keys(LABEL_CATALOGUE).sort().map(name => {
+      const label = remote.get(name);
+      return label
+        ? { name, present: true, color: (label.color ?? '').toLowerCase(), description: label.description ?? '' }
+        : { name, present: false };
+    }),
+    plan,
+  };
+}
+
+function validateReviewedPlan({ reviewedSnapshot, reviewedPlanId, mode, currentReview }) {
+  if (!reviewedSnapshot || !reviewedPlanId) {
+    throw new Error('--apply requires an immutable --reviewed-snapshot and its --plan-id.');
+  }
+  if (reviewedSnapshot.schemaVersion !== 2 || reviewedSnapshot.mode !== mode || reviewedSnapshot.apply !== false) {
+    throw new Error(`Reviewed snapshot is not a schema 2 ${mode} dry-run.`);
+  }
+  const embeddedId = reviewId(reviewedSnapshot.review);
+  if (embeddedId !== reviewedSnapshot.planId || embeddedId !== reviewedPlanId) {
+    throw new Error('Reviewed snapshot identity does not match --plan-id.');
+  }
+  if (canonicalJson(reviewedSnapshot.plan) !== canonicalJson(reviewedSnapshot.review.plan)) {
+    throw new Error('Reviewed snapshot plan does not match its immutable review payload.');
+  }
+  const currentId = reviewId(currentReview);
+  if (currentId !== reviewedPlanId) {
+    throw new Error(`Reviewed plan drifted before apply (expected ${reviewedPlanId}, observed ${currentId}).`);
+  }
+}
+
+function emptyExecution() {
+  return { attemptedWrites: 0, succeeded: [], failed: [], skipped: [], journal: [] };
+}
+
+async function journalAttempt({ snapshot, snapshotPath, operation, execute, now }) {
+  const entry = { ...operation, status: 'attempting', startedAt: now().toISOString() };
+  snapshot.execution.attemptedWrites += 1;
+  snapshot.execution.journal.push(entry);
+  await writeSnapshot(snapshotPath, snapshot);
+  try {
+    const result = await execute();
+    entry.status = result?.raced ? 'raced' : 'succeeded';
+    entry.completedAt = now().toISOString();
+    snapshot.execution.succeeded.push({ ...operation, ...(result?.raced ? { raced: true } : {}) });
+    await writeSnapshot(snapshotPath, snapshot);
+    return true;
+  } catch (error) {
+    entry.status = 'failed';
+    entry.completedAt = now().toISOString();
+    entry.error = error.message;
+    snapshot.execution.failed.push({ ...operation, error: error.message });
+    await writeSnapshot(snapshotPath, snapshot);
+    return false;
+  }
+}
+
+export async function runCatalogueSync({
+  adapter,
+  apply = false,
+  snapshotPath,
+  reviewedSnapshot,
+  reviewedPlanId,
+  now = () => new Date(),
+}) {
+  const before = await paginateRest((page, perPage) => adapter.listLabelsPage(page, perPage));
+  const currentPlan = buildCataloguePlan(before);
+  const currentReview = catalogueReview(before, currentPlan);
+
+  if (!apply) {
+    const snapshot = {
+      schemaVersion: 2,
+      mode: 'catalogue',
+      apply: false,
+      generatedAt: now().toISOString(),
+      planId: reviewId(currentReview),
+      review: currentReview,
+      before,
+      plan: currentPlan,
+      execution: emptyExecution(),
+      after: before,
+    };
+    await writeSnapshot(snapshotPath, snapshot);
+    return snapshot;
   }
 
-  const after = apply
-    ? await paginateRest((page, perPage) => adapter.listLabelsPage(page, perPage))
-    : before;
+  validateReviewedPlan({ reviewedSnapshot, reviewedPlanId, mode: 'catalogue', currentReview });
+  const plan = reviewedSnapshot.plan;
   const snapshot = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     mode: 'catalogue',
-    apply,
+    apply: true,
+    phase: 'preflight',
     generatedAt: now().toISOString(),
+    planId: reviewedPlanId,
     before,
     plan,
-    execution,
-    after,
+    execution: emptyExecution(),
+    after: null,
   };
+  await writeSnapshot(snapshotPath, snapshot);
+
+  snapshot.phase = 'applying';
+  await writeSnapshot(snapshotPath, snapshot);
+  for (const operation of plan.create) {
+    await journalAttempt({
+      snapshot,
+      snapshotPath,
+      operation: { action: 'create', name: operation.name },
+      execute: () => adapter.createLabel(operation),
+      now,
+    });
+  }
+  for (const operation of plan.update) {
+    await journalAttempt({
+      snapshot,
+      snapshotPath,
+      operation: { action: 'update', name: operation.name },
+      execute: () => adapter.updateLabel(operation.name, operation.after),
+      now,
+    });
+  }
+
+  try {
+    snapshot.after = await paginateRest((page, perPage) => adapter.listLabelsPage(page, perPage));
+    snapshot.phase = 'complete';
+    const remaining = buildCataloguePlan(snapshot.after);
+    if (remaining.create.length > 0 || remaining.update.length > 0) {
+      snapshot.execution.failed.push({ action: 'verify', error: 'Catalogue did not converge after apply.', remaining });
+    }
+  } catch (error) {
+    snapshot.phase = 'after-read-failed';
+    snapshot.afterReadError = error.message;
+    snapshot.execution.failed.push({ action: 'refresh', error: error.message });
+  }
   await writeSnapshot(snapshotPath, snapshot);
   return snapshot;
 }
@@ -257,6 +370,42 @@ async function readCleanupState({ adapter, repository, projectNumber, reviewedCo
   };
 }
 
+function cleanupReview({ before, repository, projectNumber, reviewedCorrections, plan }) {
+  const correctionLabels = new Map();
+  for (const correction of reviewedCorrections) {
+    const labels = correctionLabels.get(correction.number) ?? new Set();
+    labels.add(correction.label);
+    correctionLabels.set(correction.number, labels);
+  }
+  const items = before.snapshot.flatMap(item => {
+    const correctionSet = correctionLabels.get(item.number) ?? new Set();
+    const hasAutomaticCandidate = item.labels.some(label => label.startsWith('status: ') || Object.hasOwn(LEGACY_TYPE_ALIASES, label));
+    if (!hasAutomaticCandidate && correctionSet.size === 0) return [];
+    const labels = item.labels.filter(label =>
+      label.startsWith('status: ')
+      || label.startsWith('type: ')
+      || Object.hasOwn(LEGACY_TYPE_ALIASES, label)
+      || correctionSet.has(label));
+    const needsProjectState = item.labels.some(label => label.startsWith('status: '))
+      || reviewedCorrections.some(correction => correction.number === item.number && correction.expectedProjectStatus);
+    return [{
+      number: item.number,
+      kind: item.kind,
+      state: item.state,
+      labels,
+      projectMemberships: needsProjectState ? item.projectMemberships : [],
+    }];
+  });
+  return {
+    mode: 'cleanup',
+    repository: repository.toLowerCase(),
+    projectNumber,
+    reviewedCorrections,
+    items,
+    plan,
+  };
+}
+
 export async function runCleanup({
   adapter,
   repository,
@@ -264,64 +413,98 @@ export async function runCleanup({
   reviewedCorrections = [],
   apply = false,
   snapshotPath,
+  reviewedSnapshot,
+  reviewedPlanId,
   now = () => new Date(),
 }) {
   const before = await readCleanupState({ adapter, repository, projectNumber, reviewedCorrections });
-  const plan = buildCleanupPlan({
+  const currentPlan = buildCleanupPlan({
     items: before.items,
     projectItems: before.projectItems,
     repository,
     reviewedCorrections,
   });
-  const execution = { attemptedWrites: 0, succeeded: [], failed: [], skipped: [] };
+  const currentReview = cleanupReview({ before, repository, projectNumber, reviewedCorrections, plan: currentPlan });
 
-  if (apply) {
-    for (const mutation of plan.mutations) {
-      let additionFailed = false;
-      if (mutation.add.length > 0) {
-        execution.attemptedWrites += 1;
-        try {
-          await adapter.addLabels(mutation.number, mutation.add);
-          execution.succeeded.push({ number: mutation.number, action: 'add', labels: mutation.add });
-        } catch (error) {
-          execution.failed.push({ number: mutation.number, action: 'add', labels: mutation.add, error: error.message });
-          additionFailed = true;
-        }
-      }
-      if (additionFailed) {
-        for (const label of mutation.remove) {
-          execution.skipped.push({ number: mutation.number, action: 'remove', label, reason: 'required-label-addition-failed' });
-        }
-        continue;
-      }
-      for (const label of mutation.remove) {
-        execution.attemptedWrites += 1;
-        try {
-          await adapter.removeLabel(mutation.number, label);
-          execution.succeeded.push({ number: mutation.number, action: 'remove', label });
-        } catch (error) {
-          execution.failed.push({ number: mutation.number, action: 'remove', label, error: error.message });
-        }
-      }
-    }
+  if (!apply) {
+    const snapshot = {
+      schemaVersion: 2,
+      mode: 'cleanup',
+      apply: false,
+      repository,
+      projectNumber,
+      generatedAt: now().toISOString(),
+      reviewedCorrections,
+      planId: reviewId(currentReview),
+      review: currentReview,
+      before: before.snapshot,
+      plan: currentPlan,
+      execution: emptyExecution(),
+      after: before.snapshot,
+    };
+    await writeSnapshot(snapshotPath, snapshot);
+    return snapshot;
   }
 
-  const after = apply
-    ? await readCleanupState({ adapter, repository, projectNumber, reviewedCorrections })
-    : before;
+  validateReviewedPlan({ reviewedSnapshot, reviewedPlanId, mode: 'cleanup', currentReview });
+  const plan = reviewedSnapshot.plan;
   const snapshot = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     mode: 'cleanup',
-    apply,
+    apply: true,
+    phase: 'preflight',
     repository,
     projectNumber,
     generatedAt: now().toISOString(),
     reviewedCorrections,
+    planId: reviewedPlanId,
     before: before.snapshot,
     plan,
-    execution,
-    after: after.snapshot,
+    execution: emptyExecution(),
+    after: null,
   };
+  await writeSnapshot(snapshotPath, snapshot);
+
+  snapshot.phase = 'applying';
+  await writeSnapshot(snapshotPath, snapshot);
+  for (const mutation of plan.mutations) {
+    let additionFailed = false;
+    if (mutation.add.length > 0) {
+      additionFailed = !(await journalAttempt({
+        snapshot,
+        snapshotPath,
+        operation: { number: mutation.number, action: 'add', labels: mutation.add },
+        execute: () => adapter.addLabels(mutation.number, mutation.add),
+        now,
+      }));
+    }
+    if (additionFailed) {
+      for (const label of mutation.remove) {
+        snapshot.execution.skipped.push({ number: mutation.number, action: 'remove', label, reason: 'required-label-addition-failed' });
+      }
+      await writeSnapshot(snapshotPath, snapshot);
+      continue;
+    }
+    for (const label of mutation.remove) {
+      await journalAttempt({
+        snapshot,
+        snapshotPath,
+        operation: { number: mutation.number, action: 'remove', label },
+        execute: () => adapter.removeLabel(mutation.number, label),
+        now,
+      });
+    }
+  }
+
+  try {
+    const after = await readCleanupState({ adapter, repository, projectNumber, reviewedCorrections });
+    snapshot.after = after.snapshot;
+    snapshot.phase = 'complete';
+  } catch (error) {
+    snapshot.phase = 'after-read-failed';
+    snapshot.afterReadError = error.message;
+    snapshot.execution.failed.push({ action: 'refresh', error: error.message });
+  }
   await writeSnapshot(snapshotPath, snapshot);
   return snapshot;
 }
@@ -368,7 +551,14 @@ export function createGitHubAdapter({ owner, repo, token, fetchImpl = fetch }) {
   return {
     repository,
     listLabelsPage: (page, perPage) => request(rest(`/labels?per_page=${perPage}&page=${page}`)),
-    createLabel: definition => request(rest('/labels'), { method: 'POST', body: JSON.stringify(definition) }),
+    async createLabel(definition) {
+      try {
+        return await request(rest('/labels'), { method: 'POST', body: JSON.stringify(definition) });
+      } catch (error) {
+        if (error.status === 409 || error.status === 422) return { raced: true };
+        throw error;
+      }
+    },
     updateLabel: (name, definition) => request(rest(`/labels/${encodeURIComponent(name)}`), { method: 'PATCH', body: JSON.stringify(definition) }),
     listOpenItemsPage: (page, perPage) => request(rest(`/issues?state=open&sort=created&direction=asc&per_page=${perPage}&page=${page}`)),
     getItem: number => request(rest(`/issues/${number}`)),
@@ -425,6 +615,8 @@ function parseArguments(argv) {
     else if (argument === '--repo') options.repo = args[++index];
     else if (argument === '--project-number') options.projectNumber = Number(args[++index]);
     else if (argument === '--snapshot') options.snapshotPath = path.resolve(args[++index]);
+    else if (argument === '--reviewed-snapshot') options.reviewedSnapshotPath = path.resolve(args[++index]);
+    else if (argument === '--plan-id') options.reviewedPlanId = args[++index];
     else if (argument === '--expect-state') options.expectedStates.set(Number(args[++index]), args[++index]);
     else if (argument === '--expect-project-status') options.expectedProjectStatuses.set(Number(args[++index]), args[++index]);
     else if (argument === '--reviewed-remove') {
@@ -434,6 +626,15 @@ function parseArguments(argv) {
   if (!options.snapshotPath) {
     const timestamp = new Date().toISOString().replaceAll(/[:.]/g, '-');
     options.snapshotPath = path.resolve(`issue-label-${mode}-${timestamp}.json`);
+  }
+  if (options.apply && (!options.reviewedSnapshotPath || !options.reviewedPlanId)) {
+    throw new Error('--apply requires --reviewed-snapshot and --plan-id.');
+  }
+  if (options.apply && options.reviewedSnapshotPath === options.snapshotPath) {
+    throw new Error('Apply output --snapshot must differ from the immutable --reviewed-snapshot.');
+  }
+  if (!options.apply && (options.reviewedSnapshotPath || options.reviewedPlanId)) {
+    throw new Error('--reviewed-snapshot and --plan-id are valid only with --apply.');
   }
   options.reviewedCorrections = options.reviewedCorrections.map(correction => ({
     ...correction,
@@ -457,6 +658,8 @@ function summary(snapshot, snapshotPath) {
       mode: snapshot.mode,
       apply: snapshot.apply,
       snapshot: snapshotPath,
+      planId: snapshot.planId,
+      phase: snapshot.phase,
       create: snapshot.plan.create.length,
       update: snapshot.plan.update.length,
       retired: snapshot.plan.retired,
@@ -468,6 +671,8 @@ function summary(snapshot, snapshotPath) {
     mode: snapshot.mode,
     apply: snapshot.apply,
     snapshot: snapshotPath,
+    planId: snapshot.planId,
+    phase: snapshot.phase,
     items: snapshot.before.length,
     mutations: snapshot.plan.mutations,
     skips: snapshot.plan.skips,
@@ -478,31 +683,49 @@ function summary(snapshot, snapshotPath) {
   };
 }
 
-export async function main(argv = process.argv.slice(2)) {
+export async function main(argv = process.argv.slice(2), dependencies = {}) {
   const options = parseArguments(argv);
+  const environment = dependencies.env ?? process.env;
+  const output = dependencies.stdout ?? process.stdout;
+  const reviewedSnapshot = options.reviewedSnapshotPath
+    ? JSON.parse(await readFile(options.reviewedSnapshotPath, 'utf8'))
+    : undefined;
   const adapter = createGitHubAdapter({
     owner: options.owner,
     repo: options.repo,
-    token: process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN,
+    token: environment.GH_TOKEN ?? environment.GITHUB_TOKEN,
+    fetchImpl: dependencies.fetchImpl ?? fetch,
   });
   const snapshot = options.mode === 'catalogue'
-    ? await runCatalogueSync({ adapter, apply: options.apply, snapshotPath: options.snapshotPath })
+    ? await runCatalogueSync({
+      adapter,
+      apply: options.apply,
+      snapshotPath: options.snapshotPath,
+      reviewedSnapshot,
+      reviewedPlanId: options.reviewedPlanId,
+      now: dependencies.now,
+    })
     : await runCleanup({
       adapter,
       repository: adapter.repository,
       projectNumber: options.projectNumber,
-      reviewedCorrections: options.reviewedCorrections,
+      reviewedCorrections: reviewedSnapshot?.reviewedCorrections ?? options.reviewedCorrections,
       apply: options.apply,
       snapshotPath: options.snapshotPath,
+      reviewedSnapshot,
+      reviewedPlanId: options.reviewedPlanId,
+      now: dependencies.now,
     });
-  process.stdout.write(`${JSON.stringify(summary(snapshot, options.snapshotPath), null, 2)}\n`);
-  if (snapshot.execution.failed.length > 0) process.exitCode = 1;
+  output.write(`${JSON.stringify(summary(snapshot, options.snapshotPath), null, 2)}\n`);
+  return { snapshot, exitCode: snapshot.execution.failed.length > 0 ? 1 : 0 };
 }
 
 const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : '';
 if (fileURLToPath(import.meta.url) === invokedPath) {
-  main().catch(error => {
-    process.stderr.write(`${error.stack ?? error.message}\n`);
-    process.exitCode = 1;
-  });
+  main()
+    .then(result => { process.exitCode = result.exitCode; })
+    .catch(error => {
+      process.stderr.write(`${error.stack ?? error.message}\n`);
+      process.exitCode = 1;
+    });
 }

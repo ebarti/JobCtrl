@@ -14,6 +14,10 @@ permissions:
   contents: read
   issues: write
 
+concurrency:
+  group: issue-triage-${{ github.repository }}-${{ github.event.issue.number || inputs.issue_number }}
+  cancel-in-progress: false
+
 jobs:
   label:
     name: Label issue
@@ -33,11 +37,5 @@ jobs:
             const repo = context.repo.repo;
             const issueNumber = context.payload.issue?.number ?? Number(context.payload.inputs?.issue_number);
 
-            const { data: issue } = await github.rest.issues.get({
-              owner,
-              repo,
-              issue_number: issueNumber,
-            });
-
             const { triageIssue } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/issue-triage.mjs`);
-            await triageIssue({ github, owner, repo, issue });
+            await triageIssue({ github, owner, repo, issueNumber });

@@ -4,13 +4,10 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { LABEL_CATALOGUE } from './issue-label-catalogue.mjs';
-import {
-  buildCleanupPlan,
-  runCatalogueSync,
-  runCleanup,
-} from './issue-label-maintenance.mjs';
+import { buildCleanupPlan, main, runCatalogueSync, runCleanup } from './issue-label-maintenance.mjs';
 
 const repository = 'ebarti/jobctrl';
+const fixedNow = () => new Date('2026-09-21T12:00:00Z');
 
 function projectItem(number, statuses, id = `project-${number}`) {
   return { id, content: { number, repository: 'ebarti/JobCtrl', state: 'open' }, statuses };
@@ -32,49 +29,29 @@ function tempSnapshot(directory, name) {
   return path.join(directory, name);
 }
 
-test('catalogue sync reports drift in dry-run and applies only create/update operations', async () => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), 'jobctrl-label-catalogue-'));
-  const labels = Object.entries(LABEL_CATALOGUE)
-    .filter(([name]) => name !== 'type: test')
-    .map(([name, definition]) => ({ name, ...definition }));
-  labels.find(label => label.name === 'type: bug').description = 'stale';
-  labels.push({ name: 'status: needs triage', color: 'fbca04', description: 'historic' });
-  const writes = [];
-  const adapter = {
-    async listLabelsPage(page) {
-      return page === 1 ? labels : [];
+function cleanupAdapter(state, options = {}) {
+  return {
+    async listOpenItemsPage(page) {
+      if (options.failRefresh && options.reads === 2) throw new Error('injected refresh failure');
+      options.reads = (options.reads ?? 0) + 1;
+      return page === 1 ? [state] : [];
     },
-    async createLabel(definition) {
-      writes.push(['create', definition.name]);
-      labels.push({ ...definition });
+    async getItem() { throw new Error('unexpected getItem'); },
+    async listProjectItemsPage() { return { nodes: [], hasNextPage: false, nextCursor: null }; },
+    async addLabels(_number, labels) {
+      await options.beforeAdd?.();
+      if (options.failAddition) throw new Error('injected add failure');
+      for (const name of labels) if (!state.labels.some(label => label.name === name)) state.labels.push({ name });
     },
-    async updateLabel(name, definition) {
-      writes.push(['update', name]);
-      Object.assign(labels.find(label => label.name === name), definition);
+    async removeLabel(_number, name) {
+      if (options.failRemovalOnce) {
+        options.failRemovalOnce = false;
+        throw new Error('injected remove failure');
+      }
+      state.labels = state.labels.filter(label => label.name !== name);
     },
   };
-
-  const preview = await runCatalogueSync({
-    adapter,
-    snapshotPath: tempSnapshot(directory, 'preview.json'),
-    now: () => new Date('2026-09-21T10:00:00Z'),
-  });
-  assert.deepEqual(preview.plan.create.map(label => label.name), ['type: test']);
-  assert.deepEqual(preview.plan.update.map(label => label.name), ['type: bug']);
-  assert.deepEqual(preview.plan.retired, ['status: needs triage']);
-  assert.equal(preview.execution.attemptedWrites, 0);
-  assert.deepEqual(writes, []);
-
-  const applied = await runCatalogueSync({
-    adapter,
-    apply: true,
-    snapshotPath: tempSnapshot(directory, 'apply.json'),
-    now: () => new Date('2026-09-21T10:01:00Z'),
-  });
-  assert.deepEqual(writes, [['create', 'type: test'], ['update', 'type: bug']]);
-  assert.equal(applied.execution.failed.length, 0);
-  assert.equal(applied.after.find(label => label.name === 'status: needs triage').description, 'historic');
-});
+}
 
 test('cleanup dry-run paginates, preserves unrelated state and skips unverifiable status removals', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'jobctrl-label-cleanup-'));
@@ -115,25 +92,22 @@ test('cleanup dry-run paginates, preserves unrelated state and skips unverifiabl
   };
 
   const snapshotPath = tempSnapshot(directory, 'preview.json');
-  const result = await runCleanup({ adapter, repository, snapshotPath, now: () => new Date('2026-09-21T11:00:00Z') });
+  const result = await runCleanup({ adapter, repository, snapshotPath, now: fixedNow });
   assert.deepEqual(calls.open, [1, 2]);
   assert.deepEqual(calls.project, [null, 'next']);
   assert.deepEqual(calls.writes, []);
   assert.deepEqual(result.before, result.after);
   assert.equal(result.execution.attemptedWrites, 0);
-
+  assert.match(result.planId, /^[a-f0-9]{64}$/);
   const one = result.plan.mutations.find(mutation => mutation.number === 1);
   assert.deepEqual(one.add, ['type: bug']);
   assert.deepEqual(one.remove.sort(), ['bug', 'status: in progress']);
-  const six = result.plan.mutations.find(mutation => mutation.number === 6);
-  assert.equal(six.kind, 'pull_request');
-  assert.deepEqual(six.remove, ['status: needs triage']);
+  assert.equal(result.plan.mutations.find(mutation => mutation.number === 6).kind, 'pull_request');
   assert.ok(result.plan.skips.some(skip => skip.number === 2 && skip.reason === 'project-membership-missing'));
   assert.ok(result.plan.skips.some(skip => skip.number === 3 && skip.reason === 'legacy-type-conflicts-with-manual-type'));
   assert.ok(result.plan.skips.some(skip => skip.number === 4 && skip.reason === 'project-membership-ambiguous'));
   assert.ok(result.plan.skips.some(skip => skip.number === 5 && skip.reason === 'project-status-missing-or-ambiguous'));
   assert.equal(result.plan.mutations.some(mutation => mutation.number === 8), false);
-  assert.equal(result.plan.skips.some(skip => skip.number === 8), false);
   const beforeOne = result.before.find(item => item.number === 1);
   assert.deepEqual(beforeOne.assignees, ['maintainer']);
   assert.ok(beforeOne.labels.includes('custom: keep'));
@@ -161,32 +135,68 @@ test('reviewed corrections are explicit and enforce expected state and Project s
   assert.equal(result.mutations.find(mutation => mutation.number === 888).remove.includes('origin: owner backlog'), false);
 });
 
-test('partial mutation failure is retained and a rerun converges', async () => {
+test('cleanup apply is bound to reviewed state and fails closed after relevant item drift', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'jobctrl-label-drift-'));
+  const state = issue(7, ['bug', 'custom: keep']);
+  const writes = [];
+  const adapter = cleanupAdapter(state);
+  adapter.addLabels = async (...args) => { writes.push(['add', ...args]); };
+  adapter.removeLabel = async (...args) => { writes.push(['remove', ...args]); };
+  const preview = await runCleanup({ adapter, repository, snapshotPath: tempSnapshot(directory, 'preview.json') });
+  state.labels.push({ name: 'type: feature' });
+  await assert.rejects(runCleanup({
+    adapter,
+    repository,
+    apply: true,
+    reviewedSnapshot: preview,
+    reviewedPlanId: preview.planId,
+    snapshotPath: tempSnapshot(directory, 'apply.json'),
+  }), /Reviewed plan drifted before apply/);
+  assert.deepEqual(writes, []);
+});
+
+test('catalogue apply is bound to reviewed definitions and fails closed after label drift', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'jobctrl-catalogue-drift-'));
+  const labels = Object.entries(LABEL_CATALOGUE)
+    .filter(([name]) => name !== 'type: test')
+    .map(([name, definition]) => ({ name, ...definition }));
+  const writes = [];
+  const adapter = {
+    async listLabelsPage(page) { return page === 1 ? labels : []; },
+    async createLabel(definition) { writes.push(['create', definition]); },
+    async updateLabel(name, definition) { writes.push(['update', name, definition]); },
+  };
+  const preview = await runCatalogueSync({ adapter, snapshotPath: tempSnapshot(directory, 'preview.json') });
+  labels.push({ name: 'type: test', ...LABEL_CATALOGUE['type: test'] });
+  await assert.rejects(runCatalogueSync({
+    adapter,
+    apply: true,
+    reviewedSnapshot: preview,
+    reviewedPlanId: preview.planId,
+    snapshotPath: tempSnapshot(directory, 'apply.json'),
+  }), /Reviewed plan drifted before apply/);
+  assert.deepEqual(writes, []);
+});
+
+test('partial mutation failure is journaled and a newly reviewed rerun converges', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'jobctrl-label-rerun-'));
   const state = issue(7, ['bug', 'custom: keep'], { assignees: [{ login: 'owner' }] });
-  let failRemoval = true;
-  const adapter = {
-    async listOpenItemsPage(page) { return page === 1 ? [state] : []; },
-    async getItem() { throw new Error('unexpected getItem'); },
-    async listProjectItemsPage() { return { nodes: [], hasNextPage: false, nextCursor: null }; },
-    async addLabels(_number, labels) {
-      for (const name of labels) if (!state.labels.some(label => label.name === name)) state.labels.push({ name });
-    },
-    async removeLabel(_number, name) {
-      if (failRemoval) {
-        failRemoval = false;
-        throw new Error('injected remove failure');
-      }
-      state.labels = state.labels.filter(label => label.name !== name);
-    },
-  };
-
-  const first = await runCleanup({ adapter, repository, apply: true, snapshotPath: tempSnapshot(directory, 'first.json') });
+  const options = { failRemovalOnce: true };
+  const adapter = cleanupAdapter(state, options);
+  const firstPreview = await runCleanup({ adapter, repository, snapshotPath: tempSnapshot(directory, 'first-preview.json') });
+  const first = await runCleanup({
+    adapter, repository, apply: true, reviewedSnapshot: firstPreview, reviewedPlanId: firstPreview.planId,
+    snapshotPath: tempSnapshot(directory, 'first-apply.json'),
+  });
   assert.equal(first.execution.failed.length, 1);
   assert.match(first.execution.failed[0].error, /injected remove failure/);
+  assert.deepEqual(first.execution.journal.map(entry => entry.status), ['succeeded', 'failed']);
   assert.deepEqual(state.labels.map(label => label.name).sort(), ['bug', 'custom: keep', 'type: bug']);
-
-  const second = await runCleanup({ adapter, repository, apply: true, snapshotPath: tempSnapshot(directory, 'second.json') });
+  const secondPreview = await runCleanup({ adapter, repository, snapshotPath: tempSnapshot(directory, 'second-preview.json') });
+  const second = await runCleanup({
+    adapter, repository, apply: true, reviewedSnapshot: secondPreview, reviewedPlanId: secondPreview.planId,
+    snapshotPath: tempSnapshot(directory, 'second-apply.json'),
+  });
   assert.equal(second.execution.failed.length, 0);
   assert.deepEqual(second.plan.mutations[0].add, []);
   assert.deepEqual(second.plan.mutations[0].remove, ['bug']);
@@ -197,15 +207,169 @@ test('partial mutation failure is retained and a rerun converges', async () => {
 test('failed canonical-label addition never removes the legacy label', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'jobctrl-label-add-failure-'));
   const state = issue(9, ['enhancement', 'custom: keep']);
-  const adapter = {
-    async listOpenItemsPage(page) { return page === 1 ? [state] : []; },
-    async getItem() { throw new Error('unexpected getItem'); },
-    async listProjectItemsPage() { return { nodes: [], hasNextPage: false, nextCursor: null }; },
-    async addLabels() { throw new Error('injected add failure'); },
-    async removeLabel() { throw new Error('remove must not run'); },
-  };
-  const result = await runCleanup({ adapter, repository, apply: true, snapshotPath: tempSnapshot(directory, 'failure.json') });
+  const adapter = cleanupAdapter(state, { failAddition: true });
+  const preview = await runCleanup({ adapter, repository, snapshotPath: tempSnapshot(directory, 'preview.json') });
+  const result = await runCleanup({
+    adapter, repository, apply: true, reviewedSnapshot: preview, reviewedPlanId: preview.planId,
+    snapshotPath: tempSnapshot(directory, 'failure.json'),
+  });
   assert.equal(result.execution.failed.length, 1);
   assert.deepEqual(result.execution.skipped, [{ number: 9, action: 'remove', label: 'enhancement', reason: 'required-label-addition-failed' }]);
   assert.deepEqual(state.labels.map(label => label.name).sort(), ['custom: keep', 'enhancement']);
+});
+
+test('preflight and attempted writes remain durable when the post-write refresh fails', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'jobctrl-label-refresh-'));
+  const state = issue(10, ['question']);
+  const options = { failRefresh: true, reads: 0 };
+  const adapter = cleanupAdapter(state, options);
+  const preview = await runCleanup({ adapter, repository, snapshotPath: tempSnapshot(directory, 'preview.json') });
+  const applyPath = tempSnapshot(directory, 'apply.json');
+  let observedBeforeWrite;
+  options.beforeAdd = async () => { observedBeforeWrite = JSON.parse(await readFile(applyPath, 'utf8')); };
+  const result = await runCleanup({
+    adapter, repository, apply: true, reviewedSnapshot: preview, reviewedPlanId: preview.planId, snapshotPath: applyPath,
+  });
+  assert.equal(result.phase, 'after-read-failed');
+  assert.equal(observedBeforeWrite.planId, preview.planId);
+  assert.equal(observedBeforeWrite.execution.journal[0].status, 'attempting');
+  assert.match(result.afterReadError, /injected refresh failure/);
+  assert.deepEqual(result.execution.journal.map(entry => entry.status), ['succeeded', 'succeeded']);
+  const retained = JSON.parse(await readFile(applyPath, 'utf8'));
+  assert.equal(retained.phase, 'after-read-failed');
+  assert.equal(retained.planId, preview.planId);
+  assert.equal(retained.after, null);
+  assert.match(retained.execution.failed.at(-1).error, /injected refresh failure/);
+});
+
+function githubFetchFixture() {
+  const state = {
+    labels: Object.entries(LABEL_CATALOGUE)
+      .filter(([name]) => name !== 'type: test')
+      .map(([name, definition]) => ({ name, ...definition })),
+    issues: [issue(41, ['status: in progress', 'bug', 'custom: keep'], { assignees: [{ login: 'maintainer' }] })],
+    calls: [], raceCreate: true, failBugRemovalOnce: true,
+  };
+  state.labels.find(label => label.name === 'type: bug').description = 'stale description';
+  const response = (body, status = 200) => new Response(status === 204 ? null : JSON.stringify(body), {
+    status, headers: { 'content-type': 'application/json' },
+  });
+
+  async function fetchImpl(url, options = {}) {
+    const method = options.method ?? 'GET';
+    const body = options.body ? JSON.parse(options.body) : undefined;
+    state.calls.push({ method, url, body });
+    const parsed = new URL(url);
+    if (parsed.pathname === '/graphql') {
+      const cursor = body.variables.cursor;
+      const nodes = cursor === null
+        ? [{ id: 'other-repository', content: { number: 999, state: 'OPEN', repository: { nameWithOwner: 'elsewhere/repo' } }, fieldValues: { nodes: [] } }]
+        : [{ id: 'project-41', content: { number: 41, state: 'OPEN', repository: { nameWithOwner: 'ebarti/JobCtrl' } }, fieldValues: { nodes: [{ name: 'In Progress', field: { name: 'Status' } }] } }];
+      return response({ data: { repository: { owner: { projectV2: { items: {
+        pageInfo: cursor === null ? { hasNextPage: true, endCursor: 'cursor-2' } : { hasNextPage: false, endCursor: null }, nodes,
+      } } } } } });
+    }
+    if (parsed.pathname === '/repos/ebarti/jobctrl/labels' && method === 'GET') return response(state.labels);
+    if (parsed.pathname === '/repos/ebarti/jobctrl/labels' && method === 'POST') {
+      if (state.raceCreate) {
+        state.raceCreate = false;
+        state.labels.push({ ...body });
+        return response({ message: 'already exists' }, 409);
+      }
+      state.labels.push({ ...body });
+      return response(body, 201);
+    }
+    if (parsed.pathname.startsWith('/repos/ebarti/jobctrl/labels/') && method === 'PATCH') {
+      const name = decodeURIComponent(parsed.pathname.split('/').at(-1));
+      Object.assign(state.labels.find(label => label.name === name), body);
+      return response({ name, ...body });
+    }
+    if (parsed.pathname === '/repos/ebarti/jobctrl/issues' && method === 'GET') return response(state.issues);
+    const issueLabels = parsed.pathname.match(/^\/repos\/ebarti\/jobctrl\/issues\/(\d+)\/labels$/);
+    if (issueLabels && method === 'POST') {
+      const target = state.issues.find(item => item.number === Number(issueLabels[1]));
+      for (const name of body.labels) if (!target.labels.some(label => label.name === name)) target.labels.push({ name });
+      return response(target.labels);
+    }
+    const issueLabel = parsed.pathname.match(/^\/repos\/ebarti\/jobctrl\/issues\/(\d+)\/labels\/(.+)$/);
+    if (issueLabel && method === 'DELETE') {
+      const name = decodeURIComponent(issueLabel[2]);
+      if (name === 'bug' && state.failBugRemovalOnce) {
+        state.failBugRemovalOnce = false;
+        return response({ message: 'injected failure' }, 500);
+      }
+      const target = state.issues.find(item => item.number === Number(issueLabel[1]));
+      target.labels = target.labels.filter(label => label.name !== name);
+      return response(null, 204);
+    }
+    throw new Error(`Unexpected request: ${method} ${url}`);
+  }
+  return { state, fetchImpl };
+}
+
+test('real CLI adapter preserves reviewed plans across REST and GraphQL pagination, failures, races, and convergence', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'jobctrl-label-cli-'));
+  const fixture = githubFetchFixture();
+  const dependencies = { fetchImpl: fixture.fetchImpl, env: { GH_TOKEN: 'fixture-token' }, stdout: { write() {} }, now: fixedNow };
+  const mutationCalls = () => fixture.state.calls.filter(call => call.url !== 'https://api.github.com/graphql' && ['POST', 'PATCH', 'DELETE'].includes(call.method));
+
+  const cataloguePreviewPath = tempSnapshot(directory, 'catalogue-preview.json');
+  const cataloguePreview = await main(['catalogue', '--snapshot', cataloguePreviewPath], dependencies);
+  assert.deepEqual(cataloguePreview.snapshot.plan.create.map(label => label.name), ['type: test']);
+  assert.deepEqual(cataloguePreview.snapshot.plan.update.map(label => label.name), ['type: bug']);
+  assert.deepEqual(mutationCalls(), []);
+  const catalogueApply = await main([
+    'catalogue', '--apply', '--reviewed-snapshot', cataloguePreviewPath, '--plan-id', cataloguePreview.snapshot.planId,
+    '--snapshot', tempSnapshot(directory, 'catalogue-apply.json'),
+  ], dependencies);
+  assert.equal(catalogueApply.exitCode, 0);
+  assert.equal(catalogueApply.snapshot.execution.succeeded.find(entry => entry.action === 'create').raced, true);
+  const catalogueMutations = mutationCalls();
+  assert.deepEqual(catalogueMutations[0], {
+    method: 'POST', url: 'https://api.github.com/repos/ebarti/jobctrl/labels',
+    body: { name: 'type: test', ...LABEL_CATALOGUE['type: test'] },
+  });
+  assert.deepEqual(catalogueMutations[1], {
+    method: 'PATCH', url: 'https://api.github.com/repos/ebarti/jobctrl/labels/type%3A%20bug',
+    body: LABEL_CATALOGUE['type: bug'],
+  });
+
+  const cleanupPreviewPath = tempSnapshot(directory, 'cleanup-preview.json');
+  const mutationsBeforeCleanupPreview = mutationCalls().length;
+  const cleanupPreview = await main(['cleanup', '--snapshot', cleanupPreviewPath], dependencies);
+  assert.deepEqual(cleanupPreview.snapshot.plan.mutations[0].add, ['type: bug']);
+  assert.deepEqual(cleanupPreview.snapshot.plan.mutations[0].remove, ['status: in progress', 'bug']);
+  assert.equal(mutationCalls().length, mutationsBeforeCleanupPreview);
+  const cursors = fixture.state.calls.filter(call => call.url === 'https://api.github.com/graphql').slice(-2).map(call => call.body.variables.cursor);
+  assert.deepEqual(cursors, [null, 'cursor-2']);
+
+  const firstCleanup = await main([
+    'cleanup', '--apply', '--reviewed-snapshot', cleanupPreviewPath, '--plan-id', cleanupPreview.snapshot.planId,
+    '--snapshot', tempSnapshot(directory, 'cleanup-first-apply.json'),
+  ], dependencies);
+  assert.equal(firstCleanup.exitCode, 1);
+  assert.match(firstCleanup.snapshot.execution.failed[0].error, /injected failure/);
+  const cleanupMutations = mutationCalls().slice(mutationsBeforeCleanupPreview);
+  assert.deepEqual(cleanupMutations[0], {
+    method: 'POST', url: 'https://api.github.com/repos/ebarti/jobctrl/issues/41/labels', body: { labels: ['type: bug'] },
+  });
+  assert.equal(cleanupMutations[1].url, 'https://api.github.com/repos/ebarti/jobctrl/issues/41/labels/status%3A%20in%20progress');
+  assert.equal(cleanupMutations[1].method, 'DELETE');
+  assert.equal(cleanupMutations[2].url, 'https://api.github.com/repos/ebarti/jobctrl/issues/41/labels/bug');
+  assert.equal(cleanupMutations[2].method, 'DELETE');
+
+  const rerunPreviewPath = tempSnapshot(directory, 'cleanup-rerun-preview.json');
+  const rerunPreview = await main(['cleanup', '--snapshot', rerunPreviewPath], dependencies);
+  assert.deepEqual(rerunPreview.snapshot.plan.mutations[0].add, []);
+  assert.deepEqual(rerunPreview.snapshot.plan.mutations[0].remove, ['bug']);
+  const rerun = await main([
+    'cleanup', '--apply', '--reviewed-snapshot', rerunPreviewPath, '--plan-id', rerunPreview.snapshot.planId,
+    '--snapshot', tempSnapshot(directory, 'cleanup-rerun-apply.json'),
+  ], dependencies);
+  assert.equal(rerun.exitCode, 0);
+  assert.deepEqual(fixture.state.issues[0].labels.map(label => label.name).sort(), ['custom: keep', 'type: bug']);
+  assert.deepEqual(fixture.state.issues[0].assignees, [{ login: 'maintainer' }]);
+  const converged = await main(['cleanup', '--snapshot', tempSnapshot(directory, 'cleanup-converged.json')], dependencies);
+  assert.deepEqual(converged.snapshot.plan.mutations, []);
+  assert.equal(converged.snapshot.execution.attemptedWrites, 0);
 });

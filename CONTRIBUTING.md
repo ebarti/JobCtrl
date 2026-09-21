@@ -85,10 +85,24 @@ Closed-item or privacy corrections must be named individually with
 `--reviewed-remove`, an expected state, a reason, and an expected Project Status
 when a progress label is involved.
 
-Every command defaults to dry-run and retains before/after state in the named
-snapshot. `--apply` is the explicit write boundary. Applying catalogue drift or
-assignment cleanup requires the same scoped authorization as any other GitHub
-metadata change; neither command deletes label definitions.
+Every command defaults to dry-run and retains before/after state plus a SHA-256
+`planId` in the named snapshot. An apply must name that unchanged dry-run file
+and identity, and it fails before writing if any relevant label, item state, or
+Project membership has drifted. Apply output goes to a separate snapshot, which
+records the preflight plan and journals every attempted write even if the final
+GitHub refresh fails:
+
+```bash
+GH_TOKEN="$(gh auth token)" node scripts/issue-label-maintenance.mjs cleanup \
+  --apply \
+  --reviewed-snapshot /tmp/jobctrl-label-cleanup-preview.json \
+  --plan-id '<planId from the reviewed preview>' \
+  --snapshot /tmp/jobctrl-label-cleanup-apply.json
+```
+
+`--apply` is the explicit write boundary. Applying catalogue drift or assignment
+cleanup requires the same scoped authorization as any other GitHub metadata
+change; neither command deletes label definitions.
 
 ## Developer Certificate of Origin Sign-Off
 

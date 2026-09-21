@@ -27,8 +27,20 @@ const AREA_FIELDS = ['Affected area', 'Area', 'Regression surface'];
 const RELEASE_FIELD = 'Release impact';
 const RELEASE_CHECKBOX = 'This appears to block a public release, source install, or documented first-run flow.';
 const PRIVACY_IGNORED_FIELDS = /^(?:data-safety confirmation|public issue confirmation|confirmation|release impact)$/i;
-const SENSITIVE_OBJECT = /\b(?:secrets?|api[ -]?keys?|tokens?|credentials?|passwords?|private[ -]?data|personal[ -]?data|profile[ -]?facts?|resumes?|generated[ -]?materials?|browser[ -]?profiles?|sqlite[ -]?databases?|exploit[ -]?details?)\b/i;
-const EXPOSURE_SEMANTIC = /\b(?:expos(?:e|ed|ure|ing)|leak(?:ed|ing|s)?|visibl(?:e|ity)|log(?:ged|ging)|print(?:ed|ing)|show(?:n|ing)|disclos(?:e|ed|ure|ing)|publish(?:ed|ing)|commit(?:ted|ting)|past(?:e|ed|ing)|render(?:ed|ing)|return(?:ed|ing)|sent|output|response)\b/i;
+const SENSITIVE_OBJECT_SOURCE = String.raw`(?:secrets?|api[ -]?keys?|tokens?|credentials?|passwords?|private[ -]?data|personal[ -]?data|profile[ -]?facts?|resumes?|generated[ -]?materials?|browser[ -]?profiles?|sqlite[ -]?databases?|exploit[ -]?details?)`;
+const EXPOSURE_ACTION_SOURCE = String.raw`(?:expos(?:e|ed|ing)|leak(?:ed|ing|s)?|visibl(?:e|ity)|log(?:ged|ging)|print(?:ed|ing)|show(?:n|ing)|disclos(?:e|ed|ing)|publish(?:ed|ing)|commit(?:ted|ting)|past(?:e|ed|ing)|render(?:ed|ing))`;
+const EXPOSURE_SURFACE_SOURCE = String.raw`(?:logs?|output|responses?|errors?|console|terminal|ui|pages?|screens?|issues?|commits?)`;
+const EXPOSURE_PATTERNS = [
+  new RegExp(String.raw`\b${SENSITIVE_OBJECT_SOURCE}\b.{0,60}\b${EXPOSURE_ACTION_SOURCE}\b`, 'i'),
+  new RegExp(String.raw`\b${EXPOSURE_ACTION_SOURCE}\b.{0,60}\b${SENSITIVE_OBJECT_SOURCE}\b`, 'i'),
+  new RegExp(String.raw`\b${SENSITIVE_OBJECT_SOURCE}\b.{0,40}\b(?:appears?|shows? up|is|was|were)?\s*(?:in|into|on|via)\s+(?:the\s+)?${EXPOSURE_SURFACE_SOURCE}\b`, 'i'),
+];
+const NEGATED_EXPOSURE_PATTERNS = [
+  new RegExp(String.raw`\b(?:no|never)\s+${SENSITIVE_OBJECT_SOURCE}\b.{0,40}\b${EXPOSURE_ACTION_SOURCE}\b`, 'i'),
+  new RegExp(String.raw`\b${SENSITIVE_OBJECT_SOURCE}\b.{0,30}\b(?:is|are|was|were|has|have|had)?\s*(?:not|never)\s+${EXPOSURE_ACTION_SOURCE}\b`, 'i'),
+  new RegExp(String.raw`\bwithout\s+(?:ever\s+)?${EXPOSURE_ACTION_SOURCE}\b.{0,40}\b${SENSITIVE_OBJECT_SOURCE}\b`, 'i'),
+];
+const issueTriageQueues = new Map();
 
 function labelNames(issue) {
   return new Set((issue.labels ?? []).map(label => typeof label === 'string' ? label : label.name));
@@ -70,9 +82,8 @@ function privacyText(issue, form) {
 function isExplicitExposure(issue, form) {
   const segments = privacyText(issue, form).split(/\n+|(?<=[.!?])\s+/);
   return segments.some(segment =>
-    !/\b(?:no|not|never|without)\b/i.test(segment)
-    && SENSITIVE_OBJECT.test(segment)
-    && EXPOSURE_SEMANTIC.test(segment));
+    !NEGATED_EXPOSURE_PATTERNS.some(pattern => pattern.test(segment))
+    && EXPOSURE_PATTERNS.some(pattern => pattern.test(segment)));
 }
 
 function checkedReleaseImpact(form) {
@@ -139,19 +150,54 @@ export async function ensureDeclaredLabel({ github, owner, repo, name }) {
   }
 }
 
-export async function triageIssue({ github, owner, repo, issue }) {
-  const additions = labelsForIssue(issue);
+async function getIssue(github, owner, repo, issueNumber) {
+  const { data } = await github.rest.issues.get({ owner, repo, issue_number: issueNumber });
+  return data;
+}
+
+async function triageLatestIssue({ github, owner, repo, issueNumber }) {
+  let issue = await getIssue(github, owner, repo, issueNumber);
+  let additions = labelsForIssue(issue);
+  if (additions.length === 0) return { additions: [], ensured: [] };
+
   const ensured = [];
-  for (const name of additions) {
-    ensured.push(await ensureDeclaredLabel({ github, owner, repo, name }));
+  const ensuredNames = new Set();
+  for (;;) {
+    for (const name of additions) {
+      if (ensuredNames.has(name)) continue;
+      ensured.push(await ensureDeclaredLabel({ github, owner, repo, name }));
+      ensuredNames.add(name);
+    }
+
+    issue = await getIssue(github, owner, repo, issueNumber);
+    const latestAdditions = labelsForIssue(issue);
+    if (latestAdditions.length === 0) return { additions: [], ensured };
+    if (latestAdditions.every(name => ensuredNames.has(name))) {
+      additions = latestAdditions;
+      break;
+    }
+    additions = latestAdditions;
   }
-  if (additions.length > 0) {
-    await github.rest.issues.addLabels({
-      owner,
-      repo,
-      issue_number: issue.number,
-      labels: additions,
-    });
-  }
+
+  await github.rest.issues.addLabels({
+    owner,
+    repo,
+    issue_number: issueNumber,
+    labels: additions,
+  });
   return { additions, ensured };
+}
+
+export async function triageIssue({ github, owner, repo, issueNumber, issue }) {
+  const number = issueNumber ?? issue?.number;
+  if (!Number.isInteger(number) || number <= 0) throw new Error('A positive issue number is required.');
+  const key = `${owner}/${repo}#${number}`.toLowerCase();
+  const previous = issueTriageQueues.get(key) ?? Promise.resolve();
+  const current = previous.catch(() => {}).then(() => triageLatestIssue({ github, owner, repo, issueNumber: number }));
+  issueTriageQueues.set(key, current);
+  try {
+    return await current;
+  } finally {
+    if (issueTriageQueues.get(key) === current) issueTriageQueues.delete(key);
+  }
 }
