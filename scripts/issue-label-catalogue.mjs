@@ -21,15 +21,6 @@ export const LABEL_CATALOGUE = Object.freeze({
   'release: possible-blocker': Object.freeze({ color: 'e99695', description: 'May block a public release, install path, or documented first-run flow.' }),
 });
 
-export const LEGACY_TYPE_ALIASES = Object.freeze({
-  bug: 'type: bug',
-  documentation: 'type: documentation',
-  enhancement: 'type: feature',
-  question: 'type: question',
-});
-
-export const SUPPORTED_LABEL_NAMES = Object.freeze(Object.keys(LABEL_CATALOGUE));
-
 export function labelDefinition(name) {
   return LABEL_CATALOGUE[name];
 }

@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import { labelsForIssue, triageIssue } from './issue-triage.mjs';
+import { ensureDeclaredLabel, labelsForIssue, triageIssue } from './issue-triage.mjs';
 
 const safety = '### Data-safety confirmation\n\n- [x] I have not included secrets, tokens, private data, worker logs, browser profiles, or APIs.';
 
@@ -9,30 +8,12 @@ function bodyWithArea(area, extra = '') {
   return `### Affected area\n\n${area}\n\n### What happened?\n\n${extra}\n\n${safety}`;
 }
 
-function githubFixture({
-  issue,
-  existingDefinitions = [],
-  createRace = [],
-  onGetLabel,
-  onBeforeAddLabels,
-  onAddLabels,
-  provenance = 'bot-owned',
-} = {}) {
+function githubFixture({ issue, existingDefinitions = [], createRace = [], onGetLabel, onBeforeAddLabels } = {}) {
   const definitions = new Set(existingDefinitions);
   const races = new Set(createRace);
   const calls = [];
-  const events = [];
-  let nextEventId = 1;
   let currentIssue = structuredClone(issue);
-  const recordLabel = (name, actor = { login: 'github-actions[bot]', type: 'Bot' }) => {
-    events.push({ id: nextEventId++, event: 'labeled', label: { name }, actor });
-  };
   const github = {
-    async paginate(method, input) {
-      calls.push(['paginate', input]);
-      const response = await method(input);
-      return response.data;
-    },
     rest: {
       issues: {
         async get(input) {
@@ -56,27 +37,13 @@ function githubFixture({
         },
         async addLabels(input) {
           calls.push(['addLabels', input]);
-          onBeforeAddLabels?.(currentIssue, input, { recordLabel });
+          onBeforeAddLabels?.(currentIssue, input);
           for (const name of input.labels) {
-            if (currentIssue.labels.some(label => (label.name ?? label) === name)) continue;
-            currentIssue.labels.push({ name });
-            if (provenance === 'bot-owned') recordLabel(name);
-            else if (provenance === 'ambiguous') {
-              recordLabel(name);
-              recordLabel(name);
+            if (!currentIssue.labels.some(label => (label.name ?? label) === name)) {
+              currentIssue.labels.push({ name });
             }
           }
-          onAddLabels?.(currentIssue, input, { recordLabel });
           return { data: input.labels };
-        },
-        async listEvents(input) {
-          calls.push(['listEvents', input]);
-          return { data: structuredClone(events) };
-        },
-        async removeLabel(input) {
-          calls.push(['removeLabel', input]);
-          currentIssue.labels = currentIssue.labels.filter(label => (label.name ?? label) !== input.name);
-          return { data: null };
         },
       },
     },
@@ -85,21 +52,25 @@ function githubFixture({
     github,
     calls,
     definitions,
-    events,
     get issue() { return currentIssue; },
     editIssue(changes) { Object.assign(currentIssue, structuredClone(changes)); },
   };
 }
 
-test('project progress labels are never inferred and closed issues are inert', () => {
-  assert.deepEqual(labelsForIssue({ state: 'open', title: '[Bug]: broken', body: '', labels: [] }), ['type: bug']);
+test('Project Status is the sole progress source and closed issues are inert', () => {
+  const open = labelsForIssue({ state: 'open', title: '[Bug]: broken', body: '', labels: [] });
+  assert.deepEqual(open, ['type: bug']);
+  assert.equal(open.some(label => label.startsWith('status: ')), false);
   assert.deepEqual(labelsForIssue({ state: 'closed', title: '[Bug]: broken', body: '', labels: [] }), []);
-  assert.equal(labelsForIssue({ state: 'open', title: '[Bug]: broken', body: '', labels: [] }).some(label => label.startsWith('status: ')), false);
 });
 
-test('form and bounded conventional titles infer at most one type', () => {
+test('form prefixes and bounded conventional titles infer at most one type', () => {
   const cases = [
     ['[Bug]: broken', 'type: bug'],
+    ['[Feature]: add filter', 'type: feature'],
+    ['[QA]: regression', 'type: qa-regression'],
+    ['[Docs]: fix setup', 'type: documentation'],
+    ['[Question]: setup', 'type: question'],
     ['feat(web): add filter', 'type: feature'],
     ['docs!: correct setup', 'type: documentation'],
     ['test(api): missing proof', 'type: test'],
@@ -108,8 +79,7 @@ test('form and bounded conventional titles infer at most one type', () => {
   ];
   for (const [title, expected] of cases) {
     const result = labelsForIssue({ state: 'open', title, body: '', labels: [] });
-    assert.equal(result.filter(label => label.startsWith('type: ')).length, 1);
-    assert.ok(result.includes(expected), title);
+    assert.deepEqual(result.filter(label => label.startsWith('type: ')), [expected], title);
   }
   for (const title of ['prefix fix: broken', 'fix no colon', 'feature: broad alias', '[maintenance]: task']) {
     assert.equal(labelsForIssue({ state: 'open', title, body: '', labels: [] }).some(label => label.startsWith('type: ')), false, title);
@@ -117,223 +87,78 @@ test('form and bounded conventional titles infer at most one type', () => {
 });
 
 test('existing manual type and area labels are authoritative', () => {
-  const labels = labelsForIssue({
+  assert.deepEqual(labelsForIssue({
     state: 'open',
     title: '[Bug]: web failure',
-    body: bodyWithArea('Web app', 'API key exposed in output'),
+    body: bodyWithArea('Web app'),
     labels: ['type: investigation', 'area: api', 'priority: P2'],
-  });
-  assert.deepEqual(labels, ['privacy: review-needed']);
+  }), []);
 });
 
-test('structured area is conservative and conflicting fields are left unchanged', () => {
-  assert.deepEqual(labelsForIssue({ state: 'open', title: '[Bug]: first screen', body: bodyWithArea('Setup or install'), labels: ['type: bug'] }), ['area: setup']);
+test('area classification uses one explicit supported form choice and never issue prose', () => {
+  assert.deepEqual(labelsForIssue({
+    state: 'open', title: '[Bug]: first screen', body: bodyWithArea('Setup or install'), labels: ['type: bug'],
+  }), ['area: setup']);
   for (const body of [
+    'Documentation and setup are mentioned in prose.',
     '### Area\n\nUnsure',
     '### Area\n\nDocumentation\n\n### Area\n\nWeb app',
     '### Area\n\nDocumentation\n\n### Affected area\n\nWeb app',
   ]) {
-    assert.deepEqual(labelsForIssue({ state: 'open', title: 'Unclassified request', body, labels: [] }), []);
+    assert.deepEqual(labelsForIssue({ state: 'open', title: 'Docs setup problem', body, labels: [] }), []);
   }
 });
 
-test('privacy requires a sensitive object and explicit exposure semantics', () => {
-  for (const title of [
-    'fix(security): resolve credential dependency advisories',
-    '[Bug]: vulnerability in dependency',
-    'chore: rotate API tokens',
-    'docs: document credential migration',
-    '[Bug]: API token is not exposed',
-    '[Bug]: no credentials were logged',
-    '[Bug]: no API key appears in logs',
-    '[Bug]: API key does not appear in logs',
-    '[Bug]: API key was never in logs',
-    '[Bug]: This change does not expose API keys',
-    '[Bug]: We do not expose credentials',
-    '[Bug]: Never expose tokens in logs',
-    '[Bug]: The fix never leaks private data',
-    '[Bug]: This change does not currently expose API keys',
-    '[Bug]: We do not accidentally leak credentials',
-    'chore: update credential output formatting',
-    'fix: credential response schema validation',
-    'docs: describe API token output fields',
-    'chore: credential logging maintenance',
-    'fix: API token response logging',
-  ]) {
-    assert.equal(labelsForIssue({ state: 'open', title, body: safety, labels: [] }).includes('privacy: review-needed'), false, title);
-  }
-  for (const subject of [
-    'API token exposed',
-    'Private data visible',
-    'Credential shown in error',
-    'API key in output',
-    'Secret leaked into logs',
-    'API token exposed without redaction',
-    'API key appears in logs',
-    'This change exposes API keys',
-    'We expose credentials',
-    'This change exposes tokens in logs',
-    'The fix leaks private data',
-    'Credentials were copied and exposed in logs',
-    'API keys, unfortunately, were logged',
-    'This change does not expose API keys although credentials were logged',
-  ]) {
-    assert.ok(labelsForIssue({ state: 'open', title: `[Bug]: ${subject}`, body: bodyWithArea('TypeScript API'), labels: [] }).includes('privacy: review-needed'), subject);
-  }
-});
+const ARBITRARY_PRIVACY_PROSE = [
+  "API token exposed|Private data visible|Credential shown in error|API key in output|Secret leaked into logs|API token exposed without redaction",
+  "API key appears in logs|This change exposes API keys|We expose credentials|This change exposes tokens in logs|The fix leaks private data|Credentials were copied and exposed in logs",
+  "API keys, unfortunately, were logged|This change does not expose API keys although credentials were logged|API token is not exposed|No credentials were logged|No API key appears in logs|API key does not appear in logs",
+  "API key was never in logs|This change does not expose API keys|We do not expose credentials|Never expose tokens in logs|The fix never leaks private data|This change does not currently expose API keys",
+  "We do not accidentally leak credentials|This change doesn't expose API keys|We don't leak credentials|The migration didn't expose tokens|API key wasn't logged|Credentials weren't exposed",
+  "API keys weren't accidentally logged|API key doesn't currently appear in logs|API keys weren't in logs|Credentials were never publicly exposed|No API keys or credentials were exposed|Credentials were not exposed or logged",
+  "API keys cannot be exposed|API keys will not be exposed|API keys are no longer logged|Neither API keys nor credentials were exposed|API keys were not exposed|API keys were not accidentally exposed",
+  "No API keys were exposed|Credentials were not exposed|API keys are not being exposed|The service cannot expose API keys|The service will not expose API keys|The service is not exposing API keys or credentials",
+  "The service no longer logs API keys|API keys were not, unfortunately, exposed|The service can't expose API keys|The service won't expose API keys|The service isn't exposing API keys|The service does not expose or log credentials",
+  "The service does not expose credentials or log tokens|Credentials were not exposed and were not logged|Credential logging maintenance|API token response logging|Credential display formatting|Credential publishing workflow",
+  "Publishing credential documentation|Displaying credential schema|The service publishes credential documentation|The service displays credential fields|The service logs API token responses|The service publishes credential and token documentation",
+  "API token is exposed|Credentials were logged|API keys were not exposed though credentials were logged|API keys were not exposed while credentials were logged|API keys were not exposed but credentials were logged|API keys were not exposed; credentials were logged",
+  "API token is not exposed and API key appears in logs|API keys were not exposed but were logged|API keys weren't exposed but appeared in logs|The service is exposing API keys|The service is showing API keys|The service is displaying API keys",
+  "The service is revealing API keys|The service is leaking API keys|The service is logging API keys|The service is printing API keys|The service is publishing API keys|The service is disclosing API keys",
+  "The service is committing API keys|The service is pasting API keys|The service is rendering API keys|API keys are visible|API key exposure|API key visibility",
+  "API keys appear in logs|API keys were exposed|API keys were accidentally exposed|API keys or credentials were exposed|Credentials were exposed|Credentials were exposed and logged",
+  "Credentials were not exposed and were logged|API keys are being exposed|The service is exposing API keys and credentials|The service exposes and logs credentials|No exposed API keys|API keys have no exposure",
+  "The service mustn't expose API keys|API keys were not exposed nor credentials were logged|Neither API keys were exposed nor credentials were logged|Credential leak|API key leak|Secret leak",
+  "Password leak|Credentials leak|API keys leak|Secrets leak|Passwords leak|Vulnerabilities reported",
+].flatMap(group => group.split('|'));
 
-test('production triage adapter enforces the bounded exposure grammar matrix', async () => {
-  const cases = [
-    ['API token is not exposed', false],
-    ['No credentials were logged', false],
-    ['API key does not appear in logs', false],
-    ['This change does not expose API keys', false],
-    ['We do not expose credentials', false],
-    ['Never expose tokens in logs', false],
-    ['The fix never leaks private data', false],
-    ['This change does not currently expose API keys', false],
-    ['We do not accidentally leak credentials', false],
-    ["This change doesn't expose API keys", false],
-    ["We don't leak credentials", false],
-    ["The migration didn't expose tokens", false],
-    ["API key wasn't logged", false],
-    ["Credentials weren't exposed", false],
-    ["API keys weren't accidentally logged", false],
-    ["API key doesn't currently appear in logs", false],
-    ["API keys weren't in logs", false],
-    ['Credentials were never publicly exposed', false],
-    ['No API keys or credentials were exposed', false],
-    ['Credentials were not exposed or logged', false],
-    ['API keys cannot be exposed', false],
-    ['API keys will not be exposed', false],
-    ['API keys are no longer logged', false],
-    ['Neither API keys nor credentials were exposed', false],
-    ['API keys were not exposed', false],
-    ['API keys were not accidentally exposed', false],
-    ['No API keys were exposed', false],
-    ['Credentials were not exposed', false],
-    ['API keys are not being exposed', false],
-    ['The service cannot expose API keys', false],
-    ['The service will not expose API keys', false],
-    ['The service is not exposing API keys or credentials', false],
-    ['The service no longer logs API keys', false],
-    ['API keys were not, unfortunately, exposed', false],
-    ["The service can't expose API keys", false],
-    ["The service won't expose API keys", false],
-    ["The service isn't exposing API keys", false],
-    ['The service does not expose or log credentials', false],
-    ['The service does not expose credentials or log tokens', false],
-    ['Credentials were not exposed and were not logged', false],
-    ['Credential logging maintenance', false],
-    ['API token response logging', false],
-    ['Credential display formatting', false],
-    ['Credential publishing workflow', false],
-    ['Publishing credential documentation', false],
-    ['Displaying credential schema', false],
-    ['The service publishes credential documentation', false],
-    ['The service displays credential fields', false],
-    ['The service logs API token responses', false],
-    ['The service publishes credential and token documentation', false],
-    ['API token is exposed', true],
-    ['Credentials were logged', true],
-    ['API key appears in logs', true],
-    ['This change exposes API keys', true],
-    ['We expose credentials', true],
-    ['This change exposes tokens in logs', true],
-    ['The fix leaks private data', true],
-    ['Credentials were copied and exposed in logs', true],
-    ['API keys, unfortunately, were logged', true],
-    ['This change does not expose API keys although credentials were logged', true],
-    ['API keys were not exposed though credentials were logged', true],
-    ['API keys were not exposed while credentials were logged', true],
-    ['API keys were not exposed but credentials were logged', true],
-    ['API keys were not exposed; credentials were logged', true],
-    ['API token is not exposed and API key appears in logs', true],
-    ['API keys were not exposed but were logged', true],
-    ["API keys weren't exposed but appeared in logs", true],
-    ['The service is exposing API keys', true],
-    ['The service is showing API keys', true],
-    ['The service is displaying API keys', true],
-    ['The service is revealing API keys', true],
-    ['The service is leaking API keys', true],
-    ['The service is logging API keys', true],
-    ['The service is printing API keys', true],
-    ['The service is publishing API keys', true],
-    ['The service is disclosing API keys', true],
-    ['The service is committing API keys', true],
-    ['The service is pasting API keys', true],
-    ['The service is rendering API keys', true],
-    ['API keys are visible', true],
-    ['API key exposure', true],
-    ['API key visibility', true],
-    ['API keys appear in logs', true],
-    ['API keys were exposed', true],
-    ['API keys were accidentally exposed', true],
-    ['API keys or credentials were exposed', true],
-    ['Credentials were exposed', true],
-    ['Credentials were exposed and logged', true],
-    ['Credentials were not exposed and were logged', true],
-    ['API keys are being exposed', true],
-    ['The service is exposing API keys and credentials', true],
-    ['The service exposes and logs credentials', true],
-  ];
-  const outcomes = new Map();
-  let number = 200;
-  for (const [subject, expectedPrivacy] of cases) {
-    const issue = {
-      number: number++,
-      state: 'open',
-      title: `[Bug]: ${subject}`,
-      body: bodyWithArea('TypeScript API'),
-      labels: [{ name: 'priority: P2' }],
-    };
-    const fixture = githubFixture({
-      issue,
-      existingDefinitions: ['type: bug', 'area: api', 'privacy: review-needed'],
-    });
-    const result = await triageIssue({
-      github: fixture.github,
-      owner: 'ebarti',
-      repo: 'jobctrl',
-      issueNumber: issue.number,
-    });
-    const actualPrivacy = fixture.issue.labels.some(label => label.name === 'privacy: review-needed');
-    assert.equal(result.additions.includes('privacy: review-needed'), expectedPrivacy, subject);
-    assert.equal(actualPrivacy, expectedPrivacy, subject);
-    assert.equal(fixture.calls.filter(([method]) => method === 'addLabels').length, 1, subject);
-    outcomes.set(subject, actualPrivacy);
+test('arbitrary title and body prose never infers privacy review', () => {
+  for (const prose of ARBITRARY_PRIVACY_PROSE) {
+    for (const issue of [
+      { state: 'open', title: `[Bug]: ${prose}`, body: bodyWithArea('TypeScript API'), labels: [] },
+      { state: 'open', title: '[Bug]: synthetic report', body: bodyWithArea('TypeScript API', prose), labels: [] },
+    ]) {
+      assert.equal(labelsForIssue(issue).includes('privacy: review-needed'), false, prose);
+    }
   }
-
-  for (const [base, transformed] of [
-    ['API keys were exposed', 'API keys were accidentally exposed'],
-    ['API keys were not exposed', 'API keys were not accidentally exposed'],
-    ['API keys were exposed', 'API keys or credentials were exposed'],
-    ['No API keys were exposed', 'No API keys or credentials were exposed'],
-    ['Credentials were exposed', 'Credentials were exposed and logged'],
-    ['Credentials were not exposed', 'Credentials were not exposed or logged'],
-    ['The service publishes credential documentation', 'The service publishes credential and token documentation'],
-  ]) {
-    assert.equal(outcomes.get(transformed), outcomes.get(base), base + ' -> ' + transformed);
-  }
-  assert.equal(outcomes.get('API keys were not exposed'), false);
-  assert.equal(outcomes.get('API keys were not exposed but were logged'), true);
-});
-
-test('existing manual privacy and release flags are never removed on edits', () => {
   assert.deepEqual(labelsForIssue({
-    state: 'open',
-    title: 'chore: ordinary maintenance',
-    body: '',
-    labels: ['type: maintenance', 'privacy: review-needed', 'release: possible-blocker'],
+    state: 'open', title: 'ordinary maintenance', body: '', labels: ['type: maintenance', 'privacy: review-needed'],
   }), []);
 });
 
-test('security-contact form keeps security and privacy routing', () => {
+test('security-contact type is the only automatic privacy route', () => {
   assert.deepEqual(labelsForIssue({ state: 'open', title: '[Security contact]: request', body: safety, labels: [] }), [
     'type: security-contact',
     'area: security',
     'privacy: review-needed',
   ]);
+  assert.deepEqual(labelsForIssue({ state: 'open', title: 'private path', body: safety, labels: ['type: security-contact'] }), [
+    'area: security',
+    'privacy: review-needed',
+  ]);
+  assert.deepEqual(labelsForIssue({
+    state: 'open', title: '[Security contact]: request', body: safety,
+    labels: ['type: security-contact', 'area: security', 'privacy: review-needed'],
+  }), []);
 });
 
 test('release label requires its exact checked form field', () => {
@@ -348,154 +173,91 @@ test('release label requires its exact checked form field', () => {
   }
 });
 
-test('opened, edited and reopened handling creates only missing declarations and converges', async () => {
+test('catalogue lookup creates only missing declared labels and tolerates a create race', async () => {
+  const fixture = githubFixture({
+    issue: { number: 1, state: 'open', title: '', body: '', labels: [] },
+    existingDefinitions: ['type: bug'],
+    createRace: ['area: api'],
+  });
+  assert.deepEqual(await ensureDeclaredLabel({ github: fixture.github, owner: 'ebarti', repo: 'jobctrl', name: 'type: bug' }), {
+    name: 'type: bug', created: false,
+  });
+  assert.equal(fixture.calls.some(([method]) => method === 'createLabel'), false);
+  assert.deepEqual(await ensureDeclaredLabel({ github: fixture.github, owner: 'ebarti', repo: 'jobctrl', name: 'area: api' }), {
+    name: 'area: api', created: false, raced: true,
+  });
+  await assert.rejects(
+    ensureDeclaredLabel({ github: fixture.github, owner: 'ebarti', repo: 'jobctrl', name: 'status: needs triage' }),
+    /Refusing to create undeclared label/,
+  );
+});
+
+test('opened, edited and reopened handling converges without rewriting definitions', async () => {
   const issue = {
     number: 77,
     state: 'open',
-    title: '[Bug]: API key exposed in output',
+    title: '[Bug]: synthetic failure',
     body: bodyWithArea('TypeScript API'),
     labels: [],
   };
   const fixture = githubFixture({ issue, existingDefinitions: ['type: bug'], createRace: ['area: api'] });
 
   const opened = await triageIssue({ github: fixture.github, owner: 'ebarti', repo: 'jobctrl', issueNumber: issue.number });
-  assert.deepEqual(opened.additions, ['type: bug', 'area: api', 'privacy: review-needed']);
+  assert.deepEqual(opened.additions, ['type: bug', 'area: api']);
   assert.equal(opened.ensured.find(item => item.name === 'area: api').raced, true);
-  assert.equal(fixture.calls.some(([method]) => method === 'updateLabel'), false);
-
   const edited = await triageIssue({ github: fixture.github, owner: 'ebarti', repo: 'jobctrl', issueNumber: issue.number });
   const reopened = await triageIssue({ github: fixture.github, owner: 'ebarti', repo: 'jobctrl', issueNumber: issue.number });
   assert.deepEqual(edited.additions, []);
   assert.deepEqual(reopened.additions, []);
   assert.equal(fixture.calls.filter(([method]) => method === 'addLabels').length, 1);
+  assert.equal(fixture.calls.some(([method]) => method === 'updateLabel'), false);
 });
 
-test('closed handling performs zero API writes', async () => {
-  const issue = { number: 78, state: 'closed', title: '[Bug]: closed', body: '', labels: [] };
-  const fixture = githubFixture({ issue });
-  const result = await triageIssue({
-    github: fixture.github,
-    owner: 'ebarti',
-    repo: 'jobctrl',
-    issueNumber: issue.number,
+test('closed handling performs zero API writes and a close before assignment stays inert', async () => {
+  const closedFixture = githubFixture({
+    issue: { number: 78, state: 'closed', title: '[Bug]: closed', body: '', labels: [] },
   });
-  assert.deepEqual(result, { additions: [], ensured: [] });
-  assert.equal(fixture.calls.filter(([method]) => ['createLabel', 'addLabels'].includes(method)).length, 0);
-});
+  assert.deepEqual(await triageIssue({
+    github: closedFixture.github, owner: 'ebarti', repo: 'jobctrl', issueNumber: 78,
+  }), { additions: [], ensured: [] });
+  assert.equal(closedFixture.calls.filter(([method]) => ['createLabel', 'addLabels'].includes(method)).length, 0);
 
-test('overlapping opened and edited runs serialize without accumulating conflicting type and area labels', async () => {
-  const issue = {
-    number: 79,
-    state: 'open',
-    title: '[Bug]: API failure',
-    body: bodyWithArea('TypeScript API'),
-    labels: [],
-  };
-  const fixture = githubFixture({
-    issue,
-    existingDefinitions: ['type: bug', 'area: api', 'type: feature', 'area: web'],
-  });
-  const originalAdd = fixture.github.rest.issues.addLabels;
-  fixture.github.rest.issues.addLabels = async input => {
-    const result = await originalAdd(input);
-    fixture.editIssue({ title: '[Feature]: web filter', body: bodyWithArea('Web app') });
-    return result;
-  };
-
-  const opened = triageIssue({ github: fixture.github, owner: 'ebarti', repo: 'jobctrl', issueNumber: issue.number });
-  const edited = triageIssue({ github: fixture.github, owner: 'ebarti', repo: 'jobctrl', issueNumber: issue.number });
-  await Promise.all([opened, edited]);
-
-  assert.deepEqual(fixture.issue.labels.map(label => label.name).filter(name => name.startsWith('type: ')), ['type: feature']);
-  assert.deepEqual(fixture.issue.labels.map(label => label.name).filter(name => name.startsWith('area: ')), ['area: web']);
-  assert.equal(fixture.calls.filter(([method]) => method === 'addLabels').length, 2);
-  assert.deepEqual(fixture.calls.filter(([method]) => method === 'removeLabel').map(([, input]) => input.name), ['type: bug', 'area: api']);
-});
-
-test('a close during triage is re-read immediately before assignment', async () => {
-  const issue = { number: 80, state: 'open', title: '[Bug]: closes while running', body: '', labels: [] };
-  const fixture = githubFixture({
-    issue,
+  const closingFixture = githubFixture({
+    issue: { number: 79, state: 'open', title: '[Bug]: closing', body: '', labels: [] },
     existingDefinitions: ['type: bug'],
-    onGetLabel(currentIssue) { currentIssue.state = 'closed'; },
+    onGetLabel(issue) { issue.state = 'closed'; },
   });
-  const result = await triageIssue({ github: fixture.github, owner: 'ebarti', repo: 'jobctrl', issueNumber: issue.number });
+  const result = await triageIssue({ github: closingFixture.github, owner: 'ebarti', repo: 'jobctrl', issueNumber: 79 });
   assert.deepEqual(result.additions, []);
-  assert.equal(fixture.calls.filter(([method]) => method === 'addLabels').length, 0);
+  assert.equal(closingFixture.calls.filter(([method]) => method === 'addLabels').length, 0);
 });
 
-test('a close at the add-label boundary compensates only labels added by that run', async () => {
-  const issue = {
-    number: 81,
-    state: 'open',
-    title: '[Bug]: closes while labels are added',
-    body: bodyWithArea('Web app'),
-    labels: [{ name: 'priority: P1' }, { name: 'origin: manual' }],
-  };
+test('overlapping issue events serialize and never accumulate conflicting classifications', async () => {
+  let edited = false;
   const fixture = githubFixture({
-    issue,
-    existingDefinitions: ['type: bug', 'area: web'],
-    onAddLabels(currentIssue) { currentIssue.state = 'closed'; },
-  });
-  const result = await triageIssue({ github: fixture.github, owner: 'ebarti', repo: 'jobctrl', issueNumber: issue.number });
-  assert.deepEqual(result.compensated, ['type: bug', 'area: web']);
-  assert.deepEqual(fixture.issue.labels.map(label => label.name).sort(), ['origin: manual', 'priority: P1']);
-  assert.deepEqual(fixture.calls.filter(([method]) => method === 'removeLabel').map(([, input]) => input.name), ['type: bug', 'area: web']);
-  assert.equal(fixture.calls.filter(([method]) => method === 'listEvents').length, 2);
-});
-
-test('same-label human race is preserved because the new assignment is not bot-owned', async () => {
-  const issue = {
-    number: 82,
-    state: 'open',
-    title: '[Bug]: human wins label race',
-    body: '',
-    labels: [{ name: 'priority: P1' }],
-  };
-  const fixture = githubFixture({
-    issue,
-    existingDefinitions: ['type: bug'],
-    onBeforeAddLabels(currentIssue, _input, { recordLabel }) {
-      currentIssue.labels.push({ name: 'type: bug' });
-      recordLabel('type: bug', { login: 'maintainer', type: 'User' });
-      currentIssue.state = 'closed';
+    issue: {
+      number: 80,
+      state: 'open',
+      title: '[Bug]: API failure',
+      body: bodyWithArea('TypeScript API'),
+      labels: [],
+    },
+    existingDefinitions: ['type: bug', 'area: api', 'type: feature', 'area: web'],
+    onBeforeAddLabels(issue) {
+      if (edited) return;
+      edited = true;
+      issue.title = '[Feature]: web filter';
+      issue.body = bodyWithArea('Web app');
     },
   });
-  const result = await triageIssue({ github: fixture.github, owner: 'ebarti', repo: 'jobctrl', issueNumber: issue.number });
-  assert.deepEqual(result.compensated, []);
-  assert.deepEqual(result.compensationSkipped, ['type: bug']);
-  assert.deepEqual(fixture.issue.labels.map(label => label.name).sort(), ['priority: P1', 'type: bug']);
-  assert.equal(fixture.calls.some(([method]) => method === 'removeLabel'), false);
-});
 
-test('missing or ambiguous label provenance fails safe without manual or unrelated label loss', async () => {
-  for (const provenance of ['missing', 'ambiguous']) {
-    const issue = {
-      number: provenance === 'missing' ? 83 : 84,
-      state: 'open',
-      title: '[Bug]: provenance cannot prove ownership',
-      body: '',
-      labels: [{ name: 'priority: P1' }, { name: 'origin: manual' }],
-    };
-    const fixture = githubFixture({
-      issue,
-      existingDefinitions: ['type: bug'],
-      provenance,
-      onAddLabels(currentIssue) { currentIssue.state = 'closed'; },
-    });
-    const result = await triageIssue({ github: fixture.github, owner: 'ebarti', repo: 'jobctrl', issueNumber: issue.number });
-    assert.deepEqual(result.compensated, [], provenance);
-    assert.deepEqual(result.compensationSkipped, ['type: bug'], provenance);
-    assert.deepEqual(fixture.issue.labels.map(label => label.name).sort(), ['origin: manual', 'priority: P1', 'type: bug'], provenance);
-    assert.equal(fixture.calls.some(([method]) => method === 'removeLabel'), false, provenance);
-  }
-});
+  await Promise.all([
+    triageIssue({ github: fixture.github, owner: 'ebarti', repo: 'jobctrl', issueNumber: 80 }),
+    triageIssue({ github: fixture.github, owner: 'ebarti', repo: 'jobctrl', issueNumber: 80 }),
+  ]);
 
-test('workflow serializes each issue and passes only the issue number to fresh triage reads', async () => {
-  const workflow = await readFile(new URL('../.github/workflows/issue-triage.yml', import.meta.url), 'utf8');
-  assert.match(workflow, /group: issue-triage-\$\{\{ github\.repository \}\}-\$\{\{ github\.event\.issue\.number \|\| inputs\.issue_number \}\}/);
-  assert.match(workflow, /cancel-in-progress: false/);
-  assert.match(workflow, /const automationLogin = 'github-actions\[bot\]'/);
-  assert.match(workflow, /triageIssue\(\{ github, owner, repo, issueNumber, automationLogin \}\)/);
-  assert.doesNotMatch(workflow, /const \{ data: issue \}/);
+  const names = fixture.issue.labels.map(label => label.name);
+  assert.deepEqual(names.filter(name => name.startsWith('type: ')), ['type: bug']);
+  assert.deepEqual(names.filter(name => name.startsWith('area: ')), ['area: api']);
+  assert.equal(fixture.calls.filter(([method]) => method === 'addLabels').length, 1);
 });

@@ -36,7 +36,6 @@ jobs:
             const owner = context.repo.owner;
             const repo = context.repo.repo;
             const issueNumber = context.payload.issue?.number ?? Number(context.payload.inputs?.issue_number);
-            const automationLogin = 'github-actions[bot]';
 
             const { triageIssue } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/issue-triage.mjs`);
-            await triageIssue({ github, owner, repo, issueNumber, automationLogin });
+            await triageIssue({ github, owner, repo, issueNumber });
