@@ -182,7 +182,7 @@ test('privacy requires a sensitive object and explicit exposure semantics', () =
   }
 });
 
-test('production triage adapter respects contextual exposure negation in both phrase orders', async () => {
+test('production triage adapter enforces the bounded exposure grammar matrix', async () => {
   const cases = [
     ['API token is not exposed', false],
     ['No credentials were logged', false],
@@ -202,6 +202,38 @@ test('production triage adapter respects contextual exposure negation in both ph
     ["API key doesn't currently appear in logs", false],
     ["API keys weren't in logs", false],
     ['Credentials were never publicly exposed', false],
+    ['No API keys or credentials were exposed', false],
+    ['Credentials were not exposed or logged', false],
+    ['API keys cannot be exposed', false],
+    ['API keys will not be exposed', false],
+    ['API keys are no longer logged', false],
+    ['Neither API keys nor credentials were exposed', false],
+    ['API keys were not exposed', false],
+    ['API keys were not accidentally exposed', false],
+    ['No API keys were exposed', false],
+    ['Credentials were not exposed', false],
+    ['API keys are not being exposed', false],
+    ['The service cannot expose API keys', false],
+    ['The service will not expose API keys', false],
+    ['The service is not exposing API keys or credentials', false],
+    ['The service no longer logs API keys', false],
+    ['API keys were not, unfortunately, exposed', false],
+    ["The service can't expose API keys", false],
+    ["The service won't expose API keys", false],
+    ["The service isn't exposing API keys", false],
+    ['The service does not expose or log credentials', false],
+    ['The service does not expose credentials or log tokens', false],
+    ['Credentials were not exposed and were not logged', false],
+    ['Credential logging maintenance', false],
+    ['API token response logging', false],
+    ['Credential display formatting', false],
+    ['Credential publishing workflow', false],
+    ['Publishing credential documentation', false],
+    ['Displaying credential schema', false],
+    ['The service publishes credential documentation', false],
+    ['The service displays credential fields', false],
+    ['The service logs API token responses', false],
+    ['The service publishes credential and token documentation', false],
     ['API token is exposed', true],
     ['Credentials were logged', true],
     ['API key appears in logs', true],
@@ -217,7 +249,35 @@ test('production triage adapter respects contextual exposure negation in both ph
     ['API keys were not exposed but credentials were logged', true],
     ['API keys were not exposed; credentials were logged', true],
     ['API token is not exposed and API key appears in logs', true],
+    ['API keys were not exposed but were logged', true],
+    ["API keys weren't exposed but appeared in logs", true],
+    ['The service is exposing API keys', true],
+    ['The service is showing API keys', true],
+    ['The service is displaying API keys', true],
+    ['The service is revealing API keys', true],
+    ['The service is leaking API keys', true],
+    ['The service is logging API keys', true],
+    ['The service is printing API keys', true],
+    ['The service is publishing API keys', true],
+    ['The service is disclosing API keys', true],
+    ['The service is committing API keys', true],
+    ['The service is pasting API keys', true],
+    ['The service is rendering API keys', true],
+    ['API keys are visible', true],
+    ['API key exposure', true],
+    ['API key visibility', true],
+    ['API keys appear in logs', true],
+    ['API keys were exposed', true],
+    ['API keys were accidentally exposed', true],
+    ['API keys or credentials were exposed', true],
+    ['Credentials were exposed', true],
+    ['Credentials were exposed and logged', true],
+    ['Credentials were not exposed and were logged', true],
+    ['API keys are being exposed', true],
+    ['The service is exposing API keys and credentials', true],
+    ['The service exposes and logs credentials', true],
   ];
+  const outcomes = new Map();
   let number = 200;
   for (const [subject, expectedPrivacy] of cases) {
     const issue = {
@@ -237,10 +297,26 @@ test('production triage adapter respects contextual exposure negation in both ph
       repo: 'jobctrl',
       issueNumber: issue.number,
     });
+    const actualPrivacy = fixture.issue.labels.some(label => label.name === 'privacy: review-needed');
     assert.equal(result.additions.includes('privacy: review-needed'), expectedPrivacy, subject);
-    assert.equal(fixture.issue.labels.some(label => label.name === 'privacy: review-needed'), expectedPrivacy, subject);
+    assert.equal(actualPrivacy, expectedPrivacy, subject);
     assert.equal(fixture.calls.filter(([method]) => method === 'addLabels').length, 1, subject);
+    outcomes.set(subject, actualPrivacy);
   }
+
+  for (const [base, transformed] of [
+    ['API keys were exposed', 'API keys were accidentally exposed'],
+    ['API keys were not exposed', 'API keys were not accidentally exposed'],
+    ['API keys were exposed', 'API keys or credentials were exposed'],
+    ['No API keys were exposed', 'No API keys or credentials were exposed'],
+    ['Credentials were exposed', 'Credentials were exposed and logged'],
+    ['Credentials were not exposed', 'Credentials were not exposed or logged'],
+    ['The service publishes credential documentation', 'The service publishes credential and token documentation'],
+  ]) {
+    assert.equal(outcomes.get(transformed), outcomes.get(base), base + ' -> ' + transformed);
+  }
+  assert.equal(outcomes.get('API keys were not exposed'), false);
+  assert.equal(outcomes.get('API keys were not exposed but were logged'), true);
 });
 
 test('existing manual privacy and release flags are never removed on edits', () => {

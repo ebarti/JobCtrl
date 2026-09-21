@@ -27,18 +27,44 @@ const AREA_FIELDS = ['Affected area', 'Area', 'Regression surface'];
 const RELEASE_FIELD = 'Release impact';
 const RELEASE_CHECKBOX = 'This appears to block a public release, source install, or documented first-run flow.';
 const PRIVACY_IGNORED_FIELDS = /^(?:data-safety confirmation|public issue confirmation|confirmation|release impact)$/i;
-const SENSITIVE_OBJECT_SOURCE = String.raw`(?:secrets?|api[ -]?keys?|tokens?|credentials?|passwords?|private[ -]?data|personal[ -]?data|profile[ -]?facts?|resumes?|generated[ -]?materials?|browser[ -]?profiles?|sqlite[ -]?databases?|exploit[ -]?details?)`;
-const EXPOSURE_ACTION_SOURCE = String.raw`(?:expos(?:e|es|ed)|leak(?:s|ed)?|visibl(?:e|ity)|logged|printed|shown|disclos(?:e|es|ed)|published|committed|pasted|rendered)`;
-const EXPOSURE_SURFACE_SOURCE = String.raw`(?:logs?|output|responses?|errors?|console|terminal|ui|pages?|screens?|issues?|commits?)`;
-const NEGATION_SOURCE = String.raw`(?:not|never|doesn['’]t|don['’]t|didn['’]t|isn['’]t|aren['’]t|wasn['’]t|weren['’]t|hasn['’]t|haven['’]t|hadn['’]t|won['’]t|wouldn['’]t|can['’]t|couldn['’]t|shouldn['’]t)`;
-const NEGATION_MODIFIER_SOURCE = String.raw`(?:[a-z]+ly|ever|yet|still)`;
-const ACTION_NEGATION_PATTERN = new RegExp(String.raw`\b${NEGATION_SOURCE}(?:\s+${NEGATION_MODIFIER_SOURCE}){0,3}\s*$`, 'i');
-const OBJECT_NEGATION_PATTERN = /\b(?:no|without)\s*$/i;
-const SURFACE_NEGATION_PATTERN = new RegExp(
-  String.raw`\b${NEGATION_SOURCE}(?:\s+${NEGATION_MODIFIER_SOURCE}){0,3}(?:\s+(?:appears?|appeared|show(?:s|ed)? up|be))?\s+(?:in|into|on|via)\b`,
-  'i',
-);
-const ASSERTION_BOUNDARY_PATTERN = /\n+|;+|(?<=[.!?])\s+|\s+(?:although|though|but|however|while|whereas)\s+/i;
+const SENSITIVE_PHRASES = [
+  ['api', 'key'], ['api', 'keys'],
+  ['private', 'data'], ['personal', 'data'], ['profile', 'fact'], ['profile', 'facts'],
+  ['generated', 'material'], ['generated', 'materials'], ['browser', 'profile'], ['browser', 'profiles'],
+  ['sqlite', 'database'], ['sqlite', 'databases'], ['exploit', 'detail'], ['exploit', 'details'],
+  ['secret'], ['secrets'], ['token'], ['tokens'], ['credential'], ['credentials'],
+  ['password'], ['passwords'], ['resume'], ['resumes'],
+].sort((left, right) => right.length - left.length);
+const PLURAL_SENSITIVE_WORDS = new Set(['keys', 'secrets', 'tokens', 'credentials', 'passwords', 'facts', 'resumes', 'materials', 'profiles', 'databases', 'details', 'data']);
+const EXPOSURE_ACTIONS = new Map([
+  ['expose', 'base'], ['exposes', 'finite'], ['exposed', 'past'], ['exposing', 'progressive'], ['exposure', 'noun'],
+  ['leak', 'base'], ['leaks', 'finite'], ['leaked', 'past'], ['leaking', 'progressive'],
+  ['log', 'base'], ['logs', 'finite'], ['logged', 'past'], ['logging', 'progressive'],
+  ['print', 'base'], ['prints', 'finite'], ['printed', 'past'], ['printing', 'progressive'],
+  ['show', 'base'], ['shows', 'finite'], ['showed', 'past'], ['shown', 'past'], ['showing', 'progressive'],
+  ['display', 'base'], ['displays', 'finite'], ['displayed', 'past'], ['displaying', 'progressive'],
+  ['reveal', 'base'], ['reveals', 'finite'], ['revealed', 'past'], ['revealing', 'progressive'],
+  ['disclose', 'base'], ['discloses', 'finite'], ['disclosed', 'past'], ['disclosing', 'progressive'],
+  ['publish', 'base'], ['publishes', 'finite'], ['published', 'past'], ['publishing', 'progressive'],
+  ['commit', 'base'], ['commits', 'finite'], ['committed', 'past'], ['committing', 'progressive'],
+  ['paste', 'base'], ['pastes', 'finite'], ['pasted', 'past'], ['pasting', 'progressive'],
+  ['render', 'base'], ['renders', 'finite'], ['rendered', 'past'], ['rendering', 'progressive'],
+  ['visible', 'adjective'], ['visibility', 'noun'],
+  ['appear', 'surface'], ['appears', 'surface'], ['appeared', 'surface'], ['appearing', 'surface'],
+]);
+const EXPOSURE_SURFACES = new Set(['log', 'logs', 'output', 'response', 'responses', 'error', 'errors', 'console', 'terminal', 'ui', 'page', 'pages', 'screen', 'screens', 'issue', 'issues', 'commit', 'commits']);
+const SURFACE_PREPOSITIONS = new Set(['in', 'into', 'on', 'via']);
+const AUXILIARIES = new Set(['am', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'do', 'does', 'did', 'have', 'has', 'had', 'will', 'would', 'can', 'could', 'should', 'may', 'might', 'must', 'shall']);
+const NEGATED_CONTRACTIONS = new Set(["doesn't", "don't", "didn't", "isn't", "aren't", "wasn't", "weren't", "hasn't", "haven't", "hadn't", "won't", "wouldn't", "can't", "couldn't", "shouldn't"]);
+const COORDINATORS = new Set(['and', 'or', 'nor']);
+const CONTRAST_CONNECTORS = new Set(['although', 'though', 'but', 'however', 'while', 'whereas']);
+const ACTIVE_OBJECT_FILLERS = new Set(['the', 'a', 'an', 'these', 'those', 'our', 'your', 'raw', 'public', 'private', 'personal', 'customer', 'customers', 'user', 'users']);
+const IMPLICIT_SURFACE_FILLERS = new Set(['the', 'a', 'an']);
+const MAINTENANCE_NOUNS = new Set([
+  'dependency', 'dependencies', 'documentation', 'docs', 'field', 'fields',
+  'format', 'formatting', 'handling', 'maintenance', 'migration', 'output', 'outputs',
+  'response', 'responses', 'rotation', 'schema', 'validation', 'workflow', 'workflows',
+]);
 const issueTriageQueues = new Map();
 
 function labelNames(issue) {
@@ -78,61 +104,252 @@ function privacyText(issue, form) {
   return values.join('\n');
 }
 
-function findPhrases(text, source) {
-  return [...text.matchAll(new RegExp(String.raw`\b${source}\b`, 'gi'))]
-    .map(match => ({ index: match.index, end: match.index + match[0].length }));
+function tokenizeExposureText(text) {
+  return [...text.toLowerCase().matchAll(/[a-z]+(?:['’][a-z]+)?|[0-9]+|[;,.!?]|\n+/gi)]
+    .map(match => ({
+      value: match[0].includes('\n') ? '\n' : match[0].replaceAll('’', "'"),
+      index: match.index,
+    }));
 }
 
-function nearestPhrase(phrase, candidates) {
+function splitExposureAssertions(text) {
+  const assertions = [];
+  let tokens = [];
+  let inheritsSubject = false;
+  const flush = () => {
+    if (tokens.length > 0) assertions.push({ tokens, inheritsSubject });
+    tokens = [];
+  };
+
+  for (const token of tokenizeExposureText(text)) {
+    if (token.value === '\n' || ['.', '!', '?'].includes(token.value)) {
+      flush();
+      inheritsSubject = false;
+    } else if (token.value === ';' || CONTRAST_CONNECTORS.has(token.value)) {
+      flush();
+      inheritsSubject = true;
+    } else {
+      tokens.push(token);
+    }
+  }
+  flush();
+  return assertions;
+}
+
+function phraseMatches(tokens, start, phrase) {
+  return phrase.every((word, offset) => tokens[start + offset]?.value === word);
+}
+
+function sensitiveObjects(tokens) {
+  const candidates = [];
+  for (let index = 0; index < tokens.length;) {
+    const phrase = SENSITIVE_PHRASES.find(candidate => phraseMatches(tokens, index, candidate));
+    if (!phrase) {
+      index += 1;
+      continue;
+    }
+    candidates.push({
+      start: index,
+      end: index + phrase.length - 1,
+      plural: PLURAL_SENSITIVE_WORDS.has(phrase.at(-1)),
+      negated: false,
+    });
+    index += phrase.length;
+  }
+
+  const objects = candidates.filter((candidate, index) => {
+    let groupEnd = index;
+    let current = candidate;
+    while (groupEnd + 1 < candidates.length) {
+      const next = candidates[groupEnd + 1];
+      const between = tokens.slice(current.end + 1, next.start).map(token => token.value);
+      if (between.length === 0 || !between.every(value => value === ',' || COORDINATORS.has(value))) break;
+      groupEnd += 1;
+      current = next;
+    }
+    return !MAINTENANCE_NOUNS.has(tokens[candidates[groupEnd].end + 1]?.value);
+  });
+
+  for (let index = 0; index < objects.length; index += 1) {
+    const object = objects[index];
+    const previous = tokens[object.start - 1]?.value;
+    object.negated = ['no', 'neither', 'without'].includes(previous);
+    const coordinated = objects[index - 1];
+    if (!object.negated && coordinated?.negated) {
+      const between = tokens.slice(coordinated.end + 1, object.start).map(token => token.value);
+      object.negated = between.length > 0 && between.every(value => value === ',' || COORDINATORS.has(value));
+    }
+  }
+  return objects;
+}
+
+function exposureActions(tokens) {
+  return tokens.flatMap((token, index) => {
+    const form = EXPOSURE_ACTIONS.get(token.value);
+    const surfacePrefix = tokens.slice(Math.max(0, index - 4), index);
+    const prepositionIndex = surfacePrefix.findLastIndex(candidate => SURFACE_PREPOSITIONS.has(candidate.value));
+    const isSurfaceNoun = EXPOSURE_SURFACES.has(token.value)
+      && prepositionIndex >= 0
+      && surfacePrefix.slice(prepositionIndex + 1).every(candidate =>
+        IMPLICIT_SURFACE_FILLERS.has(candidate.value)
+        || ACTIVE_OBJECT_FILLERS.has(candidate.value)
+        || isModifier(candidate.value));
+    return form && !isSurfaceNoun ? [{ index, form, value: token.value }] : [];
+  });
+}
+
+function tokenDistance(action, object) {
+  if (object.end < action.index) return action.index - object.end - 1;
+  if (action.index < object.start) return object.start - action.index - 1;
+  return 0;
+}
+
+function nearestObject(action, objects) {
   let nearest;
-  for (const candidate of candidates) {
-    const distance = candidate.end <= phrase.index
-      ? phrase.index - candidate.end
-      : phrase.end <= candidate.index
-        ? candidate.index - phrase.end
-        : 0;
-    if (distance > 60) continue;
-    if (!nearest || distance < nearest.distance) nearest = { ...candidate, distance };
+  for (const object of objects) {
+    const distance = tokenDistance(action, object);
+    if (distance > 12) continue;
+    if (!nearest || distance < nearest.distance) nearest = { ...object, distance };
   }
   return nearest;
 }
 
-function objectIsNegated(assertion, object) {
-  return OBJECT_NEGATION_PATTERN.test(assertion.slice(Math.max(0, object.index - 16), object.index));
+function isModifier(value) {
+  return value.endsWith('ly') || ['ever', 'yet', 'still', 'longer', 'currently'].includes(value);
 }
 
-function actionIsNegated(assertion, action) {
-  return ACTION_NEGATION_PATTERN.test(assertion.slice(0, action.index));
+function hasNegation(tokens, start, end) {
+  const values = tokens.slice(Math.max(0, start), end).map(token => token.value);
+  return values.some((value, index) =>
+    ['not', 'never', 'cannot', 'without', 'neither'].includes(value)
+    || NEGATED_CONTRACTIONS.has(value)
+    || (value === 'no' && values[index + 1] === 'longer'));
 }
 
-function assertionHasExposure(assertion) {
-  const objects = findPhrases(assertion, SENSITIVE_OBJECT_SOURCE);
-  if (objects.length === 0) return false;
+function hasAuxiliary(tokens, start, end) {
+  return tokens.slice(Math.max(0, start), end).some(token => AUXILIARIES.has(token.value));
+}
 
-  const actions = findPhrases(assertion, EXPOSURE_ACTION_SOURCE);
-  for (const action of actions) {
-    const object = nearestPhrase(action, objects);
-    if (object && !objectIsNegated(assertion, object) && !actionIsNegated(assertion, action)) return true;
-  }
-
-  const surfacePattern = new RegExp(
-    String.raw`\b${SENSITIVE_OBJECT_SOURCE}\b.{0,40}?\b(?:appears?|appeared|shows? up|is|was|were)?\s*(?:in|into|on|via)\s+(?:the\s+)?${EXPOSURE_SURFACE_SOURCE}\b`,
-    'gi',
-  );
-  for (const match of assertion.matchAll(surfacePattern)) {
-    const object = objects.find(candidate => candidate.index === match.index);
-    if (!object) continue;
-    const hasSurfacePredicate = /\b(?:appears?|appeared|shows? up)\b/i.test(match[0]);
-    if (!hasSurfacePredicate && nearestPhrase(object, actions)) continue;
-    if (!objectIsNegated(assertion, object) && !SURFACE_NEGATION_PATTERN.test(match[0])) return true;
+function hasSurfaceAfter(tokens, index) {
+  for (let cursor = index + 1; cursor < Math.min(tokens.length, index + 9); cursor += 1) {
+    if (!SURFACE_PREPOSITIONS.has(tokens[cursor].value)) continue;
+    return tokens.slice(cursor + 1, Math.min(tokens.length, cursor + 4))
+      .some(token => EXPOSURE_SURFACES.has(token.value));
   }
   return false;
 }
 
+function activeObjectGapIsBounded(tokens, action, object) {
+  return tokens.slice(action.index + 1, object.start).every(token =>
+    token.value === ','
+    || ACTIVE_OBJECT_FILLERS.has(token.value)
+    || isModifier(token.value));
+}
+
+function relationshipIsSyntactic(tokens, action, object) {
+  if (object.inherited) {
+    return action.form !== 'progressive' || hasAuxiliary(tokens, 0, action.index);
+  }
+  if (action.index < object.start) return activeObjectGapIsBounded(tokens, action, object);
+
+  const hasAux = hasAuxiliary(tokens, object.end + 1, action.index);
+  if (action.form === 'progressive') return hasAux;
+  if (action.form === 'base') {
+    const meaningfulGap = tokens.slice(object.end + 1, action.index)
+      .filter(token => token.value !== ',' && !isModifier(token.value));
+    return hasAux || (object.plural && meaningfulGap.length === 0);
+  }
+  return true;
+}
+
+function actionNegation(tokens, action, object, previous) {
+  const objectBeforeAction = object.inherited || object.end < action.index;
+  const start = objectBeforeAction
+    ? object.inherited ? 0 : object.end + 1
+    : Math.max(0, ...sensitiveObjects(tokens)
+      .filter(candidate => candidate.end < action.index)
+      .map(candidate => candidate.end + 1));
+  if (object.negated) return true;
+
+  if (objectBeforeAction && previous?.negated) {
+    const betweenActions = tokens.slice(previous.action.index + 1, action.index);
+    const coordinatorIndex = betweenActions.findLastIndex(token => COORDINATORS.has(token.value));
+    const restartedPredicate = coordinatorIndex >= 0
+      ? betweenActions.slice(coordinatorIndex + 1)
+      : [];
+    if (restartedPredicate.some(token => AUXILIARIES.has(token.value) || NEGATED_CONTRACTIONS.has(token.value))) {
+      return hasNegation(restartedPredicate, 0, restartedPredicate.length);
+    }
+  }
+
+  if (hasNegation(tokens, start, action.index)) return true;
+
+  if (previous?.negated && !objectBeforeAction) {
+    const between = tokens.slice(previous.action.index + 1, action.index).map(token => token.value);
+    if (between.some(value => COORDINATORS.has(value))) return true;
+  }
+  return false;
+}
+
+function implicitSurfaceExposure(tokens, objects, actions) {
+  for (const object of objects) {
+    if (!object.inherited && actions.some(action => tokenDistance(action, object) <= 12)) continue;
+    const start = object.inherited ? 0 : object.end + 1;
+    for (let cursor = start; cursor < Math.min(tokens.length, start + 9); cursor += 1) {
+      if (!SURFACE_PREPOSITIONS.has(tokens[cursor].value)) continue;
+      const surface = tokens.slice(cursor + 1, Math.min(tokens.length, cursor + 4))
+        .some(token => EXPOSURE_SURFACES.has(token.value));
+      if (!surface) continue;
+      const fillers = tokens.slice(start, cursor);
+      const bounded = fillers.every(token =>
+        token.value === ','
+        || AUXILIARIES.has(token.value)
+        || NEGATED_CONTRACTIONS.has(token.value)
+        || IMPLICIT_SURFACE_FILLERS.has(token.value)
+        || ['not', 'never', 'no', 'longer', 'cannot'].includes(token.value)
+        || isModifier(token.value));
+      if (bounded && !object.negated && !hasNegation(tokens, start, cursor)) return true;
+    }
+  }
+  return false;
+}
+
+function assertionExposure(tokens, inheritedSubjects) {
+  const localObjects = sensitiveObjects(tokens);
+  const objects = localObjects.length > 0
+    ? localObjects
+    : inheritedSubjects.map(subject => ({ ...subject, start: -1, end: -1, negated: false, inherited: true }));
+  const actions = exposureActions(tokens);
+  let previous;
+
+  for (const action of actions) {
+    const object = nearestObject(action, localObjects)
+      ?? (objects[0]?.inherited ? objects[0] : undefined);
+    if (!object || !relationshipIsSyntactic(tokens, action, object)) continue;
+    if (action.form === 'surface' && !hasSurfaceAfter(tokens, action.index)) continue;
+
+    const negated = actionNegation(tokens, action, object, previous);
+    if (!negated) return { exposure: true, subjects: localObjects };
+    previous = { action, object, negated };
+  }
+
+  return {
+    exposure: implicitSurfaceExposure(tokens, objects, actions),
+    subjects: localObjects,
+  };
+}
+
 function isExplicitExposure(issue, form) {
-  return privacyText(issue, form)
-    .split(ASSERTION_BOUNDARY_PATTERN)
-    .some(assertionHasExposure);
+  let inheritedSubjects = [];
+  for (const assertion of splitExposureAssertions(privacyText(issue, form))) {
+    if (!assertion.inheritsSubject) inheritedSubjects = [];
+    const result = assertionExposure(assertion.tokens, inheritedSubjects);
+    if (result.exposure) return true;
+    if (result.subjects.length > 0) {
+      inheritedSubjects = result.subjects.map(subject => ({ ...subject, negated: false }));
+    }
+  }
+  return false;
 }
 
 function checkedReleaseImpact(form) {
