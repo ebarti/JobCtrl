@@ -184,6 +184,10 @@ const READ_CASES = [
       api.artifactPreviewHtmlUrl("artifact-tailored-resume", 7),
   ],
   ["profile", (api: ApiClientPort) => api.profile()],
+  [
+    "targetRoleSuggestions",
+    (api: ApiClientPort) => api.targetRoleSuggestions({ expectedProfileVersion: 1, maximumSuggestions: 3 }),
+  ],
   ["profilePreviewPdfUrl", (api: ApiClientPort) => api.profilePreviewPdfUrl(7)],
   [
     "profilePreviewHtmlUrl",
@@ -223,6 +227,22 @@ describe("DemoApiClientAdapter", () => {
     expect(catalog.providers.find((provider) => provider.provider === "claude")?.models).toEqual(
       sampleProviderModelsResponse.providers.find((provider) => provider.provider === "claude")?.models,
     );
+  });
+
+  it("labels synthetic target-role suggestions and rejects stale profile versions", async () => {
+    const { adapter } = await createAdapter();
+
+    await expect(
+      adapter.targetRoleSuggestions({ expectedProfileVersion: 1, maximumSuggestions: 1 }),
+    ).resolves.toMatchObject({
+      profileVersion: 1,
+      strategy: "model_stub",
+      warnings: ["stubbed_model_evidence"],
+      suggestions: [{ evidenceIds: ["experience:experience-platform-delivery"] }],
+    });
+    await expect(
+      adapter.targetRoleSuggestions({ expectedProfileVersion: 2, maximumSuggestions: 1 }),
+    ).rejects.toMatchObject({ status: 409, statusText: "stale_profile_version" });
   });
 
   it("covers every port member and reserves capability errors for unavailable methods", async () => {

@@ -1918,15 +1918,21 @@ export const TargetRoleSuggestionResultSchema = z
   .object({
     profileVersion: z.number().int().positive(),
     suggestions: z.array(TargetRoleSuggestionSchema).max(5),
-    strategy: z.enum(["model", "recent_title_fallback", "none", "model_stub"]),
+    strategy: z.enum(["model", "recent_title_fallback", "none"]),
     warnings: z.array(z.string().trim().min(1).max(120)).max(8).default([]),
   })
   .strict();
 export type TargetRoleSuggestionResult = z.infer<typeof TargetRoleSuggestionResultSchema>;
 
-export const TargetRoleSuggestionResponseSchema = TargetRoleSuggestionResultSchema.extend({
-  ok: z.literal(true),
-}).strict();
+export const TargetRoleSuggestionResponseSchema = z
+  .object({
+    ok: z.literal(true),
+    profileVersion: z.number().int().positive(),
+    suggestions: z.array(TargetRoleSuggestionSchema).max(5),
+    strategy: z.enum(["model", "recent_title_fallback", "none", "model_stub"]),
+    warnings: z.array(z.string().trim().min(1).max(120)).max(8).default([]),
+  })
+  .strict();
 export type TargetRoleSuggestionResponse = z.infer<typeof TargetRoleSuggestionResponseSchema>;
 
 export const ProfileImportRequestSchema = z

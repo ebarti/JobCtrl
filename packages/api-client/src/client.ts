@@ -109,6 +109,8 @@ import type {
   ProfileConfigResponse,
   ProfileImportRequest,
   ProfileImportResponse,
+  TargetRoleSuggestionRequest,
+  TargetRoleSuggestionResponse,
   ProfileUpdateRequest,
   ProviderStatusResponse,
   ProviderModelCatalogResponse,
@@ -1018,6 +1020,10 @@ export class JobCtrlApiClient {
 
   updateProfile(body: ProfileUpdateRequest): Promise<ProfileConfigResponse> {
     return this.patch("/v1/profile", body);
+  }
+
+  targetRoleSuggestions(body: TargetRoleSuggestionRequest): Promise<TargetRoleSuggestionResponse> {
+    return this.post("/v1/profile/target-role-suggestions", body);
   }
 
   importResume(body: ProfileImportRequest): Promise<ProfileImportResponse> {

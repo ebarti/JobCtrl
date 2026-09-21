@@ -55,6 +55,16 @@ different owners even though the UI presents them together. See
 routes used by autosave, resume preview, source administration, and Keychain-backed
 credentials.
 
+Target Search can request role suggestions through
+`POST /v1/profile/target-role-suggestions`. The web sends only the last saved
+`profileVersion`; it never sends the current browser form draft. The TypeScript
+API checks that version before and after one synchronous Python RPC call, and
+the worker builds a bounded payload from saved experience titles, achievement
+evidence, and skills. Contact details, voluntary EEO values, compensation,
+attestations, raw PDF data, and raw profile content logs are excluded. Results
+remain transient until the user edits/selects them and accepts an append through
+the normal `PATCH /v1/profile` path with `expectedProfileVersion`.
+
 ## Artifacts And Tailoring Audit
 
 Artifact list/detail/preview routes and canonical tailoring evidence are grouped

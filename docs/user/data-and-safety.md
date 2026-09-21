@@ -208,7 +208,7 @@ records something you did. Follow-ups are reminders and never act automatically.
 
 | Service | When used | Data involved |
 | --- | --- | --- |
-| LLM providers | Scoring, employer analysis, materials, contact extraction, stored interview prep | Posting text, relevant profile evidence, generated text, or opted-in fetched page text. |
+| LLM providers | Scoring, employer analysis, materials, target-role suggestions, contact extraction, stored interview prep | Posting text, relevant profile evidence, generated text, or opted-in fetched page text. Target-role suggestions send a bounded saved-profile subset of experience titles, achievement fields, and skills; they exclude contact details, EEO, compensation, attestations, and raw PDFs. |
 | Job boards, ATS APIs, posting pages | Discovery and Enrich prefer the connected paired extension; otherwise acquisition uses guarded public HTTP or anonymous Playwright | Both modes send search terms, URLs, and page/API requests. Connected Chrome may also send cookies or session state belonging to that site; its cookie values are never copied into worker tasks or results, and its user-agent string is returned as transport metadata. Anonymous acquisition uses no personal Chrome profile or ambient netrc credentials. |
 | Apply model and browser | Apply/dry-run work you start, or a standing loop you enable | Apply prompt, reviewed materials, profile application fields, and page interaction. |
 | Gmail | Authenticated verification, bounded outcome feedback, or an approved email application | Scoped queries/evidence or the exact approved recipient/attachment. |

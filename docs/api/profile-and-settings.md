@@ -14,12 +14,32 @@ For every request/response field, use the
 | --- | --- |
 | `GET /v1/profile` | Read the normalized candidate profile and current preferences. |
 | `PATCH /v1/profile` | Save validated profile fields and preference changes. |
+| `POST /v1/profile/target-role-suggestions` | Generate transient evidence-backed role proposals from an exact saved profile version. |
 | `GET /v1/profile/preview.html` | Render the baseline profile resume as HTML. |
 | `GET /v1/profile/preview.pdf` | Render the baseline profile resume as PDF. |
 
 Profile writes are explicit saves/autosaves of canonical candidate data. A job
 tailoring run consumes a versioned snapshot; it does not silently mutate the
 profile to fit a posting.
+
+`GET /v1/profile` includes `profileVersion` (`null` before initialization, then
+a positive monotonic integer). Ordinary manual `PATCH` requests remain
+backward-compatible and may omit `expectedProfileVersion`. A suggestion-derived
+save includes the version returned with the suggestions; the API compares and
+writes in the same transaction. A mismatch returns `409
+stale_profile_version`, writes no profile row, records no `ProfileUpdated`
+event, and creates no preparation-continuation work.
+
+The suggestion route accepts `{ expectedProfileVersion, maximumSuggestions }`,
+where the maximum is `1–5` and defaults to `3`. It reads only that canonical
+saved snapshot and returns `profileVersion`, `strategy`, bounded `warnings`, and
+zero to five editable suggestions. Each suggestion includes `title`,
+`classification` (`direct` or `adjacent`), an explicitly supported `track` and
+`seniority`, a concise `rationale`, and valid evidence references. Generation
+is transient: it writes no role, profile event, or Discovery plan. Only the
+user's selected acceptance enters the normal profile save path, where roles are
+appended and case-insensitively deduplicated instead of replacing existing
+values.
 
 Each `resume.experience_entries[]` record may include `summary`. The field
 defaults to an empty string, remains optional for existing and new roles, and

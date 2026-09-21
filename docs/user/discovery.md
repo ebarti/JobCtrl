@@ -358,6 +358,14 @@ seniority floor attached. An exact title match can therefore pass even when it
 is below a selected floor; the floor is principally enforced on generated
 recall queries.
 
+The **Evidence-backed role suggestions** card is an optional authoring aid for
+this saved target-role list. It reads the canonical saved profile version and
+returns editable proposals with evidence references; it does not inspect the
+unsaved browser draft or change an active Discovery execution. Rejecting or
+dismissing proposals writes nothing. Accepting selected titles appends and
+case-insensitively deduplicates them in the normal Target Search form, and the
+subsequent version-checked save affects only future Discovery plans.
+
 ::: warning Multiple tracks and floors
 Tracks and seniority floors are currently stored as independent ordered lists,
 not as explicit track-to-floor pairs. Recall generation can associate those

@@ -9798,6 +9798,170 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("generates version-bound target role suggestions without mutating the profile", async () => {
+    const providerCall = vi.fn(async (method: string, params: Record<string, unknown>) => ({
+      jsonrpc: "2.0" as const,
+      id: 1,
+      result: {
+        profileVersion: params.expectedProfileVersion,
+        suggestions: [
+          {
+            title: "Senior Platform Engineer",
+            classification: "direct",
+            track: "IC",
+            seniority: "Senior",
+            evidenceIds: ["experience:role_1"],
+            rationale: "The saved canonical role title supports this direct suggestion.",
+          },
+        ],
+        strategy: "model",
+        warnings: [],
+      },
+    }));
+    const app = buildApp({
+      ...options,
+      providerDispatcher: { call: providerCall, close: vi.fn(async () => undefined) },
+    });
+    const initial = await app.inject({
+      method: "PATCH",
+      url: "/v1/profile",
+      payload: { profile: profileWithTargetSearch("Synthetic Candidate", "Barcelona", "Remote") },
+    });
+    const version = initial.json().profileVersion as number;
+    const beforeDb = new Database(options.dbPath, { readonly: true });
+    const beforeEvents = beforeDb.prepare(
+      "SELECT COUNT(*) AS count FROM job_events WHERE event_type = 'ProfileUpdated'",
+    ).get() as { count: number };
+    beforeDb.close();
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/profile/target-role-suggestions",
+      payload: { expectedProfileVersion: version, maximumSuggestions: 2 },
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json()).toMatchObject({
+      ok: true,
+      profileVersion: version,
+      strategy: "model",
+      suggestions: [{ title: "Senior Platform Engineer", evidenceIds: ["experience:role_1"] }],
+    });
+    expect(providerCall).toHaveBeenCalledWith(RpcMethods.ProfileTargetRoleSuggestions, {
+      tenantId: "local",
+      expectedProfileVersion: version,
+      maximumSuggestions: 2,
+    });
+    const stored = await app.inject({ method: "GET", url: "/v1/profile" });
+    expect(stored.json()).toMatchObject({
+      profileVersion: version,
+      profile: { personal: { full_name: "Synthetic Candidate" } },
+    });
+    const afterDb = new Database(options.dbPath, { readonly: true });
+    expect(afterDb.prepare(
+      "SELECT COUNT(*) AS count FROM job_events WHERE event_type = 'ProfileUpdated'",
+    ).get()).toEqual(beforeEvents);
+    afterDb.close();
+    await app.close();
+  });
+
+  it("atomically rejects stale suggestion saves without a profile event", async () => {
+    const app = buildApp(options);
+    const initial = await app.inject({
+      method: "PATCH",
+      url: "/v1/profile",
+      payload: { profile: profileWithTargetSearch("Initial Candidate", "Barcelona", "Remote") },
+    });
+    const version = initial.json().profileVersion as number;
+    const beforeDb = new Database(options.dbPath, { readonly: true });
+    const beforeEvents = beforeDb.prepare(
+      "SELECT COUNT(*) AS count FROM job_events WHERE event_type = 'ProfileUpdated'",
+    ).get() as { count: number };
+    beforeDb.close();
+
+    const stale = await app.inject({
+      method: "PATCH",
+      url: "/v1/profile",
+      payload: {
+        profile: profileWithTargetSearch("Stale Candidate", "Barcelona", "Remote"),
+        expectedProfileVersion: version + 1,
+      },
+    });
+
+    expect(stale.statusCode, stale.body).toBe(409);
+    expect(stale.json()).toMatchObject({
+      error: "stale_profile_version",
+      expectedProfileVersion: version + 1,
+      actualProfileVersion: version,
+    });
+    const staleGeneration = await app.inject({
+      method: "POST",
+      url: "/v1/profile/target-role-suggestions",
+      payload: { expectedProfileVersion: version + 1 },
+    });
+    expect(staleGeneration.statusCode, staleGeneration.body).toBe(409);
+    const stored = await app.inject({ method: "GET", url: "/v1/profile" });
+    expect(stored.json()).toMatchObject({
+      profileVersion: version,
+      profile: { personal: { full_name: "Initial Candidate" } },
+    });
+    const afterDb = new Database(options.dbPath, { readonly: true });
+    expect(afterDb.prepare(
+      "SELECT COUNT(*) AS count FROM job_events WHERE event_type = 'ProfileUpdated'",
+    ).get()).toEqual(beforeEvents);
+    afterDb.close();
+    await app.close();
+  });
+
+  it("rejects a delayed suggestion response after an intervening profile edit", async () => {
+    const pending = deferred<Awaited<ReturnType<JsonRpcDispatcher["call"]>>>();
+    const providerCall = vi.fn(() => pending.promise);
+    const app = buildApp({
+      ...options,
+      providerDispatcher: { call: providerCall, close: vi.fn(async () => undefined) },
+    });
+    const initial = await app.inject({
+      method: "PATCH",
+      url: "/v1/profile",
+      payload: { profile: profileWithTargetSearch("Initial Candidate", "Barcelona", "Remote") },
+    });
+    const version = initial.json().profileVersion as number;
+    const suggestionResponse = app.inject({
+      method: "POST",
+      url: "/v1/profile/target-role-suggestions",
+      payload: { expectedProfileVersion: version },
+    });
+    await vi.waitFor(() => expect(providerCall).toHaveBeenCalledTimes(1));
+    const intervening = await app.inject({
+      method: "PATCH",
+      url: "/v1/profile",
+      payload: {
+        profile: profileWithTargetSearch("Later Candidate", "Barcelona", "Remote"),
+        expectedProfileVersion: version,
+      },
+    });
+    expect(intervening.statusCode, intervening.body).toBe(200);
+    pending.resolve({
+      jsonrpc: "2.0",
+      id: 1,
+      result: { profileVersion: version, suggestions: [], strategy: "none", warnings: [] },
+    });
+
+    const stale = await suggestionResponse;
+    expect(stale.statusCode, stale.body).toBe(409);
+    expect(stale.json()).toMatchObject({
+      error: "stale_profile_version",
+      expectedProfileVersion: version,
+      actualProfileVersion: version + 1,
+    });
+    const stored = await app.inject({ method: "GET", url: "/v1/profile" });
+    expect(stored.json()).toMatchObject({
+      profileVersion: version + 1,
+      profile: { personal: { full_name: "Later Candidate" } },
+    });
+    await app.close();
+  });
+
   it("persists profile, style, and template updates to relational rows without rewriting stray files", async () => {
     const app = buildApp(options);
     const originalStrayProfile = fs.readFileSync(strayProfileExportPath, "utf8");

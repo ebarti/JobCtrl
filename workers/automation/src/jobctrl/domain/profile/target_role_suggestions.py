@@ -128,7 +128,7 @@ def suggest_target_roles(
             suggestions=suggestions,
             strategy="model" if suggestions else "none",
         )
-    except (KeyError, TypeError, ValueError, RuntimeError):
+    except Exception:  # noqa: BLE001 - provider failures fail closed to a canonical fallback
         fallback = _recent_title_fallback(
             payload,
             evidence_kinds,
@@ -194,7 +194,7 @@ def _build_minimized_payload(
     for category in _records(resume.get("skill_categories"))[:12]:
         category_id = _text(category.get("id"), 80)
         for index, item in enumerate(_strings(category.get("items"))[:12], start=1):
-            evidence_id = f"skill:{category_id}:{index}"
+            evidence_id = f"profile:{snapshot.version}:skill:{category_id}:{index}"
             if not category_id or not _EVIDENCE_ID.fullmatch(evidence_id):
                 continue
             skills.append(

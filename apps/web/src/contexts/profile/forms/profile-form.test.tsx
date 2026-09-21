@@ -1,6 +1,6 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
-import { ProfileSchema } from "@jobctrl/contracts";
+import { ProfileSchema, type TargetRoleSuggestionResponse } from "@jobctrl/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -826,6 +826,143 @@ describe("<ProfileForm>", () => {
     await user.type(input, "Director of Engineering");
 
     expect(input).toHaveValue("Director of Engineering");
+  });
+
+  it("appends and dedupes delayed suggestions against intervening form edits", async () => {
+    const user = userEvent.setup();
+    let resolveSuggestions: ((response: TargetRoleSuggestionResponse) => void) | undefined;
+    const targetRoleSuggestions = vi.fn(() => new Promise<TargetRoleSuggestionResponse>((resolve) => {
+      resolveSuggestions = resolve;
+    }));
+    const updateProfile = vi.fn(async (request) => ({
+      ...sampleProfileResponse,
+      profileVersion: 4,
+      profile: JSON.parse(request.profileText),
+    }));
+    renderWithProviders(<ProfileForm initial={sampleProfileResponse} section="target-search" />, {
+      ports: buildTestPorts({ api: { targetRoleSuggestions, updateProfile } }),
+    });
+
+    await user.click(screen.getByRole("button", { name: "Suggest roles" }));
+    expect(targetRoleSuggestions).toHaveBeenCalledWith({
+      expectedProfileVersion: 3,
+      maximumSuggestions: 3,
+    });
+    await user.type(screen.getByLabelText("Target roles 1"), "VP Engineering");
+    await act(async () => {
+      resolveSuggestions?.({
+        ok: true,
+        profileVersion: 3,
+        suggestions: [
+          {
+            title: "vp engineering",
+            classification: "direct",
+            track: "Management",
+            seniority: "VP",
+            evidenceIds: ["experience:exp-1"],
+            rationale: "Matches the saved role evidence.",
+          },
+          {
+            title: "Head of Platform",
+            classification: "adjacent",
+            track: "Management",
+            seniority: "Director",
+            evidenceIds: ["experience:exp-1", "exp-1_bullet_1"],
+            rationale: "Saved delivery evidence supports adjacent scope.",
+          },
+        ],
+        strategy: "model",
+        warnings: [],
+      });
+      await Promise.resolve();
+    });
+    await user.click(await screen.findByRole("button", { name: "Add selected roles" }));
+
+    expect(screen.getByLabelText("Target roles 1")).toHaveValue("VP Engineering");
+    expect(screen.getByLabelText("Target roles 2")).toHaveValue("Head of Platform");
+    expect(screen.queryByLabelText("Target roles 3")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(1));
+    const request = updateProfile.mock.calls[0]![0];
+    expect(request.expectedProfileVersion).toBe(3);
+    expect(JSON.parse(request.profileText).experience.target_role).toBe(
+      "VP Engineering; Head of Platform",
+    );
+  });
+
+  it("lets the user edit or reject transient suggestions before acceptance", async () => {
+    const user = userEvent.setup();
+    const targetRoleSuggestions = vi.fn(async () => ({
+      ok: true as const,
+      profileVersion: 3,
+      suggestions: [
+        {
+          title: "Platform Director",
+          classification: "direct" as const,
+          track: "Management",
+          seniority: "Director",
+          evidenceIds: ["experience:exp-1"],
+          rationale: "Recent saved title.",
+        },
+        {
+          title: "Infrastructure Director",
+          classification: "adjacent" as const,
+          track: "Management",
+          seniority: "Director",
+          evidenceIds: ["experience:exp-1", "exp-1_bullet_1"],
+          rationale: "Saved platform and reliability evidence.",
+        },
+      ],
+      strategy: "model" as const,
+      warnings: [],
+    }));
+    renderWithProviders(<ProfileForm initial={sampleProfileResponse} section="target-search" />, {
+      ports: buildTestPorts({ api: { targetRoleSuggestions } }),
+    });
+
+    await user.click(screen.getByRole("button", { name: "Suggest roles" }));
+    const edited = await screen.findByLabelText("Suggested role 2");
+    await user.clear(edited);
+    await user.type(edited, "Head of Infrastructure");
+    await user.click(screen.getByRole("button", { name: "Reject Platform Director" }));
+    await user.click(screen.getByRole("button", { name: "Add selected roles" }));
+
+    expect(screen.getByLabelText("Target roles 1")).toHaveValue("Head of Infrastructure");
+    expect(screen.queryByDisplayValue("Platform Director")).not.toBeInTheDocument();
+  });
+
+  it("shows provider failure without changing target roles", async () => {
+    const user = userEvent.setup();
+    const targetRoleSuggestions = vi.fn(async () => {
+      throw new Error("Suggestions are temporarily unavailable.");
+    });
+    renderWithProviders(<ProfileForm initial={sampleProfileResponse} section="target-search" />, {
+      ports: buildTestPorts({ api: { targetRoleSuggestions } }),
+    });
+
+    await user.click(screen.getByRole("button", { name: "Suggest roles" }));
+
+    expect(await screen.findByText("Suggestions are temporarily unavailable.")).toBeInTheDocument();
+    expect(screen.getByLabelText("Target roles 1")).toHaveValue("");
+    expect(screen.queryByRole("button", { name: "Add selected roles" })).not.toBeInTheDocument();
+  });
+
+  it("keeps ordinary manual target-role persistence version-agnostic", async () => {
+    const user = userEvent.setup();
+    const updateProfile = vi.fn(async (request) => ({
+      ...sampleProfileResponse,
+      profileVersion: 4,
+      profile: JSON.parse(request.profileText),
+    }));
+    renderWithProviders(<ProfileForm initial={sampleProfileResponse} section="target-search" />, {
+      ports: buildTestPorts({ api: { updateProfile } }),
+    });
+
+    await user.type(screen.getByLabelText("Target roles 1"), "Staff Engineer");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(1));
+
+    expect(updateProfile.mock.calls[0]![0]).not.toHaveProperty("expectedProfileVersion");
   });
 
   it("adds and focuses the next target location with Enter", async () => {

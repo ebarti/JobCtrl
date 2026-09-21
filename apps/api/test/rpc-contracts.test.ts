@@ -23,6 +23,7 @@ import {
   ManualCaptureImportWorkflowResultSchema,
   ProviderModelCatalogResultSchema,
   ProfileTargetRoleSuggestionsParamsSchema,
+  ProfileUpdateRequestSchema,
   RederiveLearningRecommendationsParamsSchema,
   RederiveLearningRecommendationsResultSchema,
   RefreshCompensationParamsSchema,
@@ -36,6 +37,7 @@ import {
   RunStageParamsSchema,
   SettingsUpdateRequestSchema,
   TailorJobParamsSchema,
+  TargetRoleSuggestionResultSchema,
 } from "../src/contracts.js";
 
 const CANONICAL_JOB_ID = "11111111-1111-4111-8111-111111111111";
@@ -257,6 +259,43 @@ describe("cancel_run RPC contract", () => {
         maximumSuggestions: 9,
       }),
     ).toThrow();
+    expect(
+      TargetRoleSuggestionResultSchema.parse({
+        profileVersion: 4,
+        suggestions: [
+          {
+            title: "Staff Platform Engineer",
+            classification: "direct",
+            track: "IC",
+            seniority: "Staff",
+            evidenceIds: ["experience:role_1"],
+            rationale: "The canonical recent title and scope support this role.",
+          },
+        ],
+        strategy: "model",
+        warnings: [],
+      }),
+    ).toMatchObject({ profileVersion: 4, strategy: "model" });
+    expect(() =>
+      TargetRoleSuggestionResultSchema.parse({
+        profileVersion: 4,
+        suggestions: [
+          {
+            title: "Invented",
+            classification: "direct",
+            track: "IC",
+            seniority: "Staff",
+            evidenceIds: ["fabricated evidence"],
+            rationale: "Unsupported.",
+          },
+        ],
+        strategy: "model",
+      }),
+    ).toThrow();
+    expect(ProfileUpdateRequestSchema.parse({
+      profile: {},
+      expectedProfileVersion: 4,
+    })).toMatchObject({ expectedProfileVersion: 4 });
   });
 
   it("parses a known-good request payload", () => {

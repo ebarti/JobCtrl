@@ -16,6 +16,15 @@ const NO_PROFILE_CHANGE = Symbol("no-profile-change");
 
 export class ProfileInputError extends Error {}
 
+export class ProfileVersionConflictError extends Error {
+  constructor(
+    readonly expectedVersion: number,
+    readonly actualVersion: number | null,
+  ) {
+    super(`stale_profile_version: expected ${expectedVersion}, current ${actualVersion ?? "none"}`);
+  }
+}
+
 const CHILD_TABLES = [
   "candidate_profile_experience_bullets",
   "candidate_profile_achievement_evidence",
@@ -389,10 +398,17 @@ export function readProfileConfig(db: SqliteDatabase): ProfileConfigResponse {
   ensureProfileTables(db);
   const row = getProfileRow(db);
   if (!row) {
-    return { ok: true, profile: {}, style: DEFAULT_STYLE, templateText: DEFAULT_RESUME_TEMPLATE };
+    return {
+      ok: true,
+      profileVersion: null,
+      profile: {},
+      style: DEFAULT_STYLE,
+      templateText: DEFAULT_RESUME_TEMPLATE,
+    };
   }
   return {
     ok: true,
+    profileVersion: Number(row.version ?? 1),
     profile: rowToProfile(db, row),
     style: styleFromRow(row),
     templateText: String(row.resume_template_text || DEFAULT_RESUME_TEMPLATE),
@@ -443,24 +459,32 @@ export function writeProfileConfig(
     throw new ProfileInputError("At least one profile, style, or template field is required.");
   }
 
-  const existing = getProfileRow(db);
-  if (!existing && !profile) {
-    throw new ProfileInputError("profile must be initialized before updating style or template settings.");
-  }
-  const nextProfile = profile ?? rowToProfile(db, existing as ProfileRow);
-  const existingStyle = existing ? styleFromRow(existing) : DEFAULT_STYLE;
-  const nextStyle = stylePatch ? normalizeStyle({ ...existingStyle, ...stylePatch }) : existingStyle;
-  const nextTemplate =
-    templateText ??
-    (existing ? String(existing.resume_template_text || DEFAULT_RESUME_TEMPLATE) : DEFAULT_RESUME_TEMPLATE);
-  const previousResponse = existing ? readProfileConfig(db) : null;
-  const nextVersion = existing ? Number(existing.version ?? 0) + 1 : 1;
+  let previousResponse: ProfileConfigResponse | null = null;
   let response: ProfileConfigResponse | null = null;
   try {
     db.transaction(() => {
+      const existing = getProfileRow(db);
+      const actualVersion = existing ? Number(existing.version ?? 1) : null;
+      if (
+        request.expectedProfileVersion !== undefined
+        && request.expectedProfileVersion !== actualVersion
+      ) {
+        throw new ProfileVersionConflictError(request.expectedProfileVersion, actualVersion);
+      }
+      if (!existing && !profile) {
+        throw new ProfileInputError("profile must be initialized before updating style or template settings.");
+      }
+      const nextProfile = profile ?? rowToProfile(db, existing as ProfileRow);
+      const existingStyle = existing ? styleFromRow(existing) : DEFAULT_STYLE;
+      const nextStyle = stylePatch ? normalizeStyle({ ...existingStyle, ...stylePatch }) : existingStyle;
+      const nextTemplate =
+        templateText ??
+        (existing ? String(existing.resume_template_text || DEFAULT_RESUME_TEMPLATE) : DEFAULT_RESUME_TEMPLATE);
+      previousResponse = existing ? readProfileConfig(db) : null;
+      const nextVersion = existing ? Number(existing.version ?? 0) + 1 : 1;
       replaceProfile(db, nextProfile, nextStyle, nextTemplate, nextVersion);
       response = readProfileConfig(db);
-      if (previousResponse && isDeepStrictEqual(previousResponse, response)) {
+      if (previousResponse && sameProfileContent(previousResponse, response)) {
         throw NO_PROFILE_CHANGE;
       }
     })();
@@ -474,6 +498,16 @@ export function writeProfileConfig(
     throw new ProfileInputError("profile update did not produce a readable profile.");
   }
   return response;
+}
+
+function sameProfileContent(
+  before: ProfileConfigResponse,
+  after: ProfileConfigResponse,
+): boolean {
+  return isDeepStrictEqual(
+    { profile: before.profile, style: before.style, templateText: before.templateText },
+    { profile: after.profile, style: after.style, templateText: after.templateText },
+  );
 }
 
 export function parseProfileUpdateProfile(request: ProfileUpdateRequest): ProfileShape | undefined {

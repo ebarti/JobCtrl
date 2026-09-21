@@ -61,6 +61,9 @@ import {
   ExtensionCaptureIngestSchema,
   ProfileImportRequestSchema,
   type ProfileConfigResponse,
+  RpcMethods,
+  TargetRoleSuggestionRequestSchema,
+  TargetRoleSuggestionResultSchema,
   ProfileUpdateRequestSchema,
   type ProviderModelCatalogItem,
   ProviderModelCatalogResultSchema,
@@ -315,6 +318,7 @@ import {
 } from "./local-origin.js";
 import {
   ProfileInputError,
+  ProfileVersionConflictError,
   parseProfileUpdateProfile,
   readExtensionAutofillProfile,
   readProfileConfig,
@@ -2735,6 +2739,16 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       profileUpdatedEvent = update.recorded;
       queuePreparationContinuation = update.continuePreparation;
     } catch (error) {
+      if (error instanceof ProfileVersionConflictError) {
+        void reply.code(409);
+        return {
+          ok: false,
+          error: "stale_profile_version",
+          expectedProfileVersion: error.expectedVersion,
+          actualProfileVersion: error.actualVersion,
+          message: error.message,
+        };
+      }
       if (error instanceof InputError || error instanceof ProfileInputError) {
         void reply.code(400);
         return { ok: false, error: "invalid_profile", message: error.message };
@@ -2749,6 +2763,87 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       });
     }
     return profileResponse;
+  });
+
+  app.post("/v1/profile/target-role-suggestions", async (request, reply) => {
+    const body = parseBody(reply, TargetRoleSuggestionRequestSchema, request.body ?? {});
+    if (!body) return undefined;
+    if (!databaseExists(options.dbPath)) {
+      void reply.code(503);
+      return { ok: false, error: "db_not_found", message: `No JobCtrl database found at ${options.dbPath}` };
+    }
+    const before = withDb(reply, options.dbPath, (db) => readProfileConfig(db));
+    if (!("profileVersion" in before) || before.profileVersion !== body.expectedProfileVersion) {
+      void reply.code(409);
+      return {
+        ok: false,
+        error: "stale_profile_version",
+        expectedProfileVersion: body.expectedProfileVersion,
+        actualProfileVersion: "profileVersion" in before ? before.profileVersion : null,
+      };
+    }
+    try {
+      const response = await providerDispatcher.call(RpcMethods.ProfileTargetRoleSuggestions, {
+        tenantId: "local",
+        expectedProfileVersion: body.expectedProfileVersion,
+        maximumSuggestions: body.maximumSuggestions,
+      });
+      if (response.error) {
+        if (
+          response.error.code === JsonRpcErrorCodes.InvalidParams
+          && response.error.message.includes("stale_profile_version")
+        ) {
+          void reply.code(409);
+          return {
+            ok: false,
+            error: "stale_profile_version",
+            expectedProfileVersion: body.expectedProfileVersion,
+          };
+        }
+        void reply.code(502);
+        return {
+          ok: false,
+          error: "target_role_suggestions_failed",
+          message: "Target role suggestions returned an error.",
+        };
+      }
+      const parsed = TargetRoleSuggestionResultSchema.safeParse(response.result);
+      if (!parsed.success) {
+        void reply.code(502);
+        return {
+          ok: false,
+          error: "target_role_suggestions_failed",
+          message: "Target role suggestions returned an invalid response.",
+        };
+      }
+      if (parsed.data.profileVersion !== body.expectedProfileVersion) {
+        void reply.code(409);
+        return {
+          ok: false,
+          error: "stale_profile_version",
+          expectedProfileVersion: body.expectedProfileVersion,
+          actualProfileVersion: parsed.data.profileVersion,
+        };
+      }
+      const after = withDb(reply, options.dbPath, (db) => readProfileConfig(db));
+      if (!("profileVersion" in after) || after.profileVersion !== body.expectedProfileVersion) {
+        void reply.code(409);
+        return {
+          ok: false,
+          error: "stale_profile_version",
+          expectedProfileVersion: body.expectedProfileVersion,
+          actualProfileVersion: "profileVersion" in after ? after.profileVersion : null,
+        };
+      }
+      return { ok: true as const, ...parsed.data };
+    } catch {
+      void reply.code(503);
+      return {
+        ok: false,
+        error: "target_role_suggestions_unavailable",
+        message: "Target role suggestions are temporarily unavailable.",
+      };
+    }
   });
 
   app.post("/v1/profile/import-resume", async (request, reply) => {

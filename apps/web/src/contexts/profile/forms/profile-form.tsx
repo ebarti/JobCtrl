@@ -12,6 +12,7 @@ import { Alert, AlertDescription } from "../../../shared/ui/alert.js";
 import { Button } from "../../../shared/ui/button.js";
 import { getPathValue, isJsonRecord, setPathValue, type JsonRecord } from "../lib/json-record.js";
 import { StructuredProfileEditor } from "../components/StructuredProfileEditor.js";
+import { TargetRoleSuggestions } from "../components/TargetRoleSuggestions.js";
 import { useUpdateProfileMutation } from "../hooks/useUpdateProfileMutation.js";
 import { AutosaveUndoController } from "../../../shared/ui/autosave-undo-controller.js";
 import {
@@ -77,12 +78,36 @@ function validateProfileDateRanges(profile: ProfileShape): string | undefined {
   return undefined;
 }
 
-function toUpdateRequest(values: ProfileFormValues): ProfileUpdateRequest {
+function toUpdateRequest(
+  values: ProfileFormValues,
+  expectedProfileVersion?: number,
+): ProfileUpdateRequest {
   return {
     profileText: JSON.stringify(values.profile, null, 2),
     styleText: JSON.stringify(values.style, null, 2),
     templateText: values.templateText,
+    ...(expectedProfileVersion === undefined ? {} : { expectedProfileVersion }),
   };
+}
+
+function appendTargetRoles(profile: JsonRecord | null, titles: readonly string[]): JsonRecord | null {
+  if (!profile) return profile;
+  const next = structuredClone(profile);
+  const current = String(getPathValue(next, "experience.target_role") ?? "")
+    .split(/[;,\n]/)
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const seen = new Set(current.map((value) => value.toLowerCase()));
+  for (const title of titles) {
+    const trimmed = title.trim();
+    const key = trimmed.toLowerCase();
+    if (trimmed && !seen.has(key)) {
+      current.push(trimmed);
+      seen.add(key);
+    }
+  }
+  setPathValue(next, "experience.target_role", current.join("; "));
+  return next;
 }
 
 function serializeProfileValues(values: ProfileFormValues): string {
@@ -419,6 +444,7 @@ export function ProfileForm({
   const [resetToken, setResetToken] = useState(0);
   const formRef = useRef<HTMLFormElement>(null);
   const plateProfileProjectionRef = useRef<PlateProfileProjectionState | null>(null);
+  const expectedProfileVersionRef = useRef<number | undefined>(undefined);
   const isProfileSection = section === "profile";
   const saveLabel = "Save changes";
   const discardLabel = "Discard changes";
@@ -450,15 +476,19 @@ export function ProfileForm({
       const shouldUpdateProfile =
         submittedValues !== serializeProfileValues(initialValues);
       const profileResponse = shouldUpdateProfile
-        ? await updateProfile.mutateAsync(toUpdateRequest(value))
+        ? await updateProfile.mutateAsync(
+            toUpdateRequest(value, expectedProfileVersionRef.current),
+          )
         : initial;
       if (serializeProfileValues(formApi.state.values) === submittedValues) {
+        expectedProfileVersionRef.current = undefined;
         plateProfileProjectionRef.current = null;
         formApi.reset(toProfileFormValues(profileResponse));
         onPreviewSourceChange?.(profileResponse);
         setStatusTone("saved");
         setStatusMessage(savedMessage);
       } else {
+        expectedProfileVersionRef.current = profileResponse.profileVersion ?? undefined;
         setStatusTone("warning");
         setStatusMessage("Saved; newer changes pending");
       }
@@ -501,6 +531,7 @@ export function ProfileForm({
       return;
     }
     plateProfileProjectionRef.current = null;
+    expectedProfileVersionRef.current = undefined;
     form.reset(toProfileFormValues(initial));
     onPreviewSourceChange?.(initial);
     setResetToken((token) => token + 1);
@@ -517,6 +548,7 @@ export function ProfileForm({
       onReset={(event) => {
         event.preventDefault();
         plateProfileProjectionRef.current = null;
+        expectedProfileVersionRef.current = undefined;
         form.reset(toProfileFormValues(initial));
         onPreviewSourceChange?.(initial);
         setResetToken((token) => token + 1);
@@ -585,20 +617,32 @@ export function ProfileForm({
         {(profileField) => (
           <form.Field name="style">
             {(styleField) => (
-              <StructuredProfileEditor
-                mode={section}
-                showSectionHeading={showSectionHeading}
-                profile={profileField.state.value}
-                style={styleField.state.value}
-                onProfileChange={(value) => {
-                  clearTransientStatus();
-                  profileField.handleChange(value);
-                }}
-                onStyleChange={(value) => {
-                  clearTransientStatus();
-                  styleField.handleChange(value);
-                }}
-              />
+              <>
+                {section === "target-search" ? (
+                  <TargetRoleSuggestions
+                    profileVersion={initial.profileVersion}
+                    onAccept={(titles, expectedProfileVersion) => {
+                      expectedProfileVersionRef.current = expectedProfileVersion;
+                      clearTransientStatus();
+                      profileField.handleChange(appendTargetRoles(profileField.state.value, titles));
+                    }}
+                  />
+                ) : null}
+                <StructuredProfileEditor
+                  mode={section}
+                  showSectionHeading={showSectionHeading}
+                  profile={profileField.state.value}
+                  style={styleField.state.value}
+                  onProfileChange={(value) => {
+                    clearTransientStatus();
+                    profileField.handleChange(value);
+                  }}
+                  onStyleChange={(value) => {
+                    clearTransientStatus();
+                    styleField.handleChange(value);
+                  }}
+                />
+              </>
             )}
           </form.Field>
         )}

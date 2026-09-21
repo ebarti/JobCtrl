@@ -110,6 +110,7 @@ def test_generates_bounded_suggestions_from_minimized_canonical_evidence():
     assert call["max_tokens"] == 900
     payload = llm.calls[0][0][1].content
     assert len(payload) <= 12_500
+    assert "profile:7:skill:platform:1" in payload
     for excluded in (
         "private@example.test",
         "private-salary",
@@ -156,6 +157,14 @@ def test_returns_zero_when_authoritative_track_or_seniority_is_missing():
     assert result.suggestions == ()
     assert result.warnings == ("authoritative_track_or_seniority_missing",)
     assert llm.calls == []
+
+
+def test_provider_failure_uses_only_the_exact_recent_title_fallback():
+    result = suggest_target_roles(_snapshot(), llm=_SyntheticLlm(OSError("provider unavailable")))
+
+    assert result.strategy == "recent_title_fallback"
+    assert [item.title for item in result.suggestions] == ["Platform Engineering Manager"]
+    assert result.warnings == ("model_unavailable_or_invalid",)
 
 
 def test_real_rpc_dispatcher_uses_saved_snapshot_and_rejects_stale_version(monkeypatch, tmp_path):

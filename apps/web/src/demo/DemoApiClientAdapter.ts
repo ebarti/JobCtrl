@@ -18,6 +18,8 @@ import {
   type JobCompensationSummary,
   type JobSummary,
   type PaginatedResponse,
+  type TargetRoleSuggestionRequest,
+  type TargetRoleSuggestionResponse,
   type WorkflowRunSummary,
 } from "@jobctrl/contracts";
 
@@ -419,6 +421,35 @@ export class DemoApiClientAdapter implements ApiClientPort {
 
   profile() {
     return this.read((model) => model.profile.config);
+  }
+
+  async targetRoleSuggestions(
+    body: TargetRoleSuggestionRequest,
+  ): Promise<TargetRoleSuggestionResponse> {
+    const profile = await this.read((model) => model.profile.config);
+    if (profile.profileVersion !== body.expectedProfileVersion) {
+      throw new JobCtrlApiError(
+        409,
+        "stale_profile_version",
+        `stale_profile_version: expected ${body.expectedProfileVersion}, current ${profile.profileVersion ?? "none"}`,
+      );
+    }
+    return {
+      ok: true,
+      profileVersion: body.expectedProfileVersion,
+      suggestions: [
+        {
+          title: "Director of Platform Delivery",
+          classification: "direct" as const,
+          track: "Management",
+          seniority: "Director",
+          evidenceIds: ["experience:experience-platform-delivery"],
+          rationale: "The saved synthetic profile contains a matching recent platform delivery role.",
+        },
+      ].slice(0, body.maximumSuggestions),
+      strategy: "model_stub",
+      warnings: ["stubbed_model_evidence"],
+    };
   }
 
   profilePreviewPdfUrl(cacheKey?: CacheKey): string {
