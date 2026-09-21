@@ -28,7 +28,8 @@ const RELEASE_FIELD = 'Release impact';
 const RELEASE_CHECKBOX = 'This appears to block a public release, source install, or documented first-run flow.';
 const PRIVACY_IGNORED_FIELDS = /^(?:data-safety confirmation|public issue confirmation|confirmation|release impact)$/i;
 const SENSITIVE_OBJECT_SOURCE = String.raw`(?:secrets?|api[ -]?keys?|tokens?|credentials?|passwords?|private[ -]?data|personal[ -]?data|profile[ -]?facts?|resumes?|generated[ -]?materials?|browser[ -]?profiles?|sqlite[ -]?databases?|exploit[ -]?details?)`;
-const EXPOSURE_ACTION_SOURCE = String.raw`(?:expos(?:e|ed|ing)|leak(?:ed|ing|s)?|visibl(?:e|ity)|log(?:ged|ging)|print(?:ed|ing)|show(?:n|ing)|disclos(?:e|ed|ing)|publish(?:ed|ing)|commit(?:ted|ting)|past(?:e|ed|ing)|render(?:ed|ing))`;
+const EXPOSURE_ACTION_SOURCE = String.raw`(?:expos(?:e|es|ed)|leak(?:s|ed)?|visibl(?:e|ity)|logged|printed|shown|disclos(?:e|es|ed)|published|committed|pasted|rendered)`;
+const NEGATED_EXPOSURE_ACTION_SOURCE = String.raw`(?:expos(?:e|es|ed|ing)|leak(?:s|ed|ing)?|visibl(?:e|ity)|log(?:ged|ging)|print(?:ed|ing)|show(?:n|ing)|disclos(?:e|es|ed|ing)|publish(?:ed|ing)|commit(?:ted|ting)|past(?:e|ed|ing)|render(?:ed|ing))`;
 const EXPOSURE_SURFACE_SOURCE = String.raw`(?:logs?|output|responses?|errors?|console|terminal|ui|pages?|screens?|issues?|commits?)`;
 const EXPOSURE_PATTERNS = [
   new RegExp(String.raw`\b${SENSITIVE_OBJECT_SOURCE}\b.{0,60}\b${EXPOSURE_ACTION_SOURCE}\b`, 'i'),
@@ -36,9 +37,9 @@ const EXPOSURE_PATTERNS = [
   new RegExp(String.raw`\b${SENSITIVE_OBJECT_SOURCE}\b.{0,40}\b(?:appears?|shows? up|is|was|were)?\s*(?:in|into|on|via)\s+(?:the\s+)?${EXPOSURE_SURFACE_SOURCE}\b`, 'i'),
 ];
 const NEGATED_EXPOSURE_PATTERNS = [
-  new RegExp(String.raw`\b(?:no|never)\s+${SENSITIVE_OBJECT_SOURCE}\b.{0,40}\b${EXPOSURE_ACTION_SOURCE}\b`, 'i'),
-  new RegExp(String.raw`\b${SENSITIVE_OBJECT_SOURCE}\b.{0,30}\b(?:is|are|was|were|has|have|had)?\s*(?:not|never)\s+${EXPOSURE_ACTION_SOURCE}\b`, 'i'),
-  new RegExp(String.raw`\bwithout\s+(?:ever\s+)?${EXPOSURE_ACTION_SOURCE}\b.{0,40}\b${SENSITIVE_OBJECT_SOURCE}\b`, 'i'),
+  new RegExp(String.raw`\b(?:no|never)\s+${SENSITIVE_OBJECT_SOURCE}\b.{0,40}\b${NEGATED_EXPOSURE_ACTION_SOURCE}\b`, 'i'),
+  new RegExp(String.raw`\b${SENSITIVE_OBJECT_SOURCE}\b.{0,30}\b(?:is|are|was|were|has|have|had)?\s*(?:not|never)\s+${NEGATED_EXPOSURE_ACTION_SOURCE}\b`, 'i'),
+  new RegExp(String.raw`\bwithout\s+(?:ever\s+)?${NEGATED_EXPOSURE_ACTION_SOURCE}\b.{0,40}\b${SENSITIVE_OBJECT_SOURCE}\b`, 'i'),
 ];
 const issueTriageQueues = new Map();
 

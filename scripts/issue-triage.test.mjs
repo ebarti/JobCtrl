@@ -112,6 +112,8 @@ test('privacy requires a sensitive object and explicit exposure semantics', () =
     'chore: update credential output formatting',
     'fix: credential response schema validation',
     'docs: describe API token output fields',
+    'chore: credential logging maintenance',
+    'fix: API token response logging',
   ]) {
     assert.equal(labelsForIssue({ state: 'open', title, body: safety, labels: [] }).includes('privacy: review-needed'), false, title);
   }
