@@ -114,7 +114,7 @@ for (const theme of ["light", "dark"] as const) {
     await expect(table).toBeVisible({ timeout: 30_000 });
     if (theme === "dark")
       await page.getByRole("button", { name: "Switch to dark theme" }).click();
-    await expect(table.locator("thead th")).toHaveCount(8);
+    await expect(table.locator("thead th")).toHaveCount(9);
     const heights: number[] = [];
     for (const density of ["Compact", "Regular", "Comfortable"]) {
       await page.getByRole("button", { name: density, exact: true }).click();
