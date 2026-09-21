@@ -152,6 +152,8 @@ test('privacy requires a sensitive object and explicit exposure semantics', () =
     '[Bug]: We do not expose credentials',
     '[Bug]: Never expose tokens in logs',
     '[Bug]: The fix never leaks private data',
+    '[Bug]: This change does not currently expose API keys',
+    '[Bug]: We do not accidentally leak credentials',
     'chore: update credential output formatting',
     'fix: credential response schema validation',
     'docs: describe API token output fields',
@@ -172,6 +174,9 @@ test('privacy requires a sensitive object and explicit exposure semantics', () =
     'We expose credentials',
     'This change exposes tokens in logs',
     'The fix leaks private data',
+    'Credentials were copied and exposed in logs',
+    'API keys, unfortunately, were logged',
+    'This change does not expose API keys although credentials were logged',
   ]) {
     assert.ok(labelsForIssue({ state: 'open', title: `[Bug]: ${subject}`, body: bodyWithArea('TypeScript API'), labels: [] }).includes('privacy: review-needed'), subject);
   }
@@ -186,6 +191,17 @@ test('production triage adapter respects contextual exposure negation in both ph
     ['We do not expose credentials', false],
     ['Never expose tokens in logs', false],
     ['The fix never leaks private data', false],
+    ['This change does not currently expose API keys', false],
+    ['We do not accidentally leak credentials', false],
+    ["This change doesn't expose API keys", false],
+    ["We don't leak credentials", false],
+    ["The migration didn't expose tokens", false],
+    ["API key wasn't logged", false],
+    ["Credentials weren't exposed", false],
+    ["API keys weren't accidentally logged", false],
+    ["API key doesn't currently appear in logs", false],
+    ["API keys weren't in logs", false],
+    ['Credentials were never publicly exposed', false],
     ['API token is exposed', true],
     ['Credentials were logged', true],
     ['API key appears in logs', true],
@@ -193,6 +209,14 @@ test('production triage adapter respects contextual exposure negation in both ph
     ['We expose credentials', true],
     ['This change exposes tokens in logs', true],
     ['The fix leaks private data', true],
+    ['Credentials were copied and exposed in logs', true],
+    ['API keys, unfortunately, were logged', true],
+    ['This change does not expose API keys although credentials were logged', true],
+    ['API keys were not exposed though credentials were logged', true],
+    ['API keys were not exposed while credentials were logged', true],
+    ['API keys were not exposed but credentials were logged', true],
+    ['API keys were not exposed; credentials were logged', true],
+    ['API token is not exposed and API key appears in logs', true],
   ];
   let number = 200;
   for (const [subject, expectedPrivacy] of cases) {

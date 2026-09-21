@@ -29,21 +29,16 @@ const RELEASE_CHECKBOX = 'This appears to block a public release, source install
 const PRIVACY_IGNORED_FIELDS = /^(?:data-safety confirmation|public issue confirmation|confirmation|release impact)$/i;
 const SENSITIVE_OBJECT_SOURCE = String.raw`(?:secrets?|api[ -]?keys?|tokens?|credentials?|passwords?|private[ -]?data|personal[ -]?data|profile[ -]?facts?|resumes?|generated[ -]?materials?|browser[ -]?profiles?|sqlite[ -]?databases?|exploit[ -]?details?)`;
 const EXPOSURE_ACTION_SOURCE = String.raw`(?:expos(?:e|es|ed)|leak(?:s|ed)?|visibl(?:e|ity)|logged|printed|shown|disclos(?:e|es|ed)|published|committed|pasted|rendered)`;
-const NEGATED_EXPOSURE_ACTION_SOURCE = String.raw`(?:expos(?:e|es|ed|ing)|leak(?:s|ed|ing)?|visibl(?:e|ity)|log(?:ged|ging)|print(?:ed|ing)|show(?:n|ing)|disclos(?:e|es|ed|ing)|publish(?:ed|ing)|commit(?:ted|ting)|past(?:e|ed|ing)|render(?:ed|ing))`;
 const EXPOSURE_SURFACE_SOURCE = String.raw`(?:logs?|output|responses?|errors?|console|terminal|ui|pages?|screens?|issues?|commits?)`;
-const EXPOSURE_PATTERNS = [
-  new RegExp(String.raw`\b${SENSITIVE_OBJECT_SOURCE}\b.{0,60}\b${EXPOSURE_ACTION_SOURCE}\b`, 'i'),
-  new RegExp(String.raw`\b${EXPOSURE_ACTION_SOURCE}\b.{0,60}\b${SENSITIVE_OBJECT_SOURCE}\b`, 'i'),
-  new RegExp(String.raw`\b${SENSITIVE_OBJECT_SOURCE}\b.{0,40}\b(?:appears?|shows? up|is|was|were)?\s*(?:in|into|on|via)\s+(?:the\s+)?${EXPOSURE_SURFACE_SOURCE}\b`, 'i'),
-];
-const NEGATED_EXPOSURE_PATTERNS = [
-  new RegExp(String.raw`\b(?:no|never)\s+${SENSITIVE_OBJECT_SOURCE}\b.{0,40}\b${NEGATED_EXPOSURE_ACTION_SOURCE}\b`, 'i'),
-  new RegExp(String.raw`\b${SENSITIVE_OBJECT_SOURCE}\b.{0,30}\b(?:is|are|was|were|has|have|had)?\s*(?:not|never)\s+${NEGATED_EXPOSURE_ACTION_SOURCE}\b`, 'i'),
-  new RegExp(String.raw`\b(?:not|never)\s+${NEGATED_EXPOSURE_ACTION_SOURCE}\b.{0,40}\b${SENSITIVE_OBJECT_SOURCE}\b`, 'i'),
-  new RegExp(String.raw`\bwithout\s+(?:ever\s+)?${NEGATED_EXPOSURE_ACTION_SOURCE}\b.{0,40}\b${SENSITIVE_OBJECT_SOURCE}\b`, 'i'),
-  new RegExp(String.raw`\bno\s+${SENSITIVE_OBJECT_SOURCE}\b.{0,40}\b(?:appears?|shows? up|is|was|were)?\s*(?:in|into|on|via)\s+(?:the\s+)?${EXPOSURE_SURFACE_SOURCE}\b`, 'i'),
-  new RegExp(String.raw`\b${SENSITIVE_OBJECT_SOURCE}\b.{0,30}\b(?:does|do|did|is|are|was|were|has|have|had)\s+(?:not|never)\s+(?:appear|show up|be)?\s*(?:in|into|on|via)\s+(?:the\s+)?${EXPOSURE_SURFACE_SOURCE}\b`, 'i'),
-];
+const NEGATION_SOURCE = String.raw`(?:not|never|doesn['’]t|don['’]t|didn['’]t|isn['’]t|aren['’]t|wasn['’]t|weren['’]t|hasn['’]t|haven['’]t|hadn['’]t|won['’]t|wouldn['’]t|can['’]t|couldn['’]t|shouldn['’]t)`;
+const NEGATION_MODIFIER_SOURCE = String.raw`(?:[a-z]+ly|ever|yet|still)`;
+const ACTION_NEGATION_PATTERN = new RegExp(String.raw`\b${NEGATION_SOURCE}(?:\s+${NEGATION_MODIFIER_SOURCE}){0,3}\s*$`, 'i');
+const OBJECT_NEGATION_PATTERN = /\b(?:no|without)\s*$/i;
+const SURFACE_NEGATION_PATTERN = new RegExp(
+  String.raw`\b${NEGATION_SOURCE}(?:\s+${NEGATION_MODIFIER_SOURCE}){0,3}(?:\s+(?:appears?|appeared|show(?:s|ed)? up|be))?\s+(?:in|into|on|via)\b`,
+  'i',
+);
+const ASSERTION_BOUNDARY_PATTERN = /\n+|;+|(?<=[.!?])\s+|\s+(?:although|though|but|however|while|whereas)\s+/i;
 const issueTriageQueues = new Map();
 
 function labelNames(issue) {
@@ -83,11 +78,61 @@ function privacyText(issue, form) {
   return values.join('\n');
 }
 
+function findPhrases(text, source) {
+  return [...text.matchAll(new RegExp(String.raw`\b${source}\b`, 'gi'))]
+    .map(match => ({ index: match.index, end: match.index + match[0].length }));
+}
+
+function nearestPhrase(phrase, candidates) {
+  let nearest;
+  for (const candidate of candidates) {
+    const distance = candidate.end <= phrase.index
+      ? phrase.index - candidate.end
+      : phrase.end <= candidate.index
+        ? candidate.index - phrase.end
+        : 0;
+    if (distance > 60) continue;
+    if (!nearest || distance < nearest.distance) nearest = { ...candidate, distance };
+  }
+  return nearest;
+}
+
+function objectIsNegated(assertion, object) {
+  return OBJECT_NEGATION_PATTERN.test(assertion.slice(Math.max(0, object.index - 16), object.index));
+}
+
+function actionIsNegated(assertion, action) {
+  return ACTION_NEGATION_PATTERN.test(assertion.slice(0, action.index));
+}
+
+function assertionHasExposure(assertion) {
+  const objects = findPhrases(assertion, SENSITIVE_OBJECT_SOURCE);
+  if (objects.length === 0) return false;
+
+  const actions = findPhrases(assertion, EXPOSURE_ACTION_SOURCE);
+  for (const action of actions) {
+    const object = nearestPhrase(action, objects);
+    if (object && !objectIsNegated(assertion, object) && !actionIsNegated(assertion, action)) return true;
+  }
+
+  const surfacePattern = new RegExp(
+    String.raw`\b${SENSITIVE_OBJECT_SOURCE}\b.{0,40}?\b(?:appears?|appeared|shows? up|is|was|were)?\s*(?:in|into|on|via)\s+(?:the\s+)?${EXPOSURE_SURFACE_SOURCE}\b`,
+    'gi',
+  );
+  for (const match of assertion.matchAll(surfacePattern)) {
+    const object = objects.find(candidate => candidate.index === match.index);
+    if (!object) continue;
+    const hasSurfacePredicate = /\b(?:appears?|appeared|shows? up)\b/i.test(match[0]);
+    if (!hasSurfacePredicate && nearestPhrase(object, actions)) continue;
+    if (!objectIsNegated(assertion, object) && !SURFACE_NEGATION_PATTERN.test(match[0])) return true;
+  }
+  return false;
+}
+
 function isExplicitExposure(issue, form) {
-  const clauses = privacyText(issue, form).split(/\n+|(?<=[.!?;,])\s+|\s+(?:and|or|but|however|while|whereas)\s+/i);
-  return clauses.some(clause =>
-    !NEGATED_EXPOSURE_PATTERNS.some(pattern => pattern.test(clause))
-    && EXPOSURE_PATTERNS.some(pattern => pattern.test(clause)));
+  return privacyText(issue, form)
+    .split(ASSERTION_BOUNDARY_PATTERN)
+    .some(assertionHasExposure);
 }
 
 function checkedReleaseImpact(form) {
