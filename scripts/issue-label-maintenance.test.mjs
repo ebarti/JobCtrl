@@ -244,11 +244,18 @@ test('preflight and attempted writes remain durable when the post-write refresh 
 
 function githubFetchFixture() {
   const state = {
-    labels: Object.entries(LABEL_CATALOGUE)
-      .filter(([name]) => name !== 'type: test')
-      .map(([name, definition]) => ({ name, ...definition })),
-    issues: [issue(41, ['status: in progress', 'bug', 'custom: keep'], { assignees: [{ login: 'maintainer' }] })],
-    calls: [], raceCreate: true, failBugRemovalOnce: true,
+    labels: [
+      ...Array.from({ length: 100 }, (_, index) => ({ name: `custom: ${index}`, color: 'ededed', description: 'Fixture label.' })),
+      ...Object.entries(LABEL_CATALOGUE)
+        .filter(([name]) => name !== 'type: test')
+        .map(([name, definition]) => ({ name, ...definition })),
+    ],
+    issues: [
+      ...Array.from({ length: 100 }, (_, index) => issue(index + 1000, ['custom: keep'])),
+      issue(41, ['status: in progress', 'bug', 'custom: keep'], { assignees: [{ login: 'maintainer' }] }),
+    ],
+    closedItems: new Map(),
+    calls: [], raceCreate: true, failBugRemovalOnce: true, includeReviewed: false,
   };
   state.labels.find(label => label.name === 'type: bug').description = 'stale description';
   const response = (body, status = 200) => new Response(status === 204 ? null : JSON.stringify(body), {
@@ -264,12 +271,22 @@ function githubFetchFixture() {
       const cursor = body.variables.cursor;
       const nodes = cursor === null
         ? [{ id: 'other-repository', content: { number: 999, state: 'OPEN', repository: { nameWithOwner: 'elsewhere/repo' } }, fieldValues: { nodes: [] } }]
-        : [{ id: 'project-41', content: { number: 41, state: 'OPEN', repository: { nameWithOwner: 'ebarti/JobCtrl' } }, fieldValues: { nodes: [{ name: 'In Progress', field: { name: 'Status' } }] } }];
+        : [
+          { id: 'project-41', content: { number: 41, state: 'OPEN', repository: { nameWithOwner: 'ebarti/JobCtrl' } }, fieldValues: { nodes: [{ name: 'In Progress', field: { name: 'Status' } }] } },
+          ...(state.includeReviewed ? [
+            { id: 'project-888', content: { number: 888, state: 'OPEN', repository: { nameWithOwner: 'ebarti/JobCtrl' } }, fieldValues: { nodes: [{ name: 'Backlog', field: { name: 'Status' } }] } },
+            { id: 'project-945', content: { number: 945, state: 'CLOSED', repository: { nameWithOwner: 'ebarti/JobCtrl' } }, fieldValues: { nodes: [{ name: 'Done', field: { name: 'Status' } }] } },
+          ] : []),
+        ];
       return response({ data: { repository: { owner: { projectV2: { items: {
         pageInfo: cursor === null ? { hasNextPage: true, endCursor: 'cursor-2' } : { hasNextPage: false, endCursor: null }, nodes,
       } } } } } });
     }
-    if (parsed.pathname === '/repos/ebarti/jobctrl/labels' && method === 'GET') return response(state.labels);
+    if (parsed.pathname === '/repos/ebarti/jobctrl/labels' && method === 'GET') {
+      const page = Number(parsed.searchParams.get('page'));
+      const perPage = Number(parsed.searchParams.get('per_page'));
+      return response(state.labels.slice((page - 1) * perPage, page * perPage));
+    }
     if (parsed.pathname === '/repos/ebarti/jobctrl/labels' && method === 'POST') {
       if (state.raceCreate) {
         state.raceCreate = false;
@@ -284,7 +301,17 @@ function githubFetchFixture() {
       Object.assign(state.labels.find(label => label.name === name), body);
       return response({ name, ...body });
     }
-    if (parsed.pathname === '/repos/ebarti/jobctrl/issues' && method === 'GET') return response(state.issues);
+    if (parsed.pathname === '/repos/ebarti/jobctrl/issues' && method === 'GET') {
+      const page = Number(parsed.searchParams.get('page'));
+      const perPage = Number(parsed.searchParams.get('per_page'));
+      return response(state.issues.slice((page - 1) * perPage, page * perPage));
+    }
+    const singleIssue = parsed.pathname.match(/^\/repos\/ebarti\/jobctrl\/issues\/(\d+)$/);
+    if (singleIssue && method === 'GET') {
+      const number = Number(singleIssue[1]);
+      const target = state.issues.find(item => item.number === number) ?? state.closedItems.get(number);
+      return target ? response(target) : response({ message: 'Not Found' }, 404);
+    }
     const issueLabels = parsed.pathname.match(/^\/repos\/ebarti\/jobctrl\/issues\/(\d+)\/labels$/);
     if (issueLabels && method === 'POST') {
       const target = state.issues.find(item => item.number === Number(issueLabels[1]));
@@ -318,6 +345,10 @@ test('real CLI adapter preserves reviewed plans across REST and GraphQL paginati
   assert.deepEqual(cataloguePreview.snapshot.plan.create.map(label => label.name), ['type: test']);
   assert.deepEqual(cataloguePreview.snapshot.plan.update.map(label => label.name), ['type: bug']);
   assert.deepEqual(mutationCalls(), []);
+  assert.deepEqual(fixture.state.calls.filter(call => call.method === 'GET' && call.url.includes('/labels?')).map(call => call.url), [
+    'https://api.github.com/repos/ebarti/jobctrl/labels?per_page=100&page=1',
+    'https://api.github.com/repos/ebarti/jobctrl/labels?per_page=100&page=2',
+  ]);
   const catalogueApply = await main([
     'catalogue', '--apply', '--reviewed-snapshot', cataloguePreviewPath, '--plan-id', cataloguePreview.snapshot.planId,
     '--snapshot', tempSnapshot(directory, 'catalogue-apply.json'),
@@ -340,6 +371,10 @@ test('real CLI adapter preserves reviewed plans across REST and GraphQL paginati
   assert.deepEqual(cleanupPreview.snapshot.plan.mutations[0].add, ['type: bug']);
   assert.deepEqual(cleanupPreview.snapshot.plan.mutations[0].remove, ['status: in progress', 'bug']);
   assert.equal(mutationCalls().length, mutationsBeforeCleanupPreview);
+  assert.deepEqual(fixture.state.calls.filter(call => call.method === 'GET' && call.url.includes('/issues?')).map(call => call.url), [
+    'https://api.github.com/repos/ebarti/jobctrl/issues?state=open&sort=created&direction=asc&per_page=100&page=1',
+    'https://api.github.com/repos/ebarti/jobctrl/issues?state=open&sort=created&direction=asc&per_page=100&page=2',
+  ]);
   const cursors = fixture.state.calls.filter(call => call.url === 'https://api.github.com/graphql').slice(-2).map(call => call.body.variables.cursor);
   assert.deepEqual(cursors, [null, 'cursor-2']);
 
@@ -367,9 +402,27 @@ test('real CLI adapter preserves reviewed plans across REST and GraphQL paginati
     '--snapshot', tempSnapshot(directory, 'cleanup-rerun-apply.json'),
   ], dependencies);
   assert.equal(rerun.exitCode, 0);
-  assert.deepEqual(fixture.state.issues[0].labels.map(label => label.name).sort(), ['custom: keep', 'type: bug']);
-  assert.deepEqual(fixture.state.issues[0].assignees, [{ login: 'maintainer' }]);
+  const item41 = fixture.state.issues.find(item => item.number === 41);
+  assert.deepEqual(item41.labels.map(label => label.name).sort(), ['custom: keep', 'type: bug']);
+  assert.deepEqual(item41.assignees, [{ login: 'maintainer' }]);
   const converged = await main(['cleanup', '--snapshot', tempSnapshot(directory, 'cleanup-converged.json')], dependencies);
   assert.deepEqual(converged.snapshot.plan.mutations, []);
   assert.equal(converged.snapshot.execution.attemptedWrites, 0);
+
+  fixture.state.includeReviewed = true;
+  fixture.state.issues.push(issue(888, ['privacy: review-needed', 'origin: owner backlog']));
+  fixture.state.closedItems.set(945, issue(945, ['status: needs triage', 'privacy: review-needed'], { state: 'closed' }));
+  const mutationsBeforeReviewedPreview = mutationCalls().length;
+  const reviewed = await main([
+    'cleanup', '--snapshot', tempSnapshot(directory, 'cleanup-reviewed.json'),
+    '--reviewed-remove', '888', 'privacy: review-needed', 'Public content contains no exposed value.',
+    '--expect-state', '888', 'open',
+    '--reviewed-remove', '945', 'status: needs triage', 'Closed item remains Project Done.',
+    '--expect-state', '945', 'closed', '--expect-project-status', '945', 'Done',
+    '--reviewed-remove', '945', 'privacy: review-needed', 'Public content contains no exposure report.',
+    '--expect-state', '945', 'closed', '--expect-project-status', '945', 'Done',
+  ], dependencies);
+  assert.deepEqual(reviewed.snapshot.plan.mutations.map(mutation => mutation.number), [888, 945]);
+  assert.equal(mutationCalls().length, mutationsBeforeReviewedPreview);
+  assert.ok(fixture.state.calls.some(call => call.method === 'GET' && call.url === 'https://api.github.com/repos/ebarti/jobctrl/issues/945'));
 });

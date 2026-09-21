@@ -40,6 +40,8 @@ const NEGATED_EXPOSURE_PATTERNS = [
   new RegExp(String.raw`\b(?:no|never)\s+${SENSITIVE_OBJECT_SOURCE}\b.{0,40}\b${NEGATED_EXPOSURE_ACTION_SOURCE}\b`, 'i'),
   new RegExp(String.raw`\b${SENSITIVE_OBJECT_SOURCE}\b.{0,30}\b(?:is|are|was|were|has|have|had)?\s*(?:not|never)\s+${NEGATED_EXPOSURE_ACTION_SOURCE}\b`, 'i'),
   new RegExp(String.raw`\bwithout\s+(?:ever\s+)?${NEGATED_EXPOSURE_ACTION_SOURCE}\b.{0,40}\b${SENSITIVE_OBJECT_SOURCE}\b`, 'i'),
+  new RegExp(String.raw`\bno\s+${SENSITIVE_OBJECT_SOURCE}\b.{0,40}\b(?:appears?|shows? up|is|was|were)?\s*(?:in|into|on|via)\s+(?:the\s+)?${EXPOSURE_SURFACE_SOURCE}\b`, 'i'),
+  new RegExp(String.raw`\b${SENSITIVE_OBJECT_SOURCE}\b.{0,30}\b(?:does|do|did|is|are|was|were|has|have|had)\s+(?:not|never)\s+(?:appear|show up|be)?\s*(?:in|into|on|via)\s+(?:the\s+)?${EXPOSURE_SURFACE_SOURCE}\b`, 'i'),
 ];
 const issueTriageQueues = new Map();
 
@@ -186,7 +188,27 @@ async function triageLatestIssue({ github, owner, repo, issueNumber }) {
     issue_number: issueNumber,
     labels: additions,
   });
-  return { additions, ensured };
+
+  const afterWrite = await getIssue(github, owner, repo, issueNumber);
+  const addedNames = new Set(additions);
+  const withoutThisRun = {
+    ...afterWrite,
+    labels: (afterWrite.labels ?? []).filter(label => !addedNames.has(typeof label === 'string' ? label : label.name)),
+  };
+  const stillExpected = new Set(labelsForIssue(withoutThisRun));
+  const compensated = additions.filter(name => !stillExpected.has(name));
+  const compensationFailures = [];
+  for (const name of compensated) {
+    try {
+      await github.rest.issues.removeLabel({ owner, repo, issue_number: issueNumber, name });
+    } catch (error) {
+      if (error.status !== 404) compensationFailures.push(error);
+    }
+  }
+  if (compensationFailures.length > 0) {
+    throw new AggregateError(compensationFailures, `Failed to compensate ${compensationFailures.length} stale triage label(s).`);
+  }
+  return { additions, ensured, compensated };
 }
 
 export async function triageIssue({ github, owner, repo, issueNumber, issue }) {

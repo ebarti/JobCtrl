@@ -9,7 +9,7 @@ function bodyWithArea(area, extra = '') {
   return `### Affected area\n\n${area}\n\n### What happened?\n\n${extra}\n\n${safety}`;
 }
 
-function githubFixture({ issue, existingDefinitions = [], createRace = [], onGetLabel } = {}) {
+function githubFixture({ issue, existingDefinitions = [], createRace = [], onGetLabel, onAddLabels } = {}) {
   const definitions = new Set(existingDefinitions);
   const races = new Set(createRace);
   const calls = [];
@@ -41,7 +41,13 @@ function githubFixture({ issue, existingDefinitions = [], createRace = [], onGet
           for (const name of input.labels) {
             if (!currentIssue.labels.some(label => (label.name ?? label) === name)) currentIssue.labels.push({ name });
           }
+          onAddLabels?.(currentIssue, input);
           return { data: input.labels };
+        },
+        async removeLabel(input) {
+          calls.push(['removeLabel', input]);
+          currentIssue.labels = currentIssue.labels.filter(label => (label.name ?? label) !== input.name);
+          return { data: null };
         },
       },
     },
@@ -109,6 +115,9 @@ test('privacy requires a sensitive object and explicit exposure semantics', () =
     'docs: document credential migration',
     '[Bug]: API token is not exposed',
     '[Bug]: no credentials were logged',
+    '[Bug]: no API key appears in logs',
+    '[Bug]: API key does not appear in logs',
+    '[Bug]: API key was never in logs',
     'chore: update credential output formatting',
     'fix: credential response schema validation',
     'docs: describe API token output fields',
@@ -194,7 +203,7 @@ test('closed handling performs zero API writes', async () => {
   assert.equal(fixture.calls.filter(([method]) => ['createLabel', 'addLabels'].includes(method)).length, 0);
 });
 
-test('overlapping opened and edited runs serialize and preserve the first authoritative type and area', async () => {
+test('overlapping opened and edited runs serialize without accumulating conflicting type and area labels', async () => {
   const issue = {
     number: 79,
     state: 'open',
@@ -217,9 +226,10 @@ test('overlapping opened and edited runs serialize and preserve the first author
   const edited = triageIssue({ github: fixture.github, owner: 'ebarti', repo: 'jobctrl', issueNumber: issue.number });
   await Promise.all([opened, edited]);
 
-  assert.deepEqual(fixture.issue.labels.map(label => label.name).filter(name => name.startsWith('type: ')), ['type: bug']);
-  assert.deepEqual(fixture.issue.labels.map(label => label.name).filter(name => name.startsWith('area: ')), ['area: api']);
-  assert.equal(fixture.calls.filter(([method]) => method === 'addLabels').length, 1);
+  assert.deepEqual(fixture.issue.labels.map(label => label.name).filter(name => name.startsWith('type: ')), ['type: feature']);
+  assert.deepEqual(fixture.issue.labels.map(label => label.name).filter(name => name.startsWith('area: ')), ['area: web']);
+  assert.equal(fixture.calls.filter(([method]) => method === 'addLabels').length, 2);
+  assert.deepEqual(fixture.calls.filter(([method]) => method === 'removeLabel').map(([, input]) => input.name), ['type: bug', 'area: api']);
 });
 
 test('a close during triage is re-read immediately before assignment', async () => {
@@ -232,6 +242,25 @@ test('a close during triage is re-read immediately before assignment', async () 
   const result = await triageIssue({ github: fixture.github, owner: 'ebarti', repo: 'jobctrl', issueNumber: issue.number });
   assert.deepEqual(result.additions, []);
   assert.equal(fixture.calls.filter(([method]) => method === 'addLabels').length, 0);
+});
+
+test('a close at the add-label boundary compensates only labels added by that run', async () => {
+  const issue = {
+    number: 81,
+    state: 'open',
+    title: '[Bug]: closes while labels are added',
+    body: bodyWithArea('Web app'),
+    labels: [{ name: 'priority: P1' }, { name: 'origin: manual' }],
+  };
+  const fixture = githubFixture({
+    issue,
+    existingDefinitions: ['type: bug', 'area: web'],
+    onAddLabels(currentIssue) { currentIssue.state = 'closed'; },
+  });
+  const result = await triageIssue({ github: fixture.github, owner: 'ebarti', repo: 'jobctrl', issueNumber: issue.number });
+  assert.deepEqual(result.compensated, ['type: bug', 'area: web']);
+  assert.deepEqual(fixture.issue.labels.map(label => label.name).sort(), ['origin: manual', 'priority: P1']);
+  assert.deepEqual(fixture.calls.filter(([method]) => method === 'removeLabel').map(([, input]) => input.name), ['type: bug', 'area: web']);
 });
 
 test('workflow serializes each issue and passes only the issue number to fresh triage reads', async () => {
