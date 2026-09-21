@@ -947,7 +947,7 @@ describe("<ProfileForm>", () => {
     expect(screen.getByText(/saved profile changed while this form has unsaved edits/i)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Rebase edits onto saved profile" }));
     await waitFor(() => expect(suggestRoles).toBeEnabled());
-    expect(screen.getByText(/Draft rebased\. Regenerate and review role suggestions/i)).toBeInTheDocument();
+    expect(screen.getByText(/Draft rebased and stale suggested roles removed/i)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Save changes" }));
     expect(updateProfile).toHaveBeenCalledTimes(1);
     expect(screen.getByText(/regenerate suggestions, and review them before saving/i)).toBeInTheDocument();
@@ -967,6 +967,96 @@ describe("<ProfileForm>", () => {
       personal: { full_name: "External Canonical Name" },
       experience: { target_role: "Head of Platform", target_locations: "Madrid" },
     });
+  });
+
+  it("removes stale suggested roles before a zero-result review authorizes rebased manual edits", async () => {
+    const user = userEvent.setup();
+    const initialV3 = structuredClone(sampleProfileResponse);
+    initialV3.profileVersion = 3;
+    initialV3.profile = ProfileSchema.parse(initialV3.profile);
+    const canonicalV3Profile = initialV3.profile as ProfileShape;
+    canonicalV3Profile.experience.target_role = "VP Engineering";
+    initialV3.profile = canonicalV3Profile;
+    const initialV4 = structuredClone(initialV3);
+    initialV4.profileVersion = 4;
+    const canonicalV4Profile = initialV4.profile as ProfileShape;
+    canonicalV4Profile.personal.full_name = "External Canonical Name";
+    initialV4.profile = canonicalV4Profile;
+    const targetRoleSuggestions = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true as const,
+        profileVersion: 3,
+        suggestions: [
+          {
+            title: "Head of Platform",
+            classification: "adjacent" as const,
+            track: "Management",
+            seniority: "Director",
+            evidenceIds: ["experience:exp-1", "exp-1_bullet_1"],
+            rationale: "Saved delivery evidence supports adjacent scope.",
+          },
+        ],
+        strategy: "model" as const,
+        warnings: ["stubbed_model_evidence"],
+      })
+      .mockResolvedValueOnce({
+        ok: true as const,
+        profileVersion: 4,
+        suggestions: [],
+        strategy: "none" as const,
+        warnings: ["provider_token_or_cost_bound_unsupported"],
+      });
+    const updateProfile = vi.fn()
+      .mockRejectedValueOnce(new Error("The saved profile changed. Refresh and try again."))
+      .mockImplementationOnce(async (request) => ({
+        ...initialV4,
+        profileVersion: 5,
+        profile: JSON.parse(request.profileText),
+      }));
+    const ports = buildTestPorts({ api: { targetRoleSuggestions, updateProfile } });
+    const { rerender } = renderWithProviders(
+      <ProfileForm initial={initialV3} section="target-search" />,
+      { ports },
+    );
+
+    await user.type(screen.getByLabelText("Target location 1"), "Madrid");
+    await user.click(screen.getByRole("button", { name: "Suggest roles" }));
+    await user.click(await screen.findByRole("button", { name: "Add selected roles" }));
+    expect(screen.getByDisplayValue("VP Engineering")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("Head of Platform")).toBeInTheDocument();
+    await user.type(screen.getByLabelText("Target roles 2"), "{Enter}");
+    await user.type(screen.getByLabelText("Target roles 3"), "Manual Architect");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(await screen.findByText("The saved profile changed. Refresh and try again.")).toBeInTheDocument();
+
+    rerender(<ProfileForm initial={initialV4} section="target-search" />);
+    await user.click(screen.getByRole("button", { name: "Rebase edits onto saved profile" }));
+    expect(screen.getByDisplayValue("VP Engineering")).toBeInTheDocument();
+    expect(screen.queryByDisplayValue("Head of Platform")).not.toBeInTheDocument();
+    expect(screen.getByDisplayValue("Manual Architect")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("Madrid")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(updateProfile).toHaveBeenCalledTimes(1);
+    expect(screen.getByText(/regenerate suggestions, and review them before saving/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Suggest roles" }));
+    expect(await screen.findByText(
+      "The saved evidence did not support a conservative role suggestion.",
+    )).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(2));
+
+    const retry = updateProfile.mock.calls[1]![0];
+    expect(retry.expectedProfileVersion).toBe(4);
+    expect(JSON.parse(retry.profileText)).toMatchObject({
+      personal: { full_name: "External Canonical Name" },
+      experience: {
+        target_role: "VP Engineering; Manual Architect",
+        target_locations: "Madrid",
+      },
+    });
+    expect(JSON.parse(retry.profileText).experience.target_role).not.toContain("Head of Platform");
   });
 
   it("lets the user edit or reject transient suggestions before acceptance", async () => {

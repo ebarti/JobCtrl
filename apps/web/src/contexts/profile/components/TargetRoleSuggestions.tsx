@@ -34,6 +34,7 @@ export interface TargetRoleSuggestionsProps {
   profileVersion: number | null;
   onAccept: (titles: readonly string[], expectedProfileVersion: number) => void;
   onRebase: () => void;
+  onResolveWithoutAcceptance: (expectedProfileVersion: number) => void;
 }
 
 export function TargetRoleSuggestions({
@@ -41,6 +42,7 @@ export function TargetRoleSuggestions({
   profileVersion,
   onAccept,
   onRebase,
+  onResolveWithoutAcceptance,
 }: TargetRoleSuggestionsProps) {
   const generation = useTargetRoleSuggestionsMutation();
   const [generatedVersion, setGeneratedVersion] = useState<number | null>(null);
@@ -64,6 +66,9 @@ export function TargetRoleSuggestions({
       });
       setGeneratedVersion(result.profileVersion);
       setSuggestions(result.suggestions.map((suggestion) => ({ ...suggestion, selected: true })));
+      if (result.suggestions.length === 0 && result.profileVersion === profileVersion) {
+        onResolveWithoutAcceptance(result.profileVersion);
+      }
       if (result.warnings.includes("stubbed_model_evidence")) {
         setNoticeMessage("This demo result uses deterministic fixture evidence; no model ran.");
       } else if (result.warnings.includes("model_unavailable_or_invalid")) {
@@ -88,6 +93,9 @@ export function TargetRoleSuggestions({
   };
 
   const dismiss = () => {
+    if (generatedVersion !== null && !isStale && !isFormBaseStale) {
+      onResolveWithoutAcceptance(generatedVersion);
+    }
     setSuggestions([]);
     setGeneratedVersion(null);
     setEmptyMessage("");
@@ -103,7 +111,11 @@ export function TargetRoleSuggestions({
       .filter(Boolean);
     if (!titles.length) return;
     onAccept(titles, generatedVersion);
-    dismiss();
+    setSuggestions([]);
+    setGeneratedVersion(null);
+    setEmptyMessage("");
+    setNoticeMessage("");
+    generation.reset();
   };
 
   const selectedCount = suggestions.filter((suggestion) => suggestion.selected).length;
@@ -211,7 +223,13 @@ export function TargetRoleSuggestions({
                     variant="ghost"
                     size="sm"
                     disabled={isStale || isFormBaseStale}
-                    onClick={() => setSuggestions((current) => current.filter((_, itemIndex) => itemIndex !== index))}
+                    onClick={() => {
+                      const next = suggestions.filter((_, itemIndex) => itemIndex !== index);
+                      if (next.length === 0 && generatedVersion !== null) {
+                        onResolveWithoutAcceptance(generatedVersion);
+                      }
+                      setSuggestions(next);
+                    }}
                   >
                     Reject {suggestion.title}
                   </Button>
