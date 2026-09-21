@@ -91,6 +91,8 @@ test('privacy requires a sensitive object and explicit exposure semantics', () =
     '[Bug]: vulnerability in dependency',
     'chore: rotate API tokens',
     'docs: document credential migration',
+    '[Bug]: API token is not exposed',
+    '[Bug]: no credentials were logged',
   ]) {
     assert.equal(labelsForIssue({ state: 'open', title, body: safety, labels: [] }).includes('privacy: review-needed'), false, title);
   }
@@ -103,6 +105,15 @@ test('privacy requires a sensitive object and explicit exposure semantics', () =
   ]) {
     assert.ok(labelsForIssue({ state: 'open', title: `[Bug]: ${subject}`, body: bodyWithArea('TypeScript API'), labels: [] }).includes('privacy: review-needed'), subject);
   }
+});
+
+test('existing manual privacy and release flags are never removed on edits', () => {
+  assert.deepEqual(labelsForIssue({
+    state: 'open',
+    title: 'chore: ordinary maintenance',
+    body: '',
+    labels: ['type: maintenance', 'privacy: review-needed', 'release: possible-blocker'],
+  }), []);
 });
 
 test('security-contact form keeps security and privacy routing', () => {

@@ -68,8 +68,11 @@ function privacyText(issue, form) {
 }
 
 function isExplicitExposure(issue, form) {
-  const text = privacyText(issue, form);
-  return SENSITIVE_OBJECT.test(text) && EXPOSURE_SEMANTIC.test(text);
+  const segments = privacyText(issue, form).split(/\n+|(?<=[.!?])\s+/);
+  return segments.some(segment =>
+    !/\b(?:no|not|never|without)\b/i.test(segment)
+    && SENSITIVE_OBJECT.test(segment)
+    && EXPOSURE_SEMANTIC.test(segment));
 }
 
 function checkedReleaseImpact(form) {

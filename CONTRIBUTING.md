@@ -50,6 +50,46 @@ JOBCTRL_DIR=/tmp/jobctrl-qa corepack pnpm dev
   maintainer approval before their workflows run. There is no top-of-stack scheduler; see
   [the CI reference](docs/local-development.md#pull-request-ci).
 
+## Issue Labels And Project Status
+
+Project 7's `Status` field is the only progress source for issues and pull
+requests. Labels classify the work by `type:`, `area:`, or a specific
+`privacy:` or `release:` flag. Labels, titles, authors, priority, and Project
+Status describe work; none of them grants permission to implement, merge,
+release, deploy, submit an application, or change user data.
+
+Issue forms assign their explicit type and, where fixed by the form, their
+area. The triage workflow adds at most one missing type and one missing area,
+never replaces a maintainer's type or area, and does nothing to closed issues.
+Privacy review is limited to the security-contact form or reports that name
+both a sensitive object and how it was exposed. Release impact is assigned only
+from the checked release-impact field.
+
+The supported classification labels live in
+`scripts/issue-label-catalogue.mjs`. Event triage creates a declared label only
+when it is missing; it does not rewrite existing label colors or descriptions.
+To report catalogue drift without changing GitHub, run:
+
+```bash
+GH_TOKEN="$(gh auth token)" node scripts/issue-label-maintenance.mjs catalogue \
+  --snapshot /tmp/jobctrl-label-catalogue-preview.json
+```
+
+The same tool previews existing assignment cleanup. It removes an open item's
+progress `status:` labels only when Project 7 has one unambiguous `Status` and
+retains the legacy `status: needs validation` and `execution: not admitted`
+semantics. It canonicalizes only the legacy `bug`, `documentation`,
+`enhancement`, and `question` aliases when they do not conflict with a manual
+type, and preserves all other labels, assignees, Project fields, and item state.
+Closed-item or privacy corrections must be named individually with
+`--reviewed-remove`, an expected state, a reason, and an expected Project Status
+when a progress label is involved.
+
+Every command defaults to dry-run and retains before/after state in the named
+snapshot. `--apply` is the explicit write boundary. Applying catalogue drift or
+assignment cleanup requires the same scoped authorization as any other GitHub
+metadata change; neither command deletes label definitions.
+
 ## Developer Certificate of Origin Sign-Off
 
 External contributor pull request commits must include a `Signed-off-by:`
