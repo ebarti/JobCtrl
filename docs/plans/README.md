@@ -36,8 +36,10 @@ docs to describe the delivered behavior. Delivery history lives in the git log
 
 Current accepted scope and dependencies live in [GitHub Issues](https://github.com/ebarti/JobCtrl/issues).
 The [profile evidence and selective resume composition program](https://github.com/ebarti/JobCtrl/issues/883)
-is a design proposal; its implementation requires the decisions and acceptance
-criteria recorded there.
+has a [reviewable integrated proposal](2026-09-21-profile-evidence-selective-tailoring.md)
+for draft evidence capture, explicit canonical promotion, opt-in selective
+composition, rendered-artifact audit, and dependent delivery slices. The plan
+is unshipped and awaits explicit user approval before implementation.
 
 ## Revalidated Delivery Records
 
