@@ -93,7 +93,7 @@ export function ContactImportWizard({ onDone }: ContactImportWizardProps) {
   };
 
   return (
-    <div className="contact-import-wizard">
+    <div className="contact-import-wizard min-w-0 max-w-full">
       {errorMessage ? <div className="banner inline" role="alert">{errorMessage}</div> : null}
       {statusMessage ? <div className="status-line" role="status">{statusMessage}</div> : null}
 
@@ -175,7 +175,7 @@ export function ContactImportWizard({ onDone }: ContactImportWizardProps) {
       ) : null}
 
       {step === "preview" ? (
-        <div className="wizard-step">
+        <div className="wizard-step min-w-0 max-w-full">
           {preview ? (
             <>
               <p role="status">
@@ -185,11 +185,11 @@ export function ContactImportWizard({ onDone }: ContactImportWizardProps) {
               </p>
               <ol
                 aria-label="Contact import preview"
-                className="max-h-[45dvh] overflow-y-auto break-words pr-2 [overflow-wrap:anywhere]"
+                className="w-full min-w-0 max-w-full max-h-[45dvh] overflow-y-auto break-words pr-2 [overflow-wrap:anywhere]"
                 tabIndex={0}
               >
                 {preview.items.map((item) => (
-                  <li key={item.index}>
+                  <li className="min-w-0 max-w-full" key={item.index}>
                     <p><b>{item.displayName || `Contact ${item.index}`}</b> <span className="meta">{item.status}</span></p>
                     <p className="meta">
                       Employer: {item.employer ?? "None"}{item.jobId ? ` · Job: ${item.jobId}` : ""}

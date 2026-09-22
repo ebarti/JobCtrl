@@ -104,6 +104,7 @@ describe("<OutreachView>", () => {
     expect(
       await screen.findByRole("heading", { name: "Import contacts" }),
     ).toBeInTheDocument();
+    expect(screen.getByRole("dialog")).toHaveClass("min-w-0", "grid-cols-[minmax(0,1fr)]");
   });
 
   it("wires the empty-state actions to the existing create and import flows", async () => {

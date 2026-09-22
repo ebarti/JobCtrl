@@ -90,7 +90,10 @@ describe("<ContactImportWizard>", () => {
     expect(screen.getByText("ORG is required.")).toBeInTheDocument();
     expect(screen.getByText(/Duplicate of item 1/)).toBeInTheDocument();
     expect(requests).toHaveLength(1);
-    expect(screen.getByRole("list", { name: "Contact import preview" })).toHaveAttribute("tabindex", "0");
+    const previewList = screen.getByRole("list", { name: "Contact import preview" });
+    expect(previewList).toHaveAttribute("tabindex", "0");
+    expect(previewList).toHaveClass("w-full", "min-w-0", "max-w-full", "[overflow-wrap:anywhere]");
+    expect(previewList.closest(".contact-import-wizard")).toHaveClass("min-w-0", "max-w-full");
     expect(requests[0]).toMatchObject({ format: "vcard", mode: "preview", filename: "network.vcf" });
 
     await user.click(screen.getByRole("button", { name: "Continue" }));

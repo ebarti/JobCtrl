@@ -66,8 +66,8 @@ export function ContactImportButton({
       >
         {label}
       </DialogTrigger>
-      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto">
-        <DialogHeader>
+      <DialogContent className="min-w-0 grid-cols-[minmax(0,1fr)] max-h-[calc(100dvh-2rem)] overflow-y-auto">
+        <DialogHeader className="min-w-0 max-w-full [overflow-wrap:anywhere]">
           <DialogTitle>Import contacts</DialogTitle>
           <DialogDescription>
             Preview CSV or vCard 3.0/4.0 content before committing it. Every imported fact is
