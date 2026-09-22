@@ -120,6 +120,7 @@ def main() -> int:
     safe_env = {key: os.environ[key] for key in (
         "PATH", "HOME", "USERPROFILE", "SystemRoot", "WINDIR", "TEMP", "TMP",
         "TMPDIR", "LOCALAPPDATA", "APPDATA", "DBUS_SESSION_BUS_ADDRESS",
+        "PSModulePath",
     ) if key in os.environ}
     os.environ.clear()
     os.environ.update(safe_env)
