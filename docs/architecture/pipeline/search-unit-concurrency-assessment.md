@@ -43,18 +43,18 @@ it diagnostic rather than concurrent production.
 
 | Measurement | Current policy baseline | Zero-service control |
 | --- | ---: | ---: |
-| Wall time p50 / p95 | 5.150 s / 5.151 s | 5.089 s / 5.095 s |
-| Time to first accepted p50 / p95 | 95.7 ms / 98.6 ms | 36.8 ms / 37.0 ms |
-| Adapter service p50 / p95 | 56.9 ms / 60.4 ms | 0.2 ms / 0.3 ms |
-| Limiter wait p50 / p95 | 934.8 ms / 952.5 ms | 994.9 ms / 1.005 s |
-| Acceptance/persistence p50 / p95 | 5.1 ms / 5.8 ms | 4.1 ms / 5.3 ms |
-| Checkpoint save p50 / p95 | 0.13 ms / 1.12 ms | 0.10 ms / 1.14 ms |
+| Wall time p50 / p95 | 5.124 s / 5.147 s | 5.092 s / 5.101 s |
+| Time to first accepted p50 / p95 | 86.4 ms / 91.8 ms | 36.5 ms / 38.2 ms |
+| Adapter service p50 / p95 | 54.5 ms / 60.4 ms | 0.2 ms / 0.3 ms |
+| Limiter wait p50 / p95 | 936.6 ms / 953.6 ms | 994.5 ms / 1.005 s |
+| Acceptance/persistence p50 / p95 | 4.5 ms / 6.1 ms | 4.4 ms / 5.4 ms |
+| Checkpoint save p50 / p95 | 0.11 ms / 1.09 ms | 0.11 ms / 1.07 ms |
 
 All six units completed in every measured repeat. Every repeat produced exactly
 six job rows, six acceptance receipts, and six checkpointed units, with one
 adapter active at most. Removing the 50 ms synthetic service wait reduced median
-wall time by about 61 ms (1.2%). The diagnostic competing-call arm still took
-5.065 s, kept all five start gaps at or above 1.0 s, and observed a maximum of
+wall time by about 33 ms (0.6%). The diagnostic competing-call arm still took
+5.079 s, kept all five start gaps at or above 1.0 s, and observed a maximum of
 one active call.
 
 The timings overlap and must not be added as a decomposition. In particular,
@@ -66,9 +66,9 @@ Cancellation and retry probes used the same production durable consumer:
 
 | Scenario | Observed result |
 | --- | --- |
-| Pending cancellation | All six units canceled without starting an adapter; returned in 40 ms. |
-| Active provider wait | JobStreaming's cancellation-aware wait stopped; all six units canceled 51 ms after the signal. |
-| Host-limiter wait | No adapter started, but return took 933 ms after the signal because the current limiter sleep has no cancellation input. |
+| Pending cancellation | All six units canceled without starting an adapter; returned in 35 ms. |
+| Active provider wait | JobStreaming's cancellation-aware wait stopped; all six units canceled 54 ms after the signal. |
+| Host-limiter wait | No adapter started, but return took 927 ms after the signal because the current limiter sleep has no cancellation input. |
 | Provider retry | One synthetic transient failure retried once, then completed with one job, one receipt, and checkpoint revision 4 in 5.107 s. |
 
 The limiter result is an observed responsiveness gap, not evidence that the
@@ -114,7 +114,7 @@ the current measurements.
 
 The artifact records the exact observed invocation. It ran with the existing
 project `.venv` at Python 3.14.4 and JobStreaming 0.0.5 on arm64 macOS, from git
-revision `31b3f6ead7a9fd20ca866512795f673f912a3f3b`, using
+revision `cb5a01b97b226fb96d8affcbde0858d49effda77`, using
 `workers/automation/uv.lock` SHA-256
 `4eaf563541a57070c8e1b661d34aad441d419ef8811dbd02abdc64b267148a67`.
 
