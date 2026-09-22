@@ -134,8 +134,9 @@ const controlServer = http.createServer(async (request, response) => {
       return;
     }
     if (request.method === "POST" && url.pathname === "/shutdown") {
-      writeJson(response, 202, { ok: true });
-      setTimeout(() => void shutdown("control-request"), 0);
+      await shutdown("control-request", { closeControl: false });
+      writeJson(response, 200, { ok: true });
+      controlServer.close();
       return;
     }
     writeJson(response, 404, { error: "not_found" });
@@ -185,7 +186,19 @@ function prepareLiveCoverScenario(dbPath) {
   const db = new Database(dbPath);
   try {
     db.transaction(() => {
-      db.prepare("DELETE FROM worker_runtime_heartbeats").run();
+      const now = new Date().toISOString();
+      db.prepare(
+        "INSERT INTO job_enrichments (" +
+          "tenant_id, job_id, current_status, full_description, application_url, enriched_at, " +
+          "extraction_tier, attempts_json, updated_at" +
+          ") SELECT tenant_id, job_id, 'enriched', full_description, url, ?, " +
+          "'css_selectors', '[]', ? FROM jobs WHERE tenant_id = 'local' AND job_id = ? " +
+          "ON CONFLICT(tenant_id, job_id) DO UPDATE SET " +
+          "current_status = excluded.current_status, full_description = excluded.full_description, " +
+          "application_url = excluded.application_url, enriched_at = excluded.enriched_at, " +
+          "extraction_tier = excluded.extraction_tier, attempts_json = excluded.attempts_json, " +
+          "updated_at = excluded.updated_at",
+      ).run(now, now, LIVE_JOB_ID);
       const coverIds = db
         .prepare(
           "SELECT artifact_id FROM job_materials_artifacts " +
@@ -227,10 +240,38 @@ function prepareLiveCoverScenario(dbPath) {
   }
 }
 
-async function shutdown(reason) {
+function quiesceSyntheticSeed(dbPath) {
+  const db = new Database(dbPath);
+  try {
+    db.transaction(() => {
+      db.prepare("DELETE FROM worker_runtime_heartbeats").run();
+      db.prepare(
+        "UPDATE job_stage_states SET state = 'blocked', retryable = 0, " +
+          "next_action = 'live-worker-smoke-disabled', version = version + 1 " +
+          "WHERE state IN ('pending', 'queued', 'running', 'failed')",
+      ).run();
+      db.prepare(
+        "UPDATE job_bullet_provenance SET transform_type = 'rephrase' " +
+          "WHERE transform_type = 'rephrased'",
+      ).run();
+      db.prepare(
+        "DELETE FROM job_events WHERE json_valid(payload_json) " +
+          "AND json_extract(payload_json, '$.workflowId') = 'discover-local'",
+      ).run();
+      db.prepare(
+        "DELETE FROM workflow_run_projections " +
+          "WHERE tenant_id = 'local' AND workflow_id = 'discover-local'",
+      ).run();
+    })();
+  } finally {
+    db.close();
+  }
+}
+
+async function shutdown(reason, { closeControl = true } = {}) {
   if (shuttingDown) return;
   shuttingDown = true;
-  controlServer.close();
+  if (closeControl) controlServer.close();
   const outcomes = {};
   for (const item of [...children].reverse()) {
     outcomes[item.name] = await stopProcessGroup(item.child.pid, {
@@ -272,7 +313,7 @@ try {
     controlServer.listen(config.ports.JOBCTRL_LIVE_WORKER_CONTROL_PORT, "127.0.0.1", resolve);
   });
   seedOwnedE2eWorkspace(repoRoot);
-  prepareLiveCoverScenario(process.env.JOBCTRL_E2E_DB_PATH);
+  quiesceSyntheticSeed(process.env.JOBCTRL_E2E_DB_PATH);
 
   fs.mkdirSync(path.dirname(process.env.JOBCTRL_TEMPORAL_DB), { recursive: true });
   startChild("temporal", config.temporalBinary, [
@@ -323,6 +364,7 @@ try {
   process.kill(-worker.pid, "SIGSTOP");
   workerPaused = true;
   state.workerPaused = true;
+  prepareLiveCoverScenario(process.env.JOBCTRL_E2E_DB_PATH);
 
   startChild("api", "corepack", [
     "pnpm",

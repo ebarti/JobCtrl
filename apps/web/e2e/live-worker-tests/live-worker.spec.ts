@@ -54,8 +54,9 @@ async function workflowDetail(workflowId: string): Promise<WorkflowDetail> {
   const response = await fetch(
     `http://127.0.0.1:${process.env["JOBCTRL_E2E_API_PORT"]}/v1/workflow-runs/${encodeURIComponent(workflowId)}`,
   );
-  expect(response.ok, await response.text()).toBe(true);
-  return (await response.json()) as WorkflowDetail;
+  const body = await response.text();
+  expect(response.ok, body).toBe(true);
+  return JSON.parse(body) as WorkflowDetail;
 }
 
 async function startBrowserEventObservation(page: Page): Promise<void> {
@@ -135,9 +136,11 @@ test("real cover workflow reaches worker running and terminal state in the brows
     .locator("table.jobs-data-grid-table tbody tr")
     .filter({ hasText: JOB_TITLE });
   await expect(row).toBeVisible({ timeout: 30_000 });
-  await row
-    .getByRole("button", { name: new RegExp(`^Open job ${JOB_TITLE}`) })
-    .click();
+  const rowActivation = row.getByRole("button", {
+    name: new RegExp(`^Open job ${JOB_TITLE}`),
+  });
+  await rowActivation.focus();
+  await rowActivation.press("Enter");
 
   const drawer = page.getByRole("article", { name: "Job details" });
   const coverStage = drawer
@@ -232,7 +235,7 @@ test("real cover workflow reaches worker running and terminal state in the brows
     workflowType: "JobPipelineWorkflow",
     status: "in_progress",
     jobKey: JOB_ID,
-    inputSummary: { tenantId: "local", jobId: JOB_ID },
+    inputSummary: { jobId: JOB_ID },
   });
   await expect
     .poll(

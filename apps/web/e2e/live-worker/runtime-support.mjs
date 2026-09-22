@@ -148,6 +148,9 @@ export function sanitizedRuntimeEnvironment(env = process.env) {
     "CAPSOLVER_API_KEY",
     "GEMINI_API_KEY",
     "GOOGLE_API_KEY",
+    "LANGFUSE_PUBLIC_KEY",
+    "LANGFUSE_SECRET_KEY",
+    "LANGFUSE_BASE_URL",
     "OPENAI_API_KEY",
     "OPENAI_BASE_URL",
   ]) {

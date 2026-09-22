@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
@@ -35,6 +36,13 @@ const ports = {
   control: String(portBase + 4),
 };
 const serviceHome = process.env["JOBCTRL_E2E_SERVICE_HOME"]!;
+const contributorHome = os.homedir();
+const browserPath =
+  process.env["PLAYWRIGHT_BROWSERS_PATH"] ??
+  path.join(contributorHome, "Library", "Caches", "ms-playwright");
+const corepackHome =
+  process.env["COREPACK_HOME"] ??
+  path.join(contributorHome, ".cache", "node", "corepack");
 const evidenceDir = path.join(repoRoot, "dist", "live-worker-smoke", runKey);
 const temporalDb = path.join(workspace.appDir, "temporal", "temporal.db");
 const runtimeEnvironment = {
@@ -43,8 +51,14 @@ const runtimeEnvironment = {
   USERPROFILE: serviceHome,
   XDG_CONFIG_HOME: path.join(serviceHome, ".config"),
   XDG_CACHE_HOME: path.join(serviceHome, ".cache"),
+  PLAYWRIGHT_BROWSERS_PATH: browserPath,
+  COREPACK_HOME: corepackHome,
   TZ: "UTC",
   UV_LOCKED: "1",
+  LANGFUSE_DISABLE: "1",
+  HTTP_PROXY: "http://127.0.0.1:9",
+  HTTPS_PROXY: "http://127.0.0.1:9",
+  ALL_PROXY: "http://127.0.0.1:9",
   NO_PROXY: "127.0.0.1,localhost,::1",
   no_proxy: "127.0.0.1,localhost,::1",
   JOBCTRL_LIVE_WORKER_SMOKE: "1",
