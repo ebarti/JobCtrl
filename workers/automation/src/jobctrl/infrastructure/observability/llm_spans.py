@@ -58,6 +58,11 @@ def llm_generation_span(
     the LLM returns. Exceptions raised inside the ``with`` block mark the span
     failed without exporting their potentially private messages, then re-raise.
     """
+    from jobctrl.llm import enforce_spend_budget
+    from jobctrl.llm_lanes import current_llm_lane
+
+    lane = current_llm_lane()
+    enforce_spend_budget(lane)
     tracer = trace.get_tracer(scope_name)
     with tracer.start_as_current_span(
         f"llm.{model}",
@@ -71,6 +76,7 @@ def llm_generation_span(
         span.set_attribute("gen_ai.operation.name", operation)
         span.set_attribute("jobctrl.llm.operation", operation)
         span.set_attribute("jobctrl.llm.stage", scope_name)
+        span.set_attribute("jobctrl.llm.lane", lane)
         if schema_fingerprint is not None:
             span.set_attribute("jobctrl.llm.schema_fingerprint", schema_fingerprint)
         span.set_attribute("jobctrl.llm.input.message_count", len(messages))
@@ -83,12 +89,15 @@ def llm_generation_span(
         if provider is not None:
             span.set_attribute("gen_ai.provider.name", provider)
 
+        usage_recorded = False
+
         def record(
             text: str,
             *,
             input_tokens: int | None = None,
             output_tokens: int | None = None,
         ) -> None:
+            nonlocal usage_recorded
             span.set_attribute("gen_ai.response.model", model)
             span.set_attribute("jobctrl.llm.output.character_count", len(text))
             if input_tokens is not None and output_tokens is not None:
@@ -106,16 +115,17 @@ def llm_generation_span(
                 span.set_attribute("gen_ai.usage.input_tokens", input_tokens)
             if output_tokens is not None:
                 span.set_attribute("gen_ai.usage.output_tokens", output_tokens)
-            try:
-                from jobctrl.llm import record_llm_spend
+            if usage_recorded or (input_tokens is None and output_tokens is None):
+                return
+            from jobctrl.llm import record_llm_spend
 
-                record_llm_spend(
-                    input_tokens=input_tokens,
-                    output_tokens=output_tokens,
-                    model=model,
-                )
-            except Exception:  # noqa: BLE001 - spend telemetry must not fail the LLM call
-                pass
+            record_llm_spend(
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                model=model,
+                lane=lane,
+            )
+            usage_recorded = True
 
         try:
             yield record

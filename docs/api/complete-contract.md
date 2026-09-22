@@ -1440,7 +1440,13 @@ heartbeat status (`healthy`, `missing`, `stale` after 45 s, or `mismatched`
 when the worker points at a different app dir/database) and an `llmSpend`
 block (`status: ok | over_budget`, today's `estimatedUsd` from the local
 `llm_spend` metering table, and configured `dailyBudgetUsd` from
-`config.json` — default `25`, `0` = unlimited), plus worker startup
+`config.json` — default `25`, `0` = unlimited). Its `lanes` object reports every
+known product lane with input, output, total, limit, remaining, unlimited, and
+`ok | over_budget` status. Lane limits are read from `laneTokenLimits`; unknown
+keys and non-integral or negative values are rejected by `PATCH /v1/settings`.
+The top-level spend status continues to represent the global USD ceiling so an
+exhausted lane does not make unrelated lanes unavailable. The response also
+includes worker startup
 concurrency metadata
 (`maxConcurrentActivities`, `activityExecutorMaxWorkers`). The web topbar
 surfaces missing or stale worker heartbeats, the Settings page surfaces the

@@ -235,7 +235,7 @@ loadable service-account JSON file. The path is write-only and is not shown agai
 Otherwise JobCtrl checks the standard local gcloud ADC location, whose
 officially loadable ADC types (including `authorized_user`) remain supported.
 
-## LLM Spend Budget
+## LLM Spend Budgets
 
 ### Daily LLM budget {#runtime-setting-daily-llm-budget}
 
@@ -243,8 +243,19 @@ The daily LLM budget is stored in `config.json` and edited in **Settings →
 General** (`dailyBudgetUsd`, default `25`; `0` means unlimited). Workflows that spend LLM tokens run a
 budget preflight before their heavy activities and stop with a non-retryable
 budget error once the estimated daily spend reaches the ceiling.
-`GET /v1/health` reports today's estimated spend against the configured
-budget.
+`laneTokenLimits` adds an independent daily observed-token threshold for each
+product lane: `discovery`, `enrichment`, `scoring`, `tailoring`, `apply`,
+`contact`, `interview`, `profile`, and `compensation`. Omitted lanes and a value
+of `0` are unlimited. Each value must be a non-negative integer; unknown lane
+names are rejected. A lane stops admitting new provider attempts when its UTC
+daily input-plus-output total is at or above its threshold. Other lanes remain
+available while the global USD ceiling allows them.
+
+Admission uses observations already recorded by providers. An admitted call may
+therefore finish above its lane threshold because JobCtrl has no proven maximum
+token cost for an in-flight call. The limit is not a reservation or strict
+in-flight cap. `GET /v1/health` and `jobctrl doctor` report the global USD total
+and each lane's observed tokens, configured threshold, and status.
 
 ## Execution Concurrency
 

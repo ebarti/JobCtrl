@@ -392,6 +392,12 @@ async def _temporal_check_spend_budget(_payload) -> SpendBudgetStatus:
         output_tokens=0,
         estimated_usd=0.0,
         daily_budget_usd=25.0,
+        lane="discovery",
+        lane_input_tokens=0,
+        lane_output_tokens=0,
+        lane_token_limit=0,
+        lane_exceeded=False,
+        global_exceeded=False,
         exceeded=False,
     )
 
@@ -1207,6 +1213,41 @@ def test_cancellation_interrupts_provider_wait_and_terminalizes_all_units(
     try:
         units = SqliteDiscoverySearchUnitRepository(conn).list_units(execution)
         assert [unit.state for unit in units] == ["canceled", "canceled"]
+    finally:
+        close_connection(db_path)
+
+
+def test_pending_cancellation_terminalizes_all_units_without_starting_a_provider(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = tmp_path / "jobctrl.db"
+    init_db(db_path)
+    close_connection(db_path)
+    monkeypatch.setattr(jobspy, "init_db", lambda: init_db(db_path))
+    monkeypatch.setattr(jobspy, "get_shared_rate_limiter", _NoopLimiter)
+    execution = _execution("temporal-run-pending-cancel")
+    cancel_event = threading.Event()
+    cancel_event.set()
+    _SuccessfulIndeed.requests = []
+
+    with pytest.raises(jobspy.DiscoveryCancelled):
+        jobspy.run_discovery(
+            cfg=_config(
+                queries=("Director of Engineering", "VP Engineering"),
+            ),
+            cancel_event=cancel_event,
+            discovery_execution=execution,
+            activity_attempt=1,
+            activity_owner_token="pending-cancel-attempt-1",
+            adapter_registry=_registry(indeed_factory=_SuccessfulIndeed),
+        )
+
+    conn = init_db(db_path)
+    try:
+        units = SqliteDiscoverySearchUnitRepository(conn).list_units(execution)
+        assert [unit.state for unit in units] == ["canceled", "canceled"]
+        assert _SuccessfulIndeed.requests == []
     finally:
         close_connection(db_path)
 

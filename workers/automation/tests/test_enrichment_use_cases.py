@@ -14,6 +14,11 @@ Cover the cascade behaviours:
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
+
+import pytest
+
+import jobctrl.llm as legacy_llm
 
 from jobctrl.domain.enrichment import (
     DetailPage,
@@ -26,6 +31,7 @@ from jobctrl.domain.enrichment.use_cases import (
     EnrichBatchUseCase,
     EnrichJobUseCase,
     TierExtractor,
+    default_extractors,
 )
 from jobctrl.domain.enrichment.value_objects import (
     ApplicationUrl,
@@ -34,6 +40,9 @@ from jobctrl.domain.enrichment.value_objects import (
 from jobctrl.domain.identifiers import JobId
 from jobctrl.domain.ports.enrichment import DetailPageFetcherPort
 from jobctrl.domain.ports.events import EventPublisher
+from jobctrl.infrastructure.llm.llm_client import LlmAdapter
+from jobctrl.infrastructure.observability.llm_spans import llm_generation_span
+from jobctrl.llm_lanes import current_llm_lane
 from jobctrl.domain.tenant import LOCAL_TENANT
 
 
@@ -86,6 +95,31 @@ class _CannedFetcher(DetailPageFetcherPort):
 class _RaisingFetcher(DetailPageFetcherPort):
     def fetch(self, url: str) -> DetailPage:
         raise RuntimeError("nav timeout")
+
+
+class _SpanBackedEnrichmentLlm:
+    """Injected backend that keeps the production adapter and span boundaries."""
+
+    provider_id = "synthetic"
+    model = "gemini-synthetic"
+
+    def __init__(self) -> None:
+        self.lanes: list[str] = []
+
+    def chat(self, messages: list[dict[str, str]], **kwargs: Any) -> str:
+        self.lanes.append(current_llm_lane())
+        response = (
+            '{"full_description": "Tier three recovered the complete job description.", '
+            '"application_url": "https://example.com/apply"}'
+        )
+        with llm_generation_span(
+            model=self.model,
+            messages=messages,
+            params=kwargs,
+            scope_name="jobctrl.llm.synthetic",
+        ) as record:
+            record(response, input_tokens=11, output_tokens=7)
+        return response
 
 
 @dataclass
@@ -170,6 +204,45 @@ def test_use_case_falls_through_to_tier_2_on_tier_1_failure() -> None:
     assert saved.extraction_tier is ExtractionTier.CSS_SELECTORS
     assert saved.full_description is not None
     assert saved.full_description.text == "CSS-extracted"
+
+
+def test_canonical_cascade_binds_tier_3_usage_to_enrichment_lane(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spend: list[dict[str, Any]] = []
+    monkeypatch.setattr(legacy_llm, "enforce_spend_budget", lambda _lane=None: None)
+    monkeypatch.setattr(legacy_llm, "record_llm_spend", lambda **kwargs: spend.append(kwargs))
+    backend = _SpanBackedEnrichmentLlm()
+    adapter = LlmAdapter(client=backend)
+    repo = _MemoryEnrichmentRepository()
+    use_case = EnrichJobUseCase(
+        repository=repo,
+        fetcher=_CannedFetcher(
+            DetailPage(
+                url="https://example.com/jobs/1",
+                html="<html><body><div>Opaque posting markup.</div></body></html>",
+            )
+        ),
+        extractors=default_extractors(llm=adapter),
+    )
+
+    outcome = use_case.execute(
+        tenant_id=LOCAL_TENANT,
+        job_id=JobId("https://example.com/jobs/1"),
+        url="https://example.com/jobs/1",
+    )
+
+    assert outcome.ok
+    assert outcome.tier_used is ExtractionTier.LLM_ASSISTED
+    assert backend.lanes == ["enrichment"]
+    assert spend == [
+        {
+            "input_tokens": 11,
+            "output_tokens": 7,
+            "model": "gemini-synthetic",
+            "lane": "enrichment",
+        }
+    ]
 
 
 def test_use_case_records_failure_when_all_tiers_fail() -> None:

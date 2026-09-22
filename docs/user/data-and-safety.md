@@ -109,6 +109,11 @@ secrets. Post-accept withdrawal and immediate visitor-event deletion are not
 yet available in this MVP; retained data and cookies expire on the schedules
 above. The consent screen links to this disclosure before entry.
 
+The [demo access, consent withdrawal, and visitor erasure proposal](../plans/2026-09-22-demo-access-consent-withdrawal-proposal.md)
+is a future design for [#885](https://github.com/ebarti/JobCtrl/issues/885).
+It is **PROPOSED**, awaits owner decisions, and does not change the current
+consent gate, retention, or deletion behavior described above.
+
 After entry, the compact **Demo guide** links to seeded scoring evidence,
 tailored-material review, Apply Review/dry-run, and run history. Every shortcut
 and action is simulated; it does not contact employers, send messages, or make

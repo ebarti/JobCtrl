@@ -24,6 +24,7 @@ from jobctrl.domain.enrichment.services import (
 )
 from jobctrl.domain.ports.llm import LlmMessage, LlmPort
 from jobctrl.infrastructure.enrichment.playwright_fetcher import _collect_json_ld, _collect_main_content
+from jobctrl.llm_lanes import bind_llm_lane, current_llm_lane
 
 
 class _StubLlm(LlmPort):
@@ -32,6 +33,7 @@ class _StubLlm(LlmPort):
     def __init__(self, response: str) -> None:
         self._response = response
         self.calls: list[Sequence[LlmMessage]] = []
+        self.lanes: list[str] = []
 
     def chat(
         self,
@@ -41,6 +43,7 @@ class _StubLlm(LlmPort):
         temperature: float | None = None,
     ) -> str:
         self.calls.append(list(messages))
+        self.lanes.append(current_llm_lane())
         return self._response
 
 
@@ -316,6 +319,21 @@ def test_llm_extractor_parses_json_response() -> None:
     assert result.application_url is not None
     assert result.application_url.value == "https://example.com/apply"
     assert len(llm.calls) == 1
+
+
+def test_llm_extractor_owns_enrichment_lane_and_restores_caller_context() -> None:
+    llm = _StubLlm(
+        '{"full_description": "A sufficiently complete job description.", '
+        '"application_url": null}'
+    )
+    page = DetailPage(url="https://example.com/jobs/1", html="<p>opaque page</p>")
+
+    with bind_llm_lane("profile"):
+        result = LlmExtractor(llm=llm).extract(page)
+        assert current_llm_lane() == "profile"
+
+    assert result.ok
+    assert llm.lanes == ["enrichment"]
 
 
 def test_llm_extractor_handles_null_apply_url() -> None:

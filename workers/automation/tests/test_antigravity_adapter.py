@@ -310,8 +310,8 @@ async def test_draft_opens_generation_span_with_model_and_tokens(
     assert attrs["langfuse.observation.type"] == "generation"
     assert attrs["langfuse.observation.model.name"] == "gemini-3.5-flash"
     assert attrs["gen_ai.usage.input_tokens"] == 900
-    # output = visible candidates (150) + reasoning thoughts (40).
-    assert attrs["gen_ai.usage.output_tokens"] == 190
+    # Reasoning thoughts are a subset of provider output and are not added twice.
+    assert attrs["gen_ai.usage.output_tokens"] == 150
 
 
 async def test_draft_span_omits_tokens_when_sdk_reports_no_usage(

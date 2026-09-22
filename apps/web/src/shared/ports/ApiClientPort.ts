@@ -51,6 +51,7 @@ import type {
   ReviseOutreachDraftRequest,
   RejectOutreachDraftRequest,
   LogOutreachSendRequest,
+  LlmLane,
   ScheduleFollowUpRequest,
   DueFollowUpsResponse,
   CredentialKey,
@@ -169,6 +170,15 @@ export interface ApiHealthResponse {
     dailyBudgetUsd: number;
     remainingUsd: number | null;
     unlimited: boolean;
+    lanes: Record<LlmLane, {
+      status: "ok" | "over_budget";
+      inputTokens: number;
+      outputTokens: number;
+      totalTokens: number;
+      tokenLimit: number;
+      remainingTokens: number | null;
+      unlimited: boolean;
+    }>;
     message: string;
   };
   worker: {

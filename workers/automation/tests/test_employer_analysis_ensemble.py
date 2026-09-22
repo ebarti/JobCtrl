@@ -20,6 +20,7 @@ from typing import Any
 
 import pytest
 
+import jobctrl.llm as legacy_llm
 from jobctrl.domain.materials.analysis import (
     EnsembleError,
     JobAnalysis,
@@ -33,6 +34,7 @@ from jobctrl.infrastructure.analysis.claude_analysis_adapter import (
 )
 from jobctrl.infrastructure.analysis.codex_analysis_adapter import CodexAnalysisAdapter
 from jobctrl.infrastructure.analysis.ensemble import compute_agreement, run_ensemble
+from jobctrl.infrastructure.llm.provider_errors import ProviderCallError
 
 pytestmark = pytest.mark.asyncio
 
@@ -184,6 +186,54 @@ class _FakeAsyncCodex:
         return self.thread
 
 
+class _CloseFailureStream:
+    def __init__(self, turn_id: str) -> None:
+        self._turn_id = turn_id
+        self._yielded = False
+
+    def __aiter__(self) -> _CloseFailureStream:
+        return self
+
+    async def __anext__(self) -> Any:
+        if self._yielded:
+            raise StopAsyncIteration
+        self._yielded = True
+        return SimpleNamespace(
+            payload=SimpleNamespace(
+                turn_id=self._turn_id,
+                token_usage=SimpleNamespace(
+                    total=SimpleNamespace(input_tokens=17, output_tokens=9)
+                ),
+            )
+        )
+
+    async def aclose(self) -> None:
+        raise RuntimeError("synthetic close failure")
+
+
+class _CloseFailureHandle:
+    id = "turn-close-failure"
+
+    def stream(self) -> _CloseFailureStream:
+        return _CloseFailureStream(self.id)
+
+
+class _CloseFailureThread:
+    async def turn(self, prompt: str, **kwargs: Any) -> _CloseFailureHandle:
+        return _CloseFailureHandle()
+
+
+class _CloseFailureCodex:
+    async def __aenter__(self) -> _CloseFailureCodex:
+        return self
+
+    async def __aexit__(self, *exc: Any) -> None:
+        return None
+
+    async def thread_start(self, **kwargs: Any) -> _CloseFailureThread:
+        return _CloseFailureThread()
+
+
 # --------------------------------------------------------------------------- #
 # Adapter tests
 # --------------------------------------------------------------------------- #
@@ -247,13 +297,13 @@ class TestClaudeAdapter:
         attrs = dict(span.attributes or {})
         assert attrs["langfuse.observation.type"] == "generation"
         assert attrs["langfuse.observation.model.name"] == "claude-opus-4-8"
-        # input = 1200 fresh + 50 cache_read; cache tokens count toward input processed.
-        assert attrs["gen_ai.usage.input_tokens"] == 1250
+        # Cached input is a subset of provider input and is not added twice.
+        assert attrs["gen_ai.usage.input_tokens"] == 1200
         assert attrs["gen_ai.usage.output_tokens"] == 340
         assert json.loads(attrs["langfuse.observation.usage_details"]) == {
-            "input_tokens": 1250,
+            "input_tokens": 1200,
             "output_tokens": 340,
-            "total_tokens": 1590,
+            "total_tokens": 1540,
         }
 
     async def test_draft_span_omits_tokens_when_sdk_reports_no_usage(self, in_memory_exporter) -> None:
@@ -377,6 +427,31 @@ class TestCodexAdapter:
         assert attrs["langfuse.observation.model.name"] == "gpt-5.5"
         assert attrs["gen_ai.usage.input_tokens"] == 800
         assert attrs["gen_ai.usage.output_tokens"] == 210
+
+    async def test_records_usage_before_stream_close_failure(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        spend: list[dict[str, Any]] = []
+        monkeypatch.setattr(legacy_llm, "enforce_spend_budget", lambda _lane=None: None)
+        monkeypatch.setattr(legacy_llm, "record_llm_spend", lambda **kwargs: spend.append(kwargs))
+        adapter = CodexAnalysisAdapter(
+            model="gpt-5.5",
+            async_codex_factory=_CloseFailureCodex,
+        )
+
+        with pytest.raises(ProviderCallError) as raised:
+            await adapter.draft("system", JD)
+
+        assert raised.value.envelope.category == "provider_exception"
+        assert spend == [
+            {
+                "input_tokens": 17,
+                "output_tokens": 9,
+                "model": "gpt-5.5",
+                "lane": "discovery",
+            }
+        ]
 
 
 # --------------------------------------------------------------------------- #

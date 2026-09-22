@@ -11,6 +11,14 @@ import pytest
 from jobctrl import llm
 from jobctrl.domain.materials.use_cases import TAILORED_RESUME_RESPONSE_SCHEMA
 from jobctrl.llm import LLMClient
+from jobctrl.llm_lanes import bind_llm_lane
+
+
+@pytest.fixture(autouse=True)
+def _llm_lane(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr("jobctrl.llm.enforce_spend_budget", lambda _lane=None: None)
+    with bind_llm_lane("tailoring"):
+        yield
 
 
 def test_gemini_provider_defaults_to_gemini_35_flash(monkeypatch) -> None:
@@ -132,8 +140,15 @@ def test_openai_compat_path_sends_strict_tailoring_schema() -> None:
     assert set(experience_item["required"]) == {"id", "title", "bullets"}
 
 
-def test_chat_json_retries_malformed_structured_output_without_token_cap() -> None:
+def test_chat_json_retries_malformed_structured_output_without_token_cap(monkeypatch) -> None:
     requests: list[dict] = []
+    usage: list[dict] = []
+    admissions: list[str | None] = []
+    monkeypatch.setattr("jobctrl.llm.record_llm_spend", lambda **kwargs: usage.append(kwargs))
+    monkeypatch.setattr(
+        "jobctrl.llm.enforce_spend_budget",
+        lambda lane=None: admissions.append(lane),
+    )
 
     def _openai_response(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content.decode("utf-8"))
@@ -175,7 +190,21 @@ def test_chat_json_retries_malformed_structured_output_without_token_cap() -> No
 
     assert response == {"score": 8}
     assert len(requests) == 2
+    assert admissions == ["tailoring", "tailoring"]
+    assert [item["input_tokens"] + item["output_tokens"] for item in usage] == [2, 2]
     assert all("max_tokens" not in request for request in requests)
+
+
+@pytest.mark.asyncio
+async def test_run_sync_preserves_lane_context_across_worker_thread() -> None:
+    from jobctrl.infrastructure.llm.llm_client import _run_sync
+    from jobctrl.llm_lanes import current_llm_lane
+
+    async def read_lane() -> str:
+        return current_llm_lane()
+
+    with bind_llm_lane("profile"):
+        assert _run_sync(read_lane()) == "profile"
 
 
 # ---------------------------------------------------------------------------

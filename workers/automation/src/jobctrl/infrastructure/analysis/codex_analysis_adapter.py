@@ -39,6 +39,7 @@ from jobctrl.infrastructure.analysis.strict_schema import strict_json_schema
 from jobctrl.infrastructure.llm.codex_turn import run_codex_turn
 from jobctrl.infrastructure.llm.provider_errors import ProviderCallError, provider_exception_error
 from jobctrl.infrastructure.observability.llm_spans import llm_generation_span
+from jobctrl.llm_lanes import lane_bound
 from jobctrl.infrastructure.setup_probes import (
     CODEX_NEUTRALIZED_AUTH_ENV,
     ensure_jobctrl_codex_auth,
@@ -255,6 +256,7 @@ class CodexAnalysisAdapter:
     def model_id(self) -> str:
         return self._model
 
+    @lane_bound("discovery")
     async def draft(self, system_prompt: str, jd_snapshot: str) -> JobAnalysisDraft:
         factory = self._async_codex_factory or _load_async_codex_factory()
         prompt = f"{system_prompt}\n\nJOB DESCRIPTION:\n{jd_snapshot}"
@@ -292,6 +294,11 @@ class CodexAnalysisAdapter:
                             "output_schema": strict_json_schema(JobAnalysis.model_json_schema()),
                             "effort": "high",
                         },
+                        record_usage=lambda input_tokens, output_tokens: record(
+                            "",
+                            input_tokens=input_tokens,
+                            output_tokens=output_tokens,
+                        ),
                     )
             except ProviderCallError:
                 raise

@@ -550,12 +550,28 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
 
 
 async def _check_spend(payload: JobPipelineWorkflowInput) -> None:
-    await workflow.execute_activity(
-        check_spend_budget,
-        SpendBudgetInput(tenant_id=payload.tenant_id),
-        start_to_close_timeout=timedelta(seconds=30),
-        retry_policy=RetryPolicy(maximum_attempts=1),
+    lane_by_stage = {
+        "discover": "discovery",
+        "enrich": "enrichment",
+        "score": "scoring",
+        "tailor": "tailoring",
+        "cover": "tailoring",
+        "apply": "apply",
+    }
+    lanes = tuple(
+        dict.fromkeys(
+            lane_by_stage[stage]
+            for stage in payload.stages
+            if stage in lane_by_stage
+        )
     )
+    for lane in lanes:
+        await workflow.execute_activity(
+            check_spend_budget,
+            SpendBudgetInput(tenant_id=payload.tenant_id, lane=lane),
+            start_to_close_timeout=timedelta(seconds=30),
+            retry_policy=RetryPolicy(maximum_attempts=1),
+        )
 
 
 def _activity_timeout(payload: JobPipelineWorkflowInput) -> timedelta:

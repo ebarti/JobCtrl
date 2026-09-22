@@ -85,7 +85,7 @@ def build_digest(
     generated_at = _format_utc_timestamp(_utc_now(now))
     since = read_digest_state(conn)["lastAcknowledgedAt"]
     threshold = _normalize_threshold(min_fit_score)
-    budget_status = budget or read_spend_budget_status()
+    budget_status = budget or read_spend_budget_status(lane="discovery")
     return {
         "ok": True,
         "generatedAt": generated_at,
@@ -235,7 +235,7 @@ def _budget_payload(status: SpendBudgetStatus) -> dict[str, Any]:
     unlimited = status.daily_budget_usd <= 0
     remaining = None if unlimited else max(0.0, status.daily_budget_usd - status.estimated_usd)
     return {
-        "status": "over_budget" if status.exceeded else "ok",
+        "status": "over_budget" if status.global_exceeded else "ok",
         "estimatedUsd": float(status.estimated_usd),
         "dailyBudgetUsd": float(status.daily_budget_usd),
         "remainingUsd": remaining,

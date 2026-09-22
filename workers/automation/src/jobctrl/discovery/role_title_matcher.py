@@ -10,6 +10,7 @@ from collections import OrderedDict
 from collections.abc import Mapping
 
 from jobctrl.domain.ports.llm import LlmMessage, LlmPort
+from jobctrl.llm_lanes import lane_bound
 from jobctrl.infrastructure.llm import get_llm_adapter
 
 log = logging.getLogger(__name__)
@@ -117,6 +118,7 @@ class RoleTitleMatcher:
             self._cache.popitem(last=False)
         return result
 
+    @lane_bound("discovery")
     def _classify(
         self,
         *,

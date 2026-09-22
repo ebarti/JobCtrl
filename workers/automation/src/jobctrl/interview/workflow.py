@@ -72,7 +72,7 @@ class InterviewPrepWorkflow:
         try:
             await workflow.execute_activity(
                 check_spend_budget,
-                SpendBudgetInput(tenant_id=payload.tenant_id),
+                SpendBudgetInput(tenant_id=payload.tenant_id, lane="interview"),
                 start_to_close_timeout=_DEFAULT_TIMEOUT,
                 heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
                 retry_policy=_TAILOR_RETRY,

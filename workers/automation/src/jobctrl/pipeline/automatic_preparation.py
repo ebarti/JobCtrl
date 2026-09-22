@@ -69,7 +69,7 @@ async def reconcile_automatic_preparation(
     # retries this read on its next heartbeat instead of guessing that it is idle.
     async for _execution in client.list_workflows(query=_ACTIVE_WORK):
         return 0
-    if read_spend_budget_status().exceeded:
+    if read_spend_budget_status(lane="scoring").global_exceeded:
         return 0
     conn = database.get_connection()
     await _reconcile_stopped_enrichment_owners(client, conn)

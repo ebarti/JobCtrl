@@ -27,6 +27,7 @@ from jobctrl.domain.materials.analysis import (
 )
 from jobctrl.infrastructure.analysis.prompts import build_synthesizer_user_prompt
 from jobctrl.infrastructure.observability.llm_spans import llm_generation_span
+from jobctrl.llm_lanes import lane_bound
 from jobctrl.infrastructure.setup_probes import bundled_claude_sdk_options
 from jobctrl.runtime import activate_provider_pack, is_bundled_runtime
 
@@ -116,8 +117,8 @@ def _usage_from_messages(messages: list[Any]) -> tuple[int | None, int | None]:
     """Best-effort ``(input_tokens, output_tokens)`` from the final ResultMessage.
 
     The Claude Agent SDK reports authoritative cumulative usage on the terminal
-    ``ResultMessage``; the true input is fresh + cache-creation + cache-read
-    tokens (reading only ``input_tokens`` under-reports the cached system prompt).
+    ``ResultMessage``. Cache fields are subsets of ``input_tokens`` and must not
+    be added again.
     Every field is coerced defensively so a drifted/non-int usage shape yields
     omitted counts rather than raising inside the span (telemetry must never fail
     the leg). Returns ``(None, None)`` when the SDK surfaced no usage.
@@ -128,11 +129,7 @@ def _usage_from_messages(messages: list[Any]) -> tuple[int | None, int | None]:
         usage = getattr(message, "usage", None)
         if not isinstance(usage, Mapping):
             return None, None
-        input_tokens = (
-            (_optional_int(usage.get("input_tokens")) or 0)
-            + (_optional_int(usage.get("cache_creation_input_tokens")) or 0)
-            + (_optional_int(usage.get("cache_read_input_tokens")) or 0)
-        )
+        input_tokens = _optional_int(usage.get("input_tokens")) or 0
         output_tokens = _optional_int(usage.get("output_tokens")) or 0
         return (input_tokens or None, output_tokens or None)
     return None, None
@@ -154,6 +151,7 @@ class _ClaudeStructuredCaller:
         self._options_factory = options_factory
         self._scope_name = scope_name
 
+    @lane_bound("discovery")
     async def call(self, *, system_prompt: str, user_prompt: str) -> dict[str, Any]:
         query_fn = self._query_fn or _load_sdk_query()
         options_factory = self._options_factory or _load_options_factory()
@@ -186,13 +184,9 @@ class _ClaudeStructuredCaller:
             raw = query_fn(prompt=user_prompt, options=options)
             iterator = await _aiter(raw)
             messages = [message async for message in iterator]
-            structured = _structured_output_from_messages(messages)
             input_tokens, output_tokens = _usage_from_messages(messages)
-            record(
-                json.dumps(structured, ensure_ascii=False),
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-            )
+            record("", input_tokens=input_tokens, output_tokens=output_tokens)
+            structured = _structured_output_from_messages(messages)
             return structured
 
 

@@ -152,6 +152,7 @@ from jobctrl.domain.materials.value_objects import (
 )
 from jobctrl.domain.ports.events import EventPublisher
 from jobctrl.domain.ports.llm import LlmMessage, LlmPort
+from jobctrl.llm_lanes import lane_bound
 from jobctrl.domain.ports.materials import (
     BulletProvenanceRepository,
     EmployerAnalysisRepository,
@@ -2869,6 +2870,7 @@ class TailorResumeUseCase:
             )
         return self._analyze_use_case.execute(job=job, tenant_id=tenant_id).analysis
 
+    @lane_bound("tailoring")
     def _run_attempts(
         self,
         *,
@@ -3546,6 +3548,7 @@ class TailorResumeUseCase:
             record["status"] = "judge_rejected"
         return replace(candidate, verdict=verdict, adversarial_review=adversarial_review)
 
+    @lane_bound("tailoring")
     def _chat_json_payload(
         self,
         messages: list[LlmMessage],
@@ -4568,6 +4571,7 @@ class GenerateCoverLetterUseCase:
             if keyword.keyword.strip()
         ]
 
+    @lane_bound("tailoring")
     def _run_attempts(
         self,
         *,

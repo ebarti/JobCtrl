@@ -1390,6 +1390,17 @@ Consequences:
 - Preferences and health expose the configured budget and today's estimated
   spend
 
+Amended (2026-09-22): `llm_spend` is keyed by UTC day and explicit product lane.
+The global USD ceiling remains authoritative across the sum of all rows. Each
+known lane also has a configurable observed input-plus-output token threshold;
+omitted or `0` means unlimited, and admission stops at or above the threshold.
+Provider/retry boundaries repeat workflow preflight authority. Usage persists
+before downstream validation failures, while repeated callbacks for one
+observation remain idempotent. Cached input and reasoning output are subsets and
+are not added twice. An admitted call may overshoot because no proven maximum
+call cost exists; the design does not reserve tokens or claim a strict in-flight
+cap.
+
 ## 2026-07-03: Heavy Sync RPC Handlers Become Workflows
 
 Status: accepted
@@ -2283,6 +2294,15 @@ exact-source rollback, interrupted-transition cleanup, and no-mixed-runtime
 invariants above. `docs/architecture/storage.md` and
 `docs/architecture/application-url-authority.md` carry the migration contract
 and the reader/writer inventory.
+
+Amended (2026-09-22): exact schema v11 supersedes v10 as the sole runtime
+contract. V11 extends `llm_spend` to a `(day, lane)` primary key and preserves
+every v10 historical total in the explicit migration-only `legacy` lane.
+Legacy contributes to global totals, while runtime writes cannot target it.
+Exact-v10 sources receive this stopped-runtime step directly; older admitted
+sources compose their frozen migration chain through a private exact-v10
+intermediate. Candidate creation retains paired backup, exact-manifest,
+source-preservation, integrity, rollback, and owner-private file guarantees.
 
 ## 2026-08-20: Profile Plate Direct-Text Projection Uses The Canonical Form Draft
 

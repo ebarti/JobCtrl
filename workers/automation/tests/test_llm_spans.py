@@ -6,6 +6,15 @@ import json
 
 import pytest
 
+from jobctrl.llm_lanes import bind_llm_lane
+
+
+@pytest.fixture(autouse=True)
+def _llm_lane(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr("jobctrl.llm.enforce_spend_budget", lambda _lane=None: None)
+    with bind_llm_lane("tailoring"):
+        yield
+
 
 def _attrs(span) -> dict:
     return dict(span.attributes or {})
@@ -85,8 +94,25 @@ def test_llm_generation_span_records_spend_once(monkeypatch, in_memory_exporter)
             "input_tokens": 5,
             "output_tokens": 2,
             "model": "gemini-3.5-flash",
+            "lane": "tailoring",
         }
     ]
+
+
+def test_llm_generation_span_deduplicates_repeated_usage_callback(
+    monkeypatch,
+    in_memory_exporter,
+):
+    from jobctrl.infrastructure.observability.llm_spans import llm_generation_span
+
+    calls: list[dict] = []
+    monkeypatch.setattr("jobctrl.llm.record_llm_spend", lambda **kwargs: calls.append(kwargs))
+
+    with llm_generation_span(model="gemini-3.5-flash", messages=[], params={}) as record:
+        record("hello", input_tokens=5, output_tokens=2)
+        record("hello", input_tokens=5, output_tokens=2)
+
+    assert len(calls) == 1
 
 
 def test_llm_generation_span_handles_unknown_tokens(in_memory_exporter):

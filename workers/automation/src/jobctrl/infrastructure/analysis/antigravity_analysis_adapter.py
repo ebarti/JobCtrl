@@ -38,6 +38,7 @@ from jobctrl.domain.materials.analysis import (
 )
 from jobctrl.infrastructure.analysis.gemini_schema import gemini_json_schema
 from jobctrl.infrastructure.observability.llm_spans import llm_generation_span
+from jobctrl.llm_lanes import lane_bound
 from jobctrl.infrastructure.setup_probes import antigravity_auth_kwargs
 from jobctrl.runtime import activate_provider_pack, is_bundled_runtime
 
@@ -158,6 +159,7 @@ class AntigravityAnalysisAdapter:
             **antigravity_auth_kwargs(),
         )
 
+    @lane_bound("discovery")
     async def draft(self, system_prompt: str, jd_snapshot: str) -> JobAnalysisDraft:
         agent_factory = self._agent_factory or _load_agent_factory()
         config_factory = self._config_factory or _load_config_factory()
@@ -180,8 +182,10 @@ class AntigravityAnalysisAdapter:
                 # The chunk stream MUST be drained before structured_output() resolves.
                 async for _chunk in response.chunks:
                     pass
-                structured = await response.structured_output()
                 usage_metadata = getattr(response, "usage_metadata", None)
+                input_tokens, output_tokens = _usage_from_metadata(usage_metadata)
+                record("", input_tokens=input_tokens, output_tokens=output_tokens)
+                structured = await response.structured_output()
 
             if structured is None:
                 raise RuntimeError(
@@ -193,12 +197,6 @@ class AntigravityAnalysisAdapter:
             if not isinstance(structured, dict):
                 raise RuntimeError("Antigravity (Gemini) structured output was not a JSON object")
 
-            input_tokens, output_tokens = _usage_from_metadata(usage_metadata)
-            record(
-                json.dumps(structured, ensure_ascii=False),
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-            )
             analysis = JobAnalysis.model_validate(structured)
             return JobAnalysisDraft(model_id=self._model, **analysis.model_dump())
 
@@ -216,17 +214,15 @@ def _optional_int(value: Any) -> int | None:
 def _usage_from_metadata(usage_metadata: Any) -> tuple[int | None, int | None]:
     """Best-effort ``(input_tokens, output_tokens)`` from Gemini ``usage_metadata``.
 
-    ``prompt_token_count`` is the total input the model processed (cached tokens
-    included); output is the visible ``candidates_token_count`` plus the
-    ``thoughts_token_count`` reasoning tokens. Returns ``(None, None)`` when the
-    SDK surfaced no usage so the span omits token counts rather than fabricating.
+    ``prompt_token_count`` and ``candidates_token_count`` are the provider totals.
+    Cached input and reasoning output fields are subsets, so adding them would
+    double count. Returns ``(None, None)`` when the SDK surfaced no usage.
     """
     if usage_metadata is None:
         return None, None
     prompt = _optional_int(getattr(usage_metadata, "prompt_token_count", None))
     candidates = _optional_int(getattr(usage_metadata, "candidates_token_count", None)) or 0
-    thoughts = _optional_int(getattr(usage_metadata, "thoughts_token_count", None)) or 0
-    return prompt, ((candidates + thoughts) or None)
+    return prompt, (candidates or None)
 
 
 __all__ = [

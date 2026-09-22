@@ -15,8 +15,8 @@ from pathlib import Path
 from typing import Any, Protocol
 from urllib.parse import urlparse
 
-from jobctrl.database import close_connection, open_exact_v10_database
-from jobctrl.infrastructure.migrations.schema_manifest import EXACT_V10_MANIFEST, SchemaManifestError, assert_exact_manifest
+from jobctrl.database import close_connection, open_exact_v11_database
+from jobctrl.infrastructure.migrations.schema_manifest import EXACT_V11_MANIFEST, SchemaManifestError, assert_exact_manifest
 from jobctrl.domain.events.base import DomainEvent
 from jobctrl.domain.ports.events import EventHandler, EventPublisher, Subscription
 from jobctrl.infrastructure.gmail.client import GmailClient
@@ -146,7 +146,7 @@ def scan_gmail_feedback(
         default=DEFAULT_WINDOW_DAYS,
     )
 
-    conn = open_exact_v10_database(db_path)
+    conn = open_exact_v11_database(db_path)
     try:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA busy_timeout=10000")
@@ -293,9 +293,9 @@ def scan_gmail_feedback(
 
 def ensure_application_feedback_tables(conn: sqlite3.Connection) -> None:
     """Validate the current feedback owner without creating or altering schema."""
-    if conn.execute("PRAGMA user_version").fetchone()[0] != EXACT_V10_MANIFEST.version:
+    if conn.execute("PRAGMA user_version").fetchone()[0] != EXACT_V11_MANIFEST.version:
         raise SchemaManifestError("Gmail feedback requires the exact current database schema")
-    assert_exact_manifest(conn, EXACT_V10_MANIFEST)
+    assert_exact_manifest(conn, EXACT_V11_MANIFEST)
 
 
 def classify_outcome(*, subject: str, snippet: str, body_text: str) -> Classification:

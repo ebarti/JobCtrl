@@ -293,11 +293,15 @@ class ClaudeCodeCliAdapter:
         result_records: list[str] = []
         result_envelopes_valid: list[bool] = []
         stats: dict[str, Any] = {}
+        usage_recorded = False
         proc: subprocess.Popen | None = None
         start = time.time()
 
         try:
             _write_private_json(mcp_config_path, prompt.mcp_config)
+            from jobctrl.llm import enforce_spend_budget
+
+            enforce_spend_budget("apply")
             proc = subprocess.Popen(
                 cmd,
                 **_popen_kwargs(env=env, cwd=str(worker_dir)),
@@ -409,6 +413,20 @@ class ClaudeCodeCliAdapter:
                             "cost_usd": float(msg.get("total_cost_usd", 0) or 0),
                             "turns": int(msg.get("num_turns", 0) or 0),
                         }
+                        if not usage_recorded and any(
+                            stats[key] > 0
+                            for key in ("input", "output", "cache_read", "cache_create", "cost_usd")
+                        ):
+                            from jobctrl.llm import record_llm_spend
+
+                            record_llm_spend(
+                                input_tokens=stats["input"],
+                                output_tokens=stats["output"],
+                                estimated_usd=stats["cost_usd"],
+                                model=model_label,
+                                lane="apply",
+                            )
+                            usage_recorded = True
                         raw_result = msg.get("result", "")
                         result_text = (
                             raw_result
@@ -440,16 +458,6 @@ class ClaudeCodeCliAdapter:
                 if stats
                 else None
             )
-            if token_usage is not None:
-                from jobctrl.llm import record_llm_spend
-
-                record_llm_spend(
-                    input_tokens=token_usage.input + token_usage.cache_read + token_usage.cache_create,
-                    output_tokens=token_usage.output,
-                    estimated_usd=token_usage.cost_usd,
-                    model=model_label,
-                )
-
             # Negative returncode means the process was killed by a
             # signal (Ctrl+C skip from the launcher) — treat as a
             # ``Failed("SKIPPED")`` rather than fabricating a result.

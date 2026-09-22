@@ -62,9 +62,24 @@ connection persists lifecycle/source events or the cached connection claims an
 enrichment lease. A failed dependent update must roll back the whole reconciliation;
 an inherited caller transaction must remain under that caller's control.
 
+The recipe also separates the two waits that can surface at a lease claim. Hold a
+writer on an independent connection and prove a configured SQLite busy wait fails
+within the subprocess guard, then succeeds after release. In a diagnostic-only
+probe, inject one connection into another thread: the default connection must
+reject wrong-thread use, while an explicitly shareable connection must demonstrate
+that its connection-object mutex is independent of `busy_timeout`. Run these probes
+behind subprocess deadlines so a failed concurrency assertion cannot retain a test
+runner thread. Confirm the real activity worker pool reuses a connection only on its
+own thread, and record the production connection budgets (10 seconds for a new WAL
+connection and 30 seconds for a freshly admitted exact-v10 connection). The short
+fixture timeout proves mechanism and recovery; it is not a production latency bound.
+
 Also repeat an already-claimed robots retry with a real enrichment lease, inject
 retry update failures and lost comparisons, and reject superseded owners. Verify
 unchanged metadata and accepted enrichment artifacts after failed persistence.
+Race different owners for the same phase and attempt and require exactly one claim;
+then prove a newer attempt and the terminal phase supersede it, including stale-fence
+rejection.
 The owned Temporal `DiscoverWorkflow` fixture runs production preparation,
 lifecycle, enrichment, and terminal event persistence with connected and offline
 acquisition, an already-retried blocked row, and a healthy peer whose description

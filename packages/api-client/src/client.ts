@@ -20,6 +20,7 @@ import type {
   RejectOutreachDraftRequest,
   OutreachThreadResponse,
   LogOutreachSendRequest,
+  LlmLane,
   ScheduleFollowUpRequest,
   DueFollowUpsResponse,
   ContactResearchDetailResponse,
@@ -203,6 +204,15 @@ export interface HealthResponse {
     dailyBudgetUsd: number;
     remainingUsd: number | null;
     unlimited: boolean;
+    lanes: Record<LlmLane, {
+      status: "ok" | "over_budget";
+      inputTokens: number;
+      outputTokens: number;
+      totalTokens: number;
+      tokenLimit: number;
+      remainingTokens: number | null;
+      unlimited: boolean;
+    }>;
     message: string;
   };
   worker: {
