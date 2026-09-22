@@ -353,6 +353,45 @@ def provider_models(params: dict[str, Any]) -> dict[str, Any]:
     return provider_model_catalog()
 
 
+def profile_target_role_suggestions(params: dict[str, Any]) -> dict[str, Any]:
+    """Generate transient suggestions from the exact canonical profile version."""
+
+    assert_expected_runtime(
+        expected_app_dir=str(_require(params, "expectedAppDir")),
+        expected_db_path=str(_require(params, "expectedDbPath")),
+    )
+    expected_version = _require(params, "expectedProfileVersion")
+    maximum = params.get("maximumSuggestions", 3)
+    if (
+        not isinstance(expected_version, int)
+        or isinstance(expected_version, bool)
+        or expected_version < 1
+    ):
+        raise invalid_params("expectedProfileVersion must be a positive integer")
+    if not isinstance(maximum, int) or isinstance(maximum, bool) or not 1 <= maximum <= 5:
+        raise invalid_params("maximumSuggestions must be an integer from 1 to 5")
+
+    from jobctrl.domain.profile.target_role_suggestions import suggest_target_roles
+    from jobctrl.infrastructure.profile.factory import get_profile_repository
+
+    snapshot = get_profile_repository().load_snapshot(TenantId(_tenant_id(params)))
+    if snapshot.version != expected_version:
+        raise invalid_params(
+            f"stale_profile_version: expected {expected_version}, current {snapshot.version}"
+        )
+    # None of the managed production adapters currently enforces max_tokens.
+    # Until a provider can prove both token and call-cost ceilings, this route
+    # fails closed to the canonical exact-title/empty deterministic result.
+    result = suggest_target_roles(
+        snapshot,
+        llm=None,
+        maximum_suggestions=maximum,
+        allow_model=False,
+        fallback_warning="provider_token_or_cost_bound_unsupported",
+    )
+    return result.as_dict()
+
+
 def provider_verify(params: dict[str, Any]) -> dict[str, Any]:
     """Reuse and verify Codex CLI auth without making a model-generation call."""
 
@@ -1011,6 +1050,11 @@ def register_default_handlers(server: JsonRpcServer, *, canceler: WorkflowCancel
     server.register("analyze_job", analyze_job, mode="sync")
     server.register("provider_status", provider_status, mode="sync")
     server.register("provider_models", provider_models, mode="sync")
+    server.register(
+        "profile_target_role_suggestions",
+        profile_target_role_suggestions,
+        mode="sync",
+    )
     server.register("provider_verify", provider_verify, mode="sync")
     server.register("browser_capabilities_list", browser_capabilities_list, mode="sync")
     server.register("browser_capability_enable", browser_capability_enable, mode="sync")

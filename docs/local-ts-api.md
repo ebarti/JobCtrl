@@ -55,6 +55,28 @@ different owners even though the UI presents them together. See
 routes used by autosave, resume preview, source administration, and Keychain-backed
 credentials.
 
+Target Search can request role suggestions through
+`POST /v1/profile/target-role-suggestions`. The web sends only the last saved
+`profileVersion`; it never sends the current browser form draft. The TypeScript
+API checks that version before and after one synchronous Python RPC call, and
+the worker builds a bounded payload from saved experience titles, achievement
+evidence, and skills. Contact details, voluntary EEO values, compensation,
+attestations, raw PDF data, and raw profile content logs are excluded. Results
+remain transient until the user edits/selects them and accepts an append through
+the normal `PATCH /v1/profile` path with `expectedProfileVersion`.
+
+The RPC also carries app-directory and database identity derived from the API's
+trusted runtime context. The worker rejects a mismatch before it reads a
+snapshot. Current managed provider SDKs do not enforce the required output-token
+and maximum-call-cost bounds, so this production route makes no provider call
+and returns only the conservative exact-title fallback or an empty result with
+`provider_token_or_cost_bound_unsupported`. Synthetic adapter tests cover the
+model response validator without claiming a production model run. Their
+fabricated-title coverage is not exhaustive: an unsupported qualifier can
+still pass when another title token overlaps cited evidence. The production
+handler remains safe because model generation is disabled; broader inference
+requires semantic-validator hardening in addition to bounded provider support.
+
 ## Artifacts And Tailoring Audit
 
 Artifact list/detail/preview routes and canonical tailoring evidence are grouped

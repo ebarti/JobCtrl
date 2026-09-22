@@ -107,6 +107,8 @@ import type {
   ProfileConfigResponse,
   ProfileImportRequest,
   ProfileImportResponse,
+  TargetRoleSuggestionRequest,
+  TargetRoleSuggestionResponse,
   ProfileUpdateRequest,
   ProviderModelCatalogResponse,
   ProviderStatusResponse,
@@ -357,6 +359,7 @@ export interface ApiClientPort extends EndpointClientMethods {
   profilePreviewPdfUrl(cacheKey?: number | string): string;
   profilePreviewHtmlUrl(cacheKey?: number | string): string;
   updateProfile(body: ProfileUpdateRequest): Promise<ProfileConfigResponse>;
+  targetRoleSuggestions(body: TargetRoleSuggestionRequest): Promise<TargetRoleSuggestionResponse>;
   importResume(body: ProfileImportRequest): Promise<ProfileImportResponse>;
 
   settings(): Promise<SettingsResponse>;

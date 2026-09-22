@@ -1551,11 +1551,17 @@ export const DEMO_READ_MODEL = {
   profile: {
     config: {
       ok: true,
+      profileVersion: 1,
       // ProfileConfigResponse.profile intentionally remains `unknown` on the
       // wire. Parse this authored fixture now, then assert it again in the demo
       // invariant so malformed future edits cannot reach the adapter.
       profile: ProfileSchema.parse({
         personal: { full_name: "Synthetic profile" },
+        experience: {
+          target_role: "Platform delivery lead",
+          target_track: "Management",
+          target_seniority_floor: "Director",
+        },
         resume: {
           experience_entries: [
             {

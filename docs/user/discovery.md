@@ -358,6 +358,27 @@ seniority floor attached. An exact title match can therefore pass even when it
 is below a selected floor; the floor is principally enforced on generated
 recall queries.
 
+The **Evidence-backed role suggestions** card is an optional authoring aid for
+this saved target-role list. It reads the canonical saved profile version and
+returns editable proposals with evidence references; it does not inspect the
+unsaved browser draft or change an active Discovery execution. Rejecting or
+dismissing proposals writes nothing. Accepting selected titles appends and
+case-insensitively deduplicates them in the normal Target Search form, and the
+subsequent version-checked save affects only future Discovery plans.
+
+Current managed model providers cannot enforce this feature's hard token and
+maximum-cost bounds. JobCtrl therefore makes no provider call for production
+role suggestions today: it may offer an exact recent saved title when that
+title matches the saved track and seniority, or return no proposals. The card
+states this limitation. The local demo's broader proposal is deterministic
+fixture evidence and is labeled as such.
+
+If the saved profile changes after you accept a proposal, the form keeps your
+draft but blocks suggestion-derived saving. Use **Rebase edits onto saved
+profile** to carry non-overlapping edits onto the refreshed profile, then
+generate and review suggestions again. When the same field changed both
+locally and in the saved profile, discard or resolve that field manually.
+
 ::: warning Multiple tracks and floors
 Tracks and seniority floors are currently stored as independent ordered lists,
 not as explicit track-to-floor pairs. Recall generation can associate those

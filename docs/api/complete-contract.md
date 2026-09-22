@@ -61,6 +61,43 @@ Profile tables in `jobctrl.db` as the source of truth. When the profile
 tables are empty, `GET /v1/profile` returns an empty profile with default
 rendering settings. Explicit profile saves and resume-PDF imports create or
 update the SQLite rows.
+Profile reads include `profileVersion: number | null`. `PATCH /v1/profile`
+accepts optional `expectedProfileVersion`; when supplied, a mismatch returns
+`409 stale_profile_version` and the same transaction writes neither canonical
+rows nor `ProfileUpdated`.
+
+`POST /v1/profile/target-role-suggestions` accepts the strict object below:
+
+```json
+{ "expectedProfileVersion": 7, "maximumSuggestions": 3 }
+```
+
+`maximumSuggestions` defaults to `3` and is bounded to `1–5`. A successful
+response has `ok: true`, the same positive `profileVersion`, `strategy`
+(`model`, `recent_title_fallback`, or `none`), bounded warning codes, and up to
+five suggestions. Each suggestion contains a trimmed title, `direct` or
+`adjacent` classification, saved track and seniority values, one to eight
+evidence IDs, and a rationale of at most 240 characters. Invalid provider
+output, unknown evidence, unsupported track/seniority, provider failure, and a
+profile version that changes before the response all fail closed. The route is
+read-only and does not emit a profile event. The browser-local product demo
+uses the additional honest `model_stub` strategy and
+`stubbed_model_evidence` warning for its synthetic response.
+
+The API supplies trusted app-directory and database identity to the worker,
+which checks both before reading the saved snapshot. Browser input cannot
+override either value. Current managed Claude, Codex, and Google SDK adapters
+cannot enforce the hard output-token and maximum-call-cost bounds required by
+this route, so production makes no model call and returns only an exact
+recent-title fallback or `none`, with the
+`provider_token_or_cost_bound_unsupported` warning. `strategy: "model"` remains
+reserved in the wire schema and is covered by explicitly synthetic domain
+tests; it is not currently emitted by the production RPC handler. That
+synthetic validator rejects the covered unknown-evidence, track, seniority, and
+title probes, but its title-qualifier vocabulary is not exhaustive (for
+example, an unsupported qualifier can accompany an otherwise evidenced title
+token). Broader model-backed inference remains blocked until that semantic
+validation is hardened as well as the provider token/cost bounds above.
 Profile-data writes also record `ProfileUpdated` in `job_events`. When existing
 tailored resumes are present, the API handles that event by dispatching a
 background `tailor -> cover` pipeline run with `retailor=true`, `dryRun=false`,

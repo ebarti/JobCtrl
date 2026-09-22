@@ -86,7 +86,7 @@ const EXPECTED_RESPONSE_KEYS = {
   correctScore: JOB_DETAIL_RESPONSE_KEYS,
   resetStaleScoresForRescore: ["count", "jobKeys", "nextAction", "ok"],
   cancelWorkflowRun: ACTION_RESPONSE_KEYS,
-  updateProfile: ["ok", "profile", "style", "templateText"],
+  updateProfile: ["ok", "profile", "profileVersion", "style", "templateText"],
   importResume: ["ok", "profile", "source", "style", "templateText"],
   updateSettings: ["effectiveSettings", "ok", "paths", "settings"],
   createContact: ["contact", "ok"],
@@ -229,7 +229,7 @@ const LOCAL_CASES = [
 ] as const satisfies readonly LocalCase[];
 
 describe("DemoLocalCommandExecutor", () => {
-  it("keeps the 136-member capability manifest exhaustive with exact class counts", () => {
+  it("keeps the 137-member capability manifest exhaustive with exact class counts", () => {
     const counts = Object.values(DEMO_CAPABILITY_MANIFEST).reduce<Record<string, number>>(
       (result, capability) => {
         result[capability.class] = (result[capability.class] ?? 0) + 1;
@@ -237,9 +237,9 @@ describe("DemoLocalCommandExecutor", () => {
       },
       {},
     );
-    expect(Object.keys(DEMO_CAPABILITY_MANIFEST)).toHaveLength(136);
+    expect(Object.keys(DEMO_CAPABILITY_MANIFEST)).toHaveLength(137);
     expect(counts).toEqual({
-      browser_local: 92,
+      browser_local: 93,
       simulated_async: 4,
       rehearsed_external: 4,
       unavailable: 36,

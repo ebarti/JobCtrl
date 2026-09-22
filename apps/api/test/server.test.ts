@@ -1,4 +1,5 @@
 import { seedApplicationUrl } from "./seed-enrichment.js";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -41,6 +42,11 @@ import {
   type ActionDispatchResult,
 } from "../src/local-actions.js";
 import { persistProfileUpdate } from "../src/profile-events.js";
+import {
+  AUTOMATION_PROJECT_DIR,
+  createSourcePythonRuntime,
+  type PythonRuntimeCommandResolver,
+} from "../src/python-runtime.js";
 import { BUILT_IN_RESUME_TEMPLATE_THEME } from "../src/resume-templates.js";
 import { buildApp, type BuildAppOptions } from "../src/server.js";
 import { initializeExactV7Database } from "./v7-schema.js";
@@ -55,6 +61,22 @@ const COMPENSATION_JOB_ID = "11111111-1111-4111-8111-111111111111";
 const INERT_RESUME_TEMPLATE = "{{ personal_data }}\n\n{{ resume_body }}\n";
 const REJECTED_CREDENTIAL_VALUE_MARKER =
   "rejected-credential-must-not-appear";
+const SOURCE_PYTHON_RPC_AVAILABLE = spawnSync(
+  "uv",
+  [
+    "--project",
+    AUTOMATION_PROJECT_DIR,
+    "run",
+    "--no-sync",
+    "python",
+    "-c",
+    "from jobctrl.infrastructure.rpc.handlers import register_default_handlers",
+  ],
+  {
+    env: { ...process.env, UV_FROZEN: "1" },
+    stdio: "ignore",
+  },
+).status === 0;
 
 function validProfileFixture(fullName: string): Record<string, unknown> {
   return {
@@ -9795,6 +9817,337 @@ describe("local TypeScript API", () => {
       db.close();
     }
 
+    await app.close();
+  });
+
+  it("generates version-bound target role suggestions without mutating the profile", async () => {
+    const providerCall = vi.fn(async (method: string, params: Record<string, unknown>) => ({
+      jsonrpc: "2.0" as const,
+      id: 1,
+      result: {
+        profileVersion: params.expectedProfileVersion,
+        suggestions: [
+          {
+            title: "Senior Platform Engineer",
+            classification: "direct",
+            track: "IC",
+            seniority: "Senior",
+            evidenceIds: ["experience:role_1"],
+            rationale: "The saved canonical role title supports this direct suggestion.",
+          },
+        ],
+        strategy: "model",
+        warnings: [],
+      },
+    }));
+    const app = buildApp({
+      ...options,
+      providerDispatcher: { call: providerCall, close: vi.fn(async () => undefined) },
+    });
+    const initial = await app.inject({
+      method: "PATCH",
+      url: "/v1/profile",
+      payload: { profile: profileWithTargetSearch("Synthetic Candidate", "Barcelona", "Remote") },
+    });
+    const version = initial.json().profileVersion as number;
+    const beforeDb = new Database(options.dbPath, { readonly: true });
+    const beforeEvents = beforeDb.prepare(
+      "SELECT COUNT(*) AS count FROM job_events WHERE event_type = 'ProfileUpdated'",
+    ).get() as { count: number };
+    beforeDb.close();
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/profile/target-role-suggestions",
+      payload: { expectedProfileVersion: version, maximumSuggestions: 2 },
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json()).toMatchObject({
+      ok: true,
+      profileVersion: version,
+      strategy: "model",
+      suggestions: [{ title: "Senior Platform Engineer", evidenceIds: ["experience:role_1"] }],
+    });
+    expect(providerCall).toHaveBeenCalledWith(RpcMethods.ProfileTargetRoleSuggestions, {
+      tenantId: "local",
+      expectedAppDir: tempDir,
+      expectedDbPath: options.dbPath,
+      expectedProfileVersion: version,
+      maximumSuggestions: 2,
+    });
+    const stored = await app.inject({ method: "GET", url: "/v1/profile" });
+    expect(stored.json()).toMatchObject({
+      profileVersion: version,
+      profile: { personal: { full_name: "Synthetic Candidate" } },
+    });
+    const afterDb = new Database(options.dbPath, { readonly: true });
+    expect(afterDb.prepare(
+      "SELECT COUNT(*) AS count FROM job_events WHERE event_type = 'ProfileUpdated'",
+    ).get()).toEqual(beforeEvents);
+    afterDb.close();
+    await app.close();
+  });
+
+  it.skipIf(!SOURCE_PYTHON_RPC_AVAILABLE)(
+    "rejects a real suggestion worker connected to a different same-version database",
+    async () => {
+      const seedApp = buildApp(options);
+      const seeded = await seedApp.inject({
+        method: "PATCH",
+        url: "/v1/profile",
+        payload: { profile: profileWithTargetSearch("API Database", "Barcelona", "Remote") },
+      });
+      expect(seeded.statusCode, seeded.body).toBe(200);
+      const version = seeded.json().profileVersion as number;
+      await seedApp.close();
+
+      const workerAppDir = path.join(tempDir, "worker-database-b");
+      const workerDbPath = path.join(workerAppDir, "jobctrl.db");
+      fs.mkdirSync(workerAppDir, { recursive: true });
+      fs.copyFileSync(options.dbPath, workerDbPath);
+      const workerCopy = new Database(workerDbPath, { readonly: true });
+      expect(workerCopy.prepare("SELECT version FROM candidate_profiles WHERE tenant_id = 'local'").get())
+        .toMatchObject({ version });
+      workerCopy.close();
+
+      const sourceRuntime = createSourcePythonRuntime({
+        environment: { ...process.env, UV_FROZEN: "1" },
+      });
+      const mismatchedRuntime: PythonRuntimeCommandResolver = {
+        id: "real-source-worker-on-database-b",
+        resolve(invocation, context) {
+          const command = sourceRuntime.resolve(invocation, context);
+          return {
+            ...command,
+            cwd: workerAppDir,
+            env: {
+              ...command.env,
+              JOBCTRL_DIR: workerAppDir,
+              UV_FROZEN: "1",
+            },
+          };
+        },
+      };
+      const {
+        providerDispatcher: _fixtureProviderDispatcher,
+        pythonRuntime: _fixturePythonRuntime,
+        ...realWorkerOptions
+      } = options;
+      const app = buildApp({ ...realWorkerOptions, pythonRuntime: mismatchedRuntime });
+      const before = new Database(options.dbPath, { readonly: true });
+      const beforeEvents = before.prepare(
+        "SELECT COUNT(*) AS count FROM job_events WHERE event_type = 'ProfileUpdated'",
+      ).get() as { count: number };
+      before.close();
+
+      const response = await app.inject({
+        method: "POST",
+        url: "/v1/profile/target-role-suggestions",
+        payload: { expectedProfileVersion: version },
+      });
+
+      expect(response.statusCode, response.body).toBe(502);
+      expect(response.json()).toMatchObject({ error: "target_role_suggestions_failed" });
+      const after = new Database(options.dbPath, { readonly: true });
+      expect(after.prepare(
+        "SELECT COUNT(*) AS count FROM job_events WHERE event_type = 'ProfileUpdated'",
+      ).get()).toEqual(beforeEvents);
+      expect(after.prepare(
+        "SELECT personal_full_name, version FROM candidate_profiles WHERE tenant_id = 'local'",
+      ).get()).toMatchObject({ personal_full_name: "API Database", version });
+      after.close();
+      await app.close();
+    },
+  );
+
+  it.skipIf(!SOURCE_PYTHON_RPC_AVAILABLE)(
+    "uses the real worker's bounded deterministic fallback without a model call",
+    async () => {
+      const profile = profileWithTargetSearch("Canonical Profile", "Barcelona", "Remote");
+      (profile.experience as Record<string, unknown>).target_role = "Staff Platform Engineer";
+      const resume = profile.resume as { experience_entries: Array<Record<string, unknown>> };
+      resume.experience_entries[0]!.title = "Principal Platform Engineer";
+      const seedApp = buildApp(options);
+      const seeded = await seedApp.inject({
+        method: "PATCH",
+        url: "/v1/profile",
+        payload: { profile },
+      });
+      expect(seeded.statusCode, seeded.body).toBe(200);
+      const version = seeded.json().profileVersion as number;
+      // Finish the seed save's asynchronous continuation before measuring reads.
+      await vi.waitFor(() => {
+        const db = new Database(options.dbPath, { readonly: true });
+        try {
+          expect((db.prepare(
+            "SELECT COUNT(*) AS count FROM job_events WHERE event_type = 'ProfileContinuationHandled'",
+          ).get() as { count: number }).count).toBeGreaterThan(0);
+        } finally {
+          db.close();
+        }
+      });
+      await seedApp.close();
+      // Legacy profile shape: bullets exist but their evidence has never been backfilled.
+      const legacy = new Database(options.dbPath);
+      legacy.prepare("DELETE FROM candidate_profile_achievement_evidence").run();
+      legacy.close();
+      const canonicalRows = () => {
+        const db = new Database(options.dbPath, { readonly: true });
+        try {
+          const tables = db.prepare(
+            "SELECT name FROM sqlite_master WHERE type = 'table' "
+            + "AND (name LIKE 'candidate_profile%' OR name = 'job_events') ORDER BY name",
+          ).all() as Array<{ name: string }>;
+          return tables.map(({ name }) => ({
+            name,
+            rows: db.prepare(`SELECT * FROM "${name}"`).all().map((row) => JSON.stringify(row)).sort(),
+          }));
+        } finally {
+          db.close();
+        }
+      };
+      const beforeRows = canonicalRows();
+
+      const {
+        providerDispatcher: _fixtureProviderDispatcher,
+        pythonRuntime: _fixturePythonRuntime,
+        ...realWorkerOptions
+      } = options;
+      const app = buildApp({
+        ...realWorkerOptions,
+        pythonRuntime: createSourcePythonRuntime({
+          environment: { ...process.env, UV_FROZEN: "1" },
+        }),
+      });
+      const stale = await app.inject({
+        method: "POST",
+        url: "/v1/profile/target-role-suggestions",
+        payload: { expectedProfileVersion: version + 1 },
+      });
+      expect(stale.statusCode, stale.body).toBe(409);
+      expect(canonicalRows()).toEqual(beforeRows);
+
+      const response = await app.inject({
+        method: "POST",
+        url: "/v1/profile/target-role-suggestions",
+        payload: { expectedProfileVersion: version },
+      });
+
+      expect(response.statusCode, response.body).toBe(200);
+      expect(response.json()).toMatchObject({
+        profileVersion: version,
+        strategy: "recent_title_fallback",
+        warnings: ["provider_token_or_cost_bound_unsupported"],
+        suggestions: [
+          {
+            title: "Principal Platform Engineer",
+            classification: "direct",
+            track: "IC",
+            seniority: "Principal",
+            evidenceIds: ["experience:role_1"],
+          },
+        ],
+      });
+      expect(canonicalRows()).toEqual(beforeRows);
+      await app.close();
+    },
+  );
+
+  it("atomically rejects stale suggestion saves without a profile event", async () => {
+    const app = buildApp(options);
+    const initial = await app.inject({
+      method: "PATCH",
+      url: "/v1/profile",
+      payload: { profile: profileWithTargetSearch("Initial Candidate", "Barcelona", "Remote") },
+    });
+    const version = initial.json().profileVersion as number;
+    const beforeDb = new Database(options.dbPath, { readonly: true });
+    const beforeEvents = beforeDb.prepare(
+      "SELECT COUNT(*) AS count FROM job_events WHERE event_type = 'ProfileUpdated'",
+    ).get() as { count: number };
+    beforeDb.close();
+
+    const stale = await app.inject({
+      method: "PATCH",
+      url: "/v1/profile",
+      payload: {
+        profile: profileWithTargetSearch("Stale Candidate", "Barcelona", "Remote"),
+        expectedProfileVersion: version + 1,
+      },
+    });
+
+    expect(stale.statusCode, stale.body).toBe(409);
+    expect(stale.json()).toMatchObject({
+      error: "stale_profile_version",
+      expectedProfileVersion: version + 1,
+      actualProfileVersion: version,
+    });
+    const staleGeneration = await app.inject({
+      method: "POST",
+      url: "/v1/profile/target-role-suggestions",
+      payload: { expectedProfileVersion: version + 1 },
+    });
+    expect(staleGeneration.statusCode, staleGeneration.body).toBe(409);
+    const stored = await app.inject({ method: "GET", url: "/v1/profile" });
+    expect(stored.json()).toMatchObject({
+      profileVersion: version,
+      profile: { personal: { full_name: "Initial Candidate" } },
+    });
+    const afterDb = new Database(options.dbPath, { readonly: true });
+    expect(afterDb.prepare(
+      "SELECT COUNT(*) AS count FROM job_events WHERE event_type = 'ProfileUpdated'",
+    ).get()).toEqual(beforeEvents);
+    afterDb.close();
+    await app.close();
+  });
+
+  it("rejects a delayed suggestion response after an intervening profile edit", async () => {
+    const pending = deferred<Awaited<ReturnType<JsonRpcDispatcher["call"]>>>();
+    const providerCall = vi.fn(() => pending.promise);
+    const app = buildApp({
+      ...options,
+      providerDispatcher: { call: providerCall, close: vi.fn(async () => undefined) },
+    });
+    const initial = await app.inject({
+      method: "PATCH",
+      url: "/v1/profile",
+      payload: { profile: profileWithTargetSearch("Initial Candidate", "Barcelona", "Remote") },
+    });
+    const version = initial.json().profileVersion as number;
+    const suggestionResponse = app.inject({
+      method: "POST",
+      url: "/v1/profile/target-role-suggestions",
+      payload: { expectedProfileVersion: version },
+    });
+    await vi.waitFor(() => expect(providerCall).toHaveBeenCalledTimes(1));
+    const intervening = await app.inject({
+      method: "PATCH",
+      url: "/v1/profile",
+      payload: {
+        profile: profileWithTargetSearch("Later Candidate", "Barcelona", "Remote"),
+        expectedProfileVersion: version,
+      },
+    });
+    expect(intervening.statusCode, intervening.body).toBe(200);
+    pending.resolve({
+      jsonrpc: "2.0",
+      id: 1,
+      result: { profileVersion: version, suggestions: [], strategy: "none", warnings: [] },
+    });
+
+    const stale = await suggestionResponse;
+    expect(stale.statusCode, stale.body).toBe(409);
+    expect(stale.json()).toMatchObject({
+      error: "stale_profile_version",
+      expectedProfileVersion: version,
+      actualProfileVersion: version + 1,
+    });
+    const stored = await app.inject({ method: "GET", url: "/v1/profile" });
+    expect(stored.json()).toMatchObject({
+      profileVersion: version + 1,
+      profile: { personal: { full_name: "Later Candidate" } },
+    });
     await app.close();
   });
 

@@ -1754,6 +1754,7 @@ export const sampleDailyDigest: DailyDigest = {
 
 export const sampleProfileResponse: ProfileConfigResponse = {
   ok: true,
+  profileVersion: 3,
   profile: {
     personal: { full_name: "Jordan Candidate", email: "jordan@example.com" },
     resume: {

@@ -24,6 +24,7 @@ export const MinimalProfile: Story = {
   args: {
     initial: {
       ok: true,
+      profileVersion: null,
       profile: {
         personal: { full_name: "" },
       },

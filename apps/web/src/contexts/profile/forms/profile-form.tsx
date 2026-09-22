@@ -12,6 +12,7 @@ import { Alert, AlertDescription } from "../../../shared/ui/alert.js";
 import { Button } from "../../../shared/ui/button.js";
 import { getPathValue, isJsonRecord, setPathValue, type JsonRecord } from "../lib/json-record.js";
 import { StructuredProfileEditor } from "../components/StructuredProfileEditor.js";
+import { TargetRoleSuggestions } from "../components/TargetRoleSuggestions.js";
 import { useUpdateProfileMutation } from "../hooks/useUpdateProfileMutation.js";
 import { AutosaveUndoController } from "../../../shared/ui/autosave-undo-controller.js";
 import {
@@ -77,16 +78,99 @@ function validateProfileDateRanges(profile: ProfileShape): string | undefined {
   return undefined;
 }
 
-function toUpdateRequest(values: ProfileFormValues): ProfileUpdateRequest {
+function toUpdateRequest(
+  values: ProfileFormValues,
+  expectedProfileVersion?: number,
+): ProfileUpdateRequest {
   return {
     profileText: JSON.stringify(values.profile, null, 2),
     styleText: JSON.stringify(values.style, null, 2),
     templateText: values.templateText,
+    ...(expectedProfileVersion === undefined ? {} : { expectedProfileVersion }),
   };
+}
+
+function appendTargetRoles(profile: JsonRecord | null, titles: readonly string[]): JsonRecord | null {
+  if (!profile) return profile;
+  const next = structuredClone(profile);
+  const current = targetRoles(next);
+  const seen = new Set(current.map((value) => value.toLowerCase()));
+  for (const title of titles) {
+    const trimmed = title.trim();
+    const key = trimmed.toLowerCase();
+    if (trimmed && !seen.has(key)) {
+      current.push(trimmed);
+      seen.add(key);
+    }
+  }
+  setPathValue(next, "experience.target_role", current.join("; "));
+  return next;
+}
+
+function targetRoles(profile: JsonRecord | null): string[] {
+  return String(getPathValue(profile, "experience.target_role") ?? "")
+    .split(/[;,\n]/)
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
+function omitTargetRoles(profile: JsonRecord | null, titles: readonly string[]): JsonRecord | null {
+  if (!profile || titles.length === 0) return profile;
+  const omitted = new Set(titles.map((title) => title.trim().toLowerCase()));
+  const next = structuredClone(profile);
+  const current = targetRoles(next).filter((title) => !omitted.has(title.toLowerCase()));
+  setPathValue(next, "experience.target_role", current.join("; "));
+  return next;
 }
 
 function serializeProfileValues(values: ProfileFormValues): string {
   return JSON.stringify(values);
+}
+
+function jsonValuesEqual(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return Array.isArray(left)
+      && Array.isArray(right)
+      && left.length === right.length
+      && left.every((value, index) => jsonValuesEqual(value, right[index]));
+  }
+  if (isJsonRecord(left) || isJsonRecord(right)) {
+    if (!isJsonRecord(left) || !isJsonRecord(right)) return false;
+    const leftKeys = Object.keys(left).toSorted();
+    const rightKeys = Object.keys(right).toSorted();
+    return jsonValuesEqual(leftKeys, rightKeys)
+      && leftKeys.every((key) => jsonValuesEqual(left[key], right[key]));
+  }
+  return false;
+}
+
+interface ProfileRebaseResult {
+  readonly conflicts: readonly string[];
+  readonly value: unknown;
+}
+
+function rebaseProfileValue(
+  base: unknown,
+  local: unknown,
+  remote: unknown,
+  path = "profile",
+): ProfileRebaseResult {
+  if (jsonValuesEqual(local, base)) return { conflicts: [], value: structuredClone(remote) };
+  if (jsonValuesEqual(remote, base) || jsonValuesEqual(local, remote)) {
+    return { conflicts: [], value: structuredClone(local) };
+  }
+  if (isJsonRecord(base) && isJsonRecord(local) && isJsonRecord(remote)) {
+    const value: JsonRecord = {};
+    const conflicts: string[] = [];
+    for (const key of new Set([...Object.keys(base), ...Object.keys(local), ...Object.keys(remote)])) {
+      const rebased = rebaseProfileValue(base[key], local[key], remote[key], `${path}.${key}`);
+      if (rebased.value !== undefined) value[key] = rebased.value;
+      conflicts.push(...rebased.conflicts);
+    }
+    return { conflicts, value };
+  }
+  return { conflicts: [path], value: structuredClone(local) };
 }
 
 interface AppliedPlateTarget {
@@ -417,8 +501,18 @@ export function ProfileForm({
   const [statusMessage, setStatusMessage] = useState("");
   const [statusTone, setStatusTone] = useState<"saved" | "warning">("saved");
   const [resetToken, setResetToken] = useState(0);
+  const [formBaseVersion, setFormBaseVersion] = useState(initial.profileVersion);
+  const [suggestionDerivedDraft, setSuggestionDerivedDraft] = useState(false);
   const formRef = useRef<HTMLFormElement>(null);
+  const formBaseValuesRef = useRef<ProfileFormValues>(structuredClone(toProfileFormValues(initial)));
+  const suggestionAddedRolesRef = useRef<readonly {
+    profileVersion: number;
+    title: string;
+  }[]>([]);
+  const suggestionReviewRequiredRef = useRef(false);
+  const suggestionReviewResolvedVersionRef = useRef<number | undefined>(undefined);
   const plateProfileProjectionRef = useRef<PlateProfileProjectionState | null>(null);
+  const expectedProfileVersionRef = useRef<number | undefined>(undefined);
   const isProfileSection = section === "profile";
   const saveLabel = "Save changes";
   const discardLabel = "Discard changes";
@@ -437,6 +531,23 @@ export function ProfileForm({
     }
   }, [updateProfile.error, updateProfile.reset]);
 
+  const reconcileSuggestionProvenance = useCallback((profile: JsonRecord | null) => {
+    const currentRoleKeys = new Set(targetRoles(profile).map((title) => title.toLowerCase()));
+    const remainingRoles = suggestionAddedRolesRef.current.filter(
+      ({ title }) => currentRoleKeys.has(title.toLowerCase()),
+    );
+    suggestionAddedRolesRef.current = remainingRoles;
+    if (
+      remainingRoles.length === 0
+      && !suggestionReviewRequiredRef.current
+      && suggestionReviewResolvedVersionRef.current === undefined
+    ) {
+      expectedProfileVersionRef.current = undefined;
+      setSuggestionDerivedDraft(false);
+    }
+    return remainingRoles;
+  }, []);
+
   const form = useForm({
     defaultValues: toProfileFormValues(initial),
     validators: {
@@ -445,20 +556,95 @@ export function ProfileForm({
     },
     onSubmit: async ({ value, formApi }) => {
       setStatusMessage("");
+      const submittedSuggestionRoles = reconcileSuggestionProvenance(value.profile);
+      const requiresSuggestionAuthority =
+        submittedSuggestionRoles.length > 0
+        || suggestionReviewRequiredRef.current
+        || suggestionReviewResolvedVersionRef.current !== undefined;
+      if (
+        requiresSuggestionAuthority
+        && (
+          expectedProfileVersionRef.current === undefined
+          || formBaseVersion !== initial.profileVersion
+        )
+      ) {
+        setStatusTone("warning");
+        setStatusMessage(
+          "The saved profile changed. Rebase this draft, regenerate suggestions, and review them before saving.",
+        );
+        return;
+      }
       const submittedValues = serializeProfileValues(value);
       const initialValues = toProfileFormValues(initial);
       const shouldUpdateProfile =
         submittedValues !== serializeProfileValues(initialValues);
-      const profileResponse = shouldUpdateProfile
-        ? await updateProfile.mutateAsync(toUpdateRequest(value))
-        : initial;
+      let profileResponse = initial;
+      if (shouldUpdateProfile) {
+        try {
+          profileResponse = await updateProfile.mutateAsync(
+            toUpdateRequest(value, expectedProfileVersionRef.current),
+          );
+        } catch {
+          // The mutation owns the displayed error and rollback. Keep the local
+          // form/base authority unchanged until a refreshed profile is rebased.
+          return;
+        }
+      }
       if (serializeProfileValues(formApi.state.values) === submittedValues) {
+        expectedProfileVersionRef.current = undefined;
+        formBaseValuesRef.current = structuredClone(toProfileFormValues(profileResponse));
+        suggestionAddedRolesRef.current = [];
+        suggestionReviewRequiredRef.current = false;
+        suggestionReviewResolvedVersionRef.current = undefined;
+        setFormBaseVersion(profileResponse.profileVersion);
+        setSuggestionDerivedDraft(false);
         plateProfileProjectionRef.current = null;
         formApi.reset(toProfileFormValues(profileResponse));
         onPreviewSourceChange?.(profileResponse);
         setStatusTone("saved");
         setStatusMessage(savedMessage);
       } else {
+        formBaseValuesRef.current = structuredClone(toProfileFormValues(profileResponse));
+        reconcileSuggestionProvenance(formApi.state.values.profile);
+        const submittedSuggestionKeys = new Set(
+          submittedSuggestionRoles.map(({ title }) => title.toLowerCase()),
+        );
+        suggestionAddedRolesRef.current = suggestionAddedRolesRef.current.filter(
+          ({ title }) => !submittedSuggestionKeys.has(title.toLowerCase()),
+        );
+        setFormBaseVersion(profileResponse.profileVersion);
+        const staleSuggestionRoles = suggestionAddedRolesRef.current.filter(
+          ({ profileVersion }) => profileVersion !== profileResponse.profileVersion,
+        );
+        if (staleSuggestionRoles.length > 0) {
+          const currentProfile = formApi.state.values.profile;
+          const cleanedProfile = omitTargetRoles(
+            currentProfile,
+            staleSuggestionRoles.map(({ title }) => title),
+          );
+          suggestionAddedRolesRef.current = [];
+          suggestionReviewRequiredRef.current = true;
+          suggestionReviewResolvedVersionRef.current = undefined;
+          expectedProfileVersionRef.current = undefined;
+          setSuggestionDerivedDraft(true);
+          if (!jsonValuesEqual(cleanedProfile, currentProfile)) {
+            formApi.setFieldValue("profile", cleanedProfile);
+          }
+          setStatusTone("warning");
+          setStatusMessage(
+            "Saved; newer changes pending. Stale suggested roles were removed; regenerate and review them before saving.",
+          );
+          return;
+        }
+        suggestionReviewRequiredRef.current = false;
+        suggestionReviewResolvedVersionRef.current = undefined;
+        if (suggestionAddedRolesRef.current.length > 0) {
+          expectedProfileVersionRef.current = suggestionAddedRolesRef.current[0]?.profileVersion;
+          setSuggestionDerivedDraft(true);
+        } else {
+          expectedProfileVersionRef.current = undefined;
+          setSuggestionDerivedDraft(false);
+        }
         setStatusTone("warning");
         setStatusMessage("Saved; newer changes pending");
       }
@@ -501,10 +687,83 @@ export function ProfileForm({
       return;
     }
     plateProfileProjectionRef.current = null;
-    form.reset(toProfileFormValues(initial));
+    expectedProfileVersionRef.current = undefined;
+    const initialValues = toProfileFormValues(initial);
+    formBaseValuesRef.current = structuredClone(initialValues);
+    setFormBaseVersion(initial.profileVersion);
+    setSuggestionDerivedDraft(false);
+    suggestionAddedRolesRef.current = [];
+    suggestionReviewRequiredRef.current = false;
+    suggestionReviewResolvedVersionRef.current = undefined;
+    form.reset(initialValues);
     onPreviewSourceChange?.(initial);
     setResetToken((token) => token + 1);
   }, [form, initial, onPreviewSourceChange]);
+
+  const rebaseOntoSavedProfile = useCallback(() => {
+    const remoteValues = toProfileFormValues(initial);
+    const localValues = structuredClone(form.state.values);
+    const trackedSuggestionRoles = reconcileSuggestionProvenance(localValues.profile);
+    const requiresSuggestionReview =
+      trackedSuggestionRoles.length > 0 || suggestionReviewRequiredRef.current;
+    localValues.profile = omitTargetRoles(
+      localValues.profile,
+      trackedSuggestionRoles.map(({ title }) => title),
+    );
+    const rebased = rebaseProfileValue(
+      formBaseValuesRef.current,
+      localValues,
+      remoteValues,
+      "form",
+    );
+    if (rebased.conflicts.length > 0) {
+      setStatusTone("warning");
+      setStatusMessage(
+        `Saved and local edits overlap at ${rebased.conflicts.slice(0, 3).join(", ")}. `
+          + "Discard or resolve those fields before requesting new suggestions.",
+      );
+      return;
+    }
+    const rebasedValues = rebased.value as ProfileFormValues;
+    formBaseValuesRef.current = structuredClone(remoteValues);
+    suggestionAddedRolesRef.current = [];
+    suggestionReviewRequiredRef.current = requiresSuggestionReview;
+    suggestionReviewResolvedVersionRef.current = undefined;
+    setFormBaseVersion(initial.profileVersion);
+    expectedProfileVersionRef.current = undefined;
+    form.reset(remoteValues);
+    if (!jsonValuesEqual(rebasedValues.profile, remoteValues.profile)) {
+      form.setFieldValue("profile", rebasedValues.profile);
+    }
+    if (!jsonValuesEqual(rebasedValues.style, remoteValues.style)) {
+      form.setFieldValue("style", rebasedValues.style);
+    }
+    if (rebasedValues.templateText !== remoteValues.templateText) {
+      form.setFieldValue("templateText", rebasedValues.templateText);
+    }
+    setStatusTone("warning");
+    setStatusMessage(
+      requiresSuggestionReview
+        ? "Draft rebased and stale suggested roles removed. Regenerate and review role suggestions before saving."
+        : "Draft rebased onto the latest saved profile.",
+    );
+  }, [form, initial, reconcileSuggestionProvenance]);
+
+  const resolveSuggestionReviewWithoutAcceptance = useCallback((expectedProfileVersion: number) => {
+    if (
+      !suggestionDerivedDraft
+      || suggestionAddedRolesRef.current.length > 0
+      || !suggestionReviewRequiredRef.current
+      || expectedProfileVersion !== initial.profileVersion
+    ) return;
+    suggestionAddedRolesRef.current = [];
+    suggestionReviewRequiredRef.current = false;
+    suggestionReviewResolvedVersionRef.current = expectedProfileVersion;
+    expectedProfileVersionRef.current = expectedProfileVersion;
+    setSuggestionDerivedDraft(false);
+    setStatusTone("warning");
+    setStatusMessage("Suggestion review completed. Rebased manual edits can now be saved.");
+  }, [initial.profileVersion, suggestionDerivedDraft]);
 
   return (
     <form
@@ -517,7 +776,15 @@ export function ProfileForm({
       onReset={(event) => {
         event.preventDefault();
         plateProfileProjectionRef.current = null;
-        form.reset(toProfileFormValues(initial));
+        expectedProfileVersionRef.current = undefined;
+        const initialValues = toProfileFormValues(initial);
+        formBaseValuesRef.current = structuredClone(initialValues);
+        suggestionAddedRolesRef.current = [];
+        suggestionReviewRequiredRef.current = false;
+        suggestionReviewResolvedVersionRef.current = undefined;
+        setFormBaseVersion(initial.profileVersion);
+        setSuggestionDerivedDraft(false);
+        form.reset(initialValues);
         onPreviewSourceChange?.(initial);
         setResetToken((token) => token + 1);
         clearTransientStatus();
@@ -546,7 +813,10 @@ export function ProfileForm({
             isDirty={isDirty}
             isSubmitting={isSubmitting}
             resetToken={resetToken}
-            restoreValues={(nextValues) => form.reset(nextValues, { keepDefaultValues: true })}
+            restoreValues={(nextValues) => {
+              reconcileSuggestionProvenance(nextValues.profile);
+              form.reset(nextValues, { keepDefaultValues: true });
+            }}
             setStatusMessage={setStatusMessage}
             submit={() => form.handleSubmit()}
             values={values}
@@ -585,20 +855,56 @@ export function ProfileForm({
         {(profileField) => (
           <form.Field name="style">
             {(styleField) => (
-              <StructuredProfileEditor
-                mode={section}
-                showSectionHeading={showSectionHeading}
-                profile={profileField.state.value}
-                style={styleField.state.value}
-                onProfileChange={(value) => {
-                  clearTransientStatus();
-                  profileField.handleChange(value);
-                }}
-                onStyleChange={(value) => {
-                  clearTransientStatus();
-                  styleField.handleChange(value);
-                }}
-              />
+              <>
+                {section === "target-search" ? (
+                  <TargetRoleSuggestions
+                    formBaseVersion={formBaseVersion}
+                    profileVersion={initial.profileVersion}
+                    onRebase={rebaseOntoSavedProfile}
+                    onResolveWithoutAcceptance={resolveSuggestionReviewWithoutAcceptance}
+                    onAccept={(titles, expectedProfileVersion) => {
+                      const rolesBefore = targetRoles(profileField.state.value);
+                      const nextProfile = appendTargetRoles(profileField.state.value, titles);
+                      const beforeKeys = new Set(rolesBefore.map((title) => title.toLowerCase()));
+                      const addedTitles = targetRoles(nextProfile).filter(
+                        (title) => !beforeKeys.has(title.toLowerCase()),
+                      );
+                      suggestionAddedRolesRef.current = [
+                        ...suggestionAddedRolesRef.current,
+                        ...addedTitles
+                          .filter((title) => !suggestionAddedRolesRef.current.some(
+                            (existing) => existing.title.toLowerCase() === title.toLowerCase(),
+                          ))
+                          .map((title) => ({ profileVersion: expectedProfileVersion, title })),
+                      ];
+                      clearTransientStatus();
+                      profileField.handleChange(nextProfile);
+                      if (suggestionAddedRolesRef.current.length > 0) {
+                        suggestionReviewRequiredRef.current = false;
+                        suggestionReviewResolvedVersionRef.current = undefined;
+                        expectedProfileVersionRef.current = expectedProfileVersion;
+                        setSuggestionDerivedDraft(true);
+                      } else {
+                        resolveSuggestionReviewWithoutAcceptance(expectedProfileVersion);
+                      }
+                    }}
+                  />
+                ) : null}
+                <StructuredProfileEditor
+                  mode={section}
+                  showSectionHeading={showSectionHeading}
+                  profile={profileField.state.value}
+                  style={styleField.state.value}
+                  onProfileChange={(value) => {
+                    clearTransientStatus();
+                    profileField.handleChange(value);
+                  }}
+                  onStyleChange={(value) => {
+                    clearTransientStatus();
+                    styleField.handleChange(value);
+                  }}
+                />
+              </>
             )}
           </form.Field>
         )}
