@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import Database from "better-sqlite3";
 
-import { EXACT_V10_SCHEMA_MANIFEST, hasExactV10SchemaManifest } from "./schema-manifest.js";
+import { EXACT_V11_SCHEMA_MANIFEST, hasExactV11SchemaManifest } from "./schema-manifest.js";
 
 export type SqliteDatabase = Database.Database;
 export type SqliteValue = string | number | bigint | null;
@@ -11,7 +11,7 @@ export type SqliteValue = string | number | bigint | null;
 // writer that stamps ``PRAGMA user_version``; the API only admits the exact
 // migrated schema shape. Bump both constants together whenever the schema
 // shape changes.
-export const SUPPORTED_SCHEMA_VERSION = EXACT_V10_SCHEMA_MANIFEST.version;
+export const SUPPORTED_SCHEMA_VERSION = EXACT_V11_SCHEMA_MANIFEST.version;
 
 export class IncompatibleSchemaVersionError extends Error {
   constructor(current: number) {
@@ -28,7 +28,7 @@ export class IncompatibleSchemaVersionError extends Error {
 export class IncompatibleSchemaManifestError extends Error {
   constructor() {
     super(
-      "JobCtrl database schema does not match the exact v10 manifest; restore "
+      "JobCtrl database schema does not match the exact v11 manifest; restore "
         + "a compatible backup or complete the documented stopped-runtime migration.",
     );
     this.name = "IncompatibleSchemaManifestError";
@@ -44,7 +44,7 @@ function assertExactSchemaVersion(db: SqliteDatabase): void {
     db.close();
     throw new IncompatibleSchemaVersionError(current);
   }
-  if (!hasExactV10SchemaManifest(db)) {
+  if (!hasExactV11SchemaManifest(db)) {
     db.close();
     throw new IncompatibleSchemaManifestError();
   }

@@ -24,6 +24,7 @@ import httpx
 from temporalio import activity
 
 from jobctrl.infrastructure.observability.llm_spans import llm_generation_span
+from jobctrl.llm_lanes import LLM_LANES, LlmLane, current_llm_lane, validate_llm_lane
 from jobctrl.model_defaults import DEFAULT_GEMINI_MODEL
 
 log = logging.getLogger(__name__)
@@ -33,6 +34,7 @@ log = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class SpendBudgetInput:
     tenant_id: str = "local"
+    lane: LlmLane = "discovery"
 
 
 @dataclass(frozen=True)
@@ -42,6 +44,12 @@ class SpendBudgetStatus:
     output_tokens: int
     estimated_usd: float
     daily_budget_usd: float
+    lane: LlmLane
+    lane_input_tokens: int
+    lane_output_tokens: int
+    lane_token_limit: int
+    lane_exceeded: bool
+    global_exceeded: bool
     exceeded: bool
 
 
@@ -52,6 +60,7 @@ def record_llm_spend(
     estimated_usd: float | None = None,
     model: str | None = None,
     day: str | None = None,
+    lane: LlmLane | str | None = None,
 ) -> None:
     """Accumulate one LLM usage observation into the daily spend ledger."""
     input_count = _coerce_token_count(input_tokens)
@@ -71,87 +80,144 @@ def record_llm_spend(
     from jobctrl.database import get_connection, init_db
 
     spend_day = day or _utc_spend_day()
+    spend_lane = validate_llm_lane(lane) if lane is not None else current_llm_lane()
     init_db()
     conn = get_connection()
     conn.execute(
         """
-        INSERT INTO llm_spend (day, input_tokens, output_tokens, estimated_usd)
-        VALUES (?, ?, ?, ?)
-        ON CONFLICT(day) DO UPDATE SET
+        INSERT INTO llm_spend (day, lane, input_tokens, output_tokens, estimated_usd)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(day, lane) DO UPDATE SET
             input_tokens = input_tokens + excluded.input_tokens,
             output_tokens = output_tokens + excluded.output_tokens,
             estimated_usd = estimated_usd + excluded.estimated_usd
         """,
-        (spend_day, input_count, output_count, estimated),
+        (spend_day, spend_lane, input_count, output_count, estimated),
     )
     conn.commit()
 
 
 def read_llm_spend(day: str | None = None) -> dict[str, Any]:
-    """Return the accumulated spend row for *day* (UTC today by default)."""
+    """Return global totals summed across every lane for one UTC day."""
     from jobctrl.database import get_connection, init_db
 
     spend_day = day or _utc_spend_day()
     conn = get_connection()
     try:
         row = conn.execute(
-            "SELECT day, input_tokens, output_tokens, estimated_usd FROM llm_spend WHERE day = ?",
+            "SELECT COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0), "
+            "COALESCE(SUM(estimated_usd), 0) FROM llm_spend WHERE day = ?",
             (spend_day,),
         ).fetchone()
     except Exception:
         init_db()
         row = conn.execute(
-            "SELECT day, input_tokens, output_tokens, estimated_usd FROM llm_spend WHERE day = ?",
+            "SELECT COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0), "
+            "COALESCE(SUM(estimated_usd), 0) FROM llm_spend WHERE day = ?",
             (spend_day,),
         ).fetchone()
-    if row is None:
-        return {
-            "day": spend_day,
-            "input_tokens": 0,
-            "output_tokens": 0,
-            "estimated_usd": 0.0,
-        }
     return {
-        "day": str(row["day"]),
-        "input_tokens": int(row["input_tokens"] or 0),
-        "output_tokens": int(row["output_tokens"] or 0),
-        "estimated_usd": float(row["estimated_usd"] or 0.0),
+        "day": spend_day,
+        "input_tokens": int(row[0] or 0),
+        "output_tokens": int(row[1] or 0),
+        "estimated_usd": float(row[2] or 0.0),
     }
 
 
-def read_spend_budget_status(*, daily_budget_usd: float | None = None) -> SpendBudgetStatus:
+def read_llm_spend_by_lane(day: str | None = None) -> dict[LlmLane, dict[str, int | float | str]]:
+    """Return current-schema runtime lane totals; migration-only legacy is omitted."""
+    from jobctrl.database import get_connection, init_db
+
+    spend_day = day or _utc_spend_day()
+    init_db()
+    conn = get_connection()
+    rows = {
+        str(row[0]): row
+        for row in conn.execute(
+            "SELECT lane, input_tokens, output_tokens, estimated_usd FROM llm_spend WHERE day = ?",
+            (spend_day,),
+        )
+    }
+    return {
+        lane: {
+            "day": spend_day,
+            "lane": lane,
+            "input_tokens": int(rows.get(lane, (None, 0, 0, 0.0))[1] or 0),
+            "output_tokens": int(rows.get(lane, (None, 0, 0, 0.0))[2] or 0),
+            "estimated_usd": float(rows.get(lane, (None, 0, 0, 0.0))[3] or 0.0),
+        }
+        for lane in LLM_LANES
+    }
+
+
+def read_spend_budget_status(
+    *,
+    lane: LlmLane | str | None = None,
+    daily_budget_usd: float | None = None,
+    lane_token_limits: dict[LlmLane, int] | None = None,
+) -> SpendBudgetStatus:
     """Read today's spend and compare it with the configured daily budget."""
     if daily_budget_usd is None:
         from jobctrl.infrastructure.scoring.criteria_provider import read_daily_budget_usd
 
         daily_budget_usd = read_daily_budget_usd(default=25.0)
+    spend_lane = validate_llm_lane(lane) if lane is not None else current_llm_lane()
+    if lane_token_limits is None:
+        from jobctrl.infrastructure.scoring.criteria_provider import read_lane_token_limits
+
+        lane_token_limits = read_lane_token_limits()
     row = read_llm_spend()
+    lane_row = read_llm_spend_by_lane(str(row["day"]))[spend_lane]
     budget = max(0.0, float(daily_budget_usd or 0.0))
     estimated = float(row["estimated_usd"])
+    lane_input = int(lane_row["input_tokens"])
+    lane_output = int(lane_row["output_tokens"])
+    lane_limit = int(lane_token_limits[spend_lane])
+    lane_exceeded = lane_limit > 0 and lane_input + lane_output >= lane_limit
+    global_exceeded = budget > 0 and estimated >= budget
     return SpendBudgetStatus(
         day=str(row["day"]),
         input_tokens=int(row["input_tokens"]),
         output_tokens=int(row["output_tokens"]),
         estimated_usd=estimated,
         daily_budget_usd=budget,
-        exceeded=budget > 0 and estimated >= budget,
+        lane=spend_lane,
+        lane_input_tokens=lane_input,
+        lane_output_tokens=lane_output,
+        lane_token_limit=lane_limit,
+        lane_exceeded=lane_exceeded,
+        global_exceeded=global_exceeded,
+        exceeded=global_exceeded or lane_exceeded,
     )
+
+
+def enforce_spend_budget(lane: LlmLane | str | None = None) -> SpendBudgetStatus:
+    """Apply the same global and lane authority immediately before provider use."""
+    from jobctrl.domain.errors import BudgetExceededError, to_application_error
+
+    status = read_spend_budget_status(lane=lane)
+    if not status.exceeded:
+        return status
+    if status.lane_exceeded:
+        total = status.lane_input_tokens + status.lane_output_tokens
+        detail = (
+            f"LLM {status.lane} lane token threshold reached: {total} observed of "
+            f"{status.lane_token_limit} for {status.day}."
+        )
+    else:
+        detail = (
+            f"LLM daily spend budget exceeded: ${status.estimated_usd:.4f} "
+            f"spent of ${status.daily_budget_usd:.2f} for {status.day}."
+        )
+    raise to_application_error(BudgetExceededError(detail))
 
 
 @activity.defn(name="check_spend_budget")
 async def check_spend_budget(payload: SpendBudgetInput | None = None) -> SpendBudgetStatus:
     """Temporal preflight that blocks spendful workflows once the cap is hit."""
-    from jobctrl.domain.errors import BudgetExceededError, to_application_error
-
-    status = read_spend_budget_status()
-    if status.exceeded:
-        raise to_application_error(
-            BudgetExceededError(
-                f"LLM daily spend budget exceeded: ${status.estimated_usd:.4f} "
-                f"spent of ${status.daily_budget_usd:.2f} for {status.day}."
-            )
-        )
-    return status
+    if payload is None:
+        raise ValueError("check_spend_budget requires an explicit product lane")
+    return enforce_spend_budget(payload.lane)
 
 
 def estimate_llm_cost_usd(

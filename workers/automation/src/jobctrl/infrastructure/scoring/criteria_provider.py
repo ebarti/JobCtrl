@@ -14,6 +14,7 @@ from typing import Any
 from jobctrl.config import get_config_path, load_config_file
 from jobctrl.domain.profile.snapshot import ProfileSnapshot
 from jobctrl.domain.scoring.value_objects import ScoringCriteria
+from jobctrl.llm_lanes import LLM_LANES, LlmLane
 
 
 class LocalScoringCriteriaProvider:
@@ -80,6 +81,28 @@ def read_daily_budget_usd(
     except (TypeError, ValueError):
         return float(default)
     return max(0.0, budget)
+
+
+def read_lane_token_limits(
+    path: Path | str | None = None,
+) -> dict[LlmLane, int]:
+    """Read strict per-lane daily token thresholds; omitted and zero are unlimited."""
+    settings = read_config_settings(path)
+    raw = settings.get("lane_token_limits", {})
+    if raw is None:
+        raw = {}
+    if not isinstance(raw, dict):
+        raise ValueError("lane_token_limits must be an object")
+    unknown = set(raw).difference(LLM_LANES)
+    if unknown:
+        raise ValueError(f"unknown lane_token_limits key(s): {', '.join(sorted(map(str, unknown)))}")
+    limits: dict[LlmLane, int] = {}
+    for lane in LLM_LANES:
+        value = raw.get(lane, 0)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError(f"lane_token_limits.{lane} must be a nonnegative integer")
+        limits[lane] = value
+    return limits
 
 
 def read_min_fit_score(
