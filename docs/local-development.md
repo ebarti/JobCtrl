@@ -93,7 +93,7 @@ services retain their old inherited values.
 
 For a source CLI invocation, `uv --project workers/automation run jobctrl
 credentials migrate` defaults to the active owned `.env`, the current
-directory's `.env`, and an explicitly configured `JOBCTRL_USER_ENV_PATH`.
+directory's `.env`, and `JOBCTRL_USER_ENV_PATH` (default `~/JobCtrl/.env`).
 Use repeated `--env-file` arguments when an exact source set is required.
 See [Configuration](user/configuration.md#migrating-legacy-plaintext-secrets)
 for conflict handling, preservation, scope, and the one-time marker.
