@@ -215,6 +215,7 @@ import {
 } from "./extension-auth.js";
 import {
   CredentialStoreUnavailableError,
+  CredentialValueUnsupportedError,
   CredentialManagedByEnvironmentError,
   KeychainCredentialStore,
   type CredentialStore,
@@ -3002,6 +3003,16 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
           message: error.message,
         };
       }
+      if (error instanceof CredentialValueUnsupportedError) {
+        void reply.code(400);
+        return {
+          ok: false,
+          error: "credential_value_unsupported",
+          key: error.key,
+          maxBytes: error.maxBytes,
+          message: error.message,
+        };
+      }
       if (error instanceof CredentialStoreUnavailableError) {
         void reply.code(error.reason === "unsupported_platform" ? 409 : 503);
         return {
@@ -3034,6 +3045,16 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
           error: "credential_managed_by_environment",
           key: error.key,
           source: "environment",
+          message: error.message,
+        };
+      }
+      if (error instanceof CredentialValueUnsupportedError) {
+        void reply.code(400);
+        return {
+          ok: false,
+          error: "credential_value_unsupported",
+          key: error.key,
+          maxBytes: error.maxBytes,
           message: error.message,
         };
       }

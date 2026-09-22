@@ -11,7 +11,7 @@ can add ensemble diversity, but it is not mandatory.
 JobCtrl configuration is intentionally local. Every value edited anywhere on
 `/discovery` lives in SQLite. Every non-secret desired value edited anywhere
 under `/settings/**` lives in `config.json`. Secrets entered through Settings
-remain in macOS Keychain or native provider stores; operator-supplied `.env` and
+remain in the native OS credential store or native provider stores; operator-supplied `.env` and
 launch-environment secrets stay outside the saved Settings document. Everything
 here is optional unless a feature you want depends on it.
 
@@ -32,7 +32,7 @@ Contributors running from source can use the checkout-prefixed commands in
 | Target roles/locations, runtime, sources, schedules, quarantine, manual capture, or crawl identity | [**Discovery**](discovery.md) (`/discovery`) |
 | Materials, application fields, approval modes, browser automation, or Gmail | [**Apply**](apply.md) |
 | Spend/capacity, scoring guidance, or compensation source policy | **Settings → General** (`/settings`) |
-| Provider secret or cloud mode | **Settings → Credentials** (`/settings/credentials`) on macOS, or `~/.jobctrl/.env` / the shell |
+| Provider secret or cloud mode | **Settings → Credentials** (`/settings/credentials`); shell overrides for ephemeral CI/headless use |
 | Preferred provider model or employer-analysis perspectives | **Settings → Model selection** (`/settings/models`); see [Employer Analysis Perspectives](discovery.md#employer-analysis-perspectives) for how the selection is used during Discover preparation |
 | Optional extension pairing and connection status | **Settings → Browser & extension** (`/settings/browser`); Discovery and Enrich prefer the selected connected extension and can otherwise use guarded public HTTP/anonymous Playwright. See [source limits](discovery.md#crawl-politeness). |
 
@@ -53,14 +53,14 @@ import SettingsPrecedence from "../.vitepress/theme/SettingsPrecedence.vue";
 
 Environment variables are not an alternate persistence store for non-secret UI
 settings. Secret loading is separate: a non-empty environment secret can take
-precedence over Keychain at process startup. Hard deny switches such as
+precedence over the OS credential store at process startup. Hard deny switches such as
 `LANGFUSE_DISABLE=1` are also authoritative: they can force a corresponding
 feature off, but cannot turn it on.
 
 | Surface | Storage | API | When a saved change applies |
 | --- | --- | --- | --- |
 | Settings → General | [`config.json`](../api/profile-and-settings.md#config-json-field-reference) | `/v1/settings` | Live, next poll/run/workflow, or restart, as labeled; worker activity slots show desired versus active values |
-| Settings → Credentials | Non-secret desired values in `config.json`; secrets in macOS Keychain, the launch environment, or native provider stores | `/v1/credentials` | Claude and Google Keychain edits require the relevant Python process to restart; an environment-owned active route remains authoritative until its value is removed and the process restarts; Codex verification is immediate |
+| Settings → Credentials | Non-secret desired values in `config.json`; secrets in the native OS credential store, the launch environment, or native provider stores | `/v1/credentials` | Claude and Google credential edits require the relevant Python process to restart; an environment-owned active route remains authoritative until its value is removed and the process restarts; Codex verification is immediate |
 | Settings → Model selection | [`config.json`](../api/profile-and-settings.md#config-json-field-reference) | `/v1/settings`; `/v1/providers/models` | Newly started work; no worker restart |
 | Settings → Browser & extension | Non-secret Apply-browser choices and adopted executable configuration in `config.json`; the pairing token and mode-`0600` selected-extension installation ID remain separate; live Discovery task status is transient | `/v1/browser-capabilities`; `/v1/extension/pairing-token`; `/v1/extension/discovery/claim`; `/v1/discovery/browser-extension/status` | Saving the token from an extension explicitly selects that Chrome installation; token rotation clears it. Discovery and Enrich prefer the selected installation while it is connected; offline launches remain available through guarded public HTTP/anonymous Playwright, subject to worker readiness and source policy. Settings does not create a LinkedIn profile copy. |
 
@@ -73,23 +73,24 @@ activation timing for their feature-specific controls.
 | --- | --- |
 | `~/.jobctrl/jobctrl.db` | Candidate profile, every field edited on `/discovery`, preferences, tailoring controls, jobs, events, projections, and artifact metadata. |
 | [`~/.jobctrl/config.json`](../api/profile-and-settings.md#config-json-field-reference) | Every non-secret desired value edited under `/settings/**`, including budgets and capacity, application runtime, scoring guidance, model policy, browser capability choices, and compensation source policy. It never owns a field shown on `/discovery`. |
-| `~/.jobctrl/.env` | Personal provider keys and runtime environment. |
+| `~/.jobctrl/.env` | Legacy plaintext provider keys until migration, plus runtime environment configuration. |
 | repo `.env` | Development-only overrides for the current checkout. |
-| shell environment | One-off overrides for commands and CI. |
+| shell environment | Ephemeral overrides for commands, CI, and headless operation; not the normal persistent credential store. |
 | `workers/automation/src/jobctrl/config/*.yaml` | Packaged employer and site behavior registries (`employers.yaml`, `sites.yaml`). The dynamic source registry lives in SQLite. |
 
-The development launcher loads `~/.jobctrl/.env`, repo `.env`, and the optional
-`JOBCTRL_USER_ENV_PATH` file before starting local services.
+The development launcher loads `$JOBCTRL_DIR/.env` (default `~/.jobctrl/.env`),
+repo `.env`, and `JOBCTRL_USER_ENV_PATH` (default `~/JobCtrl/.env`) before
+starting local services.
 
-On macOS, **Settings → Credentials** is the preferred guided provider setup. It
-stores Anthropic or Gemini API keys and selected provider-mode settings in
-macOS Keychain. Codex uses an authenticated Codex CLI, and AWS, Google, and
-Azure credentials stay in their native CLI-managed stores; JobCtrl records only
+**Settings → Credentials** is the preferred guided provider setup. It stores
+API keys in macOS Keychain, Windows Credential Manager, or Linux Secret Service.
+Non-secret provider-mode settings are stored in `config.json`. Codex uses an
+authenticated Codex CLI, and AWS, Google, and Azure credentials stay in their native CLI-managed stores; JobCtrl records only
 the activation flags and non-secret identifiers needed to select those routes
 in `config.json`.
 
-At Python process startup, after env-file loading, JobCtrl uses a Keychain value
-only when the corresponding environment value is missing or empty; any
+At Python process startup, after env-file loading, JobCtrl uses an OS
+credential-store value only when the corresponding environment value is missing or empty; any
 non-empty environment value wins. Saving or removing a value is therefore
 **restart-to-activate** for Python consumers: restart the relevant worker or
 provider process before Claude or Google work. Preferred-model changes do not
@@ -110,13 +111,75 @@ sanitized error when inspection fails. Settings section headers likewise use
 their product names and explanations rather than internal context tags or raw
 configuration keys as decorative metadata.
 
-Native Windows
-and Linux credential-store adapters are planned; use `.env` or the shell on
-those platforms today. `jobctrl doctor` reports the effective source without
+Windows and Linux use their native credential-store adapters. A host without
+a usable native store reports unavailable; it does not save submitted secrets
+to a plaintext fallback. `jobctrl doctor` reports the effective source without
 printing secrets. **Status unknown** (`inspection_failed`) is distinct from
-**not configured**: it means JobCtrl could not inspect Keychain. Provider-mode
+**not configured**: it means JobCtrl could not inspect the native store. Provider-mode
 replacement is all-or-nothing from the web contract; a failed change preserves
 the previous configuration or reports an explicit sanitized recovery failure.
+
+Linux requires `/usr/bin/secret-tool` and an accessible Secret Service in the
+current user's D-Bus session, with its collection unlocked. Windows requires
+Windows PowerShell and a logon session with access to Credential Manager. A
+headless session without a native store can use inherited environment values;
+JobCtrl does not create an unencrypted store as a substitute. macOS continues
+to use `/usr/bin/security` and the user's Keychain.
+
+Native writes enforce each helper's byte limit before changing a stored value:
+128 UTF-8 bytes on macOS, 2,560 UTF-16 bytes on Windows, and 8,191 UTF-8 bytes on
+Linux. A character can occupy multiple bytes. Oversized input is rejected,
+never truncated. Migration refuses such a value and preserves its source.
+
+### Migrating legacy plaintext secrets
+
+Migration is an explicit one-time operation. Stop JobCtrl before running it and
+restart after completion: already running services can retain values inherited
+from their old launch environment. Startup and status reads do not migrate
+files silently.
+
+For the installed app, migrate the active JobCtrl-owned environment file:
+
+```bash
+jobctrl credentials migrate
+```
+
+The installed command defaults to the active runtime's owned `.env` file and
+does not search the current directory. To include another persistent file,
+repeat `--env-file /absolute/path/to/file` in the intended precedence order;
+later assignments win. Select the complete source set on the first run. The
+secret-free `.native-credentials-migrated.json` marker under `JOBCTRL_DIR`
+makes a completed migration a no-op on subsequent runs. This marker is not a
+backup of credential values.
+
+A migration lock prevents overlapping invocations using the same completion
+marker. Do not run migrations with different markers concurrently or edit
+credentials while migrating. A malformed marker fails closed. If a process is
+interrupted and leaves its lock behind, confirm that it has stopped and inspect
+the recovery state before removing only that stale migration lock; elapsed
+time alone does not establish that a migration is inactive.
+
+Contributors should use the [source-development migration
+command](../local-development.md#native-credential-migration), which selects
+the same persistent files as the development launcher.
+
+Only the guided secret allowlist moves: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
+`GEMINI_API_KEY`, and `CAPSOLVER_API_KEY`. Other settings and secret families,
+including Langfuse and Gmail files, remain where they were; this is not a
+promise to remove every plaintext secret from the machine. Native provider
+logins and cloud credential files are not imported. Inherited shell values are
+never copied into persistent storage.
+
+The migration verifies every native write before removing its source
+assignment. An existing equal native value is safe to reuse; a different value
+is a conflict that must be resolved deliberately. An unavailable store,
+unsupported input, changed source file, or failed write must not be reported as
+success. Errors and the completion record contain no secret values. Do not
+paste `.env` contents or raw native-store output into a support report.
+
+Migration removes selected assignments from the current source files; it does
+not securely erase old filesystem blocks, backups, shell history, or copies in
+other locations. Protect those separately.
 
 ## Local Data
 
@@ -138,7 +201,7 @@ defines the containment, capability, accounting, and product proof required
 before any such provider can become available; it does not enable one.
 
 Choose one provider in **Settings → Credentials**, restart the relevant Python
-process after a Keychain edit, and use `jobctrl doctor`. The pipeline model spec defaults to `default`, which resolves
+process after a credential edit, and use `jobctrl doctor`. The pipeline model spec defaults to `default`, which resolves
 through a ready provider. Explicit model specs use `codex:`, `claude:`, or
 `google:`; `gemini:` remains an alias for the Google SDK route.
 

@@ -20,6 +20,7 @@ import {
   type SecurityChildProcess,
   type SecurityCommandRunner,
 } from "../src/credentials.js";
+import type { NativeCredentialCommandRunner } from "../src/native-credential-store.js";
 
 const SECRET = "test-secret-must-not-appear";
 const NOT_FOUND = "The specified item could not be found.";
@@ -47,7 +48,9 @@ function statefulKeychainRunner(
     const key = args[accountIndex] as CredentialKey;
     if (args[0] === "find-generic-password") {
       if (!state.has(key)) return result(44, NOT_FOUND);
-      return result(0, "", args.includes("-w") ? `${state.get(key) ?? ""}\n` : "");
+      return args.includes("-g")
+        ? result(0, `password: ${JSON.stringify(state.get(key) ?? "")}`)
+        : result();
     }
 
     const currentAttempt = mutationAttempt;
@@ -121,19 +124,37 @@ describe("KeychainCredentialStore", () => {
     expect(JSON.stringify(response)).not.toContain(SECRET);
   });
 
-  it.each(["linux", "win32"] as const)(
-    "keeps config-backed provider settings editable without spawning security on %s",
-    async (platform) => {
+  it.each([
+    ["linux", "linux_secret_service"],
+    ["win32", "windows_credential_manager"],
+  ] as const)(
+    "supports presence-only native credential operations and config-backed settings on %s",
+    async (platform, nativeStore) => {
       const runSecurity = vi.fn<SecurityCommandRunner>();
-      const store = new KeychainCredentialStore({ platform, runSecurity });
+      const values = new Map<CredentialKey, string>();
+      const runNative = vi.fn<NativeCredentialCommandRunner>(async (command) => {
+        if (command.operation === "set") {
+          values.set(command.key, command.value ?? "");
+          return result();
+        }
+        if (command.operation === "delete") {
+          const existed = values.delete(command.key);
+          return existed ? result() : result(44);
+        }
+        if (!values.has(command.key)) return result(44);
+        return result(0, "", command.operation === "read" ? values.get(command.key) : "");
+      });
+      const store = new KeychainCredentialStore({ platform, runNative, runSecurity });
 
       const response = await store.list();
 
       expect(runSecurity).not.toHaveBeenCalled();
       expect(response.store).toEqual({
-        kind: "config_and_macos_keychain",
-        available: false,
-        unavailableReason: "unsupported_platform",
+        kind: "config_and_native_credential_store",
+        nativeStore,
+        maxSecretBytes: platform === "linux" ? 8_191 : 2_560,
+        available: true,
+        unavailableReason: null,
         requiresWorkerRestart: true,
       });
       expect(response.credentials.filter((credential) => credential.storage === "config")).toEqual(
@@ -144,12 +165,12 @@ describe("KeychainCredentialStore", () => {
           editable: true,
         })),
       );
-      expect(response.credentials.filter((credential) => credential.storage === "keychain")).toEqual(
+      expect(response.credentials.filter((credential) => credential.storage === "native_store")).toEqual(
         SecretCredentialKeys.map((key) => expect.objectContaining({
           key,
-          configured: null,
-          effectiveSource: "inspection_unknown",
-          editable: false,
+          configured: false,
+          effectiveSource: "absent",
+          editable: true,
         })),
       );
 
@@ -174,25 +195,34 @@ describe("KeychainCredentialStore", () => {
           },
         },
       });
-      await expect(store.set("OPENAI_API_KEY", SECRET)).rejects.toMatchObject({
-        name: "CredentialStoreUnavailableError",
-        reason: "unsupported_platform",
+      const exact = `  ${SECRET}-héllø  `;
+      await store.set("OPENAI_API_KEY", exact);
+      expect(await store.readForInternalUse("OPENAI_API_KEY")).toBe(exact);
+      expect((await store.list()).credentials.find((entry) => entry.key === "OPENAI_API_KEY")).toMatchObject({
+        configured: true,
+        effectiveSource: "native_store",
+        editable: true,
       });
-      await expect(store.delete("OPENAI_API_KEY")).rejects.toMatchObject({
-        name: "CredentialStoreUnavailableError",
-        reason: "unsupported_platform",
-      });
-      await expect(
-        store.applyBatch([
-          { operation: "delete", key: "ANTHROPIC_API_KEY" },
-        ]),
-      ).rejects.toMatchObject({
-        name: "CredentialStoreUnavailableError",
-        reason: "unsupported_platform",
-      });
+      await store.delete("OPENAI_API_KEY");
+      await store.delete("OPENAI_API_KEY");
+      expect(await store.readForInternalUse("OPENAI_API_KEY")).toBeNull();
       expect(runSecurity).not.toHaveBeenCalled();
     },
   );
+
+  it("keeps unsupported platforms fail-closed while config settings remain editable", async () => {
+    const store = new KeychainCredentialStore({ platform: "freebsd" });
+    const response = await store.list();
+    expect(response.store).toMatchObject({
+      nativeStore: null,
+      maxSecretBytes: null,
+      available: false,
+      unavailableReason: "unsupported_platform",
+    });
+    await expect(store.set("OPENAI_API_KEY", SECRET)).rejects.toMatchObject({
+      reason: "unsupported_platform",
+    });
+  });
 
   it("reports every present Keychain item without requesting its value", async () => {
     const runSecurity = vi.fn<SecurityCommandRunner>(async () => result());
@@ -207,7 +237,7 @@ describe("KeychainCredentialStore", () => {
       available: true,
       unavailableReason: null,
     });
-    expect(response.credentials.filter((credential) => credential.storage === "keychain").every(
+    expect(response.credentials.filter((credential) => credential.storage === "native_store").every(
       (credential) => credential.configured === true,
     )).toBe(true);
     expect(response.credentials.filter((credential) => credential.storage === "config").every(
@@ -281,12 +311,14 @@ describe("KeychainCredentialStore", () => {
       const response = await store.list();
 
       expect(response.store).toEqual({
-        kind: "config_and_macos_keychain",
+        kind: "config_and_native_credential_store",
+        nativeStore: "macos_keychain" as const,
+        maxSecretBytes: 128,
         available: false,
         unavailableReason: "inspection_failed",
         requiresWorkerRestart: true,
       });
-      expect(response.credentials.filter((credential) => credential.storage === "keychain").every(
+      expect(response.credentials.filter((credential) => credential.storage === "native_store").every(
         (credential) => credential.configured === null && credential.editable === false,
       )).toBe(true);
       expect(response.credentials.filter((credential) => credential.storage === "config").every(
@@ -353,7 +385,7 @@ describe("KeychainCredentialStore", () => {
 
     for (const response of [failed, malformed]) {
       expect(response.store.unavailableReason).toBe("inspection_failed");
-      expect(response.credentials.filter((credential) => credential.storage === "keychain").every(
+      expect(response.credentials.filter((credential) => credential.storage === "native_store").every(
         (credential) => credential.configured === null,
       )).toBe(true);
       expect(response.credentials.filter((credential) => credential.storage === "config").every(
@@ -380,7 +412,7 @@ describe("KeychainCredentialStore", () => {
 
     expect(runSecurity).toHaveBeenCalledTimes(SecretCredentialKeys.length);
     expect(response.store.unavailableReason).toBe("inspection_failed");
-    expect(response.credentials.filter((credential) => credential.storage === "keychain").every(
+    expect(response.credentials.filter((credential) => credential.storage === "native_store").every(
       (credential) => credential.configured === null,
     )).toBe(true);
     expect(response.credentials.filter((credential) => credential.storage === "config").every(
@@ -437,6 +469,24 @@ describe("KeychainCredentialStore", () => {
     expect(response.store.available).toBe(true);
     expect(response.store.requiresWorkerRestart).toBe(true);
     expect(JSON.stringify(response)).not.toContain(SECRET);
+  });
+
+  it.each([
+    ["snowman-☃", `password: 0x${Buffer.from("snowman-☃", "utf8").toString("hex")} "ignored display"`],
+    ["deadbeef", 'password: "deadbeef"'],
+    ['quote-"', 'password: "quote-""'],
+    ['slash-\\', `password: 0x${Buffer.from("slash-\\", "utf8").toString("hex")} "ignored display"`],
+  ])("decodes typed macOS private reads without confusing literal hexadecimal (%s)", async (expected, stderr) => {
+    const runSecurity = vi.fn<SecurityCommandRunner>(async (args) =>
+      args.includes("-g") ? result(0, stderr) : result(),
+    );
+    const store = new KeychainCredentialStore({ platform: "darwin", runSecurity });
+
+    await expect(store.readForInternalUse("ANTHROPIC_API_KEY")).resolves.toBe(expected);
+    expect(runSecurity).toHaveBeenCalledWith(
+      ["find-generic-password", "-s", "JobCtrl", "-a", "ANTHROPIC_API_KEY", "-g"],
+      expect.objectContaining({ timeoutMs: 2_000 }),
+    );
   });
 
   it("makes deletion idempotent only for a confirmed absent item", async () => {
@@ -508,8 +558,28 @@ describe("KeychainCredentialStore", () => {
       "project_id",
     );
     expect(JSON.stringify(response)).not.toContain(SECRET);
-    expect(runSecurity.mock.calls.filter(([args]) => args[0] === "find-generic-password" && args.includes("-w"))).toHaveLength(2);
+    expect(runSecurity.mock.calls.filter(([args]) => args[0] === "find-generic-password" && args.includes("-g"))).toHaveLength(2);
     expect(JSON.stringify(runSecurity.mock.calls.map(([args]) => args))).not.toContain(SECRET);
+  });
+
+  it("refuses a batch before mutation when an existing snapshot cannot be restored safely", async () => {
+    const externalValue = "x".repeat(129);
+    const { runSecurity, state } = statefulKeychainRunner(new Map([
+      ["ANTHROPIC_API_KEY", externalValue],
+    ]));
+    const store = new KeychainCredentialStore({ platform: "darwin", runSecurity });
+
+    const error = await store.applyBatch([
+      { operation: "delete", key: "ANTHROPIC_API_KEY" },
+    ]).catch((caught: unknown) => caught);
+
+    expect(error).toMatchObject({
+      name: "CredentialValueUnsupportedError",
+      key: "ANTHROPIC_API_KEY",
+      maxBytes: 128,
+    });
+    expect(state.get("ANTHROPIC_API_KEY")).toBe(externalValue);
+    expect(runSecurity.mock.calls.map(([args]) => args[0])).toEqual(["find-generic-password"]);
   });
 
   it.each([

@@ -435,12 +435,12 @@ Pipelines controls require worker readiness, not extension readiness.
 Provider credential storage crosses the TypeScript/Python process boundary; it
 is not a runtime secret read performed by the API:
 
-- On macOS, the web Settings form uses `PATCH /v1/credentials/batch` to replace
+- The web Settings form uses `PATCH /v1/credentials/batch` to replace
   one provider configuration. The fixed allowlist covers the Anthropic/Gemini
   keys, Claude/Google cloud activation flags and non-secret identifiers, and a
   legacy `OPENAI_API_KEY` deletion path. AWS, Google, and Azure credential files
   stay in their vendor stores. A batch either applies completely or restores
-  its pre-change Keychain state; a recovery failure is explicit and sanitized.
+  its pre-change native credential state; a recovery failure is explicit and sanitized.
   `GET /v1/credentials` and post-mutation responses return presence only; each
   `configured` state is `true`, `false`, or `null`. An inspection failure is
   `configured=null` with `unavailableReason=inspection_failed`, not an absent
@@ -453,7 +453,7 @@ is not a runtime secret read performed by the API:
   Settings action that invokes the same copy-once behavior used by setup
   and generation, then runs `codex login status` without generating model
   output. It never overwrites isolated auth or changes the normal Codex home.
-  Because Python environment/Keychain loading is process-start scoped, Settings
+  Because Python environment/native-credential loading is process-start scoped, Settings
   combines fresh presence with the last runtime status and requires a JobCtrl
   restart before new values become ready.
 - `GET /v1/providers/models` uses the same JSON-RPC boundary. It is read-only
@@ -470,15 +470,19 @@ is not a runtime secret read performed by the API:
   stores provider/model IDs only and remains separate from credentials.
 - Provider-consuming Python CLI, RPC, and worker startup paths call
   `config.load_env()`. After env files are loaded, it considers the same fixed
-  provider allowlist and performs a non-interactive Keychain lookup only for a
-  missing or empty value. Each lookup uses the fixed `/usr/bin/security` binary with a
-  two-second timeout and no stdin. A successful value is copied only into that
-  process's environment; a non-empty environment value always wins.
-- Keychain resolution is cached for the life of the Python process. There is no
-  hot reload, so a long-lived worker or RPC subprocess must restart after a
-  Settings edit. Non-macOS processes do not probe Keychain and use env files or
-  their inherited environment today; native Windows and Linux stores are
-  planned, not shipped.
+  secret allowlist and performs a bounded native-store lookup only for a missing
+  or empty value. The API writer and Python reader share the same native target
+  mapping. A successful value is copied only into that process's environment;
+  a non-empty inherited environment value always wins.
+- Native credential resolution is cached for the life of the Python process.
+  There is no hot reload, so a long-lived worker or RPC subprocess must restart
+  after a Settings edit. macOS uses Keychain, Windows uses Credential Manager,
+  and Linux uses Secret Service. Store failures remain sanitized diagnostics,
+  not proof that an entry is absent. No adapter persists a plaintext fallback.
+- Explicit legacy `.env` migration is separate from runtime startup and Settings
+  reads. It moves only allowlisted secrets after verified native readback;
+  inherited environment values and vendor-managed stores are outside its scope.
+  See [Configuration](../user/configuration.md) for the operator procedure.
 
 ### Configuration Resolution And Activation
 
@@ -487,7 +491,7 @@ global configuration object. SQLite owns every durable value composed on the
 Discovery page, including target search, runtime, scheduling, and Apply gates.
 `config.json` owns non-secret values under Settings, including cross-process
 controls, provider configuration, model IDs, AI execution policy, browser
-adoption metadata, and apply limits. Keychain owns actual secrets, while the
+adoption metadata, and apply limits. The native OS credential store owns actual secrets, while the
 copied browser profile, extension token, and selected installation ID remain
 protected separate artifacts.
 The copied-profile artifact is not part of integrated Discovery, including its
@@ -502,7 +506,7 @@ API responses expose source and activation timing so the frontend can
 distinguish live, next-poll/run/workflow, and restart-required changes. The health heartbeat is
 the source of truth for active worker activity slots; `config.json` holds the
 desired value until restart. Browser capability mutations and extension-token
-rotation are live, while Python Keychain consumers load secrets at process start.
+rotation are live, while Python native-store consumers load secrets at process start.
 
 ## Python Automation Engine
 

@@ -5178,7 +5178,9 @@ export interface DiscoverySettingsResponse {
 export interface CredentialsResponse {
   ok: true;
   store: {
-    kind: "config_and_macos_keychain";
+    kind: "config_and_native_credential_store";
+    nativeStore: "macos_keychain" | "windows_credential_manager" | "linux_secret_service" | null;
+    maxSecretBytes: number | null;
     available: boolean;
     unavailableReason: "inspection_failed" | "unsupported_platform" | null;
     requiresWorkerRestart: true;
@@ -5186,10 +5188,10 @@ export interface CredentialsResponse {
   credentials: Array<{
     key: CredentialKey;
     label: string;
-    /** Keychain inspection is reported separately from the effective owner. */
+    /** Native-store inspection is reported separately from the effective owner. */
     configured: boolean | null;
-    storage: "keychain" | "config";
-    effectiveSource: "environment" | "keychain" | "config" | "absent" | "inspection_unknown";
+    storage: "native_store" | "config";
+    effectiveSource: "environment" | "native_store" | "config" | "absent" | "inspection_unknown";
     editable: boolean;
   }>;
 }
@@ -5199,6 +5201,14 @@ export interface CredentialManagedByEnvironmentResponse {
   error: "credential_managed_by_environment";
   key: CredentialKey;
   source: "environment";
+  message: string;
+}
+
+export interface CredentialValueUnsupportedResponse {
+  ok: false;
+  error: "credential_value_unsupported";
+  key: SecretCredentialKey;
+  maxBytes: number;
   message: string;
 }
 

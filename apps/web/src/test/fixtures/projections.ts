@@ -2073,7 +2073,9 @@ export function makeWorkflowRunsPage(
 export const sampleCredentialsResponse: CredentialsResponse = {
   ok: true,
   store: {
-    kind: "config_and_macos_keychain",
+    kind: "config_and_native_credential_store",
+    nativeStore: "macos_keychain" as const,
+    maxSecretBytes: 128,
     available: true,
     unavailableReason: null,
     requiresWorkerRestart: true,
@@ -2082,8 +2084,8 @@ export const sampleCredentialsResponse: CredentialsResponse = {
     key,
     label: key,
     configured: key === "ANTHROPIC_API_KEY",
-    storage: "keychain" as const,
-    effectiveSource: key === "ANTHROPIC_API_KEY" ? "keychain" as const : "absent" as const,
+    storage: "native_store" as const,
+    effectiveSource: key === "ANTHROPIC_API_KEY" ? "native_store" as const : "absent" as const,
     editable: true,
   })),
 };

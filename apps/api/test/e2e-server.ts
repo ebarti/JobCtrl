@@ -50,7 +50,9 @@ const credentialStore: CredentialStore = {
   list: async () => ({
     ok: true,
     store: {
-      kind: "config_and_macos_keychain",
+      kind: "config_and_native_credential_store",
+      nativeStore: "macos_keychain" as const,
+      maxSecretBytes: 128,
       available: false,
       unavailableReason: "unsupported_platform",
       requiresWorkerRestart: true,

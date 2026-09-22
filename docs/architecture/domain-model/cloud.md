@@ -32,7 +32,7 @@ deployment model that ships to production.
 | **LLM calls** | Direct API calls (Gemini, OpenAI) | Managed LLM gateway | Internal **LLM Gateway Service** (FastAPI). Fronts Anthropic Claude API, Google Gemini, OpenAI. Per-tenant token metering, rate limiting, cost attribution. Gateway publishes `LlmUsageRecorded` events to Billing context. |
 | **Worker execution** | Local Temporal (`temporal server start-dev`) + a single local worker | Same Temporal programming model, scaled out | **Temporal already runs locally**: each pipeline run is a workflow, each stage an activity, with retry/timeout/visibility/finalize. The cloud change is the *deployment*, not the engine — a hosted Temporal cluster (self-hosted on Kubernetes or Temporal Cloud) with a worker fleet auto-scaled via **KEDA**. |
 | **Identity & auth** | Single user, no auth | Multi-tenant JWT/OAuth | **Auth0** (or AWS Cognito) for authentication. JWT tokens with `tenant_id` and `user_id` claims. API gateway validates JWT and injects `TenantContext` into every request. |
-| **Secrets** | macOS Keychain / `.env` | Encrypted vault | **AWS Secrets Manager**. Credentials for LLM APIs, job board accounts, and ATS login stored per-tenant. `SecretPort` adapter fetches at runtime; secrets never persisted in application state. |
+| **Secrets** | Native OS credential stores / inherited environment | Encrypted vault | **AWS Secrets Manager**. Credentials for LLM APIs, job board accounts, and ATS login stored per-tenant. `SecretPort` adapter fetches at runtime; secrets never persisted in application state. |
 | **API binding** | Loopback (127.0.0.1) | Public endpoint with TLS + auth | **AWS ALB** → **Kubernetes Ingress** → Fastify API pods. TLS termination at ALB. Rate limiting via **AWS WAF**. |
 | **Audit log** | None (local trust model) | Append-only audit trail | **AWS CloudWatch Logs** structured JSON + dedicated `audit_events` Postgres table. Every write operation (command) is logged with `tenantId`, `userId`, `action`, `resourceId`, `timestamp`, `ipAddress`. Immutable; no DELETE access. |
 | **Billing** | None | Usage-based billing | **Stripe** for subscription and usage-based billing. Billing context tracks: LLM token usage, apply run count, browser session minutes, storage bytes. Entitlement checks gate pipeline execution (e.g., max apply runs per month). |
@@ -127,7 +127,7 @@ SecretPort.get(tenantId, secretName: "openai_api_key") -> SecretValue
 SecretPort.get(tenantId, secretName: "greenhouse_login") -> SecretValue
 ```
 
-Local adapter reads from `.env` / macOS Keychain. Cloud adapter reads from
+Local adapters read native OS credential stores with explicit environment precedence. Cloud adapter reads from
 AWS Secrets Manager with tenant-scoped paths
 (`/jobctrl/{tenantId}/{secretName}`).
 
@@ -187,7 +187,7 @@ cloud" (circular), but measurable conditions.
 | Local Chrome on CDP ports | Browserbase managed sessions | **Any** cloud deployment | Chrome requires elevated container privileges or `--no-sandbox` (security risk). Browserbase eliminates this entirely. This is a day-1 cloud blocker, not a gradual migration. |
 | SQLite Candidate Profile tables | Postgres `profiles` + child profile tables | Multi-tenant deployment **OR** concurrent profile editors | Local SQLite has a single-writer limit; hosted profile editing needs tenant-scoped concurrency control. |
 | `LocalFilesystemAdapter` (tailored resumes, PDFs) | S3 with tenant-prefixed keys | Multi-node deployment (no shared filesystem) **OR** artifact size > 1 GB per tenant | Local filesystem doesn't span nodes. |
-| macOS Keychain / `.env` | AWS Secrets Manager | Non-macOS deployment **OR** multi-tenant **OR** credential rotation requirement | Keychain is macOS-only. `.env` is unencrypted. |
+| Native OS credential stores / inherited environment | AWS Secrets Manager | Multi-tenant **OR** centralized credential rotation requirement | Local native stores are user-session scoped; inherited environment is ephemeral. |
 | `TenantId = "local"` (constant) | `TenantId` from JWT claims | Multi-tenant deployment | Domain types already carry `TenantId`. Only the source of the value changes (constant → JWT). Mechanical change. |
 | No auth | Auth0 / Cognito JWT | Any public-facing deployment | Local loopback assumption breaks when API is remotely accessible. |
 | No billing / entitlements | Stripe + `EntitlementPort` | First paying customer | Until then, all entitlements return `Allowed`. The `EntitlementPort` exists as a no-op adapter locally. |

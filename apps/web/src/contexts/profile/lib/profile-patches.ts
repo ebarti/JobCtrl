@@ -84,7 +84,7 @@ export function patchCredentialConfigured(
         ? {
             ...entry,
             configured,
-            effectiveSource: configured ? "keychain" as const : "absent" as const,
+            effectiveSource: configured ? "native_store" as const : "absent" as const,
           }
         : entry,
     ),

@@ -48,7 +48,7 @@ ambient provider state. There is deliberately no package-manager alias for the
 live run: Corepack and pnpm would start before the launcher could scrub their
 environment. Invoke the direct Node command above from the repository root.
 The worker's capability-validated smoke bootstrap skips checkout and owned
-`.env` loading, persisted provider connection translation, and macOS Keychain,
+`.env` loading, persisted provider connection translation, and native credential stores,
 then asserts the credential-free environment before the loopback backend can be
 selected. This guards the provider route even when a library ignores proxy
 variables; the harness does not claim to be a general network sandbox. No

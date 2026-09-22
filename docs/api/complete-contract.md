@@ -51,7 +51,7 @@ need:
 | [Pipeline and preparation actions](#pipeline-and-preparation-actions) | Global and per-job stage runs, rescore / re-tailor, retry, and per-job actions. |
 | [Discovery target search](#discovery-target-search) | How Discover honors the profile Target search and location / work-model filters. |
 | [Worker runtime and health](#worker-runtime-and-health) | `GET /v1/health`, the worker-readiness gate, and JSON-RPC transport hardening. |
-| [Settings and credentials](#settings-and-credentials) | `/v1/settings`, `/v1/providers/models`, extension pairing token routes, and Keychain-backed `/v1/credentials`. |
+| [Settings and credentials](#settings-and-credentials) | `/v1/settings`, `/v1/providers/models`, extension pairing token routes, and native-store-backed `/v1/credentials`. |
 | [Server-Sent Events](#server-sent-events-—-get-v1-events-stream) | The `GET /v1/events/stream` realtime contract. |
 
 ## Profile and preferences
@@ -1552,40 +1552,47 @@ run link to its exact activity stream.
 - `GET /v1/credentials` lists the fixed guided Claude/Google/CapSolver credential and
   cloud-mode keys plus the legacy OpenAI-key removal entry, with a label,
   storage kind,
-  an `effectiveSource` (`environment`, `keychain`, `absent`, or
+  an `effectiveSource` (`environment`, `native_store`, `config`, `absent`, or
   `inspection_unknown`), editability, and a `configured` presence state (`true`,
   `false`, or `null`) only — values are never returned. Environment-owned
   entries are read-only. `false` means confirmed absent; `null` means presence is
   unknown and must not be interpreted as missing. Its
-  top-level `store` capability reports `kind: "macos_keychain"`, whether that
-  backend is available on the API host, `unavailableReason` as
-  `unsupported_platform`, `inspection_failed`, or `null`, and
-  `requiresWorkerRestart: true`. Non-macOS reads return the unsupported
-  capability and unknown entries without invoking the macOS `security` command
-  or failing the endpoint. A macOS inspection failure returns
-  `inspection_failed` and unknown presence rather than misreporting an entry as
-  absent.
+  top-level `store` capability reports `kind: "config_and_native_credential_store"`,
+  `nativeStore` (`macos_keychain`, `windows_credential_manager`,
+  `linux_secret_service`, or `null`), whether that backend is available on the API
+  host, `unavailableReason` (`unsupported_platform`, `inspection_failed`, or
+  `null`), the platform's `maxSecretBytes` (or `null` when unsupported), and
+  `requiresWorkerRestart: true`. Secret entries use
+  `storage: "native_store"`; non-secret provider metadata uses `storage: "config"`.
+  Unsupported hosts return unknown secret presence without failing the endpoint.
+  A failed native inspection returns `inspection_failed` and unknown presence
+  rather than misreporting an entry as absent. Metadata can establish that a
+  locked item exists without proving its secret is currently readable.
   `PATCH /v1/credentials` receives one submitted value and passes it to the
-  macOS Keychain (service `JobCtrl`); its response returns the same
+  host's native store; its response returns the same
   presence-only shape. `PATCH /v1/credentials/batch` validates the complete
   allowlisted operation plan, atomically applies it, and restores the exact
   pre-change state on failure without exposing values. The schemas reject
   unknown or duplicate keys with `400`.
+  An input exceeding the host helper's secure byte limit returns sanitized
+  `400 credential_value_unsupported` before any mutation; the response includes
+  `maxBytes` and never the submitted value. The limits are 128 UTF-8 bytes on
+  macOS, 2,560 UTF-16 bytes on Windows, and 8,191 UTF-8 bytes on Linux.
   `DELETE /v1/credentials/:key` removes an allowlisted entry and returns
   `400 invalid_credential_key` for an unknown path key. Mutations on an
   unsupported host return sanitized `409 credential_store_unavailable`;
-  operational Keychain failures return sanitized
+  operational native-store failures return sanitized
   `503 credential_store_unavailable` with a sanitized operational or rollback
   failure reason. Neither
-  path returns raw Keychain errors. `GET` and `DELETE` never return stored
+  path returns raw native-store errors. `GET` and `DELETE` never return stored
   values; private batch snapshots are used only for compensating rollback, not
   provider runtime. If
-  inspection or a mutation fails, unlock Keychain if it is locked and retry
+  inspection or a mutation fails, unlock or restore access to the store and retry
   rather than replacing an unknown status with a new credential blindly.
-  Separately, each Python CLI/worker process performs a bounded Keychain lookup
+  Separately, each Python CLI/worker process performs a bounded native-store lookup
   once at startup for allowlisted environment values that remain missing or
   empty after env-file loading. A non-empty environment value wins. A running
-  Python worker does not hot-reload API edits, so saving or removing a Keychain
+  Python worker does not hot-reload API edits, so saving or removing a native
   entry requires the relevant Python worker or provider process to restart
   before Claude, Google, or CapSolver work observes the change. Codex verification,
   preferred-model edits, browser capability changes, and extension pairing do

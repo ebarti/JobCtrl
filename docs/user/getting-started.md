@@ -129,7 +129,7 @@ One ready provider is sufficient for scoring, materials, and employer
 analysis. Connecting a second provider can improve ensemble diversity, but it
 is a recommendation, not a requirement.
 
-Claude and Google values saved to Keychain take effect when the
+Claude and Google values saved to the native credential store take effect when the
 relevant Python process next starts. Restart JobCtrl after those edits:
 
 ```bash
@@ -150,7 +150,7 @@ budgets. Apply-specific browser, CAPTCHA, and Gmail setup is in
 
 ### Verify provider readiness
 
-After any required Keychain restart, verify the effective configuration:
+After any required credential-store restart, verify the effective configuration:
 
 ```bash
 jobctrl setup
