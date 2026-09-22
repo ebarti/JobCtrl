@@ -6,55 +6,14 @@
 > verification is owned by `docs/local-reliability-qa.md`; executable release
 > controls remain in `.github/workflows/`.
 
-> **Status (2026-07-05 R1 closeout):** archived after #274 regenerated the
-> inventory against current `main`; that first closeout was **not** a
-> release-ready outcome. The 2026-07-06 W1 refresh in
-> `2026-07-05-oss-release-drive-to-done-plan.md` supersedes that W1 snapshot:
-> W1.1-W1.7 are complete and W1.8 is withdrawn. Non-W1 release/owner
-> checkpoints remain open, so do not treat the move to `implemented/` as proof
-> that the OSS release gate passed.
->
-> **W0.6 owner pass (2026-07-07):** owner review closed the W0.6 disposition
-> gate as passed. Private concern details remain off-repo; no W0.6 accepted-risk
-> entry remains a release blocker.
->
-> **Owner release decisions (2026-07-10):** the first public release is
-> **v2.0.0**. W2.4 is explicitly deferred for that release: v2.0.0 keeps P5's
-> application-wide estimated daily USD ceiling and preflight, while per-lane
-> token attribution, per-lane ceilings, apply-lane accounting, and lane-level
-> doctor/health visibility remain an acknowledged backlog item. This is a
-> written deferral, not a claim that W2.4 was implemented.
->
-> **Owner hosted-CI sequencing decision (2026-07-10):** GitHub currently
-> refuses to start private-repository jobs because of the account billing
-> state. After the exact release tree passes the complete local gate, the owner
-> will flip the repository public and immediately rerun Release Privacy, Docs,
-> Python, Homebrew sync, and TypeScript workflows. Docs deployment, release
-> tagging, and package publication stay blocked until those runs are green; a
-> failed privacy run requires an immediate return to private while it is
-> investigated. No failed zero-step run is treated as passing evidence.
->
-> **Owner decision (2026-07-06):** the W1.8 dry-run-by-default requirement is
-> withdrawn. `jobhunter apply` and workflow/RPC apply starts keep the existing
-> non-dry-run default unless the caller passes `--dry-run` / `dryRun: true`.
-> W1.8 is no longer a release requirement, gate, or acceptance criterion.
->
-> **Audience:** an external implementing agent (Codex). This document is
-> self-contained and prescriptive: follow it literally. Where it says STOP,
-> stop and report rather than improvising.
-> **Companions:** `docs/plans/implemented/2026-07-03-temporal-native-rearchitecture.md`
-> (PR #230, the architectural plan) and
-> `docs/plans/implemented/2026-07-03-temporal-rearch-implementation-spec.md` (PR #232,
-> the P1b–P5 implementation spec). Workstream W1 below **builds on top of
-> temporal phase P2** and must not re-implement anything P2 delivers.
-> **Goal:** make this repository safe to publish as open source while
-> preserving every existing capability: live application submission,
-> CapSolver-based CAPTCHA solving, email applications, LinkedIn/Indeed
-> discovery boards, AGPL-3.0-only licensing, and the existing git history.
-> Compliance posture is disclosure and hard operator gates, not capability
-> removal.
+This specification records the July 2026 remediation workstreams. #274 captured
+an initial inventory; the later W1 remediation train completed W1.1–W1.7.
+W1.8's dry-run-by-default proposal was withdrawn, and W0.6 owner review closed
+on 2026-07-07. The historical v2.0.0 scope deferred W2.4's per-lane accounting
+while retaining the application-wide estimated spend ceiling.
 
----
+The technical plan below is historical context. Current behavior and safety
+contracts are defined by the owning product and architecture documentation.
 
 ## 0. How to use this document
 

@@ -6,57 +6,10 @@
 > verification is owned by `docs/local-reliability-qa.md`; executable release
 > controls remain in `.github/workflows/`.
 
-> **Closeout status (2026-07-05 R1):** #274 executed this plan's inventory
-> method against current `main` and found **NO-GO**, not release-ready. That
-> first inventory is historical; §10 restamps the W1 apply-safety residual after
-> the W1 remediation train merged.
->
-> **Owner decision (2026-07-06):** the spec's former W1.8 dry-run-by-default
-> requirement is withdrawn. Non-dry-run remains the default unless callers pass
-> `--dry-run` / `dryRun: true`; W1.8 must not be counted as a release gate.
->
-> **Anchors verified against main @ `a488e4e9853dde292badc74a88c7de24160edc52`.**
-> **Type:** thin drive-to-done overlay. It does not re-specify anything.
-> **Source of truth for every work item:** `docs/plans/implemented/2026-07-03-oss-release-remediation-spec.md`
-> (the "spec"). This plan tracks that spec to completion against `main`, proves
-> each item's Definition of Done actually holds, and assembles the publication
-> go/no-go gate. Where this plan and the spec disagree on WHAT an item must do,
-> the spec wins; this plan only governs HOW we confirm the spec is done.
->
-> **Status update (2026-07-05, after authoring):** the W1–W2 implementation
-> was subsequently delivered directly from the spec and is merging to `main`.
-> Any per-item status recorded in this document (e.g. "not-started") is the
-> authoring-time baseline at `a488e4e9`, now historical. The close-out run
-> MUST regenerate the full inventory against current `main` using §1's
-> method — do not trust any status written here.
->
-> **Post-train closeout status (2026-07-06 R1):** §9 regenerates the inventory
-> against `main` @ `fec1940f1ae5459d9d08455d9605931179200fed`, after `gh`
-> verified the R10, R7a, and I0 prerequisite trains merged. Result: **NO-GO**.
-> W1 apply hardening is not complete: W1.1 is merged, but W1.2-W1.7 remain
-> not-done on the checked tree. W1.8 was later withdrawn by owner decision and
-> is not a release gate. W2.1 is open, W2.2 and W2.4 are partial, W0.6 is
-> repo-side only until owner disposition closure, and D-6/R11 guarded submission
-> must wait.
->
-> **Latest refresh (2026-07-06, after W1 remediation):** §10 restamps the W1
-> residual against `main` @ `660c4f22e64f0be13d7901584b399ba9fd364451`.
-> W1.1-W1.7 are complete and W1.8 is withdrawn. The W1 apply-safety
-> precondition is now satisfied, but the overall R1 release gate remains
-> **NO-GO** until the non-W1 release/owner checkpoints in §10.4 close.
->
-> **W0.6 owner pass (2026-07-07):** owner review closed W0.6 as passed. The
-> private disposition table remains off-repo; no private concern text is
-> committed here, and no W0.6 accepted-risk entry remains a release blocker.
->
-> **Owner release decisions (2026-07-10):** prepare v2.0.0 as the first public
-> release and explicitly defer W2.4. The existing global estimated daily USD
-> ceiling remains shipped; per-lane attribution and token ceilings remain
-> backlog. Hosted Actions are rerun immediately after the owner makes the
-> repository public; docs deployment, tagging, and publishing remain blocked
-> until those real runs are green.
-
----
+This record preserves the July 2026 inventory and verification of the OSS
+remediation work. The initial #274 inventory was followed by the W1 remediation
+train and W0.6 owner review. Its dated source snapshots explain the work's
+history; their former first-publication decisions are no longer pending actions.
 
 ## 0. Purpose, scope, and non-goals
 

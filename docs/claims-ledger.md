@@ -193,8 +193,6 @@ source and a resolving pointer.
 | CL-084 | JobCtrl's source is distributed under the GNU Affero General Public License v3.0 only (`AGPL-3.0-only`). | README (License); Comparison (Open-source license) | Current | repo owner | [`LICENSE`](../LICENSE); `package.json`; `workers/automation/pyproject.toml` | 2026-07-09 |
 | CL-085 | Windows Credential Manager, Linux Secret Service and macOS Keychain pass native host checks for API/Python readback, migration, presence-only responses and cleanup using synthetic credentials. Windows migration also preserves protected access permissions and exact source bytes during rollback. The native host matrix remains a required regression gate; mock-only evidence is not a native-platform pass. | Native credential stores | Beta | repo owner | [#888](https://github.com/ebarti/JobCtrl/issues/888); [native credential QA gate](developer/qa/regression-catalog.md#native-credential-storage-and-migration) | 2026-09-22 ([native host matrix](https://github.com/ebarti/JobCtrl/actions/runs/35739355706), `0e61fb0e`) |
 
-
-
 ## Maintenance
 
 Update the affected claims and verification pointers when public behavior
