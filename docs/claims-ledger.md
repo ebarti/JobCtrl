@@ -21,7 +21,14 @@ in one hop.
 
 ## Freeze status
 
-> **OWNER-SIGNED CLAIM SET — FINAL FREEZE SHA PENDING.** The
+JobCtrl is publicly released. Publication is recorded in the
+[Publish Checklist](publish-checklist.md#published-byte-reconciliation-2026-09-22)
+and [GitHub Releases](https://github.com/ebarti/JobCtrl/releases).
+The July freeze discussion below is historical. Its pending GATE G1 language
+does not describe current publication status; the publish checklist replaced
+the owner-signed ledger freeze with release and deployment evidence.
+
+> **Historical July 2026 freeze record — superseded as a launch gate.** The
 > previous provisional stamp (`48714f95`, 2026-07-06) became stale when later
 > changes added controlled Gmail application sending, the JobCtrl rename and UI
 > refresh, public bootstrap and Homebrew distribution, and additional security
@@ -36,11 +43,10 @@ in one hop.
 > narrowed CL-052's wording to match the already approved `Current` scope and
 > canonical health behavior; it introduced no new capability or status choice.
 >
-> GATE G1 remains unsatisfied only because the signed claim set is not yet
-> anchored to a post-merge commit. After the current worktree changes land,
-> replace `15356b39` with that exact dated `origin/main` SHA and rerun the
-> pointer, build, runtime, and release checks. A worktree state or an unrun
-> workflow is not a freeze anchor.
+> At that time, GATE G1 awaited a post-merge anchor and another pointer, build,
+> runtime, and release check. That historical pending action is not an
+> instruction to repeat first-launch approval or evidence that JobCtrl remains
+> unpublished. A worktree state or an unrun workflow is not a release anchor.
 >
 > Unless a row says otherwise, `Last verified` means pointer resolution and
 > claim-to-source reconciliation on 2026-07-09. Owner sign-off records an
@@ -267,8 +273,9 @@ release**. The review process:
    measurement claims.
 3. Reconcile against `ROADMAP.md` so nothing labelled `Current` is actually a
    "Now / Next / Later" roadmap item.
-4. Re-record the freeze `main` sha and date on the [Freeze status](#freeze-status)
-   line.
+4. Record the reviewed commit and verification date with the affected claims.
+   Use the publish checklist for release evidence; preserve the historical
+   [Freeze status](#freeze-status) record.
 
 Any new public claim must land a row here (Status + owner + resolving pointer)
 in the same change that introduces it.
@@ -283,6 +290,10 @@ owner approved each group as `Current`. No decision below was inferred from
 silence.
 
 ### Governance decisions
+
+These are the recorded July 2026 decisions. GOV-04's pending freeze action was
+subsequently superseded by the publish checklist's release-evidence contract;
+it is not a current unpublished-product status.
 
 | Decision | Recommendation | Consequence | Verdict |
 | --- | --- | --- | --- |
