@@ -18,6 +18,15 @@ from jobctrl.infrastructure.llm.llm_client import (
     SdkControlNormalizationWarning,
 )
 from jobctrl.infrastructure.llm.provider_errors import ProviderCallError
+from jobctrl.llm_lanes import bind_llm_lane
+
+
+@pytest.fixture(autouse=True)
+def _llm_accounting_context(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr("jobctrl.llm.enforce_spend_budget", lambda _lane=None: None)
+    monkeypatch.setattr("jobctrl.llm.record_llm_spend", lambda **_kwargs: None)
+    with bind_llm_lane("tailoring"):
+        yield
 
 
 class ResultMessage:
@@ -67,6 +76,14 @@ class _FailedCodexTurnHandle:
         # retain TurnError fields that AsyncThread.run() otherwise discards.
         yield SimpleNamespace(
             payload=SimpleNamespace(
+                turn_id=self.id,
+                token_usage=SimpleNamespace(
+                    total=SimpleNamespace(input_tokens=11, output_tokens=7)
+                ),
+            )
+        )
+        yield SimpleNamespace(
+            payload=SimpleNamespace(
                 turn=SimpleNamespace(
                     id=self.id,
                     status=SimpleNamespace(value="failed"),
@@ -106,6 +123,52 @@ class _Codex:
 class _FailedCodex(_Codex):
     async def thread_start(self, **kwargs: Any) -> _FailedCodexThread:
         return _FailedCodexThread()
+
+
+class _UsageThenIteratorFailureStream:
+    def __init__(self, turn_id: str) -> None:
+        self._turn_id = turn_id
+        self._usage = iter(((2, 1), (13, 5)))
+
+    def __aiter__(self) -> _UsageThenIteratorFailureStream:
+        return self
+
+    async def __anext__(self) -> Any:
+        try:
+            input_tokens, output_tokens = next(self._usage)
+        except StopIteration as exc:
+            raise RuntimeError("synthetic stream failure") from exc
+        return SimpleNamespace(
+            payload=SimpleNamespace(
+                turn_id=self._turn_id,
+                token_usage=SimpleNamespace(
+                    total=SimpleNamespace(
+                        input_tokens=input_tokens,
+                        output_tokens=output_tokens,
+                    )
+                ),
+            )
+        )
+
+    async def aclose(self) -> None:
+        return None
+
+
+class _UsageThenIteratorFailureHandle:
+    id = "turn-stream-failure"
+
+    def stream(self) -> _UsageThenIteratorFailureStream:
+        return _UsageThenIteratorFailureStream(self.id)
+
+
+class _UsageThenIteratorFailureThread:
+    async def turn(self, prompt: str, **kwargs: Any) -> _UsageThenIteratorFailureHandle:
+        return _UsageThenIteratorFailureHandle()
+
+
+class _UsageThenIteratorFailureCodex(_Codex):
+    async def thread_start(self, **kwargs: Any) -> _UsageThenIteratorFailureThread:
+        return _UsageThenIteratorFailureThread()
 
 
 class _GoogleResponse:
@@ -297,7 +360,11 @@ def test_codex_sdk_maps_thinking_to_effort_and_normalizes_unsupported_controls()
     assert "max_tokens" not in calls["run"]
 
 
-def test_codex_sdk_retains_safe_builder_error_fields_from_failed_turn() -> None:
+def test_codex_sdk_retains_safe_builder_error_fields_and_usage_from_failed_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spend: list[dict[str, Any]] = []
+    monkeypatch.setattr(legacy_llm, "record_llm_spend", lambda **kwargs: spend.append(kwargs))
     backend = CodexSdkBackend(
         model="codex-test-model",
         async_codex_factory=lambda: _FailedCodex(),
@@ -325,6 +392,39 @@ def test_codex_sdk_retains_safe_builder_error_fields_from_failed_turn() -> None:
         "codex_error_code": "server_overloaded",
     }.items()
     assert "schema validation failed" not in repr(envelope)
+    assert spend == [
+        {
+            "input_tokens": 11,
+            "output_tokens": 7,
+            "model": "codex-test-model",
+            "lane": "tailoring",
+        }
+    ]
+
+
+def test_codex_sdk_records_usage_before_iterator_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spend: list[dict[str, Any]] = []
+    monkeypatch.setattr(legacy_llm, "record_llm_spend", lambda **kwargs: spend.append(kwargs))
+    backend = CodexSdkBackend(
+        model="codex-test-model",
+        async_codex_factory=lambda: _UsageThenIteratorFailureCodex(),
+        approval_mode_factory=lambda: "deny",
+    )
+
+    with pytest.raises(ProviderCallError) as raised:
+        backend.chat([{"role": "user", "content": "synthetic request"}])
+
+    assert raised.value.envelope.category == "provider_exception"
+    assert spend == [
+        {
+            "input_tokens": 13,
+            "output_tokens": 5,
+            "model": "codex-test-model",
+            "lane": "tailoring",
+        }
+    ]
 
 
 def test_google_sdk_maps_thinking_level_and_normalizes_unsupported_controls(

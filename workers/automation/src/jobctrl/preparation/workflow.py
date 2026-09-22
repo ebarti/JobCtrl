@@ -335,12 +335,20 @@ async def _execute_step(step: str, payload: JobPreparationInput) -> Any:
 
 
 async def _check_spend(payload: JobPreparationInput) -> None:
-    await workflow.execute_activity(
-        check_spend_budget,
-        SpendBudgetInput(tenant_id=payload.tenant_id),
-        start_to_close_timeout=timedelta(seconds=30),
-        retry_policy=RetryPolicy(maximum_attempts=1),
+    lanes = tuple(
+        dict.fromkeys(
+            "scoring" if step == "score" else "tailoring"
+            for step in _ordered_steps(payload.steps)
+            if step in {"score", "tailor", "cover"}
+        )
     )
+    for lane in lanes:
+        await workflow.execute_activity(
+            check_spend_budget,
+            SpendBudgetInput(tenant_id=payload.tenant_id, lane=lane),
+            start_to_close_timeout=timedelta(seconds=30),
+            retry_policy=RetryPolicy(maximum_attempts=1),
+        )
 
 
 def _preparation_spends(payload: JobPreparationInput) -> bool:

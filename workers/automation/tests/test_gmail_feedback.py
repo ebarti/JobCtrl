@@ -34,7 +34,7 @@ from jobctrl.infrastructure.projections.projection_builder import (
 )
 
 
-from jobctrl.infrastructure.migrations.schema_v10 import create_exact_v10_schema
+from jobctrl.infrastructure.migrations.schema_v11 import create_exact_v11_schema
 
 RECIPIENT = "candidate@example.com"
 JOB_URL = "https://jobs.example.com/platform-engineer"
@@ -661,7 +661,7 @@ def test_outcome_anchors_join_v10_job_id(tmp_path: Path) -> None:
     db_path = tmp_path / "jobctrl.db"
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
-    create_exact_v10_schema(conn)
+    create_exact_v11_schema(conn)
     conn.execute(
         """
         INSERT INTO jobs (tenant_id, job_id, url, title, company)
@@ -742,7 +742,7 @@ def test_apply_run_anchors_join_v10_tenant_and_job_id(tmp_path: Path) -> None:
     db_path = tmp_path / "jobctrl.db"
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
-    create_exact_v10_schema(conn)
+    create_exact_v11_schema(conn)
     conn.executemany(
         """
         INSERT INTO jobs (tenant_id, job_id, url, title, company)
@@ -815,7 +815,7 @@ def test_v10_scan_writes_canonical_job_id_and_sse_event(tmp_path: Path) -> None:
     """The production scanner persists canonical records and an SSE-ready event."""
     db_path = tmp_path / "jobctrl.db"
     conn = sqlite3.connect(db_path)
-    create_exact_v10_schema(conn)
+    create_exact_v11_schema(conn)
     conn.execute(
         """
         INSERT INTO jobs (
@@ -1019,7 +1019,7 @@ def seed_feedback_db(tmp_path: Path) -> Path:
     db_path = tmp_path / "jobctrl.db"
     conn = sqlite3.connect(db_path)
     conn.execute("PRAGMA journal_mode=WAL")
-    create_exact_v10_schema(conn)
+    create_exact_v11_schema(conn)
     conn.execute(
         "INSERT INTO jobs(tenant_id,job_id,url,title,company,site,applied_at,apply_status,discovered_at) "
         "VALUES('local',?,?, 'Principal Platform Engineer','ExampleCo','ExampleCo',?,'applied','2026-05-31T10:00:00+00:00')",
@@ -1081,7 +1081,7 @@ def epoch_ms(value: str) -> int:
 
 
 def test_exact_scan_preserves_other_tenant_and_schema_and_writes_canonical_references(tmp_path: Path) -> None:
-    from jobctrl.infrastructure.migrations.schema_manifest import EXACT_V10_MANIFEST, assert_exact_manifest, schema_dump
+    from jobctrl.infrastructure.migrations.schema_manifest import EXACT_V11_MANIFEST, assert_exact_manifest, schema_dump
 
     db_path = seed_feedback_db(tmp_path)
     with sqlite3.connect(db_path) as conn:
@@ -1096,7 +1096,7 @@ def test_exact_scan_preserves_other_tenant_and_schema_and_writes_canonical_refer
     assert summary['scannedAnchorCount'] == 1 and summary['linkedEvidenceCount'] == 1
     assert summary['evidence'][0]['jobId'] == JOB_ID
     with sqlite3.connect(db_path) as conn:
-        assert_exact_manifest(conn, EXACT_V10_MANIFEST)
+        assert_exact_manifest(conn, EXACT_V11_MANIFEST)
         assert schema_dump(conn) == schema_before
         assert conn.execute("SELECT * FROM jobs WHERE tenant_id='other'").fetchall() == other_before
         for table in ('application_email_evidence', 'application_outcome_suggestions'):

@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import sqlite3
 
+import pytest
+
 from jobctrl import config
 from jobctrl.infrastructure.scoring.criteria_provider import (
     read_apply_approval_required,
     read_apply_concurrency,
     read_daily_budget_usd,
+    read_lane_token_limits,
     read_min_fit_score,
     read_preferred_model,
 )
@@ -44,6 +47,43 @@ def test_config_and_discovery_settings_are_read_by_their_own_worker_readers(
     assert read_preferred_model("claude") == "opus"
     assert read_preferred_model("codex") is None
     assert read_preferred_model("local") is None
+
+
+def test_lane_token_limits_are_strict_and_default_to_unlimited(monkeypatch, tmp_path) -> None:
+    settings_path = tmp_path / "config.json"
+    settings_path.write_text(
+        '{"lane_token_limits":{"scoring":1200,"tailoring":0}}',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("JOBCTRL_CONFIG_PATH", str(settings_path))
+
+    limits = read_lane_token_limits()
+    assert limits["scoring"] == 1200
+    assert limits["tailoring"] == 0
+    assert all(value == 0 for lane, value in limits.items() if lane != "scoring")
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        '{"lane_token_limits":{"unknown":1}}',
+        '{"lane_token_limits":{"scoring":-1}}',
+        '{"lane_token_limits":{"scoring":1.5}}',
+        '{"lane_token_limits":{"scoring":true}}',
+        '{"lane_token_limits":[]}',
+    ],
+)
+def test_lane_token_limits_reject_unknown_or_non_integral_values(
+    monkeypatch,
+    tmp_path,
+    raw: str,
+) -> None:
+    settings_path = tmp_path / "config.json"
+    settings_path.write_text(raw, encoding="utf-8")
+    monkeypatch.setenv("JOBCTRL_CONFIG_PATH", str(settings_path))
+
+    with pytest.raises(ValueError):
+        read_lane_token_limits()
 
 
 def test_config_path_environment_expands_home(monkeypatch, tmp_path) -> None:

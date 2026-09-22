@@ -17,7 +17,7 @@ import {
   matchingJobKeys,
 } from "../src/read-model.js";
 import { BUILT_IN_RESUME_TEMPLATE_THEME } from "../src/resume-templates.js";
-import { EXACT_V10_SCHEMA_MANIFEST, schemaManifest } from "../src/schema-manifest.js";
+import { EXACT_V11_SCHEMA_MANIFEST, schemaManifest } from "../src/schema-manifest.js";
 import { hideJob, restoreJob, softDeleteJob, unhideJob } from "../src/write-model.js";
 import { initializeExactV7Database } from "./v7-schema.js";
 
@@ -241,7 +241,7 @@ describe("exact-v7 read model job ids", () => {
 
   it("keeps same-UUID tenants isolated while preserving URL locators and material/template state", () => {
     const db = seededDatabase();
-    const before = schemaManifest(db, EXACT_V10_SCHEMA_MANIFEST.version);
+    const before = schemaManifest(db, EXACT_V11_SCHEMA_MANIFEST.version);
 
     const jobs = listJobs(db, activeJobQuery);
     const detail = getJobDetail(db, JOB_ID);
@@ -263,7 +263,7 @@ describe("exact-v7 read model job ids", () => {
     expect(detail?.job.resumeTemplate).toEqual(expect.any(Object));
     expect(detail?.stages.find((stage) => stage.stage === "score")).toMatchObject({ retryable: false });
     expect(dashboard.totals.jobs).toBe(1);
-    expect(schemaManifest(db, EXACT_V10_SCHEMA_MANIFEST.version)).toEqual(before);
+    expect(schemaManifest(db, EXACT_V11_SCHEMA_MANIFEST.version)).toEqual(before);
   });
 
   it("projects attempt exhaustion as a retryable failure reason", () => {

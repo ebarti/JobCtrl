@@ -8,6 +8,7 @@ Raw OpenAI keys are Codex CLI enrollment input, never a direct model route.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import hashlib
 import json
 import os
@@ -273,11 +274,16 @@ def _run_sync(awaitable: Awaitable[Any]) -> Any:
     result: list[Any] = []
     failure: list[BaseException] = []
 
-    def runner() -> None:
+    context = contextvars.copy_context()
+
+    def run_in_context() -> None:
         try:
             result.append(asyncio.run(awaitable))
         except BaseException as exc:  # noqa: BLE001 - re-raise on caller thread
             failure.append(exc)
+
+    def runner() -> None:
+        context.run(run_in_context)
 
     thread = threading.Thread(target=runner, name="jobctrl-llm-sdk", daemon=True)
     thread.start()
@@ -392,17 +398,13 @@ class ClaudeSdkBackend:
         ) as record:
             iterator = await _aiter(query_fn(prompt=prompt, options=options_factory(**kwargs)))
             sdk_messages = [message async for message in iterator]
+            input_tokens, output_tokens = _usage_from_messages(sdk_messages)
+            record("", input_tokens=input_tokens, output_tokens=output_tokens)
             value: str | dict
             if response_schema is not None:
                 value = _structured_output_from_messages(sdk_messages)
             else:
                 value = _claude_text(sdk_messages)
-            input_tokens, output_tokens = _usage_from_messages(sdk_messages)
-            record(
-                json.dumps(value, ensure_ascii=False) if isinstance(value, dict) else value,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-            )
             return value
 
     def chat(self, messages: list[dict[str, str]], **kwargs: Any) -> str:
@@ -512,6 +514,11 @@ class CodexSdkBackend:
                         model=self.model,
                         operation=operation,
                         run_kwargs=run_kwargs,
+                        record_usage=lambda input_tokens, output_tokens: record(
+                            "",
+                            input_tokens=input_tokens,
+                            output_tokens=output_tokens,
+                        ),
                     )
             except ProviderCallError:
                 raise
@@ -662,6 +669,9 @@ class GoogleSdkBackend:
                 response = await agent.chat(prompt)
                 async for _chunk in response.chunks:
                     pass
+                usage = getattr(response, "usage_metadata", None)
+                input_tokens, output_tokens = _usage_from_metadata(usage)
+                record("", input_tokens=input_tokens, output_tokens=output_tokens)
                 value: str | dict
                 if response_schema is not None:
                     value = await response.structured_output()
@@ -673,13 +683,6 @@ class GoogleSdkBackend:
                     value = await response.text()
                     if not value:
                         raise RuntimeError("Google SDK returned no final text result")
-                usage = getattr(response, "usage_metadata", None)
-            input_tokens, output_tokens = _usage_from_metadata(usage)
-            record(
-                json.dumps(value, ensure_ascii=False) if isinstance(value, dict) else value,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-            )
             return value
 
     def chat(self, messages: list[dict[str, str]], **kwargs: Any) -> str:

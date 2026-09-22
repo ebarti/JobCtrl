@@ -97,6 +97,13 @@ contains provider and model IDs only, never credentials or account metadata.
 The settings and discovery responses also include effective-source and
 activation metadata for managed controls.
 
+The same route accepts `laneTokenLimits`, an object whose only valid keys are
+`discovery`, `enrichment`, `scoring`, `tailoring`, `apply`, `contact`,
+`interview`, `profile`, and `compensation`. Values are non-negative integers;
+omitted keys and `0` mean unlimited. `GET /v1/settings` returns every known lane
+with its effective value. Unknown keys, negative values, booleans, and
+fractional values are rejected.
+
 ### `config.json` field reference {#config-json-field-reference}
 
 `~/.jobctrl/config.json` is one JSON object containing non-secret values owned
@@ -113,6 +120,7 @@ durable control composed on `/discovery` is stored in SQLite instead.
 | `pipeline_internal_concurrency` | Integer `1–16`, default `1` | Shared internal parallelism for newly started manual Pipeline actions and automatic profile-update preparation batches. |
 | `worker_activity_slots` | Integer `1–64`, default `4` | Desired Python Temporal activity capacity. A saved change becomes active after the worker restarts. |
 | `daily_budget_usd` | Non-negative number, default `25` | Daily LLM spend ceiling in USD. `0` disables the daily ceiling. |
+| `lane_token_limits` | Object keyed only by the nine LLM product lanes, each a non-negative integer; default all `0` | UTC daily observed input-plus-output token thresholds. `0` means unlimited. |
 | `analysis_legs` | Non-empty array of `codex`, `claude`, and/or `google`; default all three | Provider legs used by newly started employer-analysis work. |
 | `tailoring_generator_models` | Non-empty array of model IDs or `null`; default `null` | Ordered generator-model policy for newly started tailoring workflows. `null` uses the provider/default policy. |
 | `tailoring_judge_model` | Model ID or `null`; default `null` | Judge model for newly started tailoring workflows. `null` uses the provider/default policy. |

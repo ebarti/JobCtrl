@@ -2,6 +2,7 @@ import type {
   EffectiveJobCtrlSettings,
   EffectiveSetting,
   JobCtrlSettings,
+  LlmLane,
 } from "./contracts.js";
 import { isRecord, readConfigObject } from "./config-file.js";
 
@@ -10,6 +11,17 @@ export const DEFAULT_JOBCTRL_SETTINGS: JobCtrlSettings = {
   pipelineInternalConcurrency: 1,
   workerActivitySlots: 4,
   dailyBudgetUsd: 25,
+  laneTokenLimits: {
+    discovery: 0,
+    enrichment: 0,
+    scoring: 0,
+    tailoring: 0,
+    apply: 0,
+    contact: 0,
+    interview: 0,
+    profile: 0,
+    compensation: 0,
+  },
   analysisLegs: ["claude", "codex", "google"],
   tailoringGeneratorModels: null,
   tailoringJudgeModel: null,
@@ -36,6 +48,7 @@ export function readJobCtrlSettings(configPath: string): ResolvedJobCtrlSettings
     Number.POSITIVE_INFINITY,
     "live",
   );
+  const laneTokenLimits = persistedLaneTokenLimits(raw);
   const applyConcurrency = persistedInteger(
     raw,
     "apply_concurrency",
@@ -96,6 +109,7 @@ export function readJobCtrlSettings(configPath: string): ResolvedJobCtrlSettings
       pipelineInternalConcurrency: pipelineInternalConcurrency.value,
       workerActivitySlots: workerActivitySlots.value,
       dailyBudgetUsd: dailyBudgetUsd.value,
+      laneTokenLimits: laneTokenLimits.value,
       analysisLegs: analysisLegs.value,
       tailoringGeneratorModels: tailoringGeneratorModels.value,
       tailoringJudgeModel: tailoringJudgeModel.value,
@@ -108,6 +122,7 @@ export function readJobCtrlSettings(configPath: string): ResolvedJobCtrlSettings
     },
     effectiveSettings: {
       dailyBudgetUsd,
+      laneTokenLimits,
       applyConcurrency,
       pipelineInternalConcurrency,
       workerActivitySlots,
@@ -121,6 +136,34 @@ export function readJobCtrlSettings(configPath: string): ResolvedJobCtrlSettings
       targetCriteria,
     },
   };
+}
+
+const LLM_LANES = Object.keys(DEFAULT_JOBCTRL_SETTINGS.laneTokenLimits) as LlmLane[];
+
+function persistedLaneTokenLimits(
+  raw: Record<string, unknown>,
+): EffectiveSetting<Record<LlmLane, number>> {
+  if (!Object.hasOwn(raw, "lane_token_limits")) {
+    return defaultSetting({ ...DEFAULT_JOBCTRL_SETTINGS.laneTokenLimits }, "live");
+  }
+  const value = raw.lane_token_limits;
+  if (!isRecord(value)) {
+    throw new Error("lane_token_limits must be an object");
+  }
+  const unknown = Object.keys(value).filter((lane) => !LLM_LANES.includes(lane as LlmLane));
+  if (unknown.length > 0) {
+    throw new Error(`unknown lane_token_limits key(s): ${unknown.sort().join(", ")}`);
+  }
+  const limits = { ...DEFAULT_JOBCTRL_SETTINGS.laneTokenLimits };
+  for (const lane of LLM_LANES) {
+    const configured = value[lane];
+    if (configured === undefined) continue;
+    if (typeof configured !== "number" || !Number.isSafeInteger(configured) || configured < 0) {
+      throw new Error(`lane_token_limits.${lane} must be a nonnegative integer`);
+    }
+    limits[lane] = configured;
+  }
+  return persistedSetting(limits, "live");
 }
 
 function persistedInteger(

@@ -211,10 +211,12 @@ async def test_auto_apply_budget_exceeded_halt_does_not_restart_loop(
         conn.execute(
             """
             CREATE TABLE llm_spend (
-              day TEXT PRIMARY KEY,
+              day TEXT NOT NULL,
+              lane TEXT NOT NULL,
               input_tokens INTEGER NOT NULL DEFAULT 0,
               output_tokens INTEGER NOT NULL DEFAULT 0,
-              estimated_usd REAL NOT NULL DEFAULT 0
+              estimated_usd REAL NOT NULL DEFAULT 0,
+              PRIMARY KEY (day, lane)
             )
             """
         )
@@ -227,8 +229,8 @@ async def test_auto_apply_budget_exceeded_halt_does_not_restart_loop(
         )
         conn.execute(
             """
-            INSERT INTO llm_spend (day, estimated_usd)
-            VALUES (?, 1.25)
+            INSERT INTO llm_spend (day, lane, estimated_usd)
+            VALUES (?, 'apply', 1.25)
             """,
             (today,),
         )

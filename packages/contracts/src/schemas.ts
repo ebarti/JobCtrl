@@ -1896,12 +1896,40 @@ export const ProfileImportRequestSchema = z
   .strict();
 export type ProfileImportRequest = z.infer<typeof ProfileImportRequestSchema>;
 
+export const LlmLaneValues = [
+  "discovery",
+  "enrichment",
+  "scoring",
+  "tailoring",
+  "apply",
+  "contact",
+  "interview",
+  "profile",
+  "compensation",
+] as const;
+export type LlmLane = (typeof LlmLaneValues)[number];
+
+const laneTokenLimitsSchema = z
+  .object({
+    discovery: z.number().int().min(0).optional(),
+    enrichment: z.number().int().min(0).optional(),
+    scoring: z.number().int().min(0).optional(),
+    tailoring: z.number().int().min(0).optional(),
+    apply: z.number().int().min(0).optional(),
+    contact: z.number().int().min(0).optional(),
+    interview: z.number().int().min(0).optional(),
+    profile: z.number().int().min(0).optional(),
+    compensation: z.number().int().min(0).optional(),
+  })
+  .strict();
+
 export const SettingsUpdateRequestSchema = z
   .object({
     applyConcurrency: z.coerce.number().int().min(1).max(16).optional(),
     pipelineInternalConcurrency: z.coerce.number().int().min(1).max(16).optional(),
     workerActivitySlots: z.coerce.number().int().min(1).max(64).optional(),
     dailyBudgetUsd: z.coerce.number().min(0).optional(),
+    laneTokenLimits: laneTokenLimitsSchema.optional(),
     analysisLegs: z.array(z.enum(["codex", "claude", "google"])).min(1).optional(),
     tailoringGeneratorModels: z.array(z.string().trim().min(1).max(160)).min(1).nullable().optional(),
     tailoringJudgeModel: z.string().trim().min(1).max(160).nullable().optional(),
@@ -4469,6 +4497,7 @@ export interface JobCtrlSettings {
   pipelineInternalConcurrency: number;
   workerActivitySlots: number;
   dailyBudgetUsd: number;
+  laneTokenLimits: Record<LlmLane, number>;
   analysisLegs: ProviderId[];
   tailoringGeneratorModels: string[] | null;
   tailoringJudgeModel: string | null;
@@ -4511,6 +4540,7 @@ export type EffectiveSetting<T> = {
 
 export interface EffectiveJobCtrlSettings {
   dailyBudgetUsd: EffectiveSetting<number>;
+  laneTokenLimits: EffectiveSetting<Record<LlmLane, number>>;
   applyConcurrency: EffectiveSetting<number>;
   pipelineInternalConcurrency: EffectiveSetting<number>;
   workerActivitySlots: EffectiveSetting<number>;
@@ -4533,6 +4563,7 @@ export const SettingsResponseSchema = z
         pipelineInternalConcurrency: z.number(),
         workerActivitySlots: z.number(),
         dailyBudgetUsd: z.number(),
+        laneTokenLimits: laneTokenLimitsSchema.required(),
         analysisLegs: z.array(z.enum(ProviderIds)),
         tailoringGeneratorModels: z.array(z.string()).nullable(),
         tailoringJudgeModel: z.string().nullable(),
@@ -4553,6 +4584,7 @@ export const SettingsResponseSchema = z
     effectiveSettings: z
       .object({
         dailyBudgetUsd: effectiveSettingSchema(z.number()),
+        laneTokenLimits: effectiveSettingSchema(laneTokenLimitsSchema.required()),
         applyConcurrency: effectiveSettingSchema(z.number()),
         pipelineInternalConcurrency: effectiveSettingSchema(z.number()),
         workerActivitySlots: effectiveSettingSchema(z.number()),

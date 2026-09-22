@@ -9,23 +9,34 @@ crash, and how the pipeline behaves when things fail.
 **Read this if** you are setting a budget, scheduling discovery, tracing where a
 stage's data lands, or working out how the system recovers from a failure.
 
-## Spend Ceiling
+## Spend Ceilings
 
-A daily spend ceiling backstops LLM cost. The `check_spend_budget` activity
-(`llm.py`) is the preflight in every spendful workflow. It reads the budget
-status (`read_spend_budget_status`): `daily_budget_usd` defaults to **$25**
-(`read_daily_budget_usd(default=25.0)`), and a value of **0 means unlimited**. If
-today's `llm_spend` ledger already meets the ceiling, it raises
+A global daily USD ceiling and per-lane daily observed-token thresholds backstop
+LLM use. The `check_spend_budget` activity (`llm.py`) is the preflight in every
+spendful workflow, and the same authority runs immediately before each actual
+provider attempt, including retries and Apply subprocess launch. The global
+`daily_budget_usd` defaults to **$25**, and `0` means unlimited. Each
+`lane_token_limits` value is a non-negative integer; omitted or `0` is unlimited.
+If the UTC day's global estimated spend or the requested lane's normalized
+input-plus-output total already meets its ceiling, the authority raises
 `BudgetExceededError` (`budget_exceeded`, non-retryable), failing the run before
-any paid work. Because the preflight runs with `maximum_attempts=1`, a depleted
-budget is a clean fast failure, not a retry storm.
+that attempt. Exhausting one lane does not block peers while the global ceiling
+allows them.
 
-Per-call cost is written to the `llm_spend` UPSERT ledger, keyed by day, using
+Provider observations are written to the `llm_spend` UPSERT ledger, keyed by
+UTC day and product lane. Global totals are sums across lane rows. Input and
+output are the normalized provider totals; cached input and reasoning output
+subsets are not added again. Usage is persisted before downstream parsing,
+schema, or result-envelope validation, and one observation callback is counted
+once. Distinct retry attempts that reach a provider each count. Providers that
+expose no usage do not create token usage. Cost estimation uses
 per-model-family rates (`estimate_llm_cost_usd` in `llm.py`); the rates are
 coarse family buckets, and models without a listed family fall back to a
 generic rate, so the ledger is an estimate, not billing truth. The ceiling is a *preflight gate* per workflow, not a
-mid-call interrupt: a single expensive run already in flight is not aborted, but
-the next spendful workflow will not start once the day's ledger is at the cap.
+mid-call interrupt. Because there is no proven maximum token cost for an
+in-flight call, an admitted call can overshoot a lane threshold. JobCtrl does
+not reserve tokens or claim a strict concurrent cap; the next provider attempt
+is denied after the observation is recorded.
 
 Supervised contact research (`ContactResearchWorkflow`, Contact & Outreach) is a
 spendful workflow and reuses this **same** preflight — the `check_spend_budget`

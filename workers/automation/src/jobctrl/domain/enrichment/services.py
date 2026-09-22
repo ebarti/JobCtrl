@@ -32,6 +32,7 @@ from jobctrl.domain.enrichment.value_objects import (
 )
 from jobctrl.domain.extraction import extract_json
 from jobctrl.domain.ports.llm import LlmMessage, LlmPort
+from jobctrl.llm_lanes import lane_bound
 
 log = logging.getLogger(__name__)
 
@@ -267,6 +268,7 @@ class LlmExtractor:
         self._llm = llm
         self._prompt = prompt
 
+    @lane_bound("enrichment")
     def extract(self, page: DetailPage) -> ExtractionResult:
         if not page.html:
             return ExtractionResult(ok=False)

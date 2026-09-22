@@ -93,14 +93,14 @@ licensed-feed coverage policy. Public Levels.fyi Markdown needs no credential.
 Credentials, feed paths/URLs, feed contents, and provider payloads do not belong
 in the settings file.
 
-### Exact v10 runtime and compatible cutovers
+### Exact v11 runtime and compatible cutovers
 
-Schema v10 is the exact runtime contract. The native lifecycle upgrades admitted
-v6, exact-v7, exact-v8, and exact-v9 installations only while the application is
+Schema v11 is the exact runtime contract. The native lifecycle upgrades admitted
+v6, exact-v7, exact-v8, exact-v9, and exact-v10 installations only while the application is
 stopped. It first creates a paired backup of `jobctrl.db` and Temporal state.
 A v6 source retains the Temporal quiescence proof and identity rewrite through
 private exact-v7/v8/v9 intermediates; newer sources start at their next schema
-step. Only the final exact-v10 candidate can become live. Intermediate databases
+step. Only the final exact-v11 candidate can become live. Intermediate databases
 and their sidecars are removed after success and during failure recovery.
 
 V10 removes `jobs.application_url`. `job_enrichments.application_url` is the
@@ -127,7 +127,12 @@ verification. The receipt's comparable data digests cover every retained cell an
 sequence; the complete changed enrichment rows and alias set are verified
 separately before sealing. Any failed build, verification, activation, or readiness
 check restores the paired backup and leaves the previous version runnable.
-The TypeScript API and Python worker accept exact v10 and reject direct v6/v7/v8/v9
+V11 replaces the global `llm_spend` primary key with `(day, lane)`. Historical
+v10 rows move byte-for-value into the migration-only `legacy` lane. Global
+totals sum all lane rows, including legacy; new runtime writes accept only the
+nine named product lanes.
+
+The TypeScript API and Python worker accept exact v11 and reject direct v6/v7/v8/v9/v10
 operation; runtime constructors do not migrate schema or commit caller work.
 Each projection refresh owns only derived writes and its consumer cursor inside a
 transaction or the caller's savepoint. Refresh compares existing projected targets
@@ -136,7 +141,7 @@ and watermarks cannot hide a URL promoted during migration.
 
 The remaining URL consumers are classified in the
 [application URL authority inventory](application-url-authority.md). Historical
-v6 preparation and v7/v8/v9 schema/executor definitions remain frozen to admit
+v6 preparation and v7/v8/v9/v10 schema/executor definitions remain frozen to admit
 previous installations, and do not provide a current-runtime fallback.
 
 V9 adds one optional per-position summary to normalized Candidate Profile

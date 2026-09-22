@@ -65,6 +65,7 @@ from jobctrl.discovery.target_queries import (
 )
 from jobctrl.discovery.title_filter import title_matches_query
 from jobctrl.infrastructure.llm import get_llm_adapter
+from jobctrl.llm_lanes import lane_bound
 from jobctrl.runtime import is_bundled_runtime
 
 log = logging.getLogger(__name__)
@@ -656,6 +657,7 @@ or
 No explanation, no markdown, no thinking."""
 
 
+@lane_bound("discovery")
 def judge_api_responses(api_responses: list[dict]) -> list[dict]:
     """Use the LLM to filter API responses, keeping only job-relevant ones."""
     if not api_responses:
@@ -956,6 +958,7 @@ PAGE HTML:
 # -- LLM helpers -------------------------------------------------------------
 
 
+@lane_bound("discovery")
 def ask_llm(prompt: str) -> tuple[str, float, dict]:
     """Send prompt to LLM. Returns (response_text, seconds_taken, metadata)."""
     client = get_llm_adapter()
