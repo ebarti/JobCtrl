@@ -76,7 +76,7 @@ constitute legal approval or implementation authority.
 | `DP-885-05` | Receipt, recovery, and identification scope | Issue a bounded opaque `HttpOnly` erasure capability only when a first-party visitor is created. Keep it after analytics withdrawal solely for deletion/status. | Expire all linkage on withdrawal and make later erasure impossible; or require a manually mediated support path. | The capability preserves narrow erasure authority without a telemetry identifier. It creates another sensitive lifecycle to secure and retain. Losing it limits automated erasure to data the browser can still identify. |
 | `DP-885-06` | Retention and backup restoration | Use the limits in [Retention](#retention), plus a bounded external recovery-suppression manifest replayed before a restored D1 can serve. | Choose shorter limits; remove retained analytics; or block restore/launch until another resurrection-safe design is approved. | Suppression adds operational recovery work and a separate protected record. Omitting it risks restored rows reappearing after a claimed deletion. |
 | `DP-885-07` | Operational metrics | If separately approved, keep only minimized, non-linkable, best-effort daily counters; they never block access or a privacy action. | Remove the operational lane and scope health/choice analysis to consented traffic; never replace it with an identifier. | Kept counters help detect coarse service failures but cannot measure unique people or a nonconsenting funnel. Removal reduces data and operating complexity. |
-| `DP-885-08` | Capability lifetime | Choose a fixed 270-day lifetime from each explicit first-party grant: the 180-day maximum visitor collection window plus the 90-day maximum event-retention tail, with no passive renewal. | A shorter disclosed lifetime; no self-service post-withdrawal erasure capability; or shorter event/identity retention that preserves full coverage with a shorter capability. | Full-tail coverage retains deletion authority longer. A shorter capability reduces authority retention but can make automated erasure unavailable while retained events still exist; the UI and notice must expose that gap rather than promise a button. |
+| `DP-885-08` | Capability lifetime | **Proposal recommendation, not accepted policy:** choose a fixed 270-day lifetime from each explicit first-party grant: the 180-day maximum visitor collection window plus the 90-day maximum event-retention tail, with no passive renewal. | A shorter disclosed lifetime; no self-service post-withdrawal erasure capability; or shorter event/identity retention that preserves full coverage with a shorter capability. | Full-tail coverage retains deletion authority longer. A shorter capability reduces authority retention but can make automated erasure unavailable while retained events still exist; the UI and notice must expose that gap rather than promise a button. |
 | `DP-885-09` | Recovery-suppression lifetime | Retain suppression entries for 35 days: the currently documented 30-day paid D1 Time Travel horizon plus a five-day restore-verification buffer. Block launch if configured backup horizons exceed it. | A different explicit horizon-plus-buffer bound; or disable restore of visitor-linked data. | The entry may outlive live event rows after deletion, but prevents a restore from resurrecting them. The bound must change deliberately if backup configuration changes. |
 
 ## Recommended Experience
@@ -210,6 +210,13 @@ old digest in the same transaction. After fixed expiry, the privacy UI must not
 display a functioning deletion promise for retained rows it can no longer
 identify. If the owner chooses less than full-tail coverage, the disclosure
 must state the exact self-service window and the remaining retention tail.
+
+Replacement inherits only the prior generations explicitly named in that same
+transaction. Revoking the old digest makes every omitted prior generation
+unavailable to the new capability; no later join, fingerprint, or hidden
+server-side capability may recover it. The implementation and disclosure must
+treat that as lost erasure reach, not silently imply that one browser cookie
+still covers it.
 
 ### Cookie and browser-storage matrix
 
