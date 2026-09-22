@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -7,7 +8,7 @@ import { fileURLToPath } from "node:url";
 
 import Database from "better-sqlite3";
 
-import { RpcMethods } from "../src/contracts.js";
+import { ProviderModelCatalogResultSchema, ProviderStatusResultSchema, RpcMethods } from "../src/contracts.js";
 import { openDatabase } from "../src/db.js";
 import { SubprocessJsonRpcAdapter } from "../src/json-rpc-adapter.js";
 import { refreshProjections } from "../src/projections.js";
@@ -30,8 +31,10 @@ import {
   syntheticJob,
   withOwnedWorkspace,
   type BenchmarkWorkspace,
+  type CliOptions,
   type Distribution,
   type SeedSummary,
+  type VerifiedDirtyExclusionInput,
 } from "./local-scale.js";
 
 const WARMUPS = 2;
@@ -75,9 +78,13 @@ interface PreviewResult {
 
 interface RpcResult {
   method: string;
+  preflightMethod: string;
   coldStartupMs: number;
   warm: Distribution;
   responseHasResult: boolean;
+  providerStatusesNonReady: true;
+  catalogEnvelopeVerified: true;
+  providers: Array<{ provider: string; configured: boolean; ready: false; modelCount: 0 }>;
   processScope: ProcessScope;
   telemetryExportDisabled: true;
   providerModelCalls: 0;
@@ -154,7 +161,20 @@ interface BenchmarkReport {
   formatVersion: 1;
   benchmark: string;
   seed: string;
-  candidate: { gitHead: string; gitStatus: string[]; excludedDirtyPath: string | null };
+  candidate: {
+    gitHead: string;
+    gitStatus: string[];
+    verifiedDirtyExclusion: {
+      path: string;
+      note: string;
+      expectedContentSha256: string;
+      observedContentSha256: string;
+      worktreeStatus: string;
+      diffNumstat: string;
+      diffSha256: string;
+      verified: true;
+    } | null;
+  };
   schema: { version: 10; initializer: string };
   method: {
     datasetSizes: readonly number[];
@@ -165,10 +185,14 @@ interface BenchmarkReport {
     productionPaths: string[];
     providerNetworkPolicy: string;
     sustainedWorkload: string;
+    tailEstimateLimitation: string;
+    sseValidationBoundary: string;
+    resourceSamplingLimitation: string;
   };
   proposedReferenceBudgets: typeof PROPOSED_REFERENCE_BUDGETS;
   budgetRationale: Record<string, string>;
   provenance: Record<string, unknown>;
+  backgroundLoadAnnotation: string | null;
   backgroundLoadLimitation: string;
   datasets: DatasetResult[];
 }
@@ -190,7 +214,12 @@ interface SseCollector {
   close(): Promise<void>;
 }
 
-export async function runBenchmark(): Promise<BenchmarkReport> {
+export async function runBenchmark(
+  options: Pick<CliOptions, "backgroundLoadNote" | "dirtyExclusion"> = {
+    backgroundLoadNote: null,
+    dirtyExclusion: null,
+  },
+): Promise<BenchmarkReport> {
   const datasets: DatasetResult[] = [];
   for (const jobs of DATASET_SIZES) {
     process.stderr.write(`local-scale: measuring ${jobs} jobs\n`);
@@ -200,7 +229,7 @@ export async function runBenchmark(): Promise<BenchmarkReport> {
     formatVersion: 1,
     benchmark: "JobCtrl synthetic local scale baseline",
     seed: BENCHMARK_SEED,
-    candidate: gitCandidate(),
+    candidate: gitCandidate(options.dirtyExclusion),
     schema: {
       version: 10,
       initializer: "jobctrl.infrastructure.migrations.schema_v10.create_exact_v10_schema via uv --locked",
@@ -218,8 +247,11 @@ export async function runBenchmark(): Promise<BenchmarkReport> {
         "buildApp PDF and HTML artifact preview streams",
         "SubprocessJsonRpcAdapter -> uv -> production Python jobctrl rpc dispatcher provider_models",
       ],
-      providerNetworkPolicy: "LANGFUSE_DISABLE=1, provider credentials removed, outbound proxy forced to an unreachable loopback port; provider_models is a local read and no model/provider calls are made.",
-      sustainedWorkload: "At least 1.5 seconds and seven iterations, capped at 100 iterations; each iteration writes 10 events, refreshes the heartbeat, performs a search plus in-memory sort read, and reads pipeline operations while one SSE subscriber remains connected.",
+      providerNetworkPolicy: "The RPC subprocess receives a minimal allowlisted environment, isolated HOME/Codex/Claude/AWS/Google/Azure config paths, disabled AWS metadata and Langfuse export, and unreachable loopback proxies. A production provider_status preflight must prove every provider non-ready before provider_models is allowed; the sanitized catalog schema must then contain no ready provider or models.",
+      sustainedWorkload: "At least 1.5 seconds and seven iterations, capped at 100 iterations; each iteration writes 10 synthetic events, directly refreshes a seeded heartbeat, performs a search plus in-memory sort read, and reads seeded pipeline operations while one SSE subscriber remains connected. No Temporal worker runs.",
+      tailEstimateLimitation: "Seven retained warm samples use nearest-rank percentiles, so p95 equals the maximum. Results are exploratory, tail-sample-limited local observations rather than stable population estimates.",
+      sseValidationBoundary: "Validates production server transport, timer, event ID ordering, and counts with benchmark-only event types; it does not validate frontend event-registry or decoded-envelope acceptance.",
+      resourceSamplingLimitation: "Node peaks are sampled between sustained iterations and can miss short-lived spikes.",
     },
     proposedReferenceBudgets: PROPOSED_REFERENCE_BUDGETS,
     budgetRationale: {
@@ -232,7 +264,8 @@ export async function runBenchmark(): Promise<BenchmarkReport> {
       sustainedGrowth: "128 MiB RSS and 64 MiB heap are diagnostic leak sentinels for the bounded 1.5 second workload, not long-horizon guarantees.",
     },
     provenance: systemProvenance(),
-    backgroundLoadLimitation: "Four other issue tasks were active on the same host during this run. There was no CPU pinning or isolated reference hardware. Raw samples are retained; these measurements must not be used to tighten the proposed budgets.",
+    backgroundLoadAnnotation: options.backgroundLoadNote,
+    backgroundLoadLimitation: "Concurrent host activity was not independently measured. There was no CPU pinning or isolated reference hardware. Raw samples are retained; these measurements must not be used to tighten the proposed budgets.",
     datasets,
   };
 }
@@ -510,7 +543,7 @@ async function measureSse(baseUrl: string, workspace: BenchmarkWorkspace): Promi
   };
 }
 
-async function measureRpc(workspace: BenchmarkWorkspace): Promise<RpcResult> {
+export async function measureRpc(workspace: BenchmarkWorkspace): Promise<RpcResult> {
   const adapter = new SubprocessJsonRpcAdapter({
     appDir: workspace.directory,
     configPath: workspace.configPath,
@@ -519,26 +552,56 @@ async function measureRpc(workspace: BenchmarkWorkspace): Promise<RpcResult> {
   });
   try {
     const coldStart = performance.now();
-    const cold = await adapter.call(RpcMethods.ProviderModels, {});
+    const cold = await adapter.call(RpcMethods.ProviderStatus, {});
     const coldStartupMs = elapsed(coldStart);
-    if (cold.error || cold.result === undefined) throw new Error("production RPC cold response oracle failed");
+    if (cold.error || cold.result === undefined) throw new Error("production RPC provider-status preflight failed");
+    const statuses = ProviderStatusResultSchema.safeParse(cold.result);
+    if (!statuses.success) throw new Error("production RPC provider-status envelope oracle failed");
+    if (statuses.data.providers.some((provider) => provider.ready)) {
+      throw new Error("benchmark RPC environment exposed a ready provider; model catalog call refused");
+    }
+
+    const catalogResponse = await adapter.call(RpcMethods.ProviderModels, {});
+    if (catalogResponse.error || catalogResponse.result === undefined) {
+      throw new Error("production RPC model-catalog response oracle failed");
+    }
+    const catalog = ProviderModelCatalogResultSchema.safeParse(catalogResponse.result);
+    if (!catalog.success) throw new Error("production RPC model-catalog envelope oracle failed");
+    if (catalog.data.providers.some((provider) => provider.ready || provider.models.length > 0)) {
+      throw new Error("benchmark RPC model catalog unexpectedly exposed a ready provider or models");
+    }
     for (let index = 0; index < WARMUPS; index += 1) {
       const response = await adapter.call(RpcMethods.ProviderModels, {});
-      if (response.error || response.result === undefined) throw new Error("production RPC warmup response oracle failed");
+      const parsed = response.error ? null : ProviderModelCatalogResultSchema.safeParse(response.result);
+      if (!parsed || !parsed.success || parsed.data.providers.some((provider) => provider.ready || provider.models.length > 0)) {
+        throw new Error("production RPC warmup response oracle failed");
+      }
     }
     const samples: number[] = [];
     for (let index = 0; index < SAMPLES; index += 1) {
       const start = performance.now();
       const response = await adapter.call(RpcMethods.ProviderModels, {});
       const duration = elapsed(start);
-      if (response.error || response.result === undefined) throw new Error("production RPC warm response oracle failed");
+      const parsed = response.error ? null : ProviderModelCatalogResultSchema.safeParse(response.result);
+      if (!parsed || !parsed.success || parsed.data.providers.some((provider) => provider.ready || provider.models.length > 0)) {
+        throw new Error("production RPC warm response oracle failed");
+      }
       samples.push(duration);
     }
     return {
       method: RpcMethods.ProviderModels,
+      preflightMethod: RpcMethods.ProviderStatus,
       coldStartupMs,
       warm: distribution(samples),
       responseHasResult: true,
+      providerStatusesNonReady: true,
+      catalogEnvelopeVerified: true,
+      providers: catalog.data.providers.map((provider) => ({
+        provider: provider.provider,
+        configured: provider.configured,
+        ready: false,
+        modelCount: 0,
+      })),
       processScope: descendantProcessScope(),
       telemetryExportDisabled: true,
       providerModelCalls: 0,
@@ -930,11 +993,18 @@ function descendantProcessScope(): ProcessScope {
 }
 
 function systemProvenance(): Record<string, unknown> {
-  const python = spawnSync(
-    "uv",
-    ["--project", AUTOMATION_PROJECT_DIR, "run", "--locked", "python", "--version"],
-    { encoding: "utf8", env: offlineEnvironment(AUTOMATION_PROJECT_DIR) },
-  );
+  const environmentDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-local-scale-provenance-"));
+  let pythonVersion = "";
+  try {
+    const result = spawnSync(
+      "uv",
+      ["--project", AUTOMATION_PROJECT_DIR, "run", "--locked", "python", "--version"],
+      { encoding: "utf8", env: offlineEnvironment(environmentDirectory) },
+    );
+    pythonVersion = String(result.stdout || result.stderr).trim();
+  } finally {
+    fs.rmSync(environmentDirectory, { recursive: true, force: true });
+  }
   const db = new Database(":memory:");
   const sqliteVersion = String((db.prepare("SELECT sqlite_version() AS version").get() as { version: string }).version);
   db.close();
@@ -946,26 +1016,53 @@ function systemProvenance(): Record<string, unknown> {
     logicalCpus: os.cpus().length,
     totalMemoryBytes: os.totalmem(),
     node: process.version,
-    python: (python.stdout || python.stderr).trim(),
+    python: pythonVersion,
     sqlite: sqliteVersion,
     nodeProcessScope: `PID ${process.pid}; process.resourceUsage plus process.memoryUsage`,
     rpcProcessScope: "recursive descendants sampled while SubprocessJsonRpcAdapter's production process was warm",
   };
 }
 
-function gitCandidate(): BenchmarkReport["candidate"] {
-  const git = (args: string[]): string => {
+function gitCandidate(exclusion: VerifiedDirtyExclusionInput | null): BenchmarkReport["candidate"] {
+  const gitRaw = (args: string[]): string => {
     const result = spawnSync("git", args, { cwd: REPOSITORY_ROOT, encoding: "utf8" });
     if (result.status !== 0) throw new Error(`git ${args.join(" ")} failed: ${result.stderr.trim()}`);
-    return result.stdout.trim();
+    return result.stdout;
   };
-  const status = git(["status", "--short"]).split("\n").filter(Boolean);
+  const gitText = (args: string[]): string => gitRaw(args).trim();
+  const statusOutput = gitRaw(["status", "--short"]).replace(/(?:\r?\n)+$/u, "");
+  const status = statusOutput ? statusOutput.split(/\r?\n/u) : [];
+  let verifiedDirtyExclusion: BenchmarkReport["candidate"]["verifiedDirtyExclusion"] = null;
+  if (exclusion) {
+    const absolute = path.resolve(REPOSITORY_ROOT, exclusion.path);
+    const relative = path.relative(REPOSITORY_ROOT, absolute).replaceAll(path.sep, "/");
+    if (relative !== exclusion.path || relative.startsWith("../") || !fs.statSync(absolute).isFile()) {
+      throw new Error(`verified dirty exclusion is not a repository file: ${exclusion.path}`);
+    }
+    const worktreeStatus = status.find((line) => line.length >= 4 && line.slice(3) === exclusion.path);
+    if (!worktreeStatus) throw new Error(`verified dirty exclusion is not dirty: ${exclusion.path}`);
+    const observedContentSha256 = createHash("sha256").update(fs.readFileSync(absolute)).digest("hex");
+    if (observedContentSha256 !== exclusion.contentSha256) {
+      throw new Error(`verified dirty exclusion content changed: ${exclusion.path}`);
+    }
+    const diff = gitRaw(["diff", "HEAD", "--binary", "--", exclusion.path]);
+    const diffNumstat = gitRaw(["diff", "HEAD", "--numstat", "--", exclusion.path]).replace(/(?:\r?\n)+$/u, "");
+    if (!diff || !diffNumstat) throw new Error(`verified dirty exclusion has no HEAD diff: ${exclusion.path}`);
+    verifiedDirtyExclusion = {
+      path: exclusion.path,
+      note: exclusion.note,
+      expectedContentSha256: exclusion.contentSha256,
+      observedContentSha256,
+      worktreeStatus,
+      diffNumstat,
+      diffSha256: createHash("sha256").update(diff).digest("hex"),
+      verified: true,
+    };
+  }
   return {
-    gitHead: git(["rev-parse", "HEAD"]),
+    gitHead: gitText(["rev-parse", "HEAD"]),
     gitStatus: status,
-    excludedDirtyPath: status.some((line) => line.endsWith("workers/automation/uv.lock"))
-      ? "workers/automation/uv.lock (unrelated pre-existing two-line change; excluded from candidate)"
-      : null,
+    verifiedDirtyExclusion,
   };
 }
 
@@ -1029,7 +1126,7 @@ function delay(ms: number): Promise<void> {
 
 async function main(): Promise<void> {
   const options = parseCliArgs(process.argv.slice(2));
-  const report = await runBenchmark();
+  const report = await runBenchmark(options);
   const serialized = `${JSON.stringify(report, null, 2)}\n`;
   if (options.jsonOut) {
     fs.mkdirSync(path.dirname(options.jsonOut), { recursive: true });

@@ -63,6 +63,14 @@ export interface SeedSummary {
 
 export interface CliOptions {
   jsonOut: string | null;
+  backgroundLoadNote: string | null;
+  dirtyExclusion: VerifiedDirtyExclusionInput | null;
+}
+
+export interface VerifiedDirtyExclusionInput {
+  path: string;
+  contentSha256: string;
+  note: string;
 }
 
 const EXACT_SCHEMA_INITIALIZER = [
@@ -95,27 +103,67 @@ function percentile(sorted: readonly number[], quantile: number): number {
 
 export function parseCliArgs(argv: readonly string[]): CliOptions {
   let jsonOut: string | null = null;
+  let backgroundLoadNote: string | null = null;
+  let dirtyPath: string | null = null;
+  let dirtyContentSha256: string | null = null;
+  let dirtyNote: string | null = null;
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
-    if (argument !== "--json-out") {
-      throw new Error(`unsupported argument: ${argument ?? ""}`);
-    }
     const candidate = argv[index + 1];
     if (!candidate || candidate.startsWith("--")) {
-      throw new Error("--json-out requires a new .json file path");
+      throw new Error(`${argument ?? "argument"} requires a value`);
     }
-    if (jsonOut !== null) throw new Error("--json-out may be provided only once");
-    const resolved = path.resolve(REPOSITORY_ROOT, candidate);
-    if (path.extname(resolved) !== ".json") {
-      throw new Error("--json-out must end in .json");
+    switch (argument) {
+      case "--json-out": {
+        if (jsonOut !== null) throw new Error("--json-out may be provided only once");
+        const resolved = path.resolve(REPOSITORY_ROOT, candidate);
+        if (path.extname(resolved) !== ".json") throw new Error("--json-out must end in .json");
+        if (fs.existsSync(resolved)) throw new Error("--json-out refuses to overwrite an existing path");
+        jsonOut = resolved;
+        break;
+      }
+      case "--background-load-note":
+        if (backgroundLoadNote !== null) throw new Error("--background-load-note may be provided only once");
+        if (candidate.length > 500) throw new Error("--background-load-note must be at most 500 characters");
+        backgroundLoadNote = candidate;
+        break;
+      case "--dirty-exclusion-path": {
+        if (dirtyPath !== null) throw new Error("--dirty-exclusion-path may be provided only once");
+        const normalized = path.posix.normalize(candidate.replaceAll("\\", "/"));
+        if (path.isAbsolute(candidate) || normalized === ".." || normalized.startsWith("../")) {
+          throw new Error("--dirty-exclusion-path must stay within the repository");
+        }
+        dirtyPath = normalized;
+        break;
+      }
+      case "--dirty-exclusion-content-sha256":
+        if (dirtyContentSha256 !== null) throw new Error("--dirty-exclusion-content-sha256 may be provided only once");
+        if (!/^[a-f0-9]{64}$/u.test(candidate)) {
+          throw new Error("--dirty-exclusion-content-sha256 must be a lowercase SHA-256 digest");
+        }
+        dirtyContentSha256 = candidate;
+        break;
+      case "--dirty-exclusion-note":
+        if (dirtyNote !== null) throw new Error("--dirty-exclusion-note may be provided only once");
+        if (candidate.length > 500) throw new Error("--dirty-exclusion-note must be at most 500 characters");
+        dirtyNote = candidate;
+        break;
+      default:
+        throw new Error(`unsupported argument: ${argument ?? ""}`);
     }
-    if (fs.existsSync(resolved)) {
-      throw new Error("--json-out refuses to overwrite an existing path");
-    }
-    jsonOut = resolved;
     index += 1;
   }
-  return { jsonOut };
+  const dirtyParts = [dirtyPath, dirtyContentSha256, dirtyNote];
+  if (dirtyParts.some((value) => value !== null) && dirtyParts.some((value) => value === null)) {
+    throw new Error("dirty exclusion requires path, content SHA-256, and note together");
+  }
+  return {
+    jsonOut,
+    backgroundLoadNote,
+    dirtyExclusion: dirtyPath && dirtyContentSha256 && dirtyNote
+      ? { path: dirtyPath, contentSha256: dirtyContentSha256, note: dirtyNote }
+      : null,
+  };
 }
 
 export async function withOwnedWorkspace<T>(
@@ -300,12 +348,30 @@ export function assertHash(payload: Uint8Array, expected: string, label: string)
 }
 
 export function offlineEnvironment(appDir: string): NodeJS.ProcessEnv {
-  const environment = { ...process.env };
-  for (const key of Object.keys(environment)) {
-    if (/^(OPENAI|ANTHROPIC|GOOGLE|GEMINI|LANGFUSE)_/i.test(key)) delete environment[key];
+  const environment: NodeJS.ProcessEnv = {};
+  for (const key of [
+    "PATH", "PATHEXT", "SYSTEMROOT", "WINDIR", "COMSPEC", "TEMP", "TMP", "TMPDIR", "LANG", "LC_ALL", "TZ",
+    // This checkout's lock records the contributor's global cutoff; omitting it makes uv re-resolve despite --locked.
+    "UV_EXCLUDE_NEWER",
+  ]) {
+    const value = process.env[key];
+    if (value !== undefined) environment[key] = value;
   }
+  const isolatedHome = path.join(appDir, ".benchmark-home");
   return {
     ...environment,
+    HOME: isolatedHome,
+    USERPROFILE: isolatedHome,
+    XDG_CONFIG_HOME: path.join(isolatedHome, ".config"),
+    XDG_CACHE_HOME: path.join(isolatedHome, ".cache"),
+    XDG_DATA_HOME: path.join(isolatedHome, ".local", "share"),
+    CODEX_HOME: path.join(isolatedHome, "codex"),
+    CLAUDE_CONFIG_DIR: path.join(isolatedHome, "claude"),
+    AWS_CONFIG_FILE: path.join(isolatedHome, "aws", "config"),
+    AWS_SHARED_CREDENTIALS_FILE: path.join(isolatedHome, "aws", "credentials"),
+    AWS_EC2_METADATA_DISABLED: "true",
+    CLOUDSDK_CONFIG: path.join(isolatedHome, "gcloud"),
+    AZURE_CONFIG_DIR: path.join(isolatedHome, "azure"),
     JOBCTRL_DIR: appDir,
     LANGFUSE_DISABLE: "1",
     HTTP_PROXY: "http://127.0.0.1:1",
