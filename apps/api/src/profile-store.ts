@@ -394,6 +394,14 @@ export function ensureProfileTables(db: SqliteDatabase): void {
   backfillAchievementEvidenceFromBullets(db);
 }
 
+/** Read a version without running legacy table/evidence initialization. */
+export function readProfileVersion(db: SqliteDatabase): number | null {
+  const row = db.prepare(
+    "SELECT version FROM candidate_profiles WHERE tenant_id = ? AND profile_id = ?",
+  ).get(TENANT_ID, PROFILE_ID) as { version: number } | undefined;
+  return row ? Number(row.version) : null;
+}
+
 export function readProfileConfig(db: SqliteDatabase): ProfileConfigResponse {
   ensureProfileTables(db);
   const row = getProfileRow(db);

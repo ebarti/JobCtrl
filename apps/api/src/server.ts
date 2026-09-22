@@ -322,6 +322,7 @@ import {
   parseProfileUpdateProfile,
   readExtensionAutofillProfile,
   readProfileConfig,
+  readProfileVersion,
 } from "./profile-store.js";
 import { validateProfileTargetPlaces, type PlaceValidator } from "./place-validation.js";
 import {
@@ -2772,7 +2773,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       void reply.code(503);
       return { ok: false, error: "db_not_found", message: `No JobCtrl database found at ${options.dbPath}` };
     }
-    const before = withDb(reply, options.dbPath, (db) => readProfileConfig(db));
+    const before = withDb(reply, options.dbPath, (db) => ({ profileVersion: readProfileVersion(db) }));
     if (!("profileVersion" in before) || before.profileVersion !== body.expectedProfileVersion) {
       void reply.code(409);
       return {
@@ -2827,7 +2828,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
           actualProfileVersion: parsed.data.profileVersion,
         };
       }
-      const after = withDb(reply, options.dbPath, (db) => readProfileConfig(db));
+      const after = withDb(reply, options.dbPath, (db) => ({ profileVersion: readProfileVersion(db) }));
       if (!("profileVersion" in after) || after.profileVersion !== body.expectedProfileVersion) {
         void reply.code(409);
         return {

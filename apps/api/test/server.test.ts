@@ -9976,12 +9976,38 @@ describe("local TypeScript API", () => {
       });
       expect(seeded.statusCode, seeded.body).toBe(200);
       const version = seeded.json().profileVersion as number;
+      // Finish the seed save's asynchronous continuation before measuring reads.
+      await vi.waitFor(() => {
+        const db = new Database(options.dbPath, { readonly: true });
+        try {
+          expect((db.prepare(
+            "SELECT COUNT(*) AS count FROM job_events WHERE event_type = 'ProfileContinuationHandled'",
+          ).get() as { count: number }).count).toBeGreaterThan(0);
+        } finally {
+          db.close();
+        }
+      });
       await seedApp.close();
-      const before = new Database(options.dbPath, { readonly: true });
-      const beforeEvents = before.prepare(
-        "SELECT COUNT(*) AS count FROM job_events WHERE event_type = 'ProfileUpdated'",
-      ).get() as { count: number };
-      before.close();
+      // Legacy profile shape: bullets exist but their evidence has never been backfilled.
+      const legacy = new Database(options.dbPath);
+      legacy.prepare("DELETE FROM candidate_profile_achievement_evidence").run();
+      legacy.close();
+      const canonicalRows = () => {
+        const db = new Database(options.dbPath, { readonly: true });
+        try {
+          const tables = db.prepare(
+            "SELECT name FROM sqlite_master WHERE type = 'table' "
+            + "AND (name LIKE 'candidate_profile%' OR name = 'job_events') ORDER BY name",
+          ).all() as Array<{ name: string }>;
+          return tables.map(({ name }) => ({
+            name,
+            rows: db.prepare(`SELECT * FROM "${name}"`).all().map((row) => JSON.stringify(row)).sort(),
+          }));
+        } finally {
+          db.close();
+        }
+      };
+      const beforeRows = canonicalRows();
 
       const {
         providerDispatcher: _fixtureProviderDispatcher,
@@ -9994,6 +10020,14 @@ describe("local TypeScript API", () => {
           environment: { ...process.env, UV_FROZEN: "1" },
         }),
       });
+      const stale = await app.inject({
+        method: "POST",
+        url: "/v1/profile/target-role-suggestions",
+        payload: { expectedProfileVersion: version + 1 },
+      });
+      expect(stale.statusCode, stale.body).toBe(409);
+      expect(canonicalRows()).toEqual(beforeRows);
+
       const response = await app.inject({
         method: "POST",
         url: "/v1/profile/target-role-suggestions",
@@ -10015,11 +10049,7 @@ describe("local TypeScript API", () => {
           },
         ],
       });
-      const after = new Database(options.dbPath, { readonly: true });
-      expect(after.prepare(
-        "SELECT COUNT(*) AS count FROM job_events WHERE event_type = 'ProfileUpdated'",
-      ).get()).toEqual(beforeEvents);
-      after.close();
+      expect(canonicalRows()).toEqual(beforeRows);
       await app.close();
     },
   );
