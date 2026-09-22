@@ -5,6 +5,9 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { defineConfig, devices } from "@playwright/test";
 
+// @ts-expect-error Node-only harness support is covered by runtime-support.test.mjs.
+import { CREDENTIAL_ENV_KEYS, sanitizedRuntimeEnvironment } from "./live-worker/runtime-support.mjs";
+
 const here = fileURLToPath(new URL(".", import.meta.url));
 const repoRoot = path.resolve(here, "..", "..", "..");
 const { configureE2eWorkspace } = createRequire(import.meta.url)(
@@ -46,7 +49,7 @@ const corepackHome =
 const evidenceDir = path.join(repoRoot, "dist", "live-worker-smoke", runKey);
 const temporalDb = path.join(workspace.appDir, "temporal", "temporal.db");
 const runtimeEnvironment = {
-  ...process.env,
+  ...sanitizedRuntimeEnvironment(process.env),
   HOME: serviceHome,
   USERPROFILE: serviceHome,
   XDG_CONFIG_HOME: path.join(serviceHome, ".config"),
@@ -77,6 +80,8 @@ const runtimeEnvironment = {
   JOBCTRL_E2E_API_PORT: ports.api,
   JOBCTRL_E2E_WEB_PORT: ports.web,
 };
+for (const key of CREDENTIAL_ENV_KEYS) delete process.env[key];
+delete process.env["JOBCTRL_LIVE_WORKER_SMOKE_BOOTSTRAP_VALIDATED"];
 Object.assign(process.env, runtimeEnvironment);
 
 export const liveWorkerConfig = Object.freeze({

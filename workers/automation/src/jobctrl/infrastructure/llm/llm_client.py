@@ -28,6 +28,7 @@ _ROUTED_PROVIDERS = {"claude", "codex", "gemini", "google"}
 _LIVE_SMOKE_PROVIDER_ENV = "JOBCTRL_LIVE_WORKER_SMOKE_PROVIDER_URL"
 _LIVE_SMOKE_TOKEN_ENV = "JOBCTRL_LIVE_WORKER_SMOKE_TOKEN"
 _LIVE_SMOKE_APP_DIR_ENV = "JOBCTRL_LIVE_WORKER_SMOKE_APP_DIR"
+_LIVE_SMOKE_BOOTSTRAP_VALIDATED_ENV = "JOBCTRL_LIVE_WORKER_SMOKE_BOOTSTRAP_VALIDATED"
 _LIVE_SMOKE_MARKER = ".jobctrl-e2e-owned.json"
 
 
@@ -184,6 +185,11 @@ def _live_worker_smoke_provider_config(
         _LIVE_SMOKE_TOKEN_ENV: os.environ.get(_LIVE_SMOKE_TOKEN_ENV, "").strip(),
         _LIVE_SMOKE_APP_DIR_ENV: os.environ.get(_LIVE_SMOKE_APP_DIR_ENV, "").strip(),
     }
+    if any(values.values()) and (
+        os.environ.get("JOBCTRL_LIVE_WORKER_SMOKE_BOOTSTRAP") != "1"
+        or os.environ.get(_LIVE_SMOKE_BOOTSTRAP_VALIDATED_ENV) != "1"
+    ):
+        raise RuntimeError("Live-worker smoke provider requires validated credential-free bootstrap")
     if not any(values.values()):
         if required:
             raise RuntimeError("Live-worker smoke provider is not configured")

@@ -500,9 +500,14 @@ JSON-RPC dispatcher, and Vite against one disposable synthetic workspace. Its
 single Cover workflow uses a loopback-only deterministic model boundary and
 proves queued dispatch, real worker lifecycle/projection events, API/SSE
 identity correlation, and terminal browser state without provider spend or an
-application submission. Run `web:e2e:live-worker:test` first when changing the
-harness lifecycle or cleanup guards. Logs and browser evidence remain under
-`dist/live-worker-smoke/`; temporary app and Temporal state are deleted.
+application submission. A capability-validated worker bootstrap ignores dotenv,
+Keychain, and persisted provider connections, asserts isolated credential homes,
+and enables only the authenticated loopback provider route. Persisted
+process-group capabilities let the outer teardown verify cleanup after a runtime
+supervisor failure. Run `web:e2e:live-worker:test` first when changing these
+bootstrap, lifecycle, or cleanup guards. Logs and browser evidence remain under
+`dist/live-worker-smoke/`; temporary app and Temporal state are deleted only
+after every owned process group is verified stopped.
 
 The package-local commands are equivalent and useful when working directly
 inside the web package:

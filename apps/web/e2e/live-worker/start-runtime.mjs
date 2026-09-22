@@ -2,14 +2,15 @@ import fs from "node:fs";
 import http from "node:http";
 import net from "node:net";
 import path from "node:path";
-import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 
 import {
+  cleanupOwnedProcessGroups,
+  initializeOwnedProcessState,
+  launchOwnedProcessGroup,
   sanitizedRuntimeEnvironment,
-  stopProcessGroup,
   validateLiveWorkerEnvironment,
   waitForCondition,
 } from "./runtime-support.mjs";
@@ -151,14 +152,17 @@ const controlServer = http.createServer(async (request, response) => {
 function startChild(name, executable, args) {
   const logPath = path.join(config.evidenceDir, `${name}.log`);
   const log = fs.openSync(logPath, "a", 0o600);
-  const child = spawn(executable, args, {
+  const { child } = launchOwnedProcessGroup({
+    name,
+    executable,
+    args,
     cwd: repoRoot,
     env: runtimeEnv,
-    detached: true,
     stdio: ["ignore", log, log],
+    statePath: config.processStatePath,
+    workspace: config.workspace,
   });
-  const exit = new Promise((resolve) => child.once("exit", (code, signal) => resolve({ code, signal })));
-  const item = { name, child, exit, log };
+  const item = { name, child, log };
   children.push(item);
   child.once("error", (error) => {
     if (!shuttingDown) void fail(`${name} failed to start: ${error.message}`);
@@ -272,14 +276,11 @@ async function shutdown(reason, { closeControl = true } = {}) {
   if (shuttingDown) return;
   shuttingDown = true;
   if (closeControl) controlServer.close();
-  const outcomes = {};
-  for (const item of [...children].reverse()) {
-    outcomes[item.name] = await stopProcessGroup(item.child.pid, {
-      paused: item.name === "worker" && workerPaused,
-      waitForExit: () => item.exit,
-    });
-    fs.closeSync(item.log);
-  }
+  const outcomes = await cleanupOwnedProcessGroups({
+    statePath: config.processStatePath,
+    workspace: config.workspace,
+  });
+  for (const item of children) fs.closeSync(item.log);
   fs.writeFileSync(
     reportPath,
     JSON.stringify(
@@ -314,6 +315,10 @@ try {
   });
   seedOwnedE2eWorkspace(repoRoot);
   quiesceSyntheticSeed(process.env.JOBCTRL_E2E_DB_PATH);
+  initializeOwnedProcessState({
+    statePath: config.processStatePath,
+    workspace: config.workspace,
+  });
 
   fs.mkdirSync(path.dirname(process.env.JOBCTRL_TEMPORAL_DB), { recursive: true });
   startChild("temporal", config.temporalBinary, [

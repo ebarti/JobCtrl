@@ -41,10 +41,22 @@ can observe the terminal state and generated synthetic material.
 Only that loopback model boundary is a fixture. Stub dispatch, the isolated API,
 an unowned workspace, a missing Temporal executable, mismatched ports or token,
 an unexpected provider call, timeout, or failed cleanup fails the run. Provider
-credentials are removed from the child environment, no application stage runs,
-and the fixture accepts exactly one authenticated request. Evidence and bounded
-runtime logs are written under `dist/live-worker-smoke/<run-id>/`; the temporary
-workspace and its Temporal history are removed during teardown.
+credentials and credential-home overrides are removed from every spawned role.
+The worker's capability-validated smoke bootstrap skips checkout and owned
+`.env` loading, persisted provider connection translation, and macOS Keychain,
+then asserts the credential-free environment before the loopback backend can be
+selected. This guards the provider route even when a library ignores proxy
+variables; the harness does not claim to be a general network sandbox. No
+application stage runs, and the fixture accepts exactly one authenticated
+request.
+
+Evidence and bounded runtime logs are written under
+`dist/live-worker-smoke/<run-id>/`. Each detached service runs below an
+authenticated process-group leader recorded in the owned workspace. Teardown
+uses those persisted identities to terminate and verify every group even if the
+runtime supervisor is already gone; an identity mismatch or unverifiable live
+group preserves the workspace and fails closed. The workspace and its Temporal
+history are removed only after that outer cleanup verification succeeds.
 
 ## Route Checklist
 
