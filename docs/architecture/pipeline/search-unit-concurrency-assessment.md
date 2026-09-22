@@ -43,18 +43,18 @@ it diagnostic rather than concurrent production.
 
 | Measurement | Current policy baseline | Zero-service control |
 | --- | ---: | ---: |
-| Wall time p50 / p95 | 5.124 s / 5.147 s | 5.092 s / 5.101 s |
-| Time to first accepted p50 / p95 | 86.4 ms / 91.8 ms | 36.5 ms / 38.2 ms |
-| Adapter service p50 / p95 | 54.5 ms / 60.4 ms | 0.2 ms / 0.3 ms |
-| Limiter wait p50 / p95 | 936.6 ms / 953.6 ms | 994.5 ms / 1.005 s |
-| Acceptance/persistence p50 / p95 | 4.5 ms / 6.1 ms | 4.4 ms / 5.4 ms |
-| Checkpoint save p50 / p95 | 0.11 ms / 1.09 ms | 0.11 ms / 1.07 ms |
+| Wall time p50 / p95 | 5.144 s / 5.159 s | 5.089 s / 5.091 s |
+| Time to first accepted p50 / p95 | 98.3 ms / 98.7 ms | 36.5 ms / 36.8 ms |
+| Adapter service p50 / p95 | 53.6 ms / 60.4 ms | 0.2 ms / 0.3 ms |
+| Limiter wait p50 / p95 | 940.0 ms / 950.6 ms | 994.9 ms / 1.005 s |
+| Acceptance/persistence p50 / p95 | 4.9 ms / 6.0 ms | 4.1 ms / 5.0 ms |
+| Checkpoint save p50 / p95 | 0.13 ms / 1.09 ms | 0.11 ms / 1.08 ms |
 
 All six units completed in every measured repeat. Every repeat produced exactly
 six job rows, six acceptance receipts, and six checkpointed units, with one
 adapter active at most. Removing the 50 ms synthetic service wait reduced median
-wall time by about 33 ms (0.6%). The diagnostic competing-call arm still took
-5.079 s, kept all five start gaps at or above 1.0 s, and observed a maximum of
+wall time by about 55 ms (1.1%). The diagnostic competing-call arm still took
+5.100 s, kept all five start gaps at or above 1.0 s, and observed a maximum of
 one active call.
 
 The timings overlap and must not be added as a decomposition. In particular,
@@ -66,10 +66,10 @@ Cancellation and retry probes used the same production durable consumer:
 
 | Scenario | Observed result |
 | --- | --- |
-| Pending cancellation | All six units canceled without starting an adapter; returned in 35 ms. |
-| Active provider wait | JobStreaming's cancellation-aware wait stopped; all six units canceled 54 ms after the signal. |
-| Host-limiter wait | No adapter started, but return took 927 ms after the signal because the current limiter sleep has no cancellation input. |
-| Provider retry | One synthetic transient failure retried once, then completed with one job, one receipt, and checkpoint revision 4 in 5.107 s. |
+| Pending cancellation | All six units canceled without starting an adapter; returned in 45 ms. |
+| Active provider wait | JobStreaming's cancellation-aware wait stopped; all six units canceled 60 ms after the signal. |
+| Host-limiter wait | No adapter started, but return took 926 ms after the signal because the current limiter sleep has no cancellation input. |
+| Provider retry | One synthetic transient failure retried once, then completed with one job, one receipt, and checkpoint revision 4 in 5.106 s. |
 
 The limiter result is an observed responsiveness gap, not evidence that the
 service was unavailable. For the ordinary one-second policy it can add nearly
@@ -86,11 +86,29 @@ attempt is stale and rejected. Naively starting multiple consumers would either
 duplicate the active unit or fail the fence; the current repository does not
 provide pool-worker allocation semantics.
 
-The focused regression set also covers store-before-ack replay, checkpoint loss,
-the exact result limit before and after acknowledgement, stale-attempt fencing,
-pending and active cancellation, provider retry/reset, host spacing, and the
-shared budget boundary. These tests exercise the existing production consumer
-and repository rather than a parallel fake loop.
+The assessment now records four loss/recovery probes through the same production
+`run_discovery` consumer, JobStreaming gateway, SQLite repository, and real
+`HostRateLimiter`. Each retry used a new activity owner and attempt, while the
+limiter instance and durable execution remained shared:
+
+| Synthetic probe | Interrupted state | Recovered result |
+| --- | --- | --- |
+| Store before acknowledgement | One running unit, checkpoint revision 0, one job and one receipt | Attempt 2 recovered the unit once and completed at checkpoint revision 3; one job and one receipt remained. |
+| Limit 1, loss before acknowledgement | Running/pending units, revisions 0/none, one job and one receipt | Both units became skipped; the result remained exactly one new job and one receipt. |
+| Limit 1, loss after acknowledgement before skip | Running/pending units, revisions 1/none, one job and one receipt | Both units became skipped; the result remained exactly one new job and one receipt. |
+| Tiny invocation budget 2 | Running/pending/pending units after the first invocation failed before acknowledgement | Recovery consumed invocation 2; claiming the next unit made the durable count 3 and recorded one `budget_exhausted` blocked outcome. The first unit completed at revision 3, the other two were skipped, and only two adapter calls, one job, and one receipt occurred. |
+
+All four probes made two adapter calls with two observed limiter acquisitions.
+Their retry start gaps were 1.000--1.009 seconds, maximum provider concurrency
+was one, and every recorded invariant passed. The tiny-budget probe is a
+deliberate synthetic policy override for boundary assessment; it does not alter
+the production budget of 500 or imply a safe real-provider request budget.
+
+The focused regression set also covers same-owner lease reentry,
+stale-attempt fencing, pending and active cancellation, provider retry/reset,
+and host spacing. The new smoke regression asserts the artifact's receipts,
+checkpoints, recovery counts, terminal states, exact limits, and budget outcome
+through the real limiter. No parallel fake loop supplies this evidence.
 
 ## Assessment
 
@@ -114,7 +132,7 @@ the current measurements.
 
 The artifact records the exact observed invocation. It ran with the existing
 project `.venv` at Python 3.14.4 and JobStreaming 0.0.5 on arm64 macOS, from git
-revision `cb5a01b97b226fb96d8affcbde0858d49effda77`, using
+revision `d17d1ccfa3032e52697cb1638e0df52b1b625f03`, using
 `workers/automation/uv.lock` SHA-256
 `4eaf563541a57070c8e1b661d34aad441d419ef8811dbd02abdc64b267148a67`.
 

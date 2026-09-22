@@ -6,295 +6,48 @@
         {
           "adapter_calls": 6,
           "adapter_start_gaps_seconds": [
-            1.006466,
-            1.003093,
-            1.003083,
-            1.007966,
-            0.999854
+            1.01082,
+            1.005602,
+            1.002167,
+            1.002787,
+            1.009765
           ],
           "adapter_start_offsets_seconds": [
-            0.022594,
-            1.029061,
-            2.032153,
-            3.035236,
-            4.043202,
-            5.043056
+            0.033677,
+            1.044497,
+            2.050098,
+            3.052266,
+            4.055053,
+            5.064817
           ],
           "checkpoint_save_seconds": [
-            0.000118,
-            9.4e-05,
-            6.4e-05,
-            6.2e-05,
-            0.000928,
-            0.000175,
-            8.4e-05,
-            7.8e-05,
-            0.00103,
-            0.000131,
-            8.1e-05,
-            7.2e-05,
-            0.001078,
-            0.000143,
-            9.7e-05,
-            9.7e-05,
-            0.00046,
-            0.000158,
-            0.000112,
-            0.000104,
-            0.00012,
-            7.6e-05,
-            5.5e-05,
-            4.5e-05
-          ],
-          "database": {
-            "checkpoint_revisions": [
-              3,
-              3,
-              3,
-              3,
-              3,
-              3
-            ],
-            "checkpointed_units": 6,
-            "job_event_rows": 30,
-            "job_rows": 6,
-            "receipt_counts": {
-              "accepted": 6,
-              "existing": 0,
-              "new": 6
-            },
-            "receipt_rows": 6,
-            "recovery_count": 0,
-            "unit_count": 6,
-            "unit_states": [
-              "completed",
-              "completed",
-              "completed",
-              "completed",
-              "completed",
-              "completed"
-            ]
-          },
-          "invariants": {
-            "all_units_checkpointed": true,
-            "all_units_completed": true,
-            "exact_job_count": true,
-            "exact_receipt_count": true,
-            "exact_unit_count": true,
-            "host_spacing_preserved": true,
-            "provider_concurrency_at_most_policy": true
-          },
-          "limiter_wait_seconds": [
-            1e-05,
-            0.941449,
-            0.930374,
-            0.926458,
-            0.940862,
-            0.931651
-          ],
-          "max_active_adapters": 1,
-          "persistence_seconds": [
-            0.002142,
-            0.00488,
-            0.005283,
-            0.003971,
-            0.00445,
-            0.001705
-          ],
-          "provider_service_seconds": [
-            0.057998,
-            0.05927,
-            0.060368,
-            0.053119,
-            0.05571,
-            0.06011
-          ],
-          "result": {
-            "db_total": 6,
-            "errors": 0,
-            "existing": 0,
-            "failed_queries": 0,
-            "failed_source_ids": [],
-            "filtered": 0,
-            "new": 6,
-            "queries": 6,
-            "raw_total": 6,
-            "recovered_units": 0,
-            "search_units": 6,
-            "skipped_units": 0,
-            "total": 6
-          },
-          "time_to_first_accepted_seconds": 0.084149,
-          "wall_seconds": 5.107208
-        },
-        {
-          "adapter_calls": 6,
-          "adapter_start_gaps_seconds": [
-            1.004513,
-            1.012257,
-            1.010262,
-            1.002414,
-            1.003333
-          ],
-          "adapter_start_offsets_seconds": [
-            0.022876,
-            1.027389,
-            2.039646,
-            3.049908,
-            4.052322,
-            5.055655
-          ],
-          "checkpoint_save_seconds": [
-            0.000117,
-            0.000103,
-            6.4e-05,
-            7.1e-05,
-            0.000473,
-            0.000188,
-            0.000116,
-            0.000118,
-            0.001087,
-            0.000181,
-            0.000113,
-            0.00011,
-            0.001122,
-            0.000156,
-            8.7e-05,
-            8.8e-05,
-            0.000127,
-            9.5e-05,
-            8.1e-05,
-            5.4e-05,
-            0.001124,
-            0.000235,
-            0.00016,
-            0.000111
-          ],
-          "database": {
-            "checkpoint_revisions": [
-              3,
-              3,
-              3,
-              3,
-              3,
-              3
-            ],
-            "checkpointed_units": 6,
-            "job_event_rows": 30,
-            "job_rows": 6,
-            "receipt_counts": {
-              "accepted": 6,
-              "existing": 0,
-              "new": 6
-            },
-            "receipt_rows": 6,
-            "recovery_count": 0,
-            "unit_count": 6,
-            "unit_states": [
-              "completed",
-              "completed",
-              "completed",
-              "completed",
-              "completed",
-              "completed"
-            ]
-          },
-          "invariants": {
-            "all_units_checkpointed": true,
-            "all_units_completed": true,
-            "exact_job_count": true,
-            "exact_receipt_count": true,
-            "exact_unit_count": true,
-            "host_spacing_preserved": true,
-            "provider_concurrency_at_most_policy": true
-          },
-          "limiter_wait_seconds": [
-            1.1e-05,
-            0.938872,
-            0.949248,
-            0.94015,
-            0.936591,
-            0.940719
-          ],
-          "max_active_adapters": 1,
-          "persistence_seconds": [
-            0.00186,
-            0.003572,
-            0.004686,
-            0.005358,
-            0.002669,
-            0.006063
-          ],
-          "provider_service_seconds": [
-            0.060096,
-            0.051725,
-            0.054091,
-            0.051603,
-            0.054273,
-            0.054472
-          ],
-          "result": {
-            "db_total": 6,
-            "errors": 0,
-            "existing": 0,
-            "failed_queries": 0,
-            "failed_source_ids": [],
-            "filtered": 0,
-            "new": 6,
-            "queries": 6,
-            "raw_total": 6,
-            "recovered_units": 0,
-            "search_units": 6,
-            "skipped_units": 0,
-            "total": 6
-          },
-          "time_to_first_accepted_seconds": 0.086351,
-          "wall_seconds": 5.124499
-        },
-        {
-          "adapter_calls": 6,
-          "adapter_start_gaps_seconds": [
-            1.012845,
-            1.003842,
-            1.012674,
-            1.009527,
-            1.010406
-          ],
-          "adapter_start_offsets_seconds": [
-            0.033228,
-            1.046073,
-            2.049915,
-            3.062589,
-            4.072116,
-            5.082522
-          ],
-          "checkpoint_save_seconds": [
-            0.000142,
-            0.000143,
-            0.000104,
-            0.000112,
-            0.001176,
-            0.000131,
-            8.1e-05,
-            7.2e-05,
-            8.6e-05,
-            7.5e-05,
-            4.5e-05,
-            3.5e-05,
-            0.000954,
-            0.00016,
-            9.1e-05,
-            8.3e-05,
-            0.00099,
-            0.000201,
+            0.000125,
             0.000138,
-            0.000131,
-            0.001085,
-            0.000188,
-            0.00011,
-            0.000101
+            0.000105,
+            0.000109,
+            0.000964,
+            0.000121,
+            8.3e-05,
+            7.2e-05,
+            0.001046,
+            0.000141,
+            8.7e-05,
+            7.9e-05,
+            0.001073,
+            0.000167,
+            9.2e-05,
+            8.2e-05,
+            0.000948,
+            0.000178,
+            0.000106,
+            9e-05,
+            0.001054,
+            0.000178,
+            0.000132,
+            0.000132
           ],
           "database": {
+            "budget_exhausted_rows": [],
             "checkpoint_revisions": [
               3,
               3,
@@ -304,6 +57,7 @@
               3
             ],
             "checkpointed_units": 6,
+            "durable_invocation_count": 6,
             "job_event_rows": 30,
             "job_rows": 6,
             "receipt_counts": {
@@ -321,6 +75,62 @@
               "completed",
               "completed",
               "completed"
+            ],
+            "units": [
+              {
+                "accepted_jobs": 1,
+                "checkpoint_revision": 3,
+                "lease_attempt": 1,
+                "new_jobs": 1,
+                "recovery_count": 0,
+                "state": "completed",
+                "unit_id": "search-0000-01250d99f7056cd5"
+              },
+              {
+                "accepted_jobs": 1,
+                "checkpoint_revision": 3,
+                "lease_attempt": 1,
+                "new_jobs": 1,
+                "recovery_count": 0,
+                "state": "completed",
+                "unit_id": "search-0001-80d5f59459e26962"
+              },
+              {
+                "accepted_jobs": 1,
+                "checkpoint_revision": 3,
+                "lease_attempt": 1,
+                "new_jobs": 1,
+                "recovery_count": 0,
+                "state": "completed",
+                "unit_id": "search-0002-b04e103770c6a9dd"
+              },
+              {
+                "accepted_jobs": 1,
+                "checkpoint_revision": 3,
+                "lease_attempt": 1,
+                "new_jobs": 1,
+                "recovery_count": 0,
+                "state": "completed",
+                "unit_id": "search-0003-3d3a0417e8c1ab5a"
+              },
+              {
+                "accepted_jobs": 1,
+                "checkpoint_revision": 3,
+                "lease_attempt": 1,
+                "new_jobs": 1,
+                "recovery_count": 0,
+                "state": "completed",
+                "unit_id": "search-0004-7bb3812e6dbcb430"
+              },
+              {
+                "accepted_jobs": 1,
+                "checkpoint_revision": 3,
+                "lease_attempt": 1,
+                "new_jobs": 1,
+                "recovery_count": 0,
+                "state": "completed",
+                "unit_id": "search-0005-6ea98bfb3243fb01"
+              }
             ]
           },
           "invariants": {
@@ -334,28 +144,28 @@
           },
           "limiter_wait_seconds": [
             9e-06,
-            0.949728,
-            0.931876,
-            0.953617,
-            0.939563,
-            0.936394
+            0.941994,
+            0.94184,
+            0.928256,
+            0.930499,
+            0.939677
           ],
           "max_active_adapters": 1,
           "persistence_seconds": [
-            0.002872,
-            0.005406,
-            0.001801,
-            0.004569,
-            0.005922,
-            0.005614
+            0.002779,
+            0.003458,
+            0.005044,
+            0.005517,
+            0.005623,
+            0.005312
           ],
           "provider_service_seconds": [
-            0.053617,
-            0.058267,
-            0.051984,
-            0.057115,
-            0.057328,
-            0.050552
+            0.060136,
+            0.052412,
+            0.057981,
+            0.054773,
+            0.053621,
+            0.059515
           ],
           "result": {
             "db_total": 6,
@@ -372,8 +182,372 @@
             "skipped_units": 0,
             "total": 6
           },
-          "time_to_first_accepted_seconds": 0.091792,
-          "wall_seconds": 5.147228
+          "time_to_first_accepted_seconds": 0.098668,
+          "wall_seconds": 5.138042
+        },
+        {
+          "adapter_calls": 6,
+          "adapter_start_gaps_seconds": [
+            1.013186,
+            1.009784,
+            1.009792,
+            1.010118,
+            1.010027
+          ],
+          "adapter_start_offsets_seconds": [
+            0.033543,
+            1.04673,
+            2.056513,
+            3.066305,
+            4.076423,
+            5.08645
+          ],
+          "checkpoint_save_seconds": [
+            0.000127,
+            0.000184,
+            0.000113,
+            6.9e-05,
+            0.001563,
+            0.000183,
+            9e-05,
+            9.1e-05,
+            0.000797,
+            0.000157,
+            9.2e-05,
+            8e-05,
+            0.001058,
+            0.000158,
+            0.000107,
+            0.000109,
+            0.001035,
+            0.000159,
+            0.000126,
+            0.000116,
+            0.001091,
+            0.000158,
+            8.3e-05,
+            8.3e-05
+          ],
+          "database": {
+            "budget_exhausted_rows": [],
+            "checkpoint_revisions": [
+              3,
+              3,
+              3,
+              3,
+              3,
+              3
+            ],
+            "checkpointed_units": 6,
+            "durable_invocation_count": 6,
+            "job_event_rows": 30,
+            "job_rows": 6,
+            "receipt_counts": {
+              "accepted": 6,
+              "existing": 0,
+              "new": 6
+            },
+            "receipt_rows": 6,
+            "recovery_count": 0,
+            "unit_count": 6,
+            "unit_states": [
+              "completed",
+              "completed",
+              "completed",
+              "completed",
+              "completed",
+              "completed"
+            ],
+            "units": [
+              {
+                "accepted_jobs": 1,
+                "checkpoint_revision": 3,
+                "lease_attempt": 1,
+                "new_jobs": 1,
+                "recovery_count": 0,
+                "state": "completed",
+                "unit_id": "search-0000-01250d99f7056cd5"
+              },
+              {
+                "accepted_jobs": 1,
+                "checkpoint_revision": 3,
+                "lease_attempt": 1,
+                "new_jobs": 1,
+                "recovery_count": 0,
+                "state": "completed",
+                "unit_id": "search-0001-80d5f59459e26962"
+              },
+              {
+                "accepted_jobs": 1,
+                "checkpoint_revision": 3,
+                "lease_attempt": 1,
+                "new_jobs": 1,
+                "recovery_count": 0,
+                "state": "completed",
+                "unit_id": "search-0002-b04e103770c6a9dd"
+              },
+              {
+                "accepted_jobs": 1,
+                "checkpoint_revision": 3,
+                "lease_attempt": 1,
+                "new_jobs": 1,
+                "recovery_count": 0,
+                "state": "completed",
+                "unit_id": "search-0003-3d3a0417e8c1ab5a"
+              },
+              {
+                "accepted_jobs": 1,
+                "checkpoint_revision": 3,
+                "lease_attempt": 1,
+                "new_jobs": 1,
+                "recovery_count": 0,
+                "state": "completed",
+                "unit_id": "search-0004-7bb3812e6dbcb430"
+              },
+              {
+                "accepted_jobs": 1,
+                "checkpoint_revision": 3,
+                "lease_attempt": 1,
+                "new_jobs": 1,
+                "recovery_count": 0,
+                "state": "completed",
+                "unit_id": "search-0005-6ea98bfb3243fb01"
+              }
+            ]
+          },
+          "invariants": {
+            "all_units_checkpointed": true,
+            "all_units_completed": true,
+            "exact_job_count": true,
+            "exact_receipt_count": true,
+            "exact_unit_count": true,
+            "host_spacing_preserved": true,
+            "provider_concurrency_at_most_policy": true
+          },
+          "limiter_wait_seconds": [
+            8e-06,
+            0.944902,
+            0.941933,
+            0.944042,
+            0.940864,
+            0.940009
+          ],
+          "max_active_adapters": 1,
+          "persistence_seconds": [
+            0.003172,
+            0.005991,
+            0.004386,
+            0.004927,
+            0.005953,
+            0.004732
+          ],
+          "provider_service_seconds": [
+            0.058435,
+            0.050935,
+            0.051017,
+            0.053138,
+            0.05335,
+            0.06039
+          ],
+          "result": {
+            "db_total": 6,
+            "errors": 0,
+            "existing": 0,
+            "failed_queries": 0,
+            "failed_source_ids": [],
+            "filtered": 0,
+            "new": 6,
+            "queries": 6,
+            "raw_total": 6,
+            "recovered_units": 0,
+            "search_units": 6,
+            "skipped_units": 0,
+            "total": 6
+          },
+          "time_to_first_accepted_seconds": 0.097154,
+          "wall_seconds": 5.159337
+        },
+        {
+          "adapter_calls": 6,
+          "adapter_start_gaps_seconds": [
+            1.013223,
+            1.007891,
+            1.011795,
+            1.010022,
+            1.001644
+          ],
+          "adapter_start_offsets_seconds": [
+            0.033955,
+            1.047177,
+            2.055068,
+            3.066863,
+            4.076885,
+            5.078529
+          ],
+          "checkpoint_save_seconds": [
+            0.000137,
+            0.000143,
+            0.000128,
+            0.00011,
+            0.001753,
+            0.000136,
+            0.000102,
+            9.9e-05,
+            0.000652,
+            0.000101,
+            6.4e-05,
+            5.4e-05,
+            0.001117,
+            0.000168,
+            8.6e-05,
+            0.000105,
+            0.001016,
+            0.000156,
+            8.7e-05,
+            7.9e-05,
+            0.001065,
+            0.000174,
+            0.000109,
+            0.000107
+          ],
+          "database": {
+            "budget_exhausted_rows": [],
+            "checkpoint_revisions": [
+              3,
+              3,
+              3,
+              3,
+              3,
+              3
+            ],
+            "checkpointed_units": 6,
+            "durable_invocation_count": 6,
+            "job_event_rows": 30,
+            "job_rows": 6,
+            "receipt_counts": {
+              "accepted": 6,
+              "existing": 0,
+              "new": 6
+            },
+            "receipt_rows": 6,
+            "recovery_count": 0,
+            "unit_count": 6,
+            "unit_states": [
+              "completed",
+              "completed",
+              "completed",
+              "completed",
+              "completed",
+              "completed"
+            ],
+            "units": [
+              {
+                "accepted_jobs": 1,
+                "checkpoint_revision": 3,
+                "lease_attempt": 1,
+                "new_jobs": 1,
+                "recovery_count": 0,
+                "state": "completed",
+                "unit_id": "search-0000-01250d99f7056cd5"
+              },
+              {
+                "accepted_jobs": 1,
+                "checkpoint_revision": 3,
+                "lease_attempt": 1,
+                "new_jobs": 1,
+                "recovery_count": 0,
+                "state": "completed",
+                "unit_id": "search-0001-80d5f59459e26962"
+              },
+              {
+                "accepted_jobs": 1,
+                "checkpoint_revision": 3,
+                "lease_attempt": 1,
+                "new_jobs": 1,
+                "recovery_count": 0,
+                "state": "completed",
+                "unit_id": "search-0002-b04e103770c6a9dd"
+              },
+              {
+                "accepted_jobs": 1,
+                "checkpoint_revision": 3,
+                "lease_attempt": 1,
+                "new_jobs": 1,
+                "recovery_count": 0,
+                "state": "completed",
+                "unit_id": "search-0003-3d3a0417e8c1ab5a"
+              },
+              {
+                "accepted_jobs": 1,
+                "checkpoint_revision": 3,
+                "lease_attempt": 1,
+                "new_jobs": 1,
+                "recovery_count": 0,
+                "state": "completed",
+                "unit_id": "search-0004-7bb3812e6dbcb430"
+              },
+              {
+                "accepted_jobs": 1,
+                "checkpoint_revision": 3,
+                "lease_attempt": 1,
+                "new_jobs": 1,
+                "recovery_count": 0,
+                "state": "completed",
+                "unit_id": "search-0005-6ea98bfb3243fb01"
+              }
+            ]
+          },
+          "invariants": {
+            "all_units_checkpointed": true,
+            "all_units_completed": true,
+            "exact_job_count": true,
+            "exact_receipt_count": true,
+            "exact_unit_count": true,
+            "host_spacing_preserved": true,
+            "provider_concurrency_at_most_policy": true
+          },
+          "limiter_wait_seconds": [
+            9e-06,
+            0.943942,
+            0.941693,
+            0.950617,
+            0.9383,
+            0.927811
+          ],
+          "max_active_adapters": 1,
+          "persistence_seconds": [
+            0.00259,
+            0.004922,
+            0.002264,
+            0.005116,
+            0.005863,
+            0.00541
+          ],
+          "provider_service_seconds": [
+            0.060153,
+            0.052324,
+            0.053085,
+            0.055854,
+            0.057517,
+            0.051958
+          ],
+          "result": {
+            "db_total": 6,
+            "errors": 0,
+            "existing": 0,
+            "failed_queries": 0,
+            "failed_source_ids": [],
+            "filtered": 0,
+            "new": 6,
+            "queries": 6,
+            "raw_total": 6,
+            "recovered_units": 0,
+            "search_units": 6,
+            "skipped_units": 0,
+            "total": 6
+          },
+          "time_to_first_accepted_seconds": 0.098299,
+          "wall_seconds": 5.143824
         }
       ],
       "service_delay_seconds": 0.05,
@@ -381,45 +555,45 @@
         "all_invariants_met": true,
         "checkpoint_save": {
           "count": 72,
-          "max_seconds": 0.001176,
-          "min_seconds": 3.5e-05,
-          "p50_seconds": 0.000112,
-          "p95_seconds": 0.001087
+          "max_seconds": 0.001753,
+          "min_seconds": 5.4e-05,
+          "p50_seconds": 0.000126,
+          "p95_seconds": 0.001091
         },
         "limiter_wait": {
           "count": 18,
-          "max_seconds": 0.953617,
-          "min_seconds": 9e-06,
-          "p50_seconds": 0.936591,
-          "p95_seconds": 0.953617
+          "max_seconds": 0.950617,
+          "min_seconds": 8e-06,
+          "p50_seconds": 0.940009,
+          "p95_seconds": 0.950617
         },
         "persistence": {
           "count": 18,
-          "max_seconds": 0.006063,
-          "min_seconds": 0.001705,
-          "p50_seconds": 0.00445,
-          "p95_seconds": 0.006063
+          "max_seconds": 0.005991,
+          "min_seconds": 0.002264,
+          "p50_seconds": 0.004927,
+          "p95_seconds": 0.005991
         },
         "provider_service": {
           "count": 18,
-          "max_seconds": 0.060368,
-          "min_seconds": 0.050552,
-          "p50_seconds": 0.054472,
-          "p95_seconds": 0.060368
+          "max_seconds": 0.06039,
+          "min_seconds": 0.050935,
+          "p50_seconds": 0.053621,
+          "p95_seconds": 0.06039
         },
         "time_to_first_accepted": {
           "count": 3,
-          "max_seconds": 0.091792,
-          "min_seconds": 0.084149,
-          "p50_seconds": 0.086351,
-          "p95_seconds": 0.091792
+          "max_seconds": 0.098668,
+          "min_seconds": 0.097154,
+          "p50_seconds": 0.098299,
+          "p95_seconds": 0.098668
         },
         "wall": {
           "count": 3,
-          "max_seconds": 5.147228,
-          "min_seconds": 5.107208,
-          "p50_seconds": 5.124499,
-          "p95_seconds": 5.147228
+          "max_seconds": 5.159337,
+          "min_seconds": 5.138042,
+          "p50_seconds": 5.143824,
+          "p95_seconds": 5.159337
         }
       }
     },
@@ -430,295 +604,48 @@
         {
           "adapter_calls": 6,
           "adapter_start_gaps_seconds": [
-            1.003723,
-            1.007997,
-            1.002832,
-            1.002242,
-            1.01027
+            1.012827,
+            1.004092,
+            1.010092,
+            1.00846,
+            1.011539
           ],
           "adapter_start_offsets_seconds": [
-            0.032628,
-            1.036351,
-            2.044348,
-            3.04718,
-            4.049423,
-            5.059693
+            0.032518,
+            1.045345,
+            2.049437,
+            3.059529,
+            4.067989,
+            5.079528
           ],
           "checkpoint_save_seconds": [
-            0.00014,
-            9.2e-05,
-            6.3e-05,
+            0.000145,
+            8.9e-05,
             5.9e-05,
-            0.00103,
-            0.000195,
-            9.5e-05,
-            8.7e-05,
-            0.001065,
-            0.000138,
-            8.7e-05,
-            8e-05,
-            0.00107,
-            0.000128,
-            8.1e-05,
-            8.1e-05,
-            0.000821,
-            0.000187,
-            8.4e-05,
-            7.6e-05,
-            0.001035,
-            0.000167,
-            8.8e-05,
-            8.7e-05
-          ],
-          "database": {
-            "checkpoint_revisions": [
-              3,
-              3,
-              3,
-              3,
-              3,
-              3
-            ],
-            "checkpointed_units": 6,
-            "job_event_rows": 30,
-            "job_rows": 6,
-            "receipt_counts": {
-              "accepted": 6,
-              "existing": 0,
-              "new": 6
-            },
-            "receipt_rows": 6,
-            "recovery_count": 0,
-            "unit_count": 6,
-            "unit_states": [
-              "completed",
-              "completed",
-              "completed",
-              "completed",
-              "completed",
-              "completed"
-            ]
-          },
-          "invariants": {
-            "all_units_checkpointed": true,
-            "all_units_completed": true,
-            "exact_job_count": true,
-            "exact_receipt_count": true,
-            "exact_unit_count": true,
-            "host_spacing_preserved": true,
-            "provider_concurrency_at_most_policy": true
-          },
-          "limiter_wait_seconds": [
-            9e-06,
-            0.996262,
-            0.992995,
-            0.988288,
-            0.987253,
-            0.99543
-          ],
-          "max_active_adapters": 1,
-          "persistence_seconds": [
-            0.002013,
-            0.004675,
-            0.004399,
-            0.00443,
-            0.004515,
-            0.004376
-          ],
-          "provider_service_seconds": [
-            3.9e-05,
-            0.00021,
-            0.000187,
-            0.000273,
-            0.000212,
-            0.000186
-          ],
-          "result": {
-            "db_total": 6,
-            "errors": 0,
-            "existing": 0,
-            "failed_queries": 0,
-            "failed_source_ids": [],
-            "filtered": 0,
-            "new": 6,
-            "queries": 6,
-            "raw_total": 6,
-            "recovered_units": 0,
-            "search_units": 6,
-            "skipped_units": 0,
-            "total": 6
-          },
-          "time_to_first_accepted_seconds": 0.036147,
-          "wall_seconds": 5.071281
-        },
-        {
-          "adapter_calls": 6,
-          "adapter_start_gaps_seconds": [
-            1.013026,
-            1.009896,
-            1.009912,
-            1.008088,
-            1.004829
-          ],
-          "adapter_start_offsets_seconds": [
-            0.033253,
-            1.04628,
-            2.056175,
-            3.066087,
-            4.074175,
-            5.079004
-          ],
-          "checkpoint_save_seconds": [
-            0.000138,
-            9.3e-05,
-            6.9e-05,
-            6.1e-05,
-            0.001069,
-            0.000169,
-            0.000108,
-            9.9e-05,
-            0.001133,
-            0.000175,
-            0.000111,
-            0.000107,
-            0.000949,
-            0.000158,
-            9.8e-05,
-            9.4e-05,
-            0.00048,
-            0.000101,
-            9.5e-05,
-            9e-05,
-            0.001075,
-            0.000158,
-            7.9e-05,
-            8e-05
-          ],
-          "database": {
-            "checkpoint_revisions": [
-              3,
-              3,
-              3,
-              3,
-              3,
-              3
-            ],
-            "checkpointed_units": 6,
-            "job_event_rows": 30,
-            "job_rows": 6,
-            "receipt_counts": {
-              "accepted": 6,
-              "existing": 0,
-              "new": 6
-            },
-            "receipt_rows": 6,
-            "recovery_count": 0,
-            "unit_count": 6,
-            "unit_states": [
-              "completed",
-              "completed",
-              "completed",
-              "completed",
-              "completed",
-              "completed"
-            ]
-          },
-          "invariants": {
-            "all_units_checkpointed": true,
-            "all_units_completed": true,
-            "exact_job_count": true,
-            "exact_receipt_count": true,
-            "exact_unit_count": true,
-            "host_spacing_preserved": true,
-            "provider_concurrency_at_most_policy": true
-          },
-          "limiter_wait_seconds": [
-            9e-06,
-            1.005479,
-            0.995638,
-            0.994889,
-            0.994534,
-            0.996342
-          ],
-          "max_active_adapters": 1,
-          "persistence_seconds": [
-            0.001836,
-            0.003824,
-            0.004656,
-            0.004918,
-            0.002363,
-            0.00527
-          ],
-          "provider_service_seconds": [
-            3.9e-05,
-            0.000192,
-            0.000262,
-            0.000208,
-            5.1e-05,
-            0.000237
-          ],
-          "result": {
-            "db_total": 6,
-            "errors": 0,
-            "existing": 0,
-            "failed_queries": 0,
-            "failed_source_ids": [],
-            "filtered": 0,
-            "new": 6,
-            "queries": 6,
-            "raw_total": 6,
-            "recovered_units": 0,
-            "search_units": 6,
-            "skipped_units": 0,
-            "total": 6
-          },
-          "time_to_first_accepted_seconds": 0.036479,
-          "wall_seconds": 5.091942
-        },
-        {
-          "adapter_calls": 6,
-          "adapter_start_gaps_seconds": [
-            1.012858,
-            1.009941,
-            1.01006,
-            1.0098,
-            1.010344
-          ],
-          "adapter_start_offsets_seconds": [
-            0.03451,
-            1.047368,
-            2.057308,
-            3.067368,
-            4.077168,
-            5.087512
-          ],
-          "checkpoint_save_seconds": [
-            0.000129,
-            9e-05,
-            6.4e-05,
-            5.4e-05,
-            0.001047,
-            0.000154,
-            8.5e-05,
-            8.3e-05,
+            6e-05,
             0.001029,
-            0.000141,
-            9.6e-05,
-            9.4e-05,
-            0.001038,
-            0.000144,
-            0.0001,
+            0.000148,
+            8.6e-05,
             0.000108,
-            0.000883,
-            0.000206,
-            0.000104,
-            8.1e-05,
-            0.001026,
-            0.000182,
-            0.00011,
-            0.000102
+            0.001025,
+            0.000124,
+            9.9e-05,
+            8.7e-05,
+            0.001098,
+            0.000134,
+            9.1e-05,
+            8.9e-05,
+            0.000276,
+            8.6e-05,
+            7.2e-05,
+            5.7e-05,
+            0.000923,
+            0.000159,
+            8.3e-05,
+            8.4e-05
           ],
           "database": {
+            "budget_exhausted_rows": [],
             "checkpoint_revisions": [
               3,
               3,
@@ -728,6 +655,7 @@
               3
             ],
             "checkpointed_units": 6,
+            "durable_invocation_count": 6,
             "job_event_rows": 30,
             "job_rows": 6,
             "receipt_counts": {
@@ -745,6 +673,62 @@
               "completed",
               "completed",
               "completed"
+            ],
+            "units": [
+              {
+                "accepted_jobs": 1,
+                "checkpoint_revision": 3,
+                "lease_attempt": 1,
+                "new_jobs": 1,
+                "recovery_count": 0,
+                "state": "completed",
+                "unit_id": "search-0000-01250d99f7056cd5"
+              },
+              {
+                "accepted_jobs": 1,
+                "checkpoint_revision": 3,
+                "lease_attempt": 1,
+                "new_jobs": 1,
+                "recovery_count": 0,
+                "state": "completed",
+                "unit_id": "search-0001-80d5f59459e26962"
+              },
+              {
+                "accepted_jobs": 1,
+                "checkpoint_revision": 3,
+                "lease_attempt": 1,
+                "new_jobs": 1,
+                "recovery_count": 0,
+                "state": "completed",
+                "unit_id": "search-0002-b04e103770c6a9dd"
+              },
+              {
+                "accepted_jobs": 1,
+                "checkpoint_revision": 3,
+                "lease_attempt": 1,
+                "new_jobs": 1,
+                "recovery_count": 0,
+                "state": "completed",
+                "unit_id": "search-0003-3d3a0417e8c1ab5a"
+              },
+              {
+                "accepted_jobs": 1,
+                "checkpoint_revision": 3,
+                "lease_attempt": 1,
+                "new_jobs": 1,
+                "recovery_count": 0,
+                "state": "completed",
+                "unit_id": "search-0004-7bb3812e6dbcb430"
+              },
+              {
+                "accepted_jobs": 1,
+                "checkpoint_revision": 3,
+                "lease_attempt": 1,
+                "new_jobs": 1,
+                "recovery_count": 0,
+                "state": "completed",
+                "unit_id": "search-0005-6ea98bfb3243fb01"
+              }
             ]
           },
           "invariants": {
@@ -757,29 +741,211 @@
             "provider_concurrency_at_most_policy": true
           },
           "limiter_wait_seconds": [
-            1.1e-05,
-            1.005068,
-            0.994254,
-            0.994364,
-            0.995399,
-            0.995116
+            9e-06,
+            1.005123,
+            0.988975,
+            0.99587,
+            0.996469,
+            1.001411
           ],
           "max_active_adapters": 1,
           "persistence_seconds": [
-            0.002031,
-            0.004783,
-            0.004811,
-            0.004229,
-            0.004915,
-            0.005421
+            0.002083,
+            0.004898,
+            0.004406,
+            0.003462,
+            0.00322,
+            0.004797
+          ],
+          "provider_service_seconds": [
+            4.4e-05,
+            0.000209,
+            0.000214,
+            0.000185,
+            0.000115,
+            0.00023
+          ],
+          "result": {
+            "db_total": 6,
+            "errors": 0,
+            "existing": 0,
+            "failed_queries": 0,
+            "failed_source_ids": [],
+            "filtered": 0,
+            "new": 6,
+            "queries": 6,
+            "raw_total": 6,
+            "recovered_units": 0,
+            "search_units": 6,
+            "skipped_units": 0,
+            "total": 6
+          },
+          "time_to_first_accepted_seconds": 0.03608,
+          "wall_seconds": 5.091014
+        },
+        {
+          "adapter_calls": 6,
+          "adapter_start_gaps_seconds": [
+            1.012774,
+            1.009875,
+            1.002648,
+            1.010133,
+            1.009862
+          ],
+          "adapter_start_offsets_seconds": [
+            0.033326,
+            1.0461,
+            2.055975,
+            3.058623,
+            4.068756,
+            5.078617
+          ],
+          "checkpoint_save_seconds": [
+            0.000137,
+            0.00012,
+            7.5e-05,
+            6.9e-05,
+            0.000986,
+            0.000158,
+            0.000109,
+            8.7e-05,
+            0.000985,
+            0.000192,
+            9.5e-05,
+            7.5e-05,
+            0.001074,
+            0.000181,
+            0.000131,
+            0.000105,
+            0.00101,
+            0.000133,
+            8e-05,
+            7.1e-05,
+            0.000996,
+            0.00014,
+            8.1e-05,
+            8.2e-05
+          ],
+          "database": {
+            "budget_exhausted_rows": [],
+            "checkpoint_revisions": [
+              3,
+              3,
+              3,
+              3,
+              3,
+              3
+            ],
+            "checkpointed_units": 6,
+            "durable_invocation_count": 6,
+            "job_event_rows": 30,
+            "job_rows": 6,
+            "receipt_counts": {
+              "accepted": 6,
+              "existing": 0,
+              "new": 6
+            },
+            "receipt_rows": 6,
+            "recovery_count": 0,
+            "unit_count": 6,
+            "unit_states": [
+              "completed",
+              "completed",
+              "completed",
+              "completed",
+              "completed",
+              "completed"
+            ],
+            "units": [
+              {
+                "accepted_jobs": 1,
+                "checkpoint_revision": 3,
+                "lease_attempt": 1,
+                "new_jobs": 1,
+                "recovery_count": 0,
+                "state": "completed",
+                "unit_id": "search-0000-01250d99f7056cd5"
+              },
+              {
+                "accepted_jobs": 1,
+                "checkpoint_revision": 3,
+                "lease_attempt": 1,
+                "new_jobs": 1,
+                "recovery_count": 0,
+                "state": "completed",
+                "unit_id": "search-0001-80d5f59459e26962"
+              },
+              {
+                "accepted_jobs": 1,
+                "checkpoint_revision": 3,
+                "lease_attempt": 1,
+                "new_jobs": 1,
+                "recovery_count": 0,
+                "state": "completed",
+                "unit_id": "search-0002-b04e103770c6a9dd"
+              },
+              {
+                "accepted_jobs": 1,
+                "checkpoint_revision": 3,
+                "lease_attempt": 1,
+                "new_jobs": 1,
+                "recovery_count": 0,
+                "state": "completed",
+                "unit_id": "search-0003-3d3a0417e8c1ab5a"
+              },
+              {
+                "accepted_jobs": 1,
+                "checkpoint_revision": 3,
+                "lease_attempt": 1,
+                "new_jobs": 1,
+                "recovery_count": 0,
+                "state": "completed",
+                "unit_id": "search-0004-7bb3812e6dbcb430"
+              },
+              {
+                "accepted_jobs": 1,
+                "checkpoint_revision": 3,
+                "lease_attempt": 1,
+                "new_jobs": 1,
+                "recovery_count": 0,
+                "state": "completed",
+                "unit_id": "search-0005-6ea98bfb3243fb01"
+              }
+            ]
+          },
+          "invariants": {
+            "all_units_checkpointed": true,
+            "all_units_completed": true,
+            "exact_job_count": true,
+            "exact_receipt_count": true,
+            "exact_unit_count": true,
+            "host_spacing_preserved": true,
+            "provider_concurrency_at_most_policy": true
+          },
+          "limiter_wait_seconds": [
+            9e-06,
+            1.005122,
+            0.994014,
+            0.987571,
+            0.994865,
+            0.9958
+          ],
+          "max_active_adapters": 1,
+          "persistence_seconds": [
+            0.002016,
+            0.004845,
+            0.004952,
+            0.004847,
+            0.004127,
+            0.00376
           ],
           "provider_service_seconds": [
             4.1e-05,
-            0.000256,
-            0.000268,
+            0.000275,
+            0.000227,
             0.000198,
-            0.000225,
-            0.00026
+            0.00023,
+            0.00019
           ],
           "result": {
             "db_total": 6,
@@ -796,8 +962,190 @@
             "skipped_units": 0,
             "total": 6
           },
-          "time_to_first_accepted_seconds": 0.038158,
-          "wall_seconds": 5.100793
+          "time_to_first_accepted_seconds": 0.036841,
+          "wall_seconds": 5.088783
+        },
+        {
+          "adapter_calls": 6,
+          "adapter_start_gaps_seconds": [
+            1.007552,
+            1.002241,
+            1.002925,
+            1.009724,
+            1.010419
+          ],
+          "adapter_start_offsets_seconds": [
+            0.033075,
+            1.040628,
+            2.042868,
+            3.045794,
+            4.055517,
+            5.065936
+          ],
+          "checkpoint_save_seconds": [
+            0.000131,
+            8.3e-05,
+            6.7e-05,
+            6.1e-05,
+            0.001087,
+            0.000136,
+            8.3e-05,
+            7.9e-05,
+            0.001092,
+            0.000143,
+            9.3e-05,
+            9.9e-05,
+            0.00108,
+            0.000129,
+            9.2e-05,
+            9.7e-05,
+            0.000977,
+            0.000151,
+            0.000122,
+            0.000104,
+            0.00103,
+            0.000132,
+            8.4e-05,
+            8.7e-05
+          ],
+          "database": {
+            "budget_exhausted_rows": [],
+            "checkpoint_revisions": [
+              3,
+              3,
+              3,
+              3,
+              3,
+              3
+            ],
+            "checkpointed_units": 6,
+            "durable_invocation_count": 6,
+            "job_event_rows": 30,
+            "job_rows": 6,
+            "receipt_counts": {
+              "accepted": 6,
+              "existing": 0,
+              "new": 6
+            },
+            "receipt_rows": 6,
+            "recovery_count": 0,
+            "unit_count": 6,
+            "unit_states": [
+              "completed",
+              "completed",
+              "completed",
+              "completed",
+              "completed",
+              "completed"
+            ],
+            "units": [
+              {
+                "accepted_jobs": 1,
+                "checkpoint_revision": 3,
+                "lease_attempt": 1,
+                "new_jobs": 1,
+                "recovery_count": 0,
+                "state": "completed",
+                "unit_id": "search-0000-01250d99f7056cd5"
+              },
+              {
+                "accepted_jobs": 1,
+                "checkpoint_revision": 3,
+                "lease_attempt": 1,
+                "new_jobs": 1,
+                "recovery_count": 0,
+                "state": "completed",
+                "unit_id": "search-0001-80d5f59459e26962"
+              },
+              {
+                "accepted_jobs": 1,
+                "checkpoint_revision": 3,
+                "lease_attempt": 1,
+                "new_jobs": 1,
+                "recovery_count": 0,
+                "state": "completed",
+                "unit_id": "search-0002-b04e103770c6a9dd"
+              },
+              {
+                "accepted_jobs": 1,
+                "checkpoint_revision": 3,
+                "lease_attempt": 1,
+                "new_jobs": 1,
+                "recovery_count": 0,
+                "state": "completed",
+                "unit_id": "search-0003-3d3a0417e8c1ab5a"
+              },
+              {
+                "accepted_jobs": 1,
+                "checkpoint_revision": 3,
+                "lease_attempt": 1,
+                "new_jobs": 1,
+                "recovery_count": 0,
+                "state": "completed",
+                "unit_id": "search-0004-7bb3812e6dbcb430"
+              },
+              {
+                "accepted_jobs": 1,
+                "checkpoint_revision": 3,
+                "lease_attempt": 1,
+                "new_jobs": 1,
+                "recovery_count": 0,
+                "state": "completed",
+                "unit_id": "search-0005-6ea98bfb3243fb01"
+              }
+            ]
+          },
+          "invariants": {
+            "all_units_checkpointed": true,
+            "all_units_completed": true,
+            "exact_job_count": true,
+            "exact_receipt_count": true,
+            "exact_unit_count": true,
+            "host_spacing_preserved": true,
+            "provider_concurrency_at_most_policy": true
+          },
+          "limiter_wait_seconds": [
+            9e-06,
+            0.999903,
+            0.988189,
+            0.988363,
+            0.996061,
+            0.996455
+          ],
+          "max_active_adapters": 1,
+          "persistence_seconds": [
+            0.00197,
+            0.004233,
+            0.004549,
+            0.003622,
+            0.003806,
+            0.004247
+          ],
+          "provider_service_seconds": [
+            4e-05,
+            0.000183,
+            0.000206,
+            0.000214,
+            0.000206,
+            0.000224
+          ],
+          "result": {
+            "db_total": 6,
+            "errors": 0,
+            "existing": 0,
+            "failed_queries": 0,
+            "failed_source_ids": [],
+            "filtered": 0,
+            "new": 6,
+            "queries": 6,
+            "raw_total": 6,
+            "recovered_units": 0,
+            "search_units": 6,
+            "skipped_units": 0,
+            "total": 6
+          },
+          "time_to_first_accepted_seconds": 0.036453,
+          "wall_seconds": 5.077462
         }
       ],
       "service_delay_seconds": 0.0,
@@ -805,45 +1153,45 @@
         "all_invariants_met": true,
         "checkpoint_save": {
           "count": 72,
-          "max_seconds": 0.001133,
-          "min_seconds": 5.4e-05,
-          "p50_seconds": 0.000107,
-          "p95_seconds": 0.001069
+          "max_seconds": 0.001098,
+          "min_seconds": 5.7e-05,
+          "p50_seconds": 0.000108,
+          "p95_seconds": 0.00108
         },
         "limiter_wait": {
           "count": 18,
-          "max_seconds": 1.005479,
+          "max_seconds": 1.005123,
           "min_seconds": 9e-06,
-          "p50_seconds": 0.994534,
-          "p95_seconds": 1.005479
+          "p50_seconds": 0.994865,
+          "p95_seconds": 1.005123
         },
         "persistence": {
           "count": 18,
-          "max_seconds": 0.005421,
-          "min_seconds": 0.001836,
-          "p50_seconds": 0.00443,
-          "p95_seconds": 0.005421
+          "max_seconds": 0.004952,
+          "min_seconds": 0.00197,
+          "p50_seconds": 0.004127,
+          "p95_seconds": 0.004952
         },
         "provider_service": {
           "count": 18,
-          "max_seconds": 0.000273,
-          "min_seconds": 3.9e-05,
-          "p50_seconds": 0.000208,
-          "p95_seconds": 0.000273
+          "max_seconds": 0.000275,
+          "min_seconds": 4e-05,
+          "p50_seconds": 0.000206,
+          "p95_seconds": 0.000275
         },
         "time_to_first_accepted": {
           "count": 3,
-          "max_seconds": 0.038158,
-          "min_seconds": 0.036147,
-          "p50_seconds": 0.036479,
-          "p95_seconds": 0.038158
+          "max_seconds": 0.036841,
+          "min_seconds": 0.03608,
+          "p50_seconds": 0.036453,
+          "p95_seconds": 0.036841
         },
         "wall": {
           "count": 3,
-          "max_seconds": 5.100793,
-          "min_seconds": 5.071281,
-          "p50_seconds": 5.091942,
-          "p95_seconds": 5.100793
+          "max_seconds": 5.091014,
+          "min_seconds": 5.077462,
+          "p50_seconds": 5.088783,
+          "p95_seconds": 5.091014
         }
       }
     }
@@ -875,19 +1223,19 @@
   "diagnostics": {
     "competing_calls": {
       "call_start_gaps_seconds": [
-        1.007256,
-        1.00383,
-        1.010048,
-        1.003878,
-        1.000704
+        1.010076,
+        1.00755,
+        1.002571,
+        1.010064,
+        1.010059
       ],
       "call_start_offsets_seconds": [
-        0.000514,
-        1.007771,
-        2.011601,
-        3.021649,
-        4.025527,
-        5.02623
+        0.000297,
+        1.010373,
+        2.017924,
+        3.020495,
+        4.030559,
+        5.040619
       ],
       "durable_path": false,
       "invariants": {
@@ -896,18 +1244,18 @@
       },
       "label": "diagnostic_limiter_only_not_durable_production",
       "limiter_wait_seconds": [
-        1.5e-05,
-        1.007247,
-        2.011062,
-        3.021095,
-        4.024958,
-        5.025644
+        1.3e-05,
+        1.010067,
+        2.017607,
+        3.020171,
+        4.030229,
+        5.040284
       ],
       "max_active_calls": 1,
-      "wall_seconds": 5.078641
+      "wall_seconds": 5.099788
     }
   },
-  "generated_at_utc": "2026-09-22T08:56:26Z",
+  "generated_at_utc": "2026-09-22T09:30:47Z",
   "measurement_caveats": [
     "Synthetic service delays do not estimate real-provider throughput or safe provider policy.",
     "Persistence timing wraps store_jobspy_results and therefore includes its SQLite acceptance and receipt work.",
@@ -918,7 +1266,7 @@
   "mode": "assessment",
   "provenance": {
     "git_branch": "perf/search-unit-assessment-899",
-    "git_head": "cb5a01b97b226fb96d8affcbde0858d49effda77",
+    "git_head": "d17d1ccfa3032e52697cb1638e0df52b1b625f03",
     "git_status_porcelain": [
       "M workers/automation/uv.lock"
     ],
@@ -949,7 +1297,7 @@
     "active_provider_wait": {
       "adapter_calls": 1,
       "all_unfinished_terminalized": true,
-      "cancel_to_return_seconds": 0.054024,
+      "cancel_to_return_seconds": 0.06041,
       "limiter_wait_seconds": [
         8e-06
       ],
@@ -963,14 +1311,302 @@
         "canceled",
         "canceled"
       ],
-      "wall_seconds": 0.079689
+      "wall_seconds": 0.087056
+    },
+    "exact_limit_after_ack_before_skip": {
+      "adapter_calls": 2,
+      "adapter_start_gaps_seconds": [
+        1.000475
+      ],
+      "after_interruption": {
+        "budget_exhausted_rows": [],
+        "checkpoint_revisions": [
+          1,
+          null
+        ],
+        "checkpointed_units": 1,
+        "durable_invocation_count": 1,
+        "job_event_rows": 5,
+        "job_rows": 1,
+        "receipt_counts": {
+          "accepted": 1,
+          "existing": 0,
+          "new": 1
+        },
+        "receipt_rows": 1,
+        "recovery_count": 0,
+        "unit_count": 2,
+        "unit_states": [
+          "running",
+          "pending"
+        ],
+        "units": [
+          {
+            "accepted_jobs": 1,
+            "checkpoint_revision": 1,
+            "lease_attempt": 1,
+            "new_jobs": 1,
+            "recovery_count": 0,
+            "state": "running",
+            "unit_id": "search-0000-4ae7a9eb653bbea5"
+          },
+          {
+            "accepted_jobs": 0,
+            "checkpoint_revision": null,
+            "lease_attempt": 0,
+            "new_jobs": 0,
+            "recovery_count": 0,
+            "state": "pending",
+            "unit_id": "search-0001-4cda604312715e74"
+          }
+        ]
+      },
+      "durable_path": true,
+      "final_database": {
+        "budget_exhausted_rows": [],
+        "checkpoint_revisions": [
+          1,
+          null
+        ],
+        "checkpointed_units": 1,
+        "durable_invocation_count": 2,
+        "job_event_rows": 5,
+        "job_rows": 1,
+        "receipt_counts": {
+          "accepted": 1,
+          "existing": 0,
+          "new": 1
+        },
+        "receipt_rows": 1,
+        "recovery_count": 1,
+        "unit_count": 2,
+        "unit_states": [
+          "skipped",
+          "skipped"
+        ],
+        "units": [
+          {
+            "accepted_jobs": 1,
+            "checkpoint_revision": 1,
+            "lease_attempt": 2,
+            "new_jobs": 1,
+            "recovery_count": 1,
+            "state": "skipped",
+            "unit_id": "search-0000-4ae7a9eb653bbea5"
+          },
+          {
+            "accepted_jobs": 0,
+            "checkpoint_revision": null,
+            "lease_attempt": 0,
+            "new_jobs": 0,
+            "recovery_count": 0,
+            "state": "skipped",
+            "unit_id": "search-0001-4cda604312715e74"
+          }
+        ]
+      },
+      "interruption": "synthetic worker loss after acknowledgement before unit skip",
+      "invariants": {
+        "budget_evidence_matches_policy": true,
+        "exact_accepted_job_count": true,
+        "exact_receipt_counts": true,
+        "exact_receipt_limit": true,
+        "exact_result_limit": true,
+        "expected_checkpoint_revisions": true,
+        "expected_skipped_units": true,
+        "expected_terminal_states": true,
+        "host_spacing_preserved": true,
+        "interrupted_states_recorded": true,
+        "interrupted_unit_recovered_once": true,
+        "provider_concurrency_at_most_policy": true,
+        "real_host_rate_limiter_used": true
+      },
+      "limiter": "HostRateLimiter",
+      "limiter_wait_seconds": [
+        9e-06,
+        0.988847
+      ],
+      "result": {
+        "db_total": 1,
+        "errors": 0,
+        "existing": 0,
+        "failed_queries": 0,
+        "failed_source_ids": [],
+        "filtered": 0,
+        "new": 1,
+        "queries": 2,
+        "raw_total": 1,
+        "recovered_units": 1,
+        "search_units": 2,
+        "skipped_units": 2,
+        "total": 1
+      },
+      "scenario": "exact_limit_after_ack_before_skip",
+      "synthetic_assumptions": {
+        "jobs_per_unit": 2,
+        "max_search_unit_invocations_per_run": 500,
+        "queries": [
+          "Director of Engineering",
+          "VP Engineering"
+        ],
+        "result_limit": 1,
+        "service_delay_seconds": 0.0,
+        "sources": [
+          "indeed"
+        ]
+      },
+      "wall_seconds": 1.037523
+    },
+    "exact_limit_before_ack": {
+      "adapter_calls": 2,
+      "adapter_start_gaps_seconds": [
+        1.00685
+      ],
+      "after_interruption": {
+        "budget_exhausted_rows": [],
+        "checkpoint_revisions": [
+          0,
+          null
+        ],
+        "checkpointed_units": 1,
+        "durable_invocation_count": 1,
+        "job_event_rows": 5,
+        "job_rows": 1,
+        "receipt_counts": {
+          "accepted": 1,
+          "existing": 0,
+          "new": 1
+        },
+        "receipt_rows": 1,
+        "recovery_count": 0,
+        "unit_count": 2,
+        "unit_states": [
+          "running",
+          "pending"
+        ],
+        "units": [
+          {
+            "accepted_jobs": 1,
+            "checkpoint_revision": 0,
+            "lease_attempt": 1,
+            "new_jobs": 1,
+            "recovery_count": 0,
+            "state": "running",
+            "unit_id": "search-0000-01250d99f7056cd5"
+          },
+          {
+            "accepted_jobs": 0,
+            "checkpoint_revision": null,
+            "lease_attempt": 0,
+            "new_jobs": 0,
+            "recovery_count": 0,
+            "state": "pending",
+            "unit_id": "search-0001-b04e103770c6a9dd"
+          }
+        ]
+      },
+      "durable_path": true,
+      "final_database": {
+        "budget_exhausted_rows": [],
+        "checkpoint_revisions": [
+          0,
+          null
+        ],
+        "checkpointed_units": 1,
+        "durable_invocation_count": 2,
+        "job_event_rows": 5,
+        "job_rows": 1,
+        "receipt_counts": {
+          "accepted": 1,
+          "existing": 0,
+          "new": 1
+        },
+        "receipt_rows": 1,
+        "recovery_count": 1,
+        "unit_count": 2,
+        "unit_states": [
+          "skipped",
+          "skipped"
+        ],
+        "units": [
+          {
+            "accepted_jobs": 1,
+            "checkpoint_revision": 0,
+            "lease_attempt": 2,
+            "new_jobs": 1,
+            "recovery_count": 1,
+            "state": "skipped",
+            "unit_id": "search-0000-01250d99f7056cd5"
+          },
+          {
+            "accepted_jobs": 0,
+            "checkpoint_revision": null,
+            "lease_attempt": 0,
+            "new_jobs": 0,
+            "recovery_count": 0,
+            "state": "skipped",
+            "unit_id": "search-0001-b04e103770c6a9dd"
+          }
+        ]
+      },
+      "interruption": "synthetic worker loss before checkpoint acknowledgement",
+      "invariants": {
+        "budget_evidence_matches_policy": true,
+        "exact_accepted_job_count": true,
+        "exact_receipt_counts": true,
+        "exact_receipt_limit": true,
+        "exact_result_limit": true,
+        "expected_checkpoint_revisions": true,
+        "expected_skipped_units": true,
+        "expected_terminal_states": true,
+        "host_spacing_preserved": true,
+        "interrupted_states_recorded": true,
+        "interrupted_unit_recovered_once": true,
+        "provider_concurrency_at_most_policy": true,
+        "real_host_rate_limiter_used": true
+      },
+      "limiter": "HostRateLimiter",
+      "limiter_wait_seconds": [
+        8e-06,
+        0.996909
+      ],
+      "result": {
+        "db_total": 1,
+        "errors": 0,
+        "existing": 0,
+        "failed_queries": 0,
+        "failed_source_ids": [],
+        "filtered": 0,
+        "new": 1,
+        "queries": 2,
+        "raw_total": 0,
+        "recovered_units": 1,
+        "search_units": 2,
+        "skipped_units": 2,
+        "total": 1
+      },
+      "scenario": "exact_limit_before_ack",
+      "synthetic_assumptions": {
+        "jobs_per_unit": 1,
+        "max_search_unit_invocations_per_run": 500,
+        "queries": [
+          "Director of Engineering",
+          "VP Engineering"
+        ],
+        "result_limit": 1,
+        "service_delay_seconds": 0.0,
+        "sources": [
+          "indeed"
+        ]
+      },
+      "wall_seconds": 1.029866
     },
     "limiter_wait": {
       "adapter_calls": 0,
       "all_unfinished_terminalized": true,
-      "cancel_to_return_seconds": 0.926788,
+      "cancel_to_return_seconds": 0.926083,
       "limiter_wait_seconds": [
-        0.983159
+        0.982079
       ],
       "outcome": "canceled",
       "scenario": "limiter_wait",
@@ -982,12 +1618,12 @@
         "canceled",
         "canceled"
       ],
-      "wall_seconds": 1.013804
+      "wall_seconds": 1.014211
     },
     "pending": {
       "adapter_calls": 0,
       "all_unfinished_terminalized": true,
-      "cancel_to_return_seconds": 0.035479,
+      "cancel_to_return_seconds": 0.045368,
       "limiter_wait_seconds": [],
       "outcome": "canceled",
       "scenario": "pending",
@@ -999,29 +1635,31 @@
         "canceled",
         "canceled"
       ],
-      "wall_seconds": 0.035484
+      "wall_seconds": 0.045372
     },
     "provider_retry": {
       "adapter_calls": 2,
       "adapter_start_gaps_seconds": [
-        5.002436
+        5.002538
       ],
       "adapter_start_offsets_seconds": [
-        0.037129,
-        5.039565
+        0.035955,
+        5.038494
       ],
       "checkpoint_save_seconds": [
-        0.00011,
-        0.000102,
-        0.0002,
-        0.000122,
-        0.000103
+        9.5e-05,
+        8.8e-05,
+        0.000237,
+        0.000148,
+        0.000128
       ],
       "database": {
+        "budget_exhausted_rows": [],
         "checkpoint_revisions": [
           4
         ],
         "checkpointed_units": 1,
+        "durable_invocation_count": 1,
         "job_event_rows": 5,
         "job_rows": 1,
         "receipt_counts": {
@@ -1034,6 +1672,17 @@
         "unit_count": 1,
         "unit_states": [
           "completed"
+        ],
+        "units": [
+          {
+            "accepted_jobs": 1,
+            "checkpoint_revision": 4,
+            "lease_attempt": 1,
+            "new_jobs": 1,
+            "recovery_count": 0,
+            "state": "completed",
+            "unit_id": "search-0000-01250d99f7056cd5"
+          }
         ]
       },
       "invariants": {
@@ -1046,15 +1695,15 @@
         "provider_concurrency_at_most_policy": true
       },
       "limiter_wait_seconds": [
-        1.1e-05
+        9e-06
       ],
       "max_active_adapters": 1,
       "persistence_seconds": [
-        0.005138
+        0.005898
       ],
       "provider_service_seconds": [
-        5e-06,
-        0.054701
+        1.6e-05,
+        0.054343
       ],
       "result": {
         "db_total": 1,
@@ -1072,11 +1721,310 @@
         "total": 1
       },
       "retry_completed": true,
-      "time_to_first_accepted_seconds": 5.105319,
-      "wall_seconds": 5.106849
+      "time_to_first_accepted_seconds": 5.10458,
+      "wall_seconds": 5.106297
+    },
+    "store_before_ack_resume": {
+      "adapter_calls": 2,
+      "adapter_start_gaps_seconds": [
+        1.006574
+      ],
+      "after_interruption": {
+        "budget_exhausted_rows": [],
+        "checkpoint_revisions": [
+          0
+        ],
+        "checkpointed_units": 1,
+        "durable_invocation_count": 1,
+        "job_event_rows": 5,
+        "job_rows": 1,
+        "receipt_counts": {
+          "accepted": 1,
+          "existing": 0,
+          "new": 1
+        },
+        "receipt_rows": 1,
+        "recovery_count": 0,
+        "unit_count": 1,
+        "unit_states": [
+          "running"
+        ],
+        "units": [
+          {
+            "accepted_jobs": 1,
+            "checkpoint_revision": 0,
+            "lease_attempt": 1,
+            "new_jobs": 1,
+            "recovery_count": 0,
+            "state": "running",
+            "unit_id": "search-0000-01250d99f7056cd5"
+          }
+        ]
+      },
+      "durable_path": true,
+      "final_database": {
+        "budget_exhausted_rows": [],
+        "checkpoint_revisions": [
+          3
+        ],
+        "checkpointed_units": 1,
+        "durable_invocation_count": 2,
+        "job_event_rows": 5,
+        "job_rows": 1,
+        "receipt_counts": {
+          "accepted": 1,
+          "existing": 0,
+          "new": 1
+        },
+        "receipt_rows": 1,
+        "recovery_count": 1,
+        "unit_count": 1,
+        "unit_states": [
+          "completed"
+        ],
+        "units": [
+          {
+            "accepted_jobs": 1,
+            "checkpoint_revision": 3,
+            "lease_attempt": 2,
+            "new_jobs": 1,
+            "recovery_count": 1,
+            "state": "completed",
+            "unit_id": "search-0000-01250d99f7056cd5"
+          }
+        ]
+      },
+      "interruption": "synthetic worker loss before checkpoint acknowledgement",
+      "invariants": {
+        "budget_evidence_matches_policy": true,
+        "exact_accepted_job_count": true,
+        "exact_receipt_counts": true,
+        "exact_receipt_limit": true,
+        "exact_result_limit": true,
+        "expected_checkpoint_revisions": true,
+        "expected_skipped_units": true,
+        "expected_terminal_states": true,
+        "host_spacing_preserved": true,
+        "interrupted_states_recorded": true,
+        "interrupted_unit_recovered_once": true,
+        "provider_concurrency_at_most_policy": true,
+        "real_host_rate_limiter_used": true
+      },
+      "limiter": "HostRateLimiter",
+      "limiter_wait_seconds": [
+        8e-06,
+        0.995655
+      ],
+      "result": {
+        "db_total": 1,
+        "errors": 0,
+        "existing": 0,
+        "failed_queries": 0,
+        "failed_source_ids": [],
+        "filtered": 0,
+        "new": 1,
+        "queries": 1,
+        "raw_total": 1,
+        "recovered_units": 1,
+        "search_units": 1,
+        "skipped_units": 0,
+        "total": 1
+      },
+      "scenario": "store_before_ack_resume",
+      "synthetic_assumptions": {
+        "jobs_per_unit": 1,
+        "max_search_unit_invocations_per_run": 500,
+        "queries": [
+          "Director of Engineering"
+        ],
+        "result_limit": 0,
+        "service_delay_seconds": 0.0,
+        "sources": [
+          "indeed"
+        ]
+      },
+      "wall_seconds": 1.043347
+    },
+    "tiny_budget_recovery_boundary": {
+      "adapter_calls": 2,
+      "adapter_start_gaps_seconds": [
+        1.009124
+      ],
+      "after_interruption": {
+        "budget_exhausted_rows": [],
+        "checkpoint_revisions": [
+          0,
+          null,
+          null
+        ],
+        "checkpointed_units": 1,
+        "durable_invocation_count": 1,
+        "job_event_rows": 5,
+        "job_rows": 1,
+        "receipt_counts": {
+          "accepted": 1,
+          "existing": 0,
+          "new": 1
+        },
+        "receipt_rows": 1,
+        "recovery_count": 0,
+        "unit_count": 3,
+        "unit_states": [
+          "running",
+          "pending",
+          "pending"
+        ],
+        "units": [
+          {
+            "accepted_jobs": 1,
+            "checkpoint_revision": 0,
+            "lease_attempt": 1,
+            "new_jobs": 1,
+            "recovery_count": 0,
+            "state": "running",
+            "unit_id": "search-0000-01250d99f7056cd5"
+          },
+          {
+            "accepted_jobs": 0,
+            "checkpoint_revision": null,
+            "lease_attempt": 0,
+            "new_jobs": 0,
+            "recovery_count": 0,
+            "state": "pending",
+            "unit_id": "search-0001-b04e103770c6a9dd"
+          },
+          {
+            "accepted_jobs": 0,
+            "checkpoint_revision": null,
+            "lease_attempt": 0,
+            "new_jobs": 0,
+            "recovery_count": 0,
+            "state": "pending",
+            "unit_id": "search-0002-7bb3812e6dbcb430"
+          }
+        ]
+      },
+      "durable_path": true,
+      "final_database": {
+        "budget_exhausted_rows": [
+          {
+            "failure_category": "budget_exhausted",
+            "is_operational_failure": false,
+            "is_retryable": true,
+            "is_scrape_failure": false,
+            "metadata": {
+              "reason": "JobStreaming per-run search-unit budget exhausted"
+            },
+            "outcome": "blocked"
+          }
+        ],
+        "checkpoint_revisions": [
+          3,
+          null,
+          null
+        ],
+        "checkpointed_units": 1,
+        "durable_invocation_count": 3,
+        "job_event_rows": 5,
+        "job_rows": 1,
+        "receipt_counts": {
+          "accepted": 1,
+          "existing": 0,
+          "new": 1
+        },
+        "receipt_rows": 1,
+        "recovery_count": 1,
+        "unit_count": 3,
+        "unit_states": [
+          "completed",
+          "skipped",
+          "skipped"
+        ],
+        "units": [
+          {
+            "accepted_jobs": 1,
+            "checkpoint_revision": 3,
+            "lease_attempt": 2,
+            "new_jobs": 1,
+            "recovery_count": 1,
+            "state": "completed",
+            "unit_id": "search-0000-01250d99f7056cd5"
+          },
+          {
+            "accepted_jobs": 0,
+            "checkpoint_revision": null,
+            "lease_attempt": 2,
+            "new_jobs": 0,
+            "recovery_count": 0,
+            "state": "skipped",
+            "unit_id": "search-0001-b04e103770c6a9dd"
+          },
+          {
+            "accepted_jobs": 0,
+            "checkpoint_revision": null,
+            "lease_attempt": 0,
+            "new_jobs": 0,
+            "recovery_count": 0,
+            "state": "skipped",
+            "unit_id": "search-0002-7bb3812e6dbcb430"
+          }
+        ]
+      },
+      "interruption": "synthetic worker loss before checkpoint acknowledgement",
+      "invariants": {
+        "budget_evidence_matches_policy": true,
+        "exact_accepted_job_count": true,
+        "exact_receipt_counts": true,
+        "exact_receipt_limit": true,
+        "exact_result_limit": true,
+        "expected_checkpoint_revisions": true,
+        "expected_skipped_units": true,
+        "expected_terminal_states": true,
+        "host_spacing_preserved": true,
+        "interrupted_states_recorded": true,
+        "interrupted_unit_recovered_once": true,
+        "provider_concurrency_at_most_policy": true,
+        "real_host_rate_limiter_used": true
+      },
+      "limiter": "HostRateLimiter",
+      "limiter_wait_seconds": [
+        1e-05,
+        0.999082
+      ],
+      "result": {
+        "db_total": 1,
+        "errors": 0,
+        "existing": 0,
+        "failed_queries": 0,
+        "failed_source_ids": [],
+        "filtered": 0,
+        "new": 1,
+        "queries": 3,
+        "raw_total": 1,
+        "recovered_units": 1,
+        "search_units": 3,
+        "skipped_units": 2,
+        "total": 1
+      },
+      "scenario": "tiny_budget_recovery_boundary",
+      "synthetic_assumptions": {
+        "jobs_per_unit": 1,
+        "max_search_unit_invocations_per_run": 2,
+        "queries": [
+          "Director of Engineering",
+          "VP Engineering",
+          "Platform Engineering Manager"
+        ],
+        "result_limit": 0,
+        "service_delay_seconds": 0.0,
+        "sources": [
+          "indeed"
+        ]
+      },
+      "wall_seconds": 1.039222
     }
   },
-  "schema_version": 1,
+  "schema_version": 2,
   "scope": {
     "data": "owned temporary synthetic workspaces only",
     "durable_path": "jobctrl.discovery.jobspy.run_discovery",
