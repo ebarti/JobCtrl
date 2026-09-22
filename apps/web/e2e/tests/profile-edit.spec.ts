@@ -302,7 +302,7 @@ test("Credential notices keep a real, contained layout box at mobile width", asy
   for (const expected of [
     {
       scenario: "available" as const,
-      copy: "Claude and Google values saved here stay on this Mac in Keychain.",
+      copy: "Claude and Google values saved here stay in macOS Keychain.",
       display: "block",
       guidance: false,
       privacy: true,

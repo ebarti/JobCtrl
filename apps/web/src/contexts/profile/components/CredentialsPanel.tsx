@@ -393,9 +393,9 @@ function CodexProviderSetup({
     setLegacyMessage("");
     try {
       await removeLegacyKey.mutateAsync(removeLegacyOpenAiKeyBatch());
-      setLegacyMessage("Legacy OPENAI_API_KEY removed from JobCtrl Keychain.");
+      setLegacyMessage("Legacy OPENAI_API_KEY removed from the native credential store.");
     } catch {
-      setLegacyMessage("Could not remove the legacy Keychain value. Unlock Keychain Access and retry.");
+      setLegacyMessage("Could not remove the legacy value from the native credential store. Check credential store access and retry.");
     }
   }
 
@@ -408,7 +408,7 @@ function CodexProviderSetup({
       {legacyOpenAiKeyConfigured ? (
         <div className="provider-legacy-warning">
           <p>
-            A legacy <code>OPENAI_API_KEY</code> exists in JobCtrl Keychain. The Codex runtime does not use it directly; complete Codex enrollment first, then remove this unused copy.
+            A legacy <code>OPENAI_API_KEY</code> exists in the native credential store. The Codex runtime does not use it directly; complete Codex enrollment first, then remove this unused copy.
           </p>
           <Button
             disabled={removeLegacyKey.isPending}
@@ -476,7 +476,7 @@ function ReadOnlyProviderGuidance({
         </article>
       ))}
       {reason === "inspection_failed" ? (
-        <p className="provider-readonly-summary" role="alert">Keychain inspection must succeed before guided Claude and Google editing is restored.</p>
+        <p className="provider-readonly-summary" role="alert">Native credential store inspection must succeed before guided Claude and Google editing is restored.</p>
       ) : null}
     </>
   );
