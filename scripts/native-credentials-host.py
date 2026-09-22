@@ -38,6 +38,7 @@ def windows_acl(path: Path, *, restrict: bool = False) -> str:
 $ErrorActionPreference = 'Stop'
 Import-Module "$PSHOME\Modules\Microsoft.PowerShell.Utility\Microsoft.PowerShell.Utility.psd1" -ErrorAction Stop
 Import-Module "$PSHOME\Modules\Microsoft.PowerShell.Security\Microsoft.PowerShell.Security.psd1" -ErrorAction Stop
+Import-Module "$PSHOME\Modules\Microsoft.PowerShell.Management\Microsoft.PowerShell.Management.psd1" -ErrorAction Stop
 [Console]::InputEncoding = New-Object Text.UTF8Encoding($false)
 [Console]::OutputEncoding = New-Object Text.UTF8Encoding($false)
 $request = [Console]::In.ReadToEnd() | ConvertFrom-Json
@@ -177,6 +178,7 @@ def main() -> int:
             value = "synthetic-migration-" + secrets.token_hex(20)
             source = owned / ".env"
             source.write_text(f"KEEP=untouched\n{key}='{value}'\n", encoding="utf-8")
+            PHASE = "windows_acl_setup" if platform.system() == "Windows" else "migration_setup"
             acl_before = windows_acl(source, restrict=True) if platform.system() == "Windows" else None
             marker = owned / "migration.json"
             PHASE = "migration"
