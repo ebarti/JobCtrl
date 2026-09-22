@@ -44,10 +44,9 @@ an unexpected provider call, timeout, or failed cleanup fails the run. Provider
 credentials and credential-home overrides are removed from every spawned role.
 The documented direct Node command applies the canonical scrub before its first
 child process, so Corepack, pnpm, and the initial Playwright runner never inherit
-ambient provider state. The `corepack pnpm web:e2e:live-worker` package alias is
-only a convenience for an environment that is already credential-free; it is
-not the credential-safe entry point because those outer package-manager
-processes start before the launcher can scrub their environment.
+ambient provider state. There is deliberately no package-manager alias for the
+live run: Corepack and pnpm would start before the launcher could scrub their
+environment. Invoke the direct Node command above from the repository root.
 The worker's capability-validated smoke bootstrap skips checkout and owned
 `.env` loading, persisted provider connection translation, and macOS Keychain,
 then asserts the credential-free environment before the loopback backend can be
