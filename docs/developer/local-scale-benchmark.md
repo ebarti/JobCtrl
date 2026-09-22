@@ -3,7 +3,7 @@
 The local scale benchmark is a reproducible, synthetic baseline for JobCtrl's
 production read paths. It creates a new owned temporary app directory, config,
 SQLite database, and artifact directory for each dataset, initializes the
-database with the exact schema-v10 constructor, and removes the workspace after
+database with the exact schema-v11 constructor, and removes the workspace after
 the dataset finishes. It has no flag for an existing app directory or database.
 
 Run it from the repository root with a new output path:
@@ -28,7 +28,7 @@ must pass the production schema with no ready provider and no models. Any
 failure stops the run before provider model discovery can execute.
 
 The focused harness checks statistics, unsafe arguments, cleanup after failure,
-exact-v10 seed totals, deliberately perturbed correctness oracles, an ambient
+exact-v11 seed totals, deliberately perturbed correctness oracles, an ambient
 Bedrock/AWS/provider-credential counterfactual, and a
 smallest-dataset integration through the real HTTP, timer SSE, preview,
 projection, and `SubprocessJsonRpcAdapter` paths:
@@ -37,7 +37,7 @@ projection, and `SubprocessJsonRpcAdapter` paths:
 corepack pnpm --filter @jobctrl/api benchmark:local-scale:test
 ```
 
-The exact-v10 and production-path integration cases require `uv`. They are
+The exact-v11 and production-path integration cases require `uv`. They are
 skipped when `uv` is unavailable so ordinary TypeScript CI can still test the
 runtime-independent harness contracts.
 
@@ -77,6 +77,10 @@ or CI gates:
 | Sustained Node RSS / heap peak growth | 128 MiB / 64 MiB | Diagnostic bounds for this bounded workload, not long-horizon guarantees |
 
 ## Measured baseline
+
+The archived results below and the linked JSON retain their original v10 schema
+and measurements. Current runs use v11; compare schema identities explicitly
+before drawing performance conclusions across revisions.
 
 This baseline measured commit `8c80b31b584c7ef92b80f92ea9e496c968a8269a`
 on 2026-09-22. The checkout also contained an unrelated two-line change in
@@ -192,7 +196,7 @@ overall benchmark Node peak RSS was 254,787,584, 515,784,704, and 918,470,656
 bytes respectively; these absolute peaks include sequential-process carryover
 and are reported separately from per-scenario growth.
 
-The current exact-v10 global `llm_spend` totals stayed at zero input tokens,
+The historical exact-v10 global `llm_spend` totals stayed at zero input tokens,
 zero output tokens, and zero estimated USD, and provider call count was zero.
 The RPC dispatcher entered its instrumented path, but export was disabled. No
 LLM method ran, so no LLM span token attributes or provider usage observations

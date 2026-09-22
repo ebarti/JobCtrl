@@ -47,7 +47,7 @@ describe("local scale benchmark support", () => {
     expect(fs.existsSync(directory)).toBe(false);
   });
 
-  it.runIf(uvAvailable)("seeds the smallest declared exact-v10 dataset with fixed totals", async () => {
+  it.runIf(uvAvailable)("seeds the smallest declared exact-v11 dataset with fixed totals", async () => {
     await withOwnedWorkspace((workspace) => {
       const result = seedSyntheticDataset(workspace, DATASET_SIZES[0]);
       expect(result).toMatchObject({ jobs: 100, events: 300, eventsPerJob: 3 });

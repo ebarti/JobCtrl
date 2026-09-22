@@ -175,7 +175,7 @@ interface BenchmarkReport {
       verified: true;
     } | null;
   };
-  schema: { version: 10; initializer: string };
+  schema: { version: 11; initializer: string };
   method: {
     datasetSizes: readonly number[];
     eventsPerJob: number;
@@ -231,8 +231,8 @@ export async function runBenchmark(
     seed: BENCHMARK_SEED,
     candidate: gitCandidate(options.dirtyExclusion),
     schema: {
-      version: 10,
-      initializer: "jobctrl.infrastructure.migrations.schema_v10.create_exact_v10_schema via uv --locked",
+      version: 11,
+      initializer: "jobctrl.infrastructure.migrations.schema_v11.create_exact_v11_schema via uv --locked",
     },
     method: {
       datasetSizes: DATASET_SIZES,
@@ -679,7 +679,7 @@ async function measureSustained(baseUrl: string, workspace: BenchmarkWorkspace):
     workflowContext: context,
     providerCalls: 0,
     llmSpend,
-    llmSpendScope: "Current exact-v10 global llm_spend aggregate. Future per-lane accounting is separate work; this report does not assume lane state exists.",
+    llmSpendScope: "Current exact-v11 canonical llm_spend aggregate summed across lanes. No provider call is made by this benchmark.",
     tokenEvidence: "The production RPC dispatcher entered its instrumented rpc.provider_models path, but LANGFUSE_DISABLE=1 intentionally prevented span export. No LLM method ran, so there are no LLM span token attributes or provider usage observations for this benchmark; llm_spend stayed zero, which does not imply complete usage telemetry for unrelated workflows.",
   };
 }
