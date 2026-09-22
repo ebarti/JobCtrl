@@ -10,6 +10,15 @@
 
 ## Purpose and boundary
 
+**JobCtrl is publicly launched and published.** GitHub releases `v0.1.0`
+(2026-08-12) and `v0.1.1` (2026-08-25) already exist. The
+[latest release](https://github.com/ebarti/JobCtrl/releases/latest) and its
+signed acquisition channels identify what users can install. Pending releases,
+historical first-launch steps, and incomplete P7 acceptance do not change that
+publication status. Treat migration and rollback compatibility as obligations
+to existing users. The dated reconciliation below separates published evidence
+from the remaining verification work.
+
 A concrete, verifiable checklist and historical record for publication actions,
 each with verification and rollback guidance. This checklist does **not** by
 itself authorize or execute a publication. Completed first-publication steps

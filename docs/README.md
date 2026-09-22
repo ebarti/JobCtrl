@@ -1,5 +1,12 @@
 # Documentation Index
 
+JobCtrl is publicly released. [GitHub Releases](https://github.com/ebarti/JobCtrl/releases/latest)
+identifies the latest published version; source versions and pending release
+work do not establish what installed users receive. For publication evidence
+and remaining upgrade checks, read [Publish Checklist](publish-checklist.md).
+Historical launch plans and incomplete verification gates do not mean the
+product is unpublished.
+
 ## Public Project Docs
 
 - [`../README.md`](../README.md): product overview, quick start, safety notes,
