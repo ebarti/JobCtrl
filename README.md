@@ -338,7 +338,7 @@ evidence, qualifications, and the complete capability matrix.
   remain inspectable, and restore creates a new append-only revision without
   re-scoring jobs or replacing artifacts.
 - Keep recruiter, hiring-manager, and referrer contact records per company or
-  application, each fact carrying its provenance, with CSV import. Draft
+  application, each fact carrying its provenance, with reviewed CSV and vCard import. Draft
   truthful, reviewable outreach messages under the same anti-fabrication gates
   as your resumes, then **you** send them yourself and **log the send** (date
   + channel) — the only way a thread is marked sent. Follow-up reminders are

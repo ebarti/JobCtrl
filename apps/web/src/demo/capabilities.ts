@@ -130,7 +130,7 @@ export const DEMO_CAPABILITY_MANIFEST = {
   createContact: local("Creates a synthetic contact locally."),
   updateContact: local("Edits a synthetic contact locally."),
   deleteContact: local("Deletes a synthetic contact locally."),
-  importContacts: unavailable("Bulk contact import is unavailable to avoid personal-data entry."),
+  importContacts: unavailable("CSV and vCard contact import are unavailable to avoid personal-data entry."),
   researchTasks: local("Reads synthetic research tasks."),
   researchTask: local("Reads a synthetic research task."),
   runContactResearch: unavailable("Contact research is deferred from the public-demo MVP."),

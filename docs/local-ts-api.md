@@ -264,8 +264,8 @@ dispatch does not require this confirmation because it cannot submit.
 
 ## Contacts
 
-Contact facts, supervised research, candidate confirmation, outreach drafts,
-send logs, and follow-ups share one route family. See
+Contact facts, reviewed CSV/vCard import, supervised research, candidate
+confirmation, outreach drafts, send logs, and follow-ups share one route family. See
 [Jobs & Materials](api/jobs-and-materials.md#contacts-and-outreach).
 
 <a id="contact-research"></a>

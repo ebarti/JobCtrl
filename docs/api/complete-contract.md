@@ -47,7 +47,7 @@ need:
 | [Workflow runs](#workflow-runs) | `/v1/workflow-runs` list, detail, and cancel across every workflow type. |
 | [Profile resume preview](#profile-resume-preview) | The baseline profile resume HTML and PDF preview endpoints. |
 | [Apply review and outcomes](#apply-review-and-outcomes) | Review queue, resume-review drafts, decisions, and bounded Gmail outcome ingestion. |
-| [Contacts](#contacts) | The `/v1/contacts` routes: list (with `jobId`/`employer` filter), detail, create, update, delete, CSV import, the supervised-research run / list / detail / confirm-candidate routes, the outreach draft read / generate / revise / approve / reject routes, and the Phase 4 send-log / follow-up (schedule / complete / dismiss) / due-follow-ups routes. |
+| [Contacts](#contacts) | The `/v1/contacts` routes: list (with `jobId`/`employer` filter), detail, create, update, delete, CSV/vCard import, the supervised-research run / list / detail / confirm-candidate routes, the outreach draft read / generate / revise / approve / reject routes, and the Phase 4 send-log / follow-up (schedule / complete / dismiss) / due-follow-ups routes. |
 | [Pipeline and preparation actions](#pipeline-and-preparation-actions) | Global and per-job stage runs, rescore / re-tailor, retry, and per-job actions. |
 | [Discovery target search](#discovery-target-search) | How Discover honors the profile Target search and location / work-model filters. |
 | [Worker runtime and health](#worker-runtime-and-health) | `GET /v1/health`, the worker-readiness gate, and JSON-RPC transport hardening. |
@@ -1098,11 +1098,33 @@ fact carries provenance (`sourceKind`, `sourceRef`, `captureMethod`, `capturedAt
   `user_entered`; an unknown id returns `contact_not_found`.
 - `DELETE /v1/contacts/:contactId` soft-deletes a contact and returns
   `{ ok, contactId, deletedAt }`.
-- `POST /v1/contacts/import` imports a CSV list (`ContactImportRequest`:
-  `filename`, `csvText`). Every imported fact is tagged
-  `sourceKind = user_imported_list`, `sourceRef = <filename>`,
-  `captureMethod = manual`; rows that link to neither an employer nor an
-  application are skipped. Returns `{ ok, imported, skipped, contactIds }`.
+- `POST /v1/contacts/import` previews or imports a contact list. The reviewed
+  request is `{ filename, format: "csv" | "vcard", mode: "preview" | "commit",
+  content }`. Preview parses and checks duplicates without writing contacts,
+  attributes, events, or projections. Commit reparses and checks duplicates
+  against current canonical contacts and the input batch in its transaction;
+  preview is not a reservation. The legacy `{ filename, csvText }` request
+  remains a direct CSV commit for existing callers.
+  Every saved fact retains `sourceKind = user_imported_list`,
+  `sourceRef = <filename>`, `captureMethod = manual`, `confidence = 1`, and
+  `userConfirmed = true`. Records linking to neither employer nor application
+  are invalid/skipped. The [contact import guide](../user/contacts-and-outreach.md#contact-import)
+  defines the supported vCard subset and unsupported-field behavior. No remote
+  URLs or embedded media are fetched.
+
+  Responses include `{ ok, format, mode, imported, skipped, contactIds,
+  summary, items }`. `summary` contains `total`, `ready`, `duplicates`, `invalid`,
+  and `unsupported`. Each item includes its input `index`,
+  `status` (`ready`, `duplicate`, or `invalid`), `displayName`, `employer`, `jobId`, `role`,
+  parsed `attributes`, `issues`, optional `duplicate` match, and nullable
+  `importedContactId`. Issues carry `code`, `message`, `severity` (`warning` or
+  `error`), and nullable `property`. Duplicate matches identify `scope`
+  (`existing` or `batch`) and the corresponding `contactId` or `itemIndex`.
+  `unsupported` counts records with at least one unsupported-property,
+  parameter, version, or encoding issue, so it can overlap other counts.
+  `skipped` counts records not imported by this call (all records in preview).
+  Preview returns no imported IDs; item facts are response-only preview data.
+  Unsupported properties are not copied into events or canonical facts.
 
 Contact DTOs and request/response schemas live in `packages/contracts`
 (`ContactSummary`, `ContactDetail`, `ContactAttributeDto`,

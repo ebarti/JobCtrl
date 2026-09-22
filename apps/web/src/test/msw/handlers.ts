@@ -1,6 +1,8 @@
 import type {
   ContactAttributeDto,
   ContactCreateRequest,
+  ContactImportRequest,
+  ContactImportResponse,
   ContactUpdateRequest,
 } from "@jobctrl/contracts";
 import { http, HttpResponse } from "msw";
@@ -1007,15 +1009,42 @@ export const handlers = [
     return HttpResponse.json(makeContactListResponse(items));
   }),
   http.post("*/v1/contacts/import", async ({ request }) => {
-    const body = (await request.json()) as { csvText?: string };
-    const rows = (body.csvText ?? "").split(/\r?\n/).filter((line) => line.trim().length > 0);
-    const imported = Math.max(rows.length - 1, 0);
-    return HttpResponse.json({
+    const body = (await request.json()) as ContactImportRequest;
+    const legacy = "csvText" in body;
+    const content = legacy ? body.csvText : body.content;
+    const format = legacy ? "csv" : body.format;
+    const mode = legacy ? "commit" : body.mode;
+    const isVCard = format === "vcard";
+    const rows = content.split(/\r?\n/).filter((line) => line.trim().length > 0);
+    const count = isVCard
+      ? Math.max(content.match(/BEGIN:VCARD/gi)?.length ?? 0, 1)
+      : Math.max(rows.length - 1, 0);
+    const items = Array.from({ length: count }, (_, index) => ({
+      index: index + 1,
+      status: "ready" as const,
+      displayName: isVCard ? (/FN:([^\r\n]+)/i.exec(content)?.[1] ?? "Imported contact") : `Imported contact ${index + 1}`,
+      employer: isVCard ? (/ORG:([^;\r\n]+)/i.exec(content)?.[1] ?? "Acme") : "Acme",
+      jobId: null,
+      role: "other" as const,
+      attributes: isVCard
+        ? [{ kind: "name" as const, value: /FN:([^\r\n]+)/i.exec(content)?.[1] ?? "Imported contact" }]
+        : [],
+      duplicate: null,
+      issues: [],
+      importedContactId: mode === "commit" ? `imported-contact-${index + 1}` : null,
+    }));
+    const imported = mode === "commit" ? count : 0;
+    const response: ContactImportResponse = {
       ok: true,
+      format,
+      mode,
       imported,
       skipped: 0,
       contactIds: Array.from({ length: imported }, (_, index) => `imported-contact-${index + 1}`),
-    });
+      summary: { total: count, ready: count, duplicates: 0, invalid: 0, unsupported: 0 },
+      items,
+    };
+    return HttpResponse.json(response);
   }),
   http.post("*/v1/contacts", async ({ request }) => {
     const body = (await request.json()) as ContactCreateRequest;
