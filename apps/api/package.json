@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "benchmark:local-scale": "tsx benchmark/local-scale.ts",
+    "benchmark:local-scale": "tsx benchmark/run-local-scale.ts",
     "benchmark:local-scale:test": "vitest run benchmark/local-scale.test.ts",
     "dev": "tsx watch src/main.ts",
     "start": "tsx src/main.ts",

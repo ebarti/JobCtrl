@@ -119,6 +119,7 @@ export function parseCliArgs(argv: readonly string[]): CliOptions {
 
 export async function withOwnedWorkspace<T>(
   run: (workspace: BenchmarkWorkspace) => Promise<T> | T,
+  initialize: (workspace: BenchmarkWorkspace) => void = initializeExactV10Database,
 ): Promise<T> {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-local-scale-"));
   const artifactDirectory = path.join(directory, "artifacts");
@@ -131,7 +132,7 @@ export async function withOwnedWorkspace<T>(
   };
   fs.writeFileSync(workspace.configPath, "{}\n", { mode: 0o600 });
   try {
-    initializeExactV10Database(workspace);
+    initialize(workspace);
     return await run(workspace);
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
@@ -152,7 +153,8 @@ export function initializeExactV10Database(workspace: BenchmarkWorkspace): void 
     },
   );
   if (result.status !== 0) {
-    throw new Error(`exact-v10 initializer failed (${result.status ?? "signal"}): ${result.stderr.trim()}`);
+    const detail = result.error?.message ?? (String(result.stderr ?? "").trim() || "no stderr");
+    throw new Error(`exact-v10 initializer failed (${result.status ?? "spawn"}): ${detail}`);
   }
   const db = new Database(workspace.dbPath, { readonly: true, fileMustExist: true });
   try {
