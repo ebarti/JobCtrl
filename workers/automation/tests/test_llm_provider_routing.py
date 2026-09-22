@@ -18,6 +18,15 @@ from jobctrl.infrastructure.llm.llm_client import (
     SdkControlNormalizationWarning,
 )
 from jobctrl.infrastructure.llm.provider_errors import ProviderCallError
+from jobctrl.llm_lanes import bind_llm_lane
+
+
+@pytest.fixture(autouse=True)
+def _llm_accounting_context(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr("jobctrl.llm.enforce_spend_budget", lambda _lane=None: None)
+    monkeypatch.setattr("jobctrl.llm.record_llm_spend", lambda **_kwargs: None)
+    with bind_llm_lane("tailoring"):
+        yield
 
 
 class ResultMessage:

@@ -107,11 +107,13 @@ locking; selector resolution holds a shared selection lock through supervisor
 readiness. Before a candidate is promoted, the old process tree is quiesced
 with the registry's PID/PGID identity checks and both `JOBCTRL_DIR/jobctrl.db`
 and `JOBCTRL_DIR/temporal.db` receive online, hash-verified paired backups.
-The current runtime admits only exact schema v10. A stopped v6 database retains
+The current runtime admits only exact schema v11. A stopped v6 database retains
 the Temporal quiescence proof and private v7/v8/v9 intermediates; exact v7 and v8
 start at their next intermediate. Exact v9 transfers application URL authority
 to enrichment and retains historical lookup aliases before removing the legacy
-job column. Exact v10 needs no schema transition. Neither Python nor the
+job column. Exact v10 then moves historical global `llm_spend` rows into the
+explicit `legacy` lane before v11 activation. The legacy lane contributes to
+global USD totals but is never a runtime write target. Neither Python nor the
 TypeScript API runs against an intermediate schema. Recovery removes all staged
 candidates and their sidecars before restoring the retained database pair.
 Policy finalization happens only after the candidate has passed readiness and
@@ -775,10 +777,12 @@ The pipeline package (`jobctrl/pipeline/`) is split into `runner.py`
 Temporal batch orchestrator). The deleted in-process `run_pipeline` engine is
 not re-exported; every CLI, API, and local-action entry point starts a workflow.
 
-All workflows that can spend LLM tokens run `check_spend_budget` before their
-heavy activity. Usage is recorded in `llm_spend` from existing LLM usage capture
-points, `dailyBudgetUsd` defaults to `25`, and `0` means unlimited. When the
-current day is at or above the configured budget, the preflight raises
+All workflows that can spend LLM tokens run `check_spend_budget` with an
+explicit product lane before their heavy activity. Provider and retry
+boundaries repeat the same check. Usage is recorded in `llm_spend` by UTC day
+and lane. `dailyBudgetUsd` remains the global ceiling, while
+`laneTokenLimits` controls observed input-plus-output tokens for each lane; `0`
+means unlimited. At or above either applicable threshold the next attempt raises
 non-retryable `budget_exceeded`; finalize still records the workflow outcome.
 
 `jobctrl worker` is the long-lived process that runs the worker loop. At

@@ -674,12 +674,13 @@ def _chunk(items: list[Any], size: int) -> list[list[Any]]:
 
 
 async def _check_spend(payload: DiscoverWorkflowInput) -> None:
-    await workflow.execute_activity(
-        check_spend_budget,
-        SpendBudgetInput(tenant_id=payload.tenant_id),
-        start_to_close_timeout=timedelta(seconds=30),
-        retry_policy=RetryPolicy(maximum_attempts=1),
-    )
+    for lane in ("discovery", "enrichment"):
+        await workflow.execute_activity(
+            check_spend_budget,
+            SpendBudgetInput(tenant_id=payload.tenant_id, lane=lane),
+            start_to_close_timeout=timedelta(seconds=30),
+            retry_policy=RetryPolicy(maximum_attempts=1),
+        )
 
 
 def _input_summary(payload: DiscoverWorkflowInput) -> dict[str, Any]:

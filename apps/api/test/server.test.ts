@@ -154,6 +154,7 @@ beforeEach(() => {
       apply_concurrency: 3,
       pipeline_internal_concurrency: 5,
       daily_budget_usd: 12.5,
+      lane_token_limits: { scoring: 1801 },
       score_criteria: "Security leadership and platform reliability.",
       target_criteria: "Director-plus infrastructure and security roles.",
       preferred_models: { claude: "opus" },
@@ -345,18 +346,14 @@ describe("local TypeScript API", () => {
   it("reports today's LLM spend against the configured budget", async () => {
     const day = new Date().toISOString().slice(0, 10);
     const db = new Database(options.dbPath);
-    db.exec(
-      `CREATE TABLE IF NOT EXISTS llm_spend (
-        day TEXT PRIMARY KEY,
-        input_tokens INTEGER NOT NULL DEFAULT 0,
-        output_tokens INTEGER NOT NULL DEFAULT 0,
-        estimated_usd REAL NOT NULL DEFAULT 0
-      )`,
-    );
     db.prepare(
-      `INSERT INTO llm_spend (day, input_tokens, output_tokens, estimated_usd)
-       VALUES (?, ?, ?, ?)`,
-    ).run(day, 1234, 567, 13);
+      `INSERT INTO llm_spend (day, lane, input_tokens, output_tokens, estimated_usd)
+       VALUES (?, ?, ?, ?, ?)`,
+    ).run(day, "scoring", 1234, 567, 13);
+    db.prepare(
+      `INSERT INTO llm_spend (day, lane, input_tokens, output_tokens, estimated_usd)
+       VALUES (?, 'legacy', 5, 2, 1)`,
+    ).run(day);
     db.close();
 
     const app = buildApp(options);
@@ -367,15 +364,56 @@ describe("local TypeScript API", () => {
       llmSpend: {
         status: "over_budget",
         day,
-        inputTokens: 1234,
-        outputTokens: 567,
-        estimatedUsd: 13,
+        inputTokens: 1239,
+        outputTokens: 569,
+        estimatedUsd: 14,
         dailyBudgetUsd: 12.5,
         remainingUsd: 0,
         unlimited: false,
+        lanes: {
+          scoring: {
+            status: "over_budget",
+            inputTokens: 1234,
+            outputTokens: 567,
+            totalTokens: 1801,
+            tokenLimit: 1801,
+            remainingTokens: 0,
+            unlimited: false,
+          },
+          tailoring: {
+            status: "ok",
+            totalTokens: 0,
+            tokenLimit: 0,
+            unlimited: true,
+          },
+        },
       },
     });
 
+    await app.close();
+  });
+
+  it("keeps global health available when only one lane is exhausted", async () => {
+    const day = new Date().toISOString().slice(0, 10);
+    const db = new Database(options.dbPath);
+    db.prepare(
+      `INSERT INTO llm_spend (day, lane, input_tokens, output_tokens, estimated_usd)
+       VALUES (?, 'scoring', 1500, 301, 1)`,
+    ).run(day);
+    db.close();
+
+    const app = buildApp(options);
+    const response = await app.inject({ method: "GET", url: "/v1/health" });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json().llmSpend).toMatchObject({
+      status: "ok",
+      estimatedUsd: 1,
+      lanes: {
+        scoring: { status: "over_budget", totalTokens: 1801 },
+        tailoring: { status: "ok", totalTokens: 0 },
+      },
+    });
     await app.close();
   });
 
@@ -11050,6 +11088,7 @@ describe("local TypeScript API", () => {
         pipelineInternalConcurrency: 5,
         workerActivitySlots: 4,
         dailyBudgetUsd: 12.5,
+        laneTokenLimits: { scoring: 1801, tailoring: 0 },
         scoreCriteria: "Security leadership and platform reliability.",
         targetCriteria: "Director-plus infrastructure and security roles.",
         preferredModels: { claude: "opus" },
@@ -11059,6 +11098,7 @@ describe("local TypeScript API", () => {
       },
       effectiveSettings: {
         dailyBudgetUsd: { value: 12.5, source: "persisted", activation: "live", editable: true },
+        laneTokenLimits: { source: "persisted", activation: "live", editable: true },
         applyConcurrency: { value: 3, source: "persisted", activation: "next_poll", editable: true },
         pipelineInternalConcurrency: { value: 5, source: "persisted", activation: "next_workflow", editable: true },
         workerActivitySlots: { value: 4, source: "default", activation: "restart", editable: true },
@@ -11144,6 +11184,17 @@ describe("local TypeScript API", () => {
         pipelineInternalConcurrency: 1,
         workerActivitySlots: 4,
         dailyBudgetUsd: 25,
+        laneTokenLimits: {
+          discovery: 0,
+          enrichment: 0,
+          scoring: 0,
+          tailoring: 0,
+          apply: 0,
+          contact: 0,
+          interview: 0,
+          profile: 0,
+          compensation: 0,
+        },
         analysisLegs: ["claude", "codex", "google"],
         tailoringGeneratorModels: null,
         tailoringJudgeModel: null,
@@ -11169,6 +11220,7 @@ describe("local TypeScript API", () => {
         pipelineInternalConcurrency: 4,
         workerActivitySlots: 6,
         dailyBudgetUsd: 19.75,
+        laneTokenLimits: { scoring: 2500, tailoring: 5000 },
         analysisLegs: ["claude", "google"],
         tailoringGeneratorModels: ["claude:sonnet", "codex:gpt-5.5"],
         tailoringJudgeModel: "claude:opus",
@@ -11197,6 +11249,7 @@ describe("local TypeScript API", () => {
       pipeline_internal_concurrency: 4,
       worker_activity_slots: 6,
       daily_budget_usd: 19.75,
+      lane_token_limits: { scoring: 2500, tailoring: 5000 },
       analysis_legs: ["claude", "google"],
       tailoring_generator_models: ["claude:sonnet", "codex:gpt-5.5"],
       tailoring_judge_model: "claude:opus",
@@ -11296,6 +11349,26 @@ describe("local TypeScript API", () => {
       "pipeline_internal_concurrency",
       5,
     );
+    await app.close();
+  });
+
+  it.each([
+    { unknown: 1 },
+    { scoring: -1 },
+    { scoring: 1.5 },
+    { scoring: true },
+    { scoring: "1" },
+  ])("rejects invalid lane token limits: %j", async (laneTokenLimits) => {
+    const app = buildApp(options);
+    const before = fs.readFileSync(options.configPath, "utf8");
+    const response = await app.inject({
+      method: "PATCH",
+      url: "/v1/settings",
+      payload: { laneTokenLimits },
+    });
+
+    expect(response.statusCode, response.body).toBe(400);
+    expect(fs.readFileSync(options.configPath, "utf8")).toBe(before);
     await app.close();
   });
 
@@ -11970,7 +12043,8 @@ describe("local TypeScript API", () => {
     expect(save.json().settings.preferredModels).toEqual({ codex: "gpt-test", google: "gemini-test" });
     const persisted = JSON.parse(fs.readFileSync(options.configPath, "utf8"));
     expect(persisted.preferred_models).toEqual({ codex: "gpt-test", google: "gemini-test" });
-    expect(JSON.stringify(persisted)).not.toMatch(/credential|api[_-]?key|token/i);
+    const { lane_token_limits: _laneTokenLimits, ...credentialFreeSettings } = persisted;
+    expect(JSON.stringify(credentialFreeSettings)).not.toMatch(/credential|api[_-]?key|token/i);
     expect(call).toHaveBeenCalledTimes(1);
     await app.close();
   });

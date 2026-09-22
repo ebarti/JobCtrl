@@ -45,6 +45,7 @@ from jobctrl.domain.materials.services import sanitize_text
 from jobctrl.domain.materials.value_objects import ArtifactStatus, JudgeVerdict
 from jobctrl.domain.ports.contact import ContactRepository, OutreachThreadRepository
 from jobctrl.domain.ports.llm import LlmMessage, LlmPort
+from jobctrl.llm_lanes import lane_bound
 from jobctrl.domain.tenant import TenantId
 
 
@@ -155,6 +156,7 @@ class _OutreachDraftComposer:
     new_id: Callable[[], str] = None  # type: ignore[assignment]
     judge_min_score: float = OUTREACH_JUDGE_MIN_SCORE
 
+    @lane_bound("contact")
     def generate_body(
         self,
         *,
@@ -229,6 +231,7 @@ class _OutreachDraftComposer:
         )
         return results, provenance
 
+    @lane_bound("contact")
     def _run_judge(
         self,
         *,

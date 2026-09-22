@@ -32,6 +32,7 @@ from jobctrl.domain.enrichment.value_objects import (
 )
 from jobctrl.domain.extraction import extract_json
 from jobctrl.domain.ports.llm import LlmMessage, LlmPort
+from jobctrl.llm_lanes import lane_bound
 
 log = logging.getLogger(__name__)
 
@@ -71,6 +72,7 @@ class JsonLdExtractor:
 
     _MIN_DESC_LEN = 50
 
+    @lane_bound("enrichment")
     def extract(self, page: DetailPage) -> ExtractionResult:
         for ld in page.json_ld:
             posting = _find_job_posting(ld)

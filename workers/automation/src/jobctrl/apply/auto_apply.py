@@ -156,17 +156,26 @@ def _budget_halt_active(
             if not row or str(row[0]) != "failed" or str(row[1]) != "budget_exceeded":
                 return False
             daily_budget = read_daily_budget_usd(settings_path, default=25.0)
-            if daily_budget <= 0:
-                return False
             spend_day = datetime.now(timezone.utc).date().isoformat()
             spend = conn.execute(
-                "SELECT estimated_usd FROM llm_spend WHERE day = ?",
+                "SELECT COALESCE(SUM(estimated_usd), 0) FROM llm_spend WHERE day = ?",
+                (spend_day,),
+            ).fetchone()
+            apply_spend = conn.execute(
+                "SELECT input_tokens + output_tokens FROM llm_spend WHERE day = ? AND lane = 'apply'",
                 (spend_day,),
             ).fetchone()
     except sqlite3.Error:
         return False
     estimated = float(spend[0] or 0.0) if spend else 0.0
-    return estimated >= daily_budget
+    from jobctrl.infrastructure.scoring.criteria_provider import read_lane_token_limits
+
+    apply_limit = read_lane_token_limits(settings_path)["apply"]
+    apply_tokens = int(apply_spend[0] or 0) if apply_spend else 0
+    return (
+        (daily_budget > 0 and estimated >= daily_budget)
+        or (apply_limit > 0 and apply_tokens >= apply_limit)
+    )
 
 
 __all__ = [

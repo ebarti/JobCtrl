@@ -5,7 +5,9 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
-from typing import Literal, cast
+from functools import wraps
+from inspect import iscoroutinefunction
+from typing import Awaitable, Callable, Literal, ParamSpec, TypeVar, cast, overload
 
 LlmLane = Literal[
     "discovery",
@@ -33,6 +35,8 @@ LLM_LANES: tuple[LlmLane, ...] = (
 LEGACY_LLM_LANE = "legacy"
 
 _current_lane: ContextVar[LlmLane | None] = ContextVar("jobctrl_llm_lane", default=None)
+P = ParamSpec("P")
+R = TypeVar("R")
 
 
 class LlmLaneError(ValueError):
@@ -65,6 +69,37 @@ def bind_llm_lane(lane: LlmLane | str) -> Iterator[LlmLane]:
         _current_lane.reset(token)
 
 
+@overload
+def lane_bound(lane: LlmLane | str) -> Callable[[Callable[P, Awaitable[R]]], Callable[P, Awaitable[R]]]: ...
+
+
+@overload
+def lane_bound(lane: LlmLane | str) -> Callable[[Callable[P, R]], Callable[P, R]]: ...
+
+
+def lane_bound(lane: LlmLane | str) -> Callable:
+    """Bind a constant lane at an owning domain or activity method boundary."""
+    validated = validate_llm_lane(lane)
+
+    def decorate(function: Callable) -> Callable:
+        if iscoroutinefunction(function):
+            @wraps(function)
+            async def async_wrapper(*args: object, **kwargs: object) -> object:
+                with bind_llm_lane(validated):
+                    return await function(*args, **kwargs)
+
+            return async_wrapper
+
+        @wraps(function)
+        def sync_wrapper(*args: object, **kwargs: object) -> object:
+            with bind_llm_lane(validated):
+                return function(*args, **kwargs)
+
+        return sync_wrapper
+
+    return decorate
+
+
 __all__ = [
     "LEGACY_LLM_LANE",
     "LLM_LANES",
@@ -72,5 +107,6 @@ __all__ = [
     "LlmLaneError",
     "bind_llm_lane",
     "current_llm_lane",
+    "lane_bound",
     "validate_llm_lane",
 ]

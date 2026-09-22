@@ -33,8 +33,8 @@ log = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class SpendBudgetInput:
+    lane: LlmLane
     tenant_id: str = "local"
-    lane: LlmLane = "discovery"
 
 
 @dataclass(frozen=True)
@@ -474,13 +474,13 @@ class LLMClient:
             )
             resp.raise_for_status()
             data = resp.json()
-            text = _extract_native_gemini_text(data, model=self.model)
             usage = data.get("usageMetadata") or {}
             record(
-                text,
+                "",
                 input_tokens=usage.get("promptTokenCount"),
                 output_tokens=usage.get("candidatesTokenCount"),
             )
+            text = _extract_native_gemini_text(data, model=self.model)
             return text
 
     # -- OpenAI-compat API --------------------------------------------------
@@ -542,13 +542,13 @@ class LLMClient:
 
             resp.raise_for_status()
             data = resp.json()
-            text = _extract_compat_text(data, model=self.model)
             usage = data.get("usage") or {}
             record(
-                text,
+                "",
                 input_tokens=usage.get("prompt_tokens"),
                 output_tokens=usage.get("completion_tokens"),
             )
+            text = _extract_compat_text(data, model=self.model)
             return text
 
     # -- public API ---------------------------------------------------------

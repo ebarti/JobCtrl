@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+import argparse
+import json
 import os
+import sys
+from collections.abc import Sequence
+from dataclasses import asdict
 from pathlib import Path
 
 from jobctrl.infrastructure.migrations.legacy_to_v10_execute import execute_legacy_to_v10_candidate
@@ -64,4 +69,35 @@ def execute_legacy_to_v11_candidate(
         raise
 
 
-__all__ = ["execute_legacy_to_v11_candidate"]
+def main(argv: Sequence[str] | None = None) -> int:
+    """Run the launcher's private composite migration without leaking paths."""
+    parser = _PrivateArgumentParser(add_help=False)
+    parser.add_argument("--source", required=True)
+    parser.add_argument("--candidate", required=True)
+    parser.add_argument("--source-version", required=True, type=int, choices=(6, 7, 8, 9, 10))
+    parser.add_argument("--migration-at")
+    try:
+        arguments = parser.parse_args(argv)
+        result = execute_legacy_to_v11_candidate(
+            arguments.source,
+            arguments.candidate,
+            source_version=arguments.source_version,
+            migration_at=arguments.migration_at,
+        )
+    except CandidateExecutionError:
+        print("legacy-to-v11 candidate migration failed", file=sys.stderr)
+        return 1
+    print(json.dumps(asdict(result), sort_keys=True, separators=(",", ":")))
+    return 0
+
+
+class _PrivateArgumentParser(argparse.ArgumentParser):
+    def error(self, _message: str) -> None:
+        raise CandidateExecutionError("legacy-to-v11 candidate migration failed")
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+
+
+__all__ = ["execute_legacy_to_v11_candidate", "main"]

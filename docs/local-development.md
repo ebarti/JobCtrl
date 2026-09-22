@@ -300,6 +300,14 @@ consent read, and exact denied/granted cookie boundary.
 
 ## Verify
 
+Schema v11 migrations must run with JobCtrl stopped and must write a separate
+candidate. For a synthetic exact-v10 source, exercise the private boundary with
+`python -m jobctrl.infrastructure.migrations.v10_to_v11_execute --source
+<source.db> --candidate <candidate.db>`. The command never installs the
+candidate. Normal installations use `jobctrl update`, whose native lifecycle
+owns quiescence, paired backup, candidate activation, readiness, and rollback.
+Never run a migration executor against the live path as its candidate.
+
 Choose the touched-surface recipe and required gates through
 [Reliability & QA](local-reliability-qa.md). The root aggregates do not include
 the separate web unit, type-level, Playwright or Storybook suites. Build the

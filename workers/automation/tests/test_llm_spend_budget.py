@@ -1,17 +1,20 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 from temporalio.exceptions import ApplicationError
 
 from jobctrl.database import init_db
 from jobctrl.llm import (
+    SpendBudgetInput,
     check_spend_budget,
     read_llm_spend,
     read_spend_budget_status,
     record_llm_spend,
 )
+from jobctrl.llm_lanes import LLM_LANES, LlmLaneError, bind_llm_lane
 
 
 def _isolate_db(monkeypatch: pytest.MonkeyPatch, tmp_path):
@@ -29,8 +32,8 @@ def test_record_llm_spend_accumulates_once_per_usage_observation(
 ) -> None:
     _isolate_db(monkeypatch, tmp_path)
 
-    record_llm_spend(input_tokens=100, output_tokens=20, estimated_usd=0.5, day="2026-07-03")
-    record_llm_spend(input_tokens=25, output_tokens=5, estimated_usd=0.125, day="2026-07-03")
+    record_llm_spend(lane="scoring", input_tokens=100, output_tokens=20, estimated_usd=0.5, day="2026-07-03")
+    record_llm_spend(lane="scoring", input_tokens=25, output_tokens=5, estimated_usd=0.125, day="2026-07-03")
 
     assert read_llm_spend("2026-07-03") == {
         "day": "2026-07-03",
@@ -46,7 +49,7 @@ def test_llm_spend_day_rollover_reads_zero_for_new_day(
 ) -> None:
     _isolate_db(monkeypatch, tmp_path)
 
-    record_llm_spend(input_tokens=100, output_tokens=20, estimated_usd=0.5, day="2026-07-03")
+    record_llm_spend(lane="scoring", input_tokens=100, output_tokens=20, estimated_usd=0.5, day="2026-07-03")
 
     assert read_llm_spend("2026-07-04") == {
         "day": "2026-07-04",
@@ -61,9 +64,13 @@ def test_spend_budget_status_treats_zero_as_unlimited(
     tmp_path,
 ) -> None:
     _isolate_db(monkeypatch, tmp_path)
-    record_llm_spend(input_tokens=1, output_tokens=1, estimated_usd=99.0)
+    record_llm_spend(lane="scoring", input_tokens=1, output_tokens=1, estimated_usd=99.0)
 
-    status = read_spend_budget_status(daily_budget_usd=0)
+    status = read_spend_budget_status(
+        lane="scoring",
+        daily_budget_usd=0,
+        lane_token_limits={lane: 0 for lane in LLM_LANES},
+    )
 
     assert status.daily_budget_usd == 0
     assert status.estimated_usd == 99.0
@@ -79,10 +86,114 @@ async def test_check_spend_budget_raises_non_retryable_budget_exceeded(
     settings_path = tmp_path / "config.json"
     settings_path.write_text(json.dumps({"daily_budget_usd": 1.0}), encoding="utf-8")
     monkeypatch.setenv("JOBCTRL_CONFIG_PATH", str(settings_path))
-    record_llm_spend(input_tokens=1, output_tokens=1, estimated_usd=1.0)
+    record_llm_spend(lane="scoring", input_tokens=1, output_tokens=1, estimated_usd=1.0)
 
     with pytest.raises(ApplicationError) as exc_info:
-        await check_spend_budget(None)
+        await check_spend_budget(SpendBudgetInput(lane="scoring"))
 
     assert exc_info.value.type == "budget_exceeded"
     assert exc_info.value.non_retryable is True
+
+
+@pytest.mark.parametrize(
+    ("observed", "limit", "exceeded"),
+    ((5, 0, False), (5, 6, False), (5, 5, True), (5, 4, True)),
+)
+def test_lane_token_threshold_boundaries(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    observed: int,
+    limit: int,
+    exceeded: bool,
+) -> None:
+    _isolate_db(monkeypatch, tmp_path)
+    record_llm_spend(lane="tailoring", input_tokens=observed, output_tokens=0)
+    limits = {lane: 0 for lane in LLM_LANES}
+    limits["tailoring"] = limit
+
+    status = read_spend_budget_status(
+        lane="tailoring",
+        daily_budget_usd=0,
+        lane_token_limits=limits,
+    )
+
+    assert status.lane_exceeded is exceeded
+    assert status.exceeded is exceeded
+
+
+def test_exhausted_lane_does_not_block_peer_lane(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    _isolate_db(monkeypatch, tmp_path)
+    record_llm_spend(lane="scoring", input_tokens=10, output_tokens=0)
+    limits = {lane: 0 for lane in LLM_LANES}
+    limits["scoring"] = 10
+    limits["tailoring"] = 10
+
+    assert read_spend_budget_status(
+        lane="scoring", daily_budget_usd=0, lane_token_limits=limits
+    ).exceeded
+    assert not read_spend_budget_status(
+        lane="tailoring", daily_budget_usd=0, lane_token_limits=limits
+    ).exceeded
+
+
+def test_global_usd_ceiling_still_blocks_every_lane(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    _isolate_db(monkeypatch, tmp_path)
+    record_llm_spend(lane="scoring", input_tokens=1, estimated_usd=2.0)
+    limits = {lane: 0 for lane in LLM_LANES}
+
+    status = read_spend_budget_status(
+        lane="tailoring",
+        daily_budget_usd=2.0,
+        lane_token_limits=limits,
+    )
+
+    assert status.global_exceeded is True
+    assert status.lane_exceeded is False
+    assert status.exceeded is True
+
+
+def test_concurrent_lane_updates_are_atomic_and_context_isolated(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    _isolate_db(monkeypatch, tmp_path)
+
+    def write(lane: str) -> None:
+        with bind_llm_lane(lane):
+            record_llm_spend(input_tokens=1, output_tokens=2, estimated_usd=0.0)
+
+    lanes = ["scoring", "tailoring"] * 20
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        list(executor.map(write, lanes))
+
+    scoring = read_spend_budget_status(
+        lane="scoring",
+        daily_budget_usd=0,
+        lane_token_limits={lane: 0 for lane in LLM_LANES},
+    )
+    tailoring = read_spend_budget_status(
+        lane="tailoring",
+        daily_budget_usd=0,
+        lane_token_limits={lane: 0 for lane in LLM_LANES},
+    )
+    assert (scoring.lane_input_tokens, scoring.lane_output_tokens) == (20, 40)
+    assert (tailoring.lane_input_tokens, tailoring.lane_output_tokens) == (20, 40)
+    assert read_llm_spend()["input_tokens"] == 40
+
+
+def test_recording_rejects_missing_unknown_and_legacy_lanes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    _isolate_db(monkeypatch, tmp_path)
+    with pytest.raises(LlmLaneError):
+        record_llm_spend(input_tokens=1)
+    for lane in ("unknown", "legacy"):
+        with pytest.raises(LlmLaneError):
+            record_llm_spend(lane=lane, input_tokens=1)

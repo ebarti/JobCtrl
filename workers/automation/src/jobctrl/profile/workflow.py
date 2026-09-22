@@ -67,7 +67,7 @@ class ProfileImportWorkflow:
         try:
             await workflow.execute_activity(
                 check_spend_budget,
-                SpendBudgetInput(tenant_id=payload.tenant_id),
+                SpendBudgetInput(tenant_id=payload.tenant_id, lane="profile"),
                 start_to_close_timeout=timedelta(seconds=30),
                 retry_policy=RetryPolicy(maximum_attempts=1),
             )

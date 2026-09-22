@@ -32,11 +32,11 @@ state is preserved. Alias rows never drive submission, projections, or approval
 binding after migration.
 
 The frozen `schema_v7.sql`, historical v6 preparation helpers (including the
-wide-column registry and v6 enrichment backfill), and v6/v7/v8/v9 migration
+wide-column registry and v6 enrichment backfill), and v6/v7/v8/v9/v10 migration
 executors still describe the old column. They are isolated compatibility inputs
-to the stopped-runtime candidate chain. They are not invoked by exact-v10 runtime
+to the stopped-runtime candidate chain. They are not invoked by exact-v11 runtime
 admission. Historical tests intentionally retain those definitions. The new
-v9-to-v10 transfer is the final reader of legacy values before column removal.
+v9-to-v10 transfer remains the final reader of legacy values before column removal.
 
 Verification combines an exact migration preservation matrix, tenant/ambiguity
 lookup regressions, a shared cross-runtime migration/projection fixture,

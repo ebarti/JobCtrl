@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import json
 import stat
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -182,9 +183,36 @@ class _ErrorResultPopen(_StreamPopen):
             "type": "result",
             "subtype": "error_max_turns",
             "is_error": True,
+            "usage": {"input_tokens": 3, "output_tokens": 2},
             "result": "RESULT:DRY_RUN",
         },
     )
+
+
+class _CancelledResultPopen(_ErrorResultPopen):
+    def __init__(self, cmd: list[str], **kwargs: Any) -> None:
+        super().__init__(cmd, **kwargs)
+        self.returncode = -2
+
+
+class _UsageThenHangStream:
+    def __iter__(self):
+        yield json.dumps(
+            {
+                "type": "result",
+                "subtype": "error_max_turns",
+                "is_error": True,
+                "usage": {"input_tokens": 4, "output_tokens": 3},
+                "result": "RESULT:FAILED:timeout",
+            }
+        ) + "\n"
+        threading.Event().wait()
+
+
+class _UsageThenHangPopen(_HangingPopen):
+    def __init__(self, cmd: list[str], **kwargs: Any) -> None:
+        super().__init__(cmd, **kwargs)
+        self.stdout = _UsageThenHangStream()
 
 
 def _session() -> BrowserSession:
@@ -572,6 +600,7 @@ def test_adapter_records_llm_spend_from_sdk_usage(monkeypatch, tmp_path) -> None
             "output_tokens": 1,
             "estimated_usd": 0.0,
             "model": "opus",
+            "lane": "apply",
         }
     ]
 
@@ -678,6 +707,40 @@ def test_apply_adapter_rejects_error_result_envelope(
     assert result.submission_result.kind == "failed"
     assert result.submission_result.error == "invalid_result_envelope"
     assert result.submission_result.retryable is False
+
+
+def test_apply_failure_records_usage_before_result_validation(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr("subprocess.Popen", _ErrorResultPopen)
+    calls: list[dict[str, Any]] = []
+    monkeypatch.setattr("jobctrl.llm.record_llm_spend", lambda **kwargs: calls.append(kwargs))
+
+    result = ClaudeCodeCliAdapter(log_dir=tmp_path, app_dir=tmp_path).submit_application(
+        prompt=ApplyPrompt(text="apply", mcp_config={}),
+        browser=_session(),
+        model="default",
+        dry_run=True,
+    )
+
+    assert result.submission_result.kind == "failed"
+    assert [(call["input_tokens"], call["output_tokens"], call["lane"]) for call in calls] == [
+        (3, 2, "apply")
+    ]
+
+
+def test_apply_cancelled_process_keeps_observed_usage(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr("subprocess.Popen", _CancelledResultPopen)
+    calls: list[dict[str, Any]] = []
+    monkeypatch.setattr("jobctrl.llm.record_llm_spend", lambda **kwargs: calls.append(kwargs))
+
+    result = ClaudeCodeCliAdapter(log_dir=tmp_path, app_dir=tmp_path).submit_application(
+        prompt=ApplyPrompt(text="apply", mcp_config={}),
+        browser=_session(),
+        model="default",
+        dry_run=True,
+    )
+
+    assert result.submission_result.error.startswith("SKIPPED:")
+    assert [(call["input_tokens"], call["output_tokens"]) for call in calls] == [(3, 2)]
 
 
 @pytest.mark.parametrize(
@@ -817,6 +880,31 @@ def test_timeout_kills_only_registered_claude_process_tree(
 
     assert _HangingPopen.kwargs[0]["start_new_session"] is True
     assert killed == [12345]
+
+
+def test_timeout_keeps_usage_received_before_process_hangs(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr("subprocess.Popen", _UsageThenHangPopen)
+    times = iter([0.0, 0.0, 1.0])
+    monkeypatch.setattr(claude_code_cli.time, "monotonic", lambda: next(times, 1.0))
+    monkeypatch.setattr(
+        "jobctrl.apply.chrome._kill_process_tree",
+        lambda _pid: setattr(_UsageThenHangPopen.last, "returncode", -9),
+    )
+    calls: list[dict[str, Any]] = []
+    monkeypatch.setattr("jobctrl.llm.record_llm_spend", lambda **kwargs: calls.append(kwargs))
+
+    with pytest.raises(TimeoutError):
+        ClaudeCodeCliAdapter(log_dir=tmp_path, app_dir=tmp_path).submit_application(
+            prompt=ApplyPrompt(text="apply", mcp_config={}),
+            browser=_session(),
+            model="default",
+            dry_run=True,
+            timeout_seconds=0,
+        )
+
+    assert [(call["input_tokens"], call["output_tokens"], call["lane"]) for call in calls] == [
+        (4, 3, "apply")
+    ]
 
 
 def test_adapter_active_process_registry_kills_registered_process(monkeypatch) -> None:

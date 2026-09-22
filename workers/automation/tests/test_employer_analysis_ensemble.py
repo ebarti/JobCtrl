@@ -247,13 +247,13 @@ class TestClaudeAdapter:
         attrs = dict(span.attributes or {})
         assert attrs["langfuse.observation.type"] == "generation"
         assert attrs["langfuse.observation.model.name"] == "claude-opus-4-8"
-        # input = 1200 fresh + 50 cache_read; cache tokens count toward input processed.
-        assert attrs["gen_ai.usage.input_tokens"] == 1250
+        # Cached input is a subset of provider input and is not added twice.
+        assert attrs["gen_ai.usage.input_tokens"] == 1200
         assert attrs["gen_ai.usage.output_tokens"] == 340
         assert json.loads(attrs["langfuse.observation.usage_details"]) == {
-            "input_tokens": 1250,
+            "input_tokens": 1200,
             "output_tokens": 340,
-            "total_tokens": 1590,
+            "total_tokens": 1540,
         }
 
     async def test_draft_span_omits_tokens_when_sdk_reports_no_usage(self, in_memory_exporter) -> None:

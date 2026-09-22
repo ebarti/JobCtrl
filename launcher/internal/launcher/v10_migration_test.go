@@ -82,7 +82,7 @@ exit 43
 		SourceDataDigest:    strings.Repeat("a", 64),
 		Status:              "ready",
 		TableCount:          118,
-		UserVersion:         currentJobCtrlSchemaVersion,
+		UserVersion:         v10JobCtrlSchemaVersion,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -103,6 +103,81 @@ exit 43
 		},
 	}
 	return ctx, pair, "journal-v10-builder", argumentsPath
+}
+
+func fakeV11BuilderContext(t *testing.T, sourceVersion int64) (launchContext, databasePair, string, string) {
+	t.Helper()
+	ctx, pair, _, argumentsPath := fakeV10BuilderContext(t, sourceVersion)
+	python := filepath.Join(ctx.PayloadRoot, "python", "bin", "python3")
+	script := `#!/bin/sh
+set -eu
+if [ "$3" = "-m" ]; then
+  [ "$4" = "jobctrl.infrastructure.migrations.legacy_to_v11_execute" ] || exit 41
+  printf '%s\n' "$@" > "$JOBCTRL_TEST_ARGUMENTS"
+  candidate=""
+  previous=""
+  for argument in "$@"; do
+    if [ "$previous" = "--candidate" ]; then candidate="$argument"; fi
+    previous="$argument"
+  done
+  umask 077
+  printf '%s' "$JOBCTRL_TEST_CANDIDATE" > "$candidate"
+  printf '%s\n' "$JOBCTRL_TEST_RECEIPT"
+  exit 0
+fi
+if [ "$3" = "-c" ]; then printf '11\n'; exit 0; fi
+exit 43
+`
+	if err := os.WriteFile(python, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	candidateBytes := "sealed exact-v11 candidate"
+	digest := sha256.Sum256([]byte(candidateBytes))
+	receipt, err := json.Marshal(sealedV11CandidateReceipt{
+		CandidateDataDigest: strings.Repeat("a", 64),
+		CandidateSHA256:     hex.EncodeToString(digest[:]),
+		JobCount:            1,
+		SchemaVersion:       1,
+		SourceDataDigest:    strings.Repeat("a", 64),
+		Status:              "ready",
+		TableCount:          118,
+		UserVersion:         currentJobCtrlSchemaVersion,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx.Environment = []string{
+		"JOBCTRL_TEST_ARGUMENTS=" + argumentsPath,
+		"JOBCTRL_TEST_CANDIDATE=" + candidateBytes,
+		"JOBCTRL_TEST_RECEIPT=" + string(receipt),
+	}
+	return ctx, pair, "journal-v11-builder", argumentsPath
+}
+
+func TestBuildSealedV11CandidateDispatchesEveryAdmittedSource(t *testing.T) {
+	for _, sourceVersion := range []int64{6, 7, 8, 9, 10} {
+		t.Run("source-v"+strconv.FormatInt(sourceVersion, 10), func(t *testing.T) {
+			ctx, pair, journalID, argumentsPath := fakeV11BuilderContext(t, sourceVersion)
+			candidate, err := buildSealedV11Candidate(ctx, pair, journalID)
+			if err != nil {
+				t.Fatalf("build exact-v11 candidate: %v", err)
+			}
+			if candidate != v11CandidatePath(ctx.Instance.StateDir, journalID) {
+				t.Fatalf("candidate path = %q", candidate)
+			}
+			arguments, err := os.ReadFile(argumentsPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(arguments), "--source-version\n"+strconv.FormatInt(sourceVersion, 10)) {
+				t.Fatalf("source-version missing for v%d: %s", sourceVersion, arguments)
+			}
+			hasMigrationAt := strings.Contains(string(arguments), "--migration-at")
+			if hasMigrationAt != (sourceVersion == legacyJobCtrlSchemaVersion) {
+				t.Fatalf("migration-at presence from v%d = %v", sourceVersion, hasMigrationAt)
+			}
+		})
+	}
 }
 
 func TestBuildSealedV10CandidateDispatchesByPairedSourceVersion(t *testing.T) {
@@ -175,6 +250,26 @@ func v10CandidateArtifactPaths(stateDir, journalID string) []string {
 	return paths
 }
 
+func v11CandidateArtifactPaths(stateDir, journalID string) []string {
+	candidate := v11CandidatePath(stateDir, journalID)
+	v10Intermediate := candidate + ".exact-v10-intermediate"
+	basePaths := []string{
+		candidate,
+		v10Intermediate,
+		v10Intermediate + ".exact-v9-intermediate",
+		v10Intermediate + ".exact-v9-intermediate.exact-v8-intermediate",
+		v10Intermediate + ".exact-v9-intermediate.exact-v8-intermediate.exact-v7-intermediate",
+	}
+	paths := make([]string, 0, len(basePaths)*4)
+	for _, path := range basePaths {
+		paths = append(paths, path)
+		for _, suffix := range []string{"-journal", "-shm", "-wal"} {
+			paths = append(paths, path+suffix)
+		}
+	}
+	return paths
+}
+
 func TestInterruptedV10MigrationRecoveryRemovesCandidatesIntermediatesAndSidecars(t *testing.T) {
 	for _, stage := range []release.State{release.PolicyPending, release.MigrationCandidateReady, release.MigrationActivated} {
 		t.Run(string(stage), func(t *testing.T) {
@@ -227,21 +322,21 @@ func TestInterruptedV10MigrationRecoveryRemovesCandidatesIntermediatesAndSidecar
 	}
 }
 
-func syntheticV10CandidateBuilder(t *testing.T, python string, expectedSourceVersion int64) func(launchContext, databasePair, string) (string, error) {
+func syntheticV11CandidateBuilder(t *testing.T, python string, expectedSourceVersion int64) func(launchContext, databasePair, string) (string, error) {
 	t.Helper()
 	return func(candidate launchContext, pair databasePair, journalID string) (string, error) {
 		source, err := pairedDatabasePath(candidate.Instance.StateDir, pair, "jobctrl.db", expectedSourceVersion)
 		if err != nil {
 			return "", err
 		}
-		path := v10CandidatePath(candidate.Instance.StateDir, journalID)
+		path := v11CandidatePath(candidate.Instance.StateDir, journalID)
 		if _, err := sqliteOnlineBackup(python, source, path); err != nil {
 			return "", err
 		}
 		if err := os.Chmod(path, 0o600); err != nil {
 			return "", err
 		}
-		code := "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute('PRAGMA user_version=10'); c.commit(); c.close()"
+		code := "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute('PRAGMA user_version=11'); c.commit(); c.close()"
 		if output, err := exec.Command(python, "-c", code, path).CombinedOutput(); err != nil {
 			return "", errors.New(strings.TrimSpace(string(output)))
 		}
@@ -249,12 +344,13 @@ func syntheticV10CandidateBuilder(t *testing.T, python string, expectedSourceVer
 	}
 }
 
-func TestLifecycleMigratesV6V7V8AndV9ToV10AndRestoresExactSourceOnRollback(t *testing.T) {
+func TestLifecycleMigratesV6ThroughV10ToV11AndRestoresExactSourceOnRollback(t *testing.T) {
 	for _, sourceVersion := range []int64{
 		legacyJobCtrlSchemaVersion,
 		exactJobCtrlSchemaVersion,
 		previousJobCtrlSchemaVersion,
 		v9JobCtrlSchemaVersion,
+		v10JobCtrlSchemaVersion,
 	} {
 		t.Run("source-v"+strconv.FormatInt(sourceVersion, 10), func(t *testing.T) {
 			preserveMigrationSeams(t)
@@ -265,8 +361,8 @@ func TestLifecycleMigratesV6V7V8AndV9ToV10AndRestoresExactSourceOnRollback(t *te
 				proofs++
 				return nil
 			}
-			sealedV7CandidateBuilder = syntheticV10CandidateBuilder(t, fixture.python, sourceVersion)
-			sealedV7CandidateInstaller = installSealedV10Candidate
+			sealedV7CandidateBuilder = syntheticV11CandidateBuilder(t, fixture.python, sourceVersion)
+			sealedV7CandidateInstaller = installSealedV11Candidate
 			candidateStarts, oldStarts := 0, 0
 			startReleaseCommand = func(_ launchContext, receipt release.Receipt, journalID string) error {
 				if journalID == "" {
@@ -288,7 +384,7 @@ func TestLifecycleMigratesV6V7V8AndV9ToV10AndRestoresExactSourceOnRollback(t *te
 			}
 
 			if err := promoteExisting(fixture.ctx, fixture.store, fixture.active, fixture.candidate.BuildID, "update", io.Discard); err != nil {
-				t.Fatalf("promote v%d to v10: %v", sourceVersion, err)
+				t.Fatalf("promote v%d to v11: %v", sourceVersion, err)
 			}
 			if candidateStarts != 1 || oldStarts != 0 {
 				t.Fatalf("promotion starts candidate=%d old=%d", candidateStarts, oldStarts)
@@ -317,7 +413,7 @@ func TestLifecycleMigratesV6V7V8AndV9ToV10AndRestoresExactSourceOnRollback(t *te
 
 // Cross the production Go/Python boundary using exact, populated source schemas.
 // Startup is intercepted, but admission still runs in both shipped runtimes.
-func TestV10NativeExactSourcesRestorePairedState(t *testing.T) {
+func TestV11NativeExactSourcesRestorePairedState(t *testing.T) {
 	for _, scenario := range []struct {
 		version       int64
 		failReadiness bool
@@ -344,8 +440,8 @@ c.commit(); c.close()`
 			if output, err := exec.Command(python, "-I", "-B", "-c", code, database, strconv.FormatInt(scenario.version, 10)).CombinedOutput(); err != nil {
 				t.Fatalf("seed exact source: %v %s", err, output)
 			}
-			sealedV7CandidateBuilder = buildSealedV10Candidate
-			sealedV7CandidateInstaller = installSealedV10Candidate
+			sealedV7CandidateBuilder = buildSealedV11Candidate
+			sealedV7CandidateInstaller = installSealedV11Candidate
 			temporalQuiescenceProof = func(_, _ launchContext) error { t.Fatal("v7+ requested v6 Temporal identity proof"); return nil }
 			assertRestored := func() {
 				t.Helper()
@@ -386,9 +482,9 @@ c.close()`
 				}
 				candidateStarts++
 				code := `import sys
-from jobctrl.database import open_exact_v10_database,close_connection
-c=open_exact_v10_database(sys.argv[1])
-assert c.execute('PRAGMA user_version').fetchone()[0] == 10
+from jobctrl.database import open_exact_v11_database,close_connection
+c=open_exact_v11_database(sys.argv[1])
+assert c.execute('PRAGMA user_version').fetchone()[0] == 11
 assert 'application_url' not in {r[1] for r in c.execute('PRAGMA table_info(jobs)')}
 assert tuple(c.execute('SELECT title FROM jobs').fetchone()) == ('Preserved title',)
 assert tuple(c.execute('SELECT application_url,updated_at FROM job_enrichments').fetchone()) == ('https://apply.example/canonical','preserved-time')
@@ -396,9 +492,9 @@ assert {r[0] for r in c.execute('SELECT application_url FROM job_application_loc
 assert not c.execute('PRAGMA foreign_key_check').fetchall()
 close_connection(sys.argv[1])`
 				if output, err := exec.Command(python, "-I", "-B", "-c", code, database).CombinedOutput(); err != nil {
-					t.Fatalf("native v10 admission/transfer: %v %s", err, output)
+					t.Fatalf("native v11 admission/transfer: %v %s", err, output)
 				}
-				if err := reopenMigratedV10WithTypeScriptAPI(database); err != nil {
+				if err := reopenMigratedV11WithTypeScriptAPI(database); err != nil {
 					t.Fatal(err)
 				}
 				// Make Temporal restoration observable rather than relying on an unchanged file.
@@ -407,7 +503,7 @@ close_connection(sys.argv[1])`
 					t.Fatalf("write owned Temporal marker: %v %s", err, output)
 				}
 				if scenario.failReadiness {
-					return errors.New("synthetic v10 readiness failure")
+					return errors.New("synthetic v11 readiness failure")
 				}
 				return nil
 			}
@@ -418,7 +514,7 @@ close_connection(sys.argv[1])`
 			}
 			migrationJournalID := journal.ID
 			if scenario.failReadiness {
-				if err == nil || !strings.Contains(err.Error(), "synthetic v10 readiness failure") {
+				if err == nil || !strings.Contains(err.Error(), "synthetic v11 readiness failure") {
 					t.Fatalf("readiness failure result: %v", err)
 				}
 			} else {
@@ -438,7 +534,7 @@ close_connection(sys.argv[1])`
 				t.Fatalf("final pointer=%#v candidate=%d old=%d err=%v", active, candidateStarts, oldStarts, err)
 			}
 			assertRestored()
-			for _, path := range v10CandidateArtifactPaths(fixture.state, migrationJournalID) {
+			for _, path := range v11CandidateArtifactPaths(fixture.state, migrationJournalID) {
 				if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
 					t.Errorf("left migration artifact %s: %v", path, err)
 				}
@@ -447,7 +543,7 @@ close_connection(sys.argv[1])`
 	}
 }
 
-func TestV10FreshRuntimePromotesWithoutMigration(t *testing.T) {
+func TestV11FreshRuntimePromotesWithoutMigration(t *testing.T) {
 	preserveMigrationSeams(t)
 	python := migrationIntegrationPython(t)
 	fixture := newV6ActivationFixtureWithPython(t, python)
@@ -456,16 +552,16 @@ func TestV10FreshRuntimePromotesWithoutMigration(t *testing.T) {
 		t.Fatal(err)
 	}
 	code := `import sys
-from jobctrl.database import create_exact_v10_database,close_connection
-c=create_exact_v10_database(sys.argv[1])
-assert c.execute('PRAGMA user_version').fetchone()[0] == 10
+from jobctrl.database import create_exact_v11_database,close_connection
+c=create_exact_v11_database(sys.argv[1])
+assert c.execute('PRAGMA user_version').fetchone()[0] == 11
 assert 'application_url' not in {r[1] for r in c.execute('PRAGMA table_info(jobs)')}
 close_connection(sys.argv[1])`
 	if output, err := exec.Command(python, "-I", "-B", "-c", code, database).CombinedOutput(); err != nil {
-		t.Fatalf("fresh v10 creation: %v %s", err, output)
+		t.Fatalf("fresh v11 creation: %v %s", err, output)
 	}
 	sealedV7CandidateBuilder = func(_ launchContext, _ databasePair, _ string) (string, error) {
-		t.Fatal("fresh v10 attempted migration")
+		t.Fatal("fresh v11 attempted migration")
 		return "", nil
 	}
 	starts := 0
@@ -474,9 +570,9 @@ close_connection(sys.argv[1])`
 			t.Fatalf("unexpected fresh startup %#v", receipt)
 		}
 		starts++
-		code := "import sys; from jobctrl.database import open_exact_v10_database,close_connection; open_exact_v10_database(sys.argv[1]); close_connection(sys.argv[1])"
+		code := "import sys; from jobctrl.database import open_exact_v11_database,close_connection; open_exact_v11_database(sys.argv[1]); close_connection(sys.argv[1])"
 		if output, err := exec.Command(python, "-I", "-B", "-c", code, database).CombinedOutput(); err != nil {
-			t.Fatalf("fresh v10 admission: %v %s", err, output)
+			t.Fatalf("fresh v11 admission: %v %s", err, output)
 		}
 		return nil
 	}

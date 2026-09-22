@@ -36,6 +36,7 @@ from jobctrl.domain.contact.value_objects import (
 )
 from jobctrl.domain.ports.contact import ResearchPageFetcherPort
 from jobctrl.domain.ports.llm import LlmMessage, LlmPort
+from jobctrl.llm_lanes import lane_bound
 
 # Attribute kinds an extracted candidate can carry, keyed by the LLM field name.
 _CANDIDATE_ATTRIBUTE_FIELDS: tuple[tuple[str, str], ...] = (
@@ -223,6 +224,7 @@ class ContactResearchService:
             )
         )
 
+    @lane_bound("contact")
     def _extract_candidates(
         self,
         *,

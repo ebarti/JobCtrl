@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 from jobctrl.infrastructure.llm.provider_errors import (
     codex_protocol_error,
@@ -53,7 +53,16 @@ def _final_response(items: list[object]) -> str | None:
     return fallback
 
 
-def _outcome_from_result(*, result: object, model: str, operation: str) -> CodexTurnOutcome:
+def _outcome_from_result(
+    *,
+    result: object,
+    model: str,
+    operation: str,
+    record_usage: Callable[[int | None, int | None], None] | None,
+) -> CodexTurnOutcome:
+    input_tokens, output_tokens = _usage_from(getattr(result, "usage", None))
+    if record_usage is not None:
+        record_usage(input_tokens, output_tokens)
     if _status_value(result) != "completed":
         raise codex_turn_error(model=model, operation=operation, error=getattr(result, "error", None))
     final_response = getattr(result, "final_response", None)
@@ -64,7 +73,6 @@ def _outcome_from_result(*, result: object, model: str, operation: str) -> Codex
             code="final_response_missing",
             retryable=True,
         )
-    input_tokens, output_tokens = _usage_from(getattr(result, "usage", None))
     return CodexTurnOutcome(final_response, input_tokens, output_tokens)
 
 
@@ -75,6 +83,7 @@ async def run_codex_turn(
     model: str,
     operation: str,
     run_kwargs: dict[str, Any],
+    record_usage: Callable[[int | None, int | None], None] | None = None,
 ) -> CodexTurnOutcome:
     """Collect a Codex turn without the SDK's lossy ``thread.run()`` wrapper.
 
@@ -88,7 +97,12 @@ async def run_codex_turn(
     turn_method = getattr(thread, "turn", None)
     if not callable(turn_method):
         result = await thread.run(prompt, **run_kwargs)
-        return _outcome_from_result(result=result, model=model, operation=operation)
+        return _outcome_from_result(
+            result=result,
+            model=model,
+            operation=operation,
+            record_usage=record_usage,
+        )
 
     handle = await turn_method(prompt, **run_kwargs)
     stream = handle.stream()
@@ -112,6 +126,10 @@ async def run_codex_turn(
     finally:
         await stream.aclose()
 
+    input_tokens, output_tokens = _usage_from(usage)
+    if record_usage is not None:
+        record_usage(input_tokens, output_tokens)
+
     if completed_turn is None:
         raise codex_protocol_error(
             model=model,
@@ -133,7 +151,6 @@ async def run_codex_turn(
             code="final_response_missing",
             retryable=True,
         )
-    input_tokens, output_tokens = _usage_from(usage)
     return CodexTurnOutcome(final_response, input_tokens, output_tokens)
 
 
