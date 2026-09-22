@@ -66,7 +66,7 @@ export function ContactImportButton({
       >
         {label}
       </DialogTrigger>
-      <DialogContent>
+      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Import contacts</DialogTitle>
           <DialogDescription>

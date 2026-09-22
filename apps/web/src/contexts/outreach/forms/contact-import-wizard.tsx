@@ -183,7 +183,11 @@ export function ContactImportWizard({ onDone }: ContactImportWizardProps) {
                 " "}<b>{preview.summary.invalid}</b> invalid. Unsupported fields are reported on{
                 " "}<b>{preview.summary.unsupported}</b> contact{preview.summary.unsupported === 1 ? "" : "s"}.
               </p>
-              <ol aria-label="Contact import preview">
+              <ol
+                aria-label="Contact import preview"
+                className="max-h-[45dvh] overflow-y-auto break-words pr-2 [overflow-wrap:anywhere]"
+                tabIndex={0}
+              >
                 {preview.items.map((item) => (
                   <li key={item.index}>
                     <p><b>{item.displayName || `Contact ${item.index}`}</b> <span className="meta">{item.status}</span></p>

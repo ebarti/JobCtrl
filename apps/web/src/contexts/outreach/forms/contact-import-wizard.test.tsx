@@ -90,6 +90,7 @@ describe("<ContactImportWizard>", () => {
     expect(screen.getByText("ORG is required.")).toBeInTheDocument();
     expect(screen.getByText(/Duplicate of item 1/)).toBeInTheDocument();
     expect(requests).toHaveLength(1);
+    expect(screen.getByRole("list", { name: "Contact import preview" })).toHaveAttribute("tabindex", "0");
     expect(requests[0]).toMatchObject({ format: "vcard", mode: "preview", filename: "network.vcf" });
 
     await user.click(screen.getByRole("button", { name: "Continue" }));

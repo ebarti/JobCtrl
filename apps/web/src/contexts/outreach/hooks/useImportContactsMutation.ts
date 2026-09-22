@@ -19,7 +19,7 @@ export function useImportContactsMutation(): UseMutationResult<
   return useMutation({
     mutationKey: outreachKeys.contacts(tenantId),
     mutationFn: (body: ContactImportRequest) => api.importContacts(body),
-    onSuccess: (_response, variables) => {
+    onSettled: (_response, _error, variables) => {
       const isCommit = "csvText" in variables || variables.mode === "commit";
       if (isCommit) {
         void queryClient.invalidateQueries({ queryKey: outreachKeys.contactLists(tenantId) });
