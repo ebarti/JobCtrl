@@ -302,44 +302,205 @@ confirmed activation succeeds.
 
 ## Future implementation slices and evidence
 
-Each slice is separately reviewable. None may exercise real user data.
+Each slice is separately reviewable. None may exercise real user data. The
+branch names below are proposed, not created. If an earlier slice remains
+unmerged, the work is one sequential stack: S1 starts from the then-current
+`main`, and each later branch starts from and targets its predecessor. If an
+earlier slice has merged, the next slice first synchronizes with the new
+`main`. Every slice must re-read the then-current schema and source/writer
+inventory; exact v10 describes this proposal's snapshot and makes no promise
+that a future implementation is v11.
+
+| Slice | Proposed branch and base | Dependency |
+| --- | --- | --- |
+| S1 | `feat/retention-registry-preview`, from then-current `main` | Accepted design and a fresh source/schema inventory. |
+| S2 | `feat/retention-maintenance-recovery`, from S1 while S1 is unmerged | S1 registry, identity, preview, and reference-closure contracts. |
+| S3 | `feat/retention-manual-diagnostics-cleanup`, from S2 while S2 is unmerged | S1 + S2, plus owner acceptance of one exact diagnostic class and its retention/grace inputs. |
+| S4 | `feat/retention-policy-ux`, from S3 while S3 is unmerged | Accepted S3 evidence and all policy/UX decisions needed by the selected controls. |
+
+### Provisional module and interface boundary
+
+All new paths and interfaces in this section are provisional until their slice
+is accepted. Python retention code stays under one package,
+`workers/automation/src/jobctrl/retention/`:
+
+- `registry.py` defines typed owner adapters, canonical authority/object
+  identities, lifecycle facts, and `build_registry(...)`.
+- `references.py` computes the protected transitive closure; `manifest.py`
+  writes and verifies the private bounded versioned manifest.
+- `preview.py` produces the content-free exact-count/byte/fingerprint result.
+  Preview consumes a registry snapshot and cannot expose a mutation method.
+- `decision.py` binds selected classes and exact confirmation to one unexpired,
+  unchanged preview and policy revision.
+- `maintenance.py` is a typed client of the launcher-owned maintenance
+  protocol. It never implements a lock, generation counter, or fallback
+  barrier.
+- `quarantine.py`, `journal.py`, and `restore.py` implement staging, the
+  `planned -> prepared -> staged -> committed -> verified` state machine, and
+  conflict-safe restore only after a valid maintenance lease is supplied.
+
+`workers/automation/src/jobctrl/cli.py` will expose a provisional Typer group
+with three public interfaces:
+
+- `jobctrl retention preview [--class CLASS]` is read-only. It may run without
+  the Go launcher or a maintenance barrier, but active, changing, or unknown
+  state remains blocked and its manifest cannot authorize later mutation after
+  expiry or change.
+- `jobctrl retention cleanup --preview-id ID --class CLASS --confirm TEXT` is
+  manual and mutating. It requires the exact preview/state/policy-bound
+  confirmation and a launcher-issued maintenance lease before preparation,
+  staging, commit, or verification.
+- `jobctrl retention restore --operation-id ID --confirm TEXT` is manual and
+  mutating. It requires its own exact confirmation, a fresh launcher-issued
+  lease, identity revalidation, and conflict-safe destination checks.
+
+The registry/manifest API is private Python data, not a TypeScript API or a
+domain-event payload. CLI output is the content-free preview or a bounded
+operation receipt. `cleanup` accepts only opaque IDs already present in a
+verified manifest; it accepts no arbitrary path, database query, or ad hoc
+object list.
+
+### Maintenance-generation ownership and writer protocol
+
+The Go process authority in `launcher/internal/launcher/` owns acquisition and
+release of a workspace maintenance barrier. S2 proposes
+`maintenance.go` plus platform/process tests there. That authority stores an
+owner-only durable state containing a monotonically increasing workspace
+maintenance generation, mode, workspace-root fingerprint, operation/lease ID,
+and issue/expiry times. A generation is never reused after release or crash.
+The launcher returns a typed `MaintenanceLease` for the exact workspace,
+generation, operation, and preview fingerprint over a private inherited control
+channel; it does not pass the token in argv, ordinary environment, events, or
+logs.
+
+Every registered writer in `apps/api/src`, Python, Temporal activities, and
+apply/browser subprocess publishing paths must participate in the same
+launcher-owned protocol:
+
+1. A writer registers its producer and observed generation before work. The
+   barrier changes the generation and refuses new writers while draining.
+2. Existing writers must validate and hold the shared writer lease at the
+   actual SQLite commit or atomic file-publish/rename point, not only when work
+   starts. A generation change causes transaction rollback or leaves the
+   temporary file unpublished.
+3. Each runtime reports bounded typed quiescence for its active transactions,
+   Temporal activities/workflows, subprocesses, and pending file publications.
+   The launcher independently checks process/listener, heartbeat, Temporal,
+   database-path, and producer-registration evidence before issuing the
+   exclusive maintenance lease.
+4. An unsupported/unregistered producer, missing commit/publish fence,
+   unavailable runtime check, or disagreement between signals prevents the
+   lease and therefore prevents mutation.
+
+The Python CLI requests typed operations and consumes the lease; it must not
+create a second barrier with `BEGIN IMMEDIATE`, a PID file, or a Python-only
+lock. In a source-only environment where the Go launcher or shared-generation
+protocol is unavailable, `retention preview` may still run read-only, while
+`cleanup` and `restore` fail with a typed
+`maintenance_authority_unavailable` result before any preparation or mutation.
+There is no direct-Python fallback.
 
 ### S1 — Inventory, registry, and preview
 
-- Revalidate every writer and authority against the then-current schema.
-- Implement the versioned, private, bounded ownership registry and transitive
-  reference closure using synthetic fixtures.
-- Ship read-only content-free preview only. Prove exact counts/bytes,
-  protected/blocked reasons, policy and identity fingerprints, expiry, and
-  refusal for unknown ownership or incomplete inventory.
+- **Owns:** the provisional Python `registry`, `references`, `manifest`, and
+  `preview` modules, the read-only Typer command, and synthetic fixtures under
+  `workers/automation/tests/retention/`. It makes no launcher, API, writer, or
+  database-schema change.
+- **Boundary:** revalidate every owner, writer, table, file producer, and exact
+  schema before defining the registry version. The manifest remains private;
+  only the content-free `PreviewResult` crosses the CLI boundary.
+- **Acceptance scenarios:** complete and schema-mismatched inventories;
+  direct/transitive approval, outcome, submit-intent, repeat, generation,
+  prompt, judge, audit, and shared-file reference closure; exact
+  protected/eligible/blocked counts and bytes; stable content/row hashes and
+  authority fingerprints; expiry and clock rollback/advance; absolute and
+  traversal input; symlink, hardlink, ancestor/mount identity change; unknown
+  ownership; corrupt or oversized manifest; and state change between scans.
+- **Planned checks:**
+  `uv --project workers/automation run --locked --all-extras pytest -q workers/automation/tests/retention/test_registry.py workers/automation/tests/retention/test_preview_cli.py`,
+  `corepack pnpm python:lint`, `git diff --check`, and
+  `corepack pnpm docs:build`. Tests assert exact counts, bytes, hashes,
+  fingerprints, decisions, and zero writes.
 
 ### S2 — Maintenance, recovery, journal, and restore
 
-- Add and integrate the all-writer maintenance barrier.
-- Implement paired recovery where relevant, the state journal, same-volume
-  staging, integrity verification, and conflict-safe restore on synthetic
-  state.
-- Prove that insufficient disk, corrupt backup, unresolved activity, and a
-  changed identity cause zero mutation.
+- **Owns:** provisional launcher maintenance authority and tests under
+  `launcher/internal/launcher/`; the Python `maintenance`, `quarantine`,
+  `journal`, and `restore` modules; the mutating restore Typer command;
+  writer-fence integrations in `apps/api/src`, Python/Temporal repositories and
+  activities, and apply/file publication paths; and synthetic cross-runtime
+  fixtures. The Go launcher is the only acquisition/release owner.
+- **Boundary:** expose the typed durable-generation/lease protocol described
+  above. Preview stays barrier-free and read-only. Preparation, stage, commit,
+  verification, and restore all require the exclusive lease and full
+  action-time revalidation.
+- **Acceptance scenarios:** concurrent TypeScript/Python database writers;
+  writer arrival during drain; file publisher before and at rename; active and
+  stale process/listener/heartbeat combinations; Temporal running, revivable,
+  unresolved, unavailable, and quiescent histories; apply/browser subprocess
+  activity; mismatched database/root identity; unsupported writer; source-only
+  Python mutation attempt; insufficient disk; permission denial; missing or
+  corrupt backup; journal write/fsync failure; crash/restart at every journal
+  transition; paired SQLite/Temporal restore; restore conflict with newer
+  state; and successful independent post-restore hashes/integrity.
+- **Planned checks:** `corepack pnpm launcher:test`,
+  `corepack pnpm --filter @jobctrl/api test -- retention-maintenance.test.ts`,
+  and
+  `uv --project workers/automation run --locked --all-extras pytest -q workers/automation/tests/retention/test_maintenance.py workers/automation/tests/retention/test_recovery.py`.
+  The matrix must observe zero mutation for every refused precondition and
+  durable recovery artifacts for every simulated partial commit.
 
 ### S3 — Narrow manual diagnostics cleanup
 
-- After owner acceptance, allow one exact diagnostic class that S1 can prove is
-  disposable, inactive, unreferenced, and contained.
-- Keep execution manual and per-class opt-in. Add the full failure/race matrix
-  and use the actual CLI in an owned synthetic workspace.
-- Required proof includes accepted preview readback and hashes, recovery and
-  restore, concurrent writers, malicious absolute/traversal paths, symlink and
-  hardlink substitution, mount/ancestor changes, clock changes, schema drift,
-  disk-full, permission failure, partial crash at every journal transition, and
-  unknown ownership. Read back final live and quarantine state independently.
+- **Owns:** provisional `decision.py` and `cleanup.py` inside the same Python
+  retention package, the mutating Typer command, one owner-approved diagnostic
+  adapter, and an actual-CLI synthetic proof harness. It depends on the
+  implemented behavior of S1 and S2 and adds no second maintenance mechanism.
+- **Boundary:** permit exactly one diagnostic class that S1 proves disposable,
+  inactive, unreferenced, and contained. Execution is manual and per-class.
+  Before requesting the S2 lease, require the operator's exact CLI confirmation
+  bound to the preview ID/version, expiry, policy revision, complete candidate
+  set, and unchanged identity/reference/activity fingerprints. Expired or
+  changed preview/state is rejected before staging; confirmation cannot be
+  deferred to S4.
+- **Acceptance scenarios:** invoke the actual public CLI in an owned synthetic
+  workspace; read back the accepted preview and confirmation binding; verify
+  pre/post live, journal, quarantine, backup, and restored hashes; reject
+  missing/wrong/expired confirmation and every unchanged-state mismatch;
+  exercise mutation and restore, a concurrent writer, path traversal, symlink,
+  hardlink, mount/ancestor change, clock change, schema drift, disk-full,
+  permission failure, unknown ownership, and partial crash at each state-machine
+  transition. Read back the final live and quarantine state independently.
+- **Planned checks:** an S3-owned
+  `scripts/retention-synthetic-proof.sh` runs `jobctrl retention preview`,
+  `jobctrl retention cleanup`, and `jobctrl retention restore` against a fresh
+  temporary `JOBCTRL_DIR`, then verifies exact JSON receipts and hashes. Run it
+  alongside
+  `uv --project workers/automation run --locked --all-extras pytest -q workers/automation/tests/retention/test_cleanup_cli.py`,
+  `corepack pnpm launcher:test`, `corepack pnpm api:test`, and the S1/S2 suites.
+  The harness contains synthetic facts only and never targets a real workspace.
 
 ### S4 — Opt-in UX and policy expiry
 
-- Only after owner decisions and S3 evidence, add per-class policy controls,
-  expiry UX, review of protected/blocked totals, and explicit confirmation.
-- Scheduling remains a separate owner decision. It cannot ship by treating a
-  retention age as an implicit deletion timer.
+- **Owns:** owner-approved policy storage/API under `apps/api/src`, UX under
+  `apps/web`, and expiry/scheduling adapters that call the existing S1-S3
+  interfaces. It does not replace the S3 CLI confirmation or S2 barrier.
+- **Boundary:** depends on accepted decisions for eligible classes, retention
+  and quarantine grace, manual-first versus scheduling, and backup policy. UX
+  may present the existing exact confirmation contract. Scheduling is a
+  separate opt-in and can only produce a fresh preview for confirmation; age
+  never becomes an implicit deletion trigger.
+- **Acceptance scenarios:** owner-approved per-class policy create/update and
+  audit; protected/eligible/blocked preview display; policy-revision
+  invalidation; opt-in scheduling disabled by default; preview expiry and
+  quarantine grace boundaries; clock change; and remote-boundary disclosure.
+  Credentials, provider caches, browser authentication, raw-evidence redaction,
+  and remote erasure remain excluded.
+- **Planned checks:** focused API contract tests, web interaction/accessibility
+  tests, policy-expiry/scheduling clock-boundary tests, `corepack pnpm api:check`,
+  `corepack pnpm web:check`, and `corepack pnpm docs:build`, followed by the S3
+  actual-CLI proof to show UX/policy changes did not weaken confirmation or the
+  barrier.
 
 The checked-in apply-log and Gmail fixtures are inputs to S1 fixture design,
 not substitutes for S3 CLI proof. Production-safe verification means an owned,
