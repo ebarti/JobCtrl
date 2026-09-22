@@ -233,26 +233,23 @@ source and a resolving pointer.
 | Claim ID | Claim (neutral) | Surfaces | Status | Owner | Verification pointer | Last verified |
 | --- | --- | --- | --- | --- | --- | --- |
 | CL-081 | Building and running from a source checkout remains an advanced contributor option. It uses `scripts/install` followed by `corepack pnpm dev`; Git, uv, pnpm, and the rest of the source toolchain belong only to that option and are not installed-product prerequisites. The source audit records 73 unique direct JavaScript packages, 1,452 pnpm lock records, 20 direct core-runtime Python packages, 102 uv lock records, and two Playwright browser revisions. Preserved mixed-context observations are contributor-path measurements, not the installed-product footprint. | README (Build and run from source); Getting Started (Build and run from source); Local Development | Current | repo owner | `scripts/install`; `packaging/distribution/source-baseline.json`; `docs/local-development.md` | 2026-08-12 |
-| CL-082 | P0–P6 implement a deterministic Apple-silicon bundle, one native launcher/CLI, the explicit browser-capability split, immutable acquisition/lifecycle contracts, and a fail-closed signed release workflow. The tracked inventory declares 15 core components, one bundled optional-capability adapter, three official-channel provider packs, and two excluded developer-only components. This is not a public installation claim: no signed and notarized artifact, authenticated release pointer, stable Homebrew formula, or published-artifact clean-machine QA exists yet. Once published, curl and Homebrew must resolve the same payload and plain `jobctrl` command surface, with no source clone or user-installed toolchain. | ROADMAP (Now); README (Bundled distribution status); Getting Started (current source path versus installed contract); Local Development | Roadmap | repo owner | `launcher/internal/launcher/launcher.go`; `packaging/distribution/component-inventory.json`; `.github/workflows/release-distribution.yml`; `scripts/get`; `packaging/homebrew/Formula/jobctrl.rb.tmpl` | 2026-07-11 |
+| CL-082 | The signed and notarized v0.1.1 Apple-silicon bundle, authenticated stable descriptor, immutable release and stable Homebrew formula are published. Disposable public curl acquisition reports the same build/manifest as the signed formula; the public script still pins the older v0.1.0 bootstrap. Full two-path clean-machine/no-toolchain/no-Chrome, auth, migration, update/rollback and real TTFV acceptance remains unverified. Publication and bounded native smoke do not establish that complete installation claim. | ROADMAP; README; Getting Started; Local Development | Roadmap | repo owner | [Published-byte reconciliation](publish-checklist.md#published-byte-reconciliation-2026-09-22); [issue #884](https://github.com/ebarti/JobCtrl/issues/884) | 2026-09-22 (bounded reconciliation) |
 | CL-083 | Contact records are kept per company or application with per-fact provenance and CSV import; outreach drafts are truthful and reviewable under the same anti-fabrication gates as resumes; the user sends messages themselves and logs the send (date + channel) — the only way an outreach thread is marked sent; follow-up reminders are surfaced-only suggestions; there is no outreach send transport. This does not describe the separately approval-bound Gmail email-application path in CL-062. | README (What It Does — contacts/outreach); Normal Flows §11 (Keep Contacts); Configuration (Contact Research; Outreach Follow-Ups) | Current | repo owner | Outreach planner close-out (`plans/implemented/2026-07-05-outreach-planner-plan.md`, INV-1 no-auto-send, four-layer enforcement + fixtures); [normal flows](user/normal-flows.md) §11; [configuration](user/configuration.md) (Contact Research, Outreach Follow-Ups) | 2026-07-09 |
 | CL-084 | JobCtrl's source is distributed under the GNU Affero General Public License v3.0 only (`AGPL-3.0-only`). | README (License); Comparison (Open-source license) | Current | repo owner | [`LICENSE`](../LICENSE); `package.json`; `workers/automation/pyproject.toml` | 2026-07-09 |
 | CL-085 | Native Windows Credential Manager and Linux Secret Service/keyring adapters are planned with parity to the shipped macOS Keychain boundary: environment precedence, presence-only API responses, restart-to-activate lifecycle, bounded failure behavior, and platform-host validation before promotion. | ROADMAP (Next) | Roadmap | repo owner | [`ROADMAP.md`](../ROADMAP.md) | 2026-07-10 |
 
-> **Why CL-082 remains roadmap work.** The bundle, launcher, installer,
-> lifecycle, and release authority now have local implementation and QA
-> evidence, but publication is the missing product fact. Promote the claim only
-> after a Developer ID-signed and notarized artifact, authenticated release
-> pointer, stable formula, immutable release, and both clean-machine acquisition
-> paths have been executed and read back successfully. Checked-in workflows and
-> local candidates are not public-install evidence.
-
-> **Launch-cutover draft.** Public install copy may be prepared in a draft pull
-> request before the external release exists, but that pull request must not be
-> merged or deployed while CL-082 remains `Roadmap`. Promote CL-082 to
-> `Current`, record the final release evidence and verification date, and
-> refresh the owner-signed freeze SHA only after the signed/notarized artifact,
-> authenticated stable pointer, immutable release, Homebrew formula, and both
-> clean-machine acquisition paths have been executed and read back.
+> **Why CL-082 remains roadmap work.** Publication is now demonstrated, but
+> the complete published-byte operational matrix is not. The dated
+> [reconciliation](publish-checklist.md#published-byte-reconciliation-2026-09-22)
+> separates reusable release evidence, observed disposable checks and missing
+> gates. Keep the broad installation claim at `Roadmap` until both acquisition
+> paths and all applicable lifecycle/TTFV gates are demonstrated. Do not infer
+> full acceptance from a published artifact, source fixtures or a healthy stack.
+>
+> **Installer cutover.** Preserve the immutable release record R separately
+> from installer/docs deployment D. Section 9.6 of the publish checklist owns
+> the verified-byte cutover; this reconciliation authorizes no publication or
+> deployment and does not promote any installation claim.
 
 ## Maintenance cadence and re-review
 

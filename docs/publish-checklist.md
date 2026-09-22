@@ -41,7 +41,151 @@ steps are historical records rather than instructions to repeat them. Remaining
 actions are governed by the release gate plus the active bundled-distribution,
 public-demo, and end-to-end redesign plans.
 
-## Current operational state (recheck at execution time)
+## Published-byte reconciliation — 2026-09-22
+
+This bounded investigation for [#884](https://github.com/ebarti/JobCtrl/issues/884)
+rechecked public release bytes and existing evidence before selecting missing
+checks. **Full P7 acceptance remains unverified.** Publication, an unsigned
+build, source tests, and a successful native smoke are distinct evidence.
+Observations below were made on 2026-09-22 at approximately 12:50–12:55 UTC;
+mutable channels and workflow states must be rechecked before reuse.
+
+### Immutable release and acquisition identities
+
+The latest published GitHub release is still
+[`v0.1.1`](https://github.com/ebarti/JobCtrl/releases/tag/v0.1.1)
+(release ID `376278118`, API `immutable: true`, published
+`2026-08-25T17:54:39Z`). Its source commit is
+`726ca08bd893bba2b932cd6b66835a0bf6d56f7f`, tree
+`3cfb19af2d031fed0b565692e3750977ff478099`, and build ID is
+`0.1.1-726ca08bd893bba2b932cd6b66835a0bf6d56f7f-darwin-arm64`.
+
+| Object | Observed SHA-256 / policy |
+| --- | --- |
+| [Stable pointer](https://releases.jobctrl.dev/v1/stable/darwin-arm64.json), also byte-identical to the release's immutable `channel-pointer.json` | `84319ad4a488d577414a796072057501ed68c9328627a0d716d90867368d31bb` |
+| [Release descriptor](https://github.com/ebarti/JobCtrl/releases/download/v0.1.1/release-descriptor.json), matching its R2 object | `78b1bb105b4a1022c7e0210552732ffeb6327d5b77cccf79f4893df72f973f9c` |
+| Descriptor signature, matching GitHub and R2 | `de3ce729962fed0047c0deeb9d0a33897dd2555d55bdc86eeda1ec508e6e79af` |
+| [Manifest](https://github.com/ebarti/JobCtrl/releases/download/v0.1.1/manifest.json) | `3c79d79a3d218d51a934b6de79c7a3a2df9ade3d54e1c5cffe703d6ee891649b` |
+| Manifest signature | `4c0fb632ce42ec974feec37fac51bfd6b4ddd287c3ad172990d16a1e2a5ed0e8` |
+| Published ZIP, 357,720,868 bytes | `30745567c8f28852f077079d7bd3135b966fd0ef4477b256e324798e31810a3e` |
+| Signed descriptor policy | Stable sequence **4**, minimum-safe sequence **2** |
+| Revoked build IDs | `2.0.7-db257efe1087ec00ac2ec49b846a95d2423aecc2-darwin-arm64` only |
+
+Independent verification used `verifyReleaseBytes` from
+`scripts/distribution-release.mjs` for both Ed25519 signatures against the
+configured `release-verification` environment's **public** trust key. The key
+text SHA-256 is `ab8a99eda9fe5e0ac8fa6559c98c6198f1fc2ca26e6f69b28b95ab6fad5bb5f6`;
+key ID is `jobctrl-release-v1`. The downloaded native installer independently
+accepted the published archive and manifest during the disposable install below.
+The unsigned channel pointer is an index: its identity and digests must match
+the authenticated descriptor; its JSON alone is not signing evidence.
+
+The [Homebrew formula at tap commit
+`0f0703456140b444b6d97564b62738de06467c91`](https://github.com/ebarti/homebrew-tap/blob/0f0703456140b444b6d97564b62738de06467c91/Formula/jobctrl.rb)
+selects v0.1.1, `version_scheme 1`, and the same archive, descriptor and manifest
+identities above. A fresh public Homebrew command was not run on this host.
+
+The [public curl script](https://jobctrl.dev/install.sh) has SHA-256
+`5adb9cdeeefc77bda235af995ff4dc5bdb8da6852fc000652c31e8ffa208c876` and still pins
+the **v0.1.0 bootstrap executable**, SHA-256
+`17cf5f6eb2d5af23cd58ac66720f130731a00c749691dac1d33e2d1d33086c33`.
+That bootstrap follows the compiled stable pointer. A fresh disposable public
+curl acquisition **actually installed v0.1.1** and `jobctrl version --json`
+reported the build ID and manifest digest above. Therefore the stale bootstrap
+pin is not evidence of a different installed payload. The separate 9.6
+canonical-installer cutover is still outstanding: the public script is not the
+immutable v0.1.1 `install.sh` (SHA-256
+`2522c7e41e6712a2c237654f755ff21a2b7602495c0ded14979b872cd0b14ce2`). This audit
+neither changes the public installer nor promotes both-channel acceptance.
+
+### Existing evidence reused
+
+- [#949](https://github.com/ebarti/JobCtrl/issues/949) prepared v0.2.0 at
+  `6a82c233c434e67f0a2d1c6df3db6aa68d036b75`.
+  [Run 35607341284](https://github.com/ebarti/JobCtrl/actions/runs/35607341284)
+  passed release-identity/preflight and unsigned build jobs, then remained
+  **waiting** at `release-signing`; its signing job had no executed steps.
+  No published v0.2.0 release was available. Its separate docs/demo deployment
+  evidence and unsigned build cannot substitute for published native bytes.
+  Retain that work; do not start a competing publication or bypass approval.
+- The immutable v0.1.1
+  [published-candidate smoke](https://github.com/ebarti/JobCtrl/releases/download/v0.1.1/published-candidate-smoke.json)
+  has SHA-256 `32b89f37948e10547d031c100fa3f7db3d433139933e4d60036360bf4f12ff97`.
+  It binds the exact descriptor, installer, archive and manifest and reports
+  native install/start/running-status/version/stop/stopped-status success.
+  [Release run 32699712597](https://github.com/ebarti/JobCtrl/actions/runs/32699712597)
+  also records successful rendered-formula audit/install/test/lifecycle steps.
+  These are reusable bounded lifecycle observations, not evidence of absent
+  developer tools, absent Chrome, provider auth, migrations or real TTFV.
+  Its Actions smoke/formula artifacts are now marked **expired**; the separate
+  immutable GitHub smoke asset remains retrievable. Job conclusions do not
+  reconstruct the expired per-command Homebrew output.
+- The immutable [audit tar](https://github.com/ebarti/JobCtrl/releases/download/v0.1.1/jobctrl-release-audit.tar)
+  has SHA-256 `608dc5b0a83161079c799f138cf4c19d9b71c386584813abb84b674e76d46532`.
+  It retains notarization acceptance, SBOMs, licenses and component-size evidence.
+  Its `publication-status.json` and immutable `release-metadata.json` preserve
+  **pre-promotion** blocked states; the later smoke and immutable release API
+  establish publication. Do not rewrite those historical assets or interpret
+  their earlier status as a current failed publication. The audit size report
+  describes the unsigned archive and says `baseline-not-provided`; do not use
+  its compressed size as the signed ZIP size or claim a measured release delta.
+
+### Additional published-byte checks
+
+Ran only missing bounded checks on Apple-silicon macOS 26.6.2 in an owned
+throwaway directory outside the checkout, with fresh child-process `HOME`,
+`JOBCTRL_RUNTIME_HOME`, `JOBCTRL_DIR`, command directory and temporary directory.
+The child received only those paths, `SHELL`, and stock system
+`PATH=/usr/bin:/bin:/usr/sbin:/sbin`; no provider credentials were supplied.
+The retrieved public script was passed unchanged to `/bin/bash -s -- --home
+<owned-runtime> --bin-dir <owned-bin> --no-modify-path`. No local build or fixture
+installer was substituted.
+
+| Check | Observed result and limit |
+| --- | --- |
+| Public curl acquisition and identity | Exit 0; native `version --json` returned v0.1.1 and the exact published build/manifest above. No source checkout was created in the disposable home. |
+| Forced failed update before staging | Ran the installed `jobctrl update` under `sandbox-exec` with network access denied. Exit 1 at channel-pointer retrieval; the active receipt hash, native version and all three synthetic state-file hashes remained identical. This proves a metadata-fetch failure preserves the active selection, **not** crash recovery or failed migration after activation. |
+| Default uninstall/data preservation | Installed `jobctrl uninstall` exited 0. Independent filesystem inspection found no public command symlink, runtime `bin`, or `releases`; the synthetic SQLite file, text sentinel and disabled-capability sentinel remained byte-identical. Authenticated channel state and lock files remained, as designed. The SQLite sentinel is not an application-schema migration fixture. |
+
+No owned server was started. Existing listeners on 7233, 8233 and 8766 were
+preserved; commands that could promote/start another runtime were not executed.
+This host has Xcode and system Chrome, and no disposable clean macOS host was
+provisioned. A fresh home and restricted PATH do **not** prove an absent
+machine-wide toolchain, absent Chrome, or isolation from the user's keychain.
+No personal runtime, provider auth or browser profile was adopted for this audit.
+
+### Missing gates and next execution conditions
+
+| Required gate | Current evidence / remaining work |
+| --- | --- |
+| Clean curl and Homebrew, no source/toolchain | Curl identity observed; Homebrew signed identity and historical hosted lifecycle available. Both clean native environments and fresh public Homebrew invocation still required; the Homebrew case necessarily retains Homebrew itself. |
+| Same distribution on both installed paths | Curl runtime identity equals signed formula metadata. Retain fresh `version --json` results from both clean public acquisitions before marking the two-path gate passed. |
+| Existing source-install state upgrade and migration | Unverified against published bytes. Use an owned synthetic supported source-schema database, test upgrade, retained backup pairing and post-upgrade invariants on the clean native host. |
+| Warm and cold vendor auth / provider packs | Unverified. Requires an owner-controlled auth run; this synthetic audit supplies no credentials and cannot establish provider readiness or provider-pack operation. |
+| No Chrome; core browser, doctor and domain CLI | Unverified on a machine without Chrome. Run install/start/doctor/discovery/enrichment/PDF with optional authenticated-browser capabilities disabled. |
+| Explicit capability enable/disable and browser adoption | Unverified against published bytes. Use an owned browser/profile and explicit consent; no submission or personal profile adoption is implied. |
+| Offline restart | Unverified. After legitimate provider setup, prove restart with package-registry access denied on an isolated native host. |
+| Update, interrupted/unhealthy update, paired rollback | Only pre-staging network failure preservation observed here. Successful promotion, post-staging failure/recovery and rollback of the exact retained database/runtime pair remain unverified. |
+| Default uninstall on both channels | Curl sentinel preservation observed; real supported synthetic workspace and Homebrew uninstall/data preservation remain. |
+| Real-path TTFV | No accepted published-byte runs located. Three clean real runs, warm/cold auth classification, same-job API/UI/PDF proof, median/worst thresholds and release/channel binding remain required. Synthetic install timing is not TTFV. |
+| Footprint and browser inventory | Published audit/manifest available; no new full inventory or baseline-delta gate claimed. Retain signed-payload inventory and measured prior-release comparison when completing acceptance. |
+
+The current [TTFV recorder](developer/first-run-ttfv.md) is source-specific:
+`scripts/install`, `uv` and `corepack pnpm dev` are its gateable defaults, and
+custom install/stack commands are rejected. It therefore cannot certify the
+published curl/Homebrew matrix unchanged. A bounded published-install recorder
+adaptation must preserve its real discovery, same-job and PDF evidence while
+binding T0 and the native release/channel; do not bypass rejection checks or
+relabel source/fixture output as a published-byte run. Real auth/TTFV also lies
+outside this task's synthetic-data-only scope.
+
+Resume only the missing rows once a disposable native host and, where needed,
+owner-controlled auth are available. If v0.2.0 publishes first, reconcile its
+new immutable identities and invalidate release-specific v0.1.1 evidence;
+do not transfer the previous build's acceptance automatically. Keep CL-082
+`Roadmap` and #884 open until the applicable matrix is demonstrated.
+
+## Historical operational snapshot — 2026-08-28
 
 This is the **last validated snapshot**, not release evidence. At 2026-08-28,
 `ebarti/JobCtrl` was public and `origin/main` was
