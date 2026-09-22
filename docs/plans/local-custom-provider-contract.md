@@ -44,7 +44,7 @@ The two in-flight PR observations use their own immutable heads. Later changes
 must be reconciled before implementation; this table must not be treated as a
 claim about a moving branch.
 
-| Immutable source and symbol | Current/proven observation | What it does not prove |
+| Immutable source and symbol | Evidence state and observation | What it does not prove |
 | --- | --- | --- |
 | [`domain/ports/llm.py::LlmPort`](https://github.com/ebarti/JobCtrl/blob/6a82c233c434e67f0a2d1c6df3db6aa68d036b75/workers/automation/src/jobctrl/domain/ports/llm.py#L36-L90) | **Current:** declares `chat`, `chat_json`, and `ask`, with `model`, `temperature`, `max_tokens`, `response_schema`, and `thinking_budget`. | Its passthrough wording does not prove an adapter binds or enforces any control. |
 | [`llm_client.py::_normalize_unsupported_sdk_controls`](https://github.com/ebarti/JobCtrl/blob/6a82c233c434e67f0a2d1c6df3db6aa68d036b75/workers/automation/src/jobctrl/infrastructure/llm/llm_client.py#L43-L69) | **Current:** the sanctioned agent SDK path warns and drops `temperature` and `max_tokens`. | A successful call does not prove output or cost bounds. |
@@ -55,8 +55,8 @@ claim about a moving branch.
 | [`analyze_use_case.py::AnalyzeJobUseCase`](https://github.com/ebarti/JobCtrl/blob/6a82c233c434e67f0a2d1c6df3db6aa68d036b75/workers/automation/src/jobctrl/domain/materials/analyze_use_case.py#L132-L212) and [`analysis.py::cache_key`](https://github.com/ebarti/JobCtrl/blob/6a82c233c434e67f0a2d1c6df3db6aa68d036b75/workers/automation/src/jobctrl/domain/materials/analysis.py#L243-L263) | **Current:** analysis is posting-snapshot grounded, prose validated, generation versioned, and cached by snapshot/prompt/SDK-set identity. A failed refresh does not replace the last persisted generation. | The existing cache identity does not bind a future custom endpoint, credential, model, adapter, schema, or budget revision. |
 | [`llm.py::record_llm_spend`](https://github.com/ebarti/JobCtrl/blob/6a82c233c434e67f0a2d1c6df3db6aa68d036b75/workers/automation/src/jobctrl/llm.py#L48-L88), [`estimate_llm_cost_usd`](https://github.com/ebarti/JobCtrl/blob/6a82c233c434e67f0a2d1c6df3db6aa68d036b75/workers/automation/src/jobctrl/llm.py#L157-L179) | **Current:** accounting records observed usage after calls; a fragile name test treats any model containing `local` as zero cost. | Observed usage is not durable pre-dispatch admission, and a model name is not trusted billing classification. |
 | [`llm_spans.py::llm_generation_span`](https://github.com/ebarti/JobCtrl/blob/6a82c233c434e67f0a2d1c6df3db6aa68d036b75/workers/automation/src/jobctrl/infrastructure/observability/llm_spans.py#L45-L118) | **Current:** generation spans invoke the spend callback after a response and swallow callback failures. | Telemetry success does not prove authoritative accounting, and an accounting failure currently cannot stop acceptance. |
-| [#886 / PR #960 at `7c6c76f`](https://github.com/ebarti/JobCtrl/tree/7c6c76f936fcfde4fed6b59e686d2b1d2a9ab815), especially [`llm_lanes.py`](https://github.com/ebarti/JobCtrl/blob/7c6c76f936fcfde4fed6b59e686d2b1d2a9ab815/workers/automation/src/jobctrl/llm_lanes.py) and [`schema_v11.sql`](https://github.com/ebarti/JobCtrl/blob/7c6c76f936fcfde4fed6b59e686d2b1d2a9ab815/workers/automation/src/jobctrl/infrastructure/migrations/schema_v11.sql) | **Proven at that observed PR head:** the proposed authority uses canonical lanes and one `llm_spend(day,lane)` ledger, with observed lane-token thresholds plus the global USD threshold. | It has no strict in-flight ceiling or reservation lifecycle. This plan assigns no schema version and creates no parallel ledger. |
-| [#902 / PR #956 at `f3f3ad9`](https://github.com/ebarti/JobCtrl/tree/f3f3ad9c4ee8cb1f3677f45c2ad576907127b086), especially [`suggest_target_roles`](https://github.com/ebarti/JobCtrl/blob/f3f3ad9c4ee8cb1f3677f45c2ad576907127b086/workers/automation/src/jobctrl/domain/profile/target_role_suggestions.py#L84-L176) | **Proven at that observed PR head:** production model inference is disabled when provider call bounds are absent. | This contract does not change that behavior. A separate synthetic title-qualifier semantic gap also remains and cannot be satisfied by provider readiness. |
+| [#886 / PR #960 at `7c6c76f`](https://github.com/ebarti/JobCtrl/tree/7c6c76f936fcfde4fed6b59e686d2b1d2a9ab815), especially [`llm_lanes.py`](https://github.com/ebarti/JobCtrl/blob/7c6c76f936fcfde4fed6b59e686d2b1d2a9ab815/workers/automation/src/jobctrl/llm_lanes.py) and [`schema_v11.sql`](https://github.com/ebarti/JobCtrl/blob/7c6c76f936fcfde4fed6b59e686d2b1d2a9ab815/workers/automation/src/jobctrl/infrastructure/migrations/schema_v11.sql) | **Current source at that observed in-flight head:** the proposed authority uses canonical lanes and one `llm_spend(day,lane)` ledger, with observed lane-token thresholds plus the global USD threshold. | It has no strict in-flight ceiling or reservation lifecycle. This plan assigns no schema version and creates no parallel ledger. |
+| [#902 / PR #956 at `f3f3ad9`](https://github.com/ebarti/JobCtrl/tree/f3f3ad9c4ee8cb1f3677f45c2ad576907127b086), especially [`suggest_target_roles`](https://github.com/ebarti/JobCtrl/blob/f3f3ad9c4ee8cb1f3677f45c2ad576907127b086/workers/automation/src/jobctrl/domain/profile/target_role_suggestions.py#L84-L176) | **Current source at that observed in-flight head:** production model inference is disabled when provider call bounds are absent. | This contract does not change that behavior. A separate synthetic title-qualifier semantic gap also remains and cannot be satisfied by provider readiness. |
 
 ## Decisions Still Owned By The Product Owner
 
@@ -107,6 +107,11 @@ ProviderInstanceConfig {
 never accepted from `LlmPort.model`, a prompt, job data, an environment
 redirect, or a per-call URL. The worker resolves `credentialRefId`; API and UI
 surfaces receive only presence, revision, and safe status.
+
+Each operation receives one immutable configuration snapshot. Provider
+transports and probes may read that snapshot but cannot rewrite configuration,
+rotate credentials, select a different endpoint/model, or persist provider
+defaults as a side effect.
 
 The proposed adapter emits three immutable envelopes:
 
@@ -222,10 +227,12 @@ worker normalizes it into a deterministic allowed subset:
 - each entry binds the exact provider model identity to an opaque local catalog
   ID, model revision, adapter revision, endpoint revision, credential revision,
   proved operations, controls, schema profile, usage categories, and billing
-  classification; and
-- only the opaque local catalog ID crosses general configuration, API, UI, log,
-  event, or telemetry boundaries. Arbitrary provider model IDs are unsafe
-  telemetry labels.
+  classification;
+- saved configuration contains only the opaque local catalog ID; and
+- an authenticated local catalog API/UI may show the bounded sanitized exact ID
+  and a bounded display name for selection. Unsanitized values never leave the
+  worker, and raw provider model IDs never enter logs, events, metrics, or
+  telemetry because arbitrary model IDs are unsafe labels.
 
 An empty, malformed, stale, or failed catalog has no selectable models even if
 auth/SDK probes report ready. A saved selection whose binding disappears is
