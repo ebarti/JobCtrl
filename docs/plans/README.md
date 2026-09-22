@@ -39,6 +39,11 @@ The [profile evidence and selective resume composition program](https://github.c
 is a design proposal; its implementation requires the decisions and acceptance
 criteria recorded there.
 
+The [demo access, consent withdrawal, and visitor erasure proposal](2026-09-22-demo-access-consent-withdrawal-proposal.md)
+is **PROPOSED** for [#885](https://github.com/ebarti/JobCtrl/issues/885).
+It recommends analytics-optional access and a bounded withdrawal/deletion
+contract, but awaits the listed owner decisions and authorizes no implementation.
+
 ## Revalidated Delivery Records
 
 - [Preserve Behavior While Removing Duplicated State And Execution](implemented/2026-09-06-simplification-stack.md)
