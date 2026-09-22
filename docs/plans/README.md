@@ -41,6 +41,11 @@ for draft evidence capture, explicit canonical promotion, opt-in selective
 composition, rendered-artifact audit, and dependent delivery slices. The plan
 is unshipped and awaits explicit user approval before implementation.
 
+The [demo access, consent withdrawal, and visitor erasure proposal](2026-09-22-demo-access-consent-withdrawal-proposal.md)
+is **PROPOSED** for [#885](https://github.com/ebarti/JobCtrl/issues/885).
+It recommends analytics-optional access and a bounded withdrawal/deletion
+contract, but awaits the listed owner decisions and authorizes no implementation.
+
 ## Revalidated Delivery Records
 
 - [Preserve Behavior While Removing Duplicated State And Execution](implemented/2026-09-06-simplification-stack.md)
