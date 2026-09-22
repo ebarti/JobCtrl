@@ -1211,6 +1211,41 @@ def test_cancellation_interrupts_provider_wait_and_terminalizes_all_units(
         close_connection(db_path)
 
 
+def test_pending_cancellation_terminalizes_all_units_without_starting_a_provider(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = tmp_path / "jobctrl.db"
+    init_db(db_path)
+    close_connection(db_path)
+    monkeypatch.setattr(jobspy, "init_db", lambda: init_db(db_path))
+    monkeypatch.setattr(jobspy, "get_shared_rate_limiter", _NoopLimiter)
+    execution = _execution("temporal-run-pending-cancel")
+    cancel_event = threading.Event()
+    cancel_event.set()
+    _SuccessfulIndeed.requests = []
+
+    with pytest.raises(jobspy.DiscoveryCancelled):
+        jobspy.run_discovery(
+            cfg=_config(
+                queries=("Director of Engineering", "VP Engineering"),
+            ),
+            cancel_event=cancel_event,
+            discovery_execution=execution,
+            activity_attempt=1,
+            activity_owner_token="pending-cancel-attempt-1",
+            adapter_registry=_registry(indeed_factory=_SuccessfulIndeed),
+        )
+
+    conn = init_db(db_path)
+    try:
+        units = SqliteDiscoverySearchUnitRepository(conn).list_units(execution)
+        assert [unit.state for unit in units] == ["canceled", "canceled"]
+        assert _SuccessfulIndeed.requests == []
+    finally:
+        close_connection(db_path)
+
+
 @pytest.mark.asyncio
 async def test_temporal_worker_loss_after_store_before_ack_reclaims_and_completes(
     tmp_path: Path,
