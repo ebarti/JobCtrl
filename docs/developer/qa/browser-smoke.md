@@ -42,6 +42,8 @@ Only that loopback model boundary is a fixture. Stub dispatch, the isolated API,
 an unowned workspace, a missing Temporal executable, mismatched ports or token,
 an unexpected provider call, timeout, or failed cleanup fails the run. Provider
 credentials and credential-home overrides are removed from every spawned role.
+The root command applies the canonical scrub before its first Corepack process,
+so pnpm and the initial Playwright runner never inherit ambient provider state.
 The worker's capability-validated smoke bootstrap skips checkout and owned
 `.env` loading, persisted provider connection translation, and macOS Keychain,
 then asserts the credential-free environment before the loopback backend can be
@@ -56,7 +58,9 @@ authenticated process-group leader recorded in the owned workspace. Teardown
 uses those persisted identities to terminate and verify every group even if the
 runtime supervisor is already gone; an identity mismatch or unverifiable live
 group preserves the workspace and fails closed. The workspace and its Temporal
-history are removed only after that outer cleanup verification succeeds.
+history are removed only after that outer cleanup verification succeeds. A
+persistent pending/verified cleanup guard also blocks the workspace allocator's
+process-exit fallback from deleting state after ambiguous group ownership.
 
 ## Route Checklist
 

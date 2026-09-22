@@ -1,8 +1,14 @@
+import { EventEmitter } from "node:events";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
+
+import { runLiveWorkerBrowserSmoke } from "../../../../scripts/live-worker-browser-smoke.mjs";
 
 import {
   CREDENTIAL_ENV_KEYS,
@@ -17,8 +23,15 @@ import {
 } from "./runtime-support.mjs";
 
 const require = createRequire(import.meta.url);
-const { createOwnedE2eWorkspace, removeOwnedE2eWorkspace, workspaceEnvironment } =
-  require("../fixtures/owned-workspace.cjs");
+const {
+  createOwnedE2eWorkspace,
+  markLiveWorkerExitCleanupVerified,
+  removeOwnedE2eWorkspace,
+  workspaceEnvironment,
+} = require("../fixtures/owned-workspace.cjs");
+const ownedWorkspaceModule = fileURLToPath(
+  new URL("../fixtures/owned-workspace.cjs", import.meta.url),
+);
 
 function environment(workspace) {
   const controlPort = "34104";
@@ -98,6 +111,44 @@ test("live-worker scrubs provider credentials and rejects inherited credential h
   } finally {
     removeOwnedE2eWorkspace(workspace);
   }
+});
+
+test("root live-worker command scrubs hostile credentials before its first spawn", async () => {
+  const ambient = {
+    ...process.env,
+    PATH: process.env.PATH,
+    JOBCTRL_TEST_NON_SECRET: "preserved",
+  };
+  for (const key of CREDENTIAL_ENV_KEYS) ambient[key] = `hostile-${key}`;
+  const child = new EventEmitter();
+  child.pid = 4321;
+  const signalProcess = new EventEmitter();
+  signalProcess.kill = () => {
+    throw new Error("test child should exit before a signal is required");
+  };
+  let observed;
+
+  await runLiveWorkerBrowserSmoke({
+    environment: ambient,
+    spawnProcess: (executable, args, options) => {
+      observed = { executable, args, options };
+      queueMicrotask(() => child.emit("exit", 0, null));
+      return child;
+    },
+    signalProcess,
+    setTimer: () => 1,
+    clearTimer: () => {},
+  });
+
+  assert.equal(observed.executable, "corepack");
+  assert.equal(observed.args[0], "pnpm");
+  assert.equal(observed.options.env.JOBCTRL_TEST_NON_SECRET, "preserved");
+  assert.equal(observed.options.env.JOBCTRL_LIVE_WORKER_SMOKE, "1");
+  assert.equal(observed.options.env.UV_LOCKED, "1");
+  assert.deepEqual(
+    CREDENTIAL_ENV_KEYS.filter((key) => observed.options.env[key]),
+    [],
+  );
 });
 
 test("live-worker waits are bounded", async () => {
@@ -211,5 +262,96 @@ test("outer cleanup escalates a shutdown timeout and rejects a reused identity",
     fs.writeFileSync(statePath, originalState, { mode: 0o600 });
     await cleanupOwnedProcessGroups({ statePath, workspace, graceMs: 100 }).catch(() => {});
     removeOwnedE2eWorkspace(workspace);
+  }
+});
+
+test("runner exit preserves a live-worker workspace until cleanup is verified", () => {
+  const reportDirectory = fs.mkdtempSync(
+    path.join(os.tmpdir(), "jobctrl-live-worker-exit-test-"),
+  );
+  const reportPath = path.join(reportDirectory, "workspace.json");
+  const childScript = `
+    const fs = require("node:fs");
+    const fixture = require(${JSON.stringify(ownedWorkspaceModule)});
+    const workspace = fixture.configureE2eWorkspace();
+    fixture.requireLiveWorkerExitCleanup(workspace);
+    fs.writeFileSync(${JSON.stringify(reportPath)}, JSON.stringify(workspace));
+  `;
+  const childEnvironment = { ...process.env };
+  for (const key of [
+    "JOBCTRL_E2E_WORKSPACE",
+    "JOBCTRL_E2E_APP_DIR",
+    "JOBCTRL_E2E_DB_PATH",
+    "JOBCTRL_E2E_CONFIG_PATH",
+    "JOBCTRL_E2E_STATE_FILE",
+    "JOBCTRL_E2E_SERVICE_HOME",
+  ]) {
+    delete childEnvironment[key];
+  }
+  let workspace;
+  try {
+    const result = spawnSync(process.execPath, ["-e", childScript], {
+      env: childEnvironment,
+      encoding: "utf8",
+    });
+    assert.equal(result.status, 1);
+    assert.match(
+      result.stderr,
+      /child-group cleanup is not verified; preserving owned workspace/,
+    );
+    workspace = JSON.parse(fs.readFileSync(reportPath, "utf8"));
+    assert.equal(fs.existsSync(workspace.appDir), true);
+    const guard = JSON.parse(
+      fs.readFileSync(
+        path.join(workspace.appDir, ".jobctrl-live-worker-exit-cleanup.json"),
+        "utf8",
+      ),
+    );
+    assert.equal(guard.status, "pending");
+    assert.throws(
+      () => removeOwnedE2eWorkspace(workspace),
+      /child-group cleanup is not verified/,
+    );
+  } finally {
+    if (workspace && fs.existsSync(workspace.appDir)) {
+      markLiveWorkerExitCleanupVerified(workspace);
+      removeOwnedE2eWorkspace(workspace);
+    }
+    fs.rmSync(reportDirectory, { recursive: true, force: true });
+  }
+});
+
+test("standard fixture runner exit still removes its unguarded workspace", () => {
+  const reportDirectory = fs.mkdtempSync(
+    path.join(os.tmpdir(), "jobctrl-standard-exit-test-"),
+  );
+  const reportPath = path.join(reportDirectory, "workspace.json");
+  const childScript = `
+    const fs = require("node:fs");
+    const fixture = require(${JSON.stringify(ownedWorkspaceModule)});
+    const workspace = fixture.configureE2eWorkspace();
+    fs.writeFileSync(${JSON.stringify(reportPath)}, JSON.stringify(workspace));
+  `;
+  const childEnvironment = { ...process.env };
+  for (const key of [
+    "JOBCTRL_E2E_WORKSPACE",
+    "JOBCTRL_E2E_APP_DIR",
+    "JOBCTRL_E2E_DB_PATH",
+    "JOBCTRL_E2E_CONFIG_PATH",
+    "JOBCTRL_E2E_STATE_FILE",
+    "JOBCTRL_E2E_SERVICE_HOME",
+  ]) {
+    delete childEnvironment[key];
+  }
+  try {
+    const result = spawnSync(process.execPath, ["-e", childScript], {
+      env: childEnvironment,
+      encoding: "utf8",
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const workspace = JSON.parse(fs.readFileSync(reportPath, "utf8"));
+    assert.equal(fs.existsSync(workspace.appDir), false);
+  } finally {
+    fs.rmSync(reportDirectory, { recursive: true, force: true });
   }
 });

@@ -502,9 +502,12 @@ proves queued dispatch, real worker lifecycle/projection events, API/SSE
 identity correlation, and terminal browser state without provider spend or an
 application submission. A capability-validated worker bootstrap ignores dotenv,
 Keychain, and persisted provider connections, asserts isolated credential homes,
-and enables only the authenticated loopback provider route. Persisted
+and enables only the authenticated loopback provider route. The root wrapper
+uses the same credential list before spawning Corepack. Persisted
 process-group capabilities let the outer teardown verify cleanup after a runtime
-supervisor failure. Run `web:e2e:live-worker:test` first when changing these
+supervisor failure, while an explicit persistent guard prevents the allocator's
+exit cleanup from erasing an unverified workspace. Run
+`web:e2e:live-worker:test` first when changing these
 bootstrap, lifecycle, or cleanup guards. Logs and browser evidence remain under
 `dist/live-worker-smoke/`; temporary app and Temporal state are deleted only
 after every owned process group is verified stopped.

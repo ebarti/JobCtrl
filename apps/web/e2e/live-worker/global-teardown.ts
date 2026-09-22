@@ -8,10 +8,12 @@ import { cleanupOwnedProcessGroups } from "./runtime-support.mjs";
 const {
   assertE2eWorkspaceEnvironment,
   assertExpectedWorkspace,
+  markLiveWorkerExitCleanupVerified,
   removeOwnedE2eWorkspace,
 } = createRequire(import.meta.url)("../fixtures/owned-workspace.cjs") as {
   assertE2eWorkspaceEnvironment(): { appDir: string; token: string };
   assertExpectedWorkspace(report: unknown): void;
+  markLiveWorkerExitCleanupVerified(workspace: unknown): void;
   removeOwnedE2eWorkspace(workspace: unknown): void;
 };
 
@@ -64,6 +66,13 @@ export default async function globalTeardown(): Promise<void> {
     });
   } catch (error) {
     cleanupError = error;
+  }
+  if (!cleanupError) {
+    try {
+      markLiveWorkerExitCleanupVerified(owned);
+    } catch (error) {
+      cleanupError = error;
+    }
   }
   fs.mkdirSync(process.env["JOBCTRL_LIVE_WORKER_EVIDENCE_DIR"]!, {
     recursive: true,

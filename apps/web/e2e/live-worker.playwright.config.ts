@@ -10,10 +10,14 @@ import { CREDENTIAL_ENV_KEYS, sanitizedRuntimeEnvironment } from "./live-worker/
 
 const here = fileURLToPath(new URL(".", import.meta.url));
 const repoRoot = path.resolve(here, "..", "..", "..");
-const { configureE2eWorkspace } = createRequire(import.meta.url)(
+const { configureE2eWorkspace, requireLiveWorkerExitCleanup } = createRequire(import.meta.url)(
   "./fixtures/owned-workspace.cjs",
 ) as {
   configureE2eWorkspace(): { appDir: string; token: string };
+  requireLiveWorkerExitCleanup(workspace: {
+    appDir: string;
+    token: string;
+  }): void;
 };
 
 if (
@@ -26,6 +30,7 @@ if (
 }
 
 const workspace = configureE2eWorkspace();
+requireLiveWorkerExitCleanup(workspace);
 const runKey = createHash("sha256")
   .update(`${workspace.appDir}\0${workspace.token}`)
   .digest("hex")
