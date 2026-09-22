@@ -107,8 +107,11 @@ interface SustainedResult {
   sseEventsObserved: number;
   readLatency: Distribution;
   operationsLatency: Distribution;
-  rssGrowthBytes: number;
-  heapGrowthBytes: number;
+  resourceScope: string;
+  rssPeakGrowthBytes: number;
+  heapPeakGrowthBytes: number;
+  rssEndDeltaBytes: number;
+  heapEndDeltaBytes: number;
   nodeCpuMs: number;
   workflowContext: {
     workflowType: "DiscoverWorkflow";
@@ -121,6 +124,7 @@ interface SustainedResult {
   };
   providerCalls: 0;
   llmSpend: { inputTokens: number; outputTokens: number; estimatedUsd: number };
+  llmSpendScope: string;
   tokenEvidence: string;
 }
 
@@ -548,6 +552,12 @@ async function measureSustained(baseUrl: string, workspace: BenchmarkWorkspace):
   const cursor = maxEventId(workspace.dbPath);
   const subscriber = await openSse(`${baseUrl}/v1/events/stream?since=${cursor}`);
   const memoryBefore = memorySnapshot();
+  const memoryPeak = { ...memoryBefore };
+  const updateMemoryPeak = (): void => {
+    const current = memorySnapshot();
+    memoryPeak.rss = Math.max(memoryPeak.rss, current.rss);
+    memoryPeak.heapUsed = Math.max(memoryPeak.heapUsed, current.heapUsed);
+  };
   const cpuBefore = cpuSnapshot();
   const readSamples: number[] = [];
   const operationSamples: number[] = [];
@@ -574,9 +584,11 @@ async function measureSustained(baseUrl: string, workspace: BenchmarkWorkspace):
       if (!operationsResponse.ok) throw new Error("pipeline operations route failed during sustained load");
       verifyOperationsContext(operations);
       operationSamples.push(elapsed(operationsStart));
+      updateMemoryPeak();
       batch += 1;
     }
     await subscriber.waitFor(writes, 10_000);
+    updateMemoryPeak();
   } finally {
     await subscriber.close();
   }
@@ -595,13 +607,17 @@ async function measureSustained(baseUrl: string, workspace: BenchmarkWorkspace):
     sseEventsObserved: subscriber.ids.length,
     readLatency: distribution(readSamples),
     operationsLatency: distribution(operationSamples),
-    rssGrowthBytes: memoryAfter.rss - memoryBefore.rss,
-    heapGrowthBytes: memoryAfter.heapUsed - memoryBefore.heapUsed,
+    resourceScope: `benchmark Node PID ${process.pid}; peak sampled once per sustained iteration, end delta sampled after SSE convergence`,
+    rssPeakGrowthBytes: memoryPeak.rss - memoryBefore.rss,
+    heapPeakGrowthBytes: memoryPeak.heapUsed - memoryBefore.heapUsed,
+    rssEndDeltaBytes: memoryAfter.rss - memoryBefore.rss,
+    heapEndDeltaBytes: memoryAfter.heapUsed - memoryBefore.heapUsed,
     nodeCpuMs: cpuDeltaMs(cpuBefore, cpuAfter),
     workflowContext: context,
     providerCalls: 0,
     llmSpend,
-    tokenEvidence: "The production RPC dispatcher executed rpc.provider_models spans, but LANGFUSE_DISABLE=1 intentionally prevented export. No LLM method ran, llm_spend remained zero, and no provider token-usage observation exists for this benchmark; zero spend does not imply complete usage telemetry for unrelated workflows.",
+    llmSpendScope: "Current exact-v10 global llm_spend aggregate. Future per-lane accounting is separate work; this report does not assume lane state exists.",
+    tokenEvidence: "The production RPC dispatcher entered its instrumented rpc.provider_models path, but LANGFUSE_DISABLE=1 intentionally prevented span export. No LLM method ran, so there are no LLM span token attributes or provider usage observations for this benchmark; llm_spend stayed zero, which does not imply complete usage telemetry for unrelated workflows.",
   };
 }
 
@@ -878,8 +894,8 @@ function compareBudgets(
     rpcColdStartupMs: compare(PROPOSED_REFERENCE_BUDGETS.coldRpcStartupMs, input.rpc.coldStartupMs),
     rpcWarmP95Ms: compare(PROPOSED_REFERENCE_BUDGETS.warmP95Ms, input.rpc.warm.p95),
     sseOneSubscriberBatchMs: compare(PROPOSED_REFERENCE_BUDGETS.sseOneBatchVisibleMs, input.sse.oneSubscriberBurstMs),
-    sustainedRssGrowthBytes: compare(PROPOSED_REFERENCE_BUDGETS.sustainedNodeRssGrowthBytes, input.sustained.rssGrowthBytes),
-    sustainedHeapGrowthBytes: compare(PROPOSED_REFERENCE_BUDGETS.sustainedNodeHeapGrowthBytes, input.sustained.heapGrowthBytes),
+    sustainedRssPeakGrowthBytes: compare(PROPOSED_REFERENCE_BUDGETS.sustainedNodeRssGrowthBytes, input.sustained.rssPeakGrowthBytes),
+    sustainedHeapPeakGrowthBytes: compare(PROPOSED_REFERENCE_BUDGETS.sustainedNodeHeapGrowthBytes, input.sustained.heapPeakGrowthBytes),
   };
 }
 
