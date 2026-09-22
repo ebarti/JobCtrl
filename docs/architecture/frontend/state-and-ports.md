@@ -23,6 +23,7 @@ is the canonical decision matrix.
 | Datum | Layer | Why |
 |---|---|---|
 | Jobs list filters (`stage`, `state`, `q`, `deleted`) | **URL** | Bookmarkable; survives refresh; copy-paste shareable. |
+| Discovery source-review column filters and sort | **URL** | Bookmarkable review state; applying a named view navigates to its snapshot, while reload honors the current URL. |
 | Sort field & direction | **URL** | Same reasons. |
 | Page index, page size | **URL** | Same. |
 | Selected job (detail workspace active) | **URL** | Refresh restores the bookmarkable detail route. |

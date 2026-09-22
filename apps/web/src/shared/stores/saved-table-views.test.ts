@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import {
   DEFAULT_SAVED_TABLE_VIEW_ID,
+  DISCOVERY_SOURCE_COLUMN_IDS,
+  DISCOVERY_SOURCES_TABLE_ID,
   JOBS_TABLE_COLUMN_IDS,
   JOBS_TABLE_ID,
   migrateSavedTableViewsState,
@@ -39,6 +41,99 @@ beforeEach(() => {
 });
 
 describe("saved table views store", () => {
+  it("keeps Discovery source views separate from Jobs views", () => {
+    const initial = useSavedTableViewsStore.getState();
+    const jobsViewIds = initial.views
+      .filter((view) => view.tableId === JOBS_TABLE_ID)
+      .map((view) => view.id);
+
+    expect(
+      initial.views.find(
+        (view) =>
+          view.tableId === DISCOVERY_SOURCES_TABLE_ID &&
+          view.id === DEFAULT_SAVED_TABLE_VIEW_ID,
+      ),
+    ).toMatchObject({
+      sort: { columnId: "displayName", direction: "asc" },
+      urlFilters: {
+        sourceFilters: {
+          state: {
+            operator: "contains",
+            text: "",
+            selectedValues: ["active"],
+          },
+        },
+      },
+    });
+
+    const discoveryViewId = initial.createView(
+      DISCOVERY_SOURCES_TABLE_ID,
+      "Needs review",
+      {
+        columns: {
+          order: [
+            "type",
+            ...DISCOVERY_SOURCE_COLUMN_IDS.filter(
+              (columnId) => columnId !== "type",
+            ),
+          ],
+          hidden: ["sourceId"],
+          widths: { displayName: 360 },
+        },
+        density: "compact",
+        sort: { columnId: "observedJobs", direction: "desc" },
+        urlFilters: {
+          sourceFilters: {
+            displayName: {
+              operator: "contains",
+              text: "alpha",
+              selectedValues: [],
+            },
+          },
+        },
+        gridFilters: {},
+        grouping: null,
+        colorRules: [],
+      },
+    );
+    const next = useSavedTableViewsStore.getState();
+    const discoveryView = next.views.find(
+      (view) =>
+        view.tableId === DISCOVERY_SOURCES_TABLE_ID &&
+        view.id === discoveryViewId,
+    );
+
+    expect(discoveryView).toMatchObject({
+      columns: {
+        hidden: ["sourceId"],
+        widths: { displayName: 360 },
+      },
+      density: "compact",
+      sort: { columnId: "observedJobs", direction: "desc" },
+      urlFilters: {
+        sourceFilters: {
+          displayName: {
+            operator: "contains",
+            text: "alpha",
+            selectedValues: [],
+          },
+        },
+      },
+    });
+    expect(discoveryView?.columns.order.slice(0, 2)).toEqual([
+      "type",
+      "displayName",
+    ]);
+    expect(
+      next.views
+        .filter((view) => view.tableId === JOBS_TABLE_ID)
+        .map((view) => view.id),
+    ).toEqual(jobsViewIds);
+    expect(next.activeViewIdByTable[JOBS_TABLE_ID]).toBe(
+      DEFAULT_SAVED_TABLE_VIEW_ID,
+    );
+  });
+
   it("migrates persisted views by dropping unknown columns and reconstructing Default", () => {
     const normalized = normalizeSavedTableViewsState({
       views: [

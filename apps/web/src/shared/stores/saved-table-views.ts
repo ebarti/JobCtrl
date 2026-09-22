@@ -4,7 +4,6 @@ import {
   JOB_STATES,
   STAGES,
   STAGE_STATES,
-  type JobSortField,
   type SavedTableView,
   type SavedTableViewDensity,
   type SavedTableViewGridFilters,
@@ -53,6 +52,28 @@ export const DEFAULT_JOBS_HIDDEN_COLUMN_IDS = [
   "discovered_at",
 ] as const;
 
+export const DISCOVERY_SOURCES_TABLE_ID = "discovery-sources" satisfies TableId;
+export const DISCOVERY_SOURCE_COLUMN_IDS = [
+  "displayName",
+  "sourceId",
+  "type",
+  "state",
+  "priority",
+  "recommendedState",
+  "observedJobs",
+  "newJobs",
+  "lastRunCompletedAt",
+  "consecutiveFailures",
+  "activeVerificationRate",
+  "fullDescriptionSuccessRate",
+  "applyUrlSuccessRate",
+  "duplicateRate",
+  "politeness",
+  "actions",
+] as const;
+export const DISCOVERY_SOURCE_SORT_COLUMN_IDS =
+  DISCOVERY_SOURCE_COLUMN_IDS.filter((columnId) => columnId !== "actions");
+
 const STAGE_OR_ALL = [...STAGES, "all"] as const;
 const STATE_OR_ALL = [...STAGE_STATES, "all"] as const;
 const JOB_DELETED_VIEW_FILTERS = [
@@ -72,6 +93,7 @@ type KnownTableConfig = {
   defaultHiddenColumnIds: readonly string[];
   defaultSort: SavedTableView["sort"];
   defaultUrlFilters: SavedTableViewUrlFilters;
+  sortableColumnIds: readonly string[];
 };
 
 const TABLE_CONFIGS: Record<string, KnownTableConfig> = {
@@ -89,6 +111,24 @@ const TABLE_CONFIGS: Record<string, KnownTableConfig> = {
       deleted: "active",
       pageSize: 50,
     },
+    sortableColumnIds: JOB_SORT_FIELDS,
+  },
+  [DISCOVERY_SOURCES_TABLE_ID]: {
+    tableId: DISCOVERY_SOURCES_TABLE_ID,
+    columnIds: DISCOVERY_SOURCE_COLUMN_IDS,
+    fixedLeadingColumnIds: [],
+    defaultHiddenColumnIds: [],
+    defaultSort: { columnId: "displayName", direction: "asc" },
+    defaultUrlFilters: {
+      sourceFilters: {
+        state: {
+          operator: "contains",
+          text: "",
+          selectedValues: ["active"],
+        },
+      },
+    },
+    sortableColumnIds: DISCOVERY_SOURCE_SORT_COLUMN_IDS,
   },
 };
 
@@ -232,8 +272,7 @@ export function migrateSavedTableViewsState(
         JOBS_TABLE_COLUMN_IDS,
         JOBS_TABLE_COLUMN_IDS.filter((id) => id !== "job_state"),
       ].some(
-        (order) =>
-          JSON.stringify(columns["order"]) === JSON.stringify(order),
+        (order) => JSON.stringify(columns["order"]) === JSON.stringify(order),
       ) ||
       !isRecord(columns["widths"]) ||
       Object.keys(columns["widths"]).length > 0
@@ -367,15 +406,18 @@ function normalizeSort(
   if (
     typeof columnId === "string" &&
     config.columnIds.includes(columnId) &&
-    isOneOf(columnId, JOB_SORT_FIELDS) &&
+    config.sortableColumnIds.includes(columnId) &&
     (direction === "asc" || direction === "desc")
   ) {
-    return { columnId: columnId as JobSortField, direction };
+    return { columnId, direction };
   }
   return config.defaultSort;
 }
 
-function normalizeUrlFilters(value: unknown): SavedTableViewUrlFilters {
+function normalizeUrlFilters(
+  value: unknown,
+  config: KnownTableConfig,
+): SavedTableViewUrlFilters {
   const source = isRecord(value) ? value : {};
   const next: SavedTableViewUrlFilters = {};
   if (typeof source["q"] === "string") next.q = source["q"];
@@ -405,6 +447,9 @@ function normalizeUrlFilters(value: unknown): SavedTableViewUrlFilters {
     if (typeof timestamp === "string" && timestamp.trim()) {
       next[key] = timestamp.trim();
     }
+  }
+  if (source["sourceFilters"] !== undefined) {
+    next.sourceFilters = normalizeGridFilters(source["sourceFilters"], config);
   }
   return next;
 }
@@ -517,7 +562,7 @@ function normalizeSnapshot(
     columns: normalizeColumns(value.columns, config),
     density: normalizeDensity(value.density),
     sort: normalizeSort(value.sort, config),
-    urlFilters: normalizeUrlFilters(value.urlFilters),
+    urlFilters: normalizeUrlFilters(value.urlFilters, config),
     gridFilters: normalizeGridFilters(value.gridFilters, config),
     grouping: normalizeGrouping(value.grouping, config),
     colorRules: normalizeColorRules(value.colorRules, config),
@@ -558,7 +603,7 @@ function normalizeView(
     columns: normalizeColumns(value["columns"], config),
     density: normalizeDensity(value["density"]),
     sort: normalizeSort(value["sort"], config),
-    urlFilters: normalizeUrlFilters(value["urlFilters"]),
+    urlFilters: normalizeUrlFilters(value["urlFilters"], config),
     gridFilters: normalizeGridFilters(value["gridFilters"], config),
     grouping: normalizeGrouping(value["grouping"], config),
     colorRules: normalizeColorRules(value["colorRules"], config),

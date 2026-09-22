@@ -558,6 +558,12 @@ changes geometry, not typography.
   state; applying a view writes the URL rather than creating a second live copy
   of those facts. Older views without `jobStates` retain their legacy `deleted`
   behavior.
+- **Discovery source review** uses that same saved-table-view store under the
+  `discovery-sources` table ID, independent of `jobs`. Column visibility, order,
+  widths and density remain local presentation preferences; active source
+  filters and sorting belong to the Discovery URL. Applying a view updates
+  those URL fields explicitly; mounting or reloading does not replay its saved
+  filter snapshot over the current link.
 - **Anything cross-cutting that we discover later** that fits the pattern
   "I want to dispatch from a deep tree without prop drilling, and the
   state is not server-derived." Examples we anticipate: a `commandPalette`
