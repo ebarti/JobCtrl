@@ -30,6 +30,8 @@
     "web:test-d": "corepack pnpm --filter @jobctrl/web test-d",
     "web:e2e": "corepack pnpm --filter @jobctrl/web e2e",
     "web:e2e:headed": "corepack pnpm --filter @jobctrl/web e2e:headed",
+    "web:e2e:live-worker": "node scripts/live-worker-browser-smoke.mjs",
+    "web:e2e:live-worker:test": "node --test apps/web/e2e/live-worker/*.test.mjs",
     "web:storybook": "corepack pnpm --filter @jobctrl/web storybook",
     "web:storybook:build": "corepack pnpm --filter @jobctrl/web storybook:build",
     "web:storybook:test": "corepack pnpm --filter @jobctrl/web storybook:test",

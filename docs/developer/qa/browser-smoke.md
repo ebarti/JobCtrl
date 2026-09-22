@@ -15,6 +15,37 @@ VITE_JOBCTRL_API_BASE_URL=http://127.0.0.1:8766 corepack pnpm web:dev -- --port 
 Use the E2E stub dispatcher for commands that would otherwise start a worker,
 browser, mailbox, or model. Never submit an application during QA.
 
+## Live Worker Smoke
+
+The ordinary `web:e2e` suite stays fast and deterministic: it uses the seeded
+worker heartbeat and `JOBCTRL_E2E_STUB_DISPATCH=1`, and it may inject synthetic
+terminal events for focused UI contracts. Those checks do not prove that a
+Temporal worker can execute the production workflow and projection path.
+
+Use the separate opt-in live smoke when that proof is required:
+
+```bash
+corepack pnpm web:e2e:live-worker:test
+corepack pnpm web:e2e:live-worker
+```
+
+The live command allocates a marker-owned synthetic workspace, unique API,
+web, Temporal, Temporal UI, and control ports, and a separate Temporal SQLite
+store. It starts the normal API JSON-RPC dispatcher and the standard `jobctrl
+worker` registry. The browser queues the seed's single Cover preparation stage;
+the harness temporarily pauses that real worker so the queued response is
+observable, resumes it to observe worker-emitted running state through the API
+and SSE, then releases one deterministic loopback model response so the browser
+can observe the terminal state and generated synthetic material.
+
+Only that loopback model boundary is a fixture. Stub dispatch, the isolated API,
+an unowned workspace, a missing Temporal executable, mismatched ports or token,
+an unexpected provider call, timeout, or failed cleanup fails the run. Provider
+credentials are removed from the child environment, no application stage runs,
+and the fixture accepts exactly one authenticated request. Evidence and bounded
+runtime logs are written under `dist/live-worker-smoke/<run-id>/`; the temporary
+workspace and its Temporal history are removed during teardown.
+
 ## Route Checklist
 
 | Route | Verify |

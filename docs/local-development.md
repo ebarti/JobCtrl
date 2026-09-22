@@ -489,7 +489,20 @@ corepack pnpm web:test:coverage
 corepack pnpm web:test-d
 corepack pnpm web:e2e
 corepack pnpm web:e2e:headed
+corepack pnpm web:e2e:live-worker:test
+corepack pnpm web:e2e:live-worker
 ```
+
+`web:e2e` uses the deterministic stub dispatcher and seeded worker heartbeat.
+`web:e2e:live-worker` is a separate, slower, opt-in integration lane: it starts
+an owned Temporal dev server, the standard Python worker registry, the real API
+JSON-RPC dispatcher, and Vite against one disposable synthetic workspace. Its
+single Cover workflow uses a loopback-only deterministic model boundary and
+proves queued dispatch, real worker lifecycle/projection events, API/SSE
+identity correlation, and terminal browser state without provider spend or an
+application submission. Run `web:e2e:live-worker:test` first when changing the
+harness lifecycle or cleanup guards. Logs and browser evidence remain under
+`dist/live-worker-smoke/`; temporary app and Temporal state are deleted.
 
 The package-local commands are equivalent and useful when working directly
 inside the web package:
