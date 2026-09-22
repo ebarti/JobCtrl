@@ -24,12 +24,12 @@ import tempfile
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Iterator
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 FIXED_QUERIES = (
     "Director of Engineering",
     "VP Engineering",
@@ -179,13 +179,18 @@ class _ObservedLimiter:
             yield
 
 
-def _config(queries: tuple[str, ...], sources: tuple[str, ...]) -> dict[str, Any]:
+def _config(
+    queries: tuple[str, ...],
+    sources: tuple[str, ...],
+    *,
+    results_per_site: int = 1,
+) -> dict[str, Any]:
     return {
         "boards": list(sources),
         "queries": [{"query": query} for query in queries],
         "locations": [{"label": "remote", "location": FIXED_LOCATION, "remote": True}],
         "defaults": {
-            "results_per_site": 1,
+            "results_per_site": results_per_site,
             "hours_old": 72,
             "country_indeed": "usa",
         },
@@ -203,6 +208,7 @@ def _synthetic_registry(
     *,
     service_delay_seconds: float,
     fail_first_call: bool = False,
+    jobs_per_unit: int = 1,
 ) -> object:
     from jobstreaming import (
         AdapterCapabilities,
@@ -239,21 +245,31 @@ def _synthetic_registry(
                         context.wait(service_delay_seconds)  # type: ignore[attr-defined]
                     query = str(request.search_term)  # type: ignore[attr-defined]
                     slug = "-".join(query.casefold().split())
-                    context.emit_job(  # type: ignore[attr-defined]
-                        JobPost(
-                            id=f"{site.value}-{slug}",
-                            title=query,
-                            company_name=f"Synthetic {site.value}",
-                            job_url=f"https://synthetic.invalid/{site.value}/{slug}",
-                            location=Location(city=FIXED_LOCATION),
-                            description=(
-                                "Synthetic role evidence for a fixed, offline benchmark cohort. "
-                                * 6
-                            ),
-                            is_remote=True,
-                        ),
-                        {"offset": 1},
+                    resume_index = int(  # type: ignore[attr-defined]
+                        context.resume_state.get("next", 0)
                     )
+                    for index in range(resume_index, jobs_per_unit):
+                        offset = index + 1
+                        emitted = context.emit_job(  # type: ignore[attr-defined]
+                            JobPost(
+                                id=f"{site.value}-{slug}-{offset}",
+                                title=f"{query} {offset}",
+                                company_name=f"Synthetic {site.value}",
+                                job_url=(
+                                    f"https://synthetic.invalid/{site.value}/{slug}/{offset}"
+                                ),
+                                location=Location(city=FIXED_LOCATION),
+                                description=(
+                                    "Synthetic role evidence for a fixed, offline benchmark "
+                                    "cohort. "
+                                    * 6
+                                ),
+                                is_remote=True,
+                            ),
+                            {"next": offset},
+                        )
+                        if not emitted:
+                            break
                     return JobResponse()
                 finally:
                     recorder.adapter_end(started)
@@ -271,11 +287,15 @@ def _patched_durable_path(
     db_path: Path,
     recorder: _Recorder,
     limiter: object,
+    fail_checkpoint_revision_once: int | None = None,
+    fail_mark_skipped_once: bool = False,
+    policy_override: object | None = None,
 ) -> Iterator[object]:
     from jobctrl import database
     from jobctrl.discovery import jobspy
     from jobctrl.infrastructure.discovery.sqlite_search_unit_repository import (
         SqliteDiscoverySearchUnitCheckpointStore,
+        SqliteDiscoverySearchUnitRepository,
     )
 
     original_init_db = jobspy.init_db
@@ -283,6 +303,10 @@ def _patched_durable_path(
     original_get_limiter = jobspy.get_shared_rate_limiter
     original_store = jobspy.store_jobspy_results
     original_checkpoint_save = SqliteDiscoverySearchUnitCheckpointStore.save
+    original_mark_skipped = SqliteDiscoverySearchUnitRepository.mark_skipped
+    original_policy = jobspy.BROAD_BOARD_LEAD_POLICY
+    checkpoint_fault_pending = fail_checkpoint_revision_once is not None
+    skip_fault_pending = fail_mark_skipped_once
 
     def owned_init_db() -> object:
         return database.init_db(db_path)
@@ -301,18 +325,35 @@ def _patched_durable_path(
         return result
 
     def timed_checkpoint_save(self: object, checkpoint: object) -> None:
+        nonlocal checkpoint_fault_pending
         started = time.perf_counter()
         try:
+            if (
+                checkpoint_fault_pending
+                and getattr(checkpoint, "revision", None) == fail_checkpoint_revision_once
+            ):
+                checkpoint_fault_pending = False
+                raise RuntimeError("synthetic worker loss before checkpoint acknowledgement")
             original_checkpoint_save(self, checkpoint)
         finally:
             with recorder.lock:
                 recorder.checkpoint_save_durations.append(time.perf_counter() - started)
+
+    def faulted_mark_skipped(self: object, lease: object, **kwargs: object) -> None:
+        nonlocal skip_fault_pending
+        if skip_fault_pending:
+            skip_fault_pending = False
+            raise RuntimeError("synthetic worker loss after acknowledgement before unit skip")
+        original_mark_skipped(self, lease, **kwargs)
 
     jobspy.init_db = owned_init_db
     jobspy.get_connection = owned_get_connection
     jobspy.get_shared_rate_limiter = lambda: _ObservedLimiter(limiter, recorder)
     jobspy.store_jobspy_results = timed_store
     SqliteDiscoverySearchUnitCheckpointStore.save = timed_checkpoint_save
+    SqliteDiscoverySearchUnitRepository.mark_skipped = faulted_mark_skipped
+    if policy_override is not None:
+        jobspy.BROAD_BOARD_LEAD_POLICY = policy_override
     try:
         yield jobspy
     finally:
@@ -321,6 +362,8 @@ def _patched_durable_path(
         jobspy.get_shared_rate_limiter = original_get_limiter
         jobspy.store_jobspy_results = original_store
         SqliteDiscoverySearchUnitCheckpointStore.save = original_checkpoint_save
+        SqliteDiscoverySearchUnitRepository.mark_skipped = original_mark_skipped
+        jobspy.BROAD_BOARD_LEAD_POLICY = original_policy
 
 
 def _db_evidence(db_path: Path, execution: object) -> dict[str, Any]:
@@ -332,8 +375,29 @@ def _db_evidence(db_path: Path, execution: object) -> dict[str, Any]:
     conn = database.init_db(db_path)
     repository = SqliteDiscoverySearchUnitRepository(conn)
     units = repository.list_units(execution)
+    budget_rows = conn.execute(
+        """
+        SELECT outcome, failure_category, is_operational_failure,
+               is_scrape_failure, is_retryable, metadata_json
+          FROM operational_attempt_metrics
+         WHERE failure_category = 'budget_exhausted'
+         ORDER BY metric_id
+        """
+    ).fetchall()
     evidence = {
         "unit_states": [unit.state for unit in units],
+        "units": [
+            {
+                "unit_id": unit.unit_id,
+                "state": unit.state,
+                "lease_attempt": unit.lease_attempt,
+                "recovery_count": unit.recovery_count,
+                "checkpoint_revision": unit.checkpoint_revision,
+                "accepted_jobs": unit.accepted_jobs,
+                "new_jobs": unit.new_jobs,
+            }
+            for unit in units
+        ],
         "unit_count": len(units),
         "receipt_counts": repository.execution_counts(execution),
         "job_rows": int(conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]),
@@ -348,6 +412,20 @@ def _db_evidence(db_path: Path, execution: object) -> dict[str, Any]:
         "checkpoint_revisions": [unit.checkpoint_revision for unit in units],
         "job_event_rows": int(conn.execute("SELECT COUNT(*) FROM job_events").fetchone()[0]),
         "recovery_count": sum(unit.recovery_count for unit in units),
+        "durable_invocation_count": sum(
+            1 + unit.recovery_count for unit in units if unit.lease_attempt > 0
+        ),
+        "budget_exhausted_rows": [
+            {
+                "outcome": str(row[0]),
+                "failure_category": str(row[1]),
+                "is_operational_failure": bool(row[2]),
+                "is_scrape_failure": bool(row[3]),
+                "is_retryable": bool(row[4]),
+                "metadata": json.loads(str(row[5])),
+            }
+            for row in budget_rows
+        ],
     }
     database.close_connection(db_path)
     return evidence
@@ -447,6 +525,241 @@ def _run_production_sample(
             db_evidence=evidence,
             expected_units=expected_units,
         )
+    finally:
+        database.close_connection(db_path)
+        for suffix in ("", "-wal", "-shm"):
+            Path(f"{db_path}{suffix}").unlink(missing_ok=True)
+
+
+def _run_interrupted_durable_scenario(
+    workspace: Path,
+    *,
+    scenario: str,
+) -> dict[str, Any]:
+    """Exercise loss and recovery through production durability and rate limiting."""
+
+    from jobctrl import database
+    from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
+    from jobctrl.domain.discovery.source_registry import BROAD_BOARD_LEAD_POLICY
+    from jobctrl.infrastructure.network.rate_limiter import HostRateLimiter
+
+    specifications = {
+        "store_before_ack_resume": {
+            "queries": FIXED_QUERIES[:1],
+            "jobs_per_unit": 1,
+            "limit": 0,
+            "checkpoint_fault": 1,
+            "skip_fault": False,
+            "budget": None,
+            "interrupted_states": ["running"],
+            "expected_states": ["completed"],
+            "interrupted_checkpoints": [0],
+            "expected_checkpoints": [3],
+            "expected_skipped": 0,
+        },
+        "exact_limit_before_ack": {
+            "queries": FIXED_QUERIES[:2],
+            "jobs_per_unit": 1,
+            "limit": 1,
+            "checkpoint_fault": 1,
+            "skip_fault": False,
+            "budget": None,
+            "interrupted_states": ["running", "pending"],
+            "expected_states": ["skipped", "skipped"],
+            "interrupted_checkpoints": [0, None],
+            "expected_checkpoints": [0, None],
+            "expected_skipped": 2,
+        },
+        "exact_limit_after_ack_before_skip": {
+            "queries": FIXED_QUERIES[:2],
+            "jobs_per_unit": 2,
+            "limit": 1,
+            "checkpoint_fault": None,
+            "skip_fault": True,
+            "budget": None,
+            "interrupted_states": ["running", "pending"],
+            "expected_states": ["skipped", "skipped"],
+            "interrupted_checkpoints": [1, None],
+            "expected_checkpoints": [1, None],
+            "expected_skipped": 2,
+        },
+        "tiny_budget_recovery_boundary": {
+            "queries": FIXED_QUERIES,
+            "jobs_per_unit": 1,
+            "limit": 0,
+            "checkpoint_fault": 1,
+            "skip_fault": False,
+            "budget": 2,
+            "interrupted_states": ["running", "pending", "pending"],
+            "expected_states": ["completed", "skipped", "skipped"],
+            "interrupted_checkpoints": [0, None, None],
+            "expected_checkpoints": [3, None, None],
+            "expected_skipped": 2,
+        },
+    }
+    if scenario not in specifications:
+        raise ValueError(f"unknown interrupted scenario: {scenario}")
+    spec = specifications[scenario]
+    queries = spec["queries"]
+    assert isinstance(queries, tuple)
+    budget = spec["budget"]
+    policy = (
+        replace(BROAD_BOARD_LEAD_POLICY, max_requests_per_run=budget)
+        if isinstance(budget, int)
+        else BROAD_BOARD_LEAD_POLICY
+    )
+    db_path = workspace / f"interrupted-{scenario}.db"
+    recorder = _Recorder()
+    limiter = HostRateLimiter()
+    execution = DiscoveryExecutionRef(
+        tenant_id="local",
+        workflow_id=f"assessment-interrupted-{scenario}",
+        temporal_run_id=f"assessment-interrupted-run-{scenario}",
+    )
+    registry = _synthetic_registry(
+        recorder,
+        service_delay_seconds=0.0,
+        jobs_per_unit=int(spec["jobs_per_unit"]),
+    )
+    expected_error = (
+        "synthetic worker loss after acknowledgement before unit skip"
+        if bool(spec["skip_fault"])
+        else "synthetic worker loss before checkpoint acknowledgement"
+    )
+
+    try:
+        recorder.run_started = time.perf_counter()
+        try:
+            with _patched_durable_path(
+                db_path=db_path,
+                recorder=recorder,
+                limiter=limiter,
+                fail_checkpoint_revision_once=(
+                    int(spec["checkpoint_fault"])
+                    if isinstance(spec["checkpoint_fault"], int)
+                    else None
+                ),
+                fail_mark_skipped_once=bool(spec["skip_fault"]),
+                policy_override=policy,
+            ) as jobspy:
+                jobspy.run_discovery(
+                    cfg=_config(
+                        queries,
+                        FIXED_SOURCES[:1],
+                        results_per_site=int(spec["jobs_per_unit"]),
+                    ),
+                    run_id=f"interrupted-{scenario}-first",
+                    limit=int(spec["limit"]),
+                    discovery_execution=execution,
+                    activity_attempt=1,
+                    activity_owner_token=f"interrupted-{scenario}-owner-1",
+                    adapter_registry=registry,
+                )
+        except RuntimeError as exc:
+            if str(exc) != expected_error:
+                raise
+            first_outcome = str(exc)
+        else:
+            raise AssertionError(f"{scenario} did not reach its synthetic loss point")
+
+        after_interruption = _db_evidence(db_path, execution)
+        with _patched_durable_path(
+            db_path=db_path,
+            recorder=recorder,
+            limiter=limiter,
+            policy_override=policy,
+        ) as jobspy:
+            result = jobspy.run_discovery(
+                cfg=_config(
+                    queries,
+                    FIXED_SOURCES[:1],
+                    results_per_site=int(spec["jobs_per_unit"]),
+                ),
+                run_id=f"interrupted-{scenario}-recovery",
+                limit=int(spec["limit"]),
+                discovery_execution=execution,
+                activity_attempt=2,
+                activity_owner_token=f"interrupted-{scenario}-owner-2",
+                adapter_registry=registry,
+            )
+        wall_seconds = time.perf_counter() - recorder.run_started
+        final = _db_evidence(db_path, execution)
+        starts = sorted(recorder.adapter_starts)
+        gaps = [later - earlier for earlier, later in zip(starts, starts[1:])]
+        budget_rows = final["budget_exhausted_rows"]
+        invariants = {
+            "real_host_rate_limiter_used": (
+                recorder.adapter_calls == 2
+                and len(recorder.limiter_waits) == recorder.adapter_calls
+            ),
+            "interrupted_states_recorded": (
+                after_interruption["unit_states"] == spec["interrupted_states"]
+            ),
+            "interrupted_unit_recovered_once": final["recovery_count"] == 1,
+            "expected_terminal_states": final["unit_states"] == spec["expected_states"],
+            "expected_checkpoint_revisions": (
+                after_interruption["checkpoint_revisions"]
+                == spec["interrupted_checkpoints"]
+                and final["checkpoint_revisions"] == spec["expected_checkpoints"]
+            ),
+            "exact_accepted_job_count": final["job_rows"] == 1 and result["new"] == 1,
+            "exact_receipt_limit": final["receipt_rows"] == 1,
+            "exact_receipt_counts": final["receipt_counts"]
+            == {"accepted": 1, "new": 1, "existing": 0},
+            "exact_result_limit": int(spec["limit"]) != 1
+            or (result["new"] == 1 and final["job_rows"] == 1),
+            "expected_skipped_units": result["skipped_units"]
+            == spec["expected_skipped"],
+            "host_spacing_preserved": all(value >= 0.98 for value in gaps),
+            "provider_concurrency_at_most_policy": recorder.max_active_adapters <= 1,
+            "budget_evidence_matches_policy": (
+                len(budget_rows) == 1
+                and final["durable_invocation_count"] == 3
+                and recorder.adapter_calls == 2
+                and budget_rows[0]["outcome"] == "blocked"
+                and budget_rows[0]["failure_category"] == "budget_exhausted"
+                and budget_rows[0]["is_operational_failure"] is False
+                and budget_rows[0]["is_scrape_failure"] is False
+            )
+            if isinstance(budget, int)
+            else len(budget_rows) == 0,
+        }
+        if not all(invariants.values()):
+            failure_evidence = {
+                "adapter_calls": recorder.adapter_calls,
+                "final": final,
+                "invariants": invariants,
+                "limiter_wait_count": len(recorder.limiter_waits),
+                "result": result,
+            }
+            raise AssertionError(
+                f"{scenario} invariant failure: "
+                f"{json.dumps(failure_evidence, sort_keys=True)}"
+            )
+        return {
+            "scenario": scenario,
+            "durable_path": True,
+            "limiter": "HostRateLimiter",
+            "synthetic_assumptions": {
+                "queries": list(queries),
+                "sources": [FIXED_SOURCES[0]],
+                "jobs_per_unit": spec["jobs_per_unit"],
+                "service_delay_seconds": 0.0,
+                "result_limit": spec["limit"],
+                "max_search_unit_invocations_per_run": policy.max_requests_per_run,
+            },
+            "interruption": first_outcome,
+            "after_interruption": after_interruption,
+            "result": result,
+            "final_database": final,
+            "adapter_calls": recorder.adapter_calls,
+            "limiter_wait_seconds": [
+                round(value, 6) for value in recorder.limiter_waits
+            ],
+            "adapter_start_gaps_seconds": [round(value, 6) for value in gaps],
+            "wall_seconds": round(wall_seconds, 6),
+            "invariants": invariants,
+        }
     finally:
         database.close_connection(db_path)
         for suffix in ("", "-wal", "-shm"):
@@ -719,7 +1032,18 @@ def run_assessment(
         ]
 
         diagnostics: dict[str, Any] = {}
-        scenarios: dict[str, Any] = {}
+        scenarios = {
+            scenario: _run_interrupted_durable_scenario(
+                workspace,
+                scenario=scenario,
+            )
+            for scenario in (
+                "store_before_ack_resume",
+                "exact_limit_before_ack",
+                "exact_limit_after_ack_before_skip",
+                "tiny_budget_recovery_boundary",
+            )
+        }
         if not smoke:
             diagnostics["competing_calls"] = _run_limiter_only_diagnostic(
                 service_delay_seconds=service_delay_seconds,
