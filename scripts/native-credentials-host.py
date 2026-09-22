@@ -36,6 +36,8 @@ def windows_acl(path: Path, *, restrict: bool = False) -> str:
     """Set/check synthetic file permissions; never prints an account or secret."""
     script = r"""
 $ErrorActionPreference = 'Stop'
+Import-Module "$PSHOME\Modules\Microsoft.PowerShell.Utility\Microsoft.PowerShell.Utility.psd1" -ErrorAction Stop
+Import-Module "$PSHOME\Modules\Microsoft.PowerShell.Security\Microsoft.PowerShell.Security.psd1" -ErrorAction Stop
 [Console]::InputEncoding = New-Object Text.UTF8Encoding($false)
 [Console]::OutputEncoding = New-Object Text.UTF8Encoding($false)
 $request = [Console]::In.ReadToEnd() | ConvertFrom-Json
@@ -67,43 +69,6 @@ $result = Get-Acl -LiteralPath $request.path
     return result.stdout
 
 
-def windows_helper_probe(service: str, key: str, *, label: str, required: bool = True) -> None:
-    """Locate helper stalls using fixed markers and a read-only synthetic target."""
-    script = native.WINDOWS_CREDENTIAL_SCRIPT
-    stages = {
-        "$ErrorActionPreference = 'Stop'": "entry",
-        " [Console]::InputEncoding =": "before_input_encoding",
-        " [Console]::OutputEncoding =": "before_output_encoding",
-        " Add-Type -TypeDefinition": "before_compile",
-        " $data = [Console]::In.ReadToEnd()": "before_stdin",
-        " if ($data.operation -eq 'set')": "after_stdin",
-        " if (-not [JobCtrlCred]::CredRead": "before_native_read",
-    }
-    for fragment, stage in stages.items():
-        assert script.count(fragment) == 1
-        script = script.replace(fragment, f" [Console]::Error.WriteLine('qa-stage:{stage}')\n{fragment}")
-    binary = Path(os.environ["SystemRoot"]) / "System32/WindowsPowerShell/v1.0/powershell.exe"
-    timed_out = False
-    try:
-        result = subprocess.run(
-            [str(binary), "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
-            input=json.dumps({"operation": "read", "service": service, "key": key}),
-            encoding="utf-8", capture_output=True, timeout=15,
-        )
-        stderr = result.stderr
-        absent = result.returncode == 44
-    except subprocess.TimeoutExpired as error:
-        timed_out = True
-        stderr = error.stderr or b""
-        absent = False
-    if isinstance(stderr, bytes):
-        stderr = stderr.decode("utf-8", errors="replace")
-    observed = [stage for stage in stages.values() if f"qa-stage:{stage}" in stderr]
-    print(json.dumps({"windowsHelperProbe": observed, "environment": label, "timedOut": timed_out, "syntheticTargetAbsent": absent}), flush=True)
-    if required and not absent:
-        raise RuntimeError("Windows helper preflight failed")
-
-
 def main() -> int:
     global PHASE
     parser = argparse.ArgumentParser()
@@ -113,21 +78,16 @@ def main() -> int:
         raise RuntimeError("Linux native QA requires an owned D-Bus session")
     service = f"JobCtrl-QA-{uuid.uuid4()}"
     key = "GEMINI_API_KEY"
-    if platform.system() == "Windows":
-        PHASE = "windows_inherited_helper_probe"
-        windows_helper_probe(service, key, label="inherited", required=False)
     # Carry OS/session plumbing only, never ambient provider credentials.
     safe_env = {key: os.environ[key] for key in (
         "PATH", "HOME", "USERPROFILE", "SystemRoot", "WINDIR", "TEMP", "TMP",
         "TMPDIR", "LOCALAPPDATA", "APPDATA", "DBUS_SESSION_BUS_ADDRESS",
-        "PSModulePath",
+        "SystemDrive", "ComSpec", "PATHEXT", "ProgramFiles", "ProgramFiles(x86)",
+        "ProgramW6432", "ProgramData", "HOMEDRIVE", "HOMEPATH",
     ) if key in os.environ}
     os.environ.clear()
     os.environ.update(safe_env)
     store = native.NativeCredentialStore(service=service)
-    if platform.system() == "Windows":
-        PHASE = "windows_helper_probe"
-        windows_helper_probe(service, key, label="scrubbed")
     daemon = None
     with tempfile.TemporaryDirectory(prefix="jobctrl-native-host-") as directory:
         owned = Path(directory)
