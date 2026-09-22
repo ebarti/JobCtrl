@@ -119,6 +119,12 @@ describe("Windows Credential Manager command contract", () => {
       value: SECRET,
     });
     expect(calls[0]?.args.at(-1)).toContain("CredWriteW");
+    expect(calls[0]?.args.at(-1)).toContain(
+      'Import-Module "$PSHOME\\Modules\\Microsoft.PowerShell.Utility\\Microsoft.PowerShell.Utility.psd1"',
+    );
+    expect(calls[0]?.args.at(-1)?.indexOf("Import-Module")).toBeLessThan(
+      calls[0]?.args.at(-1)?.indexOf("Add-Type") ?? -1,
+    );
     expect(calls[0]?.args.at(-1)).toContain("InputEncoding");
     expect(calls[0]?.args.at(-1)).toContain("OutputEncoding");
   });

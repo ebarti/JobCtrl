@@ -739,6 +739,7 @@ public static class JobCtrlCred {
 }
 '@
 try {
+ Import-Module "$PSHOME\Modules\Microsoft.PowerShell.Utility\Microsoft.PowerShell.Utility.psd1" -ErrorAction Stop
  [Console]::InputEncoding = New-Object Text.UTF8Encoding($false); [Console]::OutputEncoding = New-Object Text.UTF8Encoding($false)
  Add-Type -TypeDefinition $source -ErrorAction Stop
  $data = [Console]::In.ReadToEnd() | ConvertFrom-Json; $target = [string]$data.service + ':' + [string]$data.key; $pointer = [IntPtr]::Zero

@@ -107,6 +107,9 @@ def test_windows_runner_keeps_unicode_secret_out_of_argv(monkeypatch: pytest.Mon
     assert value not in json.dumps(captured["command"])
     assert json.loads(str(captured["input"]))["value"] == value
     assert captured.get("timeout") == credentials.WINDOWS_COMMAND_TIMEOUT_SECONDS
+    script = str(captured["command"][-1])
+    assert 'Import-Module "$PSHOME\\Modules\\Microsoft.PowerShell.Utility\\Microsoft.PowerShell.Utility.psd1"' in script
+    assert script.index("Import-Module") < script.index("Add-Type")
     assert "InputEncoding" in str(captured["command"])
     assert "OutputEncoding" in str(captured["command"])
 
