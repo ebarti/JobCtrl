@@ -873,6 +873,24 @@ export const handlers = [
 
   http.get("*/v1/profile", () => HttpResponse.json(sampleProfileResponse)),
   http.patch("*/v1/profile", () => HttpResponse.json(sampleProfileResponse)),
+  http.post("*/v1/profile/target-role-suggestions", () =>
+    HttpResponse.json({
+      ok: true,
+      profileVersion: sampleProfileResponse.profileVersion,
+      suggestions: [
+        {
+          title: "Head of Platform Engineering",
+          classification: "adjacent",
+          track: "Management",
+          seniority: "Director",
+          evidenceIds: ["experience:exp-1", "exp-1_bullet_1"],
+          rationale: "Synthetic saved experience supports an adjacent platform leadership role.",
+        },
+      ],
+      strategy: "model_stub",
+      warnings: ["stubbed_model_evidence"],
+    }),
+  ),
   http.post("*/v1/profile/import-resume", () =>
     HttpResponse.json({ ok: true, profile: sampleProfileResponse.profile }),
   ),

@@ -303,6 +303,14 @@ composition; the lifecycle command supplies it automatically. A missing or
 invalid `VITE_JOBCTRL_APP_MODE` keeps the normal local composition, so a
 mistyped value cannot produce a partially mounted app.
 
+For the target-role suggestion browser check, start `corepack pnpm demo:dev`,
+accept the local demo gate, open **Discovery → Target search**, and use **Suggest
+roles**. The bundled profile fixture has version `1` and explicit Management /
+Director preferences. Its deterministic result is labeled `model_stub` with a
+`stubbed_model_evidence` warning; it is fixture evidence, not a real provider
+run. Edit, reject, or add the proposal, then save to exercise the same
+version-checked form path without production profile data or a database.
+
 Demo mode now renders the static acceptance gate before creating IndexedDB.
 If the same-origin local Worker is unavailable, acceptance remains fail-closed
 and the workspace does not initialize. The local lifecycle runs the real Worker

@@ -1285,11 +1285,22 @@ export class DemoLocalCommandExecutor {
       case "updateProfile": {
         const body = record(args[0]);
         const profile = draft.state.readModel.profile.config;
+        const expectedVersion = numberValue(body.expectedProfileVersion);
+        if (expectedVersion !== null && expectedVersion !== profile.profileVersion) {
+          throw new Error(
+            `stale_profile_version: expected ${expectedVersion}, current ${profile.profileVersion ?? "none"}`,
+          );
+        }
+        const before = JSON.stringify(profile);
         if (body.profile !== undefined) profile.profile = structuredClone(body.profile);
+        if (typeof body.profileText === "string") profile.profile = JSON.parse(body.profileText);
         if (body.style !== undefined) profile.style = structuredClone(body.style);
+        if (typeof body.styleText === "string") profile.style = JSON.parse(body.styleText);
         if (typeof body.templateText === "string") profile.templateText = body.templateText;
+        if (JSON.stringify(profile) === before) return profile;
+        profile.profileVersion = (profile.profileVersion ?? 0) + 1;
         context.appendDomainEvent(atTime(createProfileUpdated(LOCAL_TENANT, {
-          changedSections: Object.keys(body),
+          changedSections: Object.keys(body).filter((key) => key !== "expectedProfileVersion"),
           updatedAt: now,
         }), now));
         return profile;

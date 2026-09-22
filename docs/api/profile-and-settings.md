@@ -14,12 +14,54 @@ For every request/response field, use the
 | --- | --- |
 | `GET /v1/profile` | Read the normalized candidate profile and current preferences. |
 | `PATCH /v1/profile` | Save validated profile fields and preference changes. |
+| `POST /v1/profile/target-role-suggestions` | Generate transient evidence-backed role proposals from an exact saved profile version. |
 | `GET /v1/profile/preview.html` | Render the baseline profile resume as HTML. |
 | `GET /v1/profile/preview.pdf` | Render the baseline profile resume as PDF. |
 
 Profile writes are explicit saves/autosaves of canonical candidate data. A job
 tailoring run consumes a versioned snapshot; it does not silently mutate the
 profile to fit a posting.
+
+`GET /v1/profile` includes `profileVersion` (`null` before initialization, then
+a positive monotonic integer). Ordinary manual `PATCH` requests remain
+backward-compatible and may omit `expectedProfileVersion`. A suggestion-derived
+save includes the version returned with the suggestions; the API compares and
+writes in the same transaction. A mismatch returns `409
+stale_profile_version`, writes no profile row, records no `ProfileUpdated`
+event, and creates no preparation-continuation work.
+
+The suggestion route accepts `{ expectedProfileVersion, maximumSuggestions }`,
+where the maximum is `1–5` and defaults to `3`. It reads only that canonical
+saved snapshot and returns `profileVersion`, `strategy`, bounded `warnings`, and
+zero to five editable suggestions. Each suggestion includes `title`,
+`classification` (`direct` or `adjacent`), an explicitly supported `track` and
+`seniority`, a concise `rationale`, and valid evidence references. Generation
+is transient: it writes no role, profile event, or Discovery plan. Only the
+user's selected acceptance enters the normal profile save path, where roles are
+appended and case-insensitively deduplicated instead of replacing existing
+values.
+
+The API binds the RPC request to its trusted app-directory and database
+identity; those values are never accepted from the browser. The worker checks
+that identity before loading the profile snapshot. The currently managed
+Claude, Codex, and Google SDK adapters cannot enforce this feature's requested
+output-token ceiling and conservative maximum call cost, so the production RPC
+does not invoke them. It returns only a validated exact recent-title fallback
+or zero suggestions with
+`provider_token_or_cost_bound_unsupported`. The `model` strategy remains in the
+response contract and is exercised with explicitly synthetic adapters in
+domain tests, but is not a currently available production capability. Those
+tests cover specific fabricated, cross-track, and unsupported-seniority cases;
+the synthetic title validator does not yet reject every unsupported qualifier
+attached to an evidenced title token. Production remains on the exact-title or
+zero path until both that semantic gap and the provider token/cost bounds are
+closed.
+
+If a suggestion-derived save conflicts with a newer canonical profile, the web
+keeps the local draft but does not authorize it with the newer version. The user
+must explicitly rebase non-overlapping edits onto the refreshed snapshot,
+regenerate suggestions, review them, and then save against that new version.
+Overlapping edits remain blocked for manual resolution or discard.
 
 Each `resume.experience_entries[]` record may include `summary`. The field
 defaults to an empty string, remains optional for existing and new roles, and
