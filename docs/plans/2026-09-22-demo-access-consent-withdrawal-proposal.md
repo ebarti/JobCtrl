@@ -77,7 +77,9 @@ constitute legal approval or implementation authority.
 | `DP-885-06` | Retention and backup restoration | Use the limits in [Retention](#retention), plus a bounded external recovery-suppression manifest replayed before a restored D1 can serve. | Choose shorter limits; remove retained analytics; or block restore/launch until another resurrection-safe design is approved. | Suppression adds operational recovery work and a separate protected record. Omitting it risks restored rows reappearing after a claimed deletion. |
 | `DP-885-07` | Operational metrics | If separately approved, keep only minimized, non-linkable, best-effort daily counters; they never block access or a privacy action. | Remove the operational lane and scope health/choice analysis to consented traffic; never replace it with an identifier. | Kept counters help detect coarse service failures but cannot measure unique people or a nonconsenting funnel. Removal reduces data and operating complexity. |
 | `DP-885-08` | Capability lifetime | **Proposal recommendation, not accepted policy:** choose a fixed 270-day lifetime from each explicit first-party grant: the 180-day maximum visitor collection window plus the 90-day maximum event-retention tail, with no passive renewal. | A shorter disclosed lifetime; no self-service post-withdrawal erasure capability; or shorter event/identity retention that preserves full coverage with a shorter capability. | Full-tail coverage retains deletion authority longer. A shorter capability reduces authority retention but can make automated erasure unavailable while retained events still exist; the UI and notice must expose that gap rather than promise a button. |
-| `DP-885-09` | Recovery-suppression lifetime | Retain suppression entries for 35 days: the currently documented 30-day paid D1 Time Travel horizon plus a five-day restore-verification buffer. Block launch if configured backup horizons exceed it. | A different explicit horizon-plus-buffer bound; or disable restore of visitor-linked data. | The entry may outlive live event rows after deletion, but prevents a restore from resurrecting them. The bound must change deliberately if backup configuration changes. |
+| `DP-885-09` | Recovery-suppression lifetime | Keep each suppression until 35 days after the last restore point, bookmark, or restored state that could still contain the generation. Every capable restore re-creates or extends the suppression window; removal requires proof that no capable lineage remains restorable. | Choose another explicit configured-horizon-plus-buffer rule; permanently exclude visitor-linked data from restore; or block restore and deletion launch until a resurrection-safe design is approved. | Repeated restores can extend suppression well beyond 35 elapsed days and require an operator-owned lineage inventory. The owner must accept that potentially extended duration/cost or make restore a blocker. |
+| `DP-885-10` | Valid v2 visitor migration | **Proposal recommendation, not accepted policy:** automatically issue the restricted erasure capability only when a same-origin migration proves a valid active v2 visitor/session, while leaving both next-contract analytics purposes off. | Do not issue it automatically and disclose that old v2 events are not self-service deletable after old identity expiry; or provide a separately reviewed manual path. | Automatic issuance preserves bounded erasure reach but creates the long-lived authority chosen in `DP-885-08`. Refusal minimizes capability issuance but leaves retained v2 events reachable only until their existing linkage expires. Neither choice infers analytics grant. |
+| `DP-885-11` | Lost-response deletion receipt | Keep the post-delete capability as status-only authority with a terminal receipt until browser acknowledgment or a fixed 24-hour expiry. | Choose a shorter disclosed window; or require synchronous confirmation and accept that lost responses cannot be checked. | The recommended window makes a lost response recoverable without retaining telemetry linkage, but preserves a narrow status credential and receipt for up to 24 hours. |
 
 ## Recommended Experience
 
@@ -142,7 +144,7 @@ other browsers, other devices, lost cookies, or people. It does not use IP,
 user agent, behavioral matching, fingerprinting, or a client-supplied visitor
 target to recover linkage.
 
-The action deletes, as one live-D1 transaction:
+The action applies, as one live-D1 transaction:
 
 1. all `consented_product_events` rows for the capability-bound visitor;
 2. every `active_demo_identities` row for that visitor and generation, after
@@ -150,8 +152,8 @@ The action deletes, as one live-D1 transaction:
 3. every `telemetry_rate_windows` row for those sessions, plus every future
    visitor/session-scoped rate or retry row introduced by the next contract;
 4. superseded first-party consent/generation state for that visitor; and
-5. the live erasure-operation receipt state only after a durable bounded status
-   and recovery-suppression record exists.
+5. conversion of the erasure capability into the status-only terminal receipt
+   required by the two-phase acknowledgment contract below.
 
 `telemetry_global_rate_windows`, `operational_rate_windows`,
 `operational_retry_digests`, and non-linkable operational aggregates have no
@@ -166,12 +168,29 @@ boundary, or another demonstrated D1 transaction boundary, rather than a loop
 of independently committed deletes. A database error or rate limit keeps the
 operation pending/failed and never produces a success receipt.
 
-Deletion uses a capability-bound idempotency key. Retrying the same operation
-returns the same terminal result. When the response is lost, a capability-only
-status endpoint reports `pending`, `completed`, or a retryable failure without
-accepting a visitor identifier from the client. If read replicas are enabled,
-the mutation returns a D1 Session bookmark and the follow-up status read uses a
-Session with that bookmark so the receipt cannot regress behind the write.
+Deletion uses a capability-bound idempotency key and a two-phase acknowledgment
+contract. The delete transaction converts the existing erasure-capability
+record to status-only authority and writes a terminal receipt containing only
+the capability/operation digests, terminal result, completion time, consistency
+metadata, and fixed expiry. It removes the visitor/generation binding and does
+not clear the browser cookie in the mutation response. The retained receipt and
+status authority cannot recover erased telemetry linkage, select a visitor, or
+authorize deletion, analytics, access, grant, health, or reporting.
+
+Retrying the same delete returns the same terminal result. If the mutation
+response or its body is lost, the browser still has the unchanged credential
+and a capability-only status endpoint reports `pending`, `completed`, or a
+retryable failure without accepting a visitor identifier. Status reads go to
+the primary until the terminal receipt is observed. If a future implementation
+uses a replica instead, the server must durably retain and reuse the D1 Session
+bookmark; a bookmark delivered only in the lost response is insufficient.
+
+The browser renders confirmed completion before sending a separate
+acknowledgment. Only that acknowledgment revokes the status authority/receipt
+and clears the cookie; an unacknowledged record expires at the owner-chosen
+`DP-885-11` bound. A lost acknowledgment response is safe because completion
+was already rendered before acknowledgment began. Database errors, missing
+receipts, rate limits, and expired status authority never synthesize success.
 
 ## Identity, Capability, And Storage Contract
 
@@ -183,7 +202,8 @@ generation. The browser receives it only as a host-only, `Secure`, `Path=/`,
 `SameSite=Lax`, `HttpOnly` cookie. The edge stores only a keyed digest and its
 bound visitor hash/generation. The capability:
 
-- is accepted only by deletion and deletion-status routes;
+- is accepted only by deletion, deletion-status, and status-acknowledgment
+  routes;
 - is never read by telemetry, health, reporting, GA, or operational counters;
 - cannot grant access, grant analytics, revive a generation, or select a
   client-provided target;
@@ -192,7 +212,8 @@ bound visitor hash/generation. The capability:
   inherits the same still-addressable visitor and bound generations, adds the
   new generation, receives a new fixed lifetime under `DP-885-08`, and revokes
   the old digest before the browser receives its one replacement cookie;
-- is cleared after confirmed deletion or fixed expiry.
+- becomes status-only after committed deletion and is revoked only after the
+  browser acknowledges rendered completion or `DP-885-11` expires.
 
 This is an intentional tradeoff: keeping narrow authority enables deletion
 after tracking cookies are expired, but retaining any capability extends the
@@ -227,9 +248,11 @@ review exact names without treating this proposal as a schema allocation.
 | --- | --- | --- | --- | --- |
 | Access/choice | Versioned non-identifying browser preference | Remember entry and the two default-off purpose choices | Fixed, at most 180 days; browser-readable; no passive renewal | Missing/stale means unknown with both purposes off. It is never an analytics ID. |
 | Pending local deny/delete | Non-identifying local state plus cross-tab message | Stop stale in-flight bootstrap, grant, telemetry, and GA work | Until the server result is reconciled; browser-readable | Written before network I/O and wins over late grant responses. Contains no visitor/session ID. |
+| Purpose-specific grant intent | Single-use, host-only `HttpOnly` opaque cookie plus server digest/epoch | Serialize one explicit purpose grant against withdrawal/deletion | Ten minutes; consumed once; never renewed | Available to unknown/denied/access-only state without becoming analytics identity; never accepted by telemetry, reporting, or health. |
 | First-party visitor | Host-only `HttpOnly` cookie | Join consented first-party events for one visitor generation | Fixed, at most 180 days; no passive renewal | Issued only after explicit first-party opt-in; retained solely for the same withdrawal retry while locally disabled, then expired after confirmed revocation. |
 | First-party session | Host-only `HttpOnly` session cookie | Bound one browser session to the visitor generation | Browser-session lifetime | Every session is revoked together on withdrawal/deletion. A pending local deny makes the cookie unusable except for withdrawal retry; startup revalidates server state before telemetry. |
 | Erasure capability | Host-only `HttpOnly` opaque cookie | Authorize deletion/status for one bound visitor and its explicitly linked generations | Owner choice under `DP-885-08`; fixed; no passive renewal | Survives withdrawal but never participates in telemetry or reporting joins. |
+| Deletion status authority | The existing erasure-capability cookie after its server record is narrowed | Read one terminal deletion receipt and acknowledge rendered success | Owner choice under `DP-885-11`; recommended 24 hours or acknowledgment | Has no visitor/generation binding after deletion and cannot repeat deletion or authorize analytics. |
 | GA cookies/tag state | GA-managed demo-host state | Separate third-party analytics purpose | Fixed configured lifetime at most 180 days; no passive first-party extension | Created/loaded only after the separate GA opt-in. Turning GA off prevents new application calls and follows the documented GA denial/reload path. |
 | Synthetic workspace | IndexedDB or in-memory demo state | Browser-local synthetic product experience | Existing seed/version lifecycle | Available without analytics. **Reset synthetic demo data** does not withdraw, revoke, or erase server analytics. |
 | Documentation-host consent | `jobctrl.dev` local storage/cookies | Documentation analytics | Existing documentation-host contract | Separate origin and choice; it never controls `demo.jobctrl.dev`. |
@@ -244,17 +267,24 @@ as a grant.
 ### Next-contract migration from v2
 
 **RECOMMENDED:** Treat the next consent contract name, hosted D1 migration file,
-and version number as provisional until implementation. This hosted design does
-not allocate the local product schema version reserved by #886.
+and version number as provisional until implementation. This proposal allocates
+no schema version and edits no schema file.
+
+Issue #887 owns the local sensitive-artifact retention and local documentation
+boundary, including its storage/local-retention references. This #885 proposal
+does not edit those files. It covers only the hosted demo's cookies, D1/GA
+boundaries, withdrawal, remote erasure, and recovery suppression.
 
 On first next-contract contact:
 
 1. A missing, denied, malformed, inactive, or stale v2 tuple becomes access-only
    with both analytics purposes off. No identifier is minted.
-2. A valid active v2 visitor/session may be used once in a same-origin migration
-   transaction to revoke the v2 generation and mint a restricted erasure
-   capability bound to that known visitor. It must not infer a first-party or
-   GA grant. Both next-contract purposes remain off.
+2. If the owner selects `DP-885-10`, a valid active v2 visitor/session is used
+   once in a same-origin migration transaction to revoke the v2 generation and
+   mint a restricted erasure capability bound to that known visitor. It does
+   not infer a first-party or GA grant; both next-contract purposes remain off.
+   If the owner rejects automatic issuance, no capability is minted and the
+   disclosed loss of future self-service reach applies.
 3. Existing v2 events keep their original fixed expiry unless the capability
    holder requests deletion. Migration does not renew their retention.
 4. A missing old identity cannot be recovered. Historical rotated visitors and
@@ -264,28 +294,50 @@ On first next-contract contact:
    handles them as stale after failure. A late v2 response cannot overwrite a
    pending local denial or create a next-contract grant.
 
-The implementation must document whether a valid v2 tuple receives the
-capability automatically during this one-time privacy-preserving migration.
-That migration choice is part of `DP-885-05`, not an implied decision here.
+The recorded `DP-885-10` answer, not implementation discretion, decides whether
+a valid v2 tuple receives the capability during this one-time migration.
 
 ## Race And Failure Safety
 
-**RECOMMENDED:** Every state-changing route requires same-origin request
-metadata, `Cache-Control: no-store`, a strict allowlisted JSON object, a small
-endpoint-specific byte limit, and an edge-generated target derived only from
-the authenticated cookies/capability. There is no visitor ID, session ID, hash,
-or generation field in a client payload. Origin/Fetch Metadata rejection,
-content-type enforcement, and rate limits fail closed without a state change.
+**RECOMMENDED:** Every privacy mutation and every capability-bearing read,
+including deletion/status, requires same-origin request metadata and returns
+`Cache-Control: no-store`. Mutations accept only a strict allowlisted JSON
+object under a small endpoint-specific byte limit. Read routes accept no body
+or client target and reject unexpected query fields. The edge derives its
+target only from authenticated cookies/capabilities. There is no visitor ID,
+session ID, hash, generation, or receipt target in a client payload. Origin/
+Fetch Metadata rejection, content-type enforcement, strict parsing, and rate
+limits fail closed without a state change or database-state disclosure.
 
-The server owns a monotonic visitor generation:
+Unknown, denied, and access-only states receive no analytics identity. After a
+new explicit purpose choice, they may request a ten-minute, single-use,
+purpose-specific grant intent. The edge stores only its digest, purpose,
+mutation epoch, and expiry; it is absent from telemetry, health, reporting,
+operational counters, and logs. This bounded intent exists solely to serialize
+that one grant and is consumed or revoked in the same mutation transaction.
 
-1. first-party grant activates exactly one current generation and its sessions;
-2. an event insert succeeds only when its visitor, session, purpose grant, and
+The server owns a monotonic privacy-mutation epoch plus visitor generations:
+
+1. grant, denial, withdrawal, and deletion serialize against the same
+   server-held epoch/intent authority; denial/withdrawal/deletion increments the
+   epoch and revokes every outstanding intent before revoking identities or
+   deleting rows;
+2. a grant atomically consumes a fresh matching intent and activates exactly
+   one current generation and its sessions;
+3. an event insert succeeds only when its visitor, session, purpose grant, and
    generation are active in the same D1 statement/transaction;
-3. withdrawal/deletion revokes the generation and all its sessions atomically;
-4. a delayed event from a revoked generation fails the write fence; and
-5. a delayed grant response cannot reactivate that generation. A later grant
-   requires a new explicit choice and a new generation.
+4. withdrawal/deletion revokes the generation and all its sessions atomically;
+5. a delayed event or grant carrying a revoked/superseded epoch fails; and
+6. a new intent is unavailable until the pending privacy operation is terminal
+   and the visitor makes another explicit purpose choice.
+
+If an old grant commits before withdrawal/deletion, the later privacy mutation
+revokes its generation. If the privacy mutation commits first, the old intent
+is superseded and the grant cannot commit. A late grant response cannot reload
+GA or re-enable the first-party adapter because the durable local mutation
+floor rejects its older epoch. Any cookies from that response carry the
+superseded generation and are rejected/expired by the server before telemetry;
+they cannot reinstall valid authority.
 
 The client writes `pending-deny` or `pending-delete` synchronously before any
 request, disposes the first-party adapter, applies the GA deny path, and blocks
@@ -320,33 +372,44 @@ days for free plans. Restoring an older point can therefore resurrect a row
 that was deleted from the live database.
 
 Before any production implementation can launch deletion, it must add this
-bounded recovery protocol:
+restore-lineage-bounded recovery protocol:
 
 1. Before the live delete, write an operation-keyed, capability-derived
    suppression entry to a protected recovery manifest outside the restorable
    telemetry D1 database. It contains only the visitor digest/generation needed
-   to suppress restored rows, operation state, and fixed expiry. It is never a
-   reporting source.
+   to suppress restored rows, operation state, restore-lineage metadata, and a
+   not-before-removal time. It is never a reporting source.
 2. Delete and revoke live rows in one D1 transaction. Mark the recovery entry
    complete only after the live transaction commits. A prepared entry is still
    replayed conservatively after restore because it represents an explicit
    deletion request.
 3. Quarantine every telemetry D1 restore: no application Worker or reporting
    reader may serve it. Replay every unexpired prepared/completed suppression,
-   rerun retention, and verify absence of each suppressed generation before
-   routing traffic or reports to the restored database.
+   delete the restored visitor-linked rows, revoke restored identity/capability
+   authority, rerun retention, and verify absence of each suppressed generation.
+   Record the restored state as a new capable lineage and re-create or extend
+   each applicable suppression from that restore before routing traffic or
+   reports to the restored database.
 4. Preserve exact restore point, manifest version, replay counts, retention
    result, and independent absence-check evidence. If the manifest is missing,
    stale, inconsistent, or older than the backup horizon, the restore cannot
    serve. This is a launch/recovery blocker, not a warning.
-5. Retain suppression for the bounded period chosen in `DP-885-09`, then remove
-   it only after every backup capable of containing the row has expired and the
-   verification buffer has elapsed.
+5. Remove suppression only after the inventory proves that every original or
+   restored point/bookmark/state capable of containing the generation has been
+   outside its configured restore horizon for the verification buffer. A new
+   capable restore resets that trailing window under `DP-885-09`.
 
 The recovery-manifest technology and access controls require a separate
 implementation design and owner approval. The observable contract above is
 mandatory: a solution that cannot preserve it blocks deletion launch. It must
 not silently fall back to serving an unsuppressed restore.
+
+The 35-day recommendation is therefore a minimum trailing window after the
+last capable lineage event, not a fixed 35-day lifetime from deletion. Repeated
+restores can extend actual retention indefinitely until operators retire every
+capable lineage. `DP-885-09` makes that extended retention, inventory, and
+operator cost an explicit owner choice; if they are not accepted, restore of
+visitor-linked data and deletion launch remain blocked.
 
 Sources checked 2026-09-22:
 
@@ -358,8 +421,10 @@ These sources support the database mechanics only; they are not legal guidance.
 
 ## Retention
 
-**RECOMMENDED:** Retention is fixed at issuance/write time and does not slide on
-passive reads, page views, telemetry, or session restoration.
+**RECOMMENDED:** User/browser data retention is fixed at issuance/write time and
+does not slide on passive reads, page views, telemetry, or browser-session
+restoration. Recovery suppression changes only for an operator restore-lineage
+event under `DP-885-09`, never because of visitor activity.
 
 | Data | Proposed maximum | Renewal | Notes |
 | --- | --- | --- | --- |
@@ -370,7 +435,8 @@ passive reads, page views, telemetry, or session restoration.
 | Non-linkable operational aggregates | 90 days | Never | Kept only if `DP-885-07` approves them. |
 | Transient rate/retry/idempotency rows | 24 hours | Retry may reuse the same operation's original bound | Never extended by unrelated traffic. |
 | Erasure capability | Owner choice; recommended 270 days from each explicit first-party grant for the full 180-day identity plus 90-day event tail | Replaced only by a later explicit first-party grant; never passively | Survives withdrawal solely for deletion/status. A shorter choice must disclose when self-service ends while retained events may remain. |
-| Recovery suppression | 35 days under the current 30-day maximum backup horizon | Never | Must cover the configured backup horizon plus verification buffer. |
+| Deletion status authority/receipt | Owner choice; recommended 24 hours or until acknowledgment | Never renewed; acknowledgment revokes it | Contains no telemetry/visitor binding and supports only status/ack after deletion. |
+| Recovery suppression | At least 35 days after the last capable restore-lineage event under the current 30-day documented horizon | Re-created/extended only by a capable restore/bookmark/state | Repeated restores can extend total retention; removal requires lineage-inventory proof. |
 
 Operational aggregates remain schema-separated, minimized, and best effort.
 They cannot identify unique visitors, measure a nonconsenting funnel, join to
@@ -401,8 +467,8 @@ No slice below is authorized by this proposal. After every owner decision and
 separate legal/privacy review, implementation may be split into reviewable
 hosted-demo changes:
 
-1. next-contract types, provisional hosted D1 migration, generation fence, and
-   rollback-safe fixtures;
+1. next-contract types, provisional hosted D1 migration, mutation epoch,
+   single-use grant intent, generation fence, and rollback-safe fixtures;
 2. access-only bootstrap plus separate first-party/GA purpose controls;
 3. persistent privacy settings, local pending-stop lifecycle, cross-tab/BFCache
    handling, and GA deny/reload behavior;
@@ -412,8 +478,10 @@ hosted-demo changes:
 6. current-behavior documentation replacement only after the behavior is
    implemented and independently verified.
 
-Migration filenames and version numbers remain provisional. This hosted D1
-work is independent of the local product schema v11 reserved by #886.
+Migration filenames and version numbers remain provisional, and schema files
+are outside this proposal. Issue #887 owns local sensitive-artifact retention
+and its local storage/documentation boundary; #885 remains limited to hosted
+demo cookies, D1/GA, withdrawal, remote erasure, and recovery suppression.
 
 ## Future Implementation And Verification Matrix
 
@@ -422,13 +490,13 @@ work is independent of the local product schema v11 reserved by #886.
 | Area | Required future evidence | Expected result |
 | --- | --- | --- |
 | Local D1/Workers migration | Real local D1 migrations from representative v2 data, forward reopen, rollback on injected statement failure, retry, retention, and migration-status evidence | No inferred grant; rows/counts preserved or intentionally suppressed; failed migration leaves the old contract usable; retry converges once |
-| Transaction and race fixtures | Real handler/database tests for all-session revoke, generation-fenced event writes, grant-versus-withdraw/delete races, late/lost responses, duplicate operation keys, and an unaffected sentinel visitor | No stale generation writes or reactivation; target rows change atomically; sentinel visitor and events are byte-for-byte unaffected |
-| Strict edge contract | Same-origin/Fetch Metadata and CSRF probes, content-type/size/extra-key rejection, cookie tampering, client-chosen target attempts, and `Cache-Control: no-store` assertions | Only the capability-bound visitor can be affected; invalid requests make no state change and disclose no database state |
+| Transaction and race fixtures | Real handler/database tests for all-session revoke, mutation-epoch/grant-intent serialization, generation-fenced event writes, stalled grant versus completed withdrawal/deletion, late/lost responses, duplicate operation keys, and an unaffected sentinel visitor | A superseded intent cannot mint or reinstall authority; no stale generation writes/reactivation; target rows change atomically; sentinel visitor/events are byte-for-byte unaffected |
+| Strict edge contract | Same-origin/Fetch Metadata and CSRF probes for mutations and capability-bearing reads, content-type/size/extra-key/query rejection, cookie tampering, client-chosen target attempts, and `Cache-Control: no-store` assertions | Only server-derived authority can be affected/read; invalid requests make no state change and disclose no database state |
 | Built demo, two tabs | Exercise the actual production-mode built demo in two tabs with network capture | Full demo works with all analytics off; no first-party telemetry or Google request before a purpose grant or after its local off action; pending stop propagates across tabs |
 | Lifecycle restoration | BFCache, frozen/background tab, browser session restoration, visible/resume, and stale in-flight grant/telemetry fixtures | Pending deny wins; restored tabs revalidate; revoked generations cannot write or reload GA |
-| Faults | Cookie blocking, offline transitions, `429`, `503`, timeout, malformed/lost response, D1 error, and retry/status checks | Access remains available; collection fails off; no false grant, withdrawal, deletion, or success receipt |
-| Expiry and v2 migration | Fixed-clock choice/ID/event/rate/capability expiry, no-passive-renewal probes, valid/invalid/missing v2 identities, and rotated-old-identity cases | Both purposes default off; valid bounded migration follows the owner decision; lost/old identity is not recovered or fingerprinted |
-| Deletion and restore | Delete a uniquely owned synthetic visitor with multiple sessions/events/rates, quarantine a Time Travel restore containing it, replay suppression, and run an independent absence check | Live transaction deletes all scoped rows; restore cannot serve until every suppressed generation is absent; unrelated sentinel remains |
+| Faults | Cookie blocking, offline transitions, `429`, `503`, timeout, malformed/lost mutation body/headers, lost deletion response, D1 error, primary-first status, render-then-ack, and retry/status checks | Access remains available; collection fails off; status-only authority survives a lost delete response; no false grant, withdrawal, deletion, or success receipt |
+| Expiry and v2 migration | Fixed-clock choice/ID/event/rate/capability/status-receipt expiry, no-passive-renewal probes, both `DP-885-10` choices, valid/invalid/missing v2 identities, and rotated-old-identity cases | Both purposes default off; capability issuance follows the recorded choice; lost/old identity is not recovered or fingerprinted |
+| Deletion and restore | Delete a uniquely owned synthetic visitor with multiple sessions/events/rates; quarantine a Time Travel restore containing it; create another capable post-restore state; extend/replay suppression; retire the lineage; and run an independent absence check | Live transaction deletes all scoped rows; every chained restore stays quarantined until suppression is renewed and applied; removal waits for the last capable lineage window; unrelated sentinel remains |
 | GA boundary | Browser network/DevTools checks for default off, explicit on, off/reload, cookie clearing, already-sent request, offline/frozen tab, and separate first-party choice | The implementation makes only the bounded promises in this plan and never claims first-party deletion erased Google-held data |
 | Reporting populations | Run each operational and consented report against analytics-off, first-party-on, GA-only, both-on, repeated-choice, and multi-session fixtures | Labels match the exact included population; choice operations are not unique visitors; pseudonymous visitors/sessions are not reported as people |
 | Documentation | Build links and compare disclosure/settings text to the exact candidate behavior | Current docs change only when shipped behavior and verified limitations match them |
@@ -444,7 +512,7 @@ preview, fixture, or this proposal cannot substitute for that evidence.
 
 This proposal can move from **PROPOSED** only when:
 
-1. the owner records `DP-885-01` through `DP-885-09`, including explicit
+1. the owner records `DP-885-01` through `DP-885-11`, including explicit
    operational-measurement and retention choices;
 2. a separate legal/privacy review accepts the intended notice and purpose
    model without treating this engineering proposal as its conclusion;
