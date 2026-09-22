@@ -71,14 +71,23 @@ $result = Get-Acl -LiteralPath $request.path
 
 
 def assert_windows_acl_preserved(before: str, after: str) -> None:
-    if before != after:
-        before_flags, _, before_entries = before.partition("(")
-        after_flags, _, after_entries = after.partition("(")
+    before_flags, _, before_entries = before.partition("(")
+    after_flags, _, after_entries = after.partition("(")
+    # SetFileSecurity may clear AI on a copied protected file. The exact ACEs
+    # and P protection still govern access; a regular file has no child ACLs
+    # to propagate. Do not normalize protection, inheritance requests or ACEs.
+    same_protected_access = (
+        "P" in before_flags and "P" in after_flags
+        and before_flags.replace("AI", "") == after_flags.replace("AI", "")
+        and before_entries == after_entries
+    )
+    preserved = before == after or same_protected_access
+    if not preserved:
         flags = [value if all(char in "D:PAIR" for char in value) else "unrecognized"
                  for value in (before_flags, after_flags)]
         print(json.dumps({"windowsAclMismatch": True, "controlFlags": flags,
                           "accessEntriesEqual": before_entries == after_entries}), flush=True)
-    assert before == after, "Migration changed the source DACL"
+    assert preserved, "Migration changed the source DACL"
 
 
 def main() -> int:
@@ -188,7 +197,7 @@ def main() -> int:
 
             value = "synthetic-migration-" + secrets.token_hex(20)
             source = owned / ".env"
-            source.write_text(f"KEEP=untouched\n{key}='{value}'\n", encoding="utf-8")
+            source.write_bytes(f"KEEP=untouched\r\n{key}='{value}'\r\n".encode("utf-8"))
             PHASE = "windows_acl_setup" if platform.system() == "Windows" else "migration_setup"
             acl_before = windows_acl(source, restrict=True) if platform.system() == "Windows" else None
             marker = owned / "migration.json"
@@ -197,7 +206,7 @@ def main() -> int:
             PHASE = "migration_result"
             assert not result.already_completed
             PHASE = "migration_source_readback"
-            assert source.read_text(encoding="utf-8") == "KEEP=untouched\n"
+            assert source.read_bytes() == b"KEEP=untouched\r\n"
             if acl_before is not None:
                 PHASE = "migration_acl_readback"
                 assert_windows_acl_preserved(acl_before, windows_acl(source))
@@ -221,8 +230,8 @@ def main() -> int:
             assert store.read(key) is None
             if acl_before is not None:
                 PHASE = "windows_acl_rollback"
-                original = f"KEEP=untouched\n{key}='{value}'\n"
-                source.write_text(original, encoding="utf-8")
+                original = f"KEEP=untouched\r\n{key}='{value}'\r\n".encode("utf-8")
+                source.write_bytes(original)
                 write_marker = native._write_marker
 
                 def fail_marker(*_args, **_kwargs):
@@ -238,7 +247,7 @@ def main() -> int:
                         raise AssertionError("Injected marker failure must fail migration")
                 finally:
                     native._write_marker = write_marker
-                assert source.read_text(encoding="utf-8") == original
+                assert source.read_bytes() == original
                 assert_windows_acl_preserved(acl_before, windows_acl(source))
                 assert store.read(key) is None
         finally:
