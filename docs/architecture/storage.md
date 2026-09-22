@@ -116,12 +116,24 @@ jobs, runs, or feedback signals:
 | `source_locator_candidates` | Retains discovered source URLs and manual-action reasons. |
 | `learning_recommendation_jobs`, `learning_recommendation_evidence_jobs` | Immutable learning provenance retains historical JobIds. |
 | `learning_recommendation_evidence`, `tailoring_feedback_signal_reviews`, `tailoring_feedback_signal_contradictions` | Append-only evidence/reviews retain signal/review references and historical JobIds even after source signals cascade away. |
+| `learning_recommendation_tombstones` | Append-only tombstones retain `affected_signal_id` after a Job-owned source signal cascades away. |
 | `role_match_feedback_suggestions` | Retains `evidence_json`, which may cite purged jobs or runs. |
+| Non-job `workflow_run_projections` with a nonempty `input_summary_json.jobId` | Unrelated workflow history remains. In particular, `ContactResearchWorkflow` can retain the purged JobId it was asked to research. |
 
 Counts cover local rows in these retained sets, not only rows whose referenced
 source still exists. The command does not rewrite immutable learning history or
 dismiss pending captures. “Nothing remains in the purge boundary” therefore
 does not mean this auxiliary/history data is empty.
+
+The exact-v10 `job_application_locators` table is Job-owned and cascades with
+its Job. The exact-v11 lane-scoped `llm_spend` ledger contains no Job or run
+reference; it is a separate authority that the purge fingerprints and preserves.
+
+Post-commit reporting distinguishes optional compaction from preservation and
+integrity verification. If `VACUUM` or its checkpoints fail but all purge
+invariants still verify, the command reports the committed purge, recovery
+bundle, and free-space/compaction guidance. A failed post-commit invariant keeps
+the stronger stop-and-restore guidance because the live result was not verified.
 
 ### Exact v11 runtime and compatible cutovers
 

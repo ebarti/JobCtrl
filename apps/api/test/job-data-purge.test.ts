@@ -11,6 +11,7 @@ import {
   executeJobDataPurge,
   inspectJobDataPurge,
   JOB_DATA_PURGE_CONFIRMATION,
+  JobDataPurgeCompactionError,
   JobDataPurgeCommittedError,
 } from "../src/job-data-purge.js";
 import { WORKER_RUNTIME_STALE_AFTER_MS } from "../src/worker-runtime-telemetry.js";
@@ -130,9 +131,17 @@ function createFixture(options: {
        VALUES ('local', 'default', 'template-1', 'template-version-1', ?)`,
     ).run(NOW);
     db.prepare(
+      `INSERT INTO llm_spend (day, lane, input_tokens, output_tokens, estimated_usd)
+       VALUES ('2026-09-01', 'discovery', 10, 5, 0.25)`,
+    ).run();
+    db.prepare(
       `INSERT INTO jobs (tenant_id, job_id, url, title, company, site, discovered_at)
        VALUES ('local', ?, ?, 'Purge me', 'Example', 'example', ?)`,
     ).run(JOB_ID, JOB_URL, NOW);
+    db.prepare(
+      `INSERT INTO job_application_locators (tenant_id, job_id, application_url)
+       VALUES ('local', ?, ?)`,
+    ).run(JOB_ID, `${JOB_URL}/apply`);
     db.prepare(
       `INSERT INTO job_materials (
          tenant_id, job_id, generation, status, created_at, updated_at
@@ -351,6 +360,7 @@ describe("guarded production job-data purge", () => {
     expect(rowCount(fixture.dbPath, "jobs")).toBe(0);
     expect(rowCount(fixture.dbPath, "job_materials_artifacts")).toBe(0);
     expect(rowCount(fixture.dbPath, "job_artifacts")).toBe(0);
+    expect(rowCount(fixture.dbPath, "job_application_locators")).toBe(0);
     expect(rowCount(fixture.dbPath, "discovery_execution_jobs")).toBe(0);
     expect(rowCount(fixture.dbPath, "discovery_execution_recoveries")).toBe(0);
     expect(rowCount(fixture.dbPath, "discovery_runs")).toBe(0);
@@ -364,6 +374,7 @@ describe("guarded production job-data purge", () => {
     expect(rowCount(fixture.dbPath, "discovery_settings")).toBe(1);
     expect(rowCount(fixture.dbPath, "source_registry_entries")).toBe(1);
     expect(rowCount(fixture.dbPath, "resume_templates")).toBe(1);
+    expect(rowCount(fixture.dbPath, "llm_spend")).toBe(1);
     const preservedDb = new Database(fixture.dbPath, { readonly: true });
     try {
       expect(
@@ -566,6 +577,35 @@ describe("guarded production job-data purge", () => {
     expect(rowCount(path.join(fixture.appDir, "backups", bundles[0]!, "jobctrl-before.db"), "jobs")).toBe(1);
   });
 
+  it("reports a verified committed purge without restore guidance when only compaction fails", () => {
+    const fixture = createFixture();
+    const originalExec = Database.prototype.exec;
+    vi.spyOn(Database.prototype, "exec").mockImplementation(function (this: Database.Database, sql) {
+      if (sql === "VACUUM") {
+        throw Object.assign(new Error("database or disk is full"), { code: "SQLITE_FULL" });
+      }
+      return originalExec.call(this, sql);
+    });
+
+    let failure: unknown;
+    try {
+      executeJobDataPurge({ appDir: fixture.appDir });
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(JobDataPurgeCompactionError);
+    expect(String(failure)).toMatch(/purge committed and verified/i);
+    expect(String(failure)).toMatch(/recovery bundle:/i);
+    expect(String(failure)).toMatch(/free disk space/i);
+    expect(String(failure)).toMatch(/rerun.*compaction/i);
+    expect(String(failure)).not.toMatch(/restore|retry/i);
+    expect(rowCount(fixture.dbPath, "jobs")).toBe(0);
+    const bundles = fs.readdirSync(path.join(fixture.appDir, "backups"));
+    expect(bundles).toHaveLength(1);
+    expect(rowCount(path.join(fixture.appDir, "backups", bundles[0]!, "jobctrl-before.db"), "jobs")).toBe(1);
+  });
+
   it("refuses to purge while a job stage is active", () => {
     const fixture = createFixture({ running: true });
 
@@ -627,10 +667,12 @@ describe("guarded production job-data purge", () => {
     const retainedTables = [
       "manual_capture_queue", "source_locator_candidates", "learning_recommendation_jobs",
       "learning_recommendation_evidence_jobs", "learning_recommendation_evidence",
-      "tailoring_feedback_signal_reviews", "tailoring_feedback_signal_contradictions", "role_match_feedback_suggestions",
+      "learning_recommendation_tombstones", "tailoring_feedback_signal_reviews",
+      "tailoring_feedback_signal_contradictions", "role_match_feedback_suggestions",
     ];
     const db = openDatabase(fixture.dbPath);
     let before: Record<string, unknown>;
+    let retainedWorkflowBefore: unknown;
     try {
       db.transaction(() => {
         db.prepare("INSERT INTO jobs (tenant_id, job_id, url, title, company, site, discovered_at) VALUES ('local', ?, ?, 'Second', 'Example', 'example', ?)")
@@ -681,8 +723,22 @@ describe("guarded production job-data purge", () => {
           contradicting_signal_id, contradicting_signal_revision, contradicting_signal_job_id, recorded_at
         ) VALUES ('contradiction-1', 'signal-0', 1, ?, 'signal-1', 1, ?, ?)`)
           .run(JOB_ID, secondJobId, NOW);
+        db.prepare(`INSERT INTO learning_recommendation_tombstones (
+          tombstone_id, recommendation_id, affected_signal_id, affected_source_revision,
+          reason_code, derivation_version, tombstoned_at, rederived_at
+        ) VALUES ('tombstone-1', 'retained-recommendation', 'signal-0', 1,
+          'source_deleted', 1, ?, ?)`).run(NOW, NOW);
+        db.prepare(`INSERT INTO workflow_run_projections (
+          workflow_id, tenant_id, workflow_type, status, input_summary_json,
+          temporal_run_id, started_at, finished_at
+        ) VALUES ('contact-research-retained', 'local', 'ContactResearchWorkflow',
+          'succeeded', ?, 'contact-run-retained', ?, ?)`)
+          .run(JSON.stringify({ taskId: "contact-task", jobId: JOB_ID }), NOW, NOW);
       })();
       before = Object.fromEntries(retainedTables.map((table) => [table, db.prepare(`SELECT * FROM ${table}`).all()]));
+      retainedWorkflowBefore = db.prepare(
+        "SELECT * FROM workflow_run_projections WHERE workflow_id = 'contact-research-retained'",
+      ).get();
       // This additional capture is job-owned, so it must cascade instead of
       // inflating the disclosed retained count.
       db.prepare(`INSERT INTO manual_capture_queue (item_id, originating_url, reason, required_at, job_id)
@@ -694,7 +750,9 @@ describe("guarded production job-data purge", () => {
     const counts = {
       manual_capture_queue: 1, source_locator_candidates: 1, learning_recommendation_jobs: 2,
       learning_recommendation_evidence_jobs: 3, learning_recommendation_evidence: 3,
-      tailoring_feedback_signal_reviews: 3, tailoring_feedback_signal_contradictions: 1, role_match_feedback_suggestions: 1,
+      learning_recommendation_tombstones: 1, tailoring_feedback_signal_reviews: 3,
+      tailoring_feedback_signal_contradictions: 1, role_match_feedback_suggestions: 1,
+      workflow_run_projections_with_job_id: 1,
     };
     expect(inspectJobDataPurge({ appDir: fixture.appDir }).retainedReferenceRows).toEqual(counts);
     const commands = [runInventory(fixture.appDir), runConfirmedPurge(fixture.appDir), runInventory(fixture.appDir), runConfirmedPurge(fixture.appDir)];
@@ -710,6 +768,9 @@ describe("guarded production job-data purge", () => {
     try {
       expect(Object.fromEntries(retainedTables.map((table) => [table, after.prepare(`SELECT * FROM ${table}`).all()])))
         .toEqual(before!);
+      expect(after.prepare(
+        "SELECT * FROM workflow_run_projections WHERE workflow_id = 'contact-research-retained'",
+      ).get()).toEqual(retainedWorkflowBefore);
       expect(after.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
       expect(after.prepare("SELECT COUNT(*) AS count FROM tailoring_feedback_signals").get()).toEqual({ count: 0 });
       expect(after.prepare("SELECT COUNT(*) AS count FROM jobs").get()).toEqual({ count: 0 });

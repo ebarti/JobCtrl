@@ -79,6 +79,7 @@ const RETAINED_REFERENCE_TABLES = [
   "learning_recommendation_jobs",
   "learning_recommendation_evidence_jobs",
   "learning_recommendation_evidence",
+  "learning_recommendation_tombstones",
   "tailoring_feedback_signal_reviews",
   "tailoring_feedback_signal_contradictions",
   "role_match_feedback_suggestions",
@@ -104,6 +105,7 @@ const PRESERVED_TABLES = [
   "candidate_profile_skill_categories",
   "candidate_profile_skill_items",
   "discovery_settings",
+  "llm_spend",
   "resume_template_defaults",
   "resume_template_versions",
   "resume_templates",
@@ -207,6 +209,24 @@ export class JobDataPurgeCommittedError extends Error {
       + `Cause: ${causeMessage}`,
     );
     this.name = "JobDataPurgeCommittedError";
+    this.backupDirectory = backupDirectory;
+    this.databaseBackupPath = databaseBackupPath;
+  }
+}
+
+export class JobDataPurgeCompactionError extends Error {
+  readonly backupDirectory: string;
+  readonly databaseBackupPath: string;
+
+  constructor(cause: unknown, backupDirectory: string, databaseBackupPath: string) {
+    const causeMessage = cause instanceof Error ? cause.message : String(cause);
+    super(
+      `Job-data purge committed and verified, but post-commit database compaction failed. `
+      + `Live job data is purged. Recovery bundle: ${backupDirectory}. `
+      + `Free disk space if needed, then rerun only SQLite VACUUM/checkpoint compaction for this workspace. `
+      + `Cause: ${causeMessage}`,
+    );
+    this.name = "JobDataPurgeCompactionError";
     this.backupDirectory = backupDirectory;
     this.databaseBackupPath = databaseBackupPath;
   }
@@ -611,6 +631,17 @@ function retainedReferenceRows(db: SqliteDatabase): Record<string, number> {
     ...Object.fromEntries(RETAINED_REFERENCE_TABLES.map((table) => [
       table, countRows(db, `SELECT COUNT(*) AS count FROM ${table} WHERE tenant_id = ?`, [LOCAL_TENANT]),
     ])),
+    workflow_run_projections_with_job_id: countRows(
+      db,
+      `SELECT COUNT(*) AS count
+         FROM workflow_run_projections
+        WHERE tenant_id = ?
+          AND workflow_type NOT IN (${placeholders(JOB_DATA_WORKFLOW_TYPES)})
+          AND json_valid(input_summary_json)
+          AND json_type(input_summary_json, '$.jobId') = 'text'
+          AND TRIM(json_extract(input_summary_json, '$.jobId')) != ''`,
+      [LOCAL_TENANT, ...JOB_DATA_WORKFLOW_TYPES],
+    ),
   };
 }
 
@@ -816,6 +847,26 @@ function assertDatabaseIntegrity(db: SqliteDatabase): void {
   }
 }
 
+function verifyCommittedPurge(
+  db: SqliteDatabase,
+  appDir: string,
+  databasePath: string,
+  authorities: WorkspaceAuthorities,
+  preservedBefore: PreservationSnapshot,
+): number {
+  assertLogicalPurge(db);
+  assertPreserved(preservedBefore, preservationSnapshot(db, appDir));
+  assertDatabaseIntegrity(db);
+  assertWorkspaceAuthorities(authorities);
+  for (const directoryName of GENERATED_DIRECTORY_NAMES) {
+    const stats = fileTreeStats(requireOwnedDirectory(appDir, directoryName));
+    if (stats.entries > 0) {
+      throw new Error(`Purge invariant failed: ${directoryName} is not empty after the purge.`);
+    }
+  }
+  return fs.statSync(databasePath).size;
+}
+
 export function executeJobDataPurge(options: JobDataPurgeOptions = {}): JobDataPurgeResult {
   const appDir = resolvedAppDir(options.appDir);
   let authorities = requireWorkspaceAuthorities(appDir);
@@ -904,35 +955,49 @@ export function executeJobDataPurge(options: JobDataPurgeOptions = {}): JobDataP
       throw error;
     }
 
+    let compactionFailure: unknown = null;
     try {
       assertWorkspaceAuthorities(authorities);
       db.pragma("wal_checkpoint(TRUNCATE)");
       db.exec("VACUUM");
       db.pragma("wal_checkpoint(TRUNCATE)");
-      assertLogicalPurge(db);
-      assertPreserved(preservedBefore, preservationSnapshot(db, appDir));
-      assertDatabaseIntegrity(db);
-      assertWorkspaceAuthorities(authorities);
-      for (const directoryName of GENERATED_DIRECTORY_NAMES) {
-        const stats = fileTreeStats(requireOwnedDirectory(appDir, directoryName));
-        if (stats.entries > 0) {
-          throw new Error(`Purge invariant failed: ${directoryName} is not empty after the purge.`);
-        }
-      }
-
-      return {
-        ...plan,
-        backupDirectory,
-        databaseBackupPath,
-        jobOperationRowsDeleted,
-        jobsDeleted,
-        logicalDatabaseBytesAfter: fs.statSync(databasePath).size,
-        movedGeneratedFiles: plan.generatedFiles + plan.registeredLogFileCount,
-        noOp: false,
-      };
     } catch (error) {
-      throw new JobDataPurgeCommittedError(error, backupDirectory, databaseBackupPath);
+      compactionFailure = error;
     }
+
+    let logicalDatabaseBytesAfter: number;
+    try {
+      logicalDatabaseBytesAfter = verifyCommittedPurge(
+        db, appDir, databasePath, authorities, preservedBefore,
+      );
+    } catch (error) {
+      const verificationFailure = compactionFailure === null
+        ? error
+        : new AggregateError(
+          [compactionFailure, error],
+          "Post-commit database compaction and purge verification both failed.",
+        );
+      throw new JobDataPurgeCommittedError(
+        verificationFailure, backupDirectory, databaseBackupPath,
+      );
+    }
+
+    if (compactionFailure !== null) {
+      throw new JobDataPurgeCompactionError(
+        compactionFailure, backupDirectory, databaseBackupPath,
+      );
+    }
+
+    return {
+      ...plan,
+      backupDirectory,
+      databaseBackupPath,
+      jobOperationRowsDeleted,
+      jobsDeleted,
+      logicalDatabaseBytesAfter,
+      movedGeneratedFiles: plan.generatedFiles + plan.registeredLogFileCount,
+      noOp: false,
+    };
   } finally {
     db.close();
   }

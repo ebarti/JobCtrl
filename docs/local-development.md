@@ -190,7 +190,7 @@ corepack pnpm data:purge-jobs --app-dir /path/to/disposable-jobctrl-dir \
   --confirm DELETE-ALL-JOB-DATA
 ```
 
-The command backs up first, purges the exact-v9 local Job graph, archives live
+The command backs up first, purges the exact-v11 local Job graph, archives live
 generated resume/cover-letter entries and registered job logs, removes the
 job/Discovery execution ledger, source-quality summaries, job-stage operational
 attempts, and projection-rebuilding lifecycle events, compacts SQLite, and
@@ -199,6 +199,12 @@ change. It preserves unrelated Profile, source-control, contact/outreach,
 maintenance-workflow history, and non-job operational attempts. It is not a
 Temporal-history or secure-erasure command. The owning boundary is documented
 in [Storage](architecture/storage.md).
+
+If post-commit SQLite compaction alone fails, the command still verifies the
+logical purge and preservation boundary, reports that the purge committed, and
+prints the recovery bundle plus free-space and compaction guidance. If those
+post-commit invariants cannot be verified, keep JobCtrl stopped and follow the
+printed recovery-bundle restore guidance.
 
 #### Resolve Provisional Missing-History Executions
 

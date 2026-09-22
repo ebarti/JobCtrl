@@ -45,8 +45,13 @@ Verify a fresh heartbeat for the selected database refuses before backup, while
 stale or other-database heartbeats do not. Inject a commit from another SQLite
 connection after the backup and before deletion: the command must preserve that
 write and every generated file. Seed retained pending captures, source candidates,
-learning provenance/reviews, and role-feedback evidence; verify inventory, purge,
+learning provenance/reviews/tombstones, role-feedback evidence, and a non-job
+Contact Research workflow whose input retains a JobId; verify inventory, purge,
 and no-op output disclose their retained counts and preserve their stored values.
+Fail `VACUUM` after the deletion commit and prove the operator sees a committed,
+verified purge with bundle/free-space/compaction guidance and no restore or purge
+retry instruction. A separate post-commit invariant failure must retain restore
+guidance.
 
 <a id="required-commands"></a>
 
@@ -103,7 +108,7 @@ that its connection-object mutex is independent of `busy_timeout`. Run these pro
 behind subprocess deadlines so a failed concurrency assertion cannot retain a test
 runner thread. Confirm the real activity worker pool reuses a connection only on its
 own thread, and record the production connection budgets (10 seconds for a new WAL
-connection and 30 seconds for a freshly admitted exact-v10 connection). The short
+connection and 30 seconds for a freshly admitted exact-v11 connection). The short
 fixture timeout proves mechanism and recovery; it is not a production latency bound.
 
 Also repeat an already-claimed robots retry with a real enrichment lease, inject
