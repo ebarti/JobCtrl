@@ -52,7 +52,7 @@ historical source keys. Names do not change source-health or quarantine facts.
 Profile data, preferences, discovery controls, settings, and credentials have
 different owners even though the UI presents them together. See
 [Profile & Settings](api/profile-and-settings.md) for that ownership map and the
-routes used by autosave, resume preview, source administration, and Keychain-backed
+routes used by autosave, resume preview, source administration, and native-store-backed
 credentials.
 
 Target Search can request role suggestions through
@@ -264,8 +264,8 @@ dispatch does not require this confirmation because it cannot submit.
 
 ## Contacts
 
-Contact facts, supervised research, candidate confirmation, outreach drafts,
-send logs, and follow-ups share one route family. See
+Contact facts, reviewed CSV/vCard import, supervised research, candidate
+confirmation, outreach drafts, send logs, and follow-ups share one route family. See
 [Jobs & Materials](api/jobs-and-materials.md#contacts-and-outreach).
 
 <a id="contact-research"></a>

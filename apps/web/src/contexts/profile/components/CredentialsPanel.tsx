@@ -52,7 +52,7 @@ export function CredentialsPanel() {
   const configured = (keys: readonly CredentialKey[]) =>
     keys.some((key) => {
       const source = credentials.find((entry) => entry.key === key)?.effectiveSource;
-      return source === "environment" || source === "keychain" || source === "config";
+      return source === "environment" || source === "native_store" || source === "config";
     });
   const claudeConfigured = configured(CLAUDE_KEYS);
   const googleConfigured = configured(GOOGLE_KEYS);
@@ -260,7 +260,7 @@ function ProviderSetupNotice({
   if (store.unavailableReason === "inspection_failed") {
     return (
       <div className="banner credential-store-notice credential-store-notice--failure" role="alert">
-        JobCtrl could not safely inspect Keychain. Unlock Keychain Access, then reload before changing Claude or Google setup. Codex verification remains available.
+        JobCtrl could not safely inspect {nativeStoreLabel(store.nativeStore)}. Unlock the credential store, then reload before changing Claude or Google setup. Codex verification remains available.
       </div>
     );
   }
@@ -282,7 +282,7 @@ function ProviderSetupNotice({
       <AlertDescription>
         <p>
           Provider modes and non-secret connection fields are saved in config.json. API keys
-          stay in macOS Keychain. Restart JobCtrl after a change so provider processes reload
+          stay in {nativeStoreLabel(store.nativeStore)}. Restart JobCtrl after a change so provider processes reload
           both sources.
         </p>
         {providerStatusError ? (
@@ -393,9 +393,9 @@ function CodexProviderSetup({
     setLegacyMessage("");
     try {
       await removeLegacyKey.mutateAsync(removeLegacyOpenAiKeyBatch());
-      setLegacyMessage("Legacy OPENAI_API_KEY removed from JobCtrl Keychain.");
+      setLegacyMessage("Legacy OPENAI_API_KEY removed from the native credential store.");
     } catch {
-      setLegacyMessage("Could not remove the legacy Keychain value. Unlock Keychain Access and retry.");
+      setLegacyMessage("Could not remove the legacy value from the native credential store. Check credential store access and retry.");
     }
   }
 
@@ -408,7 +408,7 @@ function CodexProviderSetup({
       {legacyOpenAiKeyConfigured ? (
         <div className="provider-legacy-warning">
           <p>
-            A legacy <code>OPENAI_API_KEY</code> exists in JobCtrl Keychain. The Codex runtime does not use it directly; complete Codex enrollment first, then remove this unused copy.
+            A legacy <code>OPENAI_API_KEY</code> exists in the native credential store. The Codex runtime does not use it directly; complete Codex enrollment first, then remove this unused copy.
           </p>
           <Button
             disabled={removeLegacyKey.isPending}
@@ -476,7 +476,7 @@ function ReadOnlyProviderGuidance({
         </article>
       ))}
       {reason === "inspection_failed" ? (
-        <p className="provider-readonly-summary" role="alert">Keychain inspection must succeed before guided Claude and Google editing is restored.</p>
+        <p className="provider-readonly-summary" role="alert">Native credential store inspection must succeed before guided Claude and Google editing is restored.</p>
       ) : null}
     </>
   );
@@ -507,18 +507,18 @@ function CredentialPrivacyNotice({
   store?: CredentialsResponse["store"] | undefined;
 }) {
   const boundaryCopy = store?.available
-    ? "Claude and Google values saved here stay on this Mac in Keychain."
+    ? `Claude and Google values saved here stay in ${nativeStoreLabel(store.nativeStore)}.`
     : store?.unavailableReason === "unsupported_platform"
       ? "Claude and Google credentials are configured through the worker environment on this platform."
       : store?.unavailableReason === "inspection_failed"
-        ? "Claude and Google Keychain state is unavailable until inspection succeeds."
+        ? `Claude and Google ${nativeStoreLabel(store.nativeStore)} state is unavailable until inspection succeeds.`
         : "Provider credential storage status is loading.";
   const boundaryBadge = store?.available
-    ? "macOS Keychain"
+    ? nativeStoreLabel(store.nativeStore)
     : store?.unavailableReason === "unsupported_platform"
       ? "Process environment"
       : store?.unavailableReason === "inspection_failed"
-        ? "Keychain status unavailable"
+        ? "Credential-store status unavailable"
         : "Storage status loading";
   return (
     <DisclosureSection
@@ -549,7 +549,7 @@ function providerSetupSummary(
   if (!store) return "Checking provider setup";
   const readyCount = statuses.filter((status) => status.ready).length;
   const storage = store.available
-    ? "macOS Keychain"
+    ? nativeStoreLabel(store.nativeStore)
     : store.unavailableReason === "unsupported_platform"
       ? "Environment-managed secrets"
       : "Storage inspection unavailable";
@@ -607,10 +607,10 @@ function providerOwnership(
   if (entries.some((entry) => entry.effectiveSource === "environment")) return "launch environment";
   if (
     entries.some((entry) => entry.effectiveSource === "config") &&
-    entries.some((entry) => entry.effectiveSource === "keychain")
-  ) return "config.json + macOS Keychain";
+    entries.some((entry) => entry.effectiveSource === "native_store")
+  ) return `config.json + ${nativeStoreLabelFromCredentials(entries)}`;
   if (entries.some((entry) => entry.effectiveSource === "config")) return "config.json";
-  if (entries.some((entry) => entry.effectiveSource === "keychain")) return "macOS Keychain";
+  if (entries.some((entry) => entry.effectiveSource === "native_store")) return "native credential store";
   if (status?.mode && status.mode !== "api_key") return "external cloud credential chain";
   if (entries.some((entry) => entry.effectiveSource === "inspection_unknown")) return "inspection unavailable";
   return "not configured";
@@ -635,9 +635,23 @@ function inferConfiguredMode(
   fallback: string | null | undefined,
 ): string | null | undefined {
   const configuredModes = modeKeys.flatMap(([key, mode]) =>
-    ["environment", "keychain", "config"].includes(credentials.find((entry) => entry.key === key)?.effectiveSource ?? "")
+    ["environment", "native_store", "config"].includes(credentials.find((entry) => entry.key === key)?.effectiveSource ?? "")
       ? [mode]
       : [],
   );
   return configuredModes.length === 1 ? configuredModes[0] : fallback;
+}
+
+function nativeStoreLabel(store: CredentialsResponse["store"]["nativeStore"]): string {
+  if (store === "macos_keychain") return "macOS Keychain";
+  if (store === "windows_credential_manager") return "Windows Credential Manager";
+  if (store === "linux_secret_service") return "Linux Secret Service";
+  return "native credential store";
+}
+
+function nativeStoreLabelFromCredentials(
+  _credentials: CredentialsResponse["credentials"],
+): string {
+  // Credential entries deliberately do not repeat platform capability metadata.
+  return "native credential store";
 }

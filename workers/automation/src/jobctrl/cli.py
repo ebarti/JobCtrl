@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import os
 import sqlite3
 import time
 from datetime import datetime, timezone
@@ -42,6 +43,8 @@ app = typer.Typer(
 )
 capability_app = typer.Typer(help="Inspect and explicitly manage optional browser capabilities.")
 app.add_typer(capability_app, name="capability")
+credentials_app = typer.Typer(help="Manage provider credentials in the operating system's native store.")
+app.add_typer(credentials_app, name="credentials")
 console = Console()
 log = logging.getLogger(__name__)
 
@@ -53,6 +56,59 @@ _TIER2_STAGE_FEATURES = {
     "tailor": "resume tailoring",
     "cover": "cover letter generation",
 }
+
+
+@credentials_app.command("migrate")
+def migrate_credentials(
+    env_file: list[Path] = typer.Option(
+        [],
+        "--env-file",
+        help="Exact persistent env file to migrate; repeat for launcher precedence order.",
+    ),
+    marker: Optional[Path] = typer.Option(
+        None,
+        "--marker",
+        help="Secret-free completion marker path (defaults under JOBCTRL_DIR).",
+    ),
+) -> None:
+    """Move allowlisted persistent provider secrets into the native store once."""
+
+    from jobctrl import config
+    from jobctrl.native_credentials import (
+        NativeCredentialMigrationError,
+        migrate_persistent_env_credentials,
+    )
+    from jobctrl.runtime import is_bundled_runtime
+
+    paths = list(env_file)
+    if not paths:
+        paths.append(config.get_env_path())
+        if not is_bundled_runtime():
+            cwd_env = Path.cwd() / ".env"
+            if cwd_env not in paths:
+                paths.append(cwd_env)
+            configured = os.environ.get("JOBCTRL_USER_ENV_PATH", "").strip()
+            configured_path = Path(configured).expanduser() if configured else Path.home() / "JobCtrl" / ".env"
+            if configured_path not in paths:
+                paths.append(configured_path)
+    marker_path = marker or (config.APP_DIR / ".native-credentials-migrated.json")
+    try:
+        result = migrate_persistent_env_credentials(paths, marker_path)
+    except NativeCredentialMigrationError as exc:
+        console.print(f"[red]Credential migration failed:[/red] {exc}")
+        raise typer.Exit(code=1) from exc
+    except (OSError, UnicodeError) as exc:
+        console.print(
+            "[red]Credential migration failed:[/red] credential sources could not be inspected safely; no migration was completed."
+        )
+        raise typer.Exit(code=1) from exc
+    if result.already_completed:
+        console.print("Credential migration already completed; no files or native entries changed.")
+        return
+    console.print(
+        f"Credential migration completed: {len(result.migrated_keys)} native entr"
+        f"{'y' if len(result.migrated_keys) == 1 else 'ies'}, {len(result.source_files)} source file(s) inspected."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -3311,9 +3367,11 @@ def doctor() -> None:
         resolve_claude_apply_binary,
     )
     from jobctrl.runtime import is_bundled_runtime, payload_path
+    from jobctrl.native_credentials import native_store_label
 
-    keychain_diagnostics = load_env() or ()
+    credential_diagnostics = load_env() or ()
     bundled = is_bundled_runtime()
+    native_label = native_store_label()
 
     ok_mark = "[green]OK[/green]"
     fail_mark = "[red]MISSING[/red]"
@@ -3321,32 +3379,32 @@ def doctor() -> None:
 
     results: list[tuple[str, str, str]] = []  # (check, status, note)
 
-    loaded_from_keychain = sum(result.status == "loaded" for result in keychain_diagnostics)
-    unavailable_from_keychain = sum(result.status == "unavailable" for result in keychain_diagnostics)
-    unsupported_from_keychain = sum(result.status == "unsupported" for result in keychain_diagnostics)
-    explicit_provider_settings = sum(result.status == "explicit" for result in keychain_diagnostics)
-    if loaded_from_keychain:
+    loaded_from_native = sum(result.status == "loaded" for result in credential_diagnostics)
+    unavailable_from_native = sum(result.status == "unavailable" for result in credential_diagnostics)
+    unsupported_from_native = sum(result.status == "unsupported" for result in credential_diagnostics)
+    explicit_provider_settings = sum(result.status == "explicit" for result in credential_diagnostics)
+    if loaded_from_native:
         results.append(
             (
                 "provider credential source",
                 ok_mark,
-                f"{loaded_from_keychain} setting(s) loaded from macOS Keychain for this process; restart the worker after Settings changes",
+                f"{loaded_from_native} setting(s) loaded from {native_label} for this process; restart the worker after Settings changes",
             )
         )
-    elif unavailable_from_keychain:
+    elif unavailable_from_native:
         results.append(
             (
                 "provider credential source",
                 warn_mark,
-                "macOS Keychain fallback unavailable; use ~/.jobctrl/.env or shell environment",
+                f"{native_label} is unavailable; unlock or repair it, then restart. A non-empty inherited environment value remains an ephemeral override",
             )
         )
-    elif unsupported_from_keychain:
+    elif unsupported_from_native:
         results.append(
             (
                 "provider credential source",
                 "[dim]environment only[/dim]",
-                "native OS credential-store fallback is not shipped on this platform",
+                "native credential storage is unavailable on this platform; inherited environment values remain available for ephemeral runs",
             )
         )
     elif explicit_provider_settings:
@@ -3354,7 +3412,7 @@ def doctor() -> None:
             (
                 "provider credential source",
                 ok_mark,
-                "environment configuration takes precedence over macOS Keychain",
+                f"inherited environment configuration takes precedence over {native_label}",
             )
         )
     else:
@@ -3362,7 +3420,7 @@ def doctor() -> None:
             (
                 "provider credential source",
                 "[dim]optional[/dim]",
-                "no macOS Keychain fallback entries found; environment configuration remains available",
+                f"no {native_label} entries found; inherited environment configuration remains available for ephemeral runs",
             )
         )
 

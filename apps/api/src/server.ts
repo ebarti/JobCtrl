@@ -173,7 +173,7 @@ import {
   DISCOVERY_BROWSER_EXTENSION_UNAVAILABLE,
   commandForResolvedBlockCondition,
 } from "./blocked-condition-recovery.js";
-import { databaseExists, openDatabase } from "./db.js";
+import { databaseExists, openDatabase, openReadOnlyDatabase } from "./db.js";
 import { ConfigFileInputError } from "./config-file.js";
 import { getMarketCompensationEstimate } from "./market-compensation-estimates.js";
 import { getPostedCompensationFact } from "./posted-compensation-facts.js";
@@ -215,6 +215,7 @@ import {
 } from "./extension-auth.js";
 import {
   CredentialStoreUnavailableError,
+  CredentialValueUnsupportedError,
   CredentialManagedByEnvironmentError,
   KeychainCredentialStore,
   type CredentialStore,
@@ -3002,6 +3003,16 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
           message: error.message,
         };
       }
+      if (error instanceof CredentialValueUnsupportedError) {
+        void reply.code(400);
+        return {
+          ok: false,
+          error: "credential_value_unsupported",
+          key: error.key,
+          maxBytes: error.maxBytes,
+          message: error.message,
+        };
+      }
       if (error instanceof CredentialStoreUnavailableError) {
         void reply.code(error.reason === "unsupported_platform" ? 409 : 503);
         return {
@@ -3034,6 +3045,16 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
           error: "credential_managed_by_environment",
           key: error.key,
           source: "environment",
+          message: error.message,
+        };
+      }
+      if (error instanceof CredentialValueUnsupportedError) {
+        void reply.code(400);
+        return {
+          ok: false,
+          error: "credential_value_unsupported",
+          key: error.key,
+          maxBytes: error.maxBytes,
           message: error.message,
         };
       }
@@ -3201,7 +3222,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     if (!body) {
       return { ok: false, error: "invalid_contact_import" };
     }
-    return withWritableDb(reply, options.dbPath, (db) => {
+    const execute = (db: ReturnType<typeof openDatabase>) => {
       try {
         return importContacts(db, body);
       } catch (error) {
@@ -3211,7 +3232,10 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         }
         throw error;
       }
-    });
+    };
+    return "mode" in body && body.mode === "preview"
+      ? withReadOnlyDb(reply, options.dbPath, execute)
+      : withWritableDb(reply, options.dbPath, execute);
   });
 
   app.patch<{ Params: { contactId: string } }>("/v1/contacts/:contactId", async (request, reply) => {
@@ -4640,6 +4664,32 @@ function withDb<T>(
         message: error.message,
       };
     }
+    const opened = db !== null;
+    void reply.code(opened ? 500 : 503);
+    return {
+      ok: false,
+      error: opened ? "db_read_failed" : "db_open_failed",
+      message: error instanceof Error ? error.message : "Unable to read the JobCtrl database.",
+    };
+  } finally {
+    db?.close();
+  }
+}
+
+function withReadOnlyDb<T>(
+  reply: { code: (statusCode: number) => unknown },
+  dbPath: string,
+  read: (db: ReturnType<typeof openReadOnlyDatabase>) => T,
+): T | { ok: false; error: string; message: string } {
+  if (!databaseExists(dbPath)) {
+    void reply.code(503);
+    return { ok: false, error: "db_not_found", message: `No JobCtrl database found at ${dbPath}` };
+  }
+  let db: ReturnType<typeof openReadOnlyDatabase> | null = null;
+  try {
+    db = openReadOnlyDatabase(dbPath);
+    return read(db);
+  } catch (error) {
     const opened = db !== null;
     void reply.code(opened ? 500 : 503);
     return {

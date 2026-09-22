@@ -1814,10 +1814,14 @@ thresholds.
 
 Two supporting decisions land with it:
 
-- **CSV-only import.** User-imported contact lists are parsed from local CSV
-  files only; every imported fact is tagged `sourceKind = user_imported_list`,
-  `sourceRef = <filename>`, `captureMethod = manual`. vCard and other formats are
-  deferred (recorded in `docs/backlog.md`).
+- **User-imported contact lists.** Initially CSV-only. Amended 2026-09-22
+  for [issue #900](https://github.com/ebarti/JobCtrl/issues/900): the existing
+  workflow also accepts a bounded vCard 3.0/4.0 subset, with a read-only preview,
+  visible unsupported/malformed outcomes, duplicate detection, and explicit
+  confirmation. Every imported fact still uses `sourceKind = user_imported_list`,
+  `sourceRef = <filename>`, `captureMethod = manual`. The
+  [contact import guide](user/contacts-and-outreach.md#contact-import) owns the
+  supported fields and limitations. No send or enrichment transport is added.
 - **Generic event-log identity (schema v2).** `job_events` gains generic
   `entity_kind` / `entity_ref` columns so contact-only events carry honest
   identity (`entity_kind = 'contact'`, `entity_ref = <contactId>`) instead of

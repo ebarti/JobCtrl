@@ -588,7 +588,7 @@ Claude API/cloud auth, Google Gemini key, Google standard ADC, and an existing
 regular `GOOGLE_APPLICATION_CREDENTIALS` service-account file. Project metadata,
 missing credential files, consumer Claude OAuth, raw OpenAI keys, and deferred
 local/custom endpoints must not unlock readiness. Inject a failure at every
-Keychain batch boundary and prove exact rollback, then exercise provider-level
+native credential-store batch boundary and prove exact rollback, then exercise provider-level
 revocation, the three-card Settings route at desktop/mobile width, the demo
 read-only boundary, and a sole-provider draft plus synthesis path without making
 a live model call. For model selection, use deterministic SDK fakes to prove
@@ -602,6 +602,43 @@ environment-owned, prove its secret and removal controls stay read-only while
 another supported route remains editable. Saving that alternative must not
 displace the active environment route before the environment value is removed
 and the relevant process restarts.
+
+### Native credential storage and migration
+
+Credential-store changes require both adapter contract tests and native
+read/write/delete evidence on each available host. A mocked Windows or Linux
+adapter is contract evidence only; record unavailable native hosts explicitly.
+Use a unique synthetic service/account namespace and temporary configuration,
+never the user's `JobCtrl` entries or actual `.env` files. Verify deletion with
+an independent lookup and remove only fixture-owned entries.
+
+The opt-in `scripts/native-credentials-host.py` harness uses a unique synthetic
+namespace to exercise TypeScript writes, Python reads and migration against the
+real store. The `Native credential stores` CI workflow runs it on hosted macOS,
+Windows (Python 3.12), and Linux. Linux runs a temporary Secret Service inside
+an owned D-Bus session; Windows additionally checks restrictive source DACLs
+after migration and rollback. A queued or blocked job is not host evidence.
+From a prepared source checkout on macOS or Windows, run it with a Python
+environment containing `python-dotenv` and the installed Node dependencies.
+On Linux, use `dbus-run-session -- python scripts/native-credentials-host.py
+--linux-session` after installing `secret-tool` and `gnome-keyring-daemon`.
+
+Exercise the API's presence-only response, fixed key allowlist, unavailable
+versus absent distinction, environment-owned edit refusal, batch rollback and
+sanitized rollback failure. Verify that the Python reader resolves the same
+native target as the API writer, preserves non-empty inherited environment
+values, and observes edits only after a new process starts. Keep non-secret
+provider configuration in `config.json` and vendor-managed auth in its vendor
+store.
+
+For persistent `.env` migration, prove successful write/readback before source
+removal, preservation on store/verification/file-write failure, existing-store
+conflict handling, safe retry and completed-migration behavior. Include
+duplicate assignments, quoted values, malformed input, unrelated settings,
+concurrent file changes and symbolic links. Inspect captured output, errors,
+process arguments, completion records and temporary artifacts for synthetic
+secret leakage. Exercise the actual migration command and a fresh runtime
+reader, not only a helper with a fake store.
 
 ### Browser capability adoption gate
 

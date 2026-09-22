@@ -18,6 +18,10 @@ from pathlib import Path
 from typing import Literal
 
 from jobctrl.runtime import is_bundled_runtime, owned_env_path
+from jobctrl.native_credentials import (
+    NativeCredentialDiagnostic,
+    load_native_credential_fallbacks as _load_native_credential_fallbacks,
+)
 from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.domain.discovery.source_registry import (
     ATS_API_POLICY,
@@ -1959,6 +1963,16 @@ def load_macos_keychain_fallbacks(
     return tuple(diagnostics[key] for key in KEYCHAIN_PROVIDER_KEYS)
 
 
+def load_native_credential_fallbacks(
+    *,
+    env: MutableMapping[str, str] = os.environ,
+    system_name: str | None = None,
+) -> tuple[NativeCredentialDiagnostic, ...]:
+    """Fill missing provider secrets from the current OS native store."""
+
+    return _load_native_credential_fallbacks(env=env, system_name=system_name)
+
+
 def get_env_path() -> Path:
     """Return the state-owned environment file for the active runtime mode."""
 
@@ -2027,7 +2041,7 @@ def validate_live_worker_smoke_bootstrap(
     env[LIVE_WORKER_SMOKE_BOOTSTRAP_VALIDATED_ENV] = "1"
 
 
-def load_env() -> tuple[KeychainFallbackDiagnostic, ...]:
+def load_env() -> tuple[KeychainFallbackDiagnostic | NativeCredentialDiagnostic, ...]:
     """Load approved env files, then fill missing provider settings from Keychain.
 
     A source checkout retains its historical CWD ``.env`` fallback.  The
@@ -2054,7 +2068,7 @@ def load_env() -> tuple[KeychainFallbackDiagnostic, ...]:
         load_dotenv()
     load_provider_configuration()
     if _KEYCHAIN_FALLBACK_DIAGNOSTICS is None or not KEYCHAIN_REQUIRES_WORKER_RESTART:
-        _KEYCHAIN_FALLBACK_DIAGNOSTICS = load_macos_keychain_fallbacks()
+        _KEYCHAIN_FALLBACK_DIAGNOSTICS = load_native_credential_fallbacks()  # type: ignore[assignment]
     return _KEYCHAIN_FALLBACK_DIAGNOSTICS
 
 

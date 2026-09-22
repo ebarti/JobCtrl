@@ -38,7 +38,7 @@ function responseFor(
       configured,
       effectiveSource:
         state === "present"
-          ? "keychain"
+          ? "native_store"
           : state === "environment"
             ? "environment"
             : state === "absent"

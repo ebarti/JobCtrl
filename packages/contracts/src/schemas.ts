@@ -5179,7 +5179,9 @@ export interface DiscoverySettingsResponse {
 export interface CredentialsResponse {
   ok: true;
   store: {
-    kind: "config_and_macos_keychain";
+    kind: "config_and_native_credential_store";
+    nativeStore: "macos_keychain" | "windows_credential_manager" | "linux_secret_service" | null;
+    maxSecretBytes: number | null;
     available: boolean;
     unavailableReason: "inspection_failed" | "unsupported_platform" | null;
     requiresWorkerRestart: true;
@@ -5187,10 +5189,10 @@ export interface CredentialsResponse {
   credentials: Array<{
     key: CredentialKey;
     label: string;
-    /** Keychain inspection is reported separately from the effective owner. */
+    /** Native-store inspection is reported separately from the effective owner. */
     configured: boolean | null;
-    storage: "keychain" | "config";
-    effectiveSource: "environment" | "keychain" | "config" | "absent" | "inspection_unknown";
+    storage: "native_store" | "config";
+    effectiveSource: "environment" | "native_store" | "config" | "absent" | "inspection_unknown";
     editable: boolean;
   }>;
 }
@@ -5200,6 +5202,14 @@ export interface CredentialManagedByEnvironmentResponse {
   error: "credential_managed_by_environment";
   key: CredentialKey;
   source: "environment";
+  message: string;
+}
+
+export interface CredentialValueUnsupportedResponse {
+  ok: false;
+  error: "credential_value_unsupported";
+  key: SecretCredentialKey;
+  maxBytes: number;
   message: string;
 }
 
@@ -6390,13 +6400,63 @@ export const ContactUpdateRequestSchema = z
   .strict();
 export type ContactUpdateRequest = z.infer<typeof ContactUpdateRequestSchema>;
 
-export const ContactImportRequestSchema = z
+const ContactImportLegacyRequestSchema = z
   .object({
     filename: z.string().trim().min(1).max(300),
     csvText: z.string().min(1).max(1_000_000),
   })
   .strict();
+
+const ContactImportReviewedRequestSchema = z
+  .object({
+    filename: z.string().trim().min(1).max(300),
+    format: z.enum(["csv", "vcard"]),
+    mode: z.enum(["preview", "commit"]),
+    content: z.string().min(1).max(1_000_000),
+  })
+  .strict();
+
+/** Legacy CSV requests remain commits; new callers use the reviewed preview/commit flow. */
+export const ContactImportRequestSchema = z.union([
+  ContactImportReviewedRequestSchema,
+  ContactImportLegacyRequestSchema,
+]);
 export type ContactImportRequest = z.infer<typeof ContactImportRequestSchema>;
+
+export type ContactImportFormat = "csv" | "vcard";
+export type ContactImportMode = "preview" | "commit";
+export type ContactImportItemStatus = "ready" | "duplicate" | "invalid";
+
+export interface ContactImportIssue {
+  code: string;
+  message: string;
+  severity: "warning" | "error";
+  property: string | null;
+}
+
+export interface ContactImportPreviewAttribute {
+  kind: ContactAttributeKind;
+  value: string;
+}
+
+export interface ContactImportDuplicate {
+  scope: "existing" | "batch";
+  contactId: string | null;
+  itemIndex: number | null;
+}
+
+export interface ContactImportItem {
+  index: number;
+  status: ContactImportItemStatus;
+  displayName: string;
+  employer: string | null;
+  jobId: string | null;
+  role: ContactRole;
+  attributes: ContactImportPreviewAttribute[];
+  duplicate: ContactImportDuplicate | null;
+  issues: ContactImportIssue[];
+  importedContactId: string | null;
+}
 
 export const ContactListQuerySchema = z
   .object({
@@ -6428,9 +6488,19 @@ export interface ContactMutationResponse {
 
 export interface ContactImportResponse {
   ok: true;
+  format: ContactImportFormat;
+  mode: ContactImportMode;
   imported: number;
   skipped: number;
   contactIds: string[];
+  summary: {
+    total: number;
+    ready: number;
+    duplicates: number;
+    invalid: number;
+    unsupported: number;
+  };
+  items: ContactImportItem[];
 }
 
 export interface ContactDeleteResponse {

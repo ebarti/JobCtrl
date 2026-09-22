@@ -642,9 +642,10 @@ manager, or referrer — attached to a company or a specific job:
   in a Job Detail workspace, and add a contact with a role (recruiter, hiring
   manager, referrer, warm intro, or other), a link to the employer and/or the
   application, and facts like name, title, email, phone, or a note.
-- Or import a list from a CSV file. Each imported fact is tagged as coming from
-  that file (its filename is recorded as the source); rows that name neither an
-  employer nor an application are skipped.
+- Or open **Import contacts**, choose CSV or vCard, and paste the file contents
+  with its filename. Review the parsed facts, duplicates, and skipped records,
+  then explicitly confirm the import. Each imported fact retains the filename
+  as its source. See [supported contact imports](contacts-and-outreach.md#contact-import).
 - Every fact you store shows its **provenance** — where it came from — in the list
   and detail views, so you can always see the source of a name or email.
 

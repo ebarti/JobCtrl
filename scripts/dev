@@ -16,6 +16,7 @@
 #   scripts/dev status [name...]   Show pid, alive state, and worker health
 #   scripts/dev logs <name>        tail -f the current log (prior run: <name>.log.1)
 #   scripts/dev setup              Install/sync Node and Python dependencies
+#   scripts/dev migrate-credentials Move persistent provider keys into the native store once
 #   scripts/dev list               Print the process registry
 #   scripts/dev help               Show this message
 
@@ -175,7 +176,7 @@ ensure_not_running() {
 # observability and optional local UI integrations in the dev fleet.
 load_env_file() {
   local env_file
-  for env_file in "$HOME/.jobctrl/.env" "$ROOT/.env" "${JOBCTRL_USER_ENV_PATH:-$HOME/JobCtrl/.env}"; do
+  for env_file in "${JOBCTRL_DIR:-$HOME/.jobctrl}/.env" "$ROOT/.env" "${JOBCTRL_USER_ENV_PATH:-$HOME/JobCtrl/.env}"; do
     [[ -f "$env_file" ]] || continue
     set -a
     # shellcheck disable=SC1090,SC1091
@@ -579,6 +580,19 @@ cmd_setup() {
   ( cd "$ROOT" && uv --project workers/automation sync --extra dev )
 }
 
+cmd_migrate_credentials() {
+  local app_dir="${JOBCTRL_DIR:-$HOME/.jobctrl}"
+  local user_env="${JOBCTRL_USER_ENV_PATH:-$HOME/JobCtrl/.env}"
+  (
+    cd "$ROOT"
+    uv --project workers/automation run jobctrl credentials migrate \
+      --env-file "$app_dir/.env" \
+      --env-file "$ROOT/.env" \
+      --env-file "$user_env" \
+      --marker "$app_dir/.native-credentials-migrated.json"
+  )
+}
+
 cmd_list() {
   for n in $(known_process_names); do
     printf "%-10s %s\n" "$n" "$(process_command "$n")"
@@ -600,6 +614,7 @@ main() {
     status)  cmd_status "$@" ;;
     logs)    cmd_logs "$@" ;;
     setup)   cmd_setup ;;
+    migrate-credentials) cmd_migrate_credentials ;;
     list)    cmd_list ;;
     help|-h|--help) cmd_help ;;
     *) echo "dev: unknown command '$sub'" >&2; cmd_help; exit 2 ;;

@@ -170,18 +170,19 @@ normal Codex CLI home. JobCtrl never overwrites existing isolated auth or
 changes the normal home. The auth file remains outside
 `codex_home/workspace/`, the only JobCtrl Codex subtree available to
 prompt-driven reads.
-Anthropic and Gemini API keys plus cloud activation flags/non-secret identifiers
-can live in Keychain; AWS, Google, and Azure credential files remain in their
-vendor stores. After environment-file loading, Python loads a Keychain entry at
-startup only when that environment value is missing or empty. Any non-empty
-environment value already present wins. Restart JobCtrl after saving or removing
-a value.
+Anthropic and Gemini API keys use the native OS credential store; cloud
+activation flags and non-secret identifiers belong in `config.json`. AWS,
+Google, and Azure credential files remain in their vendor stores. After
+environment-file loading, Python loads native credentials at startup only when
+the corresponding environment value is missing or empty. Any non-empty
+inherited value wins. Restart JobCtrl after saving or removing a value.
 
-Windows Credential Manager and Linux Secret Service/keyring adapters are
-planned; those platforms use `.env` or shell variables today. The panel returns
-status, never stored values. Unknown (`inspection_failed`) means Keychain could
-not be inspected—not that a credential is absent. If Keychain is locked, unlock
-it and retry.
+The adapters use macOS Keychain, Windows Credential Manager, or Linux Secret
+Service. The panel returns status, never stored values. Unknown
+(`inspection_failed`) means the store could not be inspected, not that a
+credential is absent. Unlock or restore access to the native store and retry.
+See [Configuration](configuration.md) for legacy plaintext migration and its
+scope; migration does not erase old backups or vendor-managed auth files.
 
 ::: tip Protected by default
 The normal workspace is outside the repository. `.gitignore` and the release

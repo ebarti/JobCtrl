@@ -238,6 +238,242 @@ describe("contacts API", () => {
     }
   });
 
+  it("revalidates CSV job links at commit and still imports valid neighboring rows", async () => {
+    const { app, dbPath } = withTempApp();
+    const content = [
+      "name,employer,job_id",
+      "Ready,Review Company,",
+      `Linked,,${JOB_ID_TWO}`,
+      "Missing,,00000000-0000-4000-8000-000000000099",
+    ].join("\n");
+    const preview = (
+      await app.inject({
+        method: "POST",
+        url: "/v1/contacts/import",
+        payload: { filename: "links.csv", format: "csv", mode: "preview", content },
+      })
+    ).json() as ContactImportResponse;
+    expect(preview.summary).toMatchObject({ ready: 2, invalid: 1 });
+    expect(preview.items[2]?.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "invalid_job_link" }),
+    ]));
+
+    const db = new Database(dbPath);
+    db.pragma("foreign_keys = ON");
+    db.prepare("DELETE FROM jobs WHERE tenant_id = 'local' AND job_id = ?").run(JOB_ID_TWO);
+    db.close();
+
+    const committed = (
+      await app.inject({
+        method: "POST",
+        url: "/v1/contacts/import",
+        payload: { filename: "links.csv", format: "csv", mode: "commit", content },
+      })
+    ).json() as ContactImportResponse;
+    expect(committed).toMatchObject({ imported: 1, skipped: 2, summary: { ready: 1, invalid: 2 } });
+    const check = new Database(dbPath, { readonly: true });
+    expect((check.prepare("SELECT COUNT(*) AS count FROM contacts").get() as { count: number }).count).toBe(1);
+    check.close();
+  });
+
+  it("previews vCard 3.0/4.0 facts and outcomes without writing SQLite", async () => {
+    const { app, dbPath } = withTempApp();
+    const content = [
+      "BEGIN:VCARD",
+      "VERSION:3.0",
+      "FN:Dana\\, Reyes",
+      "ORG:Acme\\; Research;People",
+      "item1.EMAIL;TYPE=work:dana@acme.example",
+      "TITLE:VP Talent",
+      "PHOTO;VALUE=uri:https://images.example.test/dana.jpg",
+      "END:VCARD",
+      "BEGIN:VCARD",
+      "VERSION:4.0",
+      "N:Blake;Morgan;;;",
+      "ORG:Globex",
+      "TEL;VALUE=uri:tel:+1-555-0102",
+      "URL:https://globex.example/people/morgan",
+      "NOTE:Met at the unicode",
+      " conference",
+      "END:VCARD",
+    ].join("\r\n");
+    const before = new Database(dbPath, { readonly: true });
+    const beforeContacts = (before.prepare("SELECT COUNT(*) AS count FROM contacts").get() as { count: number }).count;
+    const beforeEvents = (before.prepare("SELECT COUNT(*) AS count FROM job_events").get() as { count: number }).count;
+    before.close();
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/contacts/import",
+      payload: { filename: "network.vcf", format: "vcard", mode: "preview", content },
+    });
+    expect(response.statusCode).toBe(200);
+    const preview = response.json() as ContactImportResponse;
+    expect(preview).toMatchObject({
+      format: "vcard",
+      mode: "preview",
+      imported: 0,
+      summary: { total: 2, ready: 2, duplicates: 0, invalid: 0, unsupported: 1 },
+    });
+    expect(preview.items[0]).toMatchObject({
+      displayName: "Dana, Reyes",
+      employer: "Acme; Research",
+      role: "other",
+      status: "ready",
+    });
+    expect(preview.items[0]?.attributes).toEqual(expect.arrayContaining([
+      { kind: "email", value: "dana@acme.example" },
+      { kind: "title", value: "VP Talent" },
+    ]));
+    expect(preview.items[0]?.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "unsupported_property", property: "PHOTO", severity: "warning" }),
+      expect.objectContaining({ code: "ignored_parameter", property: "EMAIL", severity: "warning" }),
+    ]));
+    expect(preview.items[1]?.attributes).toEqual(expect.arrayContaining([
+      { kind: "name", value: "Morgan Blake" },
+      { kind: "phone", value: "+1-555-0102" },
+      { kind: "profile_url", value: "https://globex.example/people/morgan" },
+      { kind: "note", value: "Met at the unicodeconference" },
+    ]));
+
+    const after = new Database(dbPath, { readonly: true });
+    expect((after.prepare("SELECT COUNT(*) AS count FROM contacts").get() as { count: number }).count).toBe(beforeContacts);
+    expect((after.prepare("SELECT COUNT(*) AS count FROM job_events").get() as { count: number }).count).toBe(beforeEvents);
+    after.close();
+  });
+
+  it("commits reviewed vCards with filename provenance and deduplicates replay", async () => {
+    const { app } = withTempApp();
+    const content = "BEGIN:VCARD\nVERSION:4.0\nFN:Dana Reyes\nORG:Acme\nEMAIL:dana@acme.example\nTITLE:VP Talent\nEND:VCARD";
+    const first = await app.inject({
+      method: "POST",
+      url: "/v1/contacts/import",
+      payload: { filename: "network.vcf", format: "vcard", mode: "commit", content },
+    });
+    const committed = first.json() as ContactImportResponse;
+    expect(committed).toMatchObject({ imported: 1, skipped: 0, summary: { ready: 1, duplicates: 0, invalid: 0 } });
+    const detail = await app.inject({ method: "GET", url: `/v1/contacts/${committed.contactIds[0]}` });
+    const contact = (detail.json() as { contact: ContactDetail }).contact;
+    expect(contact.role).toBe("other");
+    expect(contact.attributes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "title", value: "VP Talent" }),
+    ]));
+    for (const attribute of contact.attributes) {
+      expect(attribute.provenance).toMatchObject({
+        sourceKind: "user_imported_list",
+        sourceRef: "network.vcf",
+      });
+    }
+
+    const replay = await app.inject({
+      method: "POST",
+      url: "/v1/contacts/import",
+      payload: { filename: "network.vcf", format: "vcard", mode: "commit", content },
+    });
+    expect(replay.json()).toMatchObject({ imported: 0, skipped: 1, summary: { duplicates: 1 } });
+  });
+
+  it("reports malformed, unsupported encodings and ambiguous identifiers without importing", async () => {
+    const { app } = withTempApp();
+    await createContact(app, {
+      employer: "Acme",
+      attributes: [{ kind: "email", value: "same@acme.example" }],
+    });
+    await createContact(app, {
+      employer: "Acme",
+      attributes: [{ kind: "phone", value: "+1 555 0109" }],
+    });
+    const content = [
+      "BEGIN:VCARD",
+      "VERSION:4.0",
+      "FN;ENCODING=QUOTED-PRINTABLE:Dana=20Reyes",
+      "ORG:Acme",
+      "END:VCARD",
+      "BEGIN:VCARD",
+      "VERSION:4.0",
+      "FN:Ambiguous Person",
+      "ORG:Acme",
+      "EMAIL:same@acme.example",
+      "TEL:+1 555 0109",
+      "END:VCARD",
+      "BEGIN:VCARD",
+      "VERSION:2.1",
+      "FN:Old Card",
+      "ORG:Acme",
+      "END:VCARD",
+    ].join("\n");
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/contacts/import",
+      payload: { filename: "unsafe.vcf", format: "vcard", mode: "commit", content },
+    });
+    const result = response.json() as ContactImportResponse;
+    expect(result.imported).toBe(0);
+    expect(result.summary.invalid).toBe(3);
+    expect(result.items.map((item) => item.issues.map((issue) => issue.code))).toEqual([
+      expect.arrayContaining(["unsupported_encoding"]),
+      expect.arrayContaining(["ambiguous_identity"]),
+      expect.arrayContaining(["unsupported_version"]),
+    ]);
+  });
+
+  it("decodes escaped vCard text exactly once and rejects qualified TEL URI identity", async () => {
+    const { app } = withTempApp();
+    const escapedName = String.raw`Test\name`;
+    const content = String.raw`BEGIN:VCARD
+VERSION:4.0
+FN:Test\\name
+ORG:Acme
+TEL;VALUE=uri:tel:5550100;phone-context=office-a.example
+END:VCARD`;
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/contacts/import",
+      payload: { filename: "qualified.vcf", format: "vcard", mode: "preview", content },
+    });
+    const preview = response.json() as ContactImportResponse;
+    expect(preview.items[0]?.displayName).toBe(escapedName);
+    expect(preview.items[0]?.attributes.find((attribute) => attribute.kind === "name")?.value).toBe(escapedName);
+    expect(preview.items[0]).toMatchObject({ status: "invalid" });
+    expect(preview.items[0]?.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "unsupported_qualified_tel_uri", property: "TEL" }),
+    ]));
+  });
+
+  it("does not erase unsafe phone qualifiers when deduplicating", async () => {
+    const { app } = withTempApp();
+    await createContact(app, {
+      employer: "Acme",
+      attributes: [{ kind: "phone", value: "5550100 ext 1" }],
+    });
+    const content = [
+      "BEGIN:VCARD",
+      "VERSION:4.0",
+      "FN:Safe Plain Phone",
+      "ORG:Acme",
+      "TEL:+55501001",
+      "END:VCARD",
+      "BEGIN:VCARD",
+      "VERSION:4.0",
+      "FN:SIP Phone",
+      "ORG:Acme",
+      "TEL;VALUE=uri:sip:55501001@office.example",
+      "END:VCARD",
+    ].join("\n");
+    const result = (
+      await app.inject({
+        method: "POST",
+        url: "/v1/contacts/import",
+        payload: { filename: "phones.vcf", format: "vcard", mode: "preview", content },
+      })
+    ).json() as ContactImportResponse;
+    expect(result.items[0]).toMatchObject({ status: "ready", duplicate: null });
+    expect(result.items[1]).toMatchObject({ status: "invalid" });
+    expect(result.items[1]?.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "unsupported_tel_uri" }),
+    ]));
+  });
+
   it("preserves imported provenance on unrelated edits (INV-2 regression)", async () => {
     const { app } = withTempApp();
     const csvText =

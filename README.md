@@ -338,7 +338,7 @@ evidence, qualifications, and the complete capability matrix.
   remain inspectable, and restore creates a new append-only revision without
   re-scoring jobs or replacing artifacts.
 - Keep recruiter, hiring-manager, and referrer contact records per company or
-  application, each fact carrying its provenance, with CSV import. Draft
+  application, each fact carrying its provenance, with reviewed CSV and vCard import. Draft
   truthful, reviewable outreach messages under the same anti-fabrication gates
   as your resumes, then **you** send them yourself and **log the send** (date
   + channel) — the only way a thread is marked sent. Follow-up reminders are
@@ -542,8 +542,9 @@ By default, JobCtrl writes local data under `~/.jobctrl/`:
   independent files. Source launchers likewise keep both stores under the same
   `JOBCTRL_DIR` so restarting from another worktree cannot split their runtime
   identity.
-- `.env` — plaintext, cross-platform fallback for provider/API credentials; it
-  is not encrypted at rest.
+- `.env` — legacy/runtime environment configuration; allowlisted persistent
+  provider secrets can be migrated to the native OS credential store. Remaining
+  contents are plaintext.
 - `config.json` — non-secret runtime settings, including `dailyBudgetUsd`,
   apply controls, provider-scoped model IDs, compensation source policy, and
   browser capability choices. It never stores provider credentials or feed
@@ -566,9 +567,8 @@ By default, JobCtrl writes local data under `~/.jobctrl/`:
   bundled channel is public, verified paired lifecycle snapshots.
 
 Unless noted otherwise, those paths are relative to `JOBCTRL_DIR`, whose
-default is `~/.jobctrl/`. On macOS, the three provider settings supported by
-the web credential panel can live in the system Keychain instead of this
-directory.
+default is `~/.jobctrl/`. Allowlisted secrets entered in the web credential
+panel live in the native OS credential store outside this directory.
 
 The daily digest is local-only: `jobctrl digest` and the Dashboard panel read
 from `jobctrl.db` without sending notifications; only the explicit
@@ -761,8 +761,8 @@ different CLI surfaces. Source contributors can use
 ## Configuration
 
 Configuration comes from SQLite-backed profile/discovery stores,
-`config.json` Settings values, credential environment variables
-(`~/.jobctrl/.env`, repo `.env`, or the shell), and package-shipped source
+`config.json` Settings values, native OS credential stores, inherited
+environment overrides, legacy `.env` compatibility, and package-shipped source
 registries. Compensation-source policy is managed from Settings and stored
 locally; it is not a feed connection. Start with [.env.example](.env.example); full reference:
 [Configuration](https://jobctrl.dev/user/configuration).
@@ -779,9 +779,8 @@ value, while worker activity slots remain the outer execution-capacity bound.
 Every control on **Settings → General** includes contextual help and a link to
 its owning product documentation.
 
-Providers that accept environment credentials can use the plaintext
-`~/.jobctrl/.env` file or the process environment. On macOS, **Settings →
-Credentials** guides one of three providers: an authenticated Codex CLI,
+**Settings → Credentials** provides persistent native credential storage and
+guides one of three providers: an authenticated Codex CLI,
 Claude Agent SDK (Anthropic API key or supported cloud-provider credentials),
 or Google (Gemini key or Vertex AI ADC). One ready provider is sufficient for
 all core AI stages; a second provider is optional. After a provider is ready,
@@ -791,20 +790,20 @@ runtime; JobCtrl does not maintain a hand-written model list. A saved model neve
 selects another provider. New adapters resolve models in this order: an
 explicit non-default workflow model, the saved model for the selected ready
 provider, then that provider's default. Secret values managed by the
-panel are stored in the system Keychain, while AWS, Google, and Azure credential
+panel are stored in macOS Keychain, Windows Credential Manager, or Linux Secret
+Service, while AWS, Google, and Azure credential
 files remain owned by their vendor CLIs. At Python process startup, a non-empty
-environment value takes precedence over the corresponding Keychain entry.
-Claude, Google, and CapSolver Keychain edits are not hot-reloaded by Python, so
+environment value takes precedence over the corresponding native credential entry.
+Claude, Google, and CapSolver credential edits are not hot-reloaded by Python, so
 restart the relevant process after saving or removing one. Preferred models,
 browser capabilities, and extension pairing do not require that restart.
-Native Windows Credential Manager and Linux Secret
-Service/keyring adapters are planned, not shipped; use `.env` or the shell on
-those platforms today. The macOS panel
-distinguishes **not configured** from **status unknown**: an unknown
-(`inspection_failed`) result means Keychain could not be inspected, not that the
-entry is absent. Unlock Keychain if it is locked, then retry; operational
-save/remove failures return a generic unavailable message rather than raw
-Keychain output.
+The panel distinguishes **not configured** from **status unknown**: an unknown
+(`inspection_failed`) result means the native store could not be inspected,
+not that the entry is absent. Unlock or restore access to the store and retry;
+operational save/remove failures return sanitized errors. Inherited environment
+credentials remain available for ephemeral CI/headless use. See
+[Configuration](https://jobctrl.dev/user/configuration) for one-time legacy
+`.env` migration, prerequisites, and failure recovery.
 
 <details>
 <summary><b>Common variables</b></summary>

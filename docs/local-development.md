@@ -75,6 +75,34 @@ uv --project workers/automation run jobctrl setup --non-interactive --json --ski
 
 ## Run
 
+### Native credential migration
+
+Stop the owned development stack, then run:
+
+```bash
+scripts/dev migrate-credentials
+```
+
+This invokes `jobctrl credentials migrate` before sourcing any environment
+file. It selects `$JOBCTRL_DIR/.env` (default `~/.jobctrl/.env`), the checkout's
+`.env`, then `JOBCTRL_USER_ENV_PATH` (default `~/JobCtrl/.env`), in the same order
+as the development launcher. It migrates only the fixed guided secret allowlist
+and writes a secret-free completion marker under `JOBCTRL_DIR`. Inherited shell
+values are never persisted. Restart the stack after success; already-running
+services retain their old inherited values.
+
+For a source CLI invocation, `uv --project workers/automation run jobctrl
+credentials migrate` defaults to the active owned `.env`, the current
+directory's `.env`, and `JOBCTRL_USER_ENV_PATH` (default `~/JobCtrl/.env`).
+Use repeated `--env-file` arguments when an exact source set is required.
+See [Configuration](user/configuration.md#migrating-legacy-plaintext-secrets)
+for conflict handling, preservation, scope, and the one-time marker.
+
+QA must use uniquely owned temporary files and a synthetic native-store
+namespace. Never run a migration test against these default personal paths.
+
+### Start the development stack
+
 ```bash
 corepack pnpm dev
 ```
@@ -609,7 +637,7 @@ against one disposable synthetic workspace. Its single Cover workflow uses a
 loopback-only deterministic model boundary and proves queued dispatch, real
 worker lifecycle/projection events, API/SSE identity correlation, and terminal
 browser state without provider spend or an application submission. A
-capability-validated worker bootstrap ignores dotenv, Keychain, and persisted
+capability-validated worker bootstrap ignores dotenv, native credential stores, and persisted
 provider connections, asserts isolated credential homes, and enables only the
 authenticated loopback provider route. The direct Node launcher uses the same
 credential list before its first child process, so Corepack, pnpm, and

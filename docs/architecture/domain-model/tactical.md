@@ -528,7 +528,7 @@ Phase 1 realises the `Contact` aggregate; Phase 2 adds the supervised
 - `ContactId` is immutable once assigned.
 
 **Lifecycle:**
-1. Created from user input or a CSV import row.
+1. Created from user input or a confirmed CSV/vCard import record.
 2. Updated by user edits (link, role, or attributes; `ContactId` and `createdAt` are immutable).
 3. Soft-deleted when the user deletes it.
 
@@ -548,7 +548,7 @@ Phase 1 realises the `Contact` aggregate; Phase 2 adds the supervised
 
 **Domain Services:** None in Phase 1. (The pure `WarmIntroMatcher` lands with warm-intro identification in a later phase.)
 
-**CSV import:** the import use case tags every imported fact with
+**CSV/vCard import:** the import use case tags every imported fact with
 `sourceKind = user_imported_list`, `sourceRef = <filename>`,
 `captureMethod = manual`; a row that links to neither an employer nor an
 application is skipped.

@@ -470,7 +470,7 @@ forms, and timelines are imported from the contexts that own them.
 
 **Purpose:** Surface the `Contact` aggregate — keep recruiter / hiring-manager /
 referrer contact records per company or application, render every fact with its
-provenance, and import contacts from a CSV file — plus supervised research
+provenance, and import contacts from CSV or vCard text — plus supervised research
 (Phase 2) and the truthful outreach draft **review** surface (Phase 3). There is
 **no sending** in the UI: drafts terminate at an approved, copyable message, and
 the product never sends.
@@ -488,7 +488,7 @@ the product never sends.
 - Contact mutation hooks via `createOptimisticMutation` with real patchers + settle sets: `useCreateContactMutation`, `useUpdateContactMutation`, `useDeleteContactMutation`, `useImportContactsMutation`.
 - Query keys: `outreachKeys` (hierarchical, tenant-first), re-exported through `contexts/operations/queryKeys.ts`.
 - Handlers: `contexts/outreach/handlers.ts`, registered in the invalidation router.
-- Forms & store: TanStack Form + Zod `safeParse` (`contact-form`, `contact-import-wizard`); a Zustand `persist` store (`outreach-import-store`, key `jh:outreach-import`) for the multi-step CSV-import wizard.
+- Forms & store: TanStack Form + Zod `safeParse` (`contact-form`, `contact-import-wizard`); a Zustand `persist` store (`outreach-import-store`, key `jh:outreach-import`) for the multi-step CSV/vCard import wizard.
 - Components: `<ContactRoleBadge>` (legacy-named compact role status), `<ContactProvenanceList>` / `<ContactProvenanceSummary>` (render provenance for every fact — INV-2), the create / edit / delete / import buttons, and `<JobContactsPanel>` (composed into the Jobs detail workspace).
 - Outreach draft read + mutation hooks (Phase 3): `useOutreachThreadQuery`; `useGenerateDraftMutation`, `useReviseDraftMutation`, `useApproveDraftMutation`, `useRejectDraftMutation` (via `createOptimisticMutation` with real patchers + settle sets).
 - Draft review components (Phase 3): `<OutreachThreadPanel>` (the review surface), `<DraftGateResultsPanel>`, `<DraftClaimProvenanceList>`, `<DraftStatusBadge>`, the `<GenerateDraftButton>` / `<ApproveDraftButton>` / `<RejectDraftButton>` / `<CopyDraftButton>` actions, and the `revise-draft-form`.

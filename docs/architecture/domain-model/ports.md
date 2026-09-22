@@ -221,7 +221,7 @@ supervised-research ports; Phase 3 adds the `OutreachThread` aggregate's ports
 |---|---|---|
 | **Driving** | `CreateContactUseCase` | Create a contact linked to an employer and/or application, with user-entered provenance |
 | **Driving** | `UpdateContactUseCase` | Update a contact's link, role, or attributes |
-| **Driving** | `ImportContactsUseCase` | Import a user-provided CSV contact list (CSV only), tagging every fact `user_imported_list` |
+| **Driving** | `ImportContactsUseCase` | Preview and explicitly import user-provided CSV/vCard contacts, tagging every fact `user_imported_list` |
 | **Driving** | `DeleteContactUseCase` | Soft-delete a contact |
 | **Driving** | `RunContactResearchUseCase` | Start a supervised research run: authorise sources (INV-3), fetch allowed public pages through the gateway, propose candidates in `needs_review` (INV-4) |
 | **Driving** | `ConfirmContactCandidateUseCase` | Promote a `needs_review` candidate into a stored `Contact` fact, preserving provenance (INV-2) |

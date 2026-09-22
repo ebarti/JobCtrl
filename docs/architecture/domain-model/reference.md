@@ -183,7 +183,7 @@ context — or cross-cutting platform concern — that owns each term.
 | **ScoreBreakdown** | Scoring | Structured explanation of why a job received its fit score. |
 | **ScoreCorrection** | Scoring | A user-provided override of an LLM-generated score, with rationale. |
 | **SearchStrategy** | Discovery | The extraction method used to find jobs: `jobspy`, `workday_api`, `smart_extract`, `manual`. |
-| **SecretPort** | Platform (Secrets) | A driven port for retrieving per-tenant credentials. Local adapter reads `.env`/Keychain; cloud adapter reads AWS Secrets Manager. |
+| **SecretPort** | Platform (Secrets) | A driven port for retrieving per-tenant credentials. Local adapters read native OS credential stores with environment precedence; cloud adapter reads AWS Secrets Manager. |
 | **Source** | Discovery | The origin board or career site where a job was found (e.g., LinkedIn, Greenhouse). |
 | **Stage** | Pipeline Orchestration | A named step in the pipeline: `discover`, `enrich`, `score`, `tailor`, `cover`, `pdf`, `apply`. |
 | **StageState** | Pipeline Orchestration | The current status of a job within a stage. The domain model represents each variant as a typed value (PascalCase: `Pending`, `Queued`, `Running`, `Succeeded`, `Failed`, `Blocked`, `Skipped`, `Exhausted`, `NeedsVerification`, `Stale`, `Canceled` — eleven variants, see §4.7). The lowercase forms (`pending`, `queued`, `running`, `succeeded`, `failed`, `blocked`, `skipped`, `exhausted`, `needs_verification`, `stale`, `canceled`) are the serialized representation written to `job_stage_states.state`, emitted in event payloads, and exposed through the API DTOs. |

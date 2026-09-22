@@ -279,7 +279,7 @@ def test_load_env_probes_keychain_only_once_per_process(monkeypatch: pytest.Monk
     monkeypatch.setattr(config, "ENV_PATH", tmp_path / ".env")
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(config, "_KEYCHAIN_FALLBACK_DIAGNOSTICS", None)
-    monkeypatch.setattr(config, "load_macos_keychain_fallbacks", load_once)
+    monkeypatch.setattr(config, "load_native_credential_fallbacks", load_once)
 
     first = config.load_env()
     second = config.load_env()

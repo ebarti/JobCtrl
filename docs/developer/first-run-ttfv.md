@@ -10,6 +10,18 @@ The owner runs this protocol because it can spend LLM credits and may require
 interactive vendor auth. Agents may dry-check the probe logic against an
 already-running stack, but must not run the real baseline unattended.
 
+## Published-release acceptance boundary
+
+This recorder currently measures the **source-install** path: its gateable
+commands are `scripts/install`, `uv` and `corepack pnpm dev`. Custom native
+installer/start commands are rejected by its gate checks. It is not yet a
+published-byte curl/Homebrew acceptance recorder; neither a synthetic run nor
+an overridden command closes that gap. The
+[published-byte reconciliation](../publish-checklist.md#published-byte-reconciliation--2026-09-22)
+tracks the missing native-release binding and execution evidence. Preserve the
+real-path criteria below when adapting the recorder; this note changes no
+thresholds or acceptance rules.
+
 ## Stop Conditions
 
 T0 is the instant the wrapper starts the first install command,

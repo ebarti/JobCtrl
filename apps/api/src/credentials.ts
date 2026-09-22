@@ -17,6 +17,16 @@ import {
   SecretCredentialKeys,
 } from "./contracts.js";
 import { isRecord, readConfigObject, updateConfigObject } from "./config-file.js";
+import {
+  createLinuxSecretServiceRunner,
+  createWindowsCredentialManagerRunner,
+  nativeCredentialMaxBytes,
+  nativeCredentialValueSupported,
+  nativeStoreKind,
+  NATIVE_CREDENTIAL_COMMAND_TIMEOUT_MS,
+  WINDOWS_CREDENTIAL_COMMAND_TIMEOUT_MS,
+  type NativeCredentialCommandRunner,
+} from "./native-credential-store.js";
 
 export const KEYCHAIN_SERVICE = "JobCtrl";
 export const KEYCHAIN_SECURITY_BINARY = "/usr/bin/security";
@@ -25,7 +35,7 @@ export const KEYCHAIN_REQUIRES_WORKER_RESTART = true as const;
 /** Hard ceiling for every macOS `security` invocation, mirrored by the Python runtime. */
 export const KEYCHAIN_COMMAND_TIMEOUT_MS = 2_000;
 
-const MAX_CAPTURED_OUTPUT_CHARS = CREDENTIAL_VALUE_MAX_LENGTH + 2;
+const MAX_CAPTURED_OUTPUT_CHARS = CREDENTIAL_VALUE_MAX_LENGTH * 8 + 4_096;
 const CONFIRMED_NOT_FOUND_MESSAGES = new Set([
   "The specified item could not be found.",
   "The specified item could not be found in the keychain.",
@@ -110,11 +120,11 @@ export type CredentialStoreFailureReason =
 const CREDENTIAL_STORE_MESSAGES: Record<CredentialStoreFailureReason, string> =
   {
     unsupported_platform:
-      "macOS Keychain credential editing is unavailable on this platform.",
+      "Native credential storage is unavailable on this platform.",
     operational_failure:
-      "macOS Keychain is temporarily unavailable. Unlock Keychain Access and retry.",
+      "The native credential store is temporarily unavailable. Unlock it and retry.",
     partial_failure:
-      "Credential update failed and Keychain recovery was incomplete. Provider credentials may be partially updated; inspect Keychain before retrying.",
+      "Credential update failed and native-store recovery was incomplete. Provider credentials may be partially updated; inspect the native credential store before retrying.",
   };
 
 export class CredentialStoreUnavailableError extends Error {
@@ -137,6 +147,18 @@ export class CredentialManagedByEnvironmentError extends Error {
   }
 }
 
+export class CredentialValueUnsupportedError extends Error {
+  readonly key: SecretCredentialKey;
+  readonly maxBytes: number;
+
+  constructor(key: SecretCredentialKey, maxBytes: number) {
+    super(`This credential exceeds the native store's secure ${maxBytes}-byte input limit.`);
+    this.name = "CredentialValueUnsupportedError";
+    this.key = key;
+    this.maxBytes = maxBytes;
+  }
+}
+
 class SecurityCommandRunnerError extends Error {
   constructor(message: string) {
     super(message);
@@ -147,9 +169,11 @@ class SecurityCommandRunnerError extends Error {
 export interface KeychainCredentialStoreOptions {
   platform?: NodeJS.Platform;
   runSecurity?: SecurityCommandRunner;
+  runNative?: NativeCredentialCommandRunner;
   commandTimeoutMs?: number;
   env?: NodeJS.ProcessEnv;
   configPath?: string;
+  service?: string;
 }
 
 type KeychainSnapshot =
@@ -159,18 +183,34 @@ type KeychainSnapshot =
 export class KeychainCredentialStore implements CredentialStore {
   private readonly platform: NodeJS.Platform;
   private readonly runSecurity: SecurityCommandRunner;
+  private readonly runNative: NativeCredentialCommandRunner | null;
   private readonly commandTimeoutMs: number;
   private readonly env: NodeJS.ProcessEnv;
   private readonly configPath: string;
+  private readonly service: string;
 
   constructor(options: KeychainCredentialStoreOptions = {}) {
     this.platform = options.platform ?? process.platform;
     this.runSecurity = options.runSecurity ?? defaultSecurityCommandRunner;
+    this.runNative = options.runNative ?? (
+      this.platform === "linux"
+        ? createLinuxSecretServiceRunner()
+        : this.platform === "win32"
+          ? createWindowsCredentialManagerRunner(options.env ?? process.env)
+          : null
+    );
     this.commandTimeoutMs = normalizeTimeout(
-      options.commandTimeoutMs ?? KEYCHAIN_COMMAND_TIMEOUT_MS,
+      options.commandTimeoutMs ?? (
+        this.platform === "darwin"
+          ? KEYCHAIN_COMMAND_TIMEOUT_MS
+          : this.platform === "win32"
+            ? WINDOWS_CREDENTIAL_COMMAND_TIMEOUT_MS
+          : NATIVE_CREDENTIAL_COMMAND_TIMEOUT_MS
+      ),
     );
     this.env = options.env ?? process.env;
     this.configPath = options.configPath ?? defaultConfigPath(this.env);
+    this.service = options.service ?? KEYCHAIN_SERVICE;
   }
 
   async list(): Promise<CredentialsResponse> {
@@ -181,14 +221,14 @@ export class KeychainCredentialStore implements CredentialStore {
     for (const key of ProviderConfigurationKeys) {
       configured.set(key, Boolean(providerConfiguration[key]?.trim()));
     }
-    const keychainConfigured = this.supported
+    const nativeConfigured = this.supported
       ? await Promise.all(SecretCredentialKeys.map((key) => this.inspect(key)))
       : SecretCredentialKeys.map(() => null);
     SecretCredentialKeys.forEach((key, index) => {
-      configured.set(key, keychainConfigured[index] ?? null);
+      configured.set(key, nativeConfigured[index] ?? null);
     });
     const unavailableReason = this.supported
-      ? keychainConfigured.some((value) => value === null)
+      ? nativeConfigured.some((value) => value === null)
         ? "inspection_failed" as const
         : null
       : "unsupported_platform" as const;
@@ -237,11 +277,17 @@ export class KeychainCredentialStore implements CredentialStore {
     if (secretOperations.length > 0) {
       this.ensureSupported();
     }
+    for (const operation of secretOperations) {
+      if (operation.operation === "set") this.ensureValueSupported(operation.key, operation.value);
+    }
     const snapshots = new Map<SecretCredentialKey, KeychainSnapshot>();
     for (const operation of secretOperations) {
       if (!snapshots.has(operation.key)) {
         snapshots.set(operation.key, await this.snapshot(operation.key));
       }
+    }
+    for (const [key, snapshot] of snapshots) {
+      if (snapshot.configured) this.ensureValueSupported(key, snapshot.value);
     }
 
     try {
@@ -271,16 +317,14 @@ export class KeychainCredentialStore implements CredentialStore {
   }
 
   private async snapshot(key: SecretCredentialKey): Promise<KeychainSnapshot> {
-    const result = await this.execute([
-      "find-generic-password",
-      "-s",
-      KEYCHAIN_SERVICE,
-      "-a",
-      keychainAccount(key),
-      "-w",
-    ]);
+    const result = await this.executeNative("read", key);
     if (result.code === 0) {
-      const value = stripTerminalLineEnding(result.stdout);
+      const value = this.platform === "darwin"
+        ? parseMacosTypedPassword(result.stderr)
+        : result.stdout;
+      if (value === null) {
+        throw new CredentialStoreUnavailableError("operational_failure");
+      }
       if (!CredentialUpdateRequestSchema.safeParse({ key, value }).success) {
         throw new CredentialStoreUnavailableError("operational_failure");
       }
@@ -311,31 +355,23 @@ export class KeychainCredentialStore implements CredentialStore {
   }
 
   private async setWithoutInspection(key: SecretCredentialKey, value: string): Promise<void> {
-    const result = await this.execute(
-      [
-        "add-generic-password",
-        "-s",
-        KEYCHAIN_SERVICE,
-        "-a",
-        keychainAccount(key),
-        "-U",
-        "-w",
-      ],
-      value,
-    );
+    this.ensureValueSupported(key, value);
+    const result = await this.executeNative("set", key, value);
     if (result.code !== 0) {
       throw new CredentialStoreUnavailableError("operational_failure");
     }
   }
 
+  private ensureValueSupported(key: SecretCredentialKey, value: string): void {
+    if (nativeCredentialValueSupported(this.platform, value)) return;
+    throw new CredentialValueUnsupportedError(
+      key,
+      nativeCredentialMaxBytes(this.platform) ?? CREDENTIAL_VALUE_MAX_LENGTH,
+    );
+  }
+
   private async deleteWithoutInspection(key: SecretCredentialKey): Promise<void> {
-    const result = await this.execute([
-      "delete-generic-password",
-      "-s",
-      KEYCHAIN_SERVICE,
-      "-a",
-      keychainAccount(key),
-    ]);
+    const result = await this.executeNative("delete", key);
     if (result.code !== 0 && !isConfirmedNotFound(result)) {
       throw new CredentialStoreUnavailableError("operational_failure");
     }
@@ -343,19 +379,57 @@ export class KeychainCredentialStore implements CredentialStore {
 
   private async inspect(key: SecretCredentialKey): Promise<boolean | null> {
     try {
-      const result = await this.execute([
-        "find-generic-password",
-        "-s",
-        KEYCHAIN_SERVICE,
-        "-a",
-        keychainAccount(key),
-      ]);
+      const result = await this.executeNative("inspect", key);
       if (result.code === 0) {
         return true;
       }
       return isConfirmedNotFound(result) ? false : null;
     } catch {
       return null;
+    }
+  }
+
+  /** Private-value seam for migration and owned native QA only. */
+  async readForInternalUse(key: SecretCredentialKey): Promise<string | null> {
+    this.ensureSupported();
+    const snapshot = await this.snapshot(key);
+    return snapshot.configured ? snapshot.value : null;
+  }
+
+  private async executeNative(
+    operation: "inspect" | "read" | "set" | "delete",
+    key: SecretCredentialKey,
+    value?: string,
+  ): Promise<SecurityCommandResult> {
+    if (this.platform === "darwin") {
+      const args = operation === "set"
+        ? ["add-generic-password", "-s", this.service, "-a", keychainAccount(key), "-U", "-w"]
+        : operation === "delete"
+          ? ["delete-generic-password", "-s", this.service, "-a", keychainAccount(key)]
+          : [
+              "find-generic-password",
+              "-s",
+              this.service,
+              "-a",
+              keychainAccount(key),
+              ...(operation === "read" ? ["-g"] : []),
+            ];
+      return this.execute(args, value);
+    }
+    if (!this.runNative) {
+      throw new CredentialStoreUnavailableError("unsupported_platform");
+    }
+    try {
+      const result = await withTimeout(
+        this.runNative({ key, operation, service: this.service, ...(value === undefined ? {} : { value }) }, this.commandTimeoutMs),
+        this.commandTimeoutMs,
+      );
+      if (!isSecurityCommandResult(result)) {
+        throw new SecurityCommandRunnerError("Native credential command returned an invalid result.");
+      }
+      return result;
+    } catch {
+      throw new CredentialStoreUnavailableError("operational_failure");
     }
   }
 
@@ -387,7 +461,7 @@ export class KeychainCredentialStore implements CredentialStore {
   }
 
   private get supported(): boolean {
-    return this.platform === "darwin";
+    return nativeStoreKind(this.platform) !== null;
   }
 
   private response(
@@ -397,7 +471,9 @@ export class KeychainCredentialStore implements CredentialStore {
     return {
       ok: true,
       store: {
-        kind: "config_and_macos_keychain",
+        kind: "config_and_native_credential_store",
+        nativeStore: nativeStoreKind(this.platform),
+        maxSecretBytes: nativeCredentialMaxBytes(this.platform),
         available: unavailableReason === null,
         unavailableReason,
         requiresWorkerRestart: KEYCHAIN_REQUIRES_WORKER_RESTART,
@@ -406,7 +482,7 @@ export class KeychainCredentialStore implements CredentialStore {
         key,
         label: LABELS[key],
         configured: configured.get(key) ?? null,
-        storage: isProviderConfigurationKey(key) ? "config" as const : "keychain" as const,
+        storage: isProviderConfigurationKey(key) ? "config" as const : "native_store" as const,
         effectiveSource: this.effectiveSource(key, configured.get(key) ?? null),
         editable: isProviderConfigurationKey(key)
           ? true
@@ -423,7 +499,7 @@ export class KeychainCredentialStore implements CredentialStore {
       return configured ? "config" : "absent";
     }
     if (this.environmentOwned(key)) return "environment";
-    if (configured === true) return "keychain";
+    if (configured === true) return "native_store";
     if (configured === false) return "absent";
     return "inspection_unknown";
   }
@@ -460,6 +536,8 @@ export class KeychainCredentialStore implements CredentialStore {
     });
   }
 }
+
+export { KeychainCredentialStore as NativeCredentialStore };
 
 type ProviderConfigurationValues = Partial<Record<ProviderConfigurationKey, string>>;
 
@@ -737,12 +815,16 @@ function validSensitiveInputContract(
   return (
     args.length === 7 &&
     args[1] === "-s" &&
-    args[2] === KEYCHAIN_SERVICE &&
+    validCredentialService(args[2]) &&
     args[3] === "-a" &&
     args[5] === "-U" &&
     args.at(-1) === "-w" &&
     parsedInput.success
   );
+}
+
+function validCredentialService(value: string | undefined): boolean {
+  return value === KEYCHAIN_SERVICE || /^JobCtrl-QA-[0-9a-f-]{36}$/i.test(value ?? "");
 }
 
 function keychainPromptInput(sensitiveInput: string): string {
@@ -751,12 +833,20 @@ function keychainPromptInput(sensitiveInput: string): string {
   return `${sensitiveInput}\n${sensitiveInput}\n`;
 }
 
-function stripTerminalLineEnding(value: string): string {
-  return value.endsWith("\r\n")
-    ? value.slice(0, -2)
-    : value.endsWith("\n")
-      ? value.slice(0, -1)
-      : value;
+function parseMacosTypedPassword(stderr: string): string | null {
+  const line = stderr.split(/\r?\n/u).find((entry) => entry.startsWith("password: "));
+  if (!line) return null;
+  const payload = line.slice("password: ".length);
+  const hex = /^0x([0-9a-f]+)(?:\s|$)/iu.exec(payload)?.[1];
+  if (hex) {
+    const bytes = Buffer.from(hex, "hex");
+    const decoded = bytes.toString("utf8");
+    return Buffer.from(decoded, "utf8").equals(bytes) ? decoded : null;
+  }
+  if (!payload.startsWith('"') || !payload.endsWith('"')) return null;
+  // `security -g` does not escape embedded ASCII quotes. Strip only the
+  // unambiguous outer delimiter; binary/backslash-bearing values use 0x form.
+  return payload.slice(1, -1);
 }
 
 function isSecurityCommandResult(
