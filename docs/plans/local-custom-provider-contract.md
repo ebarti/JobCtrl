@@ -55,8 +55,8 @@ claim about a moving branch.
 | [`analyze_use_case.py::AnalyzeJobUseCase`](https://github.com/ebarti/JobCtrl/blob/6a82c233c434e67f0a2d1c6df3db6aa68d036b75/workers/automation/src/jobctrl/domain/materials/analyze_use_case.py#L132-L212) and [`analysis.py::cache_key`](https://github.com/ebarti/JobCtrl/blob/6a82c233c434e67f0a2d1c6df3db6aa68d036b75/workers/automation/src/jobctrl/domain/materials/analysis.py#L243-L263) | **Current:** analysis is posting-snapshot grounded, prose validated, generation versioned, and cached by snapshot/prompt/SDK-set identity. A failed refresh does not replace the last persisted generation. | The existing cache identity does not bind a future custom endpoint, credential, model, adapter, schema, or budget revision. |
 | [`llm.py::record_llm_spend`](https://github.com/ebarti/JobCtrl/blob/6a82c233c434e67f0a2d1c6df3db6aa68d036b75/workers/automation/src/jobctrl/llm.py#L48-L88), [`estimate_llm_cost_usd`](https://github.com/ebarti/JobCtrl/blob/6a82c233c434e67f0a2d1c6df3db6aa68d036b75/workers/automation/src/jobctrl/llm.py#L157-L179) | **Current:** accounting records observed usage after calls; a fragile name test treats any model containing `local` as zero cost. | Observed usage is not durable pre-dispatch admission, and a model name is not trusted billing classification. |
 | [`llm_spans.py::llm_generation_span`](https://github.com/ebarti/JobCtrl/blob/6a82c233c434e67f0a2d1c6df3db6aa68d036b75/workers/automation/src/jobctrl/infrastructure/observability/llm_spans.py#L45-L118) | **Current:** generation spans invoke the spend callback after a response and swallow callback failures. | Telemetry success does not prove authoritative accounting, and an accounting failure currently cannot stop acceptance. |
-| [#886 / PR #960 at `7c6c76f`](https://github.com/ebarti/JobCtrl/tree/7c6c76f936fcfde4fed6b59e686d2b1d2a9ab815), especially [`llm_lanes.py`](https://github.com/ebarti/JobCtrl/blob/7c6c76f936fcfde4fed6b59e686d2b1d2a9ab815/workers/automation/src/jobctrl/llm_lanes.py) and [`schema_v11.sql`](https://github.com/ebarti/JobCtrl/blob/7c6c76f936fcfde4fed6b59e686d2b1d2a9ab815/workers/automation/src/jobctrl/infrastructure/migrations/schema_v11.sql) | **Current source at that observed in-flight head:** the proposed authority uses canonical lanes and one `llm_spend(day,lane)` ledger, with observed lane-token thresholds plus the global USD threshold. | It has no strict in-flight ceiling or reservation lifecycle. This plan assigns no schema version and creates no parallel ledger. |
-| [#902 / PR #956 at `f3f3ad9`](https://github.com/ebarti/JobCtrl/tree/f3f3ad9c4ee8cb1f3677f45c2ad576907127b086), especially [`suggest_target_roles`](https://github.com/ebarti/JobCtrl/blob/f3f3ad9c4ee8cb1f3677f45c2ad576907127b086/workers/automation/src/jobctrl/domain/profile/target_role_suggestions.py#L84-L176) | **Current source at that observed in-flight head:** production model inference is disabled when provider call bounds are absent. | This contract does not change that behavior. A separate synthetic title-qualifier semantic gap also remains and cannot be satisfied by provider readiness. |
+| [#886 / PR #960 at `7c6c76f`](https://github.com/ebarti/JobCtrl/tree/7c6c76f936fcfde4fed6b59e686d2b1d2a9ab815), especially [`llm_lanes.py`](https://github.com/ebarti/JobCtrl/blob/7c6c76f936fcfde4fed6b59e686d2b1d2a9ab815/workers/automation/src/jobctrl/llm_lanes.py), [`schema_v11.sql`](https://github.com/ebarti/JobCtrl/blob/7c6c76f936fcfde4fed6b59e686d2b1d2a9ab815/workers/automation/src/jobctrl/infrastructure/migrations/schema_v11.sql), and [`llm.py::record_llm_spend`](https://github.com/ebarti/JobCtrl/blob/7c6c76f936fcfde4fed6b59e686d2b1d2a9ab815/workers/automation/src/jobctrl/llm.py#L56-L98) | **Current source at that observed in-flight head:** the proposed authority uses canonical lanes and one `llm_spend(day,lane)` ledger, with observed lane-token thresholds plus the global USD threshold. It aggregates numeric usage/cost, coerces missing counts to zero, and skips an all-zero observation. | It has no durable attempt/outcome record, explicit unknown categories, strict in-flight ceiling, or reservation lifecycle. This plan assigns no schema version and creates no parallel ledger. |
+| [#902 / PR #956 at `f3f3ad9`](https://github.com/ebarti/JobCtrl/tree/f3f3ad9c4ee8cb1f3677f45c2ad576907127b086), [`suggest_target_roles`](https://github.com/ebarti/JobCtrl/blob/f3f3ad9c4ee8cb1f3677f45c2ad576907127b086/workers/automation/src/jobctrl/domain/profile/target_role_suggestions.py#L84-L176), and the production [`profile_target_role_suggestions` handler](https://github.com/ebarti/JobCtrl/blob/f3f3ad9c4ee8cb1f3677f45c2ad576907127b086/workers/automation/src/jobctrl/infrastructure/rpc/handlers.py#L356-L392) | **Current source at that observed in-flight head:** the domain function supports model and deterministic modes. Because call bounds are absent, the production handler passes `llm=None` and `allow_model=False`, producing only the deterministic result. | This contract does not change that behavior. A separate synthetic title-qualifier semantic gap also remains and cannot be satisfied by provider readiness. |
 
 ## Decisions Still Owned By The Product Owner
 
@@ -67,11 +67,11 @@ in the last column exists.
 
 | Choice | Recommended starting policy | Alternatives | Owner | Unblock condition |
 | --- | --- | --- | --- | --- |
-| Endpoint scope | One explicitly opted-in literal loopback endpoint per provider instance. | Optional LAN endpoint; explicit remote endpoint allowlist. Both remain unresolved. | Product owner, with security review. | Written choice names allowed scopes; containment tests pass for every chosen scope. |
+| Endpoint scope | One explicitly opted-in literal loopback endpoint per provider instance, selectable only while JobCtrl can continuously bind the peer to a verifiable owned process/socket/server identity. Address and port checks alone are insufficient. | Credential- or mutual-identity loopback; optional LAN endpoint; explicit remote endpoint allowlist. LAN and remote remain unresolved. | Product owner, with security review. | Written choice names allowed scopes; containment and process/port replacement tests pass. If continuous server identity cannot be proven, no-auth loopback remains unselectable. |
 | Transport flavor | One versioned adapter profile with adapter-owned paths and semantics; an OpenAI-compatible profile is only a transport claim. | Additional native protocol profiles, each separately proven. | Worker/provider owner. | Real-endpoint operation/control/schema/usage matrix passes for the exact adapter revision. |
-| Authentication | Loopback may use no auth only when the owner explicitly chooses it; otherwise use a credential reference. Any remote endpoint requires authenticated HTTPS. | Header token, mutual TLS, or a named provider-native flow. Credentials never appear in general config. | Product owner and security owner. | Secret resolution, redaction, redirect/proxy containment, rotation, and restart behavior are proven. |
+| Authentication | Loopback may use no application credential only when the owner explicitly chooses it **and** the owned process/socket/server identity is continuously verifiable. Otherwise use a capability credential or mutual identity. Any remote endpoint requires authenticated HTTPS. | Header capability token, mutual TLS, or a named provider-native flow. Credentials never appear in general config. | Product owner and security owner. | Peer identity or secret resolution, redaction, redirect/proxy containment, rotation/replacement, and restart behavior are proven. |
 | Rollout | Disabled configuration, then discovery-only status, then allow one proven capability at a time. | Broader opt-in after all target capabilities pass. | Product owner. | Each capability has product proof against every target endpoint and owned synthetic data. |
-| Budget policy | Observed accounting only, clearly labeled as overshoot-capable; operations that require a strict bound remain unavailable. | Strict admission after the #886 ledger owner accepts a durable reservation design. | Product owner and #886 ledger owner. | Selected mode is explicit. Strict mode additionally proves atomic reservation, reconciliation, replay, crash, and day-rollover behavior. |
+| Budget policy | Observed accounting only, clearly labeled as overshoot-capable, and only after the #886 authority durably records every attempt and explicit unknown category. Operations that require a strict bound remain unavailable. | Strict admission after the separate #886 ledger reservation design is accepted. | Product owner and #886 ledger owner. | The idempotent observed-attempt API is authoritative and proven before any mode is selectable. Strict mode additionally proves atomic reservation, reconciliation, replay, crash, and day-rollover behavior. |
 
 No implementation may infer that “local” means LAN, remote, unauthenticated,
 free, private, or trusted. Those are independent properties.
@@ -118,9 +118,9 @@ The proposed adapter emits three immutable envelopes:
 ```text
 CapabilityEnvelope {
   providerInstanceId, adapterRevision, endpointRevision, credentialRevision
-  modelCatalogId, modelRevision
+  serverIdentityRevision, modelCatalogId, modelRevision
   operations: Map<Operation, OperationCapability>
-  usageProof, billingClassification, provedAt, expiresAt
+  usageProof, attemptAccountingProof, billingClassification, provedAt, expiresAt
 }
 
 OperationCapability {
@@ -141,11 +141,13 @@ ReadinessEnvelope {
 ```
 
 `ReadinessReason` is a closed code such as `disabled`, `endpoint_rejected`,
-`credential_missing`, `credential_changed`, `catalog_unavailable`,
+`server_identity_unproven`, `server_replaced`, `credential_missing`,
+`credential_changed`, `catalog_unavailable`,
 `model_not_allowed`, `connectivity_unproven`, `operation_unsupported`,
 `schema_unproven`, `control_unbound`, `usage_unproven`,
-`accounting_unavailable`, or `budget_bound_unproven`. It contains no host,
-model name, credential detail, path, response, or raw exception.
+`attempt_accounting_unavailable`, `accounting_unavailable`, or
+`budget_bound_unproven`. It contains no host, model name, credential detail,
+path, response, or raw exception.
 
 The operation-level predicate is:
 
@@ -153,12 +155,14 @@ The operation-level predicate is:
 ready(instance, operation, request) =
   instance.enabled
   AND endpoint_identity_is_pinned_and_fresh
+  AND owned_server_or_mutual_identity_is_continuously_bound
   AND credential_revision_is_pinned_and_fresh
   AND exact_model_catalog_binding_is_fresh
   AND adapter_supports(operation)
   AND every_requested_control_is_bound
   AND requested_schema_profile_is_proven
   AND live_connectivity_proof_is_fresh
+  AND durable_observed_attempt_authority_is_ready
   AND usage_and_accounting_proof_satisfies_budget_mode
   AND no_invalidation_token_changed
 ```
@@ -171,9 +175,17 @@ operations ready, and no provider fallback when the selected operation fails.
 The recommended first implementation accepts one of these policies only after
 explicit local opt-in:
 
-1. `http` to a literal IPv4 or IPv6 loopback address. `localhost` and other DNS
-   names are excluded from this first policy because literal loopback avoids DNS
-   ambiguity.
+1. `http` to a literal IPv4 or IPv6 loopback address whose server identity is
+   continuously proven. A no-credential form is selectable only when JobCtrl
+   owns and monitors the process plus an exclusive listener/socket binding (for
+   example, a JobCtrl-spawned process using an inherited pre-bound socket with
+   address reuse disabled) and can bind each connection to that same live
+   identity. If the process exits, the socket changes, the listener can be
+   shared, or the peer cannot be bound without a check/use race, readiness is
+   invalidated before another request. Otherwise loopback requires a
+   per-connection capability credential or mutual server identity. `localhost`
+   and other DNS names are excluded from this first policy because literal
+   loopback avoids DNS ambiguity, but the literal address alone is not identity.
 2. If the owner later chooses remote support, `https` to an exact configured
    hostname and port in an explicit allowlist, with an explicit credential and
    ordinary certificate/hostname validation.
@@ -184,20 +196,31 @@ mapping, environment proxy/endpoint redirects, and provider-supplied endpoint
 rewrites. The canonical origin contains no operation path; the versioned
 transport profile owns every fixed path it may call.
 
-Credential-bearing requests disable redirects and ambient proxy discovery. A
-redirect response fails before a second request. Remote resolution must return
-only addresses allowed by the selected endpoint scope. The connection policy
+Every provider request disables redirects and ambient proxy discovery. A
+redirect response fails before a second request, whether or not the profile has
+an application credential. Remote resolution must return only addresses allowed
+by the selected endpoint scope. The connection policy
 pins the approved address set for the readiness revision and verifies the
 actual peer; a changed resolution invalidates readiness before credentials are
 sent. Private, loopback, link-local, multicast, unspecified, reserved, and
 metadata-service ranges are denied for remote profiles. Loopback profiles deny
 every non-loopback peer. Mixed allowed/denied DNS answers fail as a set.
 
+A loopback address and port prove only routing, not which local process accepted
+the connection. Readiness therefore checks the owned process/socket/server
+identity continuously, including immediately before dispatch and on the active
+connection. A different process inheriting, rebinding, sharing, or replacing the
+port invalidates catalog, capability, model, and readiness state. When that
+identity cannot be established atomically enough to prevent replacement between
+verification and use, the no-credential profile is unavailable.
+
 The endpoint binding includes canonical origin, approved address-set digest,
-TLS identity where applicable, adapter revision, and endpoint revision. The
-credential binding includes credential reference and credential revision,
-never secret material. Rotation of either binding invalidates catalog,
-capability, readiness, model selection, and cached generation identity.
+owned process/socket/server identity revision or mutual peer identity, TLS
+identity where applicable, adapter revision, and endpoint revision. The
+credential binding includes credential reference and credential revision, never
+secret material. Rotation, exit, replacement, or loss of any endpoint/server or
+credential binding invalidates catalog, capability, readiness, model selection,
+and cached generation identity.
 
 Every request has finite connect, response-header, body-idle, and total
 deadlines plus a streaming byte ceiling. A safe initial recommendation is a
@@ -216,9 +239,9 @@ as generation and accounted as a call.
 
 ## Proposed Model Catalog And Invalidation Contract
 
-The model catalog must be fetched through the exact authenticated endpoint,
-credential revision, and transport profile that will execute the call. The
-worker normalizes it into a deterministic allowed subset:
+The model catalog must be fetched through the exact identity-bound endpoint,
+the credential revision when configured, and the transport profile that will
+execute the call. The worker normalizes it into a deterministic allowed subset:
 
 - at most 512 entries, sorted by the sanitized provider ID before local opaque
   IDs are minted;
@@ -245,11 +268,13 @@ credential, adapter, capability, schema, usage, and budget proofs. A text field
 or a successful free-text completion is insufficient.
 
 Readiness and selections are invalidated on endpoint, DNS/address set,
-credential, model catalog, model selection, adapter, transport schema,
-structured-output schema profile, pricing/billing classification, usage
-normalization, timeout/retry, or budget-policy changes. Process restart clears
-ephemeral proofs. Saved nonsecret configuration remains disabled or unavailable
-until the worker rebuilds fresh envelopes; restart never promotes stale state.
+owned process/socket/server identity, mutual peer identity, credential, model
+catalog, model selection, adapter, transport schema, structured-output schema
+profile, pricing/billing classification, observed-attempt authority, usage
+normalization, timeout/retry, or budget-policy changes. Provider or worker
+restart clears ephemeral proofs. Saved nonsecret configuration remains disabled
+or unavailable until the worker rebuilds fresh envelopes; restart never
+promotes stale state.
 
 ## Proposed `LlmPort` Operation Contract
 
@@ -373,6 +398,29 @@ A zero-cost classification is accepted only from a trusted, revisioned endpoint
 billing policy that explicitly attests local unmetered execution; provider or
 model names containing `local` have no authority.
 
+Observed mode is itself unavailable until the #886 ledger authority exposes a
+durable, idempotent observed-attempt record/API in the existing accounting
+authority. Numeric aggregates alone cannot represent a failed call or distinguish
+unknown usage from zero. This prerequisite does not reserve budget and does not
+create a strict ceiling.
+
+Before egress, that API durably records a logical-call ID, unique attempt ID,
+retry ordinal, lane, operation, safe revision tokens, and `dispatch_intent`.
+Idempotent updates then record an accepted, refused, truncated, invalid,
+cancelled, timed-out, failed, or dispatch-ambiguous outcome plus each normalized
+usage/cost category as a value or explicit `unknown`. Missing provider usage
+never becomes a zero-valued observation, and an all-unknown failed attempt is
+still durable and queryable. Retry and replay reuse their stable identities so
+the authority cannot omit or double-count an attempt. The provider adapter may
+not invent a table, schema version, file, telemetry surrogate, or parallel
+ledger for this purpose.
+
+If the observed-attempt create fails, dispatch is blocked. If its outcome update
+fails after dispatch, response acceptance and further calls are blocked until
+the same authoritative attempt is reconciled. Every operation-level readiness
+envelope therefore requires a fresh `attemptAccountingProof`, even when the
+owner selected overshoot-capable observed mode.
+
 Usage normalization retains provider-reported input, cache-read, cache-write,
 visible output, reasoning, tool, and internal-retry categories separately until
 a revisioned billing policy maps them to totals. A category already included in
@@ -426,8 +474,9 @@ moving responsibilities across layers.
 
 1. **Reconcile dependencies and owner choices.** Re-read the merged state of
    #886/PR #960 and #902/PR #956, record endpoint scope, transport, auth,
-   rollout, and budget decisions, and rerun the provider-call inventory. This is
-   the prerequisite for all code slices.
+   rollout, and budget decisions, define the #886-owned observed-attempt API,
+   and rerun the provider-call inventory. This is the prerequisite for all code
+   slices.
 2. **Add disabled types and configuration.** Worker config and secret-boundary
    owners add typed provider-instance, endpoint-profile, credential-reference,
    capability, readiness, and safe-reason types. Contract/API owners add
@@ -436,25 +485,33 @@ moving responsibilities across layers.
    `packages/contracts/`, `apps/api/src/`, and existing credential services.
 3. **Build the transport and adapter proof harness.** Infrastructure owns URL
    canonicalization, IP/DNS/TLS/proxy/redirect containment, bounded HTTP,
-   credential resolution, catalog normalization, exact model binding, control
-   rejection, structured-output validation, usage normalization, and typed
-   errors under `workers/automation/src/jobctrl/infrastructure/llm/`. Domain
-   `LlmPort` stays provider-neutral. Real-target proof precedes selection.
-4. **Add strict reservations only if selected.** This slice starts only after
+   owned process/socket/server or mutual peer identity, credential resolution,
+   catalog normalization, exact model binding, control rejection,
+   structured-output validation, usage normalization, and typed errors under
+   `workers/automation/src/jobctrl/infrastructure/llm/`. Domain `LlmPort` stays
+   provider-neutral. Real-target proof precedes selection.
+4. **Add authoritative observed attempts.** The #886 ledger owner adds one
+   durable idempotent create/update API for logical-call/retry identity,
+   dispatch intent, terminal/ambiguous outcome, and explicit known/unknown
+   usage/cost categories. This extends the existing accounting authority without
+   this plan assigning a table or schema version. No custom operation becomes
+   ready before create, reconciliation, replay, failure, and query behavior pass.
+5. **Add strict reservations only if selected.** This later, separate slice
+   starts only after the observed-attempt authority exists and
    the #886 ledger owner accepts a design against the then-current authoritative
    ledger. It owns atomic reserve/dispatch-intent/reconcile, concurrency,
    idempotency, replay, crash, and UTC rollover. No provider adapter may invent
    its own table or schema version.
-5. **Expose discovery/readiness.** Existing provider model API and Settings UI
+6. **Expose discovery/readiness.** Existing provider model API and Settings UI
    owners show disabled/unavailable state, safe reason codes, proof freshness,
    and invalidation. Empty/failed catalogs have no selections. Saving config is
    not readiness; restart behavior is explicit.
-6. **Compose employer analysis and materials.** Analysis owners add separate
+7. **Compose employer analysis and materials.** Analysis owners add separate
    per-leg enrollment and fingerprints for draft, synthesis, and voice. They
    preserve data minimization, grounding, prose, generation, cache, agreement,
    and last-accepted-artifact invariants. No missing leg becomes phantom
    consensus or cloud fallback.
-7. **Roll out one capability at a time.** Start with the exact capability the
+8. **Roll out one capability at a time.** Start with the exact capability the
    owner authorizes, keep all others unavailable, and require the full product
    proof for every configured real target endpoint before first use. Apply
    remains separate because it is an autonomous subprocess/tool boundary.
@@ -471,13 +528,17 @@ design-only change**.
 1. **Endpoint/auth containment:** reject userinfo/query/fragment, redirects,
    proxy injection, endpoint/model/env redirects, DNS rebinding, mixed DNS
    answers, metadata/link-local/private egress outside selected scope, TLS
-   mismatch, credential rotation races, and credential forwarding to any
-   changed peer. Prove no request follows a redirect and no secret appears in
-   diagnostics.
-2. **Real read-only catalog:** against each exact authenticated target, show the
-   bounded sanitized deterministic subset, endpoint/credential binding, empty
-   and failed behavior, stale-selection invalidation, and no side effect. A fake
-   catalog cannot satisfy this gate.
+   mismatch, credential rotation races, and credential forwarding to any changed
+   peer. For no-credential loopback, replace or share the listening process/port
+   before and during requests, race process exit and rebind, and prove continuous
+   owned process/socket/server identity invalidates readiness before egress.
+   Address/port equality alone must fail this gate. Prove no request follows a
+   redirect and no secret appears in diagnostics.
+2. **Real read-only catalog:** against each exact identity-bound target, with
+   the credential binding when configured, show the bounded sanitized
+   deterministic subset, endpoint/server/credential binding, empty and failed
+   behavior, stale-selection invalidation, and no side effect. A fake catalog
+   cannot satisfy this gate.
 3. **Operation/schema/control matrix:** for every target model and operation,
    prove supported controls reach the provider exactly; unknown/unsupported
    controls cause no egress; structured output is provider constrained and
@@ -488,23 +549,31 @@ design-only change**.
    dispatch, provider and client retries, invalid responses, and missing usage.
    Prove each actual attempt has one identity and no usage becomes zero by
    absence.
-5. **Strict reservation, if selected:** race concurrent calls at the last
+5. **Observed-attempt authority:** fail create and update writes; persist
+   refusal, truncation, invalid output, missing usage/cost, timeout, cancellation,
+   client retry, provider retry when observable, and dispatch ambiguity; replay
+   each logical-call/attempt identity; and query explicit unknown categories.
+   Prove no all-unknown/failed attempt is omitted, no retry is double-counted,
+   readiness blocks without the authority, and this path does not claim a strict
+   ceiling.
+6. **Strict reservation, if selected:** race concurrent calls at the last
    budget unit; replay reserve/settle; crash before and after dispatch intent;
    lose responses; fail accounting writes; reconcile provider usage; cross UTC
    midnight; and prove release occurs only for known non-dispatch.
-6. **Employer/materials failure:** mix ready, unavailable, invalid, and failing
+7. **Employer/materials failure:** mix ready, unavailable, invalid, and failing
    draft/synthesis/voice legs; prove no phantom consensus or cloud fallback;
    verify posting grounding, prose validation, per-leg minimization, complete
    cache invalidation, and preservation of the last accepted artifact after a
    failed refresh.
-7. **API/UI state:** prove disabled-by-default behavior, typed safe reasons,
+8. **API/UI state:** prove disabled-by-default behavior, typed safe reasons,
    empty/failed catalog unavailability, restart rebuilding rather than promoting
-   stale proof, credential/model/adapter/schema/budget invalidation, and no raw
-   endpoint/model/error leakage.
-8. **No-egress negative cases:** instrument DNS and sockets and show zero egress
-   for unsupported operation/control/schema, stale binding, missing accounting,
-   rejected endpoint, missing credential, or strict-bound failure.
-9. **Separate #902 semantics:** rerun the title-qualifier and canonical-evidence
+   stale proof, server-identity/credential/model/adapter/schema/accounting/budget
+   invalidation, and no raw endpoint/model/error leakage.
+9. **No-egress negative cases:** instrument DNS and sockets and show zero egress
+   for unsupported operation/control/schema, stale or replaced server identity,
+   missing observed-attempt authority, rejected endpoint, missing credential, or
+   strict-bound failure.
+10. **Separate #902 semantics:** rerun the title-qualifier and canonical-evidence
    scenarios independently. Provider readiness or a bounded call is not a pass
    for semantic role validation.
 
