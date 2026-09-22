@@ -165,4 +165,8 @@ These documents remain in the repository but are not separate site sections:
 - [GitHub Issues](https://github.com/ebarti/JobCtrl/issues): actionable work; [migration index #881](https://github.com/ebarti/JobCtrl/issues/881) accounts for the historical backlog.
 - [`claims-ledger.md`](claims-ledger.md): launch-claim evidence and status.
 - [`plans/`](plans/): active proposals and immutable implemented-plan history.
+  The active [sensitive-artifact retention and cleanup
+  proposal](plans/sensitive-artifact-retention.md) defines the unshipped local
+  inventory, preservation, preview, containment, and recovery contract tracked
+  by issue #887.
 - [`incidents/`](incidents/): incident records and corrective actions.
