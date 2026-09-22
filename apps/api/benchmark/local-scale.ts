@@ -11,6 +11,7 @@ import { AUTOMATION_PROJECT_DIR } from "../src/python-runtime.js";
 import { EXACT_V10_SCHEMA_MANIFEST, schemaManifest } from "../src/schema-manifest.js";
 
 export const BENCHMARK_SEED = "jobctrl-local-scale-v1";
+export const REPOSITORY_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 export const DATASET_SIZES = [100, 1_000, 10_000] as const;
 export const EVENTS_PER_JOB = 3;
 export const DESCRIPTION_BYTES = 1_024;
@@ -104,7 +105,7 @@ export function parseCliArgs(argv: readonly string[]): CliOptions {
       throw new Error("--json-out requires a new .json file path");
     }
     if (jsonOut !== null) throw new Error("--json-out may be provided only once");
-    const resolved = path.resolve(candidate);
+    const resolved = path.resolve(REPOSITORY_ROOT, candidate);
     if (path.extname(resolved) !== ".json") {
       throw new Error("--json-out must end in .json");
     }

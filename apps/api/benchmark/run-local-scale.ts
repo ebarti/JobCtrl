@@ -24,6 +24,7 @@ import {
   offlineEnvironment,
   parseCliArgs,
   PROPOSED_REFERENCE_BUDGETS,
+  REPOSITORY_ROOT,
   seedSyntheticDataset,
   SSE_POLL_INTERVAL_MS,
   syntheticJob,
@@ -38,6 +39,8 @@ const SAMPLES = 7;
 const SSE_BURST_EVENTS = 1_000;
 const SSE_SUBSCRIBERS = 4;
 const SUSTAINED_MIN_MS = 1_500;
+const SUSTAINED_MIN_ITERATIONS = 7;
+const SUSTAINED_MAX_ITERATIONS = 100;
 const PROJECTION_DRAIN_TIMEOUT_MS = 120_000;
 
 interface HttpResult {
@@ -99,6 +102,7 @@ interface SseResult {
 
 interface SustainedResult {
   durationMs: number;
+  iterations: number;
   writes: number;
   sseEventsObserved: number;
   readLatency: Distribution;
@@ -156,6 +160,7 @@ interface BenchmarkReport {
     isolation: string;
     productionPaths: string[];
     providerNetworkPolicy: string;
+    sustainedWorkload: string;
   };
   proposedReferenceBudgets: typeof PROPOSED_REFERENCE_BUDGETS;
   budgetRationale: Record<string, string>;
@@ -210,6 +215,7 @@ export async function runBenchmark(): Promise<BenchmarkReport> {
         "SubprocessJsonRpcAdapter -> uv -> production Python jobctrl rpc dispatcher provider_models",
       ],
       providerNetworkPolicy: "LANGFUSE_DISABLE=1, provider credentials removed, outbound proxy forced to an unreachable loopback port; provider_models is a local read and no model/provider calls are made.",
+      sustainedWorkload: "At least 1.5 seconds and seven iterations, capped at 100 iterations; each iteration writes 10 events, refreshes the heartbeat, performs a search plus in-memory sort read, and reads pipeline operations while one SSE subscriber remains connected.",
     },
     proposedReferenceBudgets: PROPOSED_REFERENCE_BUDGETS,
     budgetRationale: {
@@ -549,7 +555,10 @@ async function measureSustained(baseUrl: string, workspace: BenchmarkWorkspace):
   let writes = 0;
   let batch = 0;
   try {
-    while (performance.now() - started < SUSTAINED_MIN_MS) {
+    while (
+      (performance.now() - started < SUSTAINED_MIN_MS || batch < SUSTAINED_MIN_ITERATIONS)
+      && batch < SUSTAINED_MAX_ITERATIONS
+    ) {
       const writeCount = 10;
       insertBurst(workspace.dbPath, writeCount, `sustained-${batch}`, maxEventId(workspace.dbPath));
       writes += writeCount;
@@ -581,6 +590,7 @@ async function measureSustained(baseUrl: string, workspace: BenchmarkWorkspace):
   }
   return {
     durationMs,
+    iterations: batch,
     writes,
     sseEventsObserved: subscriber.ids.length,
     readLatency: distribution(readSamples),
@@ -929,7 +939,7 @@ function systemProvenance(): Record<string, unknown> {
 
 function gitCandidate(): BenchmarkReport["candidate"] {
   const git = (args: string[]): string => {
-    const result = spawnSync("git", args, { encoding: "utf8" });
+    const result = spawnSync("git", args, { cwd: REPOSITORY_ROOT, encoding: "utf8" });
     if (result.status !== 0) throw new Error(`git ${args.join(" ")} failed: ${result.stderr.trim()}`);
     return result.stdout.trim();
   };
