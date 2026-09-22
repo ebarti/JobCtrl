@@ -1,0 +1,1088 @@
+{
+  "arms": {
+    "current_policy_baseline": {
+      "durable_path": true,
+      "samples": [
+        {
+          "adapter_calls": 6,
+          "adapter_start_gaps_seconds": [
+            1.012951,
+            1.009954,
+            1.001066,
+            1.010458,
+            1.009991
+          ],
+          "adapter_start_offsets_seconds": [
+            0.033486,
+            1.046436,
+            2.056391,
+            3.057457,
+            4.067915,
+            5.077906
+          ],
+          "checkpoint_save_seconds": [
+            0.00012,
+            0.00014,
+            0.000113,
+            9.4e-05,
+            0.001084,
+            0.000199,
+            0.000117,
+            0.000115,
+            0.001124,
+            0.000167,
+            0.000114,
+            9.8e-05,
+            0.000541,
+            0.00018,
+            7.8e-05,
+            7.9e-05,
+            0.000989,
+            0.000179,
+            9.5e-05,
+            8.7e-05,
+            0.000515,
+            0.000154,
+            8.7e-05,
+            9.2e-05
+          ],
+          "database": {
+            "checkpoint_revisions": [
+              3,
+              3,
+              3,
+              3,
+              3,
+              3
+            ],
+            "checkpointed_units": 6,
+            "job_event_rows": 30,
+            "job_rows": 6,
+            "receipt_counts": {
+              "accepted": 6,
+              "existing": 0,
+              "new": 6
+            },
+            "receipt_rows": 6,
+            "recovery_count": 0,
+            "unit_count": 6,
+            "unit_states": [
+              "completed",
+              "completed",
+              "completed",
+              "completed",
+              "completed",
+              "completed"
+            ]
+          },
+          "invariants": {
+            "all_units_checkpointed": true,
+            "all_units_completed": true,
+            "exact_job_count": true,
+            "exact_receipt_count": true,
+            "exact_unit_count": true,
+            "host_spacing_preserved": true,
+            "provider_concurrency_at_most_policy": true
+          },
+          "limiter_wait_seconds": [
+            9e-06,
+            0.943196,
+            0.934067,
+            0.924394,
+            0.943201,
+            0.937819
+          ],
+          "max_active_adapters": 1,
+          "persistence_seconds": [
+            0.003015,
+            0.005558,
+            0.005765,
+            0.004423,
+            0.005655,
+            0.005087
+          ],
+          "provider_service_seconds": [
+            0.060128,
+            0.058571,
+            0.060441,
+            0.052965,
+            0.055576,
+            0.05954
+          ],
+          "result": {
+            "db_total": 6,
+            "errors": 0,
+            "existing": 0,
+            "failed_queries": 0,
+            "failed_source_ids": [],
+            "filtered": 0,
+            "new": 6,
+            "queries": 6,
+            "raw_total": 6,
+            "recovered_units": 0,
+            "search_units": 6,
+            "skipped_units": 0,
+            "total": 6
+          },
+          "time_to_first_accepted_seconds": 0.098598,
+          "wall_seconds": 5.151266
+        },
+        {
+          "adapter_calls": 6,
+          "adapter_start_gaps_seconds": [
+            1.012908,
+            1.009845,
+            1.010246,
+            1.003011,
+            1.011546
+          ],
+          "adapter_start_offsets_seconds": [
+            0.033649,
+            1.046558,
+            2.056403,
+            3.066648,
+            4.069659,
+            5.081206
+          ],
+          "checkpoint_save_seconds": [
+            0.000135,
+            0.000133,
+            0.000101,
+            9.5e-05,
+            0.001043,
+            0.000208,
+            9.8e-05,
+            8.4e-05,
+            0.001106,
+            0.000156,
+            0.000104,
+            9.4e-05,
+            0.001107,
+            0.000204,
+            0.000131,
+            0.000131,
+            0.000458,
+            0.000197,
+            0.000112,
+            0.000134,
+            0.00111,
+            0.000164,
+            8.2e-05,
+            8.3e-05
+          ],
+          "database": {
+            "checkpoint_revisions": [
+              3,
+              3,
+              3,
+              3,
+              3,
+              3
+            ],
+            "checkpointed_units": 6,
+            "job_event_rows": 30,
+            "job_rows": 6,
+            "receipt_counts": {
+              "accepted": 6,
+              "existing": 0,
+              "new": 6
+            },
+            "receipt_rows": 6,
+            "recovery_count": 0,
+            "unit_count": 6,
+            "unit_states": [
+              "completed",
+              "completed",
+              "completed",
+              "completed",
+              "completed",
+              "completed"
+            ]
+          },
+          "invariants": {
+            "all_units_checkpointed": true,
+            "all_units_completed": true,
+            "exact_job_count": true,
+            "exact_receipt_count": true,
+            "exact_unit_count": true,
+            "host_spacing_preserved": true,
+            "provider_concurrency_at_most_policy": true
+          },
+          "limiter_wait_seconds": [
+            1e-05,
+            0.952469,
+            0.935829,
+            0.934804,
+            0.934719,
+            0.940485
+          ],
+          "max_active_adapters": 1,
+          "persistence_seconds": [
+            0.00312,
+            0.005758,
+            0.005238,
+            0.005408,
+            0.004198,
+            0.004915
+          ],
+          "provider_service_seconds": [
+            0.050749,
+            0.056863,
+            0.059228,
+            0.05218,
+            0.057511,
+            0.055388
+          ],
+          "result": {
+            "db_total": 6,
+            "errors": 0,
+            "existing": 0,
+            "failed_queries": 0,
+            "failed_source_ids": [],
+            "filtered": 0,
+            "new": 6,
+            "queries": 6,
+            "raw_total": 6,
+            "recovered_units": 0,
+            "search_units": 6,
+            "skipped_units": 0,
+            "total": 6
+          },
+          "time_to_first_accepted_seconds": 0.08951,
+          "wall_seconds": 5.149616
+        },
+        {
+          "adapter_calls": 6,
+          "adapter_start_gaps_seconds": [
+            1.004053,
+            1.010696,
+            1.009381,
+            1.003887,
+            1.009029
+          ],
+          "adapter_start_offsets_seconds": [
+            0.033894,
+            1.037946,
+            2.048643,
+            3.058024,
+            4.061911,
+            5.07094
+          ],
+          "checkpoint_save_seconds": [
+            0.000131,
+            0.000117,
+            0.000153,
+            0.00012,
+            0.001132,
+            0.000193,
+            0.000107,
+            0.000105,
+            0.001223,
+            0.000161,
+            8.8e-05,
+            7.9e-05,
+            0.001047,
+            0.000203,
+            0.000127,
+            0.00015,
+            0.00116,
+            0.000187,
+            0.000103,
+            9e-05,
+            0.000842,
+            0.000195,
+            9.3e-05,
+            9e-05
+          ],
+          "database": {
+            "checkpoint_revisions": [
+              3,
+              3,
+              3,
+              3,
+              3,
+              3
+            ],
+            "checkpointed_units": 6,
+            "job_event_rows": 30,
+            "job_rows": 6,
+            "receipt_counts": {
+              "accepted": 6,
+              "existing": 0,
+              "new": 6
+            },
+            "receipt_rows": 6,
+            "recovery_count": 0,
+            "unit_count": 6,
+            "unit_states": [
+              "completed",
+              "completed",
+              "completed",
+              "completed",
+              "completed",
+              "completed"
+            ]
+          },
+          "invariants": {
+            "all_units_checkpointed": true,
+            "all_units_completed": true,
+            "exact_job_count": true,
+            "exact_receipt_count": true,
+            "exact_unit_count": true,
+            "host_spacing_preserved": true,
+            "provider_concurrency_at_most_policy": true
+          },
+          "limiter_wait_seconds": [
+            1.1e-05,
+            0.937704,
+            0.932794,
+            0.937679,
+            0.927225,
+            0.93617
+          ],
+          "max_active_adapters": 1,
+          "persistence_seconds": [
+            0.002706,
+            0.005616,
+            0.005737,
+            0.004489,
+            0.005419,
+            0.004887
+          ],
+          "provider_service_seconds": [
+            0.057341,
+            0.060369,
+            0.055294,
+            0.0604,
+            0.05621,
+            0.053057
+          ],
+          "result": {
+            "db_total": 6,
+            "errors": 0,
+            "existing": 0,
+            "failed_queries": 0,
+            "failed_source_ids": [],
+            "filtered": 0,
+            "new": 6,
+            "queries": 6,
+            "raw_total": 6,
+            "recovered_units": 0,
+            "search_units": 6,
+            "skipped_units": 0,
+            "total": 6
+          },
+          "time_to_first_accepted_seconds": 0.095664,
+          "wall_seconds": 5.136485
+        }
+      ],
+      "service_delay_seconds": 0.05,
+      "summary": {
+        "all_invariants_met": true,
+        "checkpoint_save": {
+          "count": 72,
+          "max_seconds": 0.001223,
+          "min_seconds": 7.8e-05,
+          "p50_seconds": 0.000131,
+          "p95_seconds": 0.001124
+        },
+        "limiter_wait": {
+          "count": 18,
+          "max_seconds": 0.952469,
+          "min_seconds": 9e-06,
+          "p50_seconds": 0.934804,
+          "p95_seconds": 0.952469
+        },
+        "persistence": {
+          "count": 18,
+          "max_seconds": 0.005765,
+          "min_seconds": 0.002706,
+          "p50_seconds": 0.005087,
+          "p95_seconds": 0.005765
+        },
+        "provider_service": {
+          "count": 18,
+          "max_seconds": 0.060441,
+          "min_seconds": 0.050749,
+          "p50_seconds": 0.056863,
+          "p95_seconds": 0.060441
+        },
+        "time_to_first_accepted": {
+          "count": 3,
+          "max_seconds": 0.098598,
+          "min_seconds": 0.08951,
+          "p50_seconds": 0.095664,
+          "p95_seconds": 0.098598
+        },
+        "wall": {
+          "count": 3,
+          "max_seconds": 5.151266,
+          "min_seconds": 5.136485,
+          "p50_seconds": 5.149616,
+          "p95_seconds": 5.151266
+        }
+      }
+    },
+    "zero_service_latency_control": {
+      "durable_path": true,
+      "policy_unchanged": true,
+      "samples": [
+        {
+          "adapter_calls": 6,
+          "adapter_start_gaps_seconds": [
+            1.01276,
+            1.009878,
+            1.010308,
+            1.009751,
+            1.007243
+          ],
+          "adapter_start_offsets_seconds": [
+            0.033588,
+            1.046347,
+            2.056226,
+            3.066534,
+            4.076285,
+            5.083528
+          ],
+          "checkpoint_save_seconds": [
+            0.000145,
+            8.4e-05,
+            6.3e-05,
+            6.3e-05,
+            0.001115,
+            0.000159,
+            8.6e-05,
+            8.8e-05,
+            0.001084,
+            0.000131,
+            9.5e-05,
+            9.7e-05,
+            0.001067,
+            0.000164,
+            8.8e-05,
+            8.8e-05,
+            0.001093,
+            0.000131,
+            9.4e-05,
+            8.1e-05,
+            0.001156,
+            0.000146,
+            9.2e-05,
+            0.000103
+          ],
+          "database": {
+            "checkpoint_revisions": [
+              3,
+              3,
+              3,
+              3,
+              3,
+              3
+            ],
+            "checkpointed_units": 6,
+            "job_event_rows": 30,
+            "job_rows": 6,
+            "receipt_counts": {
+              "accepted": 6,
+              "existing": 0,
+              "new": 6
+            },
+            "receipt_rows": 6,
+            "recovery_count": 0,
+            "unit_count": 6,
+            "unit_states": [
+              "completed",
+              "completed",
+              "completed",
+              "completed",
+              "completed",
+              "completed"
+            ]
+          },
+          "invariants": {
+            "all_units_checkpointed": true,
+            "all_units_completed": true,
+            "exact_job_count": true,
+            "exact_receipt_count": true,
+            "exact_unit_count": true,
+            "host_spacing_preserved": true,
+            "provider_concurrency_at_most_policy": true
+          },
+          "limiter_wait_seconds": [
+            9e-06,
+            1.005342,
+            0.995082,
+            0.996498,
+            0.994892,
+            0.992974
+          ],
+          "max_active_adapters": 1,
+          "persistence_seconds": [
+            0.001889,
+            0.00456,
+            0.003762,
+            0.004787,
+            0.004451,
+            0.004021
+          ],
+          "provider_service_seconds": [
+            4.6e-05,
+            0.000184,
+            0.000181,
+            0.000209,
+            0.000186,
+            0.000184
+          ],
+          "result": {
+            "db_total": 6,
+            "errors": 0,
+            "existing": 0,
+            "failed_queries": 0,
+            "failed_source_ids": [],
+            "filtered": 0,
+            "new": 6,
+            "queries": 6,
+            "raw_total": 6,
+            "recovered_units": 0,
+            "search_units": 6,
+            "skipped_units": 0,
+            "total": 6
+          },
+          "time_to_first_accepted_seconds": 0.036972,
+          "wall_seconds": 5.094593
+        },
+        {
+          "adapter_calls": 6,
+          "adapter_start_gaps_seconds": [
+            1.012833,
+            1.009961,
+            1.00797,
+            1.004311,
+            1.010123
+          ],
+          "adapter_start_offsets_seconds": [
+            0.03281,
+            1.045643,
+            2.055604,
+            3.063574,
+            4.067885,
+            5.078008
+          ],
+          "checkpoint_save_seconds": [
+            0.000126,
+            8.5e-05,
+            6.6e-05,
+            7e-05,
+            0.00114,
+            0.000132,
+            9.9e-05,
+            9.6e-05,
+            0.001227,
+            0.000142,
+            9.7e-05,
+            8.9e-05,
+            0.000154,
+            0.000122,
+            7.3e-05,
+            7.8e-05,
+            0.001144,
+            0.000181,
+            9.9e-05,
+            9.5e-05,
+            0.001103,
+            0.000165,
+            9.4e-05,
+            9.4e-05
+          ],
+          "database": {
+            "checkpoint_revisions": [
+              3,
+              3,
+              3,
+              3,
+              3,
+              3
+            ],
+            "checkpointed_units": 6,
+            "job_event_rows": 30,
+            "job_rows": 6,
+            "receipt_counts": {
+              "accepted": 6,
+              "existing": 0,
+              "new": 6
+            },
+            "receipt_rows": 6,
+            "recovery_count": 0,
+            "unit_count": 6,
+            "unit_states": [
+              "completed",
+              "completed",
+              "completed",
+              "completed",
+              "completed",
+              "completed"
+            ]
+          },
+          "invariants": {
+            "all_units_checkpointed": true,
+            "all_units_completed": true,
+            "exact_job_count": true,
+            "exact_receipt_count": true,
+            "exact_unit_count": true,
+            "host_spacing_preserved": true,
+            "provider_concurrency_at_most_policy": true
+          },
+          "limiter_wait_seconds": [
+            9e-06,
+            1.005316,
+            0.995821,
+            0.996315,
+            0.993129,
+            0.995084
+          ],
+          "max_active_adapters": 1,
+          "persistence_seconds": [
+            0.001885,
+            0.00379,
+            0.004109,
+            0.003429,
+            0.00501,
+            0.004221
+          ],
+          "provider_service_seconds": [
+            3.9e-05,
+            0.000252,
+            0.00018,
+            9.1e-05,
+            0.000184,
+            0.00024
+          ],
+          "result": {
+            "db_total": 6,
+            "errors": 0,
+            "existing": 0,
+            "failed_queries": 0,
+            "failed_source_ids": [],
+            "filtered": 0,
+            "new": 6,
+            "queries": 6,
+            "raw_total": 6,
+            "recovered_units": 0,
+            "search_units": 6,
+            "skipped_units": 0,
+            "total": 6
+          },
+          "time_to_first_accepted_seconds": 0.036244,
+          "wall_seconds": 5.089015
+        },
+        {
+          "adapter_calls": 6,
+          "adapter_start_gaps_seconds": [
+            1.012563,
+            1.010349,
+            1.001454,
+            1.010146,
+            1.008403
+          ],
+          "adapter_start_offsets_seconds": [
+            0.033414,
+            1.045977,
+            2.056326,
+            3.057779,
+            4.067925,
+            5.076328
+          ],
+          "checkpoint_save_seconds": [
+            0.000126,
+            8.8e-05,
+            6.7e-05,
+            6.6e-05,
+            0.000669,
+            0.000184,
+            0.000106,
+            0.000103,
+            0.001012,
+            0.000164,
+            9.3e-05,
+            8.3e-05,
+            0.00118,
+            0.000168,
+            8.9e-05,
+            8.9e-05,
+            0.001124,
+            0.000139,
+            9.7e-05,
+            0.000108,
+            0.000666,
+            0.000104,
+            5.4e-05,
+            5.4e-05
+          ],
+          "database": {
+            "checkpoint_revisions": [
+              3,
+              3,
+              3,
+              3,
+              3,
+              3
+            ],
+            "checkpointed_units": 6,
+            "job_event_rows": 30,
+            "job_rows": 6,
+            "receipt_counts": {
+              "accepted": 6,
+              "existing": 0,
+              "new": 6
+            },
+            "receipt_rows": 6,
+            "recovery_count": 0,
+            "unit_count": 6,
+            "unit_states": [
+              "completed",
+              "completed",
+              "completed",
+              "completed",
+              "completed",
+              "completed"
+            ]
+          },
+          "invariants": {
+            "all_units_checkpointed": true,
+            "all_units_completed": true,
+            "exact_job_count": true,
+            "exact_receipt_count": true,
+            "exact_unit_count": true,
+            "host_spacing_preserved": true,
+            "provider_concurrency_at_most_policy": true
+          },
+          "limiter_wait_seconds": [
+            9e-06,
+            1.005345,
+            0.99394,
+            0.986081,
+            0.994808,
+            0.99513
+          ],
+          "max_active_adapters": 1,
+          "persistence_seconds": [
+            0.001929,
+            0.005273,
+            0.005132,
+            0.00435,
+            0.004058,
+            0.003386
+          ],
+          "provider_service_seconds": [
+            3.8e-05,
+            0.000248,
+            0.000293,
+            0.000191,
+            0.000272,
+            8.6e-05
+          ],
+          "result": {
+            "db_total": 6,
+            "errors": 0,
+            "existing": 0,
+            "failed_queries": 0,
+            "failed_source_ids": [],
+            "filtered": 0,
+            "new": 6,
+            "queries": 6,
+            "raw_total": 6,
+            "recovered_units": 0,
+            "search_units": 6,
+            "skipped_units": 0,
+            "total": 6
+          },
+          "time_to_first_accepted_seconds": 0.036804,
+          "wall_seconds": 5.083989
+        }
+      ],
+      "service_delay_seconds": 0.0,
+      "summary": {
+        "all_invariants_met": true,
+        "checkpoint_save": {
+          "count": 72,
+          "max_seconds": 0.001227,
+          "min_seconds": 5.4e-05,
+          "p50_seconds": 0.000103,
+          "p95_seconds": 0.001144
+        },
+        "limiter_wait": {
+          "count": 18,
+          "max_seconds": 1.005345,
+          "min_seconds": 9e-06,
+          "p50_seconds": 0.994892,
+          "p95_seconds": 1.005345
+        },
+        "persistence": {
+          "count": 18,
+          "max_seconds": 0.005273,
+          "min_seconds": 0.001885,
+          "p50_seconds": 0.004058,
+          "p95_seconds": 0.005273
+        },
+        "provider_service": {
+          "count": 18,
+          "max_seconds": 0.000293,
+          "min_seconds": 3.8e-05,
+          "p50_seconds": 0.000184,
+          "p95_seconds": 0.000293
+        },
+        "time_to_first_accepted": {
+          "count": 3,
+          "max_seconds": 0.036972,
+          "min_seconds": 0.036244,
+          "p50_seconds": 0.036804,
+          "p95_seconds": 0.036972
+        },
+        "wall": {
+          "count": 3,
+          "max_seconds": 5.094593,
+          "min_seconds": 5.083989,
+          "p50_seconds": 5.089015,
+          "p95_seconds": 5.094593
+        }
+      }
+    }
+  },
+  "cohort": {
+    "location": "Remote",
+    "measured_repeats": 3,
+    "queries": [
+      "Director of Engineering",
+      "VP Engineering",
+      "Platform Engineering Manager"
+    ],
+    "results_per_source_unit": 1,
+    "search_units": 6,
+    "sources": [
+      "indeed",
+      "linkedin"
+    ],
+    "synthetic_service_delay_seconds": 0.05,
+    "warmups": 1
+  },
+  "current_policy": {
+    "default_max_parallel_source_families": 1,
+    "default_worker_activity_slots": 4,
+    "max_concurrent_requests_per_host": 1,
+    "max_search_unit_invocations_per_run": 500,
+    "min_request_interval_seconds": 1.0
+  },
+  "diagnostics": {
+    "competing_calls": {
+      "call_start_gaps_seconds": [
+        1.003166,
+        1.000438,
+        1.003297,
+        1.00242,
+        1.001597
+      ],
+      "call_start_offsets_seconds": [
+        0.0004,
+        1.003567,
+        2.004005,
+        3.007302,
+        4.009721,
+        5.011319
+      ],
+      "durable_path": false,
+      "invariants": {
+        "concurrency_at_most_policy": true,
+        "host_spacing_preserved": true
+      },
+      "label": "diagnostic_limiter_only_not_durable_production",
+      "limiter_wait_seconds": [
+        1.8e-05,
+        1.003151,
+        2.003572,
+        3.00686,
+        4.009272,
+        5.010863
+      ],
+      "max_active_calls": 1,
+      "wall_seconds": 5.064559
+    }
+  },
+  "generated_at_utc": "2026-09-22T08:49:02Z",
+  "measurement_caveats": [
+    "Synthetic service delays do not estimate real-provider throughput or safe provider policy.",
+    "Persistence timing wraps store_jobspy_results and therefore includes its SQLite acceptance and receipt work.",
+    "Checkpoint-save timing observes synchronous checkpoint persistence called by acknowledgements; it is not the entire stream.ack call.",
+    "Provider, limiter, persistence, and checkpoint timings can overlap in wall-clock accounting and must not be summed as a decomposition.",
+    "The competing-call arm exercises only the real limiter and is diagnostic, not concurrent durable production."
+  ],
+  "mode": "assessment",
+  "provenance": {
+    "git_branch": "perf/search-unit-assessment-899",
+    "git_head": "31b3f6ead7a9fd20ca866512795f673f912a3f3b",
+    "git_status_porcelain": [
+      "M workers/automation/uv.lock"
+    ],
+    "jobstreaming_version": "0.0.5",
+    "machine": "arm64",
+    "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "processor": "arm",
+    "python": "3.14.4 (main, Apr  7 2026, 20:47:13) [Clang 22.1.1 ]",
+    "python_executable": "/Users/eloibarti/.codex/worktrees/d7ba/JobHunter/workers/automation/.venv/bin/python",
+    "uv_lock_sha256": "4eaf563541a57070c8e1b661d34aad441d419ef8811dbd02abdc64b267148a67"
+  },
+  "reproduce": {
+    "locked_command": "env -u UV_PROJECT_ENVIRONMENT -u VIRTUAL_ENV -u UV_EXCLUDE_NEWER -u UV_EXCLUDE_NEWER_PACKAGE uv run --project workers/automation --locked --all-extras --exclude-newer false python workers/automation/scripts/search_unit_concurrency_assessment.py --output /Users/eloibarti/.codex/worktrees/d7ba/JobHunter/docs/architecture/pipeline/search-unit-concurrency-899.json --warmups 1 --repeats 3 --service-delay-seconds 0.05",
+    "observed_argv": [
+      "/Users/eloibarti/.codex/worktrees/d7ba/JobHunter/workers/automation/.venv/bin/python",
+      "workers/automation/scripts/search_unit_concurrency_assessment.py",
+      "--output",
+      "docs/architecture/pipeline/search-unit-concurrency-899.json",
+      "--warmups",
+      "1",
+      "--repeats",
+      "3",
+      "--service-delay-seconds",
+      "0.05"
+    ]
+  },
+  "scenarios": {
+    "active_provider_wait": {
+      "adapter_calls": 1,
+      "all_unfinished_terminalized": true,
+      "cancel_to_return_seconds": 0.051432,
+      "limiter_wait_seconds": [
+        7e-06
+      ],
+      "outcome": "canceled",
+      "scenario": "active_provider_wait",
+      "unit_states": [
+        "canceled",
+        "canceled",
+        "canceled",
+        "canceled",
+        "canceled",
+        "canceled"
+      ],
+      "wall_seconds": 0.077676
+    },
+    "limiter_wait": {
+      "adapter_calls": 0,
+      "all_unfinished_terminalized": true,
+      "cancel_to_return_seconds": 0.932662,
+      "limiter_wait_seconds": [
+        0.983506
+      ],
+      "outcome": "canceled",
+      "scenario": "limiter_wait",
+      "unit_states": [
+        "canceled",
+        "canceled",
+        "canceled",
+        "canceled",
+        "canceled",
+        "canceled"
+      ],
+      "wall_seconds": 1.013541
+    },
+    "pending": {
+      "adapter_calls": 0,
+      "all_unfinished_terminalized": true,
+      "cancel_to_return_seconds": 0.040459,
+      "limiter_wait_seconds": [],
+      "outcome": "canceled",
+      "scenario": "pending",
+      "unit_states": [
+        "canceled",
+        "canceled",
+        "canceled",
+        "canceled",
+        "canceled",
+        "canceled"
+      ],
+      "wall_seconds": 0.040464
+    },
+    "provider_retry": {
+      "adapter_calls": 2,
+      "adapter_start_gaps_seconds": [
+        5.001559
+      ],
+      "adapter_start_offsets_seconds": [
+        0.036614,
+        5.038173
+      ],
+      "checkpoint_save_seconds": [
+        0.000109,
+        9.5e-05,
+        0.000206,
+        0.000136,
+        8.9e-05
+      ],
+      "database": {
+        "checkpoint_revisions": [
+          4
+        ],
+        "checkpointed_units": 1,
+        "job_event_rows": 5,
+        "job_rows": 1,
+        "receipt_counts": {
+          "accepted": 1,
+          "existing": 0,
+          "new": 1
+        },
+        "receipt_rows": 1,
+        "recovery_count": 0,
+        "unit_count": 1,
+        "unit_states": [
+          "completed"
+        ]
+      },
+      "invariants": {
+        "all_units_checkpointed": true,
+        "all_units_completed": true,
+        "exact_job_count": true,
+        "exact_receipt_count": true,
+        "exact_unit_count": true,
+        "host_spacing_preserved": true,
+        "provider_concurrency_at_most_policy": true
+      },
+      "limiter_wait_seconds": [
+        9e-06
+      ],
+      "max_active_adapters": 1,
+      "persistence_seconds": [
+        0.005958
+      ],
+      "provider_service_seconds": [
+        8e-06,
+        0.055596
+      ],
+      "result": {
+        "db_total": 1,
+        "errors": 0,
+        "existing": 0,
+        "failed_queries": 0,
+        "failed_source_ids": [],
+        "filtered": 0,
+        "new": 1,
+        "queries": 1,
+        "raw_total": 1,
+        "recovered_units": 0,
+        "search_units": 1,
+        "skipped_units": 0,
+        "total": 1
+      },
+      "retry_completed": true,
+      "time_to_first_accepted_seconds": 5.105694,
+      "wall_seconds": 5.107233
+    }
+  },
+  "schema_version": 1,
+  "scope": {
+    "data": "owned temporary synthetic workspaces only",
+    "durable_path": "jobctrl.discovery.jobspy.run_discovery",
+    "gateway": "JobStreamingGateway.open_stream",
+    "network": "all socket connect operations blocked",
+    "persistence": "SQLite search units, receipts, jobs, and checkpoints"
+  },
+  "work_id": "jobctrl-899-search-unit-assessment"
+}
