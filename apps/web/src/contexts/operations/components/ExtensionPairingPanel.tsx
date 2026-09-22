@@ -103,7 +103,7 @@ export function ExtensionPairingPanel() {
       className="extension-pairing-settings"
       collapsedSummary="Live Chrome profile connection"
       defaultOpen={false}
-      description="Use the installed extension for Discovery in your current Chrome profile"
+      description="Optionally use your current Chrome profile for Discovery and Enrich"
       title="Browser extension"
     >
       <div
@@ -113,9 +113,10 @@ export function ExtensionPairingPanel() {
         <div>
           <h3>Live Chrome connection</h3>
           <p>
-            Discovery opens inactive tabs through the installed extension in
-            your currently running Chrome profile. JobCtrl does not copy the
-            profile. Saving this token in that profile selects its extension
+            Discovery and Enrich prefer the connected extension for requests
+            and inactive tabs in your currently running Chrome profile. Without
+            it, they use anonymous access and respect site restrictions. JobCtrl
+            does not copy the profile. Saving this token selects its extension
             installation for Discovery and replaces any previous selection.
           </p>
         </div>
@@ -131,14 +132,14 @@ export function ExtensionPairingPanel() {
           {!bridgeQuery.isPending && !connected ? (
             <div className="banner inline" role="alert">
               {bridgeQuery.error
-                ? "Discovery connection status is unavailable."
-                : "The token exists, but the extension is not connected. Open Chrome with the paired JobCtrl extension before running Discovery."}
+                ? "Extension status is unavailable. Discovery and Enrich can still run with anonymous access."
+                : "Extension offline. Discovery and Enrich can run with anonymous access. Open Chrome with the paired extension to prefer your signed-in profile."}
             </div>
           ) : null}
           {connected ? (
             <div className="status-line" role="status">
-              Discovery is connected through the extension in your live Chrome
-              profile.
+              Connected extension preferred for Discovery and Enrich in your
+              live Chrome profile.
             </div>
           ) : null}
           <Field className="field extension-token-field">

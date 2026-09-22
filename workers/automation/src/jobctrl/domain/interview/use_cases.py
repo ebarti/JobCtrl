@@ -41,6 +41,7 @@ from jobctrl.domain.materials.requirement_coverage import GeneratedClaimMapping
 from jobctrl.domain.materials.services import sanitize_text
 from jobctrl.domain.ports.events import EventPublisher
 from jobctrl.domain.ports.llm import LlmMessage, LlmPort
+from jobctrl.llm_lanes import lane_bound
 from jobctrl.domain.profile.snapshot import ProfileSnapshot
 from jobctrl.domain.tenant import TenantId
 from jobctrl.resume_profile import get_achievement_evidence
@@ -237,6 +238,7 @@ class GenerateInterviewPrepUseCase:
         self._publish_generated(tenant_id, prep)
         return InterviewPrepGenerationOutcome(prep=prep, status="accepted")
 
+    @lane_bound("interview")
     def _generate_candidate(
         self,
         *,
@@ -277,6 +279,7 @@ class GenerateInterviewPrepUseCase:
             max_tokens=3500,
         )
 
+    @lane_bound("interview")
     def _judge_candidate(
         self,
         *,

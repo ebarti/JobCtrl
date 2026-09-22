@@ -40,6 +40,7 @@ from jobctrl.domain.materials.analysis import (
     JobAnalysis,
     JobAnalysisDraft,
 )
+from jobctrl.domain.materials.analysis_content import AnalysisContentError, validate_candidate_prose
 from jobctrl.domain.materials.analysis_grounding import (
     GroundingError,
     find_grounding_violations,
@@ -62,23 +63,27 @@ async def _draft_with_retry(
     jd_snapshot: str,
     max_retries: int,
 ) -> JobAnalysisDraft:
-    """Run one leg, retrying on schema/grounding failure (AI-SPEC §4b).
+    """Run one leg, retrying on schema/grounding/content failure (AI-SPEC §4b).
 
     Returns the validated draft with its evidence spans SNAPPED to verbatim JD
     text (formatting-tolerant grounding gate), or raises the last error (which
     the caller records as a per-leg failure). The grounding check runs HERE so a
     leg that keeps fabricating spans is retried, then recorded as a failure
     rather than poisoning the synthesizer input — and the snapped spans flow
-    into the synthesizer + persistence verbatim-from-the-posting (D-15).
+    into the synthesizer + persistence verbatim-from-the-posting (D-15). A
+    candidate-prose rejection is fed back into the retry prompt, exactly as the
+    synthesizer re-ask does, so a leg can correct process commentary instead of
+    repeating it until the leg is exhausted.
     """
     last_error: Exception | None = None
     for attempt in range(max_retries + 1):
         try:
-            draft = await adapter.draft(system_prompt, jd_snapshot)
+            draft = await adapter.draft(_with_rejection_feedback(system_prompt, last_error), jd_snapshot)
+            validate_candidate_prose(draft)
             snapped = ground_and_snap(draft, jd_snapshot)
             assert isinstance(snapped, JobAnalysisDraft)  # snap preserves the leg type
             return snapped
-        except (ValidationError, GroundingError) as exc:
+        except (ValidationError, GroundingError, AnalysisContentError) as exc:
             last_error = exc
             log.warning(
                 "Analysis leg %s failed (attempt %d/%d): %s",
@@ -252,10 +257,13 @@ async def _synthesize_with_retry(
     for attempt in range(max_retries + 1):
         try:
             canonical = await synthesizer.reconcile(
-                system_prompt, drafts=drafts, jd_snapshot=jd_snapshot
+                _with_rejection_feedback(system_prompt, last_error),
+                drafts=drafts,
+                jd_snapshot=jd_snapshot,
             )
+            validate_candidate_prose(canonical)
             return ground_and_snap(canonical, jd_snapshot)
-        except (ValidationError, GroundingError) as exc:
+        except (ValidationError, GroundingError, AnalysisContentError) as exc:
             last_error = exc
             log.warning(
                 "Synthesizer failed (attempt %d/%d): %s",
@@ -265,6 +273,13 @@ async def _synthesize_with_retry(
             )
     assert last_error is not None
     raise last_error
+
+
+def _with_rejection_feedback(system_prompt: str, last_error: Exception | None) -> str:
+    """Re-ask with the candidate-prose rejection so the leg can correct it (AI-SPEC §6)."""
+    if isinstance(last_error, AnalysisContentError):
+        return f"{system_prompt}\nYour previous output was rejected: {last_error} Return corrected candidate prose."
+    return system_prompt
 
 
 def _raw_output_from_error(error: BaseException) -> str | None:

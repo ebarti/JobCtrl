@@ -46,10 +46,9 @@ from jobctrl.domain.materials.value_objects import ControlRule, TransformType
 from jobctrl.resume_profile import (
     experience_updates_by_id,
     get_claim_mode,
-    get_experience_entries,
-    get_required_experience_entry_ids,
     get_required_skill_category_ids,
     get_resume_master,
+    get_selected_experience_entries,
     get_skill_categories,
     get_tailoring_policy,
     tailored_experience_bullets,
@@ -303,18 +302,9 @@ def build_bullet_provenance(
         )
 
     # ---- Experience bullets (one row per rendered bullet) ----------------
-    # Audit only the entries the resume ships: mirror the assembler + both PDF
-    # renderers, which drop entries outside a pinned strict subset. Auditing an
-    # omitted entry would inflate the provenance-backed coverage with content the
-    # employer never receives.
+    # Audit the same mandatory and selected known roles the resume ships.
     experience_updates = experience_updates_by_id(tailored_payload)
-    required_experience_ids = get_required_experience_entry_ids(profile)
-    all_experience_entries = get_experience_entries(profile)
-    experience_entries = [
-        entry
-        for entry in all_experience_entries
-        if not required_experience_ids or entry.get("id") in required_experience_ids
-    ] or all_experience_entries
+    experience_entries = get_selected_experience_entries(profile, tailored_payload)
     for entry in experience_entries:
         if not isinstance(entry, dict):
             continue

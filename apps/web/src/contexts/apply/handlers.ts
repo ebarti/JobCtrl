@@ -3,6 +3,7 @@ import type {
   ApplicationFailed,
   ApplicationOutcomeRecorded,
   ApplicationSubmitted,
+  DryRunCompleted,
   ApplyReviewDecisionRecorded,
   ApplyRunEventRecorded,
   ApplyRunStarted,
@@ -60,7 +61,7 @@ export const applicationEmailFeedbackIngestedHandler = (
   event: ApplicationEmailFeedbackIngested,
 ): readonly InvalidationItem[] => [
   invalidate(outcomesKeys.lists(event.tenantId)),
-  invalidate(outcomesKeys.detail(event.tenantId, event.payload.jobKey)),
+  invalidate(outcomesKeys.detail(event.tenantId, event.payload.jobId)),
   invalidate(applyReviewKeys.queue(event.tenantId)),
   invalidate(analyticsKeys.all(event.tenantId)),
 ];
@@ -95,15 +96,29 @@ export const emailApplicationCandidateRecordedHandler = (
   invalidate(applyReviewKeys.queue(event.tenantId)),
 ];
 
+// Dry-run completion refreshes projections; it never patches submission state.
+export const dryRunCompletedHandler = (
+  event: DryRunCompleted,
+): readonly InvalidationItem[] => [
+  invalidate(applyRunsKeys.lists(event.tenantId)),
+  invalidate(applyRunsKeys.detail(event.tenantId, event.payload.run_id)),
+  invalidate(workflowRunsKeys.lists(event.tenantId)),
+  invalidate(workflowRunsKeys.detail(event.tenantId, event.payload.run_id)),
+  invalidate(applyReviewKeys.queue(event.tenantId)),
+  invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
+  invalidate(jobsKeys.lists(event.tenantId)),
+  invalidate(dashboardKeys.summary(event.tenantId)),
+];
+
 export const applicationSubmittedHandler = (
   event: ApplicationSubmitted,
 ): readonly InvalidationItem[] => [
   invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
   invalidate(jobsKeys.lists(event.tenantId)),
   invalidate(applyRunsKeys.lists(event.tenantId)),
-  invalidate(applyRunsKeys.detail(event.tenantId, event.payload.runId)),
+  invalidate(applyRunsKeys.detail(event.tenantId, event.payload.run_id)),
   invalidate(workflowRunsKeys.lists(event.tenantId)),
-  invalidate(workflowRunsKeys.detail(event.tenantId, event.payload.runId)),
+  invalidate(workflowRunsKeys.detail(event.tenantId, event.payload.run_id)),
   invalidate(dashboardKeys.summary(event.tenantId)),
   invalidate(analyticsKeys.all(event.tenantId)),
 ];

@@ -100,11 +100,9 @@ Locality is enforced structurally for ordinary local callers:
 ::: warning The loopback assumption is load-bearing
 Be honest about the limits. This posture is safe only while the API stays on
 loopback; the moment it is exposed remotely, the loopback assumption breaks and
-real authentication is required (see [Hosted-Future Posture](#hosted-future-posture)).
-Hosted auth, tenant isolation, an encrypted secret vault, and an audit log are
-roadmap items, not current guarantees — see [SECURITY.md](../../SECURITY.md) and
-the SaaS section of the [backlog](../backlog.md). Local data at rest is not
-encrypted.
+real authentication and a separate security review are required. Remote or
+multi-user exposure is outside this local threat model; see
+[SECURITY.md](../../SECURITY.md). Local data at rest is not encrypted.
 :::
 
 ### Attack Surface, Mitigations, And Attacker Stories
@@ -130,7 +128,8 @@ apply/submit route, and deterministic autofill excludes password and resume
 content. The content script intentionally matches all HTTP(S) pages so source
 and application hosts do not require per-host releases; autofill remains passive
 until an explicit review click, while the background worker may open temporary
-inactive tabs for an explicitly started/scheduled Discover execution. The
+tabs for an explicitly started/scheduled Discover execution. LinkedIn job
+pages use an active tab in an unfocused window; other pages remain inactive. The
 manifest's HTTP(S) host permission is also wildcarded so brokered API requests
 can execute in the service worker when an API origin cannot host an injectable
 HTML page. Capture/autofill routes remain loopback-only; the service worker does
@@ -164,13 +163,19 @@ installs tab-scoped DNR rules that allow main-frame navigation
 only to the exact source origin; a cross-origin redirect is blocked before
 dispatch. A task-scoped `webNavigation.onErrorOccurred` listener observes only
 the temporary tab's top frame, reports cross-origin blocked navigation as
-non-retryable `unsafe_redirect`, and is removed during task cleanup. Page-owned
+non-retryable `unsafe_redirect`, and is removed during task cleanup. LinkedIn job tasks move their known owned `about:blank` tab into
+`windows.create({focused: false, tabId})` before target navigation, leaving that
+tab active without focusing its window. Cleanup removes only the task-owned tab,
+not the whole window, so user-added tabs survive. Late tab/window creation and
+DNR installation perform cleanup again after cancellation instead of leaking
+resources or starting a canceled navigation. Page-owned
 fetch/XHR subresources are not matched by the DNR rules. The content script and broker independently reject non-web,
 credential-bearing, lexically local, or cross-origin final targets. Response
 streaming stops at the 4 MB UTF-8 byte bound instead of buffering an unbounded
 body. JobCtrl applies host pacing,
-run budgets, and robots policy around that transport; `robots.txt` is acquired
-through the same profile and evaluated with the browser-reported user agent.
+concurrency and run budgets around that transport. Neither connected nor
+anonymous Discovery/Enrich requests or evaluates `robots.txt`; historical
+robots-blocked outcomes remain readable and retryable.
 JobStreaming remains a documented residual for request accounting because its
 internal traversal is invocation-gated, even though its provider sessions use
 the extension. Normal rendered-page subresource loading is Chrome/site-owned and
@@ -454,38 +459,21 @@ to a fixture just because the scrubber is green today.
 
 **The docs site has a publish boundary.** The VitePress config
 (`docs/.vitepress/config.ts`) excludes `docs/plans/`, `docs/incidents/`,
-`docs/backlog.md`, `docs/delivered.md`, and the repo-facing `docs/README.md`
+`docs/delivered.md`, and the repo-facing `docs/README.md`
 from the built site via `srcExclude`,
 and rewrites any inbound link that escapes the published set (repo-root files or
 unpublished internal docs) to an absolute GitHub URL so the deployed site never
 ships a relative link that 404s. When adding a page, keep internal-only material
 in the excluded set and link to it normally; the config handles the rewrite.
 
-## Hosted-Future Posture
+## Deployment Boundary {#hosted-future-posture}
 
-The local-only posture is a deliberate stop on the way to a hosted multi-tenant
-target, and the seams that would change security are already named in
-[`docs/architecture/domain-model/cloud.md`](../architecture/domain-model/cloud.md) §9 (with fitness functions in §9.4) and
-the SaaS section of the [backlog](../backlog.md). The load-bearing ones:
-
-- **API authentication.** "No auth" holds only while the API is loopback-bound.
-  Any public-facing deployment triggers an Identity & Access context — Auth0 or
-  Cognito issuing JWTs, validated by a gateway that injects a
-  `TenantContext { tenantId, userId, roles }` into every request.
-- **Tenant derivation.** Domain types already carry `TenantId`; today it is the
-  constant `local`. In hosted mode the value's source changes to JWT claims — a
-  mechanical change, because query keys, events, and projections are already
-  tenant-scoped.
-- **Secret storage.** The current environment-first, macOS-Keychain-fallback
-  credential model gives way to a managed secret vault (e.g. AWS Secrets
-  Manager) on any hosted or multi-tenant deployment. `.env` is unencrypted.
-- **Browser isolation.** Local Chrome on CDP ports becomes managed browser
-  sessions (e.g. Browserbase) on any cloud deployment, because running Chrome in a
-  container needs elevated privileges or `--no-sandbox`. This is a day-1 cloud
-  blocker, not a gradual migration.
-
-None of these exist in local mode today; they are the next-evolution seam, and
-each is gated by a concrete trigger rather than shipped speculatively.
+This threat model covers the local product. Tenant-scoped types and query keys
+do not establish authenticated multi-user isolation, and loopback checks do not
+protect a remotely exposed API. A different deployment requires its own
+authentication, authorization, credential, browser and data-isolation review
+before it can make security guarantees. The current guarantees and reporting
+policy are documented in [SECURITY.md](../../SECURITY.md).
 
 ## Reporting A Security Issue
 

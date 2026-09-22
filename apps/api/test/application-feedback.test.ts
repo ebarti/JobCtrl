@@ -1,3 +1,4 @@
+import { seedApplicationUrl } from "./seed-enrichment.js";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -217,6 +218,69 @@ describe("application feedback API", () => {
     await app.close();
   });
 
+  it.each([
+    { name: "stale score and stale accepted artifact", analysisGeneration: 2, reportGeneration: 1, changedText: true, binding: "present", matched: false, covered: false },
+    { name: "fresh score and stale accepted artifact", analysisGeneration: 2, reportGeneration: 2, changedText: true, binding: "present", matched: true, covered: false },
+    { name: "current score generation with a different requirement identity", analysisGeneration: 2, reportGeneration: 2, changedText: true, binding: "present", reportTextStale: true, matched: false, covered: false },
+    { name: "unchanged source identity across generations", analysisGeneration: 2, reportGeneration: 2, changedText: false, binding: "present", matched: true, covered: true },
+    { name: "legacy missing artifact binding", analysisGeneration: 1, reportGeneration: 1, changedText: false, binding: "missing", matched: true, covered: false },
+    { name: "ambiguous duplicate artifact binding", analysisGeneration: 1, reportGeneration: 1, changedText: false, binding: "duplicate", matched: true, covered: false },
+    { name: "legacy missing score generation", analysisGeneration: 1, reportGeneration: 0, changedText: false, binding: "present", matched: false, covered: true },
+  ])("keeps source identities separate for $name", async ({ analysisGeneration, reportGeneration, changedText, binding, reportTextStale, matched, covered }) => {
+    const db = new Database(options.dbPath);
+    const source = db.prepare("SELECT requirements_json FROM job_employer_analysis WHERE job_id = ?").get(READY_JOB_ID) as { requirements_json: string };
+    const requirements = JSON.parse(source.requirements_json);
+    const currentText = changedText ? "Hold a clinical oncology license" : requirements[0].text;
+    requirements[0].text = currentText;
+    db.prepare("UPDATE job_employer_analysis SET generation = ?, requirements_json = ? WHERE job_id = ?")
+      .run(analysisGeneration, JSON.stringify(requirements), READY_JOB_ID);
+    db.prepare("UPDATE job_requirement_fit_reports SET employer_analysis_generation = ? WHERE job_id = ?")
+      .run(reportGeneration, READY_JOB_ID);
+    if (reportGeneration === analysisGeneration && !reportTextStale) {
+      db.prepare("UPDATE job_requirement_fit_items SET requirement_text = ? WHERE job_id = ? AND requirement_id = 'r1'")
+        .run(currentText, READY_JOB_ID);
+    }
+    if (binding !== "present") {
+      const metadata = binding === "missing" ? {} : { quality_plan: { requirement_directives: [
+        { requirement_id: "r1", requirement_text: currentText },
+        { requirement_id: "r1", requirement_text: "Different source requirement" },
+      ] } };
+      db.prepare("UPDATE job_materials_artifacts SET metadata_json = ? WHERE artifact_id = 'apply-ready-resume-text'")
+        .run(JSON.stringify(metadata));
+    }
+    const originalArtifacts = db.prepare("SELECT artifact_id, path, metadata_json FROM job_materials_artifacts WHERE job_id = ? ORDER BY artifact_id").all(READY_JOB_ID);
+    db.close();
+    const app = buildApp(options);
+    try {
+      const queue = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
+      expect(queue.statusCode, queue.body).toBe(200);
+      const item = queueItem(queue.json(), READY_JOB_ID)!;
+      const requirement = item.position.idealRequirements.find((entry) => entry.id === "r1")!;
+      expect(requirement.text).toBe(currentText);
+      expect(requirement.fit?.kind ?? null).toBe(matched ? "matched" : null);
+      expect(requirement.tailoring === null).toBe(!matched);
+      expect(requirement.coverage).toMatchObject({ state: covered ? "covered" : "not_recorded", bulletCount: covered ? 1 : 0 });
+      if (!covered) expect(requirement.coverage.examples).toEqual([]);
+      expect(item.materialsPreview).toMatchObject({ resumeText: "tailored resume", resumeTextArtifactId: "apply-ready-resume-text" });
+      const detail = await app.inject({ method: "GET", url: `/v1/jobs/${READY_JOB_ID}` });
+      expect(detail.statusCode, detail.body).toBe(200);
+      const body = detail.json();
+      expect(body.employerAnalysis.generation).toBe(analysisGeneration);
+      if (matched) {
+        expect(body.requirementFitReport.assessments.find((entry: { requirementId: string }) => entry.requirementId === "r1").artifactCoverage)
+          .toMatchObject({ state: covered ? "covered" : "not_recorded", bulletCount: covered ? 1 : 0 });
+      } else if (reportGeneration === analysisGeneration) {
+        expect(body.requirementFitReport.assessments.find((entry: { requirementId: string }) => entry.requirementId === "r1")).toBeUndefined();
+      } else {
+        expect(body.requirementFitReport).toBeNull();
+      }
+      const readback = new Database(options.dbPath);
+      expect(readback.prepare("SELECT artifact_id, path, metadata_json FROM job_materials_artifacts WHERE job_id = ? ORDER BY artifact_id").all(READY_JOB_ID)).toEqual(originalArtifacts);
+      expect(fs.readFileSync(path.join(path.dirname(options.dbPath), "resume.txt"), "utf8")).toBe("tailored resume");
+      readback.close();
+    } finally { await app.close(); }
+  });
+
   it("keeps jobs in review queue while existing materials are being refreshed", async () => {
     const db = new Database(options.dbPath);
     db.prepare(
@@ -243,9 +307,9 @@ describe("application feedback API", () => {
         resumePdfArtifactId: "apply-ready-resume-pdf",
       },
       applyAudit: {
-        state: "preparing",
-        label: "materials preparing",
-        summary: "tailor is running. Review evidence is still available where recorded.",
+        state: "ready",
+        label: "materials ready",
+        summary: "The tailored materials are ready to review before approval.",
       },
     });
 
@@ -344,7 +408,8 @@ describe("application feedback API", () => {
 
     expect(response.statusCode, response.body).toBe(200);
     expect(queueItem(response.json(), READY_JOB_ID)?.applyAudit).toMatchObject({
-      state: "preparing",
+      state: "ready",
+      label: "materials ready",
       missingPrerequisites: [
         expect.objectContaining({
           code: "missing_profile_attestations",
@@ -361,6 +426,12 @@ describe("application feedback API", () => {
       ]),
     });
 
+    const detail = await app.inject({ method: "GET", url: `/v1/jobs/${READY_JOB_ID}` });
+    expect(detail.statusCode, detail.body).toBe(200);
+    expect(detail.json().applyAudit).toMatchObject({
+      state: "ready", label: "materials ready",
+      missingPrerequisites: expect.arrayContaining([expect.objectContaining({ code: "missing_profile_attestations" })]),
+    });
     await app.close();
   });
 
@@ -504,9 +575,9 @@ describe("application feedback API", () => {
       currentState: "pending",
       blockers: [],
       applyAudit: {
-        state: "preparing",
-        label: "materials preparing",
-        summary: "cover is pending. Review evidence is still available where recorded.",
+        state: "ready",
+        label: "materials ready",
+        summary: "The tailored materials are ready to review before approval.",
         hardBlockers: [],
       },
     });
@@ -549,7 +620,7 @@ describe("application feedback API", () => {
 
   it("uses the posting URL as the review apply target when direct application URL is missing", async () => {
     const db = new Database(options.dbPath);
-    db.prepare("UPDATE jobs SET application_url = NULL WHERE url = ?").run(READY_JOB);
+    db.prepare("UPDATE job_enrichments SET application_url = NULL WHERE job_id = (SELECT job_id FROM jobs WHERE url = ?)").run(READY_JOB);
     db.close();
     const app = buildApp(options);
 
@@ -777,6 +848,11 @@ describe("application feedback API", () => {
         WHERE job_id = ?
           AND artifact_type IN ('tailored_resume', 'tailored_resume_txt', 'resume_txt')`,
     ).run(READY_JOB_ID);
+    db.prepare(
+      `UPDATE job_materials_artifacts
+          SET metadata_json = ?
+        WHERE job_id = ? AND artifact_id = 'apply-ready-resume-pdf'`,
+    ).run(JSON.stringify(requirementLedAuditMetadata()), READY_JOB_ID);
     insertMaterialSet(db, READY_JOB_ID, 2, "candidate");
     db.prepare(
       `INSERT INTO job_materials_artifacts (
@@ -800,10 +876,41 @@ describe("application feedback API", () => {
     expect(response.statusCode, response.body).toBe(200);
     expect(queueItem(response.json(), READY_JOB_ID)).toMatchObject({
       materialsPreview: {
+        materialsGeneration: 1,
         resumeText: null,
         resumeTextArtifactId: null,
         resumePdfArtifactId: "apply-ready-resume-pdf",
+        resumePdfLayoutBoxes: [
+          {
+            semanticId: "experience:acme:bullet:1",
+            pageNumber: 1,
+            textExcerpt: "Owned platform reliability improvements for incident response.",
+          },
+        ],
+        requirementLedAudit: { requirementCount: 2, achievementCount: 3, coverageEdgeCount: 1 },
       },
+    });
+
+    await app.close();
+  });
+
+  it("returns an empty resume preview when no resume artifact or failed audit exists", async () => {
+    const db = new Database(options.dbPath);
+    db.prepare("UPDATE jobs SET tailored_resume_path = NULL WHERE url = ?").run(READY_JOB);
+    db.prepare("DELETE FROM job_materials_artifacts WHERE job_id = ?").run(READY_JOB_ID);
+    db.close();
+    const app = buildApp(options);
+
+    const response = await app.inject({ method: "GET", url: "/v1/apply/review-queue" });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(queueItem(response.json(), READY_JOB_ID)?.materialsPreview).toMatchObject({
+      materialsGeneration: null,
+      resumeText: null,
+      resumeTextArtifactId: null,
+      resumePdfArtifactId: null,
+      resumePdfLayoutBoxes: [],
+      requirementLedAudit: null,
     });
 
     await app.close();
@@ -1093,6 +1200,7 @@ describe("application feedback API", () => {
       resumeText: null,
       resumeTextArtifactId: null,
       resumePdfArtifactId: null,
+      resumePdfLayoutBoxes: [],
     });
     expect(item?.materialsPreview.requirementLedAudit?.revision).toMatchObject({
       score: 4,
@@ -1522,6 +1630,8 @@ describe("application feedback API", () => {
 
   it("rejects submit approval when the displayed review binding is stale", async () => {
     const db = new Database(options.dbPath);
+    db.prepare("INSERT INTO job_application_locators VALUES ('local', ?, ?)")
+      .run(READY_JOB_ID, "https://example.com/old-apply");
     db.prepare(
       "INSERT INTO candidate_profiles (tenant_id, profile_id, version, updated_at) VALUES ('local', 'default', ?, ?)",
     ).run(7, NOW);
@@ -1561,9 +1671,10 @@ describe("application feedback API", () => {
     expect(staleProfile.statusCode, staleProfile.body).toBe(409);
     expect(staleProfile.json()).toMatchObject({ ok: false, error: "approval_stale_profile" });
 
+    // A retained locator finds the job but cannot authorize its retired target.
     const staleUrl = await app.inject({
       method: "POST",
-      url: `/v1/jobs/${readyKey}/apply-review/decision`,
+      url: `/v1/jobs/${encodeURIComponent("https://example.com/old-apply")}/apply-review/decision`,
       payload: {
         decision: "approve_submit",
         materialsGeneration: 1,
@@ -1803,7 +1914,7 @@ describe("application feedback API", () => {
       evidence: [
         {
           evidenceId: "evidence-1",
-          jobKey: READY_JOB_ID,
+          jobId: READY_JOB_ID,
           providerMessageId: "gmail-message-1",
           linkConfidence: 0.94,
           bodyText: rawBody,
@@ -1813,7 +1924,7 @@ describe("application feedback API", () => {
         {
           suggestionId: "suggestion-1",
           evidenceId: "evidence-1",
-          jobKey: READY_JOB_ID,
+          jobId: READY_JOB_ID,
           kind: "interview",
           confidence: 0.9,
           bodyText: rawBody,
@@ -1854,7 +1965,7 @@ describe("application feedback API", () => {
       evidence: [
         {
           evidenceId: "evidence-1",
-          jobKey: READY_JOB_ID,
+          jobId: READY_JOB_ID,
           providerMessageId: "gmail-message-1",
           linkConfidence: 0.94,
         },
@@ -1863,7 +1974,7 @@ describe("application feedback API", () => {
         {
           suggestionId: "suggestion-1",
           evidenceId: "evidence-1",
-          jobKey: READY_JOB_ID,
+          jobId: READY_JOB_ID,
           kind: "interview",
           confidence: 0.9,
         },
@@ -2440,10 +2551,10 @@ function insertJob(
 ): void {
   db.prepare(
     `INSERT INTO jobs (
-       tenant_id, job_id, url, title, site, strategy, location, salary, discovered_at, application_url,
+       tenant_id, job_id, url, title, site, strategy, location, salary, discovered_at,
        description, full_description, detail_scraped_at, fit_score, score_reasoning,
        scored_at, tailored_resume_path, tailored_at, apply_status, applied_at
-     ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     job.jobId,
     job.url,
@@ -2453,7 +2564,6 @@ function insertJob(
     "Remote",
     "",
     NOW,
-    job.url,
     "Short description",
     "Full description",
     NOW,
@@ -2465,6 +2575,7 @@ function insertJob(
     job.appliedAt ? "applied" : null,
     job.appliedAt ?? null,
   );
+  seedApplicationUrl(db, "local", job.jobId, job.url);
   for (const stage of ["discover", "enrich", "score", "tailor", "cover"]) {
     insertStage(db, job.jobId, stage, "succeeded");
   }
@@ -2529,6 +2640,13 @@ function insertMaterials(
        render_format, created_at, size_bytes, metadata_json
      ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?, ?, '{}')`,
   ).run(jobId, 1, `${artifactPrefix}-resume-text`, "tailored_resume", "approved", resumePath, "text", NOW, 15);
+  if (jobId === READY_JOB_ID) {
+    db.prepare("UPDATE job_materials_artifacts SET metadata_json = ? WHERE job_id = ? AND artifact_id = ?")
+      .run(JSON.stringify({ quality_plan: { requirement_directives: [
+        { requirement_id: "r1", requirement_text: "Lead platform reliability improvements across critical services." },
+        { requirement_id: "r2", requirement_text: "Improve developer experience and incident-response practices." },
+      ] } }), jobId, `${artifactPrefix}-resume-text`);
+  }
   db.prepare(
     `INSERT INTO job_materials_artifacts (
        tenant_id, job_id, generation, artifact_id, artifact_type, status, path,
@@ -2585,6 +2703,10 @@ function requirementLedAuditMetadata(): Record<string, unknown> {
     job_text: "Full description with FULL PROFILE SECRET and unrelated details.",
     local_path: "/private/secret-resume.pdf",
     quality_plan: {
+      requirement_directives: [
+        { requirement_id: "r1", requirement_text: "Lead platform reliability improvements across critical services." },
+        { requirement_id: "r2", requirement_text: "Improve developer experience and incident-response practices." },
+      ],
       target_profile: {
         requirements: [
           {

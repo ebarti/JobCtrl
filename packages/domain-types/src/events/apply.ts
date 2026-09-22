@@ -9,11 +9,15 @@ import { type DomainEvent, createDomainEvent } from "./base.js";
 
 // -- ApplicationSubmitted ---------------------------------------------------
 
+/** Launcher payload as persisted and delivered by SSE (lifecycle keys stay snake_case). */
 export interface ApplicationSubmittedPayload {
   readonly jobId: string;
-  readonly runId: string;
-  readonly appliedAt: string;
-  readonly verificationConfidence: number;
+  readonly run_id: string;
+  readonly result: "applied";
+  readonly finished_at: string;
+  readonly duration_ms: number | null;
+  readonly worker_id: number | null;
+  readonly model: string | null;
 }
 
 export type ApplicationSubmitted = DomainEvent<"ApplicationSubmitted", ApplicationSubmittedPayload>;
@@ -23,6 +27,35 @@ export function createApplicationSubmitted(
   payload: ApplicationSubmittedPayload,
 ): ApplicationSubmitted {
   return createDomainEvent("ApplicationSubmitted", tenantId, payload);
+}
+
+// -- DryRunCompleted --------------------------------------------------------
+
+/** Launcher payload as persisted and delivered by SSE (lifecycle keys stay snake_case). */
+export interface DryRunCompletedPayload {
+  readonly jobId: string;
+  readonly run_id: string;
+  readonly result: "dry_run_complete";
+  readonly finished_at: string;
+  readonly duration_ms: number | null;
+  readonly dry_run: true;
+  readonly worker_id: number | null;
+  readonly model: string | null;
+  readonly coverage: "full" | "partial";
+  readonly blocked_channels: readonly string[];
+  readonly allowed_navigations: readonly Readonly<Record<string, unknown>>[];
+  readonly materials_generation: number | null;
+  readonly application_url: string | null;
+  readonly profile_version: number | null;
+}
+
+export type DryRunCompleted = DomainEvent<"DryRunCompleted", DryRunCompletedPayload>;
+
+export function createDryRunCompleted(
+  tenantId: TenantId,
+  payload: DryRunCompletedPayload,
+): DryRunCompleted {
+  return createDomainEvent("DryRunCompleted", tenantId, payload);
 }
 
 // -- ApplicationFailed ------------------------------------------------------
@@ -124,7 +157,7 @@ export function createEmailApplicationCandidateRecorded(
 // -- ApplicationEmailFeedbackIngested ---------------------------------------
 
 export interface ApplicationEmailFeedbackIngestedPayload {
-  readonly jobKey: string;
+  readonly jobId: string;
   readonly evidenceId: string;
   readonly suggestionId: string;
   readonly provider: "gmail";

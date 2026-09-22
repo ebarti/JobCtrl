@@ -25,6 +25,16 @@ from opentelemetry.util._once import Once
 _TEST_KEY = "TEST_KEY_DEADBEEFCAFE"
 
 
+@pytest.fixture(autouse=True)
+def _llm_accounting_context(monkeypatch: pytest.MonkeyPatch):
+    from jobctrl.llm_lanes import bind_llm_lane
+
+    monkeypatch.setattr("jobctrl.llm.enforce_spend_budget", lambda _lane=None: None)
+    monkeypatch.setattr("jobctrl.llm.record_llm_spend", lambda **_kwargs: None)
+    with bind_llm_lane("tailoring"):
+        yield
+
+
 @pytest.fixture
 def in_memory_exporter(monkeypatch):
     """Stand up a TracerProvider piped to an in-memory exporter."""

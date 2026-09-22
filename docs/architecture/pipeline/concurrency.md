@@ -76,8 +76,12 @@ Two knobs that look like Temporal concurrency but are not:
   sequential by immutable query/location/board unit (a plain loop in the
   compatibility-named `jobspy.py`). JobStreaming owns each board adapter's
   internal transport/pagination and cancellation-aware waits. Parallelising
-  durable units is a filed
-  [backlog item](../../backlog.md), not current behavior.
+  durable units was assessed in
+  [#899](https://github.com/ebarti/JobCtrl/issues/899). The fixed synthetic
+  production-path measurement found the shared host policy dominant, exposed
+  incompatible same-owner lease reentry and non-interruptible limiter waits,
+  and did not justify runtime search-unit parallelism. See the
+  [assessment and raw samples](search-unit-concurrency-assessment.md).
 
 ## Where Fan-out Happens (And Why)
 

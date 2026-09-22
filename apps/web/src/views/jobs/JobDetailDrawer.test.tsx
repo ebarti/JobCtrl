@@ -455,6 +455,11 @@ describe("<JobDetailDrawer>", () => {
     expect(within(triage).getByText("Must-haves")).toBeInTheDocument();
     expect(within(triage).getByText("100%")).toBeInTheDocument();
     expect(
+      within(triage)
+        .getByLabelText("Ranking summary")
+        .querySelectorAll(":scope > div"),
+    ).toHaveLength(6);
+    expect(
       within(triage).getByText("Strong fit on platform reliability."),
     ).toBeInTheDocument();
     expect(
@@ -529,6 +534,20 @@ describe("<JobDetailDrawer>", () => {
     const matchedRequirement = within(roleAnalysis).getByRole("article", {
       name: "Requirement: Lead platform reliability programs across multiple teams",
     });
+    const disclosure = within(matchedRequirement).getByRole("button", {
+      name: /^Hide evidence/,
+    });
+    expect(disclosure).toHaveAttribute("aria-expanded", "true");
+    expect(
+      within(matchedRequirement).getByRole("group", { name: "Fit summary" }),
+    ).toBeVisible();
+    await userEvent.click(disclosure);
+    expect(disclosure).toHaveAttribute("aria-expanded", "false");
+    expect(
+      within(matchedRequirement).queryByRole("group", { name: "Fit summary" }),
+    ).not.toBeInTheDocument();
+    await userEvent.click(disclosure);
+    expect(disclosure).toHaveAttribute("aria-expanded", "true");
     expect(
       within(matchedRequirement).getByText(
         "Led a platform reliability transformation",
@@ -1020,6 +1039,13 @@ describe("<JobDetailDrawer>", () => {
     const requirement = await screen.findByRole("article", {
       name: "Requirement: Lead platform reliability programs across multiple teams",
     });
+    const disclosure = within(requirement).getByRole("button", {
+      name: /^Hide evidence/,
+    });
+    expect(disclosure).toHaveAttribute("aria-expanded", "true");
+    expect(
+      within(requirement).getByRole("group", { name: "Fit summary" }),
+    ).toBeVisible();
     expect(
       within(requirement).getByText("Requirement fit"),
     ).toBeInTheDocument();
@@ -1080,6 +1106,10 @@ describe("<JobDetailDrawer>", () => {
     expect(
       within(callout).getByRole("button", { name: "re-score requirement fit" }),
     ).toBeInTheDocument();
+
+    const ranking = screen.getByLabelText("Ranking summary");
+    expect(ranking.querySelectorAll(":scope > div")).toHaveLength(6);
+    expect(within(ranking).getAllByText("not assessed")).toHaveLength(2);
 
     const requirement = screen.getByRole("article", {
       name: "Requirement: Lead platform reliability programs across multiple teams",

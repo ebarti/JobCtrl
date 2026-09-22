@@ -52,6 +52,12 @@ The diagram is deliberately not an event-sourcing diagram: most aggregates are
 loaded from canonical tables, not reconstructed by replaying `job_events` on
 every command or request.
 
+Gmail feedback ingestion commits its evidence, suggestion, and durable event in
+one transaction before publishing the event to projection subscribers. After
+mail retrieval, that transaction rechecks the tenant-scoped job and provider
+message so concurrent deletion or scanning cannot leave orphaned or duplicate
+evidence. Raw message bodies stay out of event payloads and scan summaries.
+
 ## Name The Layer Before Changing It
 
 | Layer | Meaning | Authority and recovery |
@@ -185,6 +191,12 @@ and missing-row backfills make repeated refreshes safe. For the exact current
 projection responsibilities, use [Apply Feedback & Projections](read-model.md);
 for workflow/event recovery, use
 [Operations & Events](pipeline/operations.md#domain-events-projections-and-sse).
+
+The apply launcher emits `DryRunCompleted` when a run finishes without submitting.
+The apply-run projection maps it to `dry_run_complete`; the shared event registry
+and apply-owned browser handler refresh the corresponding reads. This event is
+separate from `ApplicationSubmitted` and does not establish an applied job or a
+submission outcome.
 
 ## SSE Is Invalidation, Not State Transfer
 

@@ -145,10 +145,12 @@ concurrency, optional source selection, and dry-run mode, then start the run.
 The source picker accepts up to 50 sources; leave it on **All runnable sources**
 to use the complete enabled registry.
 
-Before launch, keep Chrome running with the paired JobCtrl extension connected
-in the profile you want Discovery to use. Pipelines shows that live readiness
-and disables Discover while it is offline. The run uses that profile directly;
-it does not use a profile copy or a silent direct-network/Playwright fallback.
+Discovery can start while the extension is offline. Pipelines shows its status
+without disabling launch. To prefer your current signed-in Chrome profile,
+keep the selected paired extension connected. Each acquisition setup chooses
+the connected extension or guarded public HTTP/anonymous Playwright before
+fetching. Neither mode copies a profile, and a site or access failure does not
+switch transport. Worker readiness and stage eligibility still gate launch.
 
 </WorkflowSurfacePanel>
 
@@ -160,8 +162,10 @@ Start the same Discover workflow from the terminal:
 jobctrl run discover
 ```
 
-The CLI reaches the same fail-closed extension prerequisite even though it does
-not have the Pipelines button preflight.
+The CLI uses the same optional transport selection. An offline extension does
+not prevent dispatch; public-source restrictions and worker readiness still
+apply. See [Crawl Politeness](discovery.md#crawl-politeness) for source-specific
+limits, including anonymous broad-board proxy restrictions.
 
 Per-stage commands (`jobctrl enrich`, `score`, `tailor`, `cover`) and the
 single-job path (`jobctrl job <url> --dry-run`) start the same underlying
@@ -286,9 +290,9 @@ postings become normalized, provenance-bearing job records before scoring.
 
 <WorkflowSurfacePanel surface="web">
 
-The Jobs view supports filters, sorting, pagination, deep links, deleted and
-hidden views, fit-score ranges, stage state, source provenance, compensation
-evidence, and route-level job workspaces.
+The Jobs view supports filters, sorting, pagination, deep links, job-state and
+fit-score filters, stage state, source provenance, compensation evidence, and
+route-level job workspaces.
 
 </WorkflowSurfacePanel>
 
@@ -309,19 +313,25 @@ evidence, source provenance, artifacts, readiness, and per-job actions.
 
 <WorkflowSurfacePanel surface="web">
 
-![JobCtrl Jobs table with fit scores, companies, and triage actions](../assets/screenshots/jobs.png)
-*The Jobs table ranks discovered jobs by fit score with filters, compensation columns, and bulk triage actions.*
+![JobCtrl single-table Jobs workspace with the Active Job state filter and distinct stage progress](../assets/screenshots/jobs.png)
+*The Jobs table keeps lifecycle state and pipeline stage distinct while preserving filters, saved views, and bulk triage actions.*
 
 </WorkflowSurfacePanel>
 
-Use the **Active**, **Deleted**, and **Hidden** tabs to move between real job
-queues; **Closed** is not a normal user-facing queue. Active postings do not
-repeat an `OPEN` label beside every title. The default view keeps **Sources**
-and **Warnings** available in column controls but hides them until needed.
-Delete and permanent-delete actions use destructive styling, while restore and
-unhide remain recovery actions. Opening a row uses its keyboard-focusable row
-action, so the table does not add a redundant visible **Open** control to every
-record.
+Use the **Job state** column filter to show **Active**, **Deleted**, **Hidden**,
+or any combination of those values in one table. The default view selects
+**Active** only. The options remain available even when the current page has no
+row in that state, and the server applies them before totals and pagination.
+Hidden takes precedence if a job has both hide and delete tombstones. **Closed**
+is not a normal user-facing state; old links that use it remain compatible.
+Active postings do not repeat an `OPEN` label beside every title. The default
+view keeps **Sources** and **Warnings** available in column controls but hides
+them until needed. Mixed-state selections expose only the actions eligible for
+each state: delete or hide active jobs, restore deleted jobs, unhide hidden jobs,
+and permanently remove deleted or hidden jobs. Delete and permanent-delete
+actions use destructive styling, while restore and unhide remain recovery
+actions. Opening a row uses its keyboard-focusable row action, so the table does
+not add a redundant visible **Open** control to every record.
 
 At 900px and below, the Jobs, Artifacts, Contacts, Discovery, and Settings data
 tables reflow into labelled record cards. Their sorting and filtering controls
@@ -647,7 +657,7 @@ contacts:
 - Research **proposes** candidates for review — it never stores them automatically
   (supervised, INV-4). Each proposed candidate shows its provenance (the page it
   came from, the capture method, and a confidence), and the run shows the
-  per-source outcomes (fetched, blocked by `robots.txt`, rate-limited, or routed
+  per-source outcomes (fetched, rate-limited, historically blocked by `robots.txt`, or routed
   to manual capture because the page needs a login).
 - Review each candidate and click **confirm contact** to promote it into your
   contacts. Only then does it become a stored fact — with its research provenance

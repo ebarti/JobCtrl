@@ -53,6 +53,16 @@ A failed fetch or exhausted cascade records a retryable attempt without
 manufacturing a snapshot. Failure remains isolated to that job, so useful
 results from the rest of the source batch survive.
 
+LinkedIn's public guest description and authenticated job-detail layouts both
+have deterministic extraction rules. When the public description is present in
+the captured content, anonymous enrichment can save it without an LLM or an
+external application URL. Guest extraction selects the description's nested
+text block, excluding unrelated expandable content and show-more controls.
+Anonymous page collection removes page chrome and noisy attributes before
+applying its 50,000-character HTML limit, so removable markup does not crowd out
+posting text or application links. JSON-LD is collected separately; meaningful
+content beyond the HTML limit remains outside CSS and LLM extraction input.
+
 While the worker is running, unfinished enrichment and retryable failures are
 picked up automatically without a new discovery search. Recovery waits for
 existing preparation to finish, keeps each job's attempt history, and retries
@@ -106,10 +116,10 @@ separate primary page or pipeline stage. Its results remain inspectable:
 When a useful posting cannot be fetched safely, use manual capture rather than
 evading a site's controls. The current capture boundary accepts user-mediated
 URLs or content, including browser-extension captures, and preserves that
-origin as provenance. Integrated Discovery acquires detail pages through the
-paired extension in the user's current Chrome profile, so an existing same-site
-session may be used naturally; a page that remains inaccessible stays on the
-manual path.
+origin as provenance. Integrated Discovery prefers the connected extension in
+the user's current Chrome profile, so an existing same-site session may be used.
+Without it, acquisition uses anonymous access. Neither mode consults robots.txt;
+a page that remains inaccessible stays on the manual path.
 
 The Jobs page's **Import job** action applies the same boundary to one explicit
 public URL. A readable page is ingested immediately with its extracted title,
@@ -124,10 +134,14 @@ PDF rendering. A missing separate application URL does not block that
 preparation. Quarantined or inactive captures do not start it, and URL import
 never starts Apply.
 
-LinkedIn enrichment uses the same selected extension installation in the
-user's currently running, signed-in Chrome profile. Because this is an explicit
-owner-authenticated read rather than an anonymous crawler, JobCtrl does not
-apply LinkedIn's anonymous `robots.txt` verdict to that page. Public-destination
+The extension renders LinkedIn jobs in an active tab inside an unfocused
+temporary window, allowing client-rendered descriptions to hydrate without
+moving focus. The task retains its exact-origin navigation guard and closes
+only its own tab on completion, failure, timeout or cancellation.
+
+When connected, LinkedIn enrichment uses the selected extension installation in
+the user's currently running, signed-in Chrome profile. Neither connected nor
+anonymous acquisition requests or evaluates `robots.txt`. Public-destination
 validation, exact-origin browser-task rules, per-host pacing, the shared run
 request budget, and audit history remain enforced. Recovery stops before the
 application form and cannot submit an application.
@@ -136,14 +150,17 @@ When that live extension connects, JobCtrl immediately continues the
 browser-conditioned Enrich → Score → Tailor → Cover path for affected LinkedIn
 jobs only; unrelated robots blocks and ordinary pending jobs are not
 retriggered, and another Discover run is not required. Job-scoped and bulk
-Enrich runs/retries check the extension before dispatch; retries check it before
-resetting any stage state or diagnostics. The outer Temporal Enrich entry binds
-its workflow/run identity to the extension before any legacy URL-repair branch
-can choose a transport, then reads through that live profile. It never launches
-Playwright, adopts a system executable, runs the legacy copied-profile pre-pass,
-or creates a browser-profile snapshot. Legacy
-blocked rows carrying the former copied-profile condition remain recoverable
-through the live extension. Legacy snapshots that coupled readable content to
+Enrich runs/retries remain available offline. Each site batch prefers the live
+extension after a bounded availability check, or selects anonymous Playwright
+before acquisition. Site and access failures never cause a transport switch.
+The outer Temporal Enrich entry retains its workflow/run identity on both
+paths, preserving leases, job ownership, and broker authorization. Integrated
+anonymous fallback never adopts a system executable, runs the legacy
+copied-profile pre-pass, or creates a browser-profile snapshot. Anonymous
+LinkedIn requests use the same no-robots policy. Historical robots-blocked
+rows remain retryable in either mode; their status and audit history are retained
+until the retry advances them. Legacy browser-conditioned rows also retain the
+connection-triggered recovery path. Legacy snapshots that coupled readable content to
 a missing application URL are repaired by appending a new immutable snapshot
 version and releasing only the stale `ENRICHMENT_QUARANTINED` Tailor blocker.
 This content-trust repair does not need a browser navigation and does not invent
@@ -214,11 +231,11 @@ user. The exact selector rules are owned by the
    posting details; “pending” means that usable detail is absent, not that a
    speculative placeholder result exists.
 3. **Acquire content safely.** Fetchers use public-destination validation,
-   crawl politeness, and per-source limits. Integrated Discovery delegates the
-   page to the paired extension in the current Chrome profile and uses Chrome's
-   own user agent for both the fetch and robots evaluation; it has no copied-
-   profile or Playwright fallback. Manual capture remains the fallback for
-   access that still requires the user.
+   crawl politeness, and per-source limits. Integrated Discovery prefers the
+   connected extension and its current Chrome user agent; when unavailable at
+   setup, it uses anonymous acquisition with JobCtrl's crawler identity and
+   same no-robots acquisition policy. Copied profiles remain outside integrated Discovery.
+   Manual capture handles access that still requires the user.
 4. **Persist detail and snapshot.** The worker stores description, URLs,
    attempts, active state, provenance, confidence, and snapshot audit records
    before later stages consume them.

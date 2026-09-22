@@ -126,6 +126,12 @@ describe("resume template service", () => {
   });
 
   it("rejects template payloads that contain profile or job facts", async () => {
+    const retainedUrl = "https://apply.example.test/private-retired-target";
+    db.prepare("INSERT INTO job_application_locators VALUES ('local', ?, ?)").run(JOB_ID, retainedUrl);
+    expect(() => createResumeTemplateVersion(db, {
+      displayName: retainedUrl, theme: BUILT_IN_RESUME_TEMPLATE_THEME, layout: {},
+    })).toThrow("profile or job facts");
+
     expect(() =>
       createResumeTemplateVersion(db, {
         displayName: "Jordan Candidate",
@@ -419,11 +425,13 @@ function seedDatabase(database: Database.Database): void {
       url TEXT NOT NULL,
       title TEXT,
       company TEXT,
-      application_url TEXT,
       discovered_at TEXT,
       PRIMARY KEY (tenant_id, job_id),
       UNIQUE (tenant_id, url)
     );
+    CREATE TABLE job_enrichments (tenant_id TEXT, job_id TEXT, application_url TEXT,
+      PRIMARY KEY (tenant_id, job_id));
+    CREATE TABLE job_application_locators (tenant_id TEXT, job_id TEXT, application_url TEXT);
     CREATE TABLE candidate_profiles (
       tenant_id TEXT NOT NULL,
       profile_id TEXT NOT NULL,
@@ -564,19 +572,23 @@ function seedDatabase(database: Database.Database): void {
   database.pragma("foreign_keys = ON");
   database
     .prepare(
-      "INSERT INTO jobs (tenant_id, job_id, url, title, company, application_url, discovered_at) VALUES ('local', ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO jobs (tenant_id, job_id, url, title, company, discovered_at) VALUES ('local', ?, ?, ?, ?, ?)",
     )
-    .run(JOB_ID, JOB_URL, "Senior Platform Engineer", "Globex Infrastructure", "https://apply.example.com/globex", NOW);
+    .run(JOB_ID, JOB_URL, "Senior Platform Engineer", "Globex Infrastructure", NOW);
   database
     .prepare(
-      "INSERT INTO jobs (tenant_id, job_id, url, title, company, application_url, discovered_at) VALUES ('local', ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO jobs (tenant_id, job_id, url, title, company, discovered_at) VALUES ('local', ?, ?, ?, ?, ?)",
     )
-    .run(UUID_SHAPED_URL_OWNER_JOB_ID, UUID_SHAPED_URL, "URL-shaped locator", "Example", "https://apply.example.com/uuid", NOW);
+    .run(UUID_SHAPED_URL_OWNER_JOB_ID, UUID_SHAPED_URL, "URL-shaped locator", "Example", NOW);
   database
     .prepare(
-      "INSERT INTO jobs (tenant_id, job_id, url, title, company, application_url, discovered_at) VALUES ('other', ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO jobs (tenant_id, job_id, url, title, company, discovered_at) VALUES ('other', ?, ?, ?, ?, ?)",
     )
-    .run(JOB_ID, "https://other.example/jobs/template-engineer", "Other tenant job", "Other", "https://other.example/apply", NOW);
+    .run(JOB_ID, "https://other.example/jobs/template-engineer", "Other tenant job", "Other", NOW);
+  const insertApplication = database.prepare("INSERT INTO job_enrichments VALUES (?, ?, ?)");
+  insertApplication.run("local", JOB_ID, "https://apply.example.com/globex");
+  insertApplication.run("local", UUID_SHAPED_URL_OWNER_JOB_ID, "https://apply.example.com/uuid");
+  insertApplication.run("other", JOB_ID, "https://other.example/apply");
   database
     .prepare(
       `INSERT INTO candidate_profiles (

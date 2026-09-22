@@ -1,9 +1,8 @@
-"""Politeness gateway enforcement tests (R10 P1).
+"""Acquisition ignores robots while retaining rate limits and request budgets.
 
-The two mandated fixtures live here — a robots-deny fixture and a rate-limit
-fixture — plus robots cache TTL, unreachable-robots (D6) semantics, and
-budget-exhaustion recording. All network is loopback (127.0.0.1) or stubbed; no
-live board traffic, nothing spendful.
+Owned HTTP fixtures and exploding legacy ports detect any consultation. Legacy
+adapter compatibility tests remain separate from the production gateway tests.
+All network is loopback or stubbed; no live board traffic.
 """
 
 from __future__ import annotations
@@ -14,6 +13,8 @@ import threading
 import time
 import urllib.error
 import urllib.request
+
+import pytest
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Iterator
@@ -128,48 +129,33 @@ def _blocked_rows(conn: sqlite3.Connection) -> list[sqlite3.Row]:
 # ---------------------------------------------------------------------------
 
 
-def test_robots_deny_fixture_blocks_records_and_never_fetches_disallowed_path() -> None:
-    robots_txt = "User-agent: *\nDisallow: /jobs\n"
-    with loopback_robots(robots_txt) as server:
+@pytest.mark.parametrize("robots_status", [200, 503])
+def test_content_fetch_never_requests_robots_even_for_legacy_honor_policy(robots_status: int) -> None:
+    with loopback_robots("User-agent: *\nDisallow: /jobs\n", status=robots_status) as server:
         gateway = PolitenessGateway(
             user_agent=HONEST_UA,
             robots=RobotsCache(opener=urllib.request.build_opener()),
             rate_limiter=HostRateLimiter(),
         )
         conn = _memory_conn()
+        budget = gateway.new_run_budget(1)
         session = PolitenessSession(
-            gateway,
-            policy=_page_policy(),
-            budget=gateway.new_run_budget(100),
-            context=PolitenessSourceContext(stage="discover", source_id="src-1", adapter="browser"),
+            gateway, policy=_page_policy(), budget=budget,
+            context=PolitenessSourceContext(stage="discover", source_id="src-1"),
             recorder_conn=conn,
         )
-
         content_url = f"{server.base_url}/jobs/1"
-        fetched = False
+        assert session.check(content_url).allowed
         with session.guard(content_url) as decision:
-            if decision.allowed:
-                urllib.request.urlopen(content_url, timeout=2)  # pragma: no cover
-                fetched = True
-
-        assert decision.allowed is False
-        assert decision.outcome is PolitenessOutcome.ROBOTS_DISALLOWED
-        assert fetched is False
-        # The gateway consulted robots.txt but never the disallowed content path.
-        assert "/robots.txt" in server.requested_paths
-        assert "/jobs/1" not in server.requested_paths
-        # Honest UA on the robots fetch — no browser impersonation.
-        assert any(ua.startswith("JobCtrl/") for ua in server.seen_user_agents)
-        assert all("Mozilla" not in ua for ua in server.seen_user_agents)
-
-    rows = _blocked_rows(conn)
-    assert len(rows) == 1
-    row = rows[0]
-    assert row["failure_category"] == "robots_disallowed"
-    # Recorded as a first-class outcome, NOT a scrape/operational error.
-    assert row["is_operational_failure"] == 0
-    assert row["is_scrape_failure"] == 0
-    assert row["source_id"] == "src-1"
+            assert decision.allowed
+            with urllib.request.urlopen(
+                urllib.request.Request(content_url, headers={"User-Agent": decision.user_agent}), timeout=2
+            ) as response:
+                assert response.status == 200
+        assert server.requested_paths == ["/jobs/1"]
+        assert server.seen_user_agents == [HONEST_UA.header_value()]
+        assert budget.consumed() == 1
+        assert _blocked_rows(conn) == []
 
 
 def test_robots_allow_path_proceeds_and_consumes_budget() -> None:
@@ -394,20 +380,8 @@ def test_private_robots_destination_fails_closed_without_socket() -> None:
     assert cache.evaluate("http://jobs.example/jobs", "JobCtrl/test") is RobotsVerdict.UNKNOWN
 
 
-def test_unknown_robots_verdict_blocks_at_gateway_fail_closed() -> None:
-    class _UnknownRobots(RobotsPort):
-        def evaluate(self, url: str, user_agent: str) -> RobotsVerdict:
-            return RobotsVerdict.UNKNOWN
-
-    gateway = PolitenessGateway(
-        user_agent=HONEST_UA, robots=_UnknownRobots(), rate_limiter=HostRateLimiter()
-    )
-    decision = gateway.check("http://host/jobs", _page_policy(), gateway.new_run_budget(5))
-    assert decision.allowed is False
-    assert decision.outcome is PolitenessOutcome.ROBOTS_DISALLOWED
-
-
-def test_documented_api_policy_skips_robots() -> None:
+@pytest.mark.parametrize("robots_policy", list(RobotsPolicy))
+def test_all_policy_values_ignore_legacy_robots_injections(robots_policy: RobotsPolicy) -> None:
     class _ExplodingRobots(RobotsPort):
         def evaluate(self, url: str, user_agent: str) -> RobotsVerdict:
             raise AssertionError("robots must not be consulted for exempt sources")
@@ -415,9 +389,11 @@ def test_documented_api_policy_skips_robots() -> None:
     gateway = PolitenessGateway(
         user_agent=HONEST_UA, robots=_ExplodingRobots(), rate_limiter=HostRateLimiter()
     )
-    policy = _page_policy(robots_policy=RobotsPolicy.EXEMPT_DOCUMENTED_API)
+    policy = _page_policy(robots_policy=robots_policy)
     decision = gateway.check("http://api.example.com/jobs", policy, gateway.new_run_budget(5))
     assert decision.allowed is True
+    with gateway.with_robots(_ExplodingRobots()).guard("http://api.example.com/jobs", policy, gateway.new_run_budget(1)) as allowed:
+        assert allowed.allowed
 
 
 def test_gateway_user_agent_is_honest() -> None:

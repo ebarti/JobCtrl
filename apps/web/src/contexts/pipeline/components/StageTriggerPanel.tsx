@@ -653,11 +653,6 @@ export function StageTriggerPanel({
       ? `JobCtrl automation worker health check failed: ${health.error.message}`
       : (health.data?.worker.message ??
         "JobCtrl automation worker health is unavailable.");
-  const discoveryExtensionBlocked =
-    controls.discoverySource &&
-    (discoveryBrowserBridge.isPending ||
-      discoveryBrowserBridge.isError ||
-      discoveryBrowserBridge.data?.connected !== true);
 
   useEffect(() => {
     if (!settings.data || synchronizedInternalConcurrency.current) return;
@@ -706,11 +701,7 @@ export function StageTriggerPanel({
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (
-      !runAvailability.available ||
-      stageRunBlockReason ||
-      discoveryExtensionBlocked
-    ) return;
+    if (!runAvailability.available || stageRunBlockReason) return;
     const workers = boundedInternalConcurrency(internalConcurrency);
     setInternalConcurrency(String(workers));
     try {
@@ -720,10 +711,6 @@ export function StageTriggerPanel({
     }
     const workerSnapshot = await health.refetch();
     if (workerSnapshot.data?.worker.status !== "healthy") return;
-    if (controls.discoverySource) {
-      const bridgeSnapshot = await discoveryBrowserBridge.refetch();
-      if (bridgeSnapshot.data?.connected !== true) return;
-    }
     setSubmittedStage(activeStage);
     setSubmittedAt(Date.now());
     const tailorJudgeMinScore =
@@ -1117,6 +1104,24 @@ export function StageTriggerPanel({
         ) : null}
       </div>
 
+      {controls.discoverySource && runAvailability.available ? (
+        <p
+          className="status-line"
+          id={discoveryExtensionReasonId}
+          role="status"
+          aria-label="Extension connection"
+        >
+          {discoveryBrowserBridge.isPending
+            ? "Checking the optional Chrome extension. Discovery can run with anonymous access."
+            : discoveryBrowserBridge.isError
+              ? "Extension status unavailable. Discovery and Enrich can run with anonymous access."
+              : discoveryBrowserBridge.data?.connected === true
+                ? "Connected extension preferred for Discovery and Enrich in your current Chrome profile."
+                : "Extension offline. Discovery and Enrich can run with anonymous access."}
+          {" "}
+          <a href="/settings/browser">Browser settings</a>.
+        </p>
+      ) : null}
       <div className="stage-trigger-actions">
         <Button
           aria-describedby={
@@ -1124,16 +1129,15 @@ export function StageTriggerPanel({
               ? unavailableReasonId
               : stageRunBlockReason
                 ? blockedReasonId
-                : discoveryExtensionBlocked
+                : controls.discoverySource
                   ? discoveryExtensionReasonId
-                : undefined
+                  : undefined
           }
           disabled={
             runStages.isPending ||
             workerUnhealthy ||
             !runAvailability.available ||
-            Boolean(stageRunBlockReason) ||
-            discoveryExtensionBlocked
+            Boolean(stageRunBlockReason)
           }
           type="submit"
         >
@@ -1144,10 +1148,6 @@ export function StageTriggerPanel({
             ? health.isPending
               ? "Checking worker"
               : "Worker unavailable"
-            : discoveryExtensionBlocked
-              ? discoveryBrowserBridge.isPending
-                ? "Checking extension"
-                : "Extension offline"
             : runStages.isPending
               ? `Starting ${labelForStage(statusStage)}`
               : `Run ${labelForStage(activeStage)}`}
@@ -1181,17 +1181,6 @@ export function StageTriggerPanel({
             role="status"
           >
             {stageRunBlockReason}
-          </span>
-        ) : discoveryExtensionBlocked ? (
-          <span
-            className="status-line danger-action"
-            data-typography="body"
-            id={discoveryExtensionReasonId}
-            role="alert"
-          >
-            Discovery requires the paired JobCtrl extension in your current
-            Chrome profile. Open Chrome, then verify the connection in{" "}
-            <a href="/settings/browser">Browser settings</a>.
           </span>
         ) : workerUnhealthy ? (
           <span

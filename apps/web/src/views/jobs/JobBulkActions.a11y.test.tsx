@@ -6,19 +6,20 @@ import { renderWithProviders } from "../../test/render.js";
 import { JobBulkActions } from "./JobBulkActions.js";
 
 describe("<JobBulkActions> a11y", () => {
-  it("has no axe violations with queue tabs and selected actions", async () => {
+  it("has no axe violations with mixed-state selected actions", async () => {
     const view = renderWithProviders(
       <JobBulkActions
         search={jobsSearchSchema.parse({ deleted: "active" })}
         selectedCount={2}
+        selectedJobStates={["active", "hidden"]}
         hasItems
         hasAnyMatching
         loading={false}
-        onSetDeleted={() => {}}
         onSelectPage={() => {}}
         onSelectAllMatching={() => {}}
         onClearSelection={() => {}}
-        onPrimaryAction={() => {}}
+        onDeleteSelected={() => {}}
+        onUnhideSelected={() => {}}
         onHideSelected={() => {}}
         onPermanentlyDeleteSelected={() => {}}
       />,

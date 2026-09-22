@@ -88,6 +88,32 @@ def test_validate_json_fields_passes_for_compliant_payload() -> None:
     assert result.passed is True
 
 
+def test_known_optional_experience_is_valid_but_unknown_duplicates_and_missing_pins_are_not() -> None:
+    from copy import deepcopy
+
+    profile = _profile()
+    profile["resume"]["experience_entries"].append({
+        "id": "optional", "title": "Engineer", "company": "Optional Co",
+        "bullets": ["Improved service reliability."],
+    })
+    payload = _good_payload()
+    payload["experience_updates"].append({"id": "optional", "title": "", "bullets": ["Improved service reliability."]})
+    assert _VALIDATOR.validate_json_fields(payload, profile).passed
+    for field, value, message in [
+        ("id", "unknown", "Unknown experience updates"),
+        ("id", "acme_swe", "Duplicate experience update"),
+        ("title", "Director", "Unsupported title rewrite"),
+        ("bullets", ["Improved service reliability."] * 5, "exceeds 4 bullets"),
+    ]:
+        invalid = deepcopy(payload)
+        invalid["experience_updates"][1][field] = value
+        result = _VALIDATOR.validate_json_fields(invalid, profile)
+        assert not result.passed and any(message in error for error in result.errors)
+    payload["experience_updates"].pop(0)
+    result = _VALIDATOR.validate_json_fields(payload, profile)
+    assert not result.passed and any("Missing experience updates: acme_swe" in error for error in result.errors)
+
+
 def test_validate_json_fields_rejects_missing_executive_profile() -> None:
     payload = _good_payload()
     payload["executive_profile"] = ""

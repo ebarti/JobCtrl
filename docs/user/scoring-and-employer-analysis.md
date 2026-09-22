@@ -128,6 +128,15 @@ surfaces rather than looking for a separate scoring page:
   evidence attached to a requirement resolves through the Evidence map into its
   title and a useful source excerpt; unresolved references are labeled
   unavailable, with the raw storage key kept under **Technical details**.
+  Each requirement's **Show evidence / Hide evidence** control operates
+  independently. Every requirement starts expanded, including matched,
+  transferable, missing, blocked, and unassessed requirements. The title, tier,
+  importance, and match status remain visible when collapsed.
+  A new analysis generation resets these defaults; ordinary page updates preserve
+  your open cards. Fit evidence must match the current analysis and requirement.
+  Resume coverage must separately match the requirement recorded when that
+  resume was generated. If that source identity is unavailable or changed,
+  coverage is marked **not recorded** while the accepted resume remains available.
 - `/evidence-map` works in the opposite direction: it shows where a profile
   achievement or skill was used by requirement-fit and generated materials.
 - `/settings` owns scoring and target guidance. Guidance influences subsequent
@@ -145,6 +154,14 @@ offers bounded current-policy maintenance for selected or outdated scores.
 A correction and a re-score are different: correction records your reviewed
 decision; re-score runs the current scoring pipeline and creates a new model-
 derived version.
+
+
+The ideal-candidate narrative describes the candidate's capabilities and the
+role's needs directly. Explanations of expert agreement or how the profile was
+determined belong in the analysis audit metadata. Generation rejects such
+process commentary and re-asks before accepting a new record. Old analyses
+remain readable; a supported analysis refresh replaces invalid prose only after
+its replacement passes validation, preserving the previous generation on failure.
 
 Low confidence means the evidence needs review, not that the fit is necessarily
 low. A high score with evidence you cannot personally support is likewise a

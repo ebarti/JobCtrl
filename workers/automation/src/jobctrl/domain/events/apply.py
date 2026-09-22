@@ -92,7 +92,7 @@ def create_email_application_candidate_recorded(
 
 @dataclass(frozen=True)
 class ApplicationEmailFeedbackIngestedPayload:
-    job_key: str
+    job_id: str
     evidence_id: str
     suggestion_id: str
     provider: str = "gmail"

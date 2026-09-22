@@ -173,6 +173,14 @@ class SqliteEnrichmentRepository:
                 enrichment.updated_at,
             ),
         )
+        if enrichment.application_url is not None:
+            self._conn.execute(
+                """
+                INSERT INTO job_application_locators (tenant_id, job_id, application_url)
+                VALUES (?, ?, ?) ON CONFLICT DO NOTHING
+                """,
+                (str(enrichment.tenant_id), str(job_id), enrichment.application_url.value),
+            )
         if commit:
             self._conn.commit()
 

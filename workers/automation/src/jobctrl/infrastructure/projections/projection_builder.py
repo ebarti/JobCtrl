@@ -111,7 +111,7 @@ PROJECTION_NAME = "operations_projections"
 # columns keep NULL criteria/trace/correction. This marker drives a single
 # targeted rebuild of those rows, independent of column creation.
 SCORE_AUDIT_BACKFILL = "score_audit_columns_v1"
-COMPENSATION_PROJECTION_VERSION = 3
+COMPENSATION_PROJECTION_VERSION = 4
 
 _APPLY_URL_OUTCOME_DETAILS: dict[str, tuple[str, bool]] = {
     "APPLY_URL_EXTERNAL_RECOVERED": (
@@ -416,6 +416,8 @@ MARKET_SOURCE_DEFAULTS = {
 }
 MARKET_SAFE_AGGREGATE_BUCKETS = {
     "reported company-role compensation",
+    "reported regional source sample",
+    "reported regional company peer cohort",
     "reported company adjacent-role compensation",
     "same-location role compensation fallback",
     "trimodal tier role fallback",
@@ -980,6 +982,7 @@ class ProjectionBuilder:
                 # ``jobs`` table not yet created (very-fresh DB) — nothing
                 # to backfill.
                 pass
+        dirty_job_ids.update(self._stale_application_url_projection_jobs())
         dirty_job_ids.update(self._stale_deleted_projection_jobs())
         dirty_job_ids.update(self._stale_artifact_projection_jobs())
         dirty_job_ids.update(self._stale_stage_projection_jobs())
@@ -1468,7 +1471,7 @@ class ProjectionBuilder:
 
         title = _row_str(job_row, "title")
         site = _row_str(job_row, "site")
-        application_url = enrichment.get("application_url") or _row_nullable_str(job_row, "application_url")
+        application_url = enrichment.get("application_url")
         employer = _canonical_employer(job_row)
 
         # currentStage/State: the list view exposes only product stages.
@@ -2701,6 +2704,18 @@ class ProjectionBuilder:
         if row is None:
             return None
         return _row_nullable_str(row, "deleted_at")
+
+    def _stale_application_url_projection_jobs(self) -> set[str]:
+        # Migration retains projection rows/cursors; canonical target changes
+        # must reconcile even without an event after the cutover.
+        rows = self._conn.execute(
+            """SELECT p.job_id FROM job_list_projections p
+               JOIN jobs j ON j.tenant_id = p.tenant_id AND j.job_id = p.job_id
+               LEFT JOIN job_enrichments e ON e.tenant_id = j.tenant_id AND e.job_id = j.job_id
+               WHERE p.tenant_id = ? AND p.application_url IS NOT NULLIF(e.application_url, '')""",
+            (str(self._tenant_id),),
+        ).fetchall()
+        return {str(row[0]) for row in rows}
 
     def _stale_deleted_projection_jobs(self) -> set[str]:
         try:
@@ -4384,6 +4399,27 @@ def _market_estimate_from_row(
         "estimatorVersion": _row_str(row, "estimator_version"),
         "estimatedAt": _row_str(row, "estimated_at"),
     }
+    # Apply the current population contract to persisted canonical v1 estimates.
+    # Raw benchmark evidence remains inspectable even when target pay is unknown.
+    if (
+        base["estimatorVersion"].startswith("company-role-reported-compensation-canonical-benchmark-")
+        and any(warning["code"] == "benchmark_level_fallback" for warning in base["warnings"])
+    ):
+        return {
+            **base,
+            "estimateState": "insufficient_evidence",
+            "confidenceBand": "none",
+            "confidenceScore": 0,
+            "factors": [
+                {**factor, "score": 0, "band": "none", "reason": MARKET_COMPENSATION_REASON_MESSAGES["weak_level_match"]}
+                if factor["name"] == "level" else factor
+                for factor in base["factors"]
+            ],
+            "evidence": [{**evidence, "levelScore": 0} for evidence in base["evidence"]],
+            "insufficientReasons": [
+                {"code": "weak_level_match", "message": MARKET_COMPENSATION_REASON_MESSAGES["weak_level_match"]}
+            ],
+        }
     if estimate_state == "unsupported":
         return {
             **base,

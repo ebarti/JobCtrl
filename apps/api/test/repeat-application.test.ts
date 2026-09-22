@@ -46,9 +46,9 @@ function jobIdFor(url: string): string {
 
 function insertJob(url: string, title: string, company: string): void {
   db.prepare(
-    `INSERT INTO jobs (tenant_id, job_id, url, title, company, application_url, discovered_at)
-     VALUES ('local', ?, ?, ?, ?, ?, ?)`,
-  ).run(jobIdFor(url), url, title, company, `${url}/apply`, NOW);
+    `INSERT INTO jobs (tenant_id, job_id, url, title, company, discovered_at)
+     VALUES ('local', ?, ?, ?, ?, ?)`,
+  ).run(jobIdFor(url), url, title, company, NOW);
   db.prepare(
     `INSERT INTO job_enrichments
        (tenant_id, job_id, current_status, application_url, updated_at)

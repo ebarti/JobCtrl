@@ -2,7 +2,6 @@ name: Documentation issue
 description: Report confusing, missing, stale, or broken documentation.
 title: "[Docs]: "
 labels:
-  - "status: needs triage"
   - "type: documentation"
   - "area: docs"
 body:

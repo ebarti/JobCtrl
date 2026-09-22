@@ -1,3 +1,4 @@
+import { seedApplicationUrl } from "./seed-enrichment.js";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -312,9 +313,9 @@ function seedJobs(db: Database.Database, tempDir: string): void {
   const insertJob = db.prepare(
     `INSERT INTO jobs (
        tenant_id, job_id, url, title, company, site, strategy, location, salary, discovered_at,
-       application_url, description, full_description, detail_scraped_at,
+       description, full_description, detail_scraped_at,
        detail_error, fit_score, score_reasoning, scored_at, tailored_resume_path
-     ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     ) VALUES ('local', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   const insertScore = db.prepare(
     `INSERT INTO job_scores (
@@ -335,7 +336,6 @@ function seedJobs(db: Database.Database, tempDir: string): void {
       "Remote",
       "",
       job.discoveredAt,
-      job.applicationUrl,
       "Digest fixture description.",
       "Digest fixture full description.",
       job.discoveredAt,
@@ -345,6 +345,7 @@ function seedJobs(db: Database.Database, tempDir: string): void {
       job.scoredAt,
       null,
     );
+    seedApplicationUrl(db, "local", jobId, job.applicationUrl);
     const eligibilityStatus = job.eligibilityStatus ?? "eligible";
     const scoreBreakdown = {
       technical_fit: job.fitScore,

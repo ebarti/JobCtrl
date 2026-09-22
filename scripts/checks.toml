@@ -1,0 +1,240 @@
+schema_version = 1
+
+# Select recipes for the accepted outcome. These are command definitions, not
+# a requirement to run every suite. Add a focused recipe for uncovered behavior.
+# Run argv directly, substituting an owned artifact path for {report_path}.
+[checks.diff]
+kind = "static"
+description = "Committed PR changes against main have no whitespace errors or conflict markers"
+argv = ["git", "diff", "--check", "origin/main...HEAD"]
+
+[checks.docs]
+kind = "static"
+description = "Published documentation builds and internal links resolve"
+argv = ["corepack", "pnpm", "docs:build"]
+timeout_seconds = 300
+
+[checks.scripts]
+kind = "junit"
+description = "Repository tooling preserves its tested lifecycle and safety contracts"
+argv = ["sh", "-c", "exec node --test --test-reporter=junit --test-reporter-destination=\"$1\" scripts/*.test.mjs", "jobctrl-scripts", "{report_path}"]
+timeout_seconds = 600
+
+[checks.api-types]
+kind = "static"
+description = "TypeScript API contracts typecheck"
+argv = ["corepack", "pnpm", "api:check"]
+
+[checks.api]
+kind = "junit"
+description = "API routes, projections, persistence and dispatch meet their tested contracts"
+argv = ["corepack", "pnpm", "--filter", "@jobctrl/api", "exec", "vitest", "run", "--reporter=junit", "--outputFile={report_path}"]
+timeout_seconds = 600
+
+[checks.web-types]
+kind = "static"
+description = "Web application and frontend architecture typecheck"
+argv = ["corepack", "pnpm", "web:check"]
+
+[checks.web]
+kind = "junit"
+description = "Frontend state, mutations, forms and components meet their tested contracts"
+argv = ["corepack", "pnpm", "--filter", "@jobctrl/web", "exec", "vitest", "run", "--reporter=junit", "--outputFile={report_path}"]
+timeout_seconds = 600
+
+[checks.web-build]
+kind = "static"
+description = "Production web bundle builds"
+argv = ["corepack", "pnpm", "web:build"]
+
+[checks.web-type-tests]
+kind = "static"
+description = "Frontend compile-time contracts pass their type assertions"
+argv = ["corepack", "pnpm", "web:test-d"]
+
+[checks.web-dashboard]
+kind = "junit"
+description = "Dashboard navigation and KPI controls work against this run's synthetic workspace"
+argv = ["env", "PLAYWRIGHT_JUNIT_OUTPUT_FILE={report_path}", "corepack", "pnpm", "--filter", "@jobctrl/web", "exec", "playwright", "test", "--config=e2e/playwright.config.ts", "tests/dashboard.spec.ts", "--reporter=junit"]
+timeout_seconds = 600
+
+[checks.extension-types]
+kind = "static"
+description = "Extension messages and capabilities typecheck"
+argv = ["corepack", "pnpm", "extension:check"]
+
+[checks.extension]
+kind = "junit"
+description = "Extension boundaries and message behavior pass unit regressions"
+argv = ["corepack", "pnpm", "--filter", "@jobctrl/extension", "exec", "vitest", "run", "--reporter=junit", "--outputFile={report_path}"]
+timeout_seconds = 300
+
+[checks.extension-browser]
+kind = "junit"
+description = "Built extension exercises real Chromium assertions with no skipped required tests"
+argv = ["corepack", "pnpm", "--filter", "@jobctrl/extension", "e2e", "--reporter=junit", "--outputFile={report_path}"]
+timeout_seconds = 600
+
+[checks.python-lint]
+kind = "static"
+description = "Worker code passes the repository's locked Ruff rules"
+argv = ["corepack", "pnpm", "python:lint"]
+
+[checks.python]
+kind = "junit"
+description = "Worker regression suite executes without failures or skipped required tests"
+argv = ["uv", "--project", "workers/automation", "run", "--locked", "--all-extras", "pytest", "-q", "-m", "not system_browser", "--junitxml={report_path}"]
+timeout_seconds = 2700
+
+[checks.python-system-browser]
+kind = "junit"
+description = "Explicit synthetic Chrome dry-run safety smoke executes both opt-in browser cases"
+argv = ["env", "JOBCTRL_RUN_SYSTEM_BROWSER_TESTS=1", "uv", "--project", "workers/automation", "run", "--locked", "--all-extras", "pytest", "-q", "-m", "system_browser", "workers/automation/tests/test_apply_chrome_dry_run_guard.py", "--junitxml={report_path}"]
+min_executed = 2
+timeout_seconds = 600
+
+[checks.aggregate-types]
+kind = "static"
+description = "Cross-stack static checks pass; separate web product suites remain explicit"
+argv = ["corepack", "pnpm", "check"]
+timeout_seconds = 900
+
+
+[checks.dry-run-diff]
+kind = "static"
+description = "Dry-run completion PR changes against main have no whitespace errors"
+argv = ["git", "diff", "--check", "origin/main...HEAD"]
+
+[checks.domain-events]
+kind = "junit"
+description = "Domain event factories, payloads and enumeration preserve terminal event semantics"
+argv = ["corepack", "pnpm", "--filter", "@jobctrl/domain-types", "exec", "vitest", "run", "test", "--reporter=junit", "--outputFile={report_path}"]
+timeout_seconds = 300
+
+[checks.domain-types]
+kind = "static"
+description = "Shared domain contracts typecheck"
+argv = ["corepack", "pnpm", "--filter", "@jobctrl/domain-types", "check"]
+
+[checks.domain-event-parity]
+kind = "junit"
+description = "Python and TypeScript domain event registries and shared payload fields stay aligned"
+argv = ["uv", "--project", "workers/automation", "run", "--locked", "--all-extras", "pytest", "-q", "workers/automation/tests/test_domain_event_parity.py", "--junitxml={report_path}"]
+timeout_seconds = 300
+
+[checks.dry-run-realtime]
+kind = "junit"
+description = "Dry-run completion passes the event parser, SSE listener and exhaustive invalidation router"
+argv = ["corepack", "pnpm", "--filter", "@jobctrl/web", "exec", "vitest", "run", "src/shared/ports/lib/parseDomainEvent.test.ts", "src/shared/adapters/local/SseEventStreamAdapter.test.ts", "src/contexts/operations/invalidation-router.test.ts", "src/contexts/operations/every-event-has-handler.test.ts", "src/contexts/apply/components/RunStatusBadge.test.tsx", "--reporter=junit", "--outputFile={report_path}"]
+timeout_seconds = 300
+
+[checks.dry-run-browser]
+kind = "junit"
+description = "A synthetic emitted dry-run event refreshes browser status without recording submission"
+argv = ["env", "PLAYWRIGHT_JUNIT_OUTPUT_FILE={report_path}", "JOBCTRL_E2E_API_PORT=18966", "JOBCTRL_E2E_WEB_PORT=18967", "corepack", "pnpm", "--filter", "@jobctrl/web", "exec", "playwright", "test", "--config=e2e/playwright.config.ts", "tests/dry-run-completed.spec.ts", "--reporter=junit"]
+timeout_seconds = 600
+
+[checks.optional-extension-launcher]
+kind = "junit"
+description = "Web startup builds once before replacement, preserves running processes on failure, and leaves excluded modes unchanged"
+argv = ["node", "--test", "--test-reporter=junit", "--test-reporter-destination={report_path}", "scripts/dev-lifecycle.test.mjs"]
+min_executed = 17
+timeout_seconds = 300
+
+[checks.optional-extension-launcher-syntax]
+kind = "static"
+description = "The development launcher parses with macOS Bash 3.2"
+argv = ["/bin/bash", "-n", "scripts/dev"]
+
+[checks.optional-extension-worker]
+kind = "junit"
+description = "All acquisition families preserve guarded connected/offline persistence, profile consent, broker failures, checkpoints and stale-owner fences"
+argv = ["env", "-u", "UV_PROJECT_ENVIRONMENT", "-u", "VIRTUAL_ENV", "-u", "UV_EXCLUDE_NEWER", "-u", "UV_EXCLUDE_NEWER_PACKAGE", "uv", "run", "--project", "workers/automation", "--locked", "--all-extras", "--exclude-newer", "false", "pytest", "-q", "workers/automation/tests/test_optional_extension.py", "workers/automation/tests/test_live_browser_discovery.py", "workers/automation/tests/test_enrichment_politeness_gate.py", "workers/automation/tests/test_discovery_production_wiring.py", "workers/automation/tests/test_workday_gateway_routing.py", "workers/automation/tests/test_smartextract_discovery.py", "workers/automation/tests/test_discovery_search_units.py", "--junitxml={report_path}"]
+min_executed = 115
+timeout_seconds = 300
+
+[checks.optional-extension-api]
+kind = "junit"
+description = "Offline discovery and enrichment launch/retry routes dispatch while worker readiness and broker authorization stay enforced"
+argv = ["env", "-u", "UV_PROJECT_ENVIRONMENT", "-u", "VIRTUAL_ENV", "corepack", "pnpm", "--filter", "@jobctrl/api", "exec", "vitest", "run", "test/server.test.ts", "--reporter=junit", "--outputFile={report_path}"]
+min_executed = 249
+timeout_seconds = 300
+
+[checks.optional-extension-web]
+kind = "junit"
+description = "Offline and connected status stays informational, launch remains enabled, and targeted LinkedIn robots guidance stays bounded"
+argv = ["corepack", "pnpm", "--filter", "@jobctrl/web", "exec", "vitest", "run", "src/contexts/pipeline/components/StageTriggerPanel.test.tsx", "src/contexts/pipeline/components/StageTimeline.test.tsx", "src/contexts/operations/components/BrowserCapabilitiesPanel.test.tsx", "src/contexts/profile/components/SettingsPanel.test.tsx", "--reporter=junit", "--outputFile={report_path}"]
+min_executed = 61
+timeout_seconds = 300
+
+[checks.optional-extension-browser]
+kind = "junit"
+description = "Owned Chromium UI and real fixture API accept offline Discovery and show connected preference; dispatch is stubbed and worker persistence is covered separately"
+argv = ["env", "-u", "UV_PROJECT_ENVIRONMENT", "-u", "VIRTUAL_ENV", "UV_EXCLUDE_NEWER=false", "UV_LOCKED=1", "PLAYWRIGHT_JUNIT_OUTPUT_FILE={report_path}", "JOBCTRL_E2E_ISOLATED=1", "JOBCTRL_E2E_API_PORT=18976", "JOBCTRL_E2E_WEB_PORT=18977", "corepack", "pnpm", "--filter", "@jobctrl/web", "exec", "playwright", "test", "--config=e2e/playwright.config.ts", "tests/optional-extension.spec.ts", "--project=chromium", "--reporter=junit"]
+min_executed = 1
+timeout_seconds = 600
+
+[checks.optional-extension-python-lint]
+kind = "static"
+description = "Worker Ruff uses the repository environment without inheriting the workflow tool environment"
+argv = ["env", "-u", "UV_PROJECT_ENVIRONMENT", "-u", "VIRTUAL_ENV", "-u", "UV_EXCLUDE_NEWER", "-u", "UV_EXCLUDE_NEWER_PACKAGE", "uv", "run", "--project", "workers/automation", "--locked", "--all-extras", "--exclude-newer", "false", "ruff", "check", "."]
+timeout_seconds = 300
+
+[checks.discovery-transactions]
+kind = "junit"
+description = "Repeated Discovery preparation and enrichment release SQLite writer ownership and preserve lease fencing, artifact safety and peer persistence in both acquisition modes"
+argv = ["env", "-u", "UV_PROJECT_ENVIRONMENT", "-u", "VIRTUAL_ENV", "-u", "UV_EXCLUDE_NEWER", "-u", "UV_EXCLUDE_NEWER_PACKAGE", "uv", "run", "--project", "workers/automation", "--locked", "--all-extras", "--exclude-newer", "false", "pytest", "-q", "workers/automation/tests/test_enrichment_lease_concurrency.py", "workers/automation/tests/test_discovery_transaction_lifecycle.py", "workers/automation/tests/test_discovery_preparation_orchestration.py", "workers/automation/tests/test_enrichment_queue_selectors.py", "workers/automation/tests/test_discovery_enrichment_handoff.py", "workers/automation/tests/test_discovery_execution_reconciliation.py", "workers/automation/tests/test_discover_reliability.py", "workers/automation/tests/test_workflow_discovery.py", "--junitxml={report_path}"]
+min_executed = 10
+timeout_seconds = 600
+
+[checks.discovery-api]
+kind = "junit"
+description = "Full API suite checks optional Discovery transport, worker readiness, extension broker and startup fixtures"
+argv = ["env", "-u", "UV_PROJECT_ENVIRONMENT", "-u", "VIRTUAL_ENV", "-u", "UV_EXCLUDE_NEWER", "-u", "UV_EXCLUDE_NEWER_PACKAGE", "corepack", "pnpm", "--filter", "@jobctrl/api", "exec", "vitest", "run", "test", "--reporter=junit", "--outputFile={report_path}"]
+min_executed = 891
+timeout_seconds = 600
+
+[checks.discovery-acquisition-policy]
+kind = "junit"
+description = "Discovery robots policy is ignored while source contracts, rates, budgets, HTTP destination and enrichment URL guards remain enforced"
+argv = ["env", "-u", "UV_PROJECT_ENVIRONMENT", "-u", "VIRTUAL_ENV", "-u", "UV_EXCLUDE_NEWER", "-u", "UV_EXCLUDE_NEWER_PACKAGE", "uv", "run", "--project", "workers/automation", "--locked", "--all-extras", "--exclude-newer", "false", "pytest", "-q", "workers/automation/tests/test_politeness_gateway.py", "workers/automation/tests/test_politeness_ports.py", "workers/automation/tests/test_gateway_http_client.py", "workers/automation/tests/test_enrichment_politeness_gate.py", "workers/automation/tests/test_enrichment_url_safety.py", "workers/automation/tests/test_public_destination_http.py", "workers/automation/tests/test_source_registry.py", "workers/automation/tests/test_crawl_politeness_config.py", "--junitxml={report_path}"]
+min_executed = 1
+timeout_seconds = 600
+
+[checks.materials-role-selection]
+kind = "junit"
+description = "Tailor mandatory pins and selected known roles stay consistent across prompt, grounding, validation, text, HTML/PDF, provenance and accepted-artifact preservation"
+argv = ["env", "-u", "UV_PROJECT_ENVIRONMENT", "-u", "VIRTUAL_ENV", "-u", "UV_EXCLUDE_NEWER", "-u", "UV_EXCLUDE_NEWER_PACKAGE", "uv", "run", "--project", "workers/automation", "--locked", "--all-extras", "--exclude-newer", "false", "pytest", "-q", "workers/automation/tests/test_content_validator.py", "workers/automation/tests/test_resume_assembler.py", "workers/automation/tests/test_pdf_renderer_ports.py", "workers/automation/tests/test_bullet_provenance.py", "workers/automation/tests/test_requirement_led_tailoring.py", "workers/automation/tests/test_tailor_provenance_integration.py", "workers/automation/tests/test_materials_use_cases.py", "workers/automation/tests/test_materials_unit_of_work.py", "workers/automation/tests/test_tailor_retailor.py", "workers/automation/tests/test_resume_html_migration.py", "workers/automation/tests/test_materials_quality.py", "--junitxml={report_path}"]
+min_executed = 341
+timeout_seconds = 600
+[checks.provider-auth-recovery]
+kind = "junit"
+description = "Explicit provider login reuse recovers stale app-owned auth while status reads, generation isolation and credential privacy remain intact"
+argv = ["env", "-u", "UV_PROJECT_ENVIRONMENT", "-u", "VIRTUAL_ENV", "-u", "UV_EXCLUDE_NEWER", "-u", "UV_EXCLUDE_NEWER_PACKAGE", "uv", "run", "--project", "workers/automation", "--locked", "--all-extras", "--exclude-newer", "false", "pytest", "-q", "workers/automation/tests/test_setup_probes.py", "workers/automation/tests/test_codex_home_isolation.py", "--junitxml={report_path}"]
+min_executed = 1
+timeout_seconds = 300
+
+
+[checks.review-evidence-api]
+kind = "junit"
+description = "Application audit and compensation projections preserve material availability and source-population applicability"
+argv = ["corepack", "pnpm", "--filter", "@jobctrl/api", "exec", "vitest", "run", "test/apply-audit.test.ts", "test/market-compensation-estimates.test.ts", "test/application-feedback.test.ts", "test/application-feedback-v7.test.ts", "test/read-model-v7.test.ts", "--reporter=junit", "--outputFile={report_path}"]
+timeout_seconds = 600
+
+[checks.review-evidence-web]
+kind = "junit"
+description = "Requirement disclosures and compensation/apply-review surfaces preserve evidence and truthful readiness"
+argv = ["corepack", "pnpm", "--filter", "@jobctrl/web", "exec", "vitest", "run", "src/contexts/materials/components/EmployerAnalysisPanel.test.tsx", "src/contexts/materials/components/EmployerAnalysisPanel.a11y.test.tsx", "src/contexts/enrichment/components/CompensationEvidence.test.tsx", "src/views/apply-review/ApplyReviewView.test.tsx", "src/views/jobs/JobDetailDrawer.test.tsx", "--reporter=junit", "--outputFile={report_path}"]
+timeout_seconds = 600
+
+[checks.review-evidence-worker]
+kind = "junit"
+description = "Compensation population matching and narrative validation preserve canonical evidence and accepted analysis on failed regeneration"
+argv = ["env", "-u", "UV_PROJECT_ENVIRONMENT", "-u", "VIRTUAL_ENV", "-u", "UV_EXCLUDE_NEWER", "-u", "UV_EXCLUDE_NEWER_PACKAGE", "uv", "run", "--project", "workers/automation", "--locked", "--all-extras", "--exclude-newer", "false", "pytest", "-q", "workers/automation/tests/test_compensation_benchmark_materialization.py", "workers/automation/tests/test_automatic_compensation_refresh.py", "workers/automation/tests/test_employer_analysis_ensemble.py", "workers/automation/tests/test_analyze_job_use_case.py", "workers/automation/tests/test_employer_analysis_model.py", "workers/automation/tests/test_employer_analysis_projection.py", "workers/automation/tests/test_employer_analysis_repository.py", "--junitxml={report_path}"]
+timeout_seconds = 600
+
+[checks.salary-lookup-worker]
+kind = "junit"
+description = "Role and seniority aware compensation retrieval, estimates, refresh and source boundary regressions"
+argv = ["env", "-u", "UV_PROJECT_ENVIRONMENT", "-u", "VIRTUAL_ENV", "-u", "UV_EXCLUDE_NEWER", "-u", "UV_EXCLUDE_NEWER_PACKAGE", "uv", "run", "--project", "workers/automation", "--locked", "--all-extras", "--exclude-newer", "false", "pytest", "-q", "workers/automation/tests/test_automatic_compensation_refresh.py", "workers/automation/tests/test_compensation_audit_contract.py", "workers/automation/tests/test_compensation_benchmark_materialization.py", "workers/automation/tests/test_compensation_benchmark_repository.py", "workers/automation/tests/test_compensation_benchmarks.py", "workers/automation/tests/test_compensation_gateway_routing.py", "workers/automation/tests/test_compensation_official_data.py", "workers/automation/tests/test_compensation_refresh_cli.py", "workers/automation/tests/test_compensation_refresh_state.py", "workers/automation/tests/test_compensation_v7_job_id.py", "workers/automation/tests/test_levels_fyi_public.py", "workers/automation/tests/test_market_compensation_estimator.py", "workers/automation/tests/test_market_compensation_repository.py", "workers/automation/tests/test_posted_compensation_parser.py", "workers/automation/tests/test_posted_compensation_repository.py", "workers/automation/tests/test_projection_builder.py", "--junitxml={report_path}"]
+timeout_seconds = 600

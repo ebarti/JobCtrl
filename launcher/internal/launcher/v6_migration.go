@@ -26,15 +26,17 @@ const (
 	legacyJobCtrlSchemaVersion   = int64(6)
 	exactJobCtrlSchemaVersion    = int64(7)
 	previousJobCtrlSchemaVersion = int64(8)
-	currentJobCtrlSchemaVersion  = int64(9)
+	v9JobCtrlSchemaVersion       = int64(9)
+	v10JobCtrlSchemaVersion      = int64(10)
+	currentJobCtrlSchemaVersion  = int64(11)
 )
 
 var (
 	temporalQuiescenceProof = proveStoppedTemporalQuiescence
 	// These seam names are retained for the existing lifecycle fault-injection
-	// matrix. Production builds and installs the current exact-v9 candidate.
-	sealedV7CandidateBuilder   = buildSealedV9Candidate
-	sealedV7CandidateInstaller = installSealedV9Candidate
+	// matrix. Production builds and installs the current exact-v11 candidate.
+	sealedV7CandidateBuilder   = buildSealedV11Candidate
+	sealedV7CandidateInstaller = installSealedV11Candidate
 )
 
 type temporalQuiescenceReceipt struct {

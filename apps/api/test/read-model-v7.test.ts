@@ -1,3 +1,4 @@
+import { seedApplicationUrl } from "./seed-enrichment.js";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -13,9 +14,10 @@ import {
   listActivity,
   listJobs,
   listScoringKeywords,
+  matchingJobKeys,
 } from "../src/read-model.js";
 import { BUILT_IN_RESUME_TEMPLATE_THEME } from "../src/resume-templates.js";
-import { EXACT_V9_SCHEMA_MANIFEST, schemaManifest } from "../src/schema-manifest.js";
+import { EXACT_V11_SCHEMA_MANIFEST, schemaManifest } from "../src/schema-manifest.js";
 import { hideJob, restoreJob, softDeleteJob, unhideJob } from "../src/write-model.js";
 import { initializeExactV7Database } from "./v7-schema.js";
 
@@ -128,9 +130,10 @@ function insertJob(
   applicationUrl: string,
 ): void {
   db.prepare(
-    `INSERT INTO jobs (tenant_id, job_id, url, title, company, site, discovered_at, application_url)
-     VALUES (?, ?, ?, ?, 'Example', 'example', ?, ?)`,
-  ).run(tenantId, jobId, url, title, NOW, applicationUrl);
+    `INSERT INTO jobs (tenant_id, job_id, url, title, company, site, discovered_at)
+     VALUES (?, ?, ?, ?, 'Example', 'example', ?)`,
+  ).run(tenantId, jobId, url, title, NOW);
+  seedApplicationUrl(db, tenantId, jobId, applicationUrl);
   db.prepare(
     `INSERT INTO job_events (
        tenant_id, job_id, identity_version, stage, event_type, occurred_at
@@ -238,7 +241,7 @@ describe("exact-v7 read model job ids", () => {
 
   it("keeps same-UUID tenants isolated while preserving URL locators and material/template state", () => {
     const db = seededDatabase();
-    const before = schemaManifest(db, EXACT_V9_SCHEMA_MANIFEST.version);
+    const before = schemaManifest(db, EXACT_V11_SCHEMA_MANIFEST.version);
 
     const jobs = listJobs(db, activeJobQuery);
     const detail = getJobDetail(db, JOB_ID);
@@ -260,7 +263,7 @@ describe("exact-v7 read model job ids", () => {
     expect(detail?.job.resumeTemplate).toEqual(expect.any(Object));
     expect(detail?.stages.find((stage) => stage.stage === "score")).toMatchObject({ retryable: false });
     expect(dashboard.totals.jobs).toBe(1);
-    expect(schemaManifest(db, EXACT_V9_SCHEMA_MANIFEST.version)).toEqual(before);
+    expect(schemaManifest(db, EXACT_V11_SCHEMA_MANIFEST.version)).toEqual(before);
   });
 
   it("projects attempt exhaustion as a retryable failure reason", () => {
@@ -622,6 +625,54 @@ describe("exact-v7 read model job ids", () => {
     );
     expect(activity.items.some((item) => item.jobKey === HIDDEN_JOB_ID || item.jobKey === DELETED_JOB_ID)).toBe(false);
     expect(getJobDetail(db, "not-a-canonical-job-id")).toBeNull();
+  });
+
+  it("filters canonical job states before count, pagination, and bulk selection", () => {
+    const db = seededDatabase();
+    db.prepare(
+      `INSERT INTO jobctrl_deleted_jobs (tenant_id, job_id, deleted_at)
+       VALUES ('local', ?, ?)`,
+    ).run(HIDDEN_JOB_ID, NOW);
+
+    const active = listJobs(db, {
+      ...activeJobQuery,
+      deleted: "hidden",
+      jobStates: ["active"],
+    });
+    const deleted = listJobs(db, {
+      ...activeJobQuery,
+      deleted: "active",
+      jobStates: ["deleted"],
+    });
+    const hidden = listJobs(db, {
+      ...activeJobQuery,
+      deleted: "deleted",
+      jobStates: ["hidden"],
+    });
+    const mixedFirstPage = listJobs(db, {
+      ...activeJobQuery,
+      pageSize: 1,
+      jobStates: ["active", "hidden"],
+    });
+
+    expect(active.items.map((job) => job.jobKey)).toEqual([JOB_ID]);
+    expect(deleted.items.map((job) => job.jobKey)).toEqual([DELETED_JOB_ID]);
+    expect(hidden.items.map((job) => job.jobKey)).toEqual([HIDDEN_JOB_ID]);
+    expect(mixedFirstPage.pagination).toMatchObject({
+      page: 1,
+      pageSize: 1,
+      total: 2,
+      pages: 2,
+    });
+    expect(mixedFirstPage.filter).toMatchObject({
+      jobStates: ["active", "hidden"],
+    });
+    expect(
+      matchingJobKeys(db, {
+        deleted: "active",
+        jobStates: ["deleted", "hidden"],
+      }).sort(),
+    ).toEqual([DELETED_JOB_ID, HIDDEN_JOB_ID].sort());
   });
 
   it("filters and aggregates only projection-visible normalized score keywords", () => {

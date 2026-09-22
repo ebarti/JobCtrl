@@ -21,26 +21,6 @@
   margin-bottom: var(--jh-internal-gap);
 }
 
-.jobs-queue-navigation {
-  display: grid;
-  gap: var(--jh-internal-gap);
-  padding-inline: var(--jh-panel-padding);
-}
-
-.jobs-legacy-queue-context {
-  padding-top: var(--jh-internal-gap);
-  color: var(--muted-foreground);
-}
-
-.jobs-queue-tabs-root,
-.jobs-queue-tabs {
-  width: 100%;
-}
-
-.jobs-queue-tabs {
-  min-height: var(--jh-control-height);
-}
-
 .jobs-bulk-actions {
   display: flex;
   min-height: var(--jh-row-height);
@@ -104,14 +84,6 @@
 @media (max-width: 720px) {
   .jobs-page-head {
     margin-bottom: var(--jh-internal-gap);
-  }
-
-  .jobs-queue-navigation {
-    padding-inline: var(--jh-panel-padding);
-  }
-
-  .jobs-queue-tabs {
-    overflow-x: auto;
   }
 
   .jobs-bulk-actions {
@@ -638,8 +610,9 @@
 }
 
 .filterable-data-grid-table thead th {
-  background: color-mix(in oklch, var(--muted) 42%, var(--card));
-  color: color-mix(in oklch, var(--muted-foreground) 88%, var(--foreground));
+  background: var(--card);
+  border-bottom-color: var(--foreground);
+  color: var(--foreground);
   font-size: var(--jh-type-label-size);
   font-weight: var(--jh-type-label-weight);
   letter-spacing: normal;
@@ -733,7 +706,7 @@
   height: 22px;
   margin-left: -3px;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--radius);
   background: transparent;
   padding: 0;
   color: var(--muted-foreground);
@@ -772,10 +745,32 @@
   background: color-mix(in oklch, var(--border) 76%, transparent);
 }
 
+.jobs-data-grid-table th:last-child .data-grid-column-resizer {
+  right: 0;
+}
+
+.jobs-data-grid-table .score-cell:has(.score-stale-tag) {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.jobs-data-grid-table .score-cell > [data-typography="label"] {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.jobs-data-grid-table .score-stale-tag {
+  max-width: 100%;
+  align-items: flex-start;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .data-grid-column-filter-button {
   width: 22px;
   height: 22px;
-  border-radius: 4px;
+  border-radius: var(--radius);
 }
 
 .data-grid-column-filter-button:hover,
@@ -846,36 +841,24 @@
   text-transform: none;
 }
 
-/* Scores retain their useful colour signal without becoming colored tiles. */
-.jobs-data-grid-table .fit {
-  width: auto;
+/* Timetable score markers keep score tiers distinct without treating low fit as a failure. */
+.fit {
+  width: max-content;
   height: auto;
-  min-width: 1.5rem;
-  border: 0;
+  min-width: 32px;
+  min-height: 32px;
+  aspect-ratio: 1;
+  flex-shrink: 0;
+  padding: 4px;
+  border: 1px solid var(--fit-score-border, var(--border));
   border-radius: 0;
-  background: transparent;
+  background: var(--fit-score-bg, var(--card));
   box-shadow: none;
-  color: var(--muted-foreground);
+  color: var(--fit-score-fg, var(--muted-foreground));
   font-size: var(--jh-type-strong-body-size);
   font-variant-numeric: tabular-nums;
   font-weight: var(--jh-type-strong-body-weight);
   line-height: var(--jh-type-strong-body-line-height);
-}
-
-.jobs-data-grid-table .fit[data-score-tone="positive"] {
-  color: var(--success-text);
-}
-
-.jobs-data-grid-table .fit[data-score-tone="negative"] {
-  color: var(--destructive-text);
-}
-
-.jobs-data-grid-table .fit[data-score-tone="neutral"] {
-  color: var(--warning-text);
-}
-
-.jobs-data-grid-table .fit[data-score-tone="unknown"] {
-  color: var(--muted-foreground);
 }
 
 .filterable-data-grid-table .stage-pill,
@@ -925,7 +908,7 @@
 .data-table-pager .tab {
   min-height: 30px;
   border-color: transparent;
-  border-radius: 4px;
+  border-radius: var(--radius);
   padding: 5px 9px;
   color: var(--muted-foreground);
   font-size: var(--jh-type-control-size);
@@ -950,7 +933,7 @@
 
 .data-table-pager select {
   min-height: 30px;
-  border-radius: 4px;
+  border-radius: var(--radius);
   padding: 4px 25px 4px 8px;
   font-size: var(--jh-type-control-size);
   font-weight: var(--jh-type-control-weight);
@@ -966,7 +949,7 @@
   min-width: 30px;
   min-height: 30px;
   border-color: transparent;
-  border-radius: 4px;
+  border-radius: var(--radius);
   background: transparent;
   box-shadow: none;
 }
@@ -1053,7 +1036,7 @@
     )
     .data-grid-mobile-controls
     > summary:focus-visible {
-    border-radius: 4px;
+    border-radius: var(--radius);
     outline: 2px solid var(--ring);
     outline-offset: 3px;
   }
@@ -1214,7 +1197,7 @@
     tbody
     tr.data-grid-group-row {
     grid-template-columns: minmax(0, 1fr);
-    border-radius: 4px;
+    border-radius: var(--radius);
   }
 
   .filterable-data-grid[data-mobile-layout="cards"]
@@ -1319,7 +1302,7 @@
 }
 
 .data-grid-filter-operator {
-  border-radius: 4px;
+  border-radius: var(--radius);
 }
 
 .data-grid-filter-operator button.active {
@@ -1328,15 +1311,15 @@
 }
 
 .data-grid-value-list {
-  border-radius: 4px;
+  border-radius: var(--radius);
 }
 
 .data-grid-value-option {
-  border-radius: 3px;
+  border-radius: var(--radius);
 }
 
 .saved-table-density {
-  border-radius: 4px;
+  border-radius: var(--radius);
 }
 
 .saved-table-rule-list div,
@@ -1397,7 +1380,7 @@
 .analytics-view .segmented {
   min-height: 28px;
   border-color: transparent;
-  border-radius: 4px;
+  border-radius: var(--radius);
   padding-inline: 9px;
   color: var(--muted-foreground);
   font-size: var(--jh-type-control-size);
@@ -1477,4 +1460,43 @@
     overflow-x: auto;
     padding-inline: 12px;
   }
+}
+
+/* Jobs density changes geometry, never the 14px reading size. Explicit saved
+ * density takes precedence over the shell's inherited density. */
+.app-shell[data-density]
+  .filterable-data-grid:not([data-density])
+  .jobs-data-grid-table
+  :is(th, td) {
+  padding-block: max(4px, calc(var(--jh-table-cell-padding-block) - 5px));
+}
+
+.app-shell
+  .filterable-data-grid[data-density="compact"]
+  .jobs-data-grid-table
+  :is(th, td) {
+  padding-block: 4px;
+}
+
+.app-shell
+  .filterable-data-grid[data-density="regular"]
+  .jobs-data-grid-table
+  :is(th, td) {
+  padding-block: 7px;
+}
+
+.app-shell
+  .filterable-data-grid[data-density="comfy"]
+  .jobs-data-grid-table
+  :is(th, td) {
+  padding-block: 11px;
+}
+
+.jobs-data-grid-table :is(th, td) {
+  padding-inline: 8px;
+  overflow-wrap: anywhere;
+}
+
+.jobs-data-grid-table tbody :is(th, td) {
+  white-space: normal;
 }

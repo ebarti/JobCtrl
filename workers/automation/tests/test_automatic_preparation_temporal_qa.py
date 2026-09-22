@@ -45,7 +45,7 @@ from .test_automatic_preparation import _job, _stage
 from .test_discover_reliability import _long_description
 from .test_v7_score_runtime import _StrongLlm, _profile_snapshot
 from .test_scorer import _employer_analysis
-from .politeness_helpers import AllowAllRobots, offline_gateway
+from .politeness_helpers import offline_gateway
 
 ACTIVITIES = [
     check_spend_budget,
@@ -77,7 +77,7 @@ def world(tmp_path, monkeypatch):
         pytest.fail("Temporal enrichment must use the live Chrome transport")
 
     # Keep the real readiness check but isolate its HTTP transport too: page
-    # capture and robots doubles alone still allow a request to the owner's API.
+    # capture doubles alone still allow a request to the owner's API.
     api_url = "http://127.0.0.1:1"
     network_attempts = []
 
@@ -101,7 +101,6 @@ def world(tmp_path, monkeypatch):
     monkeypatch.setattr(live_browser, "_urllib_transport", reject_network)
     monkeypatch.setattr(detail, "LiveChromeDiscoveryClient", browser_client)
     monkeypatch.setattr(detail, "sync_playwright", reject_playwright)
-    monkeypatch.setattr(detail, "LiveChromeRobotsCache", lambda _browser: AllowAllRobots())
     monkeypatch.setattr(detail, "PolitenessGateway", offline_gateway)
     scrape_calls = []
 

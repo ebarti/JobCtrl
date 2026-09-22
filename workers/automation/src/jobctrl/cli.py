@@ -272,7 +272,7 @@ def _node_status() -> tuple[bool, str]:
     except Exception as exc:  # noqa: BLE001 - setup diagnostic
         return False, f"version check failed: {exc}"
     parts = tuple(int(p) for p in version.split(".")[:3])
-    return parts >= (20, 19, 0), version
+    return parts >= (22, 13, 0), version
 
 
 def _setup_toolchain_rows() -> list[tuple[str, bool, str]]:
@@ -280,7 +280,7 @@ def _setup_toolchain_rows() -> list[tuple[str, bool, str]]:
 
     rows: list[tuple[str, bool, str]] = []
     node_ok, node_note = _node_status()
-    rows.append(("Node.js 20.19+", node_ok, node_note))
+    rows.append(("Node.js 22.13+", node_ok, node_note))
     for command, label in (
         ("corepack", "Corepack"),
         ("uv", "uv"),
@@ -3258,6 +3258,35 @@ def politeness_doctor_notices(conn, search_cfg: dict) -> list[tuple[str, str, st
     return rows
 
 
+def llm_budget_doctor_notices() -> list[tuple[str, str, str]]:
+    """Return global USD and per-lane token status rows for ``doctor``."""
+    from jobctrl.llm import read_spend_budget_status
+    from jobctrl.llm_lanes import LLM_LANES
+
+    rows: list[tuple[str, str, str]] = []
+    first = read_spend_budget_status(lane=LLM_LANES[0])
+    global_limit = "unlimited" if first.daily_budget_usd <= 0 else f"${first.daily_budget_usd:.2f}"
+    rows.append(
+        (
+            "LLM daily spend",
+            "warn" if first.global_exceeded else "ok",
+            f"${first.estimated_usd:.4f} / {global_limit} on {first.day} UTC",
+        )
+    )
+    for lane in LLM_LANES:
+        status = first if lane == first.lane else read_spend_budget_status(lane=lane)
+        total = status.lane_input_tokens + status.lane_output_tokens
+        limit = "unlimited" if status.lane_token_limit <= 0 else f"{status.lane_token_limit} tokens"
+        rows.append(
+            (
+                f"LLM lane {lane}",
+                "warn" if status.lane_exceeded else "ok",
+                f"{total} tokens / {limit}",
+            )
+        )
+    return rows
+
+
 @app.command()
 def doctor() -> None:
     """Check your setup and diagnose missing requirements."""
@@ -3597,6 +3626,13 @@ def doctor() -> None:
             results.append((check, mark_for.get(level, warn_mark), note))
     except Exception:  # noqa: BLE001 - disclosure must not crash doctor.
         pass
+
+    try:
+        mark_for = {"ok": ok_mark, "warn": warn_mark}
+        for check, level, note in llm_budget_doctor_notices():
+            results.append((check, mark_for[level], note))
+    except Exception as exc:  # noqa: BLE001 - doctor reports unavailable accounting without crashing.
+        results.append(("LLM budget accounting", warn_mark, f"unavailable: {exc}"))
 
     # --- Render results ---
     console.print()

@@ -47,6 +47,7 @@ import {
   createApplicationEmailFeedbackIngested,
   createApplicationOutcomeRecorded,
   createApplicationSubmitted,
+  createDryRunCompleted,
   createApplyReviewDecisionRecorded,
   createApplyRunStarted,
   createOutcomeSuggestionDecided,
@@ -574,16 +575,51 @@ describe("Preparation events", () => {
 });
 
 describe("Apply events", () => {
-  it("ApplicationSubmitted has required fields", () => {
+  it.each([0, 2, null])("DryRunCompleted preserves worker_id %s and the dry-run verdict", (workerId) => {
+    const event = createDryRunCompleted(LOCAL_TENANT, {
+      jobId: "j1",
+      run_id: "r1",
+      result: "dry_run_complete",
+      dry_run: true,
+      finished_at: "2026-09-11T10:00:00Z",
+      duration_ms: null,
+      worker_id: workerId,
+      model: null,
+      coverage: "partial",
+      blocked_channels: [],
+      allowed_navigations: [],
+      materials_generation: null,
+      application_url: null,
+      profile_version: null,
+    });
+    expect(event.eventType).toBe("DryRunCompleted");
+    expect(event.tenantId).toBe(LOCAL_TENANT);
+    expect(event.payload).toMatchObject({ run_id: "r1", result: "dry_run_complete", dry_run: true });
+    expect(event.payload.worker_id).toBe(workerId);
+    expect(event.payload).not.toHaveProperty("appliedAt");
+    expect(DOMAIN_EVENT_TYPES).toContain(event.eventType);
+  });
+  it.each([0, null])("ApplicationSubmitted preserves launcher fields (worker %s)", (workerId) => {
     const event = createApplicationSubmitted(LOCAL_TENANT, {
       jobId: "j1",
-      runId: "r1",
-      appliedAt: "2025-01-01T00:00:00Z",
-      verificationConfidence: 0.95,
+      run_id: "r1",
+      result: "applied",
+      finished_at: "2025-01-01T00:00:00Z",
+      duration_ms: null,
+      worker_id: workerId,
+      model: null,
     });
     expect(event.eventType).toBe("ApplicationSubmitted");
     expect(event.tenantId).toBe("local");
-    expect(event.payload.verificationConfidence).toBe(0.95);
+    expect(event.payload).toEqual({
+      jobId: "j1",
+      run_id: "r1",
+      result: "applied",
+      finished_at: "2025-01-01T00:00:00Z",
+      duration_ms: null,
+      worker_id: workerId,
+      model: null,
+    });
   });
 
   it("ApplyRunStarted has required fields", () => {
@@ -848,7 +884,7 @@ describe("All events carry tenantId", () => {
       }),
     () =>
       createApplicationEmailFeedbackIngested(LOCAL_TENANT, {
-        jobKey: "j1",
+        jobId: "j1",
         evidenceId: "e1",
         suggestionId: "s1",
         provider: "gmail",
@@ -860,9 +896,12 @@ describe("All events carry tenantId", () => {
     () =>
       createApplicationSubmitted(LOCAL_TENANT, {
         jobId: "j1",
-        runId: "r1",
-        appliedAt: "t",
-        verificationConfidence: 0.9,
+        run_id: "r1",
+        result: "applied",
+        finished_at: "t",
+        duration_ms: 4000,
+        worker_id: 0,
+        model: "test-model",
       }),
     () =>
       createStageStarted(LOCAL_TENANT, {
@@ -1136,9 +1175,12 @@ describe("DOMAIN_EVENT_TYPES enumeration", () => {
       }).eventType,
       createApplicationSubmitted(LOCAL_TENANT, {
         jobId: "j",
-        runId: "r",
-        appliedAt: "t",
-        verificationConfidence: 0.5,
+        run_id: "r",
+        result: "applied",
+        finished_at: "t",
+        duration_ms: null,
+        worker_id: null,
+        model: null,
       }).eventType,
       createApplyReviewDecisionRecorded(LOCAL_TENANT, {
         jobKey: "j",
@@ -1174,7 +1216,7 @@ describe("DOMAIN_EVENT_TYPES enumeration", () => {
         reasonPresent: false,
       }).eventType,
       createApplicationEmailFeedbackIngested(LOCAL_TENANT, {
-        jobKey: "j",
+        jobId: "j",
         evidenceId: "e",
         suggestionId: "s",
         provider: "gmail",

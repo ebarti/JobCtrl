@@ -18,8 +18,9 @@ behind a stack of gates. What it guarantees:
   the model cannot add sections, experiences, skill categories, or education.
 - Optional achievements are selected, not copied wholesale. The planner keeps
   one strongest grounded achievement edge per requirement, and the generator
-  emits the smallest sufficient set. A per-role maximum is a ceiling, never a
-  fill target.
+  emits the smallest sufficient set. A reviewed retry can select a comparable
+  canonical fit alternative while retaining one edge per requirement. A per-role
+  maximum is a ceiling, never a fill target.
 - Every experience bullet maps to one achievement. Each numeric claim must be
   present in that same achievement's evidence; a global metric inventory is not
   claim authority.
@@ -183,7 +184,11 @@ deterministic validators still run after the gateway returns a parsed payload.
 On retries, the system message may add only fixed guidance selected from
 code-owned reason codes such as `validation_failed`, `judge_rejected`, or
 `fabrication_detected`. Free-form prior model or reviewer text is never copied
-into a later generator message.
+into a later generator message. The judge receives a canonical eligible-evidence
+catalog and a required `retry_evidence_ids` array in its structured response.
+Only exact IDs from current fit-supported coverage or explicit pins may produce
+retry data. Code derives role, requirement, and edge IDs; prose, unknown IDs, and
+unrelated profile evidence have no retry authority.
 
 The system prompt contains these sections:
 
@@ -195,8 +200,14 @@ The system prompt contains these sections:
   evidence; metrics are extracted from and remain scoped to their owning
   achievement.
 - Hard rules: return every required profile ID exactly once, preserve required
-  bullets, include the pruned strongest requirement-covered achievements, do not
-  add/remove experience, education, or skill categories, do not invent skills
+  bullets, and include the pruned strongest requirement-covered achievements.
+  Experience pins are a minimum: additional selected known roles must carry
+  target-covered or explicitly pinned evidence. A shared role selection helper
+  keeps text, HTML/PDF, and provenance aligned in profile order. Experience
+  update IDs use the same surrounding-whitespace normalization for validation,
+  claim bindings, and rendering; padded known IDs retain their selected content,
+  while duplicate normalized IDs and unknown IDs are rejected. Do not invent
+  role IDs, add/remove education or skill categories, or invent skills
   or metrics, cite one achievement per bullet, and treat max bullet count as a
   ceiling rather than a quota.
 - Writing method: retain explicit pins, select the smallest sufficient
@@ -333,7 +344,18 @@ The plan includes:
   uncovered requirements, and unused achievements. Existing
   `RequirementFitReport.fit.evidence_ids` seed direct/transferable candidates;
   deterministic ranking retains one strongest achievement per requirement while
-  allowing one achievement to cover several requirements.
+  allowing one achievement to cover several requirements. `alternative_edges`
+  retain other canonical edges seeded from that same matched/transferable fit
+  evidence. They are not generated-claim authority or mandatory content until a
+  bounded retry reselects them; no new evidence is inferred from review prose.
+  The generator receives a separate projection containing only active
+  `coverage_edges`; the judge, retry planner and audit retain the alternatives.
+  Every active edge must be cited with its exact requirement and achievement ID.
+  Each generation request constrains `coverage_edge_ids` to that round's active
+  IDs in the response schema, matching validation; an empty graph permits only
+  empty edge arrays. Retry re-selection updates both the projection and schema.
+  Prompt version `tailor.v12.active-coverage-authority` invalidates v11 attempts
+  that exposed inactive alternatives as generator authority.
 - `deterministic_checks`: a prompt-visible summary of important hard checks.
 
 Requirement directives are sorted by priority, weight, and requirement ID. They
@@ -363,14 +385,21 @@ payloads that predate that marker instead of silently changing reviewed text.
 
 For each attempt:
 
-1. Start with the base tailor prompt.
+1. Start with the base tailor prompt. On a canonical evidence retry, reselect
+   one edge per requirement from the existing fit-supported alternatives.
+   Evidence strength and claim policy remain intact; review preference breaks
+   comparable choices before the usual reuse tie breaker. Check the proposed
+   plan against the unchanged pin and artifact budget rules. An infeasible
+   retry keeps the prior plan and records `artifact_budget_infeasible`.
 2. Map earlier parse, validation, judge, adversarial, fabrication, or warning
    outcomes to a bounded code-owned retry reason and append only its fixed
    guidance to the system prompt. Keep original free-form findings in attempt
    history for audit, never in a later generator message.
-3. Build two LLM messages:
+3. Build the LLM messages from that attempt's plan:
    - system: the tailor prompt,
-   - user: original resume baseline, target job blob, and JSON-only reminder.
+   - user: original resume baseline, target job blob, and JSON-only reminder,
+   - when applicable, user data containing at most 16 canonical
+     `retry_evidence_targets`, with no review prose.
 4. Run each configured candidate model through `chat_json()` with
    `TAILORED_RESUME_RESPONSE_SCHEMA`.
 5. Normalize the current artifact-budget policy before assembling candidate
@@ -380,7 +409,10 @@ For each attempt:
 6. Judge each deterministically valid candidate unless `validation_mode` is `lenient`.
 7. Optionally run adversarial review for high-fit jobs.
 8. Select the best clean approved candidate by judge score, retaining its
-   evaluated payload, text and evidence together.
+   evaluated payload, text, evidence and exact coverage plan together. Attempt
+   history retains requested IDs, effective targets, the plan, and any plan
+   rejection. Final artifact metadata and voice validation use the selected
+   candidate's plan even when it came from an earlier round.
 9. If only warning-bearing approved candidates exist, retry while retry budget
    remains, then accept the best residual warning candidate only when allowed
    by the loop logic.
@@ -447,6 +479,10 @@ profile contract:
   prompt's empty-bullet exception. A pin without supporting evidence from its own
   role requires a profile correction: restore the evidence or remove the pin.
   An optional unsupported role is omitted.
+  A required role alone does not authorize a `pinned` bullet classification:
+  its uncovered grounded bullet uses `positioning`. When no explicit evidence,
+  bullet or skill pins exist, the generation schema excludes `pinned` labels;
+  validation still checks the ownership and support of any explicit pin.
 - Generated title must be empty or exactly match the source title.
 - Each required skill category ID must appear exactly once.
 - Unknown or duplicate skill category IDs are rejected.
@@ -611,6 +647,7 @@ The judge returns `TAILORING_JUDGE_RESPONSE_SCHEMA`:
 - `unsupported_claims`,
 - `fabrications`,
 - `missing_required_evidence`,
+- `retry_evidence_ids`: exact canonical catalog IDs to reconsider, or `[]`,
 - `repair_instructions`.
 
 Approval requires:

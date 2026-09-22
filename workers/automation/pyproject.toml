@@ -1,6 +1,6 @@
 [project]
 name = "jobctrl"
-version = "0.1.1"
+version = "0.2.0"
 description = "AI-powered end-to-end job application pipeline"
 readme = "README.md"
 license = "AGPL-3.0-only"
@@ -53,7 +53,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "build>=1.2",
-    "cryptography>=43.0",
+    "cryptography>=50.0.0",
     "google-auth>=2.0",
     "hatchling==1.29.0",
     "pytest>=7.0",

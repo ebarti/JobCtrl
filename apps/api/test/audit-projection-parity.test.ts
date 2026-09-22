@@ -1,3 +1,4 @@
+import { seedApplicationUrl } from "./seed-enrichment.js";
 /**
  * Cross-runtime projection parity for the read-model projections (AUDIT-02).
  *
@@ -192,10 +193,10 @@ function seedRows(dbPath: string): void {
   db.prepare(
     `INSERT INTO jobs (
        tenant_id, job_id, url, title, company, site, strategy, location, salary, description,
-       full_description, application_url, apply_status, applied_at,
+       full_description, apply_status, applied_at,
        score_reasoning, discovered_at
      ) VALUES ('local', @job_id, @url, @title, @company, @site, @strategy, @location, @salary, @description,
-       @full_description, @application_url, @apply_status, @applied_at,
+       @full_description, @apply_status, @applied_at,
        @score_reasoning, @discovered_at)`,
   ).run({
     job_id: jobId,
@@ -208,12 +209,13 @@ function seedRows(dbPath: string): void {
     salary: fixture.job.salary,
     description: fixture.job.description,
     full_description: fixture.job.fullDescription,
-    application_url: fixture.job.applicationUrl,
     apply_status: fixture.job.applyStatus,
     applied_at: fixture.job.appliedAt,
     score_reasoning: fixture.job.scoreReasoning,
     discovered_at: fixture.job.discoveredAt,
   });
+
+  seedApplicationUrl(db, "local", jobId, fixture.job.applicationUrl);
 
   const insertScore = db.prepare(
     `INSERT INTO job_scores (

@@ -1,4 +1,5 @@
 import path from "node:path";
+import ownedWorkspace from "../apps/web/e2e/fixtures/owned-workspace.cjs";
 
 const TOOLCHAIN_ENVIRONMENT_KEYS = [
   "PATH",
@@ -34,7 +35,7 @@ const TOOLCHAIN_ENVIRONMENT_KEYS = [
  * a separate disposable HOME through JOBCTRL_E2E_SERVICE_HOME.
  */
 export function createDocsScreenshotEnvironment({
-  appDir,
+  workspace,
   apiPort,
   webPort,
   sourceEnvironment = process.env,
@@ -74,10 +75,7 @@ export function createDocsScreenshotEnvironment({
     // it must fail on a stale lock rather than rewriting project dependencies.
     UV_LOCKED: "1",
     JOBCTRL_DOCS_SCREENSHOTS: "1",
-    JOBCTRL_E2E_APP_DIR: appDir,
-    JOBCTRL_E2E_DB_PATH: path.join(appDir, "jobctrl.db"),
-    JOBCTRL_E2E_CONFIG_PATH: path.join(appDir, "config.json"),
-    JOBCTRL_E2E_SERVICE_HOME: path.join(appDir, "service-home"),
+    ...ownedWorkspace.workspaceEnvironment(workspace),
     JOBCTRL_E2E_API_PORT: String(apiPort),
     JOBCTRL_E2E_WEB_PORT: String(webPort),
   };

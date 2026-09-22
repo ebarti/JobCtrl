@@ -42,16 +42,8 @@ export const SOURCE_POLICY_METHODS = [
 ] as const;
 export type SourcePolicyMethod = (typeof SOURCE_POLICY_METHODS)[number];
 
-/**
- * How the politeness gateway (R10) treats robots.txt for a source.
- *
- * `honor` (the fail-closed default) obeys the target host's robots.txt before
- * any page-rendering fetch. `exempt_documented_api` marks a source accessed
- * through a documented public JSON API or licensed feed governed by that
- * contract rather than the host's crawl directives (owner decision D2). Rate,
- * concurrency, and per-run budget still apply to exempt sources.
- */
-export const ROBOTS_POLICIES = ["honor", "exempt_documented_api"] as const;
+/** Acquisition never consults robots.txt; old values remain readable metadata. */
+export const ROBOTS_POLICIES = ["ignore", "honor", "exempt_documented_api"] as const;
 export type RobotsPolicy = (typeof ROBOTS_POLICIES)[number];
 
 export const SOURCE_AUTHENTICATION_MODES = [
@@ -159,7 +151,7 @@ export const SMART_EXTRACT_EXPERIMENTAL_POLICY = createSourcePolicy({
   maxPagesPerRun: 50,
   maxRunFrequency: "PT24H",
   locatorMaxRequestsPerDomain: 5,
-  robotsPolicy: "honor",
+  robotsPolicy: "ignore",
   minRequestIntervalSeconds: 1.0,
   maxConcurrentRequestsPerHost: 1,
   maxRequestsPerRun: 500,

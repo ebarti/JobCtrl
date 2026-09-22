@@ -1386,7 +1386,8 @@ def test_jobspy_ignores_missing_direct_url_for_source_learning(tmp_path):
         assert jobspy.store_jobspy_results(conn, frame, "Platform", limit=10) == (1, 0)
 
         job = conn.execute(
-            "SELECT application_url FROM jobs WHERE url = ?",
+            "SELECT e.application_url FROM jobs j LEFT JOIN job_enrichments e "
+            "ON e.tenant_id=j.tenant_id AND e.job_id=j.job_id WHERE j.url = ?",
             ("https://www.linkedin.com/jobs/view/10",),
         ).fetchone()
         assert job["application_url"] is None
@@ -1733,3 +1734,40 @@ def test_jobspy_missing_dependency_is_not_reported_as_empty_success(monkeypatch)
             {},
             limit=10,
         )
+
+
+def test_jobspy_refresh_preserves_canonical_target_and_retains_new_application_alias(tmp_path):
+    db_path = tmp_path / 'jobs.db'
+    conn = init_db(db_path)
+    posting = 'https://www.linkedin.com/jobs/view/canonical-authority'
+    try:
+        frame = _jobspy_frame([{'job_url':posting,'job_url_direct':'https://jobs.ashbyhq.com/example/first','title':'Platform Engineer','company':'Example','location':'Barcelona, Spain','site':'linkedin'}])
+        assert jobspy.store_jobspy_results(conn, frame, 'Platform', limit=10) == (1,0)
+        job_id = _stable_job_id(conn, posting)
+        conn.execute("UPDATE job_enrichments SET application_url='https://accepted.example/target',current_status='failed',attempts_json='[{\"retained\":true}]',updated_at='retained-time' WHERE tenant_id='local' AND job_id=?", (job_id,))
+        before = tuple(conn.execute("SELECT * FROM job_enrichments WHERE tenant_id='local' AND job_id=?", (job_id,)).fetchone())
+        frame.loc[0, 'job_url_direct'] = 'https://jobs.ashbyhq.com/example/second'
+        assert jobspy.store_jobspy_results(conn, frame, 'Platform', limit=10) == (0,1)
+        assert tuple(conn.execute("SELECT * FROM job_enrichments WHERE tenant_id='local' AND job_id=?", (job_id,)).fetchone()) == before
+        aliases = {row[0] for row in conn.execute("SELECT application_url FROM job_application_locators WHERE tenant_id='local' AND job_id=?", (job_id,))}
+        assert {'https://jobs.ashbyhq.com/example/first','https://jobs.ashbyhq.com/example/second'} <= aliases
+    finally:
+        close_connection(db_path)
+
+
+def test_workday_refresh_preserves_canonical_enrichment_and_other_tenant(tmp_path):
+    db_path = tmp_path / 'jobs.db'
+    conn = init_db(db_path)
+    posting = 'https://workday.example/careers/job/one'
+    try:
+        for tenant in ('local','other'):
+            conn.execute("INSERT INTO jobs(tenant_id,job_id,url,title,full_description) VALUES(?, '89100000-0000-4000-8000-000000000099', ?, ?, 'unchanged')", (tenant,posting,f'{tenant} title'))
+            conn.execute("INSERT INTO job_enrichments(tenant_id,job_id,current_status,application_url,updated_at,attempts_json) VALUES(?, '89100000-0000-4000-8000-000000000099','failed',?,'old-time','[{\"retained\":true}]')", (tenant,f'https://{tenant}.accepted/target'))
+        enrichment_before = [tuple(r) for r in conn.execute('SELECT * FROM job_enrichments ORDER BY tenant_id')]
+        other_before = tuple(conn.execute("SELECT * FROM jobs WHERE tenant_id='other'").fetchone())
+        workday._update_detail_columns(conn, {'full_description':'Updated description. ' * 30}, posting, 'new-time')
+        assert [tuple(r) for r in conn.execute('SELECT * FROM job_enrichments ORDER BY tenant_id')] == enrichment_before
+        assert tuple(conn.execute("SELECT * FROM jobs WHERE tenant_id='other'").fetchone()) == other_before
+        assert [tuple(r) for r in conn.execute('SELECT * FROM job_application_locators')] == [('local','89100000-0000-4000-8000-000000000099',posting)]
+    finally:
+        close_connection(db_path)

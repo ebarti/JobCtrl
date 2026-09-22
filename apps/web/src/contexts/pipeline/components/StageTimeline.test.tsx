@@ -255,13 +255,13 @@ describe("<StageTimeline>", () => {
     );
 
     expect(screen.getByRole("alert")).toHaveTextContent(
-      "LinkedIn enrichment needs your live Chrome session",
+      "An earlier robots policy blocked enrichment",
     );
     expect(screen.getByRole("alert")).toHaveTextContent(
-      /previous anonymous enrichment attempt/i,
+      /historical block/i,
     );
     expect(screen.getByRole("alert")).toHaveTextContent(
-      /current signed-in Chrome profile/i,
+      /with or without a connected extension/i,
     );
     expect(screen.getByRole("alert")).toHaveTextContent(
       /paired JobCtrl extension/i,
@@ -273,7 +273,7 @@ describe("<StageTimeline>", () => {
       /explicit, job-scoped manual override/i,
     );
     expect(screen.getByRole("alert")).toHaveTextContent(
-      /does not bypass .*robots policy/i,
+      /does not bypass .*destination safety checks/i,
     );
     expect(screen.getByRole("alert")).toHaveTextContent(
       /never submits an application/i,
@@ -290,7 +290,7 @@ describe("<StageTimeline>", () => {
     );
   });
 
-  it("retries one robots-blocked LinkedIn job through the connected live-profile extension", async () => {
+  it.each([true, false])("retries a legacy robots block without gating on extension readiness (connected=%s)", async (connected) => {
     const user = userEvent.setup();
     const retryStage = vi.fn(
       async (jobKey: string): Promise<ActionRunResponse> => ({
@@ -309,7 +309,7 @@ describe("<StageTimeline>", () => {
       }),
     );
     const discoveryBrowserBridgeStatus = vi.fn(async () =>
-      discoveryBrowserBridge(true),
+      discoveryBrowserBridge(connected),
     );
     renderWithProviders(
       <StageTimeline
@@ -331,11 +331,9 @@ describe("<StageTimeline>", () => {
     );
 
     const retry = await screen.findByRole("button", {
-      name: "Retry through this Chrome profile",
+      name: "Retry enrichment",
     });
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      /No browser profile is copied/i,
-    );
+    expect(discoveryBrowserBridgeStatus).not.toHaveBeenCalled();
     expect(screen.getByRole("alert")).toHaveTextContent(/host pacing/i);
     expect(screen.getByRole("alert")).toHaveTextContent(/run request budget/i);
     expect(screen.getByRole("alert")).toHaveTextContent(
@@ -360,46 +358,7 @@ describe("<StageTimeline>", () => {
     ).toBeInTheDocument();
   });
 
-  it("links to extension setup when the selected live Chrome profile is offline", async () => {
-    const discoveryBrowserBridgeStatus = vi.fn(async () =>
-      discoveryBrowserBridge(false),
-    );
-    renderWithProviders(
-      <StageTimeline
-        jobId="linkedin-job-456"
-        postingUrl="https://www.linkedin.com/jobs/view/456"
-        stages={[
-          {
-            ...makeStage("enrich", "blocked"),
-            errorCode: "ENRICH_ROBOTS_DISALLOWED",
-            errorMessage: "robots.txt disallows automated fetch of this URL",
-          },
-        ]}
-      />,
-      {
-        ports: buildTestPorts({ api: { discoveryBrowserBridgeStatus } }),
-      },
-    );
-
-    expect(
-      await screen.findByRole("link", {
-        name: "Connect this Chrome profile",
-      }),
-    ).toHaveAttribute("href", "/settings/browser");
-    expect(
-      screen.queryByRole("button", {
-        name: "Retry through this Chrome profile",
-      }),
-    ).not.toBeInTheDocument();
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      /does not create or launch a copy/i,
-    );
-    expect(
-      screen.getByRole("link", { name: "Open posting for manual capture" }),
-    ).toBeInTheDocument();
-  });
-
-  it("never offers the live-profile LinkedIn retry for a non-LinkedIn URL", async () => {
+  it("offers the same legacy retry for a non-LinkedIn URL", async () => {
     const discoveryBrowserBridgeStatus = vi.fn(async () =>
       discoveryBrowserBridge(true),
     );
@@ -422,9 +381,9 @@ describe("<StageTimeline>", () => {
 
     expect(
       screen.queryByRole("button", {
-        name: "Retry through this Chrome profile",
+        name: "Retry enrichment",
       }),
-    ).not.toBeInTheDocument();
+    ).toBeInTheDocument();
     expect(
       screen.queryByRole("link", {
         name: "Connect this Chrome profile",
@@ -433,9 +392,9 @@ describe("<StageTimeline>", () => {
     expect(discoveryBrowserBridgeStatus).not.toHaveBeenCalled();
   });
 
-  it("never offers the live-profile retry unless the robots-blocked state is current", () => {
+  it.each([true, false])("does not gate ordinary failures on extension readiness (connected=%s)", (connected) => {
     const discoveryBrowserBridgeStatus = vi.fn(async () =>
-      discoveryBrowserBridge(true),
+      discoveryBrowserBridge(connected),
     );
     renderWithProviders(
       <StageTimeline

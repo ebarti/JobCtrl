@@ -39,18 +39,25 @@ last accepted resume.
    employer analysis with a versioned Candidate Profile snapshot, requirement
    fit, tailoring permissions, required evidence pins, and writing style. The
    posting may guide emphasis; only profile evidence may support claims about
-   you. Each target requirement keeps only its strongest grounded achievement
-   edge, while one achievement may cover several requirements.
+   you. Each target requirement initially keeps only its strongest grounded
+   achievement edge, while one achievement may cover several requirements.
 2. **Ask each ready generator for structured content.** Configured candidate
    models receive the same plan. Their response must reference known experience
    and skill-category IDs, preserve source titles, respect bullet limits, and
    use skills that already exist in the profile. The generator selects the
    smallest sufficient achievement set: a maximum bullet count is a ceiling,
    not a quota, and optional inventory does not become required content. Required
+   experience pins are a mandatory minimum: target-covered or explicitly pinned
+   achievements can select additional known roles. A bullet pin also requires
+   its owning role, even if that role has no separate role pin. Unselected optional roles are
+   omitted consistently from text, HTML/PDF, and the provenance audit. Required
    roles with neither achievement evidence nor required bullet pins retain their
    existing role details without generated bullets. If a required bullet remains
    pinned after its supporting achievement is removed, restore that role's
    evidence or remove the pin before tailoring; pins are still mandatory.
+   Requiring a role does not pin every achievement within it. Without selected
+   requirement evidence or a bullet pin, that role gets one grounded positioning
+   bullet when evidence is available.
 3. **Validate the assembled resume, not just model JSON.** Deterministic checks
    run over the actual candidate text for grounding, preserved employers,
    education, section structure, prohibited claims, metrics, seniority, and
@@ -65,8 +72,12 @@ last accepted resume.
    structured judge must return `PASS`, reach the configurable threshold
    (`0.82` by default), and report no unsupported claims, fabrications, or
    missing required evidence. Jobs at or above `8/10` fit also receive a
-   six-persona adversarial review. Repair instructions from rejected candidates
-   feed the bounded retry.
+   six-persona adversarial review. A judge can identify canonical evidence to
+   reconsider on a bounded retry. JobCtrl may select a comparable alternative
+   already supported by fit analysis, keeping one achievement per requirement
+   and checking the same pins and bullet budget again. Unsupported demands and
+   raw review instructions stay in the audit; they cannot add facts or override
+   the gates.
 6. **Select and persist the best clean candidate.** JobCtrl chooses the approved
    candidate with the best judge result. An optional voice pass may edit only
    lines containing a configured buzzword and is kept only when it removes one
@@ -110,6 +121,13 @@ The user-visible surfaces divide the work:
 - `/settings/models` owns the generator/judge execution policy used by newly
   started work. The current fields and fallback rules belong to
   [Configuration](configuration.md), not this page.
+
+**Materials ready** means the accepted resume text and submission PDF are
+available for review, including while a replacement is queued or running.
+Missing profile attestations remain visible as application prerequisites and do
+not mean material generation is running. Missing resume text or PDF reports
+**materials preparing**. Stage and apply-run failures still report repair, retain
+accepted review evidence, and preserve all approval and submission gates.
 
 Generating materials, choosing a default template, revising a resume in Apply
 Review, and approving a live submission are separate decisions. Materials

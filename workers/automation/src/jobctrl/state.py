@@ -1553,19 +1553,13 @@ def reset_job_stage(
     if stage not in (*STAGE_ORDER, "apply"):
         raise ValueError(f"unknown stage: {stage}")
 
-    row = conn.execute(
-        """
-        SELECT job_id, url
-        FROM jobs
-        WHERE tenant_id = ? AND (url = ? OR application_url = ?)
-        """,
-        (str(tenant_id), job_url_or_application_url, job_url_or_application_url),
-    ).fetchone()
-    if row is None:
-        raise ValueError(f"no matching job found: {job_url_or_application_url}")
+    from jobctrl.infrastructure.job_locators import resolve_job_locator
 
-    job_url = row["url"]
-    stable_job_id = canonical_job_id(str(row["job_id"]))
+    identity = resolve_job_locator(conn, str(tenant_id), job_url_or_application_url)
+    if identity is None:
+        raise ValueError(f"no unique matching job found: {job_url_or_application_url}")
+    stable_job_id = canonical_job_id(identity[0])
+    job_url = identity[1]
     # Reset only the canonical stage-owned aggregate. The retired projection
     # columns on ``jobs`` are historical migration facts, not write targets.
     if stage in ("tailor", "cover"):

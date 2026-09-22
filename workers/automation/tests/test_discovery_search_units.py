@@ -157,6 +157,25 @@ def test_checkpoint_save_is_compare_and_swap_and_reclaim_fences_old_owner(search
     assert current.lease_epoch == second_lease.epoch
 
 
+def test_same_owner_claim_reentry_returns_the_active_lease_and_rejects_a_competing_owner(
+    search_db,
+) -> None:
+    """Document why multiple claim loops cannot safely share one activity identity."""
+
+    repository = SqliteDiscoverySearchUnitRepository(search_db)
+    execution = _execution()
+    repository.plan_units(execution, [_spec(), _spec(query="VP Engineering")])
+
+    first = repository.claim_next(execution, "shared-owner", 1)
+    reentered = repository.claim_next(execution, "shared-owner", 1)
+
+    assert first is not None
+    assert reentered == first
+    assert repository.list_units(execution)[1].state == "pending"
+    with pytest.raises(StaleDiscoverySearchUnitLease):
+        repository.claim_next(execution, "competing-owner", 1)
+
+
 def test_retryable_failure_defers_cursor_reset_until_reclaimed(search_db) -> None:
     repository = SqliteDiscoverySearchUnitRepository(search_db)
     execution = _execution()
@@ -275,7 +294,7 @@ def test_v4_search_unit_tables_require_an_explicit_v7_upgrade(
     conn.commit()
     close_connection(db_path)
 
-    with pytest.raises(SchemaMigrationRequiredError, match="exact schema v9"):
+    with pytest.raises(SchemaMigrationRequiredError, match="exact schema v11"):
         init_db(db_path)
 
 

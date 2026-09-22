@@ -7,6 +7,7 @@ on:
     branches: ["main"]
     paths:
       - "docs/**"
+      - "apps/web/src/styles/tokens.css"
       - "!docs/plans/**"
       - "!docs/incidents/**"
       - "package.json"
@@ -20,6 +21,7 @@ on:
   pull_request:
     paths:
       - "docs/**"
+      - "apps/web/src/styles/tokens.css"
       - "!docs/plans/**"
       - "!docs/incidents/**"
       - "package.json"

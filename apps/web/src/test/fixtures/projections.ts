@@ -49,6 +49,17 @@ export const sampleHealthResponse: ApiHealthResponse = {
     dailyBudgetUsd: 25,
     remainingUsd: 24.88,
     unlimited: false,
+    lanes: {
+      discovery: { status: "ok", inputTokens: 0, outputTokens: 0, totalTokens: 0, tokenLimit: 0, remainingTokens: null, unlimited: true },
+      enrichment: { status: "ok", inputTokens: 0, outputTokens: 0, totalTokens: 0, tokenLimit: 0, remainingTokens: null, unlimited: true },
+      scoring: { status: "ok", inputTokens: 0, outputTokens: 0, totalTokens: 0, tokenLimit: 0, remainingTokens: null, unlimited: true },
+      tailoring: { status: "ok", inputTokens: 0, outputTokens: 0, totalTokens: 0, tokenLimit: 0, remainingTokens: null, unlimited: true },
+      apply: { status: "ok", inputTokens: 0, outputTokens: 0, totalTokens: 0, tokenLimit: 0, remainingTokens: null, unlimited: true },
+      contact: { status: "ok", inputTokens: 0, outputTokens: 0, totalTokens: 0, tokenLimit: 0, remainingTokens: null, unlimited: true },
+      interview: { status: "ok", inputTokens: 0, outputTokens: 0, totalTokens: 0, tokenLimit: 0, remainingTokens: null, unlimited: true },
+      profile: { status: "ok", inputTokens: 0, outputTokens: 0, totalTokens: 0, tokenLimit: 0, remainingTokens: null, unlimited: true },
+      compensation: { status: "ok", inputTokens: 0, outputTokens: 0, totalTokens: 0, tokenLimit: 0, remainingTokens: null, unlimited: true },
+    },
     message: "LLM spend is $0.12 / $25.00 today.",
   },
   worker: {
@@ -1773,6 +1784,10 @@ export const sampleSettingsResponse: SettingsResponse = {
     pipelineInternalConcurrency: 3,
     workerActivitySlots: 4,
     dailyBudgetUsd: 25,
+    laneTokenLimits: {
+      discovery: 0, enrichment: 0, scoring: 0, tailoring: 0, apply: 0,
+      contact: 0, interview: 0, profile: 0, compensation: 0,
+    },
     analysisLegs: ["claude", "codex", "google"],
     tailoringGeneratorModels: null,
     tailoringJudgeModel: null,
@@ -1785,6 +1800,15 @@ export const sampleSettingsResponse: SettingsResponse = {
   },
   effectiveSettings: {
     dailyBudgetUsd: { value: 25, source: "persisted", activation: "live", editable: true },
+    laneTokenLimits: {
+      value: {
+        discovery: 0, enrichment: 0, scoring: 0, tailoring: 0, apply: 0,
+        contact: 0, interview: 0, profile: 0, compensation: 0,
+      },
+      source: "default",
+      activation: "live",
+      editable: true,
+    },
     applyConcurrency: { value: 2, source: "persisted", activation: "next_poll", editable: true },
     pipelineInternalConcurrency: { value: 3, source: "persisted", activation: "next_workflow", editable: true },
     workerActivitySlots: { value: 4, source: "default", activation: "restart", editable: true },

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from jobctrl.infrastructure.gmail.feedback import (
+from tests.v6_feedback_fixture import (
     ensure_application_feedback_tables,
 )
 from jobctrl.infrastructure.migrations.v6_to_v7_preflight import (

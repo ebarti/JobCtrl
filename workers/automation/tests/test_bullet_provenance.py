@@ -496,8 +496,8 @@ def _analysis_with_platform_requirement() -> EmployerAnalysis:
 
 def test_strict_subset_provenance_and_coverage_reflect_only_shipped_entries() -> None:
     """Regression (rev-211 A4 / auditability): when ``required_experience_entry_ids``
-    pins a STRICT SUBSET, the assembler and both PDF renderers ship only those
-    entries. Provenance -- and the coverage computed over it -- must audit ONLY the
+    pins a STRICT SUBSET and no optional roles are selected, all renderers ship
+    only those entries. Provenance and the coverage computed over it audit ONLY the
     shipped entries. A keyword present solely in an OMITTED entry ("Kubernetes")
     must not appear in any provenance row and must be reported missing, never
     inflated as covered with content the employer never receives."""

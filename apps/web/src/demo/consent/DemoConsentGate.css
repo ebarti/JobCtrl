@@ -1,113 +1,111 @@
 .demo-consent-shell {
-  min-height: 100vh;
+  min-height: 100dvh;
   display: grid;
   place-items: center;
-  padding: clamp(1.25rem, 4vw, 3rem);
-  color: #18231f;
-  background:
-    radial-gradient(circle at 14% 8%, rgb(235 118 65 / 18%), transparent 32rem),
-    radial-gradient(circle at 88% 86%, rgb(44 99 79 / 18%), transparent 34rem),
-    #f5f1e8;
+  padding: clamp(20px, 5vw, 56px);
+  background: var(--background);
+  color: var(--foreground);
 }
 
 .demo-consent-card {
-  width: min(100%, 42rem);
-  padding: clamp(1.5rem, 4vw, 3rem);
-  border: 1px solid rgb(24 35 31 / 14%);
-  border-radius: 1.5rem;
-  background: rgb(255 253 247 / 94%);
-  box-shadow: 0 1.5rem 4rem rgb(24 35 31 / 12%);
+  width: min(100%, 620px);
+  min-width: 0;
+  padding: clamp(24px, 4vw, 40px);
+  border: 1px solid var(--border);
+  border-top: 3px solid var(--foreground);
+  border-radius: var(--radius);
+  background: var(--card);
+  color: var(--card-foreground);
 }
 
 .demo-consent-mark {
   display: grid;
   place-items: center;
-  width: 2.75rem;
-  height: 2.75rem;
-  border-radius: 0.8rem;
-  color: #fffaf1;
-  background: #234c3e;
-  font-weight: 800;
-  letter-spacing: -0.04em;
+  width: 38px;
+  height: 38px;
 }
 
-.demo-consent-kicker {
-  margin: 1.35rem 0 0.4rem;
-  color: #b24e28;
-  font-size: 0.78rem;
-  font-weight: 800;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
+.demo-consent-card p {
+  margin: 16px 0 0;
+  font-size: var(--jh-type-body-size);
+  line-height: var(--jh-type-body-line-height);
+}
+
+.demo-consent-card .demo-consent-kicker {
+  margin: 24px 0 8px;
+  color: var(--muted-foreground);
+  font-size: var(--jh-type-label-size);
+  font-weight: var(--jh-type-label-weight);
+  line-height: var(--jh-type-label-line-height);
 }
 
 .demo-consent-card h1 {
   margin: 0;
-  font-size: clamp(2rem, 6vw, 3.6rem);
-  line-height: 1.02;
-  letter-spacing: -0.055em;
+  max-width: 20ch;
+  font-size: var(--jh-type-page-title-size);
+  font-weight: var(--jh-type-page-title-weight);
+  line-height: var(--jh-type-page-title-line-height);
 }
 
-.demo-consent-card p {
-  line-height: 1.65;
-}
-
-.demo-consent-requirement {
-  margin-top: 1.4rem;
-  font-size: 1.08rem;
-  font-weight: 750;
+.demo-consent-card .demo-consent-requirement {
+  margin-top: 24px;
+  font-weight: var(--jh-type-strong-body-weight);
 }
 
 .demo-consent-return-note,
 .demo-consent-error {
-  padding: 0.8rem 1rem;
-  border-radius: 0.8rem;
-  background: #f8e8dc;
+  padding: 8px 0 8px 12px;
+  border-left: 2px solid var(--status-info);
 }
 
 .demo-consent-error {
-  color: #842f22;
-  border: 1px solid rgb(132 47 34 / 22%);
+  border-color: var(--destructive);
+  color: var(--destructive-text);
 }
 
-.demo-consent-links a {
-  color: #234c3e;
-  font-weight: 700;
+.demo-consent-card a {
+  color: var(--primary);
+  font-weight: var(--jh-type-control-weight);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.demo-consent-card a:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
 }
 
 .demo-consent-actions {
   display: grid;
-  gap: 0.75rem;
-  margin-top: 1.6rem;
+  gap: 8px;
+  margin-top: 24px;
 }
 
+/* Keep the shared button tokens and focus treatment; allow the full consent
+ * choices to wrap without clipping at narrow widths or increased text sizes. */
 .demo-consent-actions button {
-  min-height: 3rem;
-  padding: 0.75rem 1rem;
-  border-radius: 0.8rem;
-  font: inherit;
-  font-weight: 800;
-  cursor: pointer;
-}
-
-.demo-consent-actions button:disabled {
-  cursor: wait;
-  opacity: 0.65;
-}
-
-.demo-consent-accept {
-  border: 1px solid #234c3e;
-  color: #fffaf1;
-  background: #234c3e;
-}
-
-.demo-consent-decline {
-  border: 1px solid rgb(24 35 31 / 24%);
-  color: #26352f;
-  background: transparent;
+  height: auto;
+  min-height: 40px;
+  padding: 8px 12px;
+  white-space: normal;
 }
 
 @media (min-width: 38rem) {
   .demo-consent-actions {
-    grid-template-columns: 1.25fr 1fr;
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 520px) {
+  .demo-consent-shell {
+    place-items: stretch;
+    padding: 0;
+  }
+
+  .demo-consent-card {
+    min-height: 100dvh;
+    border: 0;
+    border-top: 3px solid var(--foreground);
+    padding: 28px 20px;
   }
 }

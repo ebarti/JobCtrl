@@ -38,6 +38,7 @@ from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.materials.analysis import EmployerAnalysis
 from jobctrl.domain.ports.events import EventPublisher
 from jobctrl.domain.ports.llm import LlmMessage
+from jobctrl.llm_lanes import lane_bound
 from jobctrl.domain.ports.scoring import (
     LlmPort,
     RequirementFitReportRepository,
@@ -655,6 +656,7 @@ class ScoreJobUseCase:
     # Internals
     # ------------------------------------------------------------------
 
+    @lane_bound("scoring")
     def _call_llm(
         self,
         *,

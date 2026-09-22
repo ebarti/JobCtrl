@@ -12,6 +12,52 @@ import {
 import { EmployerAnalysisPanel } from "./EmployerAnalysisPanel.js";
 
 describe("<EmployerAnalysisPanel>", () => {
+  it("shows requirement evidence initially and toggles requirements independently with mouse and keyboard", async () => {
+    const user = userEvent.setup();
+    const view = render(<EmployerAnalysisPanel analysis={populatedEmployerAnalysis} requirementFitReport={populatedRequirementFitReport} />);
+    const matched = screen.getByRole("article", { name: `Requirement: ${populatedEmployerAnalysis.requirements[0]!.text}` });
+    const sibling = screen.getByRole("article", { name: `Requirement: ${populatedEmployerAnalysis.requirements[1]!.text}` });
+    const trigger = within(matched).getByRole("button", { name: /^Hide evidence/ });
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    expect(within(matched).getByRole("group", { name: "Fit summary" })).toBeVisible();
+    expect(within(sibling).getByRole("button", { name: /^Hide evidence/ })).toHaveAttribute("aria-expanded", "true");
+    await user.click(trigger);
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(within(matched).queryByRole("group", { name: "Fit summary" })).not.toBeInTheDocument();
+    await user.keyboard("{Enter}");
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    await user.keyboard(" ");
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(within(sibling).getByRole("group", { name: "Fit summary" })).toBeVisible();
+    view.rerender(<EmployerAnalysisPanel analysis={{ ...populatedEmployerAnalysis, cache_key: "replacement-analysis" }} requirementFitReport={populatedRequirementFitReport} />);
+    expect(screen.getAllByRole("button", { name: /^Hide evidence/ })[0]).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("does not bind an older score to a reused requirement ID", () => {
+    const text = "Hold a clinical oncology license";
+    render(<EmployerAnalysisPanel analysis={{ ...populatedEmployerAnalysis,
+      generation: populatedEmployerAnalysis.generation + 1,
+      requirements: [{ ...populatedEmployerAnalysis.requirements[0]!, text }],
+    }} requirementFitReport={populatedRequirementFitReport} />);
+    const card = screen.getByRole("article", { name: `Requirement: ${text}` });
+    expect(within(card).getByText("not assessed")).toBeVisible();
+    expect(within(card).queryByText("matched")).not.toBeInTheDocument();
+    expect(within(card).getByRole("button", { name: /^Hide evidence/ })).toHaveAttribute("aria-expanded", "true");
+    expect(within(card).queryByText("Double Down · priority 90%")).not.toBeInTheDocument();
+  });
+
+  it("resets disclosure on a same-cache generation replacement and preserves choices within a generation", async () => {
+    const user = userEvent.setup();
+    const view = render(<EmployerAnalysisPanel analysis={populatedEmployerAnalysis} requirementFitReport={populatedRequirementFitReport} />);
+    const first = populatedEmployerAnalysis.requirements[0]!;
+    await user.click(screen.getByRole("button", { name: `Hide evidence for requirement: ${first.text}` }));
+    view.rerender(<EmployerAnalysisPanel analysis={{ ...populatedEmployerAnalysis }} requirementFitReport={{ ...populatedRequirementFitReport }} />);
+    expect(screen.getByRole("button", { name: `Show evidence for requirement: ${first.text}` })).toHaveAttribute("aria-expanded", "false");
+    const next = { ...populatedEmployerAnalysis, generation: populatedEmployerAnalysis.generation + 1 };
+    view.rerender(<EmployerAnalysisPanel analysis={next} requirementFitReport={{ ...populatedRequirementFitReport, employerAnalysisGeneration: next.generation }} />);
+    expect(screen.getByRole("button", { name: `Hide evidence for requirement: ${first.text}` })).toHaveAttribute("aria-expanded", "true");
+  });
+
   it("renders requirements with tier + importance and quoted evidence spans", () => {
     render(<EmployerAnalysisPanel analysis={populatedEmployerAnalysis} />);
 
@@ -139,7 +185,7 @@ describe("<EmployerAnalysisPanel>", () => {
     ).toBeInTheDocument();
   });
 
-  it("keeps the compact fit summary bounded while evidence stays readable", () => {
+  it("keeps the compact fit summary bounded while evidence stays readable", async () => {
     render(
       <EmployerAnalysisPanel
         analysis={populatedEmployerAnalysis}
@@ -412,7 +458,8 @@ describe("<EmployerAnalysisPanel>", () => {
               ...transferableAssessment,
               fit: {
                 kind: "blocked",
-                blocker: "This role requires direct platform ownership evidence.",
+                blocker:
+                  "This role requires direct platform ownership evidence.",
               },
             },
           ],

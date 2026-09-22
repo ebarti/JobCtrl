@@ -1,11 +1,20 @@
 # Preserve behavior while removing duplicated state and execution
 
-Status: all four implementations delivered as open PRs on 6 September 2026.
+Status: delivered. All four implementation PRs
+[#865](https://github.com/ebarti/JobCtrl/pull/865),
+[#866](https://github.com/ebarti/JobCtrl/pull/866),
+[#868](https://github.com/ebarti/JobCtrl/pull/868) and
+[#869](https://github.com/ebarti/JobCtrl/pull/869) merged on 8 September 2026.
+Their merge commits are ancestors of the revalidated baseline
+`a1526649a395b9febb4c20ef30dd946945014a21`. This file preserves the delivery
+record; it is not an active implementation queue.
+
 Independent implementation review and synthetic QA passed for every phase.
 Review corrections and cumulative synthetic QA also passed on 7 September
 2026 at code head `f1c8aae101a727001802d44a3433a6fdb0e28c08`.
 The final published head's CI status is tracked in [PR #869's live checks](https://github.com/ebarti/JobCtrl/pull/869/checks).
-Native stack #867 remains open and unmerged; merging is a separate action.
+Separately scoped follow-ups live in [GitHub Issues](https://github.com/ebarti/JobCtrl/issues),
+with historical backlog dispositions in [#881](https://github.com/ebarti/JobCtrl/issues/881).
 
 ## Starting point and delivery order
 
@@ -52,10 +61,10 @@ The relevant facts have distinct owners:
 | Candidate evidence | One concrete candidate value for one exact payload/text; evidence must change whenever its text changes |
 | Execution ownership | Existing workflow/attempt and transaction fences; stale or canceled owners cannot publish |
 
-Read [frontend state ownership](../architecture/frontend/state-and-ports.md),
-the [tailoring contract](../architecture/tailoring.md),
-[pipeline operations](../architecture/pipeline/operations.md), and the
-[QA matrix](../local-reliability-qa.md) at their respective phase boundaries.
+Read [frontend state ownership](../../architecture/frontend/state-and-ports.md),
+the [tailoring contract](../../architecture/tailoring.md),
+[pipeline operations](../../architecture/pipeline/operations.md), and the
+[QA matrix](../../local-reliability-qa.md) at their respective phase boundaries.
 Follow root and web `AGENTS.md` instructions.
 
 Excluded work: a generic gate/workflow framework, global candidate caching,

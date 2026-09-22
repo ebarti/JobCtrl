@@ -36,6 +36,10 @@ export interface BrowserTabs {
   sendMessage<TResponse = unknown>(tabId: number, message: unknown): Promise<TResponse>;
 }
 
+export interface BrowserWindows {
+  create(createProperties: { focused: false; tabId: number }): Promise<{ id?: number }>;
+}
+
 export interface BrowserDeclarativeNetRequestRule {
   id: number;
   priority: number;
@@ -93,6 +97,7 @@ export interface BrowserApi {
     local: BrowserStorageArea;
   };
   tabs: BrowserTabs;
+  windows: BrowserWindows;
 }
 
 declare global {

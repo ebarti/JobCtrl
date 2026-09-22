@@ -29,7 +29,10 @@ _NOW = datetime(2026, 9, 6, tzinfo=timezone.utc)
 def conn(tmp_path, monkeypatch):
     connection = init_db(tmp_path / "recovery.db")
     monkeypatch.setattr("jobctrl.database.get_connection", lambda: connection)
-    monkeypatch.setattr("jobctrl.llm.read_spend_budget_status", lambda: SimpleNamespace(exceeded=False))
+    monkeypatch.setattr(
+        "jobctrl.llm.read_spend_budget_status",
+        lambda **_kwargs: SimpleNamespace(global_exceeded=False),
+    )
     monkeypatch.setattr("jobctrl.infrastructure.scoring.criteria_provider.read_min_fit_score", lambda **_: 7)
     yield connection
     connection.close()
@@ -432,7 +435,10 @@ def test_unavailable_temporal_and_live_work_prevent_mutation(conn):
 def test_budget_halt_does_not_reserve_or_dispatch(conn, monkeypatch):
     job_id = _job(conn)
     before = _stage(conn, job_id)
-    monkeypatch.setattr("jobctrl.llm.read_spend_budget_status", lambda: SimpleNamespace(exceeded=True))
+    monkeypatch.setattr(
+        "jobctrl.llm.read_spend_budget_status",
+        lambda **_kwargs: SimpleNamespace(global_exceeded=True),
+    )
     client = _Client()
     assert asyncio.run(_tick(client)) == 0
     assert _stage(conn, job_id) == before

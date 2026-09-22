@@ -21,6 +21,23 @@ from jobctrl.domain.ports.discovery import ScrapedJobPosting
 from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.infrastructure.discovery import SqliteJobRepository
 from jobctrl.infrastructure.discovery.production_wiring import DurableJobEventPublisher
+from jobctrl.llm_lanes import current_llm_lane
+
+
+def test_smart_extract_llm_calls_are_bound_to_discovery_lane(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed: list[str] = []
+
+    class _Adapter:
+        def ask(self, _prompt: str, **_kwargs: object) -> str:
+            observed.append(current_llm_lane())
+            return "{}"
+
+    monkeypatch.setattr(smartextract, "get_llm_adapter", lambda: _Adapter())
+
+    assert smartextract.ask_llm("select a strategy")[0] == "{}"
+    assert observed == ["discovery"]
 
 
 def _job_id_by_url(conn, url: str) -> str:

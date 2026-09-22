@@ -476,7 +476,7 @@
           "sourceKind": "posted",
           "warningCount": 0
         },
-        "projectionVersion": 3,
+        "projectionVersion": 4,
         "warningCount": 0
       },
       "current_error_code": null,
@@ -575,7 +575,7 @@
           "ok": true,
           "recordStatus": "not_recorded"
         },
-        "projectionVersion": 3
+        "projectionVersion": 4
       },
       "compensation_summary_json": {
         "legacyRawSalary": "EUR 90000-120000/year",
@@ -603,7 +603,7 @@
           "sourceKind": "posted",
           "warningCount": 0
         },
-        "projectionVersion": 3,
+        "projectionVersion": 4,
         "warningCount": 0
       },
       "description_preview": "Own the developer platform across the fleet. Build paved paths for product teams.",

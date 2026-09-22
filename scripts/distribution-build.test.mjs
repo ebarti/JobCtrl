@@ -615,7 +615,7 @@ test("fixture builds are bytewise reproducible in different directories", async 
     measurementStatus: "unavailable-fixture",
     packCount: 3,
     wheelCount: 46,
-    downloadBytes: 230258126,
+    downloadBytes: 230276846,
     installedBytes: null,
     fileCount: null,
     treeSha256: null,
@@ -834,6 +834,67 @@ test("headless Chromium topology rejects a full browser path even without Widevi
   await mkdir(path.dirname(fullBrowser), { recursive: true });
   await writeFile(fullBrowser, "not-widevine", { mode: 0o755 });
   await assert.rejects(assertHeadlessChromiumPayload(root, contracts), /unexpected browser revisions|full browser topology/);
+});
+
+test("bundled PDF.js smoke destroys the loading task after rendering", async (context) => {
+  const source = await readFile(new URL("./distribution-build.mjs", import.meta.url), "utf8");
+  const match = source.match(/render_script = """(async \(input\) => \{[\s\S]*?\n\})"""/);
+  assert.ok(match, "distribution build must contain the packaged PDF preview smoke script");
+
+  const previousWindow = globalThis.window;
+  const previousWorker = globalThis.pdfjsWorker;
+  const previousDestroyCount = globalThis.__jobctrlPdfLoadingTaskDestroyCount;
+  context.after(() => {
+    globalThis.window = previousWindow;
+    globalThis.pdfjsWorker = previousWorker;
+    globalThis.__jobctrlPdfLoadingTaskDestroyCount = previousDestroyCount;
+  });
+  globalThis.window = {
+    document: {
+      createElement: () => ({
+        getContext: () => ({
+          getImageData: () => ({ data: new Uint8Array([255]) }),
+        }),
+        height: 0,
+        width: 0,
+      }),
+    },
+  };
+  globalThis.__jobctrlPdfLoadingTaskDestroyCount = 0;
+
+  const pdfModuleUrl = `data:text/javascript,${encodeURIComponent(`
+    export const GlobalWorkerOptions = {};
+    export function getDocument({ data }) {
+      if (!(data instanceof Uint8Array) || data.length === 0) throw new Error("missing PDF bytes");
+      const loadingTask = {
+        destroy: async () => { globalThis.__jobctrlPdfLoadingTaskDestroyCount += 1; },
+        promise: Promise.resolve({
+          getPage: async () => ({
+            getTextContent: async () => ({ items: [{ str: "Distribution Smoke Resume" }] }),
+            getViewport: () => ({ height: 2, width: 3 }),
+            render: () => ({ promise: Promise.resolve() }),
+          }),
+        }),
+      };
+      return loadingTask;
+    }
+  `)}`;
+  const pdfWorkerUrl = `data:text/javascript,${encodeURIComponent("export const worker = true;")}`;
+  const render = Function(`return (${match[1]});`)();
+  const result = await render({
+    pdfBase64: Buffer.from("synthetic PDF bytes").toString("base64"),
+    pdfModuleUrl,
+    pdfWorkerUrl,
+  });
+
+  assert.equal(globalThis.__jobctrlPdfLoadingTaskDestroyCount, 1);
+  assert.deepEqual(result, {
+    width: 3,
+    height: 2,
+    nonZeroPixelBytes: 1,
+    readbackAttempts: 1,
+    text: "Distribution Smoke Resume",
+  });
 });
 
 test("tar parser preserves safe links and rejects traversal, hard links, and special modes", () => {

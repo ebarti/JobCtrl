@@ -80,6 +80,10 @@ describe("<JobActions>", () => {
     );
     expect(generateMaterials).not.toHaveClass("bg-primary");
 
+    const markApplied = screen.getByRole("button", { name: "Mark as applied" });
+    expect(markApplied).toHaveClass("border-border", "bg-card", "text-foreground");
+    expect(markApplied).not.toHaveClass("bg-primary", "bg-success");
+
     await waitFor(() => expect(dashboardSummary).toHaveBeenCalledTimes(1));
     expect(
       screen.queryByRole("button", { name: /^stop application run$/i }),

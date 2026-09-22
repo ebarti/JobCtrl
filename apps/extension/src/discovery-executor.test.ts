@@ -124,12 +124,13 @@ describe("Discovery browser executor", () => {
     }, 1_000,
   );
 
-  it("cleans up the inactive tab and redirect guard after a retryable hydration failure", async () => {
+  it("cleans up the owned tab and redirect guard after a retryable hydration failure", async () => {
     const remove = vi.fn(async () => undefined);
     const updateSessionRules = vi.fn(async () => undefined);
     const browser = {
       webNavigation: { onErrorOccurred: { addListener: vi.fn(), removeListener: vi.fn() } },
       declarativeNetRequest: { updateSessionRules },
+      windows: { create: vi.fn(async () => ({ id: 7 })) },
       tabs: {
         create: vi.fn(async () => ({ id: 46 })),
         update: vi.fn(async () => ({ id: 46 })),

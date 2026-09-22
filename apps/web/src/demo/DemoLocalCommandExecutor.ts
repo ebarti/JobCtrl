@@ -43,6 +43,7 @@ import {
 
 import type { ApiClientPort } from "../shared/ports/ApiClientPort.js";
 import type { ApiClientResponse } from "./contracts.js";
+import { matchingDemoJobKeys } from "./job-filter.js";
 import {
   purgeDemoJobProjections,
   recomputeDemoOperationalProjections,
@@ -1928,7 +1929,10 @@ function atTime<TEvent extends DomainEventUnion>(event: TEvent, occurredAt: stri
 function selectJobKeys(draft: DemoWorkspaceSnapshot, body: Record<string, unknown>): string[] {
   const explicit = arrayValue(body.jobKeys).map(String);
   return body.allMatching === true
-    ? draft.state.readModel.jobs.list.items.map((job) => job.jobKey)
+    ? matchingDemoJobKeys(
+        draft.state.readModel.jobs.list.items,
+        record(body.filter),
+      )
     : explicit;
 }
 

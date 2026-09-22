@@ -79,6 +79,10 @@ jobs:
           cache: pnpm
       - name: Install locked dependencies
         run: corepack pnpm install --frozen-lockfile
+      - name: Lint web boundaries
+        run: |
+          corepack pnpm web:lint
+          corepack pnpm web:lint:test
       - name: Check web
         run: corepack pnpm web:check
       - name: Test web
@@ -175,4 +179,4 @@ jobs:
           corepack pnpm extension:check
           corepack pnpm extension:test
           corepack pnpm extension:build
-          corepack pnpm extension:e2e
+          xvfb-run --auto-servernum corepack pnpm extension:e2e

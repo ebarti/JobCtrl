@@ -27,16 +27,31 @@ export function JobAuditTriage({ detail }: JobAuditTriageProps) {
             <h2>Fit & evidence</h2>
           </header>
           <dl className="job-audit-metrics" aria-label="Ranking summary">
-            <Metric label="Fit score" value={job.fitScore === null ? "Not scored" : `${job.fitScore}/10`} />
+            <Metric
+              label="Fit score"
+              value={
+                job.fitScore === null ? "Not scored" : `${job.fitScore}/10`
+              }
+            />
             <Metric label="Band" value={score?.fitBand ?? "not recorded"} />
             <Metric label="Confidence" value={score?.confidence ?? "not recorded"} />
             <Metric label="Eligibility" value={score?.eligibility.status ?? "unknown"} />
-            {requirementFitReport ? (
-              <>
-                <Metric label="Requirement fit" value={percent(requirementFitReport.summary.weightedFit)} />
-                <Metric label="Must-haves" value={percent(requirementFitReport.summary.mustHaveCoverage)} />
-              </>
-            ) : null}
+            <Metric
+              label="Requirement fit"
+              value={
+                requirementFitReport
+                  ? percent(requirementFitReport.summary.weightedFit)
+                  : "not assessed"
+              }
+            />
+            <Metric
+              label="Must-haves"
+              value={
+                requirementFitReport
+                  ? percent(requirementFitReport.summary.mustHaveCoverage)
+                  : "not assessed"
+              }
+            />
           </dl>
           {reasoning ? (
             <p className="job-audit-rationale">{reasoning}</p>
@@ -114,8 +129,8 @@ export function JobAuditTriage({ detail }: JobAuditTriageProps) {
 function Metric({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <dt>{label}</dt>
-      <dd>{value}</dd>
+      <dt data-typography="label">{label}</dt>
+      <dd data-typography="metric">{value}</dd>
     </div>
   );
 }

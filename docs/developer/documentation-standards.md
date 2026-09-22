@@ -32,7 +32,7 @@ only enough context to orient the reader, then link to the owner.
 | Backend and frontend architectural rules | The numbered [backend](../architecture/domain-model/index.md) and [frontend](../architecture/frontend/index.md) references |
 | Product and technical invariants | [Requirements](../requirements.md) |
 | Accepted architectural choices | [Decisions](../decisions.md) |
-| Public direction and detailed deferred work | [`ROADMAP.md`](../../ROADMAP.md) and [`docs/backlog.md`](../backlog.md), respectively |
+| Public direction and detailed deferred work | [`ROADMAP.md`](../../ROADMAP.md) and [GitHub Issues](https://github.com/ebarti/JobCtrl/issues), respectively; [migration index #881](https://github.com/ebarti/JobCtrl/issues/881) owns historical backlog dispositions |
 | Active delivery work and implemented records | [`docs/plans/`](../plans/) |
 
 This ownership rule does not forbid a short recap. It forbids maintaining two
@@ -149,6 +149,22 @@ runtime jargon once before using the short form.
 Use domain terms within their bounded context. Do not rename an aggregate,
 event, state, or policy in prose merely to sound friendlier; explain it once
 and keep the ubiquitous language intact.
+
+## Site Appearance
+
+The published guide follows the Swiss timetable visual contract in
+[`DESIGN.md`](../../DESIGN.md). The theme imports the product's palette,
+typography stacks and radius from `apps/web/src/styles/tokens.css`; VitePress
+adapts the dark selector at build time so its first paint uses the same tokens.
+Keep article text at a comfortable reading size instead of copying the app's
+compact control sizing. Neutral surfaces, square controls and section rules
+carry the hierarchy; preserve semantic warnings and visible focus.
+
+The homepage retains its existing entry points and feature order. Numbered
+feature markers are visual wayfinding, not a new workflow. Refresh product
+imagery through the [owned synthetic capture workflow](../local-development.md#documentation-screenshots)
+after shared branding or typography changes. Diagram palettes are curated for
+both themes; their system font also works inside serialized zoom images.
 
 ## Diagrams
 

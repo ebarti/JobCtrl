@@ -1,9 +1,11 @@
 {
   "name": "@jobctrl/api",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "scripts": {
+    "benchmark:local-scale": "tsx benchmark/run-local-scale.ts",
+    "benchmark:local-scale:test": "vitest run benchmark/local-scale.test.ts",
     "dev": "tsx watch src/main.ts",
     "start": "tsx src/main.ts",
     "data:purge-jobs": "tsx src/purge-job-data.ts",
@@ -17,7 +19,7 @@
     "@jobctrl/contracts": "workspace:*",
     "@jobctrl/domain-types": "workspace:*",
     "better-sqlite3": "^12.9.0",
-    "fastify": "^5.8.5",
+    "fastify": "^5.12.1",
     "ipaddr.js": "2.4.0",
     "zod": "^4.4.1"
   },
@@ -28,6 +30,6 @@
     "@types/node": "^25.6.0",
     "tsx": "^4.22.4",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.5"
+    "vitest": "^4.1.11"
   }
 }

@@ -85,7 +85,7 @@ export function sanitizeGmailFeedbackScanResponse(output: unknown): GmailOutcome
       const evidence = isRecord(item) ? item : {};
       return {
         evidenceId: textValue(evidence.evidenceId, "evidenceId"),
-        jobKey: textValue(evidence.jobKey, "jobKey"),
+        jobId: textValue(evidence.jobId, "jobId"),
         providerMessageId: textValue(evidence.providerMessageId, "providerMessageId"),
         linkConfidence: numberValue(evidence.linkConfidence),
       };
@@ -95,7 +95,7 @@ export function sanitizeGmailFeedbackScanResponse(output: unknown): GmailOutcome
       return {
         suggestionId: textValue(suggestion.suggestionId, "suggestionId"),
         evidenceId: textValue(suggestion.evidenceId, "evidenceId"),
-        jobKey: textValue(suggestion.jobKey, "jobKey"),
+        jobId: textValue(suggestion.jobId, "jobId"),
         kind: outcomeKind(suggestion.kind),
         confidence: numberValue(suggestion.confidence),
       };

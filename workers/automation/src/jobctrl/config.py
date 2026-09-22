@@ -72,6 +72,37 @@ PROVIDER_CONFIGURATION_KEYS = (
 KEYCHAIN_ACCOUNT_MAPPING = "key"
 KEYCHAIN_REQUIRES_WORKER_RESTART = True
 KEYCHAIN_LOOKUP_TIMEOUT_SECONDS = 2.0
+LIVE_WORKER_SMOKE_BOOTSTRAP_ENV = "JOBCTRL_LIVE_WORKER_SMOKE_BOOTSTRAP"
+LIVE_WORKER_SMOKE_BOOTSTRAP_VALIDATED_ENV = "JOBCTRL_LIVE_WORKER_SMOKE_BOOTSTRAP_VALIDATED"
+LIVE_WORKER_SMOKE_CREDENTIAL_KEYS = tuple(
+    dict.fromkeys(
+        (
+            *KEYCHAIN_PROVIDER_KEYS,
+            *PROVIDER_CONFIGURATION_KEYS,
+            "ANTHROPIC_AUTH_TOKEN",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_CONFIG_FILE",
+            "AWS_SECRET_ACCESS_KEY",
+            "AWS_SESSION_TOKEN",
+            "AWS_SHARED_CREDENTIALS_FILE",
+            "AWS_WEB_IDENTITY_TOKEN_FILE",
+            "AZURE_CLIENT_ID",
+            "AZURE_CLIENT_SECRET",
+            "AZURE_CONFIG_DIR",
+            "AZURE_TENANT_ID",
+            "CLAUDE_CODE_OAUTH_TOKEN",
+            "CLAUDE_CONFIG_DIR",
+            "CLOUDSDK_CONFIG",
+            "CODEX_API_KEY",
+            "CODEX_HOME",
+            "GOOGLE_API_KEY",
+            "LANGFUSE_BASE_URL",
+            "LANGFUSE_PUBLIC_KEY",
+            "LANGFUSE_SECRET_KEY",
+            "OPENAI_BASE_URL",
+        )
+    )
+)
 
 KeychainFallbackStatus = Literal["explicit", "loaded", "missing", "unavailable", "unsupported"]
 KeychainFallbackReason = Literal[
@@ -1936,6 +1967,66 @@ def get_env_path() -> Path:
     return ENV_PATH
 
 
+def validate_live_worker_smoke_bootstrap(
+    *,
+    env: MutableMapping[str, str] = os.environ,
+    app_dir: Path | None = None,
+) -> None:
+    """Authorize the credential-free provider fixture without loading host state."""
+
+    env.pop(LIVE_WORKER_SMOKE_BOOTSTRAP_VALIDATED_ENV, None)
+    if env.get("JOBCTRL_LIVE_WORKER_SMOKE") != "1":
+        raise RuntimeError("Live-worker smoke bootstrap mode is missing")
+    if env.get(LIVE_WORKER_SMOKE_BOOTSTRAP_ENV) != "1":
+        raise RuntimeError("Live-worker smoke bootstrap capability is missing")
+    runtime_app_dir = (app_dir or APP_DIR).resolve(strict=True)
+    configured_app_dir = Path(env.get("JOBCTRL_LIVE_WORKER_SMOKE_APP_DIR", "")).resolve(
+        strict=True
+    )
+    if configured_app_dir != runtime_app_dir:
+        raise RuntimeError("Live-worker smoke bootstrap does not own JOBCTRL_DIR")
+    token = env.get("JOBCTRL_LIVE_WORKER_SMOKE_TOKEN", "")
+    try:
+        marker = json.loads(
+            (runtime_app_dir / ".jobctrl-e2e-owned.json").read_text(encoding="utf-8")
+        )
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError("Live-worker smoke bootstrap marker is unavailable") from exc
+    metadata = runtime_app_dir.stat()
+    if (
+        not isinstance(marker, dict)
+        or marker.get("appDir") != str(runtime_app_dir)
+        or marker.get("token") != token
+        or marker.get("device") != str(metadata.st_dev)
+        or marker.get("inode") != str(metadata.st_ino)
+        or re.fullmatch(r"[a-f0-9]{64}", token) is None
+    ):
+        raise RuntimeError("Live-worker smoke bootstrap capability is invalid")
+
+    service_home = runtime_app_dir / "service-home"
+    expected_paths = {
+        "HOME": service_home,
+        "USERPROFILE": service_home,
+        "XDG_CONFIG_HOME": service_home / ".config",
+        "JOBCTRL_DIR": runtime_app_dir,
+        "JOBCTRL_CONFIG_PATH": runtime_app_dir / CONFIG_FILENAME,
+    }
+    for key, expected in expected_paths.items():
+        if Path(env.get(key, "")).resolve() != expected:
+            raise RuntimeError(f"Live-worker smoke bootstrap requires owned {key}")
+
+    present = [key for key in LIVE_WORKER_SMOKE_CREDENTIAL_KEYS if env.get(key, "").strip()]
+    if present:
+        raise RuntimeError(
+            "Live-worker smoke bootstrap found provider credentials or credential homes: "
+            + ", ".join(present)
+        )
+    provider_config = provider_configuration_environment(load_config_file(strict=True))
+    if provider_config:
+        raise RuntimeError("Live-worker smoke bootstrap refuses persisted provider configuration")
+    env[LIVE_WORKER_SMOKE_BOOTSTRAP_VALIDATED_ENV] = "1"
+
+
 def load_env() -> tuple[KeychainFallbackDiagnostic, ...]:
     """Load approved env files, then fill missing provider settings from Keychain.
 
@@ -1943,9 +2034,16 @@ def load_env() -> tuple[KeychainFallbackDiagnostic, ...]:
     installed payload reads exactly one JobCtrl-owned env file and never asks
     python-dotenv to search the current directory or its parents.
     """
-    from dotenv import load_dotenv
-
     global _KEYCHAIN_FALLBACK_DIAGNOSTICS
+
+    if os.environ.get(LIVE_WORKER_SMOKE_BOOTSTRAP_ENV) == "1":
+        validate_live_worker_smoke_bootstrap()
+        # This capability mode deliberately does not import or invoke dotenv,
+        # provider config translation, or Keychain fallback. The fixture route
+        # is the only model boundary permitted after this assertion succeeds.
+        return ()
+
+    from dotenv import load_dotenv
 
     env_path = get_env_path()
     if env_path.exists():

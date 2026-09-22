@@ -82,7 +82,7 @@ exit 43
 		SourceDataDigest:    strings.Repeat("a", 64),
 		Status:              "ready",
 		TableCount:          117,
-		UserVersion:         currentJobCtrlSchemaVersion,
+		UserVersion:         v9JobCtrlSchemaVersion,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -274,7 +274,7 @@ func TestLifecycleMigratesV6V7AndV8ToV9AndRestoresExactSourceOnRollback(t *testi
 				case fixture.candidate.BuildID:
 					candidateStarts++
 					version, err := sqliteUserVersion(fixture.python, filepath.Join(fixture.state, "jobctrl.db"))
-					if err != nil || version != currentJobCtrlSchemaVersion {
+					if err != nil || version != v9JobCtrlSchemaVersion {
 						t.Fatalf("candidate opened schema v%d, err=%v", version, err)
 					}
 				case fixture.old.BuildID:

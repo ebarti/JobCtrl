@@ -105,6 +105,7 @@ def refresh_compensation_facts(
         estimated_at=refreshed_at,
         limit=1 if job_id is not None else limit,
         job_id=job_id,
+        preserve_accepted_on_failure=bool(source_load.source_errors),
     )
 
     ProjectionBuilder(conn_factory=get_connection).refresh()

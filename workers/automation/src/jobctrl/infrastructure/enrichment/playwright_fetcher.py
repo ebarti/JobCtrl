@@ -318,7 +318,7 @@ def _collect_json_ld(page: Any) -> list[Any]:
 
 
 def _collect_main_content(page: Any) -> str:
-    """Pick the largest plausible main-content block and clean it for LLM use."""
+    """Select plausible main content, then bound its cleaned HTML."""
     for sel in ("main", "article", '[role="main"]', "#content", ".content"):
         try:
             el = page.query_selector(sel)
@@ -326,9 +326,9 @@ def _collect_main_content(page: Any) -> str:
                 continue
             text_len = len((el.inner_text() or "").strip())
             if text_len > 200:
-                html = el.inner_html()
-                if len(html) < _MAIN_CONTENT_HTML_LIMIT:
-                    return _clean_content_html(html)
+                # Raw attributes and page chrome must not displace posting text
+                # that fits within the cleaned-content budget.
+                return _clean_content_html(el.inner_html())[:_MAIN_CONTENT_HTML_LIMIT]
         except Exception:
             continue
     try:
@@ -341,7 +341,7 @@ def _collect_main_content(page: Any) -> str:
             }
             """
         )
-        return _clean_content_html(html[:_MAIN_CONTENT_HTML_LIMIT])
+        return _clean_content_html(html)[:_MAIN_CONTENT_HTML_LIMIT]
     except Exception:
         return ""
 

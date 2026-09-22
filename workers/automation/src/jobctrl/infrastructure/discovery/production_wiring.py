@@ -77,8 +77,8 @@ from jobctrl.infrastructure.discovery.location_filter import (
 )
 from jobctrl.infrastructure.discovery.live_browser import (
     LiveChromeDiscoveryClient,
-    LiveChromeRobotsCache,
     PoliteLiveChromeHttpClient,
+    prefer_live_browser,
 )
 from jobctrl.infrastructure.network import (
     GatewayHttpClient,
@@ -548,11 +548,11 @@ def run_scheduled_ats_sources(
     (exempt for documented APIs, D2), per-host rate/concurrency, the per-run
     request budget, and the honest UA all apply. Standalone tests may inject
     ``http`` to bypass the network; an execution-scoped Discover run rejects
-    that override so it cannot bypass the live extension transport.
+    that override so it cannot bypass transport selection and source policy.
     """
     if discovery_execution is not None and http is not None:
         raise ConfigurationError(
-            "Integrated Discovery cannot override the live Chrome extension transport."
+            "Integrated Discovery cannot override transport selection and source policy."
         )
     ensure_worker_discovery_tables(conn)
     resolved_gateway = gateway if gateway is not None else (PolitenessGateway() if http is None else None)
@@ -2039,8 +2039,8 @@ def _live_browser_ats_fetcher(
     run_id: str | None,
     discovery_execution: DiscoveryExecutionRef,
     cancel_event: threading.Event | None,
-) -> HttpFetcher:
-    """Build an ATS JSON fetcher that preserves policy and uses live Chrome."""
+) -> HttpFetcher | None:
+    """Use live Chrome when connected; otherwise select the guarded HTTP path."""
 
     policy: SourcePolicy = getattr(source, "policy", None) or ATS_API_POLICY
     browser = LiveChromeDiscoveryClient(
@@ -2049,9 +2049,9 @@ def _live_browser_ats_fetcher(
         source_id=source_id,
         cancel_event=cancel_event,
     )
-    active_gateway = (gateway if gateway is not None else PolitenessGateway()).with_robots(
-        LiveChromeRobotsCache(browser)
-    )
+    if prefer_live_browser(browser, cancel_event=cancel_event) is None:
+        return None
+    active_gateway = gateway if gateway is not None else PolitenessGateway()
     session = PolitenessSession(
         active_gateway,
         policy=policy,

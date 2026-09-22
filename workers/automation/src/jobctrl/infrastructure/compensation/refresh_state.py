@@ -250,6 +250,7 @@ class SqliteCompensationRefreshStateRepository:
         result_kind: Literal["direct", "extrapolated"],
         fact_id: str,
         actionable: bool = True,
+        source_error: str | None = None,
     ) -> None:
         benchmark_slice = lease.benchmark_slice
         self._assert_result_matches_slice(
@@ -257,7 +258,7 @@ class SqliteCompensationRefreshStateRepository:
             result_kind=result_kind,
             fact_id=fact_id,
         )
-        status = "succeeded" if actionable else "insufficient_evidence"
+        status = "failed" if source_error else "succeeded" if actionable else "insufficient_evidence"
         direct_id = fact_id if result_kind == "direct" else None
         extrapolated_id = fact_id if result_kind == "extrapolated" else None
         self._finish(
@@ -269,7 +270,7 @@ class SqliteCompensationRefreshStateRepository:
             result_kind=result_kind,
             direct_fact_id=direct_id,
             extrapolated_fact_id=extrapolated_id,
-            error_code=(None if actionable else "factor_out_of_bounds"),
+            error_code=source_error or (None if actionable else "factor_out_of_bounds"),
             preserve_result=False,
         )
 

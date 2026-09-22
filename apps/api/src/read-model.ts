@@ -1,3 +1,4 @@
+import { resolveJobLocator } from "./job-locators.js";
 /**
  * TS read-model — projection-backed (Phase 9 / S-33).
  *
@@ -85,6 +86,8 @@ import {
   timestampAtOrAfter,
   timestampBefore,
 } from "./contracts.js";
+import { requirementFitForCurrentAnalysis } from "./application-feedback.js";
+import { missingApplicationAttestationFields } from "./application-attestations.js";
 import { buildApplyAudit, type ApplyAuditLatestRun } from "./apply-audit.js";
 import { evaluateRepeatApplication } from "./repeat-application.js";
 import { allRows, getRow, tableExists, type SqliteDatabase, type SqliteValue } from "./db.js";
@@ -1147,6 +1150,7 @@ export function getJobDetail(db: SqliteDatabase, jobKey: string): JobDetail | nu
   const jobSummary = rowToJobSummary(listRow, db);
   const latestApplyRun = latestApplyRunForJob(db, jobId);
   const activeApplyRun = activeApplyRunForJob(db, jobId);
+  const employerAnalysis = parseEmployerAnalysis(detailRow?.employer_analysis_json ?? null);
   return {
     ok: true,
     job: {
@@ -1155,6 +1159,7 @@ export function getJobDetail(db: SqliteDatabase, jobKey: string): JobDetail | nu
       scoreReasoning: detailRow?.score_reasoning ?? listRow.score_reasoning,
     },
     applyAudit: buildApplyAudit({
+      missingProfileData: missingApplicationAttestationFields(db),
       applicationUrl: applyAuditApplicationUrl(listRow),
       hasResume: Boolean(listRow.has_resume),
       hasCoverLetter: Boolean(listRow.has_cover_letter),
@@ -1177,8 +1182,10 @@ export function getJobDetail(db: SqliteDatabase, jobKey: string): JobDetail | nu
     stages,
     artifacts,
     auditHistory,
-    employerAnalysis: parseEmployerAnalysis(detailRow?.employer_analysis_json ?? null),
-    requirementFitReport: parseRequirementFitReport(detailRow?.requirement_fit_report_json ?? null),
+    employerAnalysis,
+    requirementFitReport: requirementFitForCurrentAnalysis(
+      db, jobId, employerAnalysis, parseRequirementFitReport(detailRow?.requirement_fit_report_json ?? null),
+    ),
     interviewPrep: parseInterviewPrep(detailRow?.interview_prep_json ?? null),
     compensationAudit: parseCompensationAudit(detailRow?.compensation_audit_json ?? null),
   };
@@ -2394,32 +2401,12 @@ function findJobListRow(db: SqliteDatabase, jobKey: string): JobListProjectionRo
     [DEFAULT_TENANT, jobKey],
   );
   if (direct) return direct;
-  // URLs remain locators; canonical job ids remain the relation key.
-  return (
-    getRow<JobListProjectionRow>(
-      db,
-      `SELECT ${jobProjectionSelect()}
-         FROM job_list_projections
-        WHERE job_list_projections.tenant_id = ?
-          AND (
-            job_list_projections.application_url = ?
-            OR EXISTS (
-              SELECT 1 FROM jobs j
-               WHERE j.tenant_id = job_list_projections.tenant_id
-                 AND j.job_id = job_list_projections.job_id
-                 AND (j.url = ? OR j.application_url = ?)
-            )
-            OR EXISTS (
-              SELECT 1 FROM job_locators l
-               WHERE l.tenant_id = job_list_projections.tenant_id
-                 AND l.job_id = job_list_projections.job_id
-                 AND l.locator_value = ?
-            )
-          )
-        LIMIT 1`,
-      [DEFAULT_TENANT, jobKey, jobKey, jobKey, jobKey],
-    ) ?? null
-  );
+  const identity = resolveJobLocator(db, DEFAULT_TENANT, jobKey);
+  return identity ? getRow<JobListProjectionRow>(
+    db,
+    `SELECT ${jobProjectionSelect()} FROM job_list_projections WHERE tenant_id = ? AND job_id = ?`,
+    [DEFAULT_TENANT, identity.jobId],
+  ) ?? null : null;
 }
 
 export function listArtifacts(db: SqliteDatabase, query: ArtifactListQuery): PaginatedResponse<ArtifactSummary> {
@@ -4729,38 +4716,50 @@ function normalizeMutationFilter(filter: Partial<BulkJobMutationFilter>): JobLis
     stage: filter.stage,
     state: filter.state,
     deleted: filter.deleted ?? "active",
+    jobStates: filter.jobStates,
     applyStatus: filter.applyStatus ?? "all",
     source: filter.source ?? "",
     company: filter.company ?? "",
     minFitScore: filter.minFitScore,
     maxFitScore: filter.maxFitScore,
-    discoveredSince: undefined,
-    scoredSince: undefined,
+    discoveredSince: filter.discoveredSince,
+    scoredSince: filter.scoredSince,
   };
 }
 
 function jobSqlFilter(query: JobListQuery): { where: string; params: SqliteValue[] } {
   const clauses: string[] = ["job_list_projections.tenant_id = ?"];
   const params: SqliteValue[] = [DEFAULT_TENANT];
+  const hiddenPredicate = "EXISTS (SELECT 1 FROM jobctrl_hidden_jobs h WHERE h.tenant_id = job_list_projections.tenant_id AND h.job_id = job_list_projections.job_id AND h.unhidden_at IS NULL)";
   const closedPredicate = closedActiveStatePredicate(
     "job_list_projections.tenant_id",
     "job_list_projections.job_id",
   );
-  if (query.deleted === "active") {
+  if (query.jobStates) {
+    const statePredicates = query.jobStates.map((jobState) => {
+      if (jobState === "hidden") return hiddenPredicate;
+      if (jobState === "deleted") {
+        return `(job_list_projections.deleted_at IS NOT NULL AND NOT ${hiddenPredicate})`;
+      }
+      params.push(...closedPredicate.params);
+      return `(job_list_projections.deleted_at IS NULL AND NOT ${hiddenPredicate} AND NOT (${closedPredicate.sql}))`;
+    });
+    clauses.push(`(${statePredicates.join(" OR ")})`);
+  } else if (query.deleted === "active") {
     clauses.push("job_list_projections.deleted_at IS NULL");
-    clauses.push("NOT EXISTS (SELECT 1 FROM jobctrl_hidden_jobs h WHERE h.tenant_id = job_list_projections.tenant_id AND h.job_id = job_list_projections.job_id AND h.unhidden_at IS NULL)");
+    clauses.push(`NOT ${hiddenPredicate}`);
     clauses.push(`NOT (${closedPredicate.sql})`);
     params.push(...closedPredicate.params);
   } else if (query.deleted === "closed") {
     clauses.push("job_list_projections.deleted_at IS NULL");
-    clauses.push("NOT EXISTS (SELECT 1 FROM jobctrl_hidden_jobs h WHERE h.tenant_id = job_list_projections.tenant_id AND h.job_id = job_list_projections.job_id AND h.unhidden_at IS NULL)");
+    clauses.push(`NOT ${hiddenPredicate}`);
     clauses.push(closedPredicate.sql);
     params.push(...closedPredicate.params);
   } else if (query.deleted === "deleted") {
     clauses.push("job_list_projections.deleted_at IS NOT NULL");
-    clauses.push("NOT EXISTS (SELECT 1 FROM jobctrl_hidden_jobs h WHERE h.tenant_id = job_list_projections.tenant_id AND h.job_id = job_list_projections.job_id AND h.unhidden_at IS NULL)");
+    clauses.push(`NOT ${hiddenPredicate}`);
   } else if (query.deleted === "hidden") {
-    clauses.push("EXISTS (SELECT 1 FROM jobctrl_hidden_jobs h WHERE h.tenant_id = job_list_projections.tenant_id AND h.job_id = job_list_projections.job_id AND h.unhidden_at IS NULL)");
+    clauses.push(hiddenPredicate);
   }
   if (query.stage) {
     clauses.push("job_list_projections.current_stage = ?");
@@ -4988,6 +4987,7 @@ function jobFilterPayload(query: JobListQuery): Record<string, unknown> {
     discoveredSince: query.discoveredSince ?? null,
     scoredSince: query.scoredSince ?? null,
     deleted: query.deleted,
+    jobStates: query.jobStates ?? null,
   };
 }
 

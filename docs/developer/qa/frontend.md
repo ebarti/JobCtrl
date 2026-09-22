@@ -8,6 +8,7 @@ browser behavior, and visual consistency catch different failures.
 | Layer | Command |
 | --- | --- |
 | TypeScript | `corepack pnpm web:check` |
+| Frontend boundaries | `corepack pnpm web:lint` |
 | Unit, hook, component, a11y | `corepack pnpm --filter @jobctrl/web test` |
 | Type-level contracts | `corepack pnpm --filter @jobctrl/web test-d` |
 | Production bundle | `corepack pnpm web:build` |
@@ -19,16 +20,28 @@ browser behavior, and visual consistency catch different failures.
 - Colocated Vitest/RTL/MSW tests prove selectors, query keys, hooks, mutations,
   forms, components, rollback, and critical/serious axe checks.
 - Type-level tests prove the public inferred shapes of read hooks and contracts.
+- The boundary lint proves the documented context/view dependency direction,
+  Operations read-kernel access, browser-capability ports, and context-owned
+  API/query/store usage from TypeScript syntax and resolved symbols. The
+  TypeScript CI web job blocks on it; see
+  [automated boundary checks](../../architecture/frontend/state-and-ports.md#automated-boundary-checks).
 - Playwright uses a real API plus seeded SQLite fixtures to prove route and
   realtime behavior without a live worker or model.
+- `shipped-fit-lifecycle.spec.ts` reads canonical final-fit metadata through the
+  real review-queue API. It distinguishes post-voice gate findings from audits
+  recorded after acceptance, retains the original gate and provenance coverage,
+  and keeps historical judge-claimed coverage visibly separate from grounded
+  coverage. Its fixture restores the original metadata after each case.
 - Storybook proves state/variant rendering and shared accessibility behavior.
 
-## Rhea And Base UI Contracts
+## Visual And Base UI Contracts
 
-The current frontend preset is `base-rhea`: Geist product type, JetBrains Mono
-for technical text, the 10px semantic radius scale, capped 24px cards, neutral
-chart ramps, violet primary/focus tokens, and domain status rendered as an
-icon/dot plus text rather than a colored capsule. Contrast calculations,
+The frontend retains `base-rhea` component ancestry with the Swiss timetable
+visual contract in `DESIGN.md`: Helvetica Neue/Helvetica/Arial product type, JetBrains Mono technical
+text, square geometry, neutral chart ramps, monochrome primary/focus tokens,
+and red/amber state accents. Domain status uses an icon/dot plus text rather
+than a colored capsule, and filled score/count markers pair explicit foreground
+and background tokens. Contrast calculations,
 focused primitive behavior, and the rendered token-foundation browser gate own
 those outcomes; route code should consume semantic tokens instead of
 introducing local substitutes.

@@ -1,8 +1,8 @@
 # Publish Checklist
 
 > **Repository-only.** Excluded from the published docs site (registered in
-> `docs/.vitepress/config.ts` `UNPUBLISHED_FILES` + `srcExclude`, like
-> `docs/backlog.md`). It is launch-governance, not user documentation.
+> `docs/.vitepress/config.ts` `UNPUBLISHED_FILES` + `srcExclude`). It is
+> launch-governance, not user documentation.
 >
 > Implements Phase C of
 > [`docs/plans/implemented/2026-07-05-launch-readiness-artifacts-plan.md`](plans/implemented/2026-07-05-launch-readiness-artifacts-plan.md)

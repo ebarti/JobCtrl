@@ -7,7 +7,7 @@ import type {
   RequirementFitAssessment,
   RequirementFitReport,
 } from "@jobctrl/contracts";
-import type { JSX } from "react";
+import { useState, type JSX } from "react";
 
 import { Badge } from "../../../shared/ui/badge.js";
 import { Button } from "../../../shared/ui/button.js";
@@ -154,18 +154,10 @@ function matchingRequirementFit(
   report: RequirementFitReport | null | undefined,
 ): RequirementFitAssessment | null {
   if (!report?.assessments.length) return null;
-  const byId = report.assessments.find(
-    (assessment) => assessment.requirementId === requirement.id,
-  );
-  if (byId) return byId;
-
-  const requirementText = normalizeText(requirement.text);
-  return (
-    report.assessments.find(
-      (assessment) =>
-        normalizeText(assessment.requirementText) === requirementText,
-    ) ?? null
-  );
+  return report.assessments.find((assessment) =>
+    assessment.requirementId === requirement.id &&
+    assessment.requirementText.trim().replace(/\s+/g, " ") === requirement.text.trim().replace(/\s+/g, " "),
+  ) ?? null;
 }
 
 function requirementFitAssessment(
@@ -500,6 +492,7 @@ function RequirementItem({
   readonly resolveEvidenceReference: EmployerAnalysisPanelProps["resolveEvidenceReference"];
 }): JSX.Element {
   const assessment = requirementAssessment(requirement, requirementFitReport);
+  const [open, setOpen] = useState(true);
   const flagged = isFlaggedByAgreement(requirement, flaggedRequirements);
   const primaryRows = assessment.rows.filter(
     (row): row is RequirementAssessmentTextRow =>
@@ -518,11 +511,17 @@ function RequirementItem({
       row.label !== "Tailoring directive",
   );
   return (
-    <Card
-      aria-label={`Requirement: ${requirement.text}`}
-      className="employer-analysis-requirement employer-analysis-requirement-card [--card-spacing:--spacing(3)]"
-      role="article"
-      size="sm"
+    <Collapsible
+      open={open}
+      onOpenChange={setOpen}
+      render={
+        <Card
+          aria-label={`Requirement: ${requirement.text}`}
+          className="employer-analysis-requirement employer-analysis-requirement-card [--card-spacing:--spacing(3)]"
+          role="article"
+          size="sm"
+        />
+      }
     >
       <CardHeader>
         <div className="flex flex-wrap items-center gap-1.5">
@@ -549,66 +548,82 @@ function RequirementItem({
             {requirement.text}
           </h5>
         </CardTitle>
-        {requirement.evidence_span ? (
-          <CardDescription>
-            <blockquote className="employer-analysis-evidence" data-typography="body">
-              {requirement.evidence_span}
-            </blockquote>
-          </CardDescription>
-        ) : (
-          <CardDescription>
-            No job-description evidence span recorded.
-          </CardDescription>
-        )}
-        <CardAction>
-          <StatusBadge
-            title={assessment.title}
-            tone={assessment.tone}
-          >
+        <CardAction className="flex flex-wrap items-center gap-2">
+          <StatusBadge title={assessment.title} tone={assessment.tone}>
             {assessment.label}
           </StatusBadge>
+          <CollapsibleTrigger
+            render={
+              <Button
+                aria-label={`${open ? "Hide" : "Show"} evidence for requirement: ${requirement.text}`}
+                size="sm"
+                type="button"
+                variant="ghost"
+              />
+            }
+          >
+            {open ? "Hide evidence" : "Show evidence"}
+          </CollapsibleTrigger>
         </CardAction>
       </CardHeader>
-      <Separator />
-      <CardContent>
-        <div
-          aria-label="Fit summary"
-          className="grid min-w-0 gap-4 sm:grid-cols-[minmax(0,1.1fr)_minmax(220px,0.9fr)]"
-          data-slot="requirement-fit-summary"
-          role="group"
-        >
-          <div className="flex min-w-0 flex-col gap-3">
-            <div className="flex flex-col gap-1">
-              <span className="text-xs font-medium text-muted-foreground">
-                Requirement fit
-              </span>
-              <p className="m-0 leading-relaxed">{assessment.explanation}</p>
+      <CollapsibleContent className="flex flex-col gap-3">
+        <CardContent>
+          {requirement.evidence_span ? (
+            <CardDescription>
+              <blockquote
+                className="employer-analysis-evidence"
+                data-typography="body"
+              >
+                {requirement.evidence_span}
+              </blockquote>
+            </CardDescription>
+          ) : (
+            <CardDescription>
+              No job-description evidence span recorded.
+            </CardDescription>
+          )}
+        </CardContent>
+        <Separator />
+        <CardContent>
+          <div
+            aria-label="Fit summary"
+            className="grid min-w-0 gap-4 sm:grid-cols-[minmax(0,1.1fr)_minmax(220px,0.9fr)]"
+            data-slot="requirement-fit-summary"
+            role="group"
+          >
+            <div className="flex min-w-0 flex-col gap-3">
+              <div className="flex flex-col gap-1">
+                <span className="text-xs font-medium text-muted-foreground">
+                  Requirement fit
+                </span>
+                <p className="m-0 leading-relaxed">{assessment.explanation}</p>
+              </div>
+              {primaryRows.length ? (
+                <dl className="grid grid-cols-2 gap-3">
+                  {primaryRows.map((row) => (
+                    <RequirementFitMetric key={row.label} row={row} />
+                  ))}
+                </dl>
+              ) : null}
             </div>
-            {primaryRows.length ? (
-              <dl className="grid grid-cols-2 gap-3">
-                {primaryRows.map((row) => (
-                  <RequirementFitMetric key={row.label} row={row} />
-                ))}
-              </dl>
+            {evidenceRow ? (
+              <ProfileEvidenceReferences
+                evidenceIds={evidenceRow.evidenceIds}
+                resolveEvidenceReference={resolveEvidenceReference}
+              />
             ) : null}
           </div>
-          {evidenceRow ? (
-            <ProfileEvidenceReferences
-              evidenceIds={evidenceRow.evidenceIds}
-              resolveEvidenceReference={resolveEvidenceReference}
-            />
-          ) : null}
-        </div>
-      </CardContent>
-      {auditRows.length ? (
-        <>
-          <Separator />
-          <CardContent>
-            <RequirementAuditDetails rows={auditRows} />
-          </CardContent>
-        </>
-      ) : null}
-    </Card>
+        </CardContent>
+        {auditRows.length ? (
+          <>
+            <Separator />
+            <CardContent>
+              <RequirementAuditDetails rows={auditRows} />
+            </CardContent>
+          </>
+        ) : null}
+      </CollapsibleContent>
+    </Collapsible>
   );
 }
 
@@ -617,10 +632,7 @@ function KeywordItem({
   requirementsById,
 }: {
   readonly keyword: EmployerAnalysisKeyword;
-  readonly requirementsById: ReadonlyMap<
-    string,
-    EmployerAnalysisRequirement
-  >;
+  readonly requirementsById: ReadonlyMap<string, EmployerAnalysisRequirement>;
 }): JSX.Element {
   const requirement = keyword.requirement_ref
     ? requirementsById.get(keyword.requirement_ref)
@@ -630,16 +642,16 @@ function KeywordItem({
       <header>
         <b>{keyword.keyword}</b>
         {keyword.is_orphan ? (
-          <StatusBadge
-            tone="warn"
-            title="Not tied to a specific requirement"
-          >
+          <StatusBadge tone="warn" title="Not tied to a specific requirement">
             Orphan
           </StatusBadge>
         ) : null}
       </header>
       {keyword.evidence_span ? (
-        <blockquote className="employer-analysis-evidence" data-typography="body">
+        <blockquote
+          className="employer-analysis-evidence"
+          data-typography="body"
+        >
           {keyword.evidence_span}
         </blockquote>
       ) : (
@@ -748,6 +760,8 @@ export function EmployerAnalysisPanel({
     );
   }
 
+  const currentFitReport = requirementFitReport?.employerAnalysisGeneration === analysis.generation
+    ? requirementFitReport : null;
   const requirementsById = new Map(
     analysis.requirements.map((requirement) => [requirement.id, requirement]),
   );
@@ -807,9 +821,9 @@ export function EmployerAnalysisPanel({
             <div className="employer-analysis-requirement-list">
               {analysis.requirements.map((requirement) => (
                 <RequirementItem
-                  key={requirement.id}
+                  key={`${analysis.generation}:${analysis.cache_key}:${requirement.id}:${matchingRequirementFit(requirement, currentFitReport)?.fit.kind ?? "unknown"}`}
                   requirement={requirement}
-                  requirementFitReport={requirementFitReport}
+                  requirementFitReport={currentFitReport}
                   flaggedRequirements={analysis.agreement.flagged_requirements}
                   resolveEvidenceReference={resolveEvidenceReference}
                 />

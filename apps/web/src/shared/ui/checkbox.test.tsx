@@ -80,13 +80,21 @@ describe("Checkbox", () => {
   });
 
   it("renders indeterminate state through Base UI", () => {
-    render(<Checkbox aria-label="Indeterminate checkbox" indeterminate />);
+    const { rerender } = render(
+      <Checkbox aria-label="Indeterminate checkbox" checked={false} indeterminate />,
+    );
 
     const checkbox = screen.getByRole("checkbox", {
       name: "Indeterminate checkbox",
     });
     expect(checkbox).toHaveAttribute("aria-checked", "mixed");
     expect(checkbox).toHaveAttribute("data-indeterminate");
-    expect(checkbox.querySelector("svg")).not.toBeNull();
+    expect(checkbox.querySelector('[data-slot="checkbox-mixed-icon"]')).not.toBeNull();
+    expect(checkbox.querySelector('[data-slot="checkbox-checked-icon"]')).toBeNull();
+
+    rerender(<Checkbox aria-label="Indeterminate checkbox" checked />);
+    expect(checkbox).toHaveAttribute("aria-checked", "true");
+    expect(checkbox.querySelector('[data-slot="checkbox-mixed-icon"]')).toBeNull();
+    expect(checkbox.querySelector('[data-slot="checkbox-checked-icon"]')).not.toBeNull();
   });
 });

@@ -123,17 +123,24 @@ def derive_preparation_targets(payload: DerivePreparationTargetsInput) -> list[P
     conn = get_connection()
     tenant_id = TenantId(payload.tenant_id)
     min_score = db_module.effective_tailoring_min_score(payload.min_score)
-    state_changes = reconcile_all_score_threshold_skips(
-        conn,
-        tenant_id=tenant_id,
-        min_score=min_score,
-    )
-    state_changes += reconcile_tailor_terminal_dependents(
-        conn,
-        tenant_id=tenant_id,
-    )
-    if state_changes:
+    # Even a conditional UPDATE matching no rows acquires SQLite's writer.
+    # Own this reconciliation transaction explicitly, and reject inherited
+    # writes before entering the rollback scope so their caller keeps control.
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        reconcile_all_score_threshold_skips(
+            conn,
+            tenant_id=tenant_id,
+            min_score=min_score,
+        )
+        reconcile_tailor_terminal_dependents(
+            conn,
+            tenant_id=tenant_id,
+        )
         conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     _suppress_ineligible_artifacts(conn, tenant_id=tenant_id, min_score=min_score)
     targets = _derive_targets(
         conn,

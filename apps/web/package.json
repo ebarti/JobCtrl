@@ -1,6 +1,6 @@
 {
   "name": "@jobctrl/web",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -17,7 +17,9 @@
     "e2e:headed": "playwright test --config=e2e/playwright.config.ts --headed",
     "storybook": "storybook dev -p 6006",
     "storybook:build": "storybook build -o ../../dist/web-storybook",
-    "storybook:test": "start-server-and-test \"http-server ../../dist/web-storybook -p 6006 --silent\" http://127.0.0.1:6006 \"test-storybook --url http://127.0.0.1:6006\""
+    "storybook:test": "start-server-and-test \"http-server ../../dist/web-storybook -p 6006 --silent\" http://127.0.0.1:6006 \"test-storybook --url http://127.0.0.1:6006\"",
+    "lint": "node scripts/lint-boundaries.mjs",
+    "lint:test": "node --test scripts/lint-boundaries.test.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",
@@ -39,8 +41,8 @@
     "cmdk": "^1.1.1",
     "html2canvas": "1.4.1",
     "jspdf": "4.2.1",
-    "pdfjs-dist": "^5.7.284",
-    "platejs": "53.1.2",
+    "pdfjs-dist": "6.2.108",
+    "platejs": "53.3.11",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
     "shadcn": "4.11.0",
@@ -84,7 +86,7 @@
     "tailwindcss": "^4.2.4",
     "typescript": "^6.0.3",
     "vite": "^7.3.5",
-    "vitest": "^4.1.5"
+    "vitest": "^4.1.11"
   },
   "msw": {
     "workerDirectory": [

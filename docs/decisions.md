@@ -166,7 +166,7 @@ Rationale:
 
 Consequences:
 
-- Node.js `>=20.19.0` is required
+- Node.js `>=22.13.0` is required by the source web dependency graph
 - `apps/web` owns the React app
 - `pnpm test` must include web typecheck and build
 
@@ -1390,6 +1390,17 @@ Consequences:
 - Preferences and health expose the configured budget and today's estimated
   spend
 
+Amended (2026-09-22): `llm_spend` is keyed by UTC day and explicit product lane.
+The global USD ceiling remains authoritative across the sum of all rows. Each
+known lane also has a configurable observed input-plus-output token threshold;
+omitted or `0` means unlimited, and admission stops at or above the threshold.
+Provider/retry boundaries repeat workflow preflight authority. Usage persists
+before downstream validation failures, while repeated callbacks for one
+observation remain idempotent. Cached input and reasoning output are subsets and
+are not added twice. An admitted call may overshoot because no proven maximum
+call cost exists; the design does not reserve tokens or claim a strict in-flight
+cap.
+
 ## 2026-07-03: Heavy Sync RPC Handlers Become Workflows
 
 Status: accepted
@@ -1728,7 +1739,7 @@ Consequences:
 
 ## 2026-07-06: Crawl Politeness / Third-Party-Control Compliance Layer
 
-Status: accepted
+Status: accepted; robots enforcement superseded by the 2026-09-13 decision below
 
 Decision: every outbound discovery/enrichment fetch — the `urllib` client, the
 `python-jobspy` invocation boundary, and every Playwright navigation — routes
@@ -2264,6 +2275,35 @@ route preserves the paired backup, owner-private candidate and intermediate
 files, atomic activation, exact-source rollback, interrupted-transition
 cleanup, and no-mixed-runtime invariants above.
 
+Amended (2026-09-12): exact schema v10 supersedes v9 as the sole runtime
+contract. V10 removes `jobs.application_url`; `job_enrichments.application_url`
+is the canonical application target, and the new `job_application_locators`
+relation retains the union of nonempty legacy and canonical URLs as
+tenant-scoped lookup aliases. The stopped-runtime migration keeps a nonempty
+canonical value, otherwise promotes the nonempty legacy value into enrichment
+(creating a pending enrichment row when none exists), and retains differing
+historical URLs as aliases. Aliases support historical lookup only; they never
+drive projections, approval binding, or submission. Job lookup by application
+URL resolves posting identity first and otherwise returns a job only when
+exactly one job in the tenant matches, so a shared application endpoint fails
+closed. Retained v6, exact-v7, and exact-v8 sources compose their existing
+private migrations through an exact-v9 intermediate before this step; exact v9
+receives only the transfer. Every route preserves the paired backup,
+owner-private candidate and intermediate files, atomic activation,
+exact-source rollback, interrupted-transition cleanup, and no-mixed-runtime
+invariants above. `docs/architecture/storage.md` and
+`docs/architecture/application-url-authority.md` carry the migration contract
+and the reader/writer inventory.
+
+Amended (2026-09-22): exact schema v11 supersedes v10 as the sole runtime
+contract. V11 extends `llm_spend` to a `(day, lane)` primary key and preserves
+every v10 historical total in the explicit migration-only `legacy` lane.
+Legacy contributes to global totals, while runtime writes cannot target it.
+Exact-v10 sources receive this stopped-runtime step directly; older admitted
+sources compose their frozen migration chain through a private exact-v10
+intermediate. Candidate creation retains paired backup, exact-manifest,
+source-preservation, integrity, rollback, and owner-private file guarantees.
+
 ## 2026-08-20: Profile Plate Direct-Text Projection Uses The Canonical Form Draft
 
 Status: accepted
@@ -2336,12 +2376,12 @@ generation endpoint, register or replace an artifact, or change approval state.
 
 ## 2026-09-02: Integrated Discovery Uses The Extension In The User's Live Chrome Profile
 
-Status: accepted
+Status: superseded by the 2026-09-12 optional acquisition decision below.
 
 Decision: every job-source acquisition owned by `DiscoverWorkflow` is delegated
 to the installed JobCtrl extension in the user's currently running Chrome profile.
 The boundary includes JobStreaming provider sessions, canonical ATS/API and
-Workday requests, Smart Extract rendering, `robots.txt`, and the integrated
+Workday requests, Smart Extract rendering, and the integrated
 detail-enrichment drain. The API mediates bounded execution-bound tasks; it does
 not launch Chrome, copy a profile, or offer a direct-network, Playwright,
 adopted-browser, or copied-profile fallback. A current extension heartbeat—not
@@ -2373,7 +2413,7 @@ Consequences:
   pages before dispatch, leaving page-owned fetch/XHR under Chrome's normal policy;
 - Chrome owns cookies, session, proxy, and user agent. Browser-owned headers do
   not cross the worker task contract, and the returned browser user agent is
-  used for robots evaluation;
+  retained as transport metadata;
 - the broker retains task payloads/results only in API process memory. Temporal
   execution identity, source checkpoints, accepted observations, and normal
   workflow persistence remain the durable authorities;
@@ -2387,3 +2427,86 @@ Consequences:
   limit; and
 - copied-profile capabilities remain available only for separately consented
   compatibility paths outside integrated Discovery.
+
+## 2026-09-12: Prefer A Connected Extension And Allow Anonymous Acquisition
+
+Status: accepted
+
+Decision: Discovery and Enrich can launch with or without a paired extension.
+Each acquisition setup makes one availability choice: a bounded one-second
+loopback status probe must return literal `connected: true` to select the
+extension. Offline, unavailable, or malformed status selects the existing
+public HTTP or anonymous Playwright path. Cancellation and programming errors
+propagate; a site, DNS, access, or selected-extension failure never
+causes a second transport to acquire the same request. A subsequent setup can
+select anonymous access after an extension disconnects.
+
+Rationale: the extension supplies the user's current Chrome session when
+available, while public acquisition remains useful without installing or
+running Chrome. Choosing before acquisition makes that behavior predictable
+without using a failure as a reason to bypass access controls.
+
+Consequences: JobStreaming, ATS/API, Workday, Smart Extract, and enrichment
+retain their Discovery execution reference, source policy, persistence,
+checkpoints, leases, fences, and cohorts regardless of transport. The existing
+extension broker authentication, selected-installation ownership, bounds,
+cancellation, and authorization remain unchanged. Integrated anonymous access
+never opens the copied-profile resolver, even when standalone consent is set.
+Standalone browser capabilities keep their separate consent boundary. The
+2026-09-13 decision below removes robots enforcement in both modes; previously
+blocked rows remain retryable without requiring an extension connection. Pipelines
+and Settings show connection status without globally blocking launch or retry;
+worker readiness, stage eligibility, and authorization gates still apply.
+
+Anonymous JobStreaming uses guarded Requests transport for all integrated
+providers, including native tls-client providers: initial requests, redirects,
+replacement search sessions and per-detail sessions validate public destinations,
+and direct sockets pin numeric public addresses with the shared connector.
+Headers, cookies, bodies, query parameters and timeout options retain their
+provider semantics. Native TLS fingerprinting is not used in anonymous mode.
+Configured or environment proxy routes fail closed because the worker cannot
+pin a proxy's target DNS; connected acquisition retains Chrome's proxy behavior.
+
+## 2026-09-13: No Robots Consultation During Acquisition
+
+Status: accepted
+
+Decision: Discovery and Enrich do not request, evaluate or enforce `robots.txt`
+for any supported source or acquisition transport. This supersedes the robots
+portion of the earlier crawl-politeness decision, including its anonymous
+fail-closed default and authenticated-session exception. The shared gateway
+continues to enforce host pacing, concurrency and request budgets; destination,
+redirect, authentication and cancellation guards remain at their owning layers.
+
+Rationale: robots enforcement contradicted the acquisition contract and could
+prevent anonymous enrichment of an otherwise readable public posting.
+
+Consequences: source policy defaults to `ignore`. Historical `honor` and
+`exempt_documented_api` values and old robots-blocked outcomes remain readable
+but cannot reactivate consultation. Existing blocked jobs retry through the
+normal audited stage lifecycle in either mode, without destructive migration
+or resetting unrelated work. Current UI guidance identifies historical blocks
+and exposes the ordinary retry action.
+
+## 2026-09-13: Render LinkedIn Jobs In An Unfocused Window
+
+Status: accepted
+
+Decision: extension-rendered LinkedIn job pages use the task's known blank tab
+moved into an unfocused window. The tab is active in that window, allowing
+visibility-dependent hydration without focusing the window or changing the
+user's selected tab. Other rendered sources retain inactive tabs. The existing
+exact-origin DNR guard is installed before target navigation and final results
+must still match the source origin.
+
+Rationale: a guarded native-browser comparison left the hidden control without
+a description after thirty seconds, while the unfocused active tab rendered the
+description without a focus change. Increasing the readiness timeout or using
+raw HTML would not address the observed visibility dependency.
+
+Consequences: cleanup removes only the known task-owned tab and rule pair,
+including resources that finish creating after cancellation. It never closes a
+whole window that may contain user-added tabs. Window creation failure fails the
+task without switching acquisition transport. No new extension permission or
+personal-profile copy is needed. Browser fixtures must distinguish Playwright's
+focus emulation from native visibility proof.

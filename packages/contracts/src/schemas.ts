@@ -53,6 +53,28 @@ export const ACTIVE_STATES = [
 export type ActiveState = (typeof ACTIVE_STATES)[number];
 export const JOB_DELETED_FILTERS = ["active", "closed", "deleted", "hidden", "all"] as const;
 export type JobDeletedFilter = (typeof JOB_DELETED_FILTERS)[number];
+export const JOB_STATES = ["active", "deleted", "hidden"] as const;
+export type JobState = (typeof JOB_STATES)[number];
+export const JobStatesFilterSchema = z.preprocess(
+  (value) => {
+    if (typeof value !== "string") return value;
+    const normalized = value.trim();
+    if (!normalized) return [];
+    if (normalized.startsWith("[")) {
+      try {
+        return JSON.parse(normalized) as unknown;
+      } catch {
+        return value;
+      }
+    }
+    return normalized.split(",").map((item) => item.trim());
+  },
+  z
+    .array(z.enum(JOB_STATES))
+    .min(1)
+    .max(JOB_STATES.length)
+    .transform((values) => Array.from(new Set(values))),
+);
 export const JOB_APPLY_STATUS_FILTERS = ["all", "applied"] as const;
 export type JobApplyStatusFilter = (typeof JOB_APPLY_STATUS_FILTERS)[number];
 const STAGE_OR_ALL = [...STAGES, "all"] as const;
@@ -132,6 +154,7 @@ export const SavedTableViewUrlFiltersSchema = z
     state: z.enum(STATE_OR_ALL).optional().catch(undefined),
     applyStatus: z.enum(JOB_APPLY_STATUS_FILTERS).optional().catch(undefined),
     deleted: z.enum(["active", "closed", "deleted", "hidden"]).optional().catch(undefined),
+    jobStates: JobStatesFilterSchema.optional().catch(undefined),
     pageSize: z.coerce.number().int().min(1).max(200).optional().catch(undefined),
     minFitScore: z.coerce.number().int().min(1).max(10).optional().catch(undefined),
     maxFitScore: z.coerce.number().int().min(1).max(10).optional().catch(undefined),
@@ -1511,11 +1534,14 @@ export const BulkJobMutationFilterSchema = z
     stage: z.enum(STAGES).optional().catch(undefined),
     state: z.enum(STAGE_STATES).optional().catch(undefined),
     deleted: z.enum(JOB_DELETED_FILTERS).default("active").catch("active"),
+    jobStates: JobStatesFilterSchema.optional().catch(undefined),
     applyStatus: z.enum(JOB_APPLY_STATUS_FILTERS).default("all").catch("all"),
     source: optionalText,
     company: optionalText,
     minFitScore: optionalNumber,
     maxFitScore: optionalNumber,
+    discoveredSince: IsoTimestampSchema.optional().catch(undefined),
+    scoredSince: IsoTimestampSchema.optional().catch(undefined),
   })
   .strict();
 export type BulkJobMutationFilter = z.infer<typeof BulkJobMutationFilterSchema>;
@@ -1870,12 +1896,40 @@ export const ProfileImportRequestSchema = z
   .strict();
 export type ProfileImportRequest = z.infer<typeof ProfileImportRequestSchema>;
 
+export const LlmLaneValues = [
+  "discovery",
+  "enrichment",
+  "scoring",
+  "tailoring",
+  "apply",
+  "contact",
+  "interview",
+  "profile",
+  "compensation",
+] as const;
+export type LlmLane = (typeof LlmLaneValues)[number];
+
+const laneTokenLimitsSchema = z
+  .object({
+    discovery: z.number().int().min(0).optional(),
+    enrichment: z.number().int().min(0).optional(),
+    scoring: z.number().int().min(0).optional(),
+    tailoring: z.number().int().min(0).optional(),
+    apply: z.number().int().min(0).optional(),
+    contact: z.number().int().min(0).optional(),
+    interview: z.number().int().min(0).optional(),
+    profile: z.number().int().min(0).optional(),
+    compensation: z.number().int().min(0).optional(),
+  })
+  .strict();
+
 export const SettingsUpdateRequestSchema = z
   .object({
     applyConcurrency: z.coerce.number().int().min(1).max(16).optional(),
     pipelineInternalConcurrency: z.coerce.number().int().min(1).max(16).optional(),
     workerActivitySlots: z.coerce.number().int().min(1).max(64).optional(),
     dailyBudgetUsd: z.coerce.number().min(0).optional(),
+    laneTokenLimits: laneTokenLimitsSchema.optional(),
     analysisLegs: z.array(z.enum(["codex", "claude", "google"])).min(1).optional(),
     tailoringGeneratorModels: z.array(z.string().trim().min(1).max(160)).min(1).nullable().optional(),
     tailoringJudgeModel: z.string().trim().min(1).max(160).nullable().optional(),
@@ -2104,6 +2158,7 @@ export const JobListQuerySchema = z
     stage: z.enum(STAGES).optional().catch(undefined),
     state: z.enum(STAGE_STATES).optional().catch(undefined),
     deleted: z.enum(JOB_DELETED_FILTERS).default("active").catch("active"),
+    jobStates: JobStatesFilterSchema.optional().catch(undefined),
     applyStatus: z.enum(JOB_APPLY_STATUS_FILTERS).default("all").catch("all"),
     source: optionalText,
     company: optionalText,
@@ -4442,6 +4497,7 @@ export interface JobCtrlSettings {
   pipelineInternalConcurrency: number;
   workerActivitySlots: number;
   dailyBudgetUsd: number;
+  laneTokenLimits: Record<LlmLane, number>;
   analysisLegs: ProviderId[];
   tailoringGeneratorModels: string[] | null;
   tailoringJudgeModel: string | null;
@@ -4484,6 +4540,7 @@ export type EffectiveSetting<T> = {
 
 export interface EffectiveJobCtrlSettings {
   dailyBudgetUsd: EffectiveSetting<number>;
+  laneTokenLimits: EffectiveSetting<Record<LlmLane, number>>;
   applyConcurrency: EffectiveSetting<number>;
   pipelineInternalConcurrency: EffectiveSetting<number>;
   workerActivitySlots: EffectiveSetting<number>;
@@ -4506,6 +4563,7 @@ export const SettingsResponseSchema = z
         pipelineInternalConcurrency: z.number(),
         workerActivitySlots: z.number(),
         dailyBudgetUsd: z.number(),
+        laneTokenLimits: laneTokenLimitsSchema.required(),
         analysisLegs: z.array(z.enum(ProviderIds)),
         tailoringGeneratorModels: z.array(z.string()).nullable(),
         tailoringJudgeModel: z.string().nullable(),
@@ -4526,6 +4584,7 @@ export const SettingsResponseSchema = z
     effectiveSettings: z
       .object({
         dailyBudgetUsd: effectiveSettingSchema(z.number()),
+        laneTokenLimits: effectiveSettingSchema(laneTokenLimitsSchema.required()),
         applyConcurrency: effectiveSettingSchema(z.number()),
         pipelineInternalConcurrency: effectiveSettingSchema(z.number()),
         workerActivitySlots: effectiveSettingSchema(z.number()),

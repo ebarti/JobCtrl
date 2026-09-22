@@ -362,7 +362,6 @@ def _job_identity(
                     FROM job_enrichments je
                    WHERE je.tenant_id = ? AND je.job_id = j.job_id
                    ORDER BY je.updated_at DESC LIMIT 1),
-                 j.application_url,
                  j.url
                ) AS application_url
          FROM jobs j

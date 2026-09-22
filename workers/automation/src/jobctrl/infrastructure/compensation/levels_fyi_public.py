@@ -17,6 +17,9 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from html.parser import HTMLParser
 from typing import Any
+from urllib.parse import urljoin, urlsplit
+
+from jobctrl.domain.compensation.benchmarks import classify_seniority, resolve_country_code, resolve_reported_seniority
 
 from jobctrl.domain.compensation import (
     LEVELS_FYI_MARKET_AGGREGATE_COMPANY,
@@ -36,6 +39,7 @@ class LevelsFyiPublicTarget:
 
     role_title: str
     location: str | None
+    seniority_label: str | None = None
 
 
 @dataclass(frozen=True)
@@ -43,6 +47,7 @@ class LevelsFyiPublicLoadOutcome:
     requested_pages: int
     reachable_pages: int
     parsed_pages: int
+    level_lookup_unavailable: bool = False
 
     @property
     def unavailable(self) -> bool:
@@ -66,6 +71,17 @@ class _PublicSalaryPage:
     release_year: int
     canonical_url: str
     top_companies: tuple[_TopCompany, ...] = ()
+    level_label: str = "all levels"
+    company_name: str = LEVELS_FYI_MARKET_AGGREGATE_COMPANY
+
+
+@dataclass
+class _CachedPublicPage:
+    pages: tuple[_PublicSalaryPage, ...]
+    markdown_reachable: bool
+    html_attempted: bool = False
+    html_reachable: bool = False
+    html: str | None = None
 
 
 _ROLE_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
@@ -272,56 +288,131 @@ def load_levels_fyi_public_observations(
 ) -> tuple[ReportedCompensationObservation, ...]:
     """Load attributed public observations for unique job-family/location pages."""
 
-    canonical_urls: list[str] = []
-    seen_urls: set[str] = set()
+    queries: dict[tuple[str, str, str], LevelsFyiPublicTarget] = {}
     for target in targets:
         canonical_url = levels_fyi_public_url(target)
-        if canonical_url and canonical_url not in seen_urls:
-            seen_urls.add(canonical_url)
-            canonical_urls.append(canonical_url)
+        if canonical_url:
+            queries.setdefault((canonical_url, _target_level(target), target.role_title), target)
 
-    observations: list[ReportedCompensationObservation] = []
-    reachable_pages = 0
-    parsed_pages = 0
-    for canonical_url in canonical_urls[: max(0, max_pages)]:
-        markdown, markdown_reachable = _fetch_outcome(fetch_text, f"{canonical_url}.md")
-        page = _safe_parse(parse_levels_fyi_markdown, markdown, canonical_url) if markdown else None
-        if page is not None and not _page_matches_canonical_location(page, canonical_url):
-            page = None
-        html_reachable = False
-        if page is None:
-            public_html, html_reachable = _fetch_outcome(fetch_text, canonical_url)
-            page = _safe_parse(parse_levels_fyi_html, public_html, canonical_url) if public_html else None
-        reachable_pages += int(markdown_reachable or html_reachable)
-        if page is not None and _page_matches_canonical_location(page, canonical_url):
-            parsed_pages += 1
-            observations.extend(
-                _page_observations(
-                    page,
-                    preserve_source_currency=preserve_source_currency,
-                )
-            )
+    observations: dict[tuple[Any, ...], ReportedCompensationObservation] = {}
+    cache: dict[str, _CachedPublicPage] = {}
+    level_lookup_unavailable = False
+    for target in queries.values():
+        requested_level = _target_level(target)
+        queue = _geographic_routes(target)
+        visited: set[str] = set()
+        # Each query can follow only a bounded subset of provider-published links.
+        # Cached pages are shared across roles/levels in a refresh.
+        while queue and len(visited) < 12:
+            canonical_url = queue.pop(0)
+            if canonical_url in visited:
+                continue
+            visited.add(canonical_url)
+            if canonical_url not in cache:
+                if len(cache) >= max(0, max_pages):
+                    break
+                markdown, markdown_reachable = _fetch_outcome(fetch_text, _markdown_url(canonical_url))
+                page = _safe_parse(parse_levels_fyi_markdown, markdown, canonical_url) if markdown else None
+                cache[canonical_url] = _CachedPublicPage((page,) if page is not None else (), markdown_reachable)
+            cached = cache[canonical_url]
+            # A generic request may have needed only Markdown. Upgrade that same
+            # cache entry when a later known-level request needs HTML discovery.
+            if not cached.html_attempted and (not cached.pages or (requested_level != "unknown" and not any(
+                resolve_reported_seniority(item.role_title, item.level_label) == requested_level for item in cached.pages
+            ))):
+                cached.html_attempted = True
+                cached.html, cached.html_reachable = _fetch_outcome(fetch_text, canonical_url)
+                if cached.html:
+                    html_page = _safe_parse(parse_levels_fyi_html, cached.html, canonical_url)
+                    if html_page:
+                        cached.pages = (html_page,)
+                    cached.pages += _company_level_pages(cached.html, canonical_url)
+            pages = cached.pages
+            links = _salary_links(cached.html, canonical_url, target) if cached.html else ()
+            if requested_level != "unknown" and not cached.html_reachable and not any(
+                resolve_reported_seniority(item.role_title, item.level_label) == requested_level for item in pages
+            ):
+                level_lookup_unavailable = True
+            for page in pages:
+                if not _page_matches_canonical_location(page, page.canonical_url):
+                    continue
+                if levels_fyi_role_slug(page.role_title) != levels_fyi_role_slug(target.role_title):
+                    continue
+                # Broader levels remain context; only source-labelled exact levels
+                # become level evidence, regardless of the requested route.
+                for observation in _page_observations(page, preserve_source_currency=preserve_source_currency):
+                    key = (observation.source_url, observation.company_name, observation.role_title,
+                           observation.level_label)
+                    observations[key] = observation
+            if requested_level != "unknown":
+                if any(page.company_name == LEVELS_FYI_MARKET_AGGREGATE_COMPANY
+                       and resolve_reported_seniority(page.role_title, page.level_label) == requested_level
+                       and _page_matches_canonical_location(page, canonical_url) for page in pages):
+                    break
+                queue.extend(link for link in links if link not in visited and link not in queue)
+                queue.sort(key=lambda url: _route_priority(url, target))
 
     if on_load_outcome is not None:
-        on_load_outcome(
-            LevelsFyiPublicLoadOutcome(
-                requested_pages=min(len(canonical_urls), max(0, max_pages)),
-                reachable_pages=reachable_pages,
-                parsed_pages=parsed_pages,
-            )
-        )
+        on_load_outcome(LevelsFyiPublicLoadOutcome(
+            len(cache), sum(page.markdown_reachable or page.html_reachable for page in cache.values()),
+            sum(bool(page.pages) for page in cache.values()), level_lookup_unavailable,
+        ))
+    return tuple(observations.values())
 
-    deduped: dict[tuple[str, str, str, int | None, int | None], ReportedCompensationObservation] = {}
-    for observation in observations:
-        key = (
-            observation.source_url or "",
-            observation.company_name.casefold(),
-            observation.role_title.casefold(),
-            observation.minimum_amount,
-            observation.maximum_amount,
-        )
-        deduped[key] = observation
-    return tuple(deduped.values())
+
+def _target_level(target: LevelsFyiPublicTarget) -> str:
+    return target.seniority_label or classify_seniority(target.role_title)
+
+
+def _geographic_routes(target: LevelsFyiPublicTarget) -> list[str]:
+    routes = [levels_fyi_public_url(target)]
+    country = resolve_country_code(target.location)
+    if country and _target_level(target) != "unknown":
+        routes.append(levels_fyi_public_url(LevelsFyiPublicTarget(target.role_title, country)))
+    routes = list(dict.fromkeys(route for route in routes if route))
+    # These two software-engineer routes are published by the regional page's
+    # level selector. Principal and leadership have no such regional option.
+    level_slug = {"senior": "senior", "entry": "entry-level"}.get(_target_level(target))
+    if level_slug and levels_fyi_role_slug(target.role_title) == "software-engineer":
+        routes = [route.replace("/t/software-engineer", f"/t/software-engineer/levels/{level_slug}")
+                  for route in routes] + routes
+    return routes
+
+
+def _markdown_url(url: str) -> str:
+    parts = urlsplit(url)
+    return f"{parts.scheme}://{parts.netloc}{parts.path}.md" + (f"?{parts.query}" if parts.query else "")
+
+
+def _salary_links(text: str, canonical_url: str, target: LevelsFyiPublicTarget) -> tuple[str, ...]:
+    parser = _NextDataParser()
+    parser.feed(text)
+    role_slug = levels_fyi_role_slug(target.role_title)
+    links: set[str] = set()
+    for href in parser.links:
+        url = urljoin(canonical_url, href)
+        parts = urlsplit(url)
+        if parts.scheme != "https" or parts.netloc != "www.levels.fyi" or parts.fragment or parts.query:
+            continue
+        path = parts.path.rstrip("/")
+        if path.endswith(".md"):
+            continue
+        company_match = re.fullmatch(r"/companies/[a-z0-9-]+/salaries(?:/([a-z0-9-]+)(?:/(?:levels|locations)/[a-z0-9-]+){0,2})?", path)
+        regional = path == f"/t/{role_slug}" or path.startswith(f"/t/{role_slug}/")
+        if regional or (company_match and company_match.group(1) in {None, role_slug}):
+            links.add(f"{LEVELS_FYI_BASE_URL}{path}")
+    return tuple(sorted(links, key=lambda url: (_route_priority(url, target), url)))[:12]
+
+
+def _route_priority(url: str, target: LevelsFyiPublicTarget) -> tuple[int, int, int]:
+    path = urlsplit(url).path
+    location = levels_fyi_location_slug(target.location)
+    country = levels_fyi_location_slug(resolve_country_code(target.location))
+    source_location = path.split("/locations/", 1)[1].split("/", 1)[0] if "/locations/" in path else ""
+    geography = 0 if source_location == location else 1 if source_location == country else 2 if not source_location else 3
+    level = classify_seniority(path.split("/levels/", 1)[1].split("/", 1)[0].replace("-", " ")) if "/levels/" in path else "unknown"
+    return (geography, 0 if level == _target_level(target) else 1 if level == "unknown" else 2,
+            0 if f"/salaries/{levels_fyi_role_slug(target.role_title)}" in path else 1)
 
 
 def levels_fyi_public_url(target: LevelsFyiPublicTarget) -> str | None:
@@ -411,7 +502,8 @@ def parse_levels_fyi_markdown(text: str, *, canonical_url: str) -> _PublicSalary
     if minimum is None or maximum is None:
         return None
     top_companies: list[_TopCompany] = []
-    for company, amount in re.findall(r"^\|\s*\d+\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|$", text, re.MULTILINE):
+    company_section = text.split("### Top Paying Companies", 1)[1].split("\n#", 1)[0] if "### Top Paying Companies" in text else ""
+    for company, amount in re.findall(r"^\|\s*\d+\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|$", company_section, re.MULTILINE):
         parsed_amount = _money(amount)
         if parsed_amount is not None:
             top_companies.append(_TopCompany(name=company.strip(), median_total_compensation=parsed_amount))
@@ -425,6 +517,7 @@ def parse_levels_fyi_markdown(text: str, *, canonical_url: str) -> _PublicSalary
         release_year=int(generated_match.group(1)) if generated_match else datetime.now(timezone.utc).year,
         canonical_url=canonical_url,
         top_companies=tuple(top_companies),
+        level_label=_source_level(role_match.group(1)),
     )
 
 
@@ -436,7 +529,8 @@ def parse_levels_fyi_html(text: str, *, canonical_url: str) -> _PublicSalaryPage
     try:
         next_data = json.loads(parser.payload)
         page_props = next_data["props"]["pageProps"]
-        occupation = json.loads(page_props["jobFamilyLocationPageOccupationSchema"])
+        schema = next((page_props[key] for key in ("levelPageOccupationSchema", "generatedOccupationSchema", "jobFamilyLocationPageOccupationSchema") if page_props.get(key)), None)
+        occupation = json.loads(schema) if isinstance(schema, str) else schema
     except (KeyError, TypeError, ValueError, json.JSONDecodeError):
         return None
     if not isinstance(page_props, dict) or not isinstance(occupation, dict):
@@ -460,8 +554,18 @@ def parse_levels_fyi_html(text: str, *, canonical_url: str) -> _PublicSalaryPage
     maximum = _integer(total.get("percentile75"))
     median = _integer(total.get("median"))
     role_title = _text(page_props.get("jobFamily"))
-    location = _text(page_props.get("location"))
+    location_info = page_props.get("locationInfo") or page_props.get("locationMeta") or {}
+    location = _text(page_props.get("location")) or _text(location_info.get("displayName") or location_info.get("name"))
     currency = _text(total.get("currency") or page_props.get("locationCurrency")).upper()
+    source_locations = occupation.get("occupationLocation")
+    country = resolve_country_code(location)
+    if isinstance(source_locations, list) and country and any(
+        resolve_country_code(item.get("name")) not in {None, country}
+        for item in source_locations if isinstance(item, dict)
+    ):
+        return None
+    if total.get("unitText") not in {None, "YEAR"}:
+        return None
     if not role_title or not location or not re.fullmatch(r"[A-Z]{3}", currency) or median is None:
         return None
     if minimum is None:
@@ -498,7 +602,85 @@ def parse_levels_fyi_html(text: str, *, canonical_url: str) -> _PublicSalaryPage
         release_year=_year(reviewed_at),
         canonical_url=canonical_url,
         top_companies=tuple(top_companies),
+        level_label=_source_level(page_props.get("level") or occupation.get("name") or role_title),
+        company_name=_company_name(page_props) or _text((occupation.get("hiringOrganization") or {}).get("name")) or LEVELS_FYI_MARKET_AGGREGATE_COMPANY,
     )
+
+
+def _source_level(title: Any) -> str:
+    text = _text(title)
+    return text if classify_seniority(text) != "unknown" else "all levels"
+
+
+def _page_props(text: str) -> dict[str, Any]:
+    parser = _NextDataParser()
+    parser.feed(text)
+    try:
+        value = json.loads(parser.payload)["props"]["pageProps"]
+        return value if isinstance(value, dict) else {}
+    except (ValueError, TypeError, KeyError):
+        return {}
+
+
+def _company_name(props: dict[str, Any]) -> str:
+    company = props.get("company")
+    if isinstance(company, dict):
+        return _text(company.get("name"))
+    if isinstance(company, str):
+        return _text(company)
+    levels = props.get("levels")
+    if isinstance(levels, dict):
+        return _text(levels.get("company"))
+    return ""
+
+
+def _company_level_pages(text: str, canonical_url: str) -> tuple[_PublicSalaryPage, ...]:
+    """Read the displayed company/location career-level table, never global percentiles.
+
+    Levels' table totals are USD; its explicit location exchange rate converts
+    those values to the page currency. Numeric company grades carry no inferred
+    seniority. Per-level links and names are supplied by the provider itself.
+    """
+    props = _page_props(text)
+    rows = props.get("averages")
+    company = _company_name(props)
+    location_info = props.get("locationMeta")
+    if not isinstance(rows, list) or not company or not isinstance(location_info, dict):
+        return ()
+    location = _text(location_info.get("displayName") or location_info.get("name"))
+    currency = _text(props.get("locationCurrency"))
+    rate = _positive_float(props.get("locationExchangeRate"))
+    role = _text(props.get("jobFamily"))
+    if not location or not role or not re.fullmatch(r"[A-Z]{3}", currency) or rate is None:
+        return ()
+    schema = props.get("generatedOccupationSchema")
+    if isinstance(schema, str):
+        try:
+            schema = json.loads(schema)
+        except ValueError:
+            schema = None
+    reviewed = schema.get("mainEntityOfPage") if isinstance(schema, dict) else None
+    year = _year(reviewed.get("lastReviewed") if isinstance(reviewed, dict) else None)
+    pages = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        level = _text(row.get("primaryLevelName"))
+        total = _positive_float(row.get("total"))
+        count = _integer(row.get("count"))
+        source_url = urljoin(canonical_url, _text(row.get("levelPageUrl")))
+        parts = urlsplit(source_url)
+        # A link for the same company/family is a source-owned identifier. Do not
+        # synthesize grade slugs from job titles or arbitrary employer names.
+        company_prefix = urlsplit(canonical_url).path.split("/salaries", 1)[0]
+        if (classify_seniority(level) == "unknown" or total is None or count is None or count < 1
+                or parts.netloc != "www.levels.fyi" or parts.scheme != "https" or parts.query or parts.fragment
+                or not parts.path.startswith(f"{company_prefix}/salaries/{props.get('jobFamilySlug')}/levels/")):
+            continue
+        amount = round(total * rate)
+        pages.append(_PublicSalaryPage(role, location, currency, amount, amount, count, year,
+                                      source_url, level_label=level, company_name=company))
+    return tuple(pages)
 
 
 class _NextDataParser(HTMLParser):
@@ -506,13 +688,17 @@ class _NextDataParser(HTMLParser):
         super().__init__()
         self._inside_next_data = False
         self._chunks: list[str] = []
+        self.links: list[str] = []
 
     @property
     def payload(self) -> str:
         return "".join(self._chunks)
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        self._inside_next_data = tag == "script" and dict(attrs).get("id") == "__NEXT_DATA__"
+        attributes = dict(attrs)
+        self._inside_next_data = tag == "script" and attributes.get("id") == "__NEXT_DATA__"
+        if tag == "a" and attributes.get("href"):
+            self.links.append(str(attributes["href"]))
 
     def handle_endtag(self, tag: str) -> None:
         if tag == "script":
@@ -538,7 +724,7 @@ def _page_observations(
         ReportedCompensationObservation(
             source_id="levels_fyi",
             source_provenance="public",
-            company_name=LEVELS_FYI_MARKET_AGGREGATE_COMPANY,
+            company_name=page.company_name,
             role_title=page.role_title,
             minimum_amount=minimum,
             maximum_amount=maximum,
@@ -546,7 +732,7 @@ def _page_observations(
             period="year",
             component="total_compensation",
             location=page.location,
-            level_label="all levels",
+            level_label=page.level_label,
             release_year=page.release_year,
             snapshot_version=snapshot,
             sample_count=page.sample_count,
@@ -574,7 +760,7 @@ def _page_observations(
                 period="year",
                 component="total_compensation",
                 location=page.location,
-                level_label="all levels",
+                level_label=page.level_label,
                 release_year=page.release_year,
                 snapshot_version=snapshot,
                 sample_count=None,
@@ -601,7 +787,7 @@ def _fetch_outcome(fetch_text: TextFetcher, url: str) -> tuple[str | None, bool]
     if value is None:
         return None, False
     text = str(value or "").strip()
-    return text or None, True
+    return text or None, bool(text)
 
 
 def _safe_parse(

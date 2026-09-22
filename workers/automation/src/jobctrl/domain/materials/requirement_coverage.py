@@ -6,7 +6,7 @@ import json
 import re
 from collections.abc import Iterable as IterableABC
 from collections.abc import Mapping as MappingABC
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
 from jobctrl.domain.profile.achievement_metrics import (
@@ -804,6 +804,7 @@ class CoverageGraph:
     coverage_edges: tuple[CoverageEdge, ...] = ()
     uncovered_requirements: tuple[UncoveredRequirement, ...] = ()
     unused_achievements: tuple[UnusedAchievement, ...] = ()
+    alternative_edges: tuple[CoverageEdge, ...] = ()
 
     @property
     def requirement_ids(self) -> set[str]:
@@ -822,15 +823,29 @@ class CoverageGraph:
             "requirements": [item.to_dict() for item in self.requirements],
             "achievements": [item.to_dict() for item in self.achievements],
             "coverage_edges": [item.to_dict() for item in self.coverage_edges],
+            "alternative_edges": [item.to_dict() for item in self.alternative_edges],
             "uncovered_requirements": [item.to_dict() for item in self.uncovered_requirements],
             "unused_achievements": [item.to_dict() for item in self.unused_achievements],
         }
+
+    def to_prompt_dict(self) -> dict[str, Any]:
+        """Expose only this round's active claim edges to the generator."""
+        payload = self.to_dict()
+        del payload["alternative_edges"]
+        return payload
 
     def to_safe_metadata(self) -> dict[str, Any]:
         return {
             "requirement_count": len(self.requirements),
             "achievement_count": len(self.achievements),
             "coverage_edge_count": len(self.coverage_edges),
+            "alternative_edges": [
+                {"edge_id": edge.edge_id, "requirement_id": edge.requirement_id,
+                 "achievement_evidence_id": edge.achievement_evidence_id,
+                 "coverage_kind": edge.coverage_kind, "strength": edge.strength,
+                 "required_claim_policy": edge.required_claim_policy}
+                for edge in self.alternative_edges
+            ],
             "covered_requirement_ids": list(
                 dict.fromkeys(edge.requirement_id for edge in self.coverage_edges)
             ),
@@ -1066,6 +1081,10 @@ def seed_coverage_graph(
                         rationale=str(getattr(fit, "bridge", "") or getattr(fit, "reason", "") or ""),
                     )
                 )
+    canonical_ids = {item.achievement_evidence_id for item in achievements}
+    admissible_edges = tuple(
+        edge for edge in edges if edge.achievement_evidence_id in canonical_ids
+    )
     edges = list(
         _select_strongest_requirement_edges(
             edges=edges,
@@ -1108,6 +1127,7 @@ def seed_coverage_graph(
         coverage_edges=tuple(edges),
         uncovered_requirements=tuple(uncovered),
         unused_achievements=unused,
+        alternative_edges=tuple(edge for edge in admissible_edges if edge not in edges),
     )
 
 
@@ -1345,6 +1365,7 @@ def _select_strongest_requirement_edges(
     edges: IterableABC[CoverageEdge],
     requirements: IterableABC[RequirementNode],
     achievements: IterableABC[AchievementNode],
+    preferred_evidence_ids: frozenset[str] = frozenset(),
 ) -> tuple[CoverageEdge, ...]:
     """Choose the smallest high-quality evidence set: one edge per requirement.
 
@@ -1372,11 +1393,12 @@ def _select_strongest_requirement_edges(
         if not options:
             continue
 
-        def rank(edge: CoverageEdge) -> tuple[int, int, int, int, int, int, int, str]:
+        def rank(edge: CoverageEdge) -> tuple[int, int, int, int, int, int, int, int, str]:
             achievement = achievement_by_id.get(edge.achievement_evidence_id)
             return (
                 -kind_rank.get(edge.coverage_kind, 0),
                 -strength_rank.get(edge.strength, 0),
+                -int(edge.achievement_evidence_id in preferred_evidence_ids),
                 -int(edge.achievement_evidence_id in selected_evidence_ids),
                 -int(bool(achievement and achievement.pinned)),
                 -int(bool(achievement and achievement.user_confirmed)),
@@ -1391,6 +1413,35 @@ def _select_strongest_requirement_edges(
         selected.append(best)
         selected_evidence_ids.add(best.achievement_evidence_id)
     return tuple(selected)
+
+
+def reselect_coverage_graph(
+    graph: CoverageGraph, evidence_ids: IterableABC[str],
+) -> CoverageGraph:
+    """Reconsider canonical fit alternatives without expanding required coverage.
+
+    An alternative is not a valid generated claim until selected here. Retain
+    one strongest edge per requirement; a review preference breaks otherwise
+    comparable choices before the usual reuse/pin/identity tie breakers.
+    """
+    admissible = graph.coverage_edges + graph.alternative_edges
+    selected = _select_strongest_requirement_edges(
+        edges=admissible, requirements=graph.requirements, achievements=graph.achievements,
+        preferred_evidence_ids=frozenset(evidence_ids),
+    )
+    selected_ids = {edge.achievement_evidence_id for edge in selected}
+    return replace(
+        graph,
+        coverage_edges=selected,
+        alternative_edges=tuple(edge for edge in admissible if edge not in selected),
+        unused_achievements=tuple(
+            UnusedAchievement(
+                achievement_evidence_id=item.achievement_evidence_id,
+                reason="No selected target requirement coverage.", pinned=item.pinned,
+            )
+            for item in graph.achievements if item.achievement_evidence_id not in selected_ids
+        ),
+    )
 
 
 def validate_prohibited_claims(

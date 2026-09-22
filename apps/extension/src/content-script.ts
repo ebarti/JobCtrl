@@ -733,8 +733,8 @@ export async function waitForRenderedPageReady(
   pageUrl = location.href,
   options: RenderedPageReadinessOptions = {},
 ): Promise<void> {
-  // Cold signed-in pages can hydrate slowly in inactive tabs. Leave room for
-  // that work inside the executor's separate hard task deadline.
+  // The executor provides a visible tab for LinkedIn job hydration. Leave
+  // room for content readiness inside its separate hard task deadline.
   const timeoutMs = Math.max(250, options.timeoutMs ?? 30_000);
   const pollIntervalMs = Math.max(25, options.pollIntervalMs ?? 250);
   const minimumStableMs = Math.max(pollIntervalMs, options.minimumStableMs ?? 750);

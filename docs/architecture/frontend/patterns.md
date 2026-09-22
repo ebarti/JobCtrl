@@ -199,7 +199,8 @@ const jobsSearchSchema = z.object({
   q: z.string().default(""),
   stage: z.enum([...STAGES, "all"]).default("all"),
   state: z.enum([...STAGE_STATE_KINDS, "all"]).default("all"),
-  deleted: z.enum(["active", "deleted"]).default("active"),
+  deleted: z.enum(["active", "closed", "deleted", "hidden"]).default("active"),
+  jobStates: JobStatesFilterSchema.optional(),
   sort: z.enum([...JOB_SORT_FIELDS]).default("discovered_at"),
   dir: z.enum(["asc", "desc"]).default("desc"),
   page: z.number().int().min(1).default(1),
@@ -336,7 +337,7 @@ lives under `shared/ui/` but is imported by no view.
 | View | Owned files | Composes from |
 |---|---|---|
 | `views/dashboard/` | `DashboardView.tsx`, `KpiGrid.tsx`, `ConversionPanel.tsx`, `Funnel.tsx`, `SourceHealthCard.tsx`, `ApplyRunsCard.tsx`, `apply-run-dot-state.ts` | operations (`useDashboardSummaryQuery`, `useApplicationOutcomesQuery`); pipeline (`<StageBadge>`); apply (`<ApplyRunBadge>`, `<OutcomeSuggestionsPanel>`) |
-| `views/jobs/` | `JobsView.tsx`, `JobsTable.tsx`, `JobBulkActions.tsx`, `JobDetailDrawer.tsx`, `JobOverview.tsx`, `JobDescription.tsx`, `JobAuditTriage.tsx`, `columns.tsx`, `jobStageFilters.ts`, `selectors/jobsSelectors.ts` | operations (`useJobsListQuery`, `useJobDetailQuery`, `<JobAuditHistory>`); discovery (the user-facing Active / Deleted / Hidden Tabs plus bulk delete / hide / unhide / restore / permanent-delete); scoring (`<ScoreBadge>`, `<ScoreCorrectionControl>`, `<RescoreJobButton>`); pipeline (`<StageBadge>`, `<StageTimeline>`, `<JobActions>`); materials (`<RetailorCurrentPolicyButton>`, `<EmployerAnalysisPanel>`, artifact badges + `<OpenArtifactButton>`); apply (`<ApplyHistory>`, `<JobOutcomePanel>`); enrichment (`<CompensationAuditSection>`) |
+| `views/jobs/` | `JobsView.tsx`, `JobsTable.tsx`, `JobBulkActions.tsx`, `JobDetailDrawer.tsx`, `JobOverview.tsx`, `JobDescription.tsx`, `JobAuditTriage.tsx`, `columns.tsx`, `jobStageFilters.ts`, `selectors/jobsSelectors.ts` | operations (`useJobsListQuery`, `useJobDetailQuery`, `<JobAuditHistory>`); discovery (the URL-backed Job state column filter plus bulk delete / hide / unhide / restore / permanent-delete); scoring (`<ScoreBadge>`, `<ScoreCorrectionControl>`, `<RescoreJobButton>`); pipeline (`<StageBadge>`, `<StageTimeline>`, `<JobActions>`); materials (`<RetailorCurrentPolicyButton>`, `<EmployerAnalysisPanel>`, artifact badges + `<OpenArtifactButton>`); apply (`<ApplyHistory>`, `<JobOutcomePanel>`); enrichment (`<CompensationAuditSection>`) |
 | `views/artifacts/` | `ArtifactsView.tsx`, `ArtifactsTable.tsx`, `ArtifactFilterBar.tsx`, `ArtifactDetailPanel.tsx`, `columns.tsx` | operations (`useArtifactsListQuery`, `useArtifactDetailQuery`); materials (`<OpenArtifactButton>`, artifact badges, `<TailoringExplanationSection>`) |
 | `views/apply-review/` | `ApplyReviewView.tsx` | operations (`useApplyReviewQueueQuery`, `useResumeReviewDraftQuery`); apply (review mutations, `<ApplyReviewDecisionControls>`, `<CancelApplyButton>`); materials (`<ResumePlateEditor>`, `<ArtifactGroundingRiskPanel>`, `<JobResumeTemplateSelect>`); enrichment (`<CompensationSummaryStrip>`); profile (`useResumeTemplatesQuery`) |
 | `views/runs/` | `RunsView.tsx`, `RunsTable.tsx`, `RunsFilterBar.tsx`, `WorkflowRunDrawer.tsx`, `columns.tsx`, `temporal-web-ui.ts` | operations (`useWorkflowRunsListQuery`, `useWorkflowRunDetailQuery`); apply (`<RunStatusBadge>`); pipeline (`<CancelWorkflowRunButton>`) |
@@ -344,12 +345,17 @@ lives under `shared/ui/` but is imported by no view.
 | `views/discovery/` | `DiscoveryView.tsx` | discovery (`<DiscoveryProductControls>`, `<DiscoveryRuntimeSettingsPanel>`); profile (`<TargetSearchSettingsPanel>`, `<DiscoveryAutomationSettingsPanel>`) |
 | `views/debug/` | `DebugView.tsx`, `DebugActivityTable.tsx`, `DebugFilterBar.tsx`, `ActivityDetailDrawer.tsx`, `activity-columns.tsx`, `activity-tone.ts` | operations (`useActivityListQuery`, `useActivityEventQuery`); URL-bound event search, sorting, pagination |
 
-Jobs presents its queues as the Active, Deleted, and Hidden Tabs. `closed`
-remains a compatible URL/read-model filter for old links, not a normal
-user-facing queue. The default saved-table presentation keeps Sources and
-Warnings available but hidden, and active posting rows omit redundant
-`open`/`active` lifecycle copy. Delete and permanent-delete controls use the
-destructive primitive; restore and unhide remain ordinary recovery actions.
+Jobs presents one table with a static, multi-select **Job state** column filter
+for Active, Deleted, and Hidden. The filter is server-backed before count and
+pagination, defaults to Active, and is stored in the URL and saved-table views.
+Clearing or deselecting all state values means all three states. `closed`
+remains a compatible URL/read-model filter for old links when `jobStates` is
+absent, not a normal user-facing state. The default saved-table presentation
+keeps Sources and Warnings available but hidden, and active posting rows omit
+redundant `open` lifecycle copy. Mixed-state selections send state-qualified
+bulk filters so each mutation targets only eligible rows. Delete and
+permanent-delete controls use the destructive primitive; restore and unhide
+remain ordinary recovery actions.
 
 Apply Review keeps the queue as a left rail while the surface can support it;
 the selected application then reads as full-width decision, evidence, and
@@ -488,7 +494,8 @@ Visible product icons use `@tabler/icons-react`; do not add new
 **Tailwind utility-first.** Co-located with components; no CSS-in-JS
 runtime. Tailwind CSS 4 is configured CSS-first: `globals.css` imports
 `tailwindcss`, `tw-animate-css`, `shadcn/tailwind.css`, Fontsource's
-Geist and JetBrains Mono variable fonts, and `tokens.css`; the same file
+Geist (for resume templates) and JetBrains Mono variable fonts, and
+`tokens.css`; product UI uses the system Helvetica Neue/Helvetica/Arial stack. The same file
 uses `@theme inline` to map CSS variables into standard shadcn utilities
 such as `bg-background`, `text-foreground`, `bg-card`, `border-border`,
 `ring-ring`, `bg-primary`, and `bg-popover`.
@@ -496,7 +503,7 @@ such as `bg-background`, `text-foreground`, `bg-card`, `border-border`,
 `tokens.css` is the source of the app's token values. It defines the
 light `:root` and dark `:root[data-theme="dark"]` shadcn semantic
 variables, chart tokens, sidebar/menu tokens, radius scale inputs,
-Fontsource-backed font stacks, and JobCtrl status extensions
+system product and Fontsource-backed technical font stacks, and JobCtrl status extensions
 (`success`, `warning`, `status-info`). The Tailwind config bridge
 is not part of the active contract; generated utilities come from `@theme inline`
 plus the active CSS variables.
@@ -547,8 +554,10 @@ changes geometry, not typography.
   `jh:stage-trigger-config`.
 - **Saved table views** — table-scoped view templates and presentation state
   for high-density operational tables; persisted to `jh:saved-table-views`.
-  Active Jobs filters/sort remain URL state, and applying a view writes the URL
-  rather than creating a second live copy of those facts.
+  Jobs filters, including the multi-select Job state filter, and sort remain URL
+  state; applying a view writes the URL rather than creating a second live copy
+  of those facts. Older views without `jobStates` retain their legacy `deleted`
+  behavior.
 - **Anything cross-cutting that we discover later** that fits the pattern
   "I want to dispatch from a deep tree without prop drilling, and the
   state is not server-derived." Examples we anticipate: a `commandPalette`

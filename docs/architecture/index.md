@@ -32,6 +32,7 @@ boundary, or you need to know which page answers a given question.
 - [Temporal Workflows](pipeline/index.md) — How does a job move through durable workflows and activities?
 - [Data, Events & Projections](data-events-and-projections.md) — Which facts are canonical state, events, read projections, or telemetry?
 - [Storage Authority](storage.md) — Which process and physical store own each durable value?
+- [Application URL Authority Inventory](application-url-authority.md) — Which readers and writers still touch an application URL after exact v10, and how does a URL resolve to a job?
 - [Scoring Policy](scoring.md) — How does a discovered job become a defensible fit score?
 - [Employer Analysis & Materials Audit](materials.md) — How are generated artifacts and their claims audited?
 - [Tailoring Contract](tailoring.md) — What is the model asked, and which gates approve a resume?

@@ -235,7 +235,7 @@ supervised-research ports; Phase 3 adds the `OutreachThread` aggregate's ports
 | **Driven** | `ContactRepository` | Persist and retrieve the `Contact` aggregate (tenant-scoped) |
 | **Driven** | `ContactResearchTaskRepository` | Persist and retrieve the `ContactResearchTask` aggregate (task + candidates + source attempts) |
 | **Driven** | `OutreachThreadRepository` | Persist and retrieve the `OutreachThread` aggregate (thread + generation-versioned drafts, gate results, claim provenance, user-attested send logs, and the follow-up schedule), tenant-scoped |
-| **Driven** | `ResearchPageFetcherPort` | Gateway-routed public-page fetch; the single research outbound choke point (robots/rate-limit/budget are first-class outcomes) |
+| **Driven** | `ResearchPageFetcherPort` | Gateway-routed public-page fetch; the single research outbound choke point (rate-limit/budget and historical robots records are first-class outcomes) |
 | **Driven** | `LlmPort` | Schema-driven candidate extraction from a fetched page; outreach draft synthesis and the LLM-as-judge gate |
 | **Driven** | `EventPublisher` | Publish contact, research, and outreach-draft domain events |
 

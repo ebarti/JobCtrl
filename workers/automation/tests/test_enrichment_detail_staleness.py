@@ -398,8 +398,8 @@ def test_scrape_site_batch_uses_discovery_description_when_detail_extracts_no_da
             """
             INSERT INTO jobs (
                 tenant_id, job_id, url, title, description, full_description,
-                location, site, strategy, discovered_at, application_url, company
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                location, site, strategy, discovered_at, company
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 tenant_id,
@@ -412,7 +412,6 @@ def test_scrape_site_batch_uses_discovery_description_when_detail_extracts_no_da
                 "linkedin",
                 "jobspy",
                 "2026-06-04T15:55:20+00:00",
-                None,
                 "Checkatrade",
             ),
         )

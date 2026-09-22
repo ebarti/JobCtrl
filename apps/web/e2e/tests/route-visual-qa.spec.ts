@@ -221,9 +221,9 @@ const VISUAL_SYSTEM_AUDIT_ROUTES = [
 ] as const;
 
 const APPROVED_ROLE_METRICS = {
-  "page-title": "24px/30px/700",
-  "section-title": "18px/24px/600",
-  "component-title": "16px/22px/600",
+  "page-title": "28px/34px/700",
+  "section-title": "18px/24px/700",
+  "component-title": "16px/22px/700",
   body: "14px/20px/400",
   "strong-body": "14px/20px/600",
   control: "14px/20px/600",
@@ -256,9 +256,9 @@ async function collectTypographyAudit(
   return page.locator(".app-shell").evaluate((shell, approvedRoleMetrics) => {
     const approved = approvedRoleMetrics as Record<string, string>;
     const metricFallback: Record<string, string> = {
-      "24px/30px/700": "page-title",
-      "18px/24px/600": "section-title",
-      "16px/22px/600": "component-title",
+      "28px/34px/700": "page-title",
+      "18px/24px/700": "section-title",
+      "16px/22px/700": "component-title",
       "14px/20px/400": "body",
       "14px/20px/600": "strong-body",
       "12px/16px/600": "label",
@@ -1701,7 +1701,7 @@ test("density modes, focus rings, filters, forms, and destructive controls remai
     .check();
   await expect(page.getByText("1 selected")).toBeVisible();
   const deleteSelected = page.getByRole("button", {
-    name: /^delete selected$/i,
+    name: /^delete selected active$/i,
   });
   await expect(deleteSelected).toBeVisible();
 
@@ -1833,6 +1833,33 @@ test("density modes, focus rings, filters, forms, and destructive controls remai
     role: null,
   });
 });
+test("warning actions use the contrasting focus token in both themes", async ({ page }) => {
+  test.setTimeout(60_000);
+  for (const theme of ["light", "dark"] as const) {
+    await page.goto("/jobs");
+    if (theme === "dark") {
+      await page.getByRole("button", { name: "Switch to dark theme" }).click();
+    }
+    await page
+      .getByRole("button", { name: /^Open job Senior Engineering Manager - Risk/ })
+      .press("Enter");
+    await page.getByRole("button", { name: "More job actions" }).click();
+    const stop = page.getByRole("button", { name: "Stop current stage" });
+    await expectKeyboardFocusIndicator(page, stop, `${theme} warning action`);
+    const focus = await stop.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return {
+        ring: style.getPropertyValue("--tw-ring-color").trim(),
+        expected: style.getPropertyValue("--ring").trim(),
+      };
+    });
+    expect(focus.ring).toBe(focus.expected);
+    await expect
+      .poll(() => stop.evaluate((element) => getComputedStyle(element).boxShadow))
+      .toContain(focus.ring);
+  }
+});
+
 test("Crawl sources keeps provider traversal separate from exact outcomes", async ({
   page,
 }) => {
@@ -2036,8 +2063,8 @@ test("Profile and Preferences subjects share one expandable-card hierarchy", asy
     expect(
       style.borderWidths,
       `Profile card ${index + 1} border widths`,
-    ).toEqual(["1px", "1px", "1px", "1px"]);
-    expect(style.borderRadius, `Profile card ${index + 1} radius`).toBe("8px");
+    ).toEqual(["2px", "1px", "1px", "1px"]);
+    expect(style.borderRadius, `Profile card ${index + 1} radius`).toBe("0px");
     if (index > 0) {
       expect(
         style.top - cardStyles[index - 1]!.bottom,
@@ -2139,9 +2166,9 @@ test("Profile and Preferences subjects share one expandable-card hierarchy", asy
     expect(
       section.borderWidths,
       `Preferences card ${index + 1} border widths`,
-    ).toEqual(["1px", "1px", "1px", "1px"]);
+    ).toEqual(["2px", "1px", "1px", "1px"]);
     expect(section.borderRadius, `Preferences card ${index + 1} radius`).toBe(
-      "8px",
+      "0px",
     );
     if (index > 0) {
       expect(
@@ -2386,7 +2413,9 @@ test("Apply Review decision card keeps facts readable and decisions on one row",
           Math.min(...decisionButtons.map((rect) => rect.top))
         : 0,
       contextWidth: context?.getBoundingClientRect().width ?? 0,
-      cardHeight: element.getBoundingClientRect().height,
+      summaryHeight:
+        (element.querySelector(".apply-review-gates")?.getBoundingClientRect().top ??
+          element.getBoundingClientRect().bottom) - element.getBoundingClientRect().top,
       maxSummaryItemHeight: summaryItems.length
         ? Math.max(...summaryItems.map((rect) => rect.height))
         : 0,
@@ -2428,8 +2457,8 @@ test("Apply Review decision card keeps facts readable and decisions on one row",
     "audit summary items should remain readable",
   ).toBeLessThan(140);
   expect(
-    layout.cardHeight,
-    "decision card should remain a compact summary",
+    layout.summaryHeight,
+    "decision summary above the gates table should remain compact",
   ).toBeLessThan(720);
   expect(
     layout.scrollWidth,
@@ -2451,6 +2480,27 @@ test("Job Detail requirement-fit card has visual regression coverage", async ({
     .locator(".employer-analysis-requirement")
     .filter({ hasText: PRIMARY_REQUIREMENT_TEXT });
   await expect(drawerRequirement).toHaveCount(1);
+  const ranking = drawer.getByLabel("Ranking summary");
+  await expect(ranking.locator(":scope > div")).toHaveCount(6);
+  expect(
+    await ranking.evaluate(
+      (element) => getComputedStyle(element).gridTemplateColumns.split(" ").length,
+    ),
+  ).toBe(6);
+  const disclosure = drawerRequirement.getByRole("button", {
+    name: / evidence for requirement:/,
+  });
+  await expect(disclosure).toHaveAttribute("aria-expanded", "true");
+  await expect(
+    drawerRequirement.locator('[data-slot="requirement-fit-summary"]'),
+  ).toBeVisible();
+  await disclosure.click();
+  await expect(disclosure).toHaveAttribute("aria-expanded", "false");
+  await expect(
+    drawerRequirement.locator('[data-slot="requirement-fit-summary"]'),
+  ).not.toBeVisible();
+  await disclosure.click();
+  await expect(disclosure).toHaveAttribute("aria-expanded", "true");
   await expect(drawerRequirement).toContainText("Requirement fit");
   await expect(drawerRequirement).toContainText("matched");
   await expect(drawerRequirement).toContainText("Score contribution");
@@ -2472,6 +2522,21 @@ test("Job Detail requirement-fit card has visual regression coverage", async ({
     "job-drawer-requirement-fit-card.png",
     "job drawer requirement-fit card",
   );
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  const mobileLayout = await ranking.evaluate((element) => ({
+    columnCount: getComputedStyle(element).gridTemplateColumns.split(" ").length,
+    overflow: element.scrollWidth - element.clientWidth,
+  }));
+  expect(mobileLayout.columnCount).toBe(1);
+  expect(mobileLayout.overflow).toBeLessThanOrEqual(1);
+  const jobMetadata = drawer.getByLabel("Job metadata");
+  await expect(jobMetadata).toBeVisible();
+  expect(
+    await jobMetadata.evaluate(
+      (element) => element.scrollWidth - element.clientWidth,
+    ),
+  ).toBeLessThanOrEqual(1);
 });
 
 test("Apply Review requirement-fit card has visual regression coverage", async ({

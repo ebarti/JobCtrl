@@ -339,7 +339,6 @@ import {
   permanentlyDeleteJobs,
   queueRetriedJobsForWorkflow,
   resetJobStage,
-  retryFailedJobTargets,
   retryFailedJobs,
   type RetryFailedJobTarget,
   restoreJob,
@@ -1237,15 +1236,6 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       void reply.code(400);
       return undefined;
     }
-    if (body.stages.includes("discover") && !discoveryBrowserBroker.status().connected) {
-      void reply.code(503);
-      return {
-        ok: false,
-        error: "discovery_extension_unavailable",
-        message:
-          "Open Chrome with the paired JobCtrl extension before starting browser-backed Discovery or Enrich. JobCtrl uses the user's current Chrome profile and does not use a copied profile.",
-      };
-    }
     const command: ActionCommandPayload = {
       action: "run_stage" as const,
       jobKey: PIPELINE_ACTION_JOB_KEY,
@@ -1667,13 +1657,6 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     }
     return withWritableDb(reply, options.dbPath, async (db) => {
       if (body.runAfter) {
-        const includesEnrich = retryFailedJobTargets(db, body).some(
-          (target) => target.stage === "enrich",
-        );
-        if (includesEnrich && !discoveryBrowserBroker.status().connected) {
-          void reply.code(503);
-          return discoveryExtensionUnavailableResponse();
-        }
         const workerReady = requireWorkerReady(reply, options.dbPath, requireHealthyWorkerForActions);
         if (!workerReady) {
           return undefined;
@@ -1741,14 +1724,6 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       const targets = pendingPreparationTargets(db, body);
       const actions: ActionRunResponse[] = [];
       const runnableGroups = groupRunnableBulkRetryTargets(targets);
-
-      if (
-        targets.some((target) => target.stage === "enrich") &&
-        !discoveryBrowserBroker.status().connected
-      ) {
-        void reply.code(503);
-        return discoveryExtensionUnavailableResponse();
-      }
 
       if (targets.length > 0) {
         const workerReady = requireWorkerReady(reply, options.dbPath, requireHealthyWorkerForActions);
@@ -2014,14 +1989,6 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       void reply.code(400);
       return { ok: false, error: "unsupported_retry_run_after_stage", stage: body.stage };
     }
-    if (
-      body.runAfter &&
-      body.stage === "enrich" &&
-      !discoveryBrowserBroker.status().connected
-    ) {
-      void reply.code(503);
-      return discoveryExtensionUnavailableResponse();
-    }
     return withWritableDb(reply, options.dbPath, async (db) => {
       if (body.runAfter) {
         const workerReady = requireWorkerReady(reply, options.dbPath, requireHealthyWorkerForActions);
@@ -2060,10 +2027,6 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     if (!PREPARATION_PICKUP_STAGES.has(body.stage)) {
       void reply.code(400);
       return { ok: false, error: "unsupported_job_stage_run", stage: body.stage };
-    }
-    if (body.stage === "enrich" && !discoveryBrowserBroker.status().connected) {
-      void reply.code(503);
-      return discoveryExtensionUnavailableResponse();
     }
     const stages = retryContinuationStages(body.stage);
     return withWritableDb(reply, options.dbPath, async (db) => {
@@ -4881,19 +4844,6 @@ function stageRunStatus(actions: ActionRunResponse[]): string {
     return firstStatus;
   }
   return "accepted";
-}
-
-function discoveryExtensionUnavailableResponse(): {
-  ok: false;
-  error: "discovery_extension_unavailable";
-  message: string;
-} {
-  return {
-    ok: false,
-    error: "discovery_extension_unavailable",
-    message:
-      "Open Chrome with the paired JobCtrl extension. Browser-backed Discovery and Enrich use the user's current Chrome profile and never a copied profile.",
-  };
 }
 
 function resolveExistingJob(

@@ -23,8 +23,15 @@ import type {
 import { dashboardKeys } from "../operations/dashboardKeys.js";
 import { digestKeys } from "../operations/digestKeys.js";
 import { discoveryKeys } from "./queryKeys.js";
-import { invalidate, type InvalidationItem } from "../operations/invalidation-router.js";
+import {
+  invalidate,
+  patchQuery,
+  reconcileQuery,
+  type InvalidationItem,
+} from "../operations/invalidation-router.js";
 import { jobsKeys } from "../operations/jobsKeys.js";
+import { patchDashboardJobLabels, reconcileJobUpdatedPage } from "../operations/realtimePatches.js";
+import type { JobsListInput } from "../operations/types.js";
 
 export const jobDiscoveredHandler = (event: JobDiscovered): readonly InvalidationItem[] => [
   invalidate(jobsKeys.lists(event.tenantId)),
@@ -36,7 +43,11 @@ export const jobDiscoveredHandler = (event: JobDiscovered): readonly Invalidatio
 ];
 
 export const jobUpdatedHandler = (event: JobUpdated): readonly InvalidationItem[] => [
-  invalidate(jobsKeys.lists(event.tenantId)),
+  reconcileQuery(jobsKeys.lists(event.tenantId), (current, key) =>
+    reconcileJobUpdatedPage(current, key[4] as JobsListInput, event.payload)),
+  patchQuery(dashboardKeys.summary(event.tenantId), (current) => patchDashboardJobLabels(current, event.payload)),
+  // Labels are exact; activity insertion and aggregate/projection changes are not.
+  invalidate(dashboardKeys.summary(event.tenantId)),
   invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
 ];
 

@@ -201,7 +201,8 @@ import {
 .settings-precedence__path,
 .settings-precedence__safety {
   border: 1px solid var(--settings-precedence-border);
-  border-radius: 1rem;
+  border-top: 3px solid var(--vp-c-text-1);
+  border-radius: var(--jh-doc-radius);
 }
 
 .settings-precedence__path {
@@ -234,14 +235,14 @@ import {
   align-items: start;
   padding: 0.8rem;
   border: 1px solid var(--settings-precedence-border);
-  border-radius: 0.75rem;
+  border-radius: var(--jh-doc-radius);
   background: var(--vp-c-bg);
-  box-shadow: 0 1px 0 color-mix(in srgb, var(--vp-c-text-1) 7%, transparent);
+  box-shadow: none;
 }
 
 .settings-precedence__step--highest .settings-precedence__card {
   border-color: var(--vp-c-brand-1);
-  box-shadow: inset 0.2rem 0 0 var(--vp-c-brand-1), 0 1px 0 color-mix(in srgb, var(--vp-c-text-1) 7%, transparent);
+  box-shadow: none;
 }
 
 .settings-precedence__rank {
@@ -272,7 +273,7 @@ import {
   place-items: center;
   inline-size: 2rem;
   block-size: 2rem;
-  border-radius: 0.55rem;
+  border-radius: var(--jh-doc-radius);
   background: var(--vp-c-brand-soft);
   color: var(--vp-c-brand-1);
 }
@@ -410,7 +411,7 @@ import {
   .settings-precedence__path,
   .settings-precedence__safety {
     padding: 0.75rem;
-    border-radius: 0.75rem;
+    border-radius: var(--jh-doc-radius);
   }
 
   .settings-precedence__card {

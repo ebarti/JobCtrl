@@ -92,12 +92,25 @@ def get_skill_categories(profile: dict) -> list[dict]:
 
 
 def get_required_experience_entry_ids(profile: dict) -> list[str]:
-    """Return the required experience entry IDs."""
+    """Return mandatory roles, including owners of explicitly pinned bullets."""
     rules = get_resume_master(profile).get("tailoring_rules", {})
     ids = rules.get("required_experience_entry_ids")
-    if isinstance(ids, list) and ids:
-        return ids
-    return [entry.get("id", "") for entry in get_experience_entries(profile) if entry.get("id")]
+    known_ids = [entry.get("id", "") for entry in get_experience_entries(profile) if entry.get("id")]
+    required_ids = list(ids) if isinstance(ids, list) and ids else list(known_ids)
+    bullet_pins = get_required_bullets_by_experience_id(profile)
+    required_ids.extend(entry_id for entry_id in known_ids if entry_id in bullet_pins and entry_id not in required_ids)
+    return required_ids
+
+
+def get_selected_experience_entries(profile: dict, tailored_payload: dict) -> list[dict]:
+    """Render mandatory roles plus explicitly selected known roles in profile order.
+
+    Validation owns unknown IDs and evidence eligibility. Missing updates still
+    preserve mandatory metadata and the existing legacy required-role fallback.
+    """
+    selected_ids = set(get_required_experience_entry_ids(profile))
+    selected_ids.update(experience_updates_by_id(tailored_payload))
+    return [entry for entry in get_experience_entries(profile) if entry.get("id") in selected_ids]
 
 
 def get_required_education_entry_ids(profile: dict) -> list[str]:
@@ -534,6 +547,10 @@ def mark_current_artifact_budget(tailored_payload: dict) -> dict:
 def experience_updates_by_id(tailored_payload: dict) -> dict:
     """Index updates while preserving already-approved legacy artifacts.
 
+    Match validation and claim bindings by trimming surrounding ID whitespace.
+    Otherwise an approved optional role can disappear from every rendered
+    artifact and its provenance when joined to the canonical profile.
+
     Current generation rejects a candidate whose mandatory achievements exceed
     the configured ceiling before it can be accepted.  Older accepted payloads
     can legitimately contain that overflow, however, and are identifiable by
@@ -548,7 +565,7 @@ def experience_updates_by_id(tailored_payload: dict) -> dict:
         != _CURRENT_ARTIFACT_BUDGET_VERSION
     )
     return {
-        update.get("id"): {
+        str(update.get("id", "")).strip(): {
             **update,
             _MANDATORY_BULLET_OVERFLOW_KEY: preserve_accepted_overflow,
         }

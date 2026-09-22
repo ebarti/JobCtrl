@@ -42,18 +42,35 @@ JOBCTRL_DIR=/tmp/jobctrl-qa corepack pnpm dev
 - Use Conventional Commits for commit messages and PR titles.
 - External contributors should sign off every commit with the Developer
   Certificate of Origin trailer.
-- For standalone changes, update docs with public behavior. For an approved
-  unreleased stack, update canonical docs in the final PR and run QA afterward.
+- Update documentation for changed public behavior.
 - Do not commit local user data, `.env` files, resumes, PDFs, logs, browser
   profiles, SQLite databases, or generated application materials.
-- Heavy CI workflows run automatically for same-repository pull requests, but
-  not for pull requests from public forks. Run the relevant local validation
-  before opening a PR; maintainers run manual workflows or local checks for
-  fork contributions after reviewing the change.
-- GitHub Stacks leave dependency-heavy Python and TypeScript jobs skipped on
-  non-top layers. The cumulative top layer runs the full Python compatibility
-  matrix, packages, web builds, product tests, and browser/Storybook suites.
-  Use targeted local validation while reviewing a lower layer.
+- CI eligibility follows each executable workflow's events and path filters,
+  including fork PRs and each stack layer. All external fork contributors require
+  maintainer approval before their workflows run. There is no top-of-stack scheduler; see
+  [the CI reference](docs/local-development.md#pull-request-ci).
+
+## Issue Labels And Project Status
+
+Project 7's `Status` field is the only progress source for issues and pull
+requests. Labels classify the work by `type:`, `area:`, or a specific
+`privacy:` or `release:` flag. Labels, titles, authors, priority, and Project
+Status describe work; none of them grants permission to implement, merge,
+release, deploy, submit an application, or change user data.
+
+Issue forms assign their explicit type and, where fixed by the form, their
+area. The triage workflow adds at most one missing type and one missing area,
+never replaces a maintainer's type or area, and does nothing to closed issues.
+It does not infer privacy or area labels from issue prose. Privacy review is
+automatic only for the security-contact form or an explicit
+`type: security-contact` label. Release impact is assigned only from the checked
+release-impact field.
+
+The supported classification labels live in
+`scripts/issue-label-catalogue.mjs`. Event triage creates a declared label only
+when it is missing; it does not rewrite existing label colors or descriptions.
+One-time catalogue or assignment cleanup is reviewed as an operator artifact
+outside the repository and requires separate authorization before any write.
 
 ## Developer Certificate of Origin Sign-Off
 
@@ -78,9 +95,7 @@ git rebase --signoff origin/main
 
 ## Validation
 
-For coding agents, [AGENTS.md](AGENTS.md) owns instruction priority, autonomous
-execution, delegation, and validation tiers. `CLAUDE.md` links to that same
-file; frontend work also follows [apps/web/AGENTS.md](apps/web/AGENTS.md).
+Frontend changes also follow [apps/web/AGENTS.md](apps/web/AGENTS.md).
 
 Run the touched-surface commands in
 [Reliability & QA](docs/local-reliability-qa.md) plus `git diff --check`. Add the

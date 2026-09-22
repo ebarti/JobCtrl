@@ -69,6 +69,8 @@ jobs:
       release_build_id: ${{ steps.release-ref.outputs.release_build_id }}
       release_public_key: ${{ steps.release-ref.outputs.release_public_key }}
       release_key_id: ${{ steps.release-ref.outputs.release_key_id }}
+      release_notes_path: ${{ steps.release-ref.outputs.release_notes_path }}
+      release_notes_sha256: ${{ steps.release-ref.outputs.release_notes_sha256 }}
     steps:
       - name: Check out the exact release tag
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -113,16 +115,34 @@ jobs:
           sha="$(git rev-parse HEAD)"
           source_date_epoch="$(git show -s --format=%ct HEAD)"
           release_build_id="${RELEASE_TAG#v}-${sha}-darwin-arm64"
+          release_notes_path=".github/releases/$RELEASE_TAG.md"
+          test -f "$release_notes_path" && test ! -L "$release_notes_path"
+          test -s "$release_notes_path"
+          grep -q '[^[:space:]]' "$release_notes_path"
+          release_notes_sha256="$(shasum -a 256 "$release_notes_path" | awk '{print $1}')"
+          mkdir -p "$RUNNER_TEMP/release-notes"
+          cp "$release_notes_path" "$RUNNER_TEMP/release-notes/$RELEASE_TAG.md"
+          cmp "$release_notes_path" "$RUNNER_TEMP/release-notes/$RELEASE_TAG.md"
           {
             echo "sha=$sha"
             echo "source_date_epoch=$source_date_epoch"
             echo "release_build_id=$release_build_id"
             echo "release_public_key=$JOBCTRL_RELEASE_PUBLIC_KEY"
             echo "release_key_id=$JOBCTRL_RELEASE_KEY_ID"
+            echo "release_notes_path=$release_notes_path"
+            echo "release_notes_sha256=$release_notes_sha256"
           } >> "$GITHUB_OUTPUT"
           test "$(jq -r '.stableReleaseStatus' packaging/distribution/signing-policy.json)" = blocked-awaiting-credentials
           test "$(jq -r '.manifestSigning.publicKeyStatus' packaging/distribution/signing-policy.json)" = unprovisioned
           test "$(jq -r '.appleSigning.teamIdStatus' packaging/distribution/signing-policy.json)" = unprovisioned
+
+      - name: Retain the exact audited release notes
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: jobctrl-release-notes-${{ github.run_id }}
+          path: ${{ runner.temp }}/release-notes
+          if-no-files-found: error
+          retention-days: 14
 
   publication-preflight:
     name: Preflight checkout-free GitHub publication access
@@ -133,12 +153,35 @@ jobs:
     env:
       RELEASE_TAG: ${{ inputs.release_tag }}
       RELEASE_REF: ${{ needs.resolve.outputs.release_ref }}
+      EXPECTED_RELEASE_NOTES_SHA256: ${{ needs.resolve.outputs.release_notes_sha256 }}
     steps:
+      - name: Download the exact audited release notes
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: jobctrl-release-notes-${{ github.run_id }}
+          path: ${{ runner.temp }}/release-notes
+
       - name: Prove checkout-free release commands before signing
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          notes="$RUNNER_TEMP/release-notes/$RELEASE_TAG.md"
+          require_curated_release_notes() {
+            local candidate="$1"
+            test -f "$candidate" && test ! -L "$candidate"
+            test -s "$candidate"
+            grep -q '[^[:space:]]' "$candidate"
+            test "$(shasum -a 256 "$candidate" | awk '{print $1}')" = "$EXPECTED_RELEASE_NOTES_SHA256"
+          }
+          require_exact_release_body() {
+            local release_json="$1"
+            local body_file="$2"
+            jq -e '.body | type == "string"' "$release_json" >/dev/null
+            jq -j '.body' "$release_json" > "$body_file"
+            cmp "$notes" "$body_file"
+          }
+          require_curated_release_notes "$notes"
           test "$GH_REPO" = "$GITHUB_REPOSITORY"
           test "$(gh repo view "$GH_REPO" --json nameWithOwner --jq '.nameWithOwner')" = "$GITHUB_REPOSITORY"
           main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$RELEASE_REF...main" --jq '.status')"
@@ -146,9 +189,10 @@ jobs:
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
           release="$RUNNER_TEMP/preflight-release.json"
           error="$RUNNER_TEMP/preflight-release.err"
-          if gh release view "$RELEASE_TAG" --json isDraft,targetCommitish,tagName > "$release" 2> "$error"; then
+          if gh release view "$RELEASE_TAG" --json isDraft,targetCommitish,tagName,body > "$release" 2> "$error"; then
             test "$(jq -r '.tagName' "$release")" = "$RELEASE_TAG"
             test "$(jq -r '.targetCommitish' "$release")" = "$RELEASE_REF"
+            require_exact_release_body "$release" "$RUNNER_TEMP/preflight-release-body.md"
           elif ! grep -Eqi 'HTTP 404|release not found' "$error"; then
             cat "$error" >&2
             exit 1
@@ -547,12 +591,19 @@ jobs:
       RELEASE_TAG: ${{ inputs.release_tag }}
       RELEASE_CHANNEL: ${{ inputs.channel }}
       RELEASE_REF: ${{ needs.resolve.outputs.release_ref }}
+      EXPECTED_RELEASE_NOTES_SHA256: ${{ needs.resolve.outputs.release_notes_sha256 }}
     steps:
       - name: Download the immutable signed candidate
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: jobctrl-release-candidate-${{ github.run_id }}
           path: ${{ runner.temp }}/release
+
+      - name: Download the exact audited release notes
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: jobctrl-release-notes-${{ github.run_id }}
+          path: ${{ runner.temp }}/release-notes
 
       - name: Verify signed checksums without executing candidate code
         run: |
@@ -576,6 +627,22 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          notes="$RUNNER_TEMP/release-notes/$RELEASE_TAG.md"
+          require_curated_release_notes() {
+            local candidate="$1"
+            test -f "$candidate" && test ! -L "$candidate"
+            test -s "$candidate"
+            grep -q '[^[:space:]]' "$candidate"
+            test "$(shasum -a 256 "$candidate" | awk '{print $1}')" = "$EXPECTED_RELEASE_NOTES_SHA256"
+          }
+          require_exact_release_body() {
+            local release_json="$1"
+            local body_file="$2"
+            jq -e '.body | type == "string"' "$release_json" >/dev/null
+            jq -j '.body' "$release_json" > "$body_file"
+            cmp "$notes" "$body_file"
+          }
+          require_curated_release_notes "$notes"
           main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$RELEASE_REF...main" --jq '.status')"
           [[ "$main_relation" = ahead || "$main_relation" = identical ]]
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
@@ -591,10 +658,11 @@ jobs:
           expected_names="$(printf '%s\n' "${assets[@]##*/}" | sort)"
           expected_names_file="$RUNNER_TEMP/expected-release-assets.txt"
           printf '%s\n' "$expected_names" > "$expected_names_file"
-          if gh release view "$RELEASE_TAG" --json isDraft,isPrerelease,targetCommitish,tagName,assets > "$draft" 2> "$error"; then
+          if gh release view "$RELEASE_TAG" --json isDraft,isPrerelease,targetCommitish,tagName,body,assets > "$draft" 2> "$error"; then
             test "$(jq -r '.targetCommitish' "$draft")" = "$RELEASE_REF"
             expected_prerelease=false; [[ "$RELEASE_CHANNEL" = prerelease ]] && expected_prerelease=true
             test "$(jq -r '.isPrerelease' "$draft")" = "$expected_prerelease"
+            require_exact_release_body "$draft" "$RUNNER_TEMP/existing-release-body.md"
             existing="$RUNNER_TEMP/existing-draft-assets"
             mkdir -p "$existing"
             missing=()
@@ -619,7 +687,9 @@ jobs:
           elif grep -Eqi 'HTTP 404|release not found' "$error"; then
             flags=(--draft --target "$RELEASE_REF")
             [[ "$RELEASE_CHANNEL" = prerelease ]] && flags+=(--prerelease)
-            gh release create "$RELEASE_TAG" "${flags[@]}" --title "JobCtrl $RELEASE_TAG" "${assets[@]}"
+            gh release create "$RELEASE_TAG" "${flags[@]}" --title "JobCtrl $RELEASE_TAG" --notes-file "$notes" "${assets[@]}"
+            gh release view "$RELEASE_TAG" --json isDraft,isPrerelease,targetCommitish,tagName,body,assets > "$draft"
+            require_exact_release_body "$draft" "$RUNNER_TEMP/created-release-body.md"
           else
             cat "$error" >&2
             exit 1
@@ -1141,6 +1211,7 @@ jobs:
       RELEASE_TAG: ${{ inputs.release_tag }}
       RELEASE_CHANNEL: ${{ inputs.channel }}
       RELEASE_REF: ${{ needs.resolve.outputs.release_ref }}
+      EXPECTED_RELEASE_NOTES_SHA256: ${{ needs.resolve.outputs.release_notes_sha256 }}
     steps:
       - name: Download the untouched signer/package candidate
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -1153,6 +1224,12 @@ jobs:
         with:
           name: jobctrl-smoke-evidence-${{ github.run_id }}
           path: ${{ runner.temp }}/smoke-evidence
+
+      - name: Download the exact audited release notes
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: jobctrl-release-notes-${{ github.run_id }}
+          path: ${{ runner.temp }}/release-notes
 
       - name: Verify the signer/package closure and separate smoke evidence
         run: |
@@ -1170,6 +1247,22 @@ jobs:
         run: |
           set -euo pipefail
           test -n "$ADMIN_READ_TOKEN"
+          notes="$RUNNER_TEMP/release-notes/$RELEASE_TAG.md"
+          require_curated_release_notes() {
+            local candidate="$1"
+            test -f "$candidate" && test ! -L "$candidate"
+            test -s "$candidate"
+            grep -q '[^[:space:]]' "$candidate"
+            test "$(shasum -a 256 "$candidate" | awk '{print $1}')" = "$EXPECTED_RELEASE_NOTES_SHA256"
+          }
+          require_exact_release_body() {
+            local release_json="$1"
+            local body_file="$2"
+            jq -e '.body | type == "string"' "$release_json" >/dev/null
+            jq -j '.body' "$release_json" > "$body_file"
+            cmp "$notes" "$body_file"
+          }
+          require_curated_release_notes "$notes"
           main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$RELEASE_REF...main" --jq '.status')"
           [[ "$main_relation" = ahead || "$main_relation" = identical ]]
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"
@@ -1186,10 +1279,11 @@ jobs:
           expected_names_file="$RUNNER_TEMP/final-expected-assets.txt"
           { printf '%s\n' "${assets[@]##*/}"; printf '%s\n' published-candidate-smoke.json; } | sort > "$expected_names_file"
           release="$RUNNER_TEMP/final-release.json"
-          gh release view "$RELEASE_TAG" --json isDraft,isPrerelease,targetCommitish,assets > "$release"
+          gh release view "$RELEASE_TAG" --json isDraft,isPrerelease,targetCommitish,body,assets > "$release"
           test "$(jq -r '.targetCommitish' "$release")" = "$RELEASE_REF"
           expected_prerelease=false; [[ "$RELEASE_CHANNEL" = prerelease ]] && expected_prerelease=true
           test "$(jq -r '.isPrerelease' "$release")" = "$expected_prerelease"
+          require_exact_release_body "$release" "$RUNNER_TEMP/final-existing-release-body.md"
           if jq -e '.assets | any(.name == "published-candidate-smoke.json")' "$release" >/dev/null; then
             mkdir -p "$RUNNER_TEMP/existing-smoke"
             gh release download "$RELEASE_TAG" --dir "$RUNNER_TEMP/existing-smoke" --pattern published-candidate-smoke.json
@@ -1198,7 +1292,8 @@ jobs:
             test "$(jq -r '.isDraft' "$release")" = true
             gh release upload "$RELEASE_TAG" "$smoke"
           fi
-          gh release view "$RELEASE_TAG" --json isDraft,isPrerelease,targetCommitish,assets > "$release"
+          gh release view "$RELEASE_TAG" --json isDraft,isPrerelease,targetCommitish,body,assets > "$release"
+          require_exact_release_body "$release" "$RUNNER_TEMP/final-draft-release-body.md"
           jq -r '.assets[].name' "$release" | sort > "$RUNNER_TEMP/final-actual-assets.txt"
           cmp "$expected_names_file" "$RUNNER_TEMP/final-actual-assets.txt"
           downloaded="$RUNNER_TEMP/final-draft-assets"
@@ -1224,6 +1319,13 @@ jobs:
             sleep 3
           done
           test "$immutable" = true
+          published="$RUNNER_TEMP/published-release.json"
+          gh release view "$RELEASE_TAG" --json isDraft,isPrerelease,targetCommitish,isImmutable,body,assets > "$published"
+          test "$(jq -r '.isDraft' "$published")" = false
+          test "$(jq -r '.isImmutable' "$published")" = true
+          test "$(jq -r '.targetCommitish' "$published")" = "$RELEASE_REF"
+          test "$(jq -r '.isPrerelease' "$published")" = "$expected_prerelease"
+          require_exact_release_body "$published" "$RUNNER_TEMP/published-release-body.md"
           for asset in "${assets[@]}" "$smoke"; do
             verified=false
             for (( attempt = 0; attempt < 10; attempt++ )); do

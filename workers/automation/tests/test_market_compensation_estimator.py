@@ -225,7 +225,10 @@ def test_director_title_and_same_location_fallback_are_described_truthfully() ->
     assert company_factor.reason == (
         "No direct DuckDuckGo salary row matched; comparable roles in the same location provide 45% company support."
     )
-    assert "classified as director" in level_factor.reason
+    assert estimate.estimate_state == "insufficient_evidence"
+    assert estimate.minimum_amount is None and estimate.maximum_amount is None
+    assert level_factor.score == 0
+    assert "requested director level has no matching evidence" in level_factor.reason
 
 
 def test_employer_posted_observations_never_enter_market_estimates() -> None:
@@ -365,7 +368,7 @@ def test_weak_market_factors_emit_low_confidence_ranges_with_wider_intervals() -
         estimated_at="2026-06-19T10:00:00Z",
     )
 
-    for estimate in (low_sample, weak_level, weak_location, source_dispersion):
+    for estimate in (low_sample, weak_location, source_dispersion):
         assert estimate.estimate_state == "estimated_range"
         assert estimate.confidence_band == "low"
         assert estimate.minimum_amount is not None
@@ -378,7 +381,10 @@ def test_weak_market_factors_emit_low_confidence_ranges_with_wider_intervals() -
     assert "low_sample_count" in low_sample.warnings
     assert any(factor.name == "sample" for factor in low_sample.factors)
 
-    assert any(factor.name == "level" for factor in weak_level.factors)
+    assert weak_level.estimate_state == "insufficient_evidence"
+    assert weak_level.minimum_amount is None
+    assert "weak_level_match" in weak_level.insufficient_reasons
+    assert next(factor for factor in weak_level.factors if factor.name == "level").score == 0
 
     assert "location_mismatch" in weak_location.warnings
     assert any(factor.name == "location" for factor in weak_location.factors)
@@ -455,10 +461,12 @@ def test_levels_public_market_fallback_uses_aggregate_instead_of_top_payer_range
         estimated_at="2026-07-12T10:00:00Z",
     )
 
-    assert estimate.estimate_state == "estimated_range"
+    assert estimate.estimate_state == "insufficient_evidence"
     assert estimate.match_scope == "same_location_role_fallback"
-    assert estimate.minimum_amount == 39_000
-    assert estimate.maximum_amount == 77_000
+    assert estimate.minimum_amount is None
+    assert estimate.evidence[0].minimum_amount == 39_000
+    assert "weak_level_match" in estimate.insufficient_reasons
+    assert estimate.maximum_amount is None
     assert [row.company_name for row in estimate.evidence] == [LEVELS_FYI_MARKET_AGGREGATE_COMPANY]
 
 
@@ -536,3 +544,85 @@ def test_posted_salary_conflict_is_explicit(
         assert "source_conflict_with_posted_salary" not in estimate.warnings
     else:
         assert expected_warning in estimate.warnings
+
+
+def test_principal_peer_cohort_wins_over_all_levels_and_senior_company_rows() -> None:
+    rows = (
+        _levels(company=LEVELS_FYI_MARKET_AGGREGATE_COMPANY, role="Software Engineer", level="all levels", minimum=40_000, maximum=70_000, location="Spain", tier="unknown"),
+        _levels(company="Different Company", role="Software Engineer", level="Senior", minimum=80_000, maximum=100_000, location="Spain", tier="unknown"),
+        _levels(company="Peer Cloud", role="Software Engineer", level="Principal Engineer", minimum=160_000, maximum=180_000, location="Spain", tier="unknown"),
+        _levels(company="Peer Cloud", role="Software Engineer", level="Principal Engineer", minimum=200_000, maximum=240_000, location="Germany", tier="unknown"),
+    )
+    estimate = estimate_market_compensation(job_id=TEST_JOB_ID, company="Different Company",
+        title="Principal Software Engineer", location="Madrid, Spain", observations=rows,
+        estimated_at="2026-06-19T10:00:00Z")
+    assert estimate.estimate_state == "estimated_range"
+    assert (estimate.minimum_amount, estimate.maximum_amount) == (160_000, 180_000)
+    assert estimate.match_scope == "same_location_role_fallback"
+    assert estimate.confidence_band == "low"
+    assert estimate.aggregate_bucket == "reported regional company peer cohort"
+    assert [(row.company_name, row.level_label, row.location) for row in estimate.evidence] == [
+        ("Peer Cloud", "Principal Engineer", "Spain")]
+    assert estimate.evidence[0].company_score == 0
+
+
+@pytest.mark.parametrize(("source_title", "bucket", "target_title", "compatible"), [
+    ("Principal Infrastructure Engineer", "Principal / Director", "Principal Infrastructure Engineer", True),
+    ("Principal Infrastructure Engineer", "Principal / Director", "Director of Software Engineering", False),
+    ("Director of Software Engineering", "Principal / Director", "Director of Software Engineering", True),
+    ("Director of Software Engineering", "Principal / Director", "Principal Software Engineer", False),
+    ("Software Engineer", "Principal / Director", "Director of Software Engineering", False),
+    ("Software Engineer", "Principal / Director", "Principal Software Engineer", False),
+    ("Staff Software Engineer", "Staff / Engineering Manager", "Staff Software Engineer", True),
+    ("Staff Software Engineer", "Staff / Engineering Manager", "Software Engineering Manager", False),
+    ("Software Engineering Manager", "Staff / Engineering Manager", "Software Engineering Manager", True),
+    ("Software Engineer", "Staff / Engineering Manager", "Staff Software Engineer", False),
+])
+def test_mixed_provider_bucket_is_not_exact_level_without_source_title_support(
+    source_title, bucket, target_title, compatible,
+) -> None:
+    observation = _euro_top_tech(role=source_title, level=bucket, location="Madrid, Spain", minimum=156_000, maximum=156_000)
+    estimate = estimate_market_compensation(job_id=TEST_JOB_ID, company="Unrelated Company", title=target_title,
+        location="Spain", observations=(observation,), estimated_at="2026-09-15T10:00:00Z")
+    assert (estimate.estimate_state == "estimated_range") is compatible
+    if compatible:
+        assert estimate.aggregate_bucket == "reported regional source sample"
+    if compatible or estimate.evidence:
+        assert estimate.evidence[0].level_label == bucket
+        assert estimate.evidence[0].role_title == source_title
+        assert next(factor.score for factor in estimate.factors if factor.name == "level") == (0.95 if compatible else 0)
+    if not compatible:
+        assert estimate.minimum_amount is None and estimate.maximum_amount is None
+
+
+def test_exact_company_level_evidence_survives_geography_widening() -> None:
+    rows = (
+        _levels(company="ExampleCo", role="Senior Software Developer", level="Senior",
+                location="Remote Europe", minimum=118_000, maximum=142_000),
+        _levels(company=LEVELS_FYI_MARKET_AGGREGATE_COMPANY, role="Software Developer", level="Senior",
+                location="Spain", minimum=40_000, maximum=70_000, tier="unknown"),
+    )
+    estimate = estimate_market_compensation(job_id=TEST_JOB_ID, company="ExampleCo",
+        title="Senior Software Developer", location="Madrid, Spain", observations=rows,
+        estimated_at="2026-06-19T10:00:00Z")
+    assert estimate.estimate_state == "estimated_range"
+    assert estimate.match_scope == "exact_company_role"
+    assert (estimate.minimum_amount, estimate.maximum_amount) == (118_000, 142_000)
+    assert [row.company_name for row in estimate.evidence] == ["ExampleCo"]
+
+
+def test_level_matches_from_another_region_do_not_displace_same_country_context() -> None:
+    rows = (
+        _levels(company=LEVELS_FYI_MARKET_AGGREGATE_COMPANY, role="Software Engineer", level="all levels",
+                location="Spain", minimum=40_000, maximum=70_000, tier="unknown"),
+        _levels(company="Big US Corp", role="Software Engineer", level="Principal Engineer",
+                location="United States", minimum=300_000, maximum=350_000, tier="unknown"),
+    )
+    estimate = estimate_market_compensation(job_id=TEST_JOB_ID, company="Different Company",
+        title="Principal Software Engineer", location="Madrid, Spain", observations=rows,
+        estimated_at="2026-06-19T10:00:00Z")
+    assert estimate.estimate_state == "insufficient_evidence"
+    assert "weak_level_match" in estimate.insufficient_reasons
+    assert estimate.minimum_amount is None and estimate.maximum_amount is None
+    assert {row.location for row in estimate.evidence} == {"Spain"}
+    assert "location_mismatch" not in estimate.warnings

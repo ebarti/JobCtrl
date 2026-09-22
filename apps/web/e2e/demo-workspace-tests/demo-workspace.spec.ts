@@ -27,6 +27,14 @@ function configuredOrigin(baseURL: string | undefined): string {
   return new URL(baseURL).origin;
 }
 
+function isDemoGoogleTagRequest(requestUrl: URL): boolean {
+  return (
+    requestUrl.origin === GOOGLE_TAG_ORIGIN &&
+    requestUrl.pathname === "/gtag/js" &&
+    requestUrl.searchParams.get("id") === GOOGLE_TAG_MEASUREMENT_ID
+  );
+}
+
 const scenarioTest = test.extend<{ demoNetworkBoundary: void }>({
   demoNetworkBoundary: [
     async ({ baseURL, context }, use) => {
@@ -140,6 +148,18 @@ function jobRow(page: Page, title: string): Locator {
 
 function visible(page: Page, locator: Locator): Locator {
   return locator.and(page.locator(":visible"));
+}
+
+async function openJobActions(page: Page): Promise<Locator> {
+  const actions = page.locator("#job-detail-workflow-commands");
+  if (!(await actions.isVisible())) {
+    await page
+      .getByRole("button", { name: "More job actions", exact: true })
+      .click();
+  }
+  await expect(actions).toBeVisible();
+  await expect(actions).toHaveAttribute("aria-label", "Job workflow actions");
+  return actions;
 }
 
 async function expectJobState(
@@ -490,8 +510,9 @@ scenarioTest(
     ).toBeVisible();
     await expectJobState(second, "Systems delivery director", "failed");
 
+    const actions = await openJobActions(page);
     acceptNextConfirmation(page);
-    await page
+    await actions
       .getByRole("button", { name: "Run current stage", exact: true })
       .click();
 
@@ -524,8 +545,9 @@ scenarioTest(
     ).toBeVisible();
     await expect(drawer.getByText("accepted", { exact: true })).toHaveCount(2);
 
+    const actions = await openJobActions(page);
     acceptNextConfirmation(page);
-    await drawer
+    await actions
       .getByRole("button", { name: "Re-tailor current policy", exact: true })
       .click();
     await expect(drawer.getByText("failed", { exact: true })).toBeVisible({
@@ -536,7 +558,9 @@ scenarioTest(
       0,
     );
 
-    await drawer.getByRole("button", { name: "Retry", exact: true }).click();
+    await (await openJobActions(page))
+      .getByRole("button", { name: "Retry", exact: true })
+      .click();
     await expect(drawer.getByText("succeeded", { exact: true })).toBeVisible({
       timeout: 3_000,
     });
@@ -595,11 +619,10 @@ scenarioTest(
       page.goto("/jobs/job-fabrikam-systems"),
       second.goto("/jobs/job-fabrikam-systems"),
     ]);
-    const drawer = page.getByRole("article", { name: "Job details" });
     const initialCount = await receiptCount(page);
     await expectReceiptCount(second, initialCount);
 
-    await drawer
+    await (await openJobActions(page))
       .getByRole("button", { name: "Rehearse application", exact: true })
       .click();
     await expectReceiptCount(page, initialCount + 1);
@@ -609,7 +632,7 @@ scenarioTest(
       /no browser automation.*application destination.*accessed/i,
     );
 
-    await drawer
+    await (await openJobActions(page))
       .getByRole("button", { name: "Record simulated application", exact: true })
       .click();
     await expectReceiptCount(page, initialCount + 2);
@@ -779,7 +802,7 @@ scenarioTest("every P2 product route and seeded deep link renders populated acro
     if (url.pathname.startsWith("/v1/")) {
       productRequests.push(url.pathname);
     }
-    if (url.origin !== demoOrigin) {
+    if (url.origin !== demoOrigin && !isDemoGoogleTagRequest(url)) {
       externalRequests.push(request.url());
     }
   });
@@ -827,17 +850,16 @@ scenarioTest("every P2 product route and seeded deep link renders populated acro
     ],
     ["/discovery", "Discovery", "Bundled synthetic source"],
     ["/pipelines", "Pipelines", "Configuring"],
-    ["/debug", "Debug", "Synthetic score recorded."],
+    ["/debug", "Debug", "Synthetic score completed."],
     [
       "/activity/event-demo-score",
-      "Synthetic score recorded.",
+      "Synthetic score completed.",
       "Projected event payload",
       "article",
     ],
   ] as const;
 
   for (const [route, identity, populatedText, role = "heading"] of routes) {
-    await page.goto(STATIC_HOST);
     await page.goto(route);
     const identityLocator = visible(
       page,
@@ -943,7 +965,9 @@ scenarioTest("eventless discovery and settings writes resync across tabs and sur
   context.on("request", (request) => {
     const url = new URL(request.url());
     if (url.pathname.startsWith("/v1/")) productRequests.push(url.pathname);
-    if (url.origin !== demoOrigin) externalRequests.push(request.url());
+    if (url.origin !== demoOrigin && !isDemoGoogleTagRequest(url)) {
+      externalRequests.push(request.url());
+    }
   });
   const second = await context.newPage();
 
@@ -971,17 +995,25 @@ scenarioTest("eventless discovery and settings writes resync across tabs and sur
   await expect(secondResultsPerBoard).toHaveValue("23");
 
   await Promise.all([page.goto("/settings"), second.goto("/settings")]);
-  await expect(page.getByLabel("Concurrent applications")).toHaveValue("1");
-  await expect(second.getByLabel("Concurrent applications")).toHaveValue("1");
-  await page.getByLabel("Concurrent applications").fill("3");
+  const applyConcurrency = page.getByRole("spinbutton", {
+    name: "Concurrent applications",
+    exact: true,
+  });
+  const secondApplyConcurrency = second.getByRole("spinbutton", {
+    name: "Concurrent applications",
+    exact: true,
+  });
+  await expect(applyConcurrency).toHaveValue("1");
+  await expect(secondApplyConcurrency).toHaveValue("1");
+  await applyConcurrency.fill("3");
   const executionForm = page.locator("form").filter({
-    has: page.getByLabel("Concurrent applications"),
+    has: applyConcurrency,
   });
   await executionForm.getByRole("button", { name: "Save changes", exact: true }).click();
   await expect(executionForm.getByRole("status")).toHaveText("Settings saved.");
-  await expect(second.getByLabel("Concurrent applications")).toHaveValue("3");
+  await expect(secondApplyConcurrency).toHaveValue("3");
   await second.reload();
-  await expect(second.getByLabel("Concurrent applications")).toHaveValue("3");
+  await expect(secondApplyConcurrency).toHaveValue("3");
 
   expect(productRequests).toEqual([]);
   expect(externalRequests).toEqual([]);
@@ -998,7 +1030,9 @@ scenarioTest("discovery promotes a source and imports a manual capture through t
   context.on("request", (request) => {
     const url = new URL(request.url());
     if (url.pathname.startsWith("/v1/")) productRequests.push(url.pathname);
-    if (url.origin !== demoOrigin) externalRequests.push(request.url());
+    if (url.origin !== demoOrigin && !isDemoGoogleTagRequest(url)) {
+      externalRequests.push(request.url());
+    }
   });
 
   await page.goto("/discovery");
@@ -1037,7 +1071,9 @@ scenarioTest("score correction is browser-local, cross-tab visible, reload durab
   context.on("request", (request) => {
     const url = new URL(request.url());
     if (url.pathname.startsWith("/v1/")) productRequests.push(url.pathname);
-    if (url.origin !== demoOrigin) externalRequests.push(request.url());
+    if (url.origin !== demoOrigin && !isDemoGoogleTagRequest(url)) {
+      externalRequests.push(request.url());
+    }
   });
 
   const second = await context.newPage();

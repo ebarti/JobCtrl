@@ -107,13 +107,12 @@ Key facts about the four activities:
   they are not resumed. The internal `jobspy` family/source-ID name remains a
   compatibility key only.
 
-  For an integrated execution, every job-source acquisition is a bounded
-  live-browser task carrying the exact `DiscoveryExecutionRef`. JobStreaming's
-  provider sessions, canonical ATS/API and Workday clients, Smart Extract page
-  rendering, and each source policy's `robots.txt` fetch all delegate through
-  the API broker to the paired extension in the user's current Chrome profile.
-  The worker does not open a second browser, copy a profile, or fall back to a
-  direct transport. The broker is transient; source checkpoints and accepted
+  Each integrated acquisition retains the exact `DiscoveryExecutionRef`.
+  JobStreaming, canonical ATS/API, Workday and Smart Extract prefer the connected
+  extension after a bounded status check; offline setup selects guarded public
+  HTTP or anonymous Playwright. Neither mode consults robots.txt or copies a
+  profile. After acquisition starts, a failure never switches transport.
+  Connected requests delegate through the API broker to the selected extension. The broker is transient; source checkpoints and accepted
   observations remain the durable replay authority. One explicitly selected
   extension installation owns leases. Four background executors match the
   broker's four-task admission bound; overflow waits at worker admission rather
@@ -124,10 +123,9 @@ Key facts about the four activities:
   immediately before lease. HTTP/API tasks execute in the extension service
   worker with redirect following disabled; rendered-page tasks use tab-scoped
   DNR rules to block cross-origin main-frame redirects before dispatch, leaving
-  page-owned fetch/XHR under Chrome's normal policy. LinkedIn detail enrichment through the user's owner-authenticated
-  live session does not inherit the anonymous crawler's robots denial, but it
-  retains the same public-destination validation, pacing, request budget,
-  exact-origin, audit, and no-submit boundaries.
+  page-owned fetch/XHR under Chrome's normal policy. Both acquisition modes
+  retain their public-destination validation, pacing, request budget, audit and
+  no-submit boundaries.
 - **`discovery_enrichment`** drains detail enrichment (below) and then runs
   post-discovery hygiene.
 - **`discovery_preparation_fanout`** derives targets and starts per-job
@@ -569,7 +567,7 @@ sequenceDiagram
     Api->>Store: create contact fact and complete task
 ```
 
-Robots-denial, rate-limit, and budget-exhaustion are recorded as first-class
+Rate-limit, budget-exhaustion, and historical robots-denial are recorded as first-class
 `ResearchSourceAttempt` outcomes (the provenance of the search), never scrape
 errors. No candidate value ever enters an event or projection — only
 `contact_candidates.attributes_json` holds the proposed names/emails.

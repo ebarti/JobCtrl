@@ -1,13 +1,17 @@
 import assert from "node:assert/strict";
 import path from "node:path";
+import fs from "node:fs";
+import ownedWorkspace from "../apps/web/e2e/fixtures/owned-workspace.cjs";
 import test from "node:test";
 
 import { createDocsScreenshotEnvironment } from "./docs-screenshot-environment.mjs";
 
-test("documentation screenshot environment allows toolchain state but excludes host credentials", () => {
-  const appDir = path.join("/tmp", "jobctrl-docs-environment-test");
+test("documentation screenshot environment allows toolchain state but excludes host credentials", (t) => {
+  const workspace = ownedWorkspace.createOwnedE2eWorkspace();
+  const { appDir } = workspace;
+  t.after(() => fs.rmSync(appDir, { recursive: true, force: true }));
   const environment = createDocsScreenshotEnvironment({
-    appDir,
+    workspace,
     apiPort: 18_767,
     webPort: 15_174,
     sourceEnvironment: {
@@ -65,10 +69,12 @@ test("documentation screenshot environment allows toolchain state but excludes h
   }
 });
 
-test("documentation screenshot environment keeps only the default Playwright cache outside the isolated service home", () => {
-  const appDir = path.join("/tmp", "jobctrl-docs-environment-default-cache");
+test("documentation screenshot environment keeps only the default Playwright cache outside the isolated service home", (t) => {
+  const workspace = ownedWorkspace.createOwnedE2eWorkspace();
+  const { appDir } = workspace;
+  t.after(() => fs.rmSync(appDir, { recursive: true, force: true }));
   const environment = createDocsScreenshotEnvironment({
-    appDir,
+    workspace,
     apiPort: 18_767,
     webPort: 15_174,
     platform: "darwin",

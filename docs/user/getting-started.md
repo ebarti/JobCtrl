@@ -9,7 +9,7 @@ files stay on your computer unless you explicitly connect an external provider.
 Install it once, then use the same `jobctrl` command from any directory.
 
 ::: warning Early access
-JobCtrl `0.1.1` is the current early-access application release. The public
+JobCtrl `0.2.0` is the current early-access application release. The public
 version began at `0.1.0` after the pre-launch `2.0.x` numbering was withdrawn so
 the version reflects the product's actual maturity. That change did not
 downgrade product behavior, local data, database schemas, launcher protocols,
@@ -75,7 +75,8 @@ scripts/install
 corepack pnpm dev
 ```
 
-Only this option requires Git and the source-development toolchain. Keep the
+Only this option requires Git, Node.js 22.13 or newer, and the rest of the
+source-development toolchain. Keep the
 `corepack pnpm dev` terminal open while using the source build and stop it with
 Ctrl-C. See [Local Development](../local-development.md) for prerequisites,
 isolated workspaces, component commands, and contributor QA.
@@ -186,12 +187,14 @@ submission remains behind the configured approval gate.
 
 ## Discovery Extension And Optional Managed-Browser Capabilities
 
-Integrated Discovery requires the JobCtrl extension installed and paired in the
-Chrome profile you normally use. It executes Discovery's bounded page/API work
-directly in that currently running profile, so it does not copy the profile or
-launch a separate browser. Job-scoped Enrich retries use the same extension
-path. PDF rendering and Apply may still use their separate managed/adopted
-browser capabilities; those settings are never a Discovery or Enrich fallback.
+Discovery and Enrich work with or without the JobCtrl extension. When the
+selected paired installation is connected, acquisition prefers its bounded
+page/API transport in your current Chrome profile. Otherwise it uses guarded
+public HTTP or anonymous managed Playwright. Availability is checked before
+acquisition; a failed fetch does not switch transports. Anonymous access obeys
+site restrictions and may be unable to read signed-in content. Neither mode
+copies a profile or adopts a system-browser executable. PDF rendering and Apply
+retain their separate browser capabilities and consent requirements.
 
 Open **Settings → Browser & extension** to enable an optional system-browser
 capability, or to pair the extension. JobCtrl passively detects supported

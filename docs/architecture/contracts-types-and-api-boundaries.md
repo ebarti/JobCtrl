@@ -8,6 +8,10 @@ into competing domain models.
 **Read this if** you are adding a field, event, route, JSON-RPC method, or typed
 client call and need to know which layer owns the contract.
 
+Gmail feedback scan summaries and `ApplicationEmailFeedbackIngested` payloads
+use canonical `jobId` across Python, REST contracts, domain events, and web
+invalidation. Posting and application URLs are search hints, never identity.
+
 ## Dependency Direction
 
 The important direction is domain vocabulary → wire contract → transport. The
@@ -54,6 +58,18 @@ projection types. That is a dependency, not duplicate ownership: shared
 TypeScript vocabulary stays in `domain-types`, while Python aggregates remain
 authoritative for their behavior and invariants. The contract package exposes
 only the wire-safe shapes API consumers need.
+
+`ApplicationSubmitted` models the existing launcher payload in the shared event
+union: `run_id`, `result: "applied"`, `finished_at`, nullable `duration_ms`,
+nullable numeric `worker_id`, and nullable `model`, plus canonical `jobId`.
+The SSE envelope and browser parser preserve these lifecycle field names;
+consumers use `run_id` to identify the submitted run.
+
+`DryRunCompleted` models the existing launcher payload in the shared event union.
+Its lifecycle fields (`run_id`, `finished_at`, `dry_run`, and evidence bindings)
+retain their persisted snake_case names; SSE adds canonical `jobId`/`tenantId`
+without renaming those fields. See the [SSE contract](../api/complete-contract.md#dry-run-completion)
+for the payload boundary.
 
 ## Three API Boundaries
 

@@ -330,7 +330,7 @@ test("token foundation computes light/dark app-shell tokens and density values",
 
   const lightTokens = await readRootTokensWhenReady(page);
   await expectColorScheme(page, "light");
-  expect(lightTokens["--sidebar"], "the rail should carry a distinct violet-neutral surface").not.toBe(
+  expect(lightTokens["--sidebar"], "the rail should carry a distinct neutral surface").not.toBe(
     lightTokens["--background"],
   );
 
@@ -367,9 +367,13 @@ test("token foundation computes light/dark app-shell tokens and density values",
   const densityStyles = await readSurfaceStyles(
     page.getByRole("group", { name: "Row density" }).locator("[data-pressed]"),
   );
-  expect(densityStyles.backgroundColor, "selected density should not be a filled blob").toMatch(
-    /^(transparent|rgba\(0, 0, 0, 0\))$/,
+  expectPainted(densityStyles.backgroundColor, "selected density background");
+  expect(densityStyles.color, "selected density must pair contrasting ink with its fill").not.toBe(
+    densityStyles.backgroundColor,
   );
+  await expect(
+    page.getByRole("group", { name: "Row density" }).locator("[data-pressed]"),
+  ).toHaveCSS("border-radius", "0px");
   expectPainted(densityStyles.borderTopColor, "selected density border");
   expectPainted(densityStyles.color, "selected density foreground");
   expect(Number.parseFloat(densityStyles.borderTopWidth)).toBeGreaterThan(0);

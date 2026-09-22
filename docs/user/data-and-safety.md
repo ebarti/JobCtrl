@@ -30,7 +30,7 @@ For a plain-language overview, read
 | Does Discovery make network requests? | ✓ **Yes—that is how it searches configured job sources and, for AI-assisted steps, communicates with the model providers you selected.** Requests occur during runs you start or schedules you explicitly enable. |
 | Is product telemetry enabled by default? | ✕ **No.** Langfuse requires configuration; `LANGFUSE_DISABLE=1` overrides it. |
 | Does this documentation site use analytics? | ◐ **Only after you accept.** The optional Google Analytics tag stays unloaded until you choose **Accept analytics**; declining keeps the documentation fully available. |
-| Does Discovery use my browser profile? | ✓ **Yes, directly through the paired extension.** Integrated Discovery requires the user's currently running Chrome profile; HTTP/API tasks run in its extension service worker and rendered-page tasks use temporary inactive tabs. It does not copy or separately launch the profile. |
+| Does Discovery use my browser profile? | ◐ **When the selected paired extension is connected.** Discovery and Enrich prefer its live profile for bounded HTTP/API tasks and temporary inactive tabs. Without it, they use guarded public HTTP or anonymous managed Playwright. They never copy or separately launch your profile, and a fetch failure does not change transport. |
 | Does application-submission browser automation run continuously? | ✕ **No.** It starts only through apply/dry-run work you initiate or a standing loop you explicitly enable. |
 | Does JobCtrl submit applications or send employer-facing email by default? | ✕ **No.** Browser submission and Gmail application sending are explicit guarded actions. |
 | Does Outreach send messages automatically? | ✕ **No.** Drafts end at copy/export; send logs are user attestations. |
@@ -108,6 +108,11 @@ The demo contains synthetic data. Do not enter personal data, credentials, or
 secrets. Post-accept withdrawal and immediate visitor-event deletion are not
 yet available in this MVP; retained data and cookies expire on the schedules
 above. The consent screen links to this disclosure before entry.
+
+The [demo access, consent withdrawal, and visitor erasure proposal](../plans/2026-09-22-demo-access-consent-withdrawal-proposal.md)
+is a future design for [#885](https://github.com/ebarti/JobCtrl/issues/885).
+It is **PROPOSED**, awaits owner decisions, and does not change the current
+consent gate, retention, or deletion behavior described above.
 
 After entry, the compact **Demo guide** links to seeded scoring evidence,
 tailored-material review, Apply Review/dry-run, and run history. Every shortcut
@@ -204,20 +209,28 @@ records something you did. Follow-ups are reminders and never act automatically.
 | Service | When used | Data involved |
 | --- | --- | --- |
 | LLM providers | Scoring, employer analysis, materials, contact extraction, stored interview prep | Posting text, relevant profile evidence, generated text, or opted-in fetched page text. |
-| Job boards, ATS APIs, posting pages | Integrated Discovery and its enrichment drain, through the paired extension in the current Chrome profile | Search terms, URLs, and page/API requests; Chrome may also send cookies or other session state that already belongs to that site. Cookie values are never copied into worker tasks or results. The browser user-agent string is returned with results for robots evaluation only. |
+| Job boards, ATS APIs, posting pages | Discovery and Enrich prefer the connected paired extension; otherwise acquisition uses guarded public HTTP or anonymous Playwright | Both modes send search terms, URLs, and page/API requests. Connected Chrome may also send cookies or session state belonging to that site; its cookie values are never copied into worker tasks or results, and its user-agent string is returned as transport metadata. Anonymous acquisition uses no personal Chrome profile or ambient netrc credentials. |
 | Apply model and browser | Apply/dry-run work you start, or a standing loop you enable | Apply prompt, reviewed materials, profile application fields, and page interaction. |
 | Gmail | Authenticated verification, bounded outcome feedback, or an approved email application | Scoped queries/evidence or the exact approved recipient/attachment. |
 | Google Maps | Profile location autocomplete with a configured key | Address text typed into the location field. |
 | CAPTCHA provider | Supported widget during an apply run you explicitly start or a standing loop you enable, with a configured solver | Site key and page URL through the owned local tool. |
 | Langfuse/OpenTelemetry | Explicitly configured telemetry | Metadata-only LLM, workflow, and JSON-RPC spans: provider/model, operation/stage, outcome, token counts, and safe sizes. |
 
-Discovery and Enrich capture HTML and text from pages as rendered in your
-signed-in Chrome session. These snapshots can include account-personalized
-content beyond the posting, such as greetings or job-match panels. The worker
-processes that content; extracted posting text can be persisted locally and
-page HTML or posting text can be sent to configured LLM providers for extraction
-and later pipeline stages. Keeping broker tasks in memory does not prevent this
-downstream persistence or LLM processing.
+When using the connected paired extension, Discovery and Enrich capture HTML
+and text from your current Chrome session. If you are signed in, those snapshots
+can include account-personalized content beyond the posting, such as greetings
+or job-match panels. Anonymous acquisition captures public HTTP responses or
+pages rendered in a managed browser without adopting your personal Chrome
+profile. Anonymous JobStreaming sessions do not read `NETRC` or `~/.netrc`;
+provider-supplied protocol headers and cookies still work. Configured proxies
+that would route an anonymous provider request are rejected, including on
+redirects, because their destination DNS cannot be pinned safely.
+
+In either mode the worker processes the acquired content. Extracted posting
+text can be persisted locally, and page HTML or posting text can be sent to
+configured LLM providers for extraction and later pipeline stages. Keeping
+broker tasks in memory does not prevent this downstream persistence or LLM
+processing.
 
 Review [Security → What Leaves Your Machine](security.md#what-leaves-your-machine)
 before enabling a provider.

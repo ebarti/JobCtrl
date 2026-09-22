@@ -13,10 +13,12 @@ import { discoveryKeys } from "../discovery/queryKeys.js";
 import {
   invalidate,
   patchQuery,
+  reconcileQuery,
   type InvalidationItem,
 } from "../operations/invalidation-router.js";
 import { jobsKeys } from "../operations/jobsKeys.js";
-import { patchJobActiveState } from "../operations/realtimePatches.js";
+import { patchJobActiveState, reconcileJobActiveStatePage } from "../operations/realtimePatches.js";
+import type { JobsListInput } from "../operations/types.js";
 
 export const jobEnrichedHandler = (event: JobEnriched): readonly InvalidationItem[] => [
   invalidate(jobsKeys.lists(event.tenantId)),
@@ -67,13 +69,13 @@ export const postingContentSnapshotFailedHandler = (
 export const jobActiveStateChangedHandler = (
   event: JobActiveStateChanged,
 ): readonly InvalidationItem[] => [
-  // Active state is exact on an open detail. List membership can cross the
-  // active/closed filters, so list reconciliation remains bounded by tenant.
+  // Patch eligible pages; reconcile active/closed membership changes on the server.
   patchQuery(
     jobsKeys.detail(event.tenantId, event.payload.jobId),
     (current) => patchJobActiveState(current, event.payload),
   ),
-  invalidate(jobsKeys.lists(event.tenantId)),
+  reconcileQuery(jobsKeys.lists(event.tenantId), (current, key) =>
+    reconcileJobActiveStatePage(current, key[4] as JobsListInput, event.payload)),
   invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
   invalidate(discoveryKeys.sourceQuality(event.tenantId)),
   invalidate(dashboardKeys.summary(event.tenantId)),

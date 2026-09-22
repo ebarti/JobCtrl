@@ -267,7 +267,7 @@
   margin-bottom: 18px;
   padding: 12px 14px;
   border: 1px solid var(--configuration-rule);
-  border-radius: 8px;
+  border-radius: var(--radius);
   background: var(--configuration-surface);
 }
 
@@ -318,7 +318,7 @@
 .profile-layout .profile-sections > .form-section:first-child {
   margin-bottom: 16px;
   border: 1px solid var(--configuration-rule);
-  border-radius: 8px;
+  border-radius: var(--radius);
   background: var(--configuration-surface);
 }
 
@@ -381,7 +381,7 @@
 .profile-layout .profile-sections.profile-sections--card-stack > .form-section {
   margin-bottom: 0;
   border: 1px solid var(--configuration-rule);
-  border-radius: 8px;
+  border-radius: var(--radius);
   background: var(--configuration-surface);
 }
 
@@ -498,7 +498,7 @@
   grid-template-columns: minmax(0, 1fr);
   gap: 12px 16px;
   border: 1px solid var(--configuration-rule);
-  border-radius: 8px;
+  border-radius: var(--radius);
   background: var(--configuration-subtle);
   padding: 14px 16px 16px;
 }
@@ -575,7 +575,7 @@
 
 .profile-layout .achievement-evidence-card {
   border-color: var(--configuration-rule);
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--configuration-surface);
   box-shadow: none;
 }
@@ -584,7 +584,7 @@
 .profile-layout .date-range-present,
 .profile-layout .month-selector {
   border-color: transparent;
-  border-radius: 4px;
+  border-radius: var(--radius);
   background: var(--configuration-subtle);
 }
 
@@ -1005,7 +1005,7 @@
   overflow: hidden;
   margin: 24px 0 0;
   border: 1px solid var(--configuration-rule);
-  border-radius: 8px;
+  border-radius: var(--radius);
   background: var(--configuration-surface);
 }
 
@@ -1112,17 +1112,13 @@
   --border: oklch(1 0 0 / 14%);
   --input: oklch(1 0 0 / 20%);
   --ring: oklch(0.702 0.183 293.541);
-  --disabled-background: color-mix(
-    in oklch,
-    var(--muted) 82%,
-    var(--card)
-  );
+  --disabled-background: color-mix(in oklch, var(--muted) 82%, var(--card));
   --disabled-foreground: var(--muted-foreground);
   --disabled-border: var(--border);
   height: min(88dvh, 1050px);
   min-height: 760px;
   border: 1px solid var(--configuration-rule);
-  border-radius: 7px;
+  border-radius: var(--radius);
   color: var(--foreground);
 }
 /* visual-color-exception:end resume-editor-chrome */
@@ -1190,7 +1186,7 @@
 .config-layout > .configuration-section {
   overflow: hidden;
   border-color: var(--configuration-rule);
-  border-radius: 8px;
+  border-radius: var(--radius);
   background: var(--configuration-surface);
   box-shadow: none;
 }
@@ -1254,7 +1250,7 @@
 
 .config-layout .provider-card .tag,
 .profile-layout .tag {
-  border-radius: 4px;
+  border-radius: var(--radius);
   box-shadow: none;
 }
 
@@ -1270,7 +1266,7 @@
 .config-layout .credential-row-status {
   min-width: 0;
   max-width: 100%;
-  border-radius: 4px;
+  border-radius: var(--radius);
   justify-self: start;
   white-space: normal;
 }
@@ -1345,7 +1341,7 @@
 .config-layout .provider-cloud-guidance,
 .config-layout .provider-legacy-warning {
   border-color: var(--configuration-rule);
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--configuration-subtle);
 }
 
@@ -1407,7 +1403,7 @@
   overflow: hidden;
   margin: 0;
   border-color: var(--configuration-rule);
-  border-radius: 8px;
+  border-radius: var(--radius);
   background: var(--configuration-surface);
   box-shadow: none;
 }
@@ -1625,7 +1621,7 @@
 }
 
 .discovery-workspace .source-politeness-badge {
-  border-radius: 3px;
+  border-radius: var(--radius);
 }
 
 .discovery-workspace .source-table-category {
@@ -1676,7 +1672,7 @@
 .discovery-workspace textarea {
   min-height: var(--jh-control-height);
   border-color: var(--input);
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--configuration-surface);
   box-shadow: none;
 }
@@ -1967,4 +1963,20 @@
   .discovery-workspace .discovery-review-row .row-actions {
     grid-column: 2;
   }
+}
+
+/* Timetable section ink: strong subject boundaries, quiet internal dividers. */
+.profile-layout .profile-sections > .form-section,
+.profile-layout .profile-sections.profile-sections--card-stack > .form-section {
+  border-color: var(--foreground);
+  border-top-width: 2px;
+}
+
+.config-layout .configuration-section,
+.config-layout .provider-card {
+  border-top: 2px solid var(--foreground);
+}
+
+.config-layout .provider-disclosure {
+  border-top: 0;
 }

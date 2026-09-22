@@ -89,14 +89,18 @@ and observing that execution.
 
 ### Jobs
 
-![JobCtrl Jobs workspace with filters, saved views, fit evidence, and bulk actions](../assets/screenshots/jobs.png)
+![JobCtrl single-table Jobs workspace with a Job state filter, fit evidence, saved views, and bulk actions](../assets/screenshots/jobs.png)
 
-Jobs is the URL-backed triage table. Search, stage/state/apply/deleted filters,
-sorting, pagination, saved views, selection, columns, and bulk actions remain
-available before opening one record. **Active**, **Deleted**, and **Hidden** are
-the visible queues; legacy closed-posting filters do not become a fourth tab.
-The normal Active row omits redundant `OPEN` copy, deletion is destructive,
-and the default view keeps Sources and Warnings available but hidden. A
+Jobs is the URL-backed triage table. Search, stage/state/apply filters, sorting,
+pagination, saved views, selection, columns, and bulk actions remain available
+before opening one record. The **Job state** column filter shows **Active**,
+**Deleted**, **Hidden**, or a combination in the same table and defaults to
+Active; legacy closed-posting links remain compatible without adding another
+control. The normal Active row omits redundant `OPEN` copy, and deletion is
+destructive. The default view focuses on fit, title, company, Job state,
+location, stage, stage state, and Apply status. Source, compensation detail,
+warnings, resume template, and discovery date remain available through
+**Columns** and saved views. A
 focus-only row action opens the record without filling the table with visible
 **Open** buttons.
 
@@ -107,7 +111,11 @@ focus-only row action opens the record without filling the table with visible
 Job Detail keeps identity, score and requirement evidence, source provenance,
 compensation, description, employer analysis, interview prep, per-job actions,
 preparation diagnostics, active artifacts, Apply history, outcomes, contacts,
-and audit history in one route. Links hand off to Apply Review and Evidence
+and audit history in one route. Labeled metadata separates company, location,
+salary, posting, and discovery source. The assessment strip keeps fit score,
+band, confidence, eligibility, requirement fit, and must-have coverage together;
+missing assessments remain explicit. Requirement evidence starts visible and
+can be collapsed independently. Links hand off to Apply Review and Evidence
 without losing the job context.
 
 ### Job Run Timeline
@@ -130,6 +138,8 @@ failed retry remains audit history and never hides the last accepted artifact.
 On desktop the queue remains a left rail and the selected review reads as
 full-width sections in sequence; narrow screens move the queue above the review
 and wrap its decision actions.
+The **Submit gates** table keeps each gate's state beside its explanation;
+see [Apply](apply.md#approval-and-automation-modes) for the approval boundaries.
 
 ## Library And Evidence
 

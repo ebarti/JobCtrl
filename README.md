@@ -20,7 +20,7 @@ on your machine.
 [![Release Privacy Gate](https://github.com/ebarti/JobCtrl/actions/workflows/release-check.yml/badge.svg)](https://github.com/ebarti/JobCtrl/actions/workflows/release-check.yml)
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
 ![Source Python 3.11+](https://img.shields.io/badge/source-Python%203.11%2B-3776AB)
-![Source Node 20.19+](https://img.shields.io/badge/source-Node%2020.19%2B-339933)
+![Source Node 22.13+](https://img.shields.io/badge/source-Node%2022.13%2B-339933)
 
 <img src="docs/assets/screenshots/dashboard.png" alt="JobCtrl dashboard with pipeline health, active work, review queues, and recent activity (synthetic data)" width="880" />
 
@@ -72,7 +72,7 @@ credentials, resumes, application data, logs, or other personal information.
 
 ## Get Started
 
-JobCtrl `0.1.1` is the current early-access application release. The public
+JobCtrl `0.2.0` is the current early-access application release. The public
 version began at `0.1.0` after the pre-launch `2.0.x` numbering was withdrawn so
 the version communicates the product's actual maturity; this did not downgrade
 the product, data, database schema, launcher protocol, or security controls.
@@ -131,7 +131,9 @@ corepack pnpm dev
 ```
 
 Only this option requires Git and the contributor toolchain. Keep the
-`corepack pnpm dev` terminal open while using the source build. See
+`corepack pnpm dev` terminal open while using the source build. Startup builds
+the browser extension and prints its absolute path and manual Chrome
+load/reload instructions before starting the fleet. See
 [Local Development](docs/local-development.md) for prerequisites, component
 commands, isolated workspaces, and QA.
 
@@ -143,14 +145,14 @@ Full first-run guide: [jobctrl.dev/user/getting-started](https://jobctrl.dev/use
 
 | | |
 | --- | --- |
-| [<img src="docs/assets/screenshots/pipelines.png" alt="Pipelines workspace with launch controls, a visual stage flow, and diagnostics (synthetic data)" width="440" />](docs/assets/screenshots/pipelines.png) | [<img src="docs/assets/screenshots/jobs.png" alt="Jobs table with fit scores, stages, and filters (synthetic data)" width="440" />](docs/assets/screenshots/jobs.png) |
-| **Pipelines** — launch bounded work and inspect cohorts, backlog, capacity, ETA, and active tasks | **Jobs** — import a public posting URL, then filter and triage the canonical job alongside discovered results |
+| [<img src="docs/assets/screenshots/pipelines.png" alt="Pipelines workspace with launch controls, a visual stage flow, and diagnostics (synthetic data)" width="440" />](docs/assets/screenshots/pipelines.png) | [<img src="docs/assets/screenshots/jobs.png" alt="Single-table Jobs workspace with the Job state filter, fit scores, stages, and bulk actions (synthetic data)" width="440" />](docs/assets/screenshots/jobs.png) |
+| **Pipelines** — launch bounded work and inspect cohorts, backlog, capacity, ETA, and active tasks | **Jobs** — filter Active, Deleted, and Hidden records in one table while keeping stage progress distinct |
 | [<img src="docs/assets/screenshots/job-detail.png" alt="Route-level Job Detail workspace with requirement evidence and audit history (synthetic data)" width="440" />](docs/assets/screenshots/job-detail.png) | [<img src="docs/assets/screenshots/apply-review.png" alt="Application Review workspace editing a tailored resume with audit evidence (synthetic data)" width="440" />](docs/assets/screenshots/apply-review.png) |
 | **Job detail** — one bookmarkable workspace for fit, provenance, materials, progress, and history | **Apply Review** — edit and approve the exact resume and evidence binding that ships |
 
 Full tour with captions: [Product Tour](https://jobctrl.dev/user/product-tour).
 Documentation screenshots must be generated from synthetic data — refresh
-them with `pnpm docs:screenshots`
+them with `corepack pnpm docs:screenshots`
 ([how it works](https://jobctrl.dev/local-development#documentation-screenshots)).
 
 ## How It Compares
@@ -209,13 +211,12 @@ evidence, qualifications, and the complete capability matrix.
   application URLs are locators resolved only at explicit capture/import/API
   boundaries, so a URL change cannot detach scores, materials, outcomes, or
   workflow history. Source and employer remain separate persisted facts.
-- Fetch politely: integrated Discovery delegates every broad-board, ATS API,
-  Workday, Smart Extract, `robots.txt`, and detail-enrichment acquisition to the
-  paired extension in the user's currently running Chrome profile. Chrome owns
-  its live cookies, session, proxy, and user agent; JobCtrl keeps per-host
-  pacing, run budgets, robots evaluation, public-destination checks, and audit
-  outcomes around that transport. Discovery never copies or launches a profile
-  and has no direct-network fallback when the extension is offline (details in
+- Fetch politely: Discovery and detail enrichment prefer the paired extension
+  when it is connected, using the user's current Chrome session. Without it,
+  they use public HTTP and anonymous Playwright under the existing source,
+  pacing, budget, and destination controls. Neither mode consults robots.txt. Transport is chosen before
+  acquisition; a site failure never triggers a second transport. Integrated
+  work never copies a profile (details in
   [Local Data And Safety](#local-data-and-safety)).
 - Capture a current browser job page through the optional local browser
   extension, which feeds the existing manual-capture import path.
@@ -238,10 +239,11 @@ evidence, qualifications, and the complete capability matrix.
   nor required bullet pins retain their existing role details without generated
   bullets. A pinned bullet still needs supporting evidence from its own role;
   restore that evidence or remove the pin before tailoring.
-- Triage jobs through the real **Active**, **Deleted**, and **Hidden** queues.
-  The default Active view keeps source and warning columns available but hidden,
-  uses destructive styling for deletion, and opens a row through its focused
-  activation control instead of adding a competing always-visible action.
+- Triage jobs in one table with the **Job state** column filter for **Active**,
+  **Deleted**, and **Hidden**. The default Active filter keeps source and warning
+  columns available but hidden, uses destructive styling for deletion, and
+  opens a row through its focused activation control instead of adding a
+  competing always-visible action.
 - Review generated resumes in Apply Review as editable rich-text documents:
   change text and formatting, add hyperlinks, save a draft, render the
   replacement PDF, and approve only the exact reviewed artifact.
@@ -385,15 +387,20 @@ jobctrl capability enable auto-apply-browser --browser-path /path/to/Chrome
 ```
 
 LinkedIn Discovery and Enrich do not adopt that executable or copy a browser
-profile. They use the paired extension in the user's currently running Chrome
-profile, including job-scoped retries of previously blocked Enrich work.
+profile. They prefer a connected paired extension in the user's current Chrome profile.
+Without it they use anonymous access. Neither mode consults robots.txt;
+historical robots-blocked rows can be retried with or without the extension.
 
 ### Browser Extension Discovery, Capture, And Autofill
 
-The Manifest V3 extension is integrated Discovery's required live-browser
-transport and also a local capture/assist surface:
-build with `corepack pnpm extension:build`, load `dist/extension/` unpacked, and pair
-it with the token shown in JobCtrl Settings. **Save job** captures the active
+The optional Manifest V3 extension is Discovery's preferred live-browser
+transport when connected and also a local capture/assist surface:
+source startup builds it whenever the product web component is selected, or
+build it separately with `corepack pnpm extension:build`. Open
+`chrome://extensions`, enable **Developer mode**, load `dist/extension/` with
+**Load unpacked**, and pair it with the token shown in JobCtrl Settings. After
+rebuilding, click **Reload** on its extension card and reload open application
+tabs. **Save job** captures the active
 page over loopback into the manual-capture importer (same dedupe, snapshots,
 quarantine, and source provenance as any user-mediated capture), with a
 bounded offline queue when the stack is down. Its page script is available on
@@ -406,10 +413,12 @@ can run in the extension service worker; capture and autofill API calls remain
 loopback-only, and no remote request is created without a leased Discovery
 task.
 
-The same installed extension is the required browser transport for integrated
-Discovery. While Chrome is running, it heartbeats over loopback and executes
+The same installed extension is preferred for integrated Discovery and Enrich
+when connected. While Chrome is running, it heartbeats over loopback and executes
 bounded HTTP/API tasks in the extension service worker plus rendered-page tasks
-in temporary inactive tabs inside the profile where the extension is installed.
+in temporary tabs inside the profile where the extension is installed. LinkedIn
+job pages use an active tab in an unfocused temporary window so their content
+can render without taking focus; other pages use inactive tabs.
 Both use the user's live profile—not an exported or copied snapshot—so later
 cookie and session changes take effect automatically.
 Saving the pairing token in the extension explicitly selects that extension
@@ -421,11 +430,12 @@ it reports **Extension update incomplete** and disables pairing actions until
 the unpacked extension is reloaded; it never renders that mixed-version state
 as ready. After reload, an already stored token can select the current profile
 with **Use this Chrome profile for Discovery** without being copied again.
-Pipelines disables Discover while that heartbeat is absent, and the API also
-rejects the launch instead of falling back to Playwright or a copied profile.
+Pipelines shows extension status while allowing Discovery and Enrich launches
+offline. Each acquisition setup chooses the connected extension or anonymous
+access; an acquisition failure does not switch transports.
 Four extension executors provide bounded concurrency. Active leases heartbeat
 independently, and worker cancellation or the task's hard timeout aborts the
-request and closes an inactive tab when one exists. Direct HTTP/API requests
+request and closes its owned tab when one exists. Direct HTTP/API requests
 disable redirect following; rendered-page tabs use exact-origin request rules
 that block cross-origin main-frame redirects before Chrome dispatches them,
 while leaving the page's own fetch/XHR requests under Chrome's normal policy.
@@ -515,10 +525,9 @@ storage-and-privacy inventory:
 
 Everything in [What It Does](#what-it-does) above is **shipped and runs on
 your machine today** through the installed distribution or a source build.
-Workspace export/import and any hosted or multi-user deployment (accounts,
-billing, hosted browsers, object storage, cloud sync) live in
-[ROADMAP.md](ROADMAP.md). Nothing presented as current depends on a hosted
-JobCtrl service.
+Planned public work, including workspace export/import, lives in
+[ROADMAP.md](ROADMAP.md) and [GitHub Issues](https://github.com/ebarti/JobCtrl/issues).
+Nothing presented as current depends on a hosted JobCtrl service.
 
 ## Local Data And Safety
 
@@ -574,20 +583,16 @@ not make a manually copied or force-added private file safe to publish. Use
 [Data, Privacy & Safety](https://jobctrl.dev/user/data-and-safety) and
 [SECURITY.md](SECURITY.md).
 
-Integrated Discovery and its detail-enrichment drain use the paired extension
-in the user's current Chrome profile for every job-source page, job-source API,
-and `robots.txt` request. Chrome therefore owns the effective cookies, session,
-proxy, and browser user agent. JobCtrl still applies the source policy's
-per-host pacing, concurrency, and run budget before delegation; fetches and
-final destinations must remain public HTTP(S), and the browser-reported user
-agent is used for ordinary robots evaluation. LinkedIn detail enrichment inside
-the user's owner-authenticated live Chrome session is not classified by the
-anonymous crawler's robots verdict; the same pacing, request budget,
-destination, exact-origin, audit, and no-submit controls still apply. An
-inconclusive ordinary robots result fails closed, while an absent robots
-endpoint follows the documented warning policy. JobCtrl does not evade login,
-paywall, CAPTCHA, rate-limit, or bot-control gates, and the extension has no
-application-submission path.
+Integrated Discovery and Enrich prefer the paired extension when connected,
+including for job-source pages and APIs. Chrome then owns its cookies, session,
+proxy and user agent. An offline or unavailable extension selects guarded public
+HTTP or anonymous Playwright before acquisition. Neither mode requests,
+evaluates or enforces `robots.txt`; historical blocks remain retryable. JobCtrl
+still enforces source pacing, concurrency, request budgets, public destinations,
+redirect controls, audit history and cancellation. Integrated acquisition never
+copies a profile or switches transport after an acquisition failure. Login,
+paywall, CAPTCHA, rate-limit and bot-control gates retain their existing
+handling, and the extension has no application-submission path.
 The API validates DNS both when the worker enqueues a task and immediately
 before the extension receives its lease. Brokered HTTP/API fetches run in the
 extension service worker with Chrome credentials and redirect following
@@ -602,7 +607,7 @@ posting content to configured LLM providers; see the
 [data-flow notice](docs/user/data-and-safety.md#external-services).
 
 The configurable `JobCtrl/<version> (+<contact>)` crawl identity remains the
-identity for standalone/non-extension gateway operations and is reported by
+identity for non-extension gateway operations and is reported by
 `jobctrl doctor`; it is not substituted for Chrome's own user agent during a
 live-profile Discovery run. Existing copied-profile capabilities remain for
 separately consented compatibility paths, but `DiscoverWorkflow` never reads or
@@ -625,15 +630,15 @@ This writes `~/.jobctrl/backups/jobctrl-<timestamp>.db` via SQLite
 `VACUUM INTO` and never deletes anything (`--output <path>` to choose a
 target).
 
-The native exact-v9 update performs its own paired migration safeguard. It
-stops JobCtrl and backs up both `jobctrl.db` and bundled Temporal state. An
-admitted v6 installation is quiesced and transformed through a private exact-v7
-and then exact-v8 intermediate before v9 is sealed; an exact-v7 installation
-starts at the private v8 step, while an exact-v8 installation receives only
-the additive optional position-summary column. Intermediates are never
-installed. Any failed build, verification, activation, or readiness check
-restores the previous pair. The API and worker run exact v9 only; there is no
-mixed-version, dual-write, or permanent fallback runtime.
+The native exact-v10 update performs its own paired migration safeguard. It
+stops JobCtrl and backs up both `jobctrl.db` and bundled Temporal state. Admitted
+v6/v7/v8 sources pass through private intermediate schemas; exact v9 transfers
+application URLs directly into canonical enrichment and lookup aliases before
+removing the legacy job column. Existing canonical targets win, and legacy-only
+values remain usable. Intermediates are never installed. Any failed build,
+verification, activation, or readiness check restores the previous pair. The
+API and worker run exact v10 only; there is no mixed-version or dual-write runtime.
+See the [storage contract](docs/architecture/storage.md) for preservation rules.
 
 <details>
 <summary><b>Restore steps</b></summary>
@@ -833,9 +838,9 @@ Enable explicitly adopts it for Apply; an advanced manual executable path
 remains available. Settings does not offer LinkedIn profile copying. Browser
 enable/disable and pairing-token rotation are live, and extension pairing
 remains separate from Apply-browser adoption. Integrated Discovery and Enrich
-require a live heartbeat from the extension installed in the user's
-already-running Chrome profile and never use an adopted executable or copied
-profile.
+prefer the extension with a current heartbeat in the user's already-running
+Chrome profile. They can run anonymously without it and never use an adopted
+executable or copied profile.
 
 ## Development
 
@@ -863,8 +868,9 @@ workflow: [CONTRIBUTING.md](CONTRIBUTING.md).
 - [Reliability & QA](https://jobctrl.dev/local-reliability-qa) — regression
   matrix and QA gates.
 - [Decisions](docs/decisions.md) — accepted architecture decisions.
-- [docs/backlog.md](docs/backlog.md) · [docs/plans/](docs/plans/) — backlog
-  and implementation records.
+- [GitHub Issues](https://github.com/ebarti/JobCtrl/issues) · [migration index #881](https://github.com/ebarti/JobCtrl/issues/881)
+  — actionable work and historical backlog dispositions.
+- [docs/plans/](docs/plans/) — implementation plans and delivery records.
 
 ## License
 

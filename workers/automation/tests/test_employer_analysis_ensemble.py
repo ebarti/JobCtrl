@@ -20,11 +20,13 @@ from typing import Any
 
 import pytest
 
+import jobctrl.llm as legacy_llm
 from jobctrl.domain.materials.analysis import (
     EnsembleError,
     JobAnalysis,
     JobAnalysisDraft,
 )
+from jobctrl.domain.materials.analysis_content import AnalysisContentError, validate_candidate_prose
 from jobctrl.infrastructure.analysis import claude_analysis_adapter
 from jobctrl.infrastructure.analysis.claude_analysis_adapter import (
     ClaudeAnalysisAdapter,
@@ -32,6 +34,7 @@ from jobctrl.infrastructure.analysis.claude_analysis_adapter import (
 )
 from jobctrl.infrastructure.analysis.codex_analysis_adapter import CodexAnalysisAdapter
 from jobctrl.infrastructure.analysis.ensemble import compute_agreement, run_ensemble
+from jobctrl.infrastructure.llm.provider_errors import ProviderCallError
 
 pytestmark = pytest.mark.asyncio
 
@@ -183,6 +186,54 @@ class _FakeAsyncCodex:
         return self.thread
 
 
+class _CloseFailureStream:
+    def __init__(self, turn_id: str) -> None:
+        self._turn_id = turn_id
+        self._yielded = False
+
+    def __aiter__(self) -> _CloseFailureStream:
+        return self
+
+    async def __anext__(self) -> Any:
+        if self._yielded:
+            raise StopAsyncIteration
+        self._yielded = True
+        return SimpleNamespace(
+            payload=SimpleNamespace(
+                turn_id=self._turn_id,
+                token_usage=SimpleNamespace(
+                    total=SimpleNamespace(input_tokens=17, output_tokens=9)
+                ),
+            )
+        )
+
+    async def aclose(self) -> None:
+        raise RuntimeError("synthetic close failure")
+
+
+class _CloseFailureHandle:
+    id = "turn-close-failure"
+
+    def stream(self) -> _CloseFailureStream:
+        return _CloseFailureStream(self.id)
+
+
+class _CloseFailureThread:
+    async def turn(self, prompt: str, **kwargs: Any) -> _CloseFailureHandle:
+        return _CloseFailureHandle()
+
+
+class _CloseFailureCodex:
+    async def __aenter__(self) -> _CloseFailureCodex:
+        return self
+
+    async def __aexit__(self, *exc: Any) -> None:
+        return None
+
+    async def thread_start(self, **kwargs: Any) -> _CloseFailureThread:
+        return _CloseFailureThread()
+
+
 # --------------------------------------------------------------------------- #
 # Adapter tests
 # --------------------------------------------------------------------------- #
@@ -246,13 +297,13 @@ class TestClaudeAdapter:
         attrs = dict(span.attributes or {})
         assert attrs["langfuse.observation.type"] == "generation"
         assert attrs["langfuse.observation.model.name"] == "claude-opus-4-8"
-        # input = 1200 fresh + 50 cache_read; cache tokens count toward input processed.
-        assert attrs["gen_ai.usage.input_tokens"] == 1250
+        # Cached input is a subset of provider input and is not added twice.
+        assert attrs["gen_ai.usage.input_tokens"] == 1200
         assert attrs["gen_ai.usage.output_tokens"] == 340
         assert json.loads(attrs["langfuse.observation.usage_details"]) == {
-            "input_tokens": 1250,
+            "input_tokens": 1200,
             "output_tokens": 340,
-            "total_tokens": 1590,
+            "total_tokens": 1540,
         }
 
     async def test_draft_span_omits_tokens_when_sdk_reports_no_usage(self, in_memory_exporter) -> None:
@@ -376,6 +427,31 @@ class TestCodexAdapter:
         assert attrs["langfuse.observation.model.name"] == "gpt-5.5"
         assert attrs["gen_ai.usage.input_tokens"] == 800
         assert attrs["gen_ai.usage.output_tokens"] == 210
+
+    async def test_records_usage_before_stream_close_failure(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        spend: list[dict[str, Any]] = []
+        monkeypatch.setattr(legacy_llm, "enforce_spend_budget", lambda _lane=None: None)
+        monkeypatch.setattr(legacy_llm, "record_llm_spend", lambda **kwargs: spend.append(kwargs))
+        adapter = CodexAnalysisAdapter(
+            model="gpt-5.5",
+            async_codex_factory=_CloseFailureCodex,
+        )
+
+        with pytest.raises(ProviderCallError) as raised:
+            await adapter.draft("system", JD)
+
+        assert raised.value.envelope.category == "provider_exception"
+        assert spend == [
+            {
+                "input_tokens": 17,
+                "output_tokens": 9,
+                "model": "gpt-5.5",
+                "lane": "discovery",
+            }
+        ]
 
 
 # --------------------------------------------------------------------------- #
@@ -572,3 +648,135 @@ class TestAgreement:
         assert 0.0 <= agreement.score < 1.0
         assert "kafka" in agreement.flagged_requirements
         assert {"go", "payments"}.issubset(set(agreement.flagged_keywords))
+
+
+@pytest.mark.parametrize("rejected_narrative", [
+    "Both experts converge on a distributed-systems owner.",
+    "Both experts converged on a distributed-systems owner.",
+    "The analysis concluded that the ideal candidate owns distributed systems.",
+])
+async def test_synthesizer_reasks_process_commentary_and_accepts_candidate_prose(rejected_narrative: str) -> None:
+    class RepairingSynthesizer:
+        def __init__(self):
+            self.prompts = []
+
+        async def reconcile(self, system_prompt, *, drafts, jd_snapshot):
+            self.prompts.append(system_prompt)
+            narrative = (
+                rejected_narrative
+                if len(self.prompts) == 1 else
+                "A distributed-systems owner who works with domain experts and builds ensemble models."
+            )
+            return JobAnalysis.model_validate({**_grounded_dict(), "ideal_candidate_narrative": narrative})
+
+    synth = RepairingSynthesizer()
+    outcome = await run_ensemble("sys", JD, adapters=(_StubDraftAdapter("one", returns=_grounded_dict()),),
+                                 synthesizer=synth, synthesizer_system_prompt="synth", max_leg_retries=1)
+    assert len(synth.prompts) == 2
+    assert "previous output was rejected" in synth.prompts[1]
+    assert "works with domain experts" in outcome.canonical.ideal_candidate_narrative
+
+
+@pytest.mark.parametrize("narrative", [
+    "Both experts converge on a platform engineer.",
+    "Both experts converged on a platform engineer.",
+    "Both experts have converged on a platform engineer.",
+    "Both experts were converging on a platform engineer.",
+    "The analysis concluded that the ideal candidate owns the platform.",
+    "The analysis has concluded that the ideal candidate owns the platform.",
+    "The drafts agreed on the profile.",
+    "The analyses agree that a platform engineer is needed.",
+    "Based on the job description, the ideal candidate owns the platform.",
+    "We analyzed the posting and determined the candidate profile.",
+])
+async def test_synthesizer_rejects_persistent_process_commentary(narrative: str) -> None:
+    with pytest.raises(AnalysisContentError):
+        await run_ensemble("sys", JD, adapters=(_StubDraftAdapter("one", returns=_grounded_dict()),),
+                           synthesizer=_StubSynthesizer(returns={**_grounded_dict(), "ideal_candidate_narrative": narrative}),
+                           synthesizer_system_prompt="synth", max_leg_retries=1)
+
+
+# Domain prose legitimately names models, assessments, analyses, drafts and
+# experts as the candidate's own work. Only narration about producing the
+# profile is process commentary.
+@pytest.mark.parametrize("narrative", [
+    "Owns training infrastructure and ensures the models converge under distributed training.",
+    "Owns the models describing customer churn.",
+    "A clinical scientist who leads the assessments described in the study protocol.",
+    "Designs curricula and ensures the assessments identify learning gaps.",
+    "Builds offensive tooling so the analysis identifies exploitable paths.",
+    "the analysis identifies exploitable paths",
+    "All models are described in model cards.",
+    "After assessments, they design targeted interventions.",
+    "An ML engineer who ships models that identify fraud in real time.",
+    "These models identify fraud in real time.",
+    "Builds consensus among domain experts and engineers.",
+    "Someone who mentors analysts and reviews their drafts before publication.",
+    "Leads data analyses that reveal churn drivers; presents findings to leadership.",
+])
+async def test_candidate_prose_accepts_domain_roles_about_models_assessments_and_analysis(narrative: str) -> None:
+    validate_candidate_prose(JobAnalysis.model_validate({**_grounded_dict(), "ideal_candidate_narrative": narrative}))
+
+
+@pytest.mark.parametrize("narrative", [
+    "Experts converge on a platform owner.",
+    "The two drafts agree on a platform owner.",
+    "The combined analysis suggests a platform owner.",
+    "Each expert independently identified a platform owner.",
+    "A platform owner. Both models converge on this profile.",
+    "All three independent models identified a platform owner.",
+    "A platform owner, as both experts agree, who leads reliability work.",
+    "After reconciling both drafts, the ideal candidate owns the platform.",
+    "According to the job posting, the ideal candidate owns the platform.",
+    "This assessment shows a platform owner is needed.",
+    "Both drafts are aligned on a platform owner.",
+    "One draft suggests a platform owner while another emphasizes leadership.",
+])
+async def test_candidate_prose_rejects_process_narration(narrative: str) -> None:
+    with pytest.raises(AnalysisContentError):
+        validate_candidate_prose(JobAnalysis.model_validate({**_grounded_dict(), "ideal_candidate_narrative": narrative}))
+
+
+async def test_candidate_prose_checks_role_framing() -> None:
+    with pytest.raises(AnalysisContentError, match="role_framing"):
+        validate_candidate_prose(JobAnalysis.model_validate(
+            {**_grounded_dict(), "role_framing": "Both experts agree: own the payments platform."}))
+
+
+async def test_draft_leg_retries_process_commentary_with_rejection_feedback() -> None:
+    class RepairingDraftAdapter:
+        model_id = "claude-opus-4-8"
+
+        def __init__(self) -> None:
+            self.prompts: list[str] = []
+
+        async def draft(self, system_prompt: str, jd_snapshot: str) -> JobAnalysisDraft:
+            self.prompts.append(system_prompt)
+            narrative = (
+                "Both experts converge on a distributed-systems owner."
+                if len(self.prompts) == 1 else
+                "A distributed-systems owner who ensures the models converge under distributed training."
+            )
+            analysis = JobAnalysis.model_validate({**_grounded_dict(), "ideal_candidate_narrative": narrative})
+            return JobAnalysisDraft(model_id=self.model_id, **analysis.model_dump())
+
+    adapter = RepairingDraftAdapter()
+    outcome = await run_ensemble("sys", JD, adapters=(adapter,), synthesizer=_StubSynthesizer(),
+                                 synthesizer_system_prompt="synth", max_leg_retries=1)
+    assert adapter.prompts[0] == "sys"
+    assert len(adapter.prompts) == 2
+    assert adapter.prompts[1].startswith("sys\nYour previous output was rejected: ideal_candidate_narrative")
+    assert outcome.failures == ()
+    assert "ensures the models converge" in outcome.drafts[0].ideal_candidate_narrative
+
+
+async def test_persistent_draft_process_commentary_is_a_recorded_leg_failure() -> None:
+    commentary = {**_grounded_dict(), "ideal_candidate_narrative": "Both experts converge on a platform owner."}
+    bad = _StubDraftAdapter("gpt-5.4", returns=commentary)
+    good = _StubDraftAdapter("claude-opus-4-8", returns=_grounded_dict())
+    outcome = await run_ensemble("sys", JD, adapters=(bad, good), synthesizer=_StubSynthesizer(),
+                                 synthesizer_system_prompt="synth", max_leg_retries=1)
+    assert bad.calls == 2
+    assert [failure.model_id for failure in outcome.failures] == ["gpt-5.4"]
+    assert outcome.failures[0].error.startswith("AnalysisContentError")
+    assert [draft.model_id for draft in outcome.drafts] == ["claude-opus-4-8"]

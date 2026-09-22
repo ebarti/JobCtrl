@@ -209,10 +209,10 @@ const externalItems: readonly BoundaryItem[] = [
   --boundary-card: var(--vp-c-bg);
   --boundary-text: var(--vp-c-text-1);
   --boundary-muted: var(--vp-c-text-2);
-  --boundary-local: #047857;
-  --boundary-local-soft: #ecfdf5;
-  --boundary-external: #b45309;
-  --boundary-external-soft: #fffbeb;
+  --boundary-local: var(--vp-c-text-1);
+  --boundary-local-soft: var(--vp-c-bg-soft);
+  --boundary-external: var(--warning-text);
+  --boundary-external-soft: var(--vp-c-bg-soft);
   --boundary-gate: var(--vp-c-brand-1);
   --boundary-gate-soft: var(--vp-c-brand-soft);
   position: relative;
@@ -223,21 +223,19 @@ const externalItems: readonly BoundaryItem[] = [
   padding: clamp(0.9rem, 2.5vw, 1.35rem);
   overflow: hidden;
   border: 1px solid var(--boundary-border);
-  border-radius: 1.2rem;
-  background:
-    radial-gradient(circle at 0% 48%, color-mix(in oklab, var(--boundary-local-soft), transparent 22%), transparent 29%),
-    radial-gradient(circle at 100% 48%, color-mix(in oklab, var(--boundary-external-soft), transparent 22%), transparent 29%),
-    var(--boundary-panel);
-  box-shadow: 0 16px 42px color-mix(in srgb, #0f172a 10%, transparent);
+  border-top: 3px solid var(--vp-c-text-1);
+  border-radius: var(--jh-doc-radius);
+  background: var(--vp-c-bg);
+  box-shadow: none;
   color: var(--boundary-text);
 }
 
 :global(.dark) .data-boundary {
-  --boundary-local: #34d399;
-  --boundary-local-soft: color-mix(in oklab, #064e3b, var(--vp-c-bg) 52%);
-  --boundary-external: #fbbf24;
-  --boundary-external-soft: color-mix(in oklab, #78350f, var(--vp-c-bg) 58%);
-  box-shadow: 0 18px 48px rgb(0 0 0 / 0.28);
+  --boundary-local: var(--vp-c-text-1);
+  --boundary-local-soft: var(--vp-c-bg-soft);
+  --boundary-external: var(--warning-text);
+  --boundary-external-soft: var(--vp-c-bg-soft);
+  box-shadow: none;
 }
 
 .data-boundary__caption {
@@ -288,7 +286,7 @@ const externalItems: readonly BoundaryItem[] = [
 .data-boundary__triggers {
   padding: 0.8rem;
   border: 1px solid var(--boundary-border);
-  border-radius: 0.9rem;
+  border-radius: var(--jh-doc-radius);
   background: color-mix(in oklab, var(--boundary-card), transparent 2%);
 }
 
@@ -314,7 +312,7 @@ const externalItems: readonly BoundaryItem[] = [
   inline-size: 1.9rem;
   block-size: 1.9rem;
   place-items: center;
-  border-radius: 0.6rem;
+  border-radius: var(--jh-doc-radius);
   background: var(--boundary-gate-soft);
   color: var(--boundary-gate);
   font-size: 0.65rem;
@@ -345,7 +343,7 @@ const externalItems: readonly BoundaryItem[] = [
   min-inline-size: 0;
   padding: 0.58rem;
   border: 1px solid var(--boundary-border);
-  border-radius: 0.72rem;
+  border-radius: var(--jh-doc-radius);
   background: var(--boundary-panel);
 }
 
@@ -363,7 +361,7 @@ const externalItems: readonly BoundaryItem[] = [
 .data-boundary__trigger-icon {
   inline-size: 2rem;
   block-size: 2rem;
-  border-radius: 0.62rem;
+  border-radius: var(--jh-doc-radius);
 }
 
 .data-boundary__trigger-icon :deep(svg) {
@@ -407,7 +405,7 @@ const externalItems: readonly BoundaryItem[] = [
   min-inline-size: 0;
   padding: 0.75rem;
   border: 1px solid currentColor;
-  border-radius: 0.9rem;
+  border-radius: var(--jh-doc-radius);
 }
 
 .data-boundary__zone--local {
@@ -432,7 +430,7 @@ const externalItems: readonly BoundaryItem[] = [
 .data-boundary__zone-icon {
   inline-size: 2.25rem;
   block-size: 2.25rem;
-  border-radius: 0.7rem;
+  border-radius: var(--jh-doc-radius);
 }
 
 .data-boundary__zone--local .data-boundary__zone-icon,
@@ -484,14 +482,14 @@ const externalItems: readonly BoundaryItem[] = [
   margin: 0;
   padding: 0.5rem;
   border: 1px solid color-mix(in oklab, currentColor, var(--boundary-border) 68%);
-  border-radius: 0.66rem;
+  border-radius: var(--jh-doc-radius);
   background: color-mix(in oklab, var(--boundary-card), transparent 2%);
 }
 
 .data-boundary__item-icon {
   inline-size: 1.75rem;
   block-size: 1.75rem;
-  border-radius: 0.52rem;
+  border-radius: var(--jh-doc-radius);
 }
 
 .data-boundary__item-icon :deep(svg) {
@@ -523,7 +521,7 @@ const externalItems: readonly BoundaryItem[] = [
   gap: 0.35rem;
   padding: 0.65rem 0.45rem;
   border: 1px solid var(--boundary-gate);
-  border-radius: 0.78rem;
+  border-radius: var(--jh-doc-radius);
   background: var(--boundary-gate-soft);
   color: var(--boundary-gate);
   text-align: center;
@@ -583,7 +581,7 @@ const externalItems: readonly BoundaryItem[] = [
   padding: 0.72rem 0.8rem;
   border: 1px solid var(--boundary-border);
   border-inline-start: 3px solid var(--boundary-gate);
-  border-radius: 0.75rem;
+  border-radius: var(--jh-doc-radius);
   background: color-mix(in oklab, var(--boundary-card), transparent 2%);
   font-size: 0.74rem;
 }
@@ -614,7 +612,7 @@ const externalItems: readonly BoundaryItem[] = [
 @media (max-width: 38rem) {
   .data-boundary {
     padding: 0.75rem;
-    border-radius: 1rem;
+    border-radius: var(--jh-doc-radius);
   }
 
   .data-boundary__trigger-list,

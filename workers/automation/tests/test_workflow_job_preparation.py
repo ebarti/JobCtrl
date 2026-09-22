@@ -38,6 +38,12 @@ async def _check_spend_budget(_payload) -> SpendBudgetStatus:
         output_tokens=0,
         estimated_usd=0.0,
         daily_budget_usd=25.0,
+        lane="scoring",
+        lane_input_tokens=0,
+        lane_output_tokens=0,
+        lane_token_limit=0,
+        lane_exceeded=False,
+        global_exceeded=False,
         exceeded=False,
     )
 

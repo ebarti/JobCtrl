@@ -66,7 +66,7 @@ posting. Extracted posting text can be stored locally, and snapshots or posting
 text can reach configured LLM providers during extraction and later stages.
 See the [data-flow notice](data-and-safety.md#external-services). Cookie values
 are never copied into worker tasks or results; the browser user-agent string is
-returned with results for robots evaluation only.
+returned with results as transport metadata; it is not used for robots checks.
 
 The Apply model receives no applicant profile or generated-material prose.
 Reviewed resume and cover-letter files remain local for the user to handle
@@ -127,8 +127,9 @@ valid token for its scoped routes, but it cannot read, mint, or rotate the token
 itself.
 
 Once paired, the extension polls a loopback-only lease route and supplies the
-heartbeat shown in Settings. Integrated Discovery creates only execution-bound,
-idempotent tasks carrying the exact Temporal workflow/run identity, one public
+heartbeat shown in Settings. When selected for acquisition, the extension
+receives only execution-bound, idempotent tasks carrying the exact Temporal
+workflow/run identity, one public
 HTTP(S) URL, a `GET` or `POST` request or a rendered-page request, a maximum
 two-minute timeout, and bounded bodies/results. Browser-owned `Cookie`,
 `User-Agent`, `Origin`, `Referer`, `Host`, and all `Sec-*`/`Proxy-*` headers are
@@ -141,9 +142,10 @@ complete work until the user replaces the selection there. The broker is
 memory-only and admits at most four active/pending tasks for four extension
 executors. Queue waiting and lease execution use separate bounds. Each active
 lease heartbeats while Chrome works; cancellation or a hard timeout aborts the
-request, closes an inactive tab when one exists, and invalidates stale
-completion. If the live heartbeat disappears, new Discovery work fails closed
-rather than copying or launching a profile.
+request, closes its owned tab when one exists, and invalidates stale
+completion. A selected extension disconnect can fail its acquisition; it does
+not trigger another transport for that fetch. The next acquisition setup may
+select anonymous access if the bounded status probe reports unavailable.
 
 Capture requires a click and sends the active page URL/visible text to the local
 API. If the stack is down, the extension holds a bounded local queue. Autofill
@@ -159,8 +161,8 @@ JobCtrl treats URLs from postings, redirects, captured pages, and model output
 as untrusted. Its shared public-destination guard resolves the target and accepts
 only public HTTP(S). It blocks loopback, private-network, link-local, reserved,
 unspecified, multicast, cloud-metadata, `file:`, and other non-web targets.
-Integrated Discovery validates each task's initial URL before leasing it and
-revalidates DNS immediately before returning the lease. The extension's
+For connected-extension acquisition, the API validates each task's initial URL
+before leasing it and revalidates DNS immediately before returning the lease. The extension's
 wildcard HTTP(S) host permission exists only to execute those brokered tasks in
 the installed profile. Direct HTTP/API tasks run in the service worker with
 redirect following disabled. Rendered-page navigation uses a tab-scoped
@@ -173,7 +175,18 @@ The content script and broker also reject
 non-web, credential-bearing, lexically local, or cross-origin final URLs. A
 rendered page's ordinary subresource loading remains owned by Chrome and the
 visited site, as it would during normal browsing in that profile.
-Contact research and apply retain their own stricter transport guards.
+Anonymous JobStreaming uses guarded Requests sessions for every provider,
+including providers normally backed by native tls-client. URL/DNS checks run
+before each send, including automatic redirects; direct sockets connect to
+validated numeric public addresses. Search-session replacement and per-detail
+sessions use the same guard. Public redirects preserve normal Requests
+handling, including removal of cross-origin credentials. Proxy routing is
+rejected in this anonymous broad-board path because proxy-side destination DNS
+cannot be pinned by the worker; it never silently ignores a configured proxy.
+Provider headers, cookies, request bodies and timeout options remain supported.
+ATS/API and Workday use the existing guarded HTTP gateway; anonymous Smart
+Extract and Enrich use the public Playwright route guard described below.
+Contact research and Apply retain their own stricter transport guards.
 
 For public-page rendering, JobCtrl replays only safe public `GET` and `HEAD`
 requests through its DNS-pinned fetcher. It drops public write subrequests such
@@ -275,14 +288,14 @@ choosing not to click Submit.
 
 ### Browser Capabilities Are Explicit
 
-Integrated Discovery and LinkedIn Enrich use only the selected extension in the
-user's currently running Chrome profile. The normal Settings flow does not
-launch Playwright for those stages, adopt a Chrome executable, or offer a
-browser-profile copy. A live extension heartbeat is required before dispatch,
-and an Enrich retry is rejected before its stage is reset when that heartbeat is
-absent. The bundled managed Playwright Chromium remains available for separate
-rendering/compatibility work, and the optional Apply browser remains disabled
-until explicitly adopted.
+Discovery and Enrich prefer the selected paired extension when its bounded
+status probe reports connected. Otherwise they use guarded public HTTP or
+anonymous managed Playwright. API launch and job-level/bulk retries remain
+available offline, subject to worker readiness, authorization and stage gates.
+A failed acquisition or cancellation never switches transports. Neither mode
+adopts a Chrome executable or reads a copied profile, even if a standalone
+compatibility capability has prior consent. The optional Apply browser remains
+disabled until explicitly adopted.
 
 The Apply-browser Settings read path may detect supported Chrome/Chromium installations, but
 it returns only a bounded ID and label. Detection never launches, adopts,
@@ -333,27 +346,25 @@ unsupported/failed challenges, the apply path stops.
 
 ### Crawl Politeness
 
-Integrated Discovery and its enrichment drain apply the crawl-policy gateway
-around the paired live-Chrome transport:
+Discovery and Enrich do not request, evaluate, or enforce `robots.txt` in
+connected or anonymous mode. Legacy blocked outcomes remain readable and
+retryable; old source-policy values cannot reactivate enforcement.
 
-- `robots.txt` is enforced for page rendering: `2xx` parses the file, `4xx`
-  means absent, `5xx`/timeout is inconclusive and fails closed, and definitive
-  network absence fails open with a warning;
-- initial task URLs and browser-reported final URLs must be public HTTP(S);
-- per-host pacing, concurrency, and per-run request budgets limit load;
-- Chrome owns cookies, proxy, and user agent, and the returned browser user agent
-  is used for robots evaluation; and
-- denied/rate-limited/budget/unsafe destinations are recorded as outcomes, not
-  generic scrape errors.
+- Initial URLs, DNS resolution, redirects and final URLs retain their public
+  destination checks; rendered browser tasks retain exact-origin navigation guards.
+- Per-host pacing, concurrency, and per-run request budgets limit load.
+- Chrome owns its cookies, proxy and user agent; anonymous acquisition never
+  borrows a personal profile or ambient credentials.
+- Rate-limit, budget and unsafe-destination outcomes remain distinguishable from
+  generic scrape errors, and cancellation still ends owned work.
 
-JobStreaming owns its internal board traversal, but its provider sessions are
-replaced with the same extension transport during integrated Discovery; JobCtrl
-therefore applies only invocation-level pacing/budget where it cannot truthfully
-count the library's internal requests. The configured
-`JobCtrl/<version> (+<contact>)` identity remains in use for standalone/non-
-extension gateway operations and is never substituted for Chrome's live user
-agent. Existing copied-profile capabilities remain separate and are not a
-Discovery fallback. See
+JobStreaming owns internal board traversal. JobCtrl applies invocation-level
+pacing/budget there, with a public-destination guard on every anonymous request,
+rather than claiming per-request budget accounting.
+Its provider sessions prefer the extension when connected. The configured
+`JobCtrl/<version> (+<contact>)` identity remains in use for non-extension
+gateways and integrated anonymous broad-board requests; it is never substituted
+for Chrome's live user agent. Copied-profile capabilities remain separate. See
 [Discovery → Crawl Politeness](discovery.md#crawl-politeness).
 
 ## Credentials

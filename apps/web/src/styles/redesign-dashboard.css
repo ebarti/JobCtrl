@@ -9,9 +9,10 @@
   overflow: hidden;
   margin-bottom: 20px;
   border: 1px solid var(--border);
+  border-top: 2px solid var(--foreground);
   border-radius: calc(var(--radius) * 1.15);
   background: var(--card);
-  box-shadow: 0 1px 2px color-mix(in oklch, var(--foreground) 5%, transparent);
+  box-shadow: var(--shadow-panel);
 }
 
 .dashboard-view .kpis > * {
@@ -43,11 +44,29 @@
 }
 
 .dashboard-view .kpis [data-slot="stat-value"] {
+  display: grid;
+  place-items: center;
+  width: max-content;
+  min-width: 40px;
+  min-height: 40px;
+  padding: 4px 8px;
+  background: var(--primary);
+  color: var(--primary-foreground);
   margin-top: auto;
   font-size: var(--jh-type-metric-size);
   font-weight: var(--jh-type-metric-weight);
   letter-spacing: normal;
   line-height: var(--jh-type-metric-line-height);
+}
+
+.dashboard-view .kpis [data-slot="stat-value"][data-tone="warn"] {
+  background: var(--warning);
+  color: var(--warning-foreground);
+}
+
+.dashboard-view .kpis [data-slot="stat-value"][data-tone="down"] {
+  background: var(--destructive);
+  color: var(--destructive-foreground);
 }
 
 .dashboard-stack {
@@ -68,9 +87,10 @@
   gap: 0;
   overflow: hidden;
   border: 1px solid var(--border);
+  border-top: 2px solid var(--foreground);
   border-radius: calc(var(--radius) * 1.15);
   background: var(--card);
-  box-shadow: 0 1px 2px color-mix(in oklch, var(--foreground) 4%, transparent);
+  box-shadow: var(--shadow-panel);
 }
 
 .dashboard-ops > :nth-child(1) {
@@ -99,9 +119,10 @@
   gap: 0;
   overflow: hidden;
   border: 1px solid var(--border);
+  border-top: 2px solid var(--foreground);
   border-radius: calc(var(--radius) * 1.15);
   background: var(--card);
-  box-shadow: 0 1px 2px color-mix(in oklch, var(--foreground) 4%, transparent);
+  box-shadow: var(--shadow-panel);
 }
 
 .dashboard-tail > .card {
@@ -180,15 +201,15 @@
 .dashboard-view .bar {
   height: 7px;
   border: 0;
-  border-radius: 999px;
+  border-radius: 0;
 }
 
 .dashboard-view .bar > span:first-child {
-  border-radius: 999px 0 0 999px;
+  border-radius: 0;
 }
 
 .dashboard-view .bar > span:last-child {
-  border-radius: 0 999px 999px 0;
+  border-radius: 0;
 }
 
 .dashboard-view .conversion-body {
@@ -363,10 +384,6 @@
 }
 
 @media (max-width: 1500px) {
-  .dashboard-view .kpis {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
   .dashboard-ops > :nth-child(1) {
     grid-column: span 12;
     border-right: 0;
@@ -380,6 +397,12 @@
 
   .dashboard-ops > :nth-child(2) {
     border-right: 1px solid var(--border);
+  }
+}
+
+@media (max-width: 1200px) {
+  .dashboard-view .kpis {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 

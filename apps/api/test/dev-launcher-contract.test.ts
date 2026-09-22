@@ -26,6 +26,16 @@ function fixtureDevScript(tempDir: string): string {
   chmodSync(script, 0o755);
   return script;
 }
+function fixtureExtensionBuild(tempDir: string, callsLog: string): void {
+  const corepack = join(tempDir, "corepack");
+  writeFileSync(corepack, `#!/usr/bin/env bash
+if [[ "$*" != "pnpm extension:build" ]]; then exit 1; fi
+echo "fake corepack $*" >> "${callsLog}"
+exit 0
+`);
+  chmodSync(corepack, 0o755);
+}
+
 type DevLauncherProcess = ChildProcessByStdio<null, Readable, Readable>;
 
 function waitForOutput(child: DevLauncherProcess, text: string): Promise<void> {
@@ -379,6 +389,7 @@ while true; do sleep 1; done
     let env: NodeJS.ProcessEnv | undefined;
 
     try {
+      fixtureExtensionBuild(tempDir, callsLog);
       writeFileSync(
         join(tempDir, "pnpm"),
         `#!/usr/bin/env bash
@@ -408,6 +419,7 @@ while true; do sleep 1; done
 
       expect(output).toContain("dev: bindings");
       expect(output).toContain("web: http://127.0.0.1:5175/");
+      expect(readFileSync(callsLog, "utf8").split("\n")[0]).toBe("fake corepack pnpm extension:build");
       expect(processExists(webPid)).toBe(true);
     } finally {
       try {
@@ -435,6 +447,7 @@ while true; do sleep 1; done
     let env: NodeJS.ProcessEnv | undefined;
 
     try {
+      fixtureExtensionBuild(tempDir, callsLog);
       mkdirSync(join(tempDir, "JobCtrl"), { recursive: true });
       writeFileSync(join(tempDir, "JobCtrl", ".env"), "VITE_GOOGLE_MAPS_API_KEY=maps-test-key\n");
       writeFileSync(
@@ -461,6 +474,7 @@ while true; do sleep 1; done
       webPid = await waitForPidFile(pidFile);
       await waitForFileText(callsLog, "maps=maps-test-key");
 
+      expect(readFileSync(callsLog, "utf8").split("\n")[0]).toBe("fake corepack pnpm extension:build");
       expect(processExists(webPid)).toBe(true);
     } finally {
       try {

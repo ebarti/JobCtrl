@@ -1,10 +1,12 @@
-"""Execution-bound Discovery acquisition through the user's live Chrome profile.
+"""Execution-bound Discovery with preferred live Chrome and guarded provider HTTP.
 
-The paired extension owns every remote page/API request. This worker-side client
-talks only to the loopback JobCtrl API broker, so it neither launches Chrome nor
-copies a browser profile. Temporal remains the durability authority and broker
-request/result envelopes stay in process memory. Downstream extraction can
-persist posting text and send captured content to configured LLM providers.
+The live Chrome client talks only to the loopback JobCtrl API broker; its paired
+extension owns those remote page/API requests. When the extension is unavailable
+at setup, the JobStreaming registry uses anonymous provider HTTP with public
+destination checks and pinned connections. Neither path copies a browser profile.
+Temporal remains the durability authority and broker request/result envelopes
+stay in process memory. Downstream extraction can persist posting text and send
+captured content to configured LLM providers.
 """
 
 from __future__ import annotations
@@ -21,13 +23,17 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
-from urllib.parse import urlsplit
-from urllib.robotparser import RobotFileParser
+
+import requests
+from urllib3 import HTTPConnectionPool, HTTPSConnectionPool
+from urllib3.connection import HTTPConnection, HTTPSConnection
 
 from jobctrl import config
 from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
 from jobctrl.domain.errors import ConfigurationError, JobCtrlError, TransientNetworkError
-from jobctrl.domain.ports.politeness import RobotsPort, RobotsVerdict
+from jobctrl.infrastructure.network.fetch_failures import PublicFetchFailureKind
+from jobctrl.infrastructure.network.public_http import UnsafePublicDestinationError, create_public_connection
+from jobctrl.infrastructure.network.url_safety import validate_public_http_url
 
 
 DiscoveryBrowserSourceFamily = Literal[
@@ -40,8 +46,6 @@ DiscoveryBrowserSourceFamily = Literal[
 ApiTransport = Callable[[str, str, bytes | None, Mapping[str, str], float], tuple[int, bytes]]
 
 _TOKEN_FILENAME = "extension-capability-token"
-_ROBOTS_TTL_SECONDS = 3_600.0
-_ROBOTS_UNREACHABLE_TTL_SECONDS = 300.0
 _FORBIDDEN_BROWSER_HEADERS = frozenset(
     {
         "connection",
@@ -90,82 +94,6 @@ class _DiscoveryCapacityBusy(TransientNetworkError):
     """The bounded extension executor pool is full; retry admission locally."""
 
 
-@dataclass(frozen=True, slots=True)
-class _LiveRobotsEntry:
-    parser: RobotFileParser | None
-    verdict: RobotsVerdict | None
-    expires_at: float
-    browser_user_agent: str
-
-
-class LiveChromeRobotsCache(RobotsPort):
-    """Evaluate robots.txt through the same live-profile extension boundary."""
-
-    def __init__(
-        self,
-        client: LiveChromeDiscoveryClient,
-        *,
-        clock: Callable[[], float] = time.monotonic,
-    ) -> None:
-        self._client = client
-        self._clock = clock
-        self._lock = threading.Lock()
-        self._cache: dict[str, _LiveRobotsEntry] = {}
-
-    def evaluate(self, url: str, user_agent: str) -> RobotsVerdict:
-        parts = urlsplit(url)
-        if not parts.scheme or not parts.netloc:
-            return RobotsVerdict.UNKNOWN
-        host_key = f"{parts.scheme}://{parts.netloc}"
-        now = self._clock()
-        with self._lock:
-            entry = self._cache.get(host_key)
-            if entry is None or entry.expires_at <= now:
-                entry = self._fetch(host_key, user_agent)
-                self._cache[host_key] = entry
-        if entry.verdict is not None:
-            return entry.verdict
-        if entry.parser is None:
-            return RobotsVerdict.UNKNOWN
-        effective_user_agent = entry.browser_user_agent or user_agent
-        return RobotsVerdict.ALLOW if entry.parser.can_fetch(effective_user_agent, url) else RobotsVerdict.DISALLOW
-
-    def _fetch(self, host_key: str, fallback_user_agent: str) -> _LiveRobotsEntry:
-        result = self._client.request(
-            f"{host_key}/robots.txt",
-            headers={"Accept": "text/plain"},
-            timeout_seconds=5.0,
-        )
-        now = self._clock()
-        status = result.status_code
-        if status is not None and 400 <= status < 500:
-            parser = RobotFileParser()
-            parser.parse([])
-            parser.modified()
-            return _LiveRobotsEntry(
-                parser,
-                None,
-                now + _ROBOTS_TTL_SECONDS,
-                result.browser_user_agent or fallback_user_agent,
-            )
-        if status is None or status >= 500:
-            return _LiveRobotsEntry(
-                None,
-                RobotsVerdict.UNKNOWN,
-                now + _ROBOTS_UNREACHABLE_TTL_SECONDS,
-                result.browser_user_agent or fallback_user_agent,
-            )
-        parser = RobotFileParser()
-        parser.parse(result.body_text.splitlines())
-        parser.modified()
-        return _LiveRobotsEntry(
-            parser,
-            None,
-            now + _ROBOTS_TTL_SECONDS,
-            result.browser_user_agent or fallback_user_agent,
-        )
-
-
 class LiveChromeDiscoveryClient:
     """Submit bounded acquisition tasks to the extension installed in Chrome."""
 
@@ -192,10 +120,12 @@ class LiveChromeDiscoveryClient:
         self._token: str | None = None
 
     def ensure_available(self) -> None:
-        status = self._api_json("GET", "/v1/discovery/browser-extension/status", authenticated=False)
-        if not bool(status.get("connected")):
+        status = self._api_json(
+            "GET", "/v1/discovery/browser-extension/status", authenticated=False, timeout_seconds=1.0
+        )
+        if status.get("connected") is not True:
             raise ConfigurationError(
-                "Discovery requires the paired JobCtrl extension to be running in the user's Chrome profile."
+                "The paired JobCtrl extension is not connected in the user's Chrome profile."
             )
 
     def request(
@@ -376,6 +306,7 @@ class LiveChromeDiscoveryClient:
         payload: Mapping[str, Any] | None = None,
         authenticated: bool,
         allow_empty: bool = False,
+        timeout_seconds: float = 5.0,
     ) -> dict[str, Any]:
         headers = {"Accept": "application/json"}
         if authenticated:
@@ -390,7 +321,7 @@ class LiveChromeDiscoveryClient:
                 f"{self.api_base_url}{path}",
                 data,
                 headers,
-                5.0,
+                timeout_seconds,
             )
         except (OSError, urllib.error.URLError) as exc:
             raise TransientNetworkError("The local JobCtrl API is unavailable for Discovery browser work") from exc
@@ -560,12 +491,36 @@ class PoliteLiveChromeHttpClient:
             return self._client.rendered_page(url, timeout_seconds=timeout or self._default_timeout)
 
 
+def prefer_live_browser(
+    client: LiveChromeDiscoveryClient,
+    *,
+    cancel_event: threading.Event | None = None,
+) -> LiveChromeDiscoveryClient | None:
+    """Choose once at setup; acquisition errors never trigger another transport.
+
+    Only the loopback availability probe can select anonymous acquisition. A
+    selected extension still enforces token authentication and execution fences
+    on every task, and a later disconnect fails that acquisition normally.
+    """
+
+    if cancel_event is not None and cancel_event.is_set():
+        raise TransientNetworkError("Discovery acquisition canceled")
+    available = True
+    try:
+        client.ensure_available()
+    except (ConfigurationError, TransientNetworkError):
+        available = False
+    if cancel_event is not None and cancel_event.is_set():
+        raise TransientNetworkError("Discovery acquisition canceled")
+    return client if available else None
+
+
 def live_jobstreaming_registry(
     execution: DiscoveryExecutionRef,
     *,
     cancel_event: threading.Event | None = None,
 ) -> Any:
-    """Return the provider registry with every adapter bound to live Chrome."""
+    """Prefer live Chrome per adapter setup; keep provider HTTP when offline."""
 
     from jobstreaming import default_registry
 
@@ -581,6 +536,17 @@ def live_jobstreaming_registry(
                 source_id=f"jobspy:{_site.value}",
                 cancel_event=cancel_event,
             )
+            if prefer_live_browser(client, cancel_event=cancel_event) is None:
+                original_track = adapter.track_transport
+
+                def track_public(transport: Any) -> Any:
+                    original_track(transport)
+                    return original_track(_public_provider_session(transport, cancel_event=cancel_event))
+
+                adapter.track_transport = track_public
+                if getattr(adapter, "session", None) is not None:
+                    adapter.session = track_public(adapter.session)
+                return adapter
             session = LiveChromeSession(client)
             original_session = getattr(adapter, "session", None)
             if original_session is not None:
@@ -596,6 +562,122 @@ def live_jobstreaming_registry(
 
         registry.register(site, factory, replace=True)
     return registry
+
+
+class _PublicHTTPConnection(HTTPConnection):
+    def _new_conn(self) -> Any:
+        return create_public_connection((self.host, self.port), self.timeout, self.source_address)
+
+
+class _PublicHTTPSConnection(HTTPSConnection):
+    def _new_conn(self) -> Any:
+        return create_public_connection((self.host, self.port), self.timeout, self.source_address)
+
+
+class _PublicHTTPPool(HTTPConnectionPool):
+    ConnectionCls = _PublicHTTPConnection
+
+
+class _PublicHTTPSPool(HTTPSConnectionPool):
+    ConnectionCls = _PublicHTTPSConnection
+
+
+class _PublicProviderAdapter(requests.adapters.HTTPAdapter):
+    """Keep Requests pooling/TLS semantics while pinning each new socket."""
+
+    @staticmethod
+    def _guard_pools(manager: Any) -> None:
+        # PoolManager's default mapping is shared globally; only change ours.
+        manager.pool_classes_by_scheme = {"http": _PublicHTTPPool, "https": _PublicHTTPSPool}
+
+    def init_poolmanager(self, *args: Any, **kwargs: Any) -> None:
+        super().init_poolmanager(*args, **kwargs)
+        self._guard_pools(self.poolmanager)
+
+    def proxy_manager_for(self, proxy: str, **kwargs: Any) -> Any:
+        raise ConfigurationError("Anonymous Discovery cannot pin destination DNS through a proxy")
+
+
+def _public_provider_session(transport: Any, *, cancel_event: threading.Event | None) -> requests.Session:
+    """Guard native provider sends, including redirects and recreated sessions.
+
+    Requests sessions keep their provider configuration. tls-client has no
+    public-address socket hook, so those providers use Requests with compatible
+    request options, headers and cookies in anonymous mode. Configured proxy
+    routing is retained so the guard rejects it instead of silently going direct.
+    """
+    from jobstreaming.util import RequestsRotating, TLSRotating
+
+    if isinstance(transport, TLSRotating):
+        class PublicTLSCompatibleSession(RequestsRotating):
+            def request(self, method: str, url: str, **kwargs: Any) -> requests.Response:
+                kwargs.setdefault("allow_redirects", False)
+                if "timeout_seconds" in kwargs:
+                    kwargs["timeout"] = kwargs.pop("timeout_seconds")
+                kwargs.setdefault("timeout", transport.timeout_seconds)
+                if "insecure_skip_verify" in kwargs:
+                    kwargs["verify"] = not kwargs.pop("insecure_skip_verify")
+                if "proxy" in kwargs:
+                    proxy = kwargs.pop("proxy")
+                    kwargs["proxies"] = {"http": proxy, "https": proxy} if isinstance(proxy, str) else proxy
+                return super().request(method, url, **kwargs)
+
+            def get(self, url: str, **kwargs: Any) -> requests.Response:
+                return self.request("GET", url, **kwargs)
+
+            execute_request = request
+
+        session = PublicTLSCompatibleSession()
+        session.headers.update(transport.headers or {})
+        session.cookies = transport.cookies
+        session.proxies = transport.proxies
+        session.proxy_cycle = transport.proxy_cycle
+    elif isinstance(transport, requests.Session):
+        session = transport
+    else:
+        raise ConfigurationError("Unsupported anonymous Discovery provider transport")
+
+    # Requests otherwise discovers local netrc credentials before send() and
+    # again when rebuilding redirect auth. Anonymous acquisition must not adopt
+    # them; explicit provider headers/auth and cookies retain Requests semantics.
+    session.trust_env = False
+    if getattr(session, "_jobctrl_public_guarded", False):
+        return session
+    original_send = session.send
+
+    def send_public(request: requests.PreparedRequest, **kwargs: Any) -> requests.Response:
+        if cancel_event is not None and cancel_event.is_set():
+            raise TransientNetworkError("Discovery acquisition canceled")
+        decision = validate_public_http_url(request.url)
+        if not decision.allowed:
+            raise UnsafePublicDestinationError(
+                decision.reason or "URL is not a public HTTP(S) destination",
+                failure_kind=decision.failure_kind or PublicFetchFailureKind.UNSAFE_DESTINATION,
+                destination_url=request.url,
+            )
+        proxies = kwargs.get("proxies") or {}
+        # trust_env=False also disables automatic environment proxy selection.
+        # Check it explicitly on every hop so it cannot silently become direct.
+        environment_proxies = requests.utils.get_environ_proxies(request.url, no_proxy=proxies.get("no_proxy"))
+        if requests.utils.select_proxy(request.url, proxies) or requests.utils.select_proxy(
+            request.url, environment_proxies
+        ):
+            raise ConfigurationError("Anonymous Discovery cannot pin destination DNS through a proxy")
+        if cancel_event is not None and cancel_event.is_set():
+            raise TransientNetworkError("Discovery acquisition canceled")
+        return original_send(request, **kwargs)
+
+    # Requests follows redirects through self.send(), so each hop re-enters the
+    # URL check. The connection classes resolve/check again and connect to the
+    # validated numeric address, closing the DNS check/use gap for direct fetches.
+    session.send = send_public
+    for scheme in ("http://", "https://"):
+        previous = session.adapters.get(scheme)
+        session.mount(scheme, _PublicProviderAdapter())
+        if previous is not None:
+            previous.close()
+    session._jobctrl_public_guarded = True
+    return session
 
 
 def _safe_headers(headers: Mapping[str, object]) -> dict[str, str]:
@@ -651,9 +733,9 @@ __all__ = [
     "LiveBrowserHttpError",
     "LiveBrowserResult",
     "LiveChromeDiscoveryClient",
-    "LiveChromeRobotsCache",
     "LiveChromeResponse",
     "LiveChromeSession",
     "PoliteLiveChromeHttpClient",
     "live_jobstreaming_registry",
+    "prefer_live_browser",
 ]

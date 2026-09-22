@@ -1,3 +1,4 @@
+import { seedApplicationUrl } from "./seed-enrichment.js";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -19,11 +20,14 @@ describe("canonical job identity resolution", () => {
     initializeExactV7Database(dbPath);
     const db = new Database(dbPath);
     const insert = db.prepare(
-      `INSERT INTO jobs (tenant_id, job_id, url, application_url)
-       VALUES (?, ?, ?, ?)`,
+      `INSERT INTO jobs (tenant_id, job_id, url)
+       VALUES (?, ?, ?)`,
     );
-    insert.run("local", LOCAL_JOB_ID, SHARED_POSTING_URL, `${SHARED_POSTING_URL}/apply`);
-    insert.run("other", OTHER_JOB_ID, SHARED_POSTING_URL, `${SHARED_POSTING_URL}/apply`);
+    insert.run("local", LOCAL_JOB_ID, SHARED_POSTING_URL);
+    insert.run("other", OTHER_JOB_ID, SHARED_POSTING_URL);
+
+    seedApplicationUrl(db, "local", LOCAL_JOB_ID, `${SHARED_POSTING_URL}/apply`);
+    seedApplicationUrl(db, "other", OTHER_JOB_ID, `${SHARED_POSTING_URL}/apply`);
 
     expect(resolveJobId(db, "local", LOCAL_JOB_ID)).toBe(LOCAL_JOB_ID);
     expect(resolveJobId(db, "local", SHARED_POSTING_URL)).toBe(LOCAL_JOB_ID);

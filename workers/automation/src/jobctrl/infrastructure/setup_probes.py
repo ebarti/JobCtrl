@@ -14,6 +14,7 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 import time
 import warnings
 from dataclasses import dataclass
@@ -500,17 +501,50 @@ def reuse_and_verify_codex_connection(
     *,
     runner: Callable[..., Any] = subprocess.run,
 ) -> tuple[bool, str, str]:
-    """Explicitly reuse valid ambient Codex auth once, then verify the isolated home."""
+    """Explicitly refresh reusable CLI auth, then verify the isolated home."""
 
     values = dict(_env(env))
     try:
-        ensure_jobctrl_codex_auth(values)
-    except RuntimeError:
-        # A missing or invalid reusable source is not an error for this explicit
-        # action. The isolated verification below returns the stable, secret-free
-        # not-configured result without disclosing source-auth details.
-        pass
+        _refresh_jobctrl_codex_auth(values)
+    except Exception:  # noqa: BLE001 - filesystem exceptions may contain credential data
+        return False, "failed", "Codex authentication reuse failed"
     return verify_codex_connection(values, runner=runner)
+
+
+def _refresh_jobctrl_codex_auth(values: Mapping[str, str]) -> None:
+    """Replace only on explicit reuse; validate a private staged copy first."""
+    target = codex_auth_path(values)
+    source = source_codex_auth_path(values)
+    if target.is_symlink():
+        raise RuntimeError("Codex auth target is unsafe")
+    try:
+        _validate_codex_auth_file(source)
+    except RuntimeError:
+        # An unusable ambient cache cannot overwrite an existing isolated login.
+        if target.is_file():
+            prepare_jobctrl_codex_home(values)
+            target.chmod(0o600)
+        return
+    if source == target:
+        prepare_jobctrl_codex_home(values)
+        target.chmod(0o600)
+        return
+    prepare_jobctrl_codex_home(values)
+    staged: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=target.parent, prefix=".auth-", delete=False) as handle:
+            staged = Path(handle.name)
+            # Refuse a source changed into a symlink after initial validation.
+            with os.fdopen(os.open(source, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)), "rb") as original:
+                shutil.copyfileobj(original, handle)
+            handle.flush()
+            os.fsync(handle.fileno())
+        _validate_codex_auth_file(staged)
+        staged.chmod(0o600)
+        os.replace(staged, target)
+    finally:
+        if staged is not None:
+            staged.unlink(missing_ok=True)
 
 
 def provider_status_snapshot(

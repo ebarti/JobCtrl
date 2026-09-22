@@ -581,7 +581,7 @@ distinct from the durable `Contact` (mirrors how `ApplyRun` is separate from
 
 **Source-access policy (`ContactResearchSourcePolicy`, INV-3):** exactly three
 allowed source categories — `user_entered`, `public_web_page` (unauthenticated
-GET, robots/rate-limited through the merged politeness gateway),
+GET, rate-limited through the merged politeness gateway),
 `user_imported_list`. It reuses the discovery `SourcePolicy` guardrails
 (`third_party_control_bypass` hard-locked `false`, `authentication = none`) and a
 `LocatorPolicy` with `allow_autonomous_broad_discovery = false`. No public source

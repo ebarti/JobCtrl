@@ -97,6 +97,8 @@ has one defining page; other pages summarize it briefly and link to that owner.
 - [`developer/documentation-standards.md`](developer/documentation-standards.md):
   concept ownership, page structure, terminology, diagrams, and stable surfaces.
 - [`local-reliability-qa.md`](local-reliability-qa.md): validation-path chooser.
+- [`developer/local-scale-benchmark.md`](developer/local-scale-benchmark.md):
+  reproducible synthetic production-path benchmark and measured local baseline.
 - [`developer/qa/regression-catalog.md`](developer/qa/regression-catalog.md):
   risk families, invariants, and regression proof.
 - [`developer/qa/browser-smoke.md`](developer/qa/browser-smoke.md): browser smoke
@@ -121,6 +123,9 @@ has one defining page; other pages summarize it briefly and link to that owner.
   the distinction between domain state, events, projections, and telemetry.
 - [`architecture/storage.md`](architecture/storage.md): physical SQLite and file
   authorities.
+- [`architecture/application-url-authority.md`](architecture/application-url-authority.md):
+  application URL readers and writers after the exact-v10 migration, and the
+  unique-match job lookup rule.
 - [`architecture/read-model.md`](architecture/read-model.md): apply feedback and
   projection details.
 - [`architecture/scoring.md`](architecture/scoring.md): scoring algorithm,
@@ -159,7 +164,14 @@ These documents remain in the repository but are not separate site sections:
 
 - [`requirements.md`](requirements.md): product and technical invariants.
 - [`decisions.md`](decisions.md): accepted architecture decision records.
-- [`backlog.md`](backlog.md): detailed engineering backlog and deferred work.
+- [GitHub Issues](https://github.com/ebarti/JobCtrl/issues): actionable work; [migration index #881](https://github.com/ebarti/JobCtrl/issues/881) accounts for the historical backlog.
 - [`claims-ledger.md`](claims-ledger.md): launch-claim evidence and status.
 - [`plans/`](plans/): active proposals and immutable implemented-plan history.
+  The active [sensitive-artifact retention and cleanup
+  proposal](plans/sensitive-artifact-retention.md) defines the unshipped local
+  inventory, preservation, preview, containment, and recovery contract tracked
+  by issue #887.
+- [`plans/local-custom-provider-contract.md`](plans/local-custom-provider-contract.md):
+  design-only, fail-closed contract and proof gates for a future local/custom
+  LLM provider; the capability is currently unavailable.
 - [`incidents/`](incidents/): incident records and corrective actions.

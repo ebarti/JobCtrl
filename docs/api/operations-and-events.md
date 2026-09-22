@@ -291,6 +291,11 @@ the [frontend realtime design](../architecture/frontend/realtime.md) for cache
 behavior and the [complete SSE contract](complete-contract.md#server-sent-events-—-get-v1eventsstream)
 for framing and precedence rules.
 
+`DryRunCompleted` refreshes apply history, run reads, the review queue, job reads
+and Dashboard from projections. It means the dry-run finished without submitting;
+it does not apply `ApplicationSubmitted` semantics or update submission analytics.
+See the [dry-run event payload](complete-contract.md#dry-run-completion).
+
 The browser patches a tenant-scoped cache row only when the event carries
 enough canonical data to do so truthfully. That includes active job detail,
 already-registered artifact detail, workflow-run detail, and ordered Apply-run

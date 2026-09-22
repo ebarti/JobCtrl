@@ -341,3 +341,49 @@ def test_build_jd_snapshot_is_title_plus_full_description() -> None:
     snapshot = build_jd_snapshot(JOB)
     assert snapshot.startswith("Staff Engineer")
     assert "8+ years in Go" in snapshot
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("narrative", [
+    "Both experts converge on a platform owner.",
+    "Both experts converged on a platform owner.",
+    "The analysis concluded that the ideal candidate owns the platform.",
+])
+async def test_invalid_refresh_retains_last_accepted_analysis(narrative: str) -> None:
+    from dataclasses import replace
+    from jobctrl.domain.materials.analysis_content import AnalysisContentError
+
+    repo = _InMemoryRepo()
+    runner, _ = _runner_returning(_outcome())
+    accepted = await _use_case(repo=repo, runner=runner).execute_async(job=JOB)
+    invalid = _canonical().model_copy(update={"ideal_candidate_narrative": narrative})
+    failing_runner, _ = _runner_returning(replace(_outcome(), canonical=invalid))
+    with pytest.raises(AnalysisContentError):
+        await _use_case(repo=repo, runner=failing_runner).execute_async(job=JOB, force=True)
+    assert repo.load(LOCAL_TENANT, JOB["job_id"]) == accepted.analysis
+    assert len(repo.saved) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("narrative", [
+    "Both experts converge on a platform owner.",
+    "Both experts converged on a platform owner.",
+    "The analysis concluded that the ideal candidate owns the platform.",
+])
+async def test_invalid_same_version_cache_is_revalidated_without_breaking_legacy_reads(narrative: str) -> None:
+    from dataclasses import replace
+
+    repo = _InMemoryRepo()
+    runner, calls = _runner_returning(_outcome())
+    use_case = _use_case(repo=repo, runner=runner)
+    accepted = await use_case.execute_async(job=JOB)
+    legacy = replace(accepted.analysis, canonical=accepted.analysis.canonical.model_copy(
+        update={"ideal_candidate_narrative": narrative}))
+    repo.saved[0] = legacy
+    assert repo.load(LOCAL_TENANT, JOB["job_id"]).canonical.ideal_candidate_narrative == narrative
+    refreshed = await use_case.execute_async(job=JOB)
+    assert not refreshed.cached
+    assert calls["count"] == 2
+    assert refreshed.analysis.generation == 2
+    assert len(repo.saved) == 2
+    assert refreshed.analysis.canonical.ideal_candidate_narrative == "A distributed-systems owner."

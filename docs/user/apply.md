@@ -71,6 +71,12 @@ wrap below their binding explanation; no decision or audit section is removed.
 
 ## Approval And Automation Modes
 
+Apply Review's **Submit gates** table shows each gate, its current state, and
+the reason behind that state. It covers recorded approval, dry-run evidence,
+materials, profile version, application URL, repeat-application protection,
+and email details when applicable. Missing or stale evidence stays explicit;
+the table does not grant approval or change what the decision buttons allow.
+
 Apply can rehearse browser forms and send an exact approved email application.
 Use dry runs and narrow targets before employer-facing work. Persistence follows
 the editing surface: every value
@@ -187,11 +193,12 @@ off `applyApprovalRequired` does not turn off repeat protection.
 ## Browser Apply Automation
 
 Use **Settings → Browser & extension** to inspect the managed core browser,
-enable or disable auto-apply and authenticated LinkedIn capabilities, copy a
-LinkedIn profile with explicit consent, and pair or rotate the extension token.
-The same screen's live extension status is the separate prerequisite for
-integrated Discovery, which uses the current Chrome profile directly and never
-uses the copied Apply/LinkedIn profile described below.
+enable or disable the optional Apply browser, and pair or rotate the extension
+token. Settings does not expose profile copying. Discovery and Enrich prefer
+the connected extension or use guarded public HTTP/anonymous Playwright when
+it is unavailable; they never use a copied profile or an adopted executable.
+The separately consented legacy compatibility capability remains outside that
+integrated acquisition path.
 The screen may passively detect supported Chrome/Chromium installations, but
 the safe list exposes only an opaque browser kind and display label—never a
 local executable path. Detection does not launch, adopt, or persist a browser.
@@ -216,11 +223,12 @@ The provider key and returned token stay outside the model prompt. An
 unsupported challenge, missing configuration, or failed solve stops the apply
 path; solving a challenge never grants form-entry or final-submit authority.
 
-Integrated Discovery and Enrich use the paired extension directly in the
-currently running Chrome profile. Settings does not copy that profile or expose
-the legacy authenticated-LinkedIn copied-profile capability. Because LinkedIn
-detail recovery occurs in the user's owner-authenticated live session, JobCtrl
-does not apply the anonymous crawler's `robots.txt` verdict to that request.
+Integrated Discovery and Enrich prefer the paired extension when it is connected
+in the current Chrome profile. Settings does not copy that profile or expose
+the legacy authenticated-LinkedIn copied-profile capability. A LinkedIn detail
+request uses that live session when available and anonymous Playwright
+otherwise. Neither acquisition mode consults `robots.txt`; historical blocked
+rows remain retryable in either mode.
 Public-destination checks, exact-origin controls, per-host pacing, run request
 budgets, and audit history remain enforced. This recovery cannot fill or submit
 an application; apply still requires the normal dry-run, approval, and
@@ -237,13 +245,13 @@ path.
 | `JOBCTRL_LINKEDIN_APPLY_CHROME_PROFILE` | browser default | Chrome profile name inside the resolver user-data directory. |
 | `JOBCTRL_LINKEDIN_APPLY_HEADLESS` | visible Chrome | Set to `1` to run the resolver headless. |
 
-The source checkout installs managed Playwright Chromium for PDF rendering and
-standalone maintenance compatibility paths. Integrated Discovery and its
-enrichment drain instead require the paired extension in the user's running
-system Chrome profile; they do not launch managed Playwright. The bundled
-release contains one managed Playwright Chromium headless shell, not a full
-Chrome/Chromium application. System-browser adoption remains optional and is
-never inferred merely because Chrome is running for the extension. Non-secret desired capability choices, including
+The source checkout installs managed Playwright Chromium for PDF rendering,
+anonymous Discovery/Enrich rendering, and standalone maintenance compatibility.
+A connected paired extension is preferred for integrated acquisition in the
+user's running Chrome profile. The bundled release contains one managed
+Playwright Chromium headless shell, not a full Chrome/Chromium application.
+System-browser adoption remains optional and is never inferred from extension
+pairing or anonymous acquisition. Non-secret desired capability choices, including
 the explicitly adopted executable configuration, saved under
 **Settings → Browser & extension** are stored in `config.json`:
 
