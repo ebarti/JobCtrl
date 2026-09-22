@@ -72,6 +72,24 @@ def _git_output(repo_root: Path, *args: str) -> str:
     return completed.stdout.strip()
 
 
+def _portable_path(path: Path | str, repo_root: Path) -> str:
+    """Keep public artifacts free of workstation-specific absolute paths."""
+
+    candidate = Path(path)
+    resolved = candidate if candidate.is_absolute() else repo_root / candidate
+    try:
+        return resolved.relative_to(repo_root).as_posix()
+    except ValueError:
+        return f"<external>/{resolved.name}"
+
+
+def _portable_argv(argv: list[str], repo_root: Path) -> list[str]:
+    return [
+        _portable_path(value, repo_root) if Path(value).is_absolute() else value
+        for value in argv
+    ]
+
+
 @contextlib.contextmanager
 def _block_outbound_network() -> Iterator[None]:
     """Reject every socket connection while synthetic adapters execute."""
@@ -627,7 +645,7 @@ def _provenance(repo_root: Path) -> dict[str, Any]:
         "git_branch": _git_output(repo_root, "branch", "--show-current"),
         "git_status_porcelain": _git_output(repo_root, "status", "--porcelain").splitlines(),
         "python": sys.version,
-        "python_executable": sys.executable,
+        "python_executable": _portable_path(sys.executable, repo_root),
         "jobstreaming_version": importlib.metadata.version("jobstreaming"),
         "platform": platform.platform(),
         "machine": platform.machine(),
@@ -651,6 +669,7 @@ def run_assessment(
     )
 
     repo_root = Path(__file__).resolve().parents[3]
+    portable_output = _portable_path(output, repo_root)
     queries = FIXED_QUERIES if not smoke else FIXED_QUERIES[:1]
     sources = FIXED_SOURCES if not smoke else FIXED_SOURCES[:1]
     warmups = 0 if smoke else warmups
@@ -791,10 +810,10 @@ def run_assessment(
                 "-u UV_EXCLUDE_NEWER_PACKAGE uv run --project workers/automation "
                 "--locked --all-extras --exclude-newer false python "
                 "workers/automation/scripts/search_unit_concurrency_assessment.py "
-                f"--output {output.as_posix()} --warmups {warmups} --repeats {repeats} "
+                f"--output {portable_output} --warmups {warmups} --repeats {repeats} "
                 f"--service-delay-seconds {service_delay_seconds}"
             ),
-            "observed_argv": [sys.executable, *sys.argv],
+            "observed_argv": _portable_argv([sys.executable, *sys.argv], repo_root),
         },
     }
     output.write_text(json.dumps(artifact, indent=2, sort_keys=True) + "\n", encoding="utf-8")

@@ -39,3 +39,5 @@ def test_search_unit_assessment_smoke_exercises_the_durable_path_offline(
     assert sample["database"]["job_rows"] == 1
     assert sample["database"]["receipt_rows"] == 1
     assert sample["invariants"]["all_units_checkpointed"] is True
+    assert artifact["provenance"]["python_executable"] == "workers/automation/.venv/bin/python"
+    assert str(repo_root) not in output.read_text(encoding="utf-8")
