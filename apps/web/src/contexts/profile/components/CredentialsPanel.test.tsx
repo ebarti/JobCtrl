@@ -252,7 +252,7 @@ describe("<CredentialsPanel>", () => {
           effectiveSource: [
             "CLAUDE_CODE_USE_VERTEX",
             "GOOGLE_GENAI_USE_VERTEXAI",
-          ].includes(credential.key) ? "keychain" as const : "absent" as const,
+          ].includes(credential.key) ? "native_store" as const : "absent" as const,
         })),
       })),
       providerStatus: vi.fn(async () => ({
@@ -531,7 +531,7 @@ describe("<CredentialsPanel>", () => {
           unavailableReason: "unsupported_platform" as const,
         },
         credentials: sampleCredentialsResponse.credentials.map((credential) =>
-          credential.storage === "keychain"
+          credential.storage === "native_store"
             ? {
                 ...credential,
                 configured: null,
@@ -593,7 +593,7 @@ describe("<CredentialsPanel>", () => {
       verifyCodexProvider,
     });
 
-    expect(await screen.findByText(/could not safely inspect Keychain/i)).toBeInTheDocument();
+    expect(await screen.findByText(/could not safely inspect macOS Keychain/i)).toBeInTheDocument();
     expect(screen.queryByLabelText(/Anthropic API key \(required\)/i)).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/Gemini API key \(required\)/i)).not.toBeInTheDocument();
     expect(screen.getByLabelText("CapSolver API key")).toBeDisabled();
@@ -608,7 +608,7 @@ describe("<CredentialsPanel>", () => {
     const privacy = within(screen.getByRole("region", { name: "Credential privacy" }));
     expect(screen.getByText(/guided Claude and Google editing/i)).toBeInTheDocument();
     expect(screen.getByText(/Codex verification remains available/i)).toBeInTheDocument();
-    expect(privacy.getAllByText("Keychain status unavailable")).toHaveLength(2);
+    expect(privacy.getAllByText("Credential-store status unavailable")).toHaveLength(2);
   });
 
   it("labels isolated auth accurately when the managed SDK is unavailable", async () => {
@@ -699,7 +699,7 @@ function configuredProvidersResponse() {
         "CLAUDE_CODE_USE_VERTEX",
         "GEMINI_API_KEY",
         "GOOGLE_GENAI_USE_VERTEXAI",
-      ].includes(credential.key) ? "keychain" as const : credential.effectiveSource,
+      ].includes(credential.key) ? "native_store" as const : credential.effectiveSource,
     })),
   };
 }

@@ -19,6 +19,7 @@
     "api:dev": "corepack pnpm --filter @jobctrl/api dev",
     "api:start": "corepack pnpm --filter @jobctrl/api start",
     "data:purge-jobs": "corepack pnpm --filter @jobctrl/api data:purge-jobs",
+    "credentials:native-qa": "corepack pnpm --filter @jobctrl/api credentials:native-qa",
     "api:check": "corepack pnpm --filter @jobctrl/api check",
     "api:test": "corepack pnpm --filter @jobctrl/api test",
     "benchmark:local-scale": "corepack pnpm --filter @jobctrl/api benchmark:local-scale",

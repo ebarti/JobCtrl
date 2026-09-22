@@ -1,7 +1,7 @@
 # Storage
 
-Everything durable lives on the user's machine in local SQLite stores and
-files under the workspace directory.
+Durable data lives on the user's machine in local SQLite stores, workspace
+files, the native OS credential store, and vendor-managed authentication stores.
 
 **Read this if** you need to know which table or file owns a piece of data, or
 where generated artifacts land on disk.
@@ -16,7 +16,8 @@ Unless overridden by `JOBCTRL_DIR`, the local authority root is
 | `jobctrl.db` plus WAL/SHM | Canonical profile, jobs, discovery settings, events, projections, materials metadata, reviews, contacts, outcomes, and workflow rows. |
 | `temporal.db` plus WAL/SHM | Bundled Temporal history; native lifecycle treats it and `jobctrl.db` as one restore pair. |
 | `config.json` | Non-secret Settings values including spend/capacity, scoring guidance, provider metadata, provider-scoped model IDs, AI execution policy, compensation source policy, and explicitly adopted browser metadata. Transient detected-browser candidates are not persisted. |
-| `.env`, `gmail/` | Plaintext environment credentials and Gmail OAuth client/token state. |
+| `.env`, `gmail/` | Legacy plaintext environment configuration until migration, and Gmail OAuth client/token state. |
+| Native OS credential store | Allowlisted provider/CapSolver secrets; macOS Keychain, Windows Credential Manager, or Linux Secret Service. Not part of workspace database backups. |
 | `codex_home/` | Stable JobCtrl-owned Codex state; auth is outside the prompt-readable `workspace/` subtree. |
 | `claude_home/`, `provider-packs/`, `provider-runtime/` | Isolated and separately acquired provider runtime state. |
 | `tailored_resumes/`, `cover_letters/`, `logs/` | Generated material and logs registered by SQLite metadata where applicable. |

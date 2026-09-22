@@ -220,11 +220,11 @@ The detailed containment rules are below in
 [Apply-Path Containment](#apply-path-containment).
 
 **Secrets, files, and observability.** Runtime LLM provider keys use explicit
-environment variables first, with a process-start macOS Keychain fallback for
-three supported settings. The fallback never overrides a non-empty environment
-value and never exposes the stored value through HTTP, logs, or diagnostics.
-Native Windows and Linux credential-store adapters are planned. The CapSolver
-key is an env var scoped to the owned solver tool; Gmail token files are local;
+inherited environment variables first, with a process-start native OS
+credential-store fallback for the fixed secret allowlist. The fallback never
+overrides a non-empty environment value and never exposes the stored value through HTTP, logs, or diagnostics.
+The adapters use macOS Keychain, Windows Credential Manager, and Linux Secret
+Service. The CapSolver key is an env var scoped to the owned solver tool; Gmail token files are local;
 job-site passwords, if saved, remain local profile data and are not exposed to
 the page-reading agent.
 SQLite, generated artifacts, browser profiles, logs, prompts, completions, and
@@ -398,22 +398,23 @@ apply-worker state, or raw logs and traces. Use synthetic fixtures or
 
 **Store credentials in a secret port.** Credentials must use a secret port or
 explicit environment variables, never SQLite, snapshots, logs, traces, or
-artifacts (TR-013). The macOS-only API store
+artifacts (TR-013). The native API credential store
 (`apps/api/src/credentials.ts`) accepts only the fixed Claude/Google guided
 allowlist plus legacy OpenAI-key deletion. It can atomically replace a provider
-configuration, presence-check, and remove those Keychain entries without
-returning values. Private reads are limited to compensating rollback after a
-failed batch and must never be logged or sent over HTTP. Presence is tri-state:
+configuration, presence-check, and remove those native entries without
+returning values. Native reads used for presence inspection, compensating
+rollback, or migration verification remain private and must never be logged or
+sent over HTTP. Presence is tri-state:
 `configured: false` means
 confirmed absent; `configured: null` with `inspection_failed` means unknown and
 must not be collapsed into absence. Unsupported mutations return a sanitized
 409, operational store failures a sanitized 503 with an explicit failure reason, and
-neither exposes raw `security` output. After env-file loading, the shared Python
+neither exposes raw native-store command output. After env-file loading, the shared Python
 `config.load_env()` boundary loads a missing or empty value through a bounded,
-non-interactive Keychain lookup once per process; any non-empty environment
+native credential lookup once per process; any non-empty environment
 value wins, failures degrade to no fallback, and long-lived workers require a
-restart after a web edit. Windows and Linux use environment configuration until
-their planned native adapters ship. The
+restart after a web edit. Persistent legacy secret migration verifies native
+readback before removing source assignments and never logs values. The
 CapSolver key is an env var scoped to the
 owned CAPTCHA tool. A job-site login password, if the user provides one,
 remains local profile data; it is neither interpolated into the Apply prompt nor

@@ -1579,14 +1579,16 @@ export const DEMO_READ_MODEL = {
     credentials: {
       ok: true,
       store: {
-        kind: "config_and_macos_keychain",
+        kind: "config_and_native_credential_store",
+        nativeStore: "macos_keychain" as const,
+        maxSecretBytes: 128,
         available: false,
         unavailableReason: "unsupported_platform",
         requiresWorkerRestart: true,
       },
       credentials: [
-        { key: "OPENAI_API_KEY", label: "OpenAI API Key", configured: null, storage: "keychain", effectiveSource: "inspection_unknown", editable: false },
-        { key: "GEMINI_API_KEY", label: "Gemini API Key", configured: null, storage: "keychain", effectiveSource: "inspection_unknown", editable: false },
+        { key: "OPENAI_API_KEY", label: "OpenAI API Key", configured: null, storage: "native_store", effectiveSource: "inspection_unknown", editable: false },
+        { key: "GEMINI_API_KEY", label: "Gemini API Key", configured: null, storage: "native_store", effectiveSource: "inspection_unknown", editable: false },
       ],
     },
   },

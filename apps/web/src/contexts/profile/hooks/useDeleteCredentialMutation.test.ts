@@ -12,14 +12,16 @@ import { useDeleteCredentialMutation } from "./useDeleteCredentialMutation.js";
 const initialCredentials = {
   ok: true as const,
   store: {
-    kind: "config_and_macos_keychain" as const,
+    kind: "config_and_native_credential_store" as const,
+    nativeStore: "macos_keychain" as const,
+    maxSecretBytes: 128,
     available: true,
     unavailableReason: null,
     requiresWorkerRestart: true as const,
   },
   credentials: [
-    { key: "OPENAI_API_KEY" as const, label: "OpenAI", configured: true, storage: "keychain" as const, effectiveSource: "keychain" as const, editable: true },
-    { key: "GEMINI_API_KEY" as const, label: "Gemini", configured: false, storage: "keychain" as const, effectiveSource: "absent" as const, editable: true },
+    { key: "OPENAI_API_KEY" as const, label: "OpenAI", configured: true, storage: "native_store" as const, effectiveSource: "native_store" as const, editable: true },
+    { key: "GEMINI_API_KEY" as const, label: "Gemini", configured: false, storage: "native_store" as const, effectiveSource: "absent" as const, editable: true },
   ],
 };
 

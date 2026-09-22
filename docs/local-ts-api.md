@@ -52,7 +52,7 @@ historical source keys. Names do not change source-health or quarantine facts.
 Profile data, preferences, discovery controls, settings, and credentials have
 different owners even though the UI presents them together. See
 [Profile & Settings](api/profile-and-settings.md) for that ownership map and the
-routes used by autosave, resume preview, source administration, and Keychain-backed
+routes used by autosave, resume preview, source administration, and native-store-backed
 credentials.
 
 Target Search can request role suggestions through

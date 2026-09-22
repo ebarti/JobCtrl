@@ -173,7 +173,7 @@ durable control composed on `/discovery` is stored in SQLite instead.
 | `target_criteria` | String up to 8,000 characters, default `""` | Additional target-company or role guidance consumed by subsequent scoring runs. This is guidance, not the target-search title list. |
 | `preferred_models` | Object keyed by `codex`, `claude`, and/or `google`; default `{}` | Preferred model ID for each provider. It contains model identifiers only, never credentials. |
 | `compensation_sources` | Optional object; absent by default | Saved user-owned Levels.fyi and Glassdoor source-policy choices. It is written through `/v1/compensation/sources`, not `/v1/settings`. |
-| `provider_connections` | Optional object; absent by default | Non-secret Claude/Google route, project, region, profile, and credential-path configuration written through the Credentials API. Actual API keys remain in Keychain. |
+| `provider_connections` | Optional object; absent by default | Non-secret Claude/Google route, project, region, profile, and credential-path configuration written through the Credentials API. Actual API keys remain in the native OS credential store. |
 | `browser_capabilities` | Optional object; absent by default | Non-secret adoption metadata for optional system-browser capabilities. Copied browser contents remain outside this file. |
 
 Within `compensation_sources`, the supported source keys are `levels_fyi` and

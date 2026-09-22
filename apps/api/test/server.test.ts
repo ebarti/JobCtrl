@@ -32,8 +32,10 @@ import { DiscoveryBrowserBroker } from "../src/discovery-browser-broker.js";
 import { claimDiscoveryInstallationId } from "../src/extension-auth.js";
 import {
   CredentialStoreUnavailableError,
+  CredentialValueUnsupportedError,
   KeychainCredentialStore,
 } from "../src/credentials.js";
+import type { NativeCredentialCommandRunner } from "../src/native-credential-store.js";
 import type { JsonRpcDispatcher } from "../src/json-rpc-adapter.js";
 import {
   PROFILE_PREVIEW_SCRIPT,
@@ -11731,7 +11733,9 @@ describe("local TypeScript API", () => {
       list: vi.fn(async () => ({
         ok: true as const,
         store: {
-          kind: "config_and_macos_keychain" as const,
+          kind: "config_and_native_credential_store" as const,
+          nativeStore: "macos_keychain" as const,
+          maxSecretBytes: 128,
           available: true,
           unavailableReason: null,
           requiresWorkerRestart: true as const,
@@ -11740,8 +11744,8 @@ describe("local TypeScript API", () => {
           key,
           label: key,
           configured: stored.has(key),
-          storage: "keychain" as const,
-          effectiveSource: stored.has(key) ? "keychain" as const : "absent" as const,
+          storage: "native_store" as const,
+          effectiveSource: stored.has(key) ? "native_store" as const : "absent" as const,
           editable: true,
         })),
       })),
@@ -11770,8 +11774,8 @@ describe("local TypeScript API", () => {
     expect(initial.statusCode, initial.body).toBe(200);
     expect(initial.json().credentials).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ key: "OPENAI_API_KEY", configured: false, storage: "keychain" }),
-        expect.objectContaining({ key: "GEMINI_API_KEY", configured: false, storage: "keychain" }),
+        expect.objectContaining({ key: "OPENAI_API_KEY", configured: false, storage: "native_store" }),
+        expect.objectContaining({ key: "GEMINI_API_KEY", configured: false, storage: "native_store" }),
       ]),
     );
 
@@ -11803,7 +11807,9 @@ describe("local TypeScript API", () => {
     const response = () => ({
       ok: true as const,
       store: {
-        kind: "config_and_macos_keychain" as const,
+        kind: "config_and_native_credential_store" as const,
+        nativeStore: "macos_keychain" as const,
+        maxSecretBytes: 128,
         available: true,
         unavailableReason: null,
         requiresWorkerRestart: true as const,
@@ -11812,8 +11818,8 @@ describe("local TypeScript API", () => {
         key,
         label: key,
         configured: values.has(key),
-        storage: "keychain" as const,
-        effectiveSource: values.has(key) ? "keychain" as const : "absent" as const,
+        storage: "native_store" as const,
+        effectiveSource: values.has(key) ? "native_store" as const : "absent" as const,
         editable: true,
       })),
     });
@@ -11905,11 +11911,45 @@ describe("local TypeScript API", () => {
       error: "credential_store_unavailable",
       reason: "partial_failure",
       message:
-        "Credential update failed and Keychain recovery was incomplete. Provider credentials may be partially updated; inspect Keychain before retrying.",
+        "Credential update failed and native-store recovery was incomplete. Provider credentials may be partially updated; inspect the native credential store before retrying.",
     });
     expect(response.body).not.toContain(secret);
     expect(logError).not.toHaveBeenCalled();
 
+    await app.close();
+  });
+
+  it.each([
+    ["PATCH", "/v1/credentials", { key: "ANTHROPIC_API_KEY", value: "oversized-secret" }, "set"],
+    [
+      "PATCH",
+      "/v1/credentials/batch",
+      { operations: [{ operation: "set", key: "ANTHROPIC_API_KEY", value: "oversized-secret" }] },
+      "applyBatch",
+    ],
+  ] as const)("returns an actionable validation error for the native byte limit (%s %s)", async (method, url, payload, failingMethod) => {
+    const credentialStore = {
+      list: vi.fn(),
+      set: vi.fn(),
+      delete: vi.fn(),
+      applyBatch: vi.fn(),
+    };
+    credentialStore[failingMethod].mockRejectedValue(
+      new CredentialValueUnsupportedError("ANTHROPIC_API_KEY", 128),
+    );
+    const app = buildApp({ ...options, credentialStore });
+
+    const response = await app.inject({ method, url, payload });
+
+    expect(response.statusCode, response.body).toBe(400);
+    expect(response.json()).toEqual({
+      ok: false,
+      error: "credential_value_unsupported",
+      key: "ANTHROPIC_API_KEY",
+      maxBytes: 128,
+      message: "This credential exceeds the native store's secure 128-byte input limit.",
+    });
+    expect(response.body).not.toContain("oversized-secret");
     await app.close();
   });
 
@@ -12580,7 +12620,9 @@ describe("local TypeScript API", () => {
     const response = {
       ok: true as const,
       store: {
-        kind: "config_and_macos_keychain" as const,
+        kind: "config_and_native_credential_store" as const,
+        nativeStore: "macos_keychain" as const,
+        maxSecretBytes: 128,
         available: true,
         unavailableReason: null,
         requiresWorkerRestart: true as const,
@@ -12589,8 +12631,8 @@ describe("local TypeScript API", () => {
         key,
         label: key,
         configured: true,
-        storage: "keychain" as const,
-        effectiveSource: "keychain" as const,
+        storage: "native_store" as const,
+        effectiveSource: "native_store" as const,
         editable: true,
       })),
     };
@@ -12616,12 +12658,33 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
-  it.each(["linux", "win32"] as const)(
-    "reports unsupported Keychain storage on %s without spawning or failing credential reads",
-    async (platform) => {
+  it.each([
+    ["linux", "linux_secret_service", 8_191],
+    ["win32", "windows_credential_manager", 2_560],
+  ] as const)(
+    "exposes working native credential storage on %s through the HTTP contract",
+    async (platform, nativeStore, maxSecretBytes) => {
       const runSecurity = vi.fn();
+      const stored = new Map<string, string>();
+      const runNative = vi.fn<NativeCredentialCommandRunner>(async (command) => {
+        if (command.operation === "set") {
+          stored.set(command.key, command.value ?? "");
+          return { code: 0, stderr: "", stdout: "" };
+        }
+        if (command.operation === "delete") {
+          const existed = stored.delete(command.key);
+          return { code: existed ? 0 : 44, stderr: "", stdout: "" };
+        }
+        if (!stored.has(command.key)) return { code: 44, stderr: "", stdout: "" };
+        return {
+          code: 0,
+          stderr: "",
+          stdout: command.operation === "read" ? stored.get(command.key) ?? "" : "",
+        };
+      });
       const credentialStore = new KeychainCredentialStore({
         platform,
+        runNative,
         runSecurity,
         configPath: options.configPath,
       });
@@ -12632,9 +12695,11 @@ describe("local TypeScript API", () => {
       expect(initial.json()).toMatchObject({
         ok: true,
         store: {
-          kind: "config_and_macos_keychain",
-          available: false,
-          unavailableReason: "unsupported_platform",
+          kind: "config_and_native_credential_store",
+          nativeStore,
+          maxSecretBytes,
+          available: true,
+          unavailableReason: null,
           requiresWorkerRestart: true,
         },
       });
@@ -12643,7 +12708,7 @@ describe("local TypeScript API", () => {
           (credential: { key: string; configured: boolean | null }) => [credential.key, credential] as const,
         ),
       );
-      expect(SecretCredentialKeys.every((key) => byKey.get(key)?.configured === null)).toBe(true);
+      expect(SecretCredentialKeys.every((key) => byKey.get(key)?.configured === false)).toBe(true);
       expect(ProviderConfigurationKeys.every((key) => byKey.get(key)?.configured === false)).toBe(true);
       expect(runSecurity).not.toHaveBeenCalled();
 
@@ -12652,27 +12717,39 @@ describe("local TypeScript API", () => {
         url: "/v1/credentials",
         payload: { key: "OPENAI_API_KEY", value: "test-secret" },
       });
-      expect(save.statusCode, save.body).toBe(409);
-      expect(save.json()).toMatchObject({
-        ok: false,
-        error: "credential_store_unavailable",
-        reason: "unsupported_platform",
-      });
+      expect(save.statusCode, save.body).toBe(200);
+      expect(save.body).not.toContain("test-secret");
+      expect(stored.get("OPENAI_API_KEY")).toBe("test-secret");
 
       const remove = await app.inject({ method: "DELETE", url: "/v1/credentials/OPENAI_API_KEY" });
-      expect(remove.statusCode, remove.body).toBe(409);
-      expect(remove.json()).toMatchObject({
-        ok: false,
-        error: "credential_store_unavailable",
-        reason: "unsupported_platform",
-      });
+      expect(remove.statusCode, remove.body).toBe(200);
+      expect(stored.has("OPENAI_API_KEY")).toBe(false);
       expect(runSecurity).not.toHaveBeenCalled();
 
       await app.close();
     },
   );
 
-  it("keeps failed Keychain inspection unknown and returns sanitized 503 mutation errors", async () => {
+  it("reports null capability metadata on an unsupported platform", async () => {
+    const credentialStore = new KeychainCredentialStore({
+      platform: "freebsd",
+      configPath: options.configPath,
+    });
+    const app = buildApp({ ...options, credentialStore });
+
+    const response = await app.inject({ method: "GET", url: "/v1/credentials" });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json().store).toMatchObject({
+      nativeStore: null,
+      maxSecretBytes: null,
+      available: false,
+      unavailableReason: "unsupported_platform",
+    });
+    await app.close();
+  });
+
+  it("keeps failed native inspection unknown and returns sanitized 503 mutation errors", async () => {
     const secret = "server-secret-and-raw-stderr-must-not-appear";
     const runSecurity = vi.fn(async () => {
       throw new Error(secret);
@@ -12713,7 +12790,7 @@ describe("local TypeScript API", () => {
       ok: false,
       error: "credential_store_unavailable",
       reason: "operational_failure",
-      message: "macOS Keychain is temporarily unavailable. Unlock Keychain Access and retry.",
+      message: "The native credential store is temporarily unavailable. Unlock it and retry.",
     });
     expect(save.body).not.toContain(secret);
 

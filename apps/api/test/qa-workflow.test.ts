@@ -314,7 +314,7 @@ describe("seeded local QA workflow", () => {
     expect(saveCredential.statusCode, saveCredential.body).toBe(200);
     expect(saveCredential.json().credentials.find((credential: { key: string }) => credential.key === "OPENAI_API_KEY")).toMatchObject({
       configured: true,
-      storage: "keychain",
+      storage: "native_store",
     });
 
     const deleteCredential = await app.inject({
@@ -339,7 +339,9 @@ function createMemoryCredentialStore(): CredentialStore {
   const list = async (): Promise<CredentialsResponse> => ({
     ok: true,
     store: {
-      kind: "config_and_macos_keychain",
+      kind: "config_and_native_credential_store",
+      nativeStore: "macos_keychain" as const,
+      maxSecretBytes: 128,
       available: true,
       unavailableReason: null,
       requiresWorkerRestart: true,
@@ -348,8 +350,8 @@ function createMemoryCredentialStore(): CredentialStore {
       key,
       label: key,
       configured: values.has(key),
-      storage: "keychain" as const,
-      effectiveSource: values.has(key) ? "keychain" as const : "absent" as const,
+      storage: "native_store" as const,
+      effectiveSource: values.has(key) ? "native_store" as const : "absent" as const,
       editable: true,
     })),
   });

@@ -316,7 +316,7 @@ test("Credential notices keep a real, contained layout box at mobile width", asy
     },
     {
       scenario: "inspection_failed" as const,
-      copy: "JobCtrl could not safely inspect Keychain.",
+      copy: "JobCtrl could not safely inspect macOS Keychain.",
       display: "block",
       guidance: false,
       privacy: false,
@@ -410,7 +410,7 @@ test("Guided Claude and Google setup can be removed through confirmed provider b
       ...credential,
       configured: configuredKeys.has(credential.key),
       effectiveSource: configuredKeys.has(credential.key)
-        ? ("keychain" as const)
+        ? ("native_store" as const)
         : ("absent" as const),
     })),
   });

@@ -9,6 +9,7 @@
     "dev": "tsx watch src/main.ts",
     "start": "tsx src/main.ts",
     "data:purge-jobs": "tsx src/purge-job-data.ts",
+    "credentials:native-qa": "tsx src/native-credential-qa.ts",
     "check": "tsc --noEmit --project tsconfig.json",
     "test": "vitest run test",
     "qa:seed": "tsx test/qa-seed.ts",
