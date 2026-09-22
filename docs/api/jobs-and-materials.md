@@ -136,7 +136,7 @@ authorization at its authoritative claim boundary.
 
 | Capability | Route family |
 | --- | --- |
-| Contact facts | `/v1/contacts` list, detail, create, update, delete, and CSV import |
+| Contact facts | `/v1/contacts` list, detail, create, update, delete, and reviewed CSV/vCard import |
 | Supervised research | `/v1/contacts/research` run/list/detail and candidate confirmation |
 | Draft review | contact/thread draft generate, revise, approve, and reject routes |
 | Follow-up operations | send logs, schedule/complete/dismiss, and due-follow-up reads |

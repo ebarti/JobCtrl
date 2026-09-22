@@ -47,7 +47,7 @@ the page title is Contacts. From there you can:
 
 - filter contacts by employer or linked job;
 - create, edit, or remove a contact;
-- import a CSV list, with the filename retained as source provenance; and
+- preview and import CSV or vCard contacts, retaining filename provenance; and
 - inspect due follow-ups before opening a contact.
 
 The Contact Detail route workspace at `/outreach/:contactId` shows each fact
@@ -68,6 +68,72 @@ send action. Follow-ups are editable reminders that you complete or dismiss
 yourself. The current cadence policy belongs to
 [Apply → Outreach Follow-Ups](apply.md#outreach-follow-ups) and is not duplicated
 here.
+
+## Contact Import
+
+Open **Import contacts**, choose CSV or vCard, enter the source filename, and
+paste its contents. **Preview import** parses the input on the local API and shows
+supported facts, duplicate matches, invalid records, and warnings. Preview does
+not create contacts or events. Go back to correct the input, or continue and
+choose **Confirm import** to save the ready records. Confirmation checks for
+duplicates again against current contacts, so the final imported count can
+change if another import committed meanwhile.
+
+Every saved attribute retains the filename as `sourceRef`, with
+`sourceKind = user_imported_list`, `captureMethod = manual`, a capture timestamp,
+confidence `1`, and `userConfirmed = true`. Import does not fetch linked content,
+enrich facts, draft messages, or send outreach. Skipped duplicates never merge
+into or overwrite an existing contact; review and edit that contact separately
+if you want to add facts.
+
+Duplicate checks compare case-insensitive email addresses and phone digits
+(with at least seven digits) against active contacts and earlier ready records
+in the batch. A unique match skips the whole record. Identifiers matching
+several contacts are ambiguous and invalidate the record. Without an email or
+usable phone, only an identical normalized full record (employer, application,
+role, and all facts) counts as a duplicate; a name alone is not enough.
+Normalization ignores text case and repeated whitespace. Soft-deleted contacts
+are not duplicate targets.
+
+### Supported vCards
+
+The importer supports a bounded text subset of
+[vCard 3.0](https://www.rfc-editor.org/rfc/rfc2426) and
+[vCard 4.0](https://www.rfc-editor.org/rfc/rfc6350), including multiple cards,
+folded lines, grouped property names, and escaped text. This is not a general
+address-book synchronizer. Requests allow up to 1,000,000 text characters
+(within the API body-size limit), 1,000 cards, 50 facts per card, 2,000 characters
+per fact, and a 200-character employer. Oversized records are reported as
+invalid; an oversized card batch is rejected as an invalid preview item.
+
+| vCard property | Imported fact |
+| --- | --- |
+| `FN`, or structured `N` when `FN` is absent | Name |
+| `ORG` | Employer link from its first component |
+| `TITLE` | Title; the contact role remains **Other** |
+| `EMAIL` | Email address |
+| `TEL` | Plain phone number or an unqualified `tel:` URI |
+| `URL` | Profile URL, stored without fetching it |
+| `NOTE` | Note |
+
+Each card needs an employer (`ORG`) because a contact must link to an employer
+or application. vCards do not assign application IDs. Other properties,
+including photos, addresses, birthdays, and extensions, are reported as
+unsupported; they are not fetched or imported. Unsupported parameters are
+reported rather than treated as extra facts. Type/preference/language labels
+are reported as ignored metadata; they do not alter fact values or choose a
+preferred fact. Qualified telephone URIs (such as `phone-context` or extensions)
+are unsupported because reducing them to digits can conflate distinct numbers.
+Unsupported versions, malformed cards, incompatible property value types,
+unsupported encodings, qualified telephone URIs, or missing required links are
+invalid records.
+Their supported fields may be shown for review, but confirmation skips the
+whole invalid card. Valid neighboring cards can still be imported.
+
+CSV retains its existing column mapping; application links must identify an
+existing job. Both formats use the same reviewed workflow and provenance
+authority. For request fields and response outcomes,
+see the [contacts API contract](../api/complete-contract.md#contacts).
 
 ## Source Of Truth And Ownership
 

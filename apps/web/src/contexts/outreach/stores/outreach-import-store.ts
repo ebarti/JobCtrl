@@ -2,15 +2,17 @@ import { create } from "zustand";
 import { createJSONStorage, persist, type StateStorage } from "zustand/middleware";
 
 interface OutreachImportState {
+  format: "csv" | "vcard";
   filename: string;
-  csvText: string;
-  setUpload: (filename: string, csvText: string) => void;
+  content: string;
+  setUpload: (format: "csv" | "vcard", filename: string, content: string) => void;
   reset: () => void;
 }
 
 const initialState = {
+  format: "csv" as const,
   filename: "",
-  csvText: "",
+  content: "",
 };
 
 function createMemoryStorage(): StateStorage {
@@ -48,13 +50,13 @@ export const useOutreachImportStore = create<OutreachImportState>()(
   persist(
     (set) => ({
       ...initialState,
-      setUpload: (filename, csvText) => set({ filename, csvText }),
+      setUpload: (format, filename, content) => set({ format, filename, content }),
       reset: () => set({ ...initialState }),
     }),
     {
       name: "jh:outreach-import",
       storage: createJSONStorage(getStorage),
-      version: 1,
+      version: 2,
     },
   ),
 );

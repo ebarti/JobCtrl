@@ -8,16 +8,20 @@ import { renderHookWithProviders } from "../../../test/render.js";
 import { useImportContactsMutation } from "./useImportContactsMutation.js";
 
 describe("useImportContactsMutation", () => {
-  it("imports parsed CSV rows and returns the imported count", async () => {
+  it("returns a read-only vCard preview before commit", async () => {
     const { result } = renderHookWithProviders(() => useImportContactsMutation());
     await act(async () => {
       result.current.mutate({
-        filename: "contacts.csv",
-        csvText: "name,email\nDana Reyes,dana@acme.example\nMorgan Blake,morgan@acme.example",
+        filename: "contacts.vcf",
+        format: "vcard",
+        mode: "preview",
+        content: "BEGIN:VCARD\nVERSION:4.0\nFN:Dana Reyes\nORG:Acme\nEND:VCARD",
       });
     });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(result.current.data?.imported).toBe(2);
+    expect(result.current.data?.imported).toBe(0);
+    expect(result.current.data?.summary.ready).toBe(1);
+    expect(result.current.data?.items[0]?.displayName).toBe("Dana Reyes");
   });
 
   it("reports an error when the import request fails", async () => {
@@ -28,7 +32,7 @@ describe("useImportContactsMutation", () => {
     );
     const { result } = renderHookWithProviders(() => useImportContactsMutation());
     await act(async () => {
-      result.current.mutate({ filename: "bad.csv", csvText: "name\nDana" });
+      result.current.mutate({ filename: "bad.vcf", format: "vcard", mode: "preview", content: "broken" });
     });
     await waitFor(() => expect(result.current.isError).toBe(true));
   });

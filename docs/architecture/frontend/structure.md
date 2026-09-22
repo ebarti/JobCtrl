@@ -147,7 +147,7 @@ apps/web/
 │   │   │   ├── hooks/                    # useContactsListQuery, useContactDetailQuery, useCreate/Update/Delete/ImportContactsMutation
 │   │   │   ├── components/               # ContactRoleBadge, ContactProvenanceList/Summary, Contact{Create,Edit,Delete,Import}Button, JobContactsPanel
 │   │   │   ├── forms/                    # contact-form, contact-import-wizard (TanStack Form + Zod safeParse)
-│   │   │   ├── stores/outreach-import-store.ts   # Zustand+persist (jh:outreach-import) for the CSV-import wizard
+│   │   │   ├── stores/outreach-import-store.ts   # Zustand+persist (jh:outreach-import) for the CSV/vCard import wizard
 │   │   │   ├── lib/                      # contact-copy, contact-patches
 │   │   │   ├── handlers.ts               # contact/outreach event handlers (registered via operations/invalidation-router.ts)
 │   │   │   └── index.ts

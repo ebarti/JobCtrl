@@ -12,24 +12,24 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-function StoreSeed({ filename, csvText }: { filename: string; csvText: string }) {
+function StoreSeed({ filename, content }: { filename: string; content: string }) {
   const setUpload = useOutreachImportStore((state) => state.setUpload);
   const reset = useOutreachImportStore((state) => state.reset);
   useEffect(() => {
-    if (filename || csvText) {
-      setUpload(filename, csvText);
+    if (filename || content) {
+      setUpload("csv", filename, content);
     } else {
       reset();
     }
     return () => reset();
-  }, [filename, csvText, setUpload, reset]);
+  }, [filename, content, setUpload, reset]);
   return null;
 }
 
 export const Empty: Story = {
   render: () => (
     <>
-      <StoreSeed filename="" csvText="" />
+      <StoreSeed filename="" content="" />
       <ContactImportWizard />
     </>
   ),
@@ -40,7 +40,7 @@ export const Prefilled: Story = {
     <>
       <StoreSeed
         filename="contacts-2026-06.csv"
-        csvText={"name,email,employer\nDana Reyes,dana@acme.example,Acme\nMorgan Blake,morgan@acme.example,Acme"}
+        content={"name,email,employer\nDana Reyes,dana@acme.example,Acme\nMorgan Blake,morgan@acme.example,Acme"}
       />
       <ContactImportWizard />
     </>

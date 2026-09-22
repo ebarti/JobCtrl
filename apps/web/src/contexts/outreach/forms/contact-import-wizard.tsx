@@ -1,11 +1,21 @@
-import { ContactImportRequestSchema, type ContactImportRequest } from "@jobctrl/contracts";
+import { ContactImportRequestSchema } from "@jobctrl/contracts";
 import { useForm } from "@tanstack/react-form";
-import { useId, useMemo, useState } from "react";
+import { useId, useState } from "react";
+
+import type { ContactImportFormat, ContactImportResponse } from "../../operations/types.js";
 
 import { Button } from "../../../shared/ui/button.js";
 import { Empty } from "../../../shared/ui/empty.js";
 import { Field, FieldLabel } from "../../../shared/ui/field.js";
 import { Input } from "../../../shared/ui/input.js";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../../../shared/ui/select.js";
 import { Textarea } from "../../../shared/ui/textarea.js";
 import { useImportContactsMutation } from "../hooks/useImportContactsMutation.js";
 import { useOutreachImportStore } from "../stores/outreach-import-store.js";
@@ -15,56 +25,77 @@ export interface ContactImportWizardProps {
 }
 
 type WizardStep = "upload" | "preview" | "confirm";
-
-function estimateContactRows(csvText: string): number {
-  const rows = csvText.split(/\r?\n/).filter((line) => line.trim().length > 0);
-  return Math.max(rows.length - 1, 0);
+interface ContactImportFormValues {
+  filename: string;
+  format: ContactImportFormat;
+  content: string;
 }
+
+const FACT_LABELS: Record<string, string> = {
+  name: "Name",
+  title: "Title",
+  email: "Email",
+  phone: "Phone",
+  profile_url: "Profile URL",
+  note: "Note",
+};
 
 export function ContactImportWizard({ onDone }: ContactImportWizardProps) {
   const formId = useId();
   const filename = useOutreachImportStore((state) => state.filename);
-  const csvText = useOutreachImportStore((state) => state.csvText);
+  const format = useOutreachImportStore((state) => state.format);
+  const content = useOutreachImportStore((state) => state.content);
   const setUpload = useOutreachImportStore((state) => state.setUpload);
   const reset = useOutreachImportStore((state) => state.reset);
 
   const importContacts = useImportContactsMutation();
   const [step, setStep] = useState<WizardStep>("upload");
+  const [selectedFormat, setSelectedFormat] = useState<ContactImportFormat>(format);
+  const [preview, setPreview] = useState<ContactImportResponse | null>(null);
   const [statusMessage, setStatusMessage] = useState("");
 
   const form = useForm({
-    defaultValues: { filename, csvText } satisfies ContactImportRequest,
+    defaultValues: { filename, format, content } satisfies ContactImportFormValues,
     validators: {
       onSubmit: ({ value }) => {
-        const result = ContactImportRequestSchema.safeParse(value);
+        const result = ContactImportRequestSchema.safeParse({ ...value, mode: "preview" });
         return result.success ? undefined : (result.error.issues[0]?.message ?? "Invalid import.");
       },
     },
-    onSubmit: ({ value }) => {
-      setUpload(value.filename, value.csvText);
+    onSubmit: async ({ value }) => {
+      setUpload(value.format, value.filename, value.content);
       setStatusMessage("");
-      setStep("preview");
+      try {
+        const response = await importContacts.mutateAsync({ ...value, mode: "preview" });
+        setPreview(response);
+        setStep("preview");
+      } catch {
+        // The mutation exposes its bounded request error in the banner below.
+      }
     },
   });
 
-  const parsedRowCount = useMemo(() => estimateContactRows(csvText), [csvText]);
   const errorMessage = importContacts.error?.message ?? "";
 
   const confirmImport = async () => {
     setStatusMessage("");
-    const response = await importContacts.mutateAsync({ filename, csvText });
-    reset();
-    setStatusMessage(
-      `Imported ${response.imported} contact${response.imported === 1 ? "" : "s"}` +
-        (response.skipped ? `, skipped ${response.skipped}.` : "."),
-    );
-    onDone?.();
+    try {
+      const response = await importContacts.mutateAsync({ filename, format, content, mode: "commit" });
+      reset();
+      setStatusMessage(
+        `Imported ${response.imported} contact${response.imported === 1 ? "" : "s"}` +
+          (response.skipped ? `, skipped ${response.skipped}.` : "."),
+      );
+      onDone?.();
+    } catch {
+      // The mutation exposes its bounded request error in the banner below.
+    }
   };
 
   return (
     <div className="contact-import-wizard">
-      {errorMessage ? <div className="banner inline">{errorMessage}</div> : null}
-      {statusMessage ? <div className="status-line">{statusMessage}</div> : null}
+      {errorMessage ? <div className="banner inline" role="alert">{errorMessage}</div> : null}
+      {statusMessage ? <div className="status-line" role="status">{statusMessage}</div> : null}
 
       {step === "upload" ? (
         <form
@@ -75,10 +106,35 @@ export function ContactImportWizard({ onDone }: ContactImportWizardProps) {
             void form.handleSubmit();
           }}
         >
+          <form.Field name="format">
+            {(field) => (
+              <Field className="field">
+                <FieldLabel htmlFor={`${formId}-format`}>File format</FieldLabel>
+                <Select
+                  value={field.state.value}
+                  onValueChange={(value) => {
+                    const nextFormat = value as ContactImportFormat;
+                    field.handleChange(nextFormat);
+                    setSelectedFormat(nextFormat);
+                  }}
+                >
+                  <SelectTrigger id={`${formId}-format`} aria-label="File format" className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      <SelectItem value="csv">CSV</SelectItem>
+                      <SelectItem value="vcard">vCard 3.0 or 4.0</SelectItem>
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </Field>
+            )}
+          </form.Field>
           <form.Field name="filename">
             {(field) => (
               <Field className="field">
-                <FieldLabel htmlFor={`${formId}-filename`}>List name</FieldLabel>
+                <FieldLabel htmlFor={`${formId}-filename`}>Source filename</FieldLabel>
                 <Input
                   id={`${formId}-filename`}
                   value={field.state.value}
@@ -88,13 +144,15 @@ export function ContactImportWizard({ onDone }: ContactImportWizardProps) {
               </Field>
             )}
           </form.Field>
-          <form.Field name="csvText">
+          <form.Field name="content">
             {(field) => (
               <Field className="field">
-                <FieldLabel htmlFor={`${formId}-csv-text`}>CSV rows</FieldLabel>
+                <FieldLabel htmlFor={`${formId}-content`}>
+                  {selectedFormat === "vcard" ? "vCard content" : "CSV rows"}
+                </FieldLabel>
                 <Textarea
-                  id={`${formId}-csv-text`}
-                  rows={8}
+                  id={`${formId}-content`}
+                  rows={10}
                   value={field.state.value}
                   onBlur={field.handleBlur}
                   onChange={(event) => field.handleChange(event.target.value)}
@@ -104,40 +162,68 @@ export function ContactImportWizard({ onDone }: ContactImportWizardProps) {
           </form.Field>
           <form.Subscribe selector={(state) => state.errors}>
             {(errors) => {
-              const message = errors
-                .flat()
-                .filter((entry): entry is string => typeof entry === "string")
-                .at(0);
-              return message ? <div className="banner inline">{message}</div> : null;
+              const message = errors.flat().filter((entry): entry is string => typeof entry === "string").at(0);
+              return message ? <div className="banner inline" role="alert">{message}</div> : null;
             }}
           </form.Subscribe>
           <div className="form-actions">
-            <Button type="submit">Next</Button>
+            <Button type="submit" disabled={importContacts.isPending}>
+              {importContacts.isPending ? "Previewing…" : "Preview import"}
+            </Button>
           </div>
         </form>
       ) : null}
 
       {step === "preview" ? (
         <div className="wizard-step">
-          {csvText ? (
-            <p>
-              <b>{filename || "Contact list"}</b> parses to{" "}
-              <b>{parsedRowCount}</b> contact{parsedRowCount === 1 ? "" : "s"} (excluding the header
-              row).
-            </p>
+          {preview ? (
+            <>
+              <p role="status">
+                <b>{preview.summary.ready}</b> ready, <b>{preview.summary.duplicates}</b> duplicate,{
+                " "}<b>{preview.summary.invalid}</b> invalid. Unsupported fields are reported on{
+                " "}<b>{preview.summary.unsupported}</b> contact{preview.summary.unsupported === 1 ? "" : "s"}.
+              </p>
+              <ol aria-label="Contact import preview">
+                {preview.items.map((item) => (
+                  <li key={item.index}>
+                    <p><b>{item.displayName || `Contact ${item.index}`}</b> <span className="meta">{item.status}</span></p>
+                    <p className="meta">
+                      Employer: {item.employer ?? "None"}{item.jobId ? ` · Job: ${item.jobId}` : ""}
+                    </p>
+                    {item.attributes.length ? (
+                      <ul>
+                        {item.attributes.map((attribute, attributeIndex) => (
+                          <li key={`${attribute.kind}-${attributeIndex}`}>
+                            <b>{FACT_LABELS[attribute.kind] ?? attribute.kind}:</b> {attribute.value}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                    {item.duplicate ? (
+                      <p className="meta">
+                        Duplicate of {item.duplicate.scope === "existing"
+                          ? `existing contact ${item.duplicate.contactId ?? ""}`
+                          : `item ${item.duplicate.itemIndex ?? ""}`}.
+                      </p>
+                    ) : null}
+                    {item.issues.length ? (
+                      <ul aria-label={`Issues for contact ${item.index}`}>
+                        {item.issues.map((issue, issueIndex) => (
+                          <li key={`${issue.code}-${issueIndex}`}>{issue.message}</li>
+                        ))}
+                      </ul>
+                    ) : null}
+                  </li>
+                ))}
+              </ol>
+            </>
           ) : (
-            <Empty title="No CSV provided. Go back to step 1." />
+            <Empty title="No server preview is available. Go back and preview the import again." />
           )}
           <div className="form-actions">
-            <Button type="button" variant="outline" onClick={() => setStep("upload")}>
-              Back
-            </Button>
-            <Button
-              type="button"
-              disabled={!csvText}
-              onClick={() => setStep("confirm")}
-            >
-              Next
+            <Button type="button" variant="outline" onClick={() => setStep("upload")}>Back</Button>
+            <Button type="button" disabled={!preview || preview.summary.ready === 0} onClick={() => setStep("confirm")}>
+              Continue
             </Button>
           </div>
         </div>
@@ -146,17 +232,15 @@ export function ContactImportWizard({ onDone }: ContactImportWizardProps) {
       {step === "confirm" ? (
         <div className="wizard-step">
           <p>
-            Import <b>{parsedRowCount}</b> contact{parsedRowCount === 1 ? "" : "s"} from{" "}
-            <b>{filename || "the pasted list"}</b>. Every imported fact is recorded with imported-list
-            provenance.
+            Import <b>{preview?.summary.ready ?? 0}</b> reviewed contact{
+              preview?.summary.ready === 1 ? "" : "s"} from <b>{filename}</b>. Duplicate and invalid
+            contacts remain skipped. Every imported fact keeps this filename as imported-list provenance.
           </p>
           <div className="form-actions">
-            <Button type="button" variant="outline" onClick={() => setStep("preview")}>
-              Back
-            </Button>
+            <Button type="button" variant="outline" onClick={() => setStep("preview")}>Back</Button>
             <Button
               type="button"
-              disabled={importContacts.isPending || !csvText}
+              disabled={importContacts.isPending || !preview || preview.summary.ready === 0}
               onClick={() => void confirmImport()}
             >
               {importContacts.isPending ? "Importing…" : "Confirm import"}

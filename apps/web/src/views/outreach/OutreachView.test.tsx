@@ -53,7 +53,7 @@ describe("<OutreachView>", () => {
     expect(screen.getByText("Morgan Blake")).toBeInTheDocument();
   });
 
-  it("exposes contact create and CSV import actions", async () => {
+  it("exposes contact create and reviewed import actions", async () => {
     const user = userEvent.setup();
     const { container } = renderOutreachView();
     await waitFor(() =>
@@ -68,7 +68,7 @@ describe("<OutreachView>", () => {
       within(pageActions!).getByRole("button", { name: "New contact" }),
     ).toBeInTheDocument();
     expect(
-      within(pageActions!).getByRole("button", { name: "Import CSV" }),
+      within(pageActions!).getByRole("button", { name: "Import contacts" }),
     ).toBeInTheDocument();
 
     const filters = screen.getByRole("group", { name: "Contact filters" });
@@ -82,7 +82,7 @@ describe("<OutreachView>", () => {
       within(filters).queryByRole("button", { name: "New contact" }),
     ).not.toBeInTheDocument();
     expect(
-      within(filters).queryByRole("button", { name: "Import CSV" }),
+      within(filters).queryByRole("button", { name: "Import contacts" }),
     ).not.toBeInTheDocument();
 
     await user.click(
@@ -99,10 +99,10 @@ describe("<OutreachView>", () => {
     );
 
     await user.click(
-      within(pageActions!).getByRole("button", { name: "Import CSV" }),
+      within(pageActions!).getByRole("button", { name: "Import contacts" }),
     );
     expect(
-      await screen.findByRole("heading", { name: "Import contacts from CSV" }),
+      await screen.findByRole("heading", { name: "Import contacts" }),
     ).toBeInTheDocument();
   });
 
@@ -132,16 +132,16 @@ describe("<OutreachView>", () => {
 
     await user.click(
       within(emptyState as HTMLElement).getByRole("button", {
-        name: "Import CSV",
+        name: "Import contacts",
       }),
     );
     expect(
-      await screen.findByRole("heading", { name: "Import contacts from CSV" }),
+      await screen.findByRole("heading", { name: "Import contacts" }),
     ).toBeInTheDocument();
     expect(listContacts).toHaveBeenCalled();
   });
 
-  it("blocks personal CSV entry in the demo and points to the local app", async () => {
+  it("blocks personal contact import in the demo and points to the local app", async () => {
     const importContacts = vi.fn();
     const ports = buildTestPorts({ api: { importContacts } });
     ports.featureFlags = new DemoFeatureFlagAdapter();
@@ -151,16 +151,16 @@ describe("<OutreachView>", () => {
       expect(screen.getByText("Dana Reyes")).toBeInTheDocument(),
     );
 
-    const importButton = screen.getByRole("button", { name: "Import CSV" });
+    const importButton = screen.getByRole("button", { name: "Import contacts" });
     expect(importButton).toBeDisabled();
     expect(importButton).toHaveAccessibleDescription(
-      /CSV import is available in the local app.*never accepts personal contact data/i,
+      /CSV and vCard import are available in the local app.*never accepts personal contact data/i,
     );
     expect(
       screen.getByRole("link", { name: "Install JobCtrl" }),
     ).toHaveAttribute("href", "https://jobctrl.dev/user/getting-started");
     expect(
-      screen.queryByRole("heading", { name: "Import contacts from CSV" }),
+      screen.queryByRole("heading", { name: "Import contacts" }),
     ).not.toBeInTheDocument();
     expect(importContacts).not.toHaveBeenCalled();
   });

@@ -476,7 +476,7 @@ context; it owns a person/relationship concept that none of the other eight own.
 
 **Responsibilities:**
 - Own the `Contact` aggregate and its provenance-bearing attributes.
-- Create, update, CSV-import, and soft-delete contacts; every stored fact carries provenance (INV-2).
+- Create, update, CSV/vCard-import, and soft-delete contacts; every stored fact carries provenance (INV-2).
 - Emit contact domain events (`ContactCreated`, `ContactUpdated`, `ContactAttributeRecorded`, `ContactDeleted`) carrying only identifiers, kinds, provenance metadata, and timestamps.
 - Own the `OutreachThread` aggregate (Phase 3): generate truthful, reviewable outreach drafts under the reused materials truthfulness gate stack (INV-5), keep the last approved draft readable across re-drafts, and emit draft-lifecycle events (`OutreachDraftGenerated`, `OutreachDraftRevised`, `OutreachDraftApproved`, `OutreachDraftRejected`).
 - Record user-attested sends and manage follow-ups (Phase 4): a thread reaches "sent" ONLY via an `OutreachSendLog` over an approved draft (`OutreachSendLogged`), and a surfaced-only `FollowUpSchedule` (derived from the application lifecycle) emits `FollowUpScheduled` / `FollowUpCompleted` / `FollowUpDismissed` and feeds the `due_follow_up_projections` read model. The system never sends — logging is a recorded fact and follow-ups are never auto-acted (INV-1).

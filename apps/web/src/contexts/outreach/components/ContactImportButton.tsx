@@ -22,7 +22,7 @@ export interface ContactImportButtonProps {
 }
 
 export function ContactImportButton({
-  label = "Import CSV",
+  label = "Import contacts",
   className,
 }: ContactImportButtonProps) {
   const [open, setOpen] = useState(false);
@@ -46,7 +46,7 @@ export function ContactImportButton({
           {label}
         </Button>
         <span className="meta" id={unavailableReasonId}>
-          CSV import is available in the local app. This demo never accepts
+          CSV and vCard import are available in the local app. This demo never accepts
           personal contact data. <a href={LOCAL_INSTALL_GUIDE_URL}>Install JobCtrl</a>.
         </span>
       </>
@@ -68,10 +68,10 @@ export function ContactImportButton({
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Import contacts from CSV</DialogTitle>
+          <DialogTitle>Import contacts</DialogTitle>
           <DialogDescription>
-            Paste CSV rows to import contacts. Every imported fact is recorded with imported-list
-            provenance.
+            Preview CSV or vCard 3.0/4.0 content before committing it. Every imported fact is
+            recorded with filename provenance.
           </DialogDescription>
         </DialogHeader>
         <ContactImportWizard onDone={() => setOpen(false)} />
