@@ -102,6 +102,17 @@ def main() -> int:
             deadline = time.monotonic() + 15
             while True:
                 try:
+                    # Looking up a secret before our daemon owns the bus name can
+                    # activate a different daemon with the bus launcher's HOME.
+                    # Query the bus itself, which never activates Secret Service.
+                    owner = subprocess.run(
+                        ["dbus-send", "--session", "--print-reply", "--dest=org.freedesktop.DBus",
+                         "/org/freedesktop/DBus", "org.freedesktop.DBus.NameHasOwner",
+                         "string:org.freedesktop.secrets"],
+                        capture_output=True, text=True, timeout=5,
+                    )
+                    if owner.returncode or "boolean true" not in owner.stdout:
+                        raise native.NativeCredentialError("Owned daemon is not ready")
                     store.inspect(key)
                     break
                 except native.NativeCredentialError:
@@ -228,5 +239,10 @@ if __name__ == "__main__":
         raise SystemExit(main())
     except Exception as error:
         # Native command output and credential-bearing assertion operands stay private.
-        print(json.dumps({"platform": platform.system(), "status": "failed", "phase": PHASE, "errorType": type(error).__name__}), file=sys.stderr)
+        diagnostic = {"platform": platform.system(), "status": "failed", "phase": PHASE, "errorType": type(error).__name__}
+        if isinstance(error, native.NativeCredentialError):
+            # Only fixed public error categories, never command output or values.
+            diagnostic["timedOut"] = isinstance(error.__cause__, subprocess.TimeoutExpired)
+            diagnostic["osError"] = isinstance(error.__cause__, OSError)
+        print(json.dumps(diagnostic), file=sys.stderr)
         raise SystemExit(1) from None
