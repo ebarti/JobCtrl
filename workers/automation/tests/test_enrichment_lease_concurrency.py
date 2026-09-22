@@ -169,16 +169,30 @@ def _injected_connection_probe(path):
     assert not thread.is_alive()
     default.close()
 
-    shared = sqlite3.connect(path, timeout=1, check_same_thread=False)
-    shared.execute("PRAGMA busy_timeout=1")
-    entered = threading.Event()
+    holder_entered = threading.Event()
     release = threading.Event()
-    started = threading.Event()
+    claim_thread_ready = threading.Event()
+    allow_claim = threading.Event()
+    claim_entered_sqlite = threading.Event()
     done = threading.Event()
     result = []
 
+    class ObservableConnection(sqlite3.Connection):
+        def execute(self, sql, parameters=(), /):
+            if sql == "BEGIN IMMEDIATE":
+                claim_entered_sqlite.set()
+            return super().execute(sql, parameters)
+
+    shared = sqlite3.connect(
+        path,
+        timeout=1,
+        check_same_thread=False,
+        factory=ObservableConnection,
+    )
+    shared.execute("PRAGMA busy_timeout=1")
+
     def block():
-        entered.set()
+        holder_entered.set()
         assert release.wait(timeout=2)
         return 1
 
@@ -188,7 +202,8 @@ def _injected_connection_probe(path):
     )
 
     def claim_shared():
-        started.set()
+        claim_thread_ready.set()
+        assert allow_claim.wait(timeout=2)
         lease = _claim_activity_enrichment_lease(
             payload,
             activity_attempt=1,
@@ -200,16 +215,26 @@ def _injected_connection_probe(path):
 
     claimant = threading.Thread(target=claim_shared)
     holder.start()
-    assert entered.wait(timeout=2)
+    assert holder_entered.wait(timeout=2)
     claimant.start()
-    assert started.wait(timeout=2)
-    completed_while_held = done.wait(timeout=0.1)
+    assert claim_thread_ready.wait(timeout=2)
+    pre_entry_gate_held = not claim_entered_sqlite.is_set()
+    allow_claim.set()
+    assert claim_entered_sqlite.wait(timeout=2)
+    entered_before_release = not release.is_set()
+    completed_after_entry = done.wait(timeout=0.1)
     release.set()
     holder.join(timeout=2)
     claimant.join(timeout=2)
     assert not holder.is_alive() and not claimant.is_alive()
     shared.close()
-    return wrong_thread_error, completed_while_held, result
+    return (
+        wrong_thread_error,
+        pre_entry_gate_held,
+        entered_before_release,
+        completed_after_entry,
+        result,
+    )
 
 
 _PROBES = {
@@ -288,10 +313,16 @@ def test_worker_pool_reuses_its_thread_local_connection(database_path):
 
 
 def test_injected_connection_diagnostic_separates_mutex_from_busy_wait(database_path):
-    wrong_thread, completed_while_held, shared_result = _isolated(
-        "injected", database_path
-    )
+    (
+        wrong_thread,
+        pre_entry_gate_held,
+        entered_before_release,
+        completed_after_entry,
+        shared_result,
+    ) = _isolated("injected", database_path)
     assert wrong_thread[0][0] == "ProgrammingError"
     assert "created in a thread" in wrong_thread[0][1]
-    assert completed_while_held is False
+    assert pre_entry_gate_held is True
+    assert entered_before_release is True
+    assert completed_after_entry is False
     assert shared_result == [1]
