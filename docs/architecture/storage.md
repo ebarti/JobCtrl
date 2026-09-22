@@ -118,7 +118,7 @@ jobs, runs, or feedback signals:
 | `learning_recommendation_evidence`, `tailoring_feedback_signal_reviews`, `tailoring_feedback_signal_contradictions` | Append-only evidence/reviews retain signal/review references and historical JobIds even after source signals cascade away. |
 | `learning_recommendation_tombstones` | Append-only tombstones retain `affected_signal_id` after a Job-owned source signal cascades away. |
 | `role_match_feedback_suggestions` | Retains `evidence_json`, which may cite purged jobs or runs. |
-| Non-job `workflow_run_projections` with a nonempty `input_summary_json.jobId` | Unrelated workflow history remains. In particular, `ContactResearchWorkflow` can retain the purged JobId it was asked to research. |
+| Non-job `workflow_run_projections` | All unrelated workflow history remains and is counted. In particular, `ContactResearchWorkflow.input_summary_json.jobId` can retain the purged JobId it was asked to research. |
 
 Counts cover local rows in these retained sets, not only rows whose referenced
 source still exists. The command does not rewrite immutable learning history or

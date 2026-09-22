@@ -752,7 +752,7 @@ describe("guarded production job-data purge", () => {
       learning_recommendation_evidence_jobs: 3, learning_recommendation_evidence: 3,
       learning_recommendation_tombstones: 1, tailoring_feedback_signal_reviews: 3,
       tailoring_feedback_signal_contradictions: 1, role_match_feedback_suggestions: 1,
-      workflow_run_projections_with_job_id: 1,
+      workflow_run_projections_non_job: 2,
     };
     expect(inspectJobDataPurge({ appDir: fixture.appDir }).retainedReferenceRows).toEqual(counts);
     const commands = [runInventory(fixture.appDir), runConfirmedPurge(fixture.appDir), runInventory(fixture.appDir), runConfirmedPurge(fixture.appDir)];

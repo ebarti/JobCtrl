@@ -631,15 +631,12 @@ function retainedReferenceRows(db: SqliteDatabase): Record<string, number> {
     ...Object.fromEntries(RETAINED_REFERENCE_TABLES.map((table) => [
       table, countRows(db, `SELECT COUNT(*) AS count FROM ${table} WHERE tenant_id = ?`, [LOCAL_TENANT]),
     ])),
-    workflow_run_projections_with_job_id: countRows(
+    workflow_run_projections_non_job: countRows(
       db,
       `SELECT COUNT(*) AS count
          FROM workflow_run_projections
         WHERE tenant_id = ?
-          AND workflow_type NOT IN (${placeholders(JOB_DATA_WORKFLOW_TYPES)})
-          AND json_valid(input_summary_json)
-          AND json_type(input_summary_json, '$.jobId') = 'text'
-          AND TRIM(json_extract(input_summary_json, '$.jobId')) != ''`,
+          AND workflow_type NOT IN (${placeholders(JOB_DATA_WORKFLOW_TYPES)})`,
       [LOCAL_TENANT, ...JOB_DATA_WORKFLOW_TYPES],
     ),
   };
@@ -955,9 +952,14 @@ export function executeJobDataPurge(options: JobDataPurgeOptions = {}): JobDataP
       throw error;
     }
 
-    let compactionFailure: unknown = null;
     try {
       assertWorkspaceAuthorities(authorities);
+    } catch (error) {
+      throw new JobDataPurgeCommittedError(error, backupDirectory, databaseBackupPath);
+    }
+
+    let compactionFailure: unknown = null;
+    try {
       db.pragma("wal_checkpoint(TRUNCATE)");
       db.exec("VACUUM");
       db.pragma("wal_checkpoint(TRUNCATE)");
