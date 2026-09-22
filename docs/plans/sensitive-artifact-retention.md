@@ -345,14 +345,17 @@ with three public interfaces:
 - `jobctrl retention preview [--class CLASS]` is read-only. It may run without
   the Go launcher or a maintenance barrier, but active, changing, or unknown
   state remains blocked and its manifest cannot authorize later mutation after
-  expiry or change.
+  expiry or change. The installed launcher may continue sending this command
+  through ordinary Python dispatch because no supervising authority is needed.
 - `jobctrl retention cleanup --preview-id ID --class CLASS --confirm TEXT` is
   manual and mutating. It requires the exact preview/state/policy-bound
-  confirmation and a launcher-issued maintenance lease before preparation,
-  staging, commit, or verification.
+  confirmation and must enter through the public Go launcher, which remains
+  resident and supplies the maintenance lease before preparation, staging,
+  commit, or verification.
 - `jobctrl retention restore --operation-id ID --confirm TEXT` is manual and
   mutating. It requires its own exact confirmation, a fresh launcher-issued
-  lease, identity revalidation, and conflict-safe destination checks.
+  lease, identity revalidation, conflict-safe destination checks, and the same
+  resident Go supervision as cleanup.
 
 The registry/manifest API is private Python data, not a TypeScript API or a
 domain-event payload. CLI output is the content-free preview or a bounded
@@ -363,15 +366,45 @@ object list.
 ### Maintenance-generation ownership and writer protocol
 
 The Go process authority in `launcher/internal/launcher/` owns acquisition and
-release of a workspace maintenance barrier. S2 proposes
-`maintenance.go` plus platform/process tests there. That authority stores an
-owner-only durable state containing a monotonically increasing workspace
-maintenance generation, mode, workspace-root fingerprint, operation/lease ID,
-and issue/expiry times. A generation is never reused after release or crash.
-The launcher returns a typed `MaintenanceLease` for the exact workspace,
-generation, operation, and preview fingerprint over a private inherited control
-channel; it does not pass the token in argv, ordinary environment, events, or
-logs.
+release of a workspace maintenance barrier. Today,
+`launcher.go:dispatchCommand` sends unknown commands, including `retention`, to
+`dispatchPython`, whose `syscall.Exec` replaces the Go process. S2 must change
+that exact public-command lifecycle; a Python process left after `syscall.Exec`
+cannot be the launcher-owned authority described here.
+
+S2 adds an explicit `retention` route in `launcher.go` before the generic
+Python fallback and a provisional focused `retention_supervision.go` module:
+
+- `retention preview` may use the existing `dispatchPython` path because it is
+  read-only.
+- `retention cleanup` and `retention restore` are parsed and intercepted by Go.
+  Go acquires the durable generation/lease, spawns rather than exec-replaces
+  the isolated Python client, remains resident, supervises its process group,
+  and exchanges typed request, heartbeat, journal-state, and terminal receipts
+  over a private inherited channel.
+- The channel binds the exact workspace, monotonically increasing generation,
+  operation, preview fingerprint, launcher PID/process identity, child process
+  identity, and issue/expiry times. It is never passed in argv, ordinary
+  environment, events, or logs.
+
+The authority stores owner-only durable state containing the generation, mode,
+workspace-root fingerprint, operation/lease ID, supervising process identity,
+and issue/expiry times. A generation is never reused after release, revocation,
+or crash. Normal child exit releases the barrier only after Go receives and
+validates a terminal `verified` or recoverable failure receipt and durably
+records the resulting state. A zero exit without that receipt is channel loss,
+not success.
+
+Python crash, signal/interruption, lost channel, missing heartbeat, or malformed
+receipt makes Go revoke and fence the generation, terminate the child process
+group, retain journal/quarantine/backup recovery state, and block stale
+continuation. If Go dies before it can revoke, channel EOF makes Python abort
+before its next stage/commit/restore boundary; durable state remains fenced.
+The next launcher detects that the recorded supervising process identity is no
+longer live, advances or marks the generation revoked, and requires explicit
+journal recovery before another mutating command. A child cannot treat a
+durable token as valid without the live supervising channel, and restart never
+auto-replays the operation.
 
 Every registered writer in `apps/api/src`, Python, Temporal activities, and
 apply/browser subprocess publishing paths must participate in the same
@@ -392,11 +425,12 @@ launcher-owned protocol:
    unavailable runtime check, or disagreement between signals prevents the
    lease and therefore prevents mutation.
 
-The Python CLI requests typed operations and consumes the lease; it must not
-create a second barrier with `BEGIN IMMEDIATE`, a PID file, or a Python-only
-lock. In a source-only environment where the Go launcher or shared-generation
-protocol is unavailable, `retention preview` may still run read-only, while
-`cleanup` and `restore` fail with a typed
+The Python CLI requests typed operations and consumes the live supervised
+lease; it must not create a second barrier with `BEGIN IMMEDIATE`, a PID file,
+or a Python-only lock. The Python subcommands contain no hidden/internal bypass
+that manufactures a token. In a source-only environment where the Go launcher
+or shared-generation protocol is unavailable, `retention preview` may still
+run read-only, while `cleanup` and `restore` fail with a typed
 `maintenance_authority_unavailable` result before any preparation or mutation.
 There is no direct-Python fallback.
 
@@ -425,11 +459,13 @@ There is no direct-Python fallback.
 ### S2 — Maintenance, recovery, journal, and restore
 
 - **Owns:** provisional launcher maintenance authority and tests under
-  `launcher/internal/launcher/`; the Python `maintenance`, `quarantine`,
+  `launcher/internal/launcher/`, including the exact `launcher.go` public route
+  and provisional `retention_supervision.go` /
+  `retention_supervision_test.go`; the Python `maintenance`, `quarantine`,
   `journal`, and `restore` modules; the mutating restore Typer command;
   writer-fence integrations in `apps/api/src`, Python/Temporal repositories and
   activities, and apply/file publication paths; and synthetic cross-runtime
-  fixtures. The Go launcher is the only acquisition/release owner.
+  fixtures. The resident Go launcher is the only acquisition/release owner.
 - **Boundary:** expose the typed durable-generation/lease protocol described
   above. Preview stays barrier-free and read-only. Preparation, stage, commit,
   verification, and restore all require the exclusive lease and full
@@ -438,12 +474,20 @@ There is no direct-Python fallback.
   writer arrival during drain; file publisher before and at rename; active and
   stale process/listener/heartbeat combinations; Temporal running, revivable,
   unresolved, unavailable, and quiescent histories; apply/browser subprocess
-  activity; mismatched database/root identity; unsupported writer; source-only
-  Python mutation attempt; insufficient disk; permission denial; missing or
-  corrupt backup; journal write/fsync failure; crash/restart at every journal
-  transition; paired SQLite/Temporal restore; restore conflict with newer
-  state; and successful independent post-restore hashes/integrity.
-- **Planned checks:** `corepack pnpm launcher:test`,
+  activity; public preview routing through ordinary Python dispatch; public
+  cleanup/restore routing that keeps Go resident; Python receipt of the issued
+  generation; direct/source-only Python refusal; normal supervised release;
+  Python child crash; signal/interruption; channel loss; launcher death and
+  restart revocation; stale-token refusal; retained recovery state after
+  authority loss; mismatched database/root identity; unsupported writer;
+  insufficient disk; permission denial; missing or corrupt backup; journal
+  write/fsync failure; crash/restart at every journal transition; paired
+  SQLite/Temporal restore; restore conflict with newer state; concurrent-writer
+  commit/file-publish fencing; and successful independent post-restore
+  hashes/integrity.
+- **Planned checks:**
+  `cd launcher && go test -race ./internal/launcher -run 'TestRetention(PublicRouting|ChildGeneration|DirectPythonRefusal|AuthorityDeath|ChildCrash|ChannelLoss|WriterFence)'`,
+  `corepack pnpm launcher:test`,
   `corepack pnpm --filter @jobctrl/api test -- retention-maintenance.test.ts`,
   and
   `uv --project workers/automation run --locked --all-extras pytest -q workers/automation/tests/retention/test_maintenance.py workers/automation/tests/retention/test_recovery.py`.
@@ -458,24 +502,30 @@ There is no direct-Python fallback.
   implemented behavior of S1 and S2 and adds no second maintenance mechanism.
 - **Boundary:** permit exactly one diagnostic class that S1 proves disposable,
   inactive, unreferenced, and contained. Execution is manual and per-class.
-  Before requesting the S2 lease, require the operator's exact CLI confirmation
-  bound to the preview ID/version, expiry, policy revision, complete candidate
-  set, and unchanged identity/reference/activity fingerprints. Expired or
-  changed preview/state is rejected before staging; confirmation cannot be
-  deferred to S4.
+  The operator supplies exact confirmation on the public Go-routed command. The
+  supervised Python child must validate that it binds the preview ID/version,
+  expiry, policy revision, complete candidate set, and unchanged
+  identity/reference/activity fingerprints while holding the newly issued S2
+  lease and before preparation or mutation. Invalid, expired, or changed
+  preview/state returns a typed refusal; Go durably releases or revokes that
+  generation with zero mutation. Confirmation cannot be deferred to S4.
 - **Acceptance scenarios:** invoke the actual public CLI in an owned synthetic
-  workspace; read back the accepted preview and confirmation binding; verify
+  workspace through the built Go `jobctrl` launcher, never the direct Python
+  entrypoint; prove Go stays resident and the Python child receives the bound
+  generation; read back the accepted preview and confirmation binding; verify
   pre/post live, journal, quarantine, backup, and restored hashes; reject
   missing/wrong/expired confirmation and every unchanged-state mismatch;
   exercise mutation and restore, a concurrent writer, path traversal, symlink,
   hardlink, mount/ancestor change, clock change, schema drift, disk-full,
-  permission failure, unknown ownership, and partial crash at each state-machine
-  transition. Read back the final live and quarantine state independently.
+  permission failure, unknown ownership, authority/channel loss, and partial
+  crash at each state-machine transition. Read back the final live and
+  quarantine state independently.
 - **Planned checks:** an S3-owned
-  `scripts/retention-synthetic-proof.sh` runs `jobctrl retention preview`,
-  `jobctrl retention cleanup`, and `jobctrl retention restore` against a fresh
-  temporary `JOBCTRL_DIR`, then verifies exact JSON receipts and hashes. Run it
-  alongside
+  `scripts/retention-synthetic-proof.sh` resolves the built public Go launcher
+  and runs its `jobctrl retention preview`, `jobctrl retention cleanup`, and
+  `jobctrl retention restore` routes against a fresh temporary `JOBCTRL_DIR`.
+  It asserts the mutating routes remained supervised, then verifies exact JSON
+  receipts and hashes. Run it alongside
   `uv --project workers/automation run --locked --all-extras pytest -q workers/automation/tests/retention/test_cleanup_cli.py`,
   `corepack pnpm launcher:test`, `corepack pnpm api:test`, and the S1/S2 suites.
   The harness contains synthetic facts only and never targets a real workspace.
