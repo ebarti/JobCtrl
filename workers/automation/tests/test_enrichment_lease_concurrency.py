@@ -193,7 +193,7 @@ def _injected_connection_probe(path, pre_claim_delay=0.0):
         releaser_threads.append(threading.get_ident())
         releaser_ready.set()
         try:
-            threading.Event().wait(timeout=0.1)
+            threading.Event().wait(timeout=1.0)
         finally:
             release_times.append(time.monotonic())
             release.set()
@@ -321,9 +321,9 @@ def test_worker_pool_reuses_its_thread_local_connection(database_path):
 
 def _is_mutex_wait_evidence(elapsed, release_after_start, completion_after_release):
     return (
-        elapsed >= 0.05
-        and release_after_start >= 0.05
-        and 0 <= completion_after_release < 0.1
+        elapsed >= 0.75
+        and release_after_start >= 0.75
+        and 0 <= completion_after_release < 0.5
     )
 
 
@@ -350,7 +350,7 @@ def test_injected_connection_diagnostic_separates_mutex_from_busy_wait(database_
     assert shared_attempt == 1
 
 
-def test_delayed_pre_sqlite_call_is_not_counted_as_mutex_wait(database_path):
+def test_250ms_pre_sqlite_delay_still_requires_real_mutex_wait(database_path):
     (
         _wrong_thread,
         elapsed,
@@ -361,9 +361,12 @@ def test_delayed_pre_sqlite_call_is_not_counted_as_mutex_wait(database_path):
         _releaser_thread,
         _shared_attempt,
     ) = _isolated("injected-delayed", database_path)
-    assert elapsed >= 0.25
-    assert completion_after_release >= 0.1
-    assert not _is_mutex_wait_evidence(
+    # The review fault delayed SQLite entry by 250ms after the old signal.
+    # Here there is no signal, and the independent 1s observation interval
+    # forces the delayed synchronous call to spend the remaining time on the
+    # connection mutex before it can succeed.
+    assert elapsed >= 0.75
+    assert _is_mutex_wait_evidence(
         elapsed,
         release_after_start,
         completion_after_release,
