@@ -1,6 +1,12 @@
 # Launch-Readiness Artifacts Plan
 
-> **Status:** Implemented / archived 2026-07-08. Delivered by #262 (plan), #298-#305 (claims ledger, README/docs launch artifacts, demo inventory, publish checklist), #324 and #341 (claims-ledger currency passes), and #354 (post-rename launch README / install rewrite). Owner-only release actions remain governed by `docs/publish-checklist.md` and the release gate; they are not open implementation scope for this plan.
+> **Retired publication process (2026-09-22):** JobCtrl is already public.
+> The initial-launch approvals and go/no-go instructions in this archived
+> record are historical, not current workflow requirements. Current contributor
+> verification is owned by `docs/local-reliability-qa.md`; executable release
+> controls remain in `.github/workflows/`.
+
+> **Status:** Implemented / archived 2026-07-08. Delivered by #262 (plan), #298-#305 (claims ledger, README/docs launch artifacts, demo inventory, initial-publication documentation), #324 and #341 (claims-ledger currency passes), and #354 (post-rename launch README / install rewrite). The initial-publication process is retired; this plan is implementation history.
 > **Authored:** 2026-07-05.
 > **Anchors verified against main @ a488e4e9.**
 > **Audience:** implementing agents at high reasoning effort. This document
@@ -425,32 +431,11 @@ and publishes no comparative row.
 - Cadence and facts-verified rule documented on the page.
 - Zero external names; `scripts/release_check.py` clean.
 
-## 9. Publish-mechanics checklist (Goal 5) — Phase C (gated on G2)
+## 9. Initial-publication mechanics (retired)
 
-**Objective.** A concrete, verifiable checklist for the mechanical publish
-steps, each with a verification and a rollback note. This is the *artifact*;
-the owner executes the owner-only steps per OSS spec §5.
-
-| Step | Action | Verification | Rollback note |
-| --- | --- | --- | --- |
-| 9.1 Repo visibility flip | Owner flips `github.com/ebarti/JobCtrl` to public after the exact-tree local gate passes (owner-only, OSS spec §5); this is the 2026-07-10 controlled unblock for private-repository billing | Immediately rerun Release Privacy, Docs Site, Python CI, Sync Homebrew Tap, and TypeScript CI on the exact `main` SHA; zero-step private failures are not evidence, and Release Privacy must actually pass | Flip back to private if the executed privacy gate fails. **Note honestly:** anything fetched while public cannot be recalled and git history remains reachable — the real mitigation is the pre-flip privacy gate, not rollback (OSS spec §1 records this acceptance). |
-| 9.2 Docs-site deploy | Only after all post-public hosted gates pass, set `DOCS_DEPLOY_ENABLED=true` and the two Cloudflare secrets so `docs-site.yml` deploys from `main` | The deploy job runs (not skipped), the site serves, and `pnpm docs:build` + `pnpm docs:check:runtime` are green on the built artifact | Unset `DOCS_DEPLOY_ENABLED` → the deploy job skips cleanly and the workflow stays green; redeploy the previous `docs-site-dist` artifact if a bad build shipped. |
-| 9.3 Repo-rename redirect | Runs after the pre-publication rename train (`docs/plans/implemented/2026-07-05-rename-jobctrl-plan.md`) merges — the rename decision is made; only owner execution of the hosting rename is pending when not already complete | After the rename, GitHub auto-redirects prior URLs: verify previous absolute repository links resolve; update the absolute `REPO_URL` in `docs/.vitepress/config.ts` and any absolute repo links/badges; re-run `pnpm docs:build` | Rename back (GitHub reserves the prior name); revert the `REPO_URL`/link edits. |
-| 9.4 Release tagging | After post-public hosted green, publish the owner-approved v2.0.0 non-prerelease GitHub Release for the exact audited commit; its release-only workflow builds and publishes the package | `release-pypi.yml` rejects stale-tag commits, scans the renamed sdist/wheel, and enforces manifest/archive/tag parity before upload. Historical `publish.yml` is absent and the new workflow stays disabled until release. | Delete the tag/release; if a bad artifact published to PyPI, yank it. Re-disable the workflow. |
-
-**Invariants.**
-
-- The checklist does not execute owner-only steps; it prepares and verifies
-  them and cross-references OSS spec §5 as the authoritative gate.
-- Steps with a precondition (9.3 and 9.4: the pre-publication rename train)
-  are never marked done while the precondition is unmet.
-
-**Acceptance criteria.**
-
-- Every step has a concrete verification and a rollback note.
-- The checklist references OSS spec §5 and does not duplicate its capability/
-  privacy gates.
-- Owner-only and conditional steps are flagged.
+The repository visibility, rename, first deployment and first-release checklist
+has been removed. Publication is complete; this historical phase imposes no
+current approval or delivery requirements.
 
 ## 10. Verification (exact commands)
 
@@ -498,9 +483,7 @@ Notes:
 
    → **RESOLVED 2026-07-07 — implemented.** The decision still stands and the
    canonical plan record now lives at
-   `docs/plans/implemented/2026-07-05-rename-jobctrl-plan.md`; owner-only
-   hosting changes are tracked by the publish checklist instead of an active
-   top-level rename plan.
+   `docs/plans/implemented/2026-07-05-rename-jobctrl-plan.md`; the hosting rename is complete and imposes no current launch gate.
 3. **Alternatives-comparison** — which neutral capability categories are the
    rows, which external approaches are the columns (owner-supplied, kept
    private until facts-verified), the maintenance-cadence interval, and the
@@ -654,4 +637,4 @@ branch:
   verification commands from this plan before requesting review.
 - Do not begin implementation while this plan's stated gates or
   dependencies are unmet.
-- Split delivery: the claims-ledger and demo-fixture portion may stack immediately; asset and publish-checklist PRs only after the rename train and the gate capabilities they cite are merged.
+- Split delivery: the claims-ledger and demo-fixture portion may stack immediately; asset and initial-publication PRs only after the rename train and the gate capabilities they cite are merged.

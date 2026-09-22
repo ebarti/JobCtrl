@@ -1,5 +1,11 @@
 # OSS Release — Drive-to-Done and Completion Verification Plan
 
+> **Retired publication process (2026-09-22):** JobCtrl is already public.
+> The initial-launch approvals and go/no-go instructions in this archived
+> record are historical, not current workflow requirements. Current contributor
+> verification is owned by `docs/local-reliability-qa.md`; executable release
+> controls remain in `.github/workflows/`.
+
 > **Closeout status (2026-07-05 R1):** #274 executed this plan's inventory
 > method against current `main` and found **NO-GO**, not release-ready. That
 > first inventory is historical; §10 restamps the W1 apply-safety residual after
@@ -353,35 +359,10 @@ scripts. Each recipe defers to the item's spec DoD for the exhaustive clause lis
 
 ---
 
-## 5. Publication go/no-go checklist (Goal 4)
+## 5. Initial-publication decision (retired)
 
-Mirrors spec §5. Every box needs the stated verification; every owner checkpoint
-(spec §0.5) needs a recorded decision. The flip and first tag are owner-only.
-The 2026-07-10 hosted-CI exception changes only ordering: exact-tree local green
-precedes the flip, and the exact-SHA hosted result closes immediately afterward;
-docs deployment, tagging, and publication remain blocked meanwhile. Assemble
-this, with links, as the final release deliverable.
-
-| # | Gate line (spec §5) | Verification step | Owner checkpoint |
-| --- | --- | --- | --- |
-| 1 | W0.1–W0.6 merged; Release Privacy green on the exact public-release `main` SHA | Complete local matrix before the flip; immediately after it, rerun the exact-SHA hosted workflow. Zero-step billing failures do not count. | **2026-07-10 sequencing exception** |
-| 2 | Temporal P1b–P5 merged | §2 confirms #235, #237, #238, #239, #240 on `main` | — |
-| 3 | W1.1–W1.7 merged, each `Gate: PASS` review + QA | §2 = merged for all seven; §4.2 W1 proofs pass | — |
-| 4 | Distribution renamed to `jobctrl`; v2.0.0 selected; guarded release workflow prepared | Source manifests/archive/tag parity pass; `release-pypi.yml` remains disabled until post-public hosted green. | **Resolved 2026-07-10 — v2.0.0** |
-| 5 | W2.2, W2.3, W2.5, and W2.6 merged; W2.4 merged or owner-deferred in writing | W2 proofs pass; W2.4's v2.0.0 deferral and retained global USD ceiling are recorded in the spec and backlog. | **Resolved 2026-07-10 — W2.4 deferred** |
-| 6 | W0.6 dispositions closed (fixed / backlogged-sanitized / owner-accepted) | Owner's private disposition artifact complete; sanitized entries in `docs/backlog.md` | **§0.5.3 — each accepted-risk entry** |
-| 7 | Owner records acceptance of retained history + capability posture | Owner statement in the flip PR/issue: historical blobs remain reachable; live-submit / CAPTCHA / email-send / LinkedIn-Indeed are deliberate disclosed choices | **owner statement** |
-| 8 | Final manual QA (human) | `jobctrl doctor` clean with expected warnings; seeded `/apply-review` smoke (approval → dry-run evidence → gated submit); one harness dry-run showing blocked-channel evidence; **no real applications** | **owner-run** |
-| 9 | Owner flips visibility; hosted gates execute; owner later tags v2.0.0 | Flip is the controlled unblock; rerun all five exact-SHA hosted workflows immediately. Tag only after hosted green. | **§0.5.4 — flip, verify, then first tag** |
-
-**Go decision:** all pre-flip portions of the nine rows are verified and every
-owner checkpoint is recorded; after the controlled flip, row 1's hosted result
-must close before docs deployment or the tag. Any
-open Blocker/High review or QA finding, any un-dispositioned W0.6 concern, or any
-un-closed residual whose route is not owner-accepted = **no-go** (CLAUDE.md: work
-is not done while Blocker/High findings remain).
-
----
+The one-time visibility and first-release checklist has been removed. JobCtrl
+is public; this archived plan does not impose a new launch decision.
 
 ## 6. Risks and owner-decision status
 
@@ -551,23 +532,10 @@ requirement. R11 guarded submission / browser-extension Phase 3 must not start.
   row in the ledger/comparison/public launch copy must say **Roadmap** if it is
   post-launch. `docs/claims-ledger.md` was not edited in this close-out.
 
-### 9.5 Remaining release owner-action checklist
+### 9.5 Initial-publication owner actions (retired)
 
-W0.6, naming/rename, W2.4 disposition, comparison content, demo-asset scope,
-Current-vs-Beta policy, claims-ledger ownership/location, and the shipped
-browser-extension Phase 1/2 decisions are resolved. Browser-extension future
-phases and the optional per-source policy editor remain product-roadmap choices,
-not v2.0.0 release gates.
-
-| Owner action | Source |
-| --- | --- |
-| Review the final honest crawl user-agent contact string before the authorized real TTFV crawls. | Crawl-politeness plan D1, "Owner decisions". |
-| Re-stamp the already signed claims ledger against the final release `main` SHA. | `docs/claims-ledger.md`, "Freeze status" and GOV-04. |
-| Record historical-blob acceptance and the deliberate live capability posture in the flip record. | OSS release spec §5, retained-history/capability-posture gate. |
-| Complete the final human QA, including `jobctrl doctor`, the Apply Review gated-submit smoke, and blocked-channel harness evidence; no real applications. | OSS release spec §5, final manual QA gate. |
-| Flip visibility, then immediately rerun Release Privacy, Docs Site, Python CI, Sync Homebrew Tap, and TypeScript CI on the exact `main` SHA. | Owner hosted-CI sequencing decision; `docs/publish-checklist.md` §9.1. |
-| After hosted green, enable docs deployment, configure the exact `release-pypi.yml` Trusted Publisher, enable the release workflow, and publish the reviewed v2.0.0 GitHub Release. | `docs/publish-checklist.md` §§9.2 and 9.4. |
-| At the v2.0.0 tag, add the stable Homebrew URL/SHA, merge its canonical formula update, verify tap sync, and run the stable install smoke. | `docs/publish-checklist.md` §9.5. |
+The visibility flip, first-tag actions and claims-ledger freeze are no longer
+pending work. Their former checklist has been removed.
 
 ## 10. Refreshed W1 residual inventory after remediation (2026-07-06)
 
@@ -615,20 +583,10 @@ GitHub CI status:
 - `git diff --check`, local-only-doc touch scan, added-line competitor-name
   scan, and conflict-marker scan — clean.
 
-### 10.4 Current release gate
+### 10.4 Historical release assessment
 
-The W1 apply-safety hard precondition is now satisfied. Overall R1 is still
-**NO-GO** until at least these non-W1 release gates close:
-
-W0.6 is no longer a current blocker: owner review closed it as passed on
-2026-07-07, with private disposition details kept off-repo.
-
-| Gate | Current status | Evidence |
-| --- | --- | --- |
-| W2.1 distribution rename and guarded publishing path | complete | The distribution is `jobctrl`; the historical workflow is gone; `release-pypi.yml` is release-only, exact-main/tag/version gated, and remains disabled pending the owner release action. |
-| W2.4 per-lane token ceilings | explicitly deferred | Owner written decision 2026-07-10: v2.0.0 retains the global estimated daily USD ceiling; per-lane attribution, token ceilings, apply accounting, and lane visibility remain backlog. |
-| Hosted release gates | pending post-public rerun | Private-repository jobs fail before running because of GitHub billing. The owner-approved sequence is local full green → visibility flip → immediate hosted rerun; docs, tag, and publication remain blocked until green. |
-| Final release/visibility owner actions | not complete | §9.5 still requires the owner-only release flip, post-public workflow readback, first tag, and final sign-offs. |
+The July 2026 pre-publication assessment is superseded by the public repository
+and published releases. Its former go/no-go table is not a current gate.
 
 ## Delivery Model: Stacked PRs On This Plan
 

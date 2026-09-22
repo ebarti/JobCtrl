@@ -1,5 +1,11 @@
 # OSS Release Remediation — Implementation Spec for Codex
 
+> **Retired publication process (2026-09-22):** JobCtrl is already public.
+> The initial-launch approvals and go/no-go instructions in this archived
+> record are historical, not current workflow requirements. Current contributor
+> verification is owned by `docs/local-reliability-qa.md`; executable release
+> controls remain in `.github/workflows/`.
+
 > **Status (2026-07-05 R1 closeout):** archived after #274 regenerated the
 > inventory against current `main`; that first closeout was **not** a
 > release-ready outcome. The 2026-07-06 W1 refresh in
@@ -1095,51 +1101,9 @@ describe the full chain and what degrades when a link is missing.
 
 ---
 
-## 5. Release gate — flipping public (owner executes; you prepare)
+## 5. Initial-publication gate (retired)
 
-All boxes below must be checked before the first tag. They must also be checked
-before the visibility flip except for the single hosted-CI sequencing exception
-recorded above: that box closes immediately after the public flip and before
-docs deployment, tagging, or publication. Assemble this checklist, with links,
-as the final deliverable.
-
-- [ ] W0.1–W0.6 merged and Release Privacy green on the exact public-release
-      `main` SHA. The code is merged and the exact release tree is locally
-      green, but private-repository jobs currently fail before running because
-      of GitHub billing. The 2026-07-10 owner sequencing decision supersedes
-      the former every-commit hosted criterion: this box closes only when the
-      immediate post-public exact-SHA run actually executes and passes. A
-      zero-step failure is never accepted as evidence.
-- [x] Temporal P1b–P5 merged (PR #232 program complete).
-- [x] **G1 (crawl politeness) met:** every discovery/enrichment fetch surface
-      (#1–#10 in the crawl-politeness plan) routes through the politeness gateway
-      — robots honored, per-host rate limit + per-run budget, one honest
-      owner-configurable user-agent, blocked/rate-limited/budget-exhausted
-      recorded as non-error outcomes; no spoofed browser UA remains on any
-      product fetch path. Delivered by the R10 train (PRs #297 → #315); ADR in
-      `docs/decisions.md` (2026-07-06); plan
-      `docs/plans/implemented/2026-07-05-crawl-politeness-plan.md`. Check when the R10 train
-      is merged to `main`.
-- [x] W1.1–W1.7 merged, each with review gate `Gate: PASS` and QA gate
-      `Gate: PASS` per repo process.
-- [x] Rename train executed (owner-side, after all W-items): full
-      `JobHunter` → `JobCtrl` rename; `workers/automation/pyproject.toml`
-      distribution name `jobctrl` (re-check availability and configure the
-      Trusted Publisher immediately before first publish; a pending publisher
-      does not reserve the name); the historical `publish.yml` stays disabled
-      while the new release-only `release-pypi.yml` runs only for
-      a published non-prerelease GitHub Release with exact
-      manifest/archive/tag version parity; W0.3 structural check updated/retired.
-- [x] W2.2, W2.3, W2.5, and W2.6 merged; W2.4 explicitly deferred by the
-      owner in writing on 2026-07-10 for v2.0.0.
-- [x] W0.6 dispositions closed: every concern fixed, backlogged
-      (sanitized), or owner-accepted.
-- [ ] Owner has recorded, in the flip PR/issue: acceptance of historical
-      blobs remaining reachable (git history kept), and the capability
-      posture (live submit, CapSolver, email send, LinkedIn/Indeed) as
-      deliberate, disclosed choices.
-- [ ] Final manual QA (human): `jobctrl doctor` clean with expected
-      warnings; seeded `/apply-review` smoke showing approval → dry-run
-      evidence → gated submit controls; one harness dry-run showing the
-      blocked-channel evidence. No real applications.
-- [ ] Owner flips visibility and tags the first release.
+The first-publication checklist has been removed because the repository is
+already public. This archived remediation specification does not authorize or
+block current releases. Current safety requirements, verification and release
+controls remain with their owning documentation and executable workflows.
