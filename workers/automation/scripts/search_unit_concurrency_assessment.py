@@ -786,14 +786,15 @@ def run_assessment(
         ],
         "provenance": _provenance(repo_root),
         "reproduce": {
-            "command": (
+            "locked_command": (
                 "env -u UV_PROJECT_ENVIRONMENT -u VIRTUAL_ENV -u UV_EXCLUDE_NEWER "
                 "-u UV_EXCLUDE_NEWER_PACKAGE uv run --project workers/automation "
                 "--locked --all-extras --exclude-newer false python "
                 "workers/automation/scripts/search_unit_concurrency_assessment.py "
                 f"--output {output.as_posix()} --warmups {warmups} --repeats {repeats} "
                 f"--service-delay-seconds {service_delay_seconds}"
-            )
+            ),
+            "observed_argv": [sys.executable, *sys.argv],
         },
     }
     output.write_text(json.dumps(artifact, indent=2, sort_keys=True) + "\n", encoding="utf-8")
