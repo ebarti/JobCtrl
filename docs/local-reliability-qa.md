@@ -17,11 +17,48 @@ results. Contract-only high-risk changes require independent review and safety
 checks, with product verification before first use. Major UI regressions require
 a regression test or an explicit reproducible scenario.
 
+For the job-data purge gate, the disposable workspace must contain a Candidate
+Profile, Discovery settings, source registry, resume template/default, at least
+one Job with registered Materials, an unregistered generated candidate, a
+generated cover letter, a registered job log, `config.json`, a baseline resume
+outside the generated directories, and a terminal Discover execution with a
+retrying recovery manifest, search unit, pipeline step, and lifecycle events.
+Seed source-quality state and a `discover` operational attempt for that run.
+Seed an unrelated maintenance workflow, a `stage = operations` attempt, and
+Profile/source events as preservation controls. Prove the dry run is read-only;
+the confirmed command creates a readable exact-schema backup, removes the
+complete Job graph and job/Discovery execution ledger, archives both registered
+and unregistered generated material, compacts the database, preserves every
+profile/search/template/config byte and the unrelated controls, and is
+idempotent. Also reproduce the post-purge edge case with zero Jobs but the old
+Discover ledger still present: the command must not report a no-op, and a second
+inventory must report zero execution/history rows while the unrelated
+operational attempt remains. Separately prove active work and an artifact path
+outside the owned generated-data roots fail before any backup or mutation.
+Never run this QA gate against a real user workspace.
+
+Also seed provisional missing-history workflow/run pairs and prove the CLI lists
+their exact IDs, refuses them, and permits the documented exact-row offline
+clearance only for a matching provisional pair. Simulate the Temporal verification
+precondition with disposable absent-history fixtures; never clear real rows in QA.
+Verify a fresh heartbeat for the selected database refuses before backup, while
+stale or other-database heartbeats do not. Inject a commit from another SQLite
+connection after the backup and before deletion: the command must preserve that
+write and every generated file. Seed retained pending captures, source candidates,
+learning provenance/reviews/tombstones, role-feedback evidence, and a non-job
+Contact Research workflow whose input retains a JobId; verify inventory, purge,
+and no-op output disclose their retained counts and preserve their stored values.
+Fail `VACUUM` after the deletion commit and prove the operator sees a committed,
+verified purge with bundle/free-space/compaction guidance and no restore or purge
+retry instruction. A separate post-commit invariant failure must retain restore
+guidance.
+
 <a id="required-commands"></a>
 
 | Surface | Starting command / selected recipe |
 | --- | --- |
 | API | `corepack pnpm api:check`, focused `api:test` / `api` |
+| Destructive job-data purge | `corepack pnpm api:check`; `corepack pnpm --filter @jobctrl/api exec vitest run test/job-data-purge.test.ts test/permanent-delete-v7.test.ts`; then inventory, confirmed purge, and a second inventory against a disposable exact-v11 workspace only |
 | Web | `corepack pnpm web:lint`, `corepack pnpm web:check`, focused `web:test`, `web:build`; types/stories/browser when affected |
 | Extension | `extension:check`, `extension:test`, `extension:build`, `extension:e2e` through Corepack |
 | Worker | Locked focused Ruff/pytest; full worker suite for worker-wide changes |
@@ -71,7 +108,7 @@ that its connection-object mutex is independent of `busy_timeout`. Run these pro
 behind subprocess deadlines so a failed concurrency assertion cannot retain a test
 runner thread. Confirm the real activity worker pool reuses a connection only on its
 own thread, and record the production connection budgets (10 seconds for a new WAL
-connection and 30 seconds for a freshly admitted exact-v10 connection). The short
+connection and 30 seconds for a freshly admitted exact-v11 connection). The short
 fixture timeout proves mechanism and recovery; it is not a production latency bound.
 
 Also repeat an already-claimed robots retry with a real enrichment lease, inject

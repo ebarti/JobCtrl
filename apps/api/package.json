@@ -8,6 +8,7 @@
     "benchmark:local-scale:test": "vitest run benchmark/local-scale.test.ts",
     "dev": "tsx watch src/main.ts",
     "start": "tsx src/main.ts",
+    "data:purge-jobs": "tsx src/purge-job-data.ts",
     "check": "tsc --noEmit --project tsconfig.json",
     "test": "vitest run test",
     "qa:seed": "tsx test/qa-seed.ts",
