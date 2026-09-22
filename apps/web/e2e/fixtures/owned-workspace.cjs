@@ -1,10 +1,12 @@
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { randomBytes } = require("node:crypto");
+const { createHash, randomBytes } = require("node:crypto");
 
 const DIRECTORY_PREFIX = "jobctrl-e2e-";
 const OWNERSHIP_MARKER = ".jobctrl-e2e-owned.json";
+const LIVE_WORKER_EXIT_GUARD = ".jobctrl-live-worker-exit-cleanup.json";
+const LIVE_WORKER_EXIT_CONTRACT = "live-worker-owned-process-groups-v1";
 const WORKSPACE_ENV = "JOBCTRL_E2E_WORKSPACE";
 const creatorAllocations = new Map();
 let creatorCleanupRegistered = false;
@@ -273,8 +275,95 @@ function assertExpectedWorkspace(report, env = process.env) {
   return workspace;
 }
 
+function requireLiveWorkerExitCleanup(workspace) {
+  assertOwnedE2eWorkspace(workspace);
+  const guardPath = path.join(workspace.appDir, LIVE_WORKER_EXIT_GUARD);
+  const state = {
+    schemaVersion: 1,
+    contract: LIVE_WORKER_EXIT_CONTRACT,
+    appDir: workspace.appDir,
+    ownerTokenHash: createHash("sha256").update(workspace.token).digest("hex"),
+    status: "pending",
+  };
+  try {
+    fs.writeFileSync(guardPath, JSON.stringify(state, null, 2), {
+      flag: "wx",
+      mode: 0o600,
+    });
+  } catch (error) {
+    if (error.code !== "EEXIST") throw error;
+    readLiveWorkerExitGuard(workspace);
+  }
+  return guardPath;
+}
+
+function markLiveWorkerExitCleanupVerified(workspace) {
+  const state = readLiveWorkerExitGuard(workspace);
+  if (state.status === "verified") return;
+  writeLiveWorkerExitGuard(workspace, {
+    ...state,
+    status: "verified",
+    verifiedAt: new Date().toISOString(),
+  });
+}
+
+function readLiveWorkerExitGuard(workspace) {
+  assertOwnedE2eWorkspace(workspace);
+  const guardPath = path.join(workspace.appDir, LIVE_WORKER_EXIT_GUARD);
+  const descriptor = fs.openSync(
+    guardPath,
+    fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW,
+  );
+  try {
+    const metadata = fs.fstatSync(descriptor);
+    const state = JSON.parse(fs.readFileSync(descriptor, "utf8"));
+    if (
+      !metadata.isFile() ||
+      metadata.nlink !== 1 ||
+      (metadata.mode & 0o077) ||
+      state?.schemaVersion !== 1 ||
+      state.contract !== LIVE_WORKER_EXIT_CONTRACT ||
+      state.appDir !== workspace.appDir ||
+      state.ownerTokenHash !==
+        createHash("sha256").update(workspace.token).digest("hex") ||
+      !["pending", "verified"].includes(state.status)
+    ) {
+      throw new Error("Live-worker exit cleanup guard does not match this workspace");
+    }
+    return state;
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
+function writeLiveWorkerExitGuard(workspace, state) {
+  const guardPath = path.join(workspace.appDir, LIVE_WORKER_EXIT_GUARD);
+  const temporary = `${guardPath}.${process.pid}.${randomBytes(8).toString("hex")}.tmp`;
+  fs.writeFileSync(temporary, JSON.stringify(state, null, 2), {
+    flag: "wx",
+    mode: 0o600,
+  });
+  fs.renameSync(temporary, guardPath);
+}
+
+function assertLiveWorkerExitCleanupVerified(workspace) {
+  const guardPath = path.join(workspace.appDir, LIVE_WORKER_EXIT_GUARD);
+  try {
+    fs.lstatSync(guardPath);
+  } catch (error) {
+    if (error.code === "ENOENT") return;
+    throw error;
+  }
+  if (readLiveWorkerExitGuard(workspace).status !== "verified") {
+    throw new Error(
+      "Live-worker child-group cleanup is not verified; preserving owned workspace",
+    );
+  }
+}
+
 function removeOwnedE2eWorkspace(workspace) {
   assertOwnedE2eWorkspace(workspace);
+  assertLiveWorkerExitCleanupVerified(workspace);
   fs.rmSync(workspace.appDir, { recursive: true, force: true });
   if (creatorAllocations.get(workspace.appDir)?.token === workspace.token)
     creatorAllocations.delete(workspace.appDir);
@@ -283,6 +372,7 @@ function removeOwnedE2eWorkspace(workspace) {
 module.exports = {
   DIRECTORY_PREFIX,
   OWNERSHIP_MARKER,
+  LIVE_WORKER_EXIT_GUARD,
   WORKSPACE_ENV,
   assertInside,
   canonicalTemporaryRoot,
@@ -293,5 +383,7 @@ module.exports = {
   assertE2eWorkspaceEnvironment,
   configureE2eWorkspace,
   assertExpectedWorkspace,
+  requireLiveWorkerExitCleanup,
+  markLiveWorkerExitCleanupVerified,
   removeOwnedE2eWorkspace,
 };

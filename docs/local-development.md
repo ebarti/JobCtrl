@@ -493,7 +493,33 @@ corepack pnpm web:test:coverage
 corepack pnpm web:test-d
 corepack pnpm web:e2e
 corepack pnpm web:e2e:headed
+corepack pnpm web:e2e:live-worker:test
+node scripts/live-worker-browser-smoke.mjs
 ```
+
+`web:e2e` uses the deterministic stub dispatcher and seeded worker heartbeat.
+The direct `node scripts/live-worker-browser-smoke.mjs` command is a separate,
+slower, opt-in integration lane: it starts an owned Temporal dev server, the
+standard Python worker registry, the real API JSON-RPC dispatcher, and Vite
+against one disposable synthetic workspace. Its single Cover workflow uses a
+loopback-only deterministic model boundary and proves queued dispatch, real
+worker lifecycle/projection events, API/SSE identity correlation, and terminal
+browser state without provider spend or an application submission. A
+capability-validated worker bootstrap ignores dotenv, Keychain, and persisted
+provider connections, asserts isolated credential homes, and enables only the
+authenticated loopback provider route. The direct Node launcher uses the same
+credential list before its first child process, so Corepack, pnpm, and
+Playwright receive only the scrubbed environment. There is deliberately no
+package-manager alias for the live run because its outer Corepack and pnpm
+processes would start before the launcher; invoke the direct Node command from
+the repository root. Persisted
+process-group capabilities let the outer teardown verify cleanup after a runtime
+supervisor failure, while an explicit persistent guard prevents the allocator's
+exit cleanup from erasing an unverified workspace. Run
+`web:e2e:live-worker:test` first when changing these
+bootstrap, lifecycle, or cleanup guards. Logs and browser evidence remain under
+`dist/live-worker-smoke/`; temporary app and Temporal state are deleted only
+after every owned process group is verified stopped.
 
 The package-local commands are equivalent and useful when working directly
 inside the web package:

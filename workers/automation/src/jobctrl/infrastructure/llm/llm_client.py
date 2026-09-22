@@ -10,7 +10,12 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
+from pathlib import Path
 import threading
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlsplit
+from urllib.request import ProxyHandler, Request, build_opener
 import warnings
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any, Protocol
@@ -20,6 +25,11 @@ from jobctrl.infrastructure.llm.codex_turn import run_codex_turn
 from jobctrl.infrastructure.llm.provider_errors import ProviderCallError, provider_exception_error
 _DEFAULT_MODEL_SENTINELS = {"", "default"}
 _ROUTED_PROVIDERS = {"claude", "codex", "gemini", "google"}
+_LIVE_SMOKE_PROVIDER_ENV = "JOBCTRL_LIVE_WORKER_SMOKE_PROVIDER_URL"
+_LIVE_SMOKE_TOKEN_ENV = "JOBCTRL_LIVE_WORKER_SMOKE_TOKEN"
+_LIVE_SMOKE_APP_DIR_ENV = "JOBCTRL_LIVE_WORKER_SMOKE_APP_DIR"
+_LIVE_SMOKE_BOOTSTRAP_VALIDATED_ENV = "JOBCTRL_LIVE_WORKER_SMOKE_BOOTSTRAP_VALIDATED"
+_LIVE_SMOKE_MARKER = ".jobctrl-e2e-owned.json"
 
 
 class SdkControlNormalizationWarning(RuntimeWarning):
@@ -88,6 +98,139 @@ class _Backend(Protocol):
     def chat(self, messages: list[dict[str, str]], **kwargs: Any) -> str: ...
 
     def chat_json(self, messages: list[dict[str, str]], **kwargs: Any) -> dict: ...
+
+
+class LiveWorkerSmokeBackend:
+    """Loopback-only provider boundary for the opt-in live-worker smoke.
+
+    The smoke still runs the production workflow, activities, lifecycle, and
+    projection code. Only the external model call terminates here. Enabling the
+    backend requires the exact capability token from an independently allocated
+    browser-test workspace, so a partial or copied environment fails closed.
+    """
+
+    provider_id = "live-worker-smoke"
+
+    def __init__(self, *, model: str | None = None) -> None:
+        self._url, self._token = _live_worker_smoke_provider_config(required=True)
+        self.model = model or "live-worker-smoke-fixture"
+
+    def chat(self, messages: list[dict[str, str]], **kwargs: Any) -> str:
+        value = self._request(
+            {
+                "operation": "chat",
+                "model": self.model,
+                "messages": messages,
+                "controls": _fixture_controls(kwargs),
+            }
+        )
+        text = value.get("text")
+        if not isinstance(text, str) or not text.strip():
+            raise RuntimeError("Live-worker smoke provider returned no text")
+        return text
+
+    def chat_json(self, messages: list[dict[str, str]], **kwargs: Any) -> dict:
+        value = self._request(
+            {
+                "operation": "chat_json",
+                "model": self.model,
+                "messages": messages,
+                "controls": _fixture_controls(kwargs),
+            }
+        )
+        result = value.get("json")
+        if not isinstance(result, dict):
+            raise RuntimeError("Live-worker smoke provider returned no JSON object")
+        return result
+
+    def _request(self, payload: dict[str, Any]) -> dict[str, Any]:
+        request = Request(
+            self._url,
+            data=json.dumps(payload, separators=(",", ":")).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {self._token}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            # Ignore ambient proxy configuration. The fixture is an owned
+            # loopback capability and must never be redirected elsewhere.
+            with build_opener(ProxyHandler({})).open(request, timeout=60) as response:
+                value = json.loads(response.read().decode("utf-8"))
+        except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
+            raise RuntimeError(f"Live-worker smoke provider failed: {exc}") from exc
+        if not isinstance(value, dict):
+            raise RuntimeError("Live-worker smoke provider returned an invalid envelope")
+        return value
+
+
+def _fixture_controls(kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Keep the fixture request bounded without serializing a full schema."""
+
+    return {
+        "temperature": kwargs.get("temperature"),
+        "maxTokens": kwargs.get("max_tokens"),
+        "thinkingBudget": kwargs.get("thinking_budget"),
+        "structured": isinstance(kwargs.get("response_schema"), dict),
+    }
+
+
+def _live_worker_smoke_provider_config(
+    *,
+    required: bool = False,
+) -> tuple[str, str] | None:
+    values = {
+        _LIVE_SMOKE_PROVIDER_ENV: os.environ.get(_LIVE_SMOKE_PROVIDER_ENV, "").strip(),
+        _LIVE_SMOKE_TOKEN_ENV: os.environ.get(_LIVE_SMOKE_TOKEN_ENV, "").strip(),
+        _LIVE_SMOKE_APP_DIR_ENV: os.environ.get(_LIVE_SMOKE_APP_DIR_ENV, "").strip(),
+    }
+    if any(values.values()) and (
+        os.environ.get("JOBCTRL_LIVE_WORKER_SMOKE_BOOTSTRAP") != "1"
+        or os.environ.get(_LIVE_SMOKE_BOOTSTRAP_VALIDATED_ENV) != "1"
+    ):
+        raise RuntimeError("Live-worker smoke provider requires validated credential-free bootstrap")
+    if not any(values.values()):
+        if required:
+            raise RuntimeError("Live-worker smoke provider is not configured")
+        return None
+    missing = [name for name, value in values.items() if not value]
+    if missing:
+        raise RuntimeError(
+            "Incomplete live-worker smoke provider configuration: " + ", ".join(missing)
+        )
+
+    provider_url = values[_LIVE_SMOKE_PROVIDER_ENV]
+    token = values[_LIVE_SMOKE_TOKEN_ENV]
+    configured_app_dir = Path(values[_LIVE_SMOKE_APP_DIR_ENV]).resolve(strict=True)
+    runtime_app_dir = Path(os.environ.get("JOBCTRL_DIR", "")).resolve(strict=True)
+    if configured_app_dir != runtime_app_dir:
+        raise RuntimeError("Live-worker smoke workspace does not match JOBCTRL_DIR")
+
+    parsed = urlsplit(provider_url)
+    if (
+        parsed.scheme != "http"
+        or parsed.hostname not in {"127.0.0.1", "::1", "localhost"}
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise RuntimeError("Live-worker smoke provider must be an uncredentialed loopback HTTP URL")
+
+    marker_path = configured_app_dir / _LIVE_SMOKE_MARKER
+    try:
+        marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError("Live-worker smoke workspace marker is unavailable") from exc
+    if (
+        not isinstance(marker, dict)
+        or marker.get("appDir") != str(configured_app_dir)
+        or marker.get("token") != token
+        or len(token) != 64
+    ):
+        raise RuntimeError("Live-worker smoke capability does not own this workspace")
+    return provider_url, token
 
 
 def _parse_model_spec(model: str | None) -> tuple[str | None, str | None, str]:
@@ -570,6 +713,8 @@ class GoogleSdkBackend:
 
 
 def _default_provider() -> str:
+    if _live_worker_smoke_provider_config() is not None:
+        return LiveWorkerSmokeBackend.provider_id
     from jobctrl.infrastructure.setup_probes import ready_llm_providers
 
     ready = ready_llm_providers()
@@ -582,6 +727,15 @@ def _default_provider() -> str:
 
 def _make_backend(provider: str | None, model: str | None) -> _Backend:
     selected = provider or _default_provider()
+    smoke_config = _live_worker_smoke_provider_config()
+    if smoke_config is not None:
+        if selected != LiveWorkerSmokeBackend.provider_id:
+            raise RuntimeError(
+                "Live-worker smoke refuses non-fixture provider selection"
+            )
+        return LiveWorkerSmokeBackend(model=model)
+    if selected == LiveWorkerSmokeBackend.provider_id:
+        raise RuntimeError("Live-worker smoke provider is not configured")
     if selected == "claude":
         return ClaudeSdkBackend(model=model)
     if selected == "codex":
@@ -762,6 +916,7 @@ __all__ = [
     "ClaudeSdkBackend",
     "CodexSdkBackend",
     "GoogleSdkBackend",
+    "LiveWorkerSmokeBackend",
     "LlmAdapter",
     "SdkControlNormalizationWarning",
     "get_llm_adapter",
