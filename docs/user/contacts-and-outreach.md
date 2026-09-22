@@ -125,8 +125,10 @@ are reported as ignored metadata; they do not alter fact values or choose a
 preferred fact. Qualified telephone URIs (such as `phone-context` or extensions)
 are unsupported because reducing them to digits can conflate distinct numbers.
 Unsupported versions, malformed cards, incompatible property value types,
-unsupported encodings, qualified telephone URIs, or missing required links are
-invalid records.
+unsupported encodings on supported fields, invalid email/phone values,
+qualified telephone URIs, or missing required links are invalid records.
+Unsupported properties such as an embedded photo are skipped with a warning,
+including their encoding parameters, without invalidating other usable facts.
 Their supported fields may be shown for review, but confirmation skips the
 whole invalid card. Valid neighboring cards can still be imported.
 
