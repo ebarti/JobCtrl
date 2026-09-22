@@ -141,7 +141,7 @@ def _worker_pool_probe(path):
         pool.shutdown(wait=False, cancel_futures=True)
 
 
-def _injected_connection_probe(path):
+def _injected_connection_probe(path, pre_claim_delay=0.0):
     from jobctrl.enrichment.activities import EnrichActivityInput, _claim_activity_enrichment_lease
 
     payload = EnrichActivityInput(
@@ -169,29 +169,17 @@ def _injected_connection_probe(path):
     assert not thread.is_alive()
     default.close()
 
+    shared = sqlite3.connect(path, timeout=1, check_same_thread=False)
+    shared.execute("PRAGMA busy_timeout=1")
     holder_entered = threading.Event()
     release = threading.Event()
-    claim_thread_ready = threading.Event()
-    allow_claim = threading.Event()
-    claim_entered_sqlite = threading.Event()
-    done = threading.Event()
-    result = []
-
-    class ObservableConnection(sqlite3.Connection):
-        def execute(self, sql, parameters=(), /):
-            if sql == "BEGIN IMMEDIATE":
-                claim_entered_sqlite.set()
-            return super().execute(sql, parameters)
-
-    shared = sqlite3.connect(
-        path,
-        timeout=1,
-        check_same_thread=False,
-        factory=ObservableConnection,
-    )
-    shared.execute("PRAGMA busy_timeout=1")
+    releaser_ready = threading.Event()
+    holder_threads = []
+    releaser_threads = []
+    release_times = []
 
     def block():
+        holder_threads.append(threading.get_ident())
         holder_entered.set()
         assert release.wait(timeout=2)
         return 1
@@ -201,40 +189,58 @@ def _injected_connection_probe(path):
         target=lambda: shared.execute("SELECT block_until_released()").fetchone()
     )
 
-    def claim_shared():
-        claim_thread_ready.set()
-        assert allow_claim.wait(timeout=2)
+    def release_after_observation():
+        releaser_threads.append(threading.get_ident())
+        releaser_ready.set()
+        try:
+            threading.Event().wait(timeout=0.1)
+        finally:
+            release_times.append(time.monotonic())
+            release.set()
+
+    releaser = threading.Thread(target=release_after_observation)
+    holder.start()
+    assert holder_entered.wait(timeout=2)
+    releaser.start()
+    assert releaser_ready.wait(timeout=2)
+
+    # The subprocess orchestrator is the claimant. It cannot sample a
+    # pre-call signal or release the holder while synchronously blocked in the
+    # production helper; only the independent bounded releaser can do that.
+    claim_thread = threading.get_ident()
+    started = time.monotonic()
+    if pre_claim_delay:
+        threading.Event().wait(timeout=pre_claim_delay)
+    try:
         lease = _claim_activity_enrichment_lease(
             payload,
             activity_attempt=1,
             activity_owner_token="shared",
             conn=shared,
         )
-        result.append(lease.activity_attempt)
-        done.set()
+    finally:
+        # A releaser failure cannot strand the connection or the subprocess.
+        release.set()
+    completed = time.monotonic()
 
-    claimant = threading.Thread(target=claim_shared)
-    holder.start()
-    assert holder_entered.wait(timeout=2)
-    claimant.start()
-    assert claim_thread_ready.wait(timeout=2)
-    pre_entry_gate_held = not claim_entered_sqlite.is_set()
-    allow_claim.set()
-    assert claim_entered_sqlite.wait(timeout=2)
-    entered_before_release = not release.is_set()
-    completed_after_entry = done.wait(timeout=0.1)
-    release.set()
     holder.join(timeout=2)
-    claimant.join(timeout=2)
-    assert not holder.is_alive() and not claimant.is_alive()
+    releaser.join(timeout=2)
+    assert not holder.is_alive() and not releaser.is_alive()
     shared.close()
     return (
         wrong_thread_error,
-        pre_entry_gate_held,
-        entered_before_release,
-        completed_after_entry,
-        result,
+        completed - started,
+        release_times[0] - started,
+        completed - release_times[0],
+        claim_thread,
+        holder_threads[0],
+        releaser_threads[0],
+        lease.activity_attempt,
     )
+
+
+def _delayed_injected_connection_probe(path):
+    return _injected_connection_probe(path, pre_claim_delay=0.25)
 
 
 _PROBES = {
@@ -242,6 +248,7 @@ _PROBES = {
     "owners": _exclusive_owner_probe,
     "pool": _worker_pool_probe,
     "injected": _injected_connection_probe,
+    "injected-delayed": _delayed_injected_connection_probe,
 }
 
 
@@ -312,17 +319,52 @@ def test_worker_pool_reuses_its_thread_local_connection(database_path):
     assert (first[3], second[3]) == (1, 2)
 
 
+def _is_mutex_wait_evidence(elapsed, release_after_start, completion_after_release):
+    return (
+        elapsed >= 0.05
+        and release_after_start >= 0.05
+        and 0 <= completion_after_release < 0.1
+    )
+
+
 def test_injected_connection_diagnostic_separates_mutex_from_busy_wait(database_path):
     (
         wrong_thread,
-        pre_entry_gate_held,
-        entered_before_release,
-        completed_after_entry,
-        shared_result,
+        elapsed,
+        release_after_start,
+        completion_after_release,
+        claim_thread,
+        holder_thread,
+        releaser_thread,
+        shared_attempt,
     ) = _isolated("injected", database_path)
     assert wrong_thread[0][0] == "ProgrammingError"
     assert "created in a thread" in wrong_thread[0][1]
-    assert pre_entry_gate_held is True
-    assert entered_before_release is True
-    assert completed_after_entry is False
-    assert shared_result == [1]
+    assert elapsed < _PROCESS_DEADLINE
+    assert _is_mutex_wait_evidence(
+        elapsed,
+        release_after_start,
+        completion_after_release,
+    )
+    assert len({claim_thread, holder_thread, releaser_thread}) == 3
+    assert shared_attempt == 1
+
+
+def test_delayed_pre_sqlite_call_is_not_counted_as_mutex_wait(database_path):
+    (
+        _wrong_thread,
+        elapsed,
+        release_after_start,
+        completion_after_release,
+        _claim_thread,
+        _holder_thread,
+        _releaser_thread,
+        _shared_attempt,
+    ) = _isolated("injected-delayed", database_path)
+    assert elapsed >= 0.25
+    assert completion_after_release >= 0.1
+    assert not _is_mutex_wait_evidence(
+        elapsed,
+        release_after_start,
+        completion_after_release,
+    )
