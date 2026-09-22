@@ -1,4 +1,54 @@
 import { expect, test, type Page } from "@playwright/test";
+import Database from "better-sqlite3";
+
+import { loadE2eDbPath } from "../fixtures/e2e-state.js";
+
+const createdSourceIds: string[] = [];
+
+test.beforeEach(() => {
+  const db = new Database(loadE2eDbPath());
+  try {
+    const existing = db
+      .prepare(
+        "SELECT count(*) AS count FROM source_registry_entries WHERE source_id LIKE 'qa-saved-view-%' OR source_id LIKE 'qa-paging-%'",
+      )
+      .get() as { count: number };
+    expect(
+      existing.count,
+      "Source-view fixture IDs must be unowned before setup",
+    ).toBe(0);
+    createdSourceIds.length = 0;
+  } finally {
+    db.close();
+  }
+});
+
+test.afterEach(async ({ page }) => {
+  await page.close();
+  const db = new Database(loadE2eDbPath());
+  try {
+    db.transaction(() => {
+      for (const sourceId of createdSourceIds) {
+        db.prepare(
+          "DELETE FROM job_events WHERE event_type IN ('SourceRegistryEntryCreated', 'SourceRegistryEntryUpdated') AND json_extract(payload_json, '$.sourceId') = ?",
+        ).run(sourceId);
+        db.prepare(
+          "DELETE FROM source_registry_entries WHERE tenant_id = 'local' AND source_id = ?",
+        ).run(sourceId);
+        expect(
+          db
+            .prepare(
+              "SELECT source_id FROM source_registry_entries WHERE source_id = ?",
+            )
+            .get(sourceId),
+        ).toBeUndefined();
+      }
+    })();
+  } finally {
+    createdSourceIds.length = 0;
+    db.close();
+  }
+});
 
 async function saveAs(page: Page, name: string) {
   await page.getByRole("button", { name: "Save as view", exact: true }).click();
@@ -47,10 +97,12 @@ test("source review saves, switches, reloads and resets independently of Jobs", 
     ["Zulu", "active"],
     ["Inactive", "disabled"],
   ] as const) {
+    const sourceId = `qa-saved-view-${suffix.toLowerCase()}`;
+    createdSourceIds.push(sourceId);
     const response = await page.request.post("/v1/discovery/sources", {
       headers: { Origin: baseURL! },
       data: {
-        sourceId: `qa-saved-view-${suffix.toLowerCase()}`,
+        sourceId,
         displayName: `QA Saved ${suffix}`,
         kind: "employer_careers_page",
         priority: "standard",
@@ -234,10 +286,12 @@ test("presentation edits preserve the source review page", async ({
 }) => {
   for (let index = 0; index < 26; index += 1) {
     const suffix = String(index).padStart(2, "0");
+    const sourceId = `qa-paging-${suffix}`;
+    createdSourceIds.push(sourceId);
     const response = await page.request.post("/v1/discovery/sources", {
       headers: { Origin: baseURL! },
       data: {
-        sourceId: `qa-paging-${suffix}`,
+        sourceId,
         displayName: `QA Paging ${suffix}`,
         kind: "employer_careers_page",
         priority: "standard",
