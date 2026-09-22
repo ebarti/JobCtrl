@@ -251,6 +251,10 @@ export function launchOwnedProcessGroup({
     process.execPath,
     [
       OWNED_PROCESS_GROUP_LAUNCHER,
+      "--state",
+      statePath,
+      "--owner-hash",
+      tokenHash(workspace.token),
       "--capability",
       capability,
       "--name",

@@ -1,8 +1,27 @@
 import { spawn } from "node:child_process";
+import fs from "node:fs";
+import { fileURLToPath } from "node:url";
 
-const [capabilityFlag, capability, nameFlag, name, separator, executable, ...args] =
-  process.argv.slice(2);
+const launcherPath = fileURLToPath(import.meta.url);
+
+const [
+  stateFlag,
+  statePath,
+  ownerHashFlag,
+  ownerTokenHash,
+  capabilityFlag,
+  capability,
+  nameFlag,
+  name,
+  separator,
+  executable,
+  ...args
+] = process.argv.slice(2);
 if (
+  stateFlag !== "--state" ||
+  !statePath ||
+  ownerHashFlag !== "--owner-hash" ||
+  !/^[a-f0-9]{64}$/.test(ownerTokenHash ?? "") ||
   capabilityFlag !== "--capability" ||
   !/^[a-f0-9]{64}$/.test(capability ?? "") ||
   nameFlag !== "--name" ||
@@ -11,6 +30,31 @@ if (
   !executable
 ) {
   throw new Error("Owned process-group launcher received an invalid capability");
+}
+
+const registrationDeadline = Date.now() + 10_000;
+let registered = false;
+while (Date.now() < registrationDeadline) {
+  try {
+    const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+    registered =
+      state?.schemaVersion === 1 &&
+      state.ownerTokenHash === ownerTokenHash &&
+      state.groups?.some(
+        (record) =>
+          record.name === name &&
+          record.pid === process.pid &&
+          record.capability === capability &&
+          record.launcherPath === launcherPath,
+      );
+  } catch {
+    registered = false;
+  }
+  if (registered) break;
+  await new Promise((resolve) => setTimeout(resolve, 10));
+}
+if (!registered) {
+  throw new Error("Owned process-group launcher was not registered by its supervisor");
 }
 
 const child = spawn(executable, args, {
