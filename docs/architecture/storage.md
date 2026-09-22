@@ -27,6 +27,12 @@ Developer supervisors additionally use checkout-local `.dev/` process, log,
 and Temporal files; those are not installed-user authorities but remain
 sensitive.
 
+The proposed [sensitive-artifact retention and cleanup
+contract](../plans/sensitive-artifact-retention.md) inventories these authorities
+and defines reference protection, preview, containment, recovery, and future
+manual cleanup gates. It is unshipped: current JobCtrl has no unified retention
+command, schedule, or implicit TTL deletion.
+
 ## Schema At A Glance
 
 The database is easier to understand as a set of ownership families. The
