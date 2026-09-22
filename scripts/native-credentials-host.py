@@ -67,10 +67,13 @@ $result = Get-Acl -LiteralPath $request.path
     return result.stdout
 
 
-def windows_helper_probe(service: str, key: str) -> None:
+def windows_helper_probe(service: str, key: str, *, label: str, required: bool = True) -> None:
     """Locate helper stalls using fixed markers and a read-only synthetic target."""
     script = native.WINDOWS_CREDENTIAL_SCRIPT
     stages = {
+        "$ErrorActionPreference = 'Stop'": "entry",
+        " [Console]::InputEncoding =": "before_input_encoding",
+        " [Console]::OutputEncoding =": "before_output_encoding",
         " Add-Type -TypeDefinition": "before_compile",
         " $data = [Console]::In.ReadToEnd()": "before_stdin",
         " if ($data.operation -eq 'set')": "after_stdin",
@@ -96,8 +99,8 @@ def windows_helper_probe(service: str, key: str) -> None:
     if isinstance(stderr, bytes):
         stderr = stderr.decode("utf-8", errors="replace")
     observed = [stage for stage in stages.values() if f"qa-stage:{stage}" in stderr]
-    print(json.dumps({"windowsHelperProbe": observed, "timedOut": timed_out, "syntheticTargetAbsent": absent}), flush=True)
-    if not absent:
+    print(json.dumps({"windowsHelperProbe": observed, "environment": label, "timedOut": timed_out, "syntheticTargetAbsent": absent}), flush=True)
+    if required and not absent:
         raise RuntimeError("Windows helper preflight failed")
 
 
@@ -108,6 +111,11 @@ def main() -> int:
     args = parser.parse_args()
     if platform.system() == "Linux" and not args.linux_session:
         raise RuntimeError("Linux native QA requires an owned D-Bus session")
+    service = f"JobCtrl-QA-{uuid.uuid4()}"
+    key = "GEMINI_API_KEY"
+    if platform.system() == "Windows":
+        PHASE = "windows_inherited_helper_probe"
+        windows_helper_probe(service, key, label="inherited", required=False)
     # Carry OS/session plumbing only, never ambient provider credentials.
     safe_env = {key: os.environ[key] for key in (
         "PATH", "HOME", "USERPROFILE", "SystemRoot", "WINDIR", "TEMP", "TMP",
@@ -115,12 +123,10 @@ def main() -> int:
     ) if key in os.environ}
     os.environ.clear()
     os.environ.update(safe_env)
-    service = f"JobCtrl-QA-{uuid.uuid4()}"
     store = native.NativeCredentialStore(service=service)
-    key = "GEMINI_API_KEY"
     if platform.system() == "Windows":
         PHASE = "windows_helper_probe"
-        windows_helper_probe(service, key)
+        windows_helper_probe(service, key, label="scrubbed")
     daemon = None
     with tempfile.TemporaryDirectory(prefix="jobctrl-native-host-") as directory:
         owned = Path(directory)
