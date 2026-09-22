@@ -76,7 +76,7 @@ constitute legal approval or implementation authority.
 | `DP-885-05` | Receipt, recovery, and identification scope | Issue a bounded opaque `HttpOnly` erasure capability only when a first-party visitor is created. Keep it after analytics withdrawal solely for deletion/status. | Expire all linkage on withdrawal and make later erasure impossible; or require a manually mediated support path. | The capability preserves narrow erasure authority without a telemetry identifier. It creates another sensitive lifecycle to secure and retain. Losing it limits automated erasure to data the browser can still identify. |
 | `DP-885-06` | Retention and backup restoration | Use the limits in [Retention](#retention), plus a bounded external recovery-suppression manifest replayed before a restored D1 can serve. | Choose shorter limits; remove retained analytics; or block restore/launch until another resurrection-safe design is approved. | Suppression adds operational recovery work and a separate protected record. Omitting it risks restored rows reappearing after a claimed deletion. |
 | `DP-885-07` | Operational metrics | If separately approved, keep only minimized, non-linkable, best-effort daily counters; they never block access or a privacy action. | Remove the operational lane and scope health/choice analysis to consented traffic; never replace it with an identifier. | Kept counters help detect coarse service failures but cannot measure unique people or a nonconsenting funnel. Removal reduces data and operating complexity. |
-| `DP-885-08` | Capability lifetime | Choose a fixed lifetime, recommended 90 days and never more than 180 days, with no passive renewal. | A shorter disclosed lifetime; or no self-service post-withdrawal erasure capability. | A longer window improves recovery after withdrawal but retains deletion authority longer. A shorter window reduces authority retention and makes more old rows unreachable. |
+| `DP-885-08` | Capability lifetime | Choose a fixed 270-day lifetime from each explicit first-party grant: the 180-day maximum visitor collection window plus the 90-day maximum event-retention tail, with no passive renewal. | A shorter disclosed lifetime; no self-service post-withdrawal erasure capability; or shorter event/identity retention that preserves full coverage with a shorter capability. | Full-tail coverage retains deletion authority longer. A shorter capability reduces authority retention but can make automated erasure unavailable while retained events still exist; the UI and notice must expose that gap rather than promise a button. |
 | `DP-885-09` | Recovery-suppression lifetime | Retain suppression entries for 35 days: the currently documented 30-day paid D1 Time Travel horizon plus a five-day restore-verification buffer. Block launch if configured backup horizons exceed it. | A different explicit horizon-plus-buffer bound; or disable restore of visitor-linked data. | The entry may outlive live event rows after deletion, but prevents a restore from resurrecting them. The bound must change deliberately if backup configuration changes. |
 
 ## Recommended Experience
@@ -112,11 +112,18 @@ session in the currently identified visitor generation. Withdrawal alone keeps
 prior events until their disclosed retention deadline. The UI says so before
 confirmation.
 
-The browser expires first-party tracking cookies after local stop. It retains
-only the bounded erasure capability, if one exists. An offline or failed
-request leaves the control in **Stopped here; server withdrawal pending** and
-retries with the same operation key. It must not report server completion from
-a timeout, `429`, `503`, malformed response, or lost response.
+The browser retains the first-party visitor/session cookies only while server
+withdrawal is pending because the erasure capability is intentionally not
+authorized for withdrawal. The local pending-deny marker disables every
+application use of those cookies for telemetry, health, or grant replay; the
+only allowed application request is the same idempotent withdrawal retry. The
+server may still consider the pair active while the browser is offline, which
+the pending state must disclose. After confirmed server revocation, the browser
+expires both tracking cookies and retains only the bounded erasure capability,
+if one exists. An offline or failed request leaves the control in **Stopped
+here; server withdrawal pending** and retries with the same operation key. It
+must not report server completion from a timeout, `429`, `503`, malformed
+response, or lost response.
 
 Turning GA off applies the strictest supported consent-denied command before
 preventing new application calls and reloading the demo to clear executable
@@ -137,18 +144,21 @@ target to recover linkage.
 
 The action deletes, as one live-D1 transaction:
 
-1. all consented product-event rows for the capability-bound visitor;
-2. every active identity/session row for that visitor and generation;
-3. visitor/session-scoped telemetry rate and retry rows that the future schema
-   can bind to that identity;
-4. superseded first-party consent/identity state for that visitor; and
+1. all `consented_product_events` rows for the capability-bound visitor;
+2. every `active_demo_identities` row for that visitor and generation, after
+   capturing all of its session hashes inside the transaction;
+3. every `telemetry_rate_windows` row for those sessions, plus every future
+   visitor/session-scoped rate or retry row introduced by the next contract;
+4. superseded first-party consent/generation state for that visitor; and
 5. the live erasure-operation receipt state only after a durable bounded status
    and recovery-suppression record exists.
 
-Global rate rows and non-linkable operational aggregates have no visitor key
-and therefore cannot be selected as this visitor's data. Their continued use
-depends on `DP-885-07`; the disclosure must say they are not part of visitor
-erasure.
+`telemetry_global_rate_windows`, `operational_rate_windows`,
+`operational_retry_digests`, and non-linkable operational aggregates have no
+visitor key and therefore cannot be selected as this visitor's data. Their
+continued use depends on `DP-885-07`; the disclosure must say they are not part
+of visitor erasure. No future visitor/session-scoped row may be omitted merely
+because its table was added after this proposal.
 
 Cloudflare D1 `batch()` executes statements sequentially and rolls the sequence
 back when a statement fails. The future implementation must use that atomic
@@ -167,28 +177,39 @@ Session with that bookmark so the receipt cannot regress behind the write.
 
 ### Bounded erasure capability
 
-**RECOMMENDED:** A successful first-party grant mints a random opaque erasure
-capability alongside the first visitor generation. The browser receives it only
-as a host-only, `Secure`, `Path=/`, `SameSite=Lax`, `HttpOnly` cookie. The edge
-stores only a keyed digest and its bound visitor hash/generation. The
-capability:
+**RECOMMENDED:** The first successful first-party grant with no valid capability
+mints a random opaque erasure capability alongside the first visitor
+generation. The browser receives it only as a host-only, `Secure`, `Path=/`,
+`SameSite=Lax`, `HttpOnly` cookie. The edge stores only a keyed digest and its
+bound visitor hash/generation. The capability:
 
 - is accepted only by deletion and deletion-status routes;
 - is never read by telemetry, health, reporting, GA, or operational counters;
 - cannot grant access, grant analytics, revive a generation, or select a
   client-provided target;
 - has a fixed owner-chosen lifetime with no passive sliding renewal;
-- rotates only after a new explicit first-party grant, while the still-valid
-  old capability remains limited to its old generation; and
+- is atomically replaced on a later explicit first-party grant: the new digest
+  inherits the same still-addressable visitor and bound generations, adds the
+  new generation, receives a new fixed lifetime under `DP-885-08`, and revokes
+  the old digest before the browser receives its one replacement cookie;
 - is cleared after confirmed deletion or fixed expiry.
 
 This is an intentional tradeoff: keeping narrow authority enables deletion
 after tracking cookies are expired, but retaining any capability extends the
 period in which that browser can request a destructive action. If the cookie
 is cleared or expires, the service cannot reconstruct linkage. A valid current
-capability addresses the bound visitor and all its sessions. It cannot address
-prior rotated visitor generations unless migration explicitly bound them to
-that capability while their identity was still valid.
+capability addresses the bound visitor, the explicitly bound generations, and
+all their sessions. A visitor/capability that expired or was rotated before
+that binding is a historical visitor and cannot be recovered. Cross-device
+identities are also not addressable.
+
+The server never leaves a replaced capability valid but inaccessible behind a
+single cookie, and the browser never accumulates a cookie per generation.
+Replacement is allowed only for an explicit first-party grant and revokes the
+old digest in the same transaction. After fixed expiry, the privacy UI must not
+display a functioning deletion promise for retained rows it can no longer
+identify. If the owner chooses less than full-tail coverage, the disclosure
+must state the exact self-service window and the remaining retention tail.
 
 ### Cookie and browser-storage matrix
 
@@ -199,8 +220,8 @@ review exact names without treating this proposal as a schema allocation.
 | --- | --- | --- | --- | --- |
 | Access/choice | Versioned non-identifying browser preference | Remember entry and the two default-off purpose choices | Fixed, at most 180 days; browser-readable; no passive renewal | Missing/stale means unknown with both purposes off. It is never an analytics ID. |
 | Pending local deny/delete | Non-identifying local state plus cross-tab message | Stop stale in-flight bootstrap, grant, telemetry, and GA work | Until the server result is reconciled; browser-readable | Written before network I/O and wins over late grant responses. Contains no visitor/session ID. |
-| First-party visitor | Host-only `HttpOnly` cookie | Join consented first-party events for one visitor generation | Fixed, at most 180 days; no passive renewal | Issued only after explicit first-party opt-in; expired on withdrawal. |
-| First-party session | Host-only `HttpOnly` session cookie | Bound one browser session to the visitor generation | Browser-session lifetime | Every session is revoked together on withdrawal/deletion. Session restoration can retain a session cookie, so startup must revalidate server state before telemetry. |
+| First-party visitor | Host-only `HttpOnly` cookie | Join consented first-party events for one visitor generation | Fixed, at most 180 days; no passive renewal | Issued only after explicit first-party opt-in; retained solely for the same withdrawal retry while locally disabled, then expired after confirmed revocation. |
+| First-party session | Host-only `HttpOnly` session cookie | Bound one browser session to the visitor generation | Browser-session lifetime | Every session is revoked together on withdrawal/deletion. A pending local deny makes the cookie unusable except for withdrawal retry; startup revalidates server state before telemetry. |
 | Erasure capability | Host-only `HttpOnly` opaque cookie | Authorize deletion/status for one bound visitor generation | Owner choice under `DP-885-08`; fixed; no passive renewal | Survives withdrawal but never participates in telemetry or reporting joins. |
 | GA cookies/tag state | GA-managed demo-host state | Separate third-party analytics purpose | Fixed configured lifetime at most 180 days; no passive first-party extension | Created/loaded only after the separate GA opt-in. Turning GA off prevents new application calls and follows the documented GA denial/reload path. |
 | Synthetic workspace | IndexedDB or in-memory demo state | Browser-local synthetic product experience | Existing seed/version lifecycle | Available without analytics. **Reset synthetic demo data** does not withdraw, revoke, or erase server analytics. |
@@ -341,7 +362,7 @@ passive reads, page views, telemetry, or session restoration.
 | Raw first-party product events | 90 days | Never | Withdrawal retains them to fixed expiry; deletion removes live rows. |
 | Non-linkable operational aggregates | 90 days | Never | Kept only if `DP-885-07` approves them. |
 | Transient rate/retry/idempotency rows | 24 hours | Retry may reuse the same operation's original bound | Never extended by unrelated traffic. |
-| Erasure capability | Owner choice; recommended 90 days, never more than 180 | Never passively | Survives withdrawal solely for deletion/status. |
+| Erasure capability | Owner choice; recommended 270 days from each explicit first-party grant for the full 180-day identity plus 90-day event tail | Replaced only by a later explicit first-party grant; never passively | Survives withdrawal solely for deletion/status. A shorter choice must disclose when self-service ends while retained events may remain. |
 | Recovery suppression | 35 days under the current 30-day maximum backup horizon | Never | Must cover the configured backup horizon plus verification buffer. |
 
 Operational aggregates remain schema-separated, minimized, and best effort.

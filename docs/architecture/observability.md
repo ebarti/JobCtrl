@@ -172,6 +172,12 @@ service confirms acceptance, the demo also loads GA4 tag `G-6MJGD17JN0` with
 Google Signals, advertising, and personalization disabled. The Google tag is a
 separate third-party measurement boundary and is never loaded before consent.
 
+The [demo access, consent withdrawal, and visitor erasure proposal](../plans/2026-09-22-demo-access-consent-withdrawal-proposal.md)
+describes a possible future separation of demo access, first-party telemetry,
+and Google Analytics, plus withdrawal and deletion boundaries. It remains
+**PROPOSED**, awaits owner decisions, and changes none of the current
+observability behavior above.
+
 ## Out of Scope
 
 Out of scope for this layer: TypeScript API / web instrumentation and
