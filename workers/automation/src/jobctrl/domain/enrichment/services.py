@@ -72,7 +72,6 @@ class JsonLdExtractor:
 
     _MIN_DESC_LEN = 50
 
-    @lane_bound("enrichment")
     def extract(self, page: DetailPage) -> ExtractionResult:
         for ld in page.json_ld:
             posting = _find_job_posting(ld)
@@ -269,6 +268,7 @@ class LlmExtractor:
         self._llm = llm
         self._prompt = prompt
 
+    @lane_bound("enrichment")
     def extract(self, page: DetailPage) -> ExtractionResult:
         if not page.html:
             return ExtractionResult(ok=False)

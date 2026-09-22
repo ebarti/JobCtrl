@@ -109,6 +109,7 @@ async def run_codex_turn(
     completed_turn: object | None = None
     items: list[object] = []
     usage: object | None = None
+    stream_error: BaseException | None = None
     try:
         async for event in stream:
             payload = getattr(event, "payload", None)
@@ -123,12 +124,35 @@ async def run_codex_turn(
             turn = getattr(payload, "turn", None)
             if turn is not None and getattr(turn, "id", None) == getattr(handle, "id", None):
                 completed_turn = turn
-    finally:
+    except BaseException as exc:
+        stream_error = exc
+
+    close_error: BaseException | None = None
+    try:
         await stream.aclose()
+    except BaseException as exc:
+        close_error = exc
 
     input_tokens, output_tokens = _usage_from(usage)
-    if record_usage is not None:
-        record_usage(input_tokens, output_tokens)
+    usage_error: BaseException | None = None
+    if usage is not None and record_usage is not None:
+        try:
+            record_usage(input_tokens, output_tokens)
+        except BaseException as exc:
+            usage_error = exc
+
+    if stream_error is not None:
+        if close_error is not None:
+            stream_error.add_note("The Codex turn stream also failed while closing.")
+        if usage_error is not None:
+            stream_error.add_note("Persisting observed Codex usage also failed.")
+        raise stream_error
+    if close_error is not None:
+        if usage_error is not None:
+            close_error.add_note("Persisting observed Codex usage also failed.")
+        raise close_error
+    if usage_error is not None:
+        raise usage_error
 
     if completed_turn is None:
         raise codex_protocol_error(
