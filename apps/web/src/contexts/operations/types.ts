@@ -78,6 +78,8 @@ import type {
   SourceRegistryEntrySummary,
   SourceRegistryListResponse,
   SourceRegistryMutationResponse,
+  SavedTableView,
+  SavedTableViewGridFilters,
   SourceStatePatch,
   SourceUpsertRequest,
   Stage,
@@ -92,7 +94,11 @@ import type {
   WorkflowRunTimelineEvent,
   WorkflowRunsListQuery,
 } from "@jobctrl/contracts";
-import { JOB_STATES, JobStatesFilterSchema } from "@jobctrl/contracts";
+import {
+  JOB_STATES,
+  JobStatesFilterSchema,
+  SavedTableViewGridFiltersSchema,
+} from "@jobctrl/contracts";
 import type { DomainEventUnion } from "@jobctrl/domain-types";
 
 export type {
@@ -175,6 +181,8 @@ export type {
   SourceRegistryEntrySummary,
   SourceRegistryListResponse,
   SourceRegistryMutationResponse,
+  SavedTableView,
+  SavedTableViewGridFilters,
   SourceStatePatch,
   SourceUpsertRequest,
   Stage,
@@ -190,7 +198,7 @@ export type {
   WorkflowRunsListQuery,
 };
 
-export { JOB_STATES, JobStatesFilterSchema };
+export { JOB_STATES, JobStatesFilterSchema, SavedTableViewGridFiltersSchema };
 
 export type JobId = string;
 

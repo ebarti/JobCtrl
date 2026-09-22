@@ -8,6 +8,7 @@ import type {
   SourceLocatorListResponse,
   SourceRegistryEntrySummary,
 } from "@jobctrl/contracts";
+import type { SavedTableView } from "../../operations/types.js";
 import {
   IconAlertTriangle,
   IconBan,
@@ -34,15 +35,24 @@ import { Button } from "../../../shared/ui/button.js";
 import { CardHeader } from "../../../shared/ui/card-header.js";
 import { Checkbox } from "../../../shared/ui/checkbox.js";
 import { Empty } from "../../../shared/ui/empty.js";
-import {
-  Field,
-  FieldLabel,
-} from "../../../shared/ui/field.js";
+import { Field, FieldLabel } from "../../../shared/ui/field.js";
 import {
   FilterableDataGrid,
   type DataGridColumn,
+  type DataGridColumnVisibilityState,
+  type DataGridColumnWidthsState,
   type DataGridFilterState,
+  type DataGridSortState,
 } from "../../../shared/ui/filterable-data-grid.js";
+import {
+  DISCOVERY_SOURCES_TABLE_ID,
+  type SavedTablePresentation,
+  type SavedTableViewSnapshot,
+} from "../../../shared/stores/saved-table-views.js";
+import {
+  SavedTableViewsControl,
+  type SavedTableColumnOption,
+} from "../../../shared/ui/saved-table-views-control.js";
 import { Input } from "../../../shared/ui/input.js";
 import {
   Select,
@@ -85,6 +95,16 @@ type PreviewLead = DiscoveryPreviewResponse["leads"][number];
 type SourceMetricTone = "good" | "warn" | "bad" | "unknown";
 type DiscoveryControlsLayout = "grid" | "tabs";
 type SourceRegistryStateFilter = "all" | SourceRegistryEntrySummary["state"];
+
+export interface DiscoverySourceTableControls {
+  readonly filters: DataGridFilterState;
+  readonly sort: DataGridSortState;
+  readonly presentation: SavedTablePresentation;
+  readonly onFiltersChange: (filters: DataGridFilterState) => void;
+  readonly onSortChange: (sort: DataGridSortState) => void;
+  readonly onPresentationChange: (presentation: SavedTablePresentation) => void;
+  readonly onApplyView: (view: SavedTableView) => void;
+}
 
 const SOURCE_KINDS = [
   "ats_api",
@@ -353,8 +373,10 @@ function candidateEvidence(candidate: LocatorCandidate): string {
 
 export function DiscoveryProductControls({
   layout = "grid",
+  sourceTable,
 }: {
   readonly layout?: DiscoveryControlsLayout;
+  readonly sourceTable?: DiscoverySourceTableControls;
 } = {}) {
   const sources = useSourceRegistryQuery();
   const locatorCandidates = useSourceLocatorCandidatesQuery();
@@ -398,6 +420,7 @@ export function DiscoveryProductControls({
               defaultStateFilter="active"
               sources={sources.data?.sources ?? []}
               loading={sources.isLoading}
+              {...(sourceTable ? { sourceTable } : {})}
             />
           </TabsContent>
           <TabsContent value="locator" className="discovery-tab-panel">
@@ -430,6 +453,7 @@ export function DiscoveryProductControls({
           <SourceRegistryPanel
             sources={sources.data?.sources ?? []}
             loading={sources.isLoading}
+            {...(sourceTable ? { sourceTable } : {})}
           />
           <SourceLocatorPanel
             candidates={locatorCandidates.data?.candidates ?? []}
@@ -457,10 +481,12 @@ function SourceRegistryPanel({
   sources,
   loading,
   defaultStateFilter = "all",
+  sourceTable,
 }: {
   sources: SourceRegistryEntrySummary[];
   loading: boolean;
   defaultStateFilter?: SourceRegistryStateFilter;
+  sourceTable?: DiscoverySourceTableControls;
 }) {
   const { featureFlags } = usePorts();
   const isDemo = featureFlags.get("demoMode", false);
@@ -760,6 +786,55 @@ function SourceRegistryPanel({
     ],
     [isDemo, patchState, preview.isFetching, previewSourceId],
   );
+  const columnOptions = useMemo<SavedTableColumnOption[]>(
+    () =>
+      sourceColumns.map((column) => ({
+        id: column.id,
+        label: column.label,
+        locked: column.id === "actions",
+      })),
+    [sourceColumns],
+  );
+  const columnVisibility = useMemo<DataGridColumnVisibilityState | undefined>(
+    () =>
+      sourceTable
+        ? Object.fromEntries(
+            sourceTable.presentation.columns.hidden.map((columnId) => [
+              columnId,
+              false,
+            ]),
+          )
+        : undefined,
+    [sourceTable],
+  );
+  const savedViewSnapshot = useMemo<SavedTableViewSnapshot | null>(
+    () =>
+      sourceTable
+        ? {
+            ...sourceTable.presentation,
+            sort: sourceTable.sort,
+            urlFilters: { sourceFilters: sourceTable.filters },
+            gridFilters: {},
+          }
+        : null,
+    [sourceTable],
+  );
+
+  const handleColumnWidthsChange = (widths: DataGridColumnWidthsState) => {
+    if (!sourceTable) return;
+    sourceTable.onPresentationChange({
+      ...sourceTable.presentation,
+      columns: { ...sourceTable.presentation.columns, widths },
+    });
+  };
+
+  const handleColumnOrderChange = (order: readonly string[]) => {
+    if (!sourceTable) return;
+    sourceTable.onPresentationChange({
+      ...sourceTable.presentation,
+      columns: { ...sourceTable.presentation.columns, order: [...order] },
+    });
+  };
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -816,6 +891,31 @@ function SourceRegistryPanel({
         initialSort={{ columnId: "displayName", direction: "asc" }}
         mobileLayout="cards"
         initialFilters={initialFilters}
+        {...(sourceTable
+          ? {
+              filters: sourceTable.filters,
+              onFiltersChange: sourceTable.onFiltersChange,
+              sort: sourceTable.sort,
+              onSortChange: sourceTable.onSortChange,
+              columnVisibility: columnVisibility ?? {},
+              columnOrder: sourceTable.presentation.columns.order,
+              onColumnOrderChange: handleColumnOrderChange,
+              columnWidths: sourceTable.presentation.columns.widths,
+              onColumnWidthsChange: handleColumnWidthsChange,
+              density: sourceTable.presentation.density,
+              grouping: sourceTable.presentation.grouping,
+              colorRules: sourceTable.presentation.colorRules,
+              toolbarActions: savedViewSnapshot ? (
+                <SavedTableViewsControl
+                  tableId={DISCOVERY_SOURCES_TABLE_ID}
+                  columnOptions={columnOptions}
+                  snapshot={savedViewSnapshot}
+                  onApplyView={sourceTable.onApplyView}
+                  onPresentationChange={sourceTable.onPresentationChange}
+                />
+              ) : null,
+            }
+          : {})}
         paginate
         initialPageSize={25}
       />
@@ -852,7 +952,11 @@ function SourceRegistryPanel({
               }
             }}
           >
-            <SelectTrigger id="source-kind" aria-label="Kind" className="w-full">
+            <SelectTrigger
+              id="source-kind"
+              aria-label="Kind"
+              className="w-full"
+            >
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -909,13 +1013,17 @@ function SourcePreview({
     <div className="discovery-source-preview">
       <div className="discovery-panel-head compact">
         <h3 data-typography="component-title">Preview</h3>
-        <span className="meta" data-typography="metadata">{sourceId}</span>
+        <span className="meta" data-typography="metadata">
+          {sourceId}
+        </span>
       </div>
       <div className="rows compact">
         {leads.map((lead) => (
           <div className="discovery-preview-row" key={lead.candidateUrl}>
             <span className="title-stack">
-              <b data-typography="strong-body">{lead.title || lead.candidateUrl}</b>
+              <b data-typography="strong-body">
+                {lead.title || lead.candidateUrl}
+              </b>
               <span>
                 {lead.company || "Unknown company"} ·{" "}
                 {lead.location || "Unknown location"} · confidence{" "}
@@ -1356,7 +1464,9 @@ function ManualCaptureRow({
     <div className="discovery-review-row manual-capture-row">
       <IconExternalLink size={16} aria-hidden="true" />
       <span className="title-stack manual-capture-body">
-        <b data-typography="strong-body">{item.sourceId ?? "Unassigned source"}</b>
+        <b data-typography="strong-body">
+          {item.sourceId ?? "Unassigned source"}
+        </b>
         <span>
           {manualActionLabel(item.reason)} ·{" "}
           <span className="mono" data-typography="code">
@@ -1427,7 +1537,9 @@ function ManualCaptureRow({
             </Field>
           ) : null}
           <Field className="field wide">
-            <FieldLabel htmlFor={`${item.itemId}-capture-note`}>Note</FieldLabel>
+            <FieldLabel htmlFor={`${item.itemId}-capture-note`}>
+              Note
+            </FieldLabel>
             <Input
               id={`${item.itemId}-capture-note`}
               value={note}

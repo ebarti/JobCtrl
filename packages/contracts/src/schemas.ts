@@ -160,6 +160,7 @@ export const SavedTableViewUrlFiltersSchema = z
     maxFitScore: z.coerce.number().int().min(1).max(10).optional().catch(undefined),
     discoveredSince: z.string().trim().min(1).optional().catch(undefined),
     scoredSince: z.string().trim().min(1).optional().catch(undefined),
+    sourceFilters: SavedTableViewGridFiltersSchema.optional().catch(undefined),
   })
   .strict();
 export type SavedTableViewUrlFilters = z.infer<typeof SavedTableViewUrlFiltersSchema>;
