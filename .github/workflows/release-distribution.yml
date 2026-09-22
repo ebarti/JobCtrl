@@ -642,6 +642,13 @@ jobs:
             jq -j '.body' "$release_json" > "$body_file"
             cmp "$notes" "$body_file"
           }
+          require_asset_digest() {
+            local release_json="$1" asset="$2" expected
+            expected="sha256:$(shasum -a 256 "$asset" | awk '{print $1}')"
+            jq -e --arg name "${asset##*/}" --arg digest "$expected" \
+              '[.assets[] | select(.name == $name)] | length == 1 and .[0].digest == $digest' \
+              "$release_json" >/dev/null
+          }
           require_curated_release_notes "$notes"
           main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$RELEASE_REF...main" --jq '.status')"
           [[ "$main_relation" = ahead || "$main_relation" = identical ]]
@@ -663,13 +670,10 @@ jobs:
             expected_prerelease=false; [[ "$RELEASE_CHANNEL" = prerelease ]] && expected_prerelease=true
             test "$(jq -r '.isPrerelease' "$draft")" = "$expected_prerelease"
             require_exact_release_body "$draft" "$RUNNER_TEMP/existing-release-body.md"
-            existing="$RUNNER_TEMP/existing-draft-assets"
-            mkdir -p "$existing"
             missing=()
             for asset in "${assets[@]}"; do
               if jq -e --arg name "${asset##*/}" '.assets | any(.name == $name)' "$draft" >/dev/null; then
-                gh release download "$RELEASE_TAG" --dir "$existing" --pattern "${asset##*/}"
-                test "$(shasum -a 256 "$asset" | awk '{print $1}')" = "$(shasum -a 256 "$existing/${asset##*/}" | awk '{print $1}')"
+                require_asset_digest "$draft" "$asset"
               else
                 missing+=("$asset")
               fi
@@ -860,6 +864,20 @@ jobs:
           await writeFile(path.join(root, "homebrew-promotion-evidence.json"), `${JSON.stringify({schemaVersion: 1, status: "verified", signatureVerified: true, publishedArtifactSmoke: "passed", descriptorSha256: sha256(descriptorRaw), formulaSha256: sha256(formula), artifact: {url: descriptor.artifact.url, sha256: descriptor.artifact.sha256, manifestSha256: descriptor.artifact.manifestSha256, buildId: descriptor.buildId, appVersion: descriptor.appVersion}, publishedCandidate: smoke.candidate}, null, 2)}\n`);
           NODE
 
+      - name: Verify formula promotion evidence
+        if: ${{ inputs.channel == 'stable' }}
+        run: |
+          set -euo pipefail
+          release="$RUNNER_TEMP/release"
+          node scripts/distribution-homebrew.mjs verify-promotion \
+            --descriptor "$release/release-descriptor.json" \
+            --signature "$release/release-descriptor.json.sig" \
+            --descriptor-url "$(jq -r '.publicationUrls.immutableDescriptorUrl' "$release/release-metadata.json")" \
+            --formula "$release/jobctrl.rb" \
+            --evidence "$release/homebrew-promotion-evidence.json" \
+            --trust "$release/release-keys.json"
+          ruby -c "$release/jobctrl.rb"
+
       - name: Audit, install, test, and run the rendered formula lifecycle
         if: ${{ inputs.channel == 'stable' }}
         env:
@@ -891,6 +909,24 @@ jobs:
           stopped="$("$formula_bin" status --json)"
           STATUS="$stopped" node -e 'const status=JSON.parse(process.env.STATUS); if (status.status !== "stopped" || Object.values(status.components ?? {}).some((component) => component.state === "running")) process.exit(1)'
 
+      - name: Seal the smoke-tested formula
+        if: ${{ inputs.channel == 'stable' }}
+        run: |
+          set -euo pipefail
+          verified="$RUNNER_TEMP/jobctrl-verified"
+          mkdir -p "$verified"
+          install -m 0644 "$RUNNER_TEMP/release/jobctrl.rb" "$verified/jobctrl.rb"
+          test "$(shasum -a 256 "$verified/jobctrl.rb" | awk '{print $1}')" = "$EXPECTED_FORMULA_SHA256"
+
+      - name: Upload the smoke-tested formula
+        if: ${{ inputs.channel == 'stable' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: jobctrl-homebrew-verified-${{ github.run_id }}
+          path: ${{ runner.temp }}/jobctrl-verified
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Upload only credential-free smoke and promotion evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -901,22 +937,9 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  sync-homebrew:
-    name: Verify stable Homebrew formula without tap credentials
-    needs: [resolve, sign, package-signed-candidate, smoke-and-verify, promote-channel-pointer]
-    if: ${{ inputs.channel == 'stable' }}
-    uses: ./.github/workflows/sync-homebrew-tap.yml
-    with:
-      release_artifact_name: jobctrl-release-candidate-${{ github.run_id }}
-      smoke_artifact_name: jobctrl-smoke-evidence-${{ github.run_id }}
-      descriptor_url: ${{ format('https://releases.jobctrl.dev/v1/artifacts/{0}/release-descriptor.json', needs.resolve.outputs.release_build_id) }}
-      release_ref: ${{ needs.resolve.outputs.release_ref }}
-      release_tag: ${{ inputs.release_tag }}
-      expected_formula_sha256: ${{ needs.sign.outputs.formula_sha256 }}
-
   publish-homebrew:
     name: Publish the verified stable Homebrew formula
-    needs: [resolve, sign, sync-homebrew, promote-channel-pointer]
+    needs: [resolve, sign, smoke-and-verify, promote-channel-pointer]
     if: ${{ inputs.channel == 'stable' }}
     runs-on: ubuntu-24.04
     environment:
@@ -941,11 +964,6 @@ jobs:
           set -euo pipefail
           verified="$RUNNER_TEMP/jobctrl-verified"
           test -f "$verified/jobctrl.rb" && test ! -L "$verified/jobctrl.rb"
-          test -f "$verified/jobctrl.rb.sha256" && test ! -L "$verified/jobctrl.rb.sha256"
-          (
-            cd "$verified"
-            shasum -a 256 -c jobctrl.rb.sha256
-          )
           test "$(shasum -a 256 "$verified/jobctrl.rb" | awk '{print $1}')" = "$EXPECTED_FORMULA_SHA256"
 
       - name: Reassert the audited source lineage before loading the tap deploy key
@@ -1240,7 +1258,7 @@ jobs:
           smoke="$RUNNER_TEMP/smoke-evidence/published-candidate-smoke.json"
           test -f "$smoke" && test ! -L "$smoke"
 
-      - name: Byte-verify every draft asset, enforce immutability, and publish
+      - name: Verify asset digests, enforce immutability, and publish
         env:
           GH_TOKEN: ${{ github.token }}
           ADMIN_READ_TOKEN: ${{ secrets.JOBCTRL_RELEASE_ADMIN_READ_TOKEN }}
@@ -1261,6 +1279,13 @@ jobs:
             jq -e '.body | type == "string"' "$release_json" >/dev/null
             jq -j '.body' "$release_json" > "$body_file"
             cmp "$notes" "$body_file"
+          }
+          require_asset_digest() {
+            local release_json="$1" asset="$2" expected
+            expected="sha256:$(shasum -a 256 "$asset" | awk '{print $1}')"
+            jq -e --arg name "${asset##*/}" --arg digest "$expected" \
+              '[.assets[] | select(.name == $name)] | length == 1 and .[0].digest == $digest' \
+              "$release_json" >/dev/null
           }
           require_curated_release_notes "$notes"
           main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$RELEASE_REF...main" --jq '.status')"
@@ -1285,9 +1310,7 @@ jobs:
           test "$(jq -r '.isPrerelease' "$release")" = "$expected_prerelease"
           require_exact_release_body "$release" "$RUNNER_TEMP/final-existing-release-body.md"
           if jq -e '.assets | any(.name == "published-candidate-smoke.json")' "$release" >/dev/null; then
-            mkdir -p "$RUNNER_TEMP/existing-smoke"
-            gh release download "$RELEASE_TAG" --dir "$RUNNER_TEMP/existing-smoke" --pattern published-candidate-smoke.json
-            cmp "$smoke" "$RUNNER_TEMP/existing-smoke/published-candidate-smoke.json"
+            require_asset_digest "$release" "$smoke"
           else
             test "$(jq -r '.isDraft' "$release")" = true
             gh release upload "$RELEASE_TAG" "$smoke"
@@ -1296,15 +1319,9 @@ jobs:
           require_exact_release_body "$release" "$RUNNER_TEMP/final-draft-release-body.md"
           jq -r '.assets[].name' "$release" | sort > "$RUNNER_TEMP/final-actual-assets.txt"
           cmp "$expected_names_file" "$RUNNER_TEMP/final-actual-assets.txt"
-          downloaded="$RUNNER_TEMP/final-draft-assets"
-          mkdir -p "$downloaded"
-          while IFS= read -r name; do
-            gh release download "$RELEASE_TAG" --dir "$downloaded" --pattern "$name"
-          done < "$expected_names_file"
-          for asset in "${assets[@]}"; do
-            cmp "$asset" "$downloaded/${asset##*/}"
+          for asset in "${assets[@]}" "$smoke"; do
+            require_asset_digest "$release" "$asset"
           done
-          cmp "$smoke" "$downloaded/published-candidate-smoke.json"
           main_relation="$(gh api "repos/$GITHUB_REPOSITORY/compare/$RELEASE_REF...main" --jq '.status')"
           [[ "$main_relation" = ahead || "$main_relation" = identical ]]
           test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$RELEASE_REF"

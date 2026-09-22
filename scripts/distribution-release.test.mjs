@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { createHash, generateKeyPairSync } from "node:crypto";
 import { execFile } from "node:child_process";
 import os from "node:os";
@@ -519,6 +519,35 @@ test("pre-sign verification binds release channel and compiled public-key digest
   });
   assert.equal(verification.status, "verified-unsigned-pre-sign-candidate");
   assert.equal(verification.nativeLauncherReleaseTrustKeySha256, trustKeySha256);
+
+  const verify = () => verifyPreparedCandidate({ preparedDirectory: prepared, channel: "stable", publicKeyBase64, runner });
+  const payloadFile = path.join(prepared, "payload", "launcher", "jobctrl");
+  const originalPayload = await readFile(payloadFile);
+  await writeFile(payloadFile, Buffer.alloc(originalPayload.length, 0x78));
+  await assert.rejects(verify(), /payload tree does not exactly match/);
+  await writeFile(payloadFile, originalPayload);
+
+  const archive = path.join(prepared, (await readdir(prepared)).find((name) => name.endsWith(".zip")));
+  const originalArchive = await readFile(archive);
+  const corrupted = Buffer.from(originalArchive);
+  corrupted[0] ^= 1;
+  await writeFile(archive, corrupted);
+  await assert.rejects(verify(), /archive SHA-256/);
+  await writeFile(archive, originalArchive);
+
+  // A valid ZIP comment changes packaging bytes, not the consumed payload.
+  // The old verifier unnecessarily reconstructed and rejected this archive.
+  const commented = Buffer.concat([originalArchive, Buffer.from("comment")]);
+  commented.writeUInt16LE(7, originalArchive.length - 2);
+  await writeFile(archive, commented);
+  const resultPath = path.join(prepared, "build-result.json");
+  const result = JSON.parse(await readFile(resultPath, "utf8"));
+  await writeFile(resultPath, JSON.stringify({ ...result, archiveSha256: sha256(commented), compressedBytes: commented.length }));
+  assert.equal((await verify()).archiveSha256, sha256(commented));
+  await assert.rejects(
+    verifyPreparedCandidate({ preparedDirectory: prepared, channel: "prerelease", publicKeyBase64, runner }),
+    /wrong release channel/,
+  );
 });
 
 test("finalization cannot reuse a passing pre-sign verification for another build", () => {
