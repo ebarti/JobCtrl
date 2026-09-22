@@ -97,6 +97,8 @@ has one defining page; other pages summarize it briefly and link to that owner.
 - [`developer/documentation-standards.md`](developer/documentation-standards.md):
   concept ownership, page structure, terminology, diagrams, and stable surfaces.
 - [`local-reliability-qa.md`](local-reliability-qa.md): validation-path chooser.
+- [`developer/local-scale-benchmark.md`](developer/local-scale-benchmark.md):
+  reproducible synthetic production-path benchmark and measured local baseline.
 - [`developer/qa/regression-catalog.md`](developer/qa/regression-catalog.md):
   risk families, invariants, and regression proof.
 - [`developer/qa/browser-smoke.md`](developer/qa/browser-smoke.md): browser smoke

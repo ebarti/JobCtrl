@@ -305,6 +305,10 @@ Choose the touched-surface recipe and required gates through
 the separate web unit, type-level, Playwright or Storybook suites. Build the
 Python package when packaging behavior changes.
 
+For reproducible 100, 1,000, and 10,000-job local scale measurements through
+the production projection, HTTP, SSE, preview, and Python RPC paths, use the
+[local scale benchmark](developer/local-scale-benchmark.md).
+
 ## Pull-request CI
 
 The repository requires maintainer approval for workflow runs from all external
