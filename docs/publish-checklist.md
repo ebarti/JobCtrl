@@ -33,6 +33,23 @@ claims-ledger freeze or any committee-style sign-off as a launch requirement.
 Release tagging, Homebrew stable publication, and PyPI publication remain
 prohibited until the applicable hosted gates execute and pass.
 
+## Verification boundaries for subsequent releases
+
+The prepared payload is checked against its manifest before credentials are
+loaded and again immediately before signing. The unsigned archive keeps its
+transport digest and size check, but the verifier does not rebuild it or perform
+a second bytewise comparison: the signing path consumes the verified payload
+and produces new notarization and distribution archives. ZIP reproducibility is
+covered by the packager tests.
+
+GitHub draft creation/reuse and final publication compare each asset's
+service-reported SHA-256 digest with the local signed candidate. Missing,
+duplicate or mismatched asset identities fail before publication; the workflow
+does not download the same large draft assets again solely to compare bytes.
+After publication it still verifies GitHub's immutable release and asset
+attestations. Public installer downloads, descriptor/manifest signatures, native
+and Homebrew lifecycle tests, and atomic channel promotion remain required.
+
 ## Owner-only publication actions and records
 
 Every state-changing step below is an **owner-only** action. Implementing agents
@@ -628,12 +645,12 @@ or source-bootstrap tap formula only through the signed workflow; never treat
 it as stable release evidence. The implemented P6 signer job renders the
 replacement formula once from the signed stable descriptor and exports its
 exact SHA-256. A credential-free job smoke-tests that formula and published ZIP
-without re-rendering either. The reusable tap workflow receives the untouched
-signed candidate and separate smoke evidence,
-re-verifies the signer-rooted formula digest, and seals the exact formula
-without tap credentials before handing only the formula and checksum to the
-protected deploy-key job in the top-level release workflow. It never triggers
-from `main` or merely from a published GitHub Release.
+without re-rendering either. That same credential-free job verifies the
+signed descriptor and formula promotion evidence, runs the Homebrew lifecycle,
+and seals the tested formula against the signer's digest. It hands only the
+formula to the protected deploy-key job, which checks it against the signer
+output before loading credentials. There is no second tap verification job. Tap
+publication never triggers from `main` or merely from a published GitHub Release.
 The formula writes only its Homebrew prefix: its `bin/jobctrl` target is a
 native first-invocation bootstrap holding the signed descriptor resources and
 cached ZIP. It must not create `~/.jobctrl`, mutate a Cellar payload, or link a
@@ -644,8 +661,8 @@ the reset scheme-zero SemVer directly with the withdrawn `2.0.x` line.
 - **Action.** Configure the external signing/publication gates, then run the
   implemented signed-descriptor, published-ZIP smoke, formula render,
   Ruby syntax, and Homebrew audit/test gates; atomically promote or confirm the
-  signer-authored channel pointer; only then call the reusable sync workflow
-  with the verified render. Do not edit the tap copy by hand.
+  signer-authored channel pointer; only then publish the smoke-tested formula
+  through the protected tap job. Do not edit the tap copy by hand.
 - **Rollback.** Revert `Formula/jobctrl.rb` in the tap after coordinating a
   signed release revocation; the source-development instructions are separate.
 

@@ -7461,7 +7461,6 @@ import {
   lstat as lstat4,
   mkdir as mkdir3,
   mkdtemp as mkdtemp2,
-  open as open2,
   readFile as readFile4,
   readdir as readdir3,
   rm as rm3,
@@ -13351,26 +13350,6 @@ function preparedCandidatePaths(preparedDirectory, contracts) {
     archiveFileName
   };
 }
-async function filesAreBytewiseEqual(firstPath, secondPath) {
-  const [firstStat, secondStat] = await Promise.all([stat3(firstPath), stat3(secondPath)]);
-  if (!firstStat.isFile() || !secondStat.isFile() || firstStat.size !== secondStat.size) return false;
-  const [first, second] = await Promise.all([open2(firstPath, "r"), open2(secondPath, "r")]);
-  try {
-    const firstBuffer = Buffer.allocUnsafe(64 * 1024);
-    const secondBuffer = Buffer.allocUnsafe(64 * 1024);
-    for (let offset = 0; offset < firstStat.size; ) {
-      const [left, right] = await Promise.all([
-        first.read(firstBuffer, 0, firstBuffer.length, offset),
-        second.read(secondBuffer, 0, secondBuffer.length, offset)
-      ]);
-      if (left.bytesRead === 0 || left.bytesRead !== right.bytesRead || !firstBuffer.subarray(0, left.bytesRead).equals(secondBuffer.subarray(0, right.bytesRead))) return false;
-      offset += left.bytesRead;
-    }
-    return true;
-  } finally {
-    await Promise.all([first.close(), second.close()]);
-  }
-}
 async function verifyPreparedCandidate({ preparedDirectory, channel, publicKeyBase64, root = REPO_ROOT2, runner = defaultCommandRunner }) {
   invariant4(channel === "stable" || channel === "prerelease", "prepared candidate requires a network channel");
   requireNetworkReleasePublicKey(publicKeyBase64, "prepared candidate");
@@ -13415,15 +13394,6 @@ async function verifyPreparedCandidate({ preparedDirectory, channel, publicKeyBa
   const archiveSha256 = await sha256File3(paths.archivePath);
   invariant4(prepared.archiveSha256 === archiveSha256, "prepared archive SHA-256 does not match the checkout-rooted archive");
   invariant4(prepared.compressedBytes === archiveEntry.size, "prepared archive byte count does not match the checkout-rooted archive");
-  const scratchDirectory = await mkdtemp2(path4.join(os2.tmpdir(), "jobctrl-prepared-verify-"));
-  try {
-    const rebuiltArchivePath = path4.join(scratchDirectory, paths.archiveFileName);
-    const rebuilt = await createDeterministicZip(paths.payloadRoot, rebuiltArchivePath, manifest.sourceDateEpoch);
-    invariant4(rebuilt.sha256 === archiveSha256 && rebuilt.compressedBytes === archiveEntry.size, "checkout-rooted deterministic archive does not match the prepared archive identity");
-    invariant4(await filesAreBytewiseEqual(paths.archivePath, rebuiltArchivePath), "checkout-rooted deterministic archive bytes do not match the prepared archive");
-  } finally {
-    await rm3(scratchDirectory, { recursive: true, force: true });
-  }
   const nativeBinding = await verifyPreparedNativeBinding({ preparedDirectory: paths.preparedDirectory, channel, publicKeyBase64, runner });
   return {
     schemaVersion: 1,

@@ -15,7 +15,6 @@ import {
   lstat,
   mkdir,
   mkdtemp,
-  open,
   readFile,
   readdir,
   rm,
@@ -677,27 +676,6 @@ function preparedCandidatePaths(preparedDirectory, contracts) {
   };
 }
 
-async function filesAreBytewiseEqual(firstPath, secondPath) {
-  const [firstStat, secondStat] = await Promise.all([stat(firstPath), stat(secondPath)]);
-  if (!firstStat.isFile() || !secondStat.isFile() || firstStat.size !== secondStat.size) return false;
-  const [first, second] = await Promise.all([open(firstPath, "r"), open(secondPath, "r")]);
-  try {
-    const firstBuffer = Buffer.allocUnsafe(64 * 1024);
-    const secondBuffer = Buffer.allocUnsafe(64 * 1024);
-    for (let offset = 0; offset < firstStat.size;) {
-      const [left, right] = await Promise.all([
-        first.read(firstBuffer, 0, firstBuffer.length, offset),
-        second.read(secondBuffer, 0, secondBuffer.length, offset),
-      ]);
-      if (left.bytesRead === 0 || left.bytesRead !== right.bytesRead || !firstBuffer.subarray(0, left.bytesRead).equals(secondBuffer.subarray(0, right.bytesRead))) return false;
-      offset += left.bytesRead;
-    }
-    return true;
-  } finally {
-    await Promise.all([first.close(), second.close()]);
-  }
-}
-
 export async function verifyPreparedCandidate({ preparedDirectory, channel, publicKeyBase64, root = REPO_ROOT, runner = defaultCommandRunner }) {
   invariant(channel === "stable" || channel === "prerelease", "prepared candidate requires a network channel");
   requireNetworkReleasePublicKey(publicKeyBase64, "prepared candidate");
@@ -742,15 +720,8 @@ export async function verifyPreparedCandidate({ preparedDirectory, channel, publ
   const archiveSha256 = await sha256File(paths.archivePath);
   invariant(prepared.archiveSha256 === archiveSha256, "prepared archive SHA-256 does not match the checkout-rooted archive");
   invariant(prepared.compressedBytes === archiveEntry.size, "prepared archive byte count does not match the checkout-rooted archive");
-  const scratchDirectory = await mkdtemp(path.join(os.tmpdir(), "jobctrl-prepared-verify-"));
-  try {
-    const rebuiltArchivePath = path.join(scratchDirectory, paths.archiveFileName);
-    const rebuilt = await createDeterministicZip(paths.payloadRoot, rebuiltArchivePath, manifest.sourceDateEpoch);
-    invariant(rebuilt.sha256 === archiveSha256 && rebuilt.compressedBytes === archiveEntry.size, "checkout-rooted deterministic archive does not match the prepared archive identity");
-    invariant(await filesAreBytewiseEqual(paths.archivePath, rebuiltArchivePath), "checkout-rooted deterministic archive bytes do not match the prepared archive");
-  } finally {
-    await rm(scratchDirectory, { recursive: true, force: true });
-  }
+  // The signing input is the verified payload tree. Signing creates new ZIPs;
+  // rebuilding the unused unsigned ZIP here only retests the packager.
   const nativeBinding = await verifyPreparedNativeBinding({ preparedDirectory: paths.preparedDirectory, channel, publicKeyBase64, runner });
   return {
     schemaVersion: 1,

@@ -69,7 +69,7 @@ test("release workflow binds creation, reuse, and final readback to curated note
   const publish = stepRun(
     workflow,
     "publish-github-release",
-    "Byte-verify every draft asset, enforce immutability, and publish",
+    "Verify asset digests, enforce immutability, and publish",
   );
   for (const [label, run] of Object.entries({ resolve, preflight, draft, publish }))
     assertShellSyntax(label, run);
@@ -84,7 +84,7 @@ test("release workflow binds creation, reuse, and final readback to curated note
   assert.match(preflight, /require_exact_release_body "\$release"/);
   assert.ok(
     draft.indexOf("require_exact_release_body \"$draft\"") <
-      draft.indexOf("gh release download"),
+      draft.indexOf('require_asset_digest "$draft" "$asset"'),
     "an existing release body must be verified before any asset reuse",
   );
   assert.match(draft, /gh release create[^\n]+--notes-file "\$notes"/);
@@ -194,4 +194,140 @@ require_exact_release_body "$release_json" "$body_file"
     ).status,
     0,
   );
+});
+
+test("draft and final publication reject mismatched, absent, and duplicate asset digests", async (context) => {
+  const workflow = loadYaml(workflowUrl);
+  const temporary = await mkdtemp(path.join(os.tmpdir(), "jobctrl-release-digests-"));
+  context.after(() => rm(temporary, { recursive: true, force: true }));
+  const asset = path.join(temporary, "candidate with spaces.zip");
+  const contents = Buffer.from("signed release fixture");
+  await writeFile(asset, contents);
+  const record = { name: path.basename(asset), digest: `sha256:${sha256(contents)}` };
+  for (const [job, step] of [
+    ["publish-immutable", "Create or verify the rerunnable GitHub draft candidate"],
+    ["publish-github-release", "Verify asset digests, enforce immutability, and publish"],
+  ]) {
+    const run = stepRun(workflow, job, step);
+    assertShellSyntax(job, run);
+    assert.doesNotMatch(run, /gh release download/);
+    const script = `set -euo pipefail\n${shellFunction(run, "require_asset_digest")}\nrequire_asset_digest "$1" "$2"\n`;
+    for (const [name, assets, accepted] of [
+      ["exact", [record], true],
+      ["wrong digest", [{ ...record, digest: `sha256:${"0".repeat(64)}` }], false],
+      ["missing digest", [{ name: record.name }], false],
+      ["null digest", [{ ...record, digest: null }], false],
+      ["missing asset", [], false],
+      ["duplicate asset", [record, record], false],
+    ]) {
+      const metadata = path.join(temporary, "release.json");
+      await writeFile(metadata, JSON.stringify({ assets }));
+      const result = spawnSync("bash", ["-c", script, "verify", metadata, asset], { encoding: "utf8" });
+      assert.equal(result.status === 0, accepted, `${job}: ${name}: ${result.stderr}`);
+    }
+  }
+  const publish = stepRun(workflow, "publish-github-release", "Verify asset digests, enforce immutability, and publish");
+  assert.ok(publish.indexOf('require_asset_digest "$release" "$asset"') < publish.indexOf("gh release edit"));
+  assert.ok(publish.indexOf("gh release verify-asset") > publish.indexOf('test "$immutable" = true'));
+});
+
+test("Homebrew publishes only the signer-bound formula after its credential-free lifecycle passes", async (context) => {
+  const workflow = loadYaml(workflowUrl);
+  assert.equal(workflow.jobs["sync-homebrew"], undefined);
+  const smoke = workflow.jobs["smoke-and-verify"];
+  assert.equal(smoke.environment, undefined);
+  const names = smoke.steps.map((step) => step.name);
+  assert.ok(names.indexOf("Seal the smoke-tested formula") > names.indexOf("Audit, install, test, and run the rendered formula lifecycle"));
+  assert.ok(names.indexOf("Upload the smoke-tested formula") > names.indexOf("Seal the smoke-tested formula"));
+  const publish = workflow.jobs["publish-homebrew"];
+  assert.ok(publish.needs.includes("smoke-and-verify"));
+  assert.ok(publish.needs.includes("promote-channel-pointer"));
+  assert.equal(publish.steps[0].with.name, smoke.steps.find((step) => step.name === "Upload the smoke-tested formula").with.name);
+  assert.equal(smoke.steps.find((step) => step.name === "Upload the smoke-tested formula").if, "${{ inputs.channel == 'stable' }}");
+  const temporary = await mkdtemp(path.join(os.tmpdir(), "jobctrl-formula-handoff-"));
+  context.after(() => rm(temporary, { recursive: true, force: true }));
+  const { mkdir } = await import("node:fs/promises");
+  await mkdir(path.join(temporary, "jobctrl-verified"));
+  const formula = path.join(temporary, "jobctrl-verified", "jobctrl.rb");
+  const contents = "class Jobctrl < Formula\nend\n";
+  await writeFile(formula, contents);
+  const run = stepRun(workflow, "publish-homebrew", "Verify the sealed formula checksum");
+  const check = () => spawnSync("bash", ["-c", run], { encoding: "utf8", env: { ...process.env, RUNNER_TEMP: temporary, EXPECTED_FORMULA_SHA256: sha256(contents) } });
+  assert.equal(check().status, 0);
+  await writeFile(formula, contents.replace("Jobctrl", "Altered"));
+  assert.notEqual(check().status, 0);
+});
+
+test("final publication shell accepts exact and immutable reruns and refuses altered drafts before publishing", async (context) => {
+  const { mkdir, chmod } = await import("node:fs/promises");
+  const workflow = loadYaml(workflowUrl);
+  const run = stepRun(workflow, "publish-github-release", "Verify asset digests, enforce immutability, and publish");
+  const temporary = await mkdtemp(path.join(os.tmpdir(), "jobctrl-publish-shell-"));
+  context.after(() => rm(temporary, { recursive: true, force: true }));
+  const names = ["jobctrl-fixture-darwin-arm64.zip", "jobctrl-installer", "install.sh", "release-descriptor.json", "release-descriptor.json.sig", "channel-pointer.json", "manifest.json", "manifest.sig", "release-keys.json", "release-metadata.json", "SHA256SUMS", "jobctrl-release-audit.tar"];
+  const notes = "# Fixture release\n\nTest publication only.\n";
+  const ref = "a".repeat(40);
+  for (const scenario of ["new", "immutable rerun", "wrong digest", "missing digest", "missing asset", "unexpected asset"]) {
+    const root = path.join(temporary, scenario);
+    for (const directory of ["release", "release-notes", "smoke-evidence", "bin"]) await mkdir(path.join(root, directory), { recursive: true });
+    const assets = [];
+    for (const name of names) {
+      const bytes = name === "release-metadata.json" ? JSON.stringify({ archive: { file: names[0] } }) : `fixture ${name}\n`;
+      await writeFile(path.join(root, "release", name), bytes);
+      assets.push({ name, digest: `sha256:${sha256(bytes)}` });
+    }
+    const smoke = "{}\n";
+    await writeFile(path.join(root, "smoke-evidence", "published-candidate-smoke.json"), smoke);
+    await writeFile(path.join(root, "release-notes", "v0.2.1.md"), notes);
+    if (scenario === "wrong digest") assets[0].digest = `sha256:${"0".repeat(64)}`;
+    if (scenario === "missing digest") delete assets[0].digest;
+    if (scenario === "missing asset") assets.shift();
+    if (scenario === "unexpected asset") assets.push({ name: "unexpected.exe", digest: `sha256:${"0".repeat(64)}` });
+    if (scenario === "immutable rerun") {
+      assets.push({ name: "published-candidate-smoke.json", digest: `sha256:${sha256(smoke)}` });
+      await writeFile(path.join(root, "published"), "yes");
+    }
+    await writeFile(path.join(root, "remote.json"), JSON.stringify({ targetCommitish: ref, isPrerelease: false, body: notes, assets }));
+    const gh = path.join(root, "bin", "gh");
+    await writeFile(gh, `#!${process.execPath}
+const fs = require('node:fs');
+const path = require('node:path');
+const crypto = require('node:crypto');
+const root = process.env.RUNNER_TEMP;
+const args = process.argv.slice(2);
+const marker = path.join(root, 'published');
+const remotePath = path.join(root, 'remote.json');
+const remote = JSON.parse(fs.readFileSync(remotePath));
+fs.appendFileSync(path.join(root, 'calls.jsonl'), JSON.stringify(args) + '\\n');
+if (args[0] === 'api') {
+  process.stdout.write(args.some(a => a.includes('/compare/')) ? 'identical' : args.some(a => a.includes('/commits/')) ? process.env.RELEASE_REF : 'true');
+} else if (args[1] === 'view') {
+  process.stdout.write(args.includes('--jq') ? String(fs.existsSync(marker)) : JSON.stringify({...remote, isDraft: !fs.existsSync(marker), isImmutable: fs.existsSync(marker)}));
+} else if (args[1] === 'upload') {
+  if (fs.existsSync(marker)) process.exit(2);
+  const file = args.at(-1);
+  remote.assets.push({name: path.basename(file), digest: 'sha256:' + crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')});
+  fs.writeFileSync(remotePath, JSON.stringify(remote));
+} else if (args[1] === 'edit') {
+  fs.writeFileSync(marker, 'yes');
+} else if (args[1] === 'verify-asset') {
+  const file = args.at(-1);
+  const asset = remote.assets.find(a => a.name === path.basename(file));
+  if (!fs.existsSync(marker) || asset?.digest !== 'sha256:' + crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')) process.exit(3);
+} else if (args[1] !== 'verify' || !fs.existsSync(marker)) {
+  throw new Error('Unexpected gh invocation: ' + JSON.stringify(args));
+}
+`);
+    await chmod(gh, 0o755);
+    const result = spawnSync("bash", ["-c", run], {
+      encoding: "utf8", timeout: 10000,
+      env: { ...process.env, PATH: `${path.join(root, "bin")}:${process.env.PATH}`, RUNNER_TEMP: root, RELEASE_REF: ref, RELEASE_TAG: "v0.2.1", RELEASE_CHANNEL: "stable", EXPECTED_RELEASE_NOTES_SHA256: sha256(notes), GITHUB_REPOSITORY: "fixture/release", ADMIN_READ_TOKEN: "fixture" },
+    });
+    const accepted = scenario === "new" || scenario === "immutable rerun";
+    assert.equal(result.status === 0, accepted, `${scenario}: ${result.stderr}`);
+    const calls = (await readFile(path.join(root, "calls.jsonl"), "utf8")).trim().split("\n").map(JSON.parse);
+    assert.equal(calls.some(args => args[1] === "edit"), scenario === "new", scenario);
+    assert.equal(calls.filter(args => args[1] === "verify-asset").length, accepted ? names.length + 1 : 0, scenario);
+    assert.equal(calls.some(args => args[1] === "download"), false);
+  }
 });
