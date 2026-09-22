@@ -165,4 +165,7 @@ These documents remain in the repository but are not separate site sections:
 - [GitHub Issues](https://github.com/ebarti/JobCtrl/issues): actionable work; [migration index #881](https://github.com/ebarti/JobCtrl/issues/881) accounts for the historical backlog.
 - [`claims-ledger.md`](claims-ledger.md): launch-claim evidence and status.
 - [`plans/`](plans/): active proposals and immutable implemented-plan history.
+- [`plans/local-custom-provider-contract.md`](plans/local-custom-provider-contract.md):
+  design-only, fail-closed contract and proof gates for a future local/custom
+  LLM provider; the capability is currently unavailable.
 - [`incidents/`](incidents/): incident records and corrective actions.

@@ -132,6 +132,11 @@ settings, API/Vite proxy targets, or isolated stacks should use
 
 ## LLM Providers
 
+Local/custom endpoints are not currently supported or configurable. The
+[design-only local/custom provider contract](../plans/local-custom-provider-contract.md)
+defines the containment, capability, accounting, and product proof required
+before any such provider can become available; it does not enable one.
+
 Choose one provider in **Settings → Credentials**, restart the relevant Python
 process after a Keychain edit, and use `jobctrl doctor`. The pipeline model spec defaults to `default`, which resolves
 through a ready provider. Explicit model specs use `codex:`, `claude:`, or
