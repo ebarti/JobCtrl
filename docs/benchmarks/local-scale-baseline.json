@@ -1,0 +1,1355 @@
+{
+  "formatVersion": 1,
+  "benchmark": "JobCtrl synthetic local scale baseline",
+  "seed": "jobctrl-local-scale-v1",
+  "candidate": {
+    "gitHead": "8c80b31b584c7ef92b80f92ea9e496c968a8269a",
+    "gitStatus": [
+      " M workers/automation/uv.lock"
+    ],
+    "verifiedDirtyExclusion": {
+      "path": "workers/automation/uv.lock",
+      "note": "Unrelated pre-existing two-line uv.lock change; excluded from the issue 889 candidate.",
+      "expectedContentSha256": "4eaf563541a57070c8e1b661d34aad441d419ef8811dbd02abdc64b267148a67",
+      "observedContentSha256": "4eaf563541a57070c8e1b661d34aad441d419ef8811dbd02abdc64b267148a67",
+      "worktreeStatus": " M workers/automation/uv.lock",
+      "diffNumstat": "2\t0\tworkers/automation/uv.lock",
+      "diffSha256": "2ede19c944bcee9830b2c80dba8a7bc9b520acbfdf4f088f4df14180b62e7d08",
+      "verified": true
+    }
+  },
+  "schema": {
+    "version": 10,
+    "initializer": "jobctrl.infrastructure.migrations.schema_v10.create_exact_v10_schema via uv --locked"
+  },
+  "method": {
+    "datasetSizes": [
+      100,
+      1000,
+      10000
+    ],
+    "eventsPerJob": 3,
+    "warmups": 2,
+    "samples": 7,
+    "isolation": "Each dataset uses a new benchmark-owned mkdtemp app/config/DB/artifact workspace and is removed after the run.",
+    "productionPaths": [
+      "refreshProjections bounded foreground pass and background drain",
+      "buildApp loopback HTTP /v1/jobs list/search/in-memory sort",
+      "registerEventStreamRoute real 250 ms timer-driven SSE connection",
+      "buildApp PDF and HTML artifact preview streams",
+      "SubprocessJsonRpcAdapter -> uv -> production Python jobctrl rpc dispatcher provider_models"
+    ],
+    "providerNetworkPolicy": "The RPC subprocess receives a minimal allowlisted environment, isolated HOME/Codex/Claude/AWS/Google/Azure config paths, disabled AWS metadata and Langfuse export, and unreachable loopback proxies. A production provider_status preflight must prove every provider non-ready before provider_models is allowed; the sanitized catalog schema must then contain no ready provider or models.",
+    "sustainedWorkload": "At least 1.5 seconds and seven iterations, capped at 100 iterations; each iteration writes 10 synthetic events, directly refreshes a seeded heartbeat, performs a search plus in-memory sort read, and reads seeded pipeline operations while one SSE subscriber remains connected. No Temporal worker runs.",
+    "tailEstimateLimitation": "Seven retained warm samples use nearest-rank percentiles, so p95 equals the maximum. Results are exploratory, tail-sample-limited local observations rather than stable population estimates.",
+    "sseValidationBoundary": "Validates production server transport, timer, event ID ordering, and counts with benchmark-only event types; it does not validate frontend event-registry or decoded-envelope acceptance.",
+    "resourceSamplingLimitation": "Node peaks are sampled between sustained iterations and can miss short-lived spikes."
+  },
+  "proposedReferenceBudgets": {
+    "warmP95Ms": 250,
+    "projectionSettledNoopMs": 50,
+    "projectionIncrementalForegroundMs": 100,
+    "sseOneBatchVisibleMs": 600,
+    "coldProjectionByJobsMs": {
+      "100": 2000,
+      "1000": 8000,
+      "10000": 45000
+    },
+    "coldRpcStartupMs": 10000,
+    "sustainedNodeRssGrowthBytes": 134217728,
+    "sustainedNodeHeapGrowthBytes": 67108864
+  },
+  "budgetRationale": {
+    "warmP95Ms": "250 ms is a conservative local interactive-response target for repeated list/search/preview/RPC reads.",
+    "projectionSettledNoopMs": "50 ms keeps a settled read-model guard cheap relative to an interactive request.",
+    "projectionIncrementalForegroundMs": "100 ms bounds a fixed 50-event foreground fold before any background drain.",
+    "sseOneBatchVisibleMs": "600 ms equals two production 250 ms polls plus 100 ms local delivery allowance.",
+    "coldProjectionByJobsMs": "2/8/45 seconds separate one-time rebuild cost by declared scale and tolerate local hardware variance.",
+    "coldRpcStartupMs": "10 seconds isolates uv and Python import startup from warm RPC calls.",
+    "sustainedGrowth": "128 MiB RSS and 64 MiB heap are diagnostic leak sentinels for the bounded 1.5 second workload, not long-horizon guarantees."
+  },
+  "provenance": {
+    "capturedAt": "2026-09-22T08:40:12.009Z",
+    "os": "darwin 25.6.0",
+    "arch": "arm64",
+    "cpu": "Apple M4 Pro",
+    "logicalCpus": 12,
+    "totalMemoryBytes": 25769803776,
+    "node": "v22.21.1",
+    "python": "Python 3.14.4",
+    "sqlite": "3.53.0",
+    "nodeProcessScope": "PID 84237; process.resourceUsage plus process.memoryUsage",
+    "rpcProcessScope": "recursive descendants sampled while SubprocessJsonRpcAdapter's production process was warm"
+  },
+  "backgroundLoadAnnotation": "Four other issue tasks were active on the same host during this run.",
+  "backgroundLoadLimitation": "Concurrent host activity was not independently measured. There was no CPU pinning or isolated reference hardware. Raw samples are retained; these measurements must not be used to tighten the proposed budgets.",
+  "datasets": [
+    {
+      "jobs": 100,
+      "seed": {
+        "jobs": 100,
+        "events": 300,
+        "eventsPerJob": 3,
+        "stages": {
+          "discover": 100,
+          "enrich": 100,
+          "score": 100
+        },
+        "scores": {
+          "minimum": 0,
+          "maximum": 10,
+          "distinct": 11
+        },
+        "artifacts": {
+          "pdfBytes": 262144,
+          "htmlBytes": 131072,
+          "pdfSha256": "17cd1e5bbcd90fe8fcb8bd05cfd4d403f69cda0fb8e06da85573c1ef0ae50ef0",
+          "htmlSha256": "d7f5febbf7b896b40f92fc7014da0428f56636964b174f244c5ee854b3a2d350",
+          "artifactId": "jobctrl-local-scale-v1:resume-pdf"
+        }
+      },
+      "projection": {
+        "coldForegroundMs": 34.626,
+        "fullyDrainedConvergenceMs": 34.714,
+        "settledNoopMs": 1.072,
+        "incrementalForegroundMs": 14.493,
+        "projectionRows": 100,
+        "maxEventId": 352,
+        "watermark": 352,
+        "incrementalEvents": 50
+      },
+      "http": {
+        "ordinaryList": {
+          "samples": [
+            8.198,
+            8.577,
+            8.238,
+            8.258,
+            7.715,
+            7.926,
+            9.061
+          ],
+          "p50": 8.238,
+          "p95": 9.061,
+          "max": 9.061
+        },
+        "search": {
+          "samples": [
+            9.831,
+            9.84,
+            10.149,
+            9.802,
+            9.699,
+            9.516,
+            9.606
+          ],
+          "p50": 9.802,
+          "p95": 10.149,
+          "max": 10.149
+        },
+        "inMemorySort": {
+          "samples": [
+            10.481,
+            10.471,
+            10.928,
+            10.048,
+            10.058,
+            9.868,
+            10.315
+          ],
+          "p50": 10.315,
+          "p95": 10.928,
+          "max": 10.928
+        },
+        "searchExpected": 10,
+        "searchObserved": 10,
+        "ordinaryFirstJobId": "543f07a3-7e7c-440f-8011-ccc925afc0fb",
+        "inMemoryFirstPageSources": [
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-1",
+          "synthetic-1",
+          "synthetic-1",
+          "synthetic-1",
+          "synthetic-1",
+          "synthetic-1",
+          "synthetic-1",
+          "synthetic-1",
+          "synthetic-1",
+          "synthetic-1",
+          "synthetic-1",
+          "synthetic-1",
+          "synthetic-1",
+          "synthetic-1",
+          "synthetic-1",
+          "synthetic-1"
+        ]
+      },
+      "sse": {
+        "pollIntervalMs": 250,
+        "idleObservationMs": 550,
+        "idleDomainEvents": 0,
+        "idleNodeCpuMs": 3.223,
+        "oneSubscriberBurstMs": 209.89,
+        "replayMs": 233.392,
+        "severalSubscribersMs": 259.817,
+        "subscribers": 4,
+        "eventsPerBurst": 1000,
+        "nodeCpuMs": 177.614,
+        "rssDeltaBytes": -475136,
+        "heapDeltaBytes": -2483240,
+        "orderingVerified": true,
+        "countVerified": true
+      },
+      "preview": {
+        "pdf": {
+          "samples": [
+            4.153,
+            3.963,
+            4.222,
+            3.937,
+            3.919,
+            3.958,
+            4.927
+          ],
+          "p50": 3.963,
+          "p95": 4.927,
+          "max": 4.927
+        },
+        "html": {
+          "samples": [
+            3.895,
+            3.722,
+            3.632,
+            3.746,
+            3.677,
+            3.721,
+            3.864
+          ],
+          "p50": 3.722,
+          "p95": 3.895,
+          "max": 3.895
+        },
+        "pdfBytes": 262144,
+        "htmlBytes": 131072,
+        "pdfSha256": "17cd1e5bbcd90fe8fcb8bd05cfd4d403f69cda0fb8e06da85573c1ef0ae50ef0",
+        "htmlSha256": "d7f5febbf7b896b40f92fc7014da0428f56636964b174f244c5ee854b3a2d350"
+      },
+      "rpc": {
+        "method": "provider_models",
+        "preflightMethod": "provider_status",
+        "coldStartupMs": 498.749,
+        "warm": {
+          "samples": [
+            0.11,
+            0.111,
+            0.142,
+            0.105,
+            0.175,
+            0.108,
+            0.099
+          ],
+          "p50": 0.11,
+          "p95": 0.175,
+          "max": 0.175
+        },
+        "responseHasResult": true,
+        "providerStatusesNonReady": true,
+        "catalogEnvelopeVerified": true,
+        "providers": [
+          {
+            "provider": "codex",
+            "configured": false,
+            "ready": false,
+            "modelCount": 0
+          },
+          {
+            "provider": "claude",
+            "configured": false,
+            "ready": false,
+            "modelCount": 0
+          },
+          {
+            "provider": "google",
+            "configured": false,
+            "ready": false,
+            "modelCount": 0
+          }
+        ],
+        "processScope": {
+          "scope": "recursive descendants of benchmark Node PID while production RPC adapter is warm; excludes ps sampler and Node parent",
+          "processCount": 3,
+          "rssBytes": 170737664,
+          "cpuPercentSnapshot": 72.4,
+          "commands": [
+            "esbuild",
+            "python",
+            "uv"
+          ]
+        },
+        "telemetryExportDisabled": true,
+        "providerModelCalls": 0
+      },
+      "sustained": {
+        "durationMs": 1745.274,
+        "iterations": 73,
+        "writes": 730,
+        "sseEventsObserved": 730,
+        "readLatency": {
+          "samples": [
+            24.073,
+            11.269,
+            11.162,
+            12.044,
+            11.024,
+            11.171,
+            11.097,
+            11.384,
+            11.057,
+            10.629,
+            10.663,
+            10.596,
+            13.382,
+            11.244,
+            10.705,
+            10.653,
+            10.771,
+            10.568,
+            10.695,
+            10.591,
+            10.63,
+            10.691,
+            10.795,
+            10.934,
+            10.818,
+            10.934,
+            10.635,
+            10.383,
+            10.613,
+            10.585,
+            10.401,
+            10.453,
+            10.467,
+            10.437,
+            10.774,
+            10.596,
+            10.741,
+            10.515,
+            10.506,
+            10.616,
+            10.619,
+            10.692,
+            10.611,
+            10.843,
+            10.658,
+            11.5,
+            11.008,
+            10.692,
+            10.639,
+            10.748,
+            10.72,
+            10.668,
+            10.846,
+            10.54,
+            10.633,
+            10.613,
+            10.641,
+            10.731,
+            10.637,
+            11.041,
+            10.702,
+            10.632,
+            10.653,
+            10.439,
+            10.575,
+            10.521,
+            10.472,
+            10.642,
+            10.617,
+            10.742,
+            10.717,
+            10.972,
+            10.578
+          ],
+          "p50": 10.663,
+          "p95": 11.5,
+          "max": 24.073
+        },
+        "operationsLatency": {
+          "samples": [
+            21.039,
+            6.479,
+            6.342,
+            6.456,
+            6.601,
+            6.838,
+            6.298,
+            6.379,
+            7.366,
+            6.251,
+            6.1,
+            6.659,
+            6.341,
+            6.228,
+            6.672,
+            6.234,
+            6.117,
+            6.622,
+            6.009,
+            6.158,
+            6.705,
+            6.215,
+            6.422,
+            6.802,
+            6.229,
+            6.206,
+            6.716,
+            5.786,
+            6.139,
+            6.691,
+            6.052,
+            5.926,
+            6.606,
+            5.992,
+            6.07,
+            6.392,
+            6.074,
+            5.877,
+            6.727,
+            6.172,
+            6.163,
+            6.662,
+            6.31,
+            6.111,
+            7.168,
+            6.273,
+            6.255,
+            6.667,
+            6.204,
+            6.125,
+            6.835,
+            5.943,
+            6.102,
+            6.443,
+            6.12,
+            6.104,
+            6.632,
+            6.142,
+            6.047,
+            6.628,
+            6.135,
+            6.065,
+            6.605,
+            6.084,
+            6.058,
+            6.547,
+            6.072,
+            6.086,
+            6.521,
+            6.083,
+            6.173,
+            6.783,
+            6.073
+          ],
+          "p50": 6.234,
+          "p95": 6.838,
+          "max": 21.039
+        },
+        "resourceScope": "benchmark Node PID 84237; peak sampled once per sustained iteration, end delta sampled after SSE convergence",
+        "rssPeakGrowthBytes": 5980160,
+        "heapPeakGrowthBytes": 5999096,
+        "rssEndDeltaBytes": 5390336,
+        "heapEndDeltaBytes": -771208,
+        "nodeCpuMs": 1601.493,
+        "workflowContext": {
+          "workflowType": "DiscoverWorkflow",
+          "workflowStatus": "in_progress",
+          "heartbeatFresh": true,
+          "activeActivity": "score_job",
+          "activeDurationSamples": 8,
+          "activityQueueBacklog": 3,
+          "lifecycleEvents": 2
+        },
+        "providerCalls": 0,
+        "llmSpend": {
+          "inputTokens": 0,
+          "outputTokens": 0,
+          "estimatedUsd": 0
+        },
+        "llmSpendScope": "Current exact-v10 global llm_spend aggregate. Future per-lane accounting is separate work; this report does not assume lane state exists.",
+        "tokenEvidence": "The production RPC dispatcher entered its instrumented rpc.provider_models path, but LANGFUSE_DISABLE=1 intentionally prevented span export. No LLM method ran, so there are no LLM span token attributes or provider usage observations for this benchmark; llm_spend stayed zero, which does not imply complete usage telemetry for unrelated workflows."
+      },
+      "storage": {
+        "databaseBytes": 10306216,
+        "artifactBytes": 393216
+      },
+      "nodePeak": {
+        "rssBytes": 254787584,
+        "heapUsedBytes": 68322728
+      },
+      "proposedBudgetComparison": {
+        "projectionColdConvergenceMs": {
+          "target": 2000,
+          "observed": 34.714,
+          "pass": true
+        },
+        "projectionSettledNoopMs": {
+          "target": 50,
+          "observed": 1.072,
+          "pass": true
+        },
+        "projectionIncrementalForegroundMs": {
+          "target": 100,
+          "observed": 14.493,
+          "pass": true
+        },
+        "httpOrdinaryListP95Ms": {
+          "target": 250,
+          "observed": 9.061,
+          "pass": true
+        },
+        "httpSearchP95Ms": {
+          "target": 250,
+          "observed": 10.149,
+          "pass": true
+        },
+        "httpInMemorySortP95Ms": {
+          "target": 250,
+          "observed": 10.928,
+          "pass": true
+        },
+        "previewPdfP95Ms": {
+          "target": 250,
+          "observed": 4.927,
+          "pass": true
+        },
+        "previewHtmlP95Ms": {
+          "target": 250,
+          "observed": 3.895,
+          "pass": true
+        },
+        "rpcColdStartupMs": {
+          "target": 10000,
+          "observed": 498.749,
+          "pass": true
+        },
+        "rpcWarmP95Ms": {
+          "target": 250,
+          "observed": 0.175,
+          "pass": true
+        },
+        "sseOneSubscriberBatchMs": {
+          "target": 600,
+          "observed": 209.89,
+          "pass": true
+        },
+        "sustainedRssPeakGrowthBytes": {
+          "target": 134217728,
+          "observed": 5980160,
+          "pass": true
+        },
+        "sustainedHeapPeakGrowthBytes": {
+          "target": 67108864,
+          "observed": 5999096,
+          "pass": true
+        }
+      }
+    },
+    {
+      "jobs": 1000,
+      "seed": {
+        "jobs": 1000,
+        "events": 3000,
+        "eventsPerJob": 3,
+        "stages": {
+          "discover": 1000,
+          "enrich": 1000,
+          "score": 1000
+        },
+        "scores": {
+          "minimum": 0,
+          "maximum": 10,
+          "distinct": 11
+        },
+        "artifacts": {
+          "pdfBytes": 262144,
+          "htmlBytes": 131072,
+          "pdfSha256": "17cd1e5bbcd90fe8fcb8bd05cfd4d403f69cda0fb8e06da85573c1ef0ae50ef0",
+          "htmlSha256": "d7f5febbf7b896b40f92fc7014da0428f56636964b174f244c5ee854b3a2d350",
+          "artifactId": "jobctrl-local-scale-v1:resume-pdf"
+        }
+      },
+      "projection": {
+        "coldForegroundMs": 290.549,
+        "fullyDrainedConvergenceMs": 516.594,
+        "settledNoopMs": 4.335,
+        "incrementalForegroundMs": 23.306,
+        "projectionRows": 1000,
+        "maxEventId": 3052,
+        "watermark": 3052,
+        "incrementalEvents": 50
+      },
+      "http": {
+        "ordinaryList": {
+          "samples": [
+            13.086,
+            12.157,
+            11.734,
+            11.766,
+            12.061,
+            12.458,
+            12.396
+          ],
+          "p50": 12.157,
+          "p95": 13.086,
+          "max": 13.086
+        },
+        "search": {
+          "samples": [
+            67.033,
+            68.523,
+            69.205,
+            67.615,
+            68.473,
+            68.139,
+            66.825
+          ],
+          "p50": 68.139,
+          "p95": 69.205,
+          "max": 69.205
+        },
+        "inMemorySort": {
+          "samples": [
+            71.959,
+            72.614,
+            72.956,
+            71.768,
+            71.114,
+            70.955,
+            70.479
+          ],
+          "p50": 71.768,
+          "p95": 72.956,
+          "max": 72.956
+        },
+        "searchExpected": 100,
+        "searchObserved": 100,
+        "ordinaryFirstJobId": "acd40889-12d5-49c3-8ef1-83d8e6be617a",
+        "inMemoryFirstPageSources": [
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0"
+        ]
+      },
+      "sse": {
+        "pollIntervalMs": 250,
+        "idleObservationMs": 550,
+        "idleDomainEvents": 0,
+        "idleNodeCpuMs": 0.931,
+        "oneSubscriberBurstMs": 205.573,
+        "replayMs": 240.149,
+        "severalSubscribersMs": 253.531,
+        "subscribers": 4,
+        "eventsPerBurst": 1000,
+        "nodeCpuMs": 140.888,
+        "rssDeltaBytes": -753664,
+        "heapDeltaBytes": -5304872,
+        "orderingVerified": true,
+        "countVerified": true
+      },
+      "preview": {
+        "pdf": {
+          "samples": [
+            7.643,
+            7.851,
+            8.057,
+            8.389,
+            7.763,
+            7.91,
+            7.441
+          ],
+          "p50": 7.851,
+          "p95": 8.389,
+          "max": 8.389
+        },
+        "html": {
+          "samples": [
+            7.531,
+            7.758,
+            7.671,
+            7.622,
+            7.579,
+            7.701,
+            7.552
+          ],
+          "p50": 7.622,
+          "p95": 7.758,
+          "max": 7.758
+        },
+        "pdfBytes": 262144,
+        "htmlBytes": 131072,
+        "pdfSha256": "17cd1e5bbcd90fe8fcb8bd05cfd4d403f69cda0fb8e06da85573c1ef0ae50ef0",
+        "htmlSha256": "d7f5febbf7b896b40f92fc7014da0428f56636964b174f244c5ee854b3a2d350"
+      },
+      "rpc": {
+        "method": "provider_models",
+        "preflightMethod": "provider_status",
+        "coldStartupMs": 587.419,
+        "warm": {
+          "samples": [
+            0.091,
+            0.077,
+            0.07,
+            0.064,
+            0.065,
+            0.062,
+            0.065
+          ],
+          "p50": 0.065,
+          "p95": 0.091,
+          "max": 0.091
+        },
+        "responseHasResult": true,
+        "providerStatusesNonReady": true,
+        "catalogEnvelopeVerified": true,
+        "providers": [
+          {
+            "provider": "codex",
+            "configured": false,
+            "ready": false,
+            "modelCount": 0
+          },
+          {
+            "provider": "claude",
+            "configured": false,
+            "ready": false,
+            "modelCount": 0
+          },
+          {
+            "provider": "google",
+            "configured": false,
+            "ready": false,
+            "modelCount": 0
+          }
+        ],
+        "processScope": {
+          "scope": "recursive descendants of benchmark Node PID while production RPC adapter is warm; excludes ps sampler and Node parent",
+          "processCount": 3,
+          "rssBytes": 176209920,
+          "cpuPercentSnapshot": 75.3,
+          "commands": [
+            "esbuild",
+            "python",
+            "uv"
+          ]
+        },
+        "telemetryExportDisabled": true,
+        "providerModelCalls": 0
+      },
+      "sustained": {
+        "durationMs": 1551.3,
+        "iterations": 18,
+        "writes": 180,
+        "sseEventsObserved": 180,
+        "readLatency": {
+          "samples": [
+            97.806,
+            73.349,
+            72.722,
+            72.927,
+            73.184,
+            73.57,
+            74.202,
+            74.86,
+            73.785,
+            74.351,
+            71.772,
+            71.556,
+            70.959,
+            70.274,
+            71.174,
+            71.811,
+            72.823,
+            73.485
+          ],
+          "p50": 72.927,
+          "p95": 97.806,
+          "max": 97.806
+        },
+        "operationsLatency": {
+          "samples": [
+            35.962,
+            6.481,
+            6.45,
+            6.316,
+            6.189,
+            6.403,
+            6.35,
+            6.319,
+            6.52,
+            6.434,
+            6.356,
+            6.934,
+            6.385,
+            6.233,
+            6.097,
+            6.84,
+            6.512,
+            6.269
+          ],
+          "p50": 6.385,
+          "p95": 35.962,
+          "max": 35.962
+        },
+        "resourceScope": "benchmark Node PID 84237; peak sampled once per sustained iteration, end delta sampled after SSE convergence",
+        "rssPeakGrowthBytes": 36814848,
+        "heapPeakGrowthBytes": 44614552,
+        "rssEndDeltaBytes": 36814848,
+        "heapEndDeltaBytes": 33983824,
+        "nodeCpuMs": 1576.446,
+        "workflowContext": {
+          "workflowType": "DiscoverWorkflow",
+          "workflowStatus": "in_progress",
+          "heartbeatFresh": true,
+          "activeActivity": "score_job",
+          "activeDurationSamples": 8,
+          "activityQueueBacklog": 3,
+          "lifecycleEvents": 2
+        },
+        "providerCalls": 0,
+        "llmSpend": {
+          "inputTokens": 0,
+          "outputTokens": 0,
+          "estimatedUsd": 0
+        },
+        "llmSpendScope": "Current exact-v10 global llm_spend aggregate. Future per-lane accounting is separate work; this report does not assume lane state exists.",
+        "tokenEvidence": "The production RPC dispatcher entered its instrumented rpc.provider_models path, but LANGFUSE_DISABLE=1 intentionally prevented span export. No LLM method ran, so there are no LLM span token attributes or provider usage observations for this benchmark; llm_spend stayed zero, which does not imply complete usage telemetry for unrelated workflows."
+      },
+      "storage": {
+        "databaseBytes": 29011192,
+        "artifactBytes": 393216
+      },
+      "nodePeak": {
+        "rssBytes": 515784704,
+        "heapUsedBytes": 189102960
+      },
+      "proposedBudgetComparison": {
+        "projectionColdConvergenceMs": {
+          "target": 8000,
+          "observed": 516.594,
+          "pass": true
+        },
+        "projectionSettledNoopMs": {
+          "target": 50,
+          "observed": 4.335,
+          "pass": true
+        },
+        "projectionIncrementalForegroundMs": {
+          "target": 100,
+          "observed": 23.306,
+          "pass": true
+        },
+        "httpOrdinaryListP95Ms": {
+          "target": 250,
+          "observed": 13.086,
+          "pass": true
+        },
+        "httpSearchP95Ms": {
+          "target": 250,
+          "observed": 69.205,
+          "pass": true
+        },
+        "httpInMemorySortP95Ms": {
+          "target": 250,
+          "observed": 72.956,
+          "pass": true
+        },
+        "previewPdfP95Ms": {
+          "target": 250,
+          "observed": 8.389,
+          "pass": true
+        },
+        "previewHtmlP95Ms": {
+          "target": 250,
+          "observed": 7.758,
+          "pass": true
+        },
+        "rpcColdStartupMs": {
+          "target": 10000,
+          "observed": 587.419,
+          "pass": true
+        },
+        "rpcWarmP95Ms": {
+          "target": 250,
+          "observed": 0.091,
+          "pass": true
+        },
+        "sseOneSubscriberBatchMs": {
+          "target": 600,
+          "observed": 205.573,
+          "pass": true
+        },
+        "sustainedRssPeakGrowthBytes": {
+          "target": 134217728,
+          "observed": 36814848,
+          "pass": true
+        },
+        "sustainedHeapPeakGrowthBytes": {
+          "target": 67108864,
+          "observed": 44614552,
+          "pass": true
+        }
+      }
+    },
+    {
+      "jobs": 10000,
+      "seed": {
+        "jobs": 10000,
+        "events": 30000,
+        "eventsPerJob": 3,
+        "stages": {
+          "discover": 10000,
+          "enrich": 10000,
+          "score": 10000
+        },
+        "scores": {
+          "minimum": 0,
+          "maximum": 10,
+          "distinct": 11
+        },
+        "artifacts": {
+          "pdfBytes": 262144,
+          "htmlBytes": 131072,
+          "pdfSha256": "17cd1e5bbcd90fe8fcb8bd05cfd4d403f69cda0fb8e06da85573c1ef0ae50ef0",
+          "htmlSha256": "d7f5febbf7b896b40f92fc7014da0428f56636964b174f244c5ee854b3a2d350",
+          "artifactId": "jobctrl-local-scale-v1:resume-pdf"
+        }
+      },
+      "projection": {
+        "coldForegroundMs": 2833.645,
+        "fullyDrainedConvergenceMs": 9739.466,
+        "settledNoopMs": 50.123,
+        "incrementalForegroundMs": 147.061,
+        "projectionRows": 10000,
+        "maxEventId": 30052,
+        "watermark": 30052,
+        "incrementalEvents": 50
+      },
+      "http": {
+        "ordinaryList": {
+          "samples": [
+            76.648,
+            76.969,
+            76.296,
+            75.388,
+            76.11,
+            76.373,
+            76.951
+          ],
+          "p50": 76.373,
+          "p95": 76.969,
+          "max": 76.969
+        },
+        "search": {
+          "samples": [
+            670.07,
+            673.366,
+            679.154,
+            689.119,
+            668.93,
+            673.073,
+            673.829
+          ],
+          "p50": 673.366,
+          "p95": 689.119,
+          "max": 689.119
+        },
+        "inMemorySort": {
+          "samples": [
+            690.842,
+            694.304,
+            692.65,
+            696.743,
+            707.482,
+            690.908,
+            693.72
+          ],
+          "p50": 693.72,
+          "p95": 707.482,
+          "max": 707.482
+        },
+        "searchExpected": 1000,
+        "searchObserved": 1000,
+        "ordinaryFirstJobId": "cb24abf7-7fa3-4951-8cbf-3581ca667e08",
+        "inMemoryFirstPageSources": [
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0",
+          "synthetic-0"
+        ]
+      },
+      "sse": {
+        "pollIntervalMs": 250,
+        "idleObservationMs": 550,
+        "idleDomainEvents": 0,
+        "idleNodeCpuMs": 1.788,
+        "oneSubscriberBurstMs": 209.294,
+        "replayMs": 234.996,
+        "severalSubscribersMs": 257.088,
+        "subscribers": 4,
+        "eventsPerBurst": 1000,
+        "nodeCpuMs": 135.086,
+        "rssDeltaBytes": -1359872,
+        "heapDeltaBytes": -1881072,
+        "orderingVerified": true,
+        "countVerified": true
+      },
+      "preview": {
+        "pdf": {
+          "samples": [
+            54.069,
+            54.987,
+            53.795,
+            54.301,
+            55.262,
+            54.898,
+            53.742
+          ],
+          "p50": 54.301,
+          "p95": 55.262,
+          "max": 55.262
+        },
+        "html": {
+          "samples": [
+            53.908,
+            54.431,
+            53.696,
+            54.365,
+            53.672,
+            54.112,
+            55.111
+          ],
+          "p50": 54.112,
+          "p95": 55.111,
+          "max": 55.111
+        },
+        "pdfBytes": 262144,
+        "htmlBytes": 131072,
+        "pdfSha256": "17cd1e5bbcd90fe8fcb8bd05cfd4d403f69cda0fb8e06da85573c1ef0ae50ef0",
+        "htmlSha256": "d7f5febbf7b896b40f92fc7014da0428f56636964b174f244c5ee854b3a2d350"
+      },
+      "rpc": {
+        "method": "provider_models",
+        "preflightMethod": "provider_status",
+        "coldStartupMs": 1839.813,
+        "warm": {
+          "samples": [
+            0.098,
+            0.082,
+            0.074,
+            0.064,
+            0.063,
+            0.064,
+            0.07
+          ],
+          "p50": 0.07,
+          "p95": 0.098,
+          "max": 0.098
+        },
+        "responseHasResult": true,
+        "providerStatusesNonReady": true,
+        "catalogEnvelopeVerified": true,
+        "providers": [
+          {
+            "provider": "codex",
+            "configured": false,
+            "ready": false,
+            "modelCount": 0
+          },
+          {
+            "provider": "claude",
+            "configured": false,
+            "ready": false,
+            "modelCount": 0
+          },
+          {
+            "provider": "google",
+            "configured": false,
+            "ready": false,
+            "modelCount": 0
+          }
+        ],
+        "processScope": {
+          "scope": "recursive descendants of benchmark Node PID while production RPC adapter is warm; excludes ps sampler and Node parent",
+          "processCount": 3,
+          "rssBytes": 207208448,
+          "cpuPercentSnapshot": 96.1,
+          "commands": [
+            "esbuild",
+            "python",
+            "uv"
+          ]
+        },
+        "telemetryExportDisabled": true,
+        "providerModelCalls": 0
+      },
+      "sustained": {
+        "durationMs": 5755.515,
+        "iterations": 7,
+        "writes": 70,
+        "sseEventsObserved": 70,
+        "readLatency": {
+          "samples": [
+            894.215,
+            749.915,
+            750.845,
+            745.13,
+            745.566,
+            751.109,
+            751.577
+          ],
+          "p50": 750.845,
+          "p95": 894.215,
+          "max": 894.215
+        },
+        "operationsLatency": {
+          "samples": [
+            300.844,
+            7.293,
+            6.681,
+            6.496,
+            6.597,
+            6.35,
+            6.734
+          ],
+          "p50": 6.681,
+          "p95": 300.844,
+          "max": 300.844
+        },
+        "resourceScope": "benchmark Node PID 84237; peak sampled once per sustained iteration, end delta sampled after SSE convergence",
+        "rssPeakGrowthBytes": 39288832,
+        "heapPeakGrowthBytes": 194176016,
+        "rssEndDeltaBytes": 39288832,
+        "heapEndDeltaBytes": -156236600,
+        "nodeCpuMs": 5996.898,
+        "workflowContext": {
+          "workflowType": "DiscoverWorkflow",
+          "workflowStatus": "in_progress",
+          "heartbeatFresh": true,
+          "activeActivity": "score_job",
+          "activeDurationSamples": 8,
+          "activityQueueBacklog": 3,
+          "lifecycleEvents": 2
+        },
+        "providerCalls": 0,
+        "llmSpend": {
+          "inputTokens": 0,
+          "outputTokens": 0,
+          "estimatedUsd": 0
+        },
+        "llmSpendScope": "Current exact-v10 global llm_spend aggregate. Future per-lane accounting is separate work; this report does not assume lane state exists.",
+        "tokenEvidence": "The production RPC dispatcher entered its instrumented rpc.provider_models path, but LANGFUSE_DISABLE=1 intentionally prevented span export. No LLM method ran, so there are no LLM span token attributes or provider usage observations for this benchmark; llm_spend stayed zero, which does not imply complete usage telemetry for unrelated workflows."
+      },
+      "storage": {
+        "databaseBytes": 251633216,
+        "artifactBytes": 393216
+      },
+      "nodePeak": {
+        "rssBytes": 918470656,
+        "heapUsedBytes": 292358352
+      },
+      "proposedBudgetComparison": {
+        "projectionColdConvergenceMs": {
+          "target": 45000,
+          "observed": 9739.466,
+          "pass": true
+        },
+        "projectionSettledNoopMs": {
+          "target": 50,
+          "observed": 50.123,
+          "pass": false
+        },
+        "projectionIncrementalForegroundMs": {
+          "target": 100,
+          "observed": 147.061,
+          "pass": false
+        },
+        "httpOrdinaryListP95Ms": {
+          "target": 250,
+          "observed": 76.969,
+          "pass": true
+        },
+        "httpSearchP95Ms": {
+          "target": 250,
+          "observed": 689.119,
+          "pass": false
+        },
+        "httpInMemorySortP95Ms": {
+          "target": 250,
+          "observed": 707.482,
+          "pass": false
+        },
+        "previewPdfP95Ms": {
+          "target": 250,
+          "observed": 55.262,
+          "pass": true
+        },
+        "previewHtmlP95Ms": {
+          "target": 250,
+          "observed": 55.111,
+          "pass": true
+        },
+        "rpcColdStartupMs": {
+          "target": 10000,
+          "observed": 1839.813,
+          "pass": true
+        },
+        "rpcWarmP95Ms": {
+          "target": 250,
+          "observed": 0.098,
+          "pass": true
+        },
+        "sseOneSubscriberBatchMs": {
+          "target": 600,
+          "observed": 209.294,
+          "pass": true
+        },
+        "sustainedRssPeakGrowthBytes": {
+          "target": 134217728,
+          "observed": 39288832,
+          "pass": true
+        },
+        "sustainedHeapPeakGrowthBytes": {
+          "target": 67108864,
+          "observed": 194176016,
+          "pass": false
+        }
+      }
+    }
+  ]
+}
