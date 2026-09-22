@@ -32,6 +32,9 @@ const {
 const ownedWorkspaceModule = fileURLToPath(
   new URL("../fixtures/owned-workspace.cjs", import.meta.url),
 );
+const liveWorkerEntrypoint = fileURLToPath(
+  new URL("../../../../scripts/live-worker-browser-smoke.mjs", import.meta.url),
+);
 
 function environment(workspace) {
   const controlPort = "34104";
@@ -149,6 +152,57 @@ test("root live-worker command scrubs hostile credentials before its first spawn
     CREDENTIAL_ENV_KEYS.filter((key) => observed.options.env[key]),
     [],
   );
+});
+
+test("documented direct Node command scrubs credentials at the complete invocation boundary", () => {
+  const shimDirectory = fs.mkdtempSync(
+    path.join(os.tmpdir(), "jobctrl-live-worker-entrypoint-test-"),
+  );
+  const capturePath = path.join(shimDirectory, "first-child.json");
+  const corepackShim = path.join(shimDirectory, "corepack");
+  fs.writeFileSync(
+    corepackShim,
+    `#!/usr/bin/env node
+const fs = require("node:fs");
+fs.writeFileSync(
+  process.env.JOBCTRL_LIVE_WORKER_ENTRYPOINT_CAPTURE,
+  JSON.stringify({ args: process.argv.slice(2), env: process.env }),
+);
+`,
+    { mode: 0o700 },
+  );
+
+  const ambient = {
+    ...process.env,
+    JOBCTRL_LIVE_WORKER_ENTRYPOINT_CAPTURE: capturePath,
+    JOBCTRL_TEST_NON_SECRET: "preserved",
+    PATH: `${shimDirectory}${path.delimiter}${process.env.PATH}`,
+  };
+  for (const key of CREDENTIAL_ENV_KEYS) ambient[key] = `hostile-${key}`;
+
+  try {
+    const result = spawnSync(process.execPath, [liveWorkerEntrypoint], {
+      env: ambient,
+      encoding: "utf8",
+      timeout: 5_000,
+    });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const observed = JSON.parse(fs.readFileSync(capturePath, "utf8"));
+    assert.deepEqual(observed.args.slice(0, 3), [
+      "pnpm",
+      "--filter",
+      "@jobctrl/web",
+    ]);
+    assert.equal(observed.env.JOBCTRL_TEST_NON_SECRET, "preserved");
+    assert.equal(observed.env.JOBCTRL_LIVE_WORKER_SMOKE, "1");
+    assert.equal(observed.env.UV_LOCKED, "1");
+    assert.deepEqual(
+      CREDENTIAL_ENV_KEYS.filter((key) => observed.env[key]),
+      [],
+    );
+  } finally {
+    fs.rmSync(shimDirectory, { recursive: true, force: true });
+  }
 });
 
 test("live-worker waits are bounded", async () => {
