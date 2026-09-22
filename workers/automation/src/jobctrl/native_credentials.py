@@ -340,7 +340,7 @@ def _migrate_persistent_env_credentials(
         metadata = path.stat()
         if not stat.S_ISREG(metadata.st_mode):
             raise NativeCredentialMigrationError("credential migration requires regular files")
-        text = path.read_text(encoding="utf-8")
+        text = _read_utf8_exact(path)
         for key, values in _parse_secret_assignments(text).items():
             assignments.setdefault(key, []).extend(values)
         sources.append((path, text, metadata))
@@ -378,7 +378,7 @@ def _migrate_persistent_env_credentials(
                 raise NativeCredentialMigrationError("native credential verification failed; source files were preserved")
 
         for path, original, metadata in sources:
-            current = path.read_text(encoding="utf-8")
+            current = _read_utf8_exact(path)
             current_meta = path.stat()
             if _fingerprint(current, current_meta) != _fingerprint(original, metadata):
                 raise NativeCredentialMigrationError("credential source changed during migration")
@@ -397,7 +397,7 @@ def _migrate_persistent_env_credentials(
         recovery_failed = False
         for path, original, metadata, updated, updated_metadata in reversed(rewritten):
             try:
-                current = path.read_text(encoding="utf-8")
+                current = _read_utf8_exact(path)
                 if _fingerprint(current, path.stat()) != _fingerprint(updated, updated_metadata):
                     recovery_failed = True
                     continue
@@ -608,7 +608,7 @@ def _atomic_write(
             handle.flush()
             os.fsync(handle.fileno())
         if expected is not None:
-            current = path.read_text(encoding="utf-8")
+            current = _read_utf8_exact(path)
             if _fingerprint(current, path.stat()) != expected:
                 raise NativeCredentialMigrationError("credential source changed during migration")
         os.replace(temporary, path)
@@ -619,6 +619,11 @@ def _atomic_write(
             pass
         Path(temporary).unlink(missing_ok=True)
         raise
+
+
+def _read_utf8_exact(path: Path) -> str:
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        return handle.read()
 
 
 def _set_temporary_mode(descriptor: int, temporary: Path, destination: Path, mode: int) -> None:

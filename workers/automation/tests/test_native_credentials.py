@@ -157,6 +157,38 @@ def test_migration_moves_duplicates_and_quoted_values_once_without_touching_unre
     assert credentials.migrate_persistent_env_credentials([first, second], marker, store=store).already_completed  # type: ignore[arg-type]
 
 
+def test_migration_preserves_crlf_bytes_in_retained_lines(tmp_path: Path) -> None:
+    source = tmp_path / ".env"
+    marker = tmp_path / "marker"
+    source.write_bytes(f"KEEP=one\r\nANTHROPIC_API_KEY={SECRET}\r\nTAIL=two\r\n".encode())
+
+    credentials.migrate_persistent_env_credentials([source], marker, store=FakeStore())  # type: ignore[arg-type]
+
+    assert source.read_bytes() == b"KEEP=one\r\nTAIL=two\r\n"
+
+
+def test_failed_migration_restores_exact_crlf_source_bytes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / ".env"
+    marker = tmp_path / "marker"
+    original = f"KEEP=one\r\nANTHROPIC_API_KEY={SECRET}\r\n".encode()
+    source.write_bytes(original)
+    store = FakeStore()
+    monkeypatch.setattr(
+        credentials,
+        "_write_marker",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("synthetic marker failure")),
+    )
+
+    with pytest.raises(credentials.NativeCredentialMigrationError):
+        credentials.migrate_persistent_env_credentials([source], marker, store=store)  # type: ignore[arg-type]
+
+    assert source.read_bytes() == original
+    assert store.values == {}
+
+
 @pytest.mark.parametrize("content", ["", "{", '{"version":999,"migratedKeys":[]}'])
 def test_migration_rejects_invalid_completion_markers_without_touching_sources(
     content: str,
@@ -291,14 +323,14 @@ def test_public_migration_cli_sanitizes_source_read_failures(
         second.write_bytes(b"GEMINI_API_KEY=\xff\n")
     else:
         second.write_text("GEMINI_API_KEY=unreadable\n", encoding="utf-8")
-        real_read_text = Path.read_text
+        real_read_exact = credentials._read_utf8_exact
 
-        def guarded_read_text(path: Path, *args: object, **kwargs: object) -> str:
+        def guarded_read_exact(path: Path) -> str:
             if path == second:
                 raise OSError("private path and content must not escape")
-            return real_read_text(path, *args, **kwargs)
+            return real_read_exact(path)
 
-        monkeypatch.setattr(Path, "read_text", guarded_read_text)
+        monkeypatch.setattr(credentials, "_read_utf8_exact", guarded_read_exact)
 
     result = CliRunner().invoke(
         app,
