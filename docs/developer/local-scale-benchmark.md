@@ -12,14 +12,24 @@ Run it from the repository root with a new output path:
 corepack pnpm benchmark:local-scale --json-out /tmp/jobctrl-local-scale.json
 ```
 
-The command refuses to overwrite its output. It removes provider credentials
-from the RPC subprocess environment, disables Langfuse export, and routes any
-unexpected outbound proxy traffic to an unreachable loopback port. The only RPC
-method is the read-only `provider_models` method. The benchmark does not invoke
-a model or provider.
+Use `--background-load-note` to preserve a run-specific concurrency observation.
+A known dirty file can be recorded only by supplying all three
+`--dirty-exclusion-*` arguments: repository-relative path, verified content
+SHA-256, and an explicit reason. The runner rejects partial or mismatched
+exclusions.
+
+The command refuses to overwrite its output. The RPC subprocess receives a
+minimal allowlisted environment plus an isolated home and Codex, Claude, AWS,
+Google, and Azure config paths. AWS metadata and Langfuse export are disabled,
+and unexpected outbound proxy traffic goes to an unreachable loopback port.
+Before the read-only `provider_models` call, the production `provider_status`
+method must prove that all providers are non-ready. The returned model catalog
+must pass the production schema with no ready provider and no models. Any
+failure stops the run before provider model discovery can execute.
 
 The focused harness checks statistics, unsafe arguments, cleanup after failure,
-exact-v10 seed totals, deliberately perturbed correctness oracles, and a
+exact-v10 seed totals, deliberately perturbed correctness oracles, an ambient
+Bedrock/AWS/provider-credential counterfactual, and a
 smallest-dataset integration through the real HTTP, timer SSE, preview,
 projection, and `SubprocessJsonRpcAdapter` paths:
 
@@ -41,12 +51,17 @@ batch, workflow lifecycle events, SSE batches, and bounded sustained writes.
 Every dataset gets a separate temporary database and artifact directory.
 
 Warm HTTP, preview, and RPC results use two warmups followed by seven retained
-samples. The sustained scenario runs for at least 1.5 seconds and seven
-iterations, with a 100-iteration cap. Each iteration writes 10 events, refreshes
-a worker heartbeat, requests a free-text plus in-memory-sort job page, and reads
-pipeline operations while a production SSE connection is open. Raw samples and
-all correctness fields are in the sanitized repository artifact at
-`docs/benchmarks/local-scale-baseline.json`.
+samples. Percentiles use nearest rank, so p95 selects the maximum when only
+seven samples are retained. These are exploratory, tail-sample-limited local
+observations rather than stable population estimates.
+
+The sustained scenario runs for at least 1.5 seconds and seven iterations, with
+a 100-iteration cap. Each iteration directly writes 10 synthetic events,
+updates a seeded heartbeat, requests a free-text plus in-memory-sort job page,
+and reads seeded pipeline-operation records while a production SSE connection
+is open. It is not a live Temporal worker, provider workload, or endurance
+benchmark. Raw samples and all correctness fields are in the sanitized
+repository artifact at `docs/benchmarks/local-scale-baseline.json`.
 
 These are proposed reference targets for diagnosis. They are not adopted SLOs
 or CI gates:
@@ -63,26 +78,32 @@ or CI gates:
 
 ## Measured baseline
 
-This baseline measured commit `5c56c5f67d7529f1cd35dc1e5aa257278f2ba7db`
+This baseline measured commit `8c80b31b584c7ef92b80f92ea9e496c968a8269a`
 on 2026-09-22. The checkout also contained an unrelated two-line change in
-`workers/automation/uv.lock`; the report records and excludes it from the
-candidate. Schema version was 10. The host was macOS 25.6.0 on arm64, Apple M4
-Pro with 12 logical CPUs and 24 GiB memory, using Node v22.21.1, Python 3.14.4,
-and SQLite 3.53.0.
+`workers/automation/uv.lock`. The run received an explicit exclusion path,
+content SHA-256 `4eaf563541a57070c8e1b661d34aad441d419ef8811dbd02abdc64b267148a67`,
+and note; it verified the content hash, exact porcelain status, two-addition
+numstat, and diff identity before recording the exclusion. Generic runs do not
+infer that a dirty path is unrelated. Schema version was 10. The host was macOS
+25.6.0 on arm64, Apple M4 Pro with 12 logical CPUs and 24 GiB memory, using Node
+v22.21.1, Python 3.14.4, and SQLite 3.53.0.
 
-Four other issue tasks were active on the host. The run had no CPU pinning or
-isolated reference hardware, so it is a local baseline with background-load
-contention. Keep the raw samples when comparing another run, and do not tighten
-the proposed budgets from these measurements.
+The invocation explicitly annotated that four other issue tasks were active on
+the host. The benchmark did not independently measure concurrent activity and
+had no CPU pinning or isolated reference hardware, so it is a local baseline
+with background-load contention. Generic future runs report concurrent load as
+unmeasured unless the operator supplies an annotation. Keep the raw samples
+when comparing another run, and do not tighten the proposed budgets from these
+measurements.
 
 Projection correctness required the expected row count and an operations
 watermark equal to the maximum event ID after convergence.
 
 | Jobs | Cold foreground | Fully drained | Settled no-op | 50-event foreground | Rows / watermark |
 | ---: | ---: | ---: | ---: | ---: | --- |
-| 100 | 34.059 ms | 34.123 ms | 1.041 ms | 13.552 ms | 100 / 352 = 352 |
-| 1,000 | 277.375 ms | 495.840 ms | 4.144 ms | 22.678 ms | 1,000 / 3,052 = 3,052 |
-| 10,000 | 2,812.652 ms | 9,633.235 ms | 49.785 ms | **149.441 ms** | 10,000 / 30,052 = 30,052 |
+| 100 | 34.626 ms | 34.714 ms | 1.072 ms | 14.493 ms | 100 / 352 = 352 |
+| 1,000 | 290.549 ms | 516.594 ms | 4.335 ms | 23.306 ms | 1,000 / 3,052 = 3,052 |
+| 10,000 | 2,833.645 ms | 9,739.466 ms | **50.123 ms** | **147.061 ms** | 10,000 / 30,052 = 30,052 |
 
 HTTP responses returned the expected totals, the deterministic newest job for
 the ordinary SQL-paginated list, exact free-text selectivity of 10%, and an
@@ -90,15 +111,15 @@ ascending production source sort key for the in-memory path.
 
 | Jobs | Scenario | p50 | p95 | max |
 | ---: | --- | ---: | ---: | ---: |
-| 100 | Ordinary list | 8.373 ms | 9.236 ms | 9.236 ms |
-| 100 | Free-text search | 10.042 ms | 11.069 ms | 11.069 ms |
-| 100 | In-memory source sort | 10.107 ms | 10.544 ms | 10.544 ms |
-| 1,000 | Ordinary list | 12.012 ms | 13.685 ms | 13.685 ms |
-| 1,000 | Free-text search | 66.051 ms | 67.571 ms | 67.571 ms |
-| 1,000 | In-memory source sort | 69.697 ms | 70.682 ms | 70.682 ms |
-| 10,000 | Ordinary list | 75.628 ms | 76.026 ms | 76.026 ms |
-| 10,000 | Free-text search | 670.362 ms | **682.057 ms** | 682.057 ms |
-| 10,000 | In-memory source sort | 690.601 ms | **709.563 ms** | 709.563 ms |
+| 100 | Ordinary list | 8.238 ms | 9.061 ms | 9.061 ms |
+| 100 | Free-text search | 9.802 ms | 10.149 ms | 10.149 ms |
+| 100 | In-memory source sort | 10.315 ms | 10.928 ms | 10.928 ms |
+| 1,000 | Ordinary list | 12.157 ms | 13.086 ms | 13.086 ms |
+| 1,000 | Free-text search | 68.139 ms | 69.205 ms | 69.205 ms |
+| 1,000 | In-memory source sort | 71.768 ms | 72.956 ms | 72.956 ms |
+| 10,000 | Ordinary list | 76.373 ms | 76.969 ms | 76.969 ms |
+| 10,000 | Free-text search | 673.366 ms | **689.119 ms** | 689.119 ms |
+| 10,000 | In-memory source sort | 693.720 ms | **707.482 ms** | 707.482 ms |
 
 The 10,000-job search and in-memory sort exceed the proposed warm p95 target,
 as expected for the current materialize/filter/sort implementation. No
@@ -107,13 +128,15 @@ optimization is included in this baseline.
 The real SSE route used its production 250 ms timer and 1,000-event tenant
 batch. Idle observations lasted 550 ms and delivered zero domain events. Burst
 and replay counts and numeric event ordering were exact for one subscriber and
-four concurrent subscribers.
+four concurrent subscribers. This validates the server transport, timer, event
+ID, and count boundary with benchmark-only event types. It does not validate
+frontend event-registry membership or decoded-envelope acceptance.
 
 | Jobs | Idle Node CPU | One subscriber | Replay | Four subscribers | Total Node CPU |
 | ---: | ---: | ---: | ---: | ---: | ---: |
-| 100 | 3.296 ms | 207.452 ms | 233.240 ms | 263.691 ms | 210.602 ms |
-| 1,000 | 1.184 ms | 208.122 ms | 236.652 ms | 241.668 ms | 125.501 ms |
-| 10,000 | 1.240 ms | 203.375 ms | 241.069 ms | 252.552 ms | 129.781 ms |
+| 100 | 3.223 ms | 209.890 ms | 233.392 ms | 259.817 ms | 177.614 ms |
+| 1,000 | 0.931 ms | 205.573 ms | 240.149 ms | 253.531 ms | 140.888 ms |
+| 10,000 | 1.788 ms | 209.294 ms | 234.996 ms | 257.088 ms | 135.086 ms |
 
 Preview responses came from the production PDF and HTML routes. Every sample
 had the fixed byte count and SHA-256 digest: PDF
@@ -124,44 +147,48 @@ had the fixed byte count and SHA-256 digest: PDF
 
 | Jobs | Preview | p50 | p95 | max |
 | ---: | --- | ---: | ---: | ---: |
-| 100 | PDF | 4.078 ms | 4.336 ms | 4.336 ms |
-| 100 | HTML | 3.553 ms | 3.761 ms | 3.761 ms |
-| 1,000 | PDF | 7.771 ms | 7.932 ms | 7.932 ms |
-| 1,000 | HTML | 7.420 ms | 7.599 ms | 7.599 ms |
-| 10,000 | PDF | 54.731 ms | 56.988 ms | 56.988 ms |
-| 10,000 | HTML | 53.683 ms | 55.516 ms | 55.516 ms |
+| 100 | PDF | 3.963 ms | 4.927 ms | 4.927 ms |
+| 100 | HTML | 3.722 ms | 3.895 ms | 3.895 ms |
+| 1,000 | PDF | 7.851 ms | 8.389 ms | 8.389 ms |
+| 1,000 | HTML | 7.622 ms | 7.758 ms | 7.758 ms |
+| 10,000 | PDF | 54.301 ms | 55.262 ms | 55.262 ms |
+| 10,000 | HTML | 54.112 ms | 55.111 ms | 55.111 ms |
 
 RPC measurements used the real TypeScript `SubprocessJsonRpcAdapter`, locked
 `uv` runtime, production Python `jobctrl rpc` dispatcher, and read-only
-`provider_models` response. A single adapter instance was reused for warm
-calls.
+`provider_status` and `provider_models` responses. Cold startup includes the
+status preflight. All three statuses were unconfigured and non-ready before the
+catalog call, and every catalog envelope passed the production schema with zero
+models. A single adapter instance was reused for warm catalog calls.
 
 | Jobs | Cold startup | Warm p50 | Warm p95 | Warm max | Descendant RSS / CPU point sample |
 | ---: | ---: | ---: | ---: | ---: | --- |
-| 100 | 581.015 ms | 0.076 ms | 0.145 ms | 0.145 ms | 169,574,400 bytes / 69.5% |
-| 1,000 | 582.878 ms | 0.073 ms | 0.094 ms | 0.094 ms | 175,112,192 bytes / 75.8% |
-| 10,000 | 1,877.157 ms | 0.097 ms | 0.142 ms | 0.142 ms | 206,651,392 bytes / 99.9% |
+| 100 | 498.749 ms | 0.110 ms | 0.175 ms | 0.175 ms | 170,737,664 bytes / 72.4% |
+| 1,000 | 587.419 ms | 0.065 ms | 0.091 ms | 0.091 ms | 176,209,920 bytes / 75.3% |
+| 10,000 | 1,839.813 ms | 0.070 ms | 0.098 ms | 0.098 ms | 207,208,448 bytes / 96.1% |
 
 The RPC resource scope is recursive descendants of the benchmark Node process
 while the adapter is warm (`esbuild`, `uv`, and Python), excluding the Node
 parent and `ps` sampler. The CPU value is a point-in-time `ps` observation, not
 integrated CPU time.
 
-The sustained workload preserved a production-visible `DiscoverWorkflow` in
-`in_progress`, a fresh worker heartbeat, active `score_job` duration samples,
-queue backlog 3, and two pipeline lifecycle events. Every written event arrived
-over SSE. Node resource growth is scoped to the benchmark PID; peaks were
-sampled once per workload iteration and end deltas after SSE convergence.
+The sustained workload seeded a `DiscoverWorkflow` record in `in_progress`, a
+worker-heartbeat record, `score_job` duration samples, queue backlog 3, and two
+pipeline lifecycle records. It directly refreshed the synthetic heartbeat and
+wrote synthetic events; no Temporal worker or provider ran. Every written event
+arrived over SSE. Node resource growth is scoped to the benchmark PID; peaks
+were sampled once per workload iteration and end deltas after SSE convergence.
+Sampling between iterations can miss short-lived spikes.
 
 | Jobs | Duration / iterations / writes | Read p50 / p95 / max | Operations p50 / p95 / max | RSS / heap peak growth | Node CPU |
 | ---: | --- | --- | --- | --- | ---: |
-| 100 | 1,734.894 ms / 73 / 730 | 10.521 / 12.152 / 24.419 ms | 6.205 / 7.307 / 21.288 ms | 6,094,848 / 6,020,256 bytes | 1,587.830 ms |
-| 1,000 | 1,550.904 ms / 18 / 180 | 72.977 / 89.492 / 89.492 ms | 6.479 / 37.976 / 37.976 ms | 55,394,304 / 60,184,688 bytes | 1,615.576 ms |
-| 10,000 | 5,685.383 ms / 7 / 70 | 742.965 / 879.840 / 879.840 ms | 6.690 / 294.456 / 294.456 ms | 688,128 / **214,275,376 bytes** | 5,899.976 ms |
+| 100 | 1,745.274 ms / 73 / 730 | 10.663 / 11.500 / 24.073 ms | 6.234 / 6.838 / 21.039 ms | 5,980,160 / 5,999,096 bytes | 1,601.493 ms |
+| 1,000 | 1,551.300 ms / 18 / 180 | 72.927 / 97.806 / 97.806 ms | 6.385 / 35.962 / 35.962 ms | 36,814,848 / 44,614,552 bytes | 1,576.446 ms |
+| 10,000 | 5,755.515 ms / 7 / 70 | 750.845 / 894.215 / 894.215 ms | 6.681 / 300.844 / 300.844 ms | 39,288,832 / **194,176,016 bytes** | 5,996.898 ms |
 
 Database sizes after all scenarios were 10,306,216, 29,011,192, and
 251,633,216 bytes. Artifact bytes were fixed at 393,216 for each dataset. The
-overall benchmark Node peak RSS was 253,820,928, 536,379,392, and 885,882,880
+overall benchmark Node peak RSS was 254,787,584, 515,784,704, and 918,470,656
 bytes respectively; these absolute peaks include sequential-process carryover
 and are reported separately from per-scenario growth.
 
@@ -173,9 +200,10 @@ exist for this benchmark. Zero spend does not establish complete usage
 telemetry for unrelated workflows. Future per-lane accounting is separate
 work; this baseline does not claim that lane state exists.
 
-The 10,000-job run exceeded four proposed references: the 50-event foreground
-projection pass (149.441 ms versus 100 ms), free-text search p95 (682.057 ms
-versus 250 ms), in-memory sort p95 (709.563 ms versus 250 ms), and sustained
-heap peak growth (214,275,376 bytes versus 67,108,864 bytes). All correctness
-oracles passed. The measured evidence supports retaining these as visible
-baseline failures without a speculative optimization.
+The 10,000-job run exceeded five proposed references: settled projection no-op
+(50.123 ms versus 50 ms), the 50-event foreground projection pass (147.061 ms
+versus 100 ms), free-text search p95 (689.119 ms versus 250 ms), in-memory sort
+p95 (707.482 ms versus 250 ms), and sustained heap peak growth (194,176,016
+bytes versus 67,108,864 bytes). All correctness oracles passed. The measured
+evidence supports retaining these as visible baseline failures without a
+speculative optimization.
