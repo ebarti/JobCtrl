@@ -70,6 +70,17 @@ $result = Get-Acl -LiteralPath $request.path
     return result.stdout
 
 
+def assert_windows_acl_preserved(before: str, after: str) -> None:
+    if before != after:
+        before_flags, _, before_entries = before.partition("(")
+        after_flags, _, after_entries = after.partition("(")
+        flags = [value if all(char in "D:PAIR" for char in value) else "unrecognized"
+                 for value in (before_flags, after_flags)]
+        print(json.dumps({"windowsAclMismatch": True, "controlFlags": flags,
+                          "accessEntriesEqual": before_entries == after_entries}), flush=True)
+    assert before == after, "Migration changed the source DACL"
+
+
 def main() -> int:
     global PHASE
     parser = argparse.ArgumentParser()
@@ -183,12 +194,18 @@ def main() -> int:
             marker = owned / "migration.json"
             PHASE = "migration"
             result = native.migrate_persistent_env_credentials([source], marker, store=store)
+            PHASE = "migration_result"
             assert not result.already_completed
+            PHASE = "migration_source_readback"
             assert source.read_text(encoding="utf-8") == "KEEP=untouched\n"
             if acl_before is not None:
-                assert windows_acl(source) == acl_before, "Migration widened the source DACL"
+                PHASE = "migration_acl_readback"
+                assert_windows_acl_preserved(acl_before, windows_acl(source))
+            PHASE = "migration_native_readback"
             assert store.read(key) == value, "Migrated credential must survive source removal"
+            PHASE = "migration_marker"
             assert value not in marker.read_text(encoding="utf-8")
+            PHASE = "migration_once"
             assert native.migrate_persistent_env_credentials([source], marker, store=store).already_completed
             response = api("list")
             assert value not in json.dumps(response)
@@ -222,7 +239,7 @@ def main() -> int:
                 finally:
                     native._write_marker = write_marker
                 assert source.read_text(encoding="utf-8") == original
-                assert windows_acl(source) == acl_before, "Rollback widened the source DACL"
+                assert_windows_acl_preserved(acl_before, windows_acl(source))
                 assert store.read(key) is None
         finally:
             try:
