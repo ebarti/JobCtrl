@@ -21,6 +21,7 @@ MACOS_SECURITY_BINARY = "/usr/bin/security"
 LINUX_SECRET_TOOL_BINARY = "/usr/bin/secret-tool"
 NATIVE_COMMAND_TIMEOUT_SECONDS = 5.0
 MACOS_COMMAND_TIMEOUT_SECONDS = 2.0
+WINDOWS_COMMAND_TIMEOUT_SECONDS = 15.0
 WINDOWS_CREDENTIAL_BLOB_MAX_BYTES = 2_560
 LINUX_SECRET_TOOL_MAX_INPUT_BYTES = 8_191
 MACOS_SECURITY_PROMPT_MAX_INPUT_BYTES = 128
@@ -257,7 +258,7 @@ class NativeCredentialStore:
             text=True,
             encoding="utf-8",
             input=payload,
-            timeout=NATIVE_COMMAND_TIMEOUT_SECONDS,
+            timeout=WINDOWS_COMMAND_TIMEOUT_SECONDS,
         )
 
 

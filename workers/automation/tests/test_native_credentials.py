@@ -93,6 +93,7 @@ def test_windows_runner_keeps_unicode_secret_out_of_argv(monkeypatch: pytest.Mon
     def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         captured["command"] = command
         captured["input"] = kwargs["input"]
+        captured["timeout"] = kwargs["timeout"]
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
     value = f"  {SECRET}-☃  "
@@ -105,6 +106,7 @@ def test_windows_runner_keeps_unicode_secret_out_of_argv(monkeypatch: pytest.Mon
 
     assert value not in json.dumps(captured["command"])
     assert json.loads(str(captured["input"]))["value"] == value
+    assert captured.get("timeout") == credentials.WINDOWS_COMMAND_TIMEOUT_SECONDS
     assert "InputEncoding" in str(captured["command"])
     assert "OutputEncoding" in str(captured["command"])
 

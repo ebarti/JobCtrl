@@ -24,6 +24,7 @@ import {
   nativeCredentialValueSupported,
   nativeStoreKind,
   NATIVE_CREDENTIAL_COMMAND_TIMEOUT_MS,
+  WINDOWS_CREDENTIAL_COMMAND_TIMEOUT_MS,
   type NativeCredentialCommandRunner,
 } from "./native-credential-store.js";
 
@@ -202,6 +203,8 @@ export class KeychainCredentialStore implements CredentialStore {
       options.commandTimeoutMs ?? (
         this.platform === "darwin"
           ? KEYCHAIN_COMMAND_TIMEOUT_MS
+          : this.platform === "win32"
+            ? WINDOWS_CREDENTIAL_COMMAND_TIMEOUT_MS
           : NATIVE_CREDENTIAL_COMMAND_TIMEOUT_MS
       ),
     );

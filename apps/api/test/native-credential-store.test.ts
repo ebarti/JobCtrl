@@ -7,7 +7,9 @@ import {
   createLinuxSecretServiceRunner,
   createWindowsCredentialManagerRunner,
   LINUX_SECRET_TOOL_BINARY,
+  WINDOWS_CREDENTIAL_COMMAND_TIMEOUT_MS,
   type NativeCredentialChildProcess,
+  type NativeCredentialCommandRunner,
   type NativeCredentialProcessSpawner,
 } from "../src/native-credential-store.js";
 
@@ -84,6 +86,20 @@ describe("Linux Secret Service command contract", () => {
 });
 
 describe("Windows Credential Manager command contract", () => {
+  it("allows bounded time for cold PowerShell and Add-Type startup", async () => {
+    const runNative = vi.fn<NativeCredentialCommandRunner>(async () => ({
+      code: 44,
+      stderr: "",
+      stdout: "",
+    }));
+    const store = new KeychainCredentialStore({ platform: "win32", runNative });
+
+    await store.list();
+
+    expect(runNative).toHaveBeenCalledTimes(4);
+    expect(runNative.mock.calls.every(([, timeout]) => timeout === WINDOWS_CREDENTIAL_COMMAND_TIMEOUT_MS)).toBe(true);
+  });
+
   it("uses Cred* P/Invoke with UTF-8 stdin and no target or secret in argv", async () => {
     const { calls, spawnProcess } = scriptedSpawner([{ code: 0 }]);
     const runner = createWindowsCredentialManagerRunner(
