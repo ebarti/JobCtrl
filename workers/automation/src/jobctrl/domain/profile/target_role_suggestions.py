@@ -27,7 +27,7 @@ _TITLE_STOP_WORDS = {
 }
 _TRACK_TITLE_MARKERS = {
     "management": {"director", "head", "lead", "leader", "manager", "management", "vp"},
-    "executive": {"ceo", "cfo", "chief", "cio", "ciso", "coo", "cto", "executive", "officer", "president", "vice", "vp"},
+    "executive": {"ceo", "cfo", "chief", "cio", "ciso", "coo", "cto", "evp", "executive", "officer", "president", "svp", "vice", "vp"},
     "ic": {"architect", "developer", "engineer", "principal", "scientist", "specialist", "staff"},
 }
 _CANONICAL_SENIORITIES = {
@@ -600,7 +600,7 @@ def _title_seniority(tokens: set[str] | frozenset[str]) -> str | None:
     if executive:
         return "c_level"
     if vice:
-        return "svp" if tokens & {"svp", "evp"} or "senior" in tokens else "vp"
+        return "svp" if tokens & {"svp", "evp", "senior", "executive"} else "vp"
     if "director" in tokens:
         return "director" if "senior" not in tokens else None
     if "head" in tokens:

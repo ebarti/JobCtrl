@@ -284,6 +284,8 @@ def test_canonical_seniority_options_require_actual_title_level():
         ("senior_manager", "Management", "Senior Platform Engineering Manager", ["Senior Platform Engineering Manager"]),
         ("mid", "IC", "Software Engineer", ["Software Engineer"]),
         ("c_level", "Executive", "Chief Technology Officer", ["Chief Technology Officer"]),
+        ("svp", "Executive", "SVP of Engineering", ["SVP of Engineering"]),
+        ("svp", "Executive", "Executive Vice President of Engineering", ["Executive Vice President of Engineering"]),
     )
     for seniority, track, title, expected in cases:
         raw = _profile_dict()
