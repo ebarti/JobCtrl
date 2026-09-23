@@ -15,7 +15,7 @@ MAX_SUGGESTIONS = 5
 MAX_PAYLOAD_CHARS = 12_000
 MAX_OUTPUT_TOKENS = 900
 _ADJACENT_DOMAINS = frozenset({
-    "cloud", "data", "delivery", "infrastructure", "operations", "platform",
+    "cloud", "data", "delivery", "engineering", "infrastructure", "operations", "platform",
     "product", "reliability", "security", "software",
 })
 _EVIDENCE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$")
@@ -364,7 +364,12 @@ def _validate_model_response(
             evidence=cited_evidence,
         ):
             raise ValueError("unsupported role title or evidence")
-        rationale = _required_clean_text(raw.get("rationale"), 240)
+        _required_clean_text(raw.get("rationale"), 240)
+        rationale = (
+            "Matches the cited canonical experience title."
+            if classification == "direct"
+            else "The cited experience and independent evidence support the title wording."
+        )
         normalized_title = title.casefold()
         if normalized_title in seen:
             continue
@@ -442,7 +447,11 @@ def _deterministic_suggestions(
                 continue
             novel = sorted((achievement_support.tokens & _ADJACENT_DOMAINS) - support.tokens)
             for modifier in novel:
-                for old in sorted((support.tokens - _TITLE_STOP_WORDS) & _ADJACENT_DOMAINS):
+                replaceable = [
+                    token for token in _TITLE_WORD.findall(title.casefold())
+                    if token in support.tokens & _ADJACENT_DOMAINS
+                ]
+                for old in replaceable[-1:]:
                     candidate = re.sub(
                         rf"\b{re.escape(old)}\b", modifier.title(), title,
                         count=1, flags=re.IGNORECASE,
@@ -484,7 +493,11 @@ def _historical_preference_suggestions(
         if not entry_id or not _EVIDENCE_ID.fullmatch(evidence_id):
             continue
         raw = _text(entry.get("location"), 120)
-        if not raw or re.search(r"\b(?:not|never|various|multiple|anywhere|worldwide|hq)\b", raw, re.I):
+        if not raw or re.search(
+            r"\b(?:not|never|various|multiple|anywhere|worldwide|or|and|near|around|"
+            r"based|headquarters|hq|office|offices|region|area|relocat\w*|company)\b",
+            raw, re.I,
+        ):
             continue
         pieces = [part.strip() for part in raw.split("|")]
         if len(pieces) > 2:
@@ -496,6 +509,10 @@ def _historical_preference_suggestions(
             continue
         if location.casefold() in {"remote", "hybrid", "on-site"}:
             location = ""
+        if location and re.search(r"\b(?:remote|hybrid|on-site|onsite)\b", location, re.I):
+            continue
+        if location and re.search(r"\b(?:in|at|from)\b", location, re.I):
+            continue
         # No guesses from prose, mixed model labels, addresses, or employer HQ.
         if location and (len(location) > 100 or not re.fullmatch(r"[^\W\d_][\w ,.'-]*", location, re.UNICODE)):
             continue
@@ -572,8 +589,11 @@ def _title_matches_seniority(title_tokens: set[str], seniority: str) -> bool:
     markers = _SENIORITY_TITLE_MARKERS.get(normalized)
     if markers is None:
         markers = _title_tokens(seniority)
+        matched = markers <= title_tokens
+    else:
+        matched = bool(title_tokens & markers)
     all_markers = set().union(*_SENIORITY_TITLE_MARKERS.values())
-    return bool(title_tokens & markers) and not bool((title_tokens & all_markers) - markers)
+    return matched and not bool((title_tokens & all_markers) - markers)
 
 
 def _evidence_matches_track(evidence_tokens: set[str], track: str) -> bool:
@@ -586,8 +606,8 @@ def _evidence_matches_track(evidence_tokens: set[str], track: str) -> bool:
 
 def _evidence_matches_seniority(evidence_tokens: set[str], seniority: str) -> bool:
     normalized = " ".join(seniority.casefold().split())
-    markers = _SENIORITY_TITLE_MARKERS.get(normalized, _title_tokens(seniority))
-    return bool(evidence_tokens & markers)
+    markers = _SENIORITY_TITLE_MARKERS.get(normalized)
+    return bool(evidence_tokens & markers) if markers else _title_tokens(seniority) <= evidence_tokens
 
 
 def _title_tokens(value: str) -> set[str]:

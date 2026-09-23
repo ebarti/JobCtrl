@@ -245,12 +245,14 @@ def test_unbounded_production_path_is_deterministic_without_provider_call():
 def test_historical_preference_proposals_keep_rows_and_exact_work_model_markers():
     raw = _profile_dict()
     raw["resume"]["experience_entries"] = [
-        {"id": "a", "title": "Platform Engineering Manager", "location": "Madrid, Spain | Hybrid"},
-        {"id": "b", "title": "Platform Engineering Manager", "location": "Remote"},
-        {"id": "c", "title": "Platform Engineering Manager", "location": "London | On-site"},
-        {"id": "d", "title": "Platform Engineering Manager", "location": "Berlin | Remote/Hybrid"},
-        {"id": "e", "title": "Platform Engineering Manager", "location": "Not willing to relocate"},
-        {"id": "f", "title": "Platform Engineering Manager", "location": "Madrid, Spain | Hybrid"},
+        {"id": "a", "title": "Platform Engineering Manager", "company": "Fixture", "location": "Madrid, Spain | Hybrid"},
+        {"id": "b", "title": "Platform Engineering Manager", "company": "Fixture", "location": "Remote"},
+        {"id": "c", "title": "Platform Engineering Manager", "company": "Fixture", "location": "London | On-site"},
+        {"id": "d", "title": "Platform Engineering Manager", "company": "Fixture", "location": "Remote or Hybrid"},
+        {"id": "e", "title": "Platform Engineering Manager", "company": "Fixture", "location": "London or Paris"},
+        {"id": "f", "title": "Platform Engineering Manager", "company": "Fixture", "location": "Company headquarters in Berlin"},
+        {"id": "g", "title": "Platform Engineering Manager", "company": "Fixture", "location": "Berlin | Remote/Hybrid"},
+        {"id": "h", "title": "Platform Engineering Manager", "company": "Fixture", "location": "Madrid, Spain | Hybrid"},
     ]
     snapshot = ProfileSnapshot.from_profile(Profile.from_dict(LOCAL_TENANT, raw), version=9)
     result = suggest_target_roles(snapshot, llm=None, allow_model=False)
