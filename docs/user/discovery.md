@@ -375,25 +375,34 @@ seniority floor attached. An exact title match can therefore pass even when it
 is below a selected floor; the floor is principally enforced on generated
 recall queries.
 
-The **Evidence-backed role suggestions** card is an optional authoring aid for
-this saved target-role list. It reads the canonical saved profile version and
-returns editable proposals with evidence references; it does not inspect the
-unsaved browser draft or change an active Discovery execution. Rejecting or
-dismissing proposals writes nothing. Accepting selected titles appends and
-case-insensitively deduplicates them in the normal Target Search form, and the
-subsequent version-checked save affects only future Discovery plans.
+The **Evidence-backed target search suggestions** card is an optional authoring
+aid. It reads the canonical saved profile version and returns editable role
+titles and historical location/work-model rows with evidence references; it
+does not inspect the unsaved browser draft or change an active Discovery
+execution. Rejecting or dismissing proposals writes nothing. Accepting selected
+titles appends and case-insensitively deduplicates them. Historical preference
+rows start unselected. If you explicitly select them, each location/model pair
+is appended to the same Target Search draft without replacing existing rows or
+filling an empty counterpart. The subsequent version-checked save affects only
+future Discovery plans. The card labels the original evidence separately when
+you edit a proposal.
 
 Current managed model providers cannot enforce this feature's hard token and
 maximum-cost bounds. JobCtrl therefore makes no provider call for production
-role suggestions today: it may offer an exact recent saved title when that
-title matches the saved track and seniority, or return no proposals. The card
-states this limitation. The local demo's broader proposal is deterministic
-fixture evidence and is labeled as such.
+suggestions. It may offer exact saved titles and a small set of adjacent titles
+when the title wording, saved track/seniority, and linked achievement evidence
+support them. Sparse or incompatible evidence may produce no role proposal.
+Historical preference rows come only from explicit experience locations and
+unambiguous `Remote`, `Hybrid`, or `On-site` markers in those locations. Past
+work location or arrangement is not current willingness to search there or use
+that work model. You can always enter target roles, locations, and work models
+manually. The local demo's broader proposal is labeled as fixture evidence.
 
 If the saved profile changes after you accept a proposal, the form keeps your
 draft but blocks suggestion-derived saving. Use **Rebase edits onto saved
 profile** to carry non-overlapping edits onto the refreshed profile, then
-generate and review suggestions again. When the same field changed both
+generate and review suggestions again. This covers accepted role and historical
+preference rows, including edits after acceptance. When the same field changed both
 locally and in the saved profile, discard or resolve that field manually.
 
 ::: warning Multiple tracks and floors

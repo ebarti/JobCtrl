@@ -33,34 +33,43 @@ event, and creates no preparation-continuation work.
 The suggestion route accepts `{ expectedProfileVersion, maximumSuggestions }`,
 where the maximum is `1–5` and defaults to `3`. It reads only that canonical
 saved snapshot and returns `profileVersion`, `strategy`, bounded `warnings`, and
-zero to five editable suggestions. Each suggestion includes `title`,
+zero to five editable role suggestions and up to five historical preference
+rows. Each role suggestion includes `title`,
 `classification` (`direct` or `adjacent`), an explicitly supported `track` and
 `seniority`, a concise `rationale`, and valid evidence references. Generation
 is transient: it writes no role, profile event, or Discovery plan. Only the
 user's selected acceptance enters the normal profile save path, where roles are
 appended and case-insensitively deduplicated instead of replacing existing
-values.
+values. Each `preferenceSuggestions[]` row has `location` (possibly empty),
+`workModel` (`Remote`, `Hybrid`, `On-site`, or empty), and canonical experience
+`evidenceIds`. Location and model remain paired by row position, including an
+empty counterpart. Historical rows are unselected by default; accepting a row
+adds it to the draft without changing existing location/model pairs. Normal
+profile place validation applies when the draft is saved.
 
 The API binds the RPC request to its trusted app-directory and database
 identity; those values are never accepted from the browser. The worker checks
 that identity before loading the profile snapshot. The currently managed
 Claude, Codex, and Google SDK adapters cannot enforce this feature's requested
 output-token ceiling and conservative maximum call cost, so the production RPC
-does not invoke them. It returns only a validated exact recent-title fallback
-or zero suggestions with
-`provider_token_or_cost_bound_unsupported`. The `model` strategy remains in the
-response contract and is exercised with explicitly synthetic adapters in
-domain tests, but is not a currently available production capability. Those
-tests cover specific fabricated, cross-track, and unsupported-seniority cases;
-the synthetic title validator does not yet reject every unsupported qualifier
-attached to an evidenced title token. Production remains on the exact-title or
-zero path until both that semantic gap and the provider token/cost bounds are
-closed.
+does not invoke them. The production `deterministic` strategy uses exact saved
+experience titles and a small conservative adjacent-title policy. An adjacent
+title needs cited experience and independently relevant achievement evidence;
+every substantive title modifier must be supported, and saved track and
+seniority must match. Zero roles remain valid for sparse or incompatible
+evidence. The `model` strategy remains reserved in the wire contract and is
+exercised with synthetic adapters in domain tests; production does not emit it.
+The `provider_token_or_cost_bound_unsupported` warning explains that no model
+ran. Historical location rows come only from explicit experience locations;
+work models require an unambiguous exact marker in that field. Neither past
+location nor work arrangement expresses present search willingness.
 
 If a suggestion-derived save conflicts with a newer canonical profile, the web
 keeps the local draft but does not authorize it with the newer version. The user
 must explicitly rebase non-overlapping edits onto the refreshed snapshot,
 regenerate suggestions, review them, and then save against that new version.
+The guard covers accepted roles and historical preference rows, including
+subsequent edits to those draft values.
 Overlapping edits remain blocked for manual resolution or discard.
 
 Each `resume.experience_entries[]` record may include `summary`. The field

@@ -278,10 +278,20 @@ describe("cancel_run RPC contract", () => {
             rationale: "The canonical recent title and scope support this role.",
           },
         ],
+        preferenceSuggestions: [
+          { location: "London", workModel: "Hybrid", evidenceIds: ["experience:role_1"] },
+          { location: "", workModel: "Remote", evidenceIds: ["experience:role_2"] },
+        ],
         strategy: "model",
         warnings: [],
       }),
     ).toMatchObject({ profileVersion: 4, strategy: "model" });
+    expect(() => TargetRoleSuggestionResultSchema.parse({
+      profileVersion: 4,
+      suggestions: [],
+      preferenceSuggestions: [{ location: "", workModel: "Remote/Hybrid", evidenceIds: ["experience:role_1"] }],
+      strategy: "deterministic",
+    })).toThrow();
     expect(() =>
       TargetRoleSuggestionResultSchema.parse({
         profileVersion: 4,

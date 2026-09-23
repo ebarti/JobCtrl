@@ -1941,7 +1941,7 @@ export const TargetRoleSuggestionResponseSchema = z
     ok: z.literal(true),
     profileVersion: z.number().int().positive(),
     suggestions: z.array(TargetRoleSuggestionSchema).max(5),
-    preferenceSuggestions: z.array(TargetPreferenceSuggestionSchema).max(5).default([]),
+    preferenceSuggestions: z.array(TargetPreferenceSuggestionSchema).max(5).optional(),
     strategy: z.enum(["model", "deterministic", "recent_title_fallback", "none", "model_stub"]),
     warnings: z.array(z.string().trim().min(1).max(120)).max(8).default([]),
   })

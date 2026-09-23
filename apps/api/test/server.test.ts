@@ -10039,7 +10039,7 @@ describe("local TypeScript API", () => {
       expect(response.statusCode, response.body).toBe(200);
       expect(response.json()).toMatchObject({
         profileVersion: version,
-        strategy: "recent_title_fallback",
+        strategy: "deterministic",
         warnings: ["provider_token_or_cost_bound_unsupported"],
         suggestions: [
           {
@@ -10052,6 +10052,94 @@ describe("local TypeScript API", () => {
         ],
       });
       expect(canonicalRows()).toEqual(beforeRows);
+      await app.close();
+    },
+  );
+
+  it.skipIf(!SOURCE_PYTHON_RPC_AVAILABLE)(
+    "proposes direct, adjacent and historical rows through real API, RPC and SQLite without a write",
+    async () => {
+      const profile = profileWithTargetSearch("Synthetic Candidate", "Barcelona", "Remote");
+      const preferences = profile.experience as Record<string, unknown>;
+      preferences.target_role = "Director of Platform";
+      preferences.target_track = "Management";
+      preferences.target_seniority_floor = "Manager";
+      const resume = profile.resume as { experience_entries: Array<Record<string, unknown>> };
+      resume.experience_entries[0]!.title = "Platform Engineering Manager";
+      resume.experience_entries[0]!.location = "London | Hybrid";
+      resume.experience_entries[0]!.achievement_evidence = [{
+        id: "ev_reliability",
+        source_text: "Improved reliability",
+        action: "Improved reliability controls",
+        outcome: "Reduced incidents",
+        tools: ["Python"],
+      }];
+      const { providerDispatcher: _fixtureDispatcher, pythonRuntime: _fixtureRuntime, ...realOptions } = options;
+      const app = buildApp({
+        ...realOptions,
+        placeValidator: async () => true,
+        pythonRuntime: createSourcePythonRuntime({ environment: { ...process.env, UV_FROZEN: "1" } }),
+      });
+      const seed = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile } });
+      expect(seed.statusCode, seed.body).toBe(200);
+      const version = seed.json().profileVersion as number;
+      await vi.waitFor(() => {
+        const db = new Database(options.dbPath, { readonly: true });
+        try {
+          expect((db.prepare(
+            "SELECT COUNT(*) AS n FROM job_events WHERE event_type = 'ProfileContinuationHandled'",
+          ).get() as { n: number }).n).toBeGreaterThan(0);
+        } finally { db.close(); }
+      });
+      const canonicalRows = () => {
+        const db = new Database(options.dbPath, { readonly: true });
+        try {
+          return db.prepare("SELECT * FROM candidate_profiles WHERE tenant_id = 'local'").all();
+        } finally { db.close(); }
+      };
+      const beforeRows = canonicalRows();
+      const beforeEvents = new Database(options.dbPath, { readonly: true });
+      const eventCount = (beforeEvents.prepare("SELECT COUNT(*) AS n FROM job_events").get() as { n: number }).n;
+      beforeEvents.close();
+      const suggested = await app.inject({
+        method: "POST", url: "/v1/profile/target-role-suggestions",
+        payload: { expectedProfileVersion: version, maximumSuggestions: 3 },
+      });
+      expect(suggested.statusCode, suggested.body).toBe(200);
+      expect(suggested.json()).toMatchObject({
+        profileVersion: version,
+        strategy: "deterministic",
+        warnings: ["provider_token_or_cost_bound_unsupported"],
+        suggestions: [
+          { title: "Platform Engineering Manager", classification: "direct", evidenceIds: ["experience:role_1"] },
+          { title: "Platform Reliability Manager", classification: "adjacent", evidenceIds: ["experience:role_1", "ev_reliability"] },
+        ],
+        preferenceSuggestions: [
+          { location: "London", workModel: "Hybrid", evidenceIds: ["experience:role_1"] },
+        ],
+      });
+      expect(canonicalRows()).toEqual(beforeRows);
+      const afterGeneration = new Database(options.dbPath, { readonly: true });
+      expect((afterGeneration.prepare("SELECT COUNT(*) AS n FROM job_events").get() as { n: number }).n).toBe(eventCount);
+      afterGeneration.close();
+
+      const accepted = structuredClone(profile);
+      const acceptedPreferences = accepted.experience as Record<string, unknown>;
+      acceptedPreferences.target_role = "Director of Platform; Platform Engineering Manager; Platform Reliability Manager";
+      acceptedPreferences.target_locations = "Barcelona; London";
+      acceptedPreferences.target_work_models = "Remote; Hybrid";
+      const saved = await app.inject({
+        method: "PATCH", url: "/v1/profile",
+        payload: { profile: accepted, expectedProfileVersion: version },
+      });
+      expect(saved.statusCode, saved.body).toBe(200);
+      const reloaded = await app.inject({ method: "GET", url: "/v1/profile" });
+      expect(reloaded.json().profile.experience).toMatchObject(acceptedPreferences);
+      const stale = await app.inject({
+        method: "PATCH", url: "/v1/profile",
+        payload: { profile: accepted, expectedProfileVersion: version },
+      });
+      expect(stale.statusCode, stale.body).toBe(409);
       await app.close();
     },
   );
