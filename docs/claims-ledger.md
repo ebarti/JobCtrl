@@ -1,56 +1,8 @@
 # Public Claims Ledger
 
-> **Repository-only.** This file is intentionally excluded from the published
-> docs site (registered in `docs/.vitepress/config.ts` `UNPUBLISHED_FILES` +
-> `srcExclude`). It is a launch-governance
-> artifact, not user documentation.
->
-> Implements Phase A / GATE G1 of
-> [`docs/plans/implemented/2026-07-05-launch-readiness-artifacts-plan.md`](plans/implemented/2026-07-05-launch-readiness-artifacts-plan.md)
-> §5. No listed document in `CLAUDE.md` owns "public claim provenance," so this
-> new doc is justified under the "avoid new docs unless nothing owns it" rule.
-
-## Purpose
-
-A single source of truth for every claim JobCtrl makes on a **public
-surface**, each labelled `Current` / `Beta` / `Roadmap` and backed by a
-resolving verification pointer, so the claim set can be **frozen** before any
-launch asset (README, demo assets, hero, alternatives page) is built on top of
-it. Every hero / README / product-tour claim must trace to exactly one row here
-in one hop.
-
-## Freeze status
-
-JobCtrl is publicly released. Publication is recorded in the
-[Publish Checklist](publish-checklist.md#published-byte-reconciliation-2026-09-22)
-and [GitHub Releases](https://github.com/ebarti/JobCtrl/releases).
-The July freeze discussion below is historical. Its pending GATE G1 language
-does not describe current publication status; the publish checklist replaced
-the owner-signed ledger freeze with release and deployment evidence.
-
-> **Historical July 2026 freeze record — superseded as a launch gate.** The
-> previous provisional stamp (`48714f95`, 2026-07-06) became stale when later
-> changes added controlled Gmail application sending, the JobCtrl rename and UI
-> refresh, public bootstrap and Homebrew distribution, and additional security
-> hardening without refreshing their ledger rows. This audit re-anchored every
-> `Current` / `Beta` recommendation and every verification pointer against
-> `origin/main` @ `15356b39` on **2026-07-10**, then reconciled the in-progress
-> launch-readiness changes in this worktree. On **2026-07-09**, the repository
-> owner approved the repository-only location, the Current/Beta and synthetic
-> evidence rules, single-owner accountability, the post-merge freeze rule, and
-> every claim's scope and status through the guided review recorded in [Owner
-> sign-off record](#owner-sign-off-record). A subsequent independent review
-> narrowed CL-052's wording to match the already approved `Current` scope and
-> canonical health behavior; it introduced no new capability or status choice.
->
-> At that time, GATE G1 awaited a post-merge anchor and another pointer, build,
-> runtime, and release check. That historical pending action is not an
-> instruction to repeat first-launch approval or evidence that JobCtrl remains
-> unpublished. A worktree state or an unrun workflow is not a release anchor.
->
-> Unless a row says otherwise, `Last verified` means pointer resolution and
-> claim-to-source reconciliation on 2026-07-09. Owner sign-off records an
-> approved public statement; it does **not** constitute production benchmarking.
+This repository-only reference maps public product claims to their supporting
+code and documentation. It distinguishes shipped behavior, known limitations
+and planned features; it is not a publication approval process.
 
 ## How to read this ledger
 
@@ -75,10 +27,8 @@ output quality. Other shipped claims stay `Current` only when their honest
 qualifiers are scope notes carried in the claim text, not load-bearing
 reliability, maturity, or measurement caveats.
 
-**Owner column.** `repo owner` is the owner-approved accountable role for every
-row and for Phase C publication. The guided-review record below captures the
-approval; a future ownership change must update both the affected rows and that
-record.
+**Owner column.** `repo owner` identifies the maintainer responsible for
+keeping each claim and its verification pointer accurate.
 
 **Verification pointer.** Prefers an existing requirement handle in
 [`requirements.md`](requirements.md); otherwise an architecture doc, source
@@ -239,152 +189,14 @@ source and a resolving pointer.
 | Claim ID | Claim (neutral) | Surfaces | Status | Owner | Verification pointer | Last verified |
 | --- | --- | --- | --- | --- | --- | --- |
 | CL-081 | Building and running from a source checkout remains an advanced contributor option. It uses `scripts/install` followed by `corepack pnpm dev`; Git, uv, pnpm, and the rest of the source toolchain belong only to that option and are not installed-product prerequisites. The source audit records 73 unique direct JavaScript packages, 1,452 pnpm lock records, 20 direct core-runtime Python packages, 102 uv lock records, and two Playwright browser revisions. Preserved mixed-context observations are contributor-path measurements, not the installed-product footprint. | README (Build and run from source); Getting Started (Build and run from source); Local Development | Current | repo owner | `scripts/install`; `packaging/distribution/source-baseline.json`; `docs/local-development.md` | 2026-08-12 |
-| CL-082 | The signed and notarized v0.1.1 Apple-silicon bundle, authenticated stable descriptor, immutable release and stable Homebrew formula are published. Disposable public curl acquisition reports the same build/manifest as the signed formula; the public script still pins the older v0.1.0 bootstrap. Full two-path clean-machine/no-toolchain/no-Chrome, auth, migration, update/rollback and real TTFV acceptance remains unverified. Publication and bounded native smoke do not establish that complete installation claim. | ROADMAP; README; Getting Started; Local Development | Roadmap | repo owner | [Published-byte reconciliation](publish-checklist.md#published-byte-reconciliation--2026-09-22); [issue #884](https://github.com/ebarti/JobCtrl/issues/884) | 2026-09-22 (bounded reconciliation) |
 | CL-083 | Contact records are kept per company or application with per-fact provenance and CSV import; outreach drafts are truthful and reviewable under the same anti-fabrication gates as resumes; the user sends messages themselves and logs the send (date + channel) — the only way an outreach thread is marked sent; follow-up reminders are surfaced-only suggestions; there is no outreach send transport. This does not describe the separately approval-bound Gmail email-application path in CL-062. | README (What It Does — contacts/outreach); Normal Flows §11 (Keep Contacts); Configuration (Contact Research; Outreach Follow-Ups) | Current | repo owner | Outreach planner close-out (`plans/implemented/2026-07-05-outreach-planner-plan.md`, INV-1 no-auto-send, four-layer enforcement + fixtures); [normal flows](user/normal-flows.md) §11; [configuration](user/configuration.md) (Contact Research, Outreach Follow-Ups) | 2026-07-09 |
 | CL-084 | JobCtrl's source is distributed under the GNU Affero General Public License v3.0 only (`AGPL-3.0-only`). | README (License); Comparison (Open-source license) | Current | repo owner | [`LICENSE`](../LICENSE); `package.json`; `workers/automation/pyproject.toml` | 2026-07-09 |
 | CL-085 | Windows Credential Manager, Linux Secret Service and macOS Keychain pass native host checks for API/Python readback, migration, presence-only responses and cleanup using synthetic credentials. Windows migration also preserves protected access permissions and exact source bytes during rollback. The native host matrix remains a required regression gate; mock-only evidence is not a native-platform pass. | Native credential stores | Beta | repo owner | [#888](https://github.com/ebarti/JobCtrl/issues/888); [native credential QA gate](developer/qa/regression-catalog.md#native-credential-storage-and-migration) | 2026-09-22 ([native host matrix](https://github.com/ebarti/JobCtrl/actions/runs/35739355706), `0e61fb0e`) |
 
-> **Why CL-082 remains roadmap work.** Publication is now demonstrated, but
-> the complete published-byte operational matrix is not. The dated
-> [reconciliation](publish-checklist.md#published-byte-reconciliation--2026-09-22)
-> separates reusable release evidence, observed disposable checks and missing
-> gates. Keep the broad installation claim at `Roadmap` until both acquisition
-> paths and all applicable lifecycle/TTFV gates are demonstrated. Do not infer
-> full acceptance from a published artifact, source fixtures or a healthy stack.
->
-> **Installer cutover.** Preserve the immutable release record R separately
-> from installer/docs deployment D. Section 9.6 of the publish checklist owns
-> the verified-byte cutover; this reconciliation authorizes no publication or
-> deployment and does not promote any installation claim.
+## Maintenance
 
-## Maintenance cadence and re-review
-
-Per plan §5 and §8.3, re-run the claim review and refresh each row's
-`Last verified` whenever a public surface changes, and at minimum **every
-release**. The review process:
-
-1. Enumerate candidate claims from the live public surfaces (`README.md`,
-   `docs/index.md` hero `features`, `docs/user/product-tour.md` captions,
-   `docs/user/normal-flows.md`, `docs/user/data-and-safety.md`,
-   `docs/user/security.md`, `docs/comparison.md`, and `docs/requirements.md`).
-2. For each, confirm Status + owner + verification pointer and resolve every
-   `Current` and `Beta` pointer. Treat synthetic fixtures as illustrative or
-   invariant-test evidence only; never use them to substantiate public
-   measurement claims.
-3. Reconcile against `ROADMAP.md` so nothing labelled `Current` is actually a
-   "Now / Next / Later" roadmap item.
-4. Record the reviewed commit and verification date with the affected claims.
-   Use the publish checklist for release evidence; preserve the historical
-   [Freeze status](#freeze-status) record.
-
-Any new public claim must land a row here (Status + owner + resolving pointer)
-in the same change that introduces it.
-
-## Owner sign-off record
-
-The repository owner completed the guided review on **2026-07-09**. Governance
-and every high-judgment claim were prompted separately. The remaining
-pointer-backed claims were presented in three explicit ID groups — pipeline,
-materials, and operations — with an option to request individual prompts; the
-owner approved each group as `Current`. No decision below was inferred from
-silence.
-
-### Governance decisions
-
-These are the recorded July 2026 decisions. GOV-04's pending freeze action was
-subsequently superseded by the publish checklist's release-evidence contract;
-it is not a current unpublished-product status.
-
-| Decision | Recommendation | Consequence | Verdict |
-| --- | --- | --- | --- |
-| GOV-01 — Ledger location and publication (§11.1) | Keep `docs/claims-ledger.md` repository-only through `UNPUBLISHED_FILES` and `srcExclude`. | Publishing it would expose launch-governance notes; moving it requires updating plan and docs-index pointers. | **APPROVED 2026-07-09** |
-| GOV-02 — Classification and evidence rule (§11.6) | Preserve the recorded rule: new LLM-generated user-facing surfaces without real-usage validation are `Beta`; synthetic evidence may illustrate but never measure. | Changing the bar can promote or demote CL-029 and future generated surfaces, and changes what may appear unqualified on the hero/README. | **APPROVED 2026-07-09** |
-| GOV-03 — Accountability (§11.7) | Keep the repository owner as the single claim-freeze holder and Phase C publisher; each row still needs an explicit guided-review verdict. | Choosing multiple owners requires naming one accountable person per row and publish step before freeze. | **APPROVED 2026-07-09** |
-| GOV-04 — Freeze anchor | After all remediation changes land, rerun validation and record that exact dated `origin/main` SHA; never freeze an uncommitted worktree. | Without this, GATE G1 remains unsatisfied and the ledger can drift from the released code. | **APPROVED; EXECUTION PENDING POST-MERGE** |
-
-### Classification decisions needing explicit attention
-
-The owner accepted every status below after a separate prompt (including
-CL-030 through CL-034 individually). These rows received extra discussion
-because their qualifiers, risk, maturity, or recent behavior change could have
-altered the `Current`/`Beta` verdict.
-
-| Claim | Owner-approved status | Why this needed an owner choice | Consequence of promotion/demotion |
-| --- | --- | --- | --- |
-| **CL-005** | `Current` | The extension works but is an unpacked developer-mode install, not a browser-store release. | `Beta` would require that maturity qualifier anywhere it is promoted publicly. |
-| **CL-008** | `Current` | JobStreaming budget accounting remains invocation-scoped; the claim carries the invocation-boundary exception. | `Beta` treats that exception as a load-bearing reliability limitation rather than a scope boundary. |
-| **CL-087** | `Current` | The owner selected connected-extension preference with guarded anonymous acquisition when unavailable, without profile copying or a transport switch after failure. | `Beta` would require the live-profile prerequisite and failure posture to carry an explicit maturity qualifier on every launch/setup surface. |
-| **CL-009** | `Current` | This is a newly ledgered public claim that the web app is the supported operator surface. | `Beta` would require qualifying the UI in the comparison, tour, and README. |
-| **CL-029** | `Beta` | Grounded interview prep is a new LLM-generated, high-stakes user-facing surface without real-usage validation. | `Current` would reverse the recorded §11.6 rule for this surface. |
-| **CL-030–CL-034** | `Current` individually | These are high-risk live-submit safety invariants; implementation and tests support the exact bounded claims. | Any `Beta` verdict requires the matching safety claim to carry a maturity qualifier on every public surface. |
-| **CL-037** | `Current` | Prompt-injection controls reduce but cannot eliminate exposure; the limitation is explicit. | `Beta` treats residual exposure as a maturity caveat rather than the stated security boundary. |
-| **CL-038** | `Current` | Autofill is shipped but shares the unpacked extension distribution limitation. | `Beta` requires the extension maturity qualifier wherever autofill is advertised. |
-| **CL-039** | `Current` | Autonomous browser submission is shipped, high-risk, and explicitly opt-in with remaining gates. | `Beta` requires a maturity warning in addition to the existing safety boundaries. |
-| **CL-040** | `Current` | The ceiling is estimated per-workflow preflight, not provider billing truth or a mid-call interrupt. | `Beta` treats those exact limitations as load-bearing maturity caveats. |
-| **CL-052** | `Current` | Dashboard work/stuck/activity visibility is newly implemented and ledgered in this change. | `Beta` requires the new tour wording to identify the operational summary as beta. |
-| **CL-055** | `Beta` | Outcome rates are descriptive and small-sample gated, not causal measurements. | `Current` would remove the maturity signal while the load-bearing qualifiers remain necessary. |
-| **CL-062** | `Current` | Gmail changed after the prior freeze from read-only to approval-bound application sending. | `Beta` requires Gmail-send claims in README/Security/Data & Safety to carry the label; `Current` accepts the deterministic gates as sufficient maturity. |
-| **CL-072** | `Current` | Public PR CI is intentionally manual after review, not automatic; the claim now states the real policy. | `Beta` would imply the scanner itself is rough rather than distinguish trigger policy from capability. |
-| **CL-082** | `Roadmap` | P0–P6 are implemented locally, but signing/notarization, public pointer publication, stable formula promotion, and published-artifact QA have not executed. | Promote only after both acquisition paths resolve the same signed artifact and the clean-machine/readback gates pass. |
-
-### Claim-by-claim guided-review checklist
-
-- [x] CL-001 — owner-approved `Current` on 2026-07-09
-- [x] CL-002 — owner-approved `Current` on 2026-07-09
-- [x] CL-003 — owner-approved `Current` on 2026-07-09
-- [x] CL-004 — owner-approved `Current` on 2026-07-09
-- [x] CL-005 — owner-approved `Current` on 2026-07-09
-- [x] CL-006 — owner-approved `Current` on 2026-07-09
-- [x] CL-007 — owner-approved `Current` on 2026-07-09
-- [x] CL-008 — owner-approved `Current` on 2026-07-09
-- [x] CL-009 — owner-approved `Current` on 2026-07-09
-- [x] CL-010 — owner-approved `Current` on 2026-07-09
-- [x] CL-011 — owner-approved `Current` on 2026-07-09
-- [x] CL-012 — owner-approved `Current` on 2026-07-09
-- [x] CL-013 — owner-approved `Current` on 2026-07-09
-- [x] CL-020 — owner-approved `Current` on 2026-07-09
-- [x] CL-021 — owner-approved `Current` on 2026-07-09
-- [x] CL-022 — owner-approved `Current` on 2026-07-09
-- [x] CL-023 — owner-approved `Current` on 2026-07-09
-- [x] CL-024 — owner-approved `Current` on 2026-07-09
-- [x] CL-025 — owner-approved `Current` on 2026-07-09
-- [x] CL-026 — owner-approved `Current` on 2026-07-09
-- [x] CL-027 — owner-approved `Current` on 2026-07-09
-- [x] CL-028 — owner-approved `Current` on 2026-07-09
-- [x] CL-029 — owner-approved `Beta` on 2026-07-09
-- [x] CL-030 — owner-approved `Current` on 2026-07-09
-- [x] CL-031 — owner-approved `Current` on 2026-07-09
-- [x] CL-032 — owner-approved `Current` on 2026-07-09
-- [x] CL-033 — owner-approved `Current` on 2026-07-09
-- [x] CL-034 — owner-approved `Current` on 2026-07-09
-- [x] CL-035 — owner-approved `Current` on 2026-07-09
-- [x] CL-036 — owner-approved `Current` on 2026-07-09
-- [x] CL-037 — owner-approved `Current` on 2026-07-09
-- [x] CL-038 — owner-approved `Current` on 2026-07-09
-- [x] CL-039 — owner-approved `Current` on 2026-07-09
-- [x] CL-040 — owner-approved `Current` on 2026-07-09
-- [x] CL-041 — owner-approved `Current` on 2026-07-09
-- [x] CL-042 — owner-approved `Current` on 2026-07-09
-- [x] CL-050 — owner-approved `Current` on 2026-07-09
-- [x] CL-051 — owner-approved `Current` on 2026-07-09
-- [x] CL-052 — owner-approved `Current` on 2026-07-09
-- [x] CL-055 — owner-approved `Beta` on 2026-07-09
-- [x] CL-056 — owner-approved `Current` on 2026-07-09
-- [x] CL-060 — owner-approved `Current` on 2026-07-09
-- [x] CL-061 — owner-approved `Current` on 2026-07-09
-- [x] CL-062 — owner-approved `Current` on 2026-07-09
-- [x] CL-063 — owner-approved `Current` on 2026-07-09
-- [x] CL-064 — owner-approved `Current` on 2026-07-09
-- [x] CL-065 — owner-approved `Current` on 2026-07-09
-- [x] CL-066 — owner-approved `Current` on 2026-07-09
-- [x] CL-070 — owner-approved `Current` on 2026-07-09
-- [x] CL-071 — owner-approved `Current` on 2026-07-09
-- [x] CL-072 — owner-approved `Current` on 2026-07-09
-- [x] CL-073 — owner-approved `Current` on 2026-07-09
-- [x] CL-080 — owner-approved `Current` on 2026-07-09
-- [x] CL-081 — owner-approved `Current` on 2026-07-09
-- [x] CL-082 — owner-approved `Roadmap` on 2026-07-09
-- [x] CL-083 — owner-approved `Current` on 2026-07-09
-- [x] CL-084 — owner-approved `Current` on 2026-07-09
-- [x] CL-085 — owner-approved `Roadmap` on 2026-07-10
-- [x] CL-086 — owner-approved `Current` through the JobStreaming adoption on 2026-07-17
+Update the affected claims and verification pointers when public behavior
+changes. Use the owning product documentation for current behavior and
+`ROADMAP.md` for planned work. Synthetic fixtures can illustrate behavior and
+prove invariants; they do not substantiate real-world performance or outcome
+measurements.

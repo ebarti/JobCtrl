@@ -6,9 +6,9 @@
   signed and notarized `v2.0.7` release is immutable on GitHub, its signed assets
   and stable pointer are public on R2, and its verified Homebrew formula is
   live. The protected `v2.0.7` PyPI recovery also completed successfully. The
-  remaining published-artifact, lifecycle, clean-machine, and TTFV evidence are
-  release operations tracked in `docs/publish-checklist.md` and
-  `docs/backlog.md`; they do not keep this implementation plan active. The
+  plan is historical, not a standing publication checklist. Current packaging
+  behavior is owned by `packaging/distribution/README.md`, and scoped work is
+  tracked in GitHub Issues. The
   separately approved `v2.0.8` security patch is a release operation, not a
   reopened implementation phase.
 - **Anchors:** Current behavior and file ownership verified against

@@ -80,7 +80,6 @@ const UNPUBLISHED_FILES = new Set([
   "docs/claims-ledger.md",
   "docs/decisions.md",
   "docs/delivered.md",
-  "docs/publish-checklist.md",
   "docs/README.md",
   "docs/requirements.md",
 ]);
@@ -373,7 +372,6 @@ export default withMermaid(
       "claims-ledger.md",
       "decisions.md",
       "delivered.md",
-      "publish-checklist.md",
       "README.md",
       "requirements.md",
     ],

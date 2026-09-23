@@ -406,13 +406,8 @@ pull requests publish a static Pages preview only when
 then publishes Pages. The workflow uses the existing
 `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` secrets.
 
-The owner-approved open-source sequence does not require paid
-private-repository Actions minutes. While the repository is private, zero-step
-billing failures are expected and are not validation evidence. First pass the
-complete exact-tree local privacy/release gate, then make the repository public
-and rerun the hosted workflows on that same `main` SHA. Enable production demo
-deployment only after those hosted gates and the demo privacy approvals pass;
-see the repository-only [publish checklist](publish-checklist.md).
+Production deployment uses the workflow controls above. Verify the affected
+checks on the deployed revision; repository publication is already complete.
 
 Rollback the static site from the Cloudflare Pages deployment history, then
 redeploy the prior Worker versions if the fault crosses the `/api/*` boundary.

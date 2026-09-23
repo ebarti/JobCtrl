@@ -2,8 +2,8 @@
 
 JobCtrl is publicly released. [GitHub Releases](https://github.com/ebarti/JobCtrl/releases/latest)
 identifies the latest published version; source versions and pending release
-work do not establish what installed users receive. For publication evidence
-and remaining upgrade checks, read [Publish Checklist](publish-checklist.md).
+work do not establish what installed users receive. For installation and
+upgrade instructions, see [Getting Started](user/getting-started.md).
 Historical launch plans and incomplete verification gates do not mean the
 product is unpublished.
 
@@ -172,7 +172,7 @@ These documents remain in the repository but are not separate site sections:
 - [`requirements.md`](requirements.md): product and technical invariants.
 - [`decisions.md`](decisions.md): accepted architecture decision records.
 - [GitHub Issues](https://github.com/ebarti/JobCtrl/issues): actionable work; [migration index #881](https://github.com/ebarti/JobCtrl/issues/881) accounts for the historical backlog.
-- [`claims-ledger.md`](claims-ledger.md): launch-claim evidence and status.
+- [`claims-ledger.md`](claims-ledger.md): public product claims and supporting references.
 - [`plans/`](plans/): active proposals and immutable implemented-plan history.
   The active [sensitive-artifact retention and cleanup
   proposal](plans/sensitive-artifact-retention.md) defines the unshipped local

@@ -11,7 +11,7 @@ at the top of `docs/`.
 Accepted public implementation plans are listed below. Bundled distribution
 and the public live demo are delivered and archived
 under `implemented/`; their separately deferred operational and privacy
-follow-ups live in `docs/publish-checklist.md` and
+follow-ups live in
 [GitHub Issues](https://github.com/ebarti/JobCtrl/issues). The
 [migration index #881](https://github.com/ebarti/JobCtrl/issues/881) owns historical
 backlog dispositions. Add new
@@ -94,12 +94,12 @@ and frontend plans were renamed from working titles (`ddd-target-plan.md`,
 | 2026-06-30 | [Requirement-Led Resume Tailoring](implemented/2026-06-30-requirement-led-resume-tailoring.md) | Implemented — #201–#203; hardened by #216, #224, #228, #229; ADR 2026-06-30 |
 | 2026-07-03 | [Temporal-Native Rearchitecture](implemented/2026-07-03-temporal-native-rearchitecture.md) | Implemented — #230 (plan), #233, #231, #235, #238, #237, #239, #240; ADRs 2026-07-03 |
 | 2026-07-03 | [Temporal Rearchitecture — Implementation Spec (P1b–P5)](implemented/2026-07-03-temporal-rearch-implementation-spec.md) | Implemented — spec #232 |
-| 2026-07-03 | [OSS Release Remediation — Implementation Spec for Codex](implemented/2026-07-03-oss-release-remediation-spec.md) | Closed by #274 inventory, then W1 restamped after #336, #337, #338, #340, #342, and #345 — W1.1-W1.7 complete; W1.8 dry-run-by-default was withdrawn by owner decision; overall release remains no-go pending non-W1 owner/release checkpoints |
-| 2026-07-05 | [OSS Release — Drive-to-Done and Completion Verification Plan](implemented/2026-07-05-oss-release-drive-to-done-plan.md) | Restamped after the W1 remediation train and W0.6 owner pass — W1 apply-safety and the W2.1 rename are complete; W2.4 was explicitly deferred for v2.0.0 on 2026-07-10; overall R1 remains no-go pending final owner/release checkpoints and green post-public hosted gates |
+| 2026-07-03 | [OSS Release Remediation — Implementation Spec for Codex](implemented/2026-07-03-oss-release-remediation-spec.md) | Closed by #274 inventory, then W1 restamped after #336, #337, #338, #340, #342, and #345 — W1.1-W1.7 complete; W1.8 dry-run-by-default was withdrawn by owner decision; initial-publication process retired; retained as implementation history |
+| 2026-07-05 | [OSS Release — Drive-to-Done and Completion Verification Plan](implemented/2026-07-05-oss-release-drive-to-done-plan.md) | Restamped after the W1 remediation train and W0.6 owner pass — W1 apply-safety and the W2.1 rename are complete; W2.4 was explicitly deferred for v2.0.0 on 2026-07-10; initial-publication go/no-go process retired; retained as implementation history |
 | 2026-07-05 | [Low-Friction Install & Auth Reuse](implemented/2026-07-05-low-friction-install-plan.md) | Implemented — #254 (plan), #317, #354 |
-| 2026-07-05 | [First-Run Time-to-Value: Real-Path Measurement Discipline](implemented/2026-07-05-first-run-ttfv-plan.md) | Implemented / closed — #259 (plan), #343; Goal B withdrawn and #330 closed unmerged; desktop-packaging verdict remains pending owner-run TTFV evidence |
+| 2026-07-05 | [First-Run Time-to-Value: Real-Path Measurement Discipline](implemented/2026-07-05-first-run-ttfv-plan.md) | Implemented / closed — #259 (plan), #343; Goal B withdrawn and #330 closed unmerged |
 | 2026-07-05 | [Streaming Pipeline Latency — Score As You Discover](implemented/2026-07-05-streaming-pipeline-latency-plan.md) | Implemented — #260 (plan), #301, #306, #311; decisions recorded in #318 |
-| 2026-07-05 | [Launch-Readiness Artifacts](implemented/2026-07-05-launch-readiness-artifacts-plan.md) | Implemented / closed — #262 (plan), #298-#305, #324, #341, #354; owner-only publish actions remain in `docs/publish-checklist.md` |
+| 2026-07-05 | [Launch-Readiness Artifacts](implemented/2026-07-05-launch-readiness-artifacts-plan.md) | Implemented / closed — #262 (plan), #298-#305, #324, #341, #354; initial-publication process retired after the repository became public |
 | 2026-07-05 | [Career Evidence Map + Interview Preparation](implemented/2026-07-05-evidence-map-interview-prep-plan.md) | Implemented — #263 (plan), #276, #279, #283, #285, #293, #294 |
 | 2026-07-05 | [Application Outcome Analytics And Artifact Comparison](implemented/2026-07-05-outcome-analytics-plan.md) | Implemented — #264 (plan), #273, #280, #284, #287, #295 |
 | 2026-07-05 | [Browser Extension — Capture, Assisted Autofill, and Deferred Guarded Submission](implemented/2026-07-05-browser-extension-plan.md) | Implemented through deterministic capture/autofill — #265 (plan), #277, #281, #282; P2b free-text drafts and P3 guarded submission remain deferred |
