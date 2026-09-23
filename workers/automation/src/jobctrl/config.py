@@ -963,10 +963,16 @@ def _load_profile_target_search() -> dict[str, list[str]]:
         if row is None:
             return _empty_target_search()
         roles = _split_target_text(row["experience_target_role"])
-        locations = _split_target_rows(row["experience_target_locations"])
-        work_models = _split_target_rows(row["experience_target_work_models"])
-        if work_models and not locations:
-            locations = [""] * len(work_models)
+        raw_locations = _split_target_rows(row["experience_target_locations"])
+        raw_work_models = _split_target_rows(row["experience_target_work_models"])
+        rows: list[tuple[str, str]] = []
+        for index in range(max(len(raw_locations), len(raw_work_models))):
+            location = raw_locations[index] if index < len(raw_locations) else ""
+            work_model = raw_work_models[index] if index < len(raw_work_models) else ""
+            if location or work_model:
+                rows.append((location, work_model))
+        locations = [location for location, _ in rows]
+        work_models = [work_model for _, work_model in rows]
         return {
             "roles": roles,
             "tracks": _split_target_text(row["experience_target_track"]),

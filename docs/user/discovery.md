@@ -390,7 +390,8 @@ you edit a proposal.
 Discovery keeps those saved rows aligned while compiling the next plan. A
 location-empty Remote row supplies remote search without assigning that model
 to the next city. A location-empty Hybrid or On-site row supplies no inferred
-city; a location-only row remains local.
+city; a location-only row remains local. Rows with both fields empty are ignored,
+so an empty draft row cannot displace the existing home-location fallback.
 
 Current managed model providers cannot enforce this feature's hard token and
 maximum-cost bounds. JobCtrl therefore makes no provider call for production

@@ -10060,6 +10060,9 @@ describe("local TypeScript API", () => {
     "proposes direct, adjacent and historical rows through real API, RPC and SQLite without a write",
     async () => {
       const profile = profileWithTargetSearch("Synthetic Candidate", "", "Remote");
+      const personal = profile.personal as Record<string, unknown>;
+      personal.city = "Valencia";
+      personal.country = "Spain";
       const preferences = profile.experience as Record<string, unknown>;
       preferences.target_role = "Director of Platform";
       preferences.target_track = "Management";
@@ -10170,6 +10173,22 @@ describe("local TypeScript API", () => {
         payload: { profile: accepted, expectedProfileVersion: version },
       });
       expect(stale.statusCode, stale.body).toBe(409);
+      const emptyRows = structuredClone(accepted);
+      const emptyPreferences = emptyRows.experience as Record<string, unknown>;
+      emptyPreferences.target_locations = "; ";
+      emptyPreferences.target_work_models = "; ";
+      const emptySave = await app.inject({
+        method: "PATCH", url: "/v1/profile",
+        payload: { profile: emptyRows, expectedProfileVersion: saved.json().profileVersion },
+      });
+      expect(emptySave.statusCode, emptySave.body).toBe(200);
+      expect(compiledPlan().locations).toEqual([
+        expect.objectContaining({ location: "Valencia, Spain", remote: false }),
+      ]);
+      expect(nextPlan.locations).toEqual([
+        expect.objectContaining({ location: "Remote", remote: true }),
+        expect.objectContaining({ location: "Barcelona", remote: false }),
+      ]);
       await app.close();
     },
   );

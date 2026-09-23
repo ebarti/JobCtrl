@@ -49,7 +49,8 @@ profile place validation applies when the draft is saved.
 The Discovery compiler preserves empty positional counterparts: a model-only
 Remote row does not make a following city remote, and a location-only row keeps
 its local search behavior. It does not invent a city for a model-only Hybrid or
-On-site row.
+On-site row. Rows with neither field set are jointly discarded before the
+home-location fallback and Discovery overlay.
 
 The API binds the RPC request to its trusted app-directory and database
 identity; those values are never accepted from the browser. The worker checks

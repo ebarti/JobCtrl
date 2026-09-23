@@ -347,11 +347,23 @@ def test_saved_target_rows_keep_positions_and_existing_discovery_plan_snapshot(t
     conn.execute(
         "INSERT INTO candidate_profiles VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         ("local", "default", "Director of Platform", "Management", "Director",
-         "; Barcelona", "Remote; Hybrid", "Home City", "Home Country"),
+         "; ", "; ", "Home City", "Home Country"),
     )
     conn.commit()
     monkeypatch.setattr(config, "DB_PATH", db_path)
 
+    empty_rows_plan = config.load_search_config()
+    assert empty_rows_plan["locations"] == [
+        {"label": "home-city-home-country", "location": "Home City, Home Country", "remote": False},
+    ]
+    assert empty_rows_plan["location_accept_local"] == ["Home City, Home Country"]
+
+    conn.execute(
+        """UPDATE candidate_profiles SET experience_target_locations = ?,
+          experience_target_work_models = ? WHERE tenant_id = ? AND profile_id = ?""",
+        ("; ; ; Barcelona; ", "; Remote; ; Hybrid; ", "local", "default"),
+    )
+    conn.commit()
     running_plan = config.load_search_config()
     running_plan_snapshot = json.dumps(running_plan, sort_keys=True)
     assert running_plan["locations"] == [
