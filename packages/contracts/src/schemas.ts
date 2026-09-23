@@ -1915,11 +1915,22 @@ export const TargetRoleSuggestionSchema = z
   .strict();
 export type TargetRoleSuggestion = z.infer<typeof TargetRoleSuggestionSchema>;
 
+export const TargetPreferenceSuggestionSchema = z
+  .object({
+    location: z.string().max(100),
+    workModel: z.enum(["", "Remote", "Hybrid", "On-site"]),
+    evidenceIds: z.array(ProfileEvidenceIdSchema).min(1).max(8),
+  })
+  .strict()
+  .refine((value) => value.location.length > 0 || value.workModel.length > 0);
+export type TargetPreferenceSuggestion = z.infer<typeof TargetPreferenceSuggestionSchema>;
+
 export const TargetRoleSuggestionResultSchema = z
   .object({
     profileVersion: z.number().int().positive(),
     suggestions: z.array(TargetRoleSuggestionSchema).max(5),
-    strategy: z.enum(["model", "recent_title_fallback", "none"]),
+    preferenceSuggestions: z.array(TargetPreferenceSuggestionSchema).max(5).default([]),
+    strategy: z.enum(["model", "deterministic", "recent_title_fallback", "none"]),
     warnings: z.array(z.string().trim().min(1).max(120)).max(8).default([]),
   })
   .strict();
@@ -1930,7 +1941,8 @@ export const TargetRoleSuggestionResponseSchema = z
     ok: z.literal(true),
     profileVersion: z.number().int().positive(),
     suggestions: z.array(TargetRoleSuggestionSchema).max(5),
-    strategy: z.enum(["model", "recent_title_fallback", "none", "model_stub"]),
+    preferenceSuggestions: z.array(TargetPreferenceSuggestionSchema).max(5).default([]),
+    strategy: z.enum(["model", "deterministic", "recent_title_fallback", "none", "model_stub"]),
     warnings: z.array(z.string().trim().min(1).max(120)).max(8).default([]),
   })
   .strict();

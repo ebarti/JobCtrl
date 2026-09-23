@@ -14,6 +14,10 @@ from jobctrl.domain.profile.snapshot import ProfileSnapshot
 MAX_SUGGESTIONS = 5
 MAX_PAYLOAD_CHARS = 12_000
 MAX_OUTPUT_TOKENS = 900
+_ADJACENT_DOMAINS = frozenset({
+    "cloud", "data", "delivery", "infrastructure", "operations", "platform",
+    "product", "reliability", "security", "software",
+})
 _EVIDENCE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$")
 _TITLE_WORD = re.compile(r"[a-z0-9]+")
 _TITLE_STOP_WORDS = {
@@ -43,6 +47,7 @@ class _EvidenceSupport:
     kind: str
     title: str
     tokens: frozenset[str]
+    parent_experience_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -66,11 +71,26 @@ class TargetRoleSuggestion:
 
 
 @dataclass(frozen=True)
+class TargetPreferenceSuggestion:
+    location: str
+    work_model: str
+    evidence_ids: tuple[str, ...]
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "location": self.location,
+            "workModel": self.work_model,
+            "evidenceIds": list(self.evidence_ids),
+        }
+
+
+@dataclass(frozen=True)
 class TargetRoleSuggestionResult:
     profile_version: int
     suggestions: tuple[TargetRoleSuggestion, ...]
     strategy: str
     warnings: tuple[str, ...] = ()
+    preference_suggestions: tuple[TargetPreferenceSuggestion, ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -78,6 +98,7 @@ class TargetRoleSuggestionResult:
             "suggestions": [suggestion.as_dict() for suggestion in self.suggestions],
             "strategy": self.strategy,
             "warnings": list(self.warnings),
+            "preferenceSuggestions": [item.as_dict() for item in self.preference_suggestions],
         }
 
 
@@ -98,26 +119,30 @@ def suggest_target_roles(
     existing_roles = {
         role.casefold() for role in payload["preferences"]["existingTargetRoles"]
     }
+    preference_suggestions = _historical_preference_suggestions(snapshot)
     if not tracks or not seniorities:
         return TargetRoleSuggestionResult(
             profile_version=snapshot.version,
             suggestions=(),
             strategy="none",
             warnings=("authoritative_track_or_seniority_missing",),
+            preference_suggestions=preference_suggestions,
         )
     if not allow_model or llm is None:
-        fallback = _recent_title_fallback(
+        suggestions = _deterministic_suggestions(
             payload,
             evidence_kinds,
+            maximum=maximum,
             tracks=tracks,
             seniorities=seniorities,
             existing_roles=existing_roles,
         )
         return TargetRoleSuggestionResult(
             profile_version=snapshot.version,
-            suggestions=(fallback,) if fallback else (),
-            strategy="recent_title_fallback" if fallback else "none",
+            suggestions=suggestions,
+            strategy="deterministic" if suggestions else "none",
             warnings=(fallback_warning,) if not allow_model else (),
+            preference_suggestions=preference_suggestions,
         )
 
     try:
@@ -157,20 +182,23 @@ def suggest_target_roles(
             profile_version=snapshot.version,
             suggestions=suggestions,
             strategy="model" if suggestions else "none",
+            preference_suggestions=preference_suggestions,
         )
     except Exception:  # noqa: BLE001 - provider failures fail closed to a canonical fallback
-        fallback = _recent_title_fallback(
+        suggestions = _deterministic_suggestions(
             payload,
             evidence_kinds,
+            maximum=maximum,
             tracks=tracks,
             seniorities=seniorities,
             existing_roles=existing_roles,
         )
         return TargetRoleSuggestionResult(
             profile_version=snapshot.version,
-            suggestions=(fallback,) if fallback else (),
-            strategy="recent_title_fallback" if fallback else "none",
+            suggestions=suggestions,
+            strategy="deterministic" if suggestions else "none",
             warnings=("model_unavailable_or_invalid",),
+            preference_suggestions=preference_suggestions,
         )
 
 
@@ -204,6 +232,7 @@ def _build_minimized_payload(
                 kind="experience",
                 title=title,
                 tokens=frozenset(_title_tokens(title)),
+                parent_experience_id=evidence_id,
             )
         for item in _records(entry.get("achievement_evidence")):
             evidence_id = _text(item.get("id"), 160)
@@ -234,6 +263,7 @@ def _build_minimized_payload(
                         )
                     )
                 ),
+                parent_experience_id=f"experience:{entry_id}",
             )
             if len(achievements) >= 20:
                 break
@@ -352,37 +382,133 @@ def _validate_model_response(
     return tuple(suggestions)
 
 
-def _recent_title_fallback(
+def _deterministic_suggestions(
     payload: dict[str, Any],
     evidence_kinds: dict[str, _EvidenceSupport],
     *,
+    maximum: int,
     tracks: tuple[str, ...],
     seniorities: tuple[str, ...],
     existing_roles: set[str],
-) -> TargetRoleSuggestion | None:
+) -> tuple[TargetRoleSuggestion, ...]:
+    suggestions: list[TargetRoleSuggestion] = []
+    seen = set(existing_roles)
     for entry in payload["experience"]:
         title = str(entry["title"])
         evidence_id = str(entry["evidenceId"])
         support = evidence_kinds.get(evidence_id)
-        if title.casefold() in existing_roles or support is None or support.kind != "experience":
+        if support is None or support.kind != "experience":
             continue
-        if not _role_is_supported(
-            title,
-            classification="direct",
-            track=tracks[0],
-            seniority=seniorities[0],
-            evidence=(support,),
-        ):
-            continue
-        return TargetRoleSuggestion(
-            title=title,
-            classification="direct",
-            track=tracks[0],
-            seniority=seniorities[0],
-            evidence_ids=(evidence_id,),
-            rationale="Matches a recent canonical profile title and the saved target preferences.",
+        matched = next(
+            (
+                (track, seniority)
+                for track in tracks
+                for seniority in seniorities
+                if _role_is_supported(
+                    title,
+                    classification="direct",
+                    track=track,
+                    seniority=seniority,
+                    evidence=(support,),
+                )
+            ),
+            None,
         )
-    return None
+        if matched is None:
+            continue
+        track, seniority = matched
+        if title.casefold() not in seen:
+            seen.add(title.casefold())
+            suggestions.append(TargetRoleSuggestion(
+                title=title,
+                classification="direct",
+                track=track,
+                seniority=seniority,
+                evidence_ids=(evidence_id,),
+                rationale="Matches a saved experience title and the saved target preferences.",
+            ))
+        if len(suggestions) >= maximum:
+            break
+        # Only a cited achievement under this exact experience may supply a
+        # new domain modifier. A skill alone cannot imply a career direction.
+        for achievement in payload["achievements"]:
+            achievement_id = str(achievement["evidenceId"])
+            achievement_support = evidence_kinds.get(achievement_id)
+            if (
+                achievement_support is None
+                or achievement_support.kind != "achievement"
+                or achievement_support.parent_experience_id != evidence_id
+            ):
+                continue
+            novel = sorted((achievement_support.tokens & _ADJACENT_DOMAINS) - support.tokens)
+            for modifier in novel:
+                for old in sorted((support.tokens - _TITLE_STOP_WORDS) & _ADJACENT_DOMAINS):
+                    candidate = re.sub(
+                        rf"\b{re.escape(old)}\b", modifier.title(), title,
+                        count=1, flags=re.IGNORECASE,
+                    )
+                    if candidate.casefold() in seen or not _role_is_supported(
+                        candidate,
+                        classification="adjacent",
+                        track=track,
+                        seniority=seniority,
+                        evidence=(support, achievement_support),
+                    ):
+                        continue
+                    seen.add(candidate.casefold())
+                    suggestions.append(TargetRoleSuggestion(
+                        title=candidate,
+                        classification="adjacent",
+                        track=track,
+                        seniority=seniority,
+                        evidence_ids=(evidence_id, achievement_id),
+                        rationale=(
+                            "Combines the saved experience title with a domain "
+                            "named in its achievement evidence."
+                        ),
+                    ))
+                    if len(suggestions) >= maximum:
+                        return tuple(suggestions)
+    return tuple(suggestions)
+
+
+def _historical_preference_suggestions(
+    snapshot: ProfileSnapshot,
+) -> tuple[TargetPreferenceSuggestion, ...]:
+    resume = _record(snapshot.as_dict().get("resume"))
+    result: list[TargetPreferenceSuggestion] = []
+    seen: set[tuple[str, str]] = set()
+    for entry in _records(resume.get("experience_entries"))[:8]:
+        entry_id = _text(entry.get("id"), 100)
+        evidence_id = f"experience:{entry_id}"
+        if not entry_id or not _EVIDENCE_ID.fullmatch(evidence_id):
+            continue
+        raw = _text(entry.get("location"), 120)
+        if not raw or re.search(r"\b(?:not|never|various|multiple|anywhere|worldwide|hq)\b", raw, re.I):
+            continue
+        pieces = [part.strip() for part in raw.split("|")]
+        if len(pieces) > 2:
+            continue
+        marker = pieces[-1].casefold()
+        work_model = {"remote": "Remote", "hybrid": "Hybrid", "on-site": "On-site"}.get(marker, "")
+        location = pieces[0] if len(pieces) == 1 or work_model else ""
+        if len(pieces) == 2 and not work_model:
+            continue
+        if location.casefold() in {"remote", "hybrid", "on-site"}:
+            location = ""
+        # No guesses from prose, mixed model labels, addresses, or employer HQ.
+        if location and (len(location) > 100 or not re.fullmatch(r"[^\W\d_][\w ,.'-]*", location, re.UNICODE)):
+            continue
+        if not location and not work_model:
+            continue
+        key = (location.casefold(), work_model.casefold())
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(TargetPreferenceSuggestion(location, work_model, (evidence_id,)))
+        if len(result) >= MAX_SUGGESTIONS:
+            break
+    return tuple(result)
 
 
 def _role_is_supported(
@@ -406,6 +532,14 @@ def _role_is_supported(
     experience = tuple(item for item in evidence if item.kind == "experience")
     if not experience:
         return False
+    if any(
+        item.kind == "achievement"
+        and item.parent_experience_id not in {
+            entry.parent_experience_id for entry in experience
+        }
+        for item in evidence
+    ):
+        return False
     normalized_title = " ".join(title.casefold().split())
     if classification == "direct":
         return any(" ".join(item.title.casefold().split()) == normalized_title for item in experience)
@@ -416,7 +550,11 @@ def _role_is_supported(
     domain_tokens = title_tokens - _TITLE_STOP_WORDS
     if not domain_tokens:
         return False
-    return bool(domain_tokens & supported_tokens)
+    experience_tokens = set().union(*(item.tokens for item in experience))
+    secondary_tokens = set().union(*(
+        item.tokens for item in evidence if item.kind in {"achievement", "skill"}
+    ))
+    return domain_tokens <= supported_tokens and bool((domain_tokens - experience_tokens) & secondary_tokens)
 
 
 def _title_matches_track(title_tokens: set[str], track: str) -> bool:
@@ -434,7 +572,8 @@ def _title_matches_seniority(title_tokens: set[str], seniority: str) -> bool:
     markers = _SENIORITY_TITLE_MARKERS.get(normalized)
     if markers is None:
         markers = _title_tokens(seniority)
-    return bool(title_tokens & markers)
+    all_markers = set().union(*_SENIORITY_TITLE_MARKERS.values())
+    return bool(title_tokens & markers) and not bool((title_tokens & all_markers) - markers)
 
 
 def _evidence_matches_track(evidence_tokens: set[str], track: str) -> bool:
