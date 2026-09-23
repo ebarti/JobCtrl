@@ -27,18 +27,12 @@ _TITLE_STOP_WORDS = {
 }
 _TRACK_TITLE_MARKERS = {
     "management": {"director", "head", "lead", "leader", "manager", "management", "vp"},
-    "executive": {"chief", "executive", "officer", "president", "vice", "vp"},
+    "executive": {"ceo", "cfo", "chief", "cio", "ciso", "coo", "cto", "executive", "officer", "president", "vice", "vp"},
     "ic": {"architect", "developer", "engineer", "principal", "scientist", "specialist", "staff"},
 }
-_SENIORITY_TITLE_MARKERS = {
-    "manager": {"manager"},
-    "director": {"director", "head"},
-    "vp": {"vice", "vp"},
-    "vice president": {"vice", "vp"},
-    "executive": {"chief", "executive", "officer", "president", "vice", "vp"},
-    "senior": {"senior", "sr"},
-    "staff": {"staff"},
-    "principal": {"principal"},
+_CANONICAL_SENIORITIES = {
+    "junior", "mid", "senior", "staff", "principal", "manager",
+    "senior_manager", "director", "vp", "svp", "c_level",
 }
 
 
@@ -539,15 +533,18 @@ def _role_is_supported(
     title_tokens = _title_tokens(title)
     if not _title_matches_track(title_tokens, track):
         return False
-    if not _title_matches_seniority(title_tokens, seniority):
+    normalized_seniority = _canonical_seniority(seniority)
+    if normalized_seniority is None or _title_seniority(title_tokens) != normalized_seniority:
         return False
     supported_tokens = set().union(*(item.tokens for item in evidence))
     if not _evidence_matches_track(supported_tokens, track):
         return False
-    if not _evidence_matches_seniority(supported_tokens, seniority):
-        return False
     experience = tuple(item for item in evidence if item.kind == "experience")
     if not experience:
+        return False
+    if not any(
+        _title_seniority(item.tokens) == normalized_seniority for item in experience
+    ):
         return False
     if any(
         item.kind == "achievement"
@@ -584,16 +581,43 @@ def _title_matches_track(title_tokens: set[str], track: str) -> bool:
     return bool(title_tokens & markers)
 
 
-def _title_matches_seniority(title_tokens: set[str], seniority: str) -> bool:
-    normalized = " ".join(seniority.casefold().split())
-    markers = _SENIORITY_TITLE_MARKERS.get(normalized)
-    if markers is None:
-        markers = _title_tokens(seniority)
-        matched = markers <= title_tokens
-    else:
-        matched = bool(title_tokens & markers)
-    all_markers = set().union(*_SENIORITY_TITLE_MARKERS.values())
-    return matched and not bool((title_tokens & all_markers) - markers)
+def _canonical_seniority(value: str) -> str | None:
+    normalized = re.sub(r"[\s-]+", "_", value.casefold().strip())
+    aliases = {
+        "vice_president": "vp", "executive": "c_level", "c_suite": "c_level",
+    }
+    canonical = aliases.get(normalized, normalized)
+    return canonical if canonical in _CANONICAL_SENIORITIES else None
+
+
+def _title_seniority(tokens: set[str] | frozenset[str]) -> str | None:
+    executive = bool(tokens & {"ceo", "cfo", "chief", "cio", "ciso", "coo", "cto"})
+    vice = bool(tokens & {"vp", "svp", "evp"}) or {"vice", "president"} <= tokens
+    management = bool(tokens & {"manager", "director", "head"})
+    ic_level = bool(tokens & {"staff", "principal", "architect"})
+    if sum((executive, vice, management, ic_level)) > 1:
+        return None
+    if executive:
+        return "c_level"
+    if vice:
+        return "svp" if tokens & {"svp", "evp"} or "senior" in tokens else "vp"
+    if "director" in tokens:
+        return "director" if "senior" not in tokens else None
+    if "head" in tokens:
+        return "senior_manager" if "senior" not in tokens else None
+    if "manager" in tokens:
+        return "senior_manager" if tokens & {"senior", "sr"} else "manager"
+    if ic_level:
+        if "principal" in tokens or "architect" in tokens:
+            return "principal" if "staff" not in tokens else None
+        return "staff"
+    if tokens & {"senior", "sr"}:
+        return "senior"
+    if tokens & {"junior", "entry", "associate"}:
+        return "junior"
+    if tokens & {"engineer", "developer", "scientist", "specialist", "mid"}:
+        return "mid"
+    return None
 
 
 def _evidence_matches_track(evidence_tokens: set[str], track: str) -> bool:
@@ -602,12 +626,6 @@ def _evidence_matches_track(evidence_tokens: set[str], track: str) -> bool:
         normalized = "ic"
     markers = _TRACK_TITLE_MARKERS.get(normalized, _title_tokens(track))
     return bool(evidence_tokens & markers)
-
-
-def _evidence_matches_seniority(evidence_tokens: set[str], seniority: str) -> bool:
-    normalized = " ".join(seniority.casefold().split())
-    markers = _SENIORITY_TITLE_MARKERS.get(normalized)
-    return bool(evidence_tokens & markers) if markers else _title_tokens(seniority) <= evidence_tokens
 
 
 def _title_tokens(value: str) -> set[str]:

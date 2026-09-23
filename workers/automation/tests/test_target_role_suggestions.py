@@ -278,6 +278,26 @@ def test_deterministic_cap_existing_role_case_and_sparse_evidence():
     assert suggest_target_roles(sparse, llm=None, allow_model=False).suggestions == ()
 
 
+def test_canonical_seniority_options_require_actual_title_level():
+    cases = (
+        ("senior_manager", "Management", "Platform Engineering Manager", []),
+        ("senior_manager", "Management", "Senior Platform Engineering Manager", ["Senior Platform Engineering Manager"]),
+        ("mid", "IC", "Software Engineer", ["Software Engineer"]),
+        ("c_level", "Executive", "Chief Technology Officer", ["Chief Technology Officer"]),
+    )
+    for seniority, track, title, expected in cases:
+        raw = _profile_dict()
+        raw["experience"]["target_role"] = ""
+        raw["experience"]["target_track"] = track
+        raw["experience"]["target_seniority_floor"] = seniority
+        raw["resume"]["experience_entries"][0]["title"] = title
+        raw["resume"]["experience_entries"][0]["achievement_evidence"] = []
+        snapshot = ProfileSnapshot.from_profile(Profile.from_dict(LOCAL_TENANT, raw), version=12)
+        result = suggest_target_roles(snapshot, llm=None, allow_model=False)
+        assert [item.title for item in result.suggestions] == expected
+        assert all(item.seniority == seniority for item in result.suggestions)
+
+
 def test_real_rpc_dispatcher_uses_saved_snapshot_and_rejects_stale_version(monkeypatch, tmp_path):
     import jobctrl.config as config
     import jobctrl.database as database
