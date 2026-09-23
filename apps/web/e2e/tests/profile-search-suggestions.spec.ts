@@ -65,6 +65,9 @@ test("Discovery Target search reviews deterministic evidence and saves only expl
   expect(profileEventCount()).toBe(beforeEvents);
   expect((await (await page.request.get("/v1/profile")).json()).profileVersion).toBe(seedVersion);
   await expect(page.getByText(/Original suggestion: Platform Engineering Manager/)).toBeVisible();
+  await expect(page.getByRole("checkbox", { name: "Select Platform Engineering Manager" })).not.toBeChecked();
+  await expect(page.getByRole("checkbox", { name: "Select Platform Reliability Manager" })).not.toBeChecked();
+  await expect(page.getByRole("button", { name: "Add selected roles" })).toBeDisabled();
   await expect(page.getByRole("checkbox", { name: "Select historical preference 1" })).not.toBeChecked();
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.getByLabel("Proposed location 1")).toBeVisible();
@@ -74,6 +77,7 @@ test("Discovery Target search reviews deterministic evidence and saves only expl
   });
 
   await page.getByLabel("Suggested role 1").fill("Platform Delivery Manager");
+  await page.getByRole("checkbox", { name: "Select Platform Delivery Manager" }).check();
   await expect(page.getByText(/original evidence does not validate your edit/i).first()).toBeVisible();
   await page.getByRole("button", { name: "Reject Platform Reliability Manager" }).click();
   await page.getByRole("button", { name: "Reject Platform Security Manager" }).click();
@@ -97,6 +101,7 @@ test("Discovery Target search reviews deterministic evidence and saves only expl
 
   await page.getByRole("button", { name: "Suggest roles" }).click();
   await expect(page.getByRole("button", { name: "Add selected roles" })).toBeVisible();
+  await page.getByRole("checkbox", { name: "Select Platform Engineering Manager" }).check();
   await page.getByRole("button", { name: "Reject Platform Reliability Manager" }).click();
   await page.getByRole("button", { name: "Reject Platform Security Manager" }).click();
   await page.getByRole("button", { name: "Add selected roles" }).click();
@@ -119,6 +124,7 @@ test("Discovery Target search reviews deterministic evidence and saves only expl
   await page.getByRole("button", { name: "Suggest roles" }).click();
   await page.getByRole("button", { name: "Reject Platform Engineering Manager" }).click();
   await page.getByRole("button", { name: "Reject Platform Security Manager" }).click();
+  await page.getByRole("checkbox", { name: "Select Platform Reliability Manager" }).check();
   await page.getByRole("button", { name: "Add selected roles" }).click();
   await page.getByRole("button", { name: "Save changes" }).click();
   await expect(page.getByText("Discovery settings saved")).toBeVisible();

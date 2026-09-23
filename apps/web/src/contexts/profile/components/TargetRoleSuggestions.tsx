@@ -86,7 +86,7 @@ export function TargetRoleSuggestions({
       });
       setGeneratedVersion(result.profileVersion);
       setSuggestions(result.suggestions.map((suggestion) => ({
-        ...suggestion, originalTitle: suggestion.title, selected: true,
+        ...suggestion, originalTitle: suggestion.title, selected: false,
       })));
       const preferences = result.preferenceSuggestions ?? [];
       setPreferenceSuggestions(preferences.map((suggestion) => ({

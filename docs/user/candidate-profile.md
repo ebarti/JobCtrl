@@ -65,7 +65,7 @@ profile version, even when the browser form has new unsaved edits. Each role
 proposal shows its original direct/adjacent classification, supported track and
 seniority, rationale, and evidence references. Editing a title keeps the
 original evidence clearly separate from your edit. You can edit, reject,
-deselect, or dismiss every proposal. Historical preference rows start unselected:
+deselect, or dismiss every proposal. All role and historical preference rows start unselected:
 past work location or arrangement is not current search consent. Adding selected
 proposals only changes the current form draft; the usual Save/autosave path
 appends and deduplicates accepted titles and preserves location/model row pairs

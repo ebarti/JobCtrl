@@ -68,14 +68,16 @@ the normal `PATCH /v1/profile` path with `expectedProfileVersion`.
 The RPC also carries app-directory and database identity derived from the API's
 trusted runtime context. The worker rejects a mismatch before it reads a
 snapshot. Current managed provider SDKs do not enforce the required output-token
-and maximum-call-cost bounds, so this production route makes no provider call
-and returns only the conservative exact-title fallback or an empty result with
-`provider_token_or_cost_bound_unsupported`. Synthetic adapter tests cover the
-model response validator without claiming a production model run. Their
-fabricated-title coverage is not exhaustive: an unsupported qualifier can
-still pass when another title token overlaps cited evidence. The production
-handler remains safe because model generation is disabled; broader inference
-requires semantic-validator hardening in addition to bounded provider support.
+and maximum-call-cost bounds, so this production route makes no provider call.
+It returns deterministic direct titles from compatible saved experience and a
+small set of adjacent titles only when linked achievement evidence supports
+their full substantive wording; an empty result is valid. Historical location
+and work-model proposals come only from explicit experience location text.
+Every role and historical preference proposal starts unselected. The
+`provider_token_or_cost_bound_unsupported` warning records the provider gate.
+Synthetic adapter tests cover the model response validator without claiming a
+production model run; broader inference still requires bounded provider
+support and semantic validation.
 
 ## Artifacts And Tailoring Audit
 

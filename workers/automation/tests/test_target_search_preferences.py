@@ -326,8 +326,78 @@ def test_load_search_config_reads_profile_target_search_from_db(tmp_path, monkey
         and "source_scope" not in item
         for item in loaded["queries"]
     )
-    assert loaded["locations"] == [{"label": "barcelona-spain", "location": "Barcelona, Spain", "remote": False}]
-    assert loaded["target_region"] == "europe"
+    # An accepted model-only Hybrid row does not imply the profile home location.
+    assert loaded["locations"] == []
+
+
+def test_saved_target_rows_keep_positions_and_existing_discovery_plan_snapshot(tmp_path, monkeypatch) -> None:
+    db_path = tmp_path / "jobctrl.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        """CREATE TABLE candidate_profiles (
+          tenant_id TEXT NOT NULL, profile_id TEXT NOT NULL,
+          experience_target_role TEXT NOT NULL,
+          experience_target_track TEXT NOT NULL,
+          experience_target_seniority_floor TEXT NOT NULL,
+          experience_target_locations TEXT NOT NULL,
+          experience_target_work_models TEXT NOT NULL,
+          personal_city TEXT NOT NULL, personal_country TEXT NOT NULL
+        )"""
+    )
+    conn.execute(
+        "INSERT INTO candidate_profiles VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ("local", "default", "Director of Platform", "Management", "Director",
+         "; Barcelona", "Remote; Hybrid", "Home City", "Home Country"),
+    )
+    conn.commit()
+    monkeypatch.setattr(config, "DB_PATH", db_path)
+
+    running_plan = config.load_search_config()
+    running_plan_snapshot = json.dumps(running_plan, sort_keys=True)
+    assert running_plan["locations"] == [
+        {"label": "remote", "location": "Remote", "remote": True},
+        {"label": "barcelona", "location": "Barcelona", "remote": False},
+    ]
+    assert running_plan["location_accept_local"] == ["Barcelona"]
+    assert title_matches_any_query("Platform Director", running_plan["queries"])
+    assert not title_matches_any_query("Chief Platform Officer", running_plan["queries"])
+    assert sum(item.get("match_mode") == "recall" for item in running_plan["queries"]) <= 14
+
+    conn.execute(
+        """UPDATE candidate_profiles SET experience_target_role = ?,
+          experience_target_track = ?, experience_target_seniority_floor = ?,
+          experience_target_locations = ?, experience_target_work_models = ?
+          WHERE tenant_id = ? AND profile_id = ?""",
+        ("Chief Technology Officer", "Executive", "c_level", "Madrid;; London", "; Remote; On-site", "local", "default"),
+    )
+    conn.commit()
+    conn.close()
+    next_plan = config.load_search_config()
+
+    assert next_plan["locations"] == [
+        {"label": "madrid", "location": "Madrid", "remote": False},
+        {"label": "remote", "location": "Remote", "remote": True},
+        {"label": "london", "location": "London", "remote": False},
+    ]
+    assert next_plan["location_accept_local"] == ["Madrid", "London"]
+    assert next_plan["queries"] != running_plan["queries"]
+    assert json.dumps(running_plan, sort_keys=True) == running_plan_snapshot
+    assert sum(item.get("match_mode") == "recall" for item in next_plan["queries"]) <= 14
+
+
+def test_target_role_compiler_keeps_exact_queries_and_recall_cap() -> None:
+    domains = (
+        "Platform", "Engineering", "Product", "Security", "Data", "Infrastructure",
+        "Reliability", "Cloud", "Software", "Operations", "AI", "Backend",
+        "Technology", "Machine Learning", "DevOps",
+    )
+    exact = [f"Manager of {domain}" for domain in domains]
+
+    queries = build_target_role_queries(exact)
+
+    assert [item["query"] for item in queries[:len(exact)]] == exact
+    assert sum(item.get("match_mode") == "recall" for item in queries) == 14
+    assert len(queries) == len(exact) + 14
 
 
 def test_legacy_config_target_fields_are_ignored_when_profile_target_is_empty(tmp_path, monkeypatch) -> None:

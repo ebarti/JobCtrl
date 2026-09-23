@@ -10059,7 +10059,7 @@ describe("local TypeScript API", () => {
   it.skipIf(!SOURCE_PYTHON_RPC_AVAILABLE)(
     "proposes direct, adjacent and historical rows through real API, RPC and SQLite without a write",
     async () => {
-      const profile = profileWithTargetSearch("Synthetic Candidate", "Barcelona", "Remote");
+      const profile = profileWithTargetSearch("Synthetic Candidate", "", "Remote");
       const preferences = profile.experience as Record<string, unknown>;
       preferences.target_role = "Director of Platform";
       preferences.target_track = "Management";
@@ -10098,6 +10098,28 @@ describe("local TypeScript API", () => {
         } finally { db.close(); }
       };
       const beforeRows = canonicalRows();
+      const compiledPlan = () => {
+        const compiled = spawnSync("uv", [
+          "--project", AUTOMATION_PROJECT_DIR, "run", "--no-sync", "python", "-c",
+          "import json; from jobctrl import config; print(json.dumps(config.load_search_config()))",
+        ], {
+          cwd: tempDir,
+          env: {
+            ...process.env,
+            HOME: tempDir,
+            JOBCTRL_DIR: tempDir,
+            JOBCTRL_CONFIG_PATH: options.configPath,
+            UV_FROZEN: "1",
+          },
+          encoding: "utf8",
+        });
+        expect(compiled.status, compiled.stderr).toBe(0);
+        return JSON.parse(compiled.stdout) as { locations: Array<{ location: string; remote: boolean }>;
+          queries: Array<{ match_mode?: string; query: string }> };
+      };
+      const runningPlan = compiledPlan();
+      const runningPlanSnapshot = structuredClone(runningPlan);
+      expect(runningPlan.locations).toContainEqual(expect.objectContaining({ location: "Remote", remote: true }));
       const beforeEvents = new Database(options.dbPath, { readonly: true });
       const eventCount = (beforeEvents.prepare("SELECT COUNT(*) AS n FROM job_events").get() as { n: number }).n;
       beforeEvents.close();
@@ -10119,6 +10141,7 @@ describe("local TypeScript API", () => {
         ],
       });
       expect(canonicalRows()).toEqual(beforeRows);
+      expect(compiledPlan()).toEqual(runningPlan);
       const afterGeneration = new Database(options.dbPath, { readonly: true });
       expect((afterGeneration.prepare("SELECT COUNT(*) AS n FROM job_events").get() as { n: number }).n).toBe(eventCount);
       afterGeneration.close();
@@ -10126,7 +10149,7 @@ describe("local TypeScript API", () => {
       const accepted = structuredClone(profile);
       const acceptedPreferences = accepted.experience as Record<string, unknown>;
       acceptedPreferences.target_role = "Director of Platform; Platform Engineering Manager; Platform Reliability Manager";
-      acceptedPreferences.target_locations = "Barcelona; London";
+      acceptedPreferences.target_locations = "; Barcelona";
       acceptedPreferences.target_work_models = "Remote; Hybrid";
       const saved = await app.inject({
         method: "PATCH", url: "/v1/profile",
@@ -10135,6 +10158,13 @@ describe("local TypeScript API", () => {
       expect(saved.statusCode, saved.body).toBe(200);
       const reloaded = await app.inject({ method: "GET", url: "/v1/profile" });
       expect(reloaded.json().profile.experience).toMatchObject(acceptedPreferences);
+      const nextPlan = compiledPlan();
+      expect(nextPlan.locations).toEqual([
+        expect.objectContaining({ location: "Remote", remote: true }),
+        expect.objectContaining({ location: "Barcelona", remote: false }),
+      ]);
+      expect(nextPlan.queries.filter((query) => query.match_mode === "recall").length).toBeLessThanOrEqual(14);
+      expect(runningPlan).toEqual(runningPlanSnapshot);
       const stale = await app.inject({
         method: "PATCH", url: "/v1/profile",
         payload: { profile: accepted, expectedProfileVersion: version },

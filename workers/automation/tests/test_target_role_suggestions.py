@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from jobctrl.domain.profile.aggregate import Profile
 from jobctrl.domain.profile.snapshot import ProfileSnapshot
-from jobctrl.domain.profile.target_role_suggestions import suggest_target_roles
+from jobctrl.domain.profile.target_role_suggestions import _title_matches_track, _title_tokens, suggest_target_roles
+from jobctrl.discovery.target_queries import _classify_track
 from jobctrl.domain.rpc.messages import INVALID_PARAMS, JsonRpcRequest
 from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.infrastructure.events.in_process_bus import InProcessEventBus
@@ -264,6 +265,53 @@ def test_historical_preference_proposals_keep_rows_and_exact_work_model_markers(
     assert result.as_dict()["preferenceSuggestions"][1] == {
         "location": "", "workModel": "Remote", "evidenceIds": ["experience:b"],
     }
+
+
+def test_arrangement_aliases_are_not_historical_geographic_locations():
+    raw = _profile_dict()
+    raw["resume"]["experience_entries"] = [
+        {"id": "a", "title": "Platform Engineering Manager", "company": "Fixture", "location": "On site"},
+        {"id": "b", "title": "Platform Engineering Manager", "company": "Fixture", "location": "WFH"},
+        {"id": "c", "title": "Platform Engineering Manager", "company": "Fixture", "location": "London | On-site"},
+    ]
+    snapshot = ProfileSnapshot.from_profile(Profile.from_dict(LOCAL_TENANT, raw), version=9)
+
+    result = suggest_target_roles(snapshot, llm=None, allow_model=False)
+
+    assert [(item.location, item.work_model) for item in result.preference_suggestions] == [
+        ("London", "On-site"),
+    ]
+
+
+def test_executive_title_markers_cannot_be_labeled_management():
+    for title, seniority, classification in (
+        ("VP of Product", "VP", "direct"),
+        ("VP Platform Lead", "VP", "adjacent"),
+        ("Chief Platform Lead", "c_level", "adjacent"),
+    ):
+        assert _classify_track(_title_tokens(title)) == "executive"
+        assert not _title_matches_track(_title_tokens(title), "Management")
+        raw = _profile_dict()
+        raw["experience"]["target_role"] = ""
+        raw["experience"]["target_track"] = "Management"
+        raw["experience"]["target_seniority_floor"] = seniority
+        raw["resume"]["experience_entries"][0]["title"] = (
+            title if classification == "direct" else title.replace("Platform Lead", "Product Manager")
+        )
+        snapshot = ProfileSnapshot.from_profile(Profile.from_dict(LOCAL_TENANT, raw), version=10)
+        evidence = ["experience:role_1"] if classification == "direct" else ["experience:role_1", "ev_incidents"]
+        result = suggest_target_roles(snapshot, llm=_SyntheticLlm({"suggestions": [{
+            "title": title,
+            "classification": classification,
+            "track": "Management",
+            "seniority": seniority,
+            "evidenceIds": evidence,
+            "rationale": "Synthetic claim.",
+        }]}))
+
+        assert result.strategy == "none"
+        assert result.suggestions == ()
+        assert result.warnings == ("model_unavailable_or_invalid",)
 
 
 def test_deterministic_cap_existing_role_case_and_sparse_evidence():

@@ -30,6 +30,9 @@ _TRACK_TITLE_MARKERS = {
     "executive": {"ceo", "cfo", "chief", "cio", "ciso", "coo", "cto", "evp", "executive", "officer", "president", "svp", "vice", "vp"},
     "ic": {"architect", "developer", "engineer", "principal", "scientist", "specialist", "staff"},
 }
+_EXECUTIVE_TITLE_MARKERS = {"chief", "cio", "ciso", "cto", "evp", "svp", "vp", "vice", "president"}
+_MANAGEMENT_TITLE_MARKERS = {"manager", "management", "director", "head"}
+_IC_TITLE_MARKERS = {"architect", "engineer", "engineering", "expert", "fellow", "ic", "lead", "principal", "staff"}
 _CANONICAL_SENIORITIES = {
     "junior", "mid", "senior", "staff", "principal", "manager",
     "senior_manager", "director", "vp", "svp", "c_level",
@@ -503,7 +506,10 @@ def _historical_preference_suggestions(
             continue
         if location.casefold() in {"remote", "hybrid", "on-site"}:
             location = ""
-        if location and re.search(r"\b(?:remote|hybrid|on-site|onsite)\b", location, re.I):
+        if location and re.search(
+            r"\b(?:remote|hybrid|on[\s-]?site|onsite|wfh|work\s+from\s+home|"
+            r"telework|telecommut\w*|distributed)\b", location, re.I,
+        ):
             continue
         if location and re.search(r"\b(?:in|at|from)\b", location, re.I):
             continue
@@ -575,6 +581,14 @@ def _title_matches_track(title_tokens: set[str], track: str) -> bool:
     normalized = " ".join(track.casefold().split())
     if normalized in {"individual contributor", "individual-contributor"}:
         normalized = "ic"
+    # Discovery classifies executive markers before management and IC markers.
+    # An overlap such as "VP Platform Lead" must not become a management role.
+    if title_tokens & _EXECUTIVE_TITLE_MARKERS:
+        return normalized == "executive"
+    if title_tokens & _MANAGEMENT_TITLE_MARKERS:
+        return normalized == "management"
+    if title_tokens & _IC_TITLE_MARKERS:
+        return normalized == "ic"
     markers = _TRACK_TITLE_MARKERS.get(normalized)
     if markers is None:
         markers = _title_tokens(track)

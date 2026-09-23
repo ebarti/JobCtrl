@@ -43,9 +43,13 @@ appended and case-insensitively deduplicated instead of replacing existing
 values. Each `preferenceSuggestions[]` row has `location` (possibly empty),
 `workModel` (`Remote`, `Hybrid`, `On-site`, or empty), and canonical experience
 `evidenceIds`. Location and model remain paired by row position, including an
-empty counterpart. Historical rows are unselected by default; accepting a row
+empty counterpart. All role and historical preference rows are unselected by default; accepting a row
 adds it to the draft without changing existing location/model pairs. Normal
 profile place validation applies when the draft is saved.
+The Discovery compiler preserves empty positional counterparts: a model-only
+Remote row does not make a following city remote, and a location-only row keeps
+its local search behavior. It does not invent a city for a model-only Hybrid or
+On-site row.
 
 The API binds the RPC request to its trusted app-directory and database
 identity; those values are never accepted from the browser. The worker checks

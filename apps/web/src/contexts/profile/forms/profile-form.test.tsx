@@ -926,6 +926,7 @@ describe("<ProfileForm>", () => {
       });
       await Promise.resolve();
     });
+    await user.click(await screen.findByRole("checkbox", { name: "Select Head of Platform" }));
     await user.click(await screen.findByRole("button", { name: "Add selected roles" }));
 
     expect(screen.getByLabelText("Target roles 1")).toHaveValue("VP Engineering");
@@ -975,11 +976,15 @@ describe("<ProfileForm>", () => {
 
     await user.click(screen.getByRole("button", { name: "Suggest roles" }));
     expect(await screen.findByText(/Historical preference proposal 1/)).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Select Platform Engineering Manager" })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Select Platform Reliability Manager" })).not.toBeChecked();
+    expect(screen.getByRole("button", { name: "Add selected roles" })).toBeDisabled();
     expect(screen.getByRole("checkbox", { name: "Select historical preference 1" })).not.toBeChecked();
     expect(screen.getByRole("checkbox", { name: "Select historical preference 2" })).not.toBeChecked();
     const edited = screen.getByLabelText("Suggested role 1");
     await user.clear(edited);
     await user.type(edited, "Platform Delivery Manager");
+    await user.click(screen.getByRole("checkbox", { name: "Select Platform Delivery Manager" }));
     expect(screen.getByText(/original evidence does not validate your edit/i)).toBeInTheDocument();
     expect(screen.getByText(/Original suggestion: Platform Engineering Manager/)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Reject Platform Reliability Manager" }));
@@ -1040,6 +1045,7 @@ describe("<ProfileForm>", () => {
     });
 
     await user.click(screen.getByRole("button", { name: "Suggest roles" }));
+    await user.click(await screen.findByRole("checkbox", { name: "Select Head of Platform" }));
     await user.click(await screen.findByRole("button", { name: "Add selected roles" }));
     await user.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(1));
@@ -1106,11 +1112,13 @@ describe("<ProfileForm>", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "Suggest roles" }));
+    await user.click(await screen.findByRole("checkbox", { name: "Select Head of Platform" }));
     await user.click(await screen.findByRole("button", { name: "Add selected roles" }));
     await user.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(1));
 
     await user.click(screen.getByRole("button", { name: "Suggest roles" }));
+    await user.click(await screen.findByRole("checkbox", { name: "Select Director of Infrastructure" }));
     await user.click(await screen.findByRole("button", { name: "Add selected roles" }));
     const savedA = { ...sampleProfileResponse, profileVersion: 4 };
     await act(async () => {
@@ -1130,6 +1138,7 @@ describe("<ProfileForm>", () => {
     expect(screen.getByText(/regenerate suggestions, and review them before saving/i)).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Suggest roles" }));
+    await user.click(await screen.findByRole("checkbox", { name: "Select Director of Infrastructure" }));
     await user.click(await screen.findByRole("button", { name: "Add selected roles" }));
     await user.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(2));
@@ -1168,6 +1177,7 @@ describe("<ProfileForm>", () => {
     });
 
     await user.click(screen.getByRole("button", { name: "Suggest roles" }));
+    await user.click(await screen.findByRole("checkbox", { name: "Select Head of Platform" }));
     await user.click(await screen.findByRole("button", { name: "Add selected roles" }));
     const acceptedRole = screen.getByLabelText("Target roles 1");
     await user.clear(acceptedRole);
@@ -1201,6 +1211,7 @@ describe("<ProfileForm>", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "Suggest roles" }));
+    await user.click(await screen.findByRole("checkbox", { name: "Select Head of Platform" }));
     await user.click(await screen.findByRole("button", { name: "Add selected roles" }));
     const acceptedRole = screen.getByLabelText("Target roles 1");
     await user.clear(acceptedRole);
@@ -1254,6 +1265,7 @@ describe("<ProfileForm>", () => {
 
     await user.type(screen.getByLabelText("Target location 1"), "Madrid");
     await user.click(screen.getByRole("button", { name: "Suggest roles" }));
+    await user.click(await screen.findByRole("checkbox", { name: "Select Head of Platform" }));
     await user.click(await screen.findByRole("button", { name: "Add selected roles" }));
     await user.click(screen.getByRole("button", { name: "Save changes" }));
     expect(await screen.findByText("The saved profile changed. Refresh and try again.")).toBeInTheDocument();
@@ -1276,6 +1288,7 @@ describe("<ProfileForm>", () => {
       expectedProfileVersion: 4,
       maximumSuggestions: 3,
     });
+    await user.click(await screen.findByRole("checkbox", { name: "Select Head of Platform" }));
     await user.click(await screen.findByRole("button", { name: "Add selected roles" }));
     await user.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(2));
@@ -1340,6 +1353,7 @@ describe("<ProfileForm>", () => {
 
     await user.type(screen.getByLabelText("Target location 1"), "Madrid");
     await user.click(screen.getByRole("button", { name: "Suggest roles" }));
+    await user.click(await screen.findByRole("checkbox", { name: "Select Head of Platform" }));
     await user.click(await screen.findByRole("button", { name: "Add selected roles" }));
     expect(screen.getByDisplayValue("VP Engineering")).toBeInTheDocument();
     expect(screen.getByDisplayValue("Head of Platform")).toBeInTheDocument();
@@ -1416,6 +1430,7 @@ describe("<ProfileForm>", () => {
     await user.clear(edited);
     await user.type(edited, "Head of Infrastructure");
     await user.click(screen.getByRole("button", { name: "Reject Platform Director" }));
+    await user.click(screen.getByRole("checkbox", { name: "Select Head of Infrastructure" }));
     await user.click(screen.getByRole("button", { name: "Add selected roles" }));
 
     expect(screen.getByLabelText("Target roles 1")).toHaveValue("Head of Infrastructure");

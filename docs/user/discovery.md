@@ -379,13 +379,18 @@ The **Evidence-backed target search suggestions** card is an optional authoring
 aid. It reads the canonical saved profile version and returns editable role
 titles and historical location/work-model rows with evidence references; it
 does not inspect the unsaved browser draft or change an active Discovery
-execution. Rejecting or dismissing proposals writes nothing. Accepting selected
-titles appends and case-insensitively deduplicates them. Historical preference
-rows start unselected. If you explicitly select them, each location/model pair
+execution. Rejecting or dismissing proposals writes nothing. Every role and
+historical preference proposal starts unselected. Accepting selected titles
+appends and case-insensitively deduplicates them. If you explicitly select a preference, its location/model pair
 is appended to the same Target Search draft without replacing existing rows or
 filling an empty counterpart. The subsequent version-checked save affects only
 future Discovery plans. The card labels the original evidence separately when
 you edit a proposal.
+
+Discovery keeps those saved rows aligned while compiling the next plan. A
+location-empty Remote row supplies remote search without assigning that model
+to the next city. A location-empty Hybrid or On-site row supplies no inferred
+city; a location-only row remains local.
 
 Current managed model providers cannot enforce this feature's hard token and
 maximum-cost bounds. JobCtrl therefore makes no provider call for production
