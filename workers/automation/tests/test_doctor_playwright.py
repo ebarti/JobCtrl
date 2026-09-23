@@ -37,6 +37,7 @@ def isolated_doctor_boundaries(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) 
     monkeypatch.setattr(config, "load_search_config", lambda: {"boards": []})
     monkeypatch.setattr(config, "gmail_mcp_auth_status", lambda: (False, "synthetic auth absent"))
     monkeypatch.setattr(config, "get_tier", lambda: 1)
+    monkeypatch.setattr(_CHECK_TARGET, lambda: (True, "synthetic managed Chromium"))
     monkeypatch.setattr("jobctrl.native_credentials.native_store_label", lambda: "synthetic store")
     monkeypatch.setattr(
         "jobctrl.infrastructure.profile.get_profile_repository",
