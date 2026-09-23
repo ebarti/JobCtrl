@@ -1,10 +1,17 @@
-import { DiscoveryProductControls } from "../../contexts/discovery/components/DiscoveryProductControls.js";
+import {
+  DiscoveryProductControls,
+  type DiscoverySourceTableControls,
+} from "../../contexts/discovery/components/DiscoveryProductControls.js";
 import { DiscoveryRuntimeSettingsPanel } from "../../contexts/discovery/components/DiscoveryRuntimeSettingsPanel.js";
 import { DiscoveryAutomationSettingsPanel } from "../../contexts/discovery/components/DiscoveryAutomationSettingsPanel.js";
 import { TargetSearchSettingsPanel } from "../../contexts/profile/components/TargetSearchSettingsPanel.js";
 import { PageHead } from "../../shared/ui/page-head.js";
 
-export function DiscoveryView() {
+export function DiscoveryView({
+  sourceTable,
+}: {
+  readonly sourceTable?: DiscoverySourceTableControls;
+} = {}) {
   return (
     <>
       <PageHead eyebrow="Pipeline" title="Discovery" />
@@ -33,7 +40,10 @@ export function DiscoveryView() {
           <DiscoveryRuntimeSettingsPanel />
         </div>
         <div className="discovery-task-section" id="discovery-source-controls">
-          <DiscoveryProductControls layout="tabs" />
+          <DiscoveryProductControls
+            layout="tabs"
+            {...(sourceTable ? { sourceTable } : {})}
+          />
         </div>
       </div>
     </>

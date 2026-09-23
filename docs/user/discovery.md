@@ -14,13 +14,14 @@ ceiling, use [Configuration](configuration.md).
 <DiscoveryPipeline />
 
 ::: info One persistence authority
-Every value editable anywhere on `/discovery` is stored in
+Discovery settings and source records editable on `/discovery` are stored in
 `~/.jobctrl/jobctrl.db`. SQLite is the sole persistence authority for target
 search, Automation settings, broad-board controls and limits, role-filter
 execution, source-family parallelism, crawler identity, runtime and schedule,
 the source registry, locator candidates, quarantine, manual capture, and other
-Discovery-page state. `config.json` does not own or provide a fallback for any
-of these fields.
+Discovery domain state. `config.json` does not own or provide a fallback for any
+of these fields. Source-review table filters and sorting live in the URL;
+named table views and presentation preferences live locally in this browser.
 :::
 
 | Surface | SQLite authority | When a saved change applies |
@@ -29,6 +30,22 @@ of these fields.
 | Automation settings | Discovery-owned control rows | Next relevant run or standing-loop poll |
 | Runtime and schedule | `discovery_settings` | Next run or source family; schedule changes require a worker restart |
 | Sources, locator candidates, quarantine, and manual capture | Discovery context tables | Immediately for review state; next use for source execution |
+
+## Saved Source Review Views
+
+In **Source controls → Source registry**, use **Save as view** to name the
+current table setup, then choose it from **View** to return to that review.
+Views include column visibility, order and widths, sorting, column filters,
+and a table density override. **Configure table columns** changes visibility,
+order and density; the column headers also support reordering and resizing.
+Use **Save current view** to update a named view, or select **Default** to reset
+the table to its built-in presentation and active-source filter.
+
+Source views are separate from Jobs views. Both use the same browser-local
+saved-view mechanism; they do not change source records or Discovery settings.
+Applying a view updates the URL filters and sort. Reloading or opening a shared
+URL uses that URL's current filters and sort, with this browser's presentation
+preferences, rather than silently reapplying an older named view's filters.
 
 ## Runtime, Sources, And Schedule
 

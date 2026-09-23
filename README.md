@@ -72,8 +72,11 @@ credentials, resumes, application data, logs, or other personal information.
 
 ## Get Started
 
-JobCtrl `0.2.0` is the current early-access application release. The public
-version began at `0.1.0` after the pre-launch `2.0.x` numbering was withdrawn so
+JobCtrl is publicly released and available to install in early access. See
+[GitHub Releases](https://github.com/ebarti/JobCtrl/releases/latest) for the
+latest published version; the source checkout can contain unreleased changes.
+The public version began at `0.1.0` after the pre-launch `2.0.x` numbering was
+withdrawn so
 the version communicates the product's actual maturity; this did not downgrade
 the product, data, database schema, launcher protocol, or security controls.
 
