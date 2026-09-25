@@ -8,10 +8,14 @@ import pytest
 
 from tests.rpc_contract_probe import FIXTURE, build_server, run_probe
 
+PYTHON_OBSERVATION = FIXTURE.with_name("rpc_boundary_python.json")
+
 
 def test_shared_cases_execute_through_default_server() -> None:
     fixture = json.loads(FIXTURE.read_text())
-    observations = run_probe()["observations"]
+    probe = run_probe()
+    assert probe == json.loads(PYTHON_OBSERVATION.read_text())
+    observations = probe["observations"]
     assert set(observations) == {case["name"] for case in fixture["cases"]}
     for case in fixture["cases"]:
         observed = observations[case["name"]]
@@ -25,6 +29,10 @@ def test_shared_cases_execute_through_default_server() -> None:
             assert "result" not in response, case["name"]
             assert response["error"]["code"] == case["responseCode"], case["name"]
     assert observations["falsy_params"]["normalizedParams"] == {}
+    assert observations["null_params"]["normalizedParams"] == {}
+    assert observations["zero_params"]["normalizedParams"] == {}
+    assert observations["empty_string_params"]["normalizedParams"] == {}
+    assert observations["empty_array_params"]["normalizedParams"] == {}
     assert observations["wrong_version"]["responses"][0]["id"] == 7
     assert observations["boolean_id"]["responses"][0]["id"] is True
 

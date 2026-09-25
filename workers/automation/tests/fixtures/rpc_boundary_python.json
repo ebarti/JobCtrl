@@ -1,0 +1,578 @@
+{
+  "inventory": [
+    {
+      "method": "analyze_job",
+      "mode": "sync"
+    },
+    {
+      "method": "apply",
+      "mode": "workflow"
+    },
+    {
+      "method": "browser_capabilities_list",
+      "mode": "sync"
+    },
+    {
+      "method": "browser_capability_disable",
+      "mode": "sync"
+    },
+    {
+      "method": "browser_capability_enable",
+      "mode": "sync"
+    },
+    {
+      "method": "browser_profile_copy",
+      "mode": "sync"
+    },
+    {
+      "method": "cancel_run",
+      "mode": "sync"
+    },
+    {
+      "method": "generate_interview_prep",
+      "mode": "workflow"
+    },
+    {
+      "method": "generate_outreach_draft",
+      "mode": "sync"
+    },
+    {
+      "method": "gmail_feedback_scan",
+      "mode": "sync"
+    },
+    {
+      "method": "job_url_import",
+      "mode": "workflow"
+    },
+    {
+      "method": "manual_capture_import",
+      "mode": "workflow"
+    },
+    {
+      "method": "profile_import",
+      "mode": "workflow"
+    },
+    {
+      "method": "profile_target_role_suggestions",
+      "mode": "sync"
+    },
+    {
+      "method": "provider_models",
+      "mode": "sync"
+    },
+    {
+      "method": "provider_status",
+      "mode": "sync"
+    },
+    {
+      "method": "provider_verify",
+      "mode": "sync"
+    },
+    {
+      "method": "rederive_learning_recommendations",
+      "mode": "sync"
+    },
+    {
+      "method": "refresh_compensation",
+      "mode": "workflow"
+    },
+    {
+      "method": "render_resume_pdf",
+      "mode": "sync"
+    },
+    {
+      "method": "rescore_job",
+      "mode": "workflow"
+    },
+    {
+      "method": "rescore_jobs_not_on_current_scoring_policy",
+      "mode": "workflow"
+    },
+    {
+      "method": "retailor_current_policy",
+      "mode": "workflow"
+    },
+    {
+      "method": "retailor_job",
+      "mode": "workflow"
+    },
+    {
+      "method": "review_learning_recommendation",
+      "mode": "sync"
+    },
+    {
+      "method": "rollback_tailoring_policy",
+      "mode": "sync"
+    },
+    {
+      "method": "run_contact_research",
+      "mode": "workflow"
+    },
+    {
+      "method": "run_stage",
+      "mode": "workflow"
+    },
+    {
+      "method": "tailor_job",
+      "mode": "workflow"
+    }
+  ],
+  "observations": {
+    "provider_models_success": {
+      "pythonParsed": true,
+      "normalizedParams": {},
+      "responses": [
+        {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "providers": [
+              {
+                "provider": "codex",
+                "configured": false,
+                "ready": false,
+                "source": "live",
+                "models": []
+              },
+              {
+                "provider": "claude",
+                "configured": false,
+                "ready": false,
+                "source": "live",
+                "models": []
+              },
+              {
+                "provider": "google",
+                "configured": false,
+                "ready": false,
+                "source": "live",
+                "models": []
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "provider_models_invalid_params": {
+      "pythonParsed": true,
+      "normalizedParams": {
+        "unexpected": true
+      },
+      "responses": [
+        {
+          "jsonrpc": "2.0",
+          "id": 2,
+          "error": {
+            "code": -32602,
+            "message": "provider_models does not accept parameters"
+          }
+        }
+      ]
+    },
+    "run_stage_success": {
+      "pythonParsed": true,
+      "normalizedParams": {
+        "stage": "discover"
+      },
+      "responses": [
+        {
+          "jsonrpc": "2.0",
+          "id": 3,
+          "result": {
+            "runId": "synthetic-workflow",
+            "workflowId": "synthetic-workflow",
+            "firstExecutionRunId": "synthetic-first-run"
+          }
+        }
+      ]
+    },
+    "run_stage_invalid_stage": {
+      "pythonParsed": true,
+      "normalizedParams": {
+        "stage": "invalid"
+      },
+      "responses": [
+        {
+          "jsonrpc": "2.0",
+          "id": 4,
+          "error": {
+            "code": -32602,
+            "message": "unsupported pipeline stage for workflow: invalid"
+          }
+        }
+      ]
+    },
+    "unknown_method": {
+      "pythonParsed": true,
+      "normalizedParams": {},
+      "responses": [
+        {
+          "jsonrpc": "2.0",
+          "id": 5,
+          "error": {
+            "code": -32601,
+            "message": "Method not found: not_registered"
+          }
+        }
+      ]
+    },
+    "missing_version": {
+      "pythonParsed": true,
+      "normalizedParams": {},
+      "responses": [
+        {
+          "jsonrpc": "2.0",
+          "id": 6,
+          "result": {
+            "providers": [
+              {
+                "provider": "codex",
+                "configured": false,
+                "ready": false,
+                "source": "live",
+                "models": []
+              },
+              {
+                "provider": "claude",
+                "configured": false,
+                "ready": false,
+                "source": "live",
+                "models": []
+              },
+              {
+                "provider": "google",
+                "configured": false,
+                "ready": false,
+                "source": "live",
+                "models": []
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "wrong_version": {
+      "pythonParsed": true,
+      "normalizedParams": {},
+      "responses": [
+        {
+          "jsonrpc": "2.0",
+          "id": 7,
+          "result": {
+            "providers": [
+              {
+                "provider": "codex",
+                "configured": false,
+                "ready": false,
+                "source": "live",
+                "models": []
+              },
+              {
+                "provider": "claude",
+                "configured": false,
+                "ready": false,
+                "source": "live",
+                "models": []
+              },
+              {
+                "provider": "google",
+                "configured": false,
+                "ready": false,
+                "source": "live",
+                "models": []
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "falsy_params": {
+      "pythonParsed": true,
+      "normalizedParams": {},
+      "responses": [
+        {
+          "jsonrpc": "2.0",
+          "id": 8,
+          "result": {
+            "providers": [
+              {
+                "provider": "codex",
+                "configured": false,
+                "ready": false,
+                "source": "live",
+                "models": []
+              },
+              {
+                "provider": "claude",
+                "configured": false,
+                "ready": false,
+                "source": "live",
+                "models": []
+              },
+              {
+                "provider": "google",
+                "configured": false,
+                "ready": false,
+                "source": "live",
+                "models": []
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "null_params": {
+      "pythonParsed": true,
+      "normalizedParams": {},
+      "responses": [
+        {
+          "jsonrpc": "2.0",
+          "id": 11,
+          "result": {
+            "providers": [
+              {
+                "provider": "codex",
+                "configured": false,
+                "ready": false,
+                "source": "live",
+                "models": []
+              },
+              {
+                "provider": "claude",
+                "configured": false,
+                "ready": false,
+                "source": "live",
+                "models": []
+              },
+              {
+                "provider": "google",
+                "configured": false,
+                "ready": false,
+                "source": "live",
+                "models": []
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "zero_params": {
+      "pythonParsed": true,
+      "normalizedParams": {},
+      "responses": [
+        {
+          "jsonrpc": "2.0",
+          "id": 12,
+          "result": {
+            "providers": [
+              {
+                "provider": "codex",
+                "configured": false,
+                "ready": false,
+                "source": "live",
+                "models": []
+              },
+              {
+                "provider": "claude",
+                "configured": false,
+                "ready": false,
+                "source": "live",
+                "models": []
+              },
+              {
+                "provider": "google",
+                "configured": false,
+                "ready": false,
+                "source": "live",
+                "models": []
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "empty_string_params": {
+      "pythonParsed": true,
+      "normalizedParams": {},
+      "responses": [
+        {
+          "jsonrpc": "2.0",
+          "id": 13,
+          "result": {
+            "providers": [
+              {
+                "provider": "codex",
+                "configured": false,
+                "ready": false,
+                "source": "live",
+                "models": []
+              },
+              {
+                "provider": "claude",
+                "configured": false,
+                "ready": false,
+                "source": "live",
+                "models": []
+              },
+              {
+                "provider": "google",
+                "configured": false,
+                "ready": false,
+                "source": "live",
+                "models": []
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "empty_array_params": {
+      "pythonParsed": true,
+      "normalizedParams": {},
+      "responses": [
+        {
+          "jsonrpc": "2.0",
+          "id": 14,
+          "result": {
+            "providers": [
+              {
+                "provider": "codex",
+                "configured": false,
+                "ready": false,
+                "source": "live",
+                "models": []
+              },
+              {
+                "provider": "claude",
+                "configured": false,
+                "ready": false,
+                "source": "live",
+                "models": []
+              },
+              {
+                "provider": "google",
+                "configured": false,
+                "ready": false,
+                "source": "live",
+                "models": []
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "boolean_id": {
+      "pythonParsed": true,
+      "normalizedParams": {},
+      "responses": [
+        {
+          "jsonrpc": "2.0",
+          "id": true,
+          "result": {
+            "providers": [
+              {
+                "provider": "codex",
+                "configured": false,
+                "ready": false,
+                "source": "live",
+                "models": []
+              },
+              {
+                "provider": "claude",
+                "configured": false,
+                "ready": false,
+                "source": "live",
+                "models": []
+              },
+              {
+                "provider": "google",
+                "configured": false,
+                "ready": false,
+                "source": "live",
+                "models": []
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "fractional_id": {
+      "pythonParsed": false,
+      "normalizedParams": null,
+      "responses": [
+        {
+          "jsonrpc": "2.0",
+          "id": 1.5,
+          "error": {
+            "code": -32600,
+            "message": "JSON-RPC id must be a string, number, or null"
+          }
+        }
+      ]
+    },
+    "extra_envelope_key": {
+      "pythonParsed": true,
+      "normalizedParams": {},
+      "responses": [
+        {
+          "jsonrpc": "2.0",
+          "id": 9,
+          "result": {
+            "providers": [
+              {
+                "provider": "codex",
+                "configured": false,
+                "ready": false,
+                "source": "live",
+                "models": []
+              },
+              {
+                "provider": "claude",
+                "configured": false,
+                "ready": false,
+                "source": "live",
+                "models": []
+              },
+              {
+                "provider": "google",
+                "configured": false,
+                "ready": false,
+                "source": "live",
+                "models": []
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "array_params": {
+      "pythonParsed": false,
+      "normalizedParams": null,
+      "responses": [
+        {
+          "jsonrpc": "2.0",
+          "id": 10,
+          "error": {
+            "code": -32600,
+            "message": "JSON-RPC params must be an object"
+          }
+        }
+      ]
+    },
+    "parse_error": {
+      "pythonParsed": false,
+      "normalizedParams": null,
+      "responses": [
+        {
+          "jsonrpc": "2.0",
+          "id": null,
+          "error": {
+            "code": -32700,
+            "message": "Parse error",
+            "data": "Expecting value: line 1 column 1 (char 0)"
+          }
+        }
+      ]
+    }
+  }
+}

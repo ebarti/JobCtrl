@@ -1,7 +1,8 @@
 """Execute shared boundary cases through the registered Python JSON-RPC server.
 
-This is test support, not a second production method registry. The TypeScript
-test compares the live inventory with RpcMethods and validates returned shapes.
+This is test support, not a second production method registry. The Python test
+pins its live observation; the TypeScript test checks that snapshot against
+RpcMethods and validates returned shapes.
 """
 
 from __future__ import annotations

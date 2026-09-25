@@ -1,14 +1,15 @@
-/** Cross-language JSON-RPC guard using the actual Python parser and server. */
-import { spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
-
+/** Cross-language JSON-RPC guard over the live-Python-verified observation snapshot. */
 import { describe, expect, it } from "vitest";
 import boundaryFixture from "../../../workers/automation/tests/fixtures/rpc_boundary.json" with {
+  type: "json",
+};
+import pythonObservation from "../../../workers/automation/tests/fixtures/rpc_boundary_python.json" with {
   type: "json",
 };
 
 import {
   ApplyResultSchema,
+  ENDPOINTS,
   JsonRpcRequestSchema,
   JsonRpcResponseSchema,
   ProviderModelCatalogResultSchema,
@@ -37,48 +38,29 @@ type Probe = {
 };
 
 const fixture = boundaryFixture as unknown as { cases: BoundaryCase[] };
-const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
-const probePath = fileURLToPath(
-  new URL("../../../workers/automation/tests/rpc_contract_probe.py", import.meta.url),
-);
-
-function runPythonProbe(): Probe {
-  const python = process.env.JOBCTRL_RPC_PROBE_PYTHON;
-  const child = spawnSync(
-    python ?? "uv",
-    python
-      ? [probePath]
-      : [
-          "run", "--project", "workers/automation", "--locked", "--all-extras",
-          "--exclude-newer", "false", "python", probePath,
-        ],
-    {
-      cwd: repoRoot,
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        UV_PROJECT_ENVIRONMENT: undefined,
-        VIRTUAL_ENV: undefined,
-        UV_EXCLUDE_NEWER: undefined,
-        UV_EXCLUDE_NEWER_PACKAGE: undefined,
-      },
-    },
-  );
-  if (child.status !== 0) {
-    throw new Error(`Python RPC probe failed (${child.status}): ${child.stderr || child.error}`);
-  }
-  return JSON.parse(child.stdout) as Probe;
-}
+const probe = pythonObservation as Probe;
 
 describe("TypeScript/Python JSON-RPC boundary", () => {
-  const probe = runPythonProbe();
-
   it("matches the live Python registration inventory to RpcMethods", () => {
     const expected = Object.values(RpcMethods).sort();
     const actual = probe.inventory.map(({ method }) => method).sort();
     expect(actual).toEqual(expected);
     expect(probe.inventory.find(({ method }) => method === RpcMethods.ProviderModels)?.mode).toBe("sync");
     expect(probe.inventory.find(({ method }) => method === RpcMethods.RunStage)?.mode).toBe("workflow");
+
+    // The endpoint spec remains the source for route-to-worker dispatch.
+    const endpointReferences = Object.values(ENDPOINTS).flatMap((endpoint) => {
+      const spec = endpoint as {
+        dispatch?: { rpcMethod: string };
+        rpcDependencies?: readonly string[];
+      };
+      return [
+        ...(spec.dispatch ? [spec.dispatch.rpcMethod] : []),
+        ...(spec.rpcDependencies ?? []),
+      ];
+    });
+    expect(endpointReferences.length).toBeGreaterThan(0);
+    expect(actual).toEqual(expect.arrayContaining(endpointReferences));
 
     // An omitted live registration must break the same full-set assertion.
     expect(actual.filter((method) => method !== RpcMethods.RunStage)).not.toEqual(expected);
