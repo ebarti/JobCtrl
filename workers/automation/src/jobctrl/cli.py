@@ -3560,7 +3560,7 @@ def doctor() -> None:
         if npx_bin:
             results.append(("Node.js (npx)", ok_mark, npx_bin))
         else:
-            results.append(("Node.js (npx)", fail_mark, "Install Node.js 18+ from nodejs.org (needed for auto-apply)"))
+            results.append(("Node.js (npx)", fail_mark, "Install Node.js 22.13+ from nodejs.org (needed for auto-apply)"))
 
     # Gmail connector is optional, but apply runs that hit email verification need it
     # to stay browser-independent and finish automatically.
