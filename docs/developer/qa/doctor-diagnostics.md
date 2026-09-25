@@ -5,8 +5,9 @@ description: "Inventory what jobctrl doctor checks, what its statuses mean, and 
 # Doctor Diagnostic Coverage
 
 `jobctrl doctor` is a local setup report. It reads local configuration and
-selected state, checks installed capabilities, and makes two bounded connection
-probes. It exits zero even when it prints `MISSING`; callers must inspect the
+selected state, launches and closes managed Chromium, checks installed
+capabilities, and makes bounded Temporal and Langfuse probes. It exits zero
+even when it prints `MISSING`; callers must inspect the
 rows. The final tier is a separate feature gate, not a count of successful
 rows. This assessment describes the current CLI implementation and the
 controlled [Typer CLI cases](../../../workers/automation/tests/test_doctor_diagnostics.py).
@@ -23,10 +24,10 @@ which integration needs further verification. For user setup, use
 | Provider credential source | `load_env()` reports inherited environment precedence, native-store values loaded for this process, unavailable/unsupported native storage, or no entries. macOS uses Keychain, Windows Credential Manager, and Linux Secret Service; an unsupported platform is environment-only. | A loaded value is not a successful provider request. A worker must restart after a Settings credential change. No secret value is printed. |
 | Candidate profile and screening attestations | Loads the local tenant profile from SQLite. No profile or validation failure is `MISSING`; four typed application attestations are `OK` when present, otherwise `WARN`. | A valid local profile or complete attestations do not prove an employer form will accept them. |
 | Resume | Checks the configured plain-text path, then PDF path. Text is `OK`, PDF-only is `WARN`, and neither is `MISSING`. | No parsing, rendering, tailoring, or factual validation runs. |
-| Core browser | The browser-capability preflight checks the managed Playwright Chromium used for scraping and PDF rendering. Ready is `OK`; otherwise `MISSING`. | No browser is launched and no page or PDF is exercised. |
+| Core browser | The browser-capability preflight launches and closes the managed Playwright Chromium headless shell used for scraping and PDF rendering. Success is `OK`; otherwise `MISSING`. | No page is visited and no PDF is rendered. |
 | Optional auto-apply and authenticated LinkedIn browsers | Reads explicit capability state and adopted executable; LinkedIn also requires a consented JobCtrl-owned profile copy. Reports `OK`, `DISABLED`, `WARN` for missing, or `MISSING` for failed/unavailable. Disabled is the default and does not probe a system Chrome installation. | No browser session, account authentication, site access, profile copy, or form fill is exercised. |
 | Discovery settings and JobStreaming | Loads SQLite-backed search settings (`OK` or `WARN`) and imports the pinned JobStreaming package/version (`OK` or `MISSING`). | No board connection, source policy response, crawl, checkpoint replay, or worker execution is tested. |
-| Core analysis providers | Shared setup probes check enabled legs, Claude/Codex/Google SDK presence and local auth routes; any one ready SDK/auth pair satisfies the core LLM provider row. Individual provider failures are optional rows. | Local SDK/auth detection is not an inference call, provider health check, model availability check, or proof all enabled analysis legs can run. |
+| Core analysis providers | Shared setup probes check enabled legs, Claude/Codex/Google SDK presence and local auth routes; Codex auth can run a bounded `login status` subprocess. Any one ready SDK/auth pair satisfies the core LLM provider row. Individual provider failures are optional rows. | Local SDK/auth detection is not an inference call, provider health check, model availability check, or proof all enabled analysis legs can run. |
 | Claude apply runtime and budget flag | Resolves the configured executable, checks local existence/PATH, and checks whether it advertises `--max-budget-usd`; missing runtime is `MISSING`, absent flag is `WARN`. | No apply agent is run and no budget enforcement is exercised. In bundled mode the apply runtime is invoked bare under the payload/provider policy. |
 | Playwright MCP / Node | Bundled mode checks the payload-owned executable Playwright MCP wrapper. Source mode checks only that `npx` is on PATH. A missing component is `MISSING`. | The bundled wrapper does not depend on system `npx`; neither check starts MCP, verifies Node version, or drives a page. |
 | Gmail connector | Inspects local OAuth client/token JSON and the `gmail.send` scope; missing/invalid state is `WARN`. | No token refresh, Gmail API request, verification lookup, or email send occurs. |

@@ -159,9 +159,10 @@ def test_doctor_reports_synthetic_local_readiness_without_external_execution(
     for name in (
         "candidate profile", "application attestations", "resume.txt",
         "core browser (scraping + PDF)", "auto-apply-browser capability",
-        "authenticated-linkedin-browser capability", "core LLM provider",
+        "authenticated-linkedin-browser capability", "discovery_settings",
+        "JobStreaming", "core LLM provider",
         "Claude apply runtime", "Claude apply budget flag", "Node.js (npx)",
-        "Gmail connector auth", "Temporal", "Langfuse",
+        "Gmail connector auth", "apply approval gate", "Temporal", "Langfuse",
     ):
         assert "OK" in _row(result.output, name), name
     assert "configured" in _row(result.output, "CapSolver API key")
