@@ -153,9 +153,13 @@ command (notably `jobctrl worker` and `jobctrl rpc`) configures
 exporting on startup. The `worker` command calls `shutdown_otel()` on
 exit so the `BatchSpanProcessor` flushes any in-flight spans.
 
-`jobctrl doctor` includes a `Langfuse` row that probes the OTLP endpoint
-with a `HEAD` request — `OK reachable`, `MISSING (set
-LANGFUSE_PUBLIC_KEY/SECRET_KEY/BASE_URL)`, or `unreachable`.
+`jobctrl doctor` includes a `Langfuse` row that probes the OTLP trace path with
+an unauthenticated `HEAD` request. It reports `OK reachable` for 2xx, 401, or
+405; a missing trace route (404), redirect, other error, or transport failure
+reports `unreachable`. Missing settings report `MISSING`, and
+`LANGFUSE_DISABLE=1` reports `disabled` without a request. The HEAD response
+does not verify credentials or span ingestion; see
+[Doctor Diagnostic Coverage](../developer/qa/doctor-diagnostics.md).
 
 ## Public Demo Edge Logs
 

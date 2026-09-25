@@ -743,7 +743,7 @@ different CLI surfaces. Source contributors can use
 | --- | --- |
 | `init` | Create local configuration under `~/.jobctrl/`. |
 | `setup` | Check/sync dependencies, detect vendor auth, and persist enabled employer-analysis legs. |
-| `doctor` | Report feature tiers: database, LLM, Temporal, browser, Gmail, telemetry. |
+| `doctor` | Report local setup tiers and diagnostics for database, LLM, Temporal, browser, Gmail, and telemetry; inspect rows because missing checks still exit zero. |
 | `run [stages]` | Start pipeline workflows (default `all`, which maps to `discover`). |
 | `discover` / `enrich` / `score` / `tailor` / `cover` | Start one stage; `score --rescore` re-scores reset stale scores. |
 | `job <url>` | Tailor and/or apply one job (`--tailor`, `--apply`, `--dry-run`). |
