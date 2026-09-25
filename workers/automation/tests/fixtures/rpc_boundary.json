@@ -1,0 +1,17 @@
+{
+  "cases": [
+    {"name": "provider_models_success", "request": {"jsonrpc": "2.0", "method": "provider_models", "params": {}, "id": 1}, "tsRequest": true, "pythonParsed": true, "responseCode": null, "resultSchema": "providerModels", "tsResponse": true},
+    {"name": "provider_models_invalid_params", "request": {"jsonrpc": "2.0", "method": "provider_models", "params": {"unexpected": true}, "id": 2}, "tsRequest": true, "pythonParsed": true, "responseCode": -32602, "resultSchema": null, "tsResponse": true},
+    {"name": "run_stage_success", "request": {"jsonrpc": "2.0", "method": "run_stage", "params": {"stage": "discover"}, "id": 3}, "tsRequest": true, "pythonParsed": true, "responseCode": null, "resultSchema": "workflowAck", "tsResponse": true},
+    {"name": "run_stage_invalid_stage", "request": {"jsonrpc": "2.0", "method": "run_stage", "params": {"stage": "invalid"}, "id": 4}, "tsRequest": true, "pythonParsed": true, "responseCode": -32602, "resultSchema": null, "tsResponse": true},
+    {"name": "unknown_method", "request": {"jsonrpc": "2.0", "method": "not_registered", "params": {}, "id": 5}, "tsRequest": true, "pythonParsed": true, "responseCode": -32601, "resultSchema": null, "tsResponse": true},
+    {"name": "missing_version", "request": {"method": "provider_models", "params": {}, "id": 6}, "tsRequest": false, "pythonParsed": true, "responseCode": null, "resultSchema": "providerModels", "tsResponse": true},
+    {"name": "wrong_version", "request": {"jsonrpc": "1.0", "method": "provider_models", "params": {}, "id": 7}, "tsRequest": false, "pythonParsed": true, "responseCode": null, "resultSchema": "providerModels", "tsResponse": true},
+    {"name": "falsy_params", "request": {"jsonrpc": "2.0", "method": "provider_models", "params": false, "id": 8}, "tsRequest": false, "pythonParsed": true, "responseCode": null, "resultSchema": "providerModels", "tsResponse": true},
+    {"name": "boolean_id", "request": {"jsonrpc": "2.0", "method": "provider_models", "params": {}, "id": true}, "tsRequest": false, "pythonParsed": true, "responseCode": null, "resultSchema": "providerModels", "tsResponse": false},
+    {"name": "fractional_id", "request": {"jsonrpc": "2.0", "method": "provider_models", "params": {}, "id": 1.5}, "tsRequest": true, "pythonParsed": false, "responseCode": -32600, "resultSchema": null, "tsResponse": true},
+    {"name": "extra_envelope_key", "request": {"jsonrpc": "2.0", "method": "provider_models", "params": {}, "id": 9, "extra": true}, "tsRequest": false, "pythonParsed": true, "responseCode": null, "resultSchema": "providerModels", "tsResponse": true},
+    {"name": "array_params", "request": {"jsonrpc": "2.0", "method": "provider_models", "params": [1], "id": 10}, "tsRequest": false, "pythonParsed": false, "responseCode": -32600, "resultSchema": null, "tsResponse": true},
+    {"name": "parse_error", "raw": "not-json", "tsRequest": false, "pythonParsed": false, "responseCode": -32700, "resultSchema": null, "tsResponse": true}
+  ]
+}
