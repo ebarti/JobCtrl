@@ -201,6 +201,7 @@ const SIDEBAR: DefaultTheme.SidebarItem[] = [
         items: [
           { text: "What To Run", link: "/local-reliability-qa" },
           { text: "Regression Catalog", link: "/developer/qa/regression-catalog" },
+          { text: "Doctor Diagnostic Coverage", link: "/developer/qa/doctor-diagnostics" },
           { text: "Browser Smoke", link: "/developer/qa/browser-smoke" },
           { text: "Frontend QA", link: "/developer/qa/frontend" },
           { text: "First-Run Validation", link: "/developer/first-run-ttfv" },
