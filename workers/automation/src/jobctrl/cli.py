@@ -3650,10 +3650,10 @@ def doctor() -> None:
         else:
             try:
                 resp = httpx.head(f"{lf_url}/api/public/otel/v1/traces", timeout=2.0)
-                # Any non-server-error response means the endpoint is alive.
-                # 405 (Method Not Allowed on HEAD) and 401 (auth required) both
-                # confirm the route exists.
-                if resp.status_code < 500:
+                # HEAD cannot verify ingestion or credentials. A success, 401
+                # (auth required), or 405 (HEAD unsupported) indicates that the
+                # configured route responds; a 404 or redirect does not.
+                if 200 <= resp.status_code < 300 or resp.status_code in (401, 405):
                     results.append(("Langfuse", ok_mark, "reachable"))
                 else:
                     results.append(
