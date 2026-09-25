@@ -160,9 +160,11 @@ jobctrl setup
 jobctrl doctor
 ```
 
-`jobctrl doctor` reports readiness without printing secret values. Employer
-analysis uses whichever configured provider is ready; Claude is no longer a
-mandatory synthesis dependency.
+`jobctrl doctor` reports local setup checks without printing secret values. It
+exits zero even when a row says `MISSING`; check the rows before starting work.
+Its provider and connection checks do not run a job or verify external service
+requests. Employer analysis uses whichever configured provider is ready; Claude
+is no longer a mandatory synthesis dependency.
 
 The web app does not require `jobctrl init`. Run it only if you want starter
 files for terminal-driven workflows:

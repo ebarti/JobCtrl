@@ -108,6 +108,8 @@ has one defining page; other pages summarize it briefly and link to that owner.
   reproducible synthetic production-path benchmark and measured local baseline.
 - [`developer/qa/regression-catalog.md`](developer/qa/regression-catalog.md):
   risk families, invariants, and regression proof.
+- [`developer/qa/doctor-diagnostics.md`](developer/qa/doctor-diagnostics.md):
+  CLI diagnostic coverage, status meaning, platform modes, and verification limits.
 - [`developer/qa/browser-smoke.md`](developer/qa/browser-smoke.md): browser smoke
   assertions.
 - [`developer/qa/frontend.md`](developer/qa/frontend.md): frontend test layers

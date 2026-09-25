@@ -40,6 +40,7 @@ tooling.
 | Backend aggregates, ports, or bounded-context language | [Backend Domain Model](../architecture/domain-model/index.md) |
 | Frontend state, contexts, ports, or realtime invalidation | [Frontend Architecture](../architecture/frontend/index.md) |
 | Documentation structure or wording | [Documentation Standards](documentation-standards.md) |
+| CLI setup diagnostics and their verification limits | [Doctor Diagnostic Coverage](qa/doctor-diagnostics.md) |
 
 ## Requirements, Decisions, And History
 
