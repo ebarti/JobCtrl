@@ -59,15 +59,18 @@ moves below the editor and the resize handle disappears. Evidence Map follows
 the same rule: its entry list, selected evidence, and gaps/reusable-stories
 inspector stack instead of compressing the three-pane desktop workspace.
 
-Target Search can propose a small set of evidence-backed role titles. JobCtrl
-generates them from the saved profile version, even when the browser form has
-new unsaved edits. Each proposal shows its direct/adjacent classification,
-supported track and seniority, rationale, and evidence references. You can edit,
-reject, deselect, or dismiss every proposal. **Add selected roles** only changes
-the current form draft; the usual Save/autosave path appends and deduplicates
-those titles with an expected-version check. A delayed or stale result cannot
-overwrite later profile edits, and manual role entry continues to work without
-the suggestion feature.
+Target Search can propose a small set of evidence-backed role titles and
+historical location/work-model rows. JobCtrl generates them from the saved
+profile version, even when the browser form has new unsaved edits. Each role
+proposal shows its original direct/adjacent classification, supported track and
+seniority, rationale, and evidence references. Editing a title keeps the
+original evidence clearly separate from your edit. You can edit, reject,
+deselect, or dismiss every proposal. All role and historical preference rows start unselected:
+past work location or arrangement is not current search consent. Adding selected
+proposals only changes the current form draft; the usual Save/autosave path
+appends and deduplicates accepted titles and preserves location/model row pairs
+with an expected-version check. A delayed or stale result cannot overwrite later
+profile edits, and manual Target Search entry continues to work.
 
 The Plate toolbars on `/profile` and `/preferences` include **Export PDF**. On
 `/profile`, edits to names, address parts, email, phone, executive profile,

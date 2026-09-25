@@ -74,10 +74,15 @@ rows nor `ProfileUpdated`.
 
 `maximumSuggestions` defaults to `3` and is bounded to `1–5`. A successful
 response has `ok: true`, the same positive `profileVersion`, `strategy`
-(`model`, `recent_title_fallback`, or `none`), bounded warning codes, and up to
-five suggestions. Each suggestion contains a trimmed title, `direct` or
+(`model`, `deterministic`, legacy `recent_title_fallback`, or `none`), bounded
+warning codes, up to five role suggestions, and up to five
+`preferenceSuggestions` rows. Each role suggestion contains a trimmed title, `direct` or
 `adjacent` classification, saved track and seniority values, one to eight
-evidence IDs, and a rationale of at most 240 characters. Invalid provider
+evidence IDs, and a rationale of at most 240 characters. Each historical
+preference row contains `location` (at most 100 characters, possibly empty),
+`workModel` (`Remote`, `Hybrid`, `On-site`, or empty), and one to eight canonical
+experience evidence IDs; at least one of location and model is nonempty. Rows
+preserve their location/model pair and are not search consent. Invalid provider
 output, unknown evidence, unsupported track/seniority, provider failure, and a
 profile version that changes before the response all fail closed. The route is
 read-only and does not emit a profile event. The browser-local product demo
@@ -88,16 +93,16 @@ The API supplies trusted app-directory and database identity to the worker,
 which checks both before reading the saved snapshot. Browser input cannot
 override either value. Current managed Claude, Codex, and Google SDK adapters
 cannot enforce the hard output-token and maximum-call-cost bounds required by
-this route, so production makes no model call and returns only an exact
-recent-title fallback or `none`, with the
-`provider_token_or_cost_bound_unsupported` warning. `strategy: "model"` remains
-reserved in the wire schema and is covered by explicitly synthetic domain
-tests; it is not currently emitted by the production RPC handler. That
-synthetic validator rejects the covered unknown-evidence, track, seniority, and
-title probes, but its title-qualifier vocabulary is not exhaustive (for
-example, an unsupported qualifier can accompany an otherwise evidenced title
-token). Broader model-backed inference remains blocked until that semantic
-validation is hardened as well as the provider token/cost bounds above.
+this route, so production makes no model call. It returns bounded direct
+saved-title and conservative adjacent-title proposals under `deterministic`,
+or `none`, with the `provider_token_or_cost_bound_unsupported` warning.
+Adjacent titles require a cited experience title, independently relevant
+achievement evidence from that experience, complete substantive modifier
+support, and compatible saved track/seniority. Historical preference rows use
+only explicit experience location text and exact unambiguous work-model markers;
+the response never infers relocation or remote-work willingness. `strategy:
+"model"` remains reserved for synthetic domain testing and is not emitted by
+production RPC.
 Profile-data writes also record `ProfileUpdated` in `job_events`. When existing
 tailored resumes are present, the API handles that event by dispatching a
 background `tailor -> cover` pipeline run with `retailor=true`, `dryRun=false`,

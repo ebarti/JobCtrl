@@ -1,7 +1,7 @@
 // Test-only process entry point. Assert ownership before importing/building the
 // API: buildApp normalizes its database immediately, before listen hooks run.
 import { createRequire } from "node:module";
-import { BrowserCapabilityIds } from "@jobctrl/contracts";
+import { BrowserCapabilityIds, RpcMethods } from "@jobctrl/contracts";
 import type { CredentialStore } from "../src/credentials.js";
 import type { JsonRpcDispatcher } from "../src/json-rpc-adapter.js";
 
@@ -15,12 +15,29 @@ const { e2eStubActionDispatcher, e2eStubProfileImporter } =
   await import("../src/e2e-dispatch.js");
 const { e2eProfilePreviewRenderer } = await import("./fixtures/e2e-profile-preview.js");
 const config = resolveApiConfig();
+const realProfileSuggestions = process.env["JOBCTRL_E2E_PROFILE_SUGGESTIONS"] === "1";
+const suggestionRpc = realProfileSuggestions
+  ? new (await import("../src/json-rpc-adapter.js")).SubprocessJsonRpcAdapter({
+    appDir: config.appDir,
+    configPath: config.configPath,
+    pythonRuntime: (await import("../src/python-runtime.js")).createSourcePythonRuntime({
+      environment: {
+        ...process.env,
+        HOME: process.env["JOBCTRL_E2E_SERVICE_HOME"],
+        XDG_CONFIG_HOME: `${process.env["JOBCTRL_E2E_SERVICE_HOME"]}/.config`,
+        UV_FROZEN: "1",
+      },
+    }),
+  })
+  : null;
 const unavailable = async () => {
   throw new Error("Operation is outside the isolated E2E fixture");
 };
 const providerDispatcher: JsonRpcDispatcher = {
-  call: async (method) =>
-    method === "browser_capabilities_list"
+  call: async (method, params) =>
+    method === RpcMethods.ProfileTargetRoleSuggestions && suggestionRpc
+      ? suggestionRpc.call(method, params)
+      : method === "browser_capabilities_list"
       ? {
           jsonrpc: "2.0",
           id: 1,
@@ -44,7 +61,7 @@ const providerDispatcher: JsonRpcDispatcher = {
             message: "Method is outside the isolated E2E fixture",
           },
         },
-  close: async () => {},
+  close: async () => { await suggestionRpc?.close(); },
 };
 const credentialStore: CredentialStore = {
   list: async () => ({
@@ -82,7 +99,9 @@ const app = buildApp({
   },
   artifactOpener: unavailable,
   jobUrlValidator: unavailable,
-  placeValidator: unavailable,
+  placeValidator: realProfileSuggestions
+    ? async (place) => ["Barcelona", "London"].includes(place)
+    : unavailable,
   requireHealthyWorkerForActions: true,
 });
 await assertIsolatedE2eWorkspace();

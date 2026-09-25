@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from jobctrl.domain.profile.aggregate import Profile
 from jobctrl.domain.profile.snapshot import ProfileSnapshot
-from jobctrl.domain.profile.target_role_suggestions import suggest_target_roles
+from jobctrl.domain.profile.target_role_suggestions import _title_matches_track, _title_tokens, suggest_target_roles
+from jobctrl.discovery.target_queries import _classify_track
 from jobctrl.domain.rpc.messages import INVALID_PARAMS, JsonRpcRequest
 from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.infrastructure.events.in_process_bus import InProcessEventBus
@@ -137,8 +138,10 @@ def test_fails_closed_on_unknown_evidence():
 
     result = suggest_target_roles(_snapshot(), llm=llm)
 
-    assert result.strategy == "recent_title_fallback"
-    assert [item.title for item in result.suggestions] == ["Platform Engineering Manager"]
+    assert result.strategy == "deterministic"
+    assert [item.title for item in result.suggestions] == [
+        "Platform Engineering Manager", "Platform Reliability Manager",
+    ]
     assert result.warnings == ("model_unavailable_or_invalid",)
 
 
@@ -168,14 +171,32 @@ def test_fails_complete_model_result_closed_on_unsupported_role_semantics():
             "evidenceIds": ["experience:role_1", "ev_incidents"],
             "rationale": "The title conflicts with the declared seniority.",
         },
+        {
+            "title": "Quantum Platform Manager",
+            "classification": "adjacent",
+            "track": "Management",
+            "seniority": "Manager",
+            "evidenceIds": ["experience:role_1", "ev_incidents"],
+            "rationale": "Quantum is not supported by either cited source.",
+        },
+        {
+            "title": "Staff Platform Manager",
+            "classification": "adjacent",
+            "track": "Management",
+            "seniority": "Manager",
+            "evidenceIds": ["experience:role_1", "ev_incidents"],
+            "rationale": "Conflicting individual contributor level.",
+        },
     ):
         result = suggest_target_roles(
             _snapshot(),
             llm=_SyntheticLlm({"suggestions": [suggestion]}),
         )
 
-        assert result.strategy == "recent_title_fallback"
-        assert [item.title for item in result.suggestions] == ["Platform Engineering Manager"]
+        assert result.strategy == "deterministic"
+        assert [item.title for item in result.suggestions] == [
+            "Platform Engineering Manager", "Platform Reliability Manager",
+        ]
         assert result.warnings == ("model_unavailable_or_invalid",)
 
 
@@ -196,12 +217,14 @@ def test_returns_zero_when_authoritative_track_or_seniority_is_missing():
 def test_provider_failure_uses_only_the_exact_recent_title_fallback():
     result = suggest_target_roles(_snapshot(), llm=_SyntheticLlm(OSError("provider unavailable")))
 
-    assert result.strategy == "recent_title_fallback"
-    assert [item.title for item in result.suggestions] == ["Platform Engineering Manager"]
+    assert result.strategy == "deterministic"
+    assert [item.title for item in result.suggestions] == [
+        "Platform Engineering Manager", "Platform Reliability Manager",
+    ]
     assert result.warnings == ("model_unavailable_or_invalid",)
 
 
-def test_unbounded_production_path_returns_only_exact_canonical_title_fallback():
+def test_unbounded_production_path_is_deterministic_without_provider_call():
     result = suggest_target_roles(
         _snapshot(),
         llm=None,
@@ -209,11 +232,120 @@ def test_unbounded_production_path_returns_only_exact_canonical_title_fallback()
         fallback_warning="provider_token_or_cost_bound_unsupported",
     )
 
-    assert result.strategy == "recent_title_fallback"
-    assert [item.title for item in result.suggestions] == ["Platform Engineering Manager"]
+    assert result.strategy == "deterministic"
+    assert [item.title for item in result.suggestions] == [
+        "Platform Engineering Manager", "Platform Reliability Manager",
+    ]
     assert result.suggestions[0].classification == "direct"
     assert result.suggestions[0].evidence_ids == ("experience:role_1",)
     assert result.warnings == ("provider_token_or_cost_bound_unsupported",)
+    assert result.preference_suggestions[0].location == "Private City"
+    assert result.preference_suggestions[0].work_model == ""
+
+
+def test_historical_preference_proposals_keep_rows_and_exact_work_model_markers():
+    raw = _profile_dict()
+    raw["resume"]["experience_entries"] = [
+        {"id": "a", "title": "Platform Engineering Manager", "company": "Fixture", "location": "Madrid, Spain | Hybrid"},
+        {"id": "b", "title": "Platform Engineering Manager", "company": "Fixture", "location": "Remote"},
+        {"id": "c", "title": "Platform Engineering Manager", "company": "Fixture", "location": "London | On-site"},
+        {"id": "d", "title": "Platform Engineering Manager", "company": "Fixture", "location": "Remote or Hybrid"},
+        {"id": "e", "title": "Platform Engineering Manager", "company": "Fixture", "location": "London or Paris"},
+        {"id": "f", "title": "Platform Engineering Manager", "company": "Fixture", "location": "Company headquarters in Berlin"},
+        {"id": "g", "title": "Platform Engineering Manager", "company": "Fixture", "location": "Berlin | Remote/Hybrid"},
+        {"id": "h", "title": "Platform Engineering Manager", "company": "Fixture", "location": "Madrid, Spain | Hybrid"},
+    ]
+    snapshot = ProfileSnapshot.from_profile(Profile.from_dict(LOCAL_TENANT, raw), version=9)
+    result = suggest_target_roles(snapshot, llm=None, allow_model=False)
+    assert [(item.location, item.work_model, item.evidence_ids) for item in result.preference_suggestions] == [
+        ("Madrid, Spain", "Hybrid", ("experience:a",)),
+        ("", "Remote", ("experience:b",)),
+        ("London", "On-site", ("experience:c",)),
+    ]
+    assert result.as_dict()["preferenceSuggestions"][1] == {
+        "location": "", "workModel": "Remote", "evidenceIds": ["experience:b"],
+    }
+
+
+def test_arrangement_aliases_are_not_historical_geographic_locations():
+    raw = _profile_dict()
+    raw["resume"]["experience_entries"] = [
+        {"id": "a", "title": "Platform Engineering Manager", "company": "Fixture", "location": "On site"},
+        {"id": "b", "title": "Platform Engineering Manager", "company": "Fixture", "location": "WFH"},
+        {"id": "c", "title": "Platform Engineering Manager", "company": "Fixture", "location": "London | On-site"},
+    ]
+    snapshot = ProfileSnapshot.from_profile(Profile.from_dict(LOCAL_TENANT, raw), version=9)
+
+    result = suggest_target_roles(snapshot, llm=None, allow_model=False)
+
+    assert [(item.location, item.work_model) for item in result.preference_suggestions] == [
+        ("London", "On-site"),
+    ]
+
+
+def test_executive_title_markers_cannot_be_labeled_management():
+    for title, seniority, classification in (
+        ("VP of Product", "VP", "direct"),
+        ("VP Platform Lead", "VP", "adjacent"),
+        ("Chief Platform Lead", "c_level", "adjacent"),
+    ):
+        assert _classify_track(_title_tokens(title)) == "executive"
+        assert not _title_matches_track(_title_tokens(title), "Management")
+        raw = _profile_dict()
+        raw["experience"]["target_role"] = ""
+        raw["experience"]["target_track"] = "Management"
+        raw["experience"]["target_seniority_floor"] = seniority
+        raw["resume"]["experience_entries"][0]["title"] = (
+            title if classification == "direct" else title.replace("Platform Lead", "Product Manager")
+        )
+        snapshot = ProfileSnapshot.from_profile(Profile.from_dict(LOCAL_TENANT, raw), version=10)
+        evidence = ["experience:role_1"] if classification == "direct" else ["experience:role_1", "ev_incidents"]
+        result = suggest_target_roles(snapshot, llm=_SyntheticLlm({"suggestions": [{
+            "title": title,
+            "classification": classification,
+            "track": "Management",
+            "seniority": seniority,
+            "evidenceIds": evidence,
+            "rationale": "Synthetic claim.",
+        }]}))
+
+        assert result.strategy == "none"
+        assert result.suggestions == ()
+        assert result.warnings == ("model_unavailable_or_invalid",)
+
+
+def test_deterministic_cap_existing_role_case_and_sparse_evidence():
+    raw = _profile_dict()
+    raw["experience"]["target_role"] = "platform engineering manager"
+    snapshot = ProfileSnapshot.from_profile(Profile.from_dict(LOCAL_TENANT, raw), version=10)
+    result = suggest_target_roles(snapshot, llm=None, allow_model=False, maximum_suggestions=1)
+    assert [item.title for item in result.suggestions] == ["Platform Reliability Manager"]
+
+    raw["resume"]["experience_entries"][0]["achievement_evidence"] = []
+    sparse = ProfileSnapshot.from_profile(Profile.from_dict(LOCAL_TENANT, raw), version=11)
+    assert suggest_target_roles(sparse, llm=None, allow_model=False).suggestions == ()
+
+
+def test_canonical_seniority_options_require_actual_title_level():
+    cases = (
+        ("senior_manager", "Management", "Platform Engineering Manager", []),
+        ("senior_manager", "Management", "Senior Platform Engineering Manager", ["Senior Platform Engineering Manager"]),
+        ("mid", "IC", "Software Engineer", ["Software Engineer"]),
+        ("c_level", "Executive", "Chief Technology Officer", ["Chief Technology Officer"]),
+        ("svp", "Executive", "SVP of Engineering", ["SVP of Engineering"]),
+        ("svp", "Executive", "Executive Vice President of Engineering", ["Executive Vice President of Engineering"]),
+    )
+    for seniority, track, title, expected in cases:
+        raw = _profile_dict()
+        raw["experience"]["target_role"] = ""
+        raw["experience"]["target_track"] = track
+        raw["experience"]["target_seniority_floor"] = seniority
+        raw["resume"]["experience_entries"][0]["title"] = title
+        raw["resume"]["experience_entries"][0]["achievement_evidence"] = []
+        snapshot = ProfileSnapshot.from_profile(Profile.from_dict(LOCAL_TENANT, raw), version=12)
+        result = suggest_target_roles(snapshot, llm=None, allow_model=False)
+        assert [item.title for item in result.suggestions] == expected
+        assert all(item.seniority == seniority for item in result.suggestions)
 
 
 def test_real_rpc_dispatcher_uses_saved_snapshot_and_rejects_stale_version(monkeypatch, tmp_path):
@@ -253,9 +385,9 @@ def test_real_rpc_dispatcher_uses_saved_snapshot_and_rejects_stale_version(monke
     assert response is not None and response.error is None
     assert response.result["profileVersion"] == saved.version
     assert [item["title"] for item in response.result["suggestions"]] == [
-        "Platform Engineering Manager"
+        "Platform Engineering Manager", "Platform Reliability Manager",
     ]
-    assert response.result["strategy"] == "recent_title_fallback"
+    assert response.result["strategy"] == "deterministic"
     assert response.result["warnings"] == ["provider_token_or_cost_bound_unsupported"]
     assert repo.load_snapshot(LOCAL_TENANT).version == saved.version
 

@@ -447,6 +447,13 @@ export class DemoApiClientAdapter implements ApiClientPort {
           rationale: "The saved synthetic profile contains a matching recent platform delivery role.",
         },
       ].slice(0, body.maximumSuggestions),
+      preferenceSuggestions: [
+        {
+          location: "Madrid, Spain",
+          workModel: "Hybrid" as const,
+          evidenceIds: ["experience:experience-platform-delivery"],
+        },
+      ],
       strategy: "model_stub",
       warnings: ["stubbed_model_evidence"],
     };

@@ -758,7 +758,7 @@ def _apply_profile_target_search(search_cfg: dict, target: dict | None = None) -
     locations = target_search.get("locations", [])
     work_models = target_search.get("work_models", [])
 
-    if not roles and not tracks and not seniority and not functions and not locations:
+    if not roles and not tracks and not seniority and not functions and not locations and not work_models:
         return search_cfg
 
     next_cfg = dict(search_cfg)
@@ -775,7 +775,7 @@ def _apply_profile_target_search(search_cfg: dict, target: dict | None = None) -
             next_cfg["workday_max_tier"] = 1
             next_cfg["ats_max_tier"] = 1
 
-    if locations:
+    if locations or work_models:
         target_locations = _build_target_location_config(locations, work_models)
         next_cfg["locations"] = target_locations["locations"]
         next_cfg["location_labels"] = [item["label"] for item in target_locations["locations"]]
@@ -810,11 +810,16 @@ def _build_target_location_config(locations: list[str], work_models: list[str]) 
     first_indeed_country = ""
     europe = False
 
-    for index, raw_location in enumerate(locations):
+    for index in range(max(len(locations), len(work_models))):
+        raw_location = locations[index] if index < len(locations) else ""
         location = str(raw_location or "").strip()
-        if not location:
-            continue
         work_model = work_models[index] if index < len(work_models) else ""
+        if not location:
+            wants_remote, _ = _target_work_model_flags(work_model)
+            if wants_remote:
+                _append_search_location(search_locations, location="Remote", remote=True)
+                accept.append("Remote")
+            continue
         wants_remote, wants_local = _target_work_model_flags(work_model)
         country = _target_location_country(location)
         country_key = _country_key(country)
@@ -958,7 +963,16 @@ def _load_profile_target_search() -> dict[str, list[str]]:
         if row is None:
             return _empty_target_search()
         roles = _split_target_text(row["experience_target_role"])
-        locations = _split_target_text(row["experience_target_locations"])
+        raw_locations = _split_target_rows(row["experience_target_locations"])
+        raw_work_models = _split_target_rows(row["experience_target_work_models"])
+        rows: list[tuple[str, str]] = []
+        for index in range(max(len(raw_locations), len(raw_work_models))):
+            location = raw_locations[index] if index < len(raw_locations) else ""
+            work_model = raw_work_models[index] if index < len(raw_work_models) else ""
+            if location or work_model:
+                rows.append((location, work_model))
+        locations = [location for location, _ in rows]
+        work_models = [work_model for _, work_model in rows]
         return {
             "roles": roles,
             "tracks": _split_target_text(row["experience_target_track"]),
@@ -966,7 +980,7 @@ def _load_profile_target_search() -> dict[str, list[str]]:
             "functions": _split_target_text(row["experience_target_functions"]),
             "specializations": _split_target_text(row["experience_target_specializations"]),
             "locations": locations or _profile_home_location(row),
-            "work_models": _split_target_text(row["experience_target_work_models"]),
+            "work_models": work_models,
         }
     except Exception:
         log.debug("Failed to load profile target-search preferences", exc_info=True)
@@ -999,6 +1013,14 @@ def _split_target_text(value: object) -> list[str]:
         return []
     cleaned = re.sub(r"^\s*Target (?:roles?|locations?):\s*", "", str(value), flags=re.IGNORECASE)
     return [item.strip() for item in re.split(r"[;\n]+", cleaned) if item.strip()]
+
+
+def _split_target_rows(value: object) -> list[str]:
+    """Keep empty positional counterparts in saved location/model rows."""
+    if value is None or not str(value).strip():
+        return []
+    cleaned = re.sub(r"^\s*Target (?:roles?|locations?):\s*", "", str(value), flags=re.IGNORECASE)
+    return [item.strip() for item in re.split(r"[;\n]", cleaned)]
 
 
 def _profile_home_location(row: sqlite3.Row) -> list[str]:

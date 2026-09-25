@@ -14,6 +14,10 @@ from jobctrl.domain.profile.snapshot import ProfileSnapshot
 MAX_SUGGESTIONS = 5
 MAX_PAYLOAD_CHARS = 12_000
 MAX_OUTPUT_TOKENS = 900
+_ADJACENT_DOMAINS = frozenset({
+    "cloud", "data", "delivery", "engineering", "infrastructure", "operations", "platform",
+    "product", "reliability", "security", "software",
+})
 _EVIDENCE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$")
 _TITLE_WORD = re.compile(r"[a-z0-9]+")
 _TITLE_STOP_WORDS = {
@@ -23,18 +27,15 @@ _TITLE_STOP_WORDS = {
 }
 _TRACK_TITLE_MARKERS = {
     "management": {"director", "head", "lead", "leader", "manager", "management", "vp"},
-    "executive": {"chief", "executive", "officer", "president", "vice", "vp"},
+    "executive": {"ceo", "cfo", "chief", "cio", "ciso", "coo", "cto", "evp", "executive", "officer", "president", "svp", "vice", "vp"},
     "ic": {"architect", "developer", "engineer", "principal", "scientist", "specialist", "staff"},
 }
-_SENIORITY_TITLE_MARKERS = {
-    "manager": {"manager"},
-    "director": {"director", "head"},
-    "vp": {"vice", "vp"},
-    "vice president": {"vice", "vp"},
-    "executive": {"chief", "executive", "officer", "president", "vice", "vp"},
-    "senior": {"senior", "sr"},
-    "staff": {"staff"},
-    "principal": {"principal"},
+_EXECUTIVE_TITLE_MARKERS = {"chief", "cio", "ciso", "cto", "evp", "svp", "vp", "vice", "president"}
+_MANAGEMENT_TITLE_MARKERS = {"manager", "management", "director", "head"}
+_IC_TITLE_MARKERS = {"architect", "engineer", "engineering", "expert", "fellow", "ic", "lead", "principal", "staff"}
+_CANONICAL_SENIORITIES = {
+    "junior", "mid", "senior", "staff", "principal", "manager",
+    "senior_manager", "director", "vp", "svp", "c_level",
 }
 
 
@@ -43,6 +44,7 @@ class _EvidenceSupport:
     kind: str
     title: str
     tokens: frozenset[str]
+    parent_experience_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -66,11 +68,26 @@ class TargetRoleSuggestion:
 
 
 @dataclass(frozen=True)
+class TargetPreferenceSuggestion:
+    location: str
+    work_model: str
+    evidence_ids: tuple[str, ...]
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "location": self.location,
+            "workModel": self.work_model,
+            "evidenceIds": list(self.evidence_ids),
+        }
+
+
+@dataclass(frozen=True)
 class TargetRoleSuggestionResult:
     profile_version: int
     suggestions: tuple[TargetRoleSuggestion, ...]
     strategy: str
     warnings: tuple[str, ...] = ()
+    preference_suggestions: tuple[TargetPreferenceSuggestion, ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -78,6 +95,7 @@ class TargetRoleSuggestionResult:
             "suggestions": [suggestion.as_dict() for suggestion in self.suggestions],
             "strategy": self.strategy,
             "warnings": list(self.warnings),
+            "preferenceSuggestions": [item.as_dict() for item in self.preference_suggestions],
         }
 
 
@@ -98,26 +116,30 @@ def suggest_target_roles(
     existing_roles = {
         role.casefold() for role in payload["preferences"]["existingTargetRoles"]
     }
+    preference_suggestions = _historical_preference_suggestions(snapshot)
     if not tracks or not seniorities:
         return TargetRoleSuggestionResult(
             profile_version=snapshot.version,
             suggestions=(),
             strategy="none",
             warnings=("authoritative_track_or_seniority_missing",),
+            preference_suggestions=preference_suggestions,
         )
     if not allow_model or llm is None:
-        fallback = _recent_title_fallback(
+        suggestions = _deterministic_suggestions(
             payload,
             evidence_kinds,
+            maximum=maximum,
             tracks=tracks,
             seniorities=seniorities,
             existing_roles=existing_roles,
         )
         return TargetRoleSuggestionResult(
             profile_version=snapshot.version,
-            suggestions=(fallback,) if fallback else (),
-            strategy="recent_title_fallback" if fallback else "none",
+            suggestions=suggestions,
+            strategy="deterministic" if suggestions else "none",
             warnings=(fallback_warning,) if not allow_model else (),
+            preference_suggestions=preference_suggestions,
         )
 
     try:
@@ -157,20 +179,23 @@ def suggest_target_roles(
             profile_version=snapshot.version,
             suggestions=suggestions,
             strategy="model" if suggestions else "none",
+            preference_suggestions=preference_suggestions,
         )
     except Exception:  # noqa: BLE001 - provider failures fail closed to a canonical fallback
-        fallback = _recent_title_fallback(
+        suggestions = _deterministic_suggestions(
             payload,
             evidence_kinds,
+            maximum=maximum,
             tracks=tracks,
             seniorities=seniorities,
             existing_roles=existing_roles,
         )
         return TargetRoleSuggestionResult(
             profile_version=snapshot.version,
-            suggestions=(fallback,) if fallback else (),
-            strategy="recent_title_fallback" if fallback else "none",
+            suggestions=suggestions,
+            strategy="deterministic" if suggestions else "none",
             warnings=("model_unavailable_or_invalid",),
+            preference_suggestions=preference_suggestions,
         )
 
 
@@ -204,6 +229,7 @@ def _build_minimized_payload(
                 kind="experience",
                 title=title,
                 tokens=frozenset(_title_tokens(title)),
+                parent_experience_id=evidence_id,
             )
         for item in _records(entry.get("achievement_evidence")):
             evidence_id = _text(item.get("id"), 160)
@@ -234,6 +260,7 @@ def _build_minimized_payload(
                         )
                     )
                 ),
+                parent_experience_id=f"experience:{entry_id}",
             )
             if len(achievements) >= 20:
                 break
@@ -334,7 +361,12 @@ def _validate_model_response(
             evidence=cited_evidence,
         ):
             raise ValueError("unsupported role title or evidence")
-        rationale = _required_clean_text(raw.get("rationale"), 240)
+        _required_clean_text(raw.get("rationale"), 240)
+        rationale = (
+            "Matches the cited canonical experience title."
+            if classification == "direct"
+            else "The cited experience and independent evidence support the title wording."
+        )
         normalized_title = title.casefold()
         if normalized_title in seen:
             continue
@@ -352,37 +384,148 @@ def _validate_model_response(
     return tuple(suggestions)
 
 
-def _recent_title_fallback(
+def _deterministic_suggestions(
     payload: dict[str, Any],
     evidence_kinds: dict[str, _EvidenceSupport],
     *,
+    maximum: int,
     tracks: tuple[str, ...],
     seniorities: tuple[str, ...],
     existing_roles: set[str],
-) -> TargetRoleSuggestion | None:
+) -> tuple[TargetRoleSuggestion, ...]:
+    suggestions: list[TargetRoleSuggestion] = []
+    seen = set(existing_roles)
     for entry in payload["experience"]:
         title = str(entry["title"])
         evidence_id = str(entry["evidenceId"])
         support = evidence_kinds.get(evidence_id)
-        if title.casefold() in existing_roles or support is None or support.kind != "experience":
+        if support is None or support.kind != "experience":
             continue
-        if not _role_is_supported(
-            title,
-            classification="direct",
-            track=tracks[0],
-            seniority=seniorities[0],
-            evidence=(support,),
+        matched = next(
+            (
+                (track, seniority)
+                for track in tracks
+                for seniority in seniorities
+                if _role_is_supported(
+                    title,
+                    classification="direct",
+                    track=track,
+                    seniority=seniority,
+                    evidence=(support,),
+                )
+            ),
+            None,
+        )
+        if matched is None:
+            continue
+        track, seniority = matched
+        if title.casefold() not in seen:
+            seen.add(title.casefold())
+            suggestions.append(TargetRoleSuggestion(
+                title=title,
+                classification="direct",
+                track=track,
+                seniority=seniority,
+                evidence_ids=(evidence_id,),
+                rationale="Matches a saved experience title and the saved target preferences.",
+            ))
+        if len(suggestions) >= maximum:
+            break
+        # Only a cited achievement under this exact experience may supply a
+        # new domain modifier. A skill alone cannot imply a career direction.
+        for achievement in payload["achievements"]:
+            achievement_id = str(achievement["evidenceId"])
+            achievement_support = evidence_kinds.get(achievement_id)
+            if (
+                achievement_support is None
+                or achievement_support.kind != "achievement"
+                or achievement_support.parent_experience_id != evidence_id
+            ):
+                continue
+            novel = sorted((achievement_support.tokens & _ADJACENT_DOMAINS) - support.tokens)
+            for modifier in novel:
+                replaceable = [
+                    token for token in _TITLE_WORD.findall(title.casefold())
+                    if token in support.tokens & _ADJACENT_DOMAINS
+                ]
+                for old in replaceable[-1:]:
+                    candidate = re.sub(
+                        rf"\b{re.escape(old)}\b", modifier.title(), title,
+                        count=1, flags=re.IGNORECASE,
+                    )
+                    if candidate.casefold() in seen or not _role_is_supported(
+                        candidate,
+                        classification="adjacent",
+                        track=track,
+                        seniority=seniority,
+                        evidence=(support, achievement_support),
+                    ):
+                        continue
+                    seen.add(candidate.casefold())
+                    suggestions.append(TargetRoleSuggestion(
+                        title=candidate,
+                        classification="adjacent",
+                        track=track,
+                        seniority=seniority,
+                        evidence_ids=(evidence_id, achievement_id),
+                        rationale=(
+                            "Combines the saved experience title with a domain "
+                            "named in its achievement evidence."
+                        ),
+                    ))
+                    if len(suggestions) >= maximum:
+                        return tuple(suggestions)
+    return tuple(suggestions)
+
+
+def _historical_preference_suggestions(
+    snapshot: ProfileSnapshot,
+) -> tuple[TargetPreferenceSuggestion, ...]:
+    resume = _record(snapshot.as_dict().get("resume"))
+    result: list[TargetPreferenceSuggestion] = []
+    seen: set[tuple[str, str]] = set()
+    for entry in _records(resume.get("experience_entries"))[:8]:
+        entry_id = _text(entry.get("id"), 100)
+        evidence_id = f"experience:{entry_id}"
+        if not entry_id or not _EVIDENCE_ID.fullmatch(evidence_id):
+            continue
+        raw = _text(entry.get("location"), 120)
+        if not raw or re.search(
+            r"\b(?:not|never|various|multiple|anywhere|worldwide|or|and|near|around|"
+            r"based|headquarters|hq|office|offices|region|area|relocat\w*|company)\b",
+            raw, re.I,
         ):
             continue
-        return TargetRoleSuggestion(
-            title=title,
-            classification="direct",
-            track=tracks[0],
-            seniority=seniorities[0],
-            evidence_ids=(evidence_id,),
-            rationale="Matches a recent canonical profile title and the saved target preferences.",
-        )
-    return None
+        pieces = [part.strip() for part in raw.split("|")]
+        if len(pieces) > 2:
+            continue
+        marker = pieces[-1].casefold()
+        work_model = {"remote": "Remote", "hybrid": "Hybrid", "on-site": "On-site"}.get(marker, "")
+        location = pieces[0] if len(pieces) == 1 or work_model else ""
+        if len(pieces) == 2 and not work_model:
+            continue
+        if location.casefold() in {"remote", "hybrid", "on-site"}:
+            location = ""
+        if location and re.search(
+            r"\b(?:remote|hybrid|on[\s-]?site|onsite|wfh|work\s+from\s+home|"
+            r"telework|telecommut\w*|distributed)\b", location, re.I,
+        ):
+            continue
+        if location and re.search(r"\b(?:in|at|from)\b", location, re.I):
+            continue
+        # No guesses from prose, mixed model labels, addresses, or employer HQ.
+        if location and (len(location) > 100 or not re.fullmatch(r"[^\W\d_][\w ,.'-]*", location, re.UNICODE)):
+            continue
+        if not location and not work_model:
+            continue
+        key = (location.casefold(), work_model.casefold())
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(TargetPreferenceSuggestion(location, work_model, (evidence_id,)))
+        if len(result) >= MAX_SUGGESTIONS:
+            break
+    return tuple(result)
 
 
 def _role_is_supported(
@@ -396,15 +539,26 @@ def _role_is_supported(
     title_tokens = _title_tokens(title)
     if not _title_matches_track(title_tokens, track):
         return False
-    if not _title_matches_seniority(title_tokens, seniority):
+    normalized_seniority = _canonical_seniority(seniority)
+    if normalized_seniority is None or _title_seniority(title_tokens) != normalized_seniority:
         return False
     supported_tokens = set().union(*(item.tokens for item in evidence))
     if not _evidence_matches_track(supported_tokens, track):
         return False
-    if not _evidence_matches_seniority(supported_tokens, seniority):
-        return False
     experience = tuple(item for item in evidence if item.kind == "experience")
     if not experience:
+        return False
+    if not any(
+        _title_seniority(item.tokens) == normalized_seniority for item in experience
+    ):
+        return False
+    if any(
+        item.kind == "achievement"
+        and item.parent_experience_id not in {
+            entry.parent_experience_id for entry in experience
+        }
+        for item in evidence
+    ):
         return False
     normalized_title = " ".join(title.casefold().split())
     if classification == "direct":
@@ -416,25 +570,68 @@ def _role_is_supported(
     domain_tokens = title_tokens - _TITLE_STOP_WORDS
     if not domain_tokens:
         return False
-    return bool(domain_tokens & supported_tokens)
+    experience_tokens = set().union(*(item.tokens for item in experience))
+    secondary_tokens = set().union(*(
+        item.tokens for item in evidence if item.kind in {"achievement", "skill"}
+    ))
+    return domain_tokens <= supported_tokens and bool((domain_tokens - experience_tokens) & secondary_tokens)
 
 
 def _title_matches_track(title_tokens: set[str], track: str) -> bool:
     normalized = " ".join(track.casefold().split())
     if normalized in {"individual contributor", "individual-contributor"}:
         normalized = "ic"
+    # Discovery classifies executive markers before management and IC markers.
+    # An overlap such as "VP Platform Lead" must not become a management role.
+    if title_tokens & _EXECUTIVE_TITLE_MARKERS:
+        return normalized == "executive"
+    if title_tokens & _MANAGEMENT_TITLE_MARKERS:
+        return normalized == "management"
+    if title_tokens & _IC_TITLE_MARKERS:
+        return normalized == "ic"
     markers = _TRACK_TITLE_MARKERS.get(normalized)
     if markers is None:
         markers = _title_tokens(track)
     return bool(title_tokens & markers)
 
 
-def _title_matches_seniority(title_tokens: set[str], seniority: str) -> bool:
-    normalized = " ".join(seniority.casefold().split())
-    markers = _SENIORITY_TITLE_MARKERS.get(normalized)
-    if markers is None:
-        markers = _title_tokens(seniority)
-    return bool(title_tokens & markers)
+def _canonical_seniority(value: str) -> str | None:
+    normalized = re.sub(r"[\s-]+", "_", value.casefold().strip())
+    aliases = {
+        "vice_president": "vp", "executive": "c_level", "c_suite": "c_level",
+    }
+    canonical = aliases.get(normalized, normalized)
+    return canonical if canonical in _CANONICAL_SENIORITIES else None
+
+
+def _title_seniority(tokens: set[str] | frozenset[str]) -> str | None:
+    executive = bool(tokens & {"ceo", "cfo", "chief", "cio", "ciso", "coo", "cto"})
+    vice = bool(tokens & {"vp", "svp", "evp"}) or {"vice", "president"} <= tokens
+    management = bool(tokens & {"manager", "director", "head"})
+    ic_level = bool(tokens & {"staff", "principal", "architect"})
+    if sum((executive, vice, management, ic_level)) > 1:
+        return None
+    if executive:
+        return "c_level"
+    if vice:
+        return "svp" if tokens & {"svp", "evp", "senior", "executive"} else "vp"
+    if "director" in tokens:
+        return "director" if "senior" not in tokens else None
+    if "head" in tokens:
+        return "senior_manager" if "senior" not in tokens else None
+    if "manager" in tokens:
+        return "senior_manager" if tokens & {"senior", "sr"} else "manager"
+    if ic_level:
+        if "principal" in tokens or "architect" in tokens:
+            return "principal" if "staff" not in tokens else None
+        return "staff"
+    if tokens & {"senior", "sr"}:
+        return "senior"
+    if tokens & {"junior", "entry", "associate"}:
+        return "junior"
+    if tokens & {"engineer", "developer", "scientist", "specialist", "mid"}:
+        return "mid"
+    return None
 
 
 def _evidence_matches_track(evidence_tokens: set[str], track: str) -> bool:
@@ -442,12 +639,6 @@ def _evidence_matches_track(evidence_tokens: set[str], track: str) -> bool:
     if normalized in {"individual contributor", "individual-contributor"}:
         normalized = "ic"
     markers = _TRACK_TITLE_MARKERS.get(normalized, _title_tokens(track))
-    return bool(evidence_tokens & markers)
-
-
-def _evidence_matches_seniority(evidence_tokens: set[str], seniority: str) -> bool:
-    normalized = " ".join(seniority.casefold().split())
-    markers = _SENIORITY_TITLE_MARKERS.get(normalized, _title_tokens(seniority))
     return bool(evidence_tokens & markers)
 
 

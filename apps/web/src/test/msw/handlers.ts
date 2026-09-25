@@ -889,6 +889,9 @@ export const handlers = [
           rationale: "Synthetic saved experience supports an adjacent platform leadership role.",
         },
       ],
+      preferenceSuggestions: [
+        { location: "Madrid, Spain", workModel: "Hybrid", evidenceIds: ["experience:exp-1"] },
+      ],
       strategy: "model_stub",
       warnings: ["stubbed_model_evidence"],
     }),

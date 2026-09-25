@@ -114,6 +114,61 @@ function targetRoles(profile: JsonRecord | null): string[] {
     .filter(Boolean);
 }
 
+type TargetPreferenceRow = { location: string; workModel: string };
+
+function targetPreferenceRows(profile: JsonRecord | null): TargetPreferenceRow[] {
+  const splitRows = (path: string) => {
+    const value = String(getPathValue(profile, path) ?? "");
+    return value ? value.split(";").map((part) => part.trim()) : [];
+  };
+  const locations = splitRows("experience.target_locations");
+  const models = splitRows("experience.target_work_models");
+  return Array.from({ length: Math.max(locations.length, models.length) }, (_, index) => ({
+    location: locations[index] ?? "",
+    workModel: models[index] ?? "",
+  }));
+}
+
+function preferenceRowKey(row: TargetPreferenceRow): string {
+  return `${row.location.trim().toLowerCase()}\u0000${row.workModel.trim().toLowerCase()}`;
+}
+
+function writeTargetPreferenceRows(profile: JsonRecord, rows: readonly TargetPreferenceRow[]): void {
+  setPathValue(profile, "experience.target_locations", rows.map((row) => row.location).join("; "));
+  setPathValue(profile, "experience.target_work_models", rows.map((row) => row.workModel).join("; "));
+}
+
+function appendTargetPreferences(
+  profile: JsonRecord | null,
+  proposals: readonly TargetPreferenceRow[],
+): JsonRecord | null {
+  if (!profile) return profile;
+  const next = structuredClone(profile);
+  const rows = targetPreferenceRows(next);
+  const seen = new Set(rows.map(preferenceRowKey));
+  for (const proposal of proposals) {
+    const row = { location: proposal.location.trim(), workModel: proposal.workModel.trim() };
+    const key = preferenceRowKey(row);
+    if ((row.location || row.workModel) && !seen.has(key)) {
+      rows.push(row);
+      seen.add(key);
+    }
+  }
+  writeTargetPreferenceRows(next, rows);
+  return next;
+}
+
+function omitTargetPreferences(
+  profile: JsonRecord | null,
+  proposals: readonly TargetPreferenceRow[],
+): JsonRecord | null {
+  if (!profile || proposals.length === 0) return profile;
+  const omitted = new Set(proposals.map(preferenceRowKey));
+  const next = structuredClone(profile);
+  writeTargetPreferenceRows(next, targetPreferenceRows(next).filter((row) => !omitted.has(preferenceRowKey(row))));
+  return next;
+}
+
 function omitTargetRoles(profile: JsonRecord | null, titles: readonly string[]): JsonRecord | null {
   if (!profile || titles.length === 0) return profile;
   const omitted = new Set(titles.map((title) => title.trim().toLowerCase()));
@@ -509,6 +564,9 @@ export function ProfileForm({
     profileVersion: number;
     title: string;
   }[]>([]);
+  const suggestionAddedPreferencesRef = useRef<readonly (TargetPreferenceRow & {
+    profileVersion: number;
+  })[]>([]);
   const suggestionReviewRequiredRef = useRef(false);
   const suggestionReviewResolvedVersionRef = useRef<number | undefined>(undefined);
   const plateProfileProjectionRef = useRef<PlateProfileProjectionState | null>(null);
@@ -532,20 +590,26 @@ export function ProfileForm({
   }, [updateProfile.error, updateProfile.reset]);
 
   const reconcileSuggestionProvenance = useCallback((profile: JsonRecord | null) => {
-    const currentRoleKeys = new Set(targetRoles(profile).map((title) => title.toLowerCase()));
-    const remainingRoles = suggestionAddedRolesRef.current.filter(
-      ({ title }) => currentRoleKeys.has(title.toLowerCase()),
-    );
-    suggestionAddedRolesRef.current = remainingRoles;
+    const baseProfile = formBaseValuesRef.current.profile;
+    if (jsonValuesEqual(targetRoles(profile), targetRoles(baseProfile))) {
+      suggestionAddedRolesRef.current = [];
+    }
+    if (jsonValuesEqual(targetPreferenceRows(profile), targetPreferenceRows(baseProfile))) {
+      suggestionAddedPreferencesRef.current = [];
+    }
     if (
-      remainingRoles.length === 0
+      suggestionAddedRolesRef.current.length === 0
+      && suggestionAddedPreferencesRef.current.length === 0
       && !suggestionReviewRequiredRef.current
       && suggestionReviewResolvedVersionRef.current === undefined
     ) {
       expectedProfileVersionRef.current = undefined;
       setSuggestionDerivedDraft(false);
     }
-    return remainingRoles;
+    return {
+      roles: suggestionAddedRolesRef.current,
+      preferences: suggestionAddedPreferencesRef.current,
+    };
   }, []);
 
   const form = useForm({
@@ -556,9 +620,10 @@ export function ProfileForm({
     },
     onSubmit: async ({ value, formApi }) => {
       setStatusMessage("");
-      const submittedSuggestionRoles = reconcileSuggestionProvenance(value.profile);
+      const submittedSuggestions = reconcileSuggestionProvenance(value.profile);
       const requiresSuggestionAuthority =
-        submittedSuggestionRoles.length > 0
+        submittedSuggestions.roles.length > 0
+        || submittedSuggestions.preferences.length > 0
         || suggestionReviewRequiredRef.current
         || suggestionReviewResolvedVersionRef.current !== undefined;
       if (
@@ -594,6 +659,7 @@ export function ProfileForm({
         expectedProfileVersionRef.current = undefined;
         formBaseValuesRef.current = structuredClone(toProfileFormValues(profileResponse));
         suggestionAddedRolesRef.current = [];
+        suggestionAddedPreferencesRef.current = [];
         suggestionReviewRequiredRef.current = false;
         suggestionReviewResolvedVersionRef.current = undefined;
         setFormBaseVersion(profileResponse.profileVersion);
@@ -607,22 +673,37 @@ export function ProfileForm({
         formBaseValuesRef.current = structuredClone(toProfileFormValues(profileResponse));
         reconcileSuggestionProvenance(formApi.state.values.profile);
         const submittedSuggestionKeys = new Set(
-          submittedSuggestionRoles.map(({ title }) => title.toLowerCase()),
+          submittedSuggestions.roles.map(({ title }) => title.toLowerCase()),
         );
         suggestionAddedRolesRef.current = suggestionAddedRolesRef.current.filter(
           ({ title }) => !submittedSuggestionKeys.has(title.toLowerCase()),
+        );
+        const submittedPreferenceKeys = new Set(
+          submittedSuggestions.preferences.map(preferenceRowKey),
+        );
+        suggestionAddedPreferencesRef.current = suggestionAddedPreferencesRef.current.filter(
+          (row) => !submittedPreferenceKeys.has(preferenceRowKey(row)),
         );
         setFormBaseVersion(profileResponse.profileVersion);
         const staleSuggestionRoles = suggestionAddedRolesRef.current.filter(
           ({ profileVersion }) => profileVersion !== profileResponse.profileVersion,
         );
-        if (staleSuggestionRoles.length > 0) {
+        const staleSuggestionPreferences = suggestionAddedPreferencesRef.current.filter(
+          ({ profileVersion }) => profileVersion !== profileResponse.profileVersion,
+        );
+        if (staleSuggestionRoles.length > 0 || staleSuggestionPreferences.length > 0) {
           const currentProfile = formApi.state.values.profile;
-          const cleanedProfile = omitTargetRoles(
-            currentProfile,
-            staleSuggestionRoles.map(({ title }) => title),
+          const currentRoles = new Set(targetRoles(currentProfile).map((title) => title.toLowerCase()));
+          const currentPreferences = new Set(targetPreferenceRows(currentProfile).map(preferenceRowKey));
+          const editedStaleSuggestion =
+            staleSuggestionRoles.some(({ title }) => !currentRoles.has(title.toLowerCase()))
+            || staleSuggestionPreferences.some((row) => !currentPreferences.has(preferenceRowKey(row)));
+          const cleanedProfile = omitTargetPreferences(
+            omitTargetRoles(currentProfile, staleSuggestionRoles.map(({ title }) => title)),
+            staleSuggestionPreferences,
           );
-          suggestionAddedRolesRef.current = [];
+          suggestionAddedRolesRef.current = editedStaleSuggestion ? staleSuggestionRoles : [];
+          suggestionAddedPreferencesRef.current = editedStaleSuggestion ? staleSuggestionPreferences : [];
           suggestionReviewRequiredRef.current = true;
           suggestionReviewResolvedVersionRef.current = undefined;
           expectedProfileVersionRef.current = undefined;
@@ -632,14 +713,18 @@ export function ProfileForm({
           }
           setStatusTone("warning");
           setStatusMessage(
-            "Saved; newer changes pending. Stale suggested roles were removed; regenerate and review them before saving.",
+            editedStaleSuggestion
+              ? "Saved; newer changes pending. An edited stale suggestion must be discarded or restored before rebasing."
+              : "Saved; newer changes pending. Stale suggestions were removed; regenerate and review them before saving.",
           );
           return;
         }
         suggestionReviewRequiredRef.current = false;
         suggestionReviewResolvedVersionRef.current = undefined;
-        if (suggestionAddedRolesRef.current.length > 0) {
-          expectedProfileVersionRef.current = suggestionAddedRolesRef.current[0]?.profileVersion;
+        if (suggestionAddedRolesRef.current.length > 0 || suggestionAddedPreferencesRef.current.length > 0) {
+          expectedProfileVersionRef.current = (
+            suggestionAddedRolesRef.current[0] ?? suggestionAddedPreferencesRef.current[0]
+          )?.profileVersion;
           setSuggestionDerivedDraft(true);
         } else {
           expectedProfileVersionRef.current = undefined;
@@ -693,6 +778,7 @@ export function ProfileForm({
     setFormBaseVersion(initial.profileVersion);
     setSuggestionDerivedDraft(false);
     suggestionAddedRolesRef.current = [];
+    suggestionAddedPreferencesRef.current = [];
     suggestionReviewRequiredRef.current = false;
     suggestionReviewResolvedVersionRef.current = undefined;
     form.reset(initialValues);
@@ -703,12 +789,29 @@ export function ProfileForm({
   const rebaseOntoSavedProfile = useCallback(() => {
     const remoteValues = toProfileFormValues(initial);
     const localValues = structuredClone(form.state.values);
-    const trackedSuggestionRoles = reconcileSuggestionProvenance(localValues.profile);
+    const trackedSuggestions = reconcileSuggestionProvenance(localValues.profile);
+    const localRoles = new Set(targetRoles(localValues.profile).map((title) => title.toLowerCase()));
+    const localPreferences = new Set(targetPreferenceRows(localValues.profile).map(preferenceRowKey));
+    if (
+      trackedSuggestions.roles.some(({ title }) => !localRoles.has(title.toLowerCase()))
+      || trackedSuggestions.preferences.some((row) => !localPreferences.has(preferenceRowKey(row)))
+    ) {
+      setStatusTone("warning");
+      setStatusMessage(
+        "An accepted suggestion was edited in this stale draft. Discard the draft or restore that suggestion before rebasing.",
+      );
+      return;
+    }
     const requiresSuggestionReview =
-      trackedSuggestionRoles.length > 0 || suggestionReviewRequiredRef.current;
-    localValues.profile = omitTargetRoles(
-      localValues.profile,
-      trackedSuggestionRoles.map(({ title }) => title),
+      trackedSuggestions.roles.length > 0
+      || trackedSuggestions.preferences.length > 0
+      || suggestionReviewRequiredRef.current;
+    localValues.profile = omitTargetPreferences(
+      omitTargetRoles(
+        localValues.profile,
+        trackedSuggestions.roles.map(({ title }) => title),
+      ),
+      trackedSuggestions.preferences,
     );
     const rebased = rebaseProfileValue(
       formBaseValuesRef.current,
@@ -727,6 +830,7 @@ export function ProfileForm({
     const rebasedValues = rebased.value as ProfileFormValues;
     formBaseValuesRef.current = structuredClone(remoteValues);
     suggestionAddedRolesRef.current = [];
+    suggestionAddedPreferencesRef.current = [];
     suggestionReviewRequiredRef.current = requiresSuggestionReview;
     suggestionReviewResolvedVersionRef.current = undefined;
     setFormBaseVersion(initial.profileVersion);
@@ -744,7 +848,7 @@ export function ProfileForm({
     setStatusTone("warning");
     setStatusMessage(
       requiresSuggestionReview
-        ? "Draft rebased and stale suggested roles removed. Regenerate and review role suggestions before saving."
+        ? "Draft rebased and stale suggestions removed. Regenerate and review suggestions before saving."
         : "Draft rebased onto the latest saved profile.",
     );
   }, [form, initial, reconcileSuggestionProvenance]);
@@ -753,10 +857,12 @@ export function ProfileForm({
     if (
       !suggestionDerivedDraft
       || suggestionAddedRolesRef.current.length > 0
+      || suggestionAddedPreferencesRef.current.length > 0
       || !suggestionReviewRequiredRef.current
       || expectedProfileVersion !== initial.profileVersion
     ) return;
     suggestionAddedRolesRef.current = [];
+    suggestionAddedPreferencesRef.current = [];
     suggestionReviewRequiredRef.current = false;
     suggestionReviewResolvedVersionRef.current = expectedProfileVersion;
     expectedProfileVersionRef.current = expectedProfileVersion;
@@ -780,6 +886,7 @@ export function ProfileForm({
         const initialValues = toProfileFormValues(initial);
         formBaseValuesRef.current = structuredClone(initialValues);
         suggestionAddedRolesRef.current = [];
+        suggestionAddedPreferencesRef.current = [];
         suggestionReviewRequiredRef.current = false;
         suggestionReviewResolvedVersionRef.current = undefined;
         setFormBaseVersion(initial.profileVersion);
@@ -862,12 +969,20 @@ export function ProfileForm({
                     profileVersion={initial.profileVersion}
                     onRebase={rebaseOntoSavedProfile}
                     onResolveWithoutAcceptance={resolveSuggestionReviewWithoutAcceptance}
-                    onAccept={(titles, expectedProfileVersion) => {
+                    onAccept={(titles, preferences, expectedProfileVersion) => {
                       const rolesBefore = targetRoles(profileField.state.value);
-                      const nextProfile = appendTargetRoles(profileField.state.value, titles);
+                      const preferencesBefore = targetPreferenceRows(profileField.state.value);
+                      const nextProfile = appendTargetPreferences(
+                        appendTargetRoles(profileField.state.value, titles),
+                        preferences,
+                      );
                       const beforeKeys = new Set(rolesBefore.map((title) => title.toLowerCase()));
+                      const beforePreferenceKeys = new Set(preferencesBefore.map(preferenceRowKey));
                       const addedTitles = targetRoles(nextProfile).filter(
                         (title) => !beforeKeys.has(title.toLowerCase()),
+                      );
+                      const addedPreferences = targetPreferenceRows(nextProfile).filter(
+                        (row) => !beforePreferenceKeys.has(preferenceRowKey(row)),
                       );
                       suggestionAddedRolesRef.current = [
                         ...suggestionAddedRolesRef.current,
@@ -877,9 +992,17 @@ export function ProfileForm({
                           ))
                           .map((title) => ({ profileVersion: expectedProfileVersion, title })),
                       ];
+                      suggestionAddedPreferencesRef.current = [
+                        ...suggestionAddedPreferencesRef.current,
+                        ...addedPreferences
+                          .filter((row) => !suggestionAddedPreferencesRef.current.some(
+                            (existing) => preferenceRowKey(existing) === preferenceRowKey(row),
+                          ))
+                          .map((row) => ({ ...row, profileVersion: expectedProfileVersion })),
+                      ];
                       clearTransientStatus();
                       profileField.handleChange(nextProfile);
-                      if (suggestionAddedRolesRef.current.length > 0) {
+                      if (suggestionAddedRolesRef.current.length > 0 || suggestionAddedPreferencesRef.current.length > 0) {
                         suggestionReviewRequiredRef.current = false;
                         suggestionReviewResolvedVersionRef.current = undefined;
                         expectedProfileVersionRef.current = expectedProfileVersion;
