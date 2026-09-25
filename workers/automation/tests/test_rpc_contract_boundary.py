@@ -1,0 +1,64 @@
+"""Shared JSON-RPC fixture against the actual Python parser and registered server."""
+
+from __future__ import annotations
+
+import json
+
+import pytest
+
+from tests.rpc_contract_probe import FIXTURE, build_server, run_probe
+
+PYTHON_OBSERVATION = FIXTURE.with_name("rpc_boundary_python.json")
+
+
+def test_shared_cases_execute_through_default_server() -> None:
+    fixture = json.loads(FIXTURE.read_text())
+    probe = run_probe()
+    assert probe == json.loads(PYTHON_OBSERVATION.read_text())
+    observations = probe["observations"]
+    assert set(observations) == {case["name"] for case in fixture["cases"]}
+    for case in fixture["cases"]:
+        observed = observations[case["name"]]
+        assert observed["pythonParsed"] is case["pythonParsed"], case["name"]
+        assert len(observed["responses"]) == case.get("responseCount", 1), case["name"]
+        if case.get("responseCount") == 0:
+            continue
+        response = observed["responses"][0]
+        assert response["jsonrpc"] == "2.0", case["name"]
+        if case["responseCode"] is None:
+            assert "error" not in response and "result" in response, case["name"]
+        else:
+            assert "result" not in response, case["name"]
+            assert response["error"]["code"] == case["responseCode"], case["name"]
+    assert observations["falsy_params"]["normalizedParams"] == {}
+    assert observations["null_params"]["normalizedParams"] == {}
+    assert observations["zero_params"]["normalizedParams"] == {}
+    assert observations["empty_string_params"]["normalizedParams"] == {}
+    assert observations["empty_array_params"]["normalizedParams"] == {}
+    assert observations["wrong_version"]["responses"][0]["id"] == 7
+    assert observations["boolean_id"]["responses"][0]["id"] is True
+    assert observations["run_stage_source_ids"]["workflowSpec"]["sourceIds"] == ["jobspy:linkedin"]
+    assert observations["run_stage_recovery_reason"]["workflowSpec"]["workflowId"].startswith(
+        "condition-recovery-"
+    )
+    assert observations["run_stage_profile_continuation"]["workflowSpec"]["workflowId"].startswith(
+        "profile-continuation-"
+    )
+    assert observations["run_stage_profile_continuation"]["responses"][0]["result"]["result"] == {
+        "status": "succeeded"
+    }
+
+
+def test_default_registration_inventory_and_guard_mutation() -> None:
+    server = build_server()
+    inventory = {method: spec.mode for method, spec in server._handlers.items()}
+    assert len(inventory) == 29
+    assert inventory["provider_models"] == "sync"
+    assert inventory["run_stage"] == "workflow"
+
+    def assert_inventory(candidate: dict[str, str]) -> None:
+        assert candidate == inventory
+
+    del server._handlers["run_stage"]
+    with pytest.raises(AssertionError):
+        assert_inventory({method: spec.mode for method, spec in server._handlers.items()})

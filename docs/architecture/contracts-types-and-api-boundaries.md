@@ -118,6 +118,53 @@ See [Runtime & Processes](runtime.md) and
 [Operations & Events API](../api/operations-and-events.md) for dispatch and
 health behavior.
 
+The shared boundary fixture in `workers/automation/tests/fixtures/rpc_boundary.json`
+is exercised by the Python parser and registered stdin/stdout server. The
+Python test checks the live output against `rpc_boundary_python.json`; the
+TypeScript test validates that same observation snapshot with the actual Zod
+schemas. Together the tests compare the live default registration set with
+`RpcMethods` and check a synthetic `provider_models` synchronous result and
+`run_stage` workflow start. The TypeScript endpoint spec remains the source
+for route-to-worker method references; these fixtures are test baselines, not
+a second production registry.
+
+The guard currently **characterizes, rather than removes**, these request
+differences:
+
+| Request shape | TypeScript schema | Python parser/server today |
+| --- | --- | --- |
+| Missing or non-`2.0` `jsonrpc` | Rejects | Accepts and responds with `2.0` |
+| `params` as `false`, `null`, zero, empty string, or empty array | Rejects | Replaces with `{}` |
+| Boolean `id` | Rejects | Accepts (Python boolean is an integer) |
+| Fractional numeric `id` | Accepts | Rejects as invalid request |
+| Explicit `id: null` | Accepts | Treats as a notification and emits no response |
+| Extra envelope key | Rejects | Ignores |
+| `run_stage.sourceIds` from a source-filtered Discover command | Method schema rejects | Includes the IDs in the workflow input |
+| `run_stage.reason` from a recovery or profile continuation | Method schema rejects | Derives a stable workflow identity from the reason |
+| `run_stage.awaitResult: true` for a profile continuation | Method schema rejects | Waits for the workflow and adds its result to the acknowledgment |
+
+The suite also proves parameter and parse errors, unknown-method mapping,
+workflow acknowledgment shape, and a negative registration/schema mutation.
+It inventories all 29 handlers but exercises behavior for two. These 27 are
+currently inventory-only and need separate owned synthetic dependencies for
+their per-method parameter and result checks:
+
+| Mode | Deferred methods |
+| --- | --- |
+| Synchronous (15) | `analyze_job`, `browser_capabilities_list`, `browser_capability_disable`, `browser_capability_enable`, `browser_profile_copy`, `cancel_run`, `generate_outreach_draft`, `gmail_feedback_scan`, `profile_target_role_suggestions`, `provider_status`, `provider_verify`, `rederive_learning_recommendations`, `render_resume_pdf`, `review_learning_recommendation`, `rollback_tailoring_policy` |
+| Workflow (12) | `apply`, `generate_interview_prep`, `job_url_import`, `manual_capture_import`, `profile_import`, `refresh_compensation`, `rescore_job`, `rescore_jobs_not_on_current_scoring_policy`, `retailor_current_policy`, `retailor_job`, `run_contact_research`, `tailor_job` |
+
+A follow-up should first add the existing caller-owned `sourceIds`, `reason`,
+and `awaitResult` fields to `RunStageParamsSchema` with bounds and an awaited
+result branch, then make the API validate its constructed params. A separate
+wire-policy decision should resolve version, falsy params, extra keys, and ID
+semantics before aligning `JsonRpcRequest.from_dict` and the TypeScript envelope
+schema with compatibility tests. In particular, decide both fractional and
+explicit-null ID behavior before tightening either side. The default API
+adapter currently generates integer IDs; the explicit-null case is outside
+its normal call path. Until the follow-up, the TypeScript API's constructed
+outbound requests remain the supported caller path.
+
 ### Domain Events Over SSE
 
 Server-Sent Events (SSE) reuse the domain-event vocabulary, but the event union
