@@ -23,9 +23,11 @@ type BoundaryCase = {
   raw?: string;
   tsRequest: boolean;
   pythonParsed: boolean;
+  responseCount?: number;
   responseCode: number | null;
   resultSchema: "providerModels" | "workflowAck" | null;
-  tsResponse: boolean;
+  tsResponse: boolean | null;
+  tsRunStageParams?: boolean;
 };
 type Observation = {
   pythonParsed: boolean;
@@ -74,7 +76,11 @@ describe("TypeScript/Python JSON-RPC boundary", () => {
       : JsonRpcRequestSchema.safeParse(boundaryCase.request).success;
     expect(tsRequest).toBe(boundaryCase.tsRequest);
     expect(observation?.pythonParsed).toBe(boundaryCase.pythonParsed);
-    expect(observation?.responses).toHaveLength(1);
+    expect(observation?.responses).toHaveLength(boundaryCase.responseCount ?? 1);
+    if (boundaryCase.responseCount === 0) {
+      expect(boundaryCase.tsResponse).toBeNull();
+      return;
+    }
     const response = observation?.responses[0];
     expect(JsonRpcResponseSchema.safeParse(response).success).toBe(boundaryCase.tsResponse);
     if (boundaryCase.responseCode === null) {
@@ -86,11 +92,18 @@ describe("TypeScript/Python JSON-RPC boundary", () => {
     } else {
       expect((response?.error as { code: number }).code).toBe(boundaryCase.responseCode);
     }
-    if (boundaryCase.name === "run_stage_success") {
-      expect(RunStageParamsSchema.safeParse(boundaryCase.request?.params).success).toBe(true);
+    if (boundaryCase.tsRunStageParams !== undefined) {
+      expect(RunStageParamsSchema.safeParse(boundaryCase.request?.params).success).toBe(
+        boundaryCase.tsRunStageParams,
+      );
     }
-    if (boundaryCase.name === "run_stage_invalid_stage") {
-      expect(RunStageParamsSchema.safeParse(boundaryCase.request?.params).success).toBe(false);
+    if (["run_stage_source_ids", "run_stage_recovery_reason", "run_stage_profile_continuation"]
+      .includes(boundaryCase.name)) {
+      const knownParams = { ...(boundaryCase.request?.params as Record<string, unknown>) };
+      delete knownParams.sourceIds;
+      delete knownParams.reason;
+      delete knownParams.awaitResult;
+      expect(RunStageParamsSchema.safeParse(knownParams).success).toBe(true);
     }
   });
 

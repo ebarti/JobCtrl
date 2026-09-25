@@ -20,7 +20,9 @@ def test_shared_cases_execute_through_default_server() -> None:
     for case in fixture["cases"]:
         observed = observations[case["name"]]
         assert observed["pythonParsed"] is case["pythonParsed"], case["name"]
-        assert len(observed["responses"]) == 1, case["name"]
+        assert len(observed["responses"]) == case.get("responseCount", 1), case["name"]
+        if case.get("responseCount") == 0:
+            continue
         response = observed["responses"][0]
         assert response["jsonrpc"] == "2.0", case["name"]
         if case["responseCode"] is None:
@@ -35,6 +37,16 @@ def test_shared_cases_execute_through_default_server() -> None:
     assert observations["empty_array_params"]["normalizedParams"] == {}
     assert observations["wrong_version"]["responses"][0]["id"] == 7
     assert observations["boolean_id"]["responses"][0]["id"] is True
+    assert observations["run_stage_source_ids"]["workflowSpec"]["sourceIds"] == ["jobspy:linkedin"]
+    assert observations["run_stage_recovery_reason"]["workflowSpec"]["workflowId"].startswith(
+        "condition-recovery-"
+    )
+    assert observations["run_stage_profile_continuation"]["workflowSpec"]["workflowId"].startswith(
+        "profile-continuation-"
+    )
+    assert observations["run_stage_profile_continuation"]["responses"][0]["result"]["result"] == {
+        "status": "succeeded"
+    }
 
 
 def test_default_registration_inventory_and_guard_mutation() -> None:

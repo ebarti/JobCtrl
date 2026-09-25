@@ -137,7 +137,11 @@ differences:
 | `params` as `false`, `null`, zero, empty string, or empty array | Rejects | Replaces with `{}` |
 | Boolean `id` | Rejects | Accepts (Python boolean is an integer) |
 | Fractional numeric `id` | Accepts | Rejects as invalid request |
+| Explicit `id: null` | Accepts | Treats as a notification and emits no response |
 | Extra envelope key | Rejects | Ignores |
+| `run_stage.sourceIds` from a source-filtered Discover command | Method schema rejects | Includes the IDs in the workflow input |
+| `run_stage.reason` from a recovery or profile continuation | Method schema rejects | Derives a stable workflow identity from the reason |
+| `run_stage.awaitResult: true` for a profile continuation | Method schema rejects | Waits for the workflow and adds its result to the acknowledgment |
 
 The suite also proves parameter and parse errors, unknown-method mapping,
 workflow acknowledgment shape, and a negative registration/schema mutation.
@@ -150,11 +154,16 @@ their per-method parameter and result checks:
 | Synchronous (15) | `analyze_job`, `browser_capabilities_list`, `browser_capability_disable`, `browser_capability_enable`, `browser_profile_copy`, `cancel_run`, `generate_outreach_draft`, `gmail_feedback_scan`, `profile_target_role_suggestions`, `provider_status`, `provider_verify`, `rederive_learning_recommendations`, `render_resume_pdf`, `review_learning_recommendation`, `rollback_tailoring_policy` |
 | Workflow (12) | `apply`, `generate_interview_prep`, `job_url_import`, `manual_capture_import`, `profile_import`, `refresh_compensation`, `rescore_job`, `rescore_jobs_not_on_current_scoring_policy`, `retailor_current_policy`, `retailor_job`, `run_contact_research`, `tailor_job` |
 
-A follow-up should decide the intended wire policy for the listed
-differences, then align `JsonRpcRequest.from_dict` and the TypeScript schemas
-in one change with explicit compatibility tests. The numeric-ID decision must
-cover fractional values before either side is tightened. Until then, the
-TypeScript API's constructed outbound requests remain the supported caller path.
+A follow-up should first add the existing caller-owned `sourceIds`, `reason`,
+and `awaitResult` fields to `RunStageParamsSchema` with bounds and an awaited
+result branch, then make the API validate its constructed params. A separate
+wire-policy decision should resolve version, falsy params, extra keys, and ID
+semantics before aligning `JsonRpcRequest.from_dict` and the TypeScript envelope
+schema with compatibility tests. In particular, decide both fractional and
+explicit-null ID behavior before tightening either side. The default API
+adapter currently generates integer IDs; the explicit-null case is outside
+its normal call path. Until the follow-up, the TypeScript API's constructed
+outbound requests remain the supported caller path.
 
 ### Domain Events Over SSE
 

@@ -12,6 +12,7 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+from jobctrl import database
 from jobctrl.domain.rpc.messages import JsonRpcRequest, WorkflowStartSpec
 from jobctrl.infrastructure.llm import model_catalog
 from jobctrl.infrastructure.rpc.handlers import register_default_handlers
@@ -24,24 +25,29 @@ class _Handle:
     id = "synthetic-workflow"
     first_execution_run_id = "synthetic-first-run"
 
-
-async def _starter(_spec: WorkflowStartSpec) -> _Handle:
-    return _Handle()
+    async def result(self) -> dict[str, str]:
+        return {"status": "succeeded"}
 
 
 async def _canceler(_run_id: str) -> None:
     raise AssertionError("the contract probe must not cancel a workflow")
 
 
-def build_server() -> JsonRpcServer:
-    server = JsonRpcServer(workflow_starter=_starter)
+def build_server(*, started_specs: list[WorkflowStartSpec] | None = None) -> JsonRpcServer:
+    async def starter(spec: WorkflowStartSpec) -> _Handle:
+        if started_specs is not None:
+            started_specs.append(spec)
+        return _Handle()
+
+    server = JsonRpcServer(workflow_starter=starter)
     register_default_handlers(server, canceler=_canceler)
     return server
 
 
 def run_probe() -> dict[str, object]:
     cases = json.loads(FIXTURE.read_text())["cases"]
-    server = build_server()
+    started_specs: list[WorkflowStartSpec] = []
+    server = build_server(started_specs=started_specs)
     inventory = [
         {"method": method, "mode": spec.mode}
         for method, spec in sorted(server._handlers.items())
@@ -53,7 +59,11 @@ def run_probe() -> dict[str, object]:
         ]
     }
     observations: dict[str, dict[str, object]] = {}
-    with patch.object(model_catalog, "provider_model_catalog", return_value=catalog):
+    with (
+        patch.object(model_catalog, "provider_model_catalog", return_value=catalog),
+        patch.object(database, "get_connection", return_value=object()),
+        patch.object(database, "get_jobs_by_stage", return_value=[]),
+    ):
         for case in cases:
             payload = case.get("request")
             line = case.get("raw", json.dumps(payload))
@@ -68,13 +78,22 @@ def run_probe() -> dict[str, object]:
             except ValueError:
                 parsed = False
             output = io.StringIO()
+            starts_before = len(started_specs)
             server.serve(stdin=io.StringIO(line + "\n"), stdout=output)
             responses = [json.loads(value) for value in output.getvalue().splitlines()]
-            observations[case["name"]] = {
+            observation: dict[str, object] = {
                 "pythonParsed": parsed,
                 "normalizedParams": normalized_params,
                 "responses": responses,
             }
+            if len(started_specs) > starts_before:
+                spec = started_specs[-1]
+                observation["workflowSpec"] = {
+                    "workflow": spec.workflow.__name__,
+                    "workflowId": spec.workflow_id,
+                    "sourceIds": list(getattr(spec.args[0], "source_ids", ())),
+                }
+            observations[case["name"]] = observation
     return {"inventory": inventory, "observations": observations}
 
 

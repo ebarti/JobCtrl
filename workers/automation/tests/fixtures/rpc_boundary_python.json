@@ -184,7 +184,12 @@
             "firstExecutionRunId": "synthetic-first-run"
           }
         }
-      ]
+      ],
+      "workflowSpec": {
+        "workflow": "DiscoverWorkflow",
+        "workflowId": "discover-local",
+        "sourceIds": []
+      }
     },
     "run_stage_invalid_stage": {
       "pythonParsed": true,
@@ -201,6 +206,100 @@
           }
         }
       ]
+    },
+    "run_stage_source_ids": {
+      "pythonParsed": true,
+      "normalizedParams": {
+        "tenantId": "local",
+        "stage": "discover",
+        "stages": [
+          "discover"
+        ],
+        "limit": 25,
+        "sourceIds": [
+          "jobspy:linkedin"
+        ]
+      },
+      "responses": [
+        {
+          "jsonrpc": "2.0",
+          "id": 15,
+          "result": {
+            "runId": "synthetic-workflow",
+            "workflowId": "synthetic-workflow",
+            "firstExecutionRunId": "synthetic-first-run"
+          }
+        }
+      ],
+      "workflowSpec": {
+        "workflow": "DiscoverWorkflow",
+        "workflowId": "discover-local",
+        "sourceIds": [
+          "jobspy:linkedin"
+        ]
+      }
+    },
+    "run_stage_recovery_reason": {
+      "pythonParsed": true,
+      "normalizedParams": {
+        "tenantId": "local",
+        "stage": "score",
+        "stages": [
+          "score"
+        ],
+        "reason": "condition_resolved:synthetic-check"
+      },
+      "responses": [
+        {
+          "jsonrpc": "2.0",
+          "id": 16,
+          "result": {
+            "runId": "synthetic-workflow",
+            "workflowId": "synthetic-workflow",
+            "firstExecutionRunId": "synthetic-first-run"
+          }
+        }
+      ],
+      "workflowSpec": {
+        "workflow": "JobPipelineWorkflow",
+        "workflowId": "condition-recovery-6f015d3d82afba504cc1e4c0",
+        "sourceIds": []
+      }
+    },
+    "run_stage_profile_continuation": {
+      "pythonParsed": true,
+      "normalizedParams": {
+        "tenantId": "local",
+        "stage": "score",
+        "stages": [
+          "score",
+          "tailor",
+          "cover"
+        ],
+        "limit": 0,
+        "retailor": true,
+        "reason": "profile_updated:42",
+        "awaitResult": true
+      },
+      "responses": [
+        {
+          "jsonrpc": "2.0",
+          "id": 17,
+          "result": {
+            "runId": "synthetic-workflow",
+            "workflowId": "synthetic-workflow",
+            "firstExecutionRunId": "synthetic-first-run",
+            "result": {
+              "status": "succeeded"
+            }
+          }
+        }
+      ],
+      "workflowSpec": {
+        "workflow": "JobPipelineWorkflow",
+        "workflowId": "profile-continuation-2069c1cf9e34faa9dfae5edb",
+        "sourceIds": []
+      }
     },
     "unknown_method": {
       "pythonParsed": true,
@@ -460,6 +559,11 @@
           }
         }
       ]
+    },
+    "null_id_notification": {
+      "pythonParsed": true,
+      "normalizedParams": {},
+      "responses": []
     },
     "boolean_id": {
       "pythonParsed": true,
