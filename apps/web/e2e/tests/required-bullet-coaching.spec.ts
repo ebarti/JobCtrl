@@ -224,6 +224,9 @@ test("stale results, version conflicts, and failed requests leave manual edits a
   await expect.poll(() => heldStaleSave).toBe(true);
   const email = page.getByRole("textbox", { name: "Email" });
   await email.fill("synthetic.manual@example.com");
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect(page.getByText(/Wait for the Required bullet save to finish/)).toBeVisible();
+  expect(profileEventCount()).toBe(eventsBeforeStaleAccept);
   releaseStaleSave();
   expect((await staleSave).status()).toBe(409);
   releaseProfileReads();
@@ -242,8 +245,8 @@ test("stale results, version conflicts, and failed requests leave manual edits a
     .profile.resume.experience_entries[0].bullets[0]).toBe(originalBullet);
 });
 
-test("a manual edit made during acceptance remains pending after the accepted response", async ({ page, baseURL }) => {
-  const { apiOrigin } = await seedRequiredBullets(page, baseURL!);
+test("a same-bullet manual edit during acceptance keeps its Required pin through save", async ({ page, baseURL }) => {
+  const { apiOrigin, entryId } = await seedRequiredBullets(page, baseURL!);
   await page.goto("/profile");
   await page.getByRole("button", { name: "Inspect Required bullets" }).click();
   await expect(page.getByText(`Proposed text: “${cleanedBullet}”`)).toBeVisible();
@@ -261,13 +264,19 @@ test("a manual edit made during acceptance remains pending after the accepted re
     .filter({ hasText: `Proposed text: “${cleanedBullet}”` })
     .getByRole("button", { name: "Accept" }).click();
   await expect.poll(() => didHold).toBe(true);
-  const name = page.getByRole("textbox", { name: "Full name" });
-  await name.fill("Synthetic Concurrent Manual Name");
-  releaseSave();
-  await expect(page.getByText(/rebased into newer non-overlapping manual edits/i)).toBeVisible();
-  await expect(name).toHaveValue("Synthetic Concurrent Manual Name");
   await page.getByRole("button", { name: /^Experience entries\b/ }).click();
-  await expect(page.getByRole("textbox", { name: "Bullet 1", exact: true })).toHaveValue(cleanedBullet);
+  const bullet = page.getByRole("textbox", { name: "Bullet 1", exact: true });
+  const manualBullet = "Helped with incident response during synthetic drills.";
+  await bullet.fill(manualBullet);
+  releaseSave();
+  await expect(page.getByText(/manual edit overlaps that Required bullet/)).toBeVisible();
+  await expect(bullet).toHaveValue(manualBullet);
+  await expect(page.locator(".experience-repeat-section").first().locator(".bullet-row").first()
+    .getByRole("checkbox", { name: "Required", exact: true })).toBeChecked();
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect.poll(async () => (await (await page.request.get(`${apiOrigin}/v1/profile`)).json())
+    .profile.resume.experience_entries[0].bullets[0]).toBe(manualBullet);
   const saved = await (await page.request.get(`${apiOrigin}/v1/profile`)).json();
-  expect(saved.profile.resume.experience_entries[0].bullets[0]).toBe(cleanedBullet);
+  expect(saved.profile.resume.tailoring_rules.required_bullets_by_experience_id[entryId])
+    .toEqual([manualBullet, metricBullet]);
 });

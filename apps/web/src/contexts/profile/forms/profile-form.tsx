@@ -108,6 +108,50 @@ function setRequiredBulletText(
   return true;
 }
 
+interface PendingRequiredPinConflict {
+  readonly experienceId: string;
+  readonly entryIndex: number;
+  readonly bulletIndex: number;
+  readonly requiredBulletIndex: number;
+  readonly previousText: string;
+}
+
+function reconcilePendingRequiredPin(
+  profile: JsonRecord,
+  conflict: PendingRequiredPinConflict,
+): "resolved" | "updated" | "blocked" {
+  const parsed = ProfileSchema.safeParse(profile);
+  if (!parsed.success) return "blocked";
+  const entries = parsed.data.resume.experience_entries;
+  const entry = entries[conflict.entryIndex];
+  if (!entry || entry.id !== conflict.experienceId || entries.filter((item) => item.id === entry.id).length !== 1) {
+    return "blocked";
+  }
+  const bullet = entry.bullets[conflict.bulletIndex];
+  const required = parsed.data.resume.tailoring_rules.required_bullets_by_experience_id?.[entry.id];
+  if (!bullet || entry.bullets.filter((item) => item === bullet).length !== 1 || !required) {
+    return "blocked";
+  }
+  if (required[conflict.requiredBulletIndex] === bullet
+    && required.filter((item) => item === bullet).length === 1
+    && !required.includes(conflict.previousText)) {
+    return "resolved";
+  }
+  if (required[conflict.requiredBulletIndex] !== conflict.previousText
+    || required.filter((item) => item === conflict.previousText).length !== 1
+    || required.filter((item) => item === bullet).length > 1) {
+    return "blocked";
+  }
+  if (required.includes(bullet)) {
+    const requiredMap = getPathValue(profile, "resume.tailoring_rules.required_bullets_by_experience_id");
+    if (!isJsonRecord(requiredMap) || !Array.isArray(requiredMap[entry.id])) return "blocked";
+    (requiredMap[entry.id] as unknown[]).splice(conflict.requiredBulletIndex, 1);
+    return "updated";
+  }
+  return setRequiredBulletText(profile, entry.id, conflict.requiredBulletIndex, bullet)
+    ? "updated" : "blocked";
+}
+
 function appendTargetRoles(profile: JsonRecord | null, titles: readonly string[]): JsonRecord | null {
   if (!profile) return profile;
   const next = structuredClone(profile);
@@ -591,6 +635,9 @@ export function ProfileForm({
   const suggestionReviewResolvedVersionRef = useRef<number | undefined>(undefined);
   const plateProfileProjectionRef = useRef<PlateProfileProjectionState | null>(null);
   const expectedProfileVersionRef = useRef<number | undefined>(undefined);
+  const requiredAcceptPendingRef = useRef(false);
+  const requiredSaveVersionFenceRef = useRef<number | undefined>(undefined);
+  const requiredPinConflictRef = useRef<PendingRequiredPinConflict | null>(null);
   const isProfileSection = section === "profile";
   const saveLabel = "Save changes";
   const discardLabel = "Discard changes";
@@ -639,6 +686,34 @@ export function ProfileForm({
       onSubmit: ({ value }) => validateProfileForm(value),
     },
     onSubmit: async ({ value, formApi }) => {
+      if (requiredAcceptPendingRef.current) {
+        setStatusTone("warning");
+        setStatusMessage("Wait for the Required bullet save to finish. Your manual edits remain pending.");
+        return;
+      }
+      if (requiredSaveVersionFenceRef.current !== undefined
+        && (formBaseVersion !== initial.profileVersion
+          || requiredSaveVersionFenceRef.current !== formBaseVersion)) {
+        setStatusTone("warning");
+        setStatusMessage("The saved profile changed. Rebase your manual edits before saving.");
+        return;
+      }
+      if (requiredPinConflictRef.current && value.profile) {
+        const correctedProfile = structuredClone(value.profile);
+        const pinStatus = reconcilePendingRequiredPin(correctedProfile, requiredPinConflictRef.current);
+        if (pinStatus === "blocked") {
+          setStatusTone("warning");
+          setStatusMessage("The edited Required bullet has an ambiguous pin. Make its text unique or discard the draft before saving.");
+          return;
+        }
+        requiredPinConflictRef.current = null;
+        if (pinStatus === "updated") {
+          formApi.setFieldValue("profile", correctedProfile);
+          setStatusTone("warning");
+          setStatusMessage("The Required pin now follows your edited bullet. Review it and save again.");
+          return;
+        }
+      }
       setStatusMessage("");
       const submittedSuggestions = reconcileSuggestionProvenance(value.profile);
       const requiresSuggestionAuthority =
@@ -667,7 +742,7 @@ export function ProfileForm({
       if (shouldUpdateProfile) {
         try {
           profileResponse = await updateProfile.mutateAsync(
-            toUpdateRequest(value, expectedProfileVersionRef.current),
+            toUpdateRequest(value, requiredSaveVersionFenceRef.current ?? expectedProfileVersionRef.current),
           );
         } catch {
           // The mutation owns the displayed error and rollback. Keep the local
@@ -677,6 +752,7 @@ export function ProfileForm({
       }
       if (serializeProfileValues(formApi.state.values) === submittedValues) {
         expectedProfileVersionRef.current = undefined;
+        requiredSaveVersionFenceRef.current = undefined;
         formBaseValuesRef.current = structuredClone(toProfileFormValues(profileResponse));
         suggestionAddedRolesRef.current = [];
         suggestionAddedPreferencesRef.current = [];
@@ -690,6 +766,9 @@ export function ProfileForm({
         setStatusTone("saved");
         setStatusMessage(savedMessage);
       } else {
+        if (requiredSaveVersionFenceRef.current !== undefined) {
+          requiredSaveVersionFenceRef.current = profileResponse.profileVersion ?? undefined;
+        }
         formBaseValuesRef.current = structuredClone(toProfileFormValues(profileResponse));
         reconcileSuggestionProvenance(formApi.state.values.profile);
         const submittedSuggestionKeys = new Set(
@@ -788,11 +867,13 @@ export function ProfileForm({
   }, [applyPlateTextChanges, onPlateTextControllerChange]);
 
   useEffect(() => {
-    if (form.state.isDirty || form.state.isSubmitting) {
+    if (requiredAcceptPendingRef.current || form.state.isDirty || form.state.isSubmitting) {
       return;
     }
     plateProfileProjectionRef.current = null;
     expectedProfileVersionRef.current = undefined;
+    requiredSaveVersionFenceRef.current = undefined;
+    requiredPinConflictRef.current = null;
     const initialValues = toProfileFormValues(initial);
     formBaseValuesRef.current = structuredClone(initialValues);
     setFormBaseVersion(initial.profileVersion);
@@ -855,6 +936,9 @@ export function ProfileForm({
     suggestionReviewResolvedVersionRef.current = undefined;
     setFormBaseVersion(initial.profileVersion);
     expectedProfileVersionRef.current = undefined;
+    if (requiredSaveVersionFenceRef.current !== undefined) {
+      requiredSaveVersionFenceRef.current = initial.profileVersion ?? undefined;
+    }
     form.reset(remoteValues);
     if (!jsonValuesEqual(rebasedValues.profile, remoteValues.profile)) {
       form.setFieldValue("profile", rebasedValues.profile);
@@ -893,6 +977,9 @@ export function ProfileForm({
     formBaseValuesRef.current = structuredClone(remoteValues);
     setFormBaseVersion(initial.profileVersion);
     expectedProfileVersionRef.current = initial.profileVersion ?? undefined;
+    if (requiredSaveVersionFenceRef.current !== undefined) {
+      requiredSaveVersionFenceRef.current = initial.profileVersion ?? undefined;
+    }
     plateProfileProjectionRef.current = null;
     form.reset(remoteValues);
     if (!jsonValuesEqual(values.profile, remoteValues.profile)) {
@@ -933,7 +1020,9 @@ export function ProfileForm({
     expectedProfileVersion: number,
   ): Promise<boolean> => {
     if (
-      form.state.isDirty
+      requiredAcceptPendingRef.current
+      || requiredPinConflictRef.current !== null
+      || form.state.isDirty
       || form.state.isSubmitting
       || expectedProfileVersion !== initial.profileVersion
       || expectedProfileVersion !== formBaseVersion
@@ -1004,21 +1093,22 @@ export function ProfileForm({
       suggestion.source.requiredBulletIndex,
       suggestion.proposedText,
     )) return false;
+    requiredAcceptPendingRef.current = true;
+    requiredSaveVersionFenceRef.current = expectedProfileVersion;
     try {
       const response = await updateProfile.mutateAsync(toUpdateRequest(nextValues, expectedProfileVersion));
-      // The optimistic query patch may have reset a clean form to nextValues
-      // before the server replies. Treat that patch as the save baseline, not
-      // as a manual edit to the accepted bullet.
-      const optimisticWasApplied = jsonValuesEqual(formBaseValuesRef.current, nextValues);
-      const pendingBaseline = optimisticWasApplied ? nextValues : submittedBase;
-      const pendingBulletText = optimisticWasApplied
-        ? suggestion.proposedText
-        : suggestion.originalText;
+      // The optimistic query patch can show either snapshot while the request
+      // is pending. Neither one is a manual edit to the accepted bullet.
+      const baselineBulletTexts = new Set([suggestion.originalText, suggestion.proposedText]);
       formBaseValuesRef.current = structuredClone(toProfileFormValues(response));
       setFormBaseVersion(response.profileVersion);
       expectedProfileVersionRef.current = response.profileVersion ?? undefined;
-      if (jsonValuesEqual(form.state.values, pendingBaseline)) {
+      requiredSaveVersionFenceRef.current = response.profileVersion ?? undefined;
+      if (jsonValuesEqual(form.state.values, submittedBase)
+        || jsonValuesEqual(form.state.values, nextValues)) {
         expectedProfileVersionRef.current = undefined;
+        requiredSaveVersionFenceRef.current = undefined;
+        requiredPinConflictRef.current = null;
         plateProfileProjectionRef.current = null;
         form.reset(toProfileFormValues(response));
         onPreviewSourceChange?.(response);
@@ -1045,8 +1135,8 @@ export function ProfileForm({
           ) !== entryIndex
           || currentEntry[0]!.title !== suggestion.source.experienceTitle
           || currentEntry[0]!.company !== suggestion.source.experienceCompany
-          || currentEntry[0]!.bullets[suggestion.source.bulletIndex] !== pendingBulletText
-          || currentRequired?.[suggestion.source.requiredBulletIndex] !== pendingBulletText;
+          || !baselineBulletTexts.has(currentEntry[0]!.bullets[suggestion.source.bulletIndex] ?? "")
+          || !baselineBulletTexts.has(currentRequired?.[suggestion.source.requiredBulletIndex] ?? "");
         if (!acceptedFieldOverlaps && currentValues.profile) {
           setPathValue(currentValues.profile, bulletPath, suggestion.proposedText);
           setRequiredBulletText(
@@ -1055,6 +1145,23 @@ export function ProfileForm({
             suggestion.source.requiredBulletIndex,
             suggestion.proposedText,
           );
+          requiredPinConflictRef.current = null;
+        } else if (
+          currentValues.profile
+          && baselineBulletTexts.has(currentRequired?.[suggestion.source.requiredBulletIndex] ?? "")
+          && !baselineBulletTexts.has(currentEntry[0]?.bullets[suggestion.source.bulletIndex] ?? "")
+        ) {
+          const conflict = {
+            experienceId: suggestion.source.experienceId,
+            entryIndex,
+            bulletIndex: suggestion.source.bulletIndex,
+            requiredBulletIndex: suggestion.source.requiredBulletIndex,
+            previousText: currentRequired![suggestion.source.requiredBulletIndex]!,
+          };
+          requiredPinConflictRef.current = reconcilePendingRequiredPin(currentValues.profile, conflict) === "blocked"
+            ? conflict : null;
+        } else {
+          requiredPinConflictRef.current = null;
         }
         const responseValues = toProfileFormValues(response);
         form.reset(responseValues);
@@ -1080,11 +1187,14 @@ export function ProfileForm({
       // A timeout can follow a committed write. Keep subsequent manual saves
       // bound to the inspected version until a refreshed snapshot is rebased.
       expectedProfileVersionRef.current = formBaseVersionRef.current ?? expectedProfileVersion;
+      requiredSaveVersionFenceRef.current = expectedProfileVersion;
       setStatusTone("warning");
       setStatusMessage(
         "The suggestion save did not return a confirmed result. Rebase or reload the saved profile before retrying; manual editing remains available.",
       );
       return false;
+    } finally {
+      requiredAcceptPendingRef.current = false;
     }
   }, [form, formBaseVersion, initial.profileVersion, onPreviewSourceChange, updateProfile]);
 
@@ -1100,6 +1210,8 @@ export function ProfileForm({
         event.preventDefault();
         plateProfileProjectionRef.current = null;
         expectedProfileVersionRef.current = undefined;
+        requiredSaveVersionFenceRef.current = undefined;
+        requiredPinConflictRef.current = null;
         const initialValues = toProfileFormValues(initial);
         formBaseValuesRef.current = structuredClone(initialValues);
         suggestionAddedRolesRef.current = [];
@@ -1186,7 +1298,8 @@ export function ProfileForm({
         <form.Subscribe selector={(state) => ({ isDirty: state.isDirty, isSubmitting: state.isSubmitting })}>
           {({ isDirty, isSubmitting }) => (
             <RequiredBulletSuggestions
-              isDraftClean={!isDirty && !isSubmitting && !updateProfile.isPending}
+              isDraftClean={!isDirty && !isSubmitting && !updateProfile.isPending
+                && formBaseVersion === initial.profileVersion && !requiredAcceptPendingRef.current}
               profileVersion={initial.profileVersion}
               resetToken={resetToken}
               onAccept={acceptRequiredBulletSuggestion}

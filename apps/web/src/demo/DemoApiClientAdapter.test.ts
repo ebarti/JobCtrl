@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   JOB_SORT_FIELDS,
+  ProfileSchema,
   type ActivityEventSummary,
   type ArtifactDetail,
   type JobCompensationSummary,
@@ -247,6 +248,57 @@ describe("DemoApiClientAdapter", () => {
     await expect(
       adapter.targetRoleSuggestions({ expectedProfileVersion: 2, maximumSuggestions: 1 }),
     ).rejects.toMatchObject({ status: 409, statusText: "stale_profile_version" });
+  });
+
+  it("inspects saved synthetic Required bullets without changing the demo profile", async () => {
+    const { adapter } = await createAdapter();
+    const before = await adapter.profile();
+    const profile = ProfileSchema.parse(before.profile);
+    const entry = profile.resume.experience_entries[0]!;
+    entry.bullets[0] = "  Worked   on platform delivery.  ";
+    profile.resume.tailoring_rules.required_bullets_by_experience_id = {
+      ...profile.resume.tailoring_rules.required_bullets_by_experience_id,
+      [entry.id]: [entry.bullets[0]],
+    };
+    const saved = await adapter.updateProfile({
+      expectedProfileVersion: before.profileVersion!,
+      profileText: JSON.stringify(profile),
+    });
+    const snapshot = await adapter.profile();
+    expect(snapshot).toEqual(saved);
+
+    const inspected = await adapter.requiredBulletSuggestions({
+      expectedProfileVersion: saved.profileVersion!,
+      maximumSuggestions: 12,
+    });
+    expect(inspected).toMatchObject({
+      profileVersion: saved.profileVersion,
+      strategy: "deterministic_rules_v1",
+      modelUsed: false,
+    });
+    expect(inspected.suggestions[0]).toMatchObject({
+      kind: "grammar",
+      originalText: "  Worked   on platform delivery.  ",
+      proposedText: "Worked on platform delivery.",
+      canApply: true,
+      source: { experienceId: entry.id, fieldPath: "profile.resume.experience_entries[0].bullets[0]" },
+    });
+    expect(inspected.suggestions.map((suggestion) => suggestion.kind)).toEqual([
+      "grammar", "relevance", "achievement_framing", "missing_evidence",
+    ]);
+    expect(inspected.suggestions.filter((suggestion) => suggestion.kind !== "grammar")
+      .every((suggestion) => suggestion.proposedText === null && !suggestion.canApply)).toBe(true);
+    const bounded = await adapter.requiredBulletSuggestions({
+      expectedProfileVersion: saved.profileVersion!,
+      maximumSuggestions: 1,
+    });
+    expect(bounded.suggestions).toHaveLength(1);
+    expect(bounded.truncated).toBe(true);
+    expect(await adapter.profile()).toEqual(snapshot);
+    await expect(adapter.requiredBulletSuggestions({
+      expectedProfileVersion: saved.profileVersion! - 1,
+      maximumSuggestions: 12,
+    })).rejects.toMatchObject({ status: 409, statusText: "stale_profile_version" });
   });
 
   it("covers every port member and reserves capability errors for unavailable methods", async () => {

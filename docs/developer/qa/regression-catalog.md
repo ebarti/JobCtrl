@@ -158,7 +158,10 @@ optional bullets, a supported metric, and incomplete achievement evidence.
 Trace each source reference to the exact saved entry, bullet, and profile
 version. Exercise generation, individual rejection and acceptance, missing
 evidence questions, local edits during a delayed response, a newer canonical
-version, and failed generation/save. Generation and rejection must write no
+version, and failed generation/save. A manual Save or autosave during a pending
+accept must not send a second profile write; a same-bullet manual edit must
+keep its Required pin when unique and block ambiguous duplicate text until
+resolved. Generation and rejection must write no
 profile state. Accepted cleanup must retain every factual token, the achievement
 identity, bullet order, and Required pin. Missing evidence must remain a question
 without an applicable fabricated replacement. Verify persistence and reload

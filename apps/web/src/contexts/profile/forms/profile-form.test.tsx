@@ -7,6 +7,7 @@ import {
   type TargetRoleSuggestionResponse,
 } from "@jobctrl/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { useState } from "react";
 
 import {
   sampleProfileResponse,
@@ -26,6 +27,60 @@ async function openExperienceEntries(user: ReturnType<typeof userEvent.setup>) {
   if (disclosure.getAttribute("aria-expanded") === "false") {
     await user.click(disclosure);
   }
+}
+
+function requiredBulletCoachingFixture() {
+  const initial = structuredClone(sampleProfileResponse);
+  const profile = ProfileSchema.parse(initial.profile);
+  profile.resume.experience_entries[0]!.bullets[0] = "  Scaled   the platform 10x.  ";
+  profile.resume.tailoring_rules.required_bullets_by_experience_id = {
+    "exp-1": ["  Scaled   the platform 10x.  "],
+  };
+  initial.profile = profile;
+  const requiredBulletSuggestions = vi.fn(async () => ({
+    ok: true as const,
+    profileVersion: 3,
+    suggestions: [{
+      id: "profile:v3:experience[0]:bullet[0]:required[0]:grammar",
+      kind: "grammar" as const,
+      originalText: "  Scaled   the platform 10x.  ",
+      proposedText: "Scaled the platform 10x.",
+      canApply: true,
+      guidance: "Collapse whitespace only.",
+      source: {
+        sourceId: "profile:v3:experience[0]:bullet[0]",
+        identityKind: "snapshot_bullet" as const,
+        excerpt: "  Scaled   the platform 10x.  ",
+        fieldPath: "profile.resume.experience_entries[0].bullets[0]",
+        experienceId: "exp-1",
+        experienceTitle: "Director of Platform",
+        experienceCompany: "Initech",
+        bulletIndex: 0,
+        requiredBulletIndex: 0,
+      },
+    }],
+    strategy: "deterministic_rules_v1" as const,
+    modelUsed: false as const,
+    truncated: false,
+  }));
+  return { initial, requiredBulletSuggestions };
+}
+
+function renderRequiredProfileWithInitialChanges(
+  initial: typeof sampleProfileResponse,
+  ports: NonNullable<NonNullable<Parameters<typeof renderWithProviders>[1]>["ports"]>,
+) {
+  let setInitial!: (value: typeof initial) => void;
+  function Host() {
+    const [current, setCurrent] = useState(initial);
+    setInitial = setCurrent;
+    return <ProfileForm initial={current} />;
+  }
+  const view = renderWithProviders(<Host />, { ports, withRouter: true });
+  return {
+    ...view,
+    changeInitial: (next: typeof initial) => act(() => setInitial(next)),
+  };
 }
 
 async function renderSkillProjection(items: string[]) {
@@ -1666,17 +1721,17 @@ describe("<ProfileForm>", () => {
     let resolveSave!: (value: typeof initial) => void;
     const pendingSave = new Promise<typeof initial>((resolve) => { resolveSave = resolve; });
     const updateProfile = vi.fn((_request: ProfileUpdateRequest) => pendingSave);
-    const { rerender } = renderWithProviders(<ProfileForm initial={initial} />, {
-      ports: buildTestPorts({ api: { requiredBulletSuggestions, updateProfile } }),
-      withRouter: true,
-    });
+    const { changeInitial } = renderRequiredProfileWithInitialChanges(
+      initial,
+      buildTestPorts({ api: { requiredBulletSuggestions, updateProfile } }),
+    );
 
     await user.click(await screen.findByRole("button", { name: "Inspect Required bullets" }));
     await user.click(await screen.findByRole("button", { name: "Accept" }));
     await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(1));
     const acceptedRequest = updateProfile.mock.calls[0]?.[0] as { profileText: string } | undefined;
     const acceptedProfile = JSON.parse(acceptedRequest!.profileText);
-    rerender(<ProfileForm initial={{ ...initial, profile: acceptedProfile }} />);
+    changeInitial({ ...initial, profile: acceptedProfile });
     const fullName = screen.getByLabelText("Full name");
     await user.clear(fullName);
     await user.type(fullName, "Newer Manual Name");
@@ -1735,10 +1790,10 @@ describe("<ProfileForm>", () => {
         profileVersion: 5,
         profile: JSON.parse(request.profileText!),
       }));
-    const { rerender } = renderWithProviders(<ProfileForm initial={initial} />, {
-      ports: buildTestPorts({ api: { requiredBulletSuggestions, updateProfile } }),
-      withRouter: true,
-    });
+    const { changeInitial } = renderRequiredProfileWithInitialChanges(
+      initial,
+      buildTestPorts({ api: { requiredBulletSuggestions, updateProfile } }),
+    );
 
     await user.click(await screen.findByRole("button", { name: "Inspect Required bullets" }));
     await user.click(await screen.findByRole("button", { name: "Accept" }));
@@ -1748,7 +1803,7 @@ describe("<ProfileForm>", () => {
     await act(async () => rejectSave(new Error("Synthetic uncertain save")));
     expect(screen.getByLabelText("Email")).toHaveValue("pending@example.com");
 
-    rerender(<ProfileForm initial={newer} />);
+    changeInitial(newer);
     await user.click(screen.getByRole("button", { name: "Rebase edits onto saved profile" }));
     expect(screen.getByLabelText("Full name")).toHaveValue("External Canonical Name");
     expect(screen.getByLabelText("Email")).toHaveValue("pending@example.com");
@@ -1760,5 +1815,136 @@ describe("<ProfileForm>", () => {
       personal: { full_name: "External Canonical Name", email: "pending@example.com" },
       resume: { experience_entries: [{ bullets: ["  Scaled   the platform 10x.  ", "Led the SRE org."] }] },
     });
+  });
+
+  it("serializes manual Save behind a delayed Required accept and fences the stale draft", async () => {
+    const user = userEvent.setup();
+    const { initial, requiredBulletSuggestions } = requiredBulletCoachingFixture();
+    const newer = structuredClone(initial);
+    newer.profileVersion = 4;
+    (newer.profile as ProfileShape).personal.full_name = "External Canonical Name";
+    let rejectAccept!: (reason: Error) => void;
+    const pendingAccept = new Promise<never>((_resolve, reject) => { rejectAccept = reject; });
+    const updateProfile = vi.fn()
+      .mockImplementationOnce(() => pendingAccept)
+      .mockImplementationOnce(async (request: ProfileUpdateRequest) => ({
+        ...newer,
+        profileVersion: 5,
+        profile: JSON.parse(request.profileText!),
+      }));
+    const { changeInitial } = renderRequiredProfileWithInitialChanges(
+      initial,
+      buildTestPorts({ api: { requiredBulletSuggestions, updateProfile } }),
+    );
+
+    await user.click(await screen.findByRole("button", { name: "Inspect Required bullets" }));
+    await user.click(await screen.findByRole("button", { name: "Accept" }));
+    await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(1));
+    await user.clear(screen.getByLabelText("Email"));
+    await user.type(screen.getByLabelText("Email"), "pending@example.com");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(screen.getByText(/Wait for the Required bullet save to finish/)).toBeInTheDocument();
+    expect(updateProfile).toHaveBeenCalledTimes(1);
+
+    changeInitial(newer);
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(updateProfile).toHaveBeenCalledTimes(1);
+    await act(async () => rejectAccept(new Error("stale_profile_version")));
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(screen.getByText(/Rebase your manual edits before saving/)).toBeInTheDocument();
+    expect(updateProfile).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole("button", { name: "Rebase edits onto saved profile" }));
+    expect(screen.getByLabelText("Full name")).toHaveValue("External Canonical Name");
+    expect(screen.getByLabelText("Email")).toHaveValue("pending@example.com");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(2));
+    const request = updateProfile.mock.calls[1]![0] as ProfileUpdateRequest;
+    expect(request.expectedProfileVersion).toBe(4);
+    expect(JSON.parse(request.profileText!)).toMatchObject({
+      personal: { full_name: "External Canonical Name", email: "pending@example.com" },
+      resume: { experience_entries: [{ bullets: ["  Scaled   the platform 10x.  ", "Led the SRE org."] }] },
+    });
+  });
+
+  it("keeps the Required pin with a unique manual bullet edit made during accept", async () => {
+    const user = userEvent.setup();
+    const { initial, requiredBulletSuggestions } = requiredBulletCoachingFixture();
+    let resolveAccept!: (value: typeof initial) => void;
+    const pendingAccept = new Promise<typeof initial>((resolve) => { resolveAccept = resolve; });
+    const updateProfile = vi.fn()
+      .mockImplementationOnce(() => pendingAccept)
+      .mockImplementationOnce(async (request: ProfileUpdateRequest) => ({
+        ...initial,
+        profileVersion: 5,
+        profile: JSON.parse(request.profileText!),
+      }));
+    const { changeInitial } = renderRequiredProfileWithInitialChanges(
+      initial,
+      buildTestPorts({ api: { requiredBulletSuggestions, updateProfile } }),
+    );
+
+    await user.click(await screen.findByRole("button", { name: "Inspect Required bullets" }));
+    await user.click(await screen.findByRole("button", { name: "Accept" }));
+    await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(1));
+    await openExperienceEntries(user);
+    fireEvent.change(screen.getByLabelText("Bullet 1"), { target: { value: "Scaled the platform 10x with a manual note." } });
+    const acceptedProfile = JSON.parse((updateProfile.mock.calls[0]![0] as ProfileUpdateRequest).profileText!);
+    await act(async () => resolveAccept({ ...initial, profileVersion: 4, profile: acceptedProfile }));
+    changeInitial({ ...initial, profileVersion: 4, profile: acceptedProfile });
+
+    const bullet = screen.getByLabelText("Bullet 1");
+    expect(bullet).toHaveValue("Scaled the platform 10x with a manual note.");
+    expect(within(bullet.closest(".bullet-row") as HTMLElement).getByRole("checkbox", { name: "Required" }))
+      .toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(2));
+    const request = updateProfile.mock.calls[1]![0] as ProfileUpdateRequest;
+    expect(request.expectedProfileVersion).toBe(4);
+    const saved = JSON.parse(request.profileText!);
+    expect(saved.resume.experience_entries[0].bullets[0]).toBe("Scaled the platform 10x with a manual note.");
+    expect(saved.resume.tailoring_rules.required_bullets_by_experience_id["exp-1"])
+      .toEqual(["Scaled the platform 10x with a manual note."]);
+  });
+
+  it("blocks a duplicate overlapping bullet instead of guessing its Required pin", async () => {
+    const user = userEvent.setup();
+    const { initial, requiredBulletSuggestions } = requiredBulletCoachingFixture();
+    let resolveAccept!: (value: typeof initial) => void;
+    const pendingAccept = new Promise<typeof initial>((resolve) => { resolveAccept = resolve; });
+    const updateProfile = vi.fn()
+      .mockImplementationOnce((_request: ProfileUpdateRequest) => pendingAccept)
+      .mockImplementationOnce(async (request: ProfileUpdateRequest) => ({
+        ...initial,
+        profileVersion: 5,
+        profile: JSON.parse(request.profileText!),
+      }));
+    const { changeInitial } = renderRequiredProfileWithInitialChanges(
+      initial,
+      buildTestPorts({ api: { requiredBulletSuggestions, updateProfile } }),
+    );
+
+    await user.click(await screen.findByRole("button", { name: "Inspect Required bullets" }));
+    await user.click(await screen.findByRole("button", { name: "Accept" }));
+    await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(1));
+    await openExperienceEntries(user);
+    fireEvent.change(screen.getByLabelText("Bullet 1"), { target: { value: "Led the SRE org." } });
+    const acceptedProfile = JSON.parse((updateProfile.mock.calls[0]![0] as ProfileUpdateRequest).profileText!);
+    await act(async () => resolveAccept({ ...initial, profileVersion: 4, profile: acceptedProfile }));
+    changeInitial({ ...initial, profileVersion: 4, profile: acceptedProfile });
+
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(updateProfile).toHaveBeenCalledTimes(1);
+    expect(screen.getByText(/edited Required bullet has an ambiguous pin/)).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Bullet 1"), { target: { value: "Manual unique bullet." } });
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(updateProfile).toHaveBeenCalledTimes(1);
+    expect(screen.getByText(/Required pin now follows your edited bullet/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(2));
+    const saved = JSON.parse((updateProfile.mock.calls[1]![0] as ProfileUpdateRequest).profileText!);
+    expect(saved.resume.tailoring_rules.required_bullets_by_experience_id["exp-1"])
+      .toEqual(["Manual unique bullet."]);
   });
 });

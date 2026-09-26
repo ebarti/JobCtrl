@@ -199,6 +199,9 @@ and conflicting saves preserve existing canonical facts and keep manual editing
 available. If a newer saved profile arrives while you have a draft, use
 **Rebase edits onto saved profile** to carry non-overlapping edits forward;
 resolve overlapping fields manually before saving.
+While an accepted cleanup is saving, another Save waits. If you edit that same
+bullet, its Required pin follows a unique edited text; duplicate text must be
+resolved before the draft can be saved.
 
 This optional aid does not implement the evidence interviews, canonical fact
 promotion, or selection-policy migrations in the proposed
