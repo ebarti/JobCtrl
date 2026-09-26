@@ -15,6 +15,7 @@ For every request/response field, use the
 | `GET /v1/profile` | Read the normalized candidate profile and current preferences. |
 | `PATCH /v1/profile` | Save validated profile fields and preference changes. |
 | `POST /v1/profile/target-role-suggestions` | Generate transient evidence-backed role proposals from an exact saved profile version. |
+| `POST /v1/profile/required-bullet-suggestions` | Inspect deterministic coaching for Required bullets from an exact saved profile version. |
 | `GET /v1/profile/preview.html` | Render the baseline profile resume as HTML. |
 | `GET /v1/profile/preview.pdf` | Render the baseline profile resume as PDF. |
 
@@ -30,7 +31,7 @@ writes in the same transaction. A mismatch returns `409
 stale_profile_version`, writes no profile row, records no `ProfileUpdated`
 event, and creates no preparation-continuation work.
 
-The suggestion route accepts `{ expectedProfileVersion, maximumSuggestions }`,
+The target-role suggestion route accepts `{ expectedProfileVersion, maximumSuggestions }`,
 where the maximum is `1–5` and defaults to `3`. It reads only that canonical
 saved snapshot and returns `profileVersion`, `strategy`, bounded `warnings`, and
 zero to five editable role suggestions and up to five historical preference
@@ -76,6 +77,40 @@ regenerate suggestions, review them, and then save against that new version.
 The guard covers accepted roles and historical preference rows, including
 subsequent edits to those draft values.
 Overlapping edits remain blocked for manual resolution or discard.
+
+Required-bullet coaching uses the separate `required-bullet-suggestions` route.
+It accepts a saved `expectedProfileVersion` and optional `maximumSuggestions`
+(`1–24`, default `12`). It reads canonical profile rows without dispatching a
+worker or model, and returns transient suggestions with
+`strategy: "deterministic_rules_v1"` and `modelUsed: false`. The response reports
+whether the bounded result was truncated. Inspection stops after 512 Required
+occurrences or once enough suggestions establish output truncation.
+
+Each suggestion identifies its grammar, relevance, achievement-framing, or
+missing-evidence purpose; includes the original text and concise guidance; and
+exposes its saved experience identity, bullet position, field path, source
+excerpt, and canonical achievement ID when available. A snapshot-only bullet
+reference is explicitly distinguished from a canonical achievement ID. These
+references are valid for the returned profile version, not promises of permanent
+identity after future profile edits.
+
+Only conservative wording cleanup supplies an applicable replacement. Coaching
+questions have no proposed text and require the user's own truthful manual
+edits. The browser accepts replacements individually through the ordinary
+version-checked profile save, preserving bullet order, achievement identity,
+and Required selection. Generation, rejection, unavailable requests, and stale
+results do not promote evidence or alter the saved profile. An uncertain accept
+keeps subsequent manual saves bound to the inspected version; the Profile editor
+offers rebase for non-overlapping drafts after a newer saved version arrives.
+This route does not enable #902's model path or implement #883's proposed
+evidence migrations.
+Identical bullet or Required-pin occurrences are skipped because their saved
+text does not identify one occurrence. When multiple achievement records match
+one otherwise unique bullet, or an achievement ID is reused, the coaching can
+explain the ambiguity but cannot offer a directly applicable replacement.
+Draft, inferred, unconfirmed, or bullet-only evidence prompts a source-confirmation
+question; an extracted metric from the bullet alone is not independent
+verification.
 
 Each `resume.experience_entries[]` record may include `summary`. The field
 defaults to an empty string, remains optional for existing and new roles, and

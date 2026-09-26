@@ -66,6 +66,36 @@ accepts optional `expectedProfileVersion`; when supplied, a mismatch returns
 `409 stale_profile_version` and the same transaction writes neither canonical
 rows nor `ProfileUpdated`.
 
+`POST /v1/profile/required-bullet-suggestions` accepts only
+`expectedProfileVersion` (positive integer) and optional `maximumSuggestions`
+(`1–24`, default `12`). A successful response contains `ok: true`, the requested
+`profileVersion`, `strategy: "deterministic_rules_v1"`, `modelUsed: false`,
+`truncated`, and up to 24 suggestions. The route reads saved canonical rows;
+it neither calls a provider nor writes profile state. A stale version returns
+`409 stale_profile_version`. Inspection stops after 512 Required occurrences or
+once enough suggestions establish output truncation; `truncated` reports either
+limit.
+
+A Required-bullet suggestion contains:
+
+- `id`, `kind` (`grammar`, `relevance`, `achievement_framing`, or
+  `missing_evidence`), `originalText` (at most 2,000 characters), and `guidance`
+  (at most 500 characters).
+- `canApply` and nullable `proposedText`. Only an applicable suggestion has
+  proposed text; missing evidence never becomes an invented replacement.
+- `source`: `sourceId`, `identityKind` (`canonical_achievement` or
+  `snapshot_bullet`), `excerpt` (at most 500 characters), `fieldPath`,
+  `experienceId`, `experienceTitle`, `experienceCompany`, zero-based
+  `bulletIndex`, and zero-based `requiredBulletIndex`.
+
+Sources are scoped to the response version. Acceptance is an individual browser
+action followed by normal `PATCH /v1/profile` with `expectedProfileVersion`;
+there is no bulk promotion or separate persistent suggestion store.
+Identical bullet or Required-pin occurrences are skipped because their text
+cannot identify one occurrence. Ambiguous achievement matches or reused
+achievement IDs have no applicable replacement. Evidence questions do not
+promote bullet text or an extracted metric into independent proof.
+
 `POST /v1/profile/target-role-suggestions` accepts the strict object below:
 
 ```json

@@ -188,6 +188,10 @@ const READ_CASES = [
     "targetRoleSuggestions",
     (api: ApiClientPort) => api.targetRoleSuggestions({ expectedProfileVersion: 1, maximumSuggestions: 3 }),
   ],
+  [
+    "requiredBulletSuggestions",
+    (api: ApiClientPort) => api.requiredBulletSuggestions({ expectedProfileVersion: 1, maximumSuggestions: 12 }),
+  ],
   ["profilePreviewPdfUrl", (api: ApiClientPort) => api.profilePreviewPdfUrl(7)],
   [
     "profilePreviewHtmlUrl",

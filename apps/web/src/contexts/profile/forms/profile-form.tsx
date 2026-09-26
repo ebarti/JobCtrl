@@ -7,11 +7,15 @@ import { useForm } from "@tanstack/react-form";
 import { Link } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import type { ProfileConfigResponse } from "../../operations/types.js";
+import type {
+  ProfileConfigResponse,
+  RequiredBulletSuggestion,
+} from "../../operations/types.js";
 import { Alert, AlertDescription } from "../../../shared/ui/alert.js";
 import { Button } from "../../../shared/ui/button.js";
 import { getPathValue, isJsonRecord, setPathValue, type JsonRecord } from "../lib/json-record.js";
 import { StructuredProfileEditor } from "../components/StructuredProfileEditor.js";
+import { RequiredBulletSuggestions } from "../components/RequiredBulletSuggestions.js";
 import { TargetRoleSuggestions } from "../components/TargetRoleSuggestions.js";
 import { useUpdateProfileMutation } from "../hooks/useUpdateProfileMutation.js";
 import { AutosaveUndoController } from "../../../shared/ui/autosave-undo-controller.js";
@@ -88,6 +92,20 @@ function toUpdateRequest(
     templateText: values.templateText,
     ...(expectedProfileVersion === undefined ? {} : { expectedProfileVersion }),
   };
+}
+
+function setRequiredBulletText(
+  profile: JsonRecord,
+  experienceId: string,
+  index: number,
+  text: string,
+): boolean {
+  const required = getPathValue(profile, "resume.tailoring_rules.required_bullets_by_experience_id");
+  if (!isJsonRecord(required) || !Array.isArray(required[experienceId])) return false;
+  const bullets = required[experienceId] as unknown[];
+  if (typeof bullets[index] !== "string") return false;
+  bullets[index] = text;
+  return true;
 }
 
 function appendTargetRoles(profile: JsonRecord | null, titles: readonly string[]): JsonRecord | null {
@@ -557,6 +575,8 @@ export function ProfileForm({
   const [statusTone, setStatusTone] = useState<"saved" | "warning">("saved");
   const [resetToken, setResetToken] = useState(0);
   const [formBaseVersion, setFormBaseVersion] = useState(initial.profileVersion);
+  const formBaseVersionRef = useRef(formBaseVersion);
+  formBaseVersionRef.current = formBaseVersion;
   const [suggestionDerivedDraft, setSuggestionDerivedDraft] = useState(false);
   const formRef = useRef<HTMLFormElement>(null);
   const formBaseValuesRef = useRef<ProfileFormValues>(structuredClone(toProfileFormValues(initial)));
@@ -853,6 +873,43 @@ export function ProfileForm({
     );
   }, [form, initial, reconcileSuggestionProvenance]);
 
+  const rebaseProfileDraft = useCallback(() => {
+    const remoteValues = toProfileFormValues(initial);
+    const rebased = rebaseProfileValue(
+      formBaseValuesRef.current,
+      structuredClone(form.state.values),
+      remoteValues,
+      "form",
+    );
+    if (rebased.conflicts.length > 0) {
+      setStatusTone("warning");
+      setStatusMessage(
+        `Saved and local edits overlap at ${rebased.conflicts.slice(0, 3).join(", ")}. `
+          + "Resolve those fields manually or discard the draft before saving.",
+      );
+      return;
+    }
+    const values = rebased.value as ProfileFormValues;
+    formBaseValuesRef.current = structuredClone(remoteValues);
+    setFormBaseVersion(initial.profileVersion);
+    expectedProfileVersionRef.current = initial.profileVersion ?? undefined;
+    plateProfileProjectionRef.current = null;
+    form.reset(remoteValues);
+    if (!jsonValuesEqual(values.profile, remoteValues.profile)) {
+      form.setFieldValue("profile", values.profile);
+    }
+    if (!jsonValuesEqual(values.style, remoteValues.style)) {
+      form.setFieldValue("style", values.style);
+    }
+    if (values.templateText !== remoteValues.templateText) {
+      form.setFieldValue("templateText", values.templateText);
+    }
+    onPreviewSourceChange?.(initial);
+    setResetToken((token) => token + 1);
+    setStatusTone("warning");
+    setStatusMessage("Draft rebased onto the latest saved profile. Review and save your pending edits.");
+  }, [form, initial, onPreviewSourceChange]);
+
   const resolveSuggestionReviewWithoutAcceptance = useCallback((expectedProfileVersion: number) => {
     if (
       !suggestionDerivedDraft
@@ -870,6 +927,166 @@ export function ProfileForm({
     setStatusTone("warning");
     setStatusMessage("Suggestion review completed. Rebased manual edits can now be saved.");
   }, [initial.profileVersion, suggestionDerivedDraft]);
+
+  const acceptRequiredBulletSuggestion = useCallback(async (
+    suggestion: RequiredBulletSuggestion,
+    expectedProfileVersion: number,
+  ): Promise<boolean> => {
+    if (
+      form.state.isDirty
+      || form.state.isSubmitting
+      || expectedProfileVersion !== initial.profileVersion
+      || expectedProfileVersion !== formBaseVersion
+      || suggestion.kind !== "grammar"
+      || !suggestion.canApply
+      || suggestion.proposedText === null
+    ) return false;
+    const parsed = ProfileSchema.safeParse(form.state.values.profile);
+    if (!parsed.success) return false;
+    const normalizedOriginal = suggestion.originalText.trim().replace(/\s+/g, " ");
+    const matchingEntries = parsed.data.resume.experience_entries.filter(
+      (entry) => entry.id === suggestion.source.experienceId,
+    );
+    const entry = matchingEntries.length === 1 ? matchingEntries[0] : undefined;
+    const entryIndex = parsed.data.resume.experience_entries.findIndex(
+      (candidate) => candidate.id === suggestion.source.experienceId,
+    );
+    const requiredBullets = parsed.data.resume.tailoring_rules?.required_bullets_by_experience_id?.[
+      suggestion.source.experienceId
+    ];
+    const matchingAchievements = entry?.achievement_evidence.filter(
+      (candidate) => candidate.id.trim().length > 0
+        && candidate.id.trim().length <= 240
+        && candidate.source_text.trim().replace(/\s+/g, " ") === normalizedOriginal,
+    ) ?? [];
+    const matchingAchievementIdCount = parsed.data.resume.experience_entries.reduce(
+      (count, candidate) => count + candidate.achievement_evidence.filter(
+        (evidence) => evidence.id === suggestion.source.sourceId,
+      ).length,
+      0,
+    );
+    const sourceMatches = suggestion.source.identityKind === "canonical_achievement"
+      ? matchingAchievements.length === 1
+        && matchingAchievements[0]?.id === suggestion.source.sourceId
+        && matchingAchievementIdCount === 1
+      : matchingAchievements.length === 0
+        && suggestion.source.sourceId === `profile:v${expectedProfileVersion}:experience[${entryIndex}]:bullet[${suggestion.source.bulletIndex}]`;
+    if (
+      !entry
+      || entry.title !== suggestion.source.experienceTitle
+      || entry.company !== suggestion.source.experienceCompany
+      || suggestion.source.excerpt !== (
+        suggestion.originalText.length <= 500
+          ? suggestion.originalText
+          : `${suggestion.originalText.slice(0, 497)}...`
+      )
+      || suggestion.source.fieldPath !== `profile.resume.experience_entries[${entryIndex}].bullets[${suggestion.source.bulletIndex}]`
+      || !sourceMatches
+      || entry.bullets[suggestion.source.bulletIndex] !== suggestion.originalText
+      || requiredBullets?.[suggestion.source.requiredBulletIndex] !== suggestion.originalText
+      || entry.bullets.filter((bullet) => bullet === suggestion.originalText).length !== 1
+      || requiredBullets?.filter((bullet) => bullet === suggestion.originalText).length !== 1
+      || normalizedOriginal !== suggestion.proposedText
+    ) {
+      setStatusTone("warning");
+      setStatusMessage("The saved Required bullet no longer matches this suggestion. Inspect it again.");
+      return false;
+    }
+
+    const submittedBase = structuredClone(form.state.values);
+    const nextValues = structuredClone(submittedBase);
+    if (!nextValues.profile) return false;
+    const bulletPath = `resume.experience_entries.${entryIndex}.bullets.${suggestion.source.bulletIndex}`;
+    setPathValue(nextValues.profile, bulletPath, suggestion.proposedText);
+    if (!setRequiredBulletText(
+      nextValues.profile,
+      suggestion.source.experienceId,
+      suggestion.source.requiredBulletIndex,
+      suggestion.proposedText,
+    )) return false;
+    try {
+      const response = await updateProfile.mutateAsync(toUpdateRequest(nextValues, expectedProfileVersion));
+      // The optimistic query patch may have reset a clean form to nextValues
+      // before the server replies. Treat that patch as the save baseline, not
+      // as a manual edit to the accepted bullet.
+      const optimisticWasApplied = jsonValuesEqual(formBaseValuesRef.current, nextValues);
+      const pendingBaseline = optimisticWasApplied ? nextValues : submittedBase;
+      const pendingBulletText = optimisticWasApplied
+        ? suggestion.proposedText
+        : suggestion.originalText;
+      formBaseValuesRef.current = structuredClone(toProfileFormValues(response));
+      setFormBaseVersion(response.profileVersion);
+      expectedProfileVersionRef.current = response.profileVersion ?? undefined;
+      if (jsonValuesEqual(form.state.values, pendingBaseline)) {
+        expectedProfileVersionRef.current = undefined;
+        plateProfileProjectionRef.current = null;
+        form.reset(toProfileFormValues(response));
+        onPreviewSourceChange?.(response);
+        setResetToken((token) => token + 1);
+        setStatusTone("saved");
+        setStatusMessage("Required bullet suggestion accepted and saved");
+      } else {
+        const currentValues = structuredClone(form.state.values);
+        const currentProfile = ProfileSchema.safeParse(currentValues.profile);
+        const parsedCurrentProfile = currentProfile.success ? currentProfile.data : null;
+        const currentEntry = parsedCurrentProfile
+          ? parsedCurrentProfile.resume.experience_entries.filter(
+            (candidate) => candidate.id === suggestion.source.experienceId,
+          )
+          : [];
+        const currentRequired = currentEntry.length === 1
+          ? parsedCurrentProfile?.resume.tailoring_rules.required_bullets_by_experience_id?.[
+            suggestion.source.experienceId
+          ]
+          : undefined;
+        const acceptedFieldOverlaps = currentEntry.length !== 1
+          || parsedCurrentProfile?.resume.experience_entries.findIndex(
+            (candidate) => candidate.id === suggestion.source.experienceId,
+          ) !== entryIndex
+          || currentEntry[0]!.title !== suggestion.source.experienceTitle
+          || currentEntry[0]!.company !== suggestion.source.experienceCompany
+          || currentEntry[0]!.bullets[suggestion.source.bulletIndex] !== pendingBulletText
+          || currentRequired?.[suggestion.source.requiredBulletIndex] !== pendingBulletText;
+        if (!acceptedFieldOverlaps && currentValues.profile) {
+          setPathValue(currentValues.profile, bulletPath, suggestion.proposedText);
+          setRequiredBulletText(
+            currentValues.profile,
+            suggestion.source.experienceId,
+            suggestion.source.requiredBulletIndex,
+            suggestion.proposedText,
+          );
+        }
+        const responseValues = toProfileFormValues(response);
+        form.reset(responseValues);
+        if (!jsonValuesEqual(currentValues.profile, responseValues.profile)) {
+          form.setFieldValue("profile", currentValues.profile);
+        }
+        if (!jsonValuesEqual(currentValues.style, responseValues.style)) {
+          form.setFieldValue("style", currentValues.style);
+        }
+        if (currentValues.templateText !== responseValues.templateText) {
+          form.setFieldValue("templateText", currentValues.templateText);
+        }
+        onPreviewSourceChange?.(response);
+        setStatusTone("warning");
+        setStatusMessage(
+          acceptedFieldOverlaps
+            ? "Suggestion saved, but a newer manual edit overlaps that Required bullet. The manual edit remains pending on the updated profile version."
+            : "Suggestion saved and rebased into newer non-overlapping manual edits. Those edits remain pending on the updated profile version.",
+        );
+      }
+      return true;
+    } catch {
+      // A timeout can follow a committed write. Keep subsequent manual saves
+      // bound to the inspected version until a refreshed snapshot is rebased.
+      expectedProfileVersionRef.current = formBaseVersionRef.current ?? expectedProfileVersion;
+      setStatusTone("warning");
+      setStatusMessage(
+        "The suggestion save did not return a confirmed result. Rebase or reload the saved profile before retrying; manual editing remains available.",
+      );
+      return false;
+    }
+  }, [form, formBaseVersion, initial.profileVersion, onPreviewSourceChange, updateProfile]);
 
   return (
     <form
@@ -958,6 +1175,25 @@ export function ProfileForm({
           ) : null
         }
       </form.Subscribe>
+      {isProfileSection && formBaseVersion !== initial.profileVersion ? (
+        <div className="editor-bulk-actions">
+          <Button type="button" variant="secondary" onClick={rebaseProfileDraft}>
+            Rebase edits onto saved profile
+          </Button>
+        </div>
+      ) : null}
+      {isProfileSection ? (
+        <form.Subscribe selector={(state) => ({ isDirty: state.isDirty, isSubmitting: state.isSubmitting })}>
+          {({ isDirty, isSubmitting }) => (
+            <RequiredBulletSuggestions
+              isDraftClean={!isDirty && !isSubmitting && !updateProfile.isPending}
+              profileVersion={initial.profileVersion}
+              resetToken={resetToken}
+              onAccept={acceptRequiredBulletSuggestion}
+            />
+          )}
+        </form.Subscribe>
+      ) : null}
       <form.Field name="profile">
         {(profileField) => (
           <form.Field name="style">

@@ -404,6 +404,16 @@ export function readProfileVersion(db: SqliteDatabase): number | null {
 
 export function readProfileConfig(db: SqliteDatabase): ProfileConfigResponse {
   ensureProfileTables(db);
+  return readProfileConfigFromInitializedTables(db);
+}
+
+/** Read the canonical profile without initialization or compatibility writes.
+ * Callers must use an exact-schema, read-only database connection. */
+export function readProfileConfigReadOnly(db: SqliteDatabase): ProfileConfigResponse {
+  return readProfileConfigFromInitializedTables(db);
+}
+
+function readProfileConfigFromInitializedTables(db: SqliteDatabase): ProfileConfigResponse {
   const row = getProfileRow(db);
   if (!row) {
     return {

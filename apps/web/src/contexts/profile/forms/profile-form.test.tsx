@@ -3,6 +3,7 @@ import { userEvent } from "@testing-library/user-event";
 import {
   ProfileSchema,
   type ProfileShape,
+  type ProfileUpdateRequest,
   type TargetRoleSuggestionResponse,
 } from "@jobctrl/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -1547,5 +1548,217 @@ describe("<ProfileForm>", () => {
     fireEvent.change(input, { target: { value: "100" } });
 
     expect(input).toHaveValue(99);
+  });
+
+  it("accepts one conservative Required bullet replacement with its version guard and preserves evidence IDs", async () => {
+    const user = userEvent.setup();
+    const initial = structuredClone(sampleProfileResponse);
+    const profile = ProfileSchema.parse(initial.profile);
+    const entry = profile.resume.experience_entries[0]!;
+    entry.bullets[0] = "  Scaled   the platform 10x.  ";
+    entry.achievement_evidence = [{
+      id: "achievement-stable-1",
+      source_text: "Scaled the platform 10x.",
+      scope: "Platform",
+      action: "Scaled the platform",
+      tools: [],
+      metrics: ["10x"],
+      outcome: "Scaled the platform 10x.",
+      seniority_signal: "",
+      evidence_strength: "verified",
+      claim_confidence: 1,
+      user_confirmed: true,
+      tags: [],
+    }];
+    profile.resume.tailoring_rules.required_bullets_by_experience_id = {
+      "exp-1": ["  Scaled   the platform 10x.  "],
+    };
+    initial.profile = profile;
+    const requiredBulletSuggestions = vi.fn(async () => ({
+      ok: true as const,
+      profileVersion: 3,
+      suggestions: [{
+        id: "achievement-stable-1:0:grammar",
+        kind: "grammar" as const,
+        originalText: "  Scaled   the platform 10x.  ",
+        proposedText: "Scaled the platform 10x.",
+        canApply: true,
+        guidance: "Collapse whitespace only.",
+        source: {
+          sourceId: "achievement-stable-1",
+          identityKind: "canonical_achievement" as const,
+          excerpt: "  Scaled   the platform 10x.  ",
+          fieldPath: "profile.resume.experience_entries[0].bullets[0]",
+          experienceId: "exp-1",
+          experienceTitle: "Director of Platform",
+          experienceCompany: "Initech",
+          bulletIndex: 0,
+          requiredBulletIndex: 0,
+        },
+      }],
+      strategy: "deterministic_rules_v1" as const,
+      modelUsed: false as const,
+      truncated: false,
+    }));
+    const updateProfile = vi.fn(async (request) => ({
+      ...initial,
+      profileVersion: 4,
+      profile: JSON.parse(request.profileText),
+    }));
+    renderWithProviders(<ProfileForm initial={initial} />, {
+      ports: buildTestPorts({ api: { requiredBulletSuggestions, updateProfile } }),
+      withRouter: true,
+    });
+
+    await user.click(await screen.findByRole("button", { name: "Inspect Required bullets" }));
+    expect(await screen.findByText("Proposed text: “Scaled the platform 10x.”")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Accept" }));
+    await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(1));
+
+    const request = updateProfile.mock.calls[0]![0];
+    expect(request.expectedProfileVersion).toBe(3);
+    const saved = JSON.parse(request.profileText);
+    expect(saved.resume.experience_entries[0].bullets).toEqual([
+      "Scaled the platform 10x.",
+      "Led the SRE org.",
+    ]);
+    expect(saved.resume.tailoring_rules.required_bullets_by_experience_id["exp-1"])
+      .toEqual(["Scaled the platform 10x."]);
+    expect(saved.resume.experience_entries[0].achievement_evidence.map((item: { id: string }) => item.id))
+      .toEqual(["achievement-stable-1"]);
+  });
+
+  it("rebases an accepted Required bullet into unrelated edits made while its save is pending", async () => {
+    const user = userEvent.setup();
+    const initial = structuredClone(sampleProfileResponse);
+    const profile = ProfileSchema.parse(initial.profile);
+    profile.resume.experience_entries[0]!.bullets[0] = "  Scaled   the platform 10x.  ";
+    profile.resume.tailoring_rules.required_bullets_by_experience_id = {
+      "exp-1": ["  Scaled   the platform 10x.  "],
+    };
+    initial.profile = profile;
+    const requiredBulletSuggestions = vi.fn(async () => ({
+      ok: true as const,
+      profileVersion: 3,
+      suggestions: [{
+        id: "snapshot:grammar",
+        kind: "grammar" as const,
+        originalText: "  Scaled   the platform 10x.  ",
+        proposedText: "Scaled the platform 10x.",
+        canApply: true,
+        guidance: "Collapse whitespace only.",
+        source: {
+          sourceId: "profile:v3:experience[0]:bullet[0]",
+          identityKind: "snapshot_bullet" as const,
+          excerpt: "  Scaled   the platform 10x.  ",
+          fieldPath: "profile.resume.experience_entries[0].bullets[0]",
+          experienceId: "exp-1",
+          experienceTitle: "Director of Platform",
+          experienceCompany: "Initech",
+          bulletIndex: 0,
+          requiredBulletIndex: 0,
+        },
+      }],
+      strategy: "deterministic_rules_v1" as const,
+      modelUsed: false as const,
+      truncated: false,
+    }));
+    let resolveSave!: (value: typeof initial) => void;
+    const pendingSave = new Promise<typeof initial>((resolve) => { resolveSave = resolve; });
+    const updateProfile = vi.fn((_request: ProfileUpdateRequest) => pendingSave);
+    const { rerender } = renderWithProviders(<ProfileForm initial={initial} />, {
+      ports: buildTestPorts({ api: { requiredBulletSuggestions, updateProfile } }),
+      withRouter: true,
+    });
+
+    await user.click(await screen.findByRole("button", { name: "Inspect Required bullets" }));
+    await user.click(await screen.findByRole("button", { name: "Accept" }));
+    await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(1));
+    const acceptedRequest = updateProfile.mock.calls[0]?.[0] as { profileText: string } | undefined;
+    const acceptedProfile = JSON.parse(acceptedRequest!.profileText);
+    rerender(<ProfileForm initial={{ ...initial, profile: acceptedProfile }} />);
+    const fullName = screen.getByLabelText("Full name");
+    await user.clear(fullName);
+    await user.type(fullName, "Newer Manual Name");
+    await act(async () => resolveSave({ ...initial, profileVersion: 4, profile: acceptedProfile }));
+
+    await openExperienceEntries(user);
+    expect(screen.getByLabelText("Full name")).toHaveValue("Newer Manual Name");
+    expect(screen.getByLabelText("Bullet 1")).toHaveValue("Scaled the platform 10x.");
+    expect(screen.getByText(/rebased into newer non-overlapping manual edits/i)).toBeInTheDocument();
+  });
+
+  it("preserves a manual draft after an uncertain Required save and rebases it onto the newer profile", async () => {
+    const user = userEvent.setup();
+    const initial = structuredClone(sampleProfileResponse);
+    const profile = ProfileSchema.parse(initial.profile);
+    profile.resume.experience_entries[0]!.bullets[0] = "  Scaled   the platform 10x.  ";
+    profile.resume.tailoring_rules.required_bullets_by_experience_id = {
+      "exp-1": ["  Scaled   the platform 10x.  "],
+    };
+    initial.profile = profile;
+    const newer = structuredClone(initial);
+    newer.profileVersion = 4;
+    (newer.profile as ProfileShape).personal.full_name = "External Canonical Name";
+    const requiredBulletSuggestions = vi.fn(async () => ({
+      ok: true as const,
+      profileVersion: 3,
+      suggestions: [{
+        id: "profile:v3:experience[0]:bullet[0]:required[0]:grammar",
+        kind: "grammar" as const,
+        originalText: "  Scaled   the platform 10x.  ",
+        proposedText: "Scaled the platform 10x.",
+        canApply: true,
+        guidance: "Collapse whitespace only.",
+        source: {
+          sourceId: "profile:v3:experience[0]:bullet[0]",
+          identityKind: "snapshot_bullet" as const,
+          excerpt: "  Scaled   the platform 10x.  ",
+          fieldPath: "profile.resume.experience_entries[0].bullets[0]",
+          experienceId: "exp-1",
+          experienceTitle: "Director of Platform",
+          experienceCompany: "Initech",
+          bulletIndex: 0,
+          requiredBulletIndex: 0,
+        },
+      }],
+      strategy: "deterministic_rules_v1" as const,
+      modelUsed: false as const,
+      truncated: false,
+    }));
+    let rejectSave!: (reason: Error) => void;
+    const pendingSave = new Promise<never>((_resolve, reject) => { rejectSave = reject; });
+    const updateProfile = vi.fn()
+      .mockImplementationOnce(() => pendingSave)
+      .mockImplementationOnce(async (request: ProfileUpdateRequest) => ({
+        ...newer,
+        profileVersion: 5,
+        profile: JSON.parse(request.profileText!),
+      }));
+    const { rerender } = renderWithProviders(<ProfileForm initial={initial} />, {
+      ports: buildTestPorts({ api: { requiredBulletSuggestions, updateProfile } }),
+      withRouter: true,
+    });
+
+    await user.click(await screen.findByRole("button", { name: "Inspect Required bullets" }));
+    await user.click(await screen.findByRole("button", { name: "Accept" }));
+    await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(1));
+    await user.clear(screen.getByLabelText("Email"));
+    await user.type(screen.getByLabelText("Email"), "pending@example.com");
+    await act(async () => rejectSave(new Error("Synthetic uncertain save")));
+    expect(screen.getByLabelText("Email")).toHaveValue("pending@example.com");
+
+    rerender(<ProfileForm initial={newer} />);
+    await user.click(screen.getByRole("button", { name: "Rebase edits onto saved profile" }));
+    expect(screen.getByLabelText("Full name")).toHaveValue("External Canonical Name");
+    expect(screen.getByLabelText("Email")).toHaveValue("pending@example.com");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(2));
+    const request = updateProfile.mock.calls[1]![0] as ProfileUpdateRequest;
+    expect(request.expectedProfileVersion).toBe(4);
+    expect(JSON.parse(request.profileText!)).toMatchObject({
+      personal: { full_name: "External Canonical Name", email: "pending@example.com" },
+      resume: { experience_entries: [{ bullets: ["  Scaled   the platform 10x.  ", "Led the SRE org."] }] },
+    });
   });
 });

@@ -18,6 +18,8 @@ import {
   type JobCompensationSummary,
   type JobSummary,
   type PaginatedResponse,
+  type RequiredBulletSuggestionRequest,
+  type RequiredBulletSuggestionResponse,
   type TargetRoleSuggestionRequest,
   type TargetRoleSuggestionResponse,
   type WorkflowRunSummary,
@@ -456,6 +458,27 @@ export class DemoApiClientAdapter implements ApiClientPort {
       ],
       strategy: "model_stub",
       warnings: ["stubbed_model_evidence"],
+    };
+  }
+
+  async requiredBulletSuggestions(
+    body: RequiredBulletSuggestionRequest,
+  ): Promise<RequiredBulletSuggestionResponse> {
+    const profile = await this.read((model) => model.profile.config);
+    if (profile.profileVersion !== body.expectedProfileVersion) {
+      throw new JobCtrlApiError(
+        409,
+        "stale_profile_version",
+        `stale_profile_version: expected ${body.expectedProfileVersion}, current ${profile.profileVersion ?? "none"}`,
+      );
+    }
+    return {
+      ok: true,
+      profileVersion: body.expectedProfileVersion,
+      suggestions: [],
+      strategy: "deterministic_rules_v1",
+      modelUsed: false,
+      truncated: false,
     };
   }
 

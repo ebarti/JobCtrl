@@ -9822,6 +9822,115 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("inspects only saved Required bullets deterministically without mutating the profile", async () => {
+    const app = buildApp(options);
+    const profile = validProfileFixture("Synthetic Candidate");
+    const resume = profile.resume as Record<string, unknown>;
+    const entries = resume.experience_entries as Array<Record<string, unknown>>;
+    entries[0]!.bullets = ["  Helped   with incident response  ", "Unrequired text."];
+    resume.tailoring_rules = {
+      required_bullets_by_experience_id: {
+        role_1: ["  Helped   with incident response  "],
+      },
+    };
+    const initial = await app.inject({
+      method: "PATCH",
+      url: "/v1/profile",
+      payload: { profile },
+    });
+    const version = initial.json().profileVersion as number;
+    const db = new Database(options.dbPath, { readonly: true });
+    const eventCount = (db.prepare(
+      "SELECT COUNT(*) AS n FROM job_events WHERE event_type = 'ProfileUpdated'",
+    ).get() as { n: number }).n;
+    db.close();
+    const providerCall = options.providerDispatcher!.call as ReturnType<typeof vi.fn>;
+    const providerCallsBefore = providerCall.mock.calls.length;
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/profile/required-bullet-suggestions",
+      payload: { expectedProfileVersion: version, maximumSuggestions: 12 },
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json()).toMatchObject({
+      ok: true,
+      profileVersion: version,
+      strategy: "deterministic_rules_v1",
+      modelUsed: false,
+      suggestions: expect.arrayContaining([
+        expect.objectContaining({
+          kind: "grammar",
+          originalText: "  Helped   with incident response  ",
+          proposedText: "Helped with incident response",
+        }),
+        expect.objectContaining({ kind: "relevance", canApply: false }),
+        expect.objectContaining({ kind: "missing_evidence", canApply: false }),
+      ]),
+    });
+    expect(response.json().suggestions.some(
+      (suggestion: { originalText: string }) => suggestion.originalText === "Unrequired text.",
+    )).toBe(false);
+    expect(providerCall).toHaveBeenCalledTimes(providerCallsBefore);
+    const afterDb = new Database(options.dbPath, { readonly: true });
+    expect((afterDb.prepare(
+      "SELECT COUNT(*) AS n FROM job_events WHERE event_type = 'ProfileUpdated'",
+    ).get() as { n: number }).n).toBe(eventCount);
+    afterDb.close();
+    expect(await app.inject({ method: "GET", url: "/v1/profile" }).then((stored) => stored.json()))
+      .toMatchObject({
+        profileVersion: version,
+        profile: { resume: { experience_entries: [{ bullets: ["  Helped   with incident response  ", "Unrequired text."] }] } },
+      });
+    await app.close();
+  });
+
+  it("rejects Required bullet inspection for a stale profile version", async () => {
+    const app = buildApp(options);
+    const initial = await app.inject({
+      method: "PATCH",
+      url: "/v1/profile",
+      payload: { profile: validProfileFixture("Synthetic Candidate") },
+    });
+    const version = initial.json().profileVersion as number;
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/profile/required-bullet-suggestions",
+      payload: { expectedProfileVersion: version + 1 },
+    });
+
+    expect(response.statusCode, response.body).toBe(409);
+    expect(response.json()).toMatchObject({
+      error: "stale_profile_version",
+      expectedProfileVersion: version + 1,
+      actualProfileVersion: version,
+    });
+    await app.close();
+  });
+
+  it("rejects malformed Required coaching requests before any profile write", async () => {
+    const app = buildApp(options);
+    const initial = await app.inject({ method: "GET", url: "/v1/profile" });
+    const version = initial.json().profileVersion as number;
+    for (const payload of [
+      { expectedProfileVersion: version, maximumSuggestions: 25 },
+      { expectedProfileVersion: version, maximumSuggestions: 0 },
+      { expectedProfileVersion: version, prompt: "invent a metric" },
+    ]) {
+      const response = await app.inject({
+        method: "POST",
+        url: "/v1/profile/required-bullet-suggestions",
+        payload,
+      });
+      expect(response.statusCode, response.body).toBe(400);
+    }
+    expect((await app.inject({ method: "GET", url: "/v1/profile" })).json().profileVersion)
+      .toBe(version);
+    await app.close();
+  });
+
   it("generates version-bound target role suggestions without mutating the profile", async () => {
     const providerCall = vi.fn(async (method: string, params: Record<string, unknown>) => ({
       jsonrpc: "2.0" as const,

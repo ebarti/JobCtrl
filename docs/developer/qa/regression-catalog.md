@@ -153,6 +153,20 @@ Any fix to evidence, rationale, keywords, persona judgments, or generated-materi
 
 Before claiming "fixed" on these surfaces, add or update a regression fixture that proves the exact invariant the human complained about. Prefer a fixture that reproduces the bad state from canonical data rather than a shallow component snapshot. State what was verified and what was not; do not use "fixed" for cosmetic masking.
 
+For Required-bullet coaching, use an owned saved profile with required and
+optional bullets, a supported metric, and incomplete achievement evidence.
+Trace each source reference to the exact saved entry, bullet, and profile
+version. Exercise generation, individual rejection and acceptance, missing
+evidence questions, local edits during a delayed response, a newer canonical
+version, and failed generation/save. Generation and rejection must write no
+profile state. Accepted cleanup must retain every factual token, the achievement
+identity, bullet order, and Required pin. Missing evidence must remain a question
+without an applicable fabricated replacement. Verify persistence and reload
+through `/profile` and the real API with temporary SQLite storage; label
+synthetic preview or provider dependencies separately. The deterministic path
+must make zero provider calls and does not establish model quality or spend
+enforcement.
+
 ## Cumulative Redesign Boundaries
 
 The `base-rhea` ancestry, semantic tokens, Helvetica Neue/Helvetica/Arial type,

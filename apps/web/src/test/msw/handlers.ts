@@ -896,6 +896,16 @@ export const handlers = [
       warnings: ["stubbed_model_evidence"],
     }),
   ),
+  http.post("*/v1/profile/required-bullet-suggestions", () =>
+    HttpResponse.json({
+      ok: true,
+      profileVersion: sampleProfileResponse.profileVersion,
+      suggestions: [],
+      strategy: "deterministic_rules_v1",
+      modelUsed: false,
+      truncated: false,
+    }),
+  ),
   http.post("*/v1/profile/import-resume", () =>
     HttpResponse.json({ ok: true, profile: sampleProfileResponse.profile }),
   ),

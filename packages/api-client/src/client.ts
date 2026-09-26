@@ -109,6 +109,8 @@ import type {
   ProfileConfigResponse,
   ProfileImportRequest,
   ProfileImportResponse,
+  RequiredBulletSuggestionRequest,
+  RequiredBulletSuggestionResponse,
   TargetRoleSuggestionRequest,
   TargetRoleSuggestionResponse,
   ProfileUpdateRequest,
@@ -1024,6 +1026,12 @@ export class JobCtrlApiClient {
 
   targetRoleSuggestions(body: TargetRoleSuggestionRequest): Promise<TargetRoleSuggestionResponse> {
     return this.post("/v1/profile/target-role-suggestions", body);
+  }
+
+  requiredBulletSuggestions(
+    body: RequiredBulletSuggestionRequest,
+  ): Promise<RequiredBulletSuggestionResponse> {
+    return this.post("/v1/profile/required-bullet-suggestions", body);
   }
 
   importResume(body: ProfileImportRequest): Promise<ProfileImportResponse> {

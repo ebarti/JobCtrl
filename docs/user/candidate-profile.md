@@ -180,6 +180,30 @@ JobCtrl chooses which achievements to show for the target job. The configured
 maximum bullets per role is only an upper bound; it does not ask Tailoring to
 fill every available slot.
 
+Required-bullet coaching is opt-in and uses the saved profile, with inspectable
+source text and references. It covers conservative grammar cleanup, relevance,
+achievement framing, and missing evidence. The current coaching is deterministic;
+it does not call a model or infer new facts, metrics, achievements, or job
+requirements. Questions about missing evidence are prompts for your own truthful
+manual edits, not proposed facts that can be accepted automatically.
+Identical bullets or Required pins cannot identify one occurrence, so coaching
+skips them. A claim's own text, including a number extracted from it, does not
+independently verify the claim.
+
+Review each proposed wording change separately. Accepting a change preserves
+the bullet's order, achievement identity, and Required selection through the
+normal version-checked profile save. Rejecting or dismissing suggestions does
+not edit the profile. Save your current edits before requesting coaching; a
+changed source or saved profile version requires a fresh review. Failed requests
+and conflicting saves preserve existing canonical facts and keep manual editing
+available. If a newer saved profile arrives while you have a draft, use
+**Rebase edits onto saved profile** to carry non-overlapping edits forward;
+resolve overlapping fields manually before saving.
+
+This optional aid does not implement the evidence interviews, canonical fact
+promotion, or selection-policy migrations in the proposed
+[Profile Evidence program](../plans/2026-09-21-profile-evidence-selective-tailoring.md).
+
 ## Implementation And API Pointers
 
 | Layer | Pointer |
