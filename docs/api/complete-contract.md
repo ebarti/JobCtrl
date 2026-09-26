@@ -799,7 +799,23 @@ Recorded market estimates expose one explicit state: `unsupported`,
 `source_unavailable`, `insufficient_evidence`, or `estimated_range`. Range
 fields are present only for `estimated_range`. Non-range states carry
 inspectable reasons, confidence factors, safe source snapshots, and warnings
-instead of nullable precision. Source scope is reported compensation
+instead of nullable precision. Automatic materialization persists `insufficient_evidence` with
+`weak_role_match` or `weak_location_match` when current job evidence cannot
+resolve a supported role family or country, and it never emits `missing_role`
+for a present title. A source attempt with no supported benchmark also
+persists a no-range result. Source failure with no benchmark uses
+`source_unavailable`; an all-level benchmark still uses `insufficient_evidence`
+and `weak_level_match` for a known-level job unless a compatible accepted
+range is retained. Explicit refreshes use current accepted enrichment text to
+classify the requested job role when available. A present title whose role
+family remains unresolved receives `weak_role_match` and no range, including
+when enrichment is missing or failed. A supported role family rejects reported
+observations from another or no supported family even without enrichment. A
+previously accepted v4 Principal software same-location fallback with adjacent
+infrastructure-engineering evidence is retained through weak refreshes only
+while its title, level and country remain compatible; new cross-family ranges
+remain rejected. Provider
+observations are never classified from the job's enriched description. Source scope is reported compensation
 evidence keyed by company and role: Euro Top Tech public community-reported
 rows, Levels.fyi, Glassdoor, and manual local reported-compensation imports. The
 estimate includes company name, normalized company, role title, normalized role,

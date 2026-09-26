@@ -406,22 +406,27 @@ class SqliteMarketCompensationRepository:
 
     def can_retain_estimate(
         self, estimate: MarketCompensationEstimate | None, *, title: str, location: str | None,
+        job_context: str | None = None,
     ) -> bool:
         target_country = None
+        accepted_role_family_code = None
         if (estimate is not None
                 and estimate.estimator_version.startswith("company-role-reported-compensation-canonical-benchmark-v")
                 and any(f":{kind}:" in estimate.estimator_version for kind in ("direct", "extrapolated"))):
             lineage = load_market_benchmark_lineage(self._conn, tenant_id=estimate.tenant_id,
                                                    estimator_version=estimate.estimator_version)
-            requested = classify_role(title)
+            requested = classify_role(title, job_context=job_context)
             if (lineage is None or lineage["taxonomyVersion"] != requested.taxonomy_version
                     or lineage["roleFamilyCode"] != requested.role_family_code
                     or lineage["seniorityLabel"] != requested.seniority_label
                     or lineage["component"] != estimate.component):
                 return False
             target_country = lineage["targetGeography"]["countryCode"]
+            accepted_role_family_code = lineage["roleFamilyCode"]
         return accepted_estimate_matches_job(estimate, title=title, location=location,
-                                            target_country_code=target_country)
+                                            target_country_code=target_country,
+                                            job_context=job_context,
+                                            accepted_role_family_code=accepted_role_family_code)
 
     @contextmanager
     def _atomic_event_write(self) -> Iterator[_BufferedEventPublisher]:
@@ -452,6 +457,7 @@ class SqliteMarketCompensationRepository:
         title: str,
         company: str | None,
         location: str | None,
+        job_context: str | None = None,
         observations: tuple[ReportedCompensationObservation, ...],
         tenant_id: str = "local",
         component: str = "total_compensation",
@@ -465,6 +471,7 @@ class SqliteMarketCompensationRepository:
             title=title,
             company=company,
             location=location,
+            job_context=job_context,
             observations=observations,
             component=component,
             seniority_label=seniority_label,
@@ -480,6 +487,7 @@ class SqliteMarketCompensationRepository:
         title: str,
         company: str | None,
         location: str | None,
+        job_context: str | None = None,
         observations: tuple[ReportedCompensationObservation, ...],
         tenant_id: str,
         component: str,
@@ -494,6 +502,7 @@ class SqliteMarketCompensationRepository:
             title=title,
             company=company,
             location=location,
+            job_context=job_context,
             component=component,
             seniority_label=seniority_label,
             observations=observations,
@@ -514,12 +523,19 @@ class SqliteMarketCompensationRepository:
     ) -> int:
         if job_id is not None:
             job_id = canonical_job_id(str(job_id))
-        sql = "SELECT job_id, url, title, site, company, location FROM jobs WHERE tenant_id = ?"
+        sql = """SELECT jobs.job_id, jobs.url, jobs.title, jobs.site, jobs.company,
+                        jobs.location, enrichments.full_description AS enrichment_description
+                 FROM jobs
+                 LEFT JOIN job_enrichments AS enrichments
+                   ON enrichments.tenant_id = jobs.tenant_id
+                  AND enrichments.job_id = jobs.job_id
+                  AND enrichments.current_status = 'enriched'
+                 WHERE jobs.tenant_id = ?"""
         params: list[Any] = [tenant_id]
         if job_id:
-            sql += " AND job_id = ?"
+            sql += " AND jobs.job_id = ?"
             params.append(job_id)
-        sql += " ORDER BY url"
+        sql += " ORDER BY jobs.url"
         if limit > 0:
             sql += " LIMIT ?"
             params.append(limit)
@@ -529,17 +545,21 @@ class SqliteMarketCompensationRepository:
             title = str(_row_value(row, "title") or "")
             company = _nullable_str(_row_value(row, "company")) or _nullable_str(_row_value(row, "site"))
             location = _nullable_str(_row_value(row, "location"))
+            job_context = _nullable_str(_row_value(row, "enrichment_description"))
             estimate = self._estimate_job(
                 tenant_id=tenant_id,
                 job_id=current_job_id,
                 title=title,
                 company=company,
                 location=location,
+                job_context=job_context,
                 observations=observations,
                 component="total_compensation",
                 estimated_at=estimated_at,
             )
-            if preserve_accepted_on_failure and not estimate.evidence:
+            if (preserve_accepted_on_failure
+                    and estimate.insufficient_reasons == ("missing_reported_observation",)
+                    and not estimate.evidence):
                 estimate = replace(estimate, estimate_state="source_unavailable", insufficient_reasons=(),
                                    source_unavailable_reasons=("missing_reported_observation",))
             if preserve_accepted_on_failure and estimate.estimate_state != "estimated_range":
@@ -547,9 +567,10 @@ class SqliteMarketCompensationRepository:
                     replace(factor, reason=f"The requested role and level lookup could not retrieve supporting source pages. {factor.reason}")
                     if factor.name == "level" else factor for factor in estimate.factors
                 ))
-            current = self.get_estimate(tenant_id, current_job_id) if preserve_accepted_on_failure else None
+            current = self.get_estimate(tenant_id, current_job_id) if estimate.estimate_state != "estimated_range" else None
             if (estimate.estimate_state != "estimated_range"
-                    and self.can_retain_estimate(current, title=title, location=location)):
+                    and self.can_retain_estimate(current, title=title, location=location,
+                                                 job_context=job_context)):
                 continue
             self.save_estimate(estimate)
         self._conn.commit()

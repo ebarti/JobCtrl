@@ -106,6 +106,13 @@ a canonical direct or geographically extrapolated fact. Job list/detail
 summaries identify that authority as `direct`, `extrapolated`, or unknown;
 detail reads expose the role, level, geography, freshness, exact salary and
 price-level inputs, factor bounds, and formula needed to audit the result.
+After an automatic refresh attempt, active jobs without a supported role or
+country have a recorded `insufficient_evidence` market result with a role or
+location reason and no range. `not_requested` means no market result has been
+persisted. A failed source lookup with no benchmark records
+`source_unavailable`; a retained all-level benchmark still records
+`insufficient_evidence` with `weak_level_match` when it cannot support the
+job's level. A compatible accepted range survives either failure.
 `/v1/compensation/sources` controls permitted source inputs. Refresh is an
 explicit workflow/action, not a read-time side effect.
 

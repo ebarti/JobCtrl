@@ -376,17 +376,46 @@ class MarketCompensationEstimate:
 def accepted_estimate_matches_job(
     estimate: MarketCompensationEstimate | None, *, title: str, location: str | None,
     target_country_code: str | None = None,
+    job_context: str | None = None,
+    accepted_role_family_code: str | None = None,
 ) -> bool:
     """Check retained evidence against current job inputs across estimator encodings."""
 
     if estimate is None or estimate.estimate_state != "estimated_range" or not estimate.role_title:
         return False
-    requested = classify_role(title)
-    accepted = classify_role(estimate.role_title)
-    if (not requested.role_family_code or requested.role_family_code != accepted.role_family_code
+    requested = classify_role(title, job_context=job_context)
+    accepted = classify_role(estimate.role_title,
+                             job_context=job_context if estimate.role_title == title else None)
+    if (not requested.role_family_code
+            or requested.role_family_code != (accepted_role_family_code or accepted.role_family_code)
             or requested.seniority_label != accepted.seniority_label):
         return False
     country = resolve_country_code(location)
+    if accepted_role_family_code is None:
+        # v4 accepted a narrow same-location Principal software/infrastructure
+        # adjacency before the source-family guard existed. Keep that already
+        # accepted artifact only while its job title is unchanged; the current
+        # estimator still cannot create a new cross-family range.
+        legacy_adjacent_principal = (
+            estimate.estimator_version == ESTIMATOR_VERSION
+            and estimate.match_scope == "same_location_role_fallback"
+            and estimate.role_title == title
+            and estimate.seniority_label == "staff_plus"
+            and requested.role_family_code == "software_engineering"
+            and requested.seniority_label == "principal"
+            and country is not None
+        )
+        for row in estimate.evidence:
+            reported_family = classify_role(row.role_title).role_family_code
+            if reported_family == requested.role_family_code:
+                continue
+            if (legacy_adjacent_principal
+                    and reported_family == "infrastructure_platform"
+                    and _legacy_infrastructure_engineer_title(row.role_title)
+                    and resolve_country_code(row.location) == country
+                    and _role_score(_normalize_role(title), row.role_title) >= 0.55):
+                continue
+            return False
     if target_country_code is not None:
         if country != target_country_code:
             return False
@@ -412,12 +441,40 @@ def accepted_estimate_matches_job(
     )
 
 
+def _legacy_infrastructure_engineer_title(value: str | None) -> bool:
+    """Recognize the accepted v4 occupation, allowing only clear domain suffixes."""
+
+    match = re.fullmatch(r"\s*principal\s+infrastructure\s+engineer\b(.*)", value or "", re.IGNORECASE)
+    if match is None:
+        return False
+    suffix = match.group(1).strip()
+    if not suffix:
+        return True
+    if suffix.startswith("(") and suffix.endswith(")"):
+        domain = suffix[1:-1].strip()
+    elif suffix[0] in {",", "/", "-", "–", "—"}:
+        domain = suffix[1:].strip()
+    else:
+        return False
+    if not re.fullmatch(r"[a-z0-9]+(?:[ &/\-]+[a-z0-9]+)*", domain, re.IGNORECASE):
+        return False
+    tokens = _role_tokens(domain)
+    terminal_domain = bool(tokens) and (
+        tokens[-1] in {"tool", "platform"}
+        or (len(tokens) >= 2 and tokens[-1] == "team" and tokens[-2] in {"tool", "platform"})
+    )
+    return terminal_domain and not set(tokens) & {
+        "engineer", "engineering", "presale", "consultant", "executive", "manager", "director",
+    }
+
+
 def estimate_market_compensation(
     *,
     job_id: JobId,
     title: str,
     company: str | None,
     location: str | None,
+    job_context: str | None = None,
     observations: tuple[ReportedCompensationObservation, ...],
     tenant_id: str = "local",
     component: str = "total_compensation",
@@ -474,8 +531,13 @@ def estimate_market_compensation(
             normalized_role=normalized_role or None,
         )
     if not normalized_role:
-        insufficient_reasons.append("missing_role")
-        factors.append(_factor("role", 0.0, "The job title has no role terms to match reported compensation."))
+        has_title = bool(_clean_display(title))
+        insufficient_reasons.append("weak_role_match" if has_title else "missing_role")
+        factors.append(_factor(
+            "role", 0.0,
+            "The job title does not identify a supported role family."
+            if has_title else "The job title has no role terms to match reported compensation.",
+        ))
         return _estimate(
             tenant_id=tenant_id,
             job_id=job_id,
@@ -515,6 +577,15 @@ def estimate_market_compensation(
             normalized_role=normalized_role,
         )
 
+    requested_family = classify_role(title, job_context=job_context).role_family_code
+    if requested_family is None:
+        return _insufficient(
+            tenant_id=tenant_id, job_id=job_id, component=component_value,
+            company=company, normalized_company=normalized_company,
+            role=title, normalized_role=normalized_role,
+            factors=[_factor("role", 0.0, "The current job has no supported role family.")],
+            insufficient=["weak_role_match"], warnings=warnings, estimated_at=now,
+        )
     component_rows = tuple(
         row for row in reported_observations if row.source_id in MARKET_SOURCE_IDS and row.component == component_value
     )
@@ -534,6 +605,26 @@ def estimate_market_compensation(
             warnings=warnings,
             estimated_at=now,
         )
+    compatible_rows = tuple(
+        row for row in component_rows
+        if classify_role(row.role_title).role_family_code == requested_family
+    )
+    if not compatible_rows:
+        return _insufficient(
+            tenant_id=tenant_id,
+            job_id=job_id,
+            component=component_value,
+            company=company,
+            normalized_company=normalized_company,
+            role=title,
+            normalized_role=normalized_role,
+            factors=[_factor("role", 0.0,
+                             "Reported source roles do not support the job's current role family.")],
+            insufficient=["weak_role_match"],
+            warnings=warnings,
+            estimated_at=now,
+        )
+    component_rows = compatible_rows
     warnings.extend(_source_sample_warnings(component_rows))
 
     usable_rows: list[ReportedCompensationObservation] = []

@@ -471,6 +471,60 @@ def test_slow_refresh_cannot_publish_after_its_lease_expires(tmp_path: Path) -> 
         close_connection(db_path)
 
 
+def test_forced_refresh_retries_only_selected_current_slice_before_due_time(tmp_path: Path) -> None:
+    db_path = tmp_path / "forced-slice.db"
+    conn = init_db(db_path)
+    try:
+        _insert_job(conn, title="Director of Software Engineering", location="Madrid, Spain")
+        conn.execute(
+            """INSERT INTO jobs (tenant_id, job_id, url, title, company, location, site, discovered_at)
+               VALUES ('local', '22222222-2222-4222-8222-222222222222',
+                       'https://jobs.example.com/two', 'Senior Data Engineer', 'Example',
+                       'Berlin, Germany', 'example', ?)""",
+            (NOW,),
+        )
+        conn.commit()
+        discovered = SqliteCompensationRefreshStateRepository(conn).discover_active_job_slices("local")
+        director = next(item for item in discovered.slices if item.role_family_code == "software_engineering")
+        calls: list[tuple[LevelsFyiPublicTarget, ...]] = []
+
+        def load(targets):
+            calls.append(targets)
+            return ReportedCompensationSourceLoad(observations=())
+
+        first = run_automatic_compensation_refresh(
+            conn, tenant_id="local", owner="first", now=NOW, load_observations=load,
+            load_fx_rates=_unexpected_fx, load_price_levels=lambda: (), completion_clock=_clock(NOW),
+        )
+        assert first.slices_claimed == 2
+        assert len(calls) == 1
+        skipped = run_automatic_compensation_refresh(
+            conn, tenant_id="local", owner="normal", now="2026-08-13T08:00:00Z",
+            load_observations=load, load_fx_rates=_unexpected_fx,
+            load_price_levels=lambda: (), completion_clock=_clock("2026-08-13T08:00:00Z"),
+        )
+        assert skipped.slices_claimed == 0 and len(calls) == 1
+        with pytest.raises(ValueError, match="not active"):
+            run_automatic_compensation_refresh(
+                conn, tenant_id="local", owner="invalid", now="2026-08-13T08:00:00Z",
+                load_observations=load, load_fx_rates=_unexpected_fx,
+                load_price_levels=lambda: (), force_slices=(replace(director, role_family_code="sales_business_development"),),
+            )
+        forced = run_automatic_compensation_refresh(
+            conn, tenant_id="local", owner="forced", now="2026-08-13T08:00:00Z",
+            load_observations=load, load_fx_rates=_unexpected_fx,
+            load_price_levels=lambda: (), completion_clock=_clock("2026-08-13T08:00:00Z"),
+            force_slices=(director,),
+        )
+        assert forced.slices_claimed == 1
+        assert len(calls) == 2 and len(calls[-1]) == 1
+        assert calls[-1][0].role_title == director.title_hint
+        state = SqliteCompensationRefreshStateRepository(conn).get(director)
+        assert state is not None and state.attempt_count == 2
+    finally:
+        close_connection(db_path)
+
+
 def _insert_job(conn, *, title: str, location: str) -> None:
     conn.execute(
         """
