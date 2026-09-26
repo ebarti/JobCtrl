@@ -27,6 +27,7 @@ from jobctrl.infrastructure.compensation import (
 from jobctrl.infrastructure.compensation.sqlite_market_repository import DEFAULT_FACTOR_REASON
 from jobctrl.infrastructure.compensation.sqlite_market_repository import (
     EuroTopTechLoadOutcome,
+    ReportedCompensationSourceLoad,
 )
 from jobctrl.infrastructure.events import get_default_publisher, reset_default_publisher
 
@@ -242,6 +243,93 @@ def test_repository_round_trips_non_range_states(
     assert loaded.maximum_amount is None
     assert "missing_company" in loaded.insufficient_reasons
     assert loaded.estimate_state == estimate.estimate_state
+
+
+@pytest.mark.parametrize("focused", [True, False])
+@pytest.mark.parametrize("source_failed", [True, False])
+def test_explicit_backfill_persists_no_range_for_sales_evidence_on_enriched_software_job(
+    conn: sqlite3.Connection,
+    focused: bool,
+    source_failed: bool,
+) -> None:
+    job_url = _seed_job(
+        conn, url="https://example.com/jobs/engineering-sales-tools",
+        title="Head of Engineering, Sales & Marketing Tools", company="Acme AI",
+        location="Madrid, Spain", salary=None,
+    )
+    job_id = _job_id(job_url)
+    conn.execute(
+        """INSERT INTO job_enrichments (
+               tenant_id, job_id, current_status, full_description, updated_at
+           ) VALUES ('local', ?, 'enriched', ?, '2026-09-25T09:00:00Z')""",
+        (job_id, "Software backend services using Java and Kubernetes"),
+    )
+    conn.commit()
+    sales = replace(_glassdoor(), role_title="Director of Sales", level_label="Director",
+                    minimum_amount=60_000, maximum_amount=90_000, sample_count=20)
+    repo = SqliteMarketCompensationRepository(conn)
+
+    assert repo.backfill_from_jobs((sales,), tenant_id="local", job_id=job_id if focused else None,
+                                   estimated_at="2026-09-25T10:00:00Z",
+                                   preserve_accepted_on_failure=source_failed) == 1
+    loaded = repo.get_estimate("local", job_id)
+    assert loaded is not None and loaded.estimate_state == "insufficient_evidence"
+    assert loaded.insufficient_reasons == ("weak_role_match",)
+    assert loaded.minimum_amount is None and loaded.maximum_amount is None
+    assert loaded.evidence == ()
+
+
+@pytest.mark.parametrize("focused", [True, False])
+@pytest.mark.parametrize("enrichment_status", ["enriched", "missing", "failed"])
+@pytest.mark.parametrize("title", [
+    "Head of Engineering, Sales & Marketing Tools",
+    "Director of Software Engineering",
+])
+def test_explicit_refresh_product_path_records_role_mismatch_without_range(
+    conn: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+    focused: bool,
+    enrichment_status: str,
+    title: str,
+) -> None:
+    from jobctrl.infrastructure.compensation import refresh
+
+    job_url = _seed_job(
+        conn, url="https://example.com/jobs/explicit-engineering-sales-tools",
+        title=title, company="Acme AI",
+        location="Madrid, Spain", salary=None,
+    )
+    job_id = _job_id(job_url)
+    if enrichment_status != "missing":
+        conn.execute(
+            """INSERT INTO job_enrichments (
+                   tenant_id, job_id, current_status, full_description, updated_at
+               ) VALUES ('local', ?, ?, ?, '2026-09-25T09:00:00Z')""",
+            (job_id, enrichment_status, "Software backend services using Java and Kubernetes"),
+        )
+    conn.commit()
+    sales = replace(_glassdoor(), role_title="Director of Sales", level_label="Director",
+                    minimum_amount=60_000, maximum_amount=90_000, sample_count=20)
+    monkeypatch.setattr(refresh, "get_connection", lambda: conn)
+    monkeypatch.setattr(refresh, "load_default_reported_compensation_observations",
+                        lambda **_: ReportedCompensationSourceLoad(observations=(sales,)))
+
+    result = refresh.refresh_compensation_facts(
+        tenant_id="local", job_id=job_id if focused else None, include_euro_top_tech=False,
+    )
+
+    assert result["estimatesRefreshed"] == 1
+    estimate = SqliteMarketCompensationRepository(conn).get_estimate("local", job_id)
+    assert estimate is not None and estimate.estimate_state == "insufficient_evidence"
+    assert estimate.insufficient_reasons == ("weak_role_match",)
+    assert estimate.minimum_amount is None and estimate.maximum_amount is None
+    row = conn.execute(
+        "SELECT compensation_summary_json FROM job_list_projections WHERE tenant_id = 'local' AND job_id = ?",
+        (job_id,),
+    ).fetchone()
+    summary = json.loads(row["compensation_summary_json"])
+    assert summary["market"]["recordStatus"] == "recorded"
+    assert summary["market"]["displayRange"] is None
 
 
 def test_repository_round_trips_fallback_ranges_and_confidence_interval(

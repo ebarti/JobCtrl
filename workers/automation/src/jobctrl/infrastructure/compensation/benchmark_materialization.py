@@ -120,29 +120,35 @@ def materialize_automatic_compensation_estimates(
         job_id = canonical_job_id(str(row["job_id"]))
         title = str(row["title"] or "").strip()
         location = str(row["location"] or "").strip()
-        classification = classify_role(title)
+        job_context = _nullable_text(row["enrichment_description"])
+        classification = classify_role(title, job_context=job_context)
+        company = _nullable_text(row["company"]) or _nullable_text(row["site"])
         if classification.role_family_code is None:
             without_role += 1
-            cleared += int(
-                market_repository.delete_estimate_if_owned_by(
-                    tenant_id,
-                    job_id,
-                    estimator_version_prefix=CANONICAL_BENCHMARK_ESTIMATOR_VERSION,
-                    deleted_at=canonical_now,
-                )
+            changed = _save_empty_estimate(
+                market_repository, tenant_id=tenant_id, job_id=job_id, title=title,
+                company=company, location=location, now=canonical_now,
+                reason="weak_role_match" if title else "missing_role", factor="role",
+                explanation="The current job evidence does not establish a supported role family.",
+                job_context=job_context,
             )
+            written += int(changed)
+            unchanged += int(not changed)
+            without_benchmark += 1
             continue
         country_code = resolve_country_code(location)
         if country_code is None:
             without_country += 1
-            cleared += int(
-                market_repository.delete_estimate_if_owned_by(
-                    tenant_id,
-                    job_id,
-                    estimator_version_prefix=CANONICAL_BENCHMARK_ESTIMATOR_VERSION,
-                    deleted_at=canonical_now,
-                )
+            changed = _save_empty_estimate(
+                market_repository, tenant_id=tenant_id, job_id=job_id, title=title,
+                company=company, location=location, now=canonical_now,
+                reason="weak_location_match", factor="location",
+                explanation="The job location does not identify a country for market evidence.",
+                job_context=job_context,
             )
+            written += int(changed)
+            unchanged += int(not changed)
+            without_benchmark += 1
             continue
         benchmark_slice = CompensationBenchmarkSlice(
             tenant_id=tenant_id,
@@ -156,7 +162,6 @@ def materialize_automatic_compensation_estimates(
             benchmark_repository,
             state,
         )
-        company = _nullable_text(row["company"]) or _nullable_text(row["site"])
         if projection_input is None or projection_input.seniority_label != classification.seniority_label:
             peers = benchmark_repository.fresh_company_peers(
                 tenant_id=tenant_id, taxonomy_version=classification.taxonomy_version,
@@ -173,7 +178,8 @@ def materialize_automatic_compensation_estimates(
                     market_repository.save_estimate(peer_estimate)
                     written += 1
                 continue
-            if market_repository.can_retain_estimate(current, title=title, location=location):
+            if market_repository.can_retain_estimate(current, title=title, location=location,
+                                                     job_context=job_context):
                 # An unavailable/weak refresh cannot replace accepted role-level
                 # evidence. Stale source dates remain visible on the retained result.
                 with_benchmark += 1
@@ -198,14 +204,15 @@ def materialize_automatic_compensation_estimates(
             continue
         if projection_input is None:
             without_benchmark += 1
-            cleared += int(
-                market_repository.delete_estimate_if_owned_by(
-                    tenant_id,
-                    job_id,
-                    estimator_version_prefix=CANONICAL_BENCHMARK_ESTIMATOR_VERSION,
-                    deleted_at=canonical_now,
-                )
+            changed = _save_empty_estimate(
+                market_repository, tenant_id=tenant_id, job_id=job_id, title=title,
+                company=company, location=location, now=canonical_now,
+                reason="missing_reported_observation", factor="sample",
+                explanation="No supported reported benchmark was available for this role, level, and country.",
+                job_context=job_context,
             )
+            written += int(changed)
+            unchanged += int(not changed)
             continue
         with_benchmark += 1
         try:
@@ -257,6 +264,51 @@ def materialize_automatic_compensation_estimates(
         projections_refreshed=projections_refreshed,
         warnings=tuple(sorted(warnings)),
     )
+
+
+def _save_empty_estimate(
+    repository: SqliteMarketCompensationRepository,
+    *,
+    tenant_id: str,
+    job_id: JobId,
+    title: str,
+    company: str | None,
+    location: str,
+    now: str,
+    reason: str,
+    factor: MarketConfidenceFactorName,
+    explanation: str,
+    job_context: str | None,
+) -> bool:
+    current = repository.get_estimate(tenant_id, job_id)
+    if reason == "missing_reported_observation" and repository.can_retain_estimate(
+        current, title=title, location=location, job_context=job_context,
+    ):
+        return False
+    if (current is not None
+            and current.estimator_version == f"{CANONICAL_BENCHMARK_ESTIMATOR_VERSION}:no-benchmark"
+            and current.estimate_state == "insufficient_evidence"
+            and current.insufficient_reasons == (reason,)
+            and current.role_title == title
+            and current.company_name == company):
+        return False
+    empty = estimate_market_compensation(
+        job_id=job_id, tenant_id=tenant_id, company=company, title=title,
+        location=location, observations=(), estimated_at=now,
+    )
+    estimate = replace(
+        empty,
+        estimate_state="insufficient_evidence",
+        insufficient_reasons=(cast(Any, reason),),
+        unsupported_reasons=(),
+        source_unavailable_reasons=(),
+        factors=(_factor(factor, 0.0, explanation),),
+        estimator_version=f"{CANONICAL_BENCHMARK_ESTIMATOR_VERSION}:no-benchmark",
+    )
+    if current == estimate:
+        return False
+    repository.save_estimate(estimate)
+    return True
 
 
 def _peer_estimate(
@@ -625,8 +677,13 @@ def _active_job_rows(
 ) -> tuple[Mapping[str, Any], ...]:
     cursor = conn.execute(
         """
-        SELECT jobs.job_id, jobs.title, jobs.company, jobs.site, jobs.location
+        SELECT jobs.job_id, jobs.title, jobs.company, jobs.site, jobs.location,
+               enrichments.full_description AS enrichment_description
         FROM jobs
+        LEFT JOIN job_enrichments AS enrichments
+          ON enrichments.tenant_id = jobs.tenant_id
+         AND enrichments.job_id = jobs.job_id
+         AND enrichments.current_status = 'enriched'
         LEFT JOIN jobctrl_deleted_jobs AS deleted
           ON deleted.tenant_id = jobs.tenant_id
          AND deleted.job_id = jobs.job_id

@@ -50,6 +50,59 @@ def test_role_and_country_classification_is_deterministic() -> None:
     assert resolve_benchmark_geography("Remote - Spain") == BenchmarkGeography("ES")
 
 
+@pytest.mark.parametrize(("title", "context", "role", "level"), [
+    ("Head of Engineering, Payment Gateway", "Software backend services using Kubernetes and Java",
+     "software_engineering", "director"),
+    ("Head of Engineering, Sales & Marketing Tools", "Software backend platform using Java",
+     "software_engineering", "director"),
+    ("Head of Technology — Ecommerce", "Backend/frontend commerce APIs on React and AWS",
+     "software_engineering", "director"),
+    ("Head of Engineering Marketplace", "Software APIs and cloud services", "software_engineering", "director"),
+    ("Head of Engineering (Marketplace)", "Software APIs for marketplace", "software_engineering", "director"),
+    ("Head of Engineering (Marketplace)", "Own the software team for a digital marketplace",
+     "software_engineering", "director"),
+    ("Engineering Director - Ecommerce", "Software delivery for ecommerce", "software_engineering", "director"),
+    ("Director of Engineering (Technology Consulting)", "Cloud and Azure architecture",
+     "software_engineering", "director"),
+    ("Director of Engineering", "Own the AI platform and data and AI vision with hands-on coding",
+     "data_ai", "director"),
+    ("Director of Engineering – Manage (Identity, Fraud & CS)",
+     "Gaming platform technical vision for identity and fraud with engineering teams building scalable solutions",
+     "software_engineering", "director"),
+    ("Director of Engineering – Manage (Identity, Fraud & CS)",
+     "Gaming identity and fraud operations without technical engineering ownership", None, "director"),
+    ("Senior Technical Director, Release Management & Automation (AI)",
+     "Lead release engineers and own central software solutions and deployment automation",
+     "software_engineering", "director"),
+    ("Senior Technical Director, Release Management & Automation (AI)",
+     "Game products need cross platform delivery, release quality, delivery velocity, and internal CSO solutions",
+     "software_engineering", "director"),
+    ("Senior Technical Director, Release Management & Automation (AI)",
+     "Coordinate release management and automation across a platform", None, "director"),
+    ("HEAD OF AI ENGINEERING", None, "data_ai", "director"),
+    ("Engineering Director - AI Solutions", None, "data_ai", "director"),
+    ("Director of Data Engineering", "Software platform", "data_ai", "director"),
+    ("Head of Platform Engineering", "Software backend", "infrastructure_platform", "director"),
+    ("Director of Engineering & Platform", "Software backend", "infrastructure_platform", "director"),
+    ("Head of Network Engineering & Architecture", "Cloud and network infrastructure",
+     "infrastructure_platform", "director"),
+    ("CISO", None, "security_privacy", "executive"),
+    ("BESS Engineering Director", "Electrical construction and energy storage", None, "director"),
+    ("Director of Engineering", "Industrial electrical manufacturing platform", None, "director"),
+    ("Head of Industrial Engineering", "Factory maintenance and mechanical systems", None, "director"),
+    ("Director of Hotel Engineering", "Building maintenance, HVAC and facilities", None, "director"),
+    ("Industrial Engineer", None, None, "unknown"),
+    ("Hotel Chief Engineer", None, None, "executive"),
+    ("Engineering Manager", "Software backend systems using Kubernetes", "software_engineering", "manager"),
+    ("Engineering Manager", None, None, "manager"),
+    ("Head of Engineering, Payment Gateway", None, None, "director"),
+])
+def test_leadership_role_uses_supported_title_or_current_job_context(title, context, role, level) -> None:
+    result = classify_role(title, job_context=context)
+    assert result.role_family_code == role
+    assert result.seniority_label == level
+
+
 def test_reported_observations_become_content_addressed_direct_facts() -> None:
     observation = ReportedCompensationObservation(
         source_id="levels_fyi",
@@ -108,7 +161,7 @@ def test_reported_observations_become_content_addressed_direct_facts() -> None:
     ("Principal Infrastructure Engineer", "Principal / Director", "principal"),
     ("Director of Software Engineering", "Principal / Director", "director"),
     ("Software Engineer", "Principal / Director", "unknown"),
-    ("Principal / Director Engineer", "Principal / Director", "unknown"),
+    ("Principal / Director Software Engineer", "Principal / Director", "unknown"),
     ("Staff Software Engineer", "Staff / Engineering Manager", "staff"),
     ("Software Engineering Manager", "Staff / Engineering Manager", "manager"),
     ("Software Engineer", "Staff / Engineering Manager", "unknown"),

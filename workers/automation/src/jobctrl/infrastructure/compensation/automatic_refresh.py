@@ -98,6 +98,7 @@ def refresh_automatic_compensation_benchmarks(
     now: str | None = None,
     conn: sqlite3.Connection | None = None,
     opener: Any | None = None,
+    force_slices: tuple[CompensationBenchmarkSlice, ...] | None = None,
 ) -> AutomaticCompensationRefreshResult:
     """Run the production automatic refresh through policy-routed public clients."""
 
@@ -165,6 +166,7 @@ def refresh_automatic_compensation_benchmarks(
             fetch_text=ecb_client.fetch_text,
         ),
         load_price_levels=load_price_levels,
+        force_slices=force_slices,
     )
 
 
@@ -178,8 +180,9 @@ def run_automatic_compensation_refresh(
     load_fx_rates: FxLoader,
     load_price_levels: PriceLevelLoader,
     completion_clock: CompletionClock | None = None,
+    force_slices: tuple[CompensationBenchmarkSlice, ...] | None = None,
 ) -> AutomaticCompensationRefreshResult:
-    """Refresh every missing or due country/role slice exactly once per run."""
+    """Refresh due slices, or an explicitly selected bounded set under the same lease."""
 
     canonical_now = canonical_benchmark_timestamp(now, "now")
     fresh_until = _shift_timestamp(canonical_now, AUTOMATIC_REFRESH_INTERVAL)
@@ -190,12 +193,21 @@ def run_automatic_compensation_refresh(
     benchmark_repository = SqliteCompensationBenchmarkRepository(conn)
 
     discovery = state_repository.discover_active_job_slices(tenant_id)
-    state_repository.ensure_slices(discovery.slices, now=canonical_now)
+    selected = discovery.slices
+    if force_slices is not None:
+        if not force_slices or len(force_slices) > 5:
+            raise ValueError("forced compensation refresh requires one to five active slices")
+        discovered = {item.key: item for item in discovery.slices}
+        if any(item.key not in discovered for item in force_slices):
+            raise ValueError("forced compensation refresh slice is not active")
+        selected = tuple(discovered[key] for key in sorted({item.key for item in force_slices}))
+    state_repository.ensure_slices(selected, now=canonical_now)
     claimed = state_repository.claim_due(
-        discovery.slices,
+        selected,
         owner=owner,
         now=canonical_now,
         lease_expires_at=lease_expires_at,
+        force=force_slices is not None,
     )
     if not claimed:
         return AutomaticCompensationRefreshResult(

@@ -43,18 +43,38 @@ for comparison:
 1. **Discover reusable benchmark slices.** At the end of each Discover run,
    active jobs are classified with JobCtrl's versioned role-family taxonomy and
    grouped by role family, seniority, country, and compensation component. Jobs
-   whose role family or country cannot be resolved remain explicitly without a
-   market benchmark.
+   whose role family or country cannot be resolved receive a persisted
+   `insufficient_evidence` result with a role or location reason, so an
+   attempted refresh never appears as `not_requested`. Current accepted
+   enrichment text can disambiguate a generic engineering-leadership title
+   when it establishes concrete software or data/AI platform ownership. A
+   technical release director needs explicit software-release or digital-game
+   release ownership. Identity/fraud engineering leadership needs technical
+   ownership of engineering teams, not a product-domain keyword alone.
+   Provider observations still use only their own reported role and level.
+   Focused or all-jobs explicit refreshes withhold a range when the current
+   title and enrichment do not establish a supported role family; when they
+   do, observations from another family cannot supply a range even without
+   enrichment. A broad region such as European
+   Union is not inferred to be a country.
 2. **Refresh only missing or due slices.** A lease-fenced refresh claims each
    missing slice, or a slice whose seven-day freshness window has expired, at
    most once for that run. Euro Top Tech is a fixed public source. Levels.fyi
    and Glassdoor are loaded only when their Settings policy explicitly permits
    the selected access mode; an absent Levels.fyi preference remains disabled.
+   An operator can request a one-shot retry for one to five exact active
+   benchmark slices before their normal due time. It uses the same lease and
+   source policy; ordinary Discovery keeps the seven-day cadence.
 3. **Normalize direct evidence.** Supported observations are canonicalized to
    EUR per year with source-dated ECB exchange rates when conversion is needed.
    Direct facts preserve role taxonomy, seniority, exact geography, sample
    count, source snapshot, freshness, confidence interval, attribution, and
    evidence hash. Employer-posted compensation is not a direct market fact.
+   Historical immutable direct facts retain the classified role family and
+   level but not the provider's original role-title text. JobCtrl does not
+   rewrite those facts when job-title recognition improves; a previously
+   accepted compatible range remains subject to role, level, country, and
+   lineage retention checks.
 4. **Extrapolate missing geographies audibly.** When no fresh exact-country
    benchmark exists, JobCtrl may derive one from another country using Eurostat
    price-level evidence and same-company cross-country pay ratios. The company
@@ -126,7 +146,10 @@ for comparison:
    Retention compares the saved and current job's canonical role and level,
    independent of automatic/explicit estimator label spellings or an empty
    failed observation set. Changed role/country or unsupported prior source
-   population prevents reuse. For a canonical geographic extrapolation, its
+   population prevents reuse. A previously accepted v4 same-location Principal
+   software estimate may retain its adjacent infrastructure-engineering
+   evidence when the job title, level and country remain compatible; a new
+   cross-family estimate is still rejected. For a canonical geographic extrapolation, its
    validated target geography determines applicability; its anchor source
    geography remains unchanged in the evidence. Missing, corrupt or mismatched
    lineage cannot authorize retention.

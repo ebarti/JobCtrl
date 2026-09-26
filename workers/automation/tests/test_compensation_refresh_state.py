@@ -170,6 +170,31 @@ def test_expired_lease_cannot_publish_a_refresh_result(tmp_path: Path) -> None:
         close_connection(db_path)
 
 
+def test_forced_claim_bypasses_freshness_but_not_active_lease(tmp_path: Path) -> None:
+    db_path = tmp_path / "forced-lease.db"
+    conn = init_db(db_path)
+    repository = SqliteCompensationRefreshStateRepository(conn)
+    try:
+        _insert_job(conn, job_id="11111111-1111-4111-8111-111111111111",
+                    title="Director of Software Engineering", location="Madrid, Spain")
+        benchmark_slice = repository.discover_active_job_slices("local").slices[0]
+        repository.ensure_slices((benchmark_slice,), now="2026-08-12T08:00:00Z")
+        first = repository.claim_due((benchmark_slice,), owner="first", now="2026-08-12T08:00:00Z",
+                                     lease_expires_at="2026-08-12T09:00:00Z")[0]
+        assert repository.claim_due((benchmark_slice,), owner="second", now="2026-08-12T08:01:00Z",
+                                    lease_expires_at="2026-08-12T09:01:00Z", force=True) == ()
+        repository.mark_insufficient(first, completed_at="2026-08-12T08:02:00Z",
+                                     next_refresh_at="2026-08-19T08:02:00Z", error_code="no_direct_anchor")
+        assert repository.claim_due((benchmark_slice,), owner="second", now="2026-08-12T08:03:00Z",
+                                    lease_expires_at="2026-08-12T09:03:00Z") == ()
+        forced = repository.claim_due((benchmark_slice,), owner="second", now="2026-08-12T08:03:00Z",
+                                      lease_expires_at="2026-08-12T09:03:00Z", force=True)
+        assert len(forced) == 1
+        assert repository.get(benchmark_slice).attempt_count == 2
+    finally:
+        close_connection(db_path)
+
+
 def test_stale_token_cannot_publish_after_same_owner_reclaims_expired_lease(
     tmp_path: Path,
 ) -> None:
