@@ -184,7 +184,10 @@ function generateDemoRequiredBulletSuggestions(
         || !entry.title.trim()
         || entry.company.length > 160
         || !entry.company.trim()
-      ) continue;
+      ) {
+        scanTruncated = true;
+        continue;
+      }
       const normalizedOriginal = normalizedText(originalText);
       if (!normalizedOriginal) continue;
       const proposedTextCollides = normalizedOriginal !== originalText

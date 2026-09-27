@@ -31,6 +31,8 @@ export function RequiredBulletSuggestions({
   const generation = useRequiredBulletSuggestionsMutation();
   const requestSequence = useRef(0);
   const currentAuthority = useRef({ isDraftClean, profileVersion, resetToken });
+  const acceptInFlight = useRef(false);
+  const preserveReviewedAfterFailure = useRef(false);
   const [generatedVersion, setGeneratedVersion] = useState<number | null>(null);
   const [suggestions, setSuggestions] = useState<RequiredBulletSuggestion[]>([]);
   const [emptyMessage, setEmptyMessage] = useState("");
@@ -38,8 +40,15 @@ export function RequiredBulletSuggestions({
   const isStale = generatedVersion !== null && generatedVersion !== profileVersion;
 
   useEffect(() => {
+    const previous = currentAuthority.current;
     currentAuthority.current = { isDraftClean, profileVersion, resetToken };
     requestSequence.current += 1;
+    if (generatedVersion === profileVersion
+      && previous.resetToken === resetToken
+      && (acceptInFlight.current || (preserveReviewedAfterFailure.current && isDraftClean))) {
+      return;
+    }
+    preserveReviewedAfterFailure.current = false;
     setGeneratedVersion(null);
     setSuggestions([]);
     setEmptyMessage("");
@@ -53,6 +62,7 @@ export function RequiredBulletSuggestions({
 
   const generate = async () => {
     if (profileVersion === null || !isDraftClean) return;
+    preserveReviewedAfterFailure.current = false;
     const sequence = requestSequence.current + 1;
     requestSequence.current = sequence;
     setSuggestions([]);
@@ -90,10 +100,20 @@ export function RequiredBulletSuggestions({
 
   const accept = async (suggestion: RequiredBulletSuggestion) => {
     if (!suggestion.canApply || generatedVersion === null || isStale || !isDraftClean) return;
+    acceptInFlight.current = true;
     setAcceptingId(suggestion.id);
-    const accepted = await onAccept(suggestion, generatedVersion);
-    setAcceptingId(null);
+    let accepted = false;
+    try {
+      accepted = await onAccept(suggestion, generatedVersion);
+    } catch {
+      // The form reports its save error. Keep the reviewed item available.
+    } finally {
+      acceptInFlight.current = false;
+      preserveReviewedAfterFailure.current = !accepted;
+      setAcceptingId(null);
+    }
     if (accepted) {
+      preserveReviewedAfterFailure.current = false;
       requestSequence.current += 1;
       setSuggestions([]);
       setGeneratedVersion(null);

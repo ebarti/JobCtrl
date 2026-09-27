@@ -152,6 +152,22 @@ function reconcilePendingRequiredPin(
     ? "updated" : "blocked";
 }
 
+function explicitlyRemovedRequiredPin(
+  before: JsonRecord | null,
+  after: JsonRecord,
+  conflict: PendingRequiredPinConflict,
+): boolean {
+  const beforeMap = before && getPathValue(before, "resume.tailoring_rules.required_bullets_by_experience_id");
+  const afterMap = getPathValue(after, "resume.tailoring_rules.required_bullets_by_experience_id");
+  if (!isJsonRecord(beforeMap) || !isJsonRecord(afterMap)) return false;
+  const oldPins = beforeMap[conflict.experienceId];
+  const newPins = afterMap[conflict.experienceId];
+  return Array.isArray(oldPins) && Array.isArray(newPins)
+    && oldPins[conflict.requiredBulletIndex] === conflict.previousText
+    && newPins.length === oldPins.length - 1
+    && !newPins.includes(conflict.previousText);
+}
+
 function appendTargetRoles(profile: JsonRecord | null, titles: readonly string[]): JsonRecord | null {
   if (!profile) return profile;
   const next = structuredClone(profile);
@@ -768,8 +784,12 @@ export function ProfileForm({
           setStatusMessage("The edited Required bullet has an ambiguous pin. Make its text unique or discard the draft before saving.");
           return;
         }
-        requiredPinConflictRef.current = null;
         if (pinStatus === "updated") {
+          const bullet = getPathValue(correctedProfile,
+            `resume.experience_entries.${requiredPinConflictRef.current.entryIndex}.bullets.${requiredPinConflictRef.current.bulletIndex}`);
+          if (typeof bullet === "string") {
+            requiredPinConflictRef.current = { ...requiredPinConflictRef.current, previousText: bullet };
+          }
           formApi.setFieldValue("profile", correctedProfile);
           setStatusTone("warning");
           setStatusMessage("The Required pin now follows your edited bullet. Review it and save again.");
@@ -815,6 +835,7 @@ export function ProfileForm({
       if (serializeProfileValues(formApi.state.values) === submittedValues) {
         expectedProfileVersionRef.current = undefined;
         requiredSaveVersionFenceRef.current = undefined;
+        requiredPinConflictRef.current = null;
         formBaseValuesRef.current = structuredClone(toProfileFormValues(profileResponse));
         suggestionAddedRolesRef.current = [];
         suggestionAddedPreferencesRef.current = [];
@@ -1278,6 +1299,13 @@ export function ProfileForm({
       // bound to the inspected version until a refreshed snapshot is rebased.
       expectedProfileVersionRef.current = formBaseVersionRef.current ?? expectedProfileVersion;
       requiredSaveVersionFenceRef.current = expectedProfileVersion;
+      requiredPinConflictRef.current = {
+        experienceId: suggestion.source.experienceId,
+        entryIndex,
+        bulletIndex: suggestion.source.bulletIndex,
+        requiredBulletIndex: suggestion.source.requiredBulletIndex,
+        previousText: suggestion.originalText,
+      };
       let pinNeedsResolution = false;
       const draftProfile = form.state.values.profile;
       const parsedDraft = ProfileSchema.safeParse(draftProfile);
@@ -1289,7 +1317,6 @@ export function ProfileForm({
         ]?.[suggestion.source.requiredBulletIndex];
         const draftBullet = draftEntry?.bullets[suggestion.source.bulletIndex];
         if (typeof draftBullet === "string" && typeof draftPin === "string"
-          && draftBullet !== draftPin
           && (draftPin === suggestion.originalText || draftPin === suggestion.proposedText)) {
           const conflict = {
             experienceId: suggestion.source.experienceId,
@@ -1298,15 +1325,20 @@ export function ProfileForm({
             requiredBulletIndex: suggestion.source.requiredBulletIndex,
             previousText: draftPin,
           };
-          const correctedProfile = structuredClone(draftProfile);
-          const pinStatus = reconcilePendingRequiredPin(correctedProfile, conflict);
-          if (pinStatus === "blocked") {
-            requiredPinConflictRef.current = conflict;
-            pinNeedsResolution = true;
-          } else if (pinStatus === "updated") {
-            requiredPinConflictRef.current = null;
-            form.setFieldValue("profile", correctedProfile);
+          requiredPinConflictRef.current = conflict;
+          if (draftBullet !== draftPin) {
+            const correctedProfile = structuredClone(draftProfile);
+            const pinStatus = reconcilePendingRequiredPin(correctedProfile, conflict);
+            if (pinStatus === "blocked") {
+              pinNeedsResolution = true;
+            } else if (pinStatus === "updated") {
+              requiredPinConflictRef.current = { ...conflict, previousText: draftBullet };
+              form.setFieldValue("profile", correctedProfile);
+            }
           }
+        } else if (draftPin === undefined) {
+          // The user explicitly removed this pin during the pending request.
+          requiredPinConflictRef.current = null;
         }
       }
       setStatusTone("warning");
@@ -1491,7 +1523,32 @@ export function ProfileForm({
                   style={styleField.state.value}
                   onProfileChange={(value) => {
                     clearTransientStatus();
-                    profileField.handleChange(value);
+                    const conflict = requiredPinConflictRef.current;
+                    if (!conflict || !value) {
+                      profileField.handleChange(value);
+                      return;
+                    }
+                    if (explicitlyRemovedRequiredPin(profileField.state.value, value, conflict)) {
+                      requiredPinConflictRef.current = null;
+                      profileField.handleChange(value);
+                      return;
+                    }
+                    const correctedProfile = structuredClone(value);
+                    const pinStatus = reconcilePendingRequiredPin(correctedProfile, conflict);
+                    if (pinStatus === "updated") {
+                      const bullet = getPathValue(correctedProfile,
+                        `resume.experience_entries.${conflict.entryIndex}.bullets.${conflict.bulletIndex}`);
+                      if (typeof bullet === "string") {
+                        requiredPinConflictRef.current = { ...conflict, previousText: bullet };
+                      }
+                      profileField.handleChange(correctedProfile);
+                    } else {
+                      profileField.handleChange(value);
+                      if (pinStatus === "blocked" && ProfileSchema.safeParse(value).success) {
+                        setStatusTone("warning");
+                        setStatusMessage("The edited Required bullet has an ambiguous pin. Make its text unique or discard the draft before saving.");
+                      }
+                    }
                   }}
                   onStyleChange={(value) => {
                     clearTransientStatus();

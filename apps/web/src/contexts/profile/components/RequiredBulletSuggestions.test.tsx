@@ -159,4 +159,28 @@ describe("RequiredBulletSuggestions", () => {
     expect(onAccept).toHaveBeenCalledWith(response.suggestions[0], 3);
     expect(screen.getByText("Proposed text: “Saved bullet”")).toBeInTheDocument();
   });
+
+  it("keeps the reviewed item when an in-flight accept temporarily dirties the form and then fails", async () => {
+    const user = userEvent.setup();
+    let failAccept!: (value: boolean) => void;
+    const onAccept = vi.fn(() => new Promise<boolean>((resolve) => { failAccept = resolve; }));
+    const ports = buildTestPorts({ api: { requiredBulletSuggestions: vi.fn(async () => response) } });
+    const view = renderWithProviders(
+      <RequiredBulletSuggestions isDraftClean profileVersion={3} resetToken={0} onAccept={onAccept} />,
+      { ports },
+    );
+
+    await user.click(screen.getByRole("button", { name: "Inspect Required bullets" }));
+    await user.click(await screen.findByRole("button", { name: "Accept" }));
+    view.rerender(
+      <RequiredBulletSuggestions isDraftClean={false} profileVersion={3} resetToken={0} onAccept={onAccept} />,
+    );
+    expect(screen.getByText("Proposed text: “Saved bullet”")).toBeInTheDocument();
+    await act(async () => failAccept(false));
+    view.rerender(
+      <RequiredBulletSuggestions isDraftClean profileVersion={3} resetToken={0} onAccept={onAccept} />,
+    );
+    expect(screen.getByText("Proposed text: “Saved bullet”")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reject" })).toBeEnabled();
+  });
 });

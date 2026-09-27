@@ -456,18 +456,29 @@ function assertValidSavedProfileJson(db: SqliteDatabase): void {
     throw new InvalidSavedProfileError("The saved profile contains an invalid JSON object.");
   }
   const rows = db.prepare(`
-    SELECT tools_json, metrics_json, tags_json
+    SELECT tools_json, metrics_json, tags_json, user_confirmed, claim_confidence
     FROM candidate_profile_achievement_evidence
     WHERE tenant_id = ? AND profile_id = ?
   `).all(TENANT_ID, PROFILE_ID) as Array<{
     tools_json: unknown;
     metrics_json: unknown;
     tags_json: unknown;
+    user_confirmed: unknown;
+    claim_confidence: unknown;
   }>;
   for (const row of rows) {
     assertSavedStringArray(row.tools_json);
     assertSavedStringArray(row.metrics_json);
     assertSavedStringArray(row.tags_json);
+    if (row.user_confirmed !== 0 && row.user_confirmed !== 1) {
+      throw new InvalidSavedProfileError("The saved profile contains an invalid evidence confirmation.");
+    }
+    if (typeof row.claim_confidence !== "number"
+      || !Number.isFinite(row.claim_confidence)
+      || row.claim_confidence < 0
+      || row.claim_confidence > 1) {
+      throw new InvalidSavedProfileError("The saved profile contains an invalid evidence confidence.");
+    }
   }
 }
 

@@ -293,6 +293,34 @@ describe("generateRequiredBulletSuggestions", () => {
     expect(result.truncated).toBe(true);
   });
 
+  it("reports incomplete inspection when a saved Required source cannot fit the response contract", () => {
+    const candidate = profile();
+    const entry = candidate.resume.experience_entries[0]!;
+    const longBullet = `Saved claim ${"x".repeat(2_000)}`;
+    entry.bullets[0] = longBullet;
+    candidate.resume.tailoring_rules.required_bullets_by_experience_id = {
+      "exp-1": [longBullet],
+    };
+    expect(generateRequiredBulletSuggestions(candidate, 7, 24)).toMatchObject({
+      suggestions: [], truncated: true,
+    });
+
+    entry.bullets[0] = "Required claim.";
+    candidate.resume.tailoring_rules.required_bullets_by_experience_id = {
+      "exp-1": ["Required claim."],
+    };
+    entry.title = "T".repeat(161);
+    expect(generateRequiredBulletSuggestions(candidate, 7, 24)).toMatchObject({
+      suggestions: [], truncated: true,
+    });
+
+    entry.title = "Engineer";
+    entry.company = "C".repeat(161);
+    expect(generateRequiredBulletSuggestions(candidate, 7, 24)).toMatchObject({
+      suggestions: [], truncated: true,
+    });
+  });
+
   it("bounds the scan even when every earlier Required bullet has complete evidence", () => {
     const candidate = profile();
     const entry = candidate.resume.experience_entries[0]!;

@@ -77,9 +77,13 @@ once enough suggestions establish output truncation; `truncated` reports either
 limit. The API checks a bounded read budget before materializing source rows:
 more than 256 experience entries or 4,096 normalized profile child rows returns
 an empty `truncated: true` result. This result does not assert that the profile
-has no coaching opportunities. Invalid exact-schema saved profile rows return
+has no coaching opportunities. A Required bullet longer than 2,000 characters,
+or an owning entry ID, title, or company outside the source-field bounds, is
+also skipped with `truncated: true`; an empty result does not assert a clean
+inspection. Invalid exact-schema saved profile rows return
 `422 invalid_saved_profile` without a profile write, including malformed raw
-JSON arrays in saved achievement evidence.
+JSON arrays, non-boolean confirmation integers, and confidence values outside
+`0–1` in saved achievement evidence.
 
 A Required-bullet suggestion contains:
 
