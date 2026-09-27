@@ -299,6 +299,18 @@ describe("DemoApiClientAdapter", () => {
       expectedProfileVersion: saved.profileVersion! - 1,
       maximumSuggestions: 12,
     })).rejects.toMatchObject({ status: 409, statusText: "stale_profile_version" });
+
+    entry.bullets[1] = "Worked on platform delivery.";
+    const withCollision = await adapter.updateProfile({
+      expectedProfileVersion: saved.profileVersion!,
+      profileText: JSON.stringify(profile),
+    });
+    const colliding = await adapter.requiredBulletSuggestions({
+      expectedProfileVersion: withCollision.profileVersion!,
+      maximumSuggestions: 12,
+    });
+    expect(colliding.suggestions.find((suggestion) => suggestion.kind === "grammar"))
+      .toMatchObject({ canApply: false, proposedText: null });
   });
 
   it("covers every port member and reserves capability errors for unavailable methods", async () => {

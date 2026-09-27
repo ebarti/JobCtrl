@@ -9910,6 +9910,40 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("does not offer an applicable Required cleanup that would duplicate a saved optional bullet", async () => {
+    const app = buildApp(options);
+    const profile = validProfileFixture("Synthetic Candidate");
+    const resume = profile.resume as Record<string, unknown>;
+    const entries = resume.experience_entries as Array<Record<string, unknown>>;
+    entries[0]!.bullets = ["  Helped   with incident response  ", "Helped with incident response"];
+    resume.tailoring_rules = {
+      required_bullets_by_experience_id: { role_1: ["  Helped   with incident response  "] },
+    };
+    const saved = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile } });
+    expect(saved.statusCode, saved.body).toBe(200);
+    const version = saved.json().profileVersion as number;
+
+    const inspection = await app.inject({
+      method: "POST",
+      url: "/v1/profile/required-bullet-suggestions",
+      payload: { expectedProfileVersion: version, maximumSuggestions: 12 },
+    });
+    expect(inspection.statusCode, inspection.body).toBe(200);
+    expect(inspection.json().suggestions).toContainEqual(expect.objectContaining({
+      kind: "grammar",
+      originalText: "  Helped   with incident response  ",
+      proposedText: null,
+      canApply: false,
+    }));
+    expect((await app.inject({ method: "GET", url: "/v1/profile" })).json()).toMatchObject({
+      profileVersion: version,
+      profile: { resume: { experience_entries: [{ bullets: [
+        "  Helped   with incident response  ", "Helped with incident response",
+      ] }] } },
+    });
+    await app.close();
+  });
+
   it("rejects malformed Required coaching requests before any profile write", async () => {
     const app = buildApp(options);
     const initial = await app.inject({ method: "GET", url: "/v1/profile" });

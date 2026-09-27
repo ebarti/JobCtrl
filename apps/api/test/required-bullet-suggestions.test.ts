@@ -39,6 +39,29 @@ function profile() {
 }
 
 describe("generateRequiredBulletSuggestions", () => {
+  it("withholds an applicable cleanup when its saved result duplicates another bullet or Required pin", () => {
+    const candidate = profile();
+    candidate.resume.experience_entries[0]!.bullets[1] = "Worked on platform reliability";
+    const result = generateRequiredBulletSuggestions(candidate, 7, 24);
+    const grammar = result.suggestions.find((item) => item.kind === "grammar");
+    expect(grammar).toMatchObject({
+      originalText: "  Worked   on platform reliability  ",
+      proposedText: null,
+      canApply: false,
+      source: { experienceId: "exp-1", bulletIndex: 0, requiredBulletIndex: 0 },
+    });
+    expect(grammar?.guidance).toMatch(/duplicate another saved bullet or Required pin/);
+
+    candidate.resume.experience_entries[0]!.bullets[1] = "Reduced latency using verified traces.";
+    candidate.resume.tailoring_rules.required_bullets_by_experience_id!["exp-1"]!.push(
+      "Worked on platform reliability",
+    );
+    const orphanPin = generateRequiredBulletSuggestions(candidate, 7, 24).suggestions.find(
+      (item) => item.kind === "grammar",
+    );
+    expect(orphanPin).toMatchObject({ canApply: false, proposedText: null });
+  });
+
   it("reads required bullets only and preserves their facts in conservative replacements", () => {
     const result = generateRequiredBulletSuggestions(profile(), 7, 24);
 

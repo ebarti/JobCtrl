@@ -158,6 +158,30 @@ test("Required coaching inspects saved sources, rejects without writes, and acce
   expect(await page.locator(".profile-data-workspace").evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
 });
 
+test("cleanup is not applicable when its text already belongs to another saved bullet", async ({ page, baseURL }) => {
+  const { apiOrigin, saved } = await seedRequiredBullets(page, baseURL!);
+  const profile = structuredClone(saved.profile);
+  profile.resume.experience_entries[0].bullets[2] = cleanedBullet;
+  const updated = await page.request.patch(`${apiOrigin}/v1/profile`, {
+    headers: { origin: new URL(baseURL!).origin, "sec-fetch-site": "same-origin" },
+    data: { profile, expectedProfileVersion: saved.profileVersion },
+  });
+  expect(updated.status(), await updated.text()).toBe(200);
+  const version = (await updated.json()).profileVersion;
+  const eventsBeforeInspection = profileEventCount();
+
+  await page.goto("/profile");
+  const response = page.waitForResponse(inspectionResponse);
+  await page.getByRole("button", { name: "Inspect Required bullets" }).click();
+  const generated = await (await response).json();
+  expect(generated.profileVersion).toBe(version);
+  expect(generated.suggestions.find((item: { kind: string }) => item.kind === "grammar"))
+    .toMatchObject({ originalText: originalBullet, proposedText: null, canApply: false });
+  await expect(page.getByText(/Whitespace cleanup would duplicate another saved bullet/)).toBeVisible();
+  expect(profileEventCount()).toBe(eventsBeforeInspection);
+  expect((await (await page.request.get(`${apiOrigin}/v1/profile`)).json()).profileVersion).toBe(version);
+});
+
 test("stale results, version conflicts, and failed requests leave manual edits available", async ({ page, baseURL }) => {
   const { apiOrigin, saved } = await seedRequiredBullets(page, baseURL!);
   await page.goto("/profile");
@@ -279,4 +303,61 @@ test("a same-bullet manual edit during acceptance keeps its Required pin through
   const saved = await (await page.request.get(`${apiOrigin}/v1/profile`)).json();
   expect(saved.profile.resume.tailoring_rules.required_bullets_by_experience_id[entryId])
     .toEqual([manualBullet, metricBullet]);
+});
+
+test("a committed cleanup with a lost response rebases a different bullet edit", async ({ page, baseURL }) => {
+  const { apiOrigin, entryId, saved } = await seedRequiredBullets(page, baseURL!);
+  await page.goto("/profile");
+  await page.getByRole("button", { name: "Inspect Required bullets" }).click();
+  await expect(page.getByText(`Proposed text: “${cleanedBullet}”`)).toBeVisible();
+
+  let releaseResponse!: () => void;
+  const holdResponse = new Promise<void>((resolve) => { releaseResponse = resolve; });
+  let releaseReads!: () => void;
+  const holdReads = new Promise<void>((resolve) => { releaseReads = resolve; });
+  let committed = false;
+  await page.route("**/v1/profile", async (route) => {
+    if (route.request().method() === "GET") {
+      await holdReads;
+      return route.continue();
+    }
+    if (route.request().method() === "PATCH" && !committed) {
+      const response = await route.fetch();
+      expect(response.status(), await response.text()).toBe(200);
+      committed = true;
+      await holdResponse;
+      return route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ ok: false, error: "synthetic_lost_response", message: "Synthetic response lost after commit" }),
+      });
+    }
+    return route.continue();
+  });
+  await page.locator('[data-slot="card-content"]')
+    .filter({ hasText: `Proposed text: “${cleanedBullet}”` })
+    .getByRole("button", { name: "Accept" }).click();
+  await expect.poll(() => committed).toBe(true);
+  await page.getByRole("button", { name: /^Experience entries\b/ }).click();
+  const optional = page.getByRole("textbox", { name: "Bullet 3", exact: true });
+  const manualOptional = "Documented synthetic runbooks with a manual revision.";
+  await optional.fill(manualOptional);
+  releaseResponse();
+  await expect(page.getByText(/manual editing remains available/)).toBeVisible();
+  releaseReads();
+  await page.unroute("**/v1/profile");
+  await expect(page.getByRole("button", { name: "Rebase edits onto saved profile" })).toBeVisible();
+  await page.getByRole("button", { name: "Rebase edits onto saved profile" }).click();
+
+  await expect(page.getByRole("textbox", { name: "Bullet 1", exact: true })).toHaveValue(cleanedBullet);
+  await expect(optional).toHaveValue(manualOptional);
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect.poll(async () => (await (await page.request.get(`${apiOrigin}/v1/profile`)).json())
+    .profile.resume.experience_entries[0].bullets[2]).toBe(manualOptional);
+  const persisted = await (await page.request.get(`${apiOrigin}/v1/profile`)).json();
+  expect(persisted.profileVersion).toBe(saved.profileVersion + 2);
+  expect(persisted.profile.resume.experience_entries[0].bullets)
+    .toEqual([cleanedBullet, metricBullet, manualOptional]);
+  expect(persisted.profile.resume.tailoring_rules.required_bullets_by_experience_id[entryId])
+    .toEqual([cleanedBullet, metricBullet]);
 });

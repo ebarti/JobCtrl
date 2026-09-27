@@ -102,10 +102,19 @@ and Required selection. Generation, rejection, unavailable requests, and stale
 results do not promote evidence or alter the saved profile. An uncertain accept
 keeps subsequent manual saves bound to the inspected version; the Profile editor
 offers rebase for non-overlapping drafts after a newer saved version arrives.
+That rebase can combine different bullet edits in one experience entry only
+when the saved entry ID, bullet positions, and text identities remain clear;
+overlapping or reordered bullets require manual resolution. A failed accept
+keeps a unique concurrent manual Required edit pinned and blocks ambiguous
+duplicates from being saved.
+
 This route does not enable #902's model path or implement #883's proposed
 evidence migrations.
+
 Identical bullet or Required-pin occurrences are skipped because their saved
-text does not identify one occurrence. When multiple achievement records match
+text does not identify one occurrence. A whitespace cleanup that would equal
+another saved bullet or Required pin has no applicable replacement. When
+multiple achievement records match
 one otherwise unique bullet, or an achievement ID is reused, the coaching can
 explain the ambiguity but cannot offer a directly applicable replacement.
 Draft, inferred, unconfirmed, or bullet-only evidence prompts a source-confirmation

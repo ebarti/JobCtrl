@@ -92,7 +92,10 @@ Sources are scoped to the response version. Acceptance is an individual browser
 action followed by normal `PATCH /v1/profile` with `expectedProfileVersion`;
 there is no bulk promotion or separate persistent suggestion store.
 Identical bullet or Required-pin occurrences are skipped because their text
-cannot identify one occurrence. Ambiguous achievement matches or reused
+cannot identify one occurrence. A whitespace cleanup that would make its text
+match another bullet or Required pin has no applicable replacement. The browser
+checks this again against the exact saved snapshot before sending an accept.
+Ambiguous achievement matches or reused
 achievement IDs have no applicable replacement. Evidence questions do not
 promote bullet text or an extracted metric into independent proof.
 

@@ -161,8 +161,12 @@ evidence questions, local edits during a delayed response, a newer canonical
 version, and failed generation/save. A manual Save or autosave during a pending
 accept must not send a second profile write; a same-bullet manual edit must
 keep its Required pin when unique and block ambiguous duplicate text until
-resolved. Generation and rejection must write no
-profile state. Accepted cleanup must retain every factual token, the achievement
+resolved, including after a failed accept. A proposed cleanup that would equal
+another saved bullet or Required pin must not be applicable. Rebase a different
+bullet in the same experience entry after a committed write with a lost
+response; keep overlapping or reordered bullet identities blocked.
+Generation and rejection must write no profile state. Accepted cleanup must
+retain every factual token, the achievement
 identity, bullet order, and Required pin. Missing evidence must remain a question
 without an applicable fabricated replacement. Verify persistence and reload
 through `/profile` and the real API with temporary SQLite storage; label

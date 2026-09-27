@@ -149,6 +149,11 @@ function generateDemoRequiredBulletSuggestions(
       ) continue;
       const normalizedOriginal = normalizedText(originalText);
       if (!normalizedOriginal) continue;
+      const proposedTextCollides = entry.bullets.some(
+        (bullet, index) => index !== bulletIndex && bullet === normalizedOriginal,
+      ) || requiredBullets.some(
+        (bullet, index) => index !== requiredBulletIndex && bullet === normalizedOriginal,
+      );
       const matchingAchievements = entry.achievement_evidence.filter(
         (candidate) => candidate.id.trim().length > 0
           && candidate.id.trim().length <= 240
@@ -189,14 +194,17 @@ function generateDemoRequiredBulletSuggestions(
       const idPrefix = `profile:v${profileVersion}:experience[${experienceIndex}]:bullet[${bulletIndex}]:required[${requiredBulletIndex}]`;
 
       if (normalizedOriginal !== originalText) {
+        const canApply = !ambiguousAchievement && !proposedTextCollides;
         suggestions.push({
           id: `${idPrefix}:grammar`,
           kind: "grammar",
           originalText,
-          proposedText: ambiguousAchievement ? null : normalizedOriginal,
-          canApply: !ambiguousAchievement,
-          guidance: ambiguousAchievement
-            ? "The saved achievement identity is ambiguous. Resolve it and edit whitespace manually; this suggestion cannot choose one record."
+          proposedText: canApply ? normalizedOriginal : null,
+          canApply,
+          guidance: proposedTextCollides
+            ? "Whitespace cleanup would duplicate another saved bullet or Required pin. Resolve the duplicate identity before editing this text."
+            : ambiguousAchievement
+              ? "The saved achievement identity is ambiguous. Resolve it and edit whitespace manually; this suggestion cannot choose one record."
             : "Trim leading or trailing space and collapse repeated whitespace without changing the words or facts.",
           source,
         });

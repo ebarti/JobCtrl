@@ -187,8 +187,9 @@ it does not call a model or infer new facts, metrics, achievements, or job
 requirements. Questions about missing evidence are prompts for your own truthful
 manual edits, not proposed facts that can be accepted automatically.
 Identical bullets or Required pins cannot identify one occurrence, so coaching
-skips them. A claim's own text, including a number extracted from it, does not
-independently verify the claim.
+skips them. Cleanup also stays manual when its resulting text would duplicate
+another bullet or Required pin. A claim's own text, including a number
+extracted from it, does not independently verify the claim.
 
 Review each proposed wording change separately. Accepting a change preserves
 the bullet's order, achievement identity, and Required selection through the
@@ -199,9 +200,14 @@ and conflicting saves preserve existing canonical facts and keep manual editing
 available. If a newer saved profile arrives while you have a draft, use
 **Rebase edits onto saved profile** to carry non-overlapping edits forward;
 resolve overlapping fields manually before saving.
+
 While an accepted cleanup is saving, another Save waits. If you edit that same
 bullet, its Required pin follows a unique edited text; duplicate text must be
 resolved before the draft can be saved.
+
+If an accept committed but its response was lost, rebasing can preserve edits
+to different bullets in the same experience entry when their positions and
+identities remain clear. Edits to the same bullet still need manual resolution.
 
 This optional aid does not implement the evidence interviews, canonical fact
 promotion, or selection-policy migrations in the proposed
