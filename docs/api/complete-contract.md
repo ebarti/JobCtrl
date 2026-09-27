@@ -1390,11 +1390,14 @@ Current-version preparation maintenance actions are separate endpoints:
   `{ "stage": "enrich", "runAfter": true, "refreshApplyUrl": true }` to
   inspect only that posting through the live extension. This bounded action
   does not reset Enrich or dispatch Score, Tailor, Cover, or Apply. It requires
-  an accepted description and an HTTPS LinkedIn Jobs locator; invalid or
+  an accepted description and an HTTPS `linkedin.com` or `www.linkedin.com`
+  `/jobs/view/:id` locator; invalid or
   ineligible requests return `400` or `409`. A failed target check appends an
   application-target outcome while retaining the accepted description, score,
-  and materials. The rendered page must identify the selected posting; hidden,
-  unrelated, or ambiguous Apply controls cannot supply a target.
+  and materials. The rendered page must identify the selected posting. The
+  extension reports only controls whose browser-computed visibility and narrow
+  selected-header job identity it can verify; unbound, hidden, or ambiguous
+  controls cannot supply a target.
 - `POST /v1/jobs/bulk-retry-failed` accepts selected jobs or all matching jobs.
   With the default `runAfter: false` it only resets each retryable failed stage
   to `pending`. Attempt-budget failures are included even when their legacy

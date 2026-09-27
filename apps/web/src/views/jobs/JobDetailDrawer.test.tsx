@@ -1218,6 +1218,26 @@ describe("<JobDetailDrawer>", () => {
     ]));
   });
 
+  it("does not offer target refresh for a LinkedIn locator the worker cannot inspect", async () => {
+    server.use(
+      http.get("*/v1/jobs/:jobKey", ({ params }) => {
+        const detail = makeJobDetail({
+          ...sampleJob,
+          jobKey: String(params["jobKey"]),
+          url: "https://m.linkedin.com/jobs/view/synthetic-mobile",
+          applicationUrl: null,
+        });
+        return HttpResponse.json({
+          ...detail,
+          stages: [...detail.stages, { ...detail.stages[0], stage: "enrich", state: "succeeded" }],
+        });
+      }),
+    );
+    renderJobDetailDrawer("https://m.linkedin.com/jobs/view/synthetic-mobile");
+    await screen.findByRole("article", { name: "Job details" });
+    expect(screen.queryByRole("button", { name: "Refresh application target" })).not.toBeInTheDocument();
+  });
+
   it("returns to the jobs list from the route-level workspace", async () => {
     const user = userEvent.setup();
     const { container, router } = renderJobDetailDrawer("job-1");

@@ -2734,72 +2734,29 @@ def _linkedin_view_id(url: str) -> str | None:
     return match.group(1) if match else None
 
 
-def _markup_is_hidden(node: object, *, stop_at: object) -> bool:
-    """Reject controls hidden by their own or ancestor HTML state."""
-    current = node
-    while current is not None and current is not stop_at:
-        attrs = getattr(current, "attrs", {})
-        if getattr(current, "name", None) in {"template", "noscript"}:
-            return True
-        if "hidden" in attrs or "inert" in attrs or str(attrs.get("aria-hidden") or "").lower() == "true":
-            return True
-        style = re.sub(r"\s+", "", str(attrs.get("style") or "").lower())
-        if "display:none" in style or "visibility:hidden" in style:
-            return True
-        classes = {str(value).lower() for value in attrs.get("class", ())}
-        if classes & {"hidden", "invisible", "visually-hidden", "sr-only", "d-none", "display-none"}:
-            return True
-        current = getattr(current, "parent", None)
-    return False
-
-
-def _anchor_belongs_to_view(anchor: object, region: object, view_id: str) -> bool:
-    current = anchor
-    while current is not None:
-        related_job_id = current.get("data-job-id") if hasattr(current, "get") else None
-        if related_job_id and str(related_job_id) != view_id:
-            return False
-        if current is region:
-            return True
-        current = getattr(current, "parent", None)
-    return False
-
-
 def _external_apply_target_from_html(
-    html: str, page_url: str, expected_posting_url: str,
+    html: str,
+    page_url: str,
+    expected_posting_url: str,
+    visible_apply_controls: tuple[tuple[str, str], ...] | None,
 ) -> tuple[str | None, str]:
-    """Read the selected job's unambiguous Apply control from rendered markup."""
+    """Accept only a browser-observed visible control bound to this job."""
     view_id = _linkedin_view_id(expected_posting_url)
     if view_id is None or _linkedin_view_id(page_url) != view_id:
         return None, "navigation_error"
     soup = BeautifulSoup(html, "html.parser")
-    markers = [
-        node for node in soup.select('[id^="JobDetails_AboutTheJob_"]')
-        if not _markup_is_hidden(node, stop_at=soup)
-    ]
+    markers = soup.select('[id^="JobDetails_AboutTheJob_"]')
     if len(markers) != 1 or markers[0].get("id") != f"JobDetails_AboutTheJob_{view_id}":
         return None, "external_url_missing"
-    region = markers[0].find_parent(attrs={"aria-label": "Primary content"}) or markers[0].find_parent("main")
-    if region is None or _markup_is_hidden(region, stop_at=soup):
+    if visible_apply_controls is None:
         return None, "external_url_missing"
 
     targets: set[str] = set()
     onsite_apply = False
-    for anchor in region.select("a[href]"):
-        if _markup_is_hidden(anchor, stop_at=region):
+    for href, control_job_id in visible_apply_controls:
+        if control_job_id != view_id:
             continue
-        label = str(anchor.get("aria-label") or "").strip().lower()
-        classes = {str(value).lower() for value in anchor.get("class", ())}
-        tracking = str(anchor.get("data-tracking-control-name") or "").lower()
-        if not (
-            label.startswith("apply on company website")
-            or "jobs-apply-button" in classes
-            or "jobs_apply-link" in tracking
-        ):
-            continue
-        if not _anchor_belongs_to_view(anchor, region, view_id):
-            continue
-        candidate = urljoin(page_url, str(anchor.get("href") or "").strip())
+        candidate = urljoin(page_url, href.strip())
         parsed = urlparse(candidate)
         if parsed.hostname in {"linkedin.com", "www.linkedin.com"} and parsed.path.rstrip("/") == "/safety/go":
             candidate = (parse_qs(parsed.query).get("url") or [""])[0]
@@ -2872,6 +2829,7 @@ def _refresh_selected_apply_targets(
                             else:
                                 target, method = _external_apply_target_from_html(
                                     page.body_html or "", page.final_url, identity.posting_url.value,
+                                    page.visible_apply_controls,
                                 )
         except Exception:  # noqa: BLE001 - persist a code-owned, non-sensitive failure
             method = "navigation_error"

@@ -2009,8 +2009,8 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         try {
           const url = new URL(accepted?.url ?? "");
           linkedinPosting = url.protocol === "https:"
-            && (url.hostname === "linkedin.com" || url.hostname.endsWith(".linkedin.com"))
-            && url.pathname.startsWith("/jobs/");
+            && (url.hostname === "linkedin.com" || url.hostname === "www.linkedin.com")
+            && /^\/jobs\/view\/[^/]+\/?$/.test(url.pathname);
         } catch {
           // An invalid posting URL cannot be sent to the browser acquisition path.
         }

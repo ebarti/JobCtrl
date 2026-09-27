@@ -107,14 +107,15 @@ separate primary page or pipeline stage. Its results remain inspectable:
   source and enrichment evidence, snapshot confidence or quarantine state,
   application URL, an explicit application-target outcome even when Enrich
   succeeded, and allow-listed audit history.
-  For an enriched LinkedIn posting with no verified application target, its
+  For an enriched canonical LinkedIn `/jobs/view/:id` posting with no verified application target, its
   **Refresh application target** action checks the current page through the
   connected extension. A successful check stores the validated public URL;
   an unavailable browser or missing control records a separate outcome and
   keeps the saved description, score, and materials intact. It never opens or
   submits an application form.
-  The captured page must still identify the selected posting, and a hidden,
-  unrelated, or ambiguous application control cannot supply its target.
+  The captured page must still identify the selected posting. The extension
+  checks browser-computed visibility and binds a control to the selected job
+  header; an unbound, hidden, or ambiguous control cannot supply its target.
 - `/discovery` owns source review, quarantined leads, locator candidates, and
   manual-capture decisions.
 - `/runs` shows the durable Discover and preparation workflows. A failed

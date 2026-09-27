@@ -4850,6 +4850,10 @@ export const DiscoveryBrowserTaskResultSchema = z.discriminatedUnion("status", [
       browserUserAgent: z.string().max(500).optional(),
       bodyText: DiscoveryBrowserResultBodySchema,
       bodyHtml: DiscoveryBrowserResultBodySchema.optional(),
+      visibleApplyControls: z.array(z.object({
+        href: z.string().trim().min(1).max(2048),
+        jobId: z.string().trim().min(1).max(200),
+      }).strict()).max(20).optional(),
     })
     .strict(),
   z

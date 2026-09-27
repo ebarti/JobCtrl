@@ -8465,6 +8465,28 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it.each([
+    "https://m.linkedin.com/jobs/view/synthetic-mobile",
+    "https://www.linkedin.com/jobs/search/?currentJobId=123",
+  ])("does not dispatch unsupported LinkedIn refresh locator %s", async (jobUrl) => {
+    const db = new Database(options.dbPath);
+    insertJob(db, { url: jobUrl, title: "Synthetic role", site: "linkedin" });
+    insertEnrichment(db, jobUrl, "Accepted description");
+    db.prepare("UPDATE job_enrichments SET application_url = NULL WHERE tenant_id = 'local' AND job_id = ?")
+      .run(jobIdFor(jobUrl));
+    db.close();
+    const dispatch = vi.fn(async () => ({ status: "queued", actionId: "unexpected" }));
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
+    const response = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${jobIdFor(jobUrl)}/actions/retry-stage`,
+      payload: { stage: "enrich", runAfter: true, refreshApplyUrl: true },
+    });
+    expect(response.statusCode).toBe(409);
+    expect(dispatch).not.toHaveBeenCalled();
+    await app.close();
+  });
+
   it.each(["discover", "enrich"] as const)("dispatches %s with the optional extension offline", async (stage) => {
     const dispatch = vi.fn(async () => ({ status: "queued", actionId: "optional-dispatch" }));
     const jobUrl = "https://example.com/jobs/optional-enrich";
