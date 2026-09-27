@@ -164,7 +164,11 @@ keep its Required pin when unique and block ambiguous duplicate text until
 resolved, including after a failed accept. Move that bullet below another one
 while Accept is pending, then settle success and failure: the pin must follow
 the moved bullet, never the bullet left at its old index. After a successful
-accept, an older query snapshot must not offer or perform a rebase. A proposed
+or failed accept, also edit the original Required bullet and change another
+bullet to its old text while the request is pending. Preserve both edits and
+block Save until the ambiguous pin is explicitly resolved; only a proven
+reorder may carry the pin to a new index. After a successful accept, an older
+query snapshot must not offer or perform a rebase. A proposed
 cleanup that would equal another saved bullet or Required pin must not be
 applicable. Rebase a different
 bullet in the same experience entry after a committed write with a lost
@@ -189,7 +193,11 @@ repeating the same request will expose omitted sources. Reordered source claims
 or grammar-only variations must not count as independent outcome evidence.
 Include plural possessives and contextual filler; supported novel outcome
 wording still requires a missing-evidence question unless the canonical
-achievement is verified and user-confirmed. Hold an accept pending, advance
+achievement is verified and user-confirmed. Even verified, confirmed evidence
+must keep framing advice when its outcome only restates the same result with
+context such as “during planning”; a new saved result target or measure is
+needed to resolve that framing. Check production and demo parity. Hold an accept
+pending, advance
 the five-second autosave timer, and prove no second write occurs on either
 success or failure while unrelated draft fields remain. Fence ordinary manual
 and autosave full-profile writes to their actual saved base version, permit an

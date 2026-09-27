@@ -388,6 +388,51 @@ describe("DemoApiClientAdapter", () => {
     ).map((suggestion) => suggestion.kind)).toEqual(["missing_evidence"]);
   });
 
+  it("keeps result framing for a contextual restatement in the saved demo profile", async () => {
+    const { adapter } = await createAdapter();
+    const before = await adapter.profile();
+    const profile = ProfileSchema.parse(before.profile);
+    const entry = profile.resume.experience_entries[0]!;
+    entry.bullets = ["Reduced API latency."];
+    entry.achievement_evidence = [{
+      id: "demo-context-only-outcome",
+      source_text: entry.bullets[0]!,
+      scope: "Synthetic team",
+      action: "Reduced API latency",
+      tools: [],
+      metrics: [],
+      outcome: "Reduced API latency during planning.",
+      seniority_signal: "",
+      evidence_strength: "verified",
+      claim_confidence: 1,
+      user_confirmed: true,
+      tags: [],
+    }];
+    profile.resume.tailoring_rules.required_bullets_by_experience_id = {
+      [entry.id]: [entry.bullets[0]!],
+    };
+    const saved = await adapter.updateProfile({
+      expectedProfileVersion: before.profileVersion!, profileText: JSON.stringify(profile),
+    });
+    const inspected = await adapter.requiredBulletSuggestions({
+      expectedProfileVersion: saved.profileVersion!, maximumSuggestions: 12,
+    });
+    expect(inspected.suggestions.filter((suggestion) =>
+      suggestion.source.sourceId === "demo-context-only-outcome",
+    ).map((suggestion) => suggestion.kind)).toEqual(["achievement_framing"]);
+    expect(await adapter.profile()).toEqual(saved);
+
+    entry.achievement_evidence[0]!.outcome = "Reduced API latency by 35%.";
+    const withMeasure = await adapter.updateProfile({
+      expectedProfileVersion: saved.profileVersion!, profileText: JSON.stringify(profile),
+    });
+    expect((await adapter.requiredBulletSuggestions({
+      expectedProfileVersion: withMeasure.profileVersion!, maximumSuggestions: 12,
+    })).suggestions.filter((suggestion) =>
+      suggestion.source.sourceId === "demo-context-only-outcome",
+    )).toEqual([]);
+  });
+
   it("keeps framing advice for a verified action count in the saved demo profile", async () => {
     const { adapter } = await createAdapter();
     const before = await adapter.profile();

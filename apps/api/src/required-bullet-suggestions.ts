@@ -45,11 +45,23 @@ function claimFacts(value: string): string[] {
 
 function addsOutcomeDetail(sourceText: string, outcome: string): boolean {
   if (!RESULT_LANGUAGE.test(outcome) || !RESULT_TARGET.test(outcome)) return false;
-  const sourceFacts = new Set(claimFacts(sourceText));
-  // A reordered claim, changed result verb, plural, or possessive does not
-  // supply another fact. An action count with extra context is still an
-  // action count, so require a result target and new saved factual detail.
-  return claimFacts(outcome).some((token) => !sourceFacts.has(token));
+  // Context such as "during planning" or "across teams" does not add a
+  // result. Compare only result targets and result measures, never arbitrary
+  // lexical novelty in a restated outcome.
+  const resultTargets = (value: string) => Array.from(
+    value.matchAll(new RegExp(RESULT_TARGET.source, "gi")),
+    ([target]) => claimFacts(target).join(" "),
+  );
+  const resultMeasures = (value: string) => Array.from(
+    value.matchAll(new RegExp(RESULT_QUANTITY.source, "gi")),
+    ([measure]) => measure.toLowerCase().replace(/\s+/g, "")
+      .replace(/percent\b/g, "%")
+      .replace(/milliseconds?\b/g, "ms"),
+  );
+  const sourceTargets = new Set(resultTargets(sourceText));
+  const sourceMeasures = new Set(resultMeasures(sourceText));
+  return resultTargets(outcome).some((target) => !sourceTargets.has(target))
+    || resultMeasures(outcome).some((measure) => !sourceMeasures.has(measure));
 }
 
 function hasVerifiedResultMeasure(

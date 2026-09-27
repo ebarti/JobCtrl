@@ -2547,4 +2547,66 @@ describe("<ProfileForm>", () => {
         .toEqual([pinnedText]);
     },
   );
+
+  it.each(["success", "failure"] as const)(
+    "preserves competing bullet edits instead of guessing a pending accept move after %s",
+    async (settlement) => {
+      const user = userEvent.setup();
+      const { initial, requiredBulletSuggestions } = requiredBulletCoachingFixture();
+      let resolveAccept!: (value: typeof initial) => void;
+      let rejectAccept!: (reason: Error) => void;
+      const pendingAccept = new Promise<typeof initial>((resolve, reject) => {
+        resolveAccept = resolve;
+        rejectAccept = reject;
+      });
+      const updateProfile = vi.fn()
+        .mockImplementationOnce(() => pendingAccept)
+        .mockImplementationOnce(async (request: ProfileUpdateRequest) => ({
+          ...initial,
+          profileVersion: settlement === "success" ? 5 : 4,
+          profile: JSON.parse(request.profileText!),
+        }));
+      renderRequiredProfileWithInitialChanges(
+        initial,
+        buildTestPorts({ api: { requiredBulletSuggestions, updateProfile } }),
+      );
+
+      await user.click(await screen.findByRole("button", { name: "Inspect Required bullets" }));
+      await user.click(await screen.findByRole("button", { name: "Accept" }));
+      await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(1));
+      await openExperienceEntries(user);
+      const originalRequired = "  Scaled   the platform 10x.  ";
+      fireEvent.change(screen.getByLabelText("Bullet 1"), { target: { value: "Manual replacement for A." } });
+      fireEvent.change(screen.getByLabelText("Bullet 2"), { target: { value: originalRequired } });
+
+      const acceptedProfile = JSON.parse((updateProfile.mock.calls[0]![0] as ProfileUpdateRequest).profileText!);
+      if (settlement === "success") {
+        await act(async () => resolveAccept({ ...initial, profileVersion: 4, profile: acceptedProfile }));
+      } else {
+        await act(async () => rejectAccept(new Error("Synthetic failed accept")));
+      }
+      expect(screen.getByLabelText("Bullet 1")).toHaveValue("Manual replacement for A.");
+      expect(screen.getByLabelText("Bullet 2")).toHaveValue(originalRequired);
+      await user.click(screen.getByRole("button", { name: "Save changes" }));
+      expect(updateProfile).toHaveBeenCalledTimes(1);
+      expect(screen.getByText(/edited Required bullet has an ambiguous pin/)).toBeInTheDocument();
+
+      const secondBullet = screen.getByLabelText("Bullet 2");
+      await user.click(within(secondBullet.closest(".bullet-row") as HTMLElement)
+        .getByRole("checkbox", { name: "Required" }));
+      const firstBullet = screen.getByLabelText("Bullet 1");
+      await user.click(within(firstBullet.closest(".bullet-row") as HTMLElement)
+        .getByRole("checkbox", { name: "Required" }));
+      await user.click(screen.getByRole("button", { name: "Save changes" }));
+      await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(2));
+      const request = updateProfile.mock.calls[1]![0] as ProfileUpdateRequest;
+      expect(request.expectedProfileVersion).toBe(settlement === "success" ? 4 : 3);
+      const saved = JSON.parse(request.profileText!);
+      expect(saved.resume.experience_entries[0].bullets).toEqual([
+        "Manual replacement for A.", originalRequired,
+      ]);
+      expect(saved.resume.tailoring_rules.required_bullets_by_experience_id["exp-1"])
+        .toEqual(["Manual replacement for A."]);
+    },
+  );
 });

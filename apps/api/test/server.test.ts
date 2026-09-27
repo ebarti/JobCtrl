@@ -10400,6 +10400,53 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("retains framing advice when verified saved outcome only adds context", async () => {
+    const app = buildApp(options);
+    const profile = validProfileFixture("Synthetic Candidate");
+    const resume = profile.resume as Record<string, unknown>;
+    const entry = (resume.experience_entries as Array<Record<string, unknown>>)[0]!;
+    entry.bullets = ["Reduced API latency."];
+    const achievement = {
+      id: "saved-context-only-outcome",
+      source_text: "Reduced API latency.",
+      action: "Reduced API latency",
+      metrics: [],
+      outcome: "Reduced API latency during planning.",
+      evidence_strength: "verified",
+      user_confirmed: true,
+    };
+    entry.achievement_evidence = [achievement];
+    resume.tailoring_rules = {
+      required_bullets_by_experience_id: { role_1: ["Reduced API latency."] },
+    };
+    const saved = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile } });
+    expect(saved.statusCode, saved.body).toBe(200);
+    const version = saved.json().profileVersion as number;
+    const inspect = (expectedProfileVersion: number) => app.inject({
+      method: "POST", url: "/v1/profile/required-bullet-suggestions",
+      payload: { expectedProfileVersion },
+    });
+
+    const contextual = await inspect(version);
+    expect(contextual.statusCode, contextual.body).toBe(200);
+    expect(contextual.json().suggestions.map((item: { kind: string }) => item.kind))
+      .toEqual(["achievement_framing"]);
+    expect(RequiredBulletSuggestionResponseSchema.safeParse(contextual.json()).success).toBe(true);
+    expect((await app.inject({ method: "GET", url: "/v1/profile" })).json().profileVersion)
+      .toBe(version);
+
+    achievement.outcome = "Reduced API latency by 35%.";
+    const revised = await app.inject({
+      method: "PATCH", url: "/v1/profile",
+      payload: { profile, expectedProfileVersion: version },
+    });
+    expect(revised.statusCode, revised.body).toBe(200);
+    const measured = await inspect(revised.json().profileVersion as number);
+    expect(measured.statusCode, measured.body).toBe(200);
+    expect(measured.json().suggestions).toEqual([]);
+    await app.close();
+  });
+
   it("counts every matching saved achievement before offering a Required cleanup", async () => {
     const app = buildApp(options);
     const profile = validProfileFixture("Synthetic Candidate");

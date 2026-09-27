@@ -301,6 +301,29 @@ describe("generateRequiredBulletSuggestions", () => {
       .toEqual(["achievement_framing", "missing_evidence"]);
   });
 
+  it("does not count contextual wording as a new result in verified saved evidence", () => {
+    const candidate = profile();
+    const entry = candidate.resume.experience_entries[0]!;
+    entry.bullets = ["Reduced API latency."];
+    entry.achievement_evidence = [{
+      ...entry.achievement_evidence[0]!,
+      id: "context-only-outcome",
+      source_text: entry.bullets[0]!,
+      metrics: [],
+      outcome: "Reduced API latency during planning.",
+      evidence_strength: "verified",
+      user_confirmed: true,
+    }];
+    candidate.resume.tailoring_rules.required_bullets_by_experience_id = {
+      "exp-1": [entry.bullets[0]!],
+    };
+
+    expect(generateRequiredBulletSuggestions(candidate, 7, 24).suggestions.map((item) => item.kind))
+      .toEqual(["achievement_framing"]);
+    entry.achievement_evidence[0]!.outcome = "Reduced API latency by 35%.";
+    expect(generateRequiredBulletSuggestions(candidate, 7, 24).suggestions).toEqual([]);
+  });
+
   it("asks both questions when a possessive is the only new outcome token", () => {
     const candidate = profile();
     const entry = candidate.resume.experience_entries[0]!;

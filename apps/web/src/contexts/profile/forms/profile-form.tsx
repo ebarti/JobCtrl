@@ -123,6 +123,19 @@ interface PendingRequiredPinConflict {
   baselineBullets: string[];
 }
 
+function isProvenBulletReorder(
+  baseline: readonly string[],
+  current: readonly string[],
+  sourceIndex: number,
+  sourceText: string,
+): boolean {
+  if (baseline[sourceIndex] !== sourceText || baseline.length !== current.length) return false;
+  const baselineTexts = new Set(baseline);
+  return baselineTexts.size === baseline.length
+    && new Set(current).size === current.length
+    && current.every((text) => baselineTexts.has(text));
+}
+
 function reconcilePendingRequiredPin(
   profile: JsonRecord,
   conflict: PendingRequiredPinConflict,
@@ -148,6 +161,10 @@ function reconcilePendingRequiredPin(
   // before considering the old position; the old position now belongs to a
   // different bullet and must never inherit the pin.
   if (matchingPinBulletIndexes.length === 1
+    && (matchingPinBulletIndexes[0] === conflict.bulletIndex
+      || isProvenBulletReorder(
+        conflict.baselineBullets, entry.bullets, conflict.bulletIndex, pinnedText,
+      ))
     && (pinnedText === conflict.previousText || !required.includes(conflict.previousText))) {
     conflict.bulletIndex = matchingPinBulletIndexes[0]!;
     conflict.previousText = pinnedText;
@@ -1287,8 +1304,24 @@ export function ProfileForm({
           bullet === suggestion.originalText ? [index] : []) ?? [];
         const proposedBulletIndexes = currentEntry[0]?.bullets.flatMap((bullet, index) =>
           bullet === suggestion.proposedText ? [index] : []) ?? [];
-        const acceptedBulletIndexes = originalBulletIndexes.length > 0
-          ? originalBulletIndexes : proposedBulletIndexes;
+        const sourceIndex = suggestion.source.bulletIndex;
+        const sourceAtOriginalIndex = baselineBulletTexts.has(
+          currentEntry[0]?.bullets[sourceIndex] ?? "",
+        );
+        const acceptedBulletIndexes = sourceAtOriginalIndex
+          ? [sourceIndex]
+          : originalBulletIndexes.length > 0 ? originalBulletIndexes : proposedBulletIndexes;
+        const acceptedBulletIndex = acceptedBulletIndexes.length === 1
+          ? acceptedBulletIndexes[0]! : null;
+        const moveIsProven = acceptedBulletIndex !== null
+          && (acceptedBulletIndex === sourceIndex || isProvenBulletReorder(
+            entry.bullets.map((bullet, index) =>
+              index === sourceIndex && currentEntry[0]?.bullets[acceptedBulletIndex] === suggestion.proposedText
+                ? suggestion.proposedText! : bullet),
+            currentEntry[0]?.bullets ?? [],
+            sourceIndex,
+            currentEntry[0]?.bullets[acceptedBulletIndex] ?? "",
+          ));
         let pinAmbiguous = false;
         const acceptedFieldOverlaps = currentEntry.length !== 1
           || parsedCurrentProfile?.resume.experience_entries.findIndex(
@@ -1296,13 +1329,12 @@ export function ProfileForm({
           ) !== entryIndex
           || currentEntry[0]!.title !== suggestion.source.experienceTitle
           || currentEntry[0]!.company !== suggestion.source.experienceCompany
-          || acceptedBulletIndexes.length !== 1
+          || !moveIsProven
           || !baselineBulletTexts.has(currentRequired?.[suggestion.source.requiredBulletIndex] ?? "");
         if (!acceptedFieldOverlaps && currentValues.profile) {
-          const acceptedBulletIndex = acceptedBulletIndexes[0]!;
           setPathValue(
             currentValues.profile,
-            `resume.experience_entries.${entryIndex}.bullets.${acceptedBulletIndex}`,
+            `resume.experience_entries.${entryIndex}.bullets.${acceptedBulletIndex!}`,
             suggestion.proposedText,
           );
           setRequiredBulletText(
@@ -1314,7 +1346,7 @@ export function ProfileForm({
           requiredPinConflictRef.current = {
             experienceId: suggestion.source.experienceId,
             entryIndex,
-            bulletIndex: acceptedBulletIndex,
+            bulletIndex: acceptedBulletIndex!,
             requiredBulletIndex: suggestion.source.requiredBulletIndex,
             previousText: suggestion.proposedText,
             baselineBullets: currentEntry[0]!.bullets.map((bullet, index) =>
