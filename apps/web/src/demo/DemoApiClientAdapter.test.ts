@@ -331,15 +331,15 @@ describe("DemoApiClientAdapter", () => {
     const before = await adapter.profile();
     const profile = ProfileSchema.parse(before.profile);
     const entry = profile.resume.experience_entries[0]!;
-    entry.bullets = ["Reduced team latency."];
+    entry.bullets = ["Reduced process latency."];
     entry.achievement_evidence = [{
       id: "demo-possessive-restatement",
       source_text: entry.bullets[0]!,
       scope: "Synthetic team",
-      action: "Reduced team latency",
+      action: "Reduced process latency",
       tools: [],
       metrics: [],
-      outcome: "Decreased teams' latency.",
+      outcome: "Reduced processes' latency in this role.",
       seniority_signal: "",
       evidence_strength: "supported",
       claim_confidence: 0.8,
@@ -361,6 +361,19 @@ describe("DemoApiClientAdapter", () => {
       suggestion.source.sourceId === "demo-possessive-restatement",
     ).map((suggestion) => suggestion.kind)).toEqual(["achievement_framing", "missing_evidence"]);
     expect(await adapter.profile()).toEqual(saved);
+
+    entry.achievement_evidence[0]!.outcome = "Improved reliability across the platform.";
+    const withNewWords = await adapter.updateProfile({
+      expectedProfileVersion: saved.profileVersion!,
+      profileText: JSON.stringify(profile),
+    });
+    const inspectedNewWords = await adapter.requiredBulletSuggestions({
+      expectedProfileVersion: withNewWords.profileVersion!,
+      maximumSuggestions: 12,
+    });
+    expect(inspectedNewWords.suggestions.filter((suggestion) =>
+      suggestion.source.sourceId === "demo-possessive-restatement",
+    ).map((suggestion) => suggestion.kind)).toEqual(["missing_evidence"]);
   });
 
   it("covers every port member and reserves capability errors for unavailable methods", async () => {

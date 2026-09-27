@@ -10209,6 +10209,54 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("does not treat saved grammatical filler or novel supported wording as independent proof", async () => {
+    const app = buildApp(options);
+    const profile = validProfileFixture("Synthetic Candidate");
+    const resume = profile.resume as Record<string, unknown>;
+    const entry = (resume.experience_entries as Array<Record<string, unknown>>)[0]!;
+    entry.bullets = ["Reduced process latency."];
+    const achievement = {
+      id: "saved-contextual-restatement",
+      source_text: "Reduced process latency.",
+      action: "Reduced process latency",
+      outcome: "Reduced processes' latency in this role.",
+      evidence_strength: "supported",
+      user_confirmed: true,
+    };
+    entry.achievement_evidence = [achievement];
+    resume.tailoring_rules = {
+      required_bullets_by_experience_id: { role_1: ["Reduced process latency."] },
+    };
+    const saved = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile } });
+    expect(saved.statusCode, saved.body).toBe(200);
+    const version = saved.json().profileVersion as number;
+    const inspect = (expectedProfileVersion: number) => app.inject({
+      method: "POST",
+      url: "/v1/profile/required-bullet-suggestions",
+      payload: { expectedProfileVersion },
+    });
+
+    const restatement = await inspect(version);
+    expect(restatement.statusCode, restatement.body).toBe(200);
+    expect(restatement.json().suggestions.map((item: { kind: string }) => item.kind))
+      .toEqual(["achievement_framing", "missing_evidence"]);
+
+    achievement.outcome = "Improved reliability across the platform.";
+    const revised = await app.inject({
+      method: "PATCH", url: "/v1/profile",
+      payload: { profile, expectedProfileVersion: version },
+    });
+    expect(revised.statusCode, revised.body).toBe(200);
+    const revisedVersion = revised.json().profileVersion as number;
+    const novelWords = await inspect(revisedVersion);
+    expect(novelWords.statusCode, novelWords.body).toBe(200);
+    expect(novelWords.json().suggestions.map((item: { kind: string }) => item.kind))
+      .toEqual(["missing_evidence"]);
+    expect((await app.inject({ method: "GET", url: "/v1/profile" })).json().profileVersion)
+      .toBe(revisedVersion);
+    await app.close();
+  });
+
   it("counts every matching saved achievement before offering a Required cleanup", async () => {
     const app = buildApp(options);
     const profile = validProfileFixture("Synthetic Candidate");

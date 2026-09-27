@@ -19,7 +19,7 @@ function claimSignature(value: string): string {
 }
 
 const CLAIM_CONNECTORS = new Set([
-  "a", "an", "and", "at", "be", "been", "by", "for", "from", "in", "is", "of", "on", "s", "the", "to", "was", "were", "with",
+  "a", "an", "and", "at", "be", "been", "by", "for", "from", "in", "is", "of", "on", "role", "s", "the", "this", "to", "was", "were", "with",
 ]);
 
 function claimFacts(value: string): string[] {
@@ -30,7 +30,9 @@ function claimFacts(value: string): string[] {
     .filter((token) => (token.length > 1 || /^\d$/.test(token))
       && !CLAIM_CONNECTORS.has(token)
       && !RESULT_LANGUAGE.test(token))
-    .map((token) => token.length > 4 && token.endsWith("ies")
+    .map((token) => token.length > 5 && token.endsWith("sses")
+      ? token.slice(0, -2)
+      : token.length > 4 && token.endsWith("ies")
       ? `${token.slice(0, -3)}y`
       : token.length > 4 && token.endsWith("s") && !token.endsWith("ss") && !token.endsWith("is")
         ? token.slice(0, -1)
@@ -53,11 +55,10 @@ function boundedExcerpt(value: string): string {
 function isSubstantiveEvidence(
   evidence: ProfileShape["resume"]["experience_entries"][number]["achievement_evidence"][number],
 ): boolean {
-  // Normalized storage materializes every legacy bullet as an achievement row,
-  // copying the bullet into action, outcome, and extracted metrics. That row
-  // preserves identity but does not add an independent source for the claim.
-  return addsOutcomeDetail(evidence.source_text, evidence.outcome)
-    || evidence.evidence_strength === "verified";
+  // Saved wording is not independent proof, however novel it sounds. The
+  // canonical evidence-strength field is the available verification signal;
+  // user confirmation is checked separately before suppressing the question.
+  return evidence.evidence_strength === "verified";
 }
 
 function truncatedResponse(
@@ -245,9 +246,11 @@ export function generateRequiredBulletSuggestions(
           canApply: false,
           guidance: !achievement
             ? "No unambiguous canonical achievement record matches this bullet. Which saved source supports its claim? Add only evidence you can verify in the normal editor."
-            : !hasSubstantiveEvidence
-              ? "The matching achievement record adds no independent detail beyond this bullet. Which source confirms the claim or metric? Add only verified details in the normal editor."
-              : "This achievement is marked draft, inferred, or unconfirmed. Which source verifies its claim? Review and confirm it in the normal editor before strengthening the wording.",
+            : achievement.evidence_strength === "draft"
+              || achievement.evidence_strength === "inferred"
+              || !achievement.user_confirmed
+              ? "This achievement is marked draft, inferred, or unconfirmed. Which source verifies its claim? Review and confirm it in the normal editor before strengthening the wording."
+              : "The matching achievement is not marked verified. Which independent source confirms the claim or metric? Add only verified details in the normal editor.",
           source,
         });
       }

@@ -24,10 +24,12 @@ tailoring run consumes a versioned snapshot; it does not silently mutate the
 profile to fit a posting.
 
 `GET /v1/profile` includes `profileVersion` (`null` before initialization, then
-a positive monotonic integer). Ordinary manual `PATCH` requests remain
-backward-compatible and may omit `expectedProfileVersion`. A suggestion-derived
-save includes the version returned with the suggestions; the API compares and
-writes in the same transaction. A mismatch returns `409
+a positive monotonic integer). The API remains backward-compatible with
+callers that omit `expectedProfileVersion`, but the web form includes its saved
+base version on every full-profile manual and autosave write. It omits the field
+only for the initial save while the version is `null`. A suggestion-derived
+save uses its reviewed version. The API compares and writes in one transaction;
+a mismatch returns `409
 stale_profile_version`, writes no profile row, records no `ProfileUpdated`
 event, and creates no preparation-continuation work.
 
@@ -107,14 +109,15 @@ identity after future profile edits.
 Only conservative wording cleanup supplies an applicable replacement. Coaching
 questions have no proposed text and require the user's own truthful manual
 edits. An outcome that only reorders the source claim or changes its result verb
-or grammar does not independently support that claim. The browser accepts
+or grammar does not independently support that claim. Nor does novel wording
+alone verify it: only a user-confirmed achievement marked `verified` avoids the
+missing-evidence question. The browser accepts
 replacements individually through the ordinary
 version-checked profile save, preserving bullet order, achievement identity,
 and Required selection. Generation, rejection, unavailable requests, and stale
-results do not promote evidence or alter the saved profile. After an accept,
-subsequent manual saves remain bound to its saved version while query refresh
-is pending; the Profile editor
-offers rebase for non-overlapping drafts after a newer saved version arrives.
+results do not promote evidence or alter the saved profile. Every browser save
+remains bound to its saved form version while query refresh is pending. The
+editor offers rebase for non-overlapping drafts after a newer version arrives.
 That rebase can combine different bullet edits in one experience entry only
 when the saved entry ID, bullet positions, and text identities remain clear;
 overlapping or reordered bullets require manual resolution. A failed accept
@@ -131,8 +134,8 @@ another saved bullet or Required pin has no applicable replacement. When
 multiple achievement records match
 one otherwise unique bullet, or an achievement ID is reused, the coaching can
 explain the ambiguity but cannot offer a directly applicable replacement.
-Draft, inferred, unconfirmed, or bullet-only evidence prompts a source-confirmation
-question; an extracted metric from the bullet alone is not independent
+Supported, draft, inferred, unconfirmed, or bullet-only evidence prompts a
+source-confirmation question; an extracted metric from the bullet alone is not independent
 verification.
 
 Each `resume.experience_entries[]` record may include `summary`. The field

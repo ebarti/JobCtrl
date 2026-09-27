@@ -18,6 +18,7 @@ function profile() {
               source_text: "Reduced latency using verified traces.",
               action: "Reduced latency",
               outcome: "Improved reliability",
+              evidence_strength: "verified",
               user_confirmed: true,
             },
           ],
@@ -184,6 +185,36 @@ describe("generateRequiredBulletSuggestions", () => {
     }
   });
 
+  it("requires verification even when a supported outcome adds different words", () => {
+    const candidate = profile();
+    const evidence = candidate.resume.experience_entries[0]!.achievement_evidence[0]!;
+    evidence.evidence_strength = "supported";
+    evidence.outcome = "Improved reliability across the platform.";
+    const result = generateRequiredBulletSuggestions(candidate, 7, 24);
+    const secondBullet = result.suggestions.filter((item) => item.source.bulletIndex === 1);
+    expect(secondBullet.map((item) => item.kind)).toEqual(["missing_evidence"]);
+    expect(secondBullet[0]?.guidance).toMatch(/not marked verified/);
+  });
+
+  it("keeps framing and evidence questions for plural possessives and contextual filler", () => {
+    const candidate = profile();
+    const entry = candidate.resume.experience_entries[0]!;
+    entry.bullets = ["Reduced process latency."];
+    entry.achievement_evidence = [{
+      ...entry.achievement_evidence[0]!,
+      id: "contextual-restatement",
+      source_text: entry.bullets[0]!,
+      outcome: "Reduced processes' latency in this role.",
+      evidence_strength: "supported",
+      user_confirmed: true,
+    }];
+    candidate.resume.tailoring_rules.required_bullets_by_experience_id = {
+      "exp-1": [entry.bullets[0]!],
+    };
+    expect(generateRequiredBulletSuggestions(candidate, 7, 24).suggestions.map((item) => item.kind))
+      .toEqual(["achievement_framing", "missing_evidence"]);
+  });
+
   it("asks both questions when a possessive is the only new outcome token", () => {
     const candidate = profile();
     const entry = candidate.resume.experience_entries[0]!;
@@ -333,6 +364,7 @@ describe("generateRequiredBulletSuggestions", () => {
       source_text: entry.bullets[0]!,
       action: "Worked on platform reliability",
       outcome: "Worked on platform reliability",
+      evidence_strength: "supported",
       tools: ["Synthetic tool"],
       tags: ["platform"],
     }];

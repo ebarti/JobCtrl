@@ -701,6 +701,7 @@ export function ProfileForm({
   formBaseVersionRef.current = formBaseVersion;
   const [suggestionDerivedDraft, setSuggestionDerivedDraft] = useState(false);
   const formRef = useRef<HTMLFormElement>(null);
+  const formBaseResponseRef = useRef<ProfileConfigResponse>(initial);
   const formBaseValuesRef = useRef<ProfileFormValues>(structuredClone(toProfileFormValues(initial)));
   const suggestionAddedRolesRef = useRef<readonly {
     profileVersion: number;
@@ -714,7 +715,7 @@ export function ProfileForm({
   const plateProfileProjectionRef = useRef<PlateProfileProjectionState | null>(null);
   const expectedProfileVersionRef = useRef<number | undefined>(undefined);
   const requiredAcceptPendingRef = useRef(false);
-  const requiredSaveVersionFenceRef = useRef<number | undefined>(undefined);
+  const profileSaveVersionFenceRef = useRef<number | undefined>(undefined);
   const requiredPinConflictRef = useRef<PendingRequiredPinConflict | null>(null);
   const isProfileSection = section === "profile";
   const saveLabel = "Save changes";
@@ -772,9 +773,10 @@ export function ProfileForm({
         setStatusMessage("Wait for the Required bullet save to finish. Your manual edits remain pending.");
         return;
       }
-      if (requiredSaveVersionFenceRef.current !== undefined
-        && (requiredSaveVersionFenceRef.current !== formBaseVersion
-          || (initial.profileVersion !== null && initial.profileVersion > formBaseVersion))) {
+      if ((initial.profileVersion !== null
+          && (formBaseVersion === null || initial.profileVersion > formBaseVersion))
+        || (profileSaveVersionFenceRef.current !== undefined
+          && profileSaveVersionFenceRef.current !== formBaseVersion)) {
         setStatusTone("warning");
         setStatusMessage("The saved profile changed. Rebase your manual edits before saving.");
         return;
@@ -820,14 +822,15 @@ export function ProfileForm({
         return;
       }
       const submittedValues = serializeProfileValues(value);
-      const initialValues = toProfileFormValues(initial);
       const shouldUpdateProfile =
-        submittedValues !== serializeProfileValues(initialValues);
-      let profileResponse = initial;
+        submittedValues !== serializeProfileValues(formBaseValuesRef.current);
+      let profileResponse = formBaseResponseRef.current;
       if (shouldUpdateProfile) {
         try {
           profileResponse = await updateProfile.mutateAsync(
-            toUpdateRequest(value, requiredSaveVersionFenceRef.current ?? expectedProfileVersionRef.current),
+            // Every full-profile edit is conditional on the snapshot that
+            // actually supplied this form. A new profile has no version yet.
+            toUpdateRequest(value, formBaseVersion ?? undefined),
           );
         } catch {
           // The mutation owns the displayed error and rollback. Keep the local
@@ -835,12 +838,13 @@ export function ProfileForm({
           return;
         }
       }
-      if (requiredSaveVersionFenceRef.current !== undefined && shouldUpdateProfile) {
-        requiredSaveVersionFenceRef.current = profileResponse.profileVersion ?? requiredSaveVersionFenceRef.current;
+      if (shouldUpdateProfile) {
+        profileSaveVersionFenceRef.current = profileResponse.profileVersion ?? profileSaveVersionFenceRef.current;
       }
       if (serializeProfileValues(formApi.state.values) === submittedValues) {
         expectedProfileVersionRef.current = undefined;
         requiredPinConflictRef.current = null;
+        formBaseResponseRef.current = profileResponse;
         formBaseValuesRef.current = structuredClone(toProfileFormValues(profileResponse));
         suggestionAddedRolesRef.current = [];
         suggestionAddedPreferencesRef.current = [];
@@ -854,9 +858,7 @@ export function ProfileForm({
         setStatusTone("saved");
         setStatusMessage(savedMessage);
       } else {
-        if (requiredSaveVersionFenceRef.current !== undefined) {
-          requiredSaveVersionFenceRef.current = profileResponse.profileVersion ?? undefined;
-        }
+        formBaseResponseRef.current = profileResponse;
         formBaseValuesRef.current = structuredClone(toProfileFormValues(profileResponse));
         reconcileSuggestionProvenance(formApi.state.values.profile);
         const submittedSuggestionKeys = new Set(
@@ -955,13 +957,13 @@ export function ProfileForm({
   }, [applyPlateTextChanges, onPlateTextControllerChange]);
 
   useEffect(() => {
-    const requiredFence = requiredSaveVersionFenceRef.current;
-    // A successful guarded save can be newer than the query while refetch is
+    const savedFence = profileSaveVersionFenceRef.current;
+    // Any successful save can be newer than the query while refetch is
     // pending. A failed accept can also roll its optimistic query patch back
     // at the same version. Neither snapshot should replace the known form base
     // or clear the version fence/reviewed suggestion.
-    if (requiredFence !== undefined
-      && (initial.profileVersion === null || initial.profileVersion <= requiredFence)) {
+    if (savedFence !== undefined
+      && (initial.profileVersion === null || initial.profileVersion <= savedFence)) {
       return;
     }
     if (requiredAcceptPendingRef.current || form.state.isDirty || form.state.isSubmitting) {
@@ -969,9 +971,10 @@ export function ProfileForm({
     }
     plateProfileProjectionRef.current = null;
     expectedProfileVersionRef.current = undefined;
-    requiredSaveVersionFenceRef.current = undefined;
+    profileSaveVersionFenceRef.current = undefined;
     requiredPinConflictRef.current = null;
     const initialValues = toProfileFormValues(initial);
+    formBaseResponseRef.current = initial;
     formBaseValuesRef.current = structuredClone(initialValues);
     setFormBaseVersion(initial.profileVersion);
     setSuggestionDerivedDraft(false);
@@ -1026,6 +1029,7 @@ export function ProfileForm({
       return;
     }
     const rebasedValues = rebased.value as ProfileFormValues;
+    formBaseResponseRef.current = initial;
     formBaseValuesRef.current = structuredClone(remoteValues);
     suggestionAddedRolesRef.current = [];
     suggestionAddedPreferencesRef.current = [];
@@ -1033,8 +1037,8 @@ export function ProfileForm({
     suggestionReviewResolvedVersionRef.current = undefined;
     setFormBaseVersion(initial.profileVersion);
     expectedProfileVersionRef.current = undefined;
-    if (requiredSaveVersionFenceRef.current !== undefined) {
-      requiredSaveVersionFenceRef.current = initial.profileVersion ?? undefined;
+    if (profileSaveVersionFenceRef.current !== undefined) {
+      profileSaveVersionFenceRef.current = initial.profileVersion ?? undefined;
     }
     form.reset(remoteValues);
     if (!jsonValuesEqual(rebasedValues.profile, remoteValues.profile)) {
@@ -1071,11 +1075,12 @@ export function ProfileForm({
       return;
     }
     const values = rebased.value as ProfileFormValues;
+    formBaseResponseRef.current = initial;
     formBaseValuesRef.current = structuredClone(remoteValues);
     setFormBaseVersion(initial.profileVersion);
     expectedProfileVersionRef.current = initial.profileVersion ?? undefined;
-    if (requiredSaveVersionFenceRef.current !== undefined) {
-      requiredSaveVersionFenceRef.current = initial.profileVersion ?? undefined;
+    if (profileSaveVersionFenceRef.current !== undefined) {
+      profileSaveVersionFenceRef.current = initial.profileVersion ?? undefined;
     }
     plateProfileProjectionRef.current = null;
     form.reset(remoteValues);
@@ -1195,16 +1200,17 @@ export function ProfileForm({
       suggestion.proposedText,
     )) return false;
     requiredAcceptPendingRef.current = true;
-    requiredSaveVersionFenceRef.current = expectedProfileVersion;
+    profileSaveVersionFenceRef.current = expectedProfileVersion;
     try {
       const response = await updateProfile.mutateAsync(toUpdateRequest(nextValues, expectedProfileVersion));
       // The optimistic query patch can show either snapshot while the request
       // is pending. Neither one is a manual edit to the accepted bullet.
       const baselineBulletTexts = new Set([suggestion.originalText, suggestion.proposedText]);
+      formBaseResponseRef.current = response;
       formBaseValuesRef.current = structuredClone(toProfileFormValues(response));
       setFormBaseVersion(response.profileVersion);
       expectedProfileVersionRef.current = response.profileVersion ?? undefined;
-      requiredSaveVersionFenceRef.current = response.profileVersion ?? undefined;
+      profileSaveVersionFenceRef.current = response.profileVersion ?? undefined;
       if (jsonValuesEqual(form.state.values, submittedBase)
         || jsonValuesEqual(form.state.values, nextValues)) {
         expectedProfileVersionRef.current = undefined;
@@ -1311,7 +1317,7 @@ export function ProfileForm({
       // A timeout can follow a committed write. Keep subsequent manual saves
       // bound to the inspected version until a refreshed snapshot is rebased.
       expectedProfileVersionRef.current = formBaseVersionRef.current ?? expectedProfileVersion;
-      requiredSaveVersionFenceRef.current = expectedProfileVersion;
+      profileSaveVersionFenceRef.current = expectedProfileVersion;
       requiredPinConflictRef.current = {
         experienceId: suggestion.source.experienceId,
         entryIndex,
@@ -1378,26 +1384,26 @@ export function ProfileForm({
         plateProfileProjectionRef.current = null;
         expectedProfileVersionRef.current = undefined;
         requiredPinConflictRef.current = null;
-        const requiredFence = requiredSaveVersionFenceRef.current;
-        const useSavedResponse = requiredFence !== undefined
-          && formBaseVersionRef.current === requiredFence
-          && (initial.profileVersion === null || initial.profileVersion < requiredFence);
-        const initialValues = useSavedResponse
-          ? structuredClone(formBaseValuesRef.current)
-          : toProfileFormValues(initial);
-        if (requiredFence !== undefined
-          && initial.profileVersion !== null && initial.profileVersion > requiredFence) {
-          requiredSaveVersionFenceRef.current = undefined;
+        const savedFence = profileSaveVersionFenceRef.current;
+        const useSavedResponse = savedFence !== undefined
+          && formBaseVersionRef.current === savedFence
+          && (initial.profileVersion === null || initial.profileVersion < savedFence);
+        const baseResponse = useSavedResponse ? formBaseResponseRef.current : initial;
+        const initialValues = structuredClone(toProfileFormValues(baseResponse));
+        if (savedFence !== undefined
+          && initial.profileVersion !== null && initial.profileVersion > savedFence) {
+          profileSaveVersionFenceRef.current = undefined;
         }
+        formBaseResponseRef.current = baseResponse;
         formBaseValuesRef.current = structuredClone(initialValues);
         suggestionAddedRolesRef.current = [];
         suggestionAddedPreferencesRef.current = [];
         suggestionReviewRequiredRef.current = false;
         suggestionReviewResolvedVersionRef.current = undefined;
-        setFormBaseVersion(useSavedResponse ? requiredFence : initial.profileVersion);
+        setFormBaseVersion(baseResponse.profileVersion);
         setSuggestionDerivedDraft(false);
         form.reset(initialValues);
-        onPreviewSourceChange?.(initial);
+        onPreviewSourceChange?.(baseResponse);
         setResetToken((token) => token + 1);
         clearTransientStatus();
       }}
@@ -1463,7 +1469,7 @@ export function ProfileForm({
           ) : null
         }
       </form.Subscribe>
-      {isProfileSection && formBaseVersion !== initial.profileVersion ? (
+      {section !== "target-search" && formBaseVersion !== initial.profileVersion ? (
         <div className="editor-bulk-actions">
           <Button type="button" variant="secondary" onClick={rebaseProfileDraft}>
             Rebase edits onto saved profile

@@ -65,6 +65,9 @@ Profile reads include `profileVersion: number | null`. `PATCH /v1/profile`
 accepts optional `expectedProfileVersion`; when supplied, a mismatch returns
 `409 stale_profile_version` and the same transaction writes neither canonical
 rows nor `ProfileUpdated`.
+The web form sends its actual saved base version on every full-profile manual
+or autosave write. It omits the field only for the first save when
+`profileVersion` is `null`; a conflict keeps the draft for explicit rebase.
 
 `POST /v1/profile/required-bullet-suggestions` accepts only
 `expectedProfileVersion` (positive integer) and optional `maximumSuggestions`
@@ -110,11 +113,12 @@ checks this again against the exact saved snapshot before sending an accept.
 Ambiguous achievement matches, including rows with blank or overlong IDs, or reused
 achievement IDs have no applicable replacement. A canonical `sourceId` must
 fit the 240-character wire bound before it is emitted; otherwise coaching uses
-a bounded snapshot reference. Evidence questions do not
-promote bullet text or an extracted metric into independent proof.
-An outcome that merely reorders the claim or changes its result verb or grammar
-(including plurals and possessives) adds no independent evidence; those gaps
-remain questions.
+a bounded snapshot reference. A matching achievement suppresses the
+missing-evidence question only when its canonical strength is `verified` and it
+is user-confirmed. Supported wording, tools, tags, and extracted metrics do
+not independently prove a claim. Outcome wording can guide achievement framing;
+token novelty, contextual filler, reordered claims, changed verbs, plurals,
+and possessives never establish evidence strength.
 
 `POST /v1/profile/target-role-suggestions` accepts the strict object below:
 

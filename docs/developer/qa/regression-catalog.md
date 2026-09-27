@@ -176,7 +176,14 @@ An overlong Required pin must report incomplete inspection even when it has no
 matching saved bullet. A nonempty truncated response must not tell users that
 repeating the same request will expose omitted sources. Reordered source claims
 or grammar-only variations must not count as independent outcome evidence.
-Include a possessive-only restatement. After a successful accept, delay the
+Include plural possessives and contextual filler; supported novel outcome
+wording still requires a missing-evidence question unless the canonical
+achievement is verified and user-confirmed. Hold an accept pending, advance
+the five-second autosave timer, and prove no second write occurs on either
+success or failure while unrelated draft fields remain. Fence ordinary manual
+and autosave full-profile writes to their actual saved base version, permit an
+initial version-null save, and rebase non-overlapping edits after a conflict.
+After a successful accept, delay the
 profile-query refresh, attempt a manual save after another canonical write, and
 prove it carries the accepted version fence and preserves the newer fields.
 After a failed accept, exercise the actual optimistic query rollback at the

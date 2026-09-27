@@ -193,11 +193,12 @@ extracted from it, does not independently verify the claim. Punctuation changes
 to a restated outcome also add no evidence. An action count such as the number
 of projects managed is not automatically a result. Rearranging the same claim
 or changing only its result verb, plural, or possessive in an outcome does not
-independently verify it. If a
-saved profile exceeds the bounded inspection limit, or a Required bullet or
-its entry fields cannot
-fit the response, coaching reports that it could not fully inspect it; manual
-editing remains available. An unmatched overlong Required pin is incomplete
+independently verify it. New words alone do not verify a claim: the matching
+achievement must be user-confirmed and marked verified to avoid a missing-
+evidence question. If a saved profile exceeds the bounded inspection limit, or
+a Required bullet or its entry fields cannot fit the response, coaching reports
+that it could not fully inspect it; manual editing remains available. An
+unmatched overlong Required pin is incomplete
 too. Some suggestions may still appear in an incomplete inspection; it does
 not cover every Required bullet, and repeating it on the same saved version may
 omit the same source.
@@ -207,9 +208,10 @@ the bullet's order, achievement identity, and Required selection through the
 normal version-checked profile save. Rejecting or dismissing suggestions does
 not edit the profile. Save your current edits before requesting coaching; a
 changed source or saved profile version requires a fresh review. A later manual
-save remains bound to the accepted profile version while its refreshed profile
-is loading. If another save intervenes, rebase the draft. Failed requests
-and conflicting saves preserve existing canonical facts and keep manual editing
+save remains bound to the saved form version while its refreshed profile is
+loading. Manual saves and autosaves of other profile fields use the same guard.
+If another save intervenes, rebase the draft. Failed requests and conflicting
+saves preserve existing canonical facts and keep manual editing
 available. A failed accept keeps its reviewed suggestion visible while the
 saved version remains the same. An edit made afterward keeps a unique Required
 pin with its bullet; ambiguous duplicate text must be resolved before saving.

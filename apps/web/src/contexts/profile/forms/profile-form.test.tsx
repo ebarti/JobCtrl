@@ -227,7 +227,8 @@ describe("<ProfileForm>", () => {
     await user.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(1));
     const request = updateProfile.mock.calls[0]![0];
-    expect(Object.keys(request).sort()).toEqual(["profileText", "styleText", "templateText"]);
+    expect(Object.keys(request).sort()).toEqual(["expectedProfileVersion", "profileText", "styleText", "templateText"]);
+    expect(request.expectedProfileVersion).toBe(3);
     const expected = structuredClone(original.profile) as Record<string, unknown>;
     (expected["personal"] as Record<string, unknown>)["full_name"] = "Boxed synthetic name";
     const expectedEntries = (expected["resume"] as Record<string, unknown>)["experience_entries"] as Array<Record<string, unknown>>;
@@ -843,7 +844,7 @@ describe("<ProfileForm>", () => {
     expect(updateProfile).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps a second autosave version-agnostic after a late manual-save response", async () => {
+  it("binds a second autosave to the committed version after a late save response", async () => {
     vi.useFakeTimers();
     let resolveFirstSave: ((response: typeof sampleProfileResponse) => void) | undefined;
     const updateProfile = vi.fn()
@@ -869,7 +870,7 @@ describe("<ProfileForm>", () => {
       await Promise.resolve();
     });
     expect(updateProfile).toHaveBeenCalledTimes(1);
-    expect(updateProfile.mock.calls[0]![0]).not.toHaveProperty("expectedProfileVersion");
+    expect(updateProfile.mock.calls[0]![0].expectedProfileVersion).toBe(3);
 
     fireEvent.change(targetRole, { target: { value: "VP of Engineering" } });
     await act(async () => {
@@ -883,10 +884,117 @@ describe("<ProfileForm>", () => {
       await Promise.resolve();
     });
     expect(updateProfile).toHaveBeenCalledTimes(2);
-    expect(updateProfile.mock.calls[1]![0]).not.toHaveProperty("expectedProfileVersion");
+    expect(updateProfile.mock.calls[1]![0].expectedProfileVersion).toBe(4);
     expect(JSON.parse(updateProfile.mock.calls[1]![0].profileText).experience.target_role).toBe(
       "VP of Engineering",
     );
+  });
+
+  it("keeps a stale manual draft and rebases it onto unrelated newer canonical fields", async () => {
+    const user = userEvent.setup();
+    const initial = structuredClone(sampleProfileResponse);
+    const newer = structuredClone(initial);
+    newer.profileVersion = 4;
+    (newer.profile as ProfileShape).personal.full_name = "External Canonical Name";
+    const updateProfile = vi.fn()
+      .mockRejectedValueOnce(new Error("stale_profile_version"))
+      .mockImplementationOnce(async (request: ProfileUpdateRequest) => ({
+        ...newer,
+        profileVersion: 5,
+        profile: JSON.parse(request.profileText!),
+      }));
+    const { changeInitial } = renderRequiredProfileWithInitialChanges(
+      initial, buildTestPorts({ api: { updateProfile } }),
+    );
+
+    await user.clear(await screen.findByLabelText("Email"));
+    await user.type(screen.getByLabelText("Email"), "pending@example.com");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(1));
+    expect((updateProfile.mock.calls[0]![0] as ProfileUpdateRequest).expectedProfileVersion).toBe(3);
+    expect(screen.getByLabelText("Email")).toHaveValue("pending@example.com");
+
+    changeInitial(newer);
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(updateProfile).toHaveBeenCalledTimes(1);
+    expect(screen.getByText(/Rebase your manual edits before saving/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Rebase edits onto saved profile" }));
+    expect(screen.getByLabelText("Full name")).toHaveValue("External Canonical Name");
+    expect(screen.getByLabelText("Email")).toHaveValue("pending@example.com");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(2));
+    const rebasedRequest = updateProfile.mock.calls[1]![0] as ProfileUpdateRequest;
+    expect(rebasedRequest.expectedProfileVersion).toBe(4);
+    expect(JSON.parse(rebasedRequest.profileText!)).toMatchObject({
+      personal: { full_name: "External Canonical Name", email: "pending@example.com" },
+    });
+  });
+
+  it("blocks a stale target-search autosave and rebases its draft before saving", async () => {
+    vi.useFakeTimers();
+    const initial = structuredClone(sampleProfileResponse);
+    const newer = structuredClone(initial);
+    newer.profileVersion = 4;
+    (newer.profile as ProfileShape).personal.full_name = "External Canonical Name";
+    const updateProfile = vi.fn(async (request: ProfileUpdateRequest) => ({
+      ...newer,
+      profileVersion: 5,
+      profile: JSON.parse(request.profileText!),
+    }));
+    let changeInitial!: (value: typeof initial) => void;
+    function Host() {
+      const [current, setCurrent] = useState(initial);
+      changeInitial = setCurrent;
+      return <ProfileForm initial={current} section="target-search" />;
+    }
+    renderWithProviders(<Host />, { ports: buildTestPorts({ api: { updateProfile } }) });
+    fireEvent.change(screen.getByLabelText("Target roles 1"), {
+      target: { value: "Director of Engineering" },
+    });
+    act(() => changeInitial(newer));
+    await act(async () => {
+      vi.advanceTimersByTime(5_000);
+      await Promise.resolve();
+    });
+    expect(updateProfile).not.toHaveBeenCalled();
+    expect(screen.getByText(/Rebase your manual edits before saving/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Rebase edits onto saved profile" }));
+    expect(screen.getByLabelText("Target roles 1")).toHaveValue("Director of Engineering");
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+      await Promise.resolve();
+    });
+    expect(updateProfile).toHaveBeenCalledTimes(1);
+    const request = updateProfile.mock.calls[0]![0] as ProfileUpdateRequest;
+    expect(request.expectedProfileVersion).toBe(4);
+    expect(JSON.parse(request.profileText!)).toMatchObject({
+      personal: { full_name: "External Canonical Name" },
+      experience: { target_role: "Director of Engineering" },
+    });
+  });
+
+  it("allows the first profile save without a version and fences the next full-profile save", async () => {
+    const user = userEvent.setup();
+    const initial = { ...structuredClone(sampleProfileResponse), profileVersion: null };
+    let nextVersion = 1;
+    const updateProfile = vi.fn(async (request: ProfileUpdateRequest) => ({
+      ...initial,
+      profileVersion: nextVersion++,
+      profile: JSON.parse(request.profileText!),
+    }));
+    renderWithProviders(<ProfileForm initial={initial} section="target-search" />, {
+      ports: buildTestPorts({ api: { updateProfile } }),
+    });
+    await user.type(screen.getByLabelText("Target roles 1"), "Director of Engineering");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(1));
+    expect((updateProfile.mock.calls[0]![0] as ProfileUpdateRequest)).not.toHaveProperty("expectedProfileVersion");
+
+    await user.clear(screen.getByLabelText("Target roles 1"));
+    await user.type(screen.getByLabelText("Target roles 1"), "VP of Engineering");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(2));
+    expect((updateProfile.mock.calls[1]![0] as ProfileUpdateRequest).expectedProfileVersion).toBe(1);
   });
 
   it("does not reset dirty edits when a saved autosave snapshot reaches the initial props", async () => {
@@ -1068,7 +1176,7 @@ describe("<ProfileForm>", () => {
     });
   });
 
-  it("keeps later manual edits version-agnostic after a delayed guarded suggestion save", async () => {
+  it("binds later manual edits to the committed version after a delayed suggestion save", async () => {
     const user = userEvent.setup();
     let resolveFirstSave: ((response: typeof sampleProfileResponse) => void) | undefined;
     const targetRoleSuggestions = vi.fn(async () => ({
@@ -1122,7 +1230,7 @@ describe("<ProfileForm>", () => {
     await user.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(2));
     const retry = updateProfile.mock.calls[1]![0];
-    expect(retry).not.toHaveProperty("expectedProfileVersion");
+    expect(retry.expectedProfileVersion).toBe(4);
     expect(JSON.parse(retry.profileText).experience).toMatchObject({
       target_role: "Head of Platform",
       target_locations: "Madrid",
@@ -1533,7 +1641,7 @@ describe("<ProfileForm>", () => {
     expect(screen.getByLabelText("Target roles 1")).toHaveValue("");
   });
 
-  it("keeps ordinary manual target-role persistence version-agnostic", async () => {
+  it("binds ordinary manual target-role persistence to its saved form version", async () => {
     const user = userEvent.setup();
     const updateProfile = vi.fn(async (request) => ({
       ...sampleProfileResponse,
@@ -1548,7 +1656,7 @@ describe("<ProfileForm>", () => {
     await user.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(1));
 
-    expect(updateProfile.mock.calls[0]![0]).not.toHaveProperty("expectedProfileVersion");
+    expect(updateProfile.mock.calls[0]![0].expectedProfileVersion).toBe(3);
   });
 
   it("adds and focuses the next target location with Enter", async () => {
@@ -2151,6 +2259,63 @@ describe("<ProfileForm>", () => {
     expect(screen.getByText("Proposed text: “Scaled the platform 10x.”")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Reject" })).toBeEnabled();
   });
+
+  for (const outcome of ["success", "failure"] as const) {
+    it(`does not autosave a second profile while Required accept is pending (${outcome})`, async () => {
+      const user = userEvent.setup();
+      const { initial, requiredBulletSuggestions } = requiredBulletCoachingFixture();
+      let resolveAccept!: (value: typeof initial) => void;
+      let rejectAccept!: (reason: Error) => void;
+      const pendingAccept = new Promise<typeof initial>((resolve, reject) => {
+        resolveAccept = resolve;
+        rejectAccept = reject;
+      });
+      const updateProfile = vi.fn((_request: ProfileUpdateRequest) => pendingAccept);
+      renderWithProviders(<ProfileForm initial={initial} />, {
+        ports: buildTestPorts({ api: { requiredBulletSuggestions, updateProfile } }),
+        withRouter: true,
+      });
+
+      await openExperienceEntries(user);
+      await user.click(await screen.findByRole("button", { name: "Inspect Required bullets" }));
+      await user.click(await screen.findByRole("button", { name: "Accept" }));
+      await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(1));
+      const acceptedRequest = updateProfile.mock.calls[0]![0] as ProfileUpdateRequest;
+      expect(acceptedRequest.expectedProfileVersion).toBe(3);
+
+      vi.useFakeTimers();
+      fireEvent.change(screen.getByLabelText("Email"), {
+        target: { value: "pending@example.com" },
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(5_000);
+        await Promise.resolve();
+      });
+      expect(updateProfile).toHaveBeenCalledTimes(1);
+      expect(screen.getByText(/Wait for the Required bullet save to finish/)).toBeInTheDocument();
+      expect(screen.getByLabelText("Email")).toHaveValue("pending@example.com");
+
+      await act(async () => {
+        if (outcome === "success") {
+          resolveAccept({
+            ...initial,
+            profileVersion: 4,
+            profile: JSON.parse(acceptedRequest.profileText!),
+          });
+        } else {
+          rejectAccept(new Error("Synthetic failed accept"));
+        }
+        await Promise.resolve();
+      });
+      expect(updateProfile).toHaveBeenCalledTimes(1);
+      expect(screen.getByLabelText("Email")).toHaveValue("pending@example.com");
+      const bullet = screen.getByLabelText("Bullet 1");
+      expect(bullet).toHaveValue(outcome === "success"
+        ? "Scaled the platform 10x." : "  Scaled   the platform 10x.  ");
+      expect(within(bullet.closest(".bullet-row") as HTMLElement).getByRole("checkbox", { name: "Required" }))
+        .toBeChecked();
+    });
+  }
 
   it("serializes manual Save behind a delayed Required accept and fences the stale draft", async () => {
     const user = userEvent.setup();
