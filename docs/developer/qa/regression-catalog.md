@@ -161,8 +161,12 @@ evidence questions, local edits during a delayed response, a newer canonical
 version, and failed generation/save. A manual Save or autosave during a pending
 accept must not send a second profile write; a same-bullet manual edit must
 keep its Required pin when unique and block ambiguous duplicate text until
-resolved, including after a failed accept. A proposed cleanup that would equal
-another saved bullet or Required pin must not be applicable. Rebase a different
+resolved, including after a failed accept. Move that bullet below another one
+while Accept is pending, then settle success and failure: the pin must follow
+the moved bullet, never the bullet left at its old index. After a successful
+accept, an older query snapshot must not offer or perform a rebase. A proposed
+cleanup that would equal another saved bullet or Required pin must not be
+applicable. Rebase a different
 bullet in the same experience entry after a committed write with a lost
 response; keep overlapping or reordered bullet identities blocked. An outcome
 that only changes punctuation and a metric copied from an action count must not
@@ -173,7 +177,8 @@ source fields must likewise report incomplete inspection. Corrupt exact-schema
 saved rows, including raw non-boolean evidence confirmation and out-of-range
 confidence, must return `422 invalid_saved_profile` without changing the profile.
 An overlong Required pin must report incomplete inspection even when it has no
-matching saved bullet. A nonempty truncated response must not tell users that
+matching saved bullet or owning experience entry. A nonempty truncated response
+must not tell users that
 repeating the same request will expose omitted sources. Reordered source claims
 or grammar-only variations must not count as independent outcome evidence.
 Include plural possessives and contextual filler; supported novel outcome

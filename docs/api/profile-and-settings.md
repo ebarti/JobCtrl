@@ -94,7 +94,9 @@ complete. A Required bullet or its owning entry fields that exceed the response
 source bounds also make the inspection incomplete (`truncated: true`), even if
 the Required pin has no matching saved bullet. Nonempty truncated results cover
 only an inspected subset; repeating the same request may not reveal skipped
-sources. Invalid saved rows return `422 invalid_saved_profile`. Malformed stored evidence JSON
+sources. Pins stored under a deleted experience ID also report an incomplete
+inspection, even when other valid entries have suggestions. Invalid saved rows
+return `422 invalid_saved_profile`. Malformed stored evidence JSON
 arrays, confirmation integers other than `0` or `1`, and confidence values
 outside `0–1` return 422 rather than being treated as usable evidence.
 

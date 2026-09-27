@@ -83,6 +83,8 @@ an empty `truncated: true` result. This result does not assert that the profile
 has no coaching opportunities. A Required bullet longer than 2,000 characters,
 including an unmatched Required pin, or an owning entry ID, title, or company
 outside the source-field bounds, is also skipped with `truncated: true`.
+Any nonempty Required pin list under a deleted experience ID also makes the
+inspection incomplete, since the pin has no owning entry to inspect.
 `truncated: true` can accompany nonempty suggestions: they describe only the
 inspected subset, and repeating the request on an unchanged saved version may
 omit the same source. An empty result does not assert a clean inspection.

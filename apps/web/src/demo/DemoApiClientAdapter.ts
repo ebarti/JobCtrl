@@ -146,10 +146,18 @@ function generateDemoRequiredBulletSuggestions(
   // beyond this budget cannot prove identity uniqueness, so fail closed instead
   // of producing an apparently applicable suggestion from a partial scan.
   if (entries.length > MAX_REQUIRED_COACHING_ENTRIES) return truncatedResponse(profileVersion);
+  const entryIds = new Set(entries.map((entry) => entry.id));
   let sourceRows = 0;
+  let orphanRequiredPins = false;
+  for (const experienceId in requiredByExperience) {
+    if (!Object.hasOwn(requiredByExperience, experienceId)) continue;
+    const pins = requiredByExperience[experienceId]!;
+    sourceRows += 1 + pins.length;
+    if (sourceRows > MAX_REQUIRED_COACHING_SOURCE_ROWS) return truncatedResponse(profileVersion);
+    if (pins.length > 0 && !entryIds.has(experienceId)) orphanRequiredPins = true;
+  }
   for (const entry of entries) {
-    sourceRows += 1 + entry.bullets.length + entry.achievement_evidence.length
-      + (requiredByExperience[entry.id]?.length ?? 0);
+    sourceRows += 1 + entry.bullets.length + entry.achievement_evidence.length;
     if (sourceRows > MAX_REQUIRED_COACHING_SOURCE_ROWS) return truncatedResponse(profileVersion);
   }
   const entryIdCounts = new Map<string, number>();
@@ -163,7 +171,7 @@ function generateDemoRequiredBulletSuggestions(
     }
   }
   let inspectedBullets = 0;
-  let scanTruncated = false;
+  let scanTruncated = orphanRequiredPins;
 
   scan: for (const [experienceIndex, entry] of entries.entries()) {
     if (suggestions.length > maximumSuggestions) break;

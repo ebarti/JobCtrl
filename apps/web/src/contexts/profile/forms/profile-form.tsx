@@ -111,9 +111,10 @@ function setRequiredBulletText(
 interface PendingRequiredPinConflict {
   readonly experienceId: string;
   readonly entryIndex: number;
-  readonly bulletIndex: number;
-  readonly requiredBulletIndex: number;
-  readonly previousText: string;
+  bulletIndex: number;
+  requiredBulletIndex: number;
+  previousText: string;
+  baselineBullets: string[];
 }
 
 function reconcilePendingRequiredPin(
@@ -127,29 +128,52 @@ function reconcilePendingRequiredPin(
   if (!entry || entry.id !== conflict.experienceId || entries.filter((item) => item.id === entry.id).length !== 1) {
     return "blocked";
   }
-  const bullet = entry.bullets[conflict.bulletIndex];
   const required = parsed.data.resume.tailoring_rules.required_bullets_by_experience_id?.[entry.id];
-  if (!bullet || entry.bullets.filter((item) => item === bullet).length !== 1 || !required) {
+  if (!required) {
     return "blocked";
   }
-  if (required[conflict.requiredBulletIndex] === bullet
-    && required.filter((item) => item === bullet).length === 1
-    && (conflict.previousText === bullet || !required.includes(conflict.previousText))) {
+  const pinnedText = required[conflict.requiredBulletIndex];
+  if (typeof pinnedText !== "string" || required.filter((item) => item === pinnedText).length !== 1) {
+    return "blocked";
+  }
+  const matchingPinBulletIndexes = entry.bullets.flatMap((text, index) =>
+    text === pinnedText ? [index] : []);
+  // A pin is text-based. If its unique text moved, follow that occurrence
+  // before considering the old position; the old position now belongs to a
+  // different bullet and must never inherit the pin.
+  if (matchingPinBulletIndexes.length === 1
+    && (pinnedText === conflict.previousText || !required.includes(conflict.previousText))) {
+    conflict.bulletIndex = matchingPinBulletIndexes[0]!;
+    conflict.previousText = pinnedText;
+    conflict.baselineBullets = [...entry.bullets];
     return "resolved";
   }
-  if (required[conflict.requiredBulletIndex] !== conflict.previousText
-    || required.filter((item) => item === conflict.previousText).length !== 1
+  if (matchingPinBulletIndexes.length > 1) return "blocked";
+  const bullet = entry.bullets[conflict.bulletIndex];
+  if (pinnedText !== conflict.previousText
+    || !bullet
+    || entry.bullets.filter((item) => item === bullet).length !== 1
+    || entry.bullets.length !== conflict.baselineBullets.length
+    || conflict.baselineBullets[conflict.bulletIndex] !== conflict.previousText
+    || entry.bullets.some((text, index) =>
+      index !== conflict.bulletIndex && text !== conflict.baselineBullets[index])
     || required.filter((item) => item === bullet).length > 1) {
     return "blocked";
   }
   if (required.includes(bullet)) {
     const requiredMap = getPathValue(profile, "resume.tailoring_rules.required_bullets_by_experience_id");
     if (!isJsonRecord(requiredMap) || !Array.isArray(requiredMap[entry.id])) return "blocked";
-    (requiredMap[entry.id] as unknown[]).splice(conflict.requiredBulletIndex, 1);
+    const updatedRequired = requiredMap[entry.id] as unknown[];
+    updatedRequired.splice(conflict.requiredBulletIndex, 1);
+    conflict.requiredBulletIndex = updatedRequired.indexOf(bullet);
+    conflict.previousText = bullet;
+    conflict.baselineBullets = [...entry.bullets];
     return "updated";
   }
-  return setRequiredBulletText(profile, entry.id, conflict.requiredBulletIndex, bullet)
-    ? "updated" : "blocked";
+  if (!setRequiredBulletText(profile, entry.id, conflict.requiredBulletIndex, bullet)) return "blocked";
+  conflict.previousText = bullet;
+  conflict.baselineBullets = [...entry.bullets];
+  return "updated";
 }
 
 function explicitlyRemovedRequiredPin(
@@ -988,6 +1012,13 @@ export function ProfileForm({
   }, [form, initial, onPreviewSourceChange]);
 
   const rebaseOntoSavedProfile = useCallback(() => {
+    if (initial.profileVersion === null
+      || (formBaseVersionRef.current !== null
+        && initial.profileVersion <= formBaseVersionRef.current)) {
+      setStatusTone("warning");
+      setStatusMessage("Wait for a newer saved profile before rebasing this draft.");
+      return;
+    }
     const remoteValues = toProfileFormValues(initial);
     const localValues = structuredClone(form.state.values);
     const trackedSuggestions = reconcileSuggestionProvenance(localValues.profile);
@@ -1059,6 +1090,13 @@ export function ProfileForm({
   }, [form, initial, reconcileSuggestionProvenance]);
 
   const rebaseProfileDraft = useCallback(() => {
+    if (initial.profileVersion === null
+      || (formBaseVersionRef.current !== null
+        && initial.profileVersion <= formBaseVersionRef.current)) {
+      setStatusTone("warning");
+      setStatusMessage("Wait for a newer saved profile before rebasing this draft.");
+      return;
+    }
     const remoteValues = toProfileFormValues(initial);
     const rebased = rebaseProfileValue(
       formBaseValuesRef.current,
@@ -1235,27 +1273,46 @@ export function ProfileForm({
             suggestion.source.experienceId
           ]
           : undefined;
+        const originalBulletIndexes = currentEntry[0]?.bullets.flatMap((bullet, index) =>
+          bullet === suggestion.originalText ? [index] : []) ?? [];
+        const proposedBulletIndexes = currentEntry[0]?.bullets.flatMap((bullet, index) =>
+          bullet === suggestion.proposedText ? [index] : []) ?? [];
+        const acceptedBulletIndexes = originalBulletIndexes.length > 0
+          ? originalBulletIndexes : proposedBulletIndexes;
+        let pinAmbiguous = false;
         const acceptedFieldOverlaps = currentEntry.length !== 1
           || parsedCurrentProfile?.resume.experience_entries.findIndex(
             (candidate) => candidate.id === suggestion.source.experienceId,
           ) !== entryIndex
           || currentEntry[0]!.title !== suggestion.source.experienceTitle
           || currentEntry[0]!.company !== suggestion.source.experienceCompany
-          || !baselineBulletTexts.has(currentEntry[0]!.bullets[suggestion.source.bulletIndex] ?? "")
+          || acceptedBulletIndexes.length !== 1
           || !baselineBulletTexts.has(currentRequired?.[suggestion.source.requiredBulletIndex] ?? "");
         if (!acceptedFieldOverlaps && currentValues.profile) {
-          setPathValue(currentValues.profile, bulletPath, suggestion.proposedText);
+          const acceptedBulletIndex = acceptedBulletIndexes[0]!;
+          setPathValue(
+            currentValues.profile,
+            `resume.experience_entries.${entryIndex}.bullets.${acceptedBulletIndex}`,
+            suggestion.proposedText,
+          );
           setRequiredBulletText(
             currentValues.profile,
             suggestion.source.experienceId,
             suggestion.source.requiredBulletIndex,
             suggestion.proposedText,
           );
-          requiredPinConflictRef.current = null;
+          requiredPinConflictRef.current = {
+            experienceId: suggestion.source.experienceId,
+            entryIndex,
+            bulletIndex: acceptedBulletIndex,
+            requiredBulletIndex: suggestion.source.requiredBulletIndex,
+            previousText: suggestion.proposedText,
+            baselineBullets: currentEntry[0]!.bullets.map((bullet, index) =>
+              index === acceptedBulletIndex ? suggestion.proposedText! : bullet),
+          };
         } else if (
           currentValues.profile
           && baselineBulletTexts.has(currentRequired?.[suggestion.source.requiredBulletIndex] ?? "")
-          && !baselineBulletTexts.has(currentEntry[0]?.bullets[suggestion.source.bulletIndex] ?? "")
         ) {
           const conflict = {
             experienceId: suggestion.source.experienceId,
@@ -1263,9 +1320,10 @@ export function ProfileForm({
             bulletIndex: suggestion.source.bulletIndex,
             requiredBulletIndex: suggestion.source.requiredBulletIndex,
             previousText: currentRequired![suggestion.source.requiredBulletIndex]!,
+            baselineBullets: [...entry.bullets],
           };
-          requiredPinConflictRef.current = reconcilePendingRequiredPin(currentValues.profile, conflict) === "blocked"
-            ? conflict : null;
+          pinAmbiguous = reconcilePendingRequiredPin(currentValues.profile, conflict) === "blocked";
+          requiredPinConflictRef.current = conflict;
         } else {
           requiredPinConflictRef.current = null;
         }
@@ -1279,17 +1337,18 @@ export function ProfileForm({
           ]
           : undefined;
         if (rebasedEntry?.id === suggestion.source.experienceId
-          && rebasedEntry.bullets[suggestion.source.bulletIndex] === suggestion.proposedText
           && rebasedRequired?.[suggestion.source.requiredBulletIndex] === suggestion.proposedText
           && (rebasedEntry.bullets.filter((bullet) => bullet === suggestion.proposedText).length !== 1
             || rebasedRequired.filter((bullet) => bullet === suggestion.proposedText).length !== 1)) {
           requiredPinConflictRef.current = {
             experienceId: suggestion.source.experienceId,
             entryIndex,
-            bulletIndex: suggestion.source.bulletIndex,
+            bulletIndex: rebasedEntry.bullets.indexOf(suggestion.proposedText),
             requiredBulletIndex: suggestion.source.requiredBulletIndex,
             previousText: suggestion.proposedText,
+            baselineBullets: [...rebasedEntry.bullets],
           };
+          pinAmbiguous = true;
         }
         const responseValues = toProfileFormValues(response);
         form.reset(responseValues);
@@ -1305,7 +1364,7 @@ export function ProfileForm({
         onPreviewSourceChange?.(response);
         setStatusTone("warning");
         setStatusMessage(
-          requiredPinConflictRef.current
+          pinAmbiguous
             ? "Suggestion saved, but a manual edit makes the Required pin ambiguous. Make the bullet text unique before saving the pending draft."
             : acceptedFieldOverlaps
             ? "Suggestion saved, but a newer manual edit overlaps that Required bullet. The manual edit remains pending on the updated profile version."
@@ -1324,6 +1383,7 @@ export function ProfileForm({
         bulletIndex: suggestion.source.bulletIndex,
         requiredBulletIndex: suggestion.source.requiredBulletIndex,
         previousText: suggestion.originalText,
+        baselineBullets: [...entry.bullets],
       };
       let pinNeedsResolution = false;
       const draftProfile = form.state.values.profile;
@@ -1334,26 +1394,22 @@ export function ProfileForm({
         const draftPin = parsedDraft.data.resume.tailoring_rules.required_bullets_by_experience_id?.[
           suggestion.source.experienceId
         ]?.[suggestion.source.requiredBulletIndex];
-        const draftBullet = draftEntry?.bullets[suggestion.source.bulletIndex];
-        if (typeof draftBullet === "string" && typeof draftPin === "string"
-          && (draftPin === suggestion.originalText || draftPin === suggestion.proposedText)) {
+        if (draftEntry?.id === suggestion.source.experienceId && typeof draftPin === "string") {
           const conflict = {
             experienceId: suggestion.source.experienceId,
             entryIndex,
             bulletIndex: suggestion.source.bulletIndex,
             requiredBulletIndex: suggestion.source.requiredBulletIndex,
             previousText: draftPin,
+            baselineBullets: [...entry.bullets],
           };
           requiredPinConflictRef.current = conflict;
-          if (draftBullet !== draftPin) {
-            const correctedProfile = structuredClone(draftProfile);
-            const pinStatus = reconcilePendingRequiredPin(correctedProfile, conflict);
-            if (pinStatus === "blocked") {
-              pinNeedsResolution = true;
-            } else if (pinStatus === "updated") {
-              requiredPinConflictRef.current = { ...conflict, previousText: draftBullet };
-              form.setFieldValue("profile", correctedProfile);
-            }
+          const correctedProfile = structuredClone(draftProfile);
+          const pinStatus = reconcilePendingRequiredPin(correctedProfile, conflict);
+          if (pinStatus === "blocked") {
+            pinNeedsResolution = true;
+          } else if (pinStatus === "updated") {
+            form.setFieldValue("profile", correctedProfile);
           }
         } else if (draftPin === undefined) {
           // The user explicitly removed this pin during the pending request.
@@ -1469,7 +1525,8 @@ export function ProfileForm({
           ) : null
         }
       </form.Subscribe>
-      {section !== "target-search" && formBaseVersion !== initial.profileVersion ? (
+      {section !== "target-search" && initial.profileVersion !== null
+        && (formBaseVersion === null || initial.profileVersion > formBaseVersion) ? (
         <div className="editor-bulk-actions">
           <Button type="button" variant="secondary" onClick={rebaseProfileDraft}>
             Rebase edits onto saved profile

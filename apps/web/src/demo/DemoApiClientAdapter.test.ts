@@ -324,6 +324,18 @@ describe("DemoApiClientAdapter", () => {
       maximumSuggestions: 12,
     });
     expect(incomplete).toMatchObject({ suggestions: [], truncated: true, modelUsed: false });
+
+    profile.resume.tailoring_rules.required_bullets_by_experience_id = {
+      deleted_role: [`Orphan Required claim ${"x".repeat(2_000)}`],
+    };
+    const withDeletedRolePin = await adapter.updateProfile({
+      expectedProfileVersion: withOverlongPin.profileVersion!,
+      profileText: JSON.stringify(profile),
+    });
+    expect(await adapter.requiredBulletSuggestions({
+      expectedProfileVersion: withDeletedRolePin.profileVersion!,
+      maximumSuggestions: 12,
+    })).toMatchObject({ suggestions: [], truncated: true, modelUsed: false });
   });
 
   it("keeps grammar-only restatements as questions in saved demo evidence", async () => {

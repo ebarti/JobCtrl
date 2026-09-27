@@ -198,9 +198,10 @@ achievement must be user-confirmed and marked verified to avoid a missing-
 evidence question. If a saved profile exceeds the bounded inspection limit, or
 a Required bullet or its entry fields cannot fit the response, coaching reports
 that it could not fully inspect it; manual editing remains available. An
-unmatched overlong Required pin is incomplete
-too. Some suggestions may still appear in an incomplete inspection; it does
-not cover every Required bullet, and repeating it on the same saved version may
+unmatched overlong Required pin is incomplete too. A Required pin left under a
+deleted experience is likewise uninspected. Some suggestions may still appear
+in an incomplete inspection; it does not cover every Required bullet, and
+repeating it on the same saved version may
 omit the same source.
 
 Review each proposed wording change separately. Accepting a change preserves

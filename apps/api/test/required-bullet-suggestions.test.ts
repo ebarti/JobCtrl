@@ -89,6 +89,27 @@ describe("generateRequiredBulletSuggestions", () => {
     expect(result.suggestions.some((item) => /\d/.test(item.proposedText ?? ""))).toBe(false);
   });
 
+  it("marks pins for deleted experience identities as uninspected", () => {
+    const candidate = profile();
+    candidate.resume.tailoring_rules.required_bullets_by_experience_id!["deleted-exp"] = [
+      `Orphan Required claim ${"x".repeat(2_000)}`,
+    ];
+    const result = generateRequiredBulletSuggestions(candidate, 7, 24);
+    expect(result.truncated).toBe(true);
+    expect(result.suggestions.some((item) => item.source.experienceId === "exp-1")).toBe(true);
+    expect(result.suggestions.some((item) => item.source.experienceId === "deleted-exp")).toBe(false);
+    expect(RequiredBulletSuggestionResponseSchema.safeParse(result).success).toBe(true);
+  });
+
+  it("bounds inspection of empty orphan pin lists before traversing an unbounded map", () => {
+    const candidate = profile();
+    const pins = candidate.resume.tailoring_rules.required_bullets_by_experience_id!;
+    for (let index = 0; index < 4_100; index += 1) pins[`deleted-${index}`] = [];
+    expect(generateRequiredBulletSuggestions(candidate, 7, 1)).toMatchObject({
+      suggestions: [], truncated: true,
+    });
+  });
+
   it("resolves actual canonical achievement identity and keeps evidence-complete bullets quiet", () => {
     const result = generateRequiredBulletSuggestions(profile(), 11, 24);
     const secondBulletSuggestions = result.suggestions.filter(
