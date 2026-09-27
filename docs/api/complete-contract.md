@@ -243,12 +243,19 @@ counts without exposing raw policy anchor payloads. `scoreStaleness` reports
 unresolved stale markers, including the stale reason, current and target policy
 versions, marked time, and whether the score is waiting for explicit rescore
 reset. `scoreReasoning` remains on the wire as a compact compatibility summary.
+`scoreAnalysisFreshness` separately compares the latest requirement-fit report's
+analysis generation and score version with current canonical analysis and score
+rows. Its `status` is `no_analysis`, `not_assessed`, `outdated`, or `current`;
+the current and assessed generation and score-version fields remain visible for
+audit. This read-time comparison covers older mismatched rows without changing
+the scoring-policy stale marker or triggering a model run.
 `/v1/jobs/:key` also exposes `requirementFitReport` when the latest score has
 canonical requirement-level assessments. The report is projected from
 `job_requirement_fit_reports` and ordered `job_requirement_fit_items` rows and
 shows the requirement weights, match status, score contribution, and tailoring
-directive that explain the resolved fit score. It is `null` for jobs that have
-not yet been scored with requirement-level evidence.
+directive that explain the resolved fit score. It is `null` for jobs without a
+current generation-bound assessment, including legacy scores and scores
+assessed against an earlier employer analysis.
 `GET /v1/evidence-map` returns the career evidence map projected from the same
 canonical sources already used by scoring and materials audit: profile
 achievement evidence and skills, latest bullet provenance, requirement-fit

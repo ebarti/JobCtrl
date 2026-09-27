@@ -3033,6 +3033,14 @@ export interface ScoreStaleness {
   pendingExplicitRescore: boolean;
 }
 
+/** Whether the saved requirement-fit assessment belongs to the current analysis and score. */
+export interface ScoreAnalysisFreshness {
+  status: "no_analysis" | "not_assessed" | "outdated" | "current";
+  currentAnalysisGeneration: number | null;
+  assessedAnalysisGeneration: number | null;
+  assessedScoreVersion: number | null;
+}
+
 export interface JobCompensationRangeSummary {
   currency: string | null;
   period: string;
@@ -3111,6 +3119,7 @@ export interface JobSummary {
   scoreTrace: ScoreTrace | null;
   scoreCorrection: ScoreCorrection | null;
   scoreStaleness: ScoreStaleness;
+  scoreAnalysisFreshness?: ScoreAnalysisFreshness;
   currentStage: Stage;
   currentSubstage: Stage;
   currentState: StageState;

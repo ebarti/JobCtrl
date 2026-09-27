@@ -193,6 +193,50 @@ const activeJobQuery: JobListQuery = {
 };
 
 describe("exact-v7 read model job ids", () => {
+  it("derives analysis freshness from canonical generations and preserves older score history", () => {
+    const db = seededDatabase();
+    const freshness = () => getJobDetail(db, JOB_ID)?.job.scoreAnalysisFreshness;
+    const insertAnalysis = (generation: number) => {
+      db.prepare(`INSERT INTO job_employer_analysis (
+        tenant_id, job_id, generation, snapshot_hash, prompt_version, sdk_set_version,
+        cache_key, legs_attempted, legs_succeeded, created_at
+      ) VALUES ('local', ?, ?, 'snapshot', 'v1', 'v1', ?, 1, 1, ?)`).run(JOB_ID, generation, `cache-${generation}`, NOW);
+      db.prepare(`INSERT INTO job_events (tenant_id, job_id, identity_version, stage, event_type, occurred_at)
+        VALUES ('local', ?, 1, 'score', 'AnalysisSaved', ?)`).run(JOB_ID, NOW);
+    };
+    const insertReport = (scoreVersion: number, analysisGeneration: number) => {
+      insertScoreWithKeywords(db, "local", JOB_ID, scoreVersion, []);
+      db.prepare(`INSERT INTO job_requirement_fit_reports (
+        tenant_id, job_id, score_version, employer_analysis_generation,
+        profile_snapshot_version, scoring_policy_version, formula_version,
+        resolved_fit_score, fit_band, confidence, summary_json, created_at
+      ) VALUES ('local', ?, ?, ?, 1, 1, 'requirement-fit-v1', 8, 'strong', 'high', '{}', ?)`).run(
+        JOB_ID, scoreVersion, analysisGeneration, NOW,
+      );
+      db.prepare(`INSERT INTO job_events (tenant_id, job_id, identity_version, stage, event_type, occurred_at)
+        VALUES ('local', ?, 1, 'score', 'JobScored', ?)`).run(JOB_ID, NOW);
+    };
+
+    expect(freshness()).toMatchObject({ status: "no_analysis" });
+    insertAnalysis(1);
+    expect(freshness()).toMatchObject({ status: "not_assessed", currentAnalysisGeneration: 1 });
+    insertReport(1, 1);
+    expect(freshness()).toMatchObject({ status: "current", currentAnalysisGeneration: 1, assessedScoreVersion: 1 });
+    expect(getJobDetail(db, JOB_ID)?.requirementFitReport?.employerAnalysisGeneration).toBe(1);
+
+    insertAnalysis(2);
+    expect(freshness()).toMatchObject({
+      status: "outdated", currentAnalysisGeneration: 2, assessedAnalysisGeneration: 1,
+    });
+    expect(getJobDetail(db, JOB_ID)?.requirementFitReport).toBeNull();
+    expect(getJobDetail(db, JOB_ID)?.job.scoreVersion).toBe(1);
+    expect(listJobs(db, activeJobQuery).items.find((job) => job.jobKey === JOB_ID)?.scoreAnalysisFreshness?.status).toBe("outdated");
+
+    insertReport(2, 2);
+    expect(freshness()).toMatchObject({ status: "current", currentAnalysisGeneration: 2, assessedScoreVersion: 2 });
+    expect(getJobDetail(db, JOB_ID)?.requirementFitReport?.scoreVersion).toBe(2);
+  });
+
   it.each(["waiting", "stopped", "checks_exhausted"])("projects canonical %s fetch recovery without raw request URLs or invented retryability", (status) => {
     const db = seededDatabase();
     const failure = {

@@ -154,6 +154,10 @@ offers bounded current-policy maintenance for selected or outdated scores.
 A correction and a re-score are different: correction records your reviewed
 decision; re-score runs the current scoring pipeline and creates a new model-
 derived version.
+If employer analysis changes after the last assessment, Job Detail labels the
+requirement fit outdated and offers a per-job re-score. The earlier score and
+accepted materials stay available while the new assessment runs. Jobs with an
+analysis but no saved requirement assessment are labeled not assessed instead.
 
 
 The ideal-candidate narrative describes the candidate's capabilities and the

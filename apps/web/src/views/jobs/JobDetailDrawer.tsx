@@ -97,18 +97,22 @@ function JobAuditHistorySection({
   );
 }
 
-function RequirementFitMissingCallout({ jobId }: { readonly jobId: string }) {
+function RequirementFitMissingCallout({
+  jobId,
+  outdated,
+}: { readonly jobId: string; readonly outdated: boolean }) {
+  const title = outdated ? "Requirement fit is outdated" : "Requirement fit not assessed";
   return (
     <section
       className="section requirement-fit-missing"
-      aria-label="Requirement fit not assessed"
+      aria-label={title}
     >
       <div>
-        <h3>Requirement fit not assessed</h3>
+        <h3>{title}</h3>
         <p className="muted">
-          This job has employer requirements, but the stored score predates
-          requirement-level fit. Re-score it to produce candidate fit, score
-          impact, and tailoring actions for each requirement.
+          {outdated
+            ? "The saved score assessed an earlier employer analysis. Re-score this job to assess the current requirements; the previous score and materials remain available for review."
+            : "This job has employer requirements, but the stored score predates requirement-level fit. Re-score it to produce candidate fit, score impact, and tailoring actions for each requirement."}
         </p>
       </div>
       <RescoreJobButton
@@ -360,7 +364,10 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
               <JobDescription text={detail.job.descriptionPreview} />
             </section>
             {detail.employerAnalysis && !detail.requirementFitReport ? (
-              <RequirementFitMissingCallout jobId={detail.job.jobKey} />
+              <RequirementFitMissingCallout
+                jobId={detail.job.jobKey}
+                outdated={detail.job.scoreAnalysisFreshness?.status === "outdated"}
+              />
             ) : null}
             <EmployerAnalysisPanel
               analysis={detail.employerAnalysis}
