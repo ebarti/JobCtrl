@@ -304,8 +304,9 @@ def _run_selected_enrichment(
         "workers": payload.workers,
         "tenant_id": payload.tenant_id,
         "job_ids": job_ids,
-        "refresh_apply_url": payload.refresh_apply_url,
     }
+    if payload.refresh_apply_url:
+        scraper_kwargs["refresh_apply_url"] = True
     if payload.workflow_id:
         scraper_kwargs["workflow_id"] = payload.workflow_id
     if payload.workflow_run_id:
