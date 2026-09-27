@@ -69,6 +69,10 @@ const MAX_INSPECTED_REQUIRED_BULLETS = 512;
 const MAX_REQUIRED_COACHING_ENTRIES = 256;
 const MAX_REQUIRED_COACHING_SOURCE_ROWS = 4_096;
 const RESULT_LANGUAGE = /\b(reduced|decreased|lowered|cut|improved|increased|raised|boosted|grew|accelerated|shortened|eliminated|prevented|faster|slower|fewer)\b/i;
+const RESULT_TARGET = /\b(latency|response time|load time|uptime|downtime|error rate|errors?|defects?|incidents?|costs?|expenses?|spend|revenue|conversion|retention|throughput|processing time|cycle time|reliability|performance)\b/i;
+const RESULT_DIRECTION = /\b(reduced|reduction|decreased|decrease|lowered|cut|improved|improvement|increased|increase|raised|boosted|grew|growth|accelerated|shortened|eliminated|prevented|faster|slower|fewer|saved|savings)\b/i;
+const RESULT_QUANTITY = /(?:\b\d+(?:[.,]\d+)?\s*(?:%|percent\b|ms\b|milliseconds?\b|seconds?\b|minutes?\b|hours?\b|days?\b)|[$£€]\s*\d+(?:[.,]\d+)?)/i;
+const BARE_RESULT_QUANTITY = /^(?:\d+(?:[.,]\d+)?\s*(?:%|percent|ms|milliseconds?|seconds?|minutes?|hours?|days?)|[$£€]\s*\d+(?:[.,]\d+)?)$/i;
 
 function normalizedText(value: string): string {
   return value.trim().replace(/\s+/g, " ");
@@ -100,12 +104,23 @@ function claimFacts(value: string): string[] {
 }
 
 function addsOutcomeDetail(sourceText: string, outcome: string): boolean {
-  if (!RESULT_LANGUAGE.test(outcome)) return false;
+  if (!RESULT_LANGUAGE.test(outcome) || !RESULT_TARGET.test(outcome)) return false;
   const sourceFacts = new Set(claimFacts(sourceText));
   // A reordered claim, changed result verb, plural, or possessive does not
-  // supply another fact. Require a saved content token absent from the source;
-  // grammar fragments cannot establish support.
+  // supply another fact. An action count with extra context is still an
+  // action count, so require a result target and new saved factual detail.
   return claimFacts(outcome).some((token) => !sourceFacts.has(token));
+}
+
+function hasVerifiedResultMeasure(
+  evidence: ProfileShape["resume"]["experience_entries"][number]["achievement_evidence"][number],
+): boolean {
+  if (evidence.evidence_strength !== "verified" || !evidence.user_confirmed) return false;
+  const sourceDescribesResult = RESULT_LANGUAGE.test(evidence.source_text)
+    && RESULT_TARGET.test(evidence.source_text);
+  return evidence.metrics.some((metric) => RESULT_QUANTITY.test(metric)
+    && ((BARE_RESULT_QUANTITY.test(metric.trim()) && sourceDescribesResult)
+      || (RESULT_DIRECTION.test(metric) && RESULT_TARGET.test(metric))));
 }
 
 function boundedExcerpt(value: string): string {
@@ -178,7 +193,8 @@ function generateDemoRequiredBulletSuggestions(
     // A save addresses Required pins by experience ID. Duplicate IDs cannot be
     // resolved to one owning entry, even when a positional path is available.
     if (entryIdCounts.get(entry.id) !== 1) continue;
-    const requiredBullets = requiredByExperience[entry.id] ?? [];
+    const requiredBullets = Object.hasOwn(requiredByExperience, entry.id)
+      ? requiredByExperience[entry.id] ?? [] : [];
     const bulletIndexesByText = new Map<string, number[]>();
     for (const [index, bullet] of entry.bullets.entries()) {
       const indexes = bulletIndexesByText.get(bullet) ?? [];
@@ -244,7 +260,7 @@ function generateDemoRequiredBulletSuggestions(
       // punctuation mark or a different verb for the same activity.
       const hasOutcome = Boolean(achievement && (
         addsOutcomeDetail(achievement.source_text, achievement.outcome)
-        || (achievement.metrics.length > 0 && RESULT_LANGUAGE.test(normalizedOriginal))
+        || hasVerifiedResultMeasure(achievement)
       ));
       const needsEvidence = !hasSubstantiveEvidence
         || achievement?.evidence_strength === "inferred"
@@ -268,14 +284,17 @@ function generateDemoRequiredBulletSuggestions(
       const idPrefix = `profile:v${profileVersion}:experience[${experienceIndex}]:bullet[${bulletIndex}]:required[${requiredBulletIndex}]`;
 
       if (normalizedOriginal !== originalText) {
-        const canApply = !ambiguousAchievement && !proposedTextCollides;
+        const blockedProfileInputKey = entry.id === "__proto__";
+        const canApply = !ambiguousAchievement && !proposedTextCollides && !blockedProfileInputKey;
         suggestions.push({
           id: `${idPrefix}:grammar`,
           kind: "grammar",
           originalText,
           proposedText: canApply ? normalizedOriginal : null,
           canApply,
-          guidance: proposedTextCollides
+          guidance: blockedProfileInputKey
+            ? "This saved experience ID prevents a safe profile save. Correct the experience identity before editing this Required bullet."
+            : proposedTextCollides
             ? "Whitespace cleanup would duplicate another saved bullet or Required pin. Resolve the duplicate identity before editing this text."
             : ambiguousAchievement
               ? "The saved achievement identity is ambiguous. Resolve it and edit whitespace manually; this suggestion cannot choose one record."

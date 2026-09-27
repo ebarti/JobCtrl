@@ -388,6 +388,100 @@ describe("DemoApiClientAdapter", () => {
     ).map((suggestion) => suggestion.kind)).toEqual(["missing_evidence"]);
   });
 
+  it("keeps framing advice for a verified action count in the saved demo profile", async () => {
+    const { adapter } = await createAdapter();
+    const before = await adapter.profile();
+    const profile = ProfileSchema.parse(before.profile);
+    const entry = profile.resume.experience_entries[0]!;
+    entry.bullets = ["Improved 10 dashboards."];
+    entry.achievement_evidence = [{
+      id: "demo-verified-action-count",
+      source_text: entry.bullets[0]!,
+      scope: "Synthetic team",
+      action: "Improved dashboards",
+      tools: [],
+      metrics: ["10 dashboards"],
+      outcome: "",
+      seniority_signal: "",
+      evidence_strength: "verified",
+      claim_confidence: 1,
+      user_confirmed: true,
+      tags: [],
+    }];
+    profile.resume.tailoring_rules.required_bullets_by_experience_id = {
+      [entry.id]: [entry.bullets[0]!],
+    };
+    const saved = await adapter.updateProfile({
+      expectedProfileVersion: before.profileVersion!, profileText: JSON.stringify(profile),
+    });
+    const inspected = await adapter.requiredBulletSuggestions({
+      expectedProfileVersion: saved.profileVersion!, maximumSuggestions: 12,
+    });
+    expect(inspected.suggestions.filter((suggestion) =>
+      suggestion.source.sourceId === "demo-verified-action-count",
+    ).map((suggestion) => suggestion.kind)).toEqual(["achievement_framing"]);
+    expect(await adapter.profile()).toEqual(saved);
+
+    entry.achievement_evidence[0]!.outcome = "Improved 10 dashboards for teams.";
+    const contextualAction = await adapter.updateProfile({
+      expectedProfileVersion: saved.profileVersion!, profileText: JSON.stringify(profile),
+    });
+    expect((await adapter.requiredBulletSuggestions({
+      expectedProfileVersion: contextualAction.profileVersion!, maximumSuggestions: 12,
+    })).suggestions.filter((suggestion) =>
+      suggestion.source.sourceId === "demo-verified-action-count",
+    ).map((suggestion) => suggestion.kind)).toEqual(["achievement_framing"]);
+    entry.achievement_evidence[0]!.outcome = "";
+
+    entry.achievement_evidence[0]!.metrics = ["35% latency reduction"];
+    const withMeasuredResult = await adapter.updateProfile({
+      expectedProfileVersion: contextualAction.profileVersion!, profileText: JSON.stringify(profile),
+    });
+    const measured = await adapter.requiredBulletSuggestions({
+      expectedProfileVersion: withMeasuredResult.profileVersion!, maximumSuggestions: 12,
+    });
+    expect(measured.suggestions.filter((suggestion) =>
+      suggestion.source.sourceId === "demo-verified-action-count",
+    )).toEqual([]);
+  });
+
+  it.each(["constructor", "toString", "__proto__"])(
+    "treats %s as own synthetic experience-ID data during inspection",
+    async (experienceId) => {
+      const { adapter } = await createAdapter();
+      const before = await adapter.profile();
+      const profile = ProfileSchema.parse(before.profile);
+      const entry = profile.resume.experience_entries[0]!;
+      entry.id = experienceId;
+      entry.bullets = ["  Special   Required claim  "];
+      const pins = Object.create(null) as Record<string, string[]>;
+      profile.resume.tailoring_rules.required_bullets_by_experience_id = pins;
+      const saved = await adapter.updateProfile({
+        expectedProfileVersion: before.profileVersion!, profileText: JSON.stringify(profile),
+      });
+      const withoutPin = await adapter.requiredBulletSuggestions({
+        expectedProfileVersion: saved.profileVersion!, maximumSuggestions: 12,
+      });
+      expect(withoutPin.suggestions.some((suggestion) =>
+        suggestion.source.experienceId === experienceId)).toBe(false);
+
+      pins[experienceId] = [entry.bullets[0]!];
+      const withPin = await adapter.updateProfile({
+        expectedProfileVersion: saved.profileVersion!, profileText: JSON.stringify(profile),
+      });
+      const inspected = await adapter.requiredBulletSuggestions({
+        expectedProfileVersion: withPin.profileVersion!, maximumSuggestions: 12,
+      });
+      expect(inspected.suggestions).toContainEqual(expect.objectContaining({
+        kind: "grammar", canApply: experienceId !== "__proto__",
+        source: expect.objectContaining({ experienceId, bulletIndex: 0 }),
+      }));
+      const stored = ProfileSchema.parse((await adapter.profile()).profile);
+      expect(Object.hasOwn(stored.resume.tailoring_rules.required_bullets_by_experience_id!, experienceId))
+        .toBe(true);
+    },
+  );
+
   it("covers every port member and reserves capability errors for unavailable methods", async () => {
     const { adapter } = await createAdapter();
     const fetchSpy = vi.spyOn(globalThis, "fetch");

@@ -1392,7 +1392,9 @@ function groupedValues(
     WHERE tenant_id = ? AND profile_id = ?
     ORDER BY ${keyColumn}, ${orderColumn}
   `).all(TENANT_ID, PROFILE_ID) as Array<{ key: unknown; value: unknown }>;
-  const grouped: Record<string, string[]> = {};
+  // Entry IDs are data, including Object.prototype names such as __proto__.
+  // A null prototype avoids inherited arrays/functions and setter mutation.
+  const grouped = Object.create(null) as Record<string, string[]>;
   for (const row of rows) {
     const key = text(row.key);
     grouped[key] = grouped[key] ?? [];

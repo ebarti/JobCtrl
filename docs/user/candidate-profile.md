@@ -193,7 +193,9 @@ extracted from it, does not independently verify the claim. Punctuation changes
 to a restated outcome also add no evidence. An action count such as the number
 of projects managed is not automatically a result. Rearranging the same claim
 or changing only its result verb, plural, or possessive in an outcome does not
-independently verify it. New words alone do not verify a claim: the matching
+independently verify it. “Improved 10 dashboards” with “10 dashboards” saved as
+a metric still needs a distinct outcome or verified result measure. New words
+alone do not verify a claim: the matching
 achievement must be user-confirmed and marked verified to avoid a missing-
 evidence question. If a saved profile exceeds the bounded inspection limit, or
 a Required bullet or its entry fields cannot fit the response, coaching reports

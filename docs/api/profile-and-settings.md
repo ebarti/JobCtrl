@@ -111,7 +111,9 @@ identity after future profile edits.
 Only conservative wording cleanup supplies an applicable replacement. Coaching
 questions have no proposed text and require the user's own truthful manual
 edits. An outcome that only reorders the source claim or changes its result verb
-or grammar does not independently support that claim. Nor does novel wording
+or grammar does not independently support that claim. A count of improved
+activities is still an action count; a separate outcome detail or verified,
+user-confirmed result measure is needed to suppress framing advice. Nor does novel wording
 alone verify it: only a user-confirmed achievement marked `verified` avoids the
 missing-evidence question. The browser accepts
 replacements individually through the ordinary
@@ -126,6 +128,9 @@ overlapping or reordered bullets require manual resolution. A failed accept
 keeps the reviewed suggestion through a same-version optimistic query rollback,
 keeps a unique concurrent manual Required edit pinned, and blocks ambiguous
 duplicates from being saved.
+Prototype-shaped experience IDs are read as own Required-pin keys. Cleanup for
+an exact saved `__proto__` pin remains non-applicable because the guarded profile
+JSON input cannot save that key.
 
 This route does not enable #902's model path or implement #883's proposed
 evidence migrations.

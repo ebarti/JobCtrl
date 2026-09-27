@@ -177,6 +177,71 @@ describe("generateRequiredBulletSuggestions", () => {
       .toEqual(["achievement_framing", "missing_evidence"]);
   });
 
+  it("keeps framing advice for a verified action count despite an outcome-sounding verb", () => {
+    const candidate = profile();
+    const entry = candidate.resume.experience_entries[0]!;
+    entry.bullets = ["Improved 10 dashboards."];
+    entry.achievement_evidence = [{
+      ...entry.achievement_evidence[0]!,
+      id: "verified-action-count",
+      source_text: entry.bullets[0]!,
+      action: "Improved dashboards",
+      metrics: ["10 dashboards"],
+      outcome: "",
+      evidence_strength: "verified",
+      user_confirmed: true,
+    }];
+    candidate.resume.tailoring_rules.required_bullets_by_experience_id = {
+      "exp-1": [entry.bullets[0]!],
+    };
+    expect(generateRequiredBulletSuggestions(candidate, 7, 24).suggestions.map((item) => item.kind))
+      .toEqual(["achievement_framing"]);
+
+    entry.achievement_evidence[0]!.outcome = "Improved 10 dashboards for teams.";
+    expect(generateRequiredBulletSuggestions(candidate, 7, 24).suggestions.map((item) => item.kind))
+      .toEqual(["achievement_framing"]);
+    entry.achievement_evidence[0]!.outcome = "";
+
+    entry.achievement_evidence[0]!.metrics = ["35% latency reduction"];
+    expect(generateRequiredBulletSuggestions(candidate, 7, 24).suggestions).toEqual([]);
+
+    entry.bullets = ["Reduced latency by 10%."];
+    entry.achievement_evidence[0]!.source_text = entry.bullets[0]!;
+    entry.achievement_evidence[0]!.metrics = ["10%"];
+    candidate.resume.tailoring_rules.required_bullets_by_experience_id = {
+      "exp-1": [entry.bullets[0]!],
+    };
+    expect(generateRequiredBulletSuggestions(candidate, 7, 24).suggestions).toEqual([]);
+  });
+
+  it.each(["constructor", "toString", "__proto__"])(
+    "reads %s as an own experience ID and never an inherited pin",
+    (experienceId) => {
+      const candidate = profile();
+      const entry = candidate.resume.experience_entries[1]!;
+      entry.id = experienceId;
+      entry.bullets = ["  Special   Required claim  "];
+      const pins = candidate.resume.tailoring_rules.required_bullets_by_experience_id!;
+      const originalPrototype = Object.getPrototypeOf(pins);
+      const withoutPin = generateRequiredBulletSuggestions(candidate, 7, 24);
+      expect(withoutPin.suggestions.some((item) => item.source.experienceId === experienceId)).toBe(false);
+      expect(withoutPin.suggestions.some((item) => item.source.experienceId === "exp-1")).toBe(true);
+
+      Object.defineProperty(pins, experienceId, {
+        value: [entry.bullets[0]!], enumerable: true, writable: true, configurable: true,
+      });
+      const withPin = generateRequiredBulletSuggestions(candidate, 7, 24);
+      expect(withPin.suggestions).toContainEqual(expect.objectContaining({
+        kind: "grammar",
+        canApply: experienceId !== "__proto__",
+        source: expect.objectContaining({ experienceId, bulletIndex: 0 }),
+      }));
+      expect(Object.getPrototypeOf(pins)).toBe(originalPrototype);
+      expect(Object.hasOwn(pins, experienceId)).toBe(true);
+      expect(RequiredBulletSuggestionResponseSchema.safeParse(withPin).success).toBe(true);
+    },
+  );
+
   it("does not treat a reordered or grammatical restatement as independent evidence", () => {
     const candidate = profile();
     const entry = candidate.resume.experience_entries[0]!;

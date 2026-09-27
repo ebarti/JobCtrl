@@ -120,7 +120,14 @@ missing-evidence question only when its canonical strength is `verified` and it
 is user-confirmed. Supported wording, tools, tags, and extracted metrics do
 not independently prove a claim. Outcome wording can guide achievement framing;
 token novelty, contextual filler, reordered claims, changed verbs, plurals,
-and possessives never establish evidence strength.
+and possessives never establish evidence strength. An action count remains an
+action count even beside a result-sounding verb such as “improved”; it does not
+resolve the framing question. A separate outcome detail or an explicit measured
+result in verified, user-confirmed evidence can resolve that question. Required
+pin maps treat `constructor`, `toString`, and `__proto__` as own saved ID keys;
+they never read inherited prototype values. A saved `__proto__` pin can be
+inspected, but its cleanup is not directly applicable through the guarded JSON
+profile input boundary.
 
 `POST /v1/profile/target-role-suggestions` accepts the strict object below:
 

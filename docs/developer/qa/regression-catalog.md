@@ -170,7 +170,13 @@ applicable. Rebase a different
 bullet in the same experience entry after a committed write with a lost
 response; keep overlapping or reordered bullet identities blocked. An outcome
 that only changes punctuation and a metric copied from an action count must not
-prove independent evidence or a result. Bound optional bullet and evidence
+prove independent evidence or a result. A verified “Improved 10 dashboards”
+with only “10 dashboards” as its metric must still receive framing advice;
+test production and demo parity with a separately measured result. Exercise
+`constructor`, `toString`, and `__proto__` as own saved experience-ID keys,
+including an unpinned key before another valid Required bullet. A saved
+`__proto__` key must not mutate an object prototype or produce an applicable
+profile JSON edit. Bound optional bullet and evidence
 reads before the generator scans them; an over-budget response must report
 truncation, not a clean inspection. Overlong Required bullet text or entry
 source fields must likewise report incomplete inspection. Corrupt exact-schema

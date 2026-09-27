@@ -101,11 +101,17 @@ function setRequiredBulletText(
   text: string,
 ): boolean {
   const required = getPathValue(profile, "resume.tailoring_rules.required_bullets_by_experience_id");
-  if (!isJsonRecord(required) || !Array.isArray(required[experienceId])) return false;
+  if (!isJsonRecord(required) || !Object.hasOwn(required, experienceId)
+    || !Array.isArray(required[experienceId])) return false;
   const bullets = required[experienceId] as unknown[];
   if (typeof bullets[index] !== "string") return false;
   bullets[index] = text;
   return true;
+}
+
+function ownRequiredBullets(profile: ProfileShape, experienceId: string): string[] | undefined {
+  const pins = profile.resume.tailoring_rules.required_bullets_by_experience_id;
+  return pins && Object.hasOwn(pins, experienceId) ? pins[experienceId] : undefined;
 }
 
 interface PendingRequiredPinConflict {
@@ -128,7 +134,7 @@ function reconcilePendingRequiredPin(
   if (!entry || entry.id !== conflict.experienceId || entries.filter((item) => item.id === entry.id).length !== 1) {
     return "blocked";
   }
-  const required = parsed.data.resume.tailoring_rules.required_bullets_by_experience_id?.[entry.id];
+  const required = ownRequiredBullets(parsed.data, entry.id);
   if (!required) {
     return "blocked";
   }
@@ -162,7 +168,8 @@ function reconcilePendingRequiredPin(
   }
   if (required.includes(bullet)) {
     const requiredMap = getPathValue(profile, "resume.tailoring_rules.required_bullets_by_experience_id");
-    if (!isJsonRecord(requiredMap) || !Array.isArray(requiredMap[entry.id])) return "blocked";
+    if (!isJsonRecord(requiredMap) || !Object.hasOwn(requiredMap, entry.id)
+      || !Array.isArray(requiredMap[entry.id])) return "blocked";
     const updatedRequired = requiredMap[entry.id] as unknown[];
     updatedRequired.splice(conflict.requiredBulletIndex, 1);
     conflict.requiredBulletIndex = updatedRequired.indexOf(bullet);
@@ -184,8 +191,10 @@ function explicitlyRemovedRequiredPin(
   const beforeMap = before && getPathValue(before, "resume.tailoring_rules.required_bullets_by_experience_id");
   const afterMap = getPathValue(after, "resume.tailoring_rules.required_bullets_by_experience_id");
   if (!isJsonRecord(beforeMap) || !isJsonRecord(afterMap)) return false;
-  const oldPins = beforeMap[conflict.experienceId];
-  const newPins = afterMap[conflict.experienceId];
+  const oldPins = Object.hasOwn(beforeMap, conflict.experienceId)
+    ? beforeMap[conflict.experienceId] : undefined;
+  const newPins = Object.hasOwn(afterMap, conflict.experienceId)
+    ? afterMap[conflict.experienceId] : undefined;
   return Array.isArray(oldPins) && Array.isArray(newPins)
     && oldPins[conflict.requiredBulletIndex] === conflict.previousText
     && newPins.length === oldPins.length - 1
@@ -380,10 +389,15 @@ function rebaseProfileValue(
     }
   }
   if (isJsonRecord(base) && isJsonRecord(local) && isJsonRecord(remote)) {
-    const value: JsonRecord = {};
+    const value = Object.create(null) as JsonRecord;
     const conflicts: string[] = [];
     for (const key of new Set([...Object.keys(base), ...Object.keys(local), ...Object.keys(remote)])) {
-      const rebased = rebaseProfileValue(base[key], local[key], remote[key], `${path}.${key}`);
+      const rebased = rebaseProfileValue(
+        Object.hasOwn(base, key) ? base[key] : undefined,
+        Object.hasOwn(local, key) ? local[key] : undefined,
+        Object.hasOwn(remote, key) ? remote[key] : undefined,
+        `${path}.${key}`,
+      );
       if (rebased.value !== undefined) value[key] = rebased.value;
       conflicts.push(...rebased.conflicts);
     }
@@ -1180,9 +1194,7 @@ export function ProfileForm({
     const entryIndex = parsed.data.resume.experience_entries.findIndex(
       (candidate) => candidate.id === suggestion.source.experienceId,
     );
-    const requiredBullets = parsed.data.resume.tailoring_rules?.required_bullets_by_experience_id?.[
-      suggestion.source.experienceId
-    ];
+    const requiredBullets = ownRequiredBullets(parsed.data, suggestion.source.experienceId);
     const matchingAchievements = entry?.achievement_evidence.filter(
       (candidate) => candidate.source_text.trim().replace(/\s+/g, " ") === normalizedOriginal,
     ) ?? [];
@@ -1268,10 +1280,8 @@ export function ProfileForm({
             (candidate) => candidate.id === suggestion.source.experienceId,
           )
           : [];
-        const currentRequired = currentEntry.length === 1
-          ? parsedCurrentProfile?.resume.tailoring_rules.required_bullets_by_experience_id?.[
-            suggestion.source.experienceId
-          ]
+        const currentRequired = currentEntry.length === 1 && parsedCurrentProfile
+          ? ownRequiredBullets(parsedCurrentProfile, suggestion.source.experienceId)
           : undefined;
         const originalBulletIndexes = currentEntry[0]?.bullets.flatMap((bullet, index) =>
           bullet === suggestion.originalText ? [index] : []) ?? [];
@@ -1332,9 +1342,7 @@ export function ProfileForm({
           ? rebasedProfile.data.resume.experience_entries[entryIndex]
           : undefined;
         const rebasedRequired = rebasedProfile.success
-          ? rebasedProfile.data.resume.tailoring_rules.required_bullets_by_experience_id?.[
-            suggestion.source.experienceId
-          ]
+          ? ownRequiredBullets(rebasedProfile.data, suggestion.source.experienceId)
           : undefined;
         if (rebasedEntry?.id === suggestion.source.experienceId
           && rebasedRequired?.[suggestion.source.requiredBulletIndex] === suggestion.proposedText
@@ -1391,9 +1399,8 @@ export function ProfileForm({
       if (draftProfile && parsedDraft.success) {
         const draftEntries = parsedDraft.data.resume.experience_entries;
         const draftEntry = draftEntries[entryIndex];
-        const draftPin = parsedDraft.data.resume.tailoring_rules.required_bullets_by_experience_id?.[
-          suggestion.source.experienceId
-        ]?.[suggestion.source.requiredBulletIndex];
+        const draftPin = ownRequiredBullets(parsedDraft.data, suggestion.source.experienceId)
+          ?.[suggestion.source.requiredBulletIndex];
         if (draftEntry?.id === suggestion.source.experienceId && typeof draftPin === "string") {
           const conflict = {
             experienceId: suggestion.source.experienceId,

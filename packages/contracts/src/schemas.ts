@@ -1795,12 +1795,25 @@ const ProfileRevisionGatesSchema = z
   })
   .partial();
 
+// z.record silently drops an own __proto__ key. Experience IDs are opaque
+// saved data keys, so validate every own value and copy with CreateDataProperty
+// semantics rather than treating that key as an object setter.
+const ProfileRequiredBulletMapSchema = z
+  .custom<Record<string, string[]>>((value) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    const prototype = Object.getPrototypeOf(value);
+    return (prototype === null || prototype === Object.prototype)
+      && Object.values(value).every((bullets) =>
+        Array.isArray(bullets) && bullets.every((bullet) => typeof bullet === "string"));
+  }, { message: "Expected a record of string arrays" })
+  .transform((value) => Object.fromEntries(Object.entries(value)) as Record<string, string[]>);
+
 const ProfileTailoringRulesSchema = z
   .object({
     required_experience_entry_ids: z.array(z.string()).default([]),
     required_education_entry_ids: z.array(z.string()).default([]),
     required_skill_category_ids: z.array(z.string()).default([]),
-    required_bullets_by_experience_id: z.record(z.string(), z.array(z.string())).default({}),
+    required_bullets_by_experience_id: ProfileRequiredBulletMapSchema.default({}),
     required_skills_by_category_id: z.record(z.string(), z.array(z.string())).default({}),
     max_experience_bullets: z.number().int().positive().default(4),
     custom_tailoring_prompt: z.string().default(""),

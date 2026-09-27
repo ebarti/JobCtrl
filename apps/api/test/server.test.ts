@@ -9960,6 +9960,114 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("keeps framing advice for a verified saved action count with no result measure", async () => {
+    const app = buildApp(options);
+    const profile = validProfileFixture("Synthetic Candidate");
+    const resume = profile.resume as Record<string, unknown>;
+    const entry = (resume.experience_entries as Array<Record<string, unknown>>)[0]!;
+    entry.bullets = ["Improved 10 dashboards."];
+    entry.achievement_evidence = [{
+      id: "verified-action-count",
+      source_text: "Improved 10 dashboards.",
+      action: "Improved dashboards",
+      metrics: ["10 dashboards"],
+      outcome: "",
+      evidence_strength: "verified",
+      user_confirmed: true,
+    }];
+    resume.tailoring_rules = {
+      required_bullets_by_experience_id: { role_1: ["Improved 10 dashboards."] },
+    };
+    const saved = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile } });
+    expect(saved.statusCode, saved.body).toBe(200);
+    const version = saved.json().profileVersion as number;
+
+    const inspection = await app.inject({
+      method: "POST",
+      url: "/v1/profile/required-bullet-suggestions",
+      payload: { expectedProfileVersion: version },
+    });
+    expect(inspection.statusCode, inspection.body).toBe(200);
+    expect(inspection.json().suggestions.map((item: { kind: string }) => item.kind))
+      .toEqual(["achievement_framing"]);
+    expect(inspection.json().suggestions[0]).toMatchObject({
+      canApply: false, proposedText: null,
+      source: { sourceId: "verified-action-count", experienceId: "role_1" },
+    });
+    expect(RequiredBulletSuggestionResponseSchema.safeParse(inspection.json()).success).toBe(true);
+    expect((await app.inject({ method: "GET", url: "/v1/profile" })).json().profileVersion).toBe(version);
+    await app.close();
+  });
+
+  it.each(["constructor", "toString", "__proto__"])(
+    "treats %s as saved experience-ID data during Required inspection",
+    async (experienceId) => {
+      const app = buildApp(options);
+      const profile = validProfileFixture("Synthetic Candidate");
+      const resume = profile.resume as Record<string, unknown>;
+      const entries = resume.experience_entries as Array<Record<string, unknown>>;
+      entries[0]!.id = experienceId;
+      entries[0]!.bullets = ["  Special   Required claim  "];
+      entries.push({
+        id: "ordinary-role", title: "Other Engineer", company: "Synthetic Co",
+        bullets: ["  Ordinary   Required claim  "],
+      });
+      const pins = Object.create(null) as Record<string, string[]>;
+      pins["ordinary-role"] = ["  Ordinary   Required claim  "];
+      resume.tailoring_rules = { required_bullets_by_experience_id: pins };
+      const saved = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile } });
+      expect(saved.statusCode, saved.body).toBe(200);
+      const firstVersion = saved.json().profileVersion as number;
+      const unpinned = await app.inject({
+        method: "POST", url: "/v1/profile/required-bullet-suggestions",
+        payload: { expectedProfileVersion: firstVersion },
+      });
+      expect(unpinned.statusCode, unpinned.body).toBe(200);
+      expect(unpinned.json().suggestions.some((item: { source: { experienceId: string } }) =>
+        item.source.experienceId === experienceId)).toBe(false);
+      expect(unpinned.json().suggestions).toContainEqual(expect.objectContaining({
+        kind: "grammar", source: expect.objectContaining({ experienceId: "ordinary-role" }),
+      }));
+
+      let version = firstVersion;
+      if (experienceId === "__proto__") {
+        // Fastify rejects this JSON property at its input boundary. An exact
+        // saved row can still carry the entry ID, so exercise that read path.
+        const db = new Database(options.dbPath);
+        db.prepare(`INSERT INTO candidate_profile_required_bullets
+          (tenant_id, profile_id, entry_id, bullet_index, bullet_text)
+          VALUES (?, ?, ?, ?, ?)`)
+          .run("local", "default", experienceId, 0, "  Special   Required claim  ");
+        db.close();
+      } else {
+        pins[experienceId] = ["  Special   Required claim  "];
+        const savedPin = await app.inject({
+          method: "PATCH", url: "/v1/profile",
+          payload: { profile, expectedProfileVersion: firstVersion },
+        });
+        expect(savedPin.statusCode, savedPin.body).toBe(200);
+        version = savedPin.json().profileVersion as number;
+      }
+      const stored = await app.inject({ method: "GET", url: "/v1/profile" });
+      expect(stored.statusCode, stored.body).toBe(200);
+      const storedPins = stored.json().profile.resume.tailoring_rules.required_bullets_by_experience_id;
+      expect(Object.hasOwn(storedPins, experienceId)).toBe(true);
+      expect(storedPins[experienceId]).toEqual(["  Special   Required claim  "]);
+      expect(Object.getPrototypeOf(storedPins)).toBe(Object.prototype);
+      const inspected = await app.inject({
+        method: "POST", url: "/v1/profile/required-bullet-suggestions",
+        payload: { expectedProfileVersion: version },
+      });
+      expect(inspected.statusCode, inspected.body).toBe(200);
+      expect(inspected.json().suggestions).toContainEqual(expect.objectContaining({
+        kind: "grammar", canApply: experienceId !== "__proto__",
+        source: expect.objectContaining({ experienceId, bulletIndex: 0, fieldPath: "profile.resume.experience_entries[0].bullets[0]" }),
+      }));
+      expect(RequiredBulletSuggestionResponseSchema.safeParse(inspected.json()).success).toBe(true);
+      await app.close();
+    },
+  );
+
   it("returns 422 for an invalid exact-schema saved profile row", async () => {
     const app = buildApp(options);
     const saved = await app.inject({
