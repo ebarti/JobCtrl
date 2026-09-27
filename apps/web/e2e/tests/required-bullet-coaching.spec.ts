@@ -29,6 +29,7 @@ async function seedRequiredBullets(page: Page, baseURL: string) {
   expect(initialResponse.status(), await initialResponse.text()).toBe(200);
   const initial = await initialResponse.json();
   const profile = structuredClone(initial.profile);
+  profile.personal.full_name = "Synthetic Baseline Name";
   const entry = profile.resume.experience_entries[0];
   const entryId = entry.id as string;
   entry.bullets = [originalBullet, metricBullet, optionalBullet];
@@ -71,6 +72,7 @@ async function seedRequiredBullets(page: Page, baseURL: string) {
   });
   expect(savedResponse.status(), await savedResponse.text()).toBe(200);
   const saved = await savedResponse.json();
+  expect(saved.profile.personal.full_name).toBe("Synthetic Baseline Name");
   return { apiOrigin, entryId, saved };
 }
 
@@ -195,11 +197,13 @@ test("stale results, version conflicts, and failed requests leave manual edits a
   await page.getByRole("button", { name: "Inspect Required bullets" }).click();
   const name = page.getByRole("textbox", { name: "Full name" });
   await name.fill("Synthetic Pending Draft");
+  const generatedResponse = page.waitForResponse(inspectionResponse);
   releaseGeneration();
+  expect((await generatedResponse).status()).toBe(200);
   await expect(page.getByText(/Save or discard local edits/)).toBeVisible();
   await expect(page.getByText(`Proposed text: “${cleanedBullet}”`)).toHaveCount(0);
   await expect(name).toHaveValue("Synthetic Pending Draft");
-  await page.unroute("**/v1/profile/required-bullet-suggestions");
+  await page.unrouteAll({ behavior: "wait" });
 
   await page.getByRole("button", { name: "Discard changes" }).click();
   await page.route("**/v1/profile/required-bullet-suggestions", (route) => route.fulfill({
@@ -209,7 +213,7 @@ test("stale results, version conflicts, and failed requests leave manual edits a
   }));
   await page.getByRole("button", { name: "Inspect Required bullets" }).click();
   await expect(page.getByRole("alert").filter({ hasText: /Synthetic inspection failure|503/ })).toBeVisible();
-  await page.unroute("**/v1/profile/required-bullet-suggestions");
+  await page.unrouteAll({ behavior: "wait" });
   await page.getByRole("button", { name: "Inspect Required bullets" }).click();
   await expect(page.getByText(`Proposed text: “${cleanedBullet}”`)).toBeVisible();
 
@@ -238,6 +242,7 @@ test("stale results, version conflicts, and failed requests leave manual edits a
     data: { profile: external, expectedProfileVersion: saved.profileVersion },
   });
   expect(externalResponse.status(), await externalResponse.text()).toBe(200);
+  expect((await externalResponse.json()).profileVersion).toBe(saved.profileVersion + 1);
   const eventsBeforeStaleAccept = profileEventCount();
   const staleSave = page.waitForResponse((response) =>
     new URL(response.url()).pathname === "/v1/profile" && response.request().method() === "PATCH",
@@ -254,7 +259,7 @@ test("stale results, version conflicts, and failed requests leave manual edits a
   releaseStaleSave();
   expect((await staleSave).status()).toBe(409);
   releaseProfileReads();
-  await page.unroute("**/v1/profile");
+  await page.unrouteAll({ behavior: "wait" });
   expect(profileEventCount()).toBe(eventsBeforeStaleAccept);
   const persisted = await (await page.request.get(`${apiOrigin}/v1/profile`)).json();
   expect(persisted.profile.resume.experience_entries[0].bullets[0]).toBe(originalBullet);
@@ -316,6 +321,11 @@ test("a committed cleanup with a lost response rebases a different bullet edit",
   let releaseReads!: () => void;
   const holdReads = new Promise<void>((resolve) => { releaseReads = resolve; });
   let committed = false;
+  const lostResponse = page.waitForResponse((response) =>
+    new URL(response.url()).pathname === "/v1/profile"
+      && response.request().method() === "PATCH"
+      && response.status() === 503,
+  );
   await page.route("**/v1/profile", async (route) => {
     if (route.request().method() === "GET") {
       await holdReads;
@@ -343,9 +353,10 @@ test("a committed cleanup with a lost response rebases a different bullet edit",
   const manualOptional = "Documented synthetic runbooks with a manual revision.";
   await optional.fill(manualOptional);
   releaseResponse();
+  expect((await lostResponse).status()).toBe(503);
   await expect(page.getByText(/manual editing remains available/)).toBeVisible();
   releaseReads();
-  await page.unroute("**/v1/profile");
+  await page.unrouteAll({ behavior: "wait" });
   await expect(page.getByRole("button", { name: "Rebase edits onto saved profile" })).toBeVisible();
   await page.getByRole("button", { name: "Rebase edits onto saved profile" }).click();
 

@@ -490,6 +490,40 @@ describe("DemoApiClientAdapter", () => {
     )).toEqual([]);
   });
 
+  it("recognizes a verified, confirmed deployment-time result in the saved demo profile", async () => {
+    const { adapter } = await createAdapter();
+    const before = await adapter.profile();
+    const profile = ProfileSchema.parse(before.profile);
+    const entry = profile.resume.experience_entries[0]!;
+    const bullet = "Reduced synthetic deployment time by 40%.";
+    entry.bullets = [bullet];
+    entry.achievement_evidence = [{
+      id: "demo-verified-deployment-time",
+      source_text: bullet,
+      scope: "Synthetic deployment",
+      action: "Reduced synthetic deployment time",
+      tools: [],
+      metrics: ["40%"],
+      outcome: bullet,
+      seniority_signal: "",
+      evidence_strength: "verified",
+      claim_confidence: 1,
+      user_confirmed: true,
+      tags: [],
+    }];
+    profile.resume.tailoring_rules.required_bullets_by_experience_id = { [entry.id]: [bullet] };
+    const saved = await adapter.updateProfile({
+      expectedProfileVersion: before.profileVersion!, profileText: JSON.stringify(profile),
+    });
+
+    expect((await adapter.requiredBulletSuggestions({
+      expectedProfileVersion: saved.profileVersion!, maximumSuggestions: 12,
+    })).suggestions.filter((suggestion) =>
+      suggestion.source.sourceId === "demo-verified-deployment-time",
+    )).toEqual([]);
+    expect(await adapter.profile()).toEqual(saved);
+  });
+
   it.each(["constructor", "toString", "__proto__"])(
     "treats %s as own synthetic experience-ID data during inspection",
     async (experienceId) => {

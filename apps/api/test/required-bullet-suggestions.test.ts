@@ -214,6 +214,29 @@ describe("generateRequiredBulletSuggestions", () => {
     expect(generateRequiredBulletSuggestions(candidate, 7, 24).suggestions).toEqual([]);
   });
 
+  it("recognizes a verified, confirmed deployment-time result with a measured improvement", () => {
+    const candidate = profile();
+    const entry = candidate.resume.experience_entries[0]!;
+    const bullet = "Reduced synthetic deployment time by 40%.";
+    entry.bullets = [bullet];
+    entry.achievement_evidence = [{
+      ...entry.achievement_evidence[0]!,
+      id: "verified-deployment-time",
+      source_text: bullet,
+      action: "Reduced synthetic deployment time",
+      metrics: ["40%"],
+      outcome: bullet,
+      evidence_strength: "verified",
+      user_confirmed: true,
+    }];
+    candidate.resume.tailoring_rules.required_bullets_by_experience_id = { "exp-1": [bullet] };
+
+    expect(generateRequiredBulletSuggestions(candidate, 7, 24).suggestions).toEqual([]);
+    entry.achievement_evidence[0]!.evidence_strength = "supported";
+    expect(generateRequiredBulletSuggestions(candidate, 7, 24).suggestions.map((item) => item.kind))
+      .toEqual(["achievement_framing", "missing_evidence"]);
+  });
+
   it.each(["constructor", "toString", "__proto__"])(
     "reads %s as an own experience ID and never an inherited pin",
     (experienceId) => {
