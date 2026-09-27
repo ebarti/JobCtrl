@@ -47,8 +47,25 @@ describe("RequiredBulletSuggestions", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "Inspect Required bullets" }));
-    expect(await screen.findByText(/exceeds the safe inspection limit/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Inspection is incomplete: saved Required sources exceed/i)).toBeInTheDocument();
     expect(screen.queryByText(/No deterministic coaching suggestions were found/i)).not.toBeInTheDocument();
+  });
+
+  it("warns that a nonempty truncated inspection may omit overlong sources", async () => {
+    const user = userEvent.setup();
+    const requiredBulletSuggestions = vi.fn(async () => ({ ...response, truncated: true }));
+    renderWithProviders(
+      <RequiredBulletSuggestions isDraftClean profileVersion={3} resetToken={0} onAccept={vi.fn()} />,
+      { ports: buildTestPorts({ api: { requiredBulletSuggestions } }) },
+    );
+
+    await user.click(screen.getByRole("button", { name: "Inspect Required bullets" }));
+    expect(await screen.findByText("Proposed text: “Saved bullet”")).toBeInTheDocument();
+    expect(screen.getByText(/Inspection is incomplete\. These suggestions cover only part/i))
+      .toHaveTextContent(/other sources may exceed a safe limit or the response cap/);
+    expect(screen.getByText(/Inspection is incomplete\. These suggestions cover only part/i))
+      .toHaveTextContent(/edit omitted bullets manually/);
+    expect(screen.queryByText(/Showing the first 12/i)).not.toBeInTheDocument();
   });
 
   it("rejects an individual replacement without mutating the saved profile", async () => {

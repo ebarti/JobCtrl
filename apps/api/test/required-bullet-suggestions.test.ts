@@ -155,6 +155,35 @@ describe("generateRequiredBulletSuggestions", () => {
       .toEqual(["achievement_framing", "missing_evidence"]);
   });
 
+  it("does not treat a reordered or grammatical restatement as independent evidence", () => {
+    const candidate = profile();
+    const entry = candidate.resume.experience_entries[0]!;
+    entry.bullets = ["Reduced latency by 10%."];
+    entry.achievement_evidence = [{
+      ...entry.achievement_evidence[0]!,
+      id: "reordered-outcome",
+      source_text: entry.bullets[0]!,
+      metrics: ["10%"],
+      outcome: "Latency reduced by 10%.",
+      evidence_strength: "supported",
+      user_confirmed: true,
+    }];
+    candidate.resume.tailoring_rules.required_bullets_by_experience_id = {
+      "exp-1": [entry.bullets[0]!],
+    };
+
+    for (const outcome of ["Latency reduced by 10%.", "Latency was reduced by 10 percent."]) {
+      entry.achievement_evidence[0]!.outcome = outcome;
+      const result = generateRequiredBulletSuggestions(candidate, 7, 24);
+      expect(result.suggestions).toContainEqual(expect.objectContaining({
+        kind: "missing_evidence",
+        proposedText: null,
+        canApply: false,
+        source: expect.objectContaining({ sourceId: "reordered-outcome" }),
+      }));
+    }
+  });
+
   it("uses a snapshot identity when duplicate bullet evidence is ambiguous", () => {
     const candidate = profile();
     candidate.resume.experience_entries[0]!.achievement_evidence = [
@@ -304,6 +333,19 @@ describe("generateRequiredBulletSuggestions", () => {
     expect(generateRequiredBulletSuggestions(candidate, 7, 24)).toMatchObject({
       suggestions: [], truncated: true,
     });
+
+    entry.bullets[0] = "Unrelated short bullet.";
+    expect(generateRequiredBulletSuggestions(candidate, 7, 24)).toMatchObject({
+      suggestions: [], truncated: true,
+    });
+
+    entry.bullets[0] = "  Worked   on platform reliability  ";
+    candidate.resume.tailoring_rules.required_bullets_by_experience_id = {
+      "exp-1": [entry.bullets[0], longBullet],
+    };
+    const partial = generateRequiredBulletSuggestions(candidate, 7, 24);
+    expect(partial.truncated).toBe(true);
+    expect(partial.suggestions).toContainEqual(expect.objectContaining({ kind: "grammar" }));
 
     entry.bullets[0] = "Required claim.";
     candidate.resume.tailoring_rules.required_bullets_by_experience_id = {

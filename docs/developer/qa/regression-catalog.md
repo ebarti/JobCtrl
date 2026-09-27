@@ -172,6 +172,10 @@ truncation, not a clean inspection. Overlong Required bullet text or entry
 source fields must likewise report incomplete inspection. Corrupt exact-schema
 saved rows, including raw non-boolean evidence confirmation and out-of-range
 confidence, must return `422 invalid_saved_profile` without changing the profile.
+An overlong Required pin must report incomplete inspection even when it has no
+matching saved bullet. A nonempty truncated response must not tell users that
+repeating the same request will expose omitted sources. Reordered source claims
+or grammar-only variations must not count as independent outcome evidence.
 Count every achievement row that matches a Required bullet before deciding
 whether a source identity is unique, including rows with blank or overlong IDs.
 The browser must reject an accept against that ambiguous saved snapshot, and

@@ -191,10 +191,14 @@ skips them. Cleanup also stays manual when its resulting text would duplicate
 another bullet or Required pin. A claim's own text, including a number
 extracted from it, does not independently verify the claim. Punctuation changes
 to a restated outcome also add no evidence. An action count such as the number
-of projects managed is not automatically a result. If a saved profile exceeds
+of projects managed is not automatically a result. Rearranging the same claim
+in an outcome does not independently verify it. If a saved profile exceeds
 the bounded inspection limit, or a Required bullet or its entry fields cannot
 fit the response, coaching reports that it could not fully inspect it; manual
-editing remains available.
+editing remains available. An unmatched overlong Required pin is incomplete
+too. Some suggestions may still appear in an incomplete inspection; it does
+not cover every Required bullet, and repeating it on the same saved version may
+omit the same source.
 
 Review each proposed wording change separately. Accepting a change preserves
 the bullet's order, achievement identity, and Required selection through the

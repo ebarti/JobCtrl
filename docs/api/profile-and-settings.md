@@ -89,8 +89,10 @@ materializing saved rows, the API also limits inspection to 256 experience
 entries and 4,096 normalized profile child rows. A larger profile returns an
 empty `truncated: true` result; it is not a claim that its Required bullets are
 complete. A Required bullet or its owning entry fields that exceed the response
-source bounds also make the inspection incomplete (`truncated: true`). Invalid
-saved rows return `422 invalid_saved_profile`. Malformed stored evidence JSON
+source bounds also make the inspection incomplete (`truncated: true`), even if
+the Required pin has no matching saved bullet. Nonempty truncated results cover
+only an inspected subset; repeating the same request may not reveal skipped
+sources. Invalid saved rows return `422 invalid_saved_profile`. Malformed stored evidence JSON
 arrays, confirmation integers other than `0` or `1`, and confidence values
 outside `0–1` return 422 rather than being treated as usable evidence.
 
@@ -104,7 +106,8 @@ identity after future profile edits.
 
 Only conservative wording cleanup supplies an applicable replacement. Coaching
 questions have no proposed text and require the user's own truthful manual
-edits. The browser accepts replacements individually through the ordinary
+edits. An outcome that only reorders the source claim or changes its grammar
+does not independently support that claim. The browser accepts replacements individually through the ordinary
 version-checked profile save, preserving bullet order, achievement identity,
 and Required selection. Generation, rejection, unavailable requests, and stale
 results do not promote evidence or alter the saved profile. An uncertain accept

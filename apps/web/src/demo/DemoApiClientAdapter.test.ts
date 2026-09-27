@@ -311,6 +311,19 @@ describe("DemoApiClientAdapter", () => {
     });
     expect(colliding.suggestions.find((suggestion) => suggestion.kind === "grammar"))
       .toMatchObject({ canApply: false, proposedText: null });
+
+    profile.resume.tailoring_rules.required_bullets_by_experience_id = {
+      [entry.id]: [`Unmatched Required claim ${"x".repeat(2_000)}`],
+    };
+    const withOverlongPin = await adapter.updateProfile({
+      expectedProfileVersion: withCollision.profileVersion!,
+      profileText: JSON.stringify(profile),
+    });
+    const incomplete = await adapter.requiredBulletSuggestions({
+      expectedProfileVersion: withOverlongPin.profileVersion!,
+      maximumSuggestions: 12,
+    });
+    expect(incomplete).toMatchObject({ suggestions: [], truncated: true, modelUsed: false });
   });
 
   it("covers every port member and reserves capability errors for unavailable methods", async () => {

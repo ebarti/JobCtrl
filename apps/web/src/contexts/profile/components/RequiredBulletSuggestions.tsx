@@ -83,11 +83,11 @@ export function RequiredBulletSuggestions({
       setGeneratedVersion(result.profileVersion);
       setSuggestions(result.suggestions);
       if (result.truncated && result.suggestions.length === 0) {
-        setEmptyMessage("The saved profile exceeds the safe inspection limit. Edit Required bullets manually or reduce the saved source rows, then inspect again.");
+        setEmptyMessage("Inspection is incomplete: saved Required sources exceed a safe inspection or response limit. Edit them manually; repeating this request on the same saved version may omit the same sources.");
       } else if (result.suggestions.length === 0) {
         setEmptyMessage("No deterministic coaching suggestions were found for saved Required bullets.");
       } else if (result.truncated) {
-        setEmptyMessage("Showing the first 12 deterministic suggestions. Accept or reject these, then inspect again.");
+        setEmptyMessage("Inspection is incomplete. These suggestions cover only part of the saved Required bullets; other sources may exceed a safe limit or the response cap. Review these items and edit omitted bullets manually.");
       }
     } catch {
       // The mutation exposes its sanitized API error below. Saved data stays untouched.

@@ -78,6 +78,24 @@ function claimSignature(value: string): string {
   return value.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 }
 
+const CLAIM_CONNECTORS = new Set([
+  "a", "an", "and", "at", "be", "been", "by", "for", "from", "in", "is", "of", "on", "the", "to", "was", "were", "with",
+]);
+
+function claimFacts(value: string): string[] {
+  return claimSignature(value.normalize("NFKC").replace(/%/g, " percent "))
+    .split(" ")
+    .filter((token) => token.length > 0 && !CLAIM_CONNECTORS.has(token));
+}
+
+function addsOutcomeDetail(sourceText: string, outcome: string): boolean {
+  if (!RESULT_LANGUAGE.test(outcome)) return false;
+  const sourceFacts = new Set(claimFacts(sourceText));
+  // A reordered claim or changed grammar does not supply another fact. Require
+  // at least one saved outcome token that is absent from the source claim.
+  return claimFacts(outcome).some((token) => !sourceFacts.has(token));
+}
+
 function boundedExcerpt(value: string): string {
   return value.length <= 500 ? value : `${value.slice(0, 497)}...`;
 }
@@ -85,12 +103,10 @@ function boundedExcerpt(value: string): string {
 function isSubstantiveEvidence(
   evidence: ProfileShape["resume"]["experience_entries"][number]["achievement_evidence"][number],
 ): boolean {
-  const source = claimSignature(evidence.source_text);
   // Normalized storage materializes every legacy bullet as an achievement row,
   // copying the bullet into action, outcome, and extracted metrics. That row
   // preserves identity but does not add an independent source for the claim.
-  const outcome = claimSignature(evidence.outcome);
-  return Boolean(outcome && outcome !== source && RESULT_LANGUAGE.test(evidence.outcome))
+  return addsOutcomeDetail(evidence.source_text, evidence.outcome)
     || evidence.evidence_strength === "verified";
 }
 
@@ -168,16 +184,8 @@ function generateDemoRequiredBulletSuggestions(
         break scan;
       }
       inspectedBullets += 1;
-      // Required pins store text, not an occurrence ID. An identical bullet or
-      // pin has no provable one-to-one mapping, so never guess which to edit.
       if (
-        bulletIndexesByText.get(requiredText)?.length !== 1
-        || requiredCounts.get(requiredText) !== 1
-      ) continue;
-      const bulletIndex = bulletIndexesByText.get(requiredText)![0]!;
-      const originalText = entry.bullets[bulletIndex]!;
-      if (
-        originalText.length > 2_000
+        requiredText.length > 2_000
         || entry.id.length > 160
         || !entry.id.trim()
         || entry.title.length > 160
@@ -188,6 +196,14 @@ function generateDemoRequiredBulletSuggestions(
         scanTruncated = true;
         continue;
       }
+      // Required pins store text, not an occurrence ID. An identical bullet or
+      // pin has no provable one-to-one mapping, so never guess which to edit.
+      if (
+        bulletIndexesByText.get(requiredText)?.length !== 1
+        || requiredCounts.get(requiredText) !== 1
+      ) continue;
+      const bulletIndex = bulletIndexesByText.get(requiredText)![0]!;
+      const originalText = entry.bullets[bulletIndex]!;
       const normalizedOriginal = normalizedText(originalText);
       if (!normalizedOriginal) continue;
       const proposedTextCollides = normalizedOriginal !== originalText
@@ -208,9 +224,7 @@ function generateDemoRequiredBulletSuggestions(
       // necessarily a result. Restated actions also need a result, not a new
       // punctuation mark or a different verb for the same activity.
       const hasOutcome = Boolean(achievement && (
-        (claimSignature(achievement.outcome)
-          && claimSignature(achievement.outcome) !== claimSignature(achievement.source_text)
-          && RESULT_LANGUAGE.test(achievement.outcome))
+        addsOutcomeDetail(achievement.source_text, achievement.outcome)
         || (achievement.metrics.length > 0 && RESULT_LANGUAGE.test(normalizedOriginal))
       ));
       const needsEvidence = !hasSubstantiveEvidence
