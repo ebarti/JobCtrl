@@ -30,6 +30,7 @@ async function seedRequiredBullets(page: Page, baseURL: string) {
   const initial = await initialResponse.json();
   const profile = structuredClone(initial.profile);
   profile.personal.full_name = "Synthetic Baseline Name";
+  profile.personal.email = "synthetic.baseline@example.com";
   const entry = profile.resume.experience_entries[0];
   const entryId = entry.id as string;
   entry.bullets = [originalBullet, metricBullet, optionalBullet];
@@ -73,6 +74,7 @@ async function seedRequiredBullets(page: Page, baseURL: string) {
   expect(savedResponse.status(), await savedResponse.text()).toBe(200);
   const saved = await savedResponse.json();
   expect(saved.profile.personal.full_name).toBe("Synthetic Baseline Name");
+  expect(saved.profile.personal.email).toBe("synthetic.baseline@example.com");
   return { apiOrigin, entryId, saved };
 }
 
