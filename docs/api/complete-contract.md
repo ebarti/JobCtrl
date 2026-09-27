@@ -78,7 +78,8 @@ limit. The API checks a bounded read budget before materializing source rows:
 more than 256 experience entries or 4,096 normalized profile child rows returns
 an empty `truncated: true` result. This result does not assert that the profile
 has no coaching opportunities. Invalid exact-schema saved profile rows return
-`422 invalid_saved_profile` without a profile write.
+`422 invalid_saved_profile` without a profile write, including malformed raw
+JSON arrays in saved achievement evidence.
 
 A Required-bullet suggestion contains:
 
@@ -99,8 +100,10 @@ Identical bullet or Required-pin occurrences are skipped because their text
 cannot identify one occurrence. A whitespace cleanup that would make its text
 match another bullet or Required pin has no applicable replacement. The browser
 checks this again against the exact saved snapshot before sending an accept.
-Ambiguous achievement matches or reused
-achievement IDs have no applicable replacement. Evidence questions do not
+Ambiguous achievement matches, including rows with blank or overlong IDs, or reused
+achievement IDs have no applicable replacement. A canonical `sourceId` must
+fit the 240-character wire bound before it is emitted; otherwise coaching uses
+a bounded snapshot reference. Evidence questions do not
 promote bullet text or an extracted metric into independent proof.
 
 `POST /v1/profile/target-role-suggestions` accepts the strict object below:

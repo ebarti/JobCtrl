@@ -1106,9 +1106,7 @@ export function ProfileForm({
       suggestion.source.experienceId
     ];
     const matchingAchievements = entry?.achievement_evidence.filter(
-      (candidate) => candidate.id.trim().length > 0
-        && candidate.id.trim().length <= 240
-        && candidate.source_text.trim().replace(/\s+/g, " ") === normalizedOriginal,
+      (candidate) => candidate.source_text.trim().replace(/\s+/g, " ") === normalizedOriginal,
     ) ?? [];
     const matchingAchievementIdCount = parsed.data.resume.experience_entries.reduce(
       (count, candidate) => count + candidate.achievement_evidence.filter(
@@ -1118,6 +1116,8 @@ export function ProfileForm({
     );
     const sourceMatches = suggestion.source.identityKind === "canonical_achievement"
       ? matchingAchievements.length === 1
+        && matchingAchievements[0]!.id.trim().length > 0
+        && matchingAchievements[0]!.id.length <= 240
         && matchingAchievements[0]?.id === suggestion.source.sourceId
         && matchingAchievementIdCount === 1
       : matchingAchievements.length === 0

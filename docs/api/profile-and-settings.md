@@ -89,6 +89,8 @@ materializing saved rows, the API also limits inspection to 256 experience
 entries and 4,096 normalized profile child rows. A larger profile returns an
 empty `truncated: true` result; it is not a claim that its Required bullets are
 complete. Invalid saved rows return `422 invalid_saved_profile`.
+Malformed stored evidence JSON arrays also return 422 rather than being treated
+as empty evidence.
 
 Each suggestion identifies its grammar, relevance, achievement-framing, or
 missing-evidence purpose; includes the original text and concise guidance; and

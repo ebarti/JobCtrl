@@ -1,4 +1,4 @@
-import { ProfileSchema } from "@jobctrl/contracts";
+import { ProfileSchema, RequiredBulletSuggestionResponseSchema } from "@jobctrl/contracts";
 import { describe, expect, it } from "vitest";
 
 import { generateRequiredBulletSuggestions } from "../src/required-bullet-suggestions.js";
@@ -172,6 +172,34 @@ describe("generateRequiredBulletSuggestions", () => {
       canApply: false,
       proposedText: null,
     });
+  });
+
+  it("counts matching evidence with unusable IDs and bounds every emitted source ID", () => {
+    const candidate = profile();
+    const entry = candidate.resume.experience_entries[0]!;
+    const requiredText = entry.bullets[0]!;
+    const evidence = entry.achievement_evidence[0]!;
+    entry.achievement_evidence = [
+      { ...evidence, id: "stable-id", source_text: requiredText },
+      { ...evidence, id: "", source_text: requiredText },
+    ];
+
+    const ambiguous = generateRequiredBulletSuggestions(candidate, 7, 24);
+    expect(ambiguous.suggestions.find((item) => item.kind === "grammar")).toMatchObject({
+      canApply: false,
+      proposedText: null,
+      source: { identityKind: "snapshot_bullet", sourceId: "profile:v7:experience[0]:bullet[0]" },
+    });
+    expect(RequiredBulletSuggestionResponseSchema.safeParse(ambiguous).success).toBe(true);
+
+    entry.achievement_evidence = [{ ...evidence, id: `x${" ".repeat(240)}`, source_text: requiredText }];
+    const overlong = generateRequiredBulletSuggestions(candidate, 7, 24);
+    expect(overlong.suggestions.find((item) => item.kind === "grammar")).toMatchObject({
+      canApply: false,
+      proposedText: null,
+      source: { identityKind: "snapshot_bullet" },
+    });
+    expect(RequiredBulletSuggestionResponseSchema.safeParse(overlong).success).toBe(true);
   });
 
   it("does not choose one of identical saved bullet or Required-pin occurrences", () => {

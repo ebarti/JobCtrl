@@ -170,6 +170,11 @@ prove independent evidence or a result. Bound optional bullet and evidence
 reads before the generator scans them; an over-budget response must report
 truncation, not a clean inspection. Corrupt exact-schema saved rows must return
 `422 invalid_saved_profile` without changing the profile.
+Count every achievement row that matches a Required bullet before deciding
+whether a source identity is unique, including rows with blank or overlong IDs.
+The browser must reject an accept against that ambiguous saved snapshot, and
+every emitted source ID must satisfy the response schema's raw length bound.
+Malformed saved evidence JSON must not be silently decoded to empty arrays.
 Generation and rejection must write no profile state. Accepted cleanup must
 retain every factual token, the achievement
 identity, bullet order, and Required pin. Missing evidence must remain a question

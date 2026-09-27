@@ -19,6 +19,7 @@ import {
   PipelineOperationsSnapshotSchema,
   ProviderConfigurationKeys,
   RpcMethods,
+  RequiredBulletSuggestionResponseSchema,
   ScoringKeywordAggregationResponseSchema,
   SecretCredentialKeys,
   type ActionCommandPayload,
@@ -9984,6 +9985,115 @@ describe("local TypeScript API", () => {
       .toMatchObject({ title: "" });
     expect(after.prepare("SELECT version FROM candidate_profiles").get()).toMatchObject({ version });
     after.close();
+    await app.close();
+  });
+
+  it("rejects malformed saved evidence JSON without rewriting or dropping its source", async () => {
+    const app = buildApp(options);
+    const saved = await app.inject({
+      method: "PATCH",
+      url: "/v1/profile",
+      payload: { profile: validProfileFixture("Synthetic Candidate") },
+    });
+    expect(saved.statusCode, saved.body).toBe(200);
+    const version = saved.json().profileVersion as number;
+    const db = new Database(options.dbPath);
+    const changed = db.prepare(
+      "UPDATE candidate_profile_achievement_evidence SET metrics_json = '[not json' WHERE entry_id = 'role_1'",
+    ).run();
+    expect(changed.changes).toBeGreaterThan(0);
+    const eventCount = (db.prepare(
+      "SELECT COUNT(*) AS count FROM job_events WHERE event_type = 'ProfileUpdated'",
+    ).get() as { count: number }).count;
+    db.close();
+
+    const inspection = await app.inject({
+      method: "POST",
+      url: "/v1/profile/required-bullet-suggestions",
+      payload: { expectedProfileVersion: version },
+    });
+    expect(inspection.statusCode, inspection.body).toBe(422);
+    expect(inspection.json()).toMatchObject({ error: "invalid_saved_profile" });
+    const after = new Database(options.dbPath, { readonly: true });
+    expect(after.prepare("SELECT metrics_json FROM candidate_profile_achievement_evidence WHERE entry_id = 'role_1'").get())
+      .toMatchObject({ metrics_json: "[not json" });
+    expect(after.prepare("SELECT version FROM candidate_profiles").get()).toMatchObject({ version });
+    expect((after.prepare(
+      "SELECT COUNT(*) AS count FROM job_events WHERE event_type = 'ProfileUpdated'",
+    ).get() as { count: number }).count).toBe(eventCount);
+    after.close();
+    await app.close();
+  });
+
+  it("counts every matching saved achievement before offering a Required cleanup", async () => {
+    const app = buildApp(options);
+    const profile = validProfileFixture("Synthetic Candidate");
+    const resume = profile.resume as Record<string, unknown>;
+    const entry = (resume.experience_entries as Array<Record<string, unknown>>)[0]!;
+    entry.bullets = ["  Helped   with incident response  "];
+    entry.achievement_evidence = [
+      { id: "stable-achievement", source_text: "Helped with incident response" },
+      { id: "", source_text: "  Helped   with incident response  " },
+    ];
+    resume.tailoring_rules = {
+      required_bullets_by_experience_id: { role_1: ["  Helped   with incident response  "] },
+    };
+    const saved = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile } });
+    expect(saved.statusCode, saved.body).toBe(200);
+    const version = saved.json().profileVersion as number;
+    expect(saved.json().profile.resume.experience_entries[0].achievement_evidence)
+      .toHaveLength(2);
+
+    const inspection = await app.inject({
+      method: "POST",
+      url: "/v1/profile/required-bullet-suggestions",
+      payload: { expectedProfileVersion: version },
+    });
+    expect(inspection.statusCode, inspection.body).toBe(200);
+    expect(inspection.json().suggestions).toContainEqual(expect.objectContaining({
+      kind: "grammar",
+      canApply: false,
+      proposedText: null,
+      source: expect.objectContaining({ identityKind: "snapshot_bullet" }),
+    }));
+    expect(RequiredBulletSuggestionResponseSchema.safeParse(inspection.json()).success).toBe(true);
+    expect((await app.inject({ method: "GET", url: "/v1/profile" })).json().profileVersion).toBe(version);
+    await app.close();
+  });
+
+  it("uses a bounded snapshot source when the saved achievement ID is overlong", async () => {
+    const app = buildApp(options);
+    const profile = validProfileFixture("Synthetic Candidate");
+    const resume = profile.resume as Record<string, unknown>;
+    const entry = (resume.experience_entries as Array<Record<string, unknown>>)[0]!;
+    entry.bullets = ["  Helped   with incident response  "];
+    entry.achievement_evidence = [{
+      id: `x${" ".repeat(240)}`,
+      source_text: "Helped with incident response",
+    }];
+    resume.tailoring_rules = {
+      required_bullets_by_experience_id: { role_1: ["  Helped   with incident response  "] },
+    };
+    const saved = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile } });
+    expect(saved.statusCode, saved.body).toBe(200);
+    const version = saved.json().profileVersion as number;
+
+    const inspection = await app.inject({
+      method: "POST",
+      url: "/v1/profile/required-bullet-suggestions",
+      payload: { expectedProfileVersion: version },
+    });
+    expect(inspection.statusCode, inspection.body).toBe(200);
+    expect(inspection.json().suggestions).toContainEqual(expect.objectContaining({
+      kind: "grammar",
+      canApply: false,
+      proposedText: null,
+      source: expect.objectContaining({
+        identityKind: "snapshot_bullet",
+        sourceId: `profile:v${version}:experience[0]:bullet[0]`,
+      }),
+    }));
+    expect(RequiredBulletSuggestionResponseSchema.safeParse(inspection.json()).success).toBe(true);
     await app.close();
   });
 

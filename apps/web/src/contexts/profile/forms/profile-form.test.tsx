@@ -1699,6 +1699,40 @@ describe("<ProfileForm>", () => {
     expect(screen.getByText(/saved Required bullet no longer matches this suggestion/)).toBeInTheDocument();
   });
 
+  it("rejects a canonical accept when a second matching evidence row has a blank ID", async () => {
+    const user = userEvent.setup();
+    const { initial, requiredBulletSuggestions } = requiredBulletCoachingFixture();
+    const entry = (initial.profile as ProfileShape).resume.experience_entries[0]!;
+    entry.achievement_evidence = [
+      { ...entry.achievement_evidence[0]!, id: "stable-id", source_text: "Scaled the platform 10x." },
+      { ...entry.achievement_evidence[0]!, id: "", source_text: "  Scaled   the platform 10x.  " },
+    ];
+    const response = await requiredBulletSuggestions();
+    const forgedSuggestion = {
+      ...response.suggestions[0]!,
+      source: {
+        ...response.suggestions[0]!.source,
+        sourceId: "stable-id",
+        identityKind: "canonical_achievement" as const,
+      },
+    };
+    const updateProfile = vi.fn();
+    renderWithProviders(<ProfileForm initial={initial} />, {
+      ports: buildTestPorts({
+        api: {
+          requiredBulletSuggestions: vi.fn(async () => ({ ...response, suggestions: [forgedSuggestion] })),
+          updateProfile,
+        },
+      }),
+      withRouter: true,
+    });
+
+    await user.click(await screen.findByRole("button", { name: "Inspect Required bullets" }));
+    await user.click(await screen.findByRole("button", { name: "Accept" }));
+    expect(updateProfile).not.toHaveBeenCalled();
+    expect(screen.getByText(/saved Required bullet no longer matches this suggestion/)).toBeInTheDocument();
+  });
+
   it("rebases an accepted Required bullet into unrelated edits made while its save is pending", async () => {
     const user = userEvent.setup();
     const initial = structuredClone(sampleProfileResponse);

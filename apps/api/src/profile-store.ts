@@ -413,12 +413,61 @@ export function readProfileConfig(db: SqliteDatabase): ProfileConfigResponse {
  * Callers must use an exact-schema, read-only database connection. */
 export function readProfileConfigReadOnly(db: SqliteDatabase): ProfileConfigResponse {
   try {
+    assertValidSavedProfileJson(db);
     return readProfileConfigFromInitializedTables(db);
   } catch (error) {
     if (error instanceof ZodError || error instanceof ProfileInputError) {
       throw new InvalidSavedProfileError("The saved profile cannot be inspected until its validation errors are corrected.");
     }
     throw error;
+  }
+}
+
+function parsedSavedJson(value: unknown): unknown {
+  if (typeof value !== "string") {
+    throw new InvalidSavedProfileError("The saved profile contains invalid JSON.");
+  }
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    throw new InvalidSavedProfileError("The saved profile contains invalid JSON.");
+  }
+}
+
+function assertSavedStringArray(value: unknown): void {
+  const parsed = parsedSavedJson(value);
+  if (!Array.isArray(parsed) || !parsed.every((item) => typeof item === "string")) {
+    throw new InvalidSavedProfileError("The saved profile contains an invalid JSON array.");
+  }
+}
+
+/** The ordinary profile reader keeps its compatibility decoding. Coaching must
+ * fail closed on malformed stored JSON instead of treating lost evidence as []. */
+function assertValidSavedProfileJson(db: SqliteDatabase): void {
+  const root = getProfileRow(db);
+  if (!root) return;
+  assertSavedStringArray(root.tailoring_auto_approvable_claim_modes_json);
+  const additional = parsedSavedJson(root.application_attestation_additional_json);
+  if (
+    !additional || typeof additional !== "object" || Array.isArray(additional)
+    || Object.values(additional).some((item) => item !== null
+      && typeof item !== "boolean" && typeof item !== "string")
+  ) {
+    throw new InvalidSavedProfileError("The saved profile contains an invalid JSON object.");
+  }
+  const rows = db.prepare(`
+    SELECT tools_json, metrics_json, tags_json
+    FROM candidate_profile_achievement_evidence
+    WHERE tenant_id = ? AND profile_id = ?
+  `).all(TENANT_ID, PROFILE_ID) as Array<{
+    tools_json: unknown;
+    metrics_json: unknown;
+    tags_json: unknown;
+  }>;
+  for (const row of rows) {
+    assertSavedStringArray(row.tools_json);
+    assertSavedStringArray(row.metrics_json);
+    assertSavedStringArray(row.tags_json);
   }
 }
 

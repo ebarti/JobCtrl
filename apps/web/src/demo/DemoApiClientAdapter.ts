@@ -156,7 +156,6 @@ function generateDemoRequiredBulletSuggestions(
     }
     const achievementsBySource = new Map<string, typeof entry.achievement_evidence>();
     for (const evidence of entry.achievement_evidence) {
-      if (!evidence.id.trim() || evidence.id.trim().length > 240) continue;
       const source = normalizedText(evidence.source_text);
       const matches = achievementsBySource.get(source) ?? [];
       matches.push(evidence);
@@ -193,8 +192,12 @@ function generateDemoRequiredBulletSuggestions(
       const matchingAchievements = achievementsBySource.get(normalizedOriginal) ?? [];
       // Duplicate bullets can have distinct durable evidence identities. Do not
       // guess which one owns an occurrence when the snapshot cannot prove it.
-      const uniqueMatch = matchingAchievements.length === 1 ? matchingAchievements[0] : undefined;
+      // Invalid IDs still count as matching rows; they cannot make another row
+      // unique by disappearing from the identity check.
+      const onlyMatch = matchingAchievements.length === 1 ? matchingAchievements[0] : undefined;
+      const uniqueMatch = onlyMatch?.id.trim() && onlyMatch.id.length <= 240 ? onlyMatch : undefined;
       const ambiguousAchievement = matchingAchievements.length > 1
+        || (onlyMatch !== undefined && uniqueMatch === undefined)
         || (uniqueMatch !== undefined && achievementIdCounts.get(uniqueMatch.id) !== 1);
       const achievement = ambiguousAchievement ? undefined : uniqueMatch;
       const hasSubstantiveEvidence = achievement ? isSubstantiveEvidence(achievement) : false;
