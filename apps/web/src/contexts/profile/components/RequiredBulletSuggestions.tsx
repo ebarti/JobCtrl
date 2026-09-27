@@ -72,7 +72,9 @@ export function RequiredBulletSuggestions({
       ) return;
       setGeneratedVersion(result.profileVersion);
       setSuggestions(result.suggestions);
-      if (result.suggestions.length === 0) {
+      if (result.truncated && result.suggestions.length === 0) {
+        setEmptyMessage("The saved profile exceeds the safe inspection limit. Edit Required bullets manually or reduce the saved source rows, then inspect again.");
+      } else if (result.suggestions.length === 0) {
         setEmptyMessage("No deterministic coaching suggestions were found for saved Required bullets.");
       } else if (result.truncated) {
         setEmptyMessage("Showing the first 12 deterministic suggestions. Accept or reject these, then inspect again.");

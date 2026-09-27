@@ -66,9 +66,16 @@ const IN_MEMORY_JOB_SORT_FIELDS = new Set([
 // Keep the browser-local synthetic profile inspection aligned with the production rule set.
 const VAGUE_RELEVANCE = /\b(responsible for|worked on|helped(?: with)?|participated in|various|multiple tasks|duties included)\b/i;
 const MAX_INSPECTED_REQUIRED_BULLETS = 512;
+const MAX_REQUIRED_COACHING_ENTRIES = 256;
+const MAX_REQUIRED_COACHING_SOURCE_ROWS = 4_096;
+const RESULT_LANGUAGE = /\b(reduced|decreased|lowered|cut|improved|increased|raised|boosted|grew|accelerated|shortened|eliminated|prevented|faster|slower|fewer)\b/i;
 
 function normalizedText(value: string): string {
   return value.trim().replace(/\s+/g, " ");
+}
+
+function claimSignature(value: string): string {
+  return value.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 }
 
 function boundedExcerpt(value: string): string {
@@ -78,12 +85,26 @@ function boundedExcerpt(value: string): string {
 function isSubstantiveEvidence(
   evidence: ProfileShape["resume"]["experience_entries"][number]["achievement_evidence"][number],
 ): boolean {
-  const source = normalizedText(evidence.source_text);
+  const source = claimSignature(evidence.source_text);
   // Normalized storage materializes every legacy bullet as an achievement row,
   // copying the bullet into action, outcome, and extracted metrics. That row
   // preserves identity but does not add an independent source for the claim.
-  return Boolean(normalizedText(evidence.outcome) && normalizedText(evidence.outcome) !== source)
+  const outcome = claimSignature(evidence.outcome);
+  return Boolean(outcome && outcome !== source && RESULT_LANGUAGE.test(evidence.outcome))
     || evidence.evidence_strength === "verified";
+}
+
+function truncatedResponse(
+  profileVersion: number,
+): RequiredBulletSuggestionResponse {
+  return {
+    ok: true,
+    profileVersion,
+    suggestions: [],
+    strategy: "deterministic_rules_v1",
+    modelUsed: false,
+    truncated: true,
+  };
 }
 
 function generateDemoRequiredBulletSuggestions(
@@ -94,6 +115,16 @@ function generateDemoRequiredBulletSuggestions(
   const suggestions: RequiredBulletSuggestion[] = [];
   const entries = profile.resume.experience_entries;
   const requiredByExperience = profile.resume.tailoring_rules?.required_bullets_by_experience_id ?? {};
+  // The limit is checked before reading bullet or evidence contents. A profile
+  // beyond this budget cannot prove identity uniqueness, so fail closed instead
+  // of producing an apparently applicable suggestion from a partial scan.
+  if (entries.length > MAX_REQUIRED_COACHING_ENTRIES) return truncatedResponse(profileVersion);
+  let sourceRows = 0;
+  for (const entry of entries) {
+    sourceRows += 1 + entry.bullets.length + entry.achievement_evidence.length
+      + (requiredByExperience[entry.id]?.length ?? 0);
+    if (sourceRows > MAX_REQUIRED_COACHING_SOURCE_ROWS) return truncatedResponse(profileVersion);
+  }
   const entryIdCounts = new Map<string, number>();
   for (const entry of entries) entryIdCounts.set(entry.id, (entryIdCounts.get(entry.id) ?? 0) + 1);
   const achievementIdCounts = new Map<string, number>();
@@ -123,6 +154,14 @@ function generateDemoRequiredBulletSuggestions(
     for (const bullet of requiredBullets) {
       requiredCounts.set(bullet, (requiredCounts.get(bullet) ?? 0) + 1);
     }
+    const achievementsBySource = new Map<string, typeof entry.achievement_evidence>();
+    for (const evidence of entry.achievement_evidence) {
+      if (!evidence.id.trim() || evidence.id.trim().length > 240) continue;
+      const source = normalizedText(evidence.source_text);
+      const matches = achievementsBySource.get(source) ?? [];
+      matches.push(evidence);
+      achievementsBySource.set(source, matches);
+    }
     for (const [requiredBulletIndex, requiredText] of requiredBullets.entries()) {
       if (suggestions.length > maximumSuggestions) break;
       if (inspectedBullets >= MAX_INSPECTED_REQUIRED_BULLETS) {
@@ -149,16 +188,9 @@ function generateDemoRequiredBulletSuggestions(
       ) continue;
       const normalizedOriginal = normalizedText(originalText);
       if (!normalizedOriginal) continue;
-      const proposedTextCollides = entry.bullets.some(
-        (bullet, index) => index !== bulletIndex && bullet === normalizedOriginal,
-      ) || requiredBullets.some(
-        (bullet, index) => index !== requiredBulletIndex && bullet === normalizedOriginal,
-      );
-      const matchingAchievements = entry.achievement_evidence.filter(
-        (candidate) => candidate.id.trim().length > 0
-          && candidate.id.trim().length <= 240
-          && normalizedText(candidate.source_text) === normalizedOriginal,
-      );
+      const proposedTextCollides = normalizedOriginal !== originalText
+        && (bulletIndexesByText.has(normalizedOriginal) || requiredCounts.has(normalizedOriginal));
+      const matchingAchievements = achievementsBySource.get(normalizedOriginal) ?? [];
       // Duplicate bullets can have distinct durable evidence identities. Do not
       // guess which one owns an occurrence when the snapshot cannot prove it.
       const uniqueMatch = matchingAchievements.length === 1 ? matchingAchievements[0] : undefined;
@@ -166,12 +198,15 @@ function generateDemoRequiredBulletSuggestions(
         || (uniqueMatch !== undefined && achievementIdCounts.get(uniqueMatch.id) !== 1);
       const achievement = ambiguousAchievement ? undefined : uniqueMatch;
       const hasSubstantiveEvidence = achievement ? isSubstantiveEvidence(achievement) : false;
-      const hasOutcome = Boolean(
-        achievement && (
-          achievement.metrics.length > 0
-          || (achievement.outcome.trim() && normalizedText(achievement.outcome) !== normalizedOriginal)
-        ),
-      );
+      // An extracted number such as "10 projects" measures action scale, not
+      // necessarily a result. Restated actions also need a result, not a new
+      // punctuation mark or a different verb for the same activity.
+      const hasOutcome = Boolean(achievement && (
+        (claimSignature(achievement.outcome)
+          && claimSignature(achievement.outcome) !== claimSignature(achievement.source_text)
+          && RESULT_LANGUAGE.test(achievement.outcome))
+        || (achievement.metrics.length > 0 && RESULT_LANGUAGE.test(normalizedOriginal))
+      ));
       const needsEvidence = !hasSubstantiveEvidence
         || achievement?.evidence_strength === "inferred"
         || achievement?.evidence_strength === "draft"

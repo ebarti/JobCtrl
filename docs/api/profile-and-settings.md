@@ -84,7 +84,11 @@ It accepts a saved `expectedProfileVersion` and optional `maximumSuggestions`
 worker or model, and returns transient suggestions with
 `strategy: "deterministic_rules_v1"` and `modelUsed: false`. The response reports
 whether the bounded result was truncated. Inspection stops after 512 Required
-occurrences or once enough suggestions establish output truncation.
+occurrences or once enough suggestions establish output truncation. Before
+materializing saved rows, the API also limits inspection to 256 experience
+entries and 4,096 normalized profile child rows. A larger profile returns an
+empty `truncated: true` result; it is not a claim that its Required bullets are
+complete. Invalid saved rows return `422 invalid_saved_profile`.
 
 Each suggestion identifies its grammar, relevance, achievement-framing, or
 missing-evidence purpose; includes the original text and concise guidance; and

@@ -189,7 +189,11 @@ manual edits, not proposed facts that can be accepted automatically.
 Identical bullets or Required pins cannot identify one occurrence, so coaching
 skips them. Cleanup also stays manual when its resulting text would duplicate
 another bullet or Required pin. A claim's own text, including a number
-extracted from it, does not independently verify the claim.
+extracted from it, does not independently verify the claim. Punctuation changes
+to a restated outcome also add no evidence. An action count such as the number
+of projects managed is not automatically a result. If a saved profile exceeds
+the bounded inspection limit, coaching reports that it could not inspect it;
+manual editing remains available.
 
 Review each proposed wording change separately. Accepting a change preserves
 the bullet's order, achievement identity, and Required selection through the

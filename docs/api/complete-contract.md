@@ -74,7 +74,11 @@ rows nor `ProfileUpdated`.
 it neither calls a provider nor writes profile state. A stale version returns
 `409 stale_profile_version`. Inspection stops after 512 Required occurrences or
 once enough suggestions establish output truncation; `truncated` reports either
-limit.
+limit. The API checks a bounded read budget before materializing source rows:
+more than 256 experience entries or 4,096 normalized profile child rows returns
+an empty `truncated: true` result. This result does not assert that the profile
+has no coaching opportunities. Invalid exact-schema saved profile rows return
+`422 invalid_saved_profile` without a profile write.
 
 A Required-bullet suggestion contains:
 

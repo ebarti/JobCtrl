@@ -125,6 +125,36 @@ describe("generateRequiredBulletSuggestions", () => {
     });
   });
 
+  it("asks for evidence and outcome when a saved action count is only restated with punctuation", () => {
+    const candidate = profile();
+    const entry = candidate.resume.experience_entries[0]!;
+    entry.bullets = ["Managed 10 projects,"];
+    entry.achievement_evidence = [{
+      ...entry.achievement_evidence[0]!,
+      id: "action-count",
+      source_text: "Managed 10 projects,",
+      action: "Managed 10 projects",
+      metrics: ["10 projects"],
+      outcome: "Managed 10 projects.",
+      evidence_strength: "supported",
+      user_confirmed: true,
+    }];
+    candidate.resume.tailoring_rules.required_bullets_by_experience_id = {
+      "exp-1": ["Managed 10 projects,"],
+    };
+
+    const result = generateRequiredBulletSuggestions(candidate, 7, 24);
+    expect(result.suggestions.map((item) => item.kind)).toEqual([
+      "achievement_framing", "missing_evidence",
+    ]);
+    expect(result.suggestions.every((item) => item.source.sourceId === "action-count"
+      && item.proposedText === null && !item.canApply)).toBe(true);
+
+    entry.achievement_evidence[0]!.outcome = "Oversaw 10 projects across teams.";
+    expect(generateRequiredBulletSuggestions(candidate, 7, 24).suggestions.map((item) => item.kind))
+      .toEqual(["achievement_framing", "missing_evidence"]);
+  });
+
   it("uses a snapshot identity when duplicate bullet evidence is ambiguous", () => {
     const candidate = profile();
     candidate.resume.experience_entries[0]!.achievement_evidence = [
@@ -246,7 +276,7 @@ describe("generateRequiredBulletSuggestions", () => {
       action: "Delivered a synthetic system",
       tools: [],
       metrics: [String(index)],
-      outcome: `Delivered synthetic system ${index}.`,
+      outcome: `Improved reliability for synthetic system ${index}.`,
       seniority_signal: "",
       evidence_strength: "verified" as const,
       claim_confidence: 1,
@@ -260,5 +290,52 @@ describe("generateRequiredBulletSuggestions", () => {
     const result = generateRequiredBulletSuggestions(candidate, 7, 24);
     expect(result.suggestions).toEqual([]);
     expect(result.truncated).toBe(true);
+  });
+
+  it("stops before reading a large optional-bullet and evidence collection", () => {
+    const candidate = profile();
+    const entry = candidate.resume.experience_entries[0]!;
+    entry.bullets = [entry.bullets[0]!, ...Array.from({ length: 4_100 }, (_, index) => `Optional ${index}`)];
+    entry.achievement_evidence = Array.from({ length: 4_100 }, (_, index) => ({
+      ...entry.achievement_evidence[0]!,
+      id: `optional-${index}`,
+      source_text: `Optional ${index}`,
+    }));
+    Object.defineProperty(entry.bullets, 1, { get: () => { throw new Error("optional bullet was scanned"); } });
+    Object.defineProperty(entry.achievement_evidence, 0, { get: () => { throw new Error("optional evidence was scanned"); } });
+
+    expect(generateRequiredBulletSuggestions(candidate, 7, 1)).toMatchObject({
+      suggestions: [],
+      truncated: true,
+      profileVersion: 7,
+    });
+  });
+
+  it("indexes each evidence source once when many Required bullets share an entry", () => {
+    const candidate = profile();
+    const entry = candidate.resume.experience_entries[0]!;
+    entry.bullets = Array.from({ length: 100 }, (_, index) => `Required action ${index}.`);
+    candidate.resume.tailoring_rules.required_bullets_by_experience_id = {
+      "exp-1": [...entry.bullets],
+    };
+    let sourceReads = 0;
+    const optionalEvidence = { ...entry.achievement_evidence[0]!, source_text: "An unrelated optional claim." };
+    Object.defineProperty(optionalEvidence, "source_text", {
+      get: () => { sourceReads += 1; return "An unrelated optional claim."; },
+    });
+    entry.achievement_evidence = [
+      ...entry.bullets.map((bullet, index) => ({
+        ...entry.achievement_evidence[0]!,
+        id: `verified-${index}`,
+        source_text: bullet,
+        outcome: "Improved synthetic reliability.",
+        evidence_strength: "verified" as const,
+        user_confirmed: true,
+      })),
+      optionalEvidence,
+    ];
+
+    generateRequiredBulletSuggestions(candidate, 7, 1);
+    expect(sourceReads).toBe(1);
   });
 });

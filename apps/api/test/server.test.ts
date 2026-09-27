@@ -9910,6 +9910,129 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("keeps punctuation-only restatements and action counts from proving a saved Required claim", async () => {
+    const app = buildApp(options);
+    const profile = validProfileFixture("Synthetic Candidate");
+    const resume = profile.resume as Record<string, unknown>;
+    const entry = (resume.experience_entries as Array<Record<string, unknown>>)[0]!;
+    entry.bullets = ["Managed 10 projects,"];
+    entry.achievement_evidence = [{
+      id: "saved-action-count",
+      source_text: "Managed 10 projects,",
+      action: "Managed 10 projects",
+      metrics: ["10 projects"],
+      outcome: "Managed 10 projects.",
+      evidence_strength: "supported",
+      user_confirmed: true,
+    }];
+    resume.tailoring_rules = {
+      required_bullets_by_experience_id: { role_1: ["Managed 10 projects,"] },
+    };
+    const saved = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile } });
+    expect(saved.statusCode, saved.body).toBe(200);
+    const version = saved.json().profileVersion as number;
+
+    const inspection = await app.inject({
+      method: "POST",
+      url: "/v1/profile/required-bullet-suggestions",
+      payload: { expectedProfileVersion: version, maximumSuggestions: 1 },
+    });
+    expect(inspection.statusCode, inspection.body).toBe(200);
+    expect(inspection.json()).toMatchObject({
+      profileVersion: version,
+      truncated: true,
+      suggestions: [{
+        kind: "achievement_framing",
+        canApply: false,
+        proposedText: null,
+        source: { sourceId: "saved-action-count", excerpt: "Managed 10 projects," },
+      }],
+    });
+    const fullInspection = await app.inject({
+      method: "POST",
+      url: "/v1/profile/required-bullet-suggestions",
+      payload: { expectedProfileVersion: version, maximumSuggestions: 12 },
+    });
+    expect(fullInspection.json().suggestions.map((item: { kind: string }) => item.kind))
+      .toEqual(["achievement_framing", "missing_evidence"]);
+    expect((await app.inject({ method: "GET", url: "/v1/profile" })).json().profileVersion).toBe(version);
+    await app.close();
+  });
+
+  it("returns 422 for an invalid exact-schema saved profile row", async () => {
+    const app = buildApp(options);
+    const saved = await app.inject({
+      method: "PATCH",
+      url: "/v1/profile",
+      payload: { profile: validProfileFixture("Synthetic Candidate") },
+    });
+    expect(saved.statusCode, saved.body).toBe(200);
+    const version = saved.json().profileVersion as number;
+    const db = new Database(options.dbPath);
+    db.prepare("UPDATE candidate_profile_experience_entries SET title = '' WHERE entry_id = 'role_1'").run();
+    db.close();
+
+    const inspection = await app.inject({
+      method: "POST",
+      url: "/v1/profile/required-bullet-suggestions",
+      payload: { expectedProfileVersion: version },
+    });
+    expect(inspection.statusCode, inspection.body).toBe(422);
+    expect(inspection.json()).toMatchObject({ error: "invalid_saved_profile" });
+    const after = new Database(options.dbPath, { readonly: true });
+    expect(after.prepare("SELECT title FROM candidate_profile_experience_entries WHERE entry_id = 'role_1'").get())
+      .toMatchObject({ title: "" });
+    expect(after.prepare("SELECT version FROM candidate_profiles").get()).toMatchObject({ version });
+    after.close();
+    await app.close();
+  });
+
+  it("bounds normalized source reads before loading many saved optional bullets and evidence rows", async () => {
+    const app = buildApp(options);
+    const saved = await app.inject({
+      method: "PATCH",
+      url: "/v1/profile",
+      payload: { profile: validProfileFixture("Synthetic Candidate") },
+    });
+    expect(saved.statusCode, saved.body).toBe(200);
+    const version = saved.json().profileVersion as number;
+    const db = new Database(options.dbPath);
+    const addBullet = db.prepare(`
+      INSERT INTO candidate_profile_experience_bullets
+        (tenant_id, profile_id, entry_id, bullet_index, bullet_text)
+      VALUES ('local', 'default', 'role_1', ?, ?)
+    `);
+    const addEvidence = db.prepare(`
+      INSERT INTO candidate_profile_achievement_evidence
+        (tenant_id, profile_id, entry_id, evidence_index, evidence_id, source_text)
+      VALUES ('local', 'default', 'role_1', ?, ?, ?)
+    `);
+    db.transaction(() => {
+      for (let index = 1; index <= 2_100; index += 1) {
+        addBullet.run(index, `Optional bullet ${index}`);
+        addEvidence.run(index, `optional-${index}`, `Optional evidence ${index}`);
+      }
+    })();
+    db.close();
+
+    const inspection = await app.inject({
+      method: "POST",
+      url: "/v1/profile/required-bullet-suggestions",
+      payload: { expectedProfileVersion: version, maximumSuggestions: 1 },
+    });
+    expect(inspection.statusCode, inspection.body).toBe(200);
+    expect(inspection.json()).toMatchObject({
+      profileVersion: version,
+      suggestions: [],
+      modelUsed: false,
+      truncated: true,
+    });
+    const after = new Database(options.dbPath, { readonly: true });
+    expect(after.prepare("SELECT version FROM candidate_profiles").get()).toMatchObject({ version });
+    after.close();
+    await app.close();
+  });
+
   it("does not offer an applicable Required cleanup that would duplicate a saved optional bullet", async () => {
     const app = buildApp(options);
     const profile = validProfileFixture("Synthetic Candidate");

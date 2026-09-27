@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
+import { ZodError } from "zod";
 
 import type {
   ExtensionAutofillProfileField,
@@ -15,6 +16,7 @@ const PROFILE_ID = "default";
 const NO_PROFILE_CHANGE = Symbol("no-profile-change");
 
 export class ProfileInputError extends Error {}
+export class InvalidSavedProfileError extends Error {}
 
 export class ProfileVersionConflictError extends Error {
   constructor(
@@ -410,7 +412,39 @@ export function readProfileConfig(db: SqliteDatabase): ProfileConfigResponse {
 /** Read the canonical profile without initialization or compatibility writes.
  * Callers must use an exact-schema, read-only database connection. */
 export function readProfileConfigReadOnly(db: SqliteDatabase): ProfileConfigResponse {
-  return readProfileConfigFromInitializedTables(db);
+  try {
+    return readProfileConfigFromInitializedTables(db);
+  } catch (error) {
+    if (error instanceof ZodError || error instanceof ProfileInputError) {
+      throw new InvalidSavedProfileError("The saved profile cannot be inspected until its validation errors are corrected.");
+    }
+    throw error;
+  }
+}
+
+/** Check normalized row counts with bounded SQLite probes before materializing
+ * arrays in JavaScript. Caller must hold the same read snapshot as the load. */
+export function exceedsProfileCoachingReadBudget(
+  db: SqliteDatabase,
+  maximumEntries: number,
+  maximumRows: number,
+): boolean {
+  let remaining = maximumRows;
+  for (const table of CHILD_TABLES) {
+    const limit = table === "candidate_profile_experience_entries"
+      ? Math.min(remaining, maximumEntries)
+      : remaining;
+    const result = db.prepare(`
+      SELECT COUNT(*) AS count FROM (
+        SELECT 1 FROM ${table}
+        WHERE tenant_id = ? AND profile_id = ?
+        LIMIT ?
+      )
+    `).get(TENANT_ID, PROFILE_ID, limit + 1) as { count: number };
+    if (result.count > limit) return true;
+    remaining -= result.count;
+  }
+  return false;
 }
 
 function readProfileConfigFromInitializedTables(db: SqliteDatabase): ProfileConfigResponse {

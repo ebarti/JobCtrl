@@ -34,6 +34,23 @@ const response = {
 };
 
 describe("RequiredBulletSuggestions", () => {
+  it("does not report a clean inspection when the saved source budget is exceeded", async () => {
+    const user = userEvent.setup();
+    const requiredBulletSuggestions = vi.fn(async () => ({
+      ...response,
+      suggestions: [],
+      truncated: true,
+    }));
+    renderWithProviders(
+      <RequiredBulletSuggestions isDraftClean profileVersion={3} resetToken={0} onAccept={vi.fn()} />,
+      { ports: buildTestPorts({ api: { requiredBulletSuggestions } }) },
+    );
+
+    await user.click(screen.getByRole("button", { name: "Inspect Required bullets" }));
+    expect(await screen.findByText(/exceeds the safe inspection limit/i)).toBeInTheDocument();
+    expect(screen.queryByText(/No deterministic coaching suggestions were found/i)).not.toBeInTheDocument();
+  });
+
   it("rejects an individual replacement without mutating the saved profile", async () => {
     const user = userEvent.setup();
     const requiredBulletSuggestions = vi.fn(async () => response);

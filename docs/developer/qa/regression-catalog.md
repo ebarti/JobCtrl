@@ -164,7 +164,12 @@ keep its Required pin when unique and block ambiguous duplicate text until
 resolved, including after a failed accept. A proposed cleanup that would equal
 another saved bullet or Required pin must not be applicable. Rebase a different
 bullet in the same experience entry after a committed write with a lost
-response; keep overlapping or reordered bullet identities blocked.
+response; keep overlapping or reordered bullet identities blocked. An outcome
+that only changes punctuation and a metric copied from an action count must not
+prove independent evidence or a result. Bound optional bullet and evidence
+reads before the generator scans them; an over-budget response must report
+truncation, not a clean inspection. Corrupt exact-schema saved rows must return
+`422 invalid_saved_profile` without changing the profile.
 Generation and rejection must write no profile state. Accepted cleanup must
 retain every factual token, the achievement
 identity, bullet order, and Required pin. Missing evidence must remain a question
