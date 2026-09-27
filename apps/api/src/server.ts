@@ -1990,6 +1990,45 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     if (!body) {
       return undefined;
     }
+    if (body.refreshApplyUrl) {
+      if (body.stage !== "enrich" || !body.runAfter || body.resetAttempts) {
+        void reply.code(400);
+        return { ok: false, error: "invalid_apply_url_refresh" };
+      }
+      return withWritableDb(reply, options.dbPath, async (db) => {
+        const jobId = resolveExistingJobId(reply, db, decodeRouteParam(request.params.jobKey));
+        if (!jobId) return { ok: false, error: "job_not_found" };
+        const accepted = db.prepare(
+          `SELECT j.url FROM job_enrichments e
+             JOIN jobs j ON j.tenant_id = e.tenant_id AND j.job_id = e.job_id
+            WHERE e.tenant_id = 'local' AND e.job_id = ? AND e.current_status = 'enriched'
+              AND TRIM(COALESCE(e.full_description, '')) != ''
+              AND TRIM(COALESCE(e.application_url, '')) = ''`,
+        ).get(jobId) as { url: string } | undefined;
+        let linkedinPosting = false;
+        try {
+          const url = new URL(accepted?.url ?? "");
+          linkedinPosting = url.protocol === "https:"
+            && (url.hostname === "linkedin.com" || url.hostname.endsWith(".linkedin.com"))
+            && url.pathname.startsWith("/jobs/");
+        } catch {
+          // An invalid posting URL cannot be sent to the browser acquisition path.
+        }
+        if (!accepted || !linkedinPosting) {
+          void reply.code(409);
+          return { ok: false, error: "apply_url_refresh_not_eligible" };
+        }
+        const workerReady = requireWorkerReady(reply, options.dbPath, requireHealthyWorkerForActions);
+        if (!workerReady) return undefined;
+        const command: ActionCommandPayload = {
+          action: "retry_stage", jobKey: jobId, jobId, stage: "enrich", stages: ["enrich"],
+          runAfter: true, refreshApplyUrl: true, dryRun: body.dryRun, limit: 1,
+        };
+        const dispatch = await actionDispatcher(command, actionContext);
+        void reply.code(dispatch.status === "queued" ? 202 : 200);
+        return buildActionResponse(command, dispatch);
+      });
+    }
     const continuationStages = body.runAfter ? retryContinuationStages(body.stage) : [];
     if (body.runAfter && continuationStages.length === 0) {
       void reply.code(400);

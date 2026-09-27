@@ -66,6 +66,7 @@ class JobPipelineWorkflowInput:
     limit: int = 0
     validation_mode: str = "normal"
     dry_run: bool = False
+    refresh_apply_url: bool = False
     rescore: bool = False
     retailor: bool = False
     tailor_models: tuple[str, ...] = ()
@@ -442,6 +443,7 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
                 workers=payload.workers,
                 limit=payload.limit,
                 dry_run=payload.dry_run,
+                refresh_apply_url=payload.refresh_apply_url,
                 job_ids=_selected_job_ids(payload),
                 workflow_id=workflow_id,
                 workflow_run_id=workflow_run_id,

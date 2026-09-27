@@ -675,6 +675,7 @@ function runStageRpcParams(command: ActionCommandPayload, context: ActionDispatc
     minScore: command.minScore ?? 7,
     validationMode: command.validationMode ?? "normal",
     dryRun: command.dryRun ?? false,
+    refreshApplyUrl: Boolean(command.refreshApplyUrl),
     rescore: Boolean(command.rescore),
     retailor: Boolean(command.retailor),
     headless: Boolean(command.headless),

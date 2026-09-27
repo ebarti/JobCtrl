@@ -1386,6 +1386,14 @@ Current-version preparation maintenance actions are separate endpoints:
   stage row, attempt/error metadata, and event history remain unchanged and no
   dispatcher call occurs. With `runAfter: false`, the route is an intentional
   local-only reset and does not require a worker.
+  For an already enriched LinkedIn job with no application URL, send
+  `{ "stage": "enrich", "runAfter": true, "refreshApplyUrl": true }` to
+  inspect only that posting through the live extension. This bounded action
+  does not reset Enrich or dispatch Score, Tailor, Cover, or Apply. It requires
+  an accepted description and an HTTPS LinkedIn Jobs locator; invalid or
+  ineligible requests return `400` or `409`. A failed target check appends an
+  application-target outcome while retaining the accepted description, score,
+  and materials.
 - `POST /v1/jobs/bulk-retry-failed` accepts selected jobs or all matching jobs.
   With the default `runAfter: false` it only resets each retryable failed stage
   to `pending`. Attempt-budget failures are included even when their legacy

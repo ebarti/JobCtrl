@@ -1131,6 +1131,68 @@ describe("<JobDetailDrawer>", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("marks fit outdated when the saved report belongs to an earlier analysis", async () => {
+    server.use(
+      http.get("*/v1/jobs/:jobKey", ({ params }) =>
+        HttpResponse.json(makeJobDetail(
+          {
+            ...sampleJob,
+            jobKey: String(params["jobKey"]),
+            scoreAnalysisFreshness: {
+              status: "outdated",
+              currentAnalysisGeneration: 2,
+              assessedAnalysisGeneration: 1,
+              assessedScoreVersion: 1,
+            },
+          },
+          { employerAnalysis: populatedEmployerAnalysis, requirementFitReport: null },
+        )),
+      ),
+    );
+    renderJobDetailDrawer("https://example.com/jobs/outdated-fit");
+    const callout = await screen.findByRole("region", { name: "Requirement fit is outdated" });
+    expect(within(callout).getByText(/earlier employer analysis/i)).toBeInTheDocument();
+    expect(within(callout).getByRole("button", { name: "re-score requirement fit" })).toBeInTheDocument();
+  });
+
+  it("offers a preserving application-target refresh for an accepted LinkedIn job", async () => {
+    const user = userEvent.setup();
+    const jobUrl = "https://www.linkedin.com/jobs/view/synthetic-target";
+    const calls: Array<Record<string, unknown>> = [];
+    server.use(
+      http.get("*/v1/jobs/:jobKey", ({ params }) => {
+        const detail = makeJobDetail({
+          ...sampleJob,
+          jobKey: String(params["jobKey"]),
+          url: jobUrl,
+          applicationUrl: null,
+        });
+        return HttpResponse.json({
+          ...detail,
+          stages: [
+            ...detail.stages,
+            {
+              ...detail.stages[0],
+              stage: "enrich",
+              state: "succeeded",
+            },
+          ],
+        });
+      }),
+      http.post("*/v1/jobs/:jobKey/actions/retry-stage", async ({ request }) => {
+        calls.push((await request.json()) as Record<string, unknown>);
+        return HttpResponse.json({ ok: true, action: "retry_stage", status: "queued" }, { status: 202 });
+      }),
+    );
+    renderJobDetailDrawer(jobUrl);
+    const callout = await screen.findByRole("region", { name: "Application target refresh" });
+    expect(within(callout).getByText(/saved description, score, and materials stay available/i)).toBeInTheDocument();
+    await user.click(within(callout).getByRole("button", { name: "Refresh application target" }));
+    await waitFor(() => expect(calls).toEqual([
+      expect.objectContaining({ stage: "enrich", runAfter: true, refreshApplyUrl: true }),
+    ]));
+  });
+
   it("returns to the jobs list from the route-level workspace", async () => {
     const user = userEvent.setup();
     const { container, router } = renderJobDetailDrawer("job-1");

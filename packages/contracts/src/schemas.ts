@@ -251,6 +251,7 @@ export const RetryStageRequestSchema = z
     resetAttempts: z.boolean().default(false),
     runAfter: z.boolean().default(false),
     dryRun: z.boolean().default(false),
+    refreshApplyUrl: z.boolean().optional(),
   })
   .strict();
 export type RetryStageRequest = z.infer<typeof RetryStageRequestSchema>;
@@ -4465,6 +4466,7 @@ export interface ActionCommandPayload {
   stages?: Stage[];
   resetAttempts?: boolean;
   runAfter?: boolean;
+  refreshApplyUrl?: boolean;
   dryRun?: boolean;
   jobIds?: string[];
   limit?: number;

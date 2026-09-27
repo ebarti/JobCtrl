@@ -55,6 +55,7 @@ class EnrichActivityInput:
     limit: int = 0
     workers: int = 1
     dry_run: bool = False
+    refresh_apply_url: bool = False
     job_ids: tuple[JobId, ...] = ()
     workflow_id: str | None = None
     workflow_run_id: str | None = None
@@ -303,6 +304,7 @@ def _run_selected_enrichment(
         "workers": payload.workers,
         "tenant_id": payload.tenant_id,
         "job_ids": job_ids,
+        "refresh_apply_url": payload.refresh_apply_url,
     }
     if payload.workflow_id:
         scraper_kwargs["workflow_id"] = payload.workflow_id

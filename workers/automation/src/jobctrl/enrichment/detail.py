@@ -34,7 +34,7 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import nullcontext
 from datetime import datetime, timezone
-from urllib.parse import urljoin, urlparse
+from urllib.parse import parse_qs, urljoin, urlparse
 
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
@@ -2726,6 +2726,134 @@ def _default_linkedin_apply_resolver_factory() -> LinkedInApplyUrlResolver:
     return LinkedInApplyUrlResolver(proxy=_PROXY_CONFIG, user_agent=None)
 
 
+def _external_apply_target_from_html(html: str, page_url: str) -> tuple[str | None, str]:
+    """Read a visible Apply link, including LinkedIn's public safety redirect."""
+    soup = BeautifulSoup(html, "html.parser")
+    onsite_apply = False
+    for anchor in soup.select("a[href]"):
+        label = " ".join((anchor.get_text(" ", strip=True), str(anchor.get("aria-label") or ""))).lower()
+        href = str(anchor.get("href") or "").strip()
+        if "apply" not in label and "apply" not in str(anchor.get("class") or "").lower():
+            continue
+        candidate = urljoin(page_url, href)
+        parsed = urlparse(candidate)
+        if parsed.hostname in {"linkedin.com", "www.linkedin.com"} and parsed.path.rstrip("/") == "/safety/go":
+            candidate = (parse_qs(parsed.query).get("url") or [""])[0]
+            if not candidate:
+                return None, "external_url_missing"
+        elif parsed.hostname in {"linkedin.com", "www.linkedin.com"}:
+            onsite_apply = True
+            continue
+        if not validate_public_http_url(candidate).allowed:
+            return None, "unsafe_url"
+        return candidate, "live_extension_rendered_page"
+    return (None, "linkedin_onsite_apply") if onsite_apply else (None, "apply_button_missing")
+
+
+def _refresh_selected_apply_targets(
+    conn: sqlite3.Connection,
+    *,
+    job_ids: tuple[JobId, ...],
+    tenant_id: TenantId,
+    browser_execution: DiscoveryExecutionRef,
+    cancel_event: threading.Event | None,
+    run_budget: RunBudgetCounter,
+    activity_lease: EnrichmentExecutionLease | None,
+) -> tuple[int, int]:
+    """Recover one selected target without resetting its accepted enrichment."""
+    from jobctrl.state import record_job_event, utc_now
+
+    repo = SqliteEnrichmentRepository(conn)
+    refreshed = 0
+    recovered_count = 0
+    for job_id in job_ids:
+        aggregate = repo.load(tenant_id, job_id)
+        if aggregate is None or not aggregate.is_enriched or aggregate.application_url is not None:
+            continue
+        identity = SqliteJobIdentityResolver(conn).resolve_by_job_id(tenant_id, job_id)
+        if identity is None:
+            continue
+        if not _is_linkedin_job("linkedin", identity.posting_url.value):
+            continue
+        if cancel_event is not None and cancel_event.is_set():
+            raise TransientNetworkError("enrichment canceled")
+        started_at = utc_now()
+        method = "navigation_error"
+        target: str | None = None
+        client = LiveChromeDiscoveryClient(
+            browser_execution,
+            source_family="enrichment",
+            source_id="enrichment:apply-url-refresh",
+            cancel_event=cancel_event,
+        )
+        try:
+            selected_browser = prefer_live_browser(client, cancel_event=cancel_event)
+            if selected_browser is not None:
+                url = identity.posting_url.value
+                session = _enrichment_session(PolitenessGateway(), run_budget, conn, site="linkedin")
+                if not validate_public_http_url(url).allowed:
+                    method = "unsafe_url"
+                else:
+                    with session.guard(url) as decision:
+                        if not decision.allowed:
+                            method = "politeness_deferred"
+                        else:
+                            page = selected_browser.rendered_page(url, timeout_seconds=60.0)
+                            if not validate_public_http_url(page.final_url).allowed:
+                                method = "unsafe_url"
+                            else:
+                                target, method = _external_apply_target_from_html(
+                                    page.body_html or "", page.final_url,
+                                )
+        except Exception:  # noqa: BLE001 - persist a code-owned, non-sensitive failure
+            method = "navigation_error"
+        if cancel_event is not None and cancel_event.is_set():
+            raise TransientNetworkError("enrichment canceled")
+        if activity_lease is not None:
+            _fence_execution_enrichment_lease(conn, activity_lease)
+        recovered_url = ApplicationUrl(value=target) if target is not None else None
+        result = (
+            recovered_url
+            if target is not None
+            else _authenticated_apply_url_recovery_error(method=method, raw_error=None)
+        )
+        updated = aggregate.record_apply_url_recovery(
+            result=result,
+            extraction_tier=ExtractionTier.CSS_SELECTORS,
+            started_at=started_at,
+            finished_at=utc_now(),
+        )
+        try:
+            repo.save(updated, commit=False)
+            outcome = _authenticated_apply_url_outcome_metadata({
+                "authenticated_apply_url_method": method,
+                "application_url": target,
+            })
+            _merge_enrich_apply_url_outcome_metadata(
+                conn, tenant_id=tenant_id, job_id=job_id,
+                outcome_metadata=outcome, updated_at=updated.updated_at,
+            )
+            if target is not None:
+                assert recovered_url is not None
+                _record_authenticated_apply_url_snapshot_recovery(
+                    conn, tenant_id=tenant_id, job_id=job_id,
+                    enrichment=updated, recovered=recovered_url, captured_at=updated.updated_at,
+                )
+            record_job_event(
+                conn, job_id, "enrich", "StageProgress", tenant_id=tenant_id,
+                message="Application target refresh completed." if target else "Application target refresh found no verified target.",
+                payload={"reason": "selected_apply_url_refresh", "applicationUrlFound": target is not None, **outcome},
+            )
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+        refreshed += 1
+        if target is not None:
+            recovered_count += 1
+    return refreshed, recovered_count
+
+
 def _record_authenticated_apply_url_snapshot_recovery(
     conn: sqlite3.Connection,
     *,
@@ -3883,6 +4011,7 @@ def _run_detail_scraper(
     workflow_id: str | None = None,
     workflow_run_id: str | None = None,
     discovery_execution: DiscoveryExecutionRef | None = None,
+    refresh_apply_url: bool = False,
 ) -> dict:
     """Group pending jobs by site and process each batch.
 
@@ -3916,6 +4045,19 @@ def _run_detail_scraper(
     # on its first pass.  Keeping them out of the steady-state pending selector
     # prevents a still-disallowed URL from looping within the same workflow.
     selected_job_ids = tuple(dict.fromkeys(canonical_job_id(str(job_id)) for job_id in job_ids))
+    run_budget = _new_enrichment_budget()
+    refresh_attempts = 0
+    refresh_recovered = 0
+    if refresh_apply_url and selected_job_ids and browser_execution is not None:
+        refresh_attempts, refresh_recovered = _refresh_selected_apply_targets(
+            conn,
+            job_ids=selected_job_ids,
+            tenant_id=stable_tenant_id,
+            browser_execution=browser_execution,
+            cancel_event=cancel_event,
+            run_budget=run_budget,
+            activity_lease=activity_lease,
+        )
     if workflow_id:
         enrichment_selector = (
             db_module._ENRICHMENT_SELECTED_RUNNABLE
@@ -3950,8 +4092,6 @@ def _run_detail_scraper(
     # One run budget spans the whole enrichment run: the authenticated LinkedIn
     # recovery pre-pass below and every site batch share it, so the per-run
     # navigation budget bounds them all together.
-    run_budget = _new_enrichment_budget()
-
     def _load_candidate_rows() -> list[sqlite3.Row | tuple]:
         return conn.execute(
             f"SELECT jobs.job_id, jobs.title, jobs.site, "
@@ -4050,7 +4190,13 @@ def _run_detail_scraper(
 
     if not rows:
         log.info("No pending jobs to scrape.")
-        return {"processed": 0, "ok": 0, "partial": 0, "error": 0, "site_errors": {}}
+        return {
+            "processed": refresh_attempts,
+            "ok": refresh_recovered,
+            "partial": refresh_attempts - refresh_recovered,
+            "error": 0,
+            "site_errors": {},
+        }
 
     site_jobs: dict[str, list[tuple]] = {}
     for row in rows:
@@ -4082,9 +4228,9 @@ def _run_detail_scraper(
     order += [s for s in sorted(site_jobs.keys()) if s not in order]
 
     total_stats: dict = {
-        "processed": 0,
-        "ok": 0,
-        "partial": 0,
+        "processed": refresh_attempts,
+        "ok": refresh_recovered,
+        "partial": refresh_attempts - refresh_recovered,
         "error": 0,
         "tiers": {1: 0, 2: 0, 3: 0},
     }

@@ -24,6 +24,7 @@ import { useEvidenceMapQuery } from "../../contexts/operations/hooks/useEvidence
 import { useJobDetailQuery } from "../../contexts/operations/hooks/useJobDetailQuery.js";
 import type { EvidenceMapEntry } from "../../contexts/operations/types.js";
 import { JobActions } from "../../contexts/pipeline/components/JobActions.js";
+import { RetryStageButton } from "../../contexts/pipeline/components/RetryStageButton.js";
 import { StageTimeline } from "../../contexts/pipeline/components/StageTimeline.js";
 import { RescoreJobButton } from "../../contexts/scoring/components/RescoreCurrentPolicyButton.js";
 import { Button, buttonVariants } from "../../shared/ui/button.js";
@@ -64,6 +65,17 @@ function canRetryStage(stage: StageSummary | undefined): boolean {
 
 function canRunCurrentStage(stage: StageSummary | undefined): boolean {
   return Boolean(stage && !["queued", "running"].includes(stage.state));
+}
+
+function isLinkedInPosting(rawUrl: string): boolean {
+  try {
+    const url = new URL(rawUrl);
+    return url.protocol === "https:"
+      && (url.hostname === "linkedin.com" || url.hostname.endsWith(".linkedin.com"))
+      && url.pathname.startsWith("/jobs/");
+  } catch {
+    return false;
+  }
 }
 
 function evidenceReferenceExcerpt(entry: EvidenceMapEntry): string | null {
@@ -363,6 +375,29 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
               </div>
               <JobDescription text={detail.job.descriptionPreview} />
             </section>
+            {!detail.job.applicationUrl && isLinkedInPosting(detail.job.url)
+              && detail.stages.some((stage) => stage.stage === "enrich" && stage.state === "succeeded") ? (
+              <section className="section requirement-fit-missing" aria-label="Application target refresh">
+                <div>
+                  <h3>Application target unavailable</h3>
+                  <p className="muted">
+                    Check the current posting for an application link. The saved description, score, and materials stay available if the check finds no verified target.
+                  </p>
+                  {detail.stages.find((stage) => stage.stage === "enrich")?.applyUrlOutcome?.message ? (
+                    <p className="muted">
+                      {detail.stages.find((stage) => stage.stage === "enrich")?.applyUrlOutcome?.message}
+                    </p>
+                  ) : null}
+                </div>
+                <RetryStageButton
+                  jobId={detail.job.jobKey}
+                  stage="enrich"
+                  runAfter
+                  refreshApplyUrl
+                  label="Refresh application target"
+                />
+              </section>
+            ) : null}
             {detail.employerAnalysis && !detail.requirementFitReport ? (
               <RequirementFitMissingCallout
                 jobId={detail.job.jobKey}
