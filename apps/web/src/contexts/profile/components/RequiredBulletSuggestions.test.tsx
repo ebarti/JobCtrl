@@ -190,12 +190,17 @@ describe("RequiredBulletSuggestions", () => {
     await user.click(screen.getByRole("button", { name: "Inspect Required bullets" }));
     await user.click(await screen.findByRole("button", { name: "Accept" }));
     view.rerender(
-      <RequiredBulletSuggestions isDraftClean={false} profileVersion={3} resetToken={0} onAccept={onAccept} />,
+      <RequiredBulletSuggestions isDraftClean={false} profileVersion={3} resetToken={1} onAccept={onAccept} />,
     );
     expect(screen.getByText("Proposed text: “Saved bullet”")).toBeInTheDocument();
     await act(async () => failAccept(false));
     view.rerender(
-      <RequiredBulletSuggestions isDraftClean profileVersion={3} resetToken={0} onAccept={onAccept} />,
+      <RequiredBulletSuggestions isDraftClean={false} profileVersion={3} resetToken={2} onAccept={onAccept} />,
+    );
+    expect(screen.getByText("Proposed text: “Saved bullet”")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Accept" })).toBeDisabled();
+    view.rerender(
+      <RequiredBulletSuggestions isDraftClean profileVersion={3} resetToken={3} onAccept={onAccept} />,
     );
     expect(screen.getByText("Proposed text: “Saved bullet”")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Reject" })).toBeEnabled();

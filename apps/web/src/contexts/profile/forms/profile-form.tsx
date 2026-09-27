@@ -758,7 +758,10 @@ export function ProfileForm({
   }, []);
 
   const form = useForm({
-    defaultValues: toProfileFormValues(initial),
+    // TanStack Form reapplies changed defaults to a clean form during render.
+    // The saved form base can be newer than the query after an accepted edit,
+    // so the query snapshot must not put the old bullet back into the draft.
+    defaultValues: formBaseValuesRef.current,
     validators: {
       onBlur: ({ value }) => validateProfileForm(value),
       onSubmit: ({ value }) => validateProfileForm(value),
@@ -770,8 +773,8 @@ export function ProfileForm({
         return;
       }
       if (requiredSaveVersionFenceRef.current !== undefined
-        && (formBaseVersion !== initial.profileVersion
-          || requiredSaveVersionFenceRef.current !== formBaseVersion)) {
+        && (requiredSaveVersionFenceRef.current !== formBaseVersion
+          || (initial.profileVersion !== null && initial.profileVersion > formBaseVersion))) {
         setStatusTone("warning");
         setStatusMessage("The saved profile changed. Rebase your manual edits before saving.");
         return;
@@ -832,9 +835,11 @@ export function ProfileForm({
           return;
         }
       }
+      if (requiredSaveVersionFenceRef.current !== undefined && shouldUpdateProfile) {
+        requiredSaveVersionFenceRef.current = profileResponse.profileVersion ?? requiredSaveVersionFenceRef.current;
+      }
       if (serializeProfileValues(formApi.state.values) === submittedValues) {
         expectedProfileVersionRef.current = undefined;
-        requiredSaveVersionFenceRef.current = undefined;
         requiredPinConflictRef.current = null;
         formBaseValuesRef.current = structuredClone(toProfileFormValues(profileResponse));
         suggestionAddedRolesRef.current = [];
@@ -950,6 +955,15 @@ export function ProfileForm({
   }, [applyPlateTextChanges, onPlateTextControllerChange]);
 
   useEffect(() => {
+    const requiredFence = requiredSaveVersionFenceRef.current;
+    // A successful guarded save can be newer than the query while refetch is
+    // pending. A failed accept can also roll its optimistic query patch back
+    // at the same version. Neither snapshot should replace the known form base
+    // or clear the version fence/reviewed suggestion.
+    if (requiredFence !== undefined
+      && (initial.profileVersion === null || initial.profileVersion <= requiredFence)) {
+      return;
+    }
     if (requiredAcceptPendingRef.current || form.state.isDirty || form.state.isSubmitting) {
       return;
     }
@@ -1194,7 +1208,6 @@ export function ProfileForm({
       if (jsonValuesEqual(form.state.values, submittedBase)
         || jsonValuesEqual(form.state.values, nextValues)) {
         expectedProfileVersionRef.current = undefined;
-        requiredSaveVersionFenceRef.current = undefined;
         requiredPinConflictRef.current = null;
         plateProfileProjectionRef.current = null;
         form.reset(toProfileFormValues(response));
@@ -1364,15 +1377,24 @@ export function ProfileForm({
         event.preventDefault();
         plateProfileProjectionRef.current = null;
         expectedProfileVersionRef.current = undefined;
-        requiredSaveVersionFenceRef.current = undefined;
         requiredPinConflictRef.current = null;
-        const initialValues = toProfileFormValues(initial);
+        const requiredFence = requiredSaveVersionFenceRef.current;
+        const useSavedResponse = requiredFence !== undefined
+          && formBaseVersionRef.current === requiredFence
+          && (initial.profileVersion === null || initial.profileVersion < requiredFence);
+        const initialValues = useSavedResponse
+          ? structuredClone(formBaseValuesRef.current)
+          : toProfileFormValues(initial);
+        if (requiredFence !== undefined
+          && initial.profileVersion !== null && initial.profileVersion > requiredFence) {
+          requiredSaveVersionFenceRef.current = undefined;
+        }
         formBaseValuesRef.current = structuredClone(initialValues);
         suggestionAddedRolesRef.current = [];
         suggestionAddedPreferencesRef.current = [];
         suggestionReviewRequiredRef.current = false;
         suggestionReviewResolvedVersionRef.current = undefined;
-        setFormBaseVersion(initial.profileVersion);
+        setFormBaseVersion(useSavedResponse ? requiredFence : initial.profileVersion);
         setSuggestionDerivedDraft(false);
         form.reset(initialValues);
         onPreviewSourceChange?.(initial);

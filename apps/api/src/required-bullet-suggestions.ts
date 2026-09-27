@@ -19,20 +19,30 @@ function claimSignature(value: string): string {
 }
 
 const CLAIM_CONNECTORS = new Set([
-  "a", "an", "and", "at", "be", "been", "by", "for", "from", "in", "is", "of", "on", "the", "to", "was", "were", "with",
+  "a", "an", "and", "at", "be", "been", "by", "for", "from", "in", "is", "of", "on", "s", "the", "to", "was", "were", "with",
 ]);
 
 function claimFacts(value: string): string[] {
-  return claimSignature(value.normalize("NFKC").replace(/%/g, " percent "))
+  return claimSignature(value.normalize("NFKC")
+    .replace(/([\p{L}\p{N}])['’]s\b/gu, "$1")
+    .replace(/%/g, " percent "))
     .split(" ")
-    .filter((token) => token.length > 0 && !CLAIM_CONNECTORS.has(token));
+    .filter((token) => (token.length > 1 || /^\d$/.test(token))
+      && !CLAIM_CONNECTORS.has(token)
+      && !RESULT_LANGUAGE.test(token))
+    .map((token) => token.length > 4 && token.endsWith("ies")
+      ? `${token.slice(0, -3)}y`
+      : token.length > 4 && token.endsWith("s") && !token.endsWith("ss") && !token.endsWith("is")
+        ? token.slice(0, -1)
+        : token);
 }
 
 function addsOutcomeDetail(sourceText: string, outcome: string): boolean {
   if (!RESULT_LANGUAGE.test(outcome)) return false;
   const sourceFacts = new Set(claimFacts(sourceText));
-  // A reordered claim or changed grammar does not supply another fact. Require
-  // at least one saved outcome token that is absent from the source claim.
+  // A reordered claim, changed result verb, plural, or possessive does not
+  // supply another fact. Require a saved content token absent from the source;
+  // grammar fragments cannot establish support.
   return claimFacts(outcome).some((token) => !sourceFacts.has(token));
 }
 

@@ -326,6 +326,43 @@ describe("DemoApiClientAdapter", () => {
     expect(incomplete).toMatchObject({ suggestions: [], truncated: true, modelUsed: false });
   });
 
+  it("keeps grammar-only restatements as questions in saved demo evidence", async () => {
+    const { adapter } = await createAdapter();
+    const before = await adapter.profile();
+    const profile = ProfileSchema.parse(before.profile);
+    const entry = profile.resume.experience_entries[0]!;
+    entry.bullets = ["Reduced team latency."];
+    entry.achievement_evidence = [{
+      id: "demo-possessive-restatement",
+      source_text: entry.bullets[0]!,
+      scope: "Synthetic team",
+      action: "Reduced team latency",
+      tools: [],
+      metrics: [],
+      outcome: "Decreased teams' latency.",
+      seniority_signal: "",
+      evidence_strength: "supported",
+      claim_confidence: 0.8,
+      user_confirmed: true,
+      tags: [],
+    }];
+    profile.resume.tailoring_rules.required_bullets_by_experience_id = {
+      [entry.id]: [entry.bullets[0]!],
+    };
+    const saved = await adapter.updateProfile({
+      expectedProfileVersion: before.profileVersion!,
+      profileText: JSON.stringify(profile),
+    });
+    const inspected = await adapter.requiredBulletSuggestions({
+      expectedProfileVersion: saved.profileVersion!,
+      maximumSuggestions: 12,
+    });
+    expect(inspected.suggestions.filter((suggestion) =>
+      suggestion.source.sourceId === "demo-possessive-restatement",
+    ).map((suggestion) => suggestion.kind)).toEqual(["achievement_framing", "missing_evidence"]);
+    expect(await adapter.profile()).toEqual(saved);
+  });
+
   it("covers every port member and reserves capability errors for unavailable methods", async () => {
     const { adapter } = await createAdapter();
     const fetchSpy = vi.spyOn(globalThis, "fetch");

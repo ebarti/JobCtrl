@@ -1,5 +1,6 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
+import { LOCAL_TENANT } from "@jobctrl/domain-types";
 import {
   ProfileSchema,
   type ProfileShape,
@@ -13,7 +14,9 @@ import {
   sampleProfileResponse,
 } from "../../../test/fixtures/projections.js";
 import { buildTestPorts } from "../../../test/testPorts.js";
-import { renderWithProviders } from "../../../test/render.js";
+import { createTestQueryClient, renderWithProviders } from "../../../test/render.js";
+import { useProfileQuery } from "../hooks/useProfileQuery.js";
+import { profileKeys } from "../queryKeys.js";
 import {
   ProfileForm,
   type ProfilePlateTextChange,
@@ -2055,6 +2058,98 @@ describe("<ProfileForm>", () => {
     ]);
     expect(saved.resume.tailoring_rules.required_bullets_by_experience_id["exp-1"])
       .toEqual(["Scaled the platform 10x."]);
+  });
+
+  it("keeps a successful Required accept version-bound during delayed refetch and an intervening save", async () => {
+    const user = userEvent.setup();
+    const { initial, requiredBulletSuggestions } = requiredBulletCoachingFixture();
+    const updateProfile = vi.fn()
+      .mockImplementationOnce(async (request: ProfileUpdateRequest) => ({
+        ...initial,
+        profileVersion: 4,
+        profile: JSON.parse(request.profileText!),
+      }))
+      .mockRejectedValueOnce(new Error("stale_profile_version"))
+      .mockImplementationOnce(async (request: ProfileUpdateRequest) => ({
+        ...initial,
+        profileVersion: 6,
+        profile: JSON.parse(request.profileText!),
+      }));
+    const { changeInitial } = renderRequiredProfileWithInitialChanges(
+      initial,
+      buildTestPorts({ api: { requiredBulletSuggestions, updateProfile } }),
+    );
+
+    await user.click(await screen.findByRole("button", { name: "Inspect Required bullets" }));
+    await user.click(await screen.findByRole("button", { name: "Accept" }));
+    await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(1));
+    expect((updateProfile.mock.calls[0]![0] as ProfileUpdateRequest).expectedProfileVersion).toBe(3);
+    expect(await screen.findByText("Required bullet suggestion accepted and saved")).toBeInTheDocument();
+    await openExperienceEntries(user);
+    expect(screen.getByLabelText("Bullet 1")).toHaveValue("Scaled the platform 10x.");
+
+    await user.clear(screen.getByLabelText("Email"));
+    await user.type(screen.getByLabelText("Email"), "pending@example.com");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(2));
+    const staleRequest = updateProfile.mock.calls[1]![0] as ProfileUpdateRequest;
+    expect(staleRequest.expectedProfileVersion).toBe(4);
+    expect(JSON.parse(staleRequest.profileText!)).toMatchObject({
+      personal: { email: "pending@example.com" },
+      resume: { experience_entries: [{ bullets: ["Scaled the platform 10x.", "Led the SRE org."] }] },
+    });
+    expect(screen.getByLabelText("Email")).toHaveValue("pending@example.com");
+
+    const acceptedProfile = JSON.parse((updateProfile.mock.calls[0]![0] as ProfileUpdateRequest).profileText!);
+    acceptedProfile.personal.full_name = "External Canonical Name";
+    changeInitial({ ...initial, profileVersion: 5, profile: acceptedProfile });
+    await user.click(screen.getByRole("button", { name: "Rebase edits onto saved profile" }));
+    expect(screen.getByLabelText("Full name")).toHaveValue("External Canonical Name");
+    expect(screen.getByLabelText("Email")).toHaveValue("pending@example.com");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(3));
+    const rebasedRequest = updateProfile.mock.calls[2]![0] as ProfileUpdateRequest;
+    expect(rebasedRequest.expectedProfileVersion).toBe(5);
+    expect(JSON.parse(rebasedRequest.profileText!)).toMatchObject({
+      personal: { full_name: "External Canonical Name", email: "pending@example.com" },
+      resume: { experience_entries: [{ bullets: ["Scaled the platform 10x.", "Led the SRE org."] }] },
+    });
+  });
+
+  it("keeps a reviewed Required suggestion through the real optimistic query rollback", async () => {
+    const user = userEvent.setup();
+    const { initial, requiredBulletSuggestions } = requiredBulletCoachingFixture();
+    const queryClient = createTestQueryClient();
+    const key = profileKeys.profile(LOCAL_TENANT);
+    queryClient.setQueryData(key, initial);
+    let rejectAccept!: (reason: Error) => void;
+    const updateProfile = vi.fn(() => new Promise<never>((_resolve, reject) => { rejectAccept = reject; }));
+    const profile = vi.fn(async () => structuredClone(initial));
+    function QueryBackedForm() {
+      const query = useProfileQuery();
+      return query.data ? <ProfileForm initial={query.data} /> : null;
+    }
+    renderWithProviders(<QueryBackedForm />, {
+      queryClient,
+      ports: buildTestPorts({ api: { profile, requiredBulletSuggestions, updateProfile } }),
+      withRouter: true,
+    });
+
+    await user.click(await screen.findByRole("button", { name: "Inspect Required bullets" }));
+    await user.click(await screen.findByRole("button", { name: "Accept" }));
+    await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(queryClient.getQueryData(key)).toMatchObject({
+      profileVersion: 3,
+      profile: { resume: { experience_entries: [{ bullets: ["Scaled the platform 10x.", "Led the SRE org."] }] } },
+    }));
+    await act(async () => rejectAccept(new Error("Synthetic failed accept")));
+    await waitFor(() => expect(queryClient.getQueryData(key)).toMatchObject({
+      profileVersion: 3,
+      profile: { resume: { experience_entries: [{ bullets: ["  Scaled   the platform 10x.  ", "Led the SRE org."] }] } },
+    }));
+    expect(await screen.findByText(/suggestion save did not return a confirmed result/i)).toBeInTheDocument();
+    expect(screen.getByText("Proposed text: “Scaled the platform 10x.”")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reject" })).toBeEnabled();
   });
 
   it("serializes manual Save behind a delayed Required accept and fences the stale draft", async () => {

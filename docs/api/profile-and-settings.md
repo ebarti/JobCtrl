@@ -106,17 +106,20 @@ identity after future profile edits.
 
 Only conservative wording cleanup supplies an applicable replacement. Coaching
 questions have no proposed text and require the user's own truthful manual
-edits. An outcome that only reorders the source claim or changes its grammar
-does not independently support that claim. The browser accepts replacements individually through the ordinary
+edits. An outcome that only reorders the source claim or changes its result verb
+or grammar does not independently support that claim. The browser accepts
+replacements individually through the ordinary
 version-checked profile save, preserving bullet order, achievement identity,
 and Required selection. Generation, rejection, unavailable requests, and stale
-results do not promote evidence or alter the saved profile. An uncertain accept
-keeps subsequent manual saves bound to the inspected version; the Profile editor
+results do not promote evidence or alter the saved profile. After an accept,
+subsequent manual saves remain bound to its saved version while query refresh
+is pending; the Profile editor
 offers rebase for non-overlapping drafts after a newer saved version arrives.
 That rebase can combine different bullet edits in one experience entry only
 when the saved entry ID, bullet positions, and text identities remain clear;
 overlapping or reordered bullets require manual resolution. A failed accept
-keeps a unique concurrent manual Required edit pinned and blocks ambiguous
+keeps the reviewed suggestion through a same-version optimistic query rollback,
+keeps a unique concurrent manual Required edit pinned, and blocks ambiguous
 duplicates from being saved.
 
 This route does not enable #902's model path or implement #883's proposed

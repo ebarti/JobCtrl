@@ -176,6 +176,11 @@ An overlong Required pin must report incomplete inspection even when it has no
 matching saved bullet. A nonempty truncated response must not tell users that
 repeating the same request will expose omitted sources. Reordered source claims
 or grammar-only variations must not count as independent outcome evidence.
+Include a possessive-only restatement. After a successful accept, delay the
+profile-query refresh, attempt a manual save after another canonical write, and
+prove it carries the accepted version fence and preserves the newer fields.
+After a failed accept, exercise the actual optimistic query rollback at the
+same version and keep the reviewed suggestion available.
 Count every achievement row that matches a Required bullet before deciding
 whether a source identity is unique, including rows with blank or overlong IDs.
 The browser must reject an accept against that ambiguous saved snapshot, and

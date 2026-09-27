@@ -10172,6 +10172,43 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("does not promote a possessive restatement in saved Required evidence", async () => {
+    const app = buildApp(options);
+    const profile = validProfileFixture("Synthetic Candidate");
+    const resume = profile.resume as Record<string, unknown>;
+    const entry = (resume.experience_entries as Array<Record<string, unknown>>)[0]!;
+    entry.bullets = ["Reduced team latency."];
+    entry.achievement_evidence = [{
+      id: "saved-possessive-restatement",
+      source_text: "Reduced team latency.",
+      action: "Reduced team latency",
+      outcome: "Reduced team's latency.",
+      evidence_strength: "supported",
+      user_confirmed: true,
+    }];
+    resume.tailoring_rules = {
+      required_bullets_by_experience_id: { role_1: ["Reduced team latency."] },
+    };
+    const saved = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile } });
+    expect(saved.statusCode, saved.body).toBe(200);
+    const version = saved.json().profileVersion as number;
+
+    const inspection = await app.inject({
+      method: "POST",
+      url: "/v1/profile/required-bullet-suggestions",
+      payload: { expectedProfileVersion: version },
+    });
+    expect(inspection.statusCode, inspection.body).toBe(200);
+    expect(inspection.json().suggestions.map((item: { kind: string }) => item.kind))
+      .toEqual(["achievement_framing", "missing_evidence"]);
+    expect(inspection.json().suggestions).toEqual([
+      expect.objectContaining({ source: expect.objectContaining({ sourceId: "saved-possessive-restatement" }), proposedText: null, canApply: false }),
+      expect.objectContaining({ source: expect.objectContaining({ sourceId: "saved-possessive-restatement" }), proposedText: null, canApply: false }),
+    ]);
+    expect((await app.inject({ method: "GET", url: "/v1/profile" })).json().profileVersion).toBe(version);
+    await app.close();
+  });
+
   it("counts every matching saved achievement before offering a Required cleanup", async () => {
     const app = buildApp(options);
     const profile = validProfileFixture("Synthetic Candidate");

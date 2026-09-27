@@ -192,8 +192,10 @@ another bullet or Required pin. A claim's own text, including a number
 extracted from it, does not independently verify the claim. Punctuation changes
 to a restated outcome also add no evidence. An action count such as the number
 of projects managed is not automatically a result. Rearranging the same claim
-in an outcome does not independently verify it. If a saved profile exceeds
-the bounded inspection limit, or a Required bullet or its entry fields cannot
+or changing only its result verb, plural, or possessive in an outcome does not
+independently verify it. If a
+saved profile exceeds the bounded inspection limit, or a Required bullet or
+its entry fields cannot
 fit the response, coaching reports that it could not fully inspect it; manual
 editing remains available. An unmatched overlong Required pin is incomplete
 too. Some suggestions may still appear in an incomplete inspection; it does
@@ -204,7 +206,9 @@ Review each proposed wording change separately. Accepting a change preserves
 the bullet's order, achievement identity, and Required selection through the
 normal version-checked profile save. Rejecting or dismissing suggestions does
 not edit the profile. Save your current edits before requesting coaching; a
-changed source or saved profile version requires a fresh review. Failed requests
+changed source or saved profile version requires a fresh review. A later manual
+save remains bound to the accepted profile version while its refreshed profile
+is loading. If another save intervenes, rebase the draft. Failed requests
 and conflicting saves preserve existing canonical facts and keep manual editing
 available. A failed accept keeps its reviewed suggestion visible while the
 saved version remains the same. An edit made afterward keeps a unique Required

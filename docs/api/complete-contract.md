@@ -112,6 +112,9 @@ achievement IDs have no applicable replacement. A canonical `sourceId` must
 fit the 240-character wire bound before it is emitted; otherwise coaching uses
 a bounded snapshot reference. Evidence questions do not
 promote bullet text or an extracted metric into independent proof.
+An outcome that merely reorders the claim or changes its result verb or grammar
+(including plurals and possessives) adds no independent evidence; those gaps
+remain questions.
 
 `POST /v1/profile/target-role-suggestions` accepts the strict object below:
 

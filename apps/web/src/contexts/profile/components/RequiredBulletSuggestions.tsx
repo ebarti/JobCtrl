@@ -40,12 +40,10 @@ export function RequiredBulletSuggestions({
   const isStale = generatedVersion !== null && generatedVersion !== profileVersion;
 
   useEffect(() => {
-    const previous = currentAuthority.current;
     currentAuthority.current = { isDraftClean, profileVersion, resetToken };
     requestSequence.current += 1;
     if (generatedVersion === profileVersion
-      && previous.resetToken === resetToken
-      && (acceptInFlight.current || (preserveReviewedAfterFailure.current && isDraftClean))) {
+      && (acceptInFlight.current || preserveReviewedAfterFailure.current)) {
       return;
     }
     preserveReviewedAfterFailure.current = false;
