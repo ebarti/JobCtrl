@@ -1151,8 +1151,33 @@ describe("<JobDetailDrawer>", () => {
     );
     renderJobDetailDrawer("https://example.com/jobs/outdated-fit");
     const callout = await screen.findByRole("region", { name: "Requirement fit is outdated" });
-    expect(within(callout).getByText(/earlier employer analysis/i)).toBeInTheDocument();
+    expect(within(callout).getByText(/different employer-analysis generation or score version/i)).toBeInTheDocument();
     expect(within(callout).getByRole("button", { name: "re-score requirement fit" })).toBeInTheDocument();
+  });
+
+  it("does not attribute score-correction divergence to an analysis change", async () => {
+    server.use(
+      http.get("*/v1/jobs/:jobKey", ({ params }) =>
+        HttpResponse.json(makeJobDetail(
+          {
+            ...sampleJob,
+            jobKey: String(params["jobKey"]),
+            scoreVersion: 2,
+            scoreAnalysisFreshness: {
+              status: "outdated",
+              currentAnalysisGeneration: 1,
+              assessedAnalysisGeneration: 1,
+              assessedScoreVersion: 1,
+            },
+          },
+          { employerAnalysis: populatedEmployerAnalysis, requirementFitReport: null },
+        )),
+      ),
+    );
+    renderJobDetailDrawer("https://example.com/jobs/corrected-score");
+    const callout = await screen.findByRole("region", { name: "Requirement fit is outdated" });
+    expect(within(callout).getByText(/different employer-analysis generation or score version/i)).toBeInTheDocument();
+    expect(within(callout).queryByText(/earlier employer analysis/i)).not.toBeInTheDocument();
   });
 
   it("offers a preserving application-target refresh for an accepted LinkedIn job", async () => {

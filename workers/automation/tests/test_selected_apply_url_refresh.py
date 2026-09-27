@@ -24,6 +24,7 @@ JOB_ID = canonical_job_id("a0000000-0000-4000-8000-000000000091")
 POSTING = "https://www.linkedin.com/jobs/view/synthetic-refresh"
 TARGET = "https://apply.example.com/position/91"
 DESCRIPTION = "Accepted role description that must survive every application-target refresh."
+MARKER = '<div id="JobDetails_AboutTheJob_synthetic-refresh">Accepted role</div>'
 
 
 @pytest.fixture
@@ -61,10 +62,12 @@ def conn(tmp_path):
 @pytest.mark.parametrize("found", [False, True])
 def test_selected_extension_refresh_preserves_accepted_rows(conn, tmp_path, monkeypatch, found):
     html = (
-        '<main><a aria-label="Apply on company website" '
+        '<main aria-label="Primary content">' + MARKER
+        + '<a hidden aria-label="Apply on company website" href="https://other.example.com/wrong">Wrong link</a>'
+        + '<a aria-label="Apply on company website" '
         'href="https://www.linkedin.com/safety/go/?url=https%3A%2F%2Fapply.example.com%2Fposition%2F91">'
         "Apply on company website</a></main>"
-        if found else "<main><h1>Synthetic role</h1></main>"
+        if found else '<main aria-label="Primary content">' + MARKER + "</main>"
     )
     broker = FixtureBrowserBroker(
         tmp_path,
@@ -114,8 +117,59 @@ def test_redirect_target_must_be_public(monkeypatch):
         detail, "validate_public_http_url",
         lambda url: SimpleNamespace(allowed=not url.startswith("http://127.0.0.1")),
     )
-    html = '<a href="https://www.linkedin.com/safety/go/?url=http%3A%2F%2F127.0.0.1%2Fprivate">Apply</a>'
-    assert detail._external_apply_target_from_html(html, POSTING) == (None, "unsafe_url")
+    html = (
+        '<main aria-label="Primary content">' + MARKER
+        + '<a aria-label="Apply on company website" '
+        'href="https://www.linkedin.com/safety/go/?url=http%3A%2F%2F127.0.0.1%2Fprivate">Apply</a></main>'
+    )
+    assert detail._external_apply_target_from_html(html, POSTING, POSTING) == (None, "unsafe_url")
+
+
+def test_unrelated_redirect_never_binds_an_application_target(conn, tmp_path, monkeypatch):
+    broker = FixtureBrowserBroker(
+        tmp_path,
+        lambda _url: {
+            "status": "succeeded",
+            "finalUrl": "https://www.linkedin.com/jobs/search/?currentJobId=other",
+            "statusCode": 200,
+            "bodyHtml": '<main aria-label="Primary content">' + MARKER
+            + '<a aria-label="Apply on company website" href="https://other.example.com/wrong">Apply</a></main>',
+        },
+    )
+    monkeypatch.setattr(detail, "LiveChromeDiscoveryClient", broker.client)
+    monkeypatch.setattr(detail, "validate_public_http_url", lambda _url: SimpleNamespace(allowed=True))
+
+    @contextmanager
+    def allowed(_url):
+        yield SimpleNamespace(allowed=True)
+
+    monkeypatch.setattr(detail, "_enrichment_session", lambda *_args, **_kwargs: SimpleNamespace(guard=allowed))
+    before = SqliteEnrichmentRepository(conn).load(LOCAL_TENANT, JOB_ID)
+    stats = detail._run_detail_scraper(
+        conn, job_ids=(JOB_ID,), workflow_id="redirect-refresh", workflow_run_id="redirect-run",
+        reset_linkedin_candidates=False, refresh_apply_url=True,
+    )
+    saved = SqliteEnrichmentRepository(conn).load(LOCAL_TENANT, JOB_ID)
+    assert before is not None and saved is not None
+    assert saved.application_url is None and saved.full_description == before.full_description
+    assert stats["processed"] == 1 and stats["ok"] == 0
+    stage = conn.execute("SELECT metadata_json FROM job_stage_states WHERE job_id=? AND stage='enrich'", (str(JOB_ID),)).fetchone()
+    assert json.loads(stage[0])["applyUrlOutcomeCode"] == "APPLY_URL_NAVIGATION_FAILED"
+
+
+def test_ambiguous_or_other_job_controls_are_not_selected(monkeypatch):
+    monkeypatch.setattr(detail, "validate_public_http_url", lambda _url: SimpleNamespace(allowed=True))
+    html = (
+        '<main aria-label="Primary content">' + MARKER
+        + '<div data-job-id="other"><a aria-label="Apply on company website" '
+        'href="https://other.example.com/wrong">Apply</a></div>'
+        + '<a aria-label="Apply on company website" href="https://apply.example.com/position/91">Apply</a>'
+        + '<a aria-label="Apply on company website" href="https://another.example.com/position/91">Apply</a>'
+        + '</main>'
+    )
+    assert detail._external_apply_target_from_html(html, POSTING, POSTING) == (None, "external_url_missing")
+    wrong_job = html.replace(MARKER, '<div id="JobDetails_AboutTheJob_other">Other role</div>')
+    assert detail._external_apply_target_from_html(wrong_job, POSTING, POSTING) == (None, "external_url_missing")
 
 
 def test_selected_enrichment_without_refresh_flag_leaves_accepted_row_untouched(conn, monkeypatch):
@@ -127,6 +181,23 @@ def test_selected_enrichment_without_refresh_flag_leaves_accepted_row_untouched(
     stats = detail._run_detail_scraper(
         conn, job_ids=(JOB_ID,), workflow_id="ordinary-enrich", workflow_run_id="ordinary-run",
         reset_linkedin_candidates=False,
+    )
+    assert SqliteEnrichmentRepository(conn).load(LOCAL_TENANT, JOB_ID) == before
+    assert stats["processed"] == 0
+
+
+def test_refresh_does_not_replace_an_accepted_application_target(conn, monkeypatch):
+    conn.execute("UPDATE job_enrichments SET application_url=? WHERE job_id=?", (TARGET, str(JOB_ID)))
+    conn.commit()
+
+    def unexpected_browser(*_args, **_kwargs):
+        raise AssertionError("a prior accepted target must not be refreshed")
+
+    monkeypatch.setattr(detail, "LiveChromeDiscoveryClient", unexpected_browser)
+    before = SqliteEnrichmentRepository(conn).load(LOCAL_TENANT, JOB_ID)
+    stats = detail._run_detail_scraper(
+        conn, job_ids=(JOB_ID,), workflow_id="accepted-target", workflow_run_id="accepted-run",
+        reset_linkedin_candidates=False, refresh_apply_url=True,
     )
     assert SqliteEnrichmentRepository(conn).load(LOCAL_TENANT, JOB_ID) == before
     assert stats["processed"] == 0

@@ -113,6 +113,8 @@ separate primary page or pipeline stage. Its results remain inspectable:
   an unavailable browser or missing control records a separate outcome and
   keeps the saved description, score, and materials intact. It never opens or
   submits an application form.
+  The captured page must still identify the selected posting, and a hidden,
+  unrelated, or ambiguous application control cannot supply its target.
 - `/discovery` owns source review, quarantined leads, locator candidates, and
   manual-capture decisions.
 - `/runs` shows the durable Discover and preparation workflows. A failed

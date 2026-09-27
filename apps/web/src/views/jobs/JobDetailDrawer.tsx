@@ -123,7 +123,7 @@ function RequirementFitMissingCallout({
         <h3>{title}</h3>
         <p className="muted">
           {outdated
-            ? "The saved score assessed an earlier employer analysis. Re-score this job to assess the current requirements; the previous score and materials remain available for review."
+            ? "The saved requirement fit belongs to a different employer-analysis generation or score version. Re-score this job to assess the current requirements; the previous score and materials remain available for review."
             : "This job has employer requirements, but the stored score predates requirement-level fit. Re-score it to produce candidate fit, score impact, and tailoring actions for each requirement."}
         </p>
       </div>

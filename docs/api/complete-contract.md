@@ -1393,7 +1393,8 @@ Current-version preparation maintenance actions are separate endpoints:
   an accepted description and an HTTPS LinkedIn Jobs locator; invalid or
   ineligible requests return `400` or `409`. A failed target check appends an
   application-target outcome while retaining the accepted description, score,
-  and materials.
+  and materials. The rendered page must identify the selected posting; hidden,
+  unrelated, or ambiguous Apply controls cannot supply a target.
 - `POST /v1/jobs/bulk-retry-failed` accepts selected jobs or all matching jobs.
   With the default `runAfter: false` it only resets each retryable failed stage
   to `pending`. Attempt-budget failures are included even when their legacy
