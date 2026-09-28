@@ -5,9 +5,10 @@ import { ResetStaleScoresButton } from "../../contexts/scoring/components/ResetS
 import { ScoreCorrectionControl } from "../../contexts/scoring/components/ScoreCorrectionControl.js";
 import { ScoreStalenessBadge } from "../../contexts/scoring/components/ScoreStalenessBadge.js";
 import { ContextHelp } from "../../shared/ui/context-help.js";
+import { fitScoreHelp } from "./fit-score-help.js";
 
 const metricHelp = {
-  "Fit score": "The stored candidate-to-job score from the scoring policy, on a 0–10 scale. No score appears until scoring runs; inspect the rationale and evidence below before relying on it.",
+  "Fit score": "The latest stored candidate fit score, on a 0–10 scale. It may come from policy scoring or a saved manual correction; inspect the score record before relying on it.",
   Band: "The policy's named fit category for the stored score. This is a ranking summary, not a hiring prediction.",
   Confidence: "How strongly the scoring evidence supports the fit assessment. It is not the probability of an offer or proof that every source is correct.",
   Eligibility: "The scoring policy's eligibility assessment from known job and profile facts. Unknown means the available evidence does not establish eligibility.",
@@ -45,18 +46,19 @@ export function JobAuditTriage({ detail }: JobAuditTriageProps) {
             <span className="job-audit-triage-kicker" data-typography="label">
               Assessment
             </span>
-            <h2>Fit & evidence <ContextHelp label="Fit and evidence" description="Saved scoring results, requirement-level assessments, rationale, and apply concerns. These derive from the scoring record and current job analysis; inspect the details before acting on a summary." /></h2>
+            <h2 aria-label="Fit & evidence">Fit & evidence <ContextHelp label="Fit and evidence" description="Saved scoring results, requirement-level assessments, rationale, and apply concerns. These derive from the scoring record and current job analysis; inspect the details before acting on a summary." /></h2>
           </header>
           <dl className="job-audit-metrics" aria-label="Ranking summary">
             <Metric
               label="Fit score"
+              help={fitScoreHelp(job)}
               value={
                 job.fitScore === null ? "Not scored" : `${job.fitScore}/10`
               }
             />
-            <Metric label="Band" value={score?.fitBand ?? "not recorded"} />
-            <Metric label="Confidence" value={score?.confidence ?? "not recorded"} />
-            <Metric label="Eligibility" value={score?.eligibility.status ?? "unknown"} />
+            <Metric label="Band" value={score?.fitBand ?? "not recorded"} help={job.scoreCorrection ? "This fit band comes from the retained original scoring breakdown. A manual score correction changes the displayed fit score but does not recalculate the band; the two may differ." : undefined} />
+            <Metric label="Confidence" value={score?.confidence ?? "not recorded"} help={job.scoreCorrection ? "This confidence value comes from the retained original scoring breakdown. A manual score correction does not recalculate it; it is not confidence in the corrected score or a probability of an offer." : undefined} />
+            <Metric label="Eligibility" value={score?.eligibility.status ?? "unknown"} help={job.scoreCorrection ? "This eligibility assessment comes from the retained original scoring breakdown. A manual fit-score correction does not recheck eligibility; verify current prerequisites and concerns before applying." : undefined} />
             <Metric
               label="Requirement fit"
               value={
@@ -148,10 +150,10 @@ export function JobAuditTriage({ detail }: JobAuditTriageProps) {
   );
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
+function Metric({ label, value, help }: { label: keyof typeof metricHelp; value: string; help?: string | undefined }) {
   return (
     <div>
-      <dt data-typography="label">{label} <ContextHelp label={label} description={metricHelp[label as keyof typeof metricHelp]} /></dt>
+      <dt data-typography="label">{label} <ContextHelp label={label} description={help ?? metricHelp[label]} /></dt>
       <dd data-typography="metric">{value}</dd>
     </div>
   );

@@ -4,6 +4,7 @@ import type { JobDetail } from "../../contexts/operations/types.js";
 import { ScoreBadge } from "../../contexts/scoring/components/ScoreBadge.js";
 import { ContextHelp } from "../../shared/ui/context-help.js";
 import { StatusBadge } from "../../shared/ui/status-badge.js";
+import { fitScoreHelp } from "./fit-score-help.js";
 
 export interface JobOverviewProps {
   detail: JobDetail;
@@ -47,7 +48,7 @@ export function JobOverview({ detail }: JobOverviewProps) {
       >
         <span className="job-overview-score-label" data-typography="label">
           Fit
-          <ContextHelp label="Fit score" description="The saved candidate fit score from the scoring policy, on a 0–10 scale. It may be absent before scoring or stale after the policy changes; inspect Fit & evidence for its basis." />
+          <ContextHelp label="Fit score" description={fitScoreHelp(job)} />
         </span>
         <span data-typography="metric">
           <ScoreBadge score={job.fitScore} />

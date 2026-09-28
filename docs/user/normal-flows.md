@@ -368,6 +368,9 @@ Use them when reading:
 Model agreement compares the exact normalized requirement text and keyword sets
 from surviving analysis drafts. It measures overlap between drafts, not candidate
 fit or factual confidence; one surviving draft displays 100% by convention.
+When a fit score was manually corrected, its help identifies the correction and
+reason. The displayed band, confidence, and eligibility remain from the saved
+scoring breakdown; correcting the score does not recalculate them.
 
 <WorkflowSurfacePanel surface="web">
 

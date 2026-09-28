@@ -102,7 +102,7 @@ function PrepItemCard({
         <span className={`tag ${kindTone(item.kind)}`}>
           {KIND_LABELS[item.kind]}
         </span>
-        <h4>{item.title} <ContextHelp label="Interview prep item" description="Generated practice material, not a verified personal claim or a response to send unchanged. Its kind identifies a theme, STAR draft, gap drill, or company note; inspect the linked evidence and requirements below." /></h4>
+        <h4 aria-label={item.title}>{item.title} <ContextHelp label="Interview prep item" description="Generated practice material, not a verified personal claim or a response to send unchanged. Its kind identifies a theme, STAR draft, gap drill, or company note; inspect the linked evidence and requirements below." /></h4>
       </div>
       <p>{item.generatedText}</p>
       {item.evidenceIds.length || item.requirementIds.length ? (
@@ -262,7 +262,7 @@ export function InterviewPrepPanel({
       aria-label="Interview preparation"
     >
       <div className="interview-prep-heading">
-        <h3>Interview prep <ContextHelp label="Interview prep" description="Generated interview practice grounded in recorded candidate evidence and role requirements when references exist. No prep generated means no accepted set is stored; generating a new draft does not submit an application." /></h3>
+        <h3 aria-label="Interview prep">Interview prep <ContextHelp label="Interview prep" description="Generated interview practice grounded in recorded candidate evidence and role requirements when references exist. No prep generated means no accepted set is stored; generating a new draft does not submit an application." /></h3>
         <GenerateInterviewPrepButton
           jobId={jobId}
           hasAcceptedPrep={Boolean(prep)}

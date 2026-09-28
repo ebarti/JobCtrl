@@ -755,7 +755,7 @@ export function EmployerAnalysisPanel({
   if (!analysis) {
     return (
       <section className={className} aria-label="Role Analysis">
-        <h3>Role Analysis <ContextHelp label="Role analysis" description="No employer analysis is recorded yet. It is generated during materials preparation; no requirement or model-agreement claim is available until then." /></h3>
+        <h3 aria-label="Role Analysis">Role Analysis <ContextHelp label="Role analysis" description="No employer analysis is recorded yet. It is generated during materials preparation; no requirement or model-agreement claim is available until then." /></h3>
         <p className="muted">
           No role analysis has been recorded for this job yet. It is produced
           when materials are generated.
@@ -772,7 +772,7 @@ export function EmployerAnalysisPanel({
 
   return (
     <section className={className} aria-label="Role Analysis">
-      <h3>Role Analysis <ContextHelp label="Role analysis" description="Saved employer-side interpretation of the job post: seniority, role framing, requirements, keywords, and model audit trail. These are generated interpretations with inspectable posting evidence, not verified employer facts." /></h3>
+      <h3 aria-label="Role Analysis">Role Analysis <ContextHelp label="Role analysis" description="Saved employer-side interpretation of the job post: seniority, role framing, requirements, keywords, and model audit trail. These are generated interpretations with inspectable posting evidence, not verified employer facts." /></h3>
       <div className="employer-analysis">
         <dl className="evidence-summary-grid">
           <div>
@@ -808,19 +808,19 @@ export function EmployerAnalysisPanel({
 
         {analysis.role_framing ? (
           <div className="evidence-block">
-            <h4>Role framing <ContextHelp label="Role framing" description="Generated summary of the role's scope and expectations, based on the captured posting and saved model analysis. Compare it with the source text before relying on it." /></h4>
+            <h4 aria-label="Role framing">Role framing <ContextHelp label="Role framing" description="Generated summary of the role's scope and expectations, based on the captured posting and saved model analysis. Compare it with the source text before relying on it." /></h4>
             <p>{analysis.role_framing}</p>
           </div>
         ) : null}
         {analysis.ideal_candidate_narrative ? (
           <div className="evidence-block">
-            <h4>Ideal candidate <ContextHelp label="Ideal candidate" description="Generated description of the employer's likely ideal applicant from the posting. This is an interpretation, not a claim that the candidate has these qualifications." /></h4>
+            <h4 aria-label="Ideal candidate">Ideal candidate <ContextHelp label="Ideal candidate" description="Generated description of the employer's likely ideal applicant from the posting. This is an interpretation, not a claim that the candidate has these qualifications." /></h4>
             <p>{analysis.ideal_candidate_narrative}</p>
           </div>
         ) : null}
 
         <div className="evidence-block">
-          <h4>Requirements ({analysis.requirements.length}) <ContextHelp label="Role requirements" description="Extracted employer requirements with must-have or nice-to-have tier, relative importance, and posting evidence when saved. Requirement fit separately assesses candidate evidence; an empty list means none were recorded." /></h4>
+          <h4 aria-label={`Requirements (${analysis.requirements.length})`}>Requirements ({analysis.requirements.length}) <ContextHelp label="Role requirements" description="Extracted employer requirements with must-have or nice-to-have tier, relative importance, and posting evidence when saved. Requirement fit separately assesses candidate evidence; an empty list means none were recorded." /></h4>
           {analysis.requirements.length ? (
             <div className="employer-analysis-requirement-list">
               {analysis.requirements.map((requirement) => (
@@ -841,7 +841,7 @@ export function EmployerAnalysisPanel({
         </div>
 
         <div className="evidence-block">
-          <h4>Reasoned keywords ({analysis.keywords.length}) <ContextHelp label="Reasoned keywords" description="Keywords selected by the role analysis with rationale and job-description evidence when available. An orphan keyword has no requirement link; these are not proof that a tailored artifact contains the term." /></h4>
+          <h4 aria-label={`Reasoned keywords (${analysis.keywords.length})`}>Reasoned keywords ({analysis.keywords.length}) <ContextHelp label="Reasoned keywords" description="Keywords selected by the role analysis with rationale and job-description evidence when available. An orphan keyword has no requirement link; these are not proof that a tailored artifact contains the term." /></h4>
           {analysis.keywords.length ? (
             <div className="employer-analysis-keyword-list">
               {analysis.keywords.map((keyword) => (

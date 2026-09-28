@@ -147,7 +147,7 @@ function JobAuditHistorySection({
           </StatusBadge>
         </summary>
         <div className="job-audit-history-detail">
-          <h3 data-typography="component-title">Audit history <ContextHelp label="Audit history" description="Recorded job events and technical changes. They show what happened in the local workflow; an event is not proof that an external application was submitted." /></h3>
+          <h3 aria-label="Audit history" data-typography="component-title">Audit history <ContextHelp label="Audit history" description="Recorded job events and technical changes. They show what happened in the local workflow; an event is not proof that an external application was submitted." /></h3>
           <JobAuditHistory entries={entries} />
         </div>
       </details>
@@ -166,7 +166,7 @@ function RequirementFitMissingCallout({
       aria-label={title}
     >
       <div>
-        <h3>{title} <ContextHelp label="Requirement fit status" description="The stored requirement-level score is absent or belongs to an earlier analysis or score version. Re-score to assess current requirements; prior score and materials remain available for review." /></h3>
+        <h3 aria-label={title}>{title} <ContextHelp label="Requirement fit status" description="The stored requirement-level score is absent or belongs to an earlier analysis or score version. Re-score to assess current requirements; prior score and materials remain available for review." /></h3>
         <p className="muted">
           {outdated
             ? "The saved requirement fit belongs to a different employer-analysis generation or score version. Re-score this job to assess the current requirements; the previous score and materials remain available for review."
@@ -417,7 +417,7 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
             />
             <section className="section job-detail-description">
               <div className="job-detail-section-heading">
-                <h3>Description <ContextHelp label="Description" description="Saved text captured from the original job posting. It may differ from the live posting after capture; use the original posting link to verify current wording." /></h3>
+                <h3 aria-label="Description">Description <ContextHelp label="Description" description="Saved text captured from the original job posting. It may differ from the live posting after capture; use the original posting link to verify current wording." /></h3>
                 <span data-typography="label">Original posting text</span>
               </div>
               <JobDescription text={detail.job.descriptionPreview} />
@@ -426,7 +426,7 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
               && detail.stages.some((stage) => stage.stage === "enrich" && stage.state === "succeeded") ? (
               <section className="section requirement-fit-missing" aria-label="Application target refresh">
                 <div>
-                  <h3>Application target unavailable <ContextHelp label="Application target" description="A verified destination link was not saved for this posting. Refresh attempts to locate a target; the saved description, score, and materials remain available even if none is found." /></h3>
+                  <h3 aria-label="Application target unavailable">Application target unavailable <ContextHelp label="Application target" description="A verified destination link was not saved for this posting. Refresh attempts to locate a target; the saved description, score, and materials remain available even if none is found." /></h3>
                   <p className="muted">
                     Check the current posting for an application link. The saved description, score, and materials stay available if the check finds no verified target.
                   </p>

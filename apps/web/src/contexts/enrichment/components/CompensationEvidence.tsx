@@ -524,7 +524,7 @@ function SourceTrail({
   }
   return (
     <div className="compensation-source-trail">
-      <h4>Reported source trail <ContextHelp label="Reported source trail" description="The provider snapshots and release periods recorded with this market assessment. Source counts and samples describe available evidence, not the probability that the estimate is correct." /></h4>
+      <h4 aria-label="Reported source trail">Reported source trail <ContextHelp label="Reported source trail" description="The provider snapshots and release periods recorded with this market assessment. Source counts and samples describe available evidence, not the probability that the estimate is correct." /></h4>
       <ul>
         {sources.map((source) => (
           <li key={`${source.sourceId}:${source.snapshotVersion}`}>
@@ -622,7 +622,7 @@ function FactorList({
   }
   return (
     <div className="compensation-factor-list">
-      <h4>Reliability factors <ContextHelp label="Reliability factors" description="Stored support scores for company, role, level, location, and freshness. Overall reliability is capped by the weakest critical match; these percentages are not probabilities that the salary is correct." /></h4>
+      <h4 aria-label="Reliability factors">Reliability factors <ContextHelp label="Reliability factors" description="Stored support scores for company, role, level, location, and freshness. Overall reliability is capped by the weakest critical match; these percentages are not probabilities that the salary is correct." /></h4>
       <ul>
         {factors.map((factor) => (
           <li key={factor.name}>
@@ -902,7 +902,7 @@ function BenchmarkLineage({
       <header>
         <div>
           <span className="eyebrow">Benchmark authority</span>
-          <h4>
+          <h4 aria-label={lineage.kind === "direct" ? "Direct country benchmark" : "Geographic extrapolation bridge"}>
             {lineage.kind === "direct"
               ? "Direct country benchmark"
               : "Geographic extrapolation bridge"}
@@ -991,7 +991,7 @@ function PostedPanel({
       className="compensation-panel compensation-result-card compensation-posted-card"
     >
       <header className="compensation-result-header">
-        <h4 className="eyebrow" data-typography="label">
+        <h4 aria-label="Employer posted" className="eyebrow" data-typography="label">
           Employer posted
           <ContextHelp label="Employer posted compensation" description="An amount extracted from the saved job posting when parsing was safe. Not stated or no safe amount extracted means no structured posted range is available; inspect the source field, excerpt, and interpretation notes below." />
         </h4>
@@ -1162,7 +1162,7 @@ function MarketPanel({
       className="compensation-panel compensation-result-card compensation-market-card"
     >
       <header className="compensation-result-header">
-        <h4 className="eyebrow" data-typography="label">
+        <h4 aria-label={(peerCohort || unidentifiedEmployers) && hasRange ? "Regional salary comparison" : "Market salary estimate"} className="eyebrow" data-typography="label">
           {(peerCohort || unidentifiedEmployers) && hasRange ? "Regional salary comparison" : "Market salary estimate"}
           <ContextHelp label="Market salary estimate" description="A reported-compensation benchmark selected by role, level, geography, and available sources. A numeric range appears only for an estimated-range result; insufficient evidence, unavailable sources, unsupported input, and not requested remain distinct outcomes." />
         </h4>
@@ -1192,7 +1192,7 @@ function RawPostedFallbackPanel({ value }: { readonly value: string }) {
       className="compensation-panel compensation-result-card compensation-posted-card"
     >
       <header className="compensation-result-header">
-        <h4 className="eyebrow" data-typography="label">
+        <h4 aria-label="Employer posted" className="eyebrow" data-typography="label">
           Employer posted
           <ContextHelp label="Unparsed posted compensation" description="Raw salary text captured from the posting without a structured extraction. Refresh to parse it before treating it as a comparable pay range." />
         </h4>
@@ -1245,7 +1245,7 @@ export function CompensationAuditSection({
         aria-label="Compensation evidence"
       >
         <div className="compensation-audit-heading">
-          <h3>Compensation <ContextHelp label="Compensation" description="Employer-posted pay and separately researched market evidence. No evidence recorded means neither a parsed posted amount nor a market assessment is available for this job." /></h3>
+          <h3 aria-label="Compensation">Compensation <ContextHelp label="Compensation" description="Employer-posted pay and separately researched market evidence. No evidence recorded means neither a parsed posted amount nor a market assessment is available for this job." /></h3>
           {jobId ? <CompensationRefreshControl jobId={jobId} /> : null}
         </div>
         <Empty title="No compensation evidence recorded." />
@@ -1345,7 +1345,7 @@ export function CompensationAuditSection({
       aria-label="Compensation evidence"
     >
       <div className="compensation-audit-heading">
-        <h3>Compensation <ContextHelp label="Compensation" description="Compare saved employer-posted compensation with a separately researched market benchmark. Market ranges have source, match, and reliability limits; neither is an offer guarantee." /></h3>
+        <h3 aria-label="Compensation">Compensation <ContextHelp label="Compensation" description="Compare saved employer-posted compensation with a separately researched market benchmark. Market ranges have source, match, and reliability limits; neither is an offer guarantee." /></h3>
         {jobId ? <CompensationRefreshControl jobId={jobId} /> : null}
       </div>
       {effectiveSummary ? (
