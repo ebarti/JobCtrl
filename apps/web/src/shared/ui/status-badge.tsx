@@ -17,10 +17,10 @@ const statusBadgeVariants = cva(
   {
     variants: {
       tone: {
-        danger: "text-destructive",
+        danger: "text-destructive-text",
         info: "text-status-info",
         muted: "text-muted-foreground",
-        ok: "text-success",
+        ok: "text-success-text",
         warn: "text-warning",
       } satisfies Record<StatusTagTone, string>,
     },

@@ -26,8 +26,16 @@ describe("<JobOverview>", () => {
     expect(within(metadata).getByText("Discovered via")).toBeInTheDocument();
     expect(within(metadata).getByText("jobspy:linkedin")).toBeInTheDocument();
     expect(
-      within(metadata).getByRole("link", { name: "Open original posting" }),
+      within(metadata).getByRole("link", {
+        name: "Open original posting (opens in a new tab)",
+      }),
     ).toHaveAttribute("href", sampleJob.url);
+    const postingLink = within(metadata).getByRole("link", {
+      name: "Open original posting (opens in a new tab)",
+    });
+    expect(postingLink).toHaveAttribute("target", "_blank");
+    expect(postingLink).toHaveAttribute("rel", "noreferrer");
+    expect(postingLink.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
     expect(metadata).not.toHaveTextContent(" · ");
     expect(
       screen.getByRole("heading", { level: 1, name: sampleJob.title }),

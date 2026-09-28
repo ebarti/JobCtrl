@@ -1,3 +1,5 @@
+import { IconExternalLink } from "@tabler/icons-react";
+
 import type { JobDetail } from "../../contexts/operations/types.js";
 import { ScoreBadge } from "../../contexts/scoring/components/ScoreBadge.js";
 import { StatusBadge } from "../../shared/ui/status-badge.js";
@@ -73,6 +75,8 @@ export function JobOverview({ detail }: JobOverviewProps) {
                 target="_blank"
               >
                 Open original posting
+                <IconExternalLink aria-hidden="true" size={14} stroke={1.9} />
+                <span className="sr-only"> (opens in a new tab)</span>
               </a>
             </dd>
           </div>
