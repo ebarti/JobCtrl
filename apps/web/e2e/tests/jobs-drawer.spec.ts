@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
 import { test, expect, type Locator, type Page } from "@playwright/test";
 
+import type { JobDetail } from "../../src/contexts/operations/types.js";
 import { loadE2eDbPath, QA_PLATFORM_JOB_ID } from "../fixtures/e2e-state.js";
 
 const FILTER_PARAMS =
@@ -445,6 +446,30 @@ test("Job detail: keyboard activation opens requirement fit, stages, and artifac
   page,
 }) => {
   const prohibitedRequests = watchProhibitedProductPathRequests(page);
+  await page.route(/\/v1\/jobs\/[^?]+(?:\?.*)?$/, async (route) => {
+    if (route.request().method() !== "GET") {
+      await route.continue();
+      return;
+    }
+    const response = await route.fetch();
+    const detail = (await response.json()) as JobDetail;
+    if (!Array.isArray(detail.artifacts)) {
+      await route.fulfill({ response });
+      return;
+    }
+    const accepted = detail.artifacts.find((artifact) => artifact.status === "approved");
+    if (!accepted) throw new Error("The synthetic job must contain an approved artifact.");
+    await route.fulfill({
+      response,
+      json: {
+        ...detail,
+        artifacts: [
+          ...detail.artifacts,
+          { ...accepted, artifactId: "qa-superseded-review-copy", generation: 0, status: "superseded" },
+        ],
+      },
+    });
+  });
   await page.goto(`/jobs?${FILTER_PARAMS}`);
   const row = page
     .locator("table.jobs-data-grid-table tbody tr")
@@ -464,9 +489,18 @@ test("Job detail: keyboard activation opens requirement fit, stages, and artifac
   await expect(
     drawer.getByRole("heading", { name: /Preparation diagnostics/i }),
   ).toBeVisible();
-  await expect(
-    drawer.getByRole("heading", { name: /Active artifacts/i }),
-  ).toBeVisible();
+  const artifactSection = drawer.getByRole("heading", { name: "Artifacts", exact: true }).locator("..");
+  await expect(artifactSection).toBeVisible();
+  const foregroundArtifacts = artifactSection.locator(":scope > .job-artifact-row");
+  await expect(foregroundArtifacts.first()).toContainText("approved");
+  await expect(foregroundArtifacts.first()).toContainText("Generation 1");
+  await expect(foregroundArtifacts.filter({ hasText: "superseded" })).toHaveCount(0);
+  const supersededHistory = artifactSection.locator(".job-artifact-history");
+  await expect(supersededHistory).not.toHaveAttribute("open", "");
+  await expect(supersededHistory.locator(".job-artifact-row")).toBeHidden();
+  await supersededHistory.locator(":scope > summary").click();
+  await expect(supersededHistory).toHaveAttribute("open", "");
+  await expect(supersededHistory.locator(".job-artifact-row")).toContainText("superseded");
   const roleAnalysis = drawer.getByRole("region", { name: "Role Analysis" });
   await expect(roleAnalysis).toBeVisible();
   await expect(

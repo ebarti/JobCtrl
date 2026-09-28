@@ -2486,7 +2486,11 @@ test("Job Detail requirement-fit card has visual regression coverage", async ({
     await ranking.evaluate(
       (element) => getComputedStyle(element).gridTemplateColumns.split(" ").length,
     ),
-  ).toBe(6);
+  ).toBe(3);
+  expect(
+    await ranking.evaluate((element) => element.scrollWidth <= element.clientWidth + 1),
+    "three balanced metric columns should not overflow their container",
+  ).toBe(true);
   const disclosure = drawerRequirement.getByRole("button", {
     name: / evidence for requirement:/,
   });
