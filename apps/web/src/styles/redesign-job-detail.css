@@ -232,6 +232,17 @@
   overflow-wrap: anywhere;
 }
 
+.job-artifact-history {
+  border-top: 1px solid var(--border);
+}
+
+.job-artifact-history > summary {
+  min-block-size: var(--jh-target-min-size);
+  padding: 10px 0;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+
 .job-audit-history-detail {
   display: grid;
   gap: var(--jh-internal-gap);

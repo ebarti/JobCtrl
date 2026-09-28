@@ -81,6 +81,53 @@ function renderJobDetailDrawer(jobId: string) {
 }
 
 describe("<JobDetailDrawer>", () => {
+  it("shows accepted artifacts before superseded versions while retaining the full audit list", async () => {
+    const user = userEvent.setup();
+    const superseded = Array.from({ length: 4 }, (_, index) => ({
+      ...sampleArtifact,
+      artifactId: `old-${index}`,
+      type: `older_version_${index}`,
+      status: "superseded",
+    }));
+    const approved = Array.from({ length: 4 }, (_, index) => ({
+      ...sampleArtifact,
+      artifactId: `current-${index}`,
+      type: `accepted_version_${index}`,
+      status: index === 0 ? "active" : "approved",
+    }));
+    server.use(
+      http.get("*/v1/jobs/:jobKey", ({ params }) =>
+        HttpResponse.json(
+          makeJobDetail(
+            { ...sampleJob, jobKey: String(params["jobKey"]) },
+            { artifacts: [...superseded, ...approved] },
+          ),
+        ),
+      ),
+    );
+
+    renderJobDetailDrawer("https://example.com/jobs/1");
+
+    const section = (await screen.findByRole("heading", { name: "Artifacts" })).closest("section");
+    expect(section).not.toBeNull();
+    const foregroundRows = section!.querySelectorAll(":scope > .job-artifact-row");
+    expect(foregroundRows).toHaveLength(4);
+    foregroundRows.forEach((row, index) => {
+      expect(row).toHaveTextContent(`accepted_version_${index}`);
+      expect(within(row as HTMLElement).getByRole("button", { name: "Open" })).toBeEnabled();
+    });
+
+    const history = section!.querySelector(".job-artifact-history");
+    expect(history).not.toBeNull();
+    expect(history).not.toHaveAttribute("open");
+    expect(history!.querySelectorAll(".job-artifact-row")).toHaveLength(4);
+    await user.click(within(history as HTMLElement).getByText("Earlier versions (4 superseded)"));
+    expect(history).toHaveAttribute("open");
+    superseded.forEach((artifact) => {
+      expect(within(history as HTMLElement).getByText(artifact.type)).toBeInTheDocument();
+    });
+  });
+
   it("renders source-conflict compensation warnings only inside compensation evidence", async () => {
     if (sampleCompensationAudit.market.recordStatus !== "recorded") {
       throw new Error(

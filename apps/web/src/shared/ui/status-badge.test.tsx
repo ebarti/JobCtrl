@@ -22,6 +22,18 @@ describe("<StatusBadge>", () => {
     expect(badge.querySelector("svg")).toHaveAttribute("data-icon", "inline-start");
   });
 
+  it("uses accessible semantic text colors for success and failure labels", () => {
+    render(
+      <>
+        <StatusBadge tone="ok">Succeeded</StatusBadge>
+        <StatusBadge tone="danger">Failed</StatusBadge>
+      </>,
+    );
+
+    expect(screen.getByText("Succeeded")).toHaveClass("text-success-text");
+    expect(screen.getByText("Failed")).toHaveClass("text-destructive-text");
+  });
+
   it("keeps muted metadata visually restrained", () => {
     render(<StatusBadge tone="muted">Not recorded</StatusBadge>);
 

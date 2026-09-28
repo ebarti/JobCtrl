@@ -13,6 +13,7 @@ import { http, HttpResponse } from "msw";
 import { useMemo } from "react";
 
 import { jobsSearchSchema } from "../../routes/-jobs.search.js";
+import { makeJobDetail, sampleArtifact, sampleJob } from "../../test/fixtures/projections.js";
 import { JobDetailDrawer } from "./JobDetailDrawer.js";
 
 const meta = {
@@ -55,6 +56,37 @@ function JobDetailDrawerHost({ jobId }: { jobId: string }) {
 }
 
 export const Populated: Story = {
+  render: () => <JobDetailDrawerHost jobId="job-1" />,
+};
+
+export const ArtifactLifecycle: Story = {
+  parameters: {
+    msw: {
+      handlers: [
+        http.get("*/v1/jobs/:jobKey", ({ params }) =>
+          HttpResponse.json(
+            makeJobDetail(
+              { ...sampleJob, jobKey: String(params["jobKey"]) },
+              {
+                artifacts: [
+                  ...Array.from({ length: 4 }, (_, index) => ({
+                    ...sampleArtifact,
+                    artifactId: `older-${index}`,
+                    status: "superseded",
+                  })),
+                  ...Array.from({ length: 4 }, (_, index) => ({
+                    ...sampleArtifact,
+                    artifactId: `current-${index}`,
+                    status: "approved",
+                  })),
+                ],
+              },
+            ),
+          ),
+        ),
+      ],
+    },
+  },
   render: () => <JobDetailDrawerHost jobId="job-1" />,
 };
 
