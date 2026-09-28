@@ -289,7 +289,7 @@ for (const [width, height] of [
 }
 
 for (const width of [1440, 1024, 390]) {
-  test(`job inspector preserves material labels and stage status at ${width}px`, async ({
+  test(`job detail preserves material labels and stage status at ${width}px`, async ({
     page,
     context,
   }) => {
@@ -315,14 +315,11 @@ for (const width of [1440, 1024, 390]) {
     await expect(
       page.getByRole("heading", { name: "Platform systems lead", exact: true }),
     ).toBeVisible();
-    const diagnostics = page.getByRole("button", {
-      name: "Progress and history",
-      exact: true,
-    });
-    if (await diagnostics.isVisible()) await diagnostics.click();
-    const inspector = page.locator(".job-detail-workspace__inspector");
-    await expect(inspector.getByText("running", { exact: true })).toBeVisible();
-    const rows = inspector.locator(".job-artifact-row");
+    const workspace = page.getByRole("article", { name: "Job details" });
+    const preparation = workspace.locator("#job-detail-preparation");
+    const artifacts = workspace.locator("#job-detail-artifacts");
+    await expect(preparation.getByText("running", { exact: true })).toBeVisible();
+    const rows = artifacts.locator(".job-artifact-row");
     await expect(rows).toHaveCount(2);
     await expect(
       rows.first().getByText("resume_pdf", { exact: true }),
@@ -332,23 +329,28 @@ for (const width of [1440, 1024, 390]) {
     ).toBeVisible();
     await rows.first().getByText("Technical details", { exact: true }).click();
     await expect(rows.first().locator("code")).toBeVisible();
-    const geometry = await inspector.evaluate((element) => {
-      const panel = element.getBoundingClientRect();
+    const geometry = await workspace.evaluate((element) => {
+      const sections = [
+        element.querySelector<HTMLElement>("#job-detail-preparation"),
+        element.querySelector<HTMLElement>("#job-detail-artifacts"),
+      ];
+      if (sections.some((section) => !section)) {
+        throw new Error("Expected preparation and artifact sections.");
+      }
       const labels = [
         ...element.querySelectorAll<HTMLElement>(
           ".job-artifact-row > :nth-child(2)",
         ),
       ];
-      const content = [
-        ...element.querySelectorAll(
-          ".stage-timeline__header, .job-artifact-row",
-        ),
-      ];
       return {
-        overflow: element.scrollWidth > element.clientWidth,
-        clipped: content.some((child) => {
-          const box = child.getBoundingClientRect();
-          return box.left < panel.left || box.right > panel.right;
+        overflow: sections.some((section) => section!.scrollWidth > section!.clientWidth),
+        clipped: sections.some((section) => {
+          const panel = section!.getBoundingClientRect();
+          return [...section!.querySelectorAll(".stage-timeline__header, .job-artifact-row")]
+            .some((child) => {
+              const box = child.getBoundingClientRect();
+              return box.left < panel.left || box.right > panel.right;
+            });
         }),
         // Short artifact types should take at most two text lines, never a
         // column of individual characters beside the preview action.

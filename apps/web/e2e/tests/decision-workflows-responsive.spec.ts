@@ -107,17 +107,20 @@ test.describe("decision workflow mobile composition", () => {
       }),
     ).toBeVisible();
 
-    const sectionSwitcher = workspace.getByRole("group", {
-      name: "Job detail section",
-    });
-    const diagnosticsButton = sectionSwitcher.getByRole("button", {
-      name: "Progress and history",
-    });
-    await diagnosticsButton.click();
-    await expect(diagnosticsButton).toHaveAttribute("aria-pressed", "true");
-    await expect(
-      workspace.locator("#job-detail-diagnostics-panel"),
-    ).toBeVisible();
+    await workspace.getByRole("button", { name: "Sections" }).click();
+    const sectionsMenu = page.getByRole("navigation", { name: "Job detail sections" });
+    await expect(sectionsMenu.getByRole("button", { name: "Apply history" })).toBeVisible();
+    await expect(sectionsMenu.getByRole("button", { name: "Audit history" })).toBeVisible();
+    await sectionsMenu.getByRole("button", { name: "Preparation diagnostics" }).click();
+    const preparation = workspace.locator("#job-detail-preparation");
+    const preparationTrigger = preparation.locator("[data-slot='collapsible-trigger']");
+    await expect(sectionsMenu).toBeHidden();
+    await expect(preparationTrigger).toBeFocused();
+    await expect(preparationTrigger).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    await expect(preparation.getByRole("list", { name: "Preparation stages" })).toBeVisible();
 
     const moreActions = workspace.getByRole("button", {
       name: "More job actions",

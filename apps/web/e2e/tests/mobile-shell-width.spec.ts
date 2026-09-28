@@ -171,46 +171,45 @@ test("profile navigation stays contained at the narrowest mobile viewport", asyn
   expect(layout.tabsScrollWidth).toBeGreaterThan(layout.tabsWidth);
 });
 
-test("job detail switches between evidence and diagnostics within the mobile viewport", async ({
+test("job detail keeps evidence, diagnostics, and history in one mobile column", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(JOB_DETAIL_ROUTE);
-  const overviewControl = page.getByRole("button", {
-    name: "Summary and evidence",
-  });
-  const diagnosticsControl = page.getByRole("button", {
-    name: "Progress and history",
-  });
-  const overview = page.locator("#job-detail-overview-panel");
-  const diagnostics = page.locator("#job-detail-diagnostics-panel");
+  const workspace = page.getByRole("article", { name: "Job details" });
+  const evidence = workspace.locator("#job-detail-fit-evidence");
+  const preparation = workspace.locator("#job-detail-preparation");
+  const history = workspace.locator("#job-detail-audit");
+  await expect(evidence).toBeVisible({ timeout: 30_000 });
+  await expect(preparation.getByRole("list", { name: "Preparation stages" })).toBeVisible();
+  await workspace.getByRole("button", { name: "Sections" }).click();
+  await page.getByRole("navigation", { name: "Job detail sections" })
+    .getByRole("button", { name: "Audit history" }).click();
+  await expect(history.locator("[data-slot='collapsible-trigger']")).toBeFocused();
+  await expect(evidence).toBeVisible();
+  await expect(preparation).toBeVisible();
+  await expect(history).toBeVisible();
 
-  await expect(overviewControl).toHaveAttribute("aria-pressed", "true", {
-    timeout: 30_000,
-  });
-  await expect(overview).toBeVisible();
-  await expect(diagnostics).toBeHidden();
-
-  await diagnosticsControl.click();
-  await expect(diagnosticsControl).toHaveAttribute("aria-pressed", "true");
-  await expect(overview).toBeHidden();
-  await expect(diagnostics).toBeVisible();
-  await expect(
-    page.getByRole("heading", { name: "Preparation diagnostics" }),
-  ).toBeVisible();
-
-  const layout = await diagnostics.evaluate((element) => {
-    const regionRect = element.getBoundingClientRect();
+  const layout = await workspace.evaluate((element) => {
+    const regionRects = [
+      "job-detail-fit-evidence",
+      "job-detail-preparation",
+      "job-detail-audit",
+    ].map((id) => element.querySelector<HTMLElement>(`#${id}`)?.getBoundingClientRect());
+    if (regionRects.some((rect) => !rect)) {
+      throw new Error("Expected the evidence, preparation, and history sections.");
+    }
     return {
       pageScrollWidth: document.documentElement.scrollWidth,
-      regionLeft: regionRect.left,
-      regionRight: regionRect.right,
+      regionRects: regionRects.map((rect) => ({ left: rect!.left, right: rect!.right })),
       viewportWidth: document.documentElement.clientWidth,
     };
   });
 
-  expect(layout.regionLeft).toBeGreaterThanOrEqual(0);
-  expect(layout.regionRight).toBeLessThanOrEqual(layout.viewportWidth + 1);
+  for (const rect of layout.regionRects) {
+    expect(rect.left).toBeGreaterThanOrEqual(0);
+    expect(rect.right).toBeLessThanOrEqual(layout.viewportWidth + 1);
+  }
   expect(layout.pageScrollWidth).toBeLessThanOrEqual(layout.viewportWidth + 1);
 });
 
