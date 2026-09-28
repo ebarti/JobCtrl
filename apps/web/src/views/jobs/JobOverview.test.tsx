@@ -54,4 +54,25 @@ describe("<JobOverview>", () => {
     expect(within(metadata).queryByText("Location")).not.toBeInTheDocument();
     expect(within(metadata).queryByText("Salary")).not.toBeInTheDocument();
   });
+
+  it.each(["failed", "exhausted"] as const)(
+    "renders %s workflow state with the failure icon and color",
+    (currentState) => {
+      render(
+        <JobOverview
+          detail={makeJobDetail({
+            ...sampleJob,
+            currentSubstage: "tailor",
+            currentState,
+          })}
+        />,
+      );
+
+      const workflow = screen.getByRole("group", { name: "Workflow state" });
+      const badge = within(workflow).getByText(`Tailor · ${currentState === "failed" ? "Failed" : "Exhausted"}`);
+      expect(badge).toHaveAttribute("data-status-tone", "danger");
+      expect(badge).toHaveClass("text-destructive-text");
+      expect(badge.querySelector("svg")).toHaveClass("tabler-icon-circle-x");
+    },
+  );
 });

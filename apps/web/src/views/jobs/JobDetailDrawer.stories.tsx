@@ -13,7 +13,12 @@ import { http, HttpResponse } from "msw";
 import { useMemo } from "react";
 
 import { jobsSearchSchema } from "../../routes/-jobs.search.js";
-import { makeJobDetail, sampleArtifact, sampleJob } from "../../test/fixtures/projections.js";
+import {
+  makeJobDetail,
+  makeResumeTemplateState,
+  sampleArtifact,
+  sampleJob,
+} from "../../test/fixtures/projections.js";
 import { JobDetailDrawer } from "./JobDetailDrawer.js";
 
 const meta = {
@@ -66,19 +71,16 @@ export const ArtifactLifecycle: Story = {
         http.get("*/v1/jobs/:jobKey", ({ params }) =>
           HttpResponse.json(
             makeJobDetail(
-              { ...sampleJob, jobKey: String(params["jobKey"]) },
+              { ...sampleJob, jobKey: String(params["jobKey"]), currentSubstage: "tailor", currentState: "failed" },
               {
                 artifacts: [
-                  ...Array.from({ length: 4 }, (_, index) => ({
-                    ...sampleArtifact,
-                    artifactId: `older-${index}`,
-                    status: "superseded",
-                  })),
-                  ...Array.from({ length: 4 }, (_, index) => ({
-                    ...sampleArtifact,
-                    artifactId: `current-${index}`,
-                    status: "approved",
-                  })),
+                  { ...sampleArtifact, artifactId: "superseded-pdf", type: "resume_pdf", generation: 0, status: "superseded" },
+                  { ...sampleArtifact, artifactId: "older-resume", type: "tailored_resume", generation: 1, status: "approved", resumeTemplate: makeResumeTemplateState("classic", "Classic") },
+                  { ...sampleArtifact, artifactId: "older-pdf", type: "resume_pdf", generation: 1, status: "approved" },
+                  { ...sampleArtifact, artifactId: "newer-resume", type: "tailored_resume", generation: 3, status: "approved", resumeTemplate: makeResumeTemplateState("modern", "Modern") },
+                  { ...sampleArtifact, artifactId: "newer-pdf", type: "resume_pdf", generation: 3, status: "approved" },
+                  { ...sampleArtifact, artifactId: "draft-cover", type: "cover_letter", generation: 4, status: "candidate" },
+                  { ...sampleArtifact, artifactId: "failed-cover", type: "cover_letter_pdf", generation: 4, status: "rejected" },
                 ],
               },
             ),

@@ -95,7 +95,10 @@ they cross the browser boundary.
 
 The API serves registered artifacts, never an arbitrary filesystem path. The
 job detail projection links each accepted generation to provenance, validation,
-and layout evidence.
+and layout evidence. Artifact summaries include a nullable canonical
+`generation` when one was recorded; lifecycle `status` remains unchanged.
+An older generation can still be approved, so clients must not treat age alone
+as a superseded status.
 
 ## Compensation
 

@@ -85,26 +85,36 @@ function evidenceReferenceExcerpt(entry: EvidenceMapEntry): string | null {
 }
 
 function groupJobArtifacts(artifacts: readonly ArtifactSummary[]) {
-  const current: ArtifactSummary[] = [];
+  const accepted: ArtifactSummary[] = [];
   const other: ArtifactSummary[] = [];
   const superseded: ArtifactSummary[] = [];
   for (const artifact of artifacts) {
     if (artifact.status === "active" || artifact.status === "approved") {
-      current.push(artifact);
+      accepted.push(artifact);
     } else if (artifact.status === "superseded") {
       superseded.push(artifact);
     } else {
       other.push(artifact);
     }
   }
-  return { current, other, superseded };
+  accepted.sort((left, right) => {
+    const generationDifference = (right.generation ?? -1) - (left.generation ?? -1);
+    if (generationDifference) return generationDifference;
+    const leftTime = Date.parse(left.createdAt ?? "") || 0;
+    const rightTime = Date.parse(right.createdAt ?? "") || 0;
+    return rightTime - leftTime;
+  });
+  return { accepted, other, superseded };
 }
 
 function JobArtifactRow({ artifact }: { readonly artifact: ArtifactSummary }) {
   return (
     <div className="mini-row job-artifact-row">
       <ArtifactStatusBadge status={artifact.status} />
-      <span>{artifact.type}</span>
+      <span>
+        {artifact.type}
+        {artifact.generation != null ? ` · Generation ${artifact.generation}` : null}
+      </span>
       <OpenArtifactButton
         artifactId={artifact.artifactId}
         className={buttonVariants({ size: "sm", variant: "outline" })}
@@ -349,7 +359,7 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
               <Section title="Artifacts">
                 {detail.artifacts.length ? (
                   <>
-                    {[...artifactGroups.current, ...artifactGroups.other].map(
+                    {[...artifactGroups.accepted, ...artifactGroups.other].map(
                       (artifact) => (
                         <JobArtifactRow
                           artifact={artifact}
@@ -360,7 +370,7 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
                     {artifactGroups.superseded.length ? (
                       <details className="job-artifact-history">
                         <summary data-typography="control">
-                          Earlier versions ({artifactGroups.superseded.length} superseded)
+                          Superseded artifacts ({artifactGroups.superseded.length})
                         </summary>
                         {artifactGroups.superseded.map((artifact) => (
                           <JobArtifactRow

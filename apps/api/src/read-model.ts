@@ -4075,6 +4075,7 @@ function rowToArtifactSummary(row: ArtifactProjectionRow, db?: SqliteDatabase): 
     company: row.job_employer || "Unknown company",
     type: row.artifact_type || "artifact",
     status,
+    generation: nullableNumber(row.generation),
     localPath,
     createdAt: row.created_at,
     sizeBytes,

@@ -335,6 +335,32 @@ describe("exact-v7 read model job ids", () => {
     expect(schemaManifest(db, EXACT_V11_SCHEMA_MANIFEST.version)).toEqual(before);
   });
 
+  it("returns canonical artifact generations without changing accepted lifecycle statuses", () => {
+    const db = seededDatabase();
+    const insertMaterial = db.prepare(
+      `INSERT INTO job_materials (
+         tenant_id, job_id, generation, status, created_at, updated_at
+       ) VALUES ('local', ?, ?, ?, ?, ?)`,
+    );
+    insertMaterial.run(JOB_ID, 3, "resume_approved", NOW, NOW);
+    insertMaterial.run(JOB_ID, 4, "resume_in_progress", NOW, NOW);
+    const insertArtifact = db.prepare(
+      `INSERT INTO job_materials_artifacts (
+         tenant_id, job_id, generation, artifact_type, artifact_id, status, path,
+         render_format, size_bytes, metadata_json, created_at
+       ) VALUES ('local', ?, ?, ?, ?, ?, ?, 'text', 12, '{}', ?)`,
+    );
+    insertArtifact.run(JOB_ID, 3, "tailored_resume", "resume-approved-3", "approved", path.join(os.tmpdir(), "resume-approved-3.txt"), NOW);
+    insertArtifact.run(JOB_ID, 4, "cover_letter", "cover-candidate-4", "candidate", path.join(os.tmpdir(), "cover-candidate-4.txt"), NOW);
+
+    const artifacts = getJobDetail(db, JOB_ID)!.artifacts;
+    expect(artifacts.map(({ artifactId, status, generation }) => ({ artifactId, status, generation })).sort((a, b) => a.artifactId.localeCompare(b.artifactId))).toEqual([
+      { artifactId: "cover-candidate-4", status: "candidate", generation: 4 },
+      { artifactId: "resume-approved-3", status: "approved", generation: 3 },
+      { artifactId: "resume-local", status: "approved", generation: 1 },
+    ]);
+  });
+
   it("projects attempt exhaustion as a retryable failure reason", () => {
     const db = seededDatabase();
     db.prepare(

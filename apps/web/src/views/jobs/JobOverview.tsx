@@ -22,11 +22,11 @@ function applicationTone(status: string | null): "ok" | "info" | "muted" {
   return "muted";
 }
 
-function workflowTone(state: string): "ok" | "info" | "muted" | "warn" {
+function workflowTone(state: string): "ok" | "info" | "muted" | "warn" | "danger" {
   if (state === "succeeded") return "ok";
   if (state === "queued" || state === "running") return "info";
-  if (state === "failed" || state === "blocked" || state === "exhausted")
-    return "warn";
+  if (state === "failed" || state === "exhausted") return "danger";
+  if (state === "blocked" || state === "needs_verification") return "warn";
   return "muted";
 }
 

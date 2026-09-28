@@ -21,7 +21,7 @@ const statusBadgeVariants = cva(
         info: "text-status-info",
         muted: "text-muted-foreground",
         ok: "text-success-text",
-        warn: "text-warning",
+        warn: "text-warning-text",
       } satisfies Record<StatusTagTone, string>,
     },
     defaultVariants: {

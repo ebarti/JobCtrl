@@ -29,6 +29,7 @@ import {
 import {
   makeApplyAudit,
   makeJobDetail,
+  makeResumeTemplateState,
   sampleArtifact,
   sampleCompensationAudit,
   sampleCompensationSummary,
@@ -121,11 +122,55 @@ describe("<JobDetailDrawer>", () => {
     expect(history).not.toBeNull();
     expect(history).not.toHaveAttribute("open");
     expect(history!.querySelectorAll(".job-artifact-row")).toHaveLength(4);
-    await user.click(within(history as HTMLElement).getByText("Earlier versions (4 superseded)"));
+    await user.click(within(history as HTMLElement).getByText("Superseded artifacts (4)"));
     expect(history).toHaveAttribute("open");
     superseded.forEach((artifact) => {
       expect(within(history as HTMLElement).getByText(artifact.type)).toBeInTheDocument();
     });
+  });
+
+  it("keeps every approved generation visible ahead of newer candidates and failed materials", async () => {
+    const artifacts = [
+      { ...sampleArtifact, artifactId: "draft-4", type: "cover_letter", generation: 4, status: "candidate" },
+      { ...sampleArtifact, artifactId: "old-resume", type: "tailored_resume", generation: 1, status: "approved", resumeTemplate: makeResumeTemplateState("classic", "Classic") },
+      { ...sampleArtifact, artifactId: "failed-4", type: "cover_letter_pdf", generation: 4, status: "rejected" },
+      { ...sampleArtifact, artifactId: "new-resume", type: "tailored_resume", generation: 3, status: "approved", createdAt: "2026-05-03T10:00:00Z", resumeTemplate: makeResumeTemplateState("modern", "Modern") },
+      { ...sampleArtifact, artifactId: "old-pdf", type: "resume_pdf", generation: 1, status: "approved" },
+      { ...sampleArtifact, artifactId: "new-pdf", type: "resume_pdf", generation: 3, status: "approved", createdAt: "2026-05-03T11:00:00Z" },
+      { ...sampleArtifact, artifactId: "legacy-cover", type: "cover_letter", status: "approved" },
+      { ...sampleArtifact, artifactId: "superseded-pdf", type: "resume_pdf", generation: 0, status: "superseded" },
+    ];
+    server.use(
+      http.get("*/v1/jobs/:jobKey", ({ params }) =>
+        HttpResponse.json(
+          makeJobDetail(
+            { ...sampleJob, jobKey: String(params["jobKey"]) },
+            { artifacts },
+          ),
+        ),
+      ),
+    );
+
+    renderJobDetailDrawer("https://example.com/jobs/1");
+
+    const section = (await screen.findByRole("heading", { name: "Artifacts" })).closest("section");
+    expect(section).not.toBeNull();
+    const foregroundRows = [...section!.querySelectorAll(":scope > .job-artifact-row")];
+    expect(foregroundRows).toHaveLength(7);
+    expect(foregroundRows.map((row) => row.textContent)).toEqual([
+      expect.stringContaining("resume_pdf · Generation 3"),
+      expect.stringContaining("tailored_resume · Generation 3"),
+      expect.stringContaining("tailored_resume · Generation 1"),
+      expect.stringContaining("resume_pdf · Generation 1"),
+      expect.stringContaining("cover_letter"),
+      expect.stringContaining("cover_letter · Generation 4"),
+      expect.stringContaining("cover_letter_pdf · Generation 4"),
+    ]);
+    expect(foregroundRows.slice(0, 5).every((row) => row.textContent?.includes("approved"))).toBe(true);
+    const history = section!.querySelector(".job-artifact-history");
+    expect(history).not.toHaveAttribute("open");
+    expect(history).toHaveTextContent("superseded");
+    expect(history!.querySelectorAll(".job-artifact-row")).toHaveLength(1);
   });
 
   it("renders source-conflict compensation warnings only inside compensation evidence", async () => {
