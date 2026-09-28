@@ -27,6 +27,18 @@
   padding-top: 3px;
 }
 
+.route-page--job-detail .context-help-trigger,
+.job-detail-drawer .context-help-trigger {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  min-width: 22px;
+  margin-inline-start: 3px;
+  vertical-align: middle;
+  color: var(--muted-foreground);
+}
+
 .job-overview-score-label,
 .job-overview-readiness-label,
 .job-overview-facts dt,
