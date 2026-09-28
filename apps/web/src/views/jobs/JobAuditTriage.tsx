@@ -8,7 +8,7 @@ import { ContextHelp } from "../../shared/ui/context-help.js";
 import { fitScoreHelp } from "./fit-score-help.js";
 
 const metricHelp = {
-  "Fit score": "The latest stored candidate fit score, on a 0–10 scale. It may come from policy scoring or a saved manual correction; inspect the score record before relying on it.",
+  "Fit score": "The latest stored candidate fit score, on a 1–10 scale. It may come from policy scoring or a saved manual correction; inspect the score record before relying on it.",
   Band: "The policy's named fit category for the stored score. This is a ranking summary, not a hiring prediction.",
   Confidence: "How strongly the scoring evidence supports the fit assessment. It is not the probability of an offer or proof that every source is correct.",
   Eligibility: "The scoring policy's eligibility assessment from known job and profile facts. Unknown means the available evidence does not establish eligibility.",
