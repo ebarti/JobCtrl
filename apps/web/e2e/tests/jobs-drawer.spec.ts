@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import { test, expect, type Locator, type Page } from "@playwright/test";
 
 import type { JobDetail } from "../../src/contexts/operations/types.js";
+import { sampleHealthResponse } from "../../src/test/fixtures/projections.js";
 import { loadE2eDbPath, QA_PLATFORM_JOB_ID } from "../fixtures/e2e-state.js";
 
 const FILTER_PARAMS =
@@ -574,6 +575,62 @@ test("Job detail: keyboard activation opens requirement fit, stages, and artifac
   await expect(page).toHaveURL(/sort=fit_score/);
   await expect(page).toHaveURL(/\/jobs\?/);
   expect(prohibitedRequests).toEqual([]);
+});
+
+test("Job detail section jumps clear the current topbar on desktop and phone", async ({
+  page,
+}) => {
+  let workerStatus: "stale" | "healthy" = "stale";
+  await page.route("**/v1/health", async (route) => {
+    await route.fulfill({
+      json: {
+        ...sampleHealthResponse,
+        worker: {
+          ...sampleHealthResponse.worker,
+          status: workerStatus,
+          message: "Synthetic worker health for section navigation.",
+        },
+      },
+    });
+  });
+
+  async function jumpToArtifacts() {
+    const drawer = page.getByRole("article", { name: "Job details" });
+    await expect(drawer).toBeVisible({ timeout: 30_000 });
+    const sectionsButton = drawer.getByRole("button", { name: "Sections" });
+    await sectionsButton.click();
+    await page.getByRole("button", { name: "Collapse all" }).click();
+    await sectionsButton.click();
+    await page.getByRole("navigation", { name: "Job detail sections" })
+      .getByRole("button", { name: "Artifacts" }).click();
+    const trigger = drawer.locator(
+      "#job-detail-artifacts > .configuration-section__header [data-slot='collapsible-trigger']",
+    );
+    await expect(trigger).toHaveAttribute("aria-expanded", "true");
+    await expect(trigger).toBeFocused();
+    const geometry = await trigger.evaluate((element) => ({
+      triggerTop: element.getBoundingClientRect().top,
+      topbarBottom: document.querySelector<HTMLElement>(".topbar")!.getBoundingClientRect().bottom,
+      viewportHeight: window.innerHeight,
+    }));
+    expect(geometry.triggerTop).toBeGreaterThanOrEqual(geometry.topbarBottom);
+    expect(geometry.triggerTop).toBeLessThan(geometry.viewportHeight);
+    return geometry.topbarBottom;
+  }
+
+  for (const width of [1215, 390]) {
+    await page.setViewportSize({ width, height: 844 });
+    workerStatus = "stale";
+    await page.goto(`/jobs/${encodeURIComponent(QA_PLATFORM_JOB_ID)}?${FILTER_PARAMS}`);
+    await expect(page.locator(".connection-banner")).toBeVisible();
+    const warningTopbarBottom = await jumpToArtifacts();
+
+    workerStatus = "healthy";
+    await page.reload();
+    await expect(page.locator(".connection-banner")).toHaveCount(0);
+    const healthyTopbarBottom = await jumpToArtifacts();
+    expect(warningTopbarBottom).toBeGreaterThan(healthyTopbarBottom);
+  }
 });
 
 test("Job detail: Apply Review handoff preserves the selected job", async ({

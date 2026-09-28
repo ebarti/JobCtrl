@@ -266,7 +266,7 @@
 .job-detail-major-section {
   min-width: 0;
   border-bottom: 1px solid var(--border);
-  scroll-margin-block-start: var(--jh-section-gap);
+  scroll-margin-block-start: calc(var(--job-detail-topbar-bottom, 0px) + var(--jh-section-gap));
 }
 
 .job-detail-major-section > .configuration-section__header > .configuration-section__trigger {

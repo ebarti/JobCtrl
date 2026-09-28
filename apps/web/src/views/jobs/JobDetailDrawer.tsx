@@ -346,9 +346,13 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
     const id = jumpTarget.current;
     if (!id) return;
     jumpTarget.current = null;
-    const trigger = document.getElementById(`job-detail-${id}`)?.querySelector<HTMLButtonElement>("[data-slot='collapsible-trigger']");
-    trigger?.scrollIntoView?.({ block: "start" });
-    trigger?.focus();
+    const section = document.getElementById(`job-detail-${id}`);
+    const trigger = section?.querySelector<HTMLButtonElement>("[data-slot='collapsible-trigger']");
+    if (!section || !trigger) return;
+    const topbarBottom = document.querySelector<HTMLElement>(".topbar")?.getBoundingClientRect().bottom ?? 0;
+    section.style.setProperty("--job-detail-topbar-bottom", `${Math.max(0, topbarBottom)}px`);
+    section.scrollIntoView?.({ block: "start" });
+    trigger.focus({ preventScroll: true });
   }
 
   return (
