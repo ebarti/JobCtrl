@@ -435,7 +435,7 @@ test("Jobs compensation source-conflict evidence stays product-visible without u
       "Reported compensation diverges materially from the posted salary.",
     ),
   ).toHaveCount(0);
-  await expect(drawer.getByLabel("Apply readiness")).not.toContainText(
+  await expect(drawer.getByRole("group", { name: "Apply readiness" })).not.toContainText(
     /compensation|salary|source conflict/i,
   );
   await expect(drawer.getByText("Fit score").first()).toBeVisible();
@@ -618,8 +618,15 @@ test("keeps the job detail header Tab order aligned with its visual order", asyn
   await expect(
     drawer.getByRole("button", { name: "More job actions" }),
   ).toBeFocused();
+  const overview = drawer.locator(".job-overview");
+  for (const label of ["Fit score", "Company", "Location", "Salary", "Posting"]) {
+    await page.keyboard.press("Tab");
+    await expect(overview.getByRole("button", { name: `Help for ${label}` })).toBeFocused();
+  }
   await page.keyboard.press("Tab");
-  await expect(
-    drawer.getByRole("link", { name: "Open original posting" }),
-  ).toBeFocused();
+  await expect(overview.getByRole("link", { name: "Open original posting" })).toBeFocused();
+  for (const label of ["Discovered via", "Apply readiness", "Workflow", "Application state"]) {
+    await page.keyboard.press("Tab");
+    await expect(overview.getByRole("button", { name: `Help for ${label}` })).toBeFocused();
+  }
 });
