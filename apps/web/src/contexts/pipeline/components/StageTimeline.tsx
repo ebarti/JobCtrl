@@ -12,6 +12,7 @@ import {
   AlertTitle,
 } from "../../../shared/ui/alert.js";
 import { Button } from "../../../shared/ui/button.js";
+import { ContextHelp } from "../../../shared/ui/context-help.js";
 import {
   Collapsible,
   CollapsibleContent,
@@ -51,6 +52,7 @@ export function StageTimeline({
                 data-typography="strong-body"
               >
                 {stageLabel(stage.stage)}
+                <ContextHelp label={`${stageLabel(stage.stage)} stage`} description={stageHelp[stage.stage]} />
               </span>
               <StageBadge state={stage.state} />
             </div>
@@ -146,6 +148,7 @@ function StageDiagnosticDisclosure({
         Technical details
       </CollapsibleTrigger>
       <CollapsibleContent className="stage-timeline__diagnostic-content">
+        <ContextHelp label={`${stageLabel(stage)} diagnostics`} description="Recorded code, reason, and attempt details for this preparation stage. These explain a blocked, skipped, failed, or exhausted state; they do not imply an application was submitted." />
         <StageDiagnosticList diagnostics={diagnostics} stage={stage} />
       </CollapsibleContent>
     </Collapsible>
@@ -220,6 +223,15 @@ const STAGE_LABELS: Record<StageSummary["stage"], string> = {
   tailor: "Tailor",
   cover: "Cover letter",
   apply: "Apply",
+};
+
+const stageHelp: Record<StageSummary["stage"], string> = {
+  discover: "Discovery captured a job from a configured source. Its state reflects local pipeline progress, not whether the live posting is still available.",
+  enrich: "Enrichment captures and checks posting details and an application target when available. A blocked target may need manual review; saved job details remain available.",
+  score: "Scoring evaluates candidate fit against the current policy and evidence. A completed stage records a score, not a hiring prediction.",
+  tailor: "Tailoring prepares resume material for review. Draft or failed attempts do not replace the last accepted artifact.",
+  cover: "Cover-letter preparation creates reviewable material. Completion does not send it to an employer.",
+  apply: "The apply stage has separate approval and submission controls. Its state must be checked in Apply history; preparation alone never authorizes submission.",
 };
 
 function stageLabel(stage: StageSummary["stage"]): string {

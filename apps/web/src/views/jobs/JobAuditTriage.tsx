@@ -4,6 +4,27 @@ import type { JobDetail } from "../../contexts/operations/types.js";
 import { ResetStaleScoresButton } from "../../contexts/scoring/components/ResetStaleScoresButton.js";
 import { ScoreCorrectionControl } from "../../contexts/scoring/components/ScoreCorrectionControl.js";
 import { ScoreStalenessBadge } from "../../contexts/scoring/components/ScoreStalenessBadge.js";
+import { ContextHelp } from "../../shared/ui/context-help.js";
+
+const metricHelp = {
+  "Fit score": "The stored candidate-to-job score from the scoring policy, on a 0–10 scale. No score appears until scoring runs; inspect the rationale and evidence below before relying on it.",
+  Band: "The policy's named fit category for the stored score. This is a ranking summary, not a hiring prediction.",
+  Confidence: "How strongly the scoring evidence supports the fit assessment. It is not the probability of an offer or proof that every source is correct.",
+  Eligibility: "The scoring policy's eligibility assessment from known job and profile facts. Unknown means the available evidence does not establish eligibility.",
+  "Requirement fit": "Weighted coverage of the employer requirements assessed against candidate evidence. It appears only for a current requirement-fit report; an old or missing report is not treated as current.",
+  "Must-haves": "Coverage of requirements marked must-have in the current requirement-fit report. This is separate from the overall weighted requirement fit.",
+} as const;
+
+const tagHelp = {
+  "Matched requirements": "Current analyzed requirements with candidate evidence assessed as matched. The detailed evidence is in Role Analysis.",
+  "Missing requirements": "Current analyzed requirements assessed as missing or blocked against candidate evidence; inspect each requirement before deciding on an application.",
+  "Transferable requirements": "Current requirements supported by related candidate experience rather than a direct match; inspect the evidence and tailoring directive.",
+  "Unassessed requirements": "Requirements for which the current score did not establish candidate fit. They must not be treated as matches.",
+  "Matched signals": "Signals the stored legacy score found in the available candidate and job evidence.",
+  "Missing signals": "Signals the stored legacy score did not substantiate. Their absence is an assessment result, not proof that the candidate lacks the skill.",
+  "Transferable signals": "Related experience recognized by the stored legacy score as potentially transferable.",
+  Keywords: "Keywords saved with the scoring record; their presence here does not prove coverage in a generated resume.",
+} as const;
 
 export interface JobAuditTriageProps {
   detail: JobDetail;
@@ -24,7 +45,7 @@ export function JobAuditTriage({ detail }: JobAuditTriageProps) {
             <span className="job-audit-triage-kicker" data-typography="label">
               Assessment
             </span>
-            <h2>Fit & evidence</h2>
+            <h2>Fit & evidence <ContextHelp label="Fit and evidence" description="Saved scoring results, requirement-level assessments, rationale, and apply concerns. These derive from the scoring record and current job analysis; inspect the details before acting on a summary." /></h2>
           </header>
           <dl className="job-audit-metrics" aria-label="Ranking summary">
             <Metric
@@ -61,7 +82,7 @@ export function JobAuditTriage({ detail }: JobAuditTriageProps) {
           {factGroups.length ? (
             <div className="job-audit-concerns">
               <div className="job-audit-triage-kicker" data-typography="label">
-                Apply concerns
+                Apply concerns <ContextHelp label="Apply concerns" description="Preflight facts grouped by missing prerequisites, hard blockers, eligibility concerns, and unverified or missing sources. These explain why readiness may be blocked or uncertain." />
               </div>
               <dl className="job-audit-fact-list">
                 {factGroups.map((group) => (
@@ -89,6 +110,7 @@ export function JobAuditTriage({ detail }: JobAuditTriageProps) {
           <details className="job-audit-diagnostics">
             <summary data-typography="control">Score evidence and controls</summary>
             <div className="job-audit-diagnostics__content">
+              <ContextHelp label="Score evidence and controls" description="Inspect requirement assessments or matched, missing, and transferable signals, recorded keywords, scoring policy details, and correction controls. Rescoring may be needed when the saved policy or analysis is outdated." />
               {requirementFitReport ? (
                 <RequirementFitGroups report={requirementFitReport} />
               ) : (
@@ -114,7 +136,7 @@ export function JobAuditTriage({ detail }: JobAuditTriageProps) {
               ) : null}
               <div className="job-audit-score-correction">
                 <span className="job-audit-triage-kicker" data-typography="label">
-                  Score correction
+                  Score correction <ContextHelp label="Score correction" description="Review or correct the stored fit assessment through the scoring control. The original scoring trace remains available for audit." />
                 </span>
                 <ScoreCorrectionControl jobId={job.jobKey} currentScore={job.fitScore} />
               </div>
@@ -129,7 +151,7 @@ export function JobAuditTriage({ detail }: JobAuditTriageProps) {
 function Metric({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <dt data-typography="label">{label}</dt>
+      <dt data-typography="label">{label} <ContextHelp label={label} description={metricHelp[label as keyof typeof metricHelp]} /></dt>
       <dd data-typography="metric">{value}</dd>
     </div>
   );
@@ -172,7 +194,7 @@ function TagGroup({
   values,
   tone = "info",
 }: {
-  label: string;
+  label: keyof typeof tagHelp;
   values: readonly string[] | undefined;
   tone?: "info" | "warn";
 }) {
@@ -181,7 +203,7 @@ function TagGroup({
   }
   return (
     <div className="job-audit-tag-group">
-      <span data-typography="label">{label}</span>
+      <span data-typography="label">{label} <ContextHelp label={label} description={tagHelp[label]} /></span>
       <ul data-tone={tone}>
         {values.map((value) => (
           <li data-typography="body" key={value}>

@@ -28,6 +28,7 @@ import { RetryStageButton } from "../../contexts/pipeline/components/RetryStageB
 import { StageTimeline } from "../../contexts/pipeline/components/StageTimeline.js";
 import { RescoreJobButton } from "../../contexts/scoring/components/RescoreCurrentPolicyButton.js";
 import { Button, buttonVariants } from "../../shared/ui/button.js";
+import { ContextHelp } from "../../shared/ui/context-help.js";
 import { Empty } from "../../shared/ui/empty.js";
 import {
   Popover,
@@ -114,6 +115,7 @@ function JobArtifactRow({ artifact }: { readonly artifact: ArtifactSummary }) {
       <span>
         {artifact.type}
         {artifact.generation != null ? ` · Generation ${artifact.generation}` : null}
+        <ContextHelp label={`${artifact.type} artifact`} description={`This saved material is ${artifact.status}${artifact.generation == null ? "" : ` in generation ${artifact.generation}`}. Its status comes from the artifact lifecycle record. ${artifact.status === "missing" ? "No file is available to open." : "Open it to inspect the material."} Superseded versions remain available in the history disclosure.`} />
       </span>
       <OpenArtifactButton
         artifactId={artifact.artifactId}
@@ -145,7 +147,7 @@ function JobAuditHistorySection({
           </StatusBadge>
         </summary>
         <div className="job-audit-history-detail">
-          <h3 data-typography="component-title">Audit history</h3>
+          <h3 data-typography="component-title">Audit history <ContextHelp label="Audit history" description="Recorded job events and technical changes. They show what happened in the local workflow; an event is not proof that an external application was submitted." /></h3>
           <JobAuditHistory entries={entries} />
         </div>
       </details>
@@ -164,7 +166,7 @@ function RequirementFitMissingCallout({
       aria-label={title}
     >
       <div>
-        <h3>{title}</h3>
+        <h3>{title} <ContextHelp label="Requirement fit status" description="The stored requirement-level score is absent or belongs to an earlier analysis or score version. Re-score to assess current requirements; prior score and materials remain available for review." /></h3>
         <p className="muted">
           {outdated
             ? "The saved requirement fit belongs to a different employer-analysis generation or score version. Re-score this job to assess the current requirements; the previous score and materials remain available for review."
@@ -349,14 +351,14 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
               }
               id="job-detail-diagnostics-panel"
             >
-              <Section title="Preparation diagnostics">
+              <Section title="Preparation diagnostics" help="Saved preparation stage states and diagnostic messages. A failed, blocked, or exhausted stage calls for review; these stages do not by themselves submit an application.">
                 <StageTimeline
                   jobId={detail.job.jobKey}
                   postingUrl={detail.job.url}
                   stages={preparationStages(detail.stages)}
                 />
               </Section>
-              <Section title="Artifacts">
+              <Section title="Artifacts" help="Generated job materials and their canonical lifecycle statuses. Accepted versions appear first, newest generation first; only records marked superseded are in the disclosure. Failed or draft refreshes never erase an accepted material.">
                 {detail.artifacts.length ? (
                   <>
                     {[...artifactGroups.accepted, ...artifactGroups.other].map(
@@ -385,10 +387,10 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
                   <Empty title="No artifacts recorded." />
                 )}
               </Section>
-              <Section title="Apply history">
+              <Section title="Apply history" help="Recorded apply runs for this job, including dry runs and their status. Open a run to inspect its details; a dry run is not a submission.">
                 <ApplyHistory jobId={detail.job.jobKey} />
               </Section>
-              <Section title="Application outcomes">
+              <Section title="Application outcomes" help="Manually recorded or suggested follow-up outcomes for this job. Suggested outcomes need review before acceptance, and an empty timeline means none are recorded here.">
                 <JobOutcomePanel jobId={detail.job.jobKey} />
               </Section>
               <JobContactsPanel
@@ -415,7 +417,7 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
             />
             <section className="section job-detail-description">
               <div className="job-detail-section-heading">
-                <h3>Description</h3>
+                <h3>Description <ContextHelp label="Description" description="Saved text captured from the original job posting. It may differ from the live posting after capture; use the original posting link to verify current wording." /></h3>
                 <span data-typography="label">Original posting text</span>
               </div>
               <JobDescription text={detail.job.descriptionPreview} />
@@ -424,7 +426,7 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
               && detail.stages.some((stage) => stage.stage === "enrich" && stage.state === "succeeded") ? (
               <section className="section requirement-fit-missing" aria-label="Application target refresh">
                 <div>
-                  <h3>Application target unavailable</h3>
+                  <h3>Application target unavailable <ContextHelp label="Application target" description="A verified destination link was not saved for this posting. Refresh attempts to locate a target; the saved description, score, and materials remain available even if none is found." /></h3>
                   <p className="muted">
                     Check the current posting for an application link. The saved description, score, and materials stay available if the check finds no verified target.
                   </p>

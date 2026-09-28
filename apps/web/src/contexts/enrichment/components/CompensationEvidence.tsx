@@ -20,6 +20,7 @@ import type {
 
 import { Empty } from "../../../shared/ui/empty.js";
 import { Button } from "../../../shared/ui/button.js";
+import { ContextHelp } from "../../../shared/ui/context-help.js";
 import { StatusBadge } from "../../../shared/ui/status-badge.js";
 import { useRefreshCompensationMutation } from "../hooks/useRefreshCompensationMutation.js";
 
@@ -391,16 +392,18 @@ export function CompensationSummaryStrip({
 function DetailRow({
   label,
   value,
+  help,
 }: {
   readonly label: string;
   readonly value: string | number | null | undefined;
+  readonly help?: string;
 }) {
   if (value === null || value === undefined || value === "") {
     return null;
   }
   return (
     <div>
-      <dt>{label}</dt>
+      <dt>{label}{help ? <ContextHelp label={label} description={help} /> : null}</dt>
       <dd>{value}</dd>
     </div>
   );
@@ -521,7 +524,7 @@ function SourceTrail({
   }
   return (
     <div className="compensation-source-trail">
-      <h4>Reported source trail</h4>
+      <h4>Reported source trail <ContextHelp label="Reported source trail" description="The provider snapshots and release periods recorded with this market assessment. Source counts and samples describe available evidence, not the probability that the estimate is correct." /></h4>
       <ul>
         {sources.map((source) => (
           <li key={`${source.sourceId}:${source.snapshotVersion}`}>
@@ -619,7 +622,7 @@ function FactorList({
   }
   return (
     <div className="compensation-factor-list">
-      <h4>Reliability factors</h4>
+      <h4>Reliability factors <ContextHelp label="Reliability factors" description="Stored support scores for company, role, level, location, and freshness. Overall reliability is capped by the weakest critical match; these percentages are not probabilities that the salary is correct." /></h4>
       <ul>
         {factors.map((factor) => (
           <li key={factor.name}>
@@ -734,6 +737,7 @@ function MarketAssessmentDetails({
           <DetailRow
             label="Reliability"
             value={`${formatToken(market.confidenceBand)} · ${score}`}
+            help="A recorded confidence band and support score for the selected market benchmark. This measures evidence and match quality, not the chance that an amount is the actual offer."
           />
           <DetailRow label="Role" value={estimate.roleTitle} />
           <DetailRow
@@ -756,6 +760,7 @@ function MarketAssessmentDetails({
           <DetailRow
             label="Confidence interval"
             value={market.displayConfidenceInterval}
+            help="A stored interval for the market estimate when available. It reflects the estimator's evidence range, not an employer-posted salary or offer."
           />
         </dl>
         <BenchmarkLineage lineage={lineage} />
@@ -901,6 +906,7 @@ function BenchmarkLineage({
             {lineage.kind === "direct"
               ? "Direct country benchmark"
               : "Geographic extrapolation bridge"}
+            <ContextHelp label="Benchmark authority" description="A direct benchmark uses matched role and geography evidence. An extrapolated benchmark adjusts an anchor geography using recorded cost-of-living and company evidence; inspect the inputs and review bounds below." />
           </h4>
         </div>
         <StatusBadge tone={lineage.kind === "direct" ? "ok" : boundTone}>
@@ -987,6 +993,7 @@ function PostedPanel({
       <header className="compensation-result-header">
         <h4 className="eyebrow" data-typography="label">
           Employer posted
+          <ContextHelp label="Employer posted compensation" description="An amount extracted from the saved job posting when parsing was safe. Not stated or no safe amount extracted means no structured posted range is available; inspect the source field, excerpt, and interpretation notes below." />
         </h4>
         <b className="compensation-result-value">
           {posted.displayRange ||
@@ -1036,6 +1043,7 @@ function PostedPanel({
               <DetailRow
                 label="Extraction certainty"
                 value={formatToken(fact.confidence)}
+                help="The parser's confidence in the saved posting extraction. This does not verify the live posting or guarantee the stated component is cash."
               />
             </dl>
             {"sourceText" in fact && fact.sourceText ? (
@@ -1156,6 +1164,7 @@ function MarketPanel({
       <header className="compensation-result-header">
         <h4 className="eyebrow" data-typography="label">
           {(peerCohort || unidentifiedEmployers) && hasRange ? "Regional salary comparison" : "Market salary estimate"}
+          <ContextHelp label="Market salary estimate" description="A reported-compensation benchmark selected by role, level, geography, and available sources. A numeric range appears only for an estimated-range result; insufficient evidence, unavailable sources, unsupported input, and not requested remain distinct outcomes." />
         </h4>
         <b className="compensation-result-value">{outcome.value}</b>
         <StatusBadge tone={outcome.tone}>{outcome.badge}</StatusBadge>
@@ -1185,6 +1194,7 @@ function RawPostedFallbackPanel({ value }: { readonly value: string }) {
       <header className="compensation-result-header">
         <h4 className="eyebrow" data-typography="label">
           Employer posted
+          <ContextHelp label="Unparsed posted compensation" description="Raw salary text captured from the posting without a structured extraction. Refresh to parse it before treating it as a comparable pay range." />
         </h4>
         <b className="compensation-result-value">{value}</b>
         <StatusBadge tone="muted">unparsed posting value</StatusBadge>
@@ -1235,7 +1245,7 @@ export function CompensationAuditSection({
         aria-label="Compensation evidence"
       >
         <div className="compensation-audit-heading">
-          <h3>Compensation</h3>
+          <h3>Compensation <ContextHelp label="Compensation" description="Employer-posted pay and separately researched market evidence. No evidence recorded means neither a parsed posted amount nor a market assessment is available for this job." /></h3>
           {jobId ? <CompensationRefreshControl jobId={jobId} /> : null}
         </div>
         <Empty title="No compensation evidence recorded." />
@@ -1335,7 +1345,7 @@ export function CompensationAuditSection({
       aria-label="Compensation evidence"
     >
       <div className="compensation-audit-heading">
-        <h3>Compensation</h3>
+        <h3>Compensation <ContextHelp label="Compensation" description="Compare saved employer-posted compensation with a separately researched market benchmark. Market ranges have source, match, and reliability limits; neither is an offer guarantee." /></h3>
         {jobId ? <CompensationRefreshControl jobId={jobId} /> : null}
       </div>
       {effectiveSummary ? (

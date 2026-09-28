@@ -82,6 +82,26 @@ function renderJobDetailDrawer(jobId: string) {
 }
 
 describe("<JobDetailDrawer>", () => {
+  it("keeps contextual help available across the detail workspace when records are absent", async () => {
+    server.use(
+      http.get("*/v1/jobs/:jobKey", ({ params }) =>
+        HttpResponse.json(makeJobDetail({ ...sampleJob, jobKey: String(params["jobKey"]) })),
+      ),
+    );
+    renderJobDetailDrawer("https://example.com/jobs/1");
+
+    await screen.findByRole("heading", { name: "Artifacts" });
+    for (const label of [
+      "Fit score", "Apply readiness", "Workflow", "Fit and evidence",
+      "Band", "Confidence", "Eligibility", "Requirement fit", "Must-haves",
+      "Compensation", "Description", "Role analysis", "Interview prep",
+      "Preparation diagnostics", "Artifacts", "Apply history",
+      "Application outcomes", "Contacts",
+    ]) {
+      expect(screen.getAllByRole("button", { name: `Help for ${label}` }).length).toBeGreaterThan(0);
+    }
+  });
+
   it("shows accepted artifacts before superseded versions while retaining the full audit list", async () => {
     const user = userEvent.setup();
     const superseded = Array.from({ length: 4 }, (_, index) => ({
