@@ -2,7 +2,7 @@ import { JobCtrlApiError } from "@jobctrl/api-client";
 import type { JobAuditEntry, StageSummary } from "@jobctrl/contracts";
 import { IconArrowLeft, IconChevronDown } from "@tabler/icons-react";
 import { Link } from "@tanstack/react-router";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { ApplyHistory } from "../../contexts/apply/components/ApplyHistory.js";
 import {
@@ -29,6 +29,7 @@ import { StageTimeline } from "../../contexts/pipeline/components/StageTimeline.
 import { RescoreJobButton } from "../../contexts/scoring/components/RescoreCurrentPolicyButton.js";
 import { Button, buttonVariants } from "../../shared/ui/button.js";
 import { ContextHelp } from "../../shared/ui/context-help.js";
+import { DisclosureSection } from "../../shared/ui/disclosure-section.js";
 import { Empty } from "../../shared/ui/empty.js";
 import {
   Popover,
@@ -47,7 +48,12 @@ export interface JobDetailDrawerProps {
   onClose: () => void;
 }
 
-type JobDetailMobileSection = "overview" | "diagnostics";
+interface JobDetailSectionDefinition {
+  readonly id: string;
+  readonly title: string;
+  readonly description: string;
+  readonly content: ReactNode;
+}
 
 function detailErrorTitle(error: unknown): string {
   if (error instanceof JobCtrlApiError && error.status === 404) {
@@ -183,9 +189,10 @@ function RequirementFitMissingCallout({
 }
 
 export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
-  const [mobileSection, setMobileSection] =
-    useState<JobDetailMobileSection>("overview");
   const [commandsOpen, setCommandsOpen] = useState(false);
+  const [sectionsOpen, setSectionsOpen] = useState(false);
+  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
+  const jumpTarget = useRef<string | null>(null);
   const { data: detail, error: detailError } = useJobDetailQuery(jobId);
   const evidenceMap = useEvidenceMapQuery();
   const evidenceEntriesById = useMemo(() => {
@@ -219,6 +226,130 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
     (stage) => stage.stage === detail.job.currentSubstage,
   );
   const artifactGroups = groupJobArtifacts(detail?.artifacts ?? []);
+  const sections: JobDetailSectionDefinition[] = detail ? [
+    {
+      id: "fit-evidence",
+      title: "Fit & evidence",
+      description: "Assessment, requirement fit, and apply concerns",
+      content: <>
+        <JobAuditTriage detail={detail} />
+        {detail.employerAnalysis && !detail.requirementFitReport ? (
+          <RequirementFitMissingCallout
+            jobId={detail.job.jobKey}
+            outdated={detail.job.scoreAnalysisFreshness?.status === "outdated"}
+          />
+        ) : null}
+      </>,
+    },
+    {
+      id: "preparation",
+      title: "Preparation diagnostics",
+      description: "Saved workflow stages and application target",
+      content: <>
+        <Section title="Preparation diagnostics" help="Saved preparation stage states and diagnostic messages. A failed, blocked, or exhausted stage calls for review; these stages do not by themselves submit an application.">
+          <StageTimeline jobId={detail.job.jobKey} postingUrl={detail.job.url} stages={preparationStages(detail.stages)} />
+        </Section>
+        {!detail.job.applicationUrl && isLinkedInPosting(detail.job.url)
+          && detail.stages.some((stage) => stage.stage === "enrich" && stage.state === "succeeded") ? (
+          <section className="section requirement-fit-missing" aria-label="Application target refresh">
+            <div>
+              <h3 aria-label="Application target unavailable">Application target unavailable <ContextHelp label="Application target" description="A verified destination link was not saved for this posting. Refresh attempts to locate a target; the saved description, score, and materials remain available even if none is found." /></h3>
+              <p className="muted">Check the current posting for an application link. The saved description, score, and materials stay available if the check finds no verified target.</p>
+              {detail.stages.find((stage) => stage.stage === "enrich")?.applyUrlOutcome?.message ? (
+                <p className="muted">{detail.stages.find((stage) => stage.stage === "enrich")?.applyUrlOutcome?.message}</p>
+              ) : null}
+            </div>
+            <RetryStageButton jobId={detail.job.jobKey} stage="enrich" runAfter refreshApplyUrl label="Refresh application target" />
+          </section>
+        ) : null}
+      </>,
+    },
+    {
+      id: "artifacts",
+      title: "Artifacts",
+      description: "Accepted materials and lifecycle history",
+      content: <Section title="Artifacts" help="Generated job materials and their canonical lifecycle statuses. Accepted versions appear first, newest generation first; only records marked superseded are in the disclosure. Failed or draft refreshes never erase an accepted material.">
+        {detail.artifacts.length ? <>
+          {[...artifactGroups.accepted, ...artifactGroups.other].map((artifact) => <JobArtifactRow artifact={artifact} key={artifact.artifactId} />)}
+          {artifactGroups.superseded.length ? (
+            <details className="job-artifact-history">
+              <summary data-typography="control">Superseded artifacts ({artifactGroups.superseded.length})</summary>
+              {artifactGroups.superseded.map((artifact) => <JobArtifactRow artifact={artifact} key={artifact.artifactId} />)}
+            </details>
+          ) : null}
+        </> : <Empty title="No artifacts recorded." />}
+      </Section>,
+    },
+    {
+      id: "compensation",
+      title: "Compensation",
+      description: "Posted pay and market evidence",
+      content: <CompensationAuditSection jobId={detail.job.jobKey} summary={detail.job.compensationSummary} audit={detail.compensationAudit} fallbackSalary={detail.job.salary} />,
+    },
+    {
+      id: "description",
+      title: "Description",
+      description: "Captured posting text",
+      content: <section className="section job-detail-description">
+        <div className="job-detail-section-heading">
+          <h3 aria-label="Description">Description <ContextHelp label="Description" description="Saved text captured from the original job posting. It may differ from the live posting after capture; use the original posting link to verify current wording." /></h3>
+          <span data-typography="label">Original posting text</span>
+        </div>
+        <JobDescription text={detail.job.descriptionPreview} />
+      </section>,
+    },
+    {
+      id: "role-analysis",
+      title: "Role Analysis",
+      description: "Employer interpretation and requirement evidence",
+      content: <EmployerAnalysisPanel analysis={detail.employerAnalysis} className="section job-detail-role-analysis" requirementFitReport={detail.requirementFitReport} resolveEvidenceReference={resolveEvidenceReference} />,
+    },
+    {
+      id: "interview",
+      title: "Interview prep",
+      description: "Practice material and reflections",
+      content: <InterviewPrepPanel jobId={detail.job.jobKey} prep={detail.interviewPrep} requirements={detail.employerAnalysis?.requirements ?? []} resolveEvidenceReference={resolveEvidenceReference} reflectionContent={detail.interviewPrep ? <InterviewReflectionPanel jobId={detail.job.jobKey} prepGeneration={detail.interviewPrep.generation} /> : null} />,
+    },
+    {
+      id: "apply-history",
+      title: "Apply history",
+      description: "Recorded attempts and dry runs",
+      content: <Section title="Apply history" help="Recorded apply runs for this job, including dry runs and their status. Open a run to inspect its details; a dry run is not a submission."><ApplyHistory jobId={detail.job.jobKey} /></Section>,
+    },
+    {
+      id: "outcomes",
+      title: "Application outcomes",
+      description: "Recorded follow-up outcomes",
+      content: <Section title="Application outcomes" help="Manually recorded or suggested follow-up outcomes for this job. Suggested outcomes need review before acceptance, and an empty timeline means none are recorded here."><JobOutcomePanel jobId={detail.job.jobKey} /></Section>,
+    },
+    {
+      id: "contacts",
+      title: "Contacts",
+      description: "People and outreach research linked to this job",
+      content: <JobContactsPanel jobId={detail.job.jobKey} {...(detail.job.company ? { employer: detail.job.company } : {})} />,
+    },
+    {
+      id: "audit",
+      title: "Audit history",
+      description: "Recorded job events and technical changes",
+      content: <JobAuditHistorySection entries={detail.auditHistory} />,
+    },
+  ] : [];
+
+  function jumpToSection(id: string) {
+    jumpTarget.current = id;
+    setExpandedSections((current) => ({ ...current, [id]: true }));
+    setSectionsOpen(false);
+  }
+
+  function focusJumpTarget() {
+    const id = jumpTarget.current;
+    if (!id) return;
+    jumpTarget.current = null;
+    const trigger = document.getElementById(`job-detail-${id}`)?.querySelector<HTMLButtonElement>("[data-slot='collapsible-trigger']");
+    trigger?.scrollIntoView({ block: "start" });
+    trigger?.focus();
+  }
 
   return (
     <div className="route-page route-page--job-detail" aria-label="Job details">
@@ -309,168 +440,70 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
                 </Popover>
               </div>
               <JobOverview detail={detail} />
-              <div
-                className="job-detail-mobile-sections"
-                aria-label="Job detail section"
-                role="group"
-              >
-                <Button
-                  aria-controls="job-detail-overview-panel"
-                  aria-pressed={mobileSection === "overview"}
-                  data-selected={
-                    mobileSection === "overview" ? "true" : "false"
-                  }
-                  size="sm"
-                  type="button"
-                  variant="ghost"
-                  onClick={() => setMobileSection("overview")}
+              <Popover open={sectionsOpen} onOpenChange={setSectionsOpen}>
+                <PopoverTrigger asChild>
+                  <Button className="job-detail-sections-trigger" size="sm" type="button" variant="outline">
+                    Sections
+                    <IconChevronDown aria-hidden="true" data-icon="inline-end" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent
+                  align="start"
+                  aria-label="Job detail sections"
+                  className="job-detail-sections-menu"
+                  onCloseAutoFocus={(event) => {
+                    if (jumpTarget.current) {
+                      event.preventDefault();
+                      focusJumpTarget();
+                    }
+                  }}
+                  sideOffset={8}
                 >
-                  Summary and evidence
-                </Button>
-                <Button
-                  aria-controls="job-detail-diagnostics-panel"
-                  aria-pressed={mobileSection === "diagnostics"}
-                  data-selected={
-                    mobileSection === "diagnostics" ? "true" : "false"
-                  }
-                  size="sm"
-                  type="button"
-                  variant="ghost"
-                  onClick={() => setMobileSection("diagnostics")}
-                >
-                  Progress and history
-                </Button>
-              </div>
-            </div>
-          }
-          inspector={
-            <div
-              className="job-detail-workspace__inspector"
-              data-mobile-active={
-                mobileSection === "diagnostics" ? "true" : "false"
-              }
-              id="job-detail-diagnostics-panel"
-            >
-              <Section title="Preparation diagnostics" help="Saved preparation stage states and diagnostic messages. A failed, blocked, or exhausted stage calls for review; these stages do not by themselves submit an application.">
-                <StageTimeline
-                  jobId={detail.job.jobKey}
-                  postingUrl={detail.job.url}
-                  stages={preparationStages(detail.stages)}
-                />
-              </Section>
-              <Section title="Artifacts" help="Generated job materials and their canonical lifecycle statuses. Accepted versions appear first, newest generation first; only records marked superseded are in the disclosure. Failed or draft refreshes never erase an accepted material.">
-                {detail.artifacts.length ? (
-                  <>
-                    {[...artifactGroups.accepted, ...artifactGroups.other].map(
-                      (artifact) => (
-                        <JobArtifactRow
-                          artifact={artifact}
-                          key={artifact.artifactId}
-                        />
-                      ),
-                    )}
-                    {artifactGroups.superseded.length ? (
-                      <details className="job-artifact-history">
-                        <summary data-typography="control">
-                          Superseded artifacts ({artifactGroups.superseded.length})
-                        </summary>
-                        {artifactGroups.superseded.map((artifact) => (
-                          <JobArtifactRow
-                            artifact={artifact}
-                            key={artifact.artifactId}
-                          />
-                        ))}
-                      </details>
-                    ) : null}
-                  </>
-                ) : (
-                  <Empty title="No artifacts recorded." />
-                )}
-              </Section>
-              <Section title="Apply history" help="Recorded apply runs for this job, including dry runs and their status. Open a run to inspect its details; a dry run is not a submission.">
-                <ApplyHistory jobId={detail.job.jobKey} />
-              </Section>
-              <Section title="Application outcomes" help="Manually recorded or suggested follow-up outcomes for this job. Suggested outcomes need review before acceptance, and an empty timeline means none are recorded here.">
-                <JobOutcomePanel jobId={detail.job.jobKey} />
-              </Section>
-              <JobContactsPanel
-                jobId={detail.job.jobKey}
-                {...(detail.job.company
-                  ? { employer: detail.job.company }
-                  : {})}
-              />
-              <JobAuditHistorySection entries={detail.auditHistory} />
+                  <nav aria-label="Job detail sections">
+                    {sections.map((section) => (
+                      <Button
+                        aria-controls={`job-detail-${section.id}`}
+                        aria-expanded={expandedSections[section.id] ?? true}
+                        key={section.id}
+                        size="sm"
+                        type="button"
+                        variant="ghost"
+                        onClick={() => jumpToSection(section.id)}
+                      >
+                        {section.title}
+                      </Button>
+                    ))}
+                  </nav>
+                  <div className="job-detail-sections-menu__bulk">
+                    <Button size="sm" type="button" variant="outline" onClick={() => {
+                      setExpandedSections(Object.fromEntries(sections.map((section) => [section.id, true])));
+                      setSectionsOpen(false);
+                    }}>Expand all</Button>
+                    <Button size="sm" type="button" variant="outline" onClick={() => {
+                      setExpandedSections(Object.fromEntries(sections.map((section) => [section.id, false])));
+                      setSectionsOpen(false);
+                    }}>Collapse all</Button>
+                  </div>
+                </PopoverContent>
+              </Popover>
             </div>
           }
         >
-          <div
-            className="job-detail-workspace__content"
-            data-mobile-active={mobileSection === "overview" ? "true" : "false"}
-            id="job-detail-overview-panel"
-          >
-            <JobAuditTriage detail={detail} />
-            <CompensationAuditSection
-              jobId={detail.job.jobKey}
-              summary={detail.job.compensationSummary}
-              audit={detail.compensationAudit}
-              fallbackSalary={detail.job.salary}
-            />
-            <section className="section job-detail-description">
-              <div className="job-detail-section-heading">
-                <h3 aria-label="Description">Description <ContextHelp label="Description" description="Saved text captured from the original job posting. It may differ from the live posting after capture; use the original posting link to verify current wording." /></h3>
-                <span data-typography="label">Original posting text</span>
-              </div>
-              <JobDescription text={detail.job.descriptionPreview} />
-            </section>
-            {!detail.job.applicationUrl && isLinkedInPosting(detail.job.url)
-              && detail.stages.some((stage) => stage.stage === "enrich" && stage.state === "succeeded") ? (
-              <section className="section requirement-fit-missing" aria-label="Application target refresh">
-                <div>
-                  <h3 aria-label="Application target unavailable">Application target unavailable <ContextHelp label="Application target" description="A verified destination link was not saved for this posting. Refresh attempts to locate a target; the saved description, score, and materials remain available even if none is found." /></h3>
-                  <p className="muted">
-                    Check the current posting for an application link. The saved description, score, and materials stay available if the check finds no verified target.
-                  </p>
-                  {detail.stages.find((stage) => stage.stage === "enrich")?.applyUrlOutcome?.message ? (
-                    <p className="muted">
-                      {detail.stages.find((stage) => stage.stage === "enrich")?.applyUrlOutcome?.message}
-                    </p>
-                  ) : null}
-                </div>
-                <RetryStageButton
-                  jobId={detail.job.jobKey}
-                  stage="enrich"
-                  runAfter
-                  refreshApplyUrl
-                  label="Refresh application target"
-                />
-              </section>
-            ) : null}
-            {detail.employerAnalysis && !detail.requirementFitReport ? (
-              <RequirementFitMissingCallout
-                jobId={detail.job.jobKey}
-                outdated={detail.job.scoreAnalysisFreshness?.status === "outdated"}
-              />
-            ) : null}
-            <EmployerAnalysisPanel
-              analysis={detail.employerAnalysis}
-              className="section job-detail-role-analysis"
-              requirementFitReport={detail.requirementFitReport}
-              resolveEvidenceReference={resolveEvidenceReference}
-            />
-            <InterviewPrepPanel
-              jobId={detail.job.jobKey}
-              prep={detail.interviewPrep}
-              requirements={detail.employerAnalysis?.requirements ?? []}
-              resolveEvidenceReference={resolveEvidenceReference}
-              reflectionContent={
-                detail.interviewPrep ? (
-                  <InterviewReflectionPanel
-                    jobId={detail.job.jobKey}
-                    prepGeneration={detail.interviewPrep.generation}
-                  />
-                ) : null
-              }
-            />
+          <div className="job-detail-workspace__content">
+            {sections.map((section) => (
+              <DisclosureSection
+                className="job-detail-major-section"
+                description={section.description}
+                headingLevel={2}
+                id={`job-detail-${section.id}`}
+                key={section.id}
+                onOpenChange={(open) => setExpandedSections((current) => ({ ...current, [section.id]: open }))}
+                open={expandedSections[section.id] ?? true}
+                title={section.title}
+              >
+                {section.content}
+              </DisclosureSection>
+            ))}
           </div>
         </RouteWorkspace>
       ) : null}
