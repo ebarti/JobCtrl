@@ -111,7 +111,11 @@ focus-only row action opens the record without filling the table with visible
 Job Detail keeps identity, score and requirement evidence, source provenance,
 compensation, description, employer analysis, interview prep, per-job actions,
 preparation diagnostics, active artifacts, Apply history, outcomes, contacts,
-and audit history in one route. Labeled metadata separates company, location,
+and audit history in one route. Below the header, one full-width column keeps
+these sections in reading order on desktop and phone. Use **Sections** to jump
+to a section, or **Expand all** and **Collapse all** to change the level of
+detail. Collapsing a section keeps its forms and live state in place, including
+draft text. Labeled metadata separates company, location,
 salary, posting, and discovery source. The assessment strip keeps fit score,
 band, confidence, eligibility, requirement fit, and must-have coverage together;
 missing assessments remain explicit. Requirement evidence starts visible and

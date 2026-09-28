@@ -347,7 +347,7 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
     if (!id) return;
     jumpTarget.current = null;
     const trigger = document.getElementById(`job-detail-${id}`)?.querySelector<HTMLButtonElement>("[data-slot='collapsible-trigger']");
-    trigger?.scrollIntoView({ block: "start" });
+    trigger?.scrollIntoView?.({ block: "start" });
     trigger?.focus();
   }
 
@@ -360,7 +360,6 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
           aria-label="Job details"
           className="job-detail-workspace"
           contentLabel="Job evidence and analysis"
-          inspectorLabel="Job progress, materials, and history"
           header={
             <div className="job-detail-workspace__header">
               <Button
@@ -457,6 +456,7 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
                       focusJumpTarget();
                     }
                   }}
+                  side="top"
                   sideOffset={8}
                 >
                   <nav aria-label="Job detail sections">
@@ -490,7 +490,7 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
           }
         >
           <div className="job-detail-workspace__content">
-            {sections.map((section) => (
+            {sections.map((section, index) => (
               <DisclosureSection
                 className="job-detail-major-section"
                 description={section.description}
@@ -499,7 +499,7 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
                 key={section.id}
                 onOpenChange={(open) => setExpandedSections((current) => ({ ...current, [section.id]: open }))}
                 open={expandedSections[section.id] ?? true}
-                title={section.title}
+                title={`${String(index + 1).padStart(2, "0")} · ${section.title}`}
               >
                 {section.content}
               </DisclosureSection>

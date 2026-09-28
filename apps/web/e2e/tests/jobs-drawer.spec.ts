@@ -487,7 +487,7 @@ test("Job detail: keyboard activation opens requirement fit, stages, and artifac
   const drawer = page.getByRole("article", { name: "Job details" });
   await expect(drawer).toBeVisible({ timeout: 10_000 });
   await expect(
-    drawer.getByRole("heading", { name: /Preparation diagnostics/i }),
+    drawer.getByRole("heading", { name: "Preparation diagnostics", exact: true }),
   ).toBeVisible();
   const artifactSection = drawer.getByRole("heading", { name: "Artifacts", exact: true }).locator("..");
   await expect(artifactSection).toBeVisible();
@@ -529,11 +529,42 @@ test("Job detail: keyboard activation opens requirement fit, stages, and artifac
   await expect(primaryRequirement).toContainText("Score contribution");
   await expect(primaryRequirement).toContainText("Double Down");
 
+  const sectionsButton = drawer.getByRole("button", { name: "Sections" });
+  await sectionsButton.focus();
+  await sectionsButton.press("Enter");
+  const sectionsMenu = page.getByRole("navigation", { name: "Job detail sections" });
+  await expect(sectionsMenu.getByRole("button")).toHaveCount(11);
+  await sectionsButton.press("Escape");
+  await expect(sectionsButton).toBeFocused();
+  await sectionsButton.click();
+  await page.getByRole("button", { name: "Collapse all" }).click();
+  const artifactDisclosure = drawer.locator("#job-detail-artifacts > .configuration-section__header [data-slot='collapsible-trigger']");
+  await expect(artifactDisclosure).toHaveAttribute("aria-expanded", "false");
+  await expect(artifactSection).toBeHidden();
+  await sectionsButton.click();
+  await sectionsMenu.getByRole("button", { name: "Artifacts" }).click();
+  await expect(artifactDisclosure).toHaveAttribute("aria-expanded", "true");
+  await expect(artifactDisclosure).toBeFocused();
+  await expect(artifactSection).toBeVisible();
+
   await page.reload();
   await expect(page.getByRole("article", { name: "Job details" })).toBeVisible({
     timeout: 30_000,
   });
   await expect(page).toHaveURL(/sort=fit_score/);
+  await page.setViewportSize({ width: 390, height: 844 });
+  const mobileArtifacts = page.locator("#job-detail-artifacts");
+  await mobileArtifacts.scrollIntoViewIfNeeded();
+  expect(
+    await mobileArtifacts.evaluate((element) => element.scrollWidth <= element.clientWidth + 1),
+  ).toBe(true);
+  const mobileAudit = page.locator("#job-detail-audit");
+  await mobileAudit.scrollIntoViewIfNeeded();
+  await expect(mobileAudit).toBeVisible();
+  await expect(page.locator("#job-detail-fit-evidence")).toBeAttached();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+    await page.evaluate(() => document.documentElement.clientWidth + 1),
+  );
 
   const backButton = page.getByRole("button", { name: "Back to jobs" });
   await backButton.click();
@@ -629,4 +660,6 @@ test("keeps the job detail header Tab order aligned with its visual order", asyn
     await page.keyboard.press("Tab");
     await expect(overview.getByRole("button", { name: `Help for ${label}` })).toBeFocused();
   }
+  await page.keyboard.press("Tab");
+  await expect(drawer.getByRole("button", { name: "Sections" })).toBeFocused();
 });

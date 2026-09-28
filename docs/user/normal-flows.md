@@ -351,6 +351,12 @@ Accepted artifacts appear first, newest recorded generation first. Older
 approved artifacts remain visible. Canonically superseded artifacts are
 available under **Superseded artifacts**; expand it to inspect or open them.
 
+The sections below the Job Detail header form one full-width column at desktop
+and phone widths. Open **Sections** to jump to any section in reading order;
+the destination expands, scrolls into view, and receives keyboard focus. The
+same menu offers **Expand all** and **Collapse all**. Each section can also be
+collapsed from its heading without losing a draft form entry or live update.
+
 The question-mark buttons beside Job Detail labels open short explanations of
 the saved value, its source, and important limits. Press Enter or Space on a
 focused button to open its help, then Escape to return focus to the button.

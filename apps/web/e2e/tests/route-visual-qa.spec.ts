@@ -926,7 +926,7 @@ async function readJobDetailDensityGeometry(
   const action = page.locator(".job-detail-top-actions .jh-control").first();
   const header = page.locator(".route-workspace__header");
   const section = page
-    .locator(".job-detail-workspace__content > .section")
+    .locator(".job-detail-major-section > .configuration-section__header > .configuration-section__trigger")
     .first();
   const title = page.locator(".job-overview h1");
 

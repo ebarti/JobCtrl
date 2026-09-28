@@ -123,7 +123,7 @@
 }
 
 .job-detail-sections-menu {
-  max-height: min(70dvh, 620px);
+  max-height: min(45dvh, 360px);
   overflow-y: auto;
 }
 
@@ -226,38 +226,6 @@
   flex: 0 0 auto;
 }
 
-.job-detail-workspace__inspector {
-  grid-template-columns: minmax(0, 1fr);
-}
-
-.job-detail-workspace__inspector > * {
-  min-width: 0;
-}
-
-.job-detail-workspace__inspector .job-artifact-row {
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 8px 10px;
-}
-
-.job-detail-workspace__inspector .job-artifact-row > :nth-child(2) {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.job-detail-workspace__inspector .job-artifact-row > [data-slot="button"] {
-  grid-column: 1 / -1;
-  justify-self: start;
-  height: auto;
-  white-space: normal;
-}
-
-.job-detail-workspace__inspector
-  .job-artifact-row
-  > .job-artifact-technical-details {
-  grid-column: 1 / -1;
-  min-width: 0;
-}
-
 .job-detail-workspace > .route-workspace__grid,
 .artifact-detail-workspace > .route-workspace__grid,
 .contact-detail-workspace > .route-workspace__grid,
@@ -282,7 +250,6 @@
 }
 
 .job-detail-workspace__content,
-.job-detail-workspace__inspector,
 .artifact-detail-workspace__inspector,
 .activity-detail-workspace__content,
 .activity-detail-workspace__inspector,
@@ -318,9 +285,25 @@
   padding: var(--jh-section-padding-block) var(--jh-section-padding-inline);
 }
 
+.job-detail-major-section .job-artifact-row > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 600px) {
+  .job-detail-major-section .job-artifact-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .job-detail-major-section .job-artifact-row > [data-slot="button"] {
+    grid-column: 1 / -1;
+    justify-self: start;
+    height: auto;
+    white-space: normal;
+  }
+}
+
 .job-detail-workspace__content > .section,
-.job-detail-workspace__inspector > .section,
-.job-detail-workspace__inspector > .job-contacts-panel,
 .artifact-detail-workspace__inspector > .section,
 .artifact-detail-workspace__inspector > .tailoring-explanation-section,
 .contact-detail-workspace .section,
