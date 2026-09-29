@@ -695,7 +695,11 @@ export function jobColumns(
       sortable: true,
       getFilterValue: (row) => row.company || "-",
       render: (row) => (
-        <span className="muted-cell" data-typography="body">
+        <span
+          className="muted-cell"
+          data-typography="body"
+          title={row.company || "-"}
+        >
           {row.company || "-"}
         </span>
       ),

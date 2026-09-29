@@ -5436,6 +5436,10 @@ input[type="radio"] {
   white-space: nowrap;
 }
 
+.jobs-data-grid-table td[data-label="Company"] .muted-cell {
+  display: block;
+}
+
 .fit {
   --fit-score-bg: var(--muted);
   --fit-score-border: var(--border);

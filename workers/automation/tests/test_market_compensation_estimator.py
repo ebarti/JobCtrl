@@ -13,6 +13,31 @@ from jobctrl.domain.identifiers import JobId
 TEST_JOB_ID = JobId("11111111-1111-4111-8111-111111111111")
 
 
+@pytest.mark.parametrize(("title", "reason"), [
+    ("Director", "weak_role_match"),
+    ("Head", "weak_role_match"),
+    ("", "missing_role"),
+])
+def test_title_without_occupation_has_truthful_no_range_reason(title: str, reason: str) -> None:
+    estimate = estimate_market_compensation(
+        job_id=TEST_JOB_ID, company="Acme AI", title=title, location="Madrid, Spain",
+        observations=(), estimated_at="2026-09-25T10:00:00Z",
+    )
+    assert estimate.estimate_state == "insufficient_evidence"
+    assert estimate.insufficient_reasons == (reason,)
+    assert estimate.minimum_amount is None and estimate.maximum_amount is None
+
+
+def test_ambiguous_engineering_title_without_observations_records_role_reason() -> None:
+    estimate = estimate_market_compensation(
+        job_id=TEST_JOB_ID, company="Acme AI", title="Head of Engineering",
+        location="Madrid, Spain", observations=(), estimated_at="2026-09-25T10:00:00Z",
+    )
+    assert estimate.estimate_state == "insufficient_evidence"
+    assert estimate.insufficient_reasons == ("weak_role_match",)
+    assert next(factor for factor in estimate.factors if factor.name == "role").score == 0
+
+
 def _levels(
     *,
     company: str = "Acme AI",
@@ -165,7 +190,7 @@ def test_estimates_exact_company_role_from_reported_levels_and_glassdoor_rows() 
     assert "company_role_fallback" not in estimate.warnings
 
 
-def test_executive_titles_use_executive_baseline_not_staff_plus_fallback() -> None:
+def test_executive_title_does_not_borrow_product_or_operations_executive_pay() -> None:
     estimate = estimate_market_compensation(
         job_id=TEST_JOB_ID,
         company="Different Company",
@@ -189,13 +214,9 @@ def test_executive_titles_use_executive_baseline_not_staff_plus_fallback() -> No
         estimated_at="2026-06-19T10:00:00Z",
     )
 
-    assert estimate.estimate_state == "estimated_range"
-    assert estimate.match_scope == "market_baseline_fallback"
-    assert estimate.seniority_label == "executive"
-    assert estimate.minimum_amount == 175_000
-    assert estimate.maximum_amount == 315_000
-    assert estimate.confidence_band == "low"
-    assert "company_role_fallback" in estimate.warnings
+    assert estimate.estimate_state == "insufficient_evidence"
+    assert estimate.minimum_amount is None and estimate.maximum_amount is None
+    assert {row.role_title for row in estimate.evidence}.isdisjoint({"Chief Product Officer", "COO"})
 
 
 def test_director_title_and_same_location_fallback_are_described_truthfully() -> None:
@@ -207,7 +228,7 @@ def test_director_title_and_same_location_fallback_are_described_truthfully() ->
         observations=(
             _euro_top_tech(
                 company="Euro Top Tech community",
-                role="Principal / Director Software Engineer",
+                role="Principal / Director Privacy Engineering",
                 level="Principal / Director",
                 minimum=90_000,
                 maximum=140_000,
@@ -269,6 +290,92 @@ def test_estimates_company_adjacent_role_with_explicit_fallback_warning() -> Non
     assert "company_role_fallback" in estimate.warnings
 
 
+def test_enriched_software_leadership_rejects_same_company_sales_population() -> None:
+    estimate = estimate_market_compensation(
+        job_id=TEST_JOB_ID,
+        company="Acme AI",
+        title="Head of Engineering, Sales & Marketing Tools",
+        location="Madrid, Spain",
+        job_context="Software backend services using Java and Kubernetes",
+        observations=(_glassdoor(company="Acme AI", role="Director of Sales", level="Director",
+                                 minimum=60_000, maximum=90_000, sample_count=20),),
+        estimated_at="2026-09-25T10:00:00Z",
+    )
+    assert estimate.estimate_state == "insufficient_evidence"
+    assert estimate.insufficient_reasons == ("weak_role_match",)
+    assert estimate.minimum_amount is None and estimate.maximum_amount is None
+    assert next(factor for factor in estimate.factors if factor.name == "role").score == 0
+
+
+@pytest.mark.parametrize("job_context", [None, ""])
+def test_unresolved_engineering_leadership_rejects_same_company_sales_population(
+    job_context: str | None,
+) -> None:
+    estimate = estimate_market_compensation(
+        job_id=TEST_JOB_ID,
+        company="Acme AI",
+        title="Head of Engineering, Sales & Marketing Tools",
+        location="Madrid, Spain",
+        job_context=job_context,
+        observations=(_glassdoor(company="Acme AI", role="Director of Sales", level="Director",
+                                 minimum=60_000, maximum=90_000, sample_count=20),),
+        estimated_at="2026-09-25T10:00:00Z",
+    )
+    assert estimate.estimate_state == "insufficient_evidence"
+    assert estimate.insufficient_reasons == ("weak_role_match",)
+    assert estimate.minimum_amount is None and estimate.maximum_amount is None
+    assert estimate.evidence == ()
+    assert next(factor for factor in estimate.factors if factor.name == "role").score == 0
+
+
+@pytest.mark.parametrize(("title", "reported_role"), [
+    ("Director of Software Engineering", "Director of Sales"),
+    ("Head of Platform Engineering", "Director of Software Engineering"),
+])
+def test_title_supported_leadership_rejects_other_role_families_without_enrichment(
+    title: str, reported_role: str,
+) -> None:
+    estimate = estimate_market_compensation(
+        job_id=TEST_JOB_ID, company="Acme AI", title=title, location="Madrid, Spain",
+        observations=(_glassdoor(company="Acme AI", role=reported_role, level="Director",
+                                 minimum=60_000, maximum=90_000, sample_count=20),),
+        estimated_at="2026-09-25T10:00:00Z",
+    )
+    assert estimate.estimate_state == "insufficient_evidence"
+    assert estimate.insufficient_reasons == ("weak_role_match",)
+    assert estimate.minimum_amount is None and estimate.maximum_amount is None
+
+
+def test_title_supported_leadership_accepts_same_family_evidence_without_enrichment() -> None:
+    estimate = estimate_market_compensation(
+        job_id=TEST_JOB_ID, company="Acme AI", title="Director of Software Engineering",
+        location="Madrid, Spain",
+        observations=(_glassdoor(company="Acme AI", role="Head of Software Engineering", level="Director",
+                                 minimum=140_000, maximum=180_000, sample_count=20),),
+        estimated_at="2026-09-25T10:00:00Z",
+    )
+    assert estimate.estimate_state == "estimated_range"
+    assert (estimate.minimum_amount, estimate.maximum_amount) == (140_000, 180_000)
+
+
+def test_enriched_software_leadership_keeps_only_compatible_director_evidence() -> None:
+    observations = (
+        _glassdoor(company="Acme AI", role="Director of Sales", level="Director",
+                   minimum=60_000, maximum=90_000, sample_count=20),
+        _glassdoor(company="Acme AI", role="Head of Software Engineering", level="Director",
+                   minimum=140_000, maximum=180_000, sample_count=20),
+    )
+    estimate = estimate_market_compensation(
+        job_id=TEST_JOB_ID, company="Acme AI",
+        title="Head of Engineering, Sales & Marketing Tools", location="Madrid, Spain",
+        job_context="Software backend services using Java and Kubernetes",
+        observations=observations, estimated_at="2026-09-25T10:00:00Z",
+    )
+    assert estimate.estimate_state == "estimated_range"
+    assert (estimate.minimum_amount, estimate.maximum_amount) == (140_000, 180_000)
+    assert [row.role_title for row in estimate.evidence] == ["Head of Software Engineering"]
+
+
 def test_estimates_trimodal_tier_role_fallback_with_explicit_warning() -> None:
     estimate = estimate_market_compensation(
         job_id=TEST_JOB_ID,
@@ -278,7 +385,7 @@ def test_estimates_trimodal_tier_role_fallback_with_explicit_warning() -> None:
         observations=(
             _levels(
                 company="Trimodal Labs",
-                role="Senior Product Manager",
+                role="Senior DevOps Lead",
                 minimum=172_000,
                 maximum=196_000,
                 tier="tier_3_top_of_market",
@@ -422,15 +529,16 @@ def test_same_location_role_fallback_estimates_when_company_role_is_missing() ->
 
     assert estimate.estimate_state == "estimated_range"
     assert estimate.match_scope == "same_location_role_fallback"
-    assert estimate.minimum_amount == 112_000
+    assert estimate.minimum_amount == 118_000
     assert estimate.maximum_amount == 142_000
     assert estimate.confidence_band == "low"
     assert estimate.confidence_interval_minimum_amount is not None
     assert estimate.confidence_interval_minimum_amount < estimate.minimum_amount
     assert "company_role_fallback" in estimate.warnings
+    assert [row.role_title for row in estimate.evidence] == ["Senior Platform Engineer"]
 
 
-def test_levels_public_market_fallback_uses_aggregate_instead_of_top_payer_range() -> None:
+def test_levels_public_software_aggregate_cannot_price_platform_role() -> None:
     aggregate = _levels(
         company=LEVELS_FYI_MARKET_AGGREGATE_COMPANY,
         role="Software Engineer",
@@ -462,12 +570,11 @@ def test_levels_public_market_fallback_uses_aggregate_instead_of_top_payer_range
     )
 
     assert estimate.estimate_state == "insufficient_evidence"
-    assert estimate.match_scope == "same_location_role_fallback"
+    assert estimate.match_scope == "none"
     assert estimate.minimum_amount is None
-    assert estimate.evidence[0].minimum_amount == 39_000
-    assert "weak_level_match" in estimate.insufficient_reasons
+    assert estimate.evidence == ()
+    assert "weak_role_match" in estimate.insufficient_reasons
     assert estimate.maximum_amount is None
-    assert [row.company_name for row in estimate.evidence] == [LEVELS_FYI_MARKET_AGGREGATE_COMPANY]
 
 
 def test_missing_company_is_insufficient_instead_of_location_title_estimation() -> None:

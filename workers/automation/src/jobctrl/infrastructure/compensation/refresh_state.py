@@ -96,8 +96,13 @@ class SqliteCompensationRefreshStateRepository:
         rows = _fetchall_mappings(
             self._conn.execute(
                 """
-                SELECT jobs.title, jobs.location
+                SELECT jobs.title, jobs.location,
+                       enrichments.full_description AS enrichment_description
                 FROM jobs
+                LEFT JOIN job_enrichments AS enrichments
+                  ON enrichments.tenant_id = jobs.tenant_id
+                 AND enrichments.job_id = jobs.job_id
+                 AND enrichments.current_status = 'enriched'
                 LEFT JOIN jobctrl_deleted_jobs AS deleted
                   ON deleted.tenant_id = jobs.tenant_id
                  AND deleted.job_id = jobs.job_id
@@ -118,7 +123,7 @@ class SqliteCompensationRefreshStateRepository:
         for row in rows:
             title = str(row["title"] or "").strip()
             location = str(row["location"] or "").strip()
-            classification = classify_role(title)
+            classification = classify_role(title, job_context=row["enrichment_description"])
             if classification.role_family_code is None:
                 without_role += 1
                 continue
@@ -183,6 +188,7 @@ class SqliteCompensationRefreshStateRepository:
         owner: str,
         now: str,
         lease_expires_at: str,
+        force: bool = False,
     ) -> tuple[CompensationRefreshLease, ...]:
         if not owner.strip():
             raise ValueError("compensation refresh lease owner is required")
@@ -214,7 +220,7 @@ class SqliteCompensationRefreshStateRepository:
                   AND subdivision_code = ?
                   AND locality = ?
                   AND component = ?
-                  AND (next_refresh_at IS NULL OR next_refresh_at <= ?)
+                  AND (? OR next_refresh_at IS NULL OR next_refresh_at <= ?)
                   AND (
                         lease_owner IS NULL
                         OR lease_expires_at <= ?
@@ -226,6 +232,7 @@ class SqliteCompensationRefreshStateRepository:
                     canonical_expiry,
                     canonical_now,
                     *_slice_key_values(item),
+                    int(force),
                     canonical_now,
                     canonical_now,
                 ),

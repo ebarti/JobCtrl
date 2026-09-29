@@ -140,6 +140,9 @@ _ROLE_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
         "security_privacy",
         (
             "application security",
+            "cyber security",
+            "chief information security officer",
+            "ciso",
             "cloud security",
             "cybersecurity",
             "information security",
@@ -153,8 +156,10 @@ _ROLE_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
         "data_ai",
         (
             "artificial intelligence",
+            "ai engineering",
             "data analyst",
             "data engineer",
+            "data engineering",
             "data scientist",
             "machine learning",
             "ml engineer",
@@ -168,6 +173,9 @@ _ROLE_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
             "devops",
             "infrastructure",
             "platform engineer",
+            "platform engineering",
+            "network engineer",
+            "network engineering",
             "reliability engineer",
             "site reliability",
             "sre",
@@ -253,13 +261,14 @@ _ROLE_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
         "software_engineering",
         (
             "backend",
+            "chief technology officer",
+            "cto",
             "developer",
-            "engineer",
-            "engineering manager",
             "frontend",
             "full stack",
             "mobile engineer",
             "software",
+            "sw engineering",
             "web engineer",
         ),
     ),
@@ -712,10 +721,71 @@ class ExtrapolatedBenchmarkFact:
             raise ValueError("fact_id does not match extrapolated benchmark content")
 
 
-def classify_role(title: str) -> RoleClassification:
+def classify_role(title: str, *, job_context: str | None = None) -> RoleClassification:
     normalized = _normalized_phrase(title)
     matched_code: str | None = None
     matched_rule: str | None = None
+    # The team or product following an engineering-leadership title is not the
+    # occupation. Only current job context may disambiguate a generic title;
+    # provider observations are classified from their own reported title alone.
+    engineering_leadership = bool(re.search(
+        r"\b(?:head|director|vp|vice president|chief)\s+(?:of\s+)?(?:\w+\s+)?engineering\b"
+        r"|\bengineering\s+(?:head|director|manager)\b",
+        normalized,
+    ))
+    technology_leadership = bool(re.search(
+        r"\b(?:head|director|vp|vice president)\s+of\s+technology\b"
+        r"|\btechnology\s+(?:head|director)\b",
+        normalized,
+    ))
+    if ("technical director" in normalized
+            and _phrase_present(normalized, "release management")
+            and _phrase_present(normalized, "automation")
+            and _software_release_context(job_context)):
+        return RoleClassification(
+            taxonomy_version=ROLE_FAMILY_TAXONOMY_VERSION,
+            role_family_code="software_engineering",
+            seniority_label=classify_seniority(title),
+            matched_rule="software release ownership in job context",
+        )
+    if engineering_leadership or technology_leadership:
+        title_tokens = set(normalized.split())
+        for code, rules in _ROLE_RULES[:3]:
+            matched_rule = next((rule for rule in rules if _phrase_present(normalized, rule)), None)
+            if matched_rule is not None:
+                matched_code = code
+                break
+        if matched_code is None:
+            for code, markers in (
+                ("security_privacy", {"security", "cybersecurity", "privacy", "ciso"}),
+                ("data_ai", {"data", "ai"}),
+                ("infrastructure_platform", {"platform", "network", "infrastructure", "devops"}),
+            ):
+                if title_tokens & markers:
+                    matched_code = code
+                    matched_rule = "title specialty"
+                    break
+        if matched_code is None and _data_ai_leadership_context(job_context):
+            matched_code = "data_ai"
+            matched_rule = "data and AI platform ownership in job context"
+        if matched_code is None and _digital_identity_fraud_context(normalized, job_context):
+            matched_code = "software_engineering"
+            matched_rule = "digital identity and fraud engineering ownership in job context"
+        if matched_code is None and (
+            _phrase_present(normalized, "software engineering")
+            or _phrase_present(normalized, "sw engineering")
+            or _software_engineering_context(job_context)
+            or (title_tokens & {"marketplace", "ecommerce"}
+                and _phrase_present(_normalized_phrase((job_context or "")[:20_000]), "software"))
+        ):
+            matched_code = "software_engineering"
+            matched_rule = "software engineering" if _phrase_present(normalized, "software engineering") else "job context"
+        return RoleClassification(
+            taxonomy_version=ROLE_FAMILY_TAXONOMY_VERSION,
+            role_family_code=matched_code,
+            seniority_label=classify_seniority(title),
+            matched_rule=matched_rule,
+        )
     for code, rules in _ROLE_RULES:
         for rule in rules:
             if _phrase_present(normalized, rule):
@@ -729,6 +799,53 @@ def classify_role(title: str) -> RoleClassification:
         role_family_code=matched_code,
         seniority_label=classify_seniority(title),
         matched_rule=matched_rule,
+    )
+
+
+def _software_engineering_context(value: str | None) -> bool:
+    context = _normalized_phrase((value or "")[:20_000])
+    signals = (
+        "software", "backend", "back end", "frontend", "front end",
+        "kubernetes", "microservices", "microservice", "java", "python", "typescript",
+        "javascript", "react", "cloud", "aws", "azure", "saas", "api", "apis",
+        "ecommerce", "e commerce",
+    )
+    return sum(_phrase_present(context, signal) for signal in signals) >= 2
+
+
+def _data_ai_leadership_context(value: str | None) -> bool:
+    context = _normalized_phrase((value or "")[:20_000])
+    return (
+        (_phrase_present(context, "ai platform") or _phrase_present(context, "data platform"))
+        and (_phrase_present(context, "data and ai") or _phrase_present(context, "data ai"))
+        and (_phrase_present(context, "coding") or _phrase_present(context, "hands on"))
+    )
+
+
+def _software_release_context(value: str | None) -> bool:
+    context = _normalized_phrase((value or "")[:20_000])
+    return (
+        (_phrase_present(context, "software solution") or _phrase_present(context, "software solutions"))
+        and any(_phrase_present(context, phrase) for phrase in
+                ("release engineer", "release engineers", "release engineering"))
+    ) or (
+        _phrase_present(context, "game")
+        and _phrase_present(context, "cross platform")
+        and _phrase_present(context, "release quality")
+        and _phrase_present(context, "delivery velocity")
+        and bool(re.search(r"\binternal(?: \w+){0,2} solutions\b", context))
+    )
+
+
+def _digital_identity_fraud_context(title: str, value: str | None) -> bool:
+    context = _normalized_phrase((value or "")[:20_000])
+    return (
+        _phrase_present(title, "identity")
+        and _phrase_present(title, "fraud")
+        and _phrase_present(context, "gaming")
+        and _phrase_present(context, "technical vision")
+        and _phrase_present(context, "engineering teams")
+        and _phrase_present(context, "scalable")
     )
 
 

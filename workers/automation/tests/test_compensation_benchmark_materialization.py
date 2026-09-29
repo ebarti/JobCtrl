@@ -33,6 +33,10 @@ NOW = "2026-08-12T08:00:00Z"
 FRESH_UNTIL = "2026-08-19T08:00:00Z"
 JOB_ONE = "11111111-1111-4111-8111-111111111111"
 JOB_TWO = "22222222-2222-4222-8222-222222222222"
+JOB_THREE = "33333333-3333-4333-8333-333333333333"
+JOB_FOUR = "44444444-4444-4444-8444-444444444444"
+JOB_FIVE = "55555555-5555-4555-8555-555555555555"
+JOB_SIX = "66666666-6666-4666-8666-666666666666"
 
 
 def test_direct_benchmark_materializes_every_matching_job_idempotently(
@@ -163,6 +167,158 @@ def test_direct_benchmark_materializes_every_matching_job_idempotently(
         close_connection(db_path)
 
 
+def test_current_enriched_engineering_leadership_matches_director_evidence(tmp_path: Path) -> None:
+    db_path = tmp_path / "leadership.db"
+    conn = init_db(db_path)
+    try:
+        _insert_job(conn, job_id=JOB_ONE, title="Head of Engineering, Payment Gateway")
+        _insert_enrichment(conn, JOB_ONE, "Software backend services using Kubernetes and Java")
+        _insert_job(conn, job_id=JOB_TWO, title="Head of Engineering, Sales & Marketing Tools")
+        _insert_enrichment(conn, JOB_TWO, "Software backend platform using Java")
+        discovery = SqliteCompensationRefreshStateRepository(conn).discover_active_job_slices("local")
+        assert len(discovery.slices) == 1
+        assert discovery.slices[0].role_family_code == "software_engineering"
+        assert discovery.slices[0].seniority_label == "director"
+        assert discovery.slices[0].geography.country_code == "ES"
+
+        reported = replace(_observation(country="Spain"),
+                           role_title="Director of Software Engineering", level_label="Director")
+        run_automatic_compensation_refresh(
+            conn, tenant_id="local", owner="leadership", now=NOW,
+            load_observations=lambda _: ReportedCompensationSourceLoad(observations=(reported,)),
+            load_fx_rates=_unexpected_fx, load_price_levels=lambda: (), completion_clock=lambda: NOW,
+        )
+        first = materialize_automatic_compensation_estimates(conn, tenant_id="local", materialized_at=NOW)
+        assert first.estimates_written == 2
+        for job_id in (JOB_ONE, JOB_TWO):
+            estimate = SqliteMarketCompensationRepository(conn).get_estimate("local", job_id)
+            assert estimate is not None and estimate.estimate_state == "estimated_range"
+            assert (estimate.minimum_amount, estimate.maximum_amount) == (60_000, 90_000)
+            summary, _ = _projected_compensation(conn, job_id)
+            assert summary["market"]["displayRange"] == "EUR 60000-90000/year"
+        second = materialize_automatic_compensation_estimates(
+            conn, tenant_id="local", materialized_at="2026-08-13T08:00:00Z",
+        )
+        assert second.estimates_written == 0 and second.estimates_unchanged == 2
+
+        # The independent explicit refresh must apply the same contextual role
+        # when deciding whether a failed source load may retain this range.
+        repository = SqliteMarketCompensationRepository(conn)
+        accepted = repository.get_estimate("local", JOB_ONE)
+        repository.backfill_from_jobs((), tenant_id="local", estimated_at=NOW,
+                                      preserve_accepted_on_failure=True)
+        assert repository.get_estimate("local", JOB_ONE) == accepted
+        repository.backfill_from_jobs((), tenant_id="local", estimated_at=NOW)
+        assert repository.get_estimate("local", JOB_ONE) == accepted
+        sales = replace(_observation(country="Spain"), company_name="Example",
+                        role_title="Director of Sales", level_label="Director", sample_count=20)
+        repository.backfill_from_jobs((sales,), tenant_id="local", estimated_at=NOW, job_id=JOB_ONE)
+        assert repository.get_estimate("local", JOB_ONE) == accepted
+
+        later = "2026-08-21T08:00:00Z"
+        run_automatic_compensation_refresh(
+            conn, tenant_id="local", owner="outage", now=later,
+            load_observations=lambda _: ReportedCompensationSourceLoad(
+                observations=(), source_errors=("levels_fyi_public_unavailable",)),
+            load_fx_rates=_unexpected_fx, load_price_levels=lambda: (), completion_clock=lambda: later,
+        )
+        materialize_automatic_compensation_estimates(conn, tenant_id="local", materialized_at=later)
+        retained = SqliteMarketCompensationRepository(conn).get_estimate("local", JOB_ONE)
+        assert retained is not None and retained.estimate_state == "estimated_range"
+        conn.execute("UPDATE jobs SET title = 'Head of Sales' WHERE job_id = ?", (JOB_ONE,))
+        conn.commit()
+        materialize_automatic_compensation_estimates(conn, tenant_id="local", materialized_at=later)
+        changed = SqliteMarketCompensationRepository(conn).get_estimate("local", JOB_ONE)
+        assert changed is not None and changed.estimate_state != "estimated_range"
+        assert changed.minimum_amount is None
+    finally:
+        close_connection(db_path)
+
+
+def test_unclassified_job_and_unresolved_country_get_persisted_no_range(tmp_path: Path) -> None:
+    db_path = tmp_path / "unclassified.db"
+    conn = init_db(db_path)
+    try:
+        _insert_job(conn, job_id=JOB_ONE, title="Head of Hotel Engineering")
+        _insert_job(conn, job_id=JOB_TWO, title="Principal Software Engineer")
+        _insert_job(conn, job_id=JOB_THREE, title="Senior Software Engineer")
+        conn.execute("UPDATE jobs SET location = 'European Union (Remote)' WHERE job_id = ?", (JOB_TWO,))
+        conn.commit()
+        first = materialize_automatic_compensation_estimates(conn, tenant_id="local", materialized_at=NOW)
+        assert first.jobs_without_role_family == 1
+        assert first.jobs_without_country == 1
+        assert first.estimates_written == 3
+        for job_id, reason, factor in ((JOB_ONE, "weak_role_match", "role"),
+                                       (JOB_TWO, "weak_location_match", "location"),
+                                       (JOB_THREE, "missing_reported_observation", "sample")):
+            estimate = SqliteMarketCompensationRepository(conn).get_estimate("local", job_id)
+            assert estimate is not None and estimate.estimate_state == "insufficient_evidence"
+            assert estimate.insufficient_reasons == (reason,)
+            assert estimate.minimum_amount is None and estimate.maximum_amount is None
+            assert estimate.factors[0].name == factor and estimate.factors[0].score == 0
+            summary, audit = _projected_compensation(conn, job_id)
+            assert summary["market"]["recordStatus"] == "recorded"
+            assert summary["market"]["displayRange"] is None
+            assert [item["code"] for item in audit["market"]["estimate"]["insufficientReasons"]] == [reason]
+        second = materialize_automatic_compensation_estimates(
+            conn, tenant_id="local", materialized_at="2026-08-13T08:00:00Z",
+        )
+        assert second.estimates_written == 0 and second.estimates_unchanged == 3
+    finally:
+        close_connection(db_path)
+
+
+def test_current_enrichment_routes_data_and_release_leaders_but_not_physical_or_weak_roles(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "leadership-context.db"
+    conn = init_db(db_path)
+    try:
+        _insert_job(conn, job_id=JOB_ONE, title="Director of Engineering")
+        _insert_enrichment(conn, JOB_ONE,
+                           "Own the AI platform and data and AI vision with hands-on coding")
+        _insert_job(conn, job_id=JOB_TWO,
+                    title="Senior Technical Director, Release Management & Automation (AI)")
+        _insert_enrichment(conn, JOB_TWO,
+                           "Own central software solutions and lead release engineering")
+        _insert_job(conn, job_id=JOB_THREE,
+                    title="Senior Technical Director, Release Management & Automation (AI)")
+        _insert_enrichment(conn, JOB_THREE,
+                           "Game products need cross platform delivery, release quality, "
+                           "delivery velocity, and internal CSO solutions")
+        _insert_job(conn, job_id=JOB_FOUR, title="Director of Engineering")
+        _insert_enrichment(conn, JOB_FOUR,
+                           "Own industrial electrical manufacturing and facility maintenance")
+        _insert_job(conn, job_id=JOB_FIVE,
+                    title="Director of Engineering – Manage (Identity, Fraud & CS)")
+        _insert_enrichment(conn, JOB_FIVE,
+                           "Gaming platform technical vision for identity and fraud with "
+                           "engineering teams building scalable solutions")
+        _insert_job(conn, job_id=JOB_SIX,
+                    title="Senior Technical Director, Release Management & Automation (AI)")
+        _insert_enrichment(conn, JOB_SIX,
+                           "Coordinate release management and automation across a platform")
+
+        discovery = SqliteCompensationRefreshStateRepository(conn).discover_active_job_slices("local")
+        assert {(item.role_family_code, item.seniority_label, item.geography.country_code)
+                for item in discovery.slices} == {
+                    ("data_ai", "director", "ES"), ("software_engineering", "director", "ES"),
+                }
+        assert discovery.jobs_without_role_family == 2
+        materialize_automatic_compensation_estimates(conn, tenant_id="local", materialized_at=NOW)
+        repository = SqliteMarketCompensationRepository(conn)
+        for job_id in (JOB_ONE, JOB_TWO, JOB_THREE, JOB_FIVE):
+            estimate = repository.get_estimate("local", job_id)
+            assert estimate is not None
+            assert estimate.insufficient_reasons == ("missing_reported_observation",)
+        for job_id in (JOB_FOUR, JOB_SIX):
+            estimate = repository.get_estimate("local", job_id)
+            assert estimate is not None
+            assert estimate.insufficient_reasons == ("weak_role_match",)
+    finally:
+        close_connection(db_path)
+
+
 def test_all_level_benchmark_is_context_not_principal_pay_even_for_legacy_projections(tmp_path: Path) -> None:
     from jobctrl.infrastructure.projections.projection_builder import ProjectionBuilder
     from jobctrl.domain.tenant import LOCAL_TENANT
@@ -287,7 +443,7 @@ def test_materialization_retry_repairs_projection_after_save_event_failure(
         close_connection(db_path)
 
 
-def test_materialization_retry_repairs_projection_after_clear_event_failure(
+def test_materialization_retry_repairs_projection_after_no_range_event_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -325,17 +481,17 @@ def test_materialization_retry_repairs_projection_after_clear_event_failure(
             """,
             (JOB_ONE,),
         ).fetchone()[0]
-        original = SqliteMarketCompensationRepository._record_cleared_event
+        original = SqliteMarketCompensationRepository._record_updated_event
 
-        def fail_before_event(_repository, **_kwargs) -> None:
-            raise sqlite3.OperationalError("simulated compensation clear event failure")
+        def fail_before_event(_repository, _estimate, **_kwargs) -> None:
+            raise sqlite3.OperationalError("simulated compensation update event failure")
 
         monkeypatch.setattr(
             SqliteMarketCompensationRepository,
-            "_record_cleared_event",
+            "_record_updated_event",
             fail_before_event,
         )
-        with pytest.raises(sqlite3.OperationalError, match="simulated compensation clear event failure"):
+        with pytest.raises(sqlite3.OperationalError, match="simulated compensation update event failure"):
             materialize_automatic_compensation_estimates(
                 conn,
                 tenant_id="local",
@@ -361,7 +517,7 @@ def test_materialization_retry_repairs_projection_after_clear_event_failure(
 
         monkeypatch.setattr(
             SqliteMarketCompensationRepository,
-            "_record_cleared_event",
+            "_record_updated_event",
             original,
         )
         retried = materialize_automatic_compensation_estimates(
@@ -370,13 +526,13 @@ def test_materialization_retry_repairs_projection_after_clear_event_failure(
             materialized_at="2026-08-12T09:00:00Z",
         )
 
-        assert retried.estimates_cleared == 1
+        assert retried.estimates_written == 1
         assert retried.projections_refreshed == 1
-        assert repository.get_estimate("local", JOB_ONE) is None
+        assert repository.get_estimate("local", JOB_ONE).estimate_state == "insufficient_evidence"
         summary, audit = _projected_compensation(conn, JOB_ONE)
-        assert summary["market"]["recordStatus"] == "not_requested"
+        assert summary["market"]["recordStatus"] == "recorded"
         assert summary["market"]["displayRange"] is None
-        assert audit["market"]["recordStatus"] == "not_requested"
+        assert audit["market"]["recordStatus"] == "recorded"
     finally:
         close_connection(db_path)
 
@@ -594,10 +750,10 @@ def test_role_change_clears_only_the_automatic_estimator_owned_range(
             materialized_at="2026-08-12T09:00:00Z",
         )
 
-        assert result.estimates_cleared == 1
+        assert result.estimates_written == 2
         repository = SqliteMarketCompensationRepository(conn)
-        assert repository.get_estimate("local", JOB_ONE) is None
-        assert repository.get_estimate("local", JOB_TWO) is not None
+        assert repository.get_estimate("local", JOB_ONE).estimate_state == "insufficient_evidence"
+        assert repository.get_estimate("local", JOB_TWO).estimate_state == "insufficient_evidence"
         summary = json.loads(
             conn.execute(
                 """
@@ -608,7 +764,7 @@ def test_role_change_clears_only_the_automatic_estimator_owned_range(
                 (JOB_ONE,),
             ).fetchone()["compensation_summary_json"]
         )
-        assert summary["market"]["recordStatus"] == "not_requested"
+        assert summary["market"]["recordStatus"] == "recorded"
         assert summary["market"]["displayRange"] is None
     finally:
         close_connection(db_path)
@@ -624,6 +780,16 @@ def _insert_job(conn, *, job_id: str, title: str) -> None:
         )
         """,
         (job_id, f"https://jobs.example.com/{job_id}", title, NOW),
+    )
+    conn.commit()
+
+
+def _insert_enrichment(conn, job_id: str, description: str) -> None:
+    conn.execute(
+        """INSERT INTO job_enrichments (
+               tenant_id, job_id, current_status, full_description, updated_at
+           ) VALUES ('local', ?, 'enriched', ?, ?)""",
+        (job_id, description, NOW),
     )
     conn.commit()
 
@@ -798,8 +964,98 @@ def test_failed_refresh_retains_same_job_across_producers_and_empty_results(
         close_connection()
 
 
+@pytest.mark.parametrize("consumer", ["automatic", "explicit"])
+@pytest.mark.parametrize(("source_role", "retain"), [
+    ("Principal Infrastructure Engineer", True),
+    ("Principal Infrastructure Engineer, Sales Tools Platform", True),
+    ("Principal Infrastructure Engineer, Sales & Marketing Tools Platform", True),
+    ("Principal Infrastructure Engineer, Sales/Marketing Tools Platform", True),
+    ("Principal Infrastructure Engineer, Sales-Tools Platform", True),
+    ("Principal Infrastructure Engineer (Sales Tools Platform)", True),
+    ("Principal Infrastructure Engineer / Sales Tools Platform", True),
+    ("Principal Infrastructure Engineer - Sales Tools Platform", True),
+    ("Principal Infrastructure Engineer, Business Development Platform", True),
+    ("Principal Infrastructure Engineer (Business Development Platform)", True),
+    ("Principal Infrastructure Engineer / Business Development Platform", True),
+    ("Principal Infrastructure Engineer - Business Development Platform", True),
+    ("Principal Infrastructure Engineer, Biz Dev Platform", True),
+    ("Principal Infrastructure Engineer, Biz-Dev Platform", True),
+    ("Principal Infrastructure Engineer, Sales Tools Team", True),
+    ("Principal Infrastructure Engineer, Sales Tools Platform Team", True),
+    ("Principal Infrastructure Engineer, Business Development Platform Team", True),
+    ("Principal Infrastructure Sales Engineer", False),
+    ("Principal Sales Infrastructure Engineer", False),
+    ("Principal Infrastructure Business Development Engineer", False),
+    ("Principal Infrastructure Biz Dev Engineer", False),
+    ("Principal Infrastructure Presales Engineer", False),
+    ("Principal Infrastructure Pre Sales Engineer", False),
+    ("Principal Infrastructure Engineer (Presales)", False),
+    ("Principal Infrastructure Engineer / Sales Engineer", False),
+    ("Principal Infrastructure Engineer - Business Development", False),
+    ("Principal Infrastructure Engineer, Sales Engineer", False),
+    ("Principal Infrastructure Engineer, Biz Dev", False),
+    ("Principal Infrastructure Engineer / Pre Sales", False),
+    ("Principal Infrastructure Engineer (Sales)", False),
+    ("Principal Infrastructure Engineer - Sales", False),
+    ("Principal Infrastructure Engineer, Presales", False),
+    ("Principal Infrastructure Engineer, Sales Tools Platform / Presales", False),
+    ("Principal Infrastructure Engineer, Sales Tools Platform Business Development", False),
+    ("Principal Infrastructure Engineer, Sales Tools Platform Biz Dev", False),
+    ("Principal Infrastructure Engineer, Sales Tools Platform Sales", False),
+])
+def test_unchanged_legacy_v4_principal_adjacent_engineering_range_survives_weak_refresh(
+    tmp_path: Path, consumer: str, source_role: str, retain: bool,
+) -> None:
+    conn = init_db(tmp_path / "legacy-adjacent.db")
+    try:
+        title = "Principal Software Engineer"
+        _insert_job(conn, job_id=JOB_ONE, title=title)
+        repository = SqliteMarketCompensationRepository(conn)
+        reported = replace(_observation(country="Spain"), company_name="Peer Cloud",
+                           role_title=title, level_label="Principal", sample_count=20)
+        repository.backfill_from_jobs((reported,), estimated_at=NOW)
+        accepted = repository.get_estimate("local", JOB_ONE)
+        assert accepted is not None and accepted.estimate_state == "estimated_range"
+        assert accepted.estimator_version == "company-role-reported-compensation-v4"
+        assert accepted.seniority_label == "staff_plus"
+        # Replay the previously accepted v4 adjacent-role evidence without
+        # asking the current estimator to create a new cross-family range.
+        legacy = replace(accepted,
+            match_scope="same_location_role_fallback", sample_count=1,
+            evidence=(replace(accepted.evidence[0], company_name="Peer Cloud",
+                              role_title=source_role,
+                              level_label="Principal / Director", sample_count=1,
+                              role_score=0.65, location_score=0.78),))
+        repository.save_estimate(legacy)
+        assert repository.can_retain_estimate(legacy, title=title, location="Madrid, Spain") is retain
+        assert not repository.can_retain_estimate(legacy, title="Principal Backend Engineer",
+                                                  location="Madrid, Spain")
+        assert not repository.can_retain_estimate(legacy, title=title, location="Germany")
+        assert not repository.can_retain_estimate(legacy, title=title,
+                                                  location="European Union (Remote)")
+        if consumer == "automatic":
+            generic = replace(reported, role_title="Software Engineer", level_label="all levels")
+            later = "2026-08-21T08:00:00Z"
+            run_automatic_compensation_refresh(conn, tenant_id="local", owner="weak-legacy", now=later,
+                load_observations=lambda _: ReportedCompensationSourceLoad(observations=(generic,)),
+                load_fx_rates=_unexpected_fx, load_price_levels=lambda: (), completion_clock=lambda: later)
+            materialize_automatic_compensation_estimates(conn, tenant_id="local", materialized_at=later)
+        else:
+            repository.backfill_from_jobs((), tenant_id="local", job_id=JOB_ONE,
+                                          estimated_at="2026-08-21T08:00:00Z",
+                                          preserve_accepted_on_failure=True)
+        current = repository.get_estimate("local", JOB_ONE)
+        if retain:
+            assert current == legacy
+        else:
+            assert current is not None and current.estimate_state != "estimated_range"
+            assert current.minimum_amount is None and current.maximum_amount is None
+    finally:
+        close_connection()
+
+
 @pytest.mark.parametrize("consumer", ["explicit", "automatic"])
-@pytest.mark.parametrize("change", ["role", "country", "unsupported_old_population"])
+@pytest.mark.parametrize("change", ["role", "country", "unsupported_old_population", "unsupported_old_role"])
 def test_failed_refresh_does_not_retain_changed_job_or_wrong_source_population(tmp_path, monkeypatch, consumer, change):
     from jobctrl.infrastructure.compensation import refresh
 
@@ -818,8 +1074,10 @@ def test_failed_refresh_does_not_retain_changed_job_or_wrong_source_population(t
             conn.execute("UPDATE jobs SET location = 'Germany' WHERE job_id = ?", (JOB_ONE,))
         else:
             # Replay the candidate-1 persisted defect, not its now-fixed estimator.
-            repository.save_estimate(replace(accepted, evidence=(replace(accepted.evidence[0],
-                role_title="Principal Infrastructure Engineer", level_label="Principal / Director"),)))
+            evidence = (replace(accepted.evidence[0], role_title="Director of Sales", level_label="Director")
+                        if change == "unsupported_old_role" else replace(accepted.evidence[0],
+                            role_title="Principal Infrastructure Engineer", level_label="Principal / Director"))
+            repository.save_estimate(replace(accepted, evidence=(evidence,)))
         source_load = ReportedCompensationSourceLoad(observations=(), source_errors=("levels_fyi_public_unavailable",))
         if consumer == "explicit":
             monkeypatch.setattr(refresh, "get_connection", lambda: conn)
