@@ -101,7 +101,9 @@ The user-visible surfaces divide the work:
 
 - `/jobs/:jobId` shows material readiness, accepted artifacts, employer and
   requirement evidence, stage failures, and the per-job generation/re-tailor
-  controls.
+  controls. Accepted artifacts appear first, newest recorded generation first;
+  older approved artifacts remain visible. Canonically superseded versions
+  remain inspectable in the collapsed **Superseded artifacts** list.
 - `/artifacts` lists registered generations; `/artifacts/:artifactId` opens a
   route-level inspector with stored validation, provenance, coverage, voice,
   template, risk metadata, and same-job comparison followed by the full-width

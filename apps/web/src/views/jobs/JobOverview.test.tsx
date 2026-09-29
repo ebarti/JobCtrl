@@ -26,8 +26,16 @@ describe("<JobOverview>", () => {
     expect(within(metadata).getByText("Discovered via")).toBeInTheDocument();
     expect(within(metadata).getByText("jobspy:linkedin")).toBeInTheDocument();
     expect(
-      within(metadata).getByRole("link", { name: "Open original posting" }),
+      within(metadata).getByRole("link", {
+        name: "Open original posting (opens in a new tab)",
+      }),
     ).toHaveAttribute("href", sampleJob.url);
+    const postingLink = within(metadata).getByRole("link", {
+      name: "Open original posting (opens in a new tab)",
+    });
+    expect(postingLink).toHaveAttribute("target", "_blank");
+    expect(postingLink).toHaveAttribute("rel", "noreferrer");
+    expect(postingLink.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
     expect(metadata).not.toHaveTextContent(" · ");
     expect(
       screen.getByRole("heading", { level: 1, name: sampleJob.title }),
@@ -46,4 +54,25 @@ describe("<JobOverview>", () => {
     expect(within(metadata).queryByText("Location")).not.toBeInTheDocument();
     expect(within(metadata).queryByText("Salary")).not.toBeInTheDocument();
   });
+
+  it.each(["failed", "exhausted"] as const)(
+    "renders %s workflow state with the failure icon and color",
+    (currentState) => {
+      render(
+        <JobOverview
+          detail={makeJobDetail({
+            ...sampleJob,
+            currentSubstage: "tailor",
+            currentState,
+          })}
+        />,
+      );
+
+      const workflow = screen.getByRole("group", { name: "Workflow state" });
+      const badge = within(workflow).getByText(`Tailor · ${currentState === "failed" ? "Failed" : "Exhausted"}`);
+      expect(badge).toHaveAttribute("data-status-tone", "danger");
+      expect(badge).toHaveClass("text-destructive-text");
+      expect(badge.querySelector("svg")).toHaveClass("tabler-icon-circle-x");
+    },
+  );
 });

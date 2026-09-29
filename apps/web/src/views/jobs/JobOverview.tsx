@@ -1,3 +1,5 @@
+import { IconExternalLink } from "@tabler/icons-react";
+
 import type { JobDetail } from "../../contexts/operations/types.js";
 import { ScoreBadge } from "../../contexts/scoring/components/ScoreBadge.js";
 import { StatusBadge } from "../../shared/ui/status-badge.js";
@@ -20,11 +22,11 @@ function applicationTone(status: string | null): "ok" | "info" | "muted" {
   return "muted";
 }
 
-function workflowTone(state: string): "ok" | "info" | "muted" | "warn" {
+function workflowTone(state: string): "ok" | "info" | "muted" | "warn" | "danger" {
   if (state === "succeeded") return "ok";
   if (state === "queued" || state === "running") return "info";
-  if (state === "failed" || state === "blocked" || state === "exhausted")
-    return "warn";
+  if (state === "failed" || state === "exhausted") return "danger";
+  if (state === "blocked" || state === "needs_verification") return "warn";
   return "muted";
 }
 
@@ -73,6 +75,8 @@ export function JobOverview({ detail }: JobOverviewProps) {
                 target="_blank"
               >
                 Open original posting
+                <IconExternalLink aria-hidden="true" size={14} stroke={1.9} />
+                <span className="sr-only"> (opens in a new tab)</span>
               </a>
             </dd>
           </div>

@@ -3144,6 +3144,8 @@ export interface ArtifactSummary {
   company: string;
   type: string;
   status: string;
+  /** Canonical material generation when this artifact belongs to one. */
+  generation?: number | null;
   localPath: string;
   createdAt: string | null;
   sizeBytes: number | null;

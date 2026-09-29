@@ -22,7 +22,7 @@ import { JobAuditHistory } from "../../contexts/operations/components/JobAuditHi
 import { useDiscoverySettingsQuery } from "../../contexts/operations/hooks/useDiscoverySettingsQuery.js";
 import { useEvidenceMapQuery } from "../../contexts/operations/hooks/useEvidenceMapQuery.js";
 import { useJobDetailQuery } from "../../contexts/operations/hooks/useJobDetailQuery.js";
-import type { EvidenceMapEntry } from "../../contexts/operations/types.js";
+import type { ArtifactSummary, EvidenceMapEntry } from "../../contexts/operations/types.js";
 import { JobActions } from "../../contexts/pipeline/components/JobActions.js";
 import { RetryStageButton } from "../../contexts/pipeline/components/RetryStageButton.js";
 import { StageTimeline } from "../../contexts/pipeline/components/StageTimeline.js";
@@ -82,6 +82,50 @@ function evidenceReferenceExcerpt(entry: EvidenceMapEntry): string | null {
   const excerpt =
     entry.story?.outcome ?? entry.story?.action ?? entry.story?.scope ?? null;
   return excerpt && excerpt !== entry.title ? excerpt : null;
+}
+
+function groupJobArtifacts(artifacts: readonly ArtifactSummary[]) {
+  const accepted: ArtifactSummary[] = [];
+  const other: ArtifactSummary[] = [];
+  const superseded: ArtifactSummary[] = [];
+  for (const artifact of artifacts) {
+    if (artifact.status === "active" || artifact.status === "approved") {
+      accepted.push(artifact);
+    } else if (artifact.status === "superseded") {
+      superseded.push(artifact);
+    } else {
+      other.push(artifact);
+    }
+  }
+  accepted.sort((left, right) => {
+    const generationDifference = (right.generation ?? -1) - (left.generation ?? -1);
+    if (generationDifference) return generationDifference;
+    const leftTime = Date.parse(left.createdAt ?? "") || 0;
+    const rightTime = Date.parse(right.createdAt ?? "") || 0;
+    return rightTime - leftTime;
+  });
+  return { accepted, other, superseded };
+}
+
+function JobArtifactRow({ artifact }: { readonly artifact: ArtifactSummary }) {
+  return (
+    <div className="mini-row job-artifact-row">
+      <ArtifactStatusBadge status={artifact.status} />
+      <span>
+        {artifact.type}
+        {artifact.generation != null ? ` · Generation ${artifact.generation}` : null}
+      </span>
+      <OpenArtifactButton
+        artifactId={artifact.artifactId}
+        className={buttonVariants({ size: "sm", variant: "outline" })}
+        disabled={artifact.status === "missing"}
+      />
+      <details className="job-artifact-technical-details">
+        <summary data-typography="control">Technical details</summary>
+        <code data-typography="code">{artifact.localPath}</code>
+      </details>
+    </div>
+  );
 }
 
 function JobAuditHistorySection({
@@ -172,6 +216,7 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
   const currentSubstage = detail?.stages.find(
     (stage) => stage.stage === detail.job.currentSubstage,
   );
+  const artifactGroups = groupJobArtifacts(detail?.artifacts ?? []);
 
   return (
     <div className="route-page route-page--job-detail" aria-label="Job details">
@@ -311,33 +356,33 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
                   stages={preparationStages(detail.stages)}
                 />
               </Section>
-              <Section title="Active artifacts">
+              <Section title="Artifacts">
                 {detail.artifacts.length ? (
-                  detail.artifacts.map((artifact) => (
-                    <div
-                      className="mini-row job-artifact-row"
-                      key={artifact.artifactId}
-                    >
-                      <ArtifactStatusBadge status={artifact.status} />
-                      <span>{artifact.type}</span>
-                      <OpenArtifactButton
-                        artifactId={artifact.artifactId}
-                        className={buttonVariants({
-                          size: "sm",
-                          variant: "outline",
-                        })}
-                        disabled={artifact.status === "missing"}
-                      />
-                      <details className="job-artifact-technical-details">
+                  <>
+                    {[...artifactGroups.accepted, ...artifactGroups.other].map(
+                      (artifact) => (
+                        <JobArtifactRow
+                          artifact={artifact}
+                          key={artifact.artifactId}
+                        />
+                      ),
+                    )}
+                    {artifactGroups.superseded.length ? (
+                      <details className="job-artifact-history">
                         <summary data-typography="control">
-                          Technical details
+                          Superseded artifacts ({artifactGroups.superseded.length})
                         </summary>
-                        <code data-typography="code">{artifact.localPath}</code>
+                        {artifactGroups.superseded.map((artifact) => (
+                          <JobArtifactRow
+                            artifact={artifact}
+                            key={artifact.artifactId}
+                          />
+                        ))}
                       </details>
-                    </div>
-                  ))
+                    ) : null}
+                  </>
                 ) : (
-                  <Empty title="No active apply-ready artifacts." />
+                  <Empty title="No artifacts recorded." />
                 )}
               </Section>
               <Section title="Apply history">

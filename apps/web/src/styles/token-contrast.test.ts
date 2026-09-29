@@ -194,6 +194,18 @@ describe("JobCtrl monochrome interaction contrast", () => {
 });
 
 describe("semantic text token WCAG AA contrast", () => {
+  it("distinguishes success and failure with semantic hues in both themes", () => {
+    for (const block of [lightBlock, darkBlock]) {
+      const success = readToken(block, "success-text");
+      const failure = readToken(block, "destructive-text");
+      expect(success.C).toBeGreaterThan(0.08);
+      expect(success.H).toBeGreaterThan(130);
+      expect(success.H).toBeLessThan(170);
+      expect(failure.C).toBeGreaterThan(0.08);
+      expect(failure.H).toBeLessThan(40);
+    }
+  });
+
   const textTokens = [
     "success-text",
     "warning-text",

@@ -347,6 +347,10 @@ Open the Job Detail route workspace to inspect:
 - generated artifacts;
 - apply readiness and blockers.
 
+Accepted artifacts appear first, newest recorded generation first. Older
+approved artifacts remain visible. Canonically superseded artifacts are
+available under **Superseded artifacts**; expand it to inspect or open them.
+
 <WorkflowSurfacePanel surface="web">
 
 ![JobCtrl Job Detail route workspace showing score, requirement fit, keywords, and compensation](../assets/screenshots/job-detail.png)
