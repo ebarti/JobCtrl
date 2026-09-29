@@ -82,6 +82,69 @@ function renderJobDetailDrawer(jobId: string) {
 }
 
 describe("<JobDetailDrawer>", () => {
+  it("keeps contextual help available across the detail workspace when records are absent", async () => {
+    server.use(
+      http.get("*/v1/jobs/:jobKey", ({ params }) =>
+        HttpResponse.json(makeJobDetail({ ...sampleJob, jobKey: String(params["jobKey"]) })),
+      ),
+    );
+    renderJobDetailDrawer("https://example.com/jobs/1");
+
+    await screen.findByRole("heading", { name: "Artifacts" });
+    for (const label of [
+      "Fit score", "Apply readiness", "Workflow", "Fit and evidence",
+      "Band", "Confidence", "Eligibility", "Requirement fit", "Must-haves",
+      "Compensation", "Description", "Role analysis", "Interview prep",
+      "Preparation diagnostics", "Artifacts", "Apply history",
+      "Application outcomes", "Contacts",
+    ]) {
+      expect(screen.getAllByRole("button", { name: `Help for ${label}` }).length).toBeGreaterThan(0);
+    }
+  });
+
+  it("attributes a corrected fit score to the manual record while retaining the original band and confidence", async () => {
+    const user = userEvent.setup();
+    const correction = {
+      originalScore: 6,
+      correctedScore: 9,
+      rationale: "Reviewed the candidate evidence",
+      correctedBy: "local-user",
+      correctedAt: "2026-05-06T09:30:00Z",
+    };
+    server.use(
+      http.get("*/v1/jobs/:jobKey", ({ params }) =>
+        HttpResponse.json(makeJobDetail({
+          ...sampleJob,
+          jobKey: String(params["jobKey"]),
+          fitScore: 9,
+          scoreBreakdown: { ...sampleJob.scoreBreakdown!, fitBand: "stretch", confidence: "low" },
+          scoreCorrection: correction,
+          scoreTrace: { ...sampleJob.scoreTrace!, correctionHistory: [correction] },
+        })),
+      ),
+    );
+    renderJobDetailDrawer("https://example.com/jobs/corrected");
+
+    expect(await screen.findByText("9/10")).toBeInTheDocument();
+    expect(screen.getByText("stretch")).toBeInTheDocument();
+    expect(screen.getByText("low")).toBeInTheDocument();
+    const fitHelp = screen.getAllByRole("button", { name: "Help for Fit score" });
+    expect(fitHelp).toHaveLength(2);
+    for (const trigger of fitHelp) {
+      await user.click(trigger);
+      const explanation = await screen.findByRole("dialog", { name: "Fit score explanation" });
+      expect(explanation).toHaveTextContent("latest saved manual correction");
+      expect(explanation).toHaveTextContent("Reviewed the candidate evidence");
+      expect(explanation).toHaveTextContent("does not recompute");
+      await user.keyboard("{Escape}");
+    }
+    await user.click(screen.getByRole("button", { name: "Help for Band" }));
+    expect(await screen.findByRole("dialog", { name: "Band explanation" })).toHaveTextContent("retained original scoring breakdown");
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: "Help for Confidence" }));
+    expect(await screen.findByRole("dialog", { name: "Confidence explanation" })).toHaveTextContent("not confidence in the corrected score");
+  });
+
   it("shows accepted artifacts before superseded versions while retaining the full audit list", async () => {
     const user = userEvent.setup();
     const superseded = Array.from({ length: 4 }, (_, index) => ({

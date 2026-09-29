@@ -351,6 +351,27 @@ Accepted artifacts appear first, newest recorded generation first. Older
 approved artifacts remain visible. Canonically superseded artifacts are
 available under **Superseded artifacts**; expand it to inspect or open them.
 
+The question-mark buttons beside Job Detail labels open short explanations of
+the saved value, its source, and important limits. Press Enter or Space on a
+focused button to open its help, then Escape to return focus to the button.
+Use them when reading:
+
+| Area | Help available for |
+| --- | --- |
+| Overview | fit, posting metadata, apply readiness, workflow and application state |
+| Fit & evidence | score, band, confidence, eligibility, requirement fit, must-haves, concerns and diagnostics |
+| Compensation | posted and market ranges, source evidence, reliability and benchmark lineage |
+| Role analysis | seniority, model agreement, ensemble, generation, framing, requirements, keywords and candidate evidence |
+| Preparation | stage states and diagnostics, artifacts, description, application target and interview prep |
+| Follow-up | apply history, outcomes, contacts and audit history |
+
+Model agreement compares the exact normalized requirement text and keyword sets
+from surviving analysis drafts. It measures overlap between drafts, not candidate
+fit or factual confidence; one surviving draft displays 100% by convention.
+When a fit score was manually corrected, its help identifies the correction and
+reason. The displayed band, confidence, and eligibility remain from the saved
+scoring breakdown; correcting the score does not recalculate them.
+
 <WorkflowSurfacePanel surface="web">
 
 ![JobCtrl Job Detail route workspace showing score, requirement fit, keywords, and compensation](../assets/screenshots/job-detail.png)

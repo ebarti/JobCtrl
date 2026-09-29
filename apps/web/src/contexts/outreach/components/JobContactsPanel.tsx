@@ -3,6 +3,7 @@ import { useState } from "react";
 
 import { Empty } from "../../../shared/ui/empty.js";
 import { Button } from "../../../shared/ui/button.js";
+import { ContextHelp } from "../../../shared/ui/context-help.js";
 import { useContactDetailQuery } from "../hooks/useContactDetailQuery.js";
 import { useContactsListQuery } from "../hooks/useContactsListQuery.js";
 import { ContactCreateButton } from "./ContactCreateButton.js";
@@ -58,7 +59,7 @@ export function JobContactsPanel({ jobId, employer }: JobContactsPanelProps) {
   return (
     <section className="section job-contacts-section" aria-label="Contacts">
       <div className="job-contacts-head">
-        <h3>Contacts</h3>
+        <h3 aria-label="Contacts">Contacts <ContextHelp label="Contacts" description="People linked to this job, with their recorded role and attribute provenance. No contacts linked means none are saved here; research suggestions and source attributes should be reviewed before outreach." /></h3>
         <ContactCreateButton jobId={jobId} {...(employer ? { employer } : {})} label="Add contact" />
       </div>
       {errorMessage ? <div className="banner inline">{errorMessage}</div> : null}

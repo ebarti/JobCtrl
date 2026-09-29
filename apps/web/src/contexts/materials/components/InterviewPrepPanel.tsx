@@ -14,6 +14,7 @@ import {
   AlertTitle,
 } from "../../../shared/ui/alert.js";
 import { Empty } from "../../../shared/ui/empty.js";
+import { ContextHelp } from "../../../shared/ui/context-help.js";
 import { StatusBadge } from "../../../shared/ui/status-badge.js";
 import {
   AuditTechnicalDetails,
@@ -101,14 +102,14 @@ function PrepItemCard({
         <span className={`tag ${kindTone(item.kind)}`}>
           {KIND_LABELS[item.kind]}
         </span>
-        <h4>{item.title}</h4>
+        <h4 aria-label={item.title}>{item.title} <ContextHelp label="Interview prep item" description="Generated practice material, not a verified personal claim or a response to send unchanged. Its kind identifies a theme, STAR draft, gap drill, or company note; inspect the linked evidence and requirements below." /></h4>
       </div>
       <p>{item.generatedText}</p>
       {item.evidenceIds.length || item.requirementIds.length ? (
         <dl className="interview-prep-provenance">
           {item.evidenceIds.length ? (
             <>
-              <dt>Grounded in</dt>
+              <dt>Grounded in <ContextHelp label="Interview prep evidence" description="Candidate Evidence Map references recorded for this item. Open a reference to verify the underlying fact; an unavailable reference is not replaced with a generated claim." /></dt>
               <dd>
                 <ul className="compact-list">
                   {item.evidenceIds.map((evidenceId) => (
@@ -129,6 +130,7 @@ function PrepItemCard({
                 {item.kind === "gap_drill"
                   ? "Gap requirements"
                   : "Requirements"}
+                <ContextHelp label="Interview prep requirements" description="Role-analysis requirement references linked to this practice item. A missing reference stays unavailable instead of inferring requirement text." />
               </dt>
               <dd>
                 <ul className="compact-list">
@@ -209,6 +211,7 @@ function GateAudit({ prep }: { readonly prep: InterviewPrep }) {
       <StatusBadge tone={prep.gateAudit.status === "passed" ? "ok" : "danger"}>
         gate {prep.gateAudit.status}
       </StatusBadge>
+      <ContextHelp label="Interview prep validation" description="Saved validation result for this generated preparation set. The generation and model identify the stored version; warnings are accepted residual notes to inspect, and a passed gate does not verify every statement independently." />
       {prep.gateAudit.judgeVerdict ? (
         <StatusBadge
           tone={prep.gateAudit.status === "passed" ? "ok" : "danger"}
@@ -259,7 +262,7 @@ export function InterviewPrepPanel({
       aria-label="Interview preparation"
     >
       <div className="interview-prep-heading">
-        <h3>Interview prep</h3>
+        <h3 aria-label="Interview prep">Interview prep <ContextHelp label="Interview prep" description="Generated interview practice grounded in recorded candidate evidence and role requirements when references exist. No prep generated means no accepted set is stored; generating a new draft does not submit an application." /></h3>
         <GenerateInterviewPrepButton
           jobId={jobId}
           hasAcceptedPrep={Boolean(prep)}
