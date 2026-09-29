@@ -77,11 +77,34 @@ function renderJobDetailDrawer(jobId: string) {
   });
   return {
     router,
+    queryClient: harness.queryClient,
     ...render(<RouterProvider router={router} />, { wrapper: harness.Wrapper }),
   };
 }
 
 describe("<JobDetailDrawer>", () => {
+  it("keeps a score-correction draft mounted across collapse and detail refetch", async () => {
+    const user = userEvent.setup();
+    const { queryClient } = renderJobDetailDrawer("job-1");
+    const fitSection = await waitFor(() => {
+      const section = document.getElementById("job-detail-fit-evidence");
+      expect(section).not.toBeNull();
+      return section as HTMLElement;
+    });
+    await user.click(within(fitSection).getByText("Score evidence and controls"));
+    const reason = within(fitSection).getByRole("textbox", { name: "Reason" });
+    await user.type(reason, "Keep this local draft");
+    const trigger = within(fitSection).getByRole("button", { name: /01 · Fit & evidence/ });
+    await user.click(trigger);
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(reason).toBeInTheDocument();
+    expect(reason).not.toBeVisible();
+    await queryClient.invalidateQueries();
+    await user.click(trigger);
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    expect(reason).toHaveValue("Keep this local draft");
+  });
+
   it("keeps contextual help available across the detail workspace when records are absent", async () => {
     server.use(
       http.get("*/v1/jobs/:jobKey", ({ params }) =>
@@ -554,27 +577,18 @@ describe("<JobDetailDrawer>", () => {
     expect(
       workspace.querySelector(".job-detail-workspace__content"),
     ).not.toBeNull();
-    expect(
-      workspace.querySelector(".job-detail-workspace__inspector"),
-    ).not.toBeNull();
-    const mobileSections = within(workspace).getByRole("group", {
-      name: "Job detail section",
-      hidden: true,
-    });
-    const summarySection = within(mobileSections).getByRole("button", {
-      name: "Summary and evidence",
-      hidden: true,
-    });
-    const diagnosticSection = within(mobileSections).getByRole("button", {
-      name: "Progress and history",
-      hidden: true,
-    });
-    expect(summarySection).toHaveAttribute("aria-pressed", "true");
-    fireEvent.click(diagnosticSection);
-    expect(diagnosticSection).toHaveAttribute("aria-pressed", "true");
-    expect(
-      workspace.querySelector("#job-detail-diagnostics-panel"),
-    ).toHaveAttribute("data-mobile-active", "true");
+    expect(workspace.querySelector(".route-workspace__inspector")).toBeNull();
+    expect(workspace.querySelectorAll(".job-detail-major-section")).toHaveLength(11);
+    const sectionsTrigger = within(workspace).getByRole("button", { name: "Sections" });
+    fireEvent.click(sectionsTrigger);
+    const sectionsMenu = await screen.findByRole("navigation", { name: "Job detail sections" });
+    expect(within(sectionsMenu).getAllByRole("button").map((button) => button.textContent)).toEqual([
+      "Fit & evidence", "Preparation diagnostics", "Artifacts", "Compensation",
+      "Description", "Role Analysis", "Interview prep", "Apply history",
+      "Application outcomes", "Contacts", "Audit history",
+    ]);
+    fireEvent.click(within(sectionsMenu).getByRole("button", { name: "Artifacts" }));
+    expect(within(workspace.querySelector("#job-detail-artifacts") as HTMLElement).getByRole("button", { name: /03 · Artifacts/ })).toHaveAttribute("aria-expanded", "true");
     const commandTrigger = within(workspace).getByRole("button", {
       name: "More job actions",
     });
@@ -1420,11 +1434,12 @@ describe("<JobDetailDrawer>", () => {
     expect(auditDisclosure).not.toHaveAttribute("open");
 
     const workspace = screen.getByRole("article", { name: "Job details" });
-    const sections = Array.from(workspace.querySelectorAll("section.section"));
+    const sections = Array.from(workspace.querySelectorAll(".job-detail-major-section"));
+    expect(sections).toHaveLength(11);
     expect(sections.at(-1)).toContainElement(auditDisclosure);
     expect(sections.at(-1)).toHaveTextContent("Technical details");
-    expect(sections[1]).toHaveTextContent("Compensation");
-    expect(sections[2]).toHaveTextContent("Description");
+    expect(sections[3]).toHaveTextContent("Compensation");
+    expect(sections[4]).toHaveTextContent("Description");
 
     await user.click(auditSummary);
     expect(auditDisclosure).toHaveAttribute("open");

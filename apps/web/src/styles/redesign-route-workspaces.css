@@ -117,6 +117,36 @@
   grid-row: 1;
 }
 
+.job-detail-workspace__header > .job-detail-sections-trigger {
+  grid-column: 1 / -1;
+  justify-self: start;
+}
+
+.job-detail-sections-menu {
+  max-height: min(45dvh, 360px);
+  overflow-y: auto;
+}
+
+.job-detail-sections-menu nav {
+  display: grid;
+  gap: 2px;
+}
+
+.job-detail-sections-menu nav [data-slot="button"] {
+  justify-content: flex-start;
+  width: 100%;
+  text-align: left;
+}
+
+.job-detail-sections-menu__bulk {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--jh-internal-gap);
+  margin-top: var(--jh-internal-gap);
+  border-top: 1px solid var(--border);
+  padding-top: var(--jh-internal-gap);
+}
+
 .job-overview {
   display: grid;
   min-width: 0;
@@ -196,38 +226,6 @@
   flex: 0 0 auto;
 }
 
-.job-detail-workspace__inspector {
-  grid-template-columns: minmax(0, 1fr);
-}
-
-.job-detail-workspace__inspector > * {
-  min-width: 0;
-}
-
-.job-detail-workspace__inspector .job-artifact-row {
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 8px 10px;
-}
-
-.job-detail-workspace__inspector .job-artifact-row > :nth-child(2) {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.job-detail-workspace__inspector .job-artifact-row > [data-slot="button"] {
-  grid-column: 1 / -1;
-  justify-self: start;
-  height: auto;
-  white-space: normal;
-}
-
-.job-detail-workspace__inspector
-  .job-artifact-row
-  > .job-artifact-technical-details {
-  grid-column: 1 / -1;
-  min-width: 0;
-}
-
 .job-detail-workspace > .route-workspace__grid,
 .artifact-detail-workspace > .route-workspace__grid,
 .contact-detail-workspace > .route-workspace__grid,
@@ -236,6 +234,10 @@
 .job-run-workspace > .route-workspace__grid {
   align-items: start;
   grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
+}
+
+.job-detail-workspace > .route-workspace__grid {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .job-detail-workspace > .route-workspace__grid > *,
@@ -248,7 +250,6 @@
 }
 
 .job-detail-workspace__content,
-.job-detail-workspace__inspector,
 .artifact-detail-workspace__inspector,
 .activity-detail-workspace__content,
 .activity-detail-workspace__inspector,
@@ -258,9 +259,51 @@
   min-width: 0;
 }
 
+.job-detail-workspace__content {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.job-detail-major-section {
+  min-width: 0;
+  border-bottom: 1px solid var(--border);
+  scroll-margin-block-start: calc(var(--job-detail-topbar-bottom, 0px) + var(--jh-section-gap));
+}
+
+.job-detail-major-section > .configuration-section__header > .configuration-section__trigger {
+  padding: var(--jh-section-padding-block) var(--jh-section-padding-inline);
+}
+
+.job-detail-major-section > .configuration-section__body {
+  padding: 0;
+}
+
+.job-detail-major-section > .configuration-section__body > .section,
+.job-detail-major-section > .configuration-section__body > .section:first-child {
+  min-width: 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 0;
+  padding: var(--jh-section-padding-block) var(--jh-section-padding-inline);
+}
+
+.job-detail-major-section .job-artifact-row > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 600px) {
+  .job-detail-major-section .job-artifact-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .job-detail-major-section .job-artifact-row > [data-slot="button"] {
+    grid-column: 1 / -1;
+    justify-self: start;
+    height: auto;
+    white-space: normal;
+  }
+}
+
 .job-detail-workspace__content > .section,
-.job-detail-workspace__inspector > .section,
-.job-detail-workspace__inspector > .job-contacts-panel,
 .artifact-detail-workspace__inspector > .section,
 .artifact-detail-workspace__inspector > .tailoring-explanation-section,
 .contact-detail-workspace .section,

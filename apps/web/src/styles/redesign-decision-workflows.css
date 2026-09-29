@@ -235,37 +235,6 @@
     display: block;
   }
 
-  .job-detail-mobile-sections {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: calc(var(--jh-internal-gap) / 2);
-  }
-
-  .job-detail-mobile-sections [data-slot="button"] {
-    width: 100%;
-    min-width: 0;
-    border-radius: 0;
-    border-bottom: 2px solid transparent;
-  }
-
-  .job-detail-mobile-sections [data-selected="true"] {
-    border-bottom-color: var(--primary);
-    background: color-mix(in oklch, var(--primary) 10%, transparent);
-    color: var(--foreground);
-  }
-
-  .job-detail-workspace
-    > .route-workspace__grid
-    > .route-workspace__content:has(
-      .job-detail-workspace__content[data-mobile-active="false"]
-    ),
-  .job-detail-workspace
-    > .route-workspace__grid
-    > .route-workspace__inspector:has(
-      .job-detail-workspace__inspector[data-mobile-active="false"]
-    ) {
-    display: none;
-  }
 }
 
 @container apply-review-surface (max-width: 52rem) {

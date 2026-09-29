@@ -261,14 +261,6 @@
   margin-top: var(--jh-internal-gap);
 }
 
-.job-detail-workspace {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(320px, 0.33fr);
-  min-width: 0;
-  align-items: start;
-  border-top: 0;
-}
-
 .job-detail-primary,
 .job-detail-sidebar,
 .job-detail-follow-up {
@@ -923,10 +915,6 @@
 @media (max-width: 1040px) {
   .job-detail-drawer .drawer-head {
     padding-right: 60px;
-  }
-
-  .job-detail-workspace {
-    grid-template-columns: 1fr;
   }
 
   .job-detail-sidebar {
