@@ -107,6 +107,8 @@ import type {
   ProfileConfigResponse,
   ProfileImportRequest,
   ProfileImportResponse,
+  RequiredBulletSuggestionRequest,
+  RequiredBulletSuggestionResponse,
   TargetRoleSuggestionRequest,
   TargetRoleSuggestionResponse,
   ProfileUpdateRequest,
@@ -360,6 +362,9 @@ export interface ApiClientPort extends EndpointClientMethods {
   profilePreviewHtmlUrl(cacheKey?: number | string): string;
   updateProfile(body: ProfileUpdateRequest): Promise<ProfileConfigResponse>;
   targetRoleSuggestions(body: TargetRoleSuggestionRequest): Promise<TargetRoleSuggestionResponse>;
+  requiredBulletSuggestions(
+    body: RequiredBulletSuggestionRequest,
+  ): Promise<RequiredBulletSuggestionResponse>;
   importResume(body: ProfileImportRequest): Promise<ProfileImportResponse>;
 
   settings(): Promise<SettingsResponse>;

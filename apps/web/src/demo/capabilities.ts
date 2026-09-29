@@ -107,6 +107,7 @@ export const DEMO_CAPABILITY_MANIFEST = {
   profilePreviewHtmlUrl: local("Returns the bundled synthetic profile HTML."),
   updateProfile: local("Edits only the browser-local synthetic profile."),
   targetRoleSuggestions: local("Returns deterministic suggestions from the saved synthetic profile."),
+  requiredBulletSuggestions: local("Inspects saved synthetic Required bullets with deterministic rules."),
   importResume: local("Imports only the bundled sample resume."),
   settings: local("Reads synthetic application settings."),
   updateSettings: local("Edits synthetic settings locally."),

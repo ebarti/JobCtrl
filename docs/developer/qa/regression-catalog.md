@@ -153,6 +153,76 @@ Any fix to evidence, rationale, keywords, persona judgments, or generated-materi
 
 Before claiming "fixed" on these surfaces, add or update a regression fixture that proves the exact invariant the human complained about. Prefer a fixture that reproduces the bad state from canonical data rather than a shallow component snapshot. State what was verified and what was not; do not use "fixed" for cosmetic masking.
 
+For Required-bullet coaching, use an owned saved profile with required and
+optional bullets, a supported metric, and incomplete achievement evidence.
+Trace each source reference to the exact saved entry, bullet, and profile
+version. Exercise generation, individual rejection and acceptance, missing
+evidence questions, local edits during a delayed response, a newer canonical
+version, and failed generation/save. A manual Save or autosave during a pending
+accept must not send a second profile write; a same-bullet manual edit must
+keep its Required pin when unique and block ambiguous duplicate text until
+resolved, including after a failed accept. Move that bullet below another one
+while Accept is pending, then settle success and failure: the pin must follow
+the moved bullet, never the bullet left at its old index. After a successful
+or failed accept, also edit the original Required bullet and change another
+bullet to its old text while the request is pending. Preserve both edits and
+block Save until the ambiguous pin is explicitly resolved; only a proven
+reorder may carry the pin to a new index. After a successful accept, an older
+query snapshot must not offer or perform a rebase. A proposed
+cleanup that would equal another saved bullet or Required pin must not be
+applicable. Rebase a different
+bullet in the same experience entry after a committed write with a lost
+response; keep overlapping or reordered bullet identities blocked. An outcome
+that only changes punctuation and a metric copied from an action count must not
+prove independent evidence or a result. A verified “Improved 10 dashboards”
+with only “10 dashboards” as its metric must still receive framing advice;
+test production and demo parity with a separately measured result. Exercise
+`constructor`, `toString`, and `__proto__` as own saved experience-ID keys,
+including an unpinned key before another valid Required bullet. A saved
+`__proto__` key must not mutate an object prototype or produce an applicable
+profile JSON edit. Bound optional bullet and evidence
+reads before the generator scans them; an over-budget response must report
+truncation, not a clean inspection. Overlong Required bullet text or entry
+source fields must likewise report incomplete inspection. Corrupt exact-schema
+saved rows, including raw non-boolean evidence confirmation and out-of-range
+confidence, must return `422 invalid_saved_profile` without changing the profile.
+An overlong Required pin must report incomplete inspection even when it has no
+matching saved bullet or owning experience entry. A nonempty truncated response
+must not tell users that
+repeating the same request will expose omitted sources. Reordered source claims
+or grammar-only variations must not count as independent outcome evidence.
+Include plural possessives and contextual filler; supported novel outcome
+wording still requires a missing-evidence question unless the canonical
+achievement is verified and user-confirmed. Even verified, confirmed evidence
+must keep framing advice when its outcome only restates the same result with
+context such as “during planning”; a new saved result target or measure is
+needed to resolve that framing. Check production and demo parity. Hold an accept
+pending, advance
+the five-second autosave timer, and prove no second write occurs on either
+success or failure while unrelated draft fields remain. Fence ordinary manual
+and autosave full-profile writes to their actual saved base version, permit an
+initial version-null save, and rebase non-overlapping edits after a conflict.
+After a successful accept, delay the
+profile-query refresh, attempt a manual save after another canonical write, and
+prove it carries the accepted version fence and preserves the newer fields.
+After a failed accept, exercise the actual optimistic query rollback at the
+same version and keep the reviewed suggestion available.
+Count every achievement row that matches a Required bullet before deciding
+whether a source identity is unique, including rows with blank or overlong IDs.
+The browser must reject an accept against that ambiguous saved snapshot, and
+every emitted source ID must satisfy the response schema's raw length bound.
+Malformed saved evidence JSON must not be silently decoded to empty arrays.
+After a failed accept, retain the reviewed suggestion and reconcile a later
+unique bullet edit before its manual Save or autosave; block duplicate identity.
+Generation and rejection must write no profile state. Accepted cleanup must
+retain every factual token, the achievement
+identity, bullet order, and Required pin. Missing evidence must remain a question
+without an applicable fabricated replacement. Verify persistence and reload
+through `/profile` and the real API with temporary SQLite storage; label
+synthetic preview or provider dependencies separately. The deterministic path
+must make zero provider calls and does not establish model quality or spend
+enforcement.
+
 ## Cumulative Redesign Boundaries
 
 The `base-rhea` ancestry, semantic tokens, Helvetica Neue/Helvetica/Arial type,

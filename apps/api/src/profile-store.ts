@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
+import { ZodError } from "zod";
 
 import type {
   ExtensionAutofillProfileField,
@@ -15,6 +16,7 @@ const PROFILE_ID = "default";
 const NO_PROFILE_CHANGE = Symbol("no-profile-change");
 
 export class ProfileInputError extends Error {}
+export class InvalidSavedProfileError extends Error {}
 
 export class ProfileVersionConflictError extends Error {
   constructor(
@@ -404,6 +406,108 @@ export function readProfileVersion(db: SqliteDatabase): number | null {
 
 export function readProfileConfig(db: SqliteDatabase): ProfileConfigResponse {
   ensureProfileTables(db);
+  return readProfileConfigFromInitializedTables(db);
+}
+
+/** Read the canonical profile without initialization or compatibility writes.
+ * Callers must use an exact-schema, read-only database connection. */
+export function readProfileConfigReadOnly(db: SqliteDatabase): ProfileConfigResponse {
+  try {
+    assertValidSavedProfileJson(db);
+    return readProfileConfigFromInitializedTables(db);
+  } catch (error) {
+    if (error instanceof ZodError || error instanceof ProfileInputError) {
+      throw new InvalidSavedProfileError("The saved profile cannot be inspected until its validation errors are corrected.");
+    }
+    throw error;
+  }
+}
+
+function parsedSavedJson(value: unknown): unknown {
+  if (typeof value !== "string") {
+    throw new InvalidSavedProfileError("The saved profile contains invalid JSON.");
+  }
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    throw new InvalidSavedProfileError("The saved profile contains invalid JSON.");
+  }
+}
+
+function assertSavedStringArray(value: unknown): void {
+  const parsed = parsedSavedJson(value);
+  if (!Array.isArray(parsed) || !parsed.every((item) => typeof item === "string")) {
+    throw new InvalidSavedProfileError("The saved profile contains an invalid JSON array.");
+  }
+}
+
+/** The ordinary profile reader keeps its compatibility decoding. Coaching must
+ * fail closed on malformed stored JSON instead of treating lost evidence as []. */
+function assertValidSavedProfileJson(db: SqliteDatabase): void {
+  const root = getProfileRow(db);
+  if (!root) return;
+  assertSavedStringArray(root.tailoring_auto_approvable_claim_modes_json);
+  const additional = parsedSavedJson(root.application_attestation_additional_json);
+  if (
+    !additional || typeof additional !== "object" || Array.isArray(additional)
+    || Object.values(additional).some((item) => item !== null
+      && typeof item !== "boolean" && typeof item !== "string")
+  ) {
+    throw new InvalidSavedProfileError("The saved profile contains an invalid JSON object.");
+  }
+  const rows = db.prepare(`
+    SELECT tools_json, metrics_json, tags_json, user_confirmed, claim_confidence
+    FROM candidate_profile_achievement_evidence
+    WHERE tenant_id = ? AND profile_id = ?
+  `).all(TENANT_ID, PROFILE_ID) as Array<{
+    tools_json: unknown;
+    metrics_json: unknown;
+    tags_json: unknown;
+    user_confirmed: unknown;
+    claim_confidence: unknown;
+  }>;
+  for (const row of rows) {
+    assertSavedStringArray(row.tools_json);
+    assertSavedStringArray(row.metrics_json);
+    assertSavedStringArray(row.tags_json);
+    if (row.user_confirmed !== 0 && row.user_confirmed !== 1) {
+      throw new InvalidSavedProfileError("The saved profile contains an invalid evidence confirmation.");
+    }
+    if (typeof row.claim_confidence !== "number"
+      || !Number.isFinite(row.claim_confidence)
+      || row.claim_confidence < 0
+      || row.claim_confidence > 1) {
+      throw new InvalidSavedProfileError("The saved profile contains an invalid evidence confidence.");
+    }
+  }
+}
+
+/** Check normalized row counts with bounded SQLite probes before materializing
+ * arrays in JavaScript. Caller must hold the same read snapshot as the load. */
+export function exceedsProfileCoachingReadBudget(
+  db: SqliteDatabase,
+  maximumEntries: number,
+  maximumRows: number,
+): boolean {
+  let remaining = maximumRows;
+  for (const table of CHILD_TABLES) {
+    const limit = table === "candidate_profile_experience_entries"
+      ? Math.min(remaining, maximumEntries)
+      : remaining;
+    const result = db.prepare(`
+      SELECT COUNT(*) AS count FROM (
+        SELECT 1 FROM ${table}
+        WHERE tenant_id = ? AND profile_id = ?
+        LIMIT ?
+      )
+    `).get(TENANT_ID, PROFILE_ID, limit + 1) as { count: number };
+    if (result.count > limit) return true;
+    remaining -= result.count;
+  }
+  return false;
+}
+
+function readProfileConfigFromInitializedTables(db: SqliteDatabase): ProfileConfigResponse {
   const row = getProfileRow(db);
   if (!row) {
     return {
@@ -1288,7 +1392,9 @@ function groupedValues(
     WHERE tenant_id = ? AND profile_id = ?
     ORDER BY ${keyColumn}, ${orderColumn}
   `).all(TENANT_ID, PROFILE_ID) as Array<{ key: unknown; value: unknown }>;
-  const grouped: Record<string, string[]> = {};
+  // Entry IDs are data, including Object.prototype names such as __proto__.
+  // A null prototype avoids inherited arrays/functions and setter mutation.
+  const grouped = Object.create(null) as Record<string, string[]>;
   for (const row of rows) {
     const key = text(row.key);
     grouped[key] = grouped[key] ?? [];

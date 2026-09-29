@@ -1796,12 +1796,25 @@ const ProfileRevisionGatesSchema = z
   })
   .partial();
 
+// z.record silently drops an own __proto__ key. Experience IDs are opaque
+// saved data keys, so validate every own value and copy with CreateDataProperty
+// semantics rather than treating that key as an object setter.
+const ProfileRequiredBulletMapSchema = z
+  .custom<Record<string, string[]>>((value) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    const prototype = Object.getPrototypeOf(value);
+    return (prototype === null || prototype === Object.prototype)
+      && Object.values(value).every((bullets) =>
+        Array.isArray(bullets) && bullets.every((bullet) => typeof bullet === "string"));
+  }, { message: "Expected a record of string arrays" })
+  .transform((value) => Object.fromEntries(Object.entries(value)) as Record<string, string[]>);
+
 const ProfileTailoringRulesSchema = z
   .object({
     required_experience_entry_ids: z.array(z.string()).default([]),
     required_education_entry_ids: z.array(z.string()).default([]),
     required_skill_category_ids: z.array(z.string()).default([]),
-    required_bullets_by_experience_id: z.record(z.string(), z.array(z.string())).default({}),
+    required_bullets_by_experience_id: ProfileRequiredBulletMapSchema.default({}),
     required_skills_by_category_id: z.record(z.string(), z.array(z.string())).default({}),
     max_experience_bullets: z.number().int().positive().default(4),
     custom_tailoring_prompt: z.string().default(""),
@@ -1948,6 +1961,63 @@ export const TargetRoleSuggestionResponseSchema = z
   })
   .strict();
 export type TargetRoleSuggestionResponse = z.infer<typeof TargetRoleSuggestionResponseSchema>;
+
+export const RequiredBulletSuggestionRequestSchema = z
+  .object({
+    expectedProfileVersion: z.number().int().positive(),
+    maximumSuggestions: z.number().int().min(1).max(24).default(12),
+  })
+  .strict();
+export type RequiredBulletSuggestionRequest = z.infer<typeof RequiredBulletSuggestionRequestSchema>;
+
+export const RequiredBulletSuggestionSourceSchema = z
+  .object({
+    sourceId: z.string().min(1).max(240).refine((value) => value.trim().length > 0),
+    identityKind: z.enum(["canonical_achievement", "snapshot_bullet"]),
+    excerpt: z.string().min(1).max(500),
+    fieldPath: z.string().trim().min(1).max(240),
+    experienceId: z.string().min(1).max(160).refine((value) => value.trim().length > 0),
+    experienceTitle: z.string().min(1).max(160).refine((value) => value.trim().length > 0),
+    experienceCompany: z.string().min(1).max(160).refine((value) => value.trim().length > 0),
+    bulletIndex: z.number().int().nonnegative(),
+    requiredBulletIndex: z.number().int().nonnegative(),
+  })
+  .strict();
+export type RequiredBulletSuggestionSource = z.infer<typeof RequiredBulletSuggestionSourceSchema>;
+
+export const RequiredBulletSuggestionSchema = z
+  .object({
+    id: z.string().trim().min(1).max(320),
+    kind: z.enum(["grammar", "relevance", "achievement_framing", "missing_evidence"]),
+    originalText: z.string().min(1).max(2_000),
+    proposedText: z.string().min(1).max(2_000).nullable(),
+    canApply: z.boolean(),
+    guidance: z.string().trim().min(1).max(500),
+    source: RequiredBulletSuggestionSourceSchema,
+  })
+  .strict()
+  .superRefine((suggestion, context) => {
+    if (suggestion.canApply !== (suggestion.proposedText !== null)) {
+      context.addIssue({
+        code: "custom",
+        path: ["proposedText"],
+        message: "proposedText must be present exactly when canApply is true",
+      });
+    }
+  });
+export type RequiredBulletSuggestion = z.infer<typeof RequiredBulletSuggestionSchema>;
+
+export const RequiredBulletSuggestionResponseSchema = z
+  .object({
+    ok: z.literal(true),
+    profileVersion: z.number().int().positive(),
+    suggestions: z.array(RequiredBulletSuggestionSchema).max(24),
+    strategy: z.literal("deterministic_rules_v1"),
+    modelUsed: z.literal(false),
+    truncated: z.boolean(),
+  })
+  .strict();
+export type RequiredBulletSuggestionResponse = z.infer<typeof RequiredBulletSuggestionResponseSchema>;
 
 export const ProfileImportRequestSchema = z
   .object({

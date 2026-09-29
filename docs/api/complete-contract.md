@@ -65,6 +65,69 @@ Profile reads include `profileVersion: number | null`. `PATCH /v1/profile`
 accepts optional `expectedProfileVersion`; when supplied, a mismatch returns
 `409 stale_profile_version` and the same transaction writes neither canonical
 rows nor `ProfileUpdated`.
+The web form sends its actual saved base version on every full-profile manual
+or autosave write. It omits the field only for the first save when
+`profileVersion` is `null`; a conflict keeps the draft for explicit rebase.
+
+`POST /v1/profile/required-bullet-suggestions` accepts only
+`expectedProfileVersion` (positive integer) and optional `maximumSuggestions`
+(`1–24`, default `12`). A successful response contains `ok: true`, the requested
+`profileVersion`, `strategy: "deterministic_rules_v1"`, `modelUsed: false`,
+`truncated`, and up to 24 suggestions. The route reads saved canonical rows;
+it neither calls a provider nor writes profile state. A stale version returns
+`409 stale_profile_version`. Inspection stops after 512 Required occurrences or
+once enough suggestions establish output truncation; `truncated` reports either
+limit. The API checks a bounded read budget before materializing source rows:
+more than 256 experience entries or 4,096 normalized profile child rows returns
+an empty `truncated: true` result. This result does not assert that the profile
+has no coaching opportunities. A Required bullet longer than 2,000 characters,
+including an unmatched Required pin, or an owning entry ID, title, or company
+outside the source-field bounds, is also skipped with `truncated: true`.
+Any nonempty Required pin list under a deleted experience ID also makes the
+inspection incomplete, since the pin has no owning entry to inspect.
+`truncated: true` can accompany nonempty suggestions: they describe only the
+inspected subset, and repeating the request on an unchanged saved version may
+omit the same source. An empty result does not assert a clean inspection.
+Invalid exact-schema saved profile rows return
+`422 invalid_saved_profile` without a profile write, including malformed raw
+JSON arrays, non-boolean confirmation integers, and confidence values outside
+`0–1` in saved achievement evidence.
+
+A Required-bullet suggestion contains:
+
+- `id`, `kind` (`grammar`, `relevance`, `achievement_framing`, or
+  `missing_evidence`), `originalText` (at most 2,000 characters), and `guidance`
+  (at most 500 characters).
+- `canApply` and nullable `proposedText`. Only an applicable suggestion has
+  proposed text; missing evidence never becomes an invented replacement.
+- `source`: `sourceId`, `identityKind` (`canonical_achievement` or
+  `snapshot_bullet`), `excerpt` (at most 500 characters), `fieldPath`,
+  `experienceId`, `experienceTitle`, `experienceCompany`, zero-based
+  `bulletIndex`, and zero-based `requiredBulletIndex`.
+
+Sources are scoped to the response version. Acceptance is an individual browser
+action followed by normal `PATCH /v1/profile` with `expectedProfileVersion`;
+there is no bulk promotion or separate persistent suggestion store.
+Identical bullet or Required-pin occurrences are skipped because their text
+cannot identify one occurrence. A whitespace cleanup that would make its text
+match another bullet or Required pin has no applicable replacement. The browser
+checks this again against the exact saved snapshot before sending an accept.
+Ambiguous achievement matches, including rows with blank or overlong IDs, or reused
+achievement IDs have no applicable replacement. A canonical `sourceId` must
+fit the 240-character wire bound before it is emitted; otherwise coaching uses
+a bounded snapshot reference. A matching achievement suppresses the
+missing-evidence question only when its canonical strength is `verified` and it
+is user-confirmed. Supported wording, tools, tags, and extracted metrics do
+not independently prove a claim. Outcome wording can guide achievement framing;
+token novelty, contextual filler, reordered claims, changed verbs, plurals,
+and possessives never establish evidence strength. An action count remains an
+action count even beside a result-sounding verb such as “improved”; it does not
+resolve the framing question. A separate outcome detail or an explicit measured
+result in verified, user-confirmed evidence can resolve that question. Required
+pin maps treat `constructor`, `toString`, and `__proto__` as own saved ID keys;
+they never read inherited prototype values. A saved `__proto__` pin can be
+inspected, but its cleanup is not directly applicable through the guarded JSON
+profile input boundary.
 
 `POST /v1/profile/target-role-suggestions` accepts the strict object below:
 

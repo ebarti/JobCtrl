@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   JOB_SORT_FIELDS,
+  ProfileSchema,
   type ActivityEventSummary,
   type ArtifactDetail,
   type JobCompensationSummary,
@@ -188,6 +189,10 @@ const READ_CASES = [
     "targetRoleSuggestions",
     (api: ApiClientPort) => api.targetRoleSuggestions({ expectedProfileVersion: 1, maximumSuggestions: 3 }),
   ],
+  [
+    "requiredBulletSuggestions",
+    (api: ApiClientPort) => api.requiredBulletSuggestions({ expectedProfileVersion: 1, maximumSuggestions: 12 }),
+  ],
   ["profilePreviewPdfUrl", (api: ApiClientPort) => api.profilePreviewPdfUrl(7)],
   [
     "profilePreviewHtmlUrl",
@@ -244,6 +249,317 @@ describe("DemoApiClientAdapter", () => {
       adapter.targetRoleSuggestions({ expectedProfileVersion: 2, maximumSuggestions: 1 }),
     ).rejects.toMatchObject({ status: 409, statusText: "stale_profile_version" });
   });
+
+  it("inspects saved synthetic Required bullets without changing the demo profile", async () => {
+    const { adapter } = await createAdapter();
+    const before = await adapter.profile();
+    const profile = ProfileSchema.parse(before.profile);
+    const entry = profile.resume.experience_entries[0]!;
+    entry.bullets[0] = "  Worked   on platform delivery.  ";
+    profile.resume.tailoring_rules.required_bullets_by_experience_id = {
+      ...profile.resume.tailoring_rules.required_bullets_by_experience_id,
+      [entry.id]: [entry.bullets[0]],
+    };
+    const saved = await adapter.updateProfile({
+      expectedProfileVersion: before.profileVersion!,
+      profileText: JSON.stringify(profile),
+    });
+    const snapshot = await adapter.profile();
+    expect(snapshot).toEqual(saved);
+
+    const inspected = await adapter.requiredBulletSuggestions({
+      expectedProfileVersion: saved.profileVersion!,
+      maximumSuggestions: 12,
+    });
+    expect(inspected).toMatchObject({
+      profileVersion: saved.profileVersion,
+      strategy: "deterministic_rules_v1",
+      modelUsed: false,
+    });
+    expect(inspected.suggestions[0]).toMatchObject({
+      kind: "grammar",
+      originalText: "  Worked   on platform delivery.  ",
+      proposedText: "Worked on platform delivery.",
+      canApply: true,
+      source: { experienceId: entry.id, fieldPath: "profile.resume.experience_entries[0].bullets[0]" },
+    });
+    expect(inspected.suggestions.map((suggestion) => suggestion.kind)).toEqual([
+      "grammar", "relevance", "achievement_framing", "missing_evidence",
+    ]);
+    expect(inspected.suggestions.filter((suggestion) => suggestion.kind !== "grammar")
+      .every((suggestion) => suggestion.proposedText === null && !suggestion.canApply)).toBe(true);
+    const bounded = await adapter.requiredBulletSuggestions({
+      expectedProfileVersion: saved.profileVersion!,
+      maximumSuggestions: 1,
+    });
+    expect(bounded.suggestions).toHaveLength(1);
+    expect(bounded.truncated).toBe(true);
+    expect(await adapter.profile()).toEqual(snapshot);
+    await expect(adapter.requiredBulletSuggestions({
+      expectedProfileVersion: saved.profileVersion! - 1,
+      maximumSuggestions: 12,
+    })).rejects.toMatchObject({ status: 409, statusText: "stale_profile_version" });
+
+    entry.bullets[1] = "Worked on platform delivery.";
+    const withCollision = await adapter.updateProfile({
+      expectedProfileVersion: saved.profileVersion!,
+      profileText: JSON.stringify(profile),
+    });
+    const colliding = await adapter.requiredBulletSuggestions({
+      expectedProfileVersion: withCollision.profileVersion!,
+      maximumSuggestions: 12,
+    });
+    expect(colliding.suggestions.find((suggestion) => suggestion.kind === "grammar"))
+      .toMatchObject({ canApply: false, proposedText: null });
+
+    profile.resume.tailoring_rules.required_bullets_by_experience_id = {
+      [entry.id]: [`Unmatched Required claim ${"x".repeat(2_000)}`],
+    };
+    const withOverlongPin = await adapter.updateProfile({
+      expectedProfileVersion: withCollision.profileVersion!,
+      profileText: JSON.stringify(profile),
+    });
+    const incomplete = await adapter.requiredBulletSuggestions({
+      expectedProfileVersion: withOverlongPin.profileVersion!,
+      maximumSuggestions: 12,
+    });
+    expect(incomplete).toMatchObject({ suggestions: [], truncated: true, modelUsed: false });
+
+    profile.resume.tailoring_rules.required_bullets_by_experience_id = {
+      deleted_role: [`Orphan Required claim ${"x".repeat(2_000)}`],
+    };
+    const withDeletedRolePin = await adapter.updateProfile({
+      expectedProfileVersion: withOverlongPin.profileVersion!,
+      profileText: JSON.stringify(profile),
+    });
+    expect(await adapter.requiredBulletSuggestions({
+      expectedProfileVersion: withDeletedRolePin.profileVersion!,
+      maximumSuggestions: 12,
+    })).toMatchObject({ suggestions: [], truncated: true, modelUsed: false });
+  });
+
+  it("keeps grammar-only restatements as questions in saved demo evidence", async () => {
+    const { adapter } = await createAdapter();
+    const before = await adapter.profile();
+    const profile = ProfileSchema.parse(before.profile);
+    const entry = profile.resume.experience_entries[0]!;
+    entry.bullets = ["Reduced process latency."];
+    entry.achievement_evidence = [{
+      id: "demo-possessive-restatement",
+      source_text: entry.bullets[0]!,
+      scope: "Synthetic team",
+      action: "Reduced process latency",
+      tools: [],
+      metrics: [],
+      outcome: "Reduced processes' latency in this role.",
+      seniority_signal: "",
+      evidence_strength: "supported",
+      claim_confidence: 0.8,
+      user_confirmed: true,
+      tags: [],
+    }];
+    profile.resume.tailoring_rules.required_bullets_by_experience_id = {
+      [entry.id]: [entry.bullets[0]!],
+    };
+    const saved = await adapter.updateProfile({
+      expectedProfileVersion: before.profileVersion!,
+      profileText: JSON.stringify(profile),
+    });
+    const inspected = await adapter.requiredBulletSuggestions({
+      expectedProfileVersion: saved.profileVersion!,
+      maximumSuggestions: 12,
+    });
+    expect(inspected.suggestions.filter((suggestion) =>
+      suggestion.source.sourceId === "demo-possessive-restatement",
+    ).map((suggestion) => suggestion.kind)).toEqual(["achievement_framing", "missing_evidence"]);
+    expect(await adapter.profile()).toEqual(saved);
+
+    entry.achievement_evidence[0]!.outcome = "Improved reliability across the platform.";
+    const withNewWords = await adapter.updateProfile({
+      expectedProfileVersion: saved.profileVersion!,
+      profileText: JSON.stringify(profile),
+    });
+    const inspectedNewWords = await adapter.requiredBulletSuggestions({
+      expectedProfileVersion: withNewWords.profileVersion!,
+      maximumSuggestions: 12,
+    });
+    expect(inspectedNewWords.suggestions.filter((suggestion) =>
+      suggestion.source.sourceId === "demo-possessive-restatement",
+    ).map((suggestion) => suggestion.kind)).toEqual(["missing_evidence"]);
+  });
+
+  it("keeps result framing for a contextual restatement in the saved demo profile", async () => {
+    const { adapter } = await createAdapter();
+    const before = await adapter.profile();
+    const profile = ProfileSchema.parse(before.profile);
+    const entry = profile.resume.experience_entries[0]!;
+    entry.bullets = ["Reduced API latency."];
+    entry.achievement_evidence = [{
+      id: "demo-context-only-outcome",
+      source_text: entry.bullets[0]!,
+      scope: "Synthetic team",
+      action: "Reduced API latency",
+      tools: [],
+      metrics: [],
+      outcome: "Reduced API latency during planning.",
+      seniority_signal: "",
+      evidence_strength: "verified",
+      claim_confidence: 1,
+      user_confirmed: true,
+      tags: [],
+    }];
+    profile.resume.tailoring_rules.required_bullets_by_experience_id = {
+      [entry.id]: [entry.bullets[0]!],
+    };
+    const saved = await adapter.updateProfile({
+      expectedProfileVersion: before.profileVersion!, profileText: JSON.stringify(profile),
+    });
+    const inspected = await adapter.requiredBulletSuggestions({
+      expectedProfileVersion: saved.profileVersion!, maximumSuggestions: 12,
+    });
+    expect(inspected.suggestions.filter((suggestion) =>
+      suggestion.source.sourceId === "demo-context-only-outcome",
+    ).map((suggestion) => suggestion.kind)).toEqual(["achievement_framing"]);
+    expect(await adapter.profile()).toEqual(saved);
+
+    entry.achievement_evidence[0]!.outcome = "Reduced API latency by 35%.";
+    const withMeasure = await adapter.updateProfile({
+      expectedProfileVersion: saved.profileVersion!, profileText: JSON.stringify(profile),
+    });
+    expect((await adapter.requiredBulletSuggestions({
+      expectedProfileVersion: withMeasure.profileVersion!, maximumSuggestions: 12,
+    })).suggestions.filter((suggestion) =>
+      suggestion.source.sourceId === "demo-context-only-outcome",
+    )).toEqual([]);
+  });
+
+  it("keeps framing advice for a verified action count in the saved demo profile", async () => {
+    const { adapter } = await createAdapter();
+    const before = await adapter.profile();
+    const profile = ProfileSchema.parse(before.profile);
+    const entry = profile.resume.experience_entries[0]!;
+    entry.bullets = ["Improved 10 dashboards."];
+    entry.achievement_evidence = [{
+      id: "demo-verified-action-count",
+      source_text: entry.bullets[0]!,
+      scope: "Synthetic team",
+      action: "Improved dashboards",
+      tools: [],
+      metrics: ["10 dashboards"],
+      outcome: "",
+      seniority_signal: "",
+      evidence_strength: "verified",
+      claim_confidence: 1,
+      user_confirmed: true,
+      tags: [],
+    }];
+    profile.resume.tailoring_rules.required_bullets_by_experience_id = {
+      [entry.id]: [entry.bullets[0]!],
+    };
+    const saved = await adapter.updateProfile({
+      expectedProfileVersion: before.profileVersion!, profileText: JSON.stringify(profile),
+    });
+    const inspected = await adapter.requiredBulletSuggestions({
+      expectedProfileVersion: saved.profileVersion!, maximumSuggestions: 12,
+    });
+    expect(inspected.suggestions.filter((suggestion) =>
+      suggestion.source.sourceId === "demo-verified-action-count",
+    ).map((suggestion) => suggestion.kind)).toEqual(["achievement_framing"]);
+    expect(await adapter.profile()).toEqual(saved);
+
+    entry.achievement_evidence[0]!.outcome = "Improved 10 dashboards for teams.";
+    const contextualAction = await adapter.updateProfile({
+      expectedProfileVersion: saved.profileVersion!, profileText: JSON.stringify(profile),
+    });
+    expect((await adapter.requiredBulletSuggestions({
+      expectedProfileVersion: contextualAction.profileVersion!, maximumSuggestions: 12,
+    })).suggestions.filter((suggestion) =>
+      suggestion.source.sourceId === "demo-verified-action-count",
+    ).map((suggestion) => suggestion.kind)).toEqual(["achievement_framing"]);
+    entry.achievement_evidence[0]!.outcome = "";
+
+    entry.achievement_evidence[0]!.metrics = ["35% latency reduction"];
+    const withMeasuredResult = await adapter.updateProfile({
+      expectedProfileVersion: contextualAction.profileVersion!, profileText: JSON.stringify(profile),
+    });
+    const measured = await adapter.requiredBulletSuggestions({
+      expectedProfileVersion: withMeasuredResult.profileVersion!, maximumSuggestions: 12,
+    });
+    expect(measured.suggestions.filter((suggestion) =>
+      suggestion.source.sourceId === "demo-verified-action-count",
+    )).toEqual([]);
+  });
+
+  it("recognizes a verified, confirmed deployment-time result in the saved demo profile", async () => {
+    const { adapter } = await createAdapter();
+    const before = await adapter.profile();
+    const profile = ProfileSchema.parse(before.profile);
+    const entry = profile.resume.experience_entries[0]!;
+    const bullet = "Reduced synthetic deployment time by 40%.";
+    entry.bullets = [bullet];
+    entry.achievement_evidence = [{
+      id: "demo-verified-deployment-time",
+      source_text: bullet,
+      scope: "Synthetic deployment",
+      action: "Reduced synthetic deployment time",
+      tools: [],
+      metrics: ["40%"],
+      outcome: bullet,
+      seniority_signal: "",
+      evidence_strength: "verified",
+      claim_confidence: 1,
+      user_confirmed: true,
+      tags: [],
+    }];
+    profile.resume.tailoring_rules.required_bullets_by_experience_id = { [entry.id]: [bullet] };
+    const saved = await adapter.updateProfile({
+      expectedProfileVersion: before.profileVersion!, profileText: JSON.stringify(profile),
+    });
+
+    expect((await adapter.requiredBulletSuggestions({
+      expectedProfileVersion: saved.profileVersion!, maximumSuggestions: 12,
+    })).suggestions.filter((suggestion) =>
+      suggestion.source.sourceId === "demo-verified-deployment-time",
+    )).toEqual([]);
+    expect(await adapter.profile()).toEqual(saved);
+  });
+
+  it.each(["constructor", "toString", "__proto__"])(
+    "treats %s as own synthetic experience-ID data during inspection",
+    async (experienceId) => {
+      const { adapter } = await createAdapter();
+      const before = await adapter.profile();
+      const profile = ProfileSchema.parse(before.profile);
+      const entry = profile.resume.experience_entries[0]!;
+      entry.id = experienceId;
+      entry.bullets = ["  Special   Required claim  "];
+      const pins = Object.create(null) as Record<string, string[]>;
+      profile.resume.tailoring_rules.required_bullets_by_experience_id = pins;
+      const saved = await adapter.updateProfile({
+        expectedProfileVersion: before.profileVersion!, profileText: JSON.stringify(profile),
+      });
+      const withoutPin = await adapter.requiredBulletSuggestions({
+        expectedProfileVersion: saved.profileVersion!, maximumSuggestions: 12,
+      });
+      expect(withoutPin.suggestions.some((suggestion) =>
+        suggestion.source.experienceId === experienceId)).toBe(false);
+
+      pins[experienceId] = [entry.bullets[0]!];
+      const withPin = await adapter.updateProfile({
+        expectedProfileVersion: saved.profileVersion!, profileText: JSON.stringify(profile),
+      });
+      const inspected = await adapter.requiredBulletSuggestions({
+        expectedProfileVersion: withPin.profileVersion!, maximumSuggestions: 12,
+      });
+      expect(inspected.suggestions).toContainEqual(expect.objectContaining({
+        kind: "grammar", canApply: experienceId !== "__proto__",
+        source: expect.objectContaining({ experienceId, bulletIndex: 0 }),
+      }));
+      const stored = ProfileSchema.parse((await adapter.profile()).profile);
+      expect(Object.hasOwn(stored.resume.tailoring_rules.required_bullets_by_experience_id!, experienceId))
+        .toBe(true);
+    },
+  );
 
   it("covers every port member and reserves capability errors for unavailable methods", async () => {
     const { adapter } = await createAdapter();

@@ -60,7 +60,9 @@ import {
   OutcomeSuggestionDecisionRequestSchema,
   ExtensionCaptureIngestSchema,
   ProfileImportRequestSchema,
+  ProfileSchema,
   type ProfileConfigResponse,
+  RequiredBulletSuggestionRequestSchema,
   RpcMethods,
   TargetRoleSuggestionRequestSchema,
   TargetRoleSuggestionResultSchema,
@@ -318,13 +320,21 @@ import {
   resolveExtensionCorsOrigin,
 } from "./local-origin.js";
 import {
+  InvalidSavedProfileError,
   ProfileInputError,
   ProfileVersionConflictError,
+  exceedsProfileCoachingReadBudget,
   parseProfileUpdateProfile,
   readExtensionAutofillProfile,
   readProfileConfig,
+  readProfileConfigReadOnly,
   readProfileVersion,
 } from "./profile-store.js";
+import {
+  generateRequiredBulletSuggestions,
+  MAX_REQUIRED_COACHING_ENTRIES,
+  MAX_REQUIRED_COACHING_SOURCE_ROWS,
+} from "./required-bullet-suggestions.js";
 import { validateProfileTargetPlaces, type PlaceValidator } from "./place-validation.js";
 import {
   claimNextProfileContinuationEvent,
@@ -2804,6 +2814,80 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       });
     }
     return profileResponse;
+  });
+
+  app.post("/v1/profile/required-bullet-suggestions", async (request, reply) => {
+    const body = parseBody(reply, RequiredBulletSuggestionRequestSchema, request.body ?? {});
+    if (!body) return undefined;
+    if (!databaseExists(options.dbPath)) {
+      void reply.code(503);
+      return { ok: false, error: "db_not_found", message: `No JobCtrl database found at ${options.dbPath}` };
+    }
+    const db = openReadOnlyDatabase(options.dbPath);
+    try {
+      // Keep the version and all normalized source rows in one SQLite read
+      // snapshot while a concurrent profile save may replace those rows.
+      const snapshot = db.transaction(() => {
+        const profileVersion = readProfileVersion(db);
+        if (profileVersion !== body.expectedProfileVersion) {
+          return { kind: "stale" as const, profileVersion };
+        }
+        if (exceedsProfileCoachingReadBudget(
+          db,
+          MAX_REQUIRED_COACHING_ENTRIES,
+          MAX_REQUIRED_COACHING_SOURCE_ROWS,
+        )) return { kind: "truncated" as const };
+        try {
+          return { kind: "ready" as const, profile: readProfileConfigReadOnly(db).profile };
+        } catch (error) {
+          if (error instanceof InvalidSavedProfileError) return { kind: "invalid" as const };
+          throw error;
+        }
+      })();
+      if (snapshot.kind === "stale") {
+        void reply.code(409);
+        return {
+          ok: false,
+          error: "stale_profile_version",
+          expectedProfileVersion: body.expectedProfileVersion,
+          actualProfileVersion: snapshot.profileVersion,
+        };
+      }
+      if (snapshot.kind === "truncated") {
+        return {
+          ok: true,
+          profileVersion: body.expectedProfileVersion,
+          suggestions: [],
+          strategy: "deterministic_rules_v1",
+          modelUsed: false,
+          truncated: true,
+        };
+      }
+      if (snapshot.kind === "invalid") {
+        void reply.code(422);
+        return {
+          ok: false,
+          error: "invalid_saved_profile",
+          message: "The saved profile cannot be inspected until its validation errors are corrected.",
+        };
+      }
+      const parsedProfile = ProfileSchema.safeParse(snapshot.profile);
+      if (!parsedProfile.success) {
+        void reply.code(422);
+        return {
+          ok: false,
+          error: "invalid_saved_profile",
+          message: "The saved profile cannot be inspected until its validation errors are corrected.",
+        };
+      }
+      return generateRequiredBulletSuggestions(
+        parsedProfile.data,
+        body.expectedProfileVersion,
+        body.maximumSuggestions,
+      );
+    } finally {
+      db.close();
+    }
   });
 
   app.post("/v1/profile/target-role-suggestions", async (request, reply) => {
