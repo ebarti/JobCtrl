@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // @vitest-environment-options {"url":"https://careers.example.com/jobs"}
 
-import type { ExtensionAutofillProfileField } from "@jobctrl/contracts";
+import { DiscoveryBrowserTaskResultSchema, type ExtensionAutofillProfileField } from "@jobctrl/contracts";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 let getBoundingClientRectSpy: ReturnType<typeof vi.spyOn>;
@@ -35,6 +35,38 @@ afterEach(() => {
 });
 
 describe("deterministic autofill content script", () => {
+  it("observes only a visible Apply link positively bound to the selected job header", async () => {
+    const { captureVisibleApplyControls } = await import("./content-script");
+    document.body.innerHTML = `
+      <style>.concealed { display: none; }</style>
+      <section aria-label="Primary content">
+        <div class="selected-header">
+          <a href="https://www.linkedin.com/jobs/view/123/">On-site</a>
+          <a href="https://www.linkedin.com/jobs/view/123/">Full-time</a>
+          <div><div><div>
+            <a class="concealed" aria-label="Apply on company website" href="https://other.example.com/hidden">Apply</a>
+            <a aria-label="Apply on company website" href="https://apply.example.com/current">Apply</a>
+          </div></div></div>
+        </div>
+        <section class="recommendation">
+          <a aria-label="Apply on company website" href="https://other.example.com/wrong">Apply</a>
+        </section>
+        <div id="JobDetails_AboutTheJob_123">Selected description</div>
+      </section>`;
+
+    const observed = captureVisibleApplyControls(document);
+    expect(observed).toEqual([
+      { href: "https://apply.example.com/current", jobId: "123" },
+    ]);
+    expect(DiscoveryBrowserTaskResultSchema.safeParse({
+      status: "succeeded", finalUrl: "https://www.linkedin.com/jobs/view/123/", statusCode: 200,
+      contentType: "text/html", title: "Synthetic role", bodyText: "Synthetic role",
+      visibleApplyControls: observed,
+    }).success).toBe(true);
+    document.querySelector<HTMLAnchorElement>('a[href="https://apply.example.com/current"]')?.remove();
+    expect(captureVisibleApplyControls(document)).toEqual([]);
+  });
+
   it.each([200, 404, 410])("preserves navigation HTTP %s in a rendered snapshot", async (status) => {
     const { captureRenderedPageSnapshot } = await import("./content-script");
     document.body.innerHTML = "<main>Job not found</main>";

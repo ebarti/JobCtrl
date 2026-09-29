@@ -15,6 +15,7 @@ export interface RetryStageVariables {
   readonly resetAttempts?: boolean;
   readonly runAfter?: boolean;
   readonly dryRun?: boolean;
+  readonly refreshApplyUrl?: boolean;
 }
 
 function toRequest(variables: RetryStageVariables): RetryStageRequest {
@@ -23,6 +24,7 @@ function toRequest(variables: RetryStageVariables): RetryStageRequest {
     resetAttempts: variables.resetAttempts ?? false,
     runAfter: variables.runAfter ?? false,
     dryRun: variables.dryRun ?? false,
+    ...(variables.refreshApplyUrl ? { refreshApplyUrl: true } : {}),
   };
 }
 
@@ -40,7 +42,7 @@ export function useRetryStageMutation(): UseMutationResult<
       // Retry without runAfter is sync; with runAfter it's async (202). Either
       // way the user expects "this stage is now running" feedback. SSE in
       // Phase 5 will reconcile to the true server state.
-      optimisticUpdates: ({ jobId, stage }) => [
+      optimisticUpdates: ({ jobId, stage, refreshApplyUrl }) => refreshApplyUrl ? [] : [
         {
           queryKey: jobsKeys.detail(tenantId, jobId),
           patch: (current) => patchStageState(current, stage, "running"),

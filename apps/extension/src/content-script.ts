@@ -325,10 +325,10 @@ function isFillableControl(control: Element): control is FormControl {
       return false;
     }
   }
-  return isVisibleUserEditableControl(control);
+  return isVisibleElement(control);
 }
 
-function isVisibleUserEditableControl(control: FormControl): boolean {
+function isVisibleElement(control: HTMLElement): boolean {
   if (!control.isConnected) {
     return false;
   }
@@ -361,7 +361,7 @@ function isVisibleUserEditableControl(control: FormControl): boolean {
   return hasVisibleRenderedBox(control, view);
 }
 
-function hasVisibleRenderedBox(control: FormControl, view: Window): boolean {
+function hasVisibleRenderedBox(control: HTMLElement, view: Window): boolean {
   const rects = Array.from(control.getClientRects());
   const candidates = rects.length > 0 ? rects : [control.getBoundingClientRect()];
   return candidates.some((rect) => isVisibleRect(rect) && intersectsViewport(rect, view));
@@ -703,7 +703,56 @@ export function captureRenderedPageSnapshot(): DiscoveryBrowserTaskResult {
     browserUserAgent: navigator.userAgent.slice(0, 500),
     bodyText,
     bodyHtml,
+    ...(linkedinViewId(finalUrl.href) ? { visibleApplyControls: captureVisibleApplyControls(document) } : {}),
   };
+}
+
+function linkedinViewId(rawUrl: string): string | null {
+  try {
+    const url = new URL(rawUrl);
+    if (url.protocol !== "https:" || !["linkedin.com", "www.linkedin.com"].includes(url.hostname)) return null;
+    return /^\/jobs\/view\/([^/]+)\/?$/.exec(url.pathname)?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function selectedHeaderJobId(anchor: HTMLAnchorElement): string | null {
+  // Modern LinkedIn keeps the selected header's Apply control and its two
+  // current-job detail links in one narrow DIV. Recommendations sit in a
+  // separate section; the broad Primary content region is never identity.
+  let depth = 0;
+  for (let current: HTMLElement | null = anchor; current && depth <= 6; current = current.parentElement, depth += 1) {
+    if (current !== anchor && (
+      ["MAIN", "SECTION", "ARTICLE"].includes(current.tagName)
+      || current.getAttribute("aria-label") === "Primary content"
+    )) return null;
+    if (current.tagName !== "DIV" || current.querySelector("section, article, main")) continue;
+    const ids = [...current.querySelectorAll<HTMLAnchorElement>('a[href*="/jobs/view/"]')]
+      .filter((link) => isVisibleElement(link))
+      .map((link) => linkedinViewId(link.href))
+      .filter((id): id is string => id !== null);
+    if (ids.length >= 2 && new Set(ids).size === 1) return ids[0] ?? null;
+  }
+  return null;
+}
+
+export function captureVisibleApplyControls(doc: Document): Array<{ href: string; jobId: string }> {
+  const controls: Array<{ href: string; jobId: string }> = [];
+  for (const anchor of doc.querySelectorAll<HTMLAnchorElement>("a[href]")) {
+    const label = (anchor.getAttribute("aria-label") ?? "").trim().toLowerCase();
+    const tracking = (anchor.getAttribute("data-tracking-control-name") ?? "").toLowerCase();
+    if (!(label.startsWith("apply on company website")
+      || anchor.classList.contains("jobs-apply-button")
+      || tracking.includes("jobs_apply-link"))) continue;
+    if (!isVisibleElement(anchor)) continue;
+    const jobId = selectedHeaderJobId(anchor);
+    if (!jobId) continue;
+    if (anchor.href.length > 2048) return [];
+    controls.push({ href: anchor.href, jobId });
+    if (controls.length > 20) return [];
+  }
+  return controls;
 }
 
 type RenderedPageSleep = (milliseconds: number) => Promise<void>;

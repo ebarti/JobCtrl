@@ -557,6 +557,45 @@ def test_selected_enrichment_filters_retry_to_requested_job(monkeypatch: pytest.
     ]
 
 
+def test_selected_enrichment_passes_explicit_apply_url_refresh(monkeypatch: pytest.MonkeyPatch) -> None:
+    from jobctrl.enrichment.activities import EnrichActivityInput, _run_selected_enrichment
+
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        detail,
+        "_run_detail_scraper",
+        lambda *args, **kwargs: (
+            calls.append(kwargs)
+            or {"processed": 1, "ok": 1, "partial": 0, "error": 0, "tiers": {1: 1}}
+        ),
+    )
+    monkeypatch.setattr("jobctrl.database.get_connection", lambda: object())
+    monkeypatch.setattr(
+        "jobctrl.enrichment.activities._selected_enriched_job_ids",
+        lambda _conn, *, tenant_id, job_ids: job_ids,
+    )
+
+    result = _run_selected_enrichment(
+        EnrichActivityInput(
+            tenant_id="local",
+            job_ids=(JobId("60000000-0000-4000-8000-000000000010"),),
+            limit=1,
+            refresh_apply_url=True,
+        )
+    )
+
+    assert result["status"] == "ok"
+    assert calls == [
+        {
+            "max_per_site": 1,
+            "workers": 1,
+            "tenant_id": "local",
+            "job_ids": (JobId("60000000-0000-4000-8000-000000000010"),),
+            "refresh_apply_url": True,
+        }
+    ]
+
+
 def _seed_current_job(conn, *, job_id, url: str, title: str = "Closed engineering role") -> None:
     discovered_at = "2026-05-29T10:00:00+00:00"
     conn.execute(

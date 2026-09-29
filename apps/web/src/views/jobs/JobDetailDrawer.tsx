@@ -24,6 +24,7 @@ import { useEvidenceMapQuery } from "../../contexts/operations/hooks/useEvidence
 import { useJobDetailQuery } from "../../contexts/operations/hooks/useJobDetailQuery.js";
 import type { EvidenceMapEntry } from "../../contexts/operations/types.js";
 import { JobActions } from "../../contexts/pipeline/components/JobActions.js";
+import { RetryStageButton } from "../../contexts/pipeline/components/RetryStageButton.js";
 import { StageTimeline } from "../../contexts/pipeline/components/StageTimeline.js";
 import { RescoreJobButton } from "../../contexts/scoring/components/RescoreCurrentPolicyButton.js";
 import { Button, buttonVariants } from "../../shared/ui/button.js";
@@ -66,6 +67,17 @@ function canRunCurrentStage(stage: StageSummary | undefined): boolean {
   return Boolean(stage && !["queued", "running"].includes(stage.state));
 }
 
+function isLinkedInPosting(rawUrl: string): boolean {
+  try {
+    const url = new URL(rawUrl);
+    return url.protocol === "https:"
+      && (url.hostname === "linkedin.com" || url.hostname === "www.linkedin.com")
+      && /^\/jobs\/view\/[^/]+\/?$/.test(url.pathname);
+  } catch {
+    return false;
+  }
+}
+
 function evidenceReferenceExcerpt(entry: EvidenceMapEntry): string | null {
   const excerpt =
     entry.story?.outcome ?? entry.story?.action ?? entry.story?.scope ?? null;
@@ -97,18 +109,22 @@ function JobAuditHistorySection({
   );
 }
 
-function RequirementFitMissingCallout({ jobId }: { readonly jobId: string }) {
+function RequirementFitMissingCallout({
+  jobId,
+  outdated,
+}: { readonly jobId: string; readonly outdated: boolean }) {
+  const title = outdated ? "Requirement fit is outdated" : "Requirement fit not assessed";
   return (
     <section
       className="section requirement-fit-missing"
-      aria-label="Requirement fit not assessed"
+      aria-label={title}
     >
       <div>
-        <h3>Requirement fit not assessed</h3>
+        <h3>{title}</h3>
         <p className="muted">
-          This job has employer requirements, but the stored score predates
-          requirement-level fit. Re-score it to produce candidate fit, score
-          impact, and tailoring actions for each requirement.
+          {outdated
+            ? "The saved requirement fit belongs to a different employer-analysis generation or score version. Re-score this job to assess the current requirements; the previous score and materials remain available for review."
+            : "This job has employer requirements, but the stored score predates requirement-level fit. Re-score it to produce candidate fit, score impact, and tailoring actions for each requirement."}
         </p>
       </div>
       <RescoreJobButton
@@ -359,8 +375,34 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
               </div>
               <JobDescription text={detail.job.descriptionPreview} />
             </section>
+            {!detail.job.applicationUrl && isLinkedInPosting(detail.job.url)
+              && detail.stages.some((stage) => stage.stage === "enrich" && stage.state === "succeeded") ? (
+              <section className="section requirement-fit-missing" aria-label="Application target refresh">
+                <div>
+                  <h3>Application target unavailable</h3>
+                  <p className="muted">
+                    Check the current posting for an application link. The saved description, score, and materials stay available if the check finds no verified target.
+                  </p>
+                  {detail.stages.find((stage) => stage.stage === "enrich")?.applyUrlOutcome?.message ? (
+                    <p className="muted">
+                      {detail.stages.find((stage) => stage.stage === "enrich")?.applyUrlOutcome?.message}
+                    </p>
+                  ) : null}
+                </div>
+                <RetryStageButton
+                  jobId={detail.job.jobKey}
+                  stage="enrich"
+                  runAfter
+                  refreshApplyUrl
+                  label="Refresh application target"
+                />
+              </section>
+            ) : null}
             {detail.employerAnalysis && !detail.requirementFitReport ? (
-              <RequirementFitMissingCallout jobId={detail.job.jobKey} />
+              <RequirementFitMissingCallout
+                jobId={detail.job.jobKey}
+                outdated={detail.job.scoreAnalysisFreshness?.status === "outdated"}
+              />
             ) : null}
             <EmployerAnalysisPanel
               analysis={detail.employerAnalysis}

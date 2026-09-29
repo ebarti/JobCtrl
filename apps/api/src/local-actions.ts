@@ -682,6 +682,9 @@ function runStageRpcParams(command: ActionCommandPayload, context: ActionDispatc
     llmModel: command.llmModel ?? DEFAULT_PIPELINE_LLM_MODEL,
     continuous: Boolean(command.continuous),
   };
+  if (command.refreshApplyUrl) {
+    params.refreshApplyUrl = true;
+  }
   if (command.sourceIds && command.sourceIds.length > 0) {
     params.sourceIds = command.sourceIds;
   }

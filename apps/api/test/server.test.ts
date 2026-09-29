@@ -8416,6 +8416,77 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("refreshes one accepted LinkedIn application target without resetting enrichment", async () => {
+    const jobUrl = "https://www.linkedin.com/jobs/view/synthetic-apply-target";
+    const db = new Database(options.dbPath);
+    insertJob(db, { url: jobUrl, title: "Synthetic role", site: "linkedin" });
+    insertEnrichment(db, jobUrl, "Accepted description");
+    db.prepare("UPDATE job_enrichments SET application_url = NULL WHERE tenant_id = 'local' AND job_id = ?")
+      .run(jobIdFor(jobUrl));
+    insertStage(db, jobUrl, "enrich", "succeeded");
+    const before = db.prepare("SELECT * FROM job_enrichments WHERE tenant_id = 'local' AND job_id = ?")
+      .get(jobIdFor(jobUrl));
+    db.close();
+    const dispatch = vi.fn(async () => ({ status: "queued", actionId: "target-refresh" }));
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
+    const response = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${jobIdFor(jobUrl)}/actions/retry-stage`,
+      payload: { stage: "enrich", runAfter: true, refreshApplyUrl: true },
+    });
+    expect(response.statusCode, response.body).toBe(202);
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ jobId: jobIdFor(jobUrl), stages: ["enrich"], limit: 1, refreshApplyUrl: true }),
+      expect.anything(),
+    );
+    const afterDb = new Database(options.dbPath, { readonly: true });
+    expect(afterDb.prepare("SELECT * FROM job_enrichments WHERE tenant_id = 'local' AND job_id = ?")
+      .get(jobIdFor(jobUrl))).toEqual(before);
+    expect(afterDb.prepare("SELECT state FROM job_stage_states WHERE tenant_id = 'local' AND job_id = ? AND stage = 'enrich'")
+      .get(jobIdFor(jobUrl))).toEqual({ state: "succeeded" });
+    afterDb.close();
+    await app.close();
+  });
+
+  it("rejects application-target refresh when accepted enrichment is absent", async () => {
+    const jobUrl = "https://www.linkedin.com/jobs/view/synthetic-unenriched";
+    const db = new Database(options.dbPath);
+    insertJob(db, { url: jobUrl, title: "Synthetic role", site: "linkedin" });
+    db.close();
+    const dispatch = vi.fn(async () => ({ status: "queued", actionId: "unexpected" }));
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
+    const response = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${jobIdFor(jobUrl)}/actions/retry-stage`,
+      payload: { stage: "enrich", runAfter: true, refreshApplyUrl: true },
+    });
+    expect(response.statusCode).toBe(409);
+    expect(dispatch).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it.each([
+    "https://m.linkedin.com/jobs/view/synthetic-mobile",
+    "https://www.linkedin.com/jobs/search/?currentJobId=123",
+  ])("does not dispatch unsupported LinkedIn refresh locator %s", async (jobUrl) => {
+    const db = new Database(options.dbPath);
+    insertJob(db, { url: jobUrl, title: "Synthetic role", site: "linkedin" });
+    insertEnrichment(db, jobUrl, "Accepted description");
+    db.prepare("UPDATE job_enrichments SET application_url = NULL WHERE tenant_id = 'local' AND job_id = ?")
+      .run(jobIdFor(jobUrl));
+    db.close();
+    const dispatch = vi.fn(async () => ({ status: "queued", actionId: "unexpected" }));
+    const app = buildApp({ ...options, actionDispatcher: dispatch });
+    const response = await app.inject({
+      method: "POST",
+      url: `/v1/jobs/${jobIdFor(jobUrl)}/actions/retry-stage`,
+      payload: { stage: "enrich", runAfter: true, refreshApplyUrl: true },
+    });
+    expect(response.statusCode).toBe(409);
+    expect(dispatch).not.toHaveBeenCalled();
+    await app.close();
+  });
+
   it.each(["discover", "enrich"] as const)("dispatches %s with the optional extension offline", async (stage) => {
     const dispatch = vi.fn(async () => ({ status: "queued", actionId: "optional-dispatch" }));
     const jobUrl = "https://example.com/jobs/optional-enrich";

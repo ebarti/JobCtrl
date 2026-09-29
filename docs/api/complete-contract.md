@@ -243,12 +243,19 @@ counts without exposing raw policy anchor payloads. `scoreStaleness` reports
 unresolved stale markers, including the stale reason, current and target policy
 versions, marked time, and whether the score is waiting for explicit rescore
 reset. `scoreReasoning` remains on the wire as a compact compatibility summary.
+`scoreAnalysisFreshness` separately compares the latest requirement-fit report's
+analysis generation and score version with current canonical analysis and score
+rows. Its `status` is `no_analysis`, `not_assessed`, `outdated`, or `current`;
+the current and assessed generation and score-version fields remain visible for
+audit. This read-time comparison covers older mismatched rows without changing
+the scoring-policy stale marker or triggering a model run.
 `/v1/jobs/:key` also exposes `requirementFitReport` when the latest score has
 canonical requirement-level assessments. The report is projected from
 `job_requirement_fit_reports` and ordered `job_requirement_fit_items` rows and
 shows the requirement weights, match status, score contribution, and tailoring
-directive that explain the resolved fit score. It is `null` for jobs that have
-not yet been scored with requirement-level evidence.
+directive that explain the resolved fit score. It is `null` for jobs without a
+current generation-bound assessment, including legacy scores and scores
+assessed against an earlier employer analysis.
 `GET /v1/evidence-map` returns the career evidence map projected from the same
 canonical sources already used by scoring and materials audit: profile
 achievement evidence and skills, latest bullet provenance, requirement-fit
@@ -1379,6 +1386,18 @@ Current-version preparation maintenance actions are separate endpoints:
   stage row, attempt/error metadata, and event history remain unchanged and no
   dispatcher call occurs. With `runAfter: false`, the route is an intentional
   local-only reset and does not require a worker.
+  For an already enriched LinkedIn job with no application URL, send
+  `{ "stage": "enrich", "runAfter": true, "refreshApplyUrl": true }` to
+  inspect only that posting through the live extension. This bounded action
+  does not reset Enrich or dispatch Score, Tailor, Cover, or Apply. It requires
+  an accepted description and an HTTPS `linkedin.com` or `www.linkedin.com`
+  `/jobs/view/:id` locator; invalid or
+  ineligible requests return `400` or `409`. A failed target check appends an
+  application-target outcome while retaining the accepted description, score,
+  and materials. The rendered page must identify the selected posting. The
+  extension reports only controls whose browser-computed visibility and narrow
+  selected-header job identity it can verify; unbound, hidden, or ambiguous
+  controls cannot supply a target.
 - `POST /v1/jobs/bulk-retry-failed` accepts selected jobs or all matching jobs.
   With the default `runAfter: false` it only resets each retryable failed stage
   to `pending`. Attempt-budget failures are included even when their legacy

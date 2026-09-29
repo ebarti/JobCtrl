@@ -71,6 +71,7 @@ class LiveBrowserResult:
     body_text: str
     body_html: str | None = None
     browser_user_agent: str = ""
+    visible_apply_controls: tuple[tuple[str, str], ...] | None = None
 
 
 class LiveBrowserHttpError(RuntimeError):
@@ -271,6 +272,13 @@ class LiveChromeDiscoveryClient:
                     body_text=str(result.get("bodyText") or ""),
                     body_html=(str(result["bodyHtml"]) if result.get("bodyHtml") is not None else None),
                     browser_user_agent=str(result.get("browserUserAgent") or ""),
+                    visible_apply_controls=(
+                        tuple(
+                            (str(item.get("href") or ""), str(item.get("jobId") or ""))
+                            for item in result["visibleApplyControls"] if isinstance(item, dict)
+                        )
+                        if isinstance(result.get("visibleApplyControls"), list) else None
+                    ),
                 )
         finally:
             try:

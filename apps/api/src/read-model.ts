@@ -161,6 +161,9 @@ interface JobListProjectionRow extends Record<string, unknown> {
   score_stale_old_policy_version: number | null;
   score_stale_new_policy_version: number | null;
   score_stale_marked_at: string | null;
+  current_analysis_generation: number | null;
+  assessed_analysis_generation: number | null;
+  assessed_score_version: number | null;
   current_stage: string;
   current_substage: string;
   current_state: string;
@@ -1183,9 +1186,11 @@ export function getJobDetail(db: SqliteDatabase, jobKey: string): JobDetail | nu
     artifacts,
     auditHistory,
     employerAnalysis,
-    requirementFitReport: requirementFitForCurrentAnalysis(
-      db, jobId, employerAnalysis, parseRequirementFitReport(detailRow?.requirement_fit_report_json ?? null),
-    ),
+    requirementFitReport: jobSummary.scoreAnalysisFreshness?.status === "current"
+      ? requirementFitForCurrentAnalysis(
+        db, jobId, employerAnalysis, parseRequirementFitReport(detailRow?.requirement_fit_report_json ?? null),
+      )
+      : null,
     interviewPrep: parseInterviewPrep(detailRow?.interview_prep_json ?? null),
     compensationAudit: parseCompensationAudit(detailRow?.compensation_audit_json ?? null),
   };
@@ -2572,6 +2577,7 @@ function rowToJobSummary(row: JobListProjectionRow, db?: SqliteDatabase): JobSum
     scoreTrace: parseScoreTrace(row.score_trace_json),
     scoreCorrection: parseScoreCorrection(row.score_correction_json),
     scoreStaleness: parseScoreStaleness(row),
+    scoreAnalysisFreshness: parseScoreAnalysisFreshness(row),
     currentStage: (isStage(row.current_stage) ? row.current_stage : "discover") as Stage,
     currentSubstage: (isStage(row.current_substage) ? row.current_substage : row.current_stage) as Stage,
     currentState: currentStagePresentation.state,
@@ -2695,6 +2701,21 @@ function parseScoreStaleness(row: JobListProjectionRow): JobSummary["scoreStalen
     markedAt: nullableString(row.score_stale_marked_at),
     pendingExplicitRescore: Boolean(staleReason),
   };
+}
+
+function parseScoreAnalysisFreshness(row: JobListProjectionRow): NonNullable<JobSummary["scoreAnalysisFreshness"]> {
+  const currentAnalysisGeneration = nullableNumber(row.current_analysis_generation);
+  const assessedAnalysisGeneration = nullableNumber(row.assessed_analysis_generation);
+  const assessedScoreVersion = nullableNumber(row.assessed_score_version);
+  const scoreVersion = nullableNumber(row.score_version);
+  const status = currentAnalysisGeneration === null
+    ? "no_analysis"
+    : assessedAnalysisGeneration === null || assessedScoreVersion === null
+      ? "not_assessed"
+      : assessedAnalysisGeneration === currentAnalysisGeneration && assessedScoreVersion === scoreVersion
+        ? "current"
+        : "outdated";
+  return { status, currentAnalysisGeneration, assessedAnalysisGeneration, assessedScoreVersion };
 }
 
 function parseScoreCorrection(value: string | null): JobSummary["scoreCorrection"] {
@@ -4898,6 +4919,20 @@ function jobProjectionSelect(): string {
          WHERE pss.tenant_id = job_list_projections.tenant_id
            AND pss.job_id = job_list_projections.job_id
          LIMIT 1) AS active_state`;
+  const analysisFreshnessSelect = `(SELECT MAX(a.generation)
+          FROM job_employer_analysis a
+         WHERE a.tenant_id = job_list_projections.tenant_id
+           AND a.job_id = job_list_projections.job_id) AS current_analysis_generation,
+       (SELECT r.employer_analysis_generation
+          FROM job_requirement_fit_reports r
+         WHERE r.tenant_id = job_list_projections.tenant_id
+           AND r.job_id = job_list_projections.job_id
+         ORDER BY r.score_version DESC LIMIT 1) AS assessed_analysis_generation,
+       (SELECT r.score_version
+          FROM job_requirement_fit_reports r
+         WHERE r.tenant_id = job_list_projections.tenant_id
+           AND r.job_id = job_list_projections.job_id
+         ORDER BY r.score_version DESC LIMIT 1) AS assessed_score_version`;
   return `job_list_projections.*,
           (SELECT j.url
              FROM jobs j
@@ -4908,6 +4943,7 @@ function jobProjectionSelect(): string {
           ${postingSourceUrlSqlExpression()} AS posting_source_url,
           ${postingSourceAtsKindSqlExpression()} AS posting_source_ats_kind,
           ${activeStateSelect},
+          ${analysisFreshnessSelect},
           ${hiddenSelect},
           ${stalenessSelect}`;
 }

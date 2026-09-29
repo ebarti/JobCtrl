@@ -10,6 +10,7 @@ export interface RetryStageButtonProps {
   resetAttempts?: boolean;
   runAfter?: boolean;
   dryRun?: boolean;
+  refreshApplyUrl?: boolean;
   className?: string;
   label?: string;
 }
@@ -20,6 +21,7 @@ export function RetryStageButton({
   resetAttempts = false,
   runAfter = false,
   dryRun = false,
+  refreshApplyUrl = false,
   className,
   label = "Retry",
 }: RetryStageButtonProps): JSX.Element {
@@ -31,9 +33,9 @@ export function RetryStageButton({
       {...(className ? { className } : {})}
       size="sm"
       disabled={isPending}
-      onClick={() => retryStage.mutate({ jobId, stage, resetAttempts, runAfter, dryRun })}
+      onClick={() => retryStage.mutate({ jobId, stage, resetAttempts, runAfter, dryRun, refreshApplyUrl })}
     >
-      {isPending ? "Retrying" : label}
+      {isPending ? (refreshApplyUrl ? "Refreshing" : "Retrying") : label}
     </Button>
   );
 }

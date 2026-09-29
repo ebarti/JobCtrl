@@ -87,6 +87,13 @@ def build_run_stage_workflow_spec(params: dict[str, Any]) -> WorkflowStartSpec:
             workflow_id=discover_workflow_id(tenant_id),
         )
     _reject_legacy_pipeline_job_urls(params)
+    if params.get("refreshApplyUrl") and (
+        stages != ["enrich"]
+        or _optional_job_id(params, "jobId") is None
+        or _job_ids(params)
+        or int(params.get("limit", 0)) != 1
+    ):
+        raise ValueError("refreshApplyUrl requires one selected Enrich job and limit 1")
     payload = JobPipelineWorkflowInput(
         tenant_id=tenant_id,
         expected_app_dir=params.get("expectedAppDir"),
@@ -97,6 +104,7 @@ def build_run_stage_workflow_spec(params: dict[str, Any]) -> WorkflowStartSpec:
         limit=int(params.get("limit", 0)),
         validation_mode=str(params.get("validationMode", "normal")),
         dry_run=bool(params.get("dryRun", False)),
+        refresh_apply_url=bool(params.get("refreshApplyUrl", False)),
         rescore=bool(params.get("rescore", False)),
         retailor=bool(params.get("retailor", False)),
         tailor_models=tuple(str(item) for item in (params.get("tailorModels") or ())),

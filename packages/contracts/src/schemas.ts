@@ -251,6 +251,7 @@ export const RetryStageRequestSchema = z
     resetAttempts: z.boolean().default(false),
     runAfter: z.boolean().default(false),
     dryRun: z.boolean().default(false),
+    refreshApplyUrl: z.boolean().optional(),
   })
   .strict();
 export type RetryStageRequest = z.infer<typeof RetryStageRequestSchema>;
@@ -3033,6 +3034,14 @@ export interface ScoreStaleness {
   pendingExplicitRescore: boolean;
 }
 
+/** Whether the saved requirement-fit assessment belongs to the current analysis and score. */
+export interface ScoreAnalysisFreshness {
+  status: "no_analysis" | "not_assessed" | "outdated" | "current";
+  currentAnalysisGeneration: number | null;
+  assessedAnalysisGeneration: number | null;
+  assessedScoreVersion: number | null;
+}
+
 export interface JobCompensationRangeSummary {
   currency: string | null;
   period: string;
@@ -3111,6 +3120,7 @@ export interface JobSummary {
   scoreTrace: ScoreTrace | null;
   scoreCorrection: ScoreCorrection | null;
   scoreStaleness: ScoreStaleness;
+  scoreAnalysisFreshness?: ScoreAnalysisFreshness;
   currentStage: Stage;
   currentSubstage: Stage;
   currentState: StageState;
@@ -4456,6 +4466,7 @@ export interface ActionCommandPayload {
   stages?: Stage[];
   resetAttempts?: boolean;
   runAfter?: boolean;
+  refreshApplyUrl?: boolean;
   dryRun?: boolean;
   jobIds?: string[];
   limit?: number;
@@ -4839,6 +4850,10 @@ export const DiscoveryBrowserTaskResultSchema = z.discriminatedUnion("status", [
       browserUserAgent: z.string().max(500).optional(),
       bodyText: DiscoveryBrowserResultBodySchema,
       bodyHtml: DiscoveryBrowserResultBodySchema.optional(),
+      visibleApplyControls: z.array(z.object({
+        href: z.string().trim().min(1).max(2048),
+        jobId: z.string().trim().min(1).max(200),
+      }).strict()).max(20).optional(),
     })
     .strict(),
   z
