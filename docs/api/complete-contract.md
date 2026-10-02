@@ -1017,7 +1017,8 @@ author, actual reading coverage/kind, and linked question IDs. Relationships are
 explicit `editorial_related` edges. Source citations do not prove candidate
 facts, full-book reading, author endorsement, or validated assessment.
 
-IDs match uppercase letters followed by two digits. A malformed detail ID fails
+Question IDs contain at most 12 characters and match uppercase letters followed
+by two digits. A malformed detail ID fails
 with `400 invalid_interview_question_id`; an unknown valid ID returns
 `404 unknown_question`; a reserved retired ID returns `410 retired_question`.
 Selection errors include the safe `questionId` when relevant.
@@ -1031,7 +1032,7 @@ The generate body remains optional for older callers. Its strict schema accepts:
 | `llmModel` | Optional nonempty model string, at most 120 characters. |
 | `selectedQuestionIds` | Optional ordered array of 1–16 unique active IDs. |
 | `catalogBinding` | Optional `{ catalogRevision, catalogDigest }`; revision is 1–100 characters and digest is lowercase SHA-256. |
-| `evidenceSelections` | Optional array of at most 16 `{ questionId, evidenceIds }` entries. Question IDs are unique and belong to the selected set; each ordered evidence list has at most eight unique canonical IDs, each 1–240 characters. |
+| `evidenceSelections` | Optional array of at most 16 `{ questionId, evidenceIds }` entries. Question IDs are unique and belong to the selected set; each ordered evidence list has at most eight unique canonical IDs, each 1–200 raw characters. |
 | `evidenceProfileVersion` | Positive integer required whenever `evidenceSelections` is present. It must match the current canonical profile version. |
 | `interviewStage` | `unknown`, `recruiter`, `behavioral`, `management`, `technical`, `executive`, or `mixed`; omission preserves unknown stage. |
 | `interviewFormat` | `phone`, `video`, `onsite`, `written`, or `unspecified`. |
@@ -1054,7 +1055,11 @@ An omitted question evidence entry uses deterministic accepted-evidence
 selection. An explicit entry with `evidenceIds: []` requests gaps without
 automatic replacement. The owning path validates tenant/profile ownership,
 accepted factual status, current profile version, question membership, unique
-IDs, and bounds before provider spending. Eligible IDs identify current-profile
+IDs, and bounds before provider spending. Evidence IDs retain their exact
+canonical identity: the schema does not trim, normalize, or change case, and
+rejects blank-only IDs. The same 1–200 raw-character bound applies to returned
+evidence links, outline evidence IDs, and retained selected evidence IDs.
+Eligible IDs identify current-profile
 achievement evidence with `user_confirmed = 1`, strength `supported | verified`,
 and nonempty source/scope/action/outcome support. Stale or invalid choices return
 `409 evidence_profile_changed` or `400 invalid_evidence_selection`; the client keeps
