@@ -305,22 +305,23 @@ function seedRows(dbPath: string): void {
     `INSERT INTO job_interview_prep (
        job_id, generation, tenant_id, status, model, generated_at, gate_status,
        fabrication_findings_json, grounding_findings_json, judge_verdict,
-       warnings_json, failure_reason
+       warnings_json, failure_reason, generation_context_json
      ) VALUES (@job_id, @generation, 'local', @status, @model, @generated_at, @gate_status,
        @fabrication_findings_json, @grounding_findings_json, @judge_verdict,
-       @warnings_json, @failure_reason)`,
+       @warnings_json, @failure_reason, @generation_context_json)`,
   );
   for (const prep of fixture.rows.jobInterviewPrep) {
-    insertInterviewPrep.run({ job_id: jobId, ...prep });
+    const context = prep.generation_context_json === null ? null : withExactV7JobIds(JSON.parse(String(prep.generation_context_json)));
+    insertInterviewPrep.run({ job_id: jobId, ...prep, generation_context_json: context === null ? null : JSON.stringify(context) });
   }
   const insertInterviewPrepItem = db.prepare(
     `INSERT INTO job_interview_prep_items (
        job_id, generation, item_id, tenant_id, kind, title, generated_text,
        evidence_ids_json, requirement_ids_json, source_text_json, transform_type,
-       control, grounding_audit_json, warnings_json, position
+       control, grounding_audit_json, warnings_json, position, question_metadata_json
      ) VALUES (@job_id, @generation, @item_id, 'local', @kind, @title, @generated_text,
        @evidence_ids_json, @requirement_ids_json, @source_text_json, @transform_type,
-       @control, @grounding_audit_json, @warnings_json, @position)`,
+       @control, @grounding_audit_json, @warnings_json, @position, @question_metadata_json)`,
   );
   for (const item of fixture.rows.jobInterviewPrepItems) {
     insertInterviewPrepItem.run({ job_id: jobId, ...item });
@@ -574,7 +575,8 @@ describe("Cross-runtime projection parity (AUDIT-02)", () => {
         expect(detailRes.json().interviewPrep).toEqual(
           withExactV7JobIds(fixture.expected.interviewPrepJson),
         );
-        expect(JSON.stringify(detailRes.json().interviewPrep)).not.toContain("prompt");
+        expect(JSON.stringify(detailRes.json().interviewPrep)).not.toContain("promptText");
+        expect(JSON.stringify(detailRes.json().interviewPrep)).not.toContain("rawPrompt");
         expect(JSON.stringify(detailRes.json().interviewPrep)).not.toContain("full_description");
 
         // (3) Read path: the artifact detail serves provenance + coverage + voice

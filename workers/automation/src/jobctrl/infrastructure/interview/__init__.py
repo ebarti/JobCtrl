@@ -2,6 +2,7 @@
 
 from jobctrl.infrastructure.interview.sqlite_repository import (
     SqliteInterviewPrepRepository,
+    InterviewNoteConflictError,
 )
 
-__all__ = ["SqliteInterviewPrepRepository"]
+__all__ = ["SqliteInterviewPrepRepository", "InterviewNoteConflictError"]
