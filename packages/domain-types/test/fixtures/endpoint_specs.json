@@ -1,6 +1,2379 @@
 {
   "schemaVersion": 1,
   "endpoints": {
+    "interviewCatalog": {
+      "request": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "topic": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "ic",
+              "senior_ic",
+              "staff_principal",
+              "first_time_manager",
+              "engineering_manager",
+              "director",
+              "executive",
+              "unknown"
+            ]
+          },
+          "answerFormat": {
+            "type": "string",
+            "enum": [
+              "historical",
+              "situational",
+              "principle",
+              "negotiation",
+              "narrative",
+              "preference"
+            ]
+          },
+          "source": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 20
+          },
+          "search": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "page": {
+            "default": 1,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000
+          },
+          "pageSize": {
+            "default": 121,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 121
+          }
+        },
+        "additionalProperties": false
+      },
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "catalog": {
+            "type": "object",
+            "properties": {
+              "schemaVersion": {
+                "type": "string",
+                "const": "1"
+              },
+              "catalogRevision": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 100
+              },
+              "catalogDigest": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "maturity": {
+                "type": "string",
+                "const": "research_draft"
+              },
+              "reviewedAt": {
+                "type": "string"
+              },
+              "sourcePacketDigest": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "sourceFiles": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "path": {
+                      "type": "string"
+                    },
+                    "sha256": {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{64}$"
+                    }
+                  },
+                  "required": [
+                    "path",
+                    "sha256"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "topics": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "prefix": {
+                      "type": "string"
+                    },
+                    "questionIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "pattern": "^[A-Z]+\\d{2}$"
+                      }
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "name",
+                    "prefix",
+                    "questionIds"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "questions": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "pattern": "^[A-Z]+\\d{2}$"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "topic": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "const": "active"
+                    },
+                    "maturity": {
+                      "type": "string",
+                      "const": "research_draft"
+                    },
+                    "cardRevision": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 100
+                    },
+                    "cardDigest": {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{64}$"
+                    },
+                    "rubricRevision": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 100
+                    },
+                    "rubricDigest": {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{64}$"
+                    },
+                    "roleLenses": {
+                      "minItems": 1,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "ic",
+                          "senior_ic",
+                          "staff_principal",
+                          "first_time_manager",
+                          "engineering_manager",
+                          "director",
+                          "executive",
+                          "unknown"
+                        ]
+                      }
+                    },
+                    "responsibilityTags": {
+                      "minItems": 1,
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "competencyTags": {
+                      "minItems": 1,
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "answerFormats": {
+                      "minItems": 1,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "historical",
+                          "situational",
+                          "principle",
+                          "negotiation",
+                          "narrative",
+                          "preference"
+                        ]
+                      }
+                    },
+                    "defaultAnswerFormat": {
+                      "type": "string",
+                      "enum": [
+                        "historical",
+                        "situational",
+                        "principle",
+                        "negotiation",
+                        "narrative",
+                        "preference"
+                      ]
+                    },
+                    "attributionKind": {
+                      "type": "string",
+                      "enum": [
+                        "direct_interview_guidance",
+                        "practice_extrapolation",
+                        "editorial_synthesis"
+                      ]
+                    },
+                    "sourceRef": {
+                      "type": "string"
+                    },
+                    "variants": {
+                      "type": "string"
+                    },
+                    "intent": {
+                      "type": "string"
+                    },
+                    "answer": {
+                      "type": "string"
+                    },
+                    "adaptation": {
+                      "type": "string"
+                    },
+                    "alternatives": {
+                      "type": "string"
+                    },
+                    "probes": {
+                      "type": "string"
+                    },
+                    "failures": {
+                      "type": "string"
+                    },
+                    "provenance": {
+                      "type": "string"
+                    },
+                    "rubric": {
+                      "minItems": 1,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "dimension": {
+                            "type": "string"
+                          },
+                          "weak": {
+                            "type": "string"
+                          },
+                          "strong": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "dimension",
+                          "weak",
+                          "strong"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "sources": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "examples": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "title": {
+                            "type": "string"
+                          },
+                          "body": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "title",
+                          "body"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "title",
+                    "topic",
+                    "status",
+                    "maturity",
+                    "cardRevision",
+                    "cardDigest",
+                    "rubricRevision",
+                    "rubricDigest",
+                    "roleLenses",
+                    "responsibilityTags",
+                    "competencyTags",
+                    "answerFormats",
+                    "defaultAnswerFormat",
+                    "attributionKind",
+                    "sourceRef",
+                    "variants",
+                    "intent",
+                    "answer",
+                    "adaptation",
+                    "alternatives",
+                    "probes",
+                    "failures",
+                    "provenance",
+                    "rubric",
+                    "sources",
+                    "examples"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "retiredQuestions": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "pattern": "^[A-Z]+\\d{2}$"
+                    },
+                    "retiredAt": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "replacementId": {
+                      "type": "null"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "retiredAt",
+                    "reason",
+                    "replacementId"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "sources": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "url": {
+                      "type": "string",
+                      "format": "uri"
+                    },
+                    "authorId": {
+                      "type": "string"
+                    },
+                    "readingCoverage": {
+                      "type": "string"
+                    },
+                    "readingCoverageKind": {
+                      "type": "string",
+                      "enum": [
+                        "article",
+                        "selected_passage",
+                        "overview",
+                        "official_guidance",
+                        "research_update"
+                      ]
+                    },
+                    "note": {
+                      "type": "string"
+                    },
+                    "questionIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "pattern": "^[A-Z]+\\d{2}$"
+                      }
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "title",
+                    "url",
+                    "authorId",
+                    "readingCoverage",
+                    "readingCoverageKind",
+                    "note",
+                    "questionIds"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "authors": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "sourceIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "name",
+                    "sourceIds"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "relationships": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "fromQuestionId": {
+                      "type": "string",
+                      "pattern": "^[A-Z]+\\d{2}$"
+                    },
+                    "toQuestionId": {
+                      "type": "string",
+                      "pattern": "^[A-Z]+\\d{2}$"
+                    },
+                    "kind": {
+                      "type": "string",
+                      "const": "editorial_related"
+                    },
+                    "reason": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "fromQuestionId",
+                    "toQuestionId",
+                    "kind",
+                    "reason"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "guidance": {
+                "type": "object",
+                "properties": {
+                  "overview": {
+                    "type": "string"
+                  },
+                  "sourceLedger": {
+                    "type": "string"
+                  },
+                  "evaluation": {
+                    "type": "string"
+                  },
+                  "coverage": {
+                    "type": "string"
+                  },
+                  "review": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "overview",
+                  "sourceLedger",
+                  "evaluation",
+                  "coverage",
+                  "review"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "schemaVersion",
+              "catalogRevision",
+              "catalogDigest",
+              "maturity",
+              "reviewedAt",
+              "sourcePacketDigest",
+              "sourceFiles",
+              "topics",
+              "questions",
+              "retiredQuestions",
+              "sources",
+              "authors",
+              "relationships",
+              "guidance"
+            ],
+            "additionalProperties": false
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "pageSize": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "ok",
+          "catalog",
+          "page",
+          "pageSize",
+          "total"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "interviewQuestion": {
+      "request": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "catalogBinding": {
+            "type": "object",
+            "properties": {
+              "catalogRevision": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 100
+              },
+              "catalogDigest": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              }
+            },
+            "required": [
+              "catalogRevision",
+              "catalogDigest"
+            ],
+            "additionalProperties": false
+          },
+          "question": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[A-Z]+\\d{2}$"
+              },
+              "title": {
+                "type": "string"
+              },
+              "topic": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "const": "active"
+              },
+              "maturity": {
+                "type": "string",
+                "const": "research_draft"
+              },
+              "cardRevision": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 100
+              },
+              "cardDigest": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "rubricRevision": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 100
+              },
+              "rubricDigest": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "roleLenses": {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "ic",
+                    "senior_ic",
+                    "staff_principal",
+                    "first_time_manager",
+                    "engineering_manager",
+                    "director",
+                    "executive",
+                    "unknown"
+                  ]
+                }
+              },
+              "responsibilityTags": {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "competencyTags": {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "answerFormats": {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "historical",
+                    "situational",
+                    "principle",
+                    "negotiation",
+                    "narrative",
+                    "preference"
+                  ]
+                }
+              },
+              "defaultAnswerFormat": {
+                "type": "string",
+                "enum": [
+                  "historical",
+                  "situational",
+                  "principle",
+                  "negotiation",
+                  "narrative",
+                  "preference"
+                ]
+              },
+              "attributionKind": {
+                "type": "string",
+                "enum": [
+                  "direct_interview_guidance",
+                  "practice_extrapolation",
+                  "editorial_synthesis"
+                ]
+              },
+              "sourceRef": {
+                "type": "string"
+              },
+              "variants": {
+                "type": "string"
+              },
+              "intent": {
+                "type": "string"
+              },
+              "answer": {
+                "type": "string"
+              },
+              "adaptation": {
+                "type": "string"
+              },
+              "alternatives": {
+                "type": "string"
+              },
+              "probes": {
+                "type": "string"
+              },
+              "failures": {
+                "type": "string"
+              },
+              "provenance": {
+                "type": "string"
+              },
+              "rubric": {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "dimension": {
+                      "type": "string"
+                    },
+                    "weak": {
+                      "type": "string"
+                    },
+                    "strong": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "dimension",
+                    "weak",
+                    "strong"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "sources": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "examples": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "title": {
+                      "type": "string"
+                    },
+                    "body": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "title",
+                    "body"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "id",
+              "title",
+              "topic",
+              "status",
+              "maturity",
+              "cardRevision",
+              "cardDigest",
+              "rubricRevision",
+              "rubricDigest",
+              "roleLenses",
+              "responsibilityTags",
+              "competencyTags",
+              "answerFormats",
+              "defaultAnswerFormat",
+              "attributionKind",
+              "sourceRef",
+              "variants",
+              "intent",
+              "answer",
+              "adaptation",
+              "alternatives",
+              "probes",
+              "failures",
+              "provenance",
+              "rubric",
+              "sources",
+              "examples"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "ok",
+          "catalogBinding",
+          "question"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "interviewPrepHistory": {
+      "request": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "generation": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "page": {
+            "default": 1,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000
+          },
+          "pageSize": {
+            "default": 20,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          }
+        },
+        "additionalProperties": false
+      },
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "jobId": {
+            "type": "string"
+          },
+          "generations": {
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "jobId": {
+                  "type": "string"
+                },
+                "generation": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "accepted",
+                    "failed",
+                    "superseded"
+                  ]
+                },
+                "generatedAt": {
+                  "type": "string"
+                },
+                "model": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "gateAudit": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "passed",
+                        "failed"
+                      ]
+                    },
+                    "fabricationFindings": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "groundingFindings": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "judgeVerdict": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "warnings": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "fabricationFindings",
+                    "groundingFindings",
+                    "judgeVerdict",
+                    "warnings"
+                  ],
+                  "additionalProperties": false
+                },
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "itemId": {
+                        "type": "string"
+                      },
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "theme",
+                          "star_draft",
+                          "gap_drill",
+                          "company_note",
+                          "question_outline"
+                        ]
+                      },
+                      "title": {
+                        "type": "string"
+                      },
+                      "generatedText": {
+                        "type": "string"
+                      },
+                      "evidenceIds": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "requirementIds": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "sourceText": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "transformType": {
+                        "type": "string"
+                      },
+                      "control": {
+                        "type": "string"
+                      },
+                      "groundingAudit": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "warnings": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "position": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "questionMetadata": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "questionId": {
+                                "type": "string",
+                                "pattern": "^[A-Z]+\\d{2}$"
+                              },
+                              "cardRevision": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 100
+                              },
+                              "cardDigest": {
+                                "type": "string",
+                                "pattern": "^[a-f0-9]{64}$"
+                              },
+                              "rubricRevision": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 100
+                              },
+                              "rubricDigest": {
+                                "type": "string",
+                                "pattern": "^[a-f0-9]{64}$"
+                              },
+                              "answerFormat": {
+                                "type": "string",
+                                "enum": [
+                                  "historical",
+                                  "situational",
+                                  "principle",
+                                  "negotiation",
+                                  "narrative",
+                                  "preference"
+                                ]
+                              },
+                              "selectionRationale": {
+                                "type": "string"
+                              },
+                              "evidenceLinks": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "evidenceId": {
+                                      "type": "string"
+                                    },
+                                    "sourceRef": {
+                                      "type": "string"
+                                    },
+                                    "excerpt": {
+                                      "type": "string"
+                                    },
+                                    "scope": {
+                                      "type": "string",
+                                      "enum": [
+                                        "direct",
+                                        "transferable"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "evidenceId",
+                                    "sourceRef",
+                                    "excerpt",
+                                    "scope"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              },
+                              "outline": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "heading": {
+                                      "type": "string"
+                                    },
+                                    "text": {
+                                      "type": "string"
+                                    },
+                                    "evidenceIds": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "factualSupport": {
+                                      "type": "string",
+                                      "enum": [
+                                        "accepted_profile_fact",
+                                        "hypothetical",
+                                        "new_user_statement",
+                                        "needs_clarification"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "heading",
+                                    "text",
+                                    "evidenceIds",
+                                    "factualSupport"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              },
+                              "gaps": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "id": {
+                                      "type": "string"
+                                    },
+                                    "prompt": {
+                                      "type": "string"
+                                    },
+                                    "reason": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "id",
+                                    "prompt",
+                                    "reason"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              },
+                              "probes": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "sourceGuidanceRefs": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "factualSupport": {
+                                "type": "string",
+                                "enum": [
+                                  "accepted_profile_fact",
+                                  "hypothetical",
+                                  "new_user_statement",
+                                  "needs_clarification"
+                                ]
+                              },
+                              "userEditStatus": {
+                                "type": "string",
+                                "enum": [
+                                  "generated",
+                                  "user_edited"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "questionId",
+                              "cardRevision",
+                              "cardDigest",
+                              "rubricRevision",
+                              "rubricDigest",
+                              "answerFormat",
+                              "selectionRationale",
+                              "evidenceLinks",
+                              "outline",
+                              "gaps",
+                              "probes",
+                              "sourceGuidanceRefs",
+                              "factualSupport",
+                              "userEditStatus"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "itemId",
+                      "kind",
+                      "title",
+                      "generatedText",
+                      "evidenceIds",
+                      "requirementIds",
+                      "sourceText",
+                      "transformType",
+                      "control",
+                      "groundingAudit",
+                      "warnings",
+                      "position"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "generationContext": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "schemaVersion": {
+                          "type": "string",
+                          "const": "1"
+                        },
+                        "catalogBinding": {
+                          "type": "object",
+                          "properties": {
+                            "catalogRevision": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 100
+                            },
+                            "catalogDigest": {
+                              "type": "string",
+                              "pattern": "^[a-f0-9]{64}$"
+                            }
+                          },
+                          "required": [
+                            "catalogRevision",
+                            "catalogDigest"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "contextDigest": {
+                          "type": "string",
+                          "pattern": "^[a-f0-9]{64}$"
+                        },
+                        "selectedQuestionIds": {
+                          "minItems": 1,
+                          "maxItems": 16,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "pattern": "^[A-Z]+\\d{2}$"
+                          }
+                        },
+                        "selectedQuestions": {
+                          "minItems": 1,
+                          "maxItems": 16,
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "questionId": {
+                                "type": "string",
+                                "pattern": "^[A-Z]+\\d{2}$"
+                              },
+                              "cardRevision": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 100
+                              },
+                              "cardDigest": {
+                                "type": "string",
+                                "pattern": "^[a-f0-9]{64}$"
+                              },
+                              "rubricRevision": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 100
+                              },
+                              "rubricDigest": {
+                                "type": "string",
+                                "pattern": "^[a-f0-9]{64}$"
+                              },
+                              "answerFormat": {
+                                "type": "string",
+                                "enum": [
+                                  "historical",
+                                  "situational",
+                                  "principle",
+                                  "negotiation",
+                                  "narrative",
+                                  "preference"
+                                ]
+                              },
+                              "selectionRationale": {
+                                "type": "string"
+                              },
+                              "snapshot": {
+                                "type": "object",
+                                "properties": {
+                                  "id": {
+                                    "type": "string",
+                                    "pattern": "^[A-Z]+\\d{2}$"
+                                  },
+                                  "title": {
+                                    "type": "string"
+                                  },
+                                  "topic": {
+                                    "type": "string"
+                                  },
+                                  "status": {
+                                    "type": "string",
+                                    "const": "active"
+                                  },
+                                  "maturity": {
+                                    "type": "string",
+                                    "const": "research_draft"
+                                  },
+                                  "cardRevision": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 100
+                                  },
+                                  "cardDigest": {
+                                    "type": "string",
+                                    "pattern": "^[a-f0-9]{64}$"
+                                  },
+                                  "rubricRevision": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 100
+                                  },
+                                  "rubricDigest": {
+                                    "type": "string",
+                                    "pattern": "^[a-f0-9]{64}$"
+                                  },
+                                  "roleLenses": {
+                                    "minItems": 1,
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string",
+                                      "enum": [
+                                        "ic",
+                                        "senior_ic",
+                                        "staff_principal",
+                                        "first_time_manager",
+                                        "engineering_manager",
+                                        "director",
+                                        "executive",
+                                        "unknown"
+                                      ]
+                                    }
+                                  },
+                                  "responsibilityTags": {
+                                    "minItems": 1,
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "competencyTags": {
+                                    "minItems": 1,
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "answerFormats": {
+                                    "minItems": 1,
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string",
+                                      "enum": [
+                                        "historical",
+                                        "situational",
+                                        "principle",
+                                        "negotiation",
+                                        "narrative",
+                                        "preference"
+                                      ]
+                                    }
+                                  },
+                                  "defaultAnswerFormat": {
+                                    "type": "string",
+                                    "enum": [
+                                      "historical",
+                                      "situational",
+                                      "principle",
+                                      "negotiation",
+                                      "narrative",
+                                      "preference"
+                                    ]
+                                  },
+                                  "attributionKind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "direct_interview_guidance",
+                                      "practice_extrapolation",
+                                      "editorial_synthesis"
+                                    ]
+                                  },
+                                  "sourceRef": {
+                                    "type": "string"
+                                  },
+                                  "variants": {
+                                    "type": "string"
+                                  },
+                                  "intent": {
+                                    "type": "string"
+                                  },
+                                  "answer": {
+                                    "type": "string"
+                                  },
+                                  "adaptation": {
+                                    "type": "string"
+                                  },
+                                  "alternatives": {
+                                    "type": "string"
+                                  },
+                                  "probes": {
+                                    "type": "string"
+                                  },
+                                  "failures": {
+                                    "type": "string"
+                                  },
+                                  "provenance": {
+                                    "type": "string"
+                                  },
+                                  "rubric": {
+                                    "minItems": 1,
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "dimension": {
+                                          "type": "string"
+                                        },
+                                        "weak": {
+                                          "type": "string"
+                                        },
+                                        "strong": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "dimension",
+                                        "weak",
+                                        "strong"
+                                      ],
+                                      "additionalProperties": false
+                                    }
+                                  },
+                                  "sources": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "examples": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "title": {
+                                          "type": "string"
+                                        },
+                                        "body": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "title",
+                                        "body"
+                                      ],
+                                      "additionalProperties": false
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "id",
+                                  "title",
+                                  "topic",
+                                  "status",
+                                  "maturity",
+                                  "cardRevision",
+                                  "cardDigest",
+                                  "rubricRevision",
+                                  "rubricDigest",
+                                  "roleLenses",
+                                  "responsibilityTags",
+                                  "competencyTags",
+                                  "answerFormats",
+                                  "defaultAnswerFormat",
+                                  "attributionKind",
+                                  "sourceRef",
+                                  "variants",
+                                  "intent",
+                                  "answer",
+                                  "adaptation",
+                                  "alternatives",
+                                  "probes",
+                                  "failures",
+                                  "provenance",
+                                  "rubric",
+                                  "sources",
+                                  "examples"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "required": [
+                              "questionId",
+                              "cardRevision",
+                              "cardDigest",
+                              "rubricRevision",
+                              "rubricDigest",
+                              "answerFormat",
+                              "selectionRationale",
+                              "snapshot"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "selectionMode": {
+                          "type": "string",
+                          "enum": [
+                            "user_selected",
+                            "deterministic"
+                          ]
+                        },
+                        "interviewStage": {
+                          "type": "string",
+                          "enum": [
+                            "recruiter",
+                            "behavioral",
+                            "management",
+                            "technical",
+                            "executive",
+                            "mixed",
+                            "unknown"
+                          ]
+                        },
+                        "interviewFormat": {
+                          "type": "string",
+                          "enum": [
+                            "phone",
+                            "video",
+                            "onsite",
+                            "written",
+                            "unspecified"
+                          ]
+                        },
+                        "roleLens": {
+                          "type": "string",
+                          "enum": [
+                            "ic",
+                            "senior_ic",
+                            "staff_principal",
+                            "first_time_manager",
+                            "engineering_manager",
+                            "director",
+                            "executive",
+                            "unknown"
+                          ]
+                        },
+                        "roleResponsibilities": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "knownCriteria": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "profile": {
+                          "type": "object",
+                          "properties": {
+                            "profileId": {
+                              "type": "string"
+                            },
+                            "version": {
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 9007199254740991
+                            },
+                            "evidence": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "evidenceId": {
+                                    "type": "string"
+                                  },
+                                  "sourceRef": {
+                                    "type": "string"
+                                  },
+                                  "excerpt": {
+                                    "type": "string"
+                                  },
+                                  "scope": {
+                                    "type": "string",
+                                    "enum": [
+                                      "direct",
+                                      "transferable"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "evidenceId",
+                                  "sourceRef",
+                                  "excerpt",
+                                  "scope"
+                                ],
+                                "additionalProperties": false
+                              }
+                            }
+                          },
+                          "required": [
+                            "profileId",
+                            "version",
+                            "evidence"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "jobContext": {
+                          "type": "object",
+                          "properties": {
+                            "jobId": {
+                              "type": "string"
+                            },
+                            "title": {
+                              "type": "string",
+                              "maxLength": 500
+                            },
+                            "company": {
+                              "type": "string",
+                              "maxLength": 500
+                            },
+                            "descriptionExcerpt": {
+                              "type": "string",
+                              "maxLength": 12000
+                            },
+                            "snapshotHash": {
+                              "type": "string",
+                              "pattern": "^[a-f0-9]{64}$"
+                            }
+                          },
+                          "required": [
+                            "jobId",
+                            "title",
+                            "company",
+                            "descriptionExcerpt",
+                            "snapshotHash"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "employerAnalysis": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "generation": {
+                                  "type": "integer",
+                                  "minimum": 1,
+                                  "maximum": 9007199254740991
+                                },
+                                "snapshotHash": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "snapshot": {
+                                  "type": "object",
+                                  "properties": {
+                                    "roleFraming": {
+                                      "type": "string",
+                                      "maxLength": 4000
+                                    },
+                                    "inferredSeniority": {
+                                      "type": "string",
+                                      "maxLength": 500
+                                    },
+                                    "requirements": {
+                                      "maxItems": 20,
+                                      "type": "array",
+                                      "items": {
+                                        "type": "object",
+                                        "properties": {
+                                          "requirementId": {
+                                            "type": "string"
+                                          },
+                                          "requirementText": {
+                                            "type": "string",
+                                            "maxLength": 3000
+                                          },
+                                          "sourceExcerpt": {
+                                            "type": "string",
+                                            "maxLength": 3000
+                                          }
+                                        },
+                                        "required": [
+                                          "requirementId",
+                                          "requirementText",
+                                          "sourceExcerpt"
+                                        ],
+                                        "additionalProperties": false
+                                      }
+                                    }
+                                  },
+                                  "required": [
+                                    "roleFraming",
+                                    "inferredSeniority",
+                                    "requirements"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              },
+                              "required": [
+                                "generation",
+                                "snapshotHash",
+                                "snapshot"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "fitReport": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "generation": {
+                                  "type": "integer",
+                                  "minimum": 1,
+                                  "maximum": 9007199254740991
+                                },
+                                "employerAnalysisGeneration": {
+                                  "type": "integer",
+                                  "minimum": 1,
+                                  "maximum": 9007199254740991
+                                },
+                                "profileSnapshotVersion": {
+                                  "type": "integer",
+                                  "minimum": 1,
+                                  "maximum": 9007199254740991
+                                },
+                                "status": {
+                                  "type": "string",
+                                  "enum": [
+                                    "current",
+                                    "stale_excluded"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "generation",
+                                "employerAnalysisGeneration",
+                                "profileSnapshotVersion",
+                                "status"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "approvedMaterials": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "materialId": {
+                                "type": "string"
+                              },
+                              "generation": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 9007199254740991
+                              },
+                              "sha256": {
+                                "type": "string",
+                                "pattern": "^[a-f0-9]{64}$"
+                              }
+                            },
+                            "required": [
+                              "materialId",
+                              "generation",
+                              "sha256"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "model": {
+                          "type": "object",
+                          "properties": {
+                            "model": {
+                              "type": "string"
+                            },
+                            "promptVersion": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 100
+                            },
+                            "gateVersion": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 100
+                            }
+                          },
+                          "required": [
+                            "model",
+                            "promptVersion",
+                            "gateVersion"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "schemaVersion",
+                        "catalogBinding",
+                        "contextDigest",
+                        "selectedQuestionIds",
+                        "selectedQuestions",
+                        "selectionMode",
+                        "interviewStage",
+                        "interviewFormat",
+                        "roleLens",
+                        "roleResponsibilities",
+                        "knownCriteria",
+                        "profile",
+                        "jobContext",
+                        "employerAnalysis",
+                        "fitReport",
+                        "approvedMaterials",
+                        "model"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "staleReasons": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "catalog_changed",
+                      "profile_changed",
+                      "job_changed",
+                      "employer_analysis_changed",
+                      "approved_materials_changed",
+                      "legacy_unbound"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "jobId",
+                "generation",
+                "status",
+                "generatedAt",
+                "model",
+                "gateAudit",
+                "items"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "pageSize": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "ok",
+          "jobId",
+          "generations",
+          "page",
+          "pageSize",
+          "total"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "interviewNotes": {
+      "request": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "questionId": {
+            "type": "string",
+            "pattern": "^[A-Z]+\\d{2}$"
+          },
+          "history": {
+            "type": "boolean"
+          },
+          "page": {
+            "default": 1,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000
+          },
+          "pageSize": {
+            "default": 20,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          }
+        },
+        "additionalProperties": false
+      },
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "jobId": {
+            "type": "string"
+          },
+          "notes": {
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "jobId": {
+                  "type": "string"
+                },
+                "questionId": {
+                  "type": "string",
+                  "pattern": "^[A-Z]+\\d{2}$"
+                },
+                "revision": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                },
+                "noteText": {
+                  "type": "string",
+                  "maxLength": 20000
+                },
+                "factualSupport": {
+                  "type": "string",
+                  "enum": [
+                    "supported",
+                    "unverified_user_statement",
+                    "needs_clarification",
+                    "hypothetical"
+                  ]
+                },
+                "editStatus": {
+                  "type": "string",
+                  "const": "user_edited"
+                },
+                "sourceGeneration": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "bindings": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "catalogBinding": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "catalogRevision": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 100
+                                },
+                                "catalogDigest": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                }
+                              },
+                              "required": [
+                                "catalogRevision",
+                                "catalogDigest"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "cardRevision": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 100
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "cardDigest": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "pattern": "^[a-f0-9]{64}$"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "contextDigest": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "pattern": "^[a-f0-9]{64}$"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "updatedAt": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "jobId",
+                "questionId",
+                "revision",
+                "noteText",
+                "factualSupport",
+                "editStatus",
+                "sourceGeneration",
+                "bindings",
+                "updatedAt"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "pageSize": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "ok",
+          "jobId",
+          "notes",
+          "page",
+          "pageSize",
+          "total"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "saveInterviewNote": {
+      "request": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "questionId": {
+            "type": "string",
+            "pattern": "^[A-Z]+\\d{2}$"
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "noteText": {
+            "type": "string",
+            "maxLength": 20000
+          },
+          "factualSupport": {
+            "type": "string",
+            "enum": [
+              "unverified_user_statement",
+              "needs_clarification",
+              "hypothetical"
+            ]
+          },
+          "sourceGeneration": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "bindings": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "catalogBinding": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "catalogRevision": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 100
+                          },
+                          "catalogDigest": {
+                            "type": "string",
+                            "pattern": "^[a-f0-9]{64}$"
+                          }
+                        },
+                        "required": [
+                          "catalogRevision",
+                          "catalogDigest"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "cardRevision": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 100
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "cardDigest": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^[a-f0-9]{64}$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "contextDigest": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^[a-f0-9]{64}$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "questionId",
+          "expectedRevision",
+          "noteText"
+        ],
+        "additionalProperties": false
+      },
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "note": {
+            "type": "object",
+            "properties": {
+              "jobId": {
+                "type": "string"
+              },
+              "questionId": {
+                "type": "string",
+                "pattern": "^[A-Z]+\\d{2}$"
+              },
+              "revision": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "noteText": {
+                "type": "string",
+                "maxLength": 20000
+              },
+              "factualSupport": {
+                "type": "string",
+                "enum": [
+                  "supported",
+                  "unverified_user_statement",
+                  "needs_clarification",
+                  "hypothetical"
+                ]
+              },
+              "editStatus": {
+                "type": "string",
+                "const": "user_edited"
+              },
+              "sourceGeneration": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "bindings": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "catalogBinding": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "catalogRevision": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 100
+                              },
+                              "catalogDigest": {
+                                "type": "string",
+                                "pattern": "^[a-f0-9]{64}$"
+                              }
+                            },
+                            "required": [
+                              "catalogRevision",
+                              "catalogDigest"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "cardRevision": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 100
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "cardDigest": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^[a-f0-9]{64}$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "contextDigest": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^[a-f0-9]{64}$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "updatedAt": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "jobId",
+              "questionId",
+              "revision",
+              "noteText",
+              "factualSupport",
+              "editStatus",
+              "sourceGeneration",
+              "bindings",
+              "updatedAt"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "ok",
+          "note"
+        ],
+        "additionalProperties": false
+      }
+    },
     "learningRecommendations": {
       "request": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",

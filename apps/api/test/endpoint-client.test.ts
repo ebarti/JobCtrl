@@ -2,11 +2,36 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createEndpointMethods } from "@jobctrl/api-client";
 import { ENDPOINTS } from "../src/contracts.js";
+import { syntheticInterviewCatalogAsset } from "./interview-fixture.js";
 
 const RECOMMENDATION_ID = `learning-recommendation:${"a".repeat(64)}`;
 const REVIEW_ID = `learning-recommendation-review:${"b".repeat(64)}`;
 
 describe("endpoint client factory", () => {
+  it("generates the five interview methods from the shared endpoint registry", async () => {
+    const catalog = syntheticInterviewCatalogAsset().data as { catalogRevision: string; catalogDigest: string; questions: unknown[] };
+    const note = { jobId: "job/one", questionId: "TS09", revision: 1, noteText: "synthetic user statement",
+      factualSupport: "unverified_user_statement", editStatus: "user_edited", sourceGeneration: null, bindings: null, updatedAt: "2026-10-02T12:00:00Z" };
+    const transport = vi.fn(async (method: string, path: string) => {
+      if (path === "/v1/interviews/catalog") return { ok: true, catalog, page: 1, pageSize: 121, total: 2 };
+      if (path.startsWith("/v1/interviews/questions/")) return { ok: true, catalogBinding: { catalogRevision: catalog.catalogRevision, catalogDigest: catalog.catalogDigest }, question: catalog.questions[0] };
+      if (path.endsWith("interview-prep/history")) return { ok: true, jobId: "job/one", generations: [], page: 1, pageSize: 20, total: 0 };
+      return method === "POST" ? { ok: true, note } : { ok: true, jobId: "job/one", notes: [note], page: 1, pageSize: 20, total: 1 };
+    });
+    const client = createEndpointMethods(transport);
+    await client.interviewCatalog({ role: "staff_principal" });
+    await client.interviewQuestion("TS09");
+    await client.interviewPrepHistory("job/one");
+    await client.interviewNotes("job/one", { questionId: "TS09", history: true });
+    await client.saveInterviewNote("job/one", { questionId: "TS09", expectedRevision: 0, noteText: "synthetic user statement" });
+    expect(transport.mock.calls).toEqual([
+      ["GET", "/v1/interviews/catalog", { role: "staff_principal" }],
+      ["GET", "/v1/interviews/questions/TS09", undefined],
+      ["GET", "/v1/jobs/job%2Fone/interview-prep/history", undefined],
+      ["GET", "/v1/jobs/job%2Fone/interview-notes", { questionId: "TS09", history: true }],
+      ["POST", "/v1/jobs/job%2Fone/interview-notes", { questionId: "TS09", expectedRevision: 0, noteText: "synthetic user statement" }],
+    ]);
+  });
   it("derives paths, payload placement, and response parsing from the registry", async () => {
     const transport = vi.fn(async (_method: string, path: string) => {
       if (path === "/v1/learning/recommendations") {
