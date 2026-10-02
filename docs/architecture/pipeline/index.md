@@ -110,6 +110,17 @@ Workflow selection for `run_stage` lives in
 (`build_run_stage_workflow_spec`, `build_apply_workflow_spec`, and
 `build_manual_capture_import_workflow_spec`).
 
+`InterviewPrepWorkflow` is an explicit Materials action, outside Discover's
+automatic preparation chain. It validates a bounded current-catalog selection
+before provider spending, then selects canonical evidence before generating
+format-appropriate question outlines. The same workflow/run retry reuses a
+completed generation; failed generation or persistence retains the accepted
+prep. Independent note revisions do not belong to this workflow's replacement
+lifecycle. The [Materials interview contract](../materials.md#stored-interview-preparation)
+owns input snapshots, approved-material bindings, format gates, legacy output,
+and maturity; the [API contract](../../api/complete-contract.md#interview-catalog-preparation-and-notes)
+owns request fields and history/notes routes.
+
 ### Async vs Sync (202 vs 200)
 
 The distinction matters for anyone reading the API or the UI:

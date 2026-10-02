@@ -71,6 +71,19 @@ retain their persisted snake_case names; SSE adds canonical `jobId`/`tenantId`
 without renaming those fields. See the [SSE contract](../api/complete-contract.md#dry-run-completion)
 for the payload boundary.
 
+The interview vocabulary in `packages/domain-types/src/interview/` is pure
+shared meaning; `packages/contracts/src/interview.ts` owns strict catalog,
+selection, prep/history, and note wire schemas. Python's interview value objects
+and catalog types mirror those shapes. One deterministic authored catalog emits
+the packaged worker JSON consumed by both runtimes, instead of independently
+maintained runtime content. Catalog reads are direct asset handlers;
+prep/history/notes keep canonical Materials ownership and exact-schema storage.
+The generated endpoint/client path, frontend port/local/demo adapters, RPC
+selection mirror, both projection builders, and event/invalidation registries
+must evolve together. Note conflicts preserve structured `responseBody` in
+`JobCtrlApiError` for form reconciliation. See the
+[complete interview contract](../api/complete-contract.md#interview-catalog-preparation-and-notes).
+
 ## Three API Boundaries
 
 ### Browser REST API

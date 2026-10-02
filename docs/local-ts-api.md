@@ -37,6 +37,7 @@ when implementing or debugging a specific endpoint.
 | --- | --- | --- |
 | Profile and configuration | `/v1/profile`, `/v1/settings`, `/v1/credentials`, `/v1/providers/models`, `/v1/discovery/settings`, `/v1/browser-capabilities`, `/v1/extension/pairing-token`, `/v1/discovery/browser-extension/status` | Synchronous reads, validated patches, and live extension readiness |
 | Jobs and evidence | `/v1/jobs`, `/v1/jobs/:jobKey`, `/v1/evidence-map`, `/v1/artifacts` | Projection-backed reads |
+| Interviews | `/v1/interviews/catalog`, `/v1/interviews/questions/:questionId`, per-job prep history and interview notes | Asset-backed public reads; tenant/job-scoped prep and revisioned private notes |
 | Scoring keywords and feedback learning | `/v1/scoring/keywords`, `/v1/learning/recommendations`, `/v1/learning/policies/materials` | Current score-version aggregation plus explicit review and versioned policy history |
 | Review and outcomes | `/v1/apply/review-queue`, `/v1/jobs/:jobKey/apply-review/decision`, `/v1/jobs/:jobKey/repeat-application/override`, `/v1/outcomes` | Explicit review commands plus read models |
 | Workflow operations | `/v1/pipeline/actions/run-stage`, `/v1/pipeline/operations`, `/v1/workflow-runs`, `/v1/health` | `202` for accepted asynchronous work; `200` for projection-backed and runtime-backed reads/sync commands |
@@ -107,6 +108,22 @@ are locators resolved only at explicit import or API boundaries. Employer and
 Source remain independent facts. `GET /v1/scoring/keywords` aggregates indexed,
 normalized keywords from the current score version, and `GET /v1/jobs` accepts
 an exact `normalizedScoreKeyword` filter using those returned keys.
+
+## Interview Catalog, Preparation, And Notes
+
+The global catalog/detail routes serve the same versioned public JSON packaged
+for Python and TypeScript. They remain available without a database, selected
+job, live worker, or provider call. The job action extends the existing explicit
+`generate_interview_prep` workflow with a bounded selected-question/context
+request. Prep history and independent revisioned notes use authorized
+job-scoped reads/saves. A failed refresh preserves accepted prep; a stale note
+revision returns an explicit conflict instead of overwriting the newer edit.
+
+These contracts keep public guidance, accepted personal evidence, generated
+outlines, and unverified user edits separate. Read the
+[Jobs & Materials route guide](api/jobs-and-materials.md#interviews-catalog-preparation-and-notes)
+and [complete interview contract](api/complete-contract.md#interview-catalog-preparation-and-notes)
+for route fields, limits, errors, legacy cases, and stale-input semantics.
 
 ## Feedback Learning And Policy History
 

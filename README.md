@@ -276,10 +276,13 @@ evidence, qualifications, and the complete capability matrix.
   reused in generated materials, requirement-fit decisions, and recorded gaps.
   Job and artifact audit surfaces show those references as human-readable
   evidence; storage identifiers remain under technical details.
-- Generate stored interview prep **(Beta)** for a selected job from grounded
-  JobCtrl data, with evidence links and gap drills kept inspectable before the
-  interview. Its truthfulness gates are shipped, but output quality has not yet
-  been validated through real-user usage.
+- Browse the local **Interviews** question library without a job or provider
+  call, then select up to 16 questions for grounded job-specific preparation
+  **(Beta)**. Inspect source guidance, evidence-linked outlines, retained input
+  history, stale-input warnings, and separately revisioned personal notes.
+  The catalog remains a research draft; fixtures and truthfulness gates do not
+  validate coaching quality, readiness, or grading. See
+  [Interview preparation](docs/user/materials-and-tailoring.md#interview-preparation).
 - Edit resume PDF style templates in Preferences, choose a default template,
   and override the template per job without modifying candidate profile data.
 - Launch bounded Discover and Apply work from Pipelines, then inspect the same

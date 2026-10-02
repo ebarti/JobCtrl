@@ -1642,6 +1642,38 @@ Consequences:
 
 Cites: `docs/plans/implemented/2026-07-05-evidence-map-interview-prep-plan.md` (Phase 0).
 
+### 2026-10-02 extension: Shared catalog, retained context, and separate notes
+
+The first-release integration in [#993](https://github.com/ebarti/JobCtrl/issues/993)
+keeps Materials ownership while adding a native Interviews composing view and
+one packaged, versioned catalog shared by Python and TypeScript. The authored
+research/metadata compiles deterministically; installed readers do not parse
+repository prose or depend on a plugin. Explicit responsibility tags and answer
+formats avoid deriving applicability from a title or forcing every answer into
+STAR.
+
+Job preparation retains selected-card snapshots, relevant generation-time
+profile excerpts, input bindings, rationale, and model/prompt/gate versions.
+Current changes produce read-side stale annotations instead of rewriting old
+prep. Version numbers alone are insufficient when the old source is not
+retained. User notes have independent tenant/job/question revision history and
+expected-revision saves; their user-statement status and edits cannot inherit
+generated-audit support or mutate Profile, fit, or Apply.
+
+Exact-schema v12 uses the existing stopped, independent candidate migration and
+native activation/rollback boundary. No runtime ensure-column or hidden event/
+artifact-metadata storage seam is introduced. Public catalog reads remain
+asset-backed without SQLite or a provider. Safe events invalidate private
+prep/note reads without carrying their text.
+
+Draft guidance and synthetic fixtures do not validate automated assessment or
+content efficacy. Reusable no-job preparation and typed rehearsal/calibration
+remain later phases; the existing no-live-assistance decision still applies.
+
+Owners: [Materials](architecture/materials.md#stored-interview-preparation),
+[Storage](architecture/storage.md), and the
+[API contract](api/complete-contract.md#interview-catalog-preparation-and-notes).
+
 ## 2026-07-05: Outcome Analytics Are Read-Only And Sample-Gated
 
 Status: accepted
