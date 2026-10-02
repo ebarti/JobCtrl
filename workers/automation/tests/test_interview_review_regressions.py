@@ -31,6 +31,10 @@ from tests.test_sqlite_profile_repository import _valid_profile
     "I'd saved $2 million using Kubernetes.",
     "I’d chosen Kubernetes and delivered a 75% margin increase.",
     "I’d overseen 50 direct reports at Acme.",
+    "Your prior role supervised 50 direct reports at Acme.",
+    "Your savings of $2 million came from using Kubernetes.",
+    "Your current management scope includes 50 direct reports.",
+    "The candidate’s prior work supervised 50 direct reports at Acme.",
 ])
 def test_nonfactual_labels_cannot_accept_unsupported_personal_assertions(tmp_path: Path, support: str, text: str) -> None:
     conn = _init_conn(tmp_path)
@@ -152,6 +156,8 @@ def test_activity_automatic_selection_uses_only_exact_current_rows_and_preserves
     "What would you do with a $2 million budget?",
     "How would you manage a hypothetical team of 50 direct reports?",
     "How would you manage my hypothetical team of 50 direct reports?",
+    "How would you manage your hypothetical team of 50 direct reports?",
+    "How would you manage the candidate’s hypothetical team of 50 direct reports?",
 ])
 def test_future_questions_do_not_claim_personal_history(tmp_path: Path, location: str, question: str) -> None:
     conn = _init_conn(tmp_path)
@@ -193,8 +199,11 @@ def test_supported_metric_clarification_uses_selected_canonical_excerpts(tmp_pat
 @pytest.mark.parametrize("question", [
     "How would you apply my prior experience supervising 50 direct reports at Acme?",
     "How would you use my prior savings of $2 million from migrating the platform to Kubernetes?",
+    "How would you apply your prior experience supervising 50 direct reports at Acme?",
+    "How would you use your prior savings of $2 million from migrating the platform to Kubernetes?",
     "What would you do with my 50 direct reports at Acme?",
     "How would you apply my experience using Kubernetes?",
+    "How would you use the candidate’s prior savings of $2 million?",
 ])
 def test_future_questions_cannot_supply_unsupported_personal_premises(tmp_path: Path, location: str, question: str) -> None:
     conn = _init_conn(tmp_path)

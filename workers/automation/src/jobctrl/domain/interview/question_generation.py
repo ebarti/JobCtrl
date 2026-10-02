@@ -29,7 +29,7 @@ _HISTORICAL_ASSERTION = re.compile(
     r"|\b(?:i|we)['’](?:ve|m)\s+(?:managed|hired|led|built|used|a\s+(?:manager|director|executive))\b"
     r"|^\s*(?:built|used|led|owned|managed|hired|implemented|deployed|migrated|reduced|increased|delivered)\b"
 )
-_PERSONAL_SUBJECT = re.compile(r"(?i)\b(?:i|we|you|the candidate)\b(?:['’](?:ve|m|d|re))?")
+_PERSONAL_SUBJECT = re.compile(r"(?i)\b(?:i|we|you|the candidate)\b(?!['’]s\b)(?:['’](?:ve|m|d|re))?")
 _INTENDED_ACTION = re.compile(r"(?i)^\s+(?:would|will|could|might|should|intend\s+to|plan\s+to)\b")
 _INTERROGATIVE = re.compile(r"(?i)^\s*(?:what|how|which|when|where|why|who|would|could|might|should|will|can|did|do|does|is|are|was|were|have|has)\b")
 _FUTURE_QUESTION = re.compile(r"(?i)\b(?:would|could|might|should|will)\s+(?:you|we|i|the candidate)\b")
@@ -38,10 +38,11 @@ _CONTRACTED_BASE_ACTION = re.compile(
     r"(?i)^\s+(?:(?:need|proceed|exceed|succeed|feed|breed|speed)\b|"
     r"(?!(?:\w+ed|\w*(?:been|built|done|seen|made|taken|gone|grown|known|written|given|shown|thought|bought|taught|brought|caught|driven|chosen|forgotten|broken|spoken|eaten|fallen|held|kept|felt|slept|sent|spent|stood|understood|lost|found|heard|met|won|led|had|begun|paid|sold|told|sought|fought|sung|swum|flown|ridden|hidden|risen|worn|torn|born|beaten|bitten|drawn|frozen|stolen|thrown|woken))\b)[a-z]+\b)"
 )
-_PERSONAL_POSSESSION = re.compile(r"(?i)\b(?:my|our)\b")
+_PERSONAL_OWNER = r"(?:my|our|your|(?:the\s+)?candidate['’]s)"
+_PERSONAL_POSSESSION = re.compile(rf"(?i)\b{_PERSONAL_OWNER}\b")
 _EXPLICIT_SCENARIO = re.compile(r"(?i)^\s*(?:hypothetically\b|in a hypothetical\b|suppose\b|imagine\b|if\b)")
 _CLAUSE_BOUNDARIES = re.compile(r"(?<!\d)\.|\.(?!\d)|[;\n]|\b(?:and|but|because|although|after|since|where|which)\b", re.IGNORECASE)
-_PERSONAL_PAST = re.compile(r"(?i)\b(?:my|our)\s+(?:past|previous|prior|experience|track record|history|achievements)\b")
+_PERSONAL_PAST = re.compile(rf"(?i)\b{_PERSONAL_OWNER}\s+(?:past|previous|prior|experience|track record|history|achievements)\b")
 _AUTHORITY = re.compile(r"(?i)\b(?:managed|hired|fired|direct reports|budget owner|executive|director|manager)\b")
 _CANDIDATE_COMPENSATION = re.compile(r"(?i)(?:my\s+(?:minimum|salary|target)|i(?:['’]d|\s+would)?\s+(?:need|expect|want|require|anchor|offer)|minimum\s+(?:salary|compensation)|(?:candidate|expected)\s+(?:salary|compensation)|salary\s+expectation)[^\n]{0,100}(?:\d|[$€£])")
 _RANGE_ORDER_REVERSAL = re.compile(
