@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from jobctrl.database import close_connection
+from jobctrl.domain.interview.evidence import InterviewEvidenceSnapshot
 from jobctrl.domain.interview.use_cases import GenerateInterviewPrepUseCase
 from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.infrastructure.interview import SqliteInterviewPrepRepository
@@ -256,5 +257,74 @@ def test_dependent_predicate_retains_actor_operator_and_selected_sources(
         assert outcome.status == ("accepted" if accepted else "failed"), outcome.errors
         assert len(llm.calls) == (2 if accepted else 1)
         assert repository.load_latest(LOCAL_TENANT, JOB_ID).to_read_model() == (outcome.prep if accepted else prior).to_read_model()
+    finally:
+        close_connection(tmp_path / "jobs.db")
+
+
+BIOGRAPHICAL_BINDING_PAIRS = [
+    ("Have you ever used Python and worked at Acme?", "open"),
+    ("Have you worked at Acme and served as a manager?", "open"),
+    ("Have you worked at Acme and served as a Director?", "open"),
+    ("Have you ever used Python and have you worked at Acme?", "open"),
+    ("Have you worked at Acme and have you served as a manager?", "open"),
+    ("If you used Python and worked at Acme, how would you compare alternatives?", "open"),
+    ("Suppose you worked at Acme and served as a Director. How would you compare alternatives?", "open"),
+    ("How did you work at Acme and serve as a Director?", "query"),
+    ("Describe a time you used Python and served as a Director at Acme.", "query"),
+    ("I used Python and served as a Director at Acme.", "assertion"),
+    ("How would you use your prior experience at Acme and serve as a Director?", "assertion"),
+    ("Have you used Python, and I worked at Acme?", "assertion"),
+]
+
+
+@pytest.mark.parametrize("support", ["hypothetical", "needs_clarification"])
+@pytest.mark.parametrize("location", ["heading", "text", "gap", "reason", "probe"])
+@pytest.mark.parametrize("source_context", ["empty", "latency", "role_fact"])
+@pytest.mark.parametrize("phrase,intent", BIOGRAPHICAL_BINDING_PAIRS)
+def test_biographical_subject_binding_is_distinct_from_inherited_predicate_scope(
+    tmp_path: Path, support: str, location: str, source_context: str, phrase: str, intent: str,
+):
+    conn = _init_conn(tmp_path)
+    try:
+        question_id = "M02" if source_context == "empty" else "B11"
+        repository = SqliteInterviewPrepRepository(conn)
+        request = _request(question_id)
+        if source_context == "role_fact":
+            profile = request["profile_snapshot"]
+            request["canonical_evidence"] = InterviewEvidenceSnapshot.from_canonical_rows(
+                tenant_id=profile.tenant_id, profile_id=profile.profile_id, profile_version=profile.version,
+                rows=[{"evidence_id": "ev-platform-latency", "source_text": "Used Python and served as a Director at Acme.",
+                       "scope": "personal", "user_confirmed": 1, "evidence_strength": "verified"}])
+        prior = GenerateInterviewPrepUseCase(repository=repository, llm=_FakeLlm([_candidate(question_id), _judge_pass()])).execute(
+            origin_run_id="accepted", **request).prep
+        assert prior.status == "accepted"
+        candidate = _candidate(question_id)
+        item = candidate["items"][0]
+        item["outline"][0]["factual_support"] = support
+        if location in {"heading", "text"}:
+            item["outline"][0][location] = phrase
+        elif location == "gap":
+            item["gaps"][0]["prompt"] = phrase
+        elif location == "reason":
+            item["gaps"][0]["reason"] = phrase
+        else:
+            item["probes"] = [phrase]
+        llm = _FakeLlm([candidate, _judge_pass()])
+        outcome = GenerateInterviewPrepUseCase(repository=repository, llm=llm).execute(origin_run_id="subject-binding", **request)
+        accepted = intent == "open" or (intent == "query" and source_context == "role_fact")
+        assert outcome.status == ("accepted" if accepted else "failed"), outcome.errors
+        assert len(llm.calls) == (2 if accepted else 1)
+        assert repository.load_latest(LOCAL_TENANT, JOB_ID).to_read_model() == (outcome.prep if accepted else prior).to_read_model()
+        history = repository.load_history(LOCAL_TENANT, JOB_ID)
+        assert [row["status"] for row in history] == [outcome.status, "superseded" if accepted else "accepted"]
+        if not accepted:
+            assert outcome.prep.gate_audit.status == "failed"
+            assert outcome.errors
+            assert history[0]["gateAudit"] == outcome.prep.gate_audit.to_read_model()
+        if accepted:
+            links = outcome.prep.items[0].question_metadata["evidenceLinks"]
+            assert [link["evidenceId"] for link in links] == ([] if source_context == "empty" else ["ev-platform-latency"])
+            if source_context == "role_fact":
+                assert links[0]["excerpt"] == "Used Python and served as a Director at Acme. | personal"
     finally:
         close_connection(tmp_path / "jobs.db")

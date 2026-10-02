@@ -415,10 +415,12 @@ def _assess_prose(text: str) -> _ProseAssessment:
         question = bool(sentence.strip().endswith("?") and (_QUESTION_START.search(clause) or _QUESTION_START.search(sentence)))
         future_question = bool(question and _FUTURE_QUESTION.search(clause))
         unknown_value = bool(question and _UNKNOWN_HISTORY_VALUE.fullmatch(clause.rstrip().rstrip("?") + "?"))
-        subjects = list(_PERSONAL_SUBJECT.finditer(clause))
-        modes = [_subject_mode(text, start, clause, subject, question=question, future_question=future_question) for subject in subjects]
-        governing_actor = subjects[-1].group() if subjects else None
-        governing_operator = modes[-1] if modes else None
+        subject_bindings = tuple(
+            (subject, _subject_mode(text, start, clause, subject, question=question, future_question=future_question))
+            for subject in _PERSONAL_SUBJECT.finditer(clause))
+        modes = [mode for _, mode in subject_bindings]
+        governing_actor = subject_bindings[-1][0].group() if subject_bindings else None
+        governing_operator = subject_bindings[-1][1] if subject_bindings else None
         dependency = _dependent_actor(text, start, clause, propositions)
         if dependency:
             governing_actor, governing_operator = dependency.governing_actor, dependency.governing_operator
@@ -437,7 +439,7 @@ def _assess_prose(text: str) -> _ProseAssessment:
             if (dependency and governing_operator in {"open_question", "detail_question", "conditional"}
                     and _DIRECT_PREDICATE.fullmatch(clause[:premise.start()])):
                 governed = True
-            for subject, mode in zip(subjects, modes, strict=True):
+            for subject, mode in subject_bindings:
                 if (subject.end() <= premise.start() and mode in {"open_question", "detail_question", "conditional"}
                         and _DIRECT_PREDICATE.fullmatch(clause[subject.end():premise.start()])):
                     governed = True
@@ -453,7 +455,7 @@ def _assess_prose(text: str) -> _ProseAssessment:
                 modes.append("conditional")
             elif possession_request:
                 modes.append("detail_question")
-            if not subjects:
+            if not subject_bindings:
                 governing_actor = possession.group()
                 governing_operator = modes[-1] if modes else None
             if future_question and not intended_choice and not unknown_value and not possession_hypothesis:
@@ -465,7 +467,7 @@ def _assess_prose(text: str) -> _ProseAssessment:
                 personal_assertion = True
         nonasserting = unknown_value or hypothesis or (
             modes and all(mode in {"conditional", "open_question", "object"} for mode in modes))
-        if not subjects and _HISTORICAL_ASSERTION.search(clause) and not nonasserting and not source_query:
+        if not subject_bindings and _HISTORICAL_ASSERTION.search(clause) and not nonasserting and not source_query:
             personal_assertion = True
         source_text = clause if personal_assertion or not nonasserting else ""
         operators = tuple(modes) + (("hypothesis",) if hypothesis else ()) + (("unknown_value",) if unknown_value else ())
