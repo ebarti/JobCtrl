@@ -65,7 +65,7 @@ describe("independently revisioned interview notes", () => {
     expect(useInterviewDraftStore.getState().notes.get(key)).toMatchObject({ expectedRevision: 2, conflictRevision: null });
   });
 
-  it("does not roll an old failure back over a newer terminal cache update", async () => {
+  it.each(["failure", "conflict"])("does not roll an old %s back over a newer terminal cache update", async (kind) => {
     const user = userEvent.setup();
     const pending = deferred<{ ok: true; note: InterviewQuestionNote }>();
     let stored = initial;
@@ -77,8 +77,9 @@ describe("independently revisioned interview notes", () => {
     await screen.findByText("Saving submitted version; you can keep editing.");
     stored = { ...initial, revision: 3, noteText: "Newer canonical note" };
     act(() => view.queryClient.setQueryData(interviewKeys.note(LOCAL_TENANT, "job-1", "B11"), notesResponse(stored)));
-    await act(async () => pending.reject(new Error("late failure")));
-    await screen.findByText("Note save failed. Your text has been preserved.");
+    await act(async () => pending.reject(kind === "conflict" ? new JobCtrlApiError(409, "Conflict", "interview_note_revision_conflict", { currentNote: { ...initial, revision: 2, noteText: "Older conflict response" } }) : new Error("late failure")));
+    if (kind === "conflict") await screen.findByText("Another saved revision exists. Review it before saving your retained text.");
+    else await screen.findByText("Note save failed. Your text has been preserved.");
     expect(text).toHaveValue("Saved personal note new local text");
     expect(view.queryClient.getQueryData(interviewKeys.note(LOCAL_TENANT, "job-1", "B11"))).toEqual(notesResponse(stored));
   });

@@ -5,9 +5,14 @@ import { useMemo } from "react";
 import { interviewsSearchSchema } from "../../routes/-interviews.search.js";
 import { makeQuestionPrep } from "../../test/fixtures/interviews.js";
 import { makeJobDetail, sampleInterviewPrep } from "../../test/fixtures/projections.js";
+import { handlers } from "../../test/msw/handlers.js";
 import { InterviewsView } from "./InterviewsView.js";
 
-const meta = { title: "Views/Interviews/InterviewsView", component: InterviewsView, tags: ["interview993"] } satisfies Meta<typeof InterviewsView>;
+const meta = {
+  title: "Views/Interviews/InterviewsView",
+  component: InterviewsView,
+  tags: ["interview993"],
+} satisfies Meta<typeof InterviewsView>;
 export default meta;
 type Story = StoryObj<typeof meta>;
 function Host({ path = "/interviews?card=B11" }: { readonly path?: string }) {
@@ -31,6 +36,7 @@ export const PreparationAndStaleHistory: Story = {
   parameters: { msw: { handlers: [
     http.get("*/v1/jobs/job-1", () => HttpResponse.json(makeJobDetail(undefined, { interviewPrep: prep }))),
     http.get("*/v1/jobs/job-1/interview-prep/history", () => HttpResponse.json({ ok: true, jobId: "job-1", generations: [prep, { ...sampleInterviewPrep, status: "superseded" }], page: 1, pageSize: 20, total: 2 })),
+    ...handlers,
   ] } }, render: () => <Host path="/interviews?card=B11&job=job-1" />,
 };
-export const CatalogError: Story = { parameters: { msw: { handlers: [http.get("*/v1/interviews/catalog", () => HttpResponse.json({ ok: false, error: "catalog_unavailable" }, { status: 503 }))] } }, render: () => <Host /> };
+export const CatalogError: Story = { parameters: { msw: { handlers: [http.get("*/v1/interviews/catalog", () => HttpResponse.json({ ok: false, error: "catalog_unavailable" }, { status: 503 })), ...handlers] } }, render: () => <Host /> };

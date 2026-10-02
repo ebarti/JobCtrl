@@ -62,7 +62,7 @@ test("Interview preparation: ordered evidence choices dispatch and independent C
   await expect(page.getByRole("textbox", { name: "Notes for TS09" })).toHaveValue("");
   await page.getByRole("navigation", { name: "Interview questions" }).getByRole("link", { name: /B11/ }).click();
   await expect(notes).toHaveValue("Synthetic recollection requiring personal verification.");
-  const conflict = await page.request.post(`/v1/jobs/${QA_PLATFORM_JOB_ID}/interview-notes`, { data: { questionId: "B11", expectedRevision: 0, noteText: "Outdated CAS must fail" } });
+  const conflict = await page.request.post(`/v1/jobs/${QA_PLATFORM_JOB_ID}/interview-notes`, { headers: { Origin: new URL(page.url()).origin, "sec-fetch-site": "same-origin" }, data: { questionId: "B11", expectedRevision: 0, noteText: "Outdated CAS must fail" } });
   expect(conflict.status()).toBe(409);
   expect(await conflict.json()).toMatchObject({ error: "interview_note_revision_conflict", currentNote: { revision: 1 } });
   await page.getByText("Saved note revision history", { exact: true }).click();
@@ -87,4 +87,43 @@ test("Interview library responsive graph preserves touch and keyboard question a
   await injectAxe(page);
   await checkA11y(page, undefined, { includedImpacts: ["critical", "serious"] });
   expect(errors).toEqual([]);
+});
+
+test("Interview evidence: accepted canonical choices retain their version until explicit stale-profile review", async ({ page }) => {
+  refreshE2eWorkerHeartbeat();
+  await page.goto(`/interviews?card=B11&job=${QA_PLATFORM_JOB_ID}`);
+  await page.getByRole("button", { name: "Add question to preparation" }).click();
+  await page.getByText("Evidence for B11: automatic selection").click();
+  const choice = page.getByRole("checkbox", { name: /Use Owned platform reliability improvements for incident response.*for B11/ });
+  await expect(choice).toBeVisible();
+  await choice.check();
+  const [firstDispatch] = await Promise.all([
+    page.waitForResponse((response) => response.url().includes("/actions/generate-interview-prep") && response.request().method() === "POST"),
+    page.getByRole("button", { name: "Generate selected preparation" }).click(),
+  ]);
+  expect(firstDispatch.status()).toBe(202);
+  const original = firstDispatch.request().postDataJSON();
+  expect(original).toMatchObject({ evidenceSelections: [{ questionId: "B11", evidenceIds: ["ev-platform"] }] });
+  expect(original.evidenceProfileVersion).toBeGreaterThan(0);
+  const origin = new URL(page.url()).origin;
+  const current = await page.request.get("/v1/profile");
+  const profile = await current.json();
+  const updated = await page.request.patch("/v1/profile", { headers: { Origin: origin, "sec-fetch-site": "same-origin" }, data: { profile: { ...profile.profile, personal: { ...profile.profile.personal, preferred_name: "Synthetic QA version review" } } } });
+  expect(updated.status()).toBe(200);
+  const newer = await updated.json();
+  expect(newer.profileVersion).toBeGreaterThan(original.evidenceProfileVersion);
+  await expect(page.getByText(new RegExp(`Your choices are retained at version ${original.evidenceProfileVersion}`))).toBeVisible({ timeout: 15_000 });
+  await expect(choice).toBeChecked();
+  await expect(page.getByRole("button", { name: "Generate selected preparation" })).toBeDisabled();
+  const rejected = await page.request.post(`/v1/jobs/${QA_PLATFORM_JOB_ID}/actions/generate-interview-prep`, { headers: { Origin: origin, "sec-fetch-site": "same-origin" }, data: original });
+  expect(rejected.status()).toBe(409);
+  expect(await rejected.json()).toMatchObject({ error: "evidence_profile_changed" });
+  await page.getByRole("button", { name: `Confirm reviewed evidence at Profile version ${newer.profileVersion}` }).click();
+  const [reselected] = await Promise.all([
+    page.waitForResponse((response) => response.url().includes("/actions/generate-interview-prep") && response.request().method() === "POST"),
+    page.getByRole("button", { name: "Generate selected preparation" }).click(),
+  ]);
+  expect(reselected.status()).toBe(202);
+  expect(reselected.request().postDataJSON()).toMatchObject({ evidenceProfileVersion: newer.profileVersion, evidenceSelections: original.evidenceSelections });
+  await page.getByRole("region", { name: "Job interview preparation" }).screenshot({ path: "/tmp/jobctrl-993-interview-preparation.png" });
 });

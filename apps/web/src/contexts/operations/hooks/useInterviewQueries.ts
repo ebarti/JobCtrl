@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { ProfileSchema } from "../types.js";
 
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { useTenantId } from "../../../shared/providers/TenantProvider.js";
@@ -16,7 +17,10 @@ export function useInterviewEvidenceChoices(jobId: string) {
   const entries = evidence.data?.entries ?? [];
   const occurrences = new Map<string, number>();
   for (const entry of entries) if (entry.evidenceId) occurrences.set(entry.evidenceId, (occurrences.get(entry.evidenceId) ?? 0) + 1);
-  const choices = entries.filter((entry) => entry.kind === "achievement_evidence" && entry.evidenceId && entry.entryId === entry.evidenceId && occurrences.get(entry.evidenceId) === 1 && entry.freshness.userConfirmed && ["supported", "verified"].includes(entry.freshness.evidenceStrength ?? "") && entry.story && [entry.story.scope, entry.story.action, entry.story.outcome].some((text) => text.trim())).map((entry) => ({
+  const parsedProfile = ProfileSchema.safeParse(profile.data?.profile);
+  const profileIds = new Map<string, number>();
+  if (parsedProfile.success) for (const role of parsedProfile.data.resume.experience_entries) for (const fact of role.achievement_evidence) if (fact.id) profileIds.set(fact.id, (profileIds.get(fact.id) ?? 0) + 1);
+  const choices = entries.filter((entry) => entry.kind === "achievement_evidence" && entry.evidenceId && entry.entryId === entry.evidenceId && occurrences.get(entry.evidenceId) === 1 && (profileIds.get(entry.evidenceId) ?? 0) <= 1 && entry.freshness.userConfirmed && ["supported", "verified"].includes(entry.freshness.evidenceStrength ?? "") && entry.story && [entry.story.scope, entry.story.action, entry.story.outcome].some((text) => text.trim())).map((entry) => ({
     evidenceId: entry.evidenceId!, title: entry.title,
     excerpt: [entry.story!.scope, entry.story!.action, entry.story!.outcome, ...entry.story!.metrics].filter(Boolean).join(" · "),
     scope: entry.requirementUsages.some((usage) => usage.jobKey === jobId && usage.requirementFitKind === "matched") ? "direct" : "transferable",

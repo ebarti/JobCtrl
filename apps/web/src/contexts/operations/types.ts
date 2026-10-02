@@ -230,5 +230,5 @@ export type KnownDomainEventType = KnownDomainEvent["eventType"];
 
 export type { InterviewCatalog, InterviewQuestionCard, InterviewCatalogResponse, InterviewQuestionResponse, InterviewPrepHistoryResponse, InterviewNotesResponse, InterviewQuestionNote, InterviewGenerationContext, InterviewQuestionMetadata } from "@jobctrl/contracts";
 
-export { GenerateInterviewPrepRequestSchema, SaveInterviewQuestionNoteRequestSchema, InterviewQuestionNoteSchema, INTERVIEW_ANSWER_FORMATS, INTERVIEW_FORMATS, INTERVIEW_ROLE_LENSES, INTERVIEW_STAGES, MAX_INTERVIEW_SELECTED_QUESTIONS } from "@jobctrl/contracts";
+export { GenerateInterviewPrepRequestSchema, SaveInterviewQuestionNoteRequestSchema, InterviewQuestionNoteSchema, ProfileSchema, INTERVIEW_ANSWER_FORMATS, INTERVIEW_FORMATS, INTERVIEW_ROLE_LENSES, INTERVIEW_STAGES, MAX_INTERVIEW_SELECTED_QUESTIONS } from "@jobctrl/contracts";
 export type { GenerateInterviewPrepRequest, InterviewNoteBindings, SaveInterviewQuestionNoteRequest, SaveInterviewQuestionNoteResponse } from "@jobctrl/contracts";

@@ -49,8 +49,10 @@ export function useSaveInterviewNoteMutation(jobId: string, questionId: string) 
       if (error instanceof JobCtrlApiError && error.status === 409) {
         const conflict = z.object({ currentNote: InterviewQuestionNoteSchema.nullable() }).safeParse(error.responseBody);
         const note = conflict.success ? conflict.data.currentNote : null;
-        useInterviewDraftStore.getState().conflictNote(draftKey, note?.revision ?? variables.body.expectedRevision + 1);
-        if (note) queryClient.setQueryData<PendingResponse>(key, { ok: true, jobId, notes: [note], page: 1, pageSize: 20, total: 1 });
+        const canonical = queryClient.getQueryData<PendingResponse>(key);
+        const savedRevision = canonical && !canonical.pendingEditVersion ? canonical.notes[0]?.revision ?? 0 : 0;
+        useInterviewDraftStore.getState().conflictNote(draftKey, Math.max(savedRevision, note?.revision ?? variables.body.expectedRevision + 1));
+        if (note && savedRevision <= note.revision) queryClient.setQueryData<PendingResponse>(key, { ok: true, jobId, notes: [note], page: 1, pageSize: 20, total: 1 });
       }
     },
     onSuccess: ({ note }, variables) => {
