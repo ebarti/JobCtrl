@@ -30,6 +30,7 @@ INTERVIEW_STAGES = ("recruiter", "behavioral", "management", "technical", "execu
 INTERVIEW_FORMATS = ("phone", "video", "onsite", "written", "unspecified")
 MAX_INTERVIEW_SELECTED_QUESTIONS = 16
 MAX_INTERVIEW_EVIDENCE_IDS_PER_QUESTION = 8
+MAX_INTERVIEW_QUESTION_ID_LENGTH = 12
 MAX_INTERVIEW_NOTE_TEXT_LENGTH = 20_000
 CATALOG_RESOURCE_NAME = "catalog.v1.json"
 MAX_CATALOG_BYTES = 2_000_000
@@ -307,7 +308,7 @@ def parse_interview_catalog(raw: bytes) -> InterviewCatalog:
     for card in catalog["questions"]:
         if set(card) != set(InterviewQuestionCard.__required_keys__) or card["status"] != "active" or card["maturity"] != "research_draft":
             raise ValueError("invalid interview question fields/status/maturity")
-        if not re.fullmatch(r"[A-Z]+\d{2}", card["id"]):
+        if len(card["id"]) > MAX_INTERVIEW_QUESTION_ID_LENGTH or not re.fullmatch(r"[A-Z]+\d{2}", card["id"]):
             raise ValueError("invalid interview question ID")
         for key, vocabulary in (("roleLenses", INTERVIEW_ROLE_LENSES), ("answerFormats", INTERVIEW_ANSWER_FORMATS)):
             values = card[key]
@@ -356,6 +357,8 @@ def load_interview_catalog() -> InterviewCatalog:
 
 
 def get_interview_question(question_id: str, *, catalog: InterviewCatalog | None = None) -> InterviewQuestionCard:
+    if not isinstance(question_id, str) or len(question_id) > MAX_INTERVIEW_QUESTION_ID_LENGTH or not re.fullmatch(r"[A-Z]+\d{2}", question_id):
+        raise InterviewSelectionError("invalid_selection")
     catalog = load_interview_catalog() if catalog is None else catalog
     if any(card["id"] == question_id for card in catalog["retiredQuestions"]):
         raise InterviewSelectionError("retired_question", question_id)
@@ -377,7 +380,8 @@ def validate_interview_selection(
         raise InterviewSelectionError("invalid_selection")
     if len(selected_question_ids) > MAX_INTERVIEW_SELECTED_QUESTIONS:
         raise InterviewSelectionError("selection_over_budget")
-    if any(not isinstance(question_id, str) for question_id in selected_question_ids):
+    if any(not isinstance(question_id, str) or len(question_id) > MAX_INTERVIEW_QUESTION_ID_LENGTH or not re.fullmatch(r"[A-Z]+\d{2}", question_id)
+           for question_id in selected_question_ids):
         raise InterviewSelectionError("invalid_selection")
     if len(set(selected_question_ids)) != len(selected_question_ids):
         raise InterviewSelectionError("duplicate_question")

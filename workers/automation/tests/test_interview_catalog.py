@@ -139,3 +139,46 @@ def test_compiler_rejects_mutated_source_and_unversioned_editorial_metadata(tmp_
     (authored / "catalog-metadata.v1.json").write_text(json.dumps(changed))
     with pytest.raises(ValueError, match="immutable v1 catalog digest"):
         compiled.build(authored)
+
+
+@pytest.mark.parametrize("seal", ["missing", None, "", "z" * 64, "a" * 63, "a" * 65, "0" * 64])
+def test_compiler_requires_a_well_formed_matching_published_seal(tmp_path, seal):
+    authored = tmp_path / "research"
+    shutil.copytree(RESEARCH, authored)
+    metadata = json.loads((authored / "catalog-metadata.v1.json").read_text())
+    metadata["questionMetadata"]["C01"]["responsibilityTags"] = ["different_valid_tag"]
+    if seal == "missing":
+        del metadata["catalogDigest"]
+    else:
+        metadata["catalogDigest"] = seal
+    (authored / "catalog-metadata.v1.json").write_text(json.dumps(metadata))
+    with pytest.raises(ValueError, match="catalog digest"):
+        compiler().build(authored)
+
+
+def test_question_id_budget_rejects_before_lookup_and_bounds_authored_metadata(tmp_path, monkeypatch):
+    oversized = "A" * 200_000 + "01"
+    with pytest.raises(InterviewSelectionError, match="invalid_selection"):
+        get_interview_question(oversized)
+    with pytest.raises(InterviewSelectionError, match="unknown_question"):
+        get_interview_question("A" * 10 + "01")
+    monkeypatch.setattr(catalog_module, "get_interview_question", lambda *args, **kwargs: pytest.fail("oversized ID reached lookup"))
+    with pytest.raises(InterviewSelectionError, match="invalid_selection"):
+        validate_interview_selection([oversized])
+    authored = tmp_path / "research"
+    shutil.copytree(RESEARCH, authored)
+    metadata = json.loads((authored / "catalog-metadata.v1.json").read_text())
+    metadata["questionMetadata"][oversized] = metadata["questionMetadata"].pop("C01")
+    (authored / "catalog-metadata.v1.json").write_text(json.dumps(metadata))
+    with pytest.raises(ValueError, match="question ID"):
+        compiler().build(authored)
+
+
+def test_loader_bounds_question_ids_even_with_recomputed_digests():
+    catalog = load_interview_catalog()
+    card = catalog["questions"][0]
+    card["id"] = "A" * 200_000 + "01"
+    card["cardDigest"] = canonical_json_digest({key: value for key, value in card.items() if key != "cardDigest"})
+    catalog["catalogDigest"] = canonical_json_digest({key: value for key, value in catalog.items() if key != "catalogDigest"})
+    with pytest.raises(ValueError, match="question ID"):
+        parse_interview_catalog(json.dumps(catalog).encode())
