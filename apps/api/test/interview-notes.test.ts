@@ -1,12 +1,14 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { InterviewCatalog } from "../src/contracts.js";
 import { JobCtrlApiClient, JobCtrlApiError } from "@jobctrl/api-client";
 import { InterviewNoteRevisionConflictError, listInterviewNotes, readInterviewNote, saveInterviewNote } from "../src/interview-notes.js";
 import { buildApp } from "../src/server.js";
-import { syntheticInterviewCatalogAsset } from "./interview-fixture.js";
+import { syntheticInterviewCatalogAsset, syntheticInterviewGenerationContext } from "./interview-fixture.js";
 import { initializeExactV7Database } from "./v7-schema.js";
 
 const JOB_ID = "11111111-1111-4111-8111-111111111111";
@@ -28,6 +30,103 @@ describe("revisioned interview notes", () => {
     }
   });
   afterEach(() => { db.close(); fs.rmSync(directory, { recursive: true, force: true }); });
+
+  function seedPrep(generation: number, context: unknown) {
+    db.prepare(`INSERT INTO job_interview_prep (tenant_id,job_id,generation,status,generated_at,gate_status,generation_context_json)
+      VALUES ('local',?,?,'accepted','2026-10-01T00:00:00Z','passed',?)`).run(JOB_ID,generation,context === null ? null : JSON.stringify(context));
+  }
+
+  it("rejects an unrelated preparation origin and forged bindings without saving a revision", async () => {
+    seedPrep(1, syntheticInterviewGenerationContext(JOB_ID)); // TS09 only.
+    const app = buildApp({ appDir: directory, dbPath, configPath: path.join(directory, "config.json"), interviewCatalogAssetLoader: syntheticInterviewCatalogAsset });
+    const url = `/v1/jobs/${JOB_ID}/interview-notes`;
+    const unrelated = await app.inject({ method: "POST", url, payload: { questionId: "TS10", expectedRevision: 0, noteText: "unsaved private draft", sourceGeneration: 1,
+      bindings: { contextDigest: "f".repeat(64), cardRevision: "forged", cardDigest: "f".repeat(64), catalogBinding: { catalogRevision: "forged", catalogDigest: "f".repeat(64) } } } });
+    expect(unrelated.statusCode, unrelated.body).toBe(400);
+    expect(unrelated.json().error).toBe("invalid_interview_note_source");
+    for (const bindings of [{ contextDigest: "f".repeat(64) }, { cardRevision: "forged" }, { cardDigest: "f".repeat(64) },
+      { catalogBinding: { catalogRevision: "forged", catalogDigest: "f".repeat(64) } }]) {
+      const forged = await app.inject({ method: "POST", url, payload: { questionId: "TS09", expectedRevision: 0, noteText: "another unsaved draft", sourceGeneration: 1, bindings } });
+      expect(forged.statusCode, forged.body).toBe(400);
+      expect(forged.json().error).toBe("invalid_interview_note_bindings");
+    }
+    expect(db.prepare("SELECT COUNT(*) AS n FROM job_interview_notes").get()).toEqual({ n: 0 });
+    expect(db.prepare("SELECT COUNT(*) AS n FROM job_interview_note_revisions").get()).toEqual({ n: 0 });
+    expect(db.prepare("SELECT COUNT(*) AS n FROM job_events WHERE event_type='InterviewQuestionNoteSaved'").get()).toEqual({ n: 0 });
+    await app.close();
+  });
+
+  it("derives current and historical origins from retained snapshots, including retired cards", async () => {
+    const historical = syntheticInterviewGenerationContext(JOB_ID);
+    seedPrep(1, historical);
+    const current = structuredClone(historical); current.contextDigest = "e".repeat(64);
+    current.selectedQuestions[0]!.cardRevision = "2"; current.selectedQuestions[0]!.cardDigest = "c".repeat(64);
+    current.selectedQuestions[0]!.snapshot.cardRevision = "2"; current.selectedQuestions[0]!.snapshot.cardDigest = "c".repeat(64);
+    seedPrep(2, current);
+    const catalog = syntheticInterviewCatalogAsset().data as InterviewCatalog;
+    catalog.questions = catalog.questions.filter((card) => card.id !== "TS09");
+    catalog.retiredQuestions.push({ id: "TS09", retiredAt: "2026-10-02", reason: "Synthetic retirement", replacementId: null });
+    const sorted = (value: unknown): unknown => Array.isArray(value) ? value.map(sorted) : value && typeof value === "object"
+      ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => [key, sorted(item)])) : value;
+    const { catalogDigest: _digest, ...content } = catalog;
+    catalog.catalogDigest = createHash("sha256").update(JSON.stringify(sorted(content))).digest("hex");
+    const app = buildApp({ appDir: directory, dbPath, configPath: path.join(directory, "config.json"),
+      interviewCatalogAssetLoader: () => ({ ...syntheticInterviewCatalogAsset(), data: catalog }) });
+    const url = `/v1/jobs/${JOB_ID}/interview-notes`;
+    const first = await app.inject({ method: "POST", url, payload: { questionId: "TS09", expectedRevision: 0, noteText: "historic draft", sourceGeneration: 1 } });
+    expect(first.statusCode, first.body).toBe(200);
+    expect(first.json().note).toMatchObject({ sourceGeneration: 1, bindings: { catalogBinding: historical.catalogBinding,
+      cardRevision: historical.selectedQuestions[0]!.cardRevision, cardDigest: historical.selectedQuestions[0]!.cardDigest, contextDigest: historical.contextDigest } });
+    const preserved = await app.inject({ method: "POST", url, payload: { questionId: "TS09", expectedRevision: 1, noteText: "historic edit" } });
+    expect(preserved.statusCode).toBe(200); expect(preserved.json().note.bindings).toEqual(first.json().note.bindings);
+    const rebased = await app.inject({ method: "POST", url, payload: { questionId: "TS09", expectedRevision: 2, noteText: "current origin", sourceGeneration: 2,
+      bindings: { catalogBinding: current.catalogBinding, cardRevision: "2", cardDigest: "c".repeat(64), contextDigest: current.contextDigest } } });
+    expect(rebased.statusCode, rebased.body).toBe(200); expect(rebased.json().note.bindings.contextDigest).toBe(current.contextDigest);
+    const detached = await app.inject({ method: "POST", url, payload: { questionId: "TS09", expectedRevision: 3, noteText: "independent retired card", sourceGeneration: null, bindings: null } });
+    expect(detached.statusCode).toBe(200); expect(detached.json().note).toMatchObject({ sourceGeneration: null, bindings: null });
+    expect(JSON.parse((db.prepare("SELECT generation_context_json FROM job_interview_prep WHERE tenant_id='local' AND job_id=? AND generation=1").get(JOB_ID) as { generation_context_json: string }).generation_context_json)).toEqual(historical);
+    await app.close();
+  });
+
+  it("keeps independent and legacy notes unbound to preparation while validating current card claims", async () => {
+    seedPrep(1, null);
+    const catalog = syntheticInterviewCatalogAsset().data as InterviewCatalog;
+    const app = buildApp({ appDir: directory, dbPath, configPath: path.join(directory, "config.json"), interviewCatalogAssetLoader: syntheticInterviewCatalogAsset });
+    const url = `/v1/jobs/${JOB_ID}/interview-notes`;
+    const legacy = await app.inject({ method: "POST", url, payload: { questionId: "TS09", expectedRevision: 0, noteText: "legacy source", sourceGeneration: 1 } });
+    expect(legacy.statusCode).toBe(400); expect(legacy.json().error).toBe("invalid_interview_note_source");
+    for (const bindings of [{ contextDigest: "d".repeat(64) }, { cardDigest: "f".repeat(64) }]) {
+      const invalid = await app.inject({ method: "POST", url, payload: { questionId: "TS09", expectedRevision: 0, noteText: "independent unsaved draft", sourceGeneration: null, bindings } });
+      expect(invalid.statusCode).toBe(400); expect(invalid.json().error).toBe("invalid_interview_note_bindings");
+    }
+    const saved = await app.inject({ method: "POST", url, payload: { questionId: "TS09", expectedRevision: 0, noteText: "independent draft", sourceGeneration: null,
+      bindings: { catalogBinding: { catalogRevision: catalog.catalogRevision, catalogDigest: catalog.catalogDigest }, cardDigest: catalog.questions[0]!.cardDigest, contextDigest: null } } });
+    expect(saved.statusCode, saved.body).toBe(200);
+    expect(saved.json().note).toMatchObject({ sourceGeneration: null, bindings: { cardRevision: catalog.questions[0]!.cardRevision, cardDigest: catalog.questions[0]!.cardDigest, contextDigest: null } });
+    const omitted = await app.inject({ method: "POST", url, payload: { questionId: "TS10", expectedRevision: 0, noteText: "no declared origin" } });
+    expect(omitted.statusCode).toBe(200); expect(omitted.json().note).toMatchObject({ sourceGeneration: null, bindings: { contextDigest: null, cardRevision: catalog.questions[1]!.cardRevision } });
+    await app.close();
+  });
+
+  it("validates provenance after CAS and preserves every saved revision on errors", async () => {
+    seedPrep(1, syntheticInterviewGenerationContext(JOB_ID));
+    const app = buildApp({ appDir: directory, dbPath, configPath: path.join(directory, "config.json"), interviewCatalogAssetLoader: syntheticInterviewCatalogAsset });
+    const url = `/v1/jobs/${JOB_ID}/interview-notes`;
+    const saved = await app.inject({ method: "POST", url, payload: { questionId: "TS09", expectedRevision: 0, noteText: "newer valid draft", sourceGeneration: 1 } });
+    expect(saved.statusCode).toBe(200);
+    const badClaims = { questionId: "TS09", noteText: "unsaved stale private draft", sourceGeneration: 99, bindings: { contextDigest: "f".repeat(64) } };
+    const conflict = await app.inject({ method: "POST", url, payload: { ...badClaims, expectedRevision: 0 } });
+    expect(conflict.statusCode).toBe(409); expect(conflict.json().currentNote).toEqual(saved.json().note);
+    const missingRevision = await app.inject({ method: "POST", url, payload: { ...badClaims, questionId: "TS10", sourceGeneration: 1, expectedRevision: 1 } });
+    expect(missingRevision.statusCode).toBe(409); expect(missingRevision.json().currentNote).toBeNull();
+    const invalid = await app.inject({ method: "POST", url, payload: { ...badClaims, sourceGeneration: 1, expectedRevision: 1 } });
+    expect(invalid.statusCode).toBe(400);
+    expect(readInterviewNote(db, "local", JOB_ID, "TS09")).toEqual(saved.json().note);
+    expect(listInterviewNotes(db, "local", JOB_ID, { ...query, questionId: "TS09", history: true }).total).toBe(1);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM job_events WHERE event_type='InterviewQuestionNoteSaved'").get()).toEqual({ n: 1 });
+    expect(JSON.stringify(db.prepare("SELECT payload_json,message FROM job_events").all())).not.toContain("private draft");
+    await app.close();
+  });
 
   it("creates independent notes and keeps saved revisions inspectable", () => {
     const first = saveInterviewNote(db, "local", JOB_ID, { questionId: "TS09", expectedRevision: 0, noteText: "unverified personal recollection" });
@@ -76,7 +175,7 @@ describe("revisioned interview notes", () => {
 
   it("uses only safe note IDs/versions in events and never updates profile, fit or Apply", () => {
     const before = ["candidate_profiles", "job_scores", "application_outcomes", "job_interview_prep"].map((table) => db.prepare(`SELECT * FROM ${table}`).all());
-    saveInterviewNote(db, "local", JOB_ID, { questionId: "TS09", expectedRevision: 0, noteText: "private-answer-do-not-emit", bindings: { cardRevision: "1", contextDigest: "f".repeat(64) } });
+    saveInterviewNote(db, "local", JOB_ID, { questionId: "TS09", expectedRevision: 0, noteText: "private-answer-do-not-emit" });
     const event = db.prepare("SELECT message, payload_json FROM job_events WHERE event_type = 'InterviewQuestionNoteSaved'").get() as { message: string; payload_json: string };
     expect(JSON.parse(event.payload_json)).toEqual({ jobId: JOB_ID, questionId: "TS09", revision: 1, sourceGeneration: null, updatedAt: expect.any(String) });
     expect(event.message + event.payload_json).not.toContain("private-answer-do-not-emit");
