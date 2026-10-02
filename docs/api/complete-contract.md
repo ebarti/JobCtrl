@@ -1040,7 +1040,7 @@ The generate body remains optional for older callers. Its strict schema accepts:
 
 Supported answer formats are `historical`, `situational`, `principle`,
 `negotiation`, `narrative`, and `preference`. Explicit responsibility metadata
-controls eligibility; job titles/prefixes cannot invent applicability or known
+guides applicability; job titles/prefixes cannot invent applicability or known
 employer criteria. Legacy requests without selected IDs use deterministic
 bounded selection. Unknown/retired/duplicate/over-budget IDs and catalog
 mismatch are rejected before provider spending. Semantic errors use
