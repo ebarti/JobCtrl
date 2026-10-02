@@ -30,7 +30,11 @@ _HISTORICAL_ASSERTION = re.compile(
     r"|^\s*(?:built|used|led|owned|managed|hired|implemented|deployed|migrated|reduced|increased|delivered)\b"
 )
 _AUTHORITY = re.compile(r"(?i)\b(?:managed|hired|fired|direct reports|budget owner|executive|director|manager)\b")
-_CANDIDATE_COMPENSATION = re.compile(r"(?i)(?:my\s+(?:minimum|salary|target)|i\s+(?:need|expect|want|require)|minimum\s+(?:salary|compensation))[^\n]{0,100}(?:\d|[$€£])")
+_CANDIDATE_COMPENSATION = re.compile(r"(?i)(?:my\s+(?:minimum|salary|target)|i(?:['’]d|\s+would)?\s+(?:need|expect|want|require|anchor|offer)|minimum\s+(?:salary|compensation)|(?:candidate|expected)\s+(?:salary|compensation)|salary\s+expectation)[^\n]{0,100}(?:\d|[$€£])")
+_RANGE_ORDER_REVERSAL = re.compile(
+    r"(?i)(?:\b(?:volunteer|offer|give|state|share|provide|name)\b[^.!\n]{0,100}\b(?:salary|number|compensation|expectation)\b[^.!\n]{0,100}\bbefore\b[^.!\n]{0,100}\brange\b"
+    r"|\bbefore\b[^.!\n]{0,80}\brange\b[^.!\n]{0,100}\b(?:volunteer|offer|give|state|share|provide|name)\b)"
+)
 
 QUESTION_PREP_RESPONSE_SCHEMA: dict[str, Any] = {
     "title": "QuestionInterviewPrepCandidate", "type": "object", "additionalProperties": False,
@@ -207,8 +211,15 @@ def run_question_truthfulness_gates(
             if _HISTORICAL_ASSERTION.search(text):
                 failures.append(f"{item.item_id} clarification/probe asserts personal history without accepted evidence")
         if metadata.get("questionId") == "C07":
-            if "range" not in item.generated_text.lower():
+            negotiation = item.generated_text.lower()
+            if "range" not in negotiation or not re.search(r"\b(?:employer|budgeted)\b", negotiation):
                 failures.append("C07 must preserve the employer budgeted-range-first guidance")
+            if not re.search(r"\b(?:persist|repeat|again|redirected|redirect|reiterate|continue)\b|follow[- ]up|re[- ]ask", negotiation):
+                failures.append("C07 must preserve persistence when the employer redirects or remains vague")
+            for match in _RANGE_ORDER_REVERSAL.finditer(item.generated_text):
+                instruction = item.generated_text[max(0, match.start() - 30):match.end()]
+                if not re.search(r"(?i)\b(?:not|never|avoid)\s+(?:volunteer|offer|give|state|share|provide|name)\b", instruction):
+                    failures.append("C07 reverses the employer-range-first order")
             if _CANDIDATE_COMPENSATION.search(item.generated_text):
                 failures.append("C07 discloses an unsupported candidate compensation figure")
     return InterviewPrepGateAudit(status="failed" if failures or fabricated else "passed",
