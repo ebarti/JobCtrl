@@ -1,7 +1,7 @@
 # Local TypeScript API
 
 The local Fastify API is the browser-facing boundary for JobCtrl. It serves
-projection-backed reads, accepts explicit commands, starts Temporal workflows,
+projection-backed and canonical detail reads, accepts explicit commands, starts Temporal workflows,
 and streams domain-event invalidations to the web app.
 
 **Read this first** for the shape of the API. Follow a route-family link for the
@@ -10,8 +10,8 @@ when implementing or debugging a specific endpoint.
 
 ## In 30 Seconds
 
-- Reads come from SQLite-backed projections; clients do not reconstruct domain
-  state from raw events.
+- Personal reads come from SQLite-backed projections and authorized canonical
+  detail state; clients do not reconstruct domain state from raw events.
 - Workflow-starting commands normally return `202 Accepted`. That means queued,
   not completed.
 - Synchronous reads and commands return `200 OK`; invalid input, unavailable
