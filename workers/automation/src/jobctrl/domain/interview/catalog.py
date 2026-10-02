@@ -16,6 +16,14 @@ InterviewAnswerFormat = Literal["historical", "situational", "principle", "negot
 InterviewRoleLens = Literal["ic", "senior_ic", "staff_principal", "first_time_manager", "engineering_manager", "director", "executive", "unknown"]
 InterviewStage = Literal["recruiter", "behavioral", "management", "technical", "executive", "mixed", "unknown"]
 InterviewFormat = Literal["phone", "video", "onsite", "written", "unspecified"]
+InterviewSelectionErrorCode = Literal[
+    "unknown_question", "retired_question", "duplicate_question", "selection_over_budget",
+    "catalog_mismatch", "invalid_selection", "evidence_profile_changed", "invalid_evidence_selection",
+]
+INTERVIEW_SELECTION_ERROR_CODES = (
+    "unknown_question", "retired_question", "duplicate_question", "selection_over_budget",
+    "catalog_mismatch", "invalid_selection", "evidence_profile_changed", "invalid_evidence_selection",
+)
 INTERVIEW_ANSWER_FORMATS = ("historical", "situational", "principle", "negotiation", "narrative", "preference")
 INTERVIEW_ROLE_LENSES = ("ic", "senior_ic", "staff_principal", "first_time_manager", "engineering_manager", "director", "executive", "unknown")
 INTERVIEW_STAGES = ("recruiter", "behavioral", "management", "technical", "executive", "mixed", "unknown")
@@ -234,7 +242,7 @@ class SaveInterviewQuestionNoteRequest(TypedDict):
 
 
 class InterviewSelectionError(ValueError):
-    def __init__(self, code: str, question_id: str | None = None) -> None:
+    def __init__(self, code: InterviewSelectionErrorCode, question_id: str | None = None) -> None:
         self.code = code
         self.question_id = question_id
         super().__init__(code if question_id is None else f"{code}: {question_id}")
