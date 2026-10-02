@@ -25,8 +25,7 @@ profile boundary works in this order:
    present, and replaces the normalized profile rows in one database
    transaction. Every accepted save advances the local profile version.
 3. **Work receives an immutable snapshot.** Scoring, Materials, interview prep,
-   and Apply read a
-   deep-copied `ProfileSnapshot`. Derived compatibility fields are regenerated
+   and Apply read a deep-copied `ProfileSnapshot`. Derived compatibility fields are regenerated
    from the canonical rows, and changing a returned object cannot mutate the
    source profile.
 4. **Consumers bind to the version they used.** Scores, material generations,
