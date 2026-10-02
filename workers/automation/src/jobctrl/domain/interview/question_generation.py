@@ -31,9 +31,16 @@ _HISTORICAL_ASSERTION = re.compile(
 )
 _PERSONAL_SUBJECT = re.compile(r"(?i)\b(?:i|we|you|the candidate)\b(?:['’](?:ve|m|d|re))?")
 _INTENDED_ACTION = re.compile(r"(?i)^\s+(?:would|will|could|might|should|intend\s+to|plan\s+to)\b")
+_INTERROGATIVE = re.compile(r"(?i)^\s*(?:what|how|which|when|where|why|who|would|could|might|should|will|can|did|do|does|is|are|was|were|have|has)\b")
+_FUTURE_QUESTION = re.compile(r"(?i)\b(?:would|could|might|should|will)\s+(?:you|we|i|the candidate)\b")
+_QUESTION_AUXILIARY = re.compile(r"(?i)\b(?:would|could|might|should|will|can|did|do|does|have|has)\s*$")
+_CONTRACTED_BASE_ACTION = re.compile(
+    r"(?i)^\s+(?:(?:need|proceed|exceed|succeed|feed|breed|speed)\b|"
+    r"(?!(?:\w+ed|\w*(?:been|built|done|seen|made|taken|gone|grown|known|written|given|shown|thought|bought|taught|brought|caught|driven|chosen|forgotten|broken|spoken|eaten|fallen|held|kept|felt|slept|sent|spent|stood|understood|lost|found|heard|met|won|led|had|begun|paid|sold|told|sought|fought|sung|swum|flown|ridden|hidden|risen|worn|torn|born|beaten|bitten|drawn|frozen|stolen|thrown|woken))\b)[a-z]+\b)"
+)
 _PERSONAL_POSSESSION = re.compile(r"(?i)\b(?:my|our)\b")
 _EXPLICIT_SCENARIO = re.compile(r"(?i)^\s*(?:hypothetically\b|in a hypothetical\b|suppose\b|imagine\b|if\b)")
-_CLAUSE_BOUNDARIES = re.compile(r"[.;\n]|\b(?:and|but|because|although|after|since|where|which)\b", re.IGNORECASE)
+_CLAUSE_BOUNDARIES = re.compile(r"(?<!\d)\.|\.(?!\d)|[;\n]|\b(?:and|but|because|although|after|since|where|which)\b", re.IGNORECASE)
 _PERSONAL_PAST = re.compile(r"(?i)\b(?:my|our)\s+(?:past|previous|prior|experience|track record|history|achievements)\b")
 _AUTHORITY = re.compile(r"(?i)\b(?:managed|hired|fired|direct reports|budget owner|executive|director|manager)\b")
 _CANDIDATE_COMPENSATION = re.compile(r"(?i)(?:my\s+(?:minimum|salary|target)|i(?:['’]d|\s+would)?\s+(?:need|expect|want|require|anchor|offer)|minimum\s+(?:salary|compensation)|(?:candidate|expected)\s+(?:salary|compensation)|salary\s+expectation)[^\n]{0,100}(?:\d|[$€£])")
@@ -228,7 +235,8 @@ def run_question_truthfulness_gates(
                 failures.append(f"{item.item_id} clarification/probe asserts personal history without accepted evidence")
             inspected_text = _assertion_text(text)
             fabricated.extend(finding.describe() for finding in scan_resume_bullets(
-                [(f"{item.item_id}:clarification", inspected_text)], build_evidence_corpus({})))
+                [(f"{item.item_id}:clarification", inspected_text)], build_evidence_corpus({"resume": {"experience_entries": [
+                    {"id": "selected", "bullets": [link["excerpt"] for link in links.values()]}]}})))
         if metadata.get("questionId") == "C07":
             negotiation = item.generated_text.lower()
             if "range" not in negotiation or not re.search(r"\b(?:employer|budgeted)\b", negotiation):
@@ -245,20 +253,36 @@ def run_question_truthfulness_gates(
                                   fabrication_findings=tuple(fabricated), grounding_findings=tuple(failures))
 
 
+def _future_question(text: str) -> bool:
+    return bool(text.strip().endswith("?") and _INTERROGATIVE.match(text) and _FUTURE_QUESTION.search(text))
+
+
+def _intended_action(clause: str, subject: re.Match[str]) -> bool:
+    rest = clause[subject.end():]
+    if _INTENDED_ACTION.match(rest):
+        return True
+    # I'd/I’d plus a base action means "I would"; a past participle means
+    # "I had" and remains an assertion requiring evidence.
+    return bool(subject.group().lower().endswith(("'d", "’d")) and _CONTRACTED_BASE_ACTION.match(rest))
+
+
 def _unsupported_personal_assertion(text: str, *, allow_question: bool = False) -> bool:
     """Personal assertions need facts regardless of verb or model support label."""
-    if allow_question and text.strip().endswith("?"):
-        return False
+    question = _future_question(text) or bool(allow_question and text.strip().endswith("?") and _INTERROGATIVE.match(text))
     for clause in _CLAUSE_BOUNDARIES.split(text):
         subjects = list(_PERSONAL_SUBJECT.finditer(clause))
-        if _PERSONAL_PAST.search(clause):
+        requested = bool(question and _INTERROGATIVE.match(clause))
+        if _PERSONAL_PAST.search(clause) and not requested:
             return True
+        intentions = []
         for subject in subjects:
-            conditional = _INTENDED_ACTION.match(clause[subject.end():])
+            conditional = _intended_action(clause, subject)
+            asked = bool(question and _QUESTION_AUXILIARY.search(clause[:subject.start()]))
             scenario_subject = re.fullmatch(r"(?i)\s*(?:if|suppose|imagine)\s*", clause[:subject.start()])
-            if not conditional and not scenario_subject:
+            if not conditional and not asked and not scenario_subject:
                 return True
-        if _PERSONAL_POSSESSION.search(clause) and not any(_INTENDED_ACTION.match(clause[subject.end():]) for subject in subjects):
+            intentions.append(conditional or asked)
+        if _PERSONAL_POSSESSION.search(clause) and not any(intentions) and not requested:
             return True
         if not subjects and _HISTORICAL_ASSERTION.search(clause) and not _EXPLICIT_SCENARIO.match(clause):
             return True
@@ -267,10 +291,12 @@ def _unsupported_personal_assertion(text: str, *, allow_question: bool = False) 
 
 def _assertion_text(text: str) -> str:
     """Exclude clearly conditional actions while keeping actual asserted facts."""
+    if _future_question(text) and not _unsupported_personal_assertion(text, allow_question=True):
+        return ""
     assertions = []
     for clause in _CLAUSE_BOUNDARIES.split(text):
         subjects = list(_PERSONAL_SUBJECT.finditer(clause))
-        conditional = subjects and all(_INTENDED_ACTION.match(clause[subject.end():]) for subject in subjects)
+        conditional = subjects and all(_intended_action(clause, subject) for subject in subjects)
         if (conditional or _EXPLICIT_SCENARIO.match(clause)) and not _unsupported_personal_assertion(clause):
             continue
         assertions.append(clause)
