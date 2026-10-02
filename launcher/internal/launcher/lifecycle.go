@@ -926,6 +926,40 @@ func recoverInterruptedTransition(ctx launchContext, store *release.Store) (bool
 		_ = store.Advance(&journal, release.Failed, err)
 		return false, fmt.Errorf("interrupted transition cannot restore revoked prior release: %w; verified candidate %q remains staged for explicit recovery", err, receiptBuild(journal.Candidate))
 	}
+	var recoveryPair *databasePair
+	preserveUnactivatedSource := false
+	if journal.BackupID != "" {
+		var pair databasePair
+		if err := decodeStrictRegular(filepath.Join(ctx.Instance.StateDir, "backups", journal.BackupID, "pair.json"), &pair); err != nil {
+			return false, fmt.Errorf("read interrupted transition database pair: %w", err)
+		}
+		if pair.ReleaseReceipt != *journal.Old {
+			return false, errors.New("interrupted transition backup does not bind the prior release")
+		}
+		recoveryPair = &pair
+		intent, err := readV12SourcePreservation(ctx.Instance.StateDir, journal.ID)
+		if err != nil {
+			return false, err
+		}
+		sourceVersion, sourceErr := pairedV12SourceSchemaVersion(pair)
+		if intent != nil && (sourceErr != nil || intent.BackupID != pair.ID || intent.SourceVersion != sourceVersion) {
+			return false, errors.New("v12 source preservation intent does not bind the paired backup")
+		}
+		preactivation := journal.State == release.PairBackedUp || journal.State == release.MigrationCandidateReady
+		if sourceErr == nil && (preactivation || intent != nil) {
+			python := filepath.Join(ctx.PayloadRoot, "python", "bin", "python3")
+			liveVersion, liveErr := sqliteUserVersion(python, filepath.Join(ctx.Instance.StateDir, "jobctrl.db"))
+			preserveUnactivatedSource = liveErr == nil && liveVersion == sourceVersion
+			if intent != nil && !preserveUnactivatedSource {
+				return false, errV12SourceChanged
+			}
+			if preserveUnactivatedSource {
+				if err := writeV12SourcePreservation(ctx.Instance.StateDir, journal.ID, pair.ID, sourceVersion); err != nil {
+					return false, err
+				}
+			}
+		}
+	}
 	// Make the old release executable through the direct transition gate before
 	// any stop/restart action, including crashes before PairBackedUp.
 	if err := store.Advance(&journal, release.RollbackRestoring, nil); err != nil {
@@ -939,24 +973,9 @@ func recoverInterruptedTransition(ctx launchContext, store *release.Store) (bool
 	cleanupV10Candidate(ctx.Instance.StateDir, journal.ID)
 	cleanupV11Candidate(ctx.Instance.StateDir, journal.ID)
 	cleanupV12Candidate(ctx.Instance.StateDir, journal.ID)
-	if journal.BackupID != "" {
-		var pair databasePair
-		if err := decodeStrictRegular(filepath.Join(ctx.Instance.StateDir, "backups", journal.BackupID, "pair.json"), &pair); err != nil {
-			return false, fmt.Errorf("read interrupted transition database pair: %w", err)
-		}
-		if pair.ReleaseReceipt != *journal.Old {
-			return false, errors.New("interrupted transition backup does not bind the prior release")
-		}
-		preserveUnactivatedSource := false
-		if sourceVersion, sourceErr := pairedV12SourceSchemaVersion(pair); sourceErr == nil {
-			python := filepath.Join(ctx.PayloadRoot, "python", "bin", "python3")
-			liveVersion, liveErr := sqliteUserVersion(python, filepath.Join(ctx.Instance.StateDir, "jobctrl.db"))
-			preserveUnactivatedSource = liveErr == nil && liveVersion == sourceVersion
-		}
-		if !preserveUnactivatedSource {
-			if err := restorePair(ctx, pair); err != nil {
-				return false, err
-			}
+	if recoveryPair != nil && !preserveUnactivatedSource {
+		if err := restorePair(ctx, *recoveryPair); err != nil {
+			return false, err
 		}
 	}
 	active, activeErr := store.ReadActive()
@@ -991,6 +1010,9 @@ func recoverInterruptedTransition(ctx launchContext, store *release.Store) (bool
 	}
 	if err := store.Advance(&journal, release.RolledBack, nil); err != nil {
 		return false, err
+	}
+	if err := clearV12SourcePreservation(ctx.Instance.StateDir, journal.ID); err != nil {
+		return true, err
 	}
 	return true, nil
 }
@@ -1172,7 +1194,15 @@ func promoteExisting(ctx launchContext, store *release.Store, active release.Act
 
 	migrationActivationStarted := false
 	rollbackFailure := func(cause error) error {
-		_ = store.Advance(&journal, release.RollbackRestoring, cause)
+		preserveLiveSource := (databaseVersion != currentJobCtrlSchemaVersion && !migrationActivationStarted) || errors.Is(cause, errV12SourceChanged)
+		if preserveLiveSource {
+			if err := writeV12SourcePreservation(ctx.Instance.StateDir, journal.ID, pair.ID, databaseVersion); err != nil {
+				return fmt.Errorf("%v; persist source preservation intent: %w", cause, err)
+			}
+		}
+		if err := store.Advance(&journal, release.RollbackRestoring, cause); err != nil {
+			return fmt.Errorf("%v; persist rollback intent: %w", cause, err)
+		}
 		cleanupV7Candidate(ctx.Instance.StateDir, journal.ID)
 		cleanupV9Candidate(ctx.Instance.StateDir, journal.ID)
 		cleanupV10Candidate(ctx.Instance.StateDir, journal.ID)
@@ -1181,7 +1211,6 @@ func promoteExisting(ctx launchContext, store *release.Store, active release.Act
 		if stopErr := stop(ctx); stopErr != nil { // Candidate records share the canonical state identity.
 			return fmt.Errorf("%v; refusing paired rollback restore while the candidate could not be quiesced: %w", cause, stopErr)
 		}
-		preserveLiveSource := (databaseVersion != currentJobCtrlSchemaVersion && !migrationActivationStarted) || errors.Is(cause, errV12SourceChanged)
 		if !preserveLiveSource {
 			if restoreErr := restorePair(ctx, pair); restoreErr != nil {
 				return fmt.Errorf("%v; paired rollback restore failed: %w", cause, restoreErr)
@@ -1196,7 +1225,12 @@ func promoteExisting(ctx launchContext, store *release.Store, active release.Act
 		if restartErr := startReleaseCommand(ctx, active.Receipt, journal.ID); restartErr != nil {
 			return fmt.Errorf("%v; old release restart failed: %w", cause, restartErr)
 		}
-		_ = store.Advance(&journal, release.RolledBack, cause)
+		if err := store.Advance(&journal, release.RolledBack, cause); err != nil {
+			return fmt.Errorf("%v; finish rollback journal: %w", cause, err)
+		}
+		if err := clearV12SourcePreservation(ctx.Instance.StateDir, journal.ID); err != nil {
+			return fmt.Errorf("%v; remove source preservation intent: %w", cause, err)
+		}
 		return cause
 	}
 	if databaseVersion != currentJobCtrlSchemaVersion {

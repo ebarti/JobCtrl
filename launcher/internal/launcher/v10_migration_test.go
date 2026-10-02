@@ -261,6 +261,7 @@ func v12CandidateArtifactPaths(stateDir, journalID string) []string {
 	basePaths := []string{
 		candidate,
 		candidate + ".source-binding.json",
+		v12SourcePreservationPath(stateDir, journalID),
 		v11Intermediate,
 		v10Intermediate,
 		v10Intermediate + ".exact-v9-intermediate",
@@ -726,5 +727,99 @@ c.close()`
 		if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("left artifact %s: %v", path, err)
 		}
+	}
+}
+
+// A crash after restoring the application DB but before restoring Temporal
+// cannot be classified as preactivation merely from the old schema header.
+func TestV12InterruptedRollbackRestoresHalfRestoredPair(t *testing.T) {
+	preserveMigrationSeams(t)
+	fixture := newV6ActivationFixture(t)
+	pair, err := snapshotPair(fixture.ctx, fixture.old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	journal, err := fixture.store.Begin("update", &fixture.old, &fixture.candidate, fixture.candidate.DescriptorSHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	journal.BackupID = pair.ID
+	// Model the first restore rename having completed byte-for-byte.
+	if err := os.Remove(filepath.Join(fixture.state, "jobctrl.db")); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyRegular(filepath.Join(fixture.state, "backups", pair.ID, "jobctrl.db"), filepath.Join(fixture.state, "jobctrl.db")); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.store.Advance(&journal, release.RollbackRestoring, errors.New("post-activation readiness failure")); err != nil {
+		t.Fatal(err)
+	}
+	code := "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute(\"UPDATE t SET v='candidate-temporal-before-crash'\"); c.commit(); c.close()"
+	if output, err := exec.Command(fixture.python, "-I", "-B", "-c", code, filepath.Join(fixture.state, "temporal.db")).CombinedOutput(); err != nil {
+		t.Fatalf("seed interrupted Temporal: %v %s", err, output)
+	}
+	startReleaseCommand = func(_ launchContext, receipt release.Receipt, _ string) error {
+		if receipt != fixture.old {
+			t.Fatal("recovery started candidate")
+		}
+		for _, expected := range pair.Files {
+			actual, err := sha256Path(filepath.Join(fixture.state, expected.Name))
+			if err != nil || actual != expected.SHA256 {
+				return fmt.Errorf("half-restored pair retained %s: %v", expected.Name, err)
+			}
+		}
+		return nil
+	}
+	if recovered, err := recoverInterruptedTransition(fixture.ctx, fixture.store); !recovered || err != nil {
+		t.Fatalf("half-restored recovery: %v %v", recovered, err)
+	}
+}
+
+func TestV12InterruptedSourcePreservationSurvivesRecoveryRestartFailure(t *testing.T) {
+	preserveMigrationSeams(t)
+	fixture := newV6ActivationFixture(t)
+	pair, err := snapshotPair(fixture.ctx, fixture.old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	journal, err := fixture.store.Begin("update", &fixture.old, &fixture.candidate, fixture.candidate.DescriptorSHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	journal.BackupID = pair.ID
+	if err := fixture.store.Advance(&journal, release.MigrationCandidateReady, nil); err != nil {
+		t.Fatal(err)
+	}
+	code := "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute(\"UPDATE t SET v='independent-source-write'\"); c.commit(); c.close()"
+	if output, err := exec.Command(fixture.python, "-I", "-B", "-c", code, filepath.Join(fixture.state, "jobctrl.db")).CombinedOutput(); err != nil {
+		t.Fatalf("seed independent source: %v %s", err, output)
+	}
+	starts := 0
+	startReleaseCommand = func(_ launchContext, receipt release.Receipt, _ string) error {
+		if receipt != fixture.old {
+			t.Fatal("recovery started candidate")
+		}
+		starts++
+		if starts == 1 {
+			return errors.New("synthetic old restart interruption")
+		}
+		code := "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); assert c.execute('SELECT v FROM t').fetchone() == ('independent-source-write',); c.close()"
+		if output, err := exec.Command(fixture.python, "-I", "-B", "-c", code, filepath.Join(fixture.state, "jobctrl.db")).CombinedOutput(); err != nil {
+			return fmt.Errorf("independent source overwritten: %w %s", err, output)
+		}
+		return nil
+	}
+	if recovered, err := recoverInterruptedTransition(fixture.ctx, fixture.store); recovered || err == nil {
+		t.Fatalf("first recovery: %v %v", recovered, err)
+	}
+	intent, err := readV12SourcePreservation(fixture.state, journal.ID)
+	if err != nil || intent == nil || intent.BackupID != pair.ID {
+		t.Fatalf("lost durable refusal intent: %#v %v", intent, err)
+	}
+	if recovered, err := recoverInterruptedTransition(fixture.ctx, fixture.store); !recovered || err != nil {
+		t.Fatalf("second recovery: %v %v", recovered, err)
+	}
+	if _, err := os.Lstat(v12SourcePreservationPath(fixture.state, journal.ID)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("completed recovery retained intent: %v", err)
 	}
 }

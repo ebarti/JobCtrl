@@ -195,12 +195,16 @@ note text or retained context.
 
 Before native activation, the live source must match the paired source's exact
 schema and retained cells. A private binding seals its file identity/state and
-candidate digest. Activation rechecks those bindings while holding SQLite's
-writer lock through the atomic rename. An unmanaged writer or a commit after
-backup refuses activation. When the candidate has not changed the live database,
+candidate digest. Activation requires a quiescent transition to DELETE journal
+mode, then rechecks those bindings under SQLite's exclusive lock through the
+atomic rename. This refuses a WAL connection that could acknowledge a write to
+the replaced inode. An unmanaged writer or a commit after backup refuses activation. When the candidate has not changed the live database,
 recovery preserves the live source, including an independent committed write,
 instead of restoring an older backup over it. Failed readiness after activation
 still restores the paired application/Temporal backup and previous release.
+A private intent receipt binds preactivation source preservation to the exact
+journal, backup and source version, and survives interrupted old-runtime restart.
+An old schema header during partial paired restore cannot bypass Temporal recovery.
 
 The TypeScript API and Python worker accept exact v12 and reject direct v6/v7/v8/v9/v10/v11
 operation; runtime constructors do not migrate schema or commit caller work.

@@ -122,7 +122,15 @@ def activate(live: Path, candidate: Path, receipt: Path) -> None:
     lock = sqlite3.connect(f"{live.resolve().as_uri()}?mode=rw", uri=True, timeout=0)
     try:
         try:
-            lock.execute("BEGIN IMMEDIATE")
+            # WAL connections retain access to the old inode after rename and
+            # can acknowledge commits that no longer reach the live path. A
+            # DELETE-mode conversion requires WAL readers/writers to quiesce;
+            # an exclusive transaction then prevents mode changes at cutover.
+            if lock.execute("PRAGMA journal_mode=DELETE").fetchone() != ("delete",):
+                raise SourceChangedError()
+            lock.execute("BEGIN EXCLUSIVE")
+            if lock.execute("PRAGMA journal_mode").fetchone() != ("delete",):
+                raise SourceChangedError()
         except sqlite3.Error:
             raise SourceChangedError() from None
         actual = live.lstat()
@@ -134,7 +142,7 @@ def activate(live: Path, candidate: Path, receipt: Path) -> None:
             raise SourceChangedError()
         if _table_data_digest(lock, _columns(lock)) != expected["sourceDigest"]:
             raise SourceChangedError()
-        # The writer lock stays on the old inode through the atomic replacement.
+        # DELETE mode and the exclusive lock stay on the old inode through replacement.
         os.replace(candidate, live)
         for suffix in ("-journal", "-wal", "-shm"):
             Path(f"{live}{suffix}").unlink(missing_ok=True)
