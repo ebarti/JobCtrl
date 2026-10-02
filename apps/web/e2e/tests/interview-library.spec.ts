@@ -1,6 +1,27 @@
 import { expect, test } from "@playwright/test";
 import { checkA11y, injectAxe } from "axe-playwright";
-import { QA_PLATFORM_JOB_ID, refreshE2eWorkerHeartbeat } from "../fixtures/e2e-state.js";
+import Database from "better-sqlite3";
+import { makeQuestionPrep } from "../../src/test/fixtures/interviews.js";
+import { loadE2eDbPath, QA_PLATFORM_JOB_ID, refreshE2eWorkerHeartbeat } from "../fixtures/e2e-state.js";
+
+let originalProfile: { personal_preferred_name: string; version: number; updated_at: string };
+test.beforeAll(() => {
+  const db = new Database(loadE2eDbPath());
+  try { originalProfile = db.prepare("SELECT personal_preferred_name, version, updated_at FROM candidate_profiles WHERE tenant_id='local' AND profile_id='default'").get() as typeof originalProfile; }
+  finally { db.close(); }
+});
+test.afterAll(() => {
+  const db = new Database(loadE2eDbPath());
+  try {
+    db.transaction(() => {
+      db.prepare("UPDATE candidate_profiles SET personal_preferred_name=?, version=?, updated_at=? WHERE tenant_id='local' AND profile_id='default'").run(originalProfile.personal_preferred_name, originalProfile.version, originalProfile.updated_at);
+      db.prepare("DELETE FROM job_interview_prep_items WHERE tenant_id='local' AND job_id=? AND generation BETWEEN 1000 AND 1003").run(QA_PLATFORM_JOB_ID);
+      db.prepare("DELETE FROM job_interview_prep WHERE tenant_id='local' AND job_id=? AND generation BETWEEN 1000 AND 1003").run(QA_PLATFORM_JOB_ID);
+      db.prepare("DELETE FROM job_interview_note_revisions WHERE tenant_id='local' AND job_id=? AND question_id='B11'").run(QA_PLATFORM_JOB_ID);
+      db.prepare("DELETE FROM job_interview_notes WHERE tenant_id='local' AND job_id=? AND question_id='B11'").run(QA_PLATFORM_JOB_ID);
+    })();
+  } finally { db.close(); }
+});
 
 // Repository Playwright workflow: Browser plugin is unavailable in this task.
 // These requests exercise the real API against the run's owned synthetic DB.
@@ -126,4 +147,58 @@ test("Interview evidence: accepted canonical choices retain their version until 
   expect(reselected.status()).toBe(202);
   expect(reselected.request().postDataJSON()).toMatchObject({ evidenceProfileVersion: newer.profileVersion, evidenceSelections: original.evidenceSelections });
   await page.getByRole("region", { name: "Job interview preparation" }).screenshot({ path: "/tmp/jobctrl-993-interview-preparation.png" });
+});
+
+function seedHistoricalPreparation(generation = 1001): void {
+  const prep = makeQuestionPrep("B11", QA_PLATFORM_JOB_ID);
+  const db = new Database(loadE2eDbPath());
+  try {
+    const insert = db.prepare(`INSERT INTO job_interview_prep
+      (tenant_id, job_id, generation, status, model, generated_at, gate_status,
+       fabrication_findings_json, grounding_findings_json, judge_verdict, warnings_json, failure_reason, generation_context_json)
+      VALUES ('local', ?, ?, ?, 'e2e-fixture', '2026-10-01T12:00:00Z', ?, '[]', '[]', 'grounded', '[]', '', ?)
+      ON CONFLICT(tenant_id, job_id, generation) DO UPDATE SET status=excluded.status, generation_context_json=excluded.generation_context_json`);
+    db.transaction(() => {
+      insert.run(QA_PLATFORM_JOB_ID, 1000, "superseded", "passed", null);
+      if (generation === 1003) db.prepare("UPDATE job_interview_prep SET status='superseded' WHERE tenant_id='local' AND job_id=? AND generation=1001").run(QA_PLATFORM_JOB_ID);
+      insert.run(QA_PLATFORM_JOB_ID, generation, "accepted", "passed", JSON.stringify(prep.generationContext));
+      if (generation === 1001) insert.run(QA_PLATFORM_JOB_ID, 1002, "failed", "failed", null);
+      const item = prep.items[0]!;
+      db.prepare(`INSERT INTO job_interview_prep_items
+        (tenant_id, job_id, generation, item_id, kind, title, generated_text, evidence_ids_json,
+         requirement_ids_json, source_text_json, transform_type, control, grounding_audit_json, warnings_json, position, question_metadata_json)
+        VALUES ('local', ?, ?, ?, 'question_outline', ?, ?, '[]', '[]', '[]', 'grounded_prep', 'never_fabricate', '[]', '[]', 0, ?)`)
+        .run(QA_PLATFORM_JOB_ID, generation, item.itemId, item.title, item.generatedText, JSON.stringify(item.questionMetadata));
+    })();
+  } finally { db.close(); }
+}
+
+test("Interview history: accepted outlines and gaps survive failed runs and independent note revisions", async ({ page }) => {
+  seedHistoricalPreparation();
+  await page.goto(`/interviews?card=B11&job=${QA_PLATFORM_JOB_ID}`);
+  const accepted = page.getByRole("region", { name: "Interview preparation", exact: true }).first();
+  await expect(accepted.getByText("What did you personally own?", { exact: true })).toBeVisible();
+  await expect(accepted.getByRole("paragraph").filter({ hasText: "Open B11 guidance · principle answer" })).toBeVisible();
+  await expect(accepted.getByText("Preparation inputs have changed", { exact: true })).toBeVisible();
+  await accepted.getByText("Generation-time inputs and versions", { exact: true }).click();
+  await expect(accepted).toContainText('"evidenceSelectionMode": "deterministic"');
+  await page.getByText(/Generation 1002 · failed/).click();
+  await expect(page.getByText("Failed attempt; the accepted generation remains available.")).toBeVisible();
+  await expect(accepted.getByText("What did you personally own?", { exact: true })).toBeVisible();
+  await page.getByText(/Generation 1000 · superseded/).click();
+  await expect(page.getByText("Legacy generation: profile, catalog and question versions were not recorded.")).toBeVisible();
+  const notes = page.getByRole("textbox", { name: "Notes for B11" });
+  await expect(notes).toHaveValue("Synthetic recollection requiring personal verification.");
+  await notes.fill("Independent synthetic note kept across preparation replacement.");
+  const [saved] = await Promise.all([
+    page.waitForResponse((response) => response.url().includes("/interview-notes") && response.request().method() === "POST"),
+    page.getByRole("button", { name: "Save unverified note" }).click(),
+  ]);
+  expect(await saved.json()).toMatchObject({ note: { revision: 2, sourceGeneration: 1001, factualSupport: "unverified_user_statement" } });
+  seedHistoricalPreparation(1003);
+  await page.reload();
+  await expect(page.getByRole("textbox", { name: "Notes for B11" })).toHaveValue("Independent synthetic note kept across preparation replacement.");
+  await expect(page.getByRole("region", { name: "Interview preparation", exact: true }).first()).toContainText("generation 1003");
+  await injectAxe(page);
+  await checkA11y(page, undefined, { includedImpacts: ["critical", "serious"] });
 });
