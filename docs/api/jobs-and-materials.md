@@ -106,7 +106,7 @@ as a superseded status.
 | --- | --- |
 | `GET /v1/interviews/catalog` | Bounded, filtered installed public catalog with source/reading metadata. |
 | `GET /v1/interviews/questions/:questionId` | One active card plus its immutable catalog binding. |
-| `POST /v1/jobs/:jobKey/actions/generate-interview-prep` | Explicit bounded selection/context dispatched to `InterviewPrepWorkflow`; returns `202`. |
+| `POST /v1/jobs/:jobKey/actions/generate-interview-prep` | Explicit bounded selection/context dispatched to `InterviewPrepWorkflow`; returns `202` when queued, `200` for a completed dispatch response. |
 | `GET /v1/jobs/:jobKey/interview-prep/history` | Paginated generations, including superseded and failed attempts. |
 | `GET /v1/jobs/:jobKey/interview-notes` | Latest independent per-question notes, or one question's revision history. |
 | `POST /v1/jobs/:jobKey/interview-notes` | Expected-revision note save; a stale edit returns `409`. |

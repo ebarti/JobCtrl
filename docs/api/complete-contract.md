@@ -982,7 +982,7 @@ or provider call. Normal loopback Host/origin protections apply to every route.
 | --- | --- |
 | `GET /v1/interviews/catalog` | `{ ok: true, catalog, page, pageSize, total }`; `catalog.questions` is the filtered page. |
 | `GET /v1/interviews/questions/:questionId` | `{ ok: true, catalogBinding, question }`. |
-| `POST /v1/jobs/:jobKey/actions/generate-interview-prep` | `202` with the normal queued workflow-start response. |
+| `POST /v1/jobs/:jobKey/actions/generate-interview-prep` | Normal action response: `202` when queued, `200` for a completed dispatch response. |
 | `GET /v1/jobs/:jobKey/interview-prep/history` | `{ ok: true, jobId, generations, page, pageSize, total }`. |
 | `GET /v1/jobs/:jobKey/interview-notes` | `{ ok: true, jobId, notes, page, pageSize, total }`. |
 | `POST /v1/jobs/:jobKey/interview-notes` | `{ ok: true, note }` after an expected-revision save. |
@@ -1052,8 +1052,10 @@ An omitted question evidence entry uses deterministic accepted-evidence
 selection. An explicit entry with `evidenceIds: []` requests gaps without
 automatic replacement. The owning path validates tenant/profile ownership,
 accepted factual status, current profile version, question membership, unique
-IDs, and bounds before provider spending. Stale or invalid choices are rejected
-as `evidence_profile_changed` or `invalid_evidence_selection`; the client keeps
+IDs, and bounds before provider spending. Eligible IDs identify current-profile
+achievement evidence with `user_confirmed = 1`, strength `supported | verified`,
+and nonempty source/scope/action/outcome support. Stale or invalid choices return
+`409 evidence_profile_changed` or `400 invalid_evidence_selection`; the client keeps
 the draft for reselection. Notes and new recollections are not accepted facts.
 The same conditional version fence applies to HTTP and worker RPC schemas.
 
@@ -1093,7 +1095,7 @@ labeled, and a maximum bullet-provenance generation is not approval proof.
 Current job-detail reads retain the latest accepted generation during pending
 or failed refresh. History query accepts optional positive `generation`,
 `page` 1–1000 (default 1), and `pageSize` 1–100 (default 20). It exposes prior
-accepted/superseded and failed attempts. Relevant generation-time excerpts and
+accepted/superseded and failed attempts, newest generation first. Relevant generation-time excerpts and
 snapshots stay immutable when current inputs change. Read-derived `staleReasons`
 are `catalog_changed`, `profile_changed`, `job_changed`,
 `employer_analysis_changed`, `approved_materials_changed`, or `legacy_unbound`.
@@ -1107,16 +1109,18 @@ persisted generation rather than spending again.
 Note GET accepts optional `questionId`, `history: true | false`, and the same
 page bounds/defaults as prep history. `history: true` requires `questionId` and
 returns that question's append-only revision history; ordinary reads return the
-latest note per question. Reads remain tenant/job scoped.
+latest note per question. Rows sort by question ID ascending, then revision
+descending. Reads remain tenant/job scoped.
 
 Save accepts required `questionId`, integer `expectedRevision >= 0`, and
-`noteText` of at most 20,000 characters. Revision 0 creates the first note;
+`noteText` of at most 20,000 characters (empty text is valid). Revision 0 creates the first note;
 subsequent saves compare the loaded revision and append the next revision.
 Optional `factualSupport` is `unverified_user_statement` (default),
 `needs_clarification`, or `hypothetical`; input cannot self-declare `supported`.
 Optional `sourceGeneration` is positive or null and must belong to the same
 job. Optional nullable `bindings` holds catalog binding, card revision/digest,
-and context digest. A source generation explains origin but never transfers a
+and context digest. Omission preserves an existing source generation or binding;
+explicit null clears it. A source generation explains origin but never transfers a
 passed generation audit to the user edit.
 
 The returned note has canonical `jobId`/`questionId`, positive `revision`,
@@ -1128,6 +1132,7 @@ an active card. Save revision, history append, and safe event commit together.
 
 A stale `expectedRevision` returns `409` with
 `{ ok: false, error: "interview_note_revision_conflict", message, currentNote }`.
+`currentNote` is the current saved note or null when no saved baseline exists.
 The client exposes `JobCtrlApiError.responseBody` so the form can reconcile with
 the current saved note while retaining its dirty draft. An invalid source
 generation returns `400 invalid_interview_note_source`; an unknown job returns
@@ -1685,7 +1690,8 @@ the apply JSON-RPC method (and so `ApplyWorkflow`) for one job;
 cover preparation stages for one job and returns `202` when the worker is
 ready; `POST /v1/jobs/:jobKey/actions/generate-interview-prep` dispatches the
 explicit `generate_interview_prep` workflow action for one job and returns `202`
-when queued; `POST /v1/jobs/:jobKey/actions/cancel` requests cooperative
+when queued (`200` for a completed dispatch response);
+`POST /v1/jobs/:jobKey/actions/cancel` requests cooperative
 cancellation of that job's in-flight work; and
 `POST /v1/jobs/:jobKey/actions/mark-applied` /
 `POST /v1/jobs/:jobKey/actions/mark-skipped` record manual pipeline outcomes
