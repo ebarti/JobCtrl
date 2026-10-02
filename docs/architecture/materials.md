@@ -193,10 +193,23 @@ factual-support label or an unrelated supported body cannot substantiate a
 heading claim. Evidence from another question, authored examples, and advertised
 job responsibilities cannot become personal evidence.
 
+Generated outline sections couple `factualSupport` with `evidenceIds` as accepted
+personal proof. `accepted_profile_fact` requires nonempty IDs from that
+question's selected evidence and claims confined to those excerpts;
+`hypothetical` and `needs_clarification` require `evidenceIds: []`. A canonical
+fact may appear as a separate factual anchor; a clarification can refer to it
+while keeping its proof IDs empty. Question-level `evidenceLinks` retain context
+separately. Incompatible support/ID combinations fail parsing; dropping IDs or
+relabeling the section cannot make the original output acceptable.
+
 Generic behavioral invitations and open questions request recollection or
 clarification without establishing an event as fact. Genuinely hypothetical or
 prospective guidance, including first-time-manager scenarios, may lack
-historical evidence. An explicit empty evidence selection stays empty and
+historical evidence. Generic planned missing-answer slots request particulars;
+specific events, metrics, employers, tools, or authority embedded in them remain
+bound to selected sources. A question about the canonical advertised role's
+expectations clarifies the job rather than asserting candidate history.
+An explicit empty evidence selection stays empty and
 produces focused gaps or prospective guidance. Source/job text remains data
 rather than an instruction that can add facts. B11/TS09 preserve decision
 criteria, limits, and alternatives; C07 never infers/discloses a private salary
