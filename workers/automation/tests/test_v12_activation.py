@@ -115,3 +115,90 @@ def test_schema_drift_during_candidate_verification_is_refused(tmp_path: Path, m
     with sqlite3.connect(live) as conn:
         assert conn.execute("SELECT title FROM independent_view").fetchone() == ("paired title",)
         assert conn.execute("PRAGMA user_version").fetchone() == (11,)
+
+
+@pytest.mark.parametrize("wal_at_bind", [True, False])
+def test_wal_connection_opened_after_initial_check_cannot_acknowledge_lost_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, wal_at_bind: bool
+) -> None:
+    import threading
+    import time
+
+    source, live, candidate, receipt = _bound(tmp_path)
+    if wal_at_bind:
+        receipt.unlink()
+        conn = sqlite3.connect(live)
+        try:
+            assert conn.execute("PRAGMA journal_mode=WAL").fetchone() == ("wal",)
+        finally:
+            conn.close()
+        activation.bind_source(source, live, candidate, receipt)
+    original = activation.assert_exact_manifest
+    original_replace = activation.os.replace
+    ready, write, attempted = threading.Event(), threading.Event(), threading.Event()
+    outcomes: list[object] = []
+    threads: list[threading.Thread] = []
+
+    def writer() -> None:
+        conn = sqlite3.connect(live, timeout=2)
+        try:
+            assert conn.execute("PRAGMA journal_mode=WAL").fetchone() == ("wal",)
+            assert conn.execute("SELECT title FROM jobs").fetchall() == [("paired title",)]
+            ready.set()
+            assert write.wait(3)
+            attempted.set()
+            conn.execute("UPDATE jobs SET title='acknowledged WAL write'")
+            conn.commit()
+            outcomes.append("committed")
+        except BaseException as error:
+            outcomes.append(error)
+            ready.set()
+        finally:
+            conn.close()
+
+    def open_old_wal_connection(conn, manifest):
+        original(conn, manifest)
+        thread = threading.Thread(target=writer)
+        threads.append(thread)
+        thread.start()
+        assert ready.wait(3)
+
+    def signal_waiting_writer_then_replace(old, new):
+        # This was the original losing schedule. Quiescence now refuses before
+        # this rename boundary while the late WAL connection remains open.
+        write.set()
+        assert attempted.wait(3)
+        time.sleep(0.05)
+        original_replace(old, new)
+
+    monkeypatch.setattr(activation, "assert_exact_manifest", open_old_wal_connection)
+    monkeypatch.setattr(activation.os, "replace", signal_waiting_writer_then_replace)
+    try:
+        with pytest.raises(activation.SourceChangedError):
+            activation.activate(live, candidate, receipt)
+    finally:
+        write.set()
+        for thread in threads:
+            thread.join(3)
+            assert not thread.is_alive()
+    assert outcomes == ["committed"]
+    with sqlite3.connect(live) as conn:
+        assert conn.execute("SELECT title FROM jobs").fetchone() == ("acknowledged WAL write",)
+        assert conn.execute("PRAGMA user_version").fetchone() == (11,)
+    assert candidate.exists()
+
+
+def test_quiescent_wal_source_activates_in_delete_mode(tmp_path: Path) -> None:
+    _, live, candidate, receipt = _bound(tmp_path)
+    receipt.unlink()
+    conn = sqlite3.connect(live)
+    try:
+        assert conn.execute("PRAGMA journal_mode=WAL").fetchone() == ("wal",)
+    finally:
+        conn.close()
+    activation.bind_source(tmp_path / "paired.db", live, candidate, receipt)
+    activation.activate(live, candidate, receipt)
+    with sqlite3.connect(live) as conn:
+        assert conn.execute("PRAGMA journal_mode").fetchone() == ("delete",)
+        assert_exact_manifest(conn, EXACT_V12_MANIFEST)
+        assert conn.execute("SELECT title FROM jobs").fetchone() == ("paired title",)

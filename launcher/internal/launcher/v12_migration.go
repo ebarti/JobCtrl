@@ -179,3 +179,57 @@ func bindV12Source(candidate launchContext, source, path string) error {
 	}
 	return nil
 }
+
+// A separate private intent keeps the historical journal wire shape compatible
+// with the previous launcher while distinguishing refusal from a partial restore.
+type v12SourcePreservationIntent struct {
+	SchemaVersion int    `json:"schemaVersion"`
+	JournalID     string `json:"journalId"`
+	BackupID      string `json:"backupId"`
+	SourceVersion int64  `json:"sourceVersion"`
+}
+
+func v12SourcePreservationPath(stateDir, journalID string) string {
+	return v12CandidatePath(stateDir, journalID) + ".preserve-source.json"
+}
+
+func readV12SourcePreservation(stateDir, journalID string) (*v12SourcePreservationIntent, error) {
+	path := v12SourcePreservationPath(stateDir, journalID)
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 {
+		return nil, errors.New("v12 source preservation intent is not owner-private")
+	}
+	var intent v12SourcePreservationIntent
+	if err := decodeStrictRegular(path, &intent); err != nil || intent.SchemaVersion != 1 || intent.JournalID != journalID || intent.BackupID == "" || intent.SourceVersion < 6 || intent.SourceVersion > 11 {
+		return nil, errors.New("v12 source preservation intent is invalid")
+	}
+	return &intent, nil
+}
+
+func writeV12SourcePreservation(stateDir, journalID, backupID string, version int64) error {
+	if journalID == "" || backupID == "" || version < 6 || version > 11 {
+		return errors.New("v12 source preservation intent binding is invalid")
+	}
+	existing, err := readV12SourcePreservation(stateDir, journalID)
+	if err != nil {
+		return err
+	}
+	intent := v12SourcePreservationIntent{1, journalID, backupID, version}
+	if existing != nil {
+		if *existing != intent {
+			return errors.New("v12 source preservation intent binding mismatch")
+		}
+		return nil
+	}
+	return writeJSONAtomic(v12SourcePreservationPath(stateDir, journalID), intent)
+}
+
+func clearV12SourcePreservation(stateDir, journalID string) error {
+	if err := os.Remove(v12SourcePreservationPath(stateDir, journalID)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return syncDirectory(stateDir)
+}
