@@ -117,6 +117,7 @@ class GenerateInterviewPrepUseCase:
         profile = profile_snapshot.as_dict()
         target_skill_terms = _target_skill_terms(requirements, evidence_gaps)
         model_label = model or str(getattr(self._llm, "model", "") or "default")
+        input_warnings = tuple(str(row["inputWarning"]) for row in accepted_materials if row.get("inputWarning"))
 
         try:
             prompt = question_generation_prompt(cards=cards, plans=plans, context=context,
@@ -134,6 +135,7 @@ class GenerateInterviewPrepUseCase:
                 generated_at=generated_at,
                 model=model_label,
                 reasons=(f"generation_error: {exc}",),
+                warnings=input_warnings,
                 origin_run_id=origin_run_id,
                 context=context,
             )
@@ -147,6 +149,7 @@ class GenerateInterviewPrepUseCase:
                 generated_at=generated_at,
                 model=model_label,
                 reasons=(*gate.fabrication_findings, *gate.grounding_findings),
+                warnings=input_warnings,
                 origin_run_id=origin_run_id,
                 context=context,
             )
@@ -168,6 +171,7 @@ class GenerateInterviewPrepUseCase:
                 generated_at=generated_at,
                 model=model_label,
                 reasons=(f"judge_error: {exc}",),
+                warnings=input_warnings,
                 origin_run_id=origin_run_id,
                 context=context,
             )
@@ -180,7 +184,7 @@ class GenerateInterviewPrepUseCase:
                 generated_at=generated_at,
                 model=model_label,
                 reasons=reasons or ("judge rejected interview prep",),
-                warnings=judge.warnings,
+                warnings=(*input_warnings, *judge.warnings),
                 judge_verdict=f"{judge.verdict}:{judge.score:.2f}",
                 origin_run_id=origin_run_id,
                 context=context,
@@ -191,7 +195,7 @@ class GenerateInterviewPrepUseCase:
             fabrication_findings=(),
             grounding_findings=gate.grounding_findings,
             judge_verdict=f"{judge.verdict}:{judge.score:.2f}",
-            warnings=tuple(dict.fromkeys((*gate.warnings, *judge.warnings,
+            warnings=tuple(dict.fromkeys((*input_warnings, *gate.warnings, *judge.warnings,
                 *((f"Bounded context omitted {employer_context['unusedRequirementCount']} unselected employer requirements.",)
                   if employer_context and employer_context.get("unusedRequirementCount") else ())))),
         )
@@ -205,7 +209,15 @@ class GenerateInterviewPrepUseCase:
             items=items,
             generation_context=context,
         )
-        self._repository.save(prep, tenant_id=tenant_id, origin_run_id=origin_run_id)
+        try:
+            self._repository.save(prep, tenant_id=tenant_id, origin_run_id=origin_run_id)
+        except Exception:  # noqa: BLE001
+            log.exception("Interview prep persistence failed for %s", job_id)
+            return self._fail(tenant_id=tenant_id, job_id=job_id, generation=generation,
+                              generated_at=generated_at, model=model_label,
+                              reasons=("persistence_error: generated preparation could not be saved",),
+                              warnings=input_warnings,
+                              origin_run_id=origin_run_id, context=context)
         self._publish_generated(tenant_id, prep)
         return InterviewPrepGenerationOutcome(prep=prep, status="accepted")
 

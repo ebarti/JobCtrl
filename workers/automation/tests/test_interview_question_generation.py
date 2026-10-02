@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 
 from jobctrl.domain.interview.catalog import InterviewSelectionError, canonical_json_digest
-from jobctrl.domain.interview.preparation import choose_questions, plan_evidence
+from jobctrl.domain.interview.preparation import accepted_evidence_sources, choose_questions, plan_evidence
 from jobctrl.domain.interview.use_cases import GenerateInterviewPrepUseCase
 from jobctrl.domain.interview.value_objects import InterviewPrep
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
@@ -215,3 +215,105 @@ def test_real_catalog_recruiter_selection_is_format_appropriate_and_legacy_is_bo
     assert legacy["selectionMode"] == "deterministic"
     assert len(legacy["selectedQuestionIds"]) == 5
     assert "C08" not in legacy["selectedQuestionIds"]
+
+
+@pytest.mark.parametrize("extra,code", [
+    ({"evidenceSelections": [{"questionId": "B11", "evidenceIds": []}]}, "invalid_evidence_selection"),
+    ({"evidenceProfileVersion": 2, "evidenceSelections": [{"questionId": "B11", "evidenceIds": []}]}, "evidence_profile_changed"),
+    ({"evidenceProfileVersion": True, "evidenceSelections": []}, "invalid_evidence_selection"),
+    ({"evidenceProfileVersion": 1, "evidenceSelections": [{"questionId": "B11", "evidenceIds": ["foreign-id"]}]}, "invalid_evidence_selection"),
+    ({"evidenceProfileVersion": 1, "evidenceSelections": [{"questionId": "TS09", "evidenceIds": []}]}, "invalid_evidence_selection"),
+    ({"evidenceProfileVersion": 1, "evidenceSelections": [{"questionId": "B11", "evidenceIds": []}] * 2}, "invalid_evidence_selection"),
+    ({"evidenceProfileVersion": 1, "evidenceSelections": [{"questionId": "B11", "evidenceIds": ["ev-platform-latency"] * 2}]}, "invalid_evidence_selection"),
+    ({"evidenceProfileVersion": 1, "evidenceSelections": [{"questionId": "B11", "evidenceIds": [f"e{i}" for i in range(9)]}]}, "invalid_evidence_selection"),
+    ({"evidenceProfileVersion": 1, "evidenceSelections": [{"questionId": "B11", "evidenceIds": [" "]}]}, "invalid_evidence_selection"),
+    ({"evidenceProfileVersion": 1, "evidenceSelections": [{"questionId": "B11", "evidenceIds": [" ev-platform-latency "]}]}, "invalid_evidence_selection"),
+    ({"evidenceProfileVersion": 1, "evidenceSelections": [{"questionId": "B11", "evidenceIds": ["e" * 201]}]}, "invalid_evidence_selection"),
+    ({"evidenceProfileVersion": 1, "evidenceSelections": [{"questionId": "B11", "evidenceIds": [], "noteText": "new recollection"}]}, "invalid_evidence_selection"),
+])
+def test_explicit_evidence_rejects_before_provider_call_or_repository_write(extra, code) -> None:
+    llm, repository = _FakeLlm([]), _Repository()
+    with pytest.raises(InterviewSelectionError) as caught:
+        GenerateInterviewPrepUseCase(repository=repository, llm=llm, catalog=_catalog()).execute(
+            tenant_id=LOCAL_TENANT, job=_job(), profile_snapshot=_profile_snapshot(),
+            evidence_entries=(), evidence_gaps=(), requirements=(),
+            selection_input={"selectedQuestionIds": ["B11"], **extra})
+    assert caught.value.code == code
+    assert not llm.calls and not repository.rows
+
+
+@pytest.mark.parametrize("confirmed,strength", [(False, "verified"), (True, "draft"), (True, "inferred")])
+def test_unaccepted_canonical_evidence_cannot_be_chosen_or_auto_selected(confirmed, strength) -> None:
+    profile = _profile_snapshot()
+    fact = profile._data["resume"]["experience_entries"][0]["achievement_evidence"][0]
+    fact["user_confirmed"], fact["evidence_strength"] = confirmed, strength
+    assert accepted_evidence_sources(profile) == []
+    cards, selection = choose_questions(_catalog(), {"selectedQuestionIds": ["B11"], "evidenceProfileVersion": 1,
+                                                   "evidenceSelections": [{"questionId": "B11", "evidenceIds": [fact["id"]]}]}, ())
+    with pytest.raises(InterviewSelectionError) as caught:
+        plan_evidence(cards, profile, selection, ())
+    assert caught.value.code == "invalid_evidence_selection"
+
+
+def test_explicit_empty_evidence_is_retained_with_gap_and_never_autofilled() -> None:
+    candidate = _question_candidate("B01", "Clarify the personal contribution before preparing an example.", support="needs_clarification",
+                                    gaps=[{"prompt": "Which accepted experience do you want to use?", "reason": "You selected no evidence."}])
+    selection = {"selectedQuestionIds": ["B01"], "evidenceProfileVersion": 1,
+                 "evidenceSelections": [{"questionId": "B01", "evidenceIds": []}]}
+    outcome, llm, _ = _execute(candidate, ids=["B01"], extra={"selection_input": selection})
+    assert outcome.status == "accepted", outcome.errors
+    assert outcome.prep.items[0].question_metadata["evidenceLinks"] == []
+    selected = outcome.prep.generation_context["selectedQuestions"][0]
+    assert selected["evidenceSelectionMode"] == "user_selected" and selected["selectedEvidenceIds"] == []
+    assert "ev-platform-latency" not in llm.calls[0]["messages"][1].content
+    no_gap, _, _ = _execute(_question_candidate("B01", "Clarify details."), ids=["B01"], extra={"selection_input": selection})
+    assert no_gap.status == "failed"
+
+
+def test_explicit_evidence_preserves_order_and_omitted_questions_use_auto_selection() -> None:
+    profile = _profile_snapshot()
+    facts = profile._data["resume"]["experience_entries"][0]["achievement_evidence"]
+    second = deepcopy(facts[0])
+    second["id"], second["source_text"] = "Arbitrary saved ID", "Optimized Python monitoring."
+    facts.append(second)
+    request = {"selectedQuestionIds": ["B01", "B11"], "evidenceProfileVersion": 1,
+               "evidenceSelections": [{"questionId": "B01", "evidenceIds": [second["id"], facts[0]["id"]]}]}
+    cards, selection = choose_questions(_catalog(), request, ())
+    plans = plan_evidence(cards, profile, selection, ())
+    assert [link["evidenceId"] for link in plans["B01"]] == [second["id"], facts[0]["id"]]
+    assert plans["B11"]
+    candidate = {"items": [_question_candidate("B01", "Reduced API latency by 30% using Python.", ids=[facts[0]["id"]], support="accepted_profile_fact")["items"][0],
+                            _question_candidate("B11", "Compare alternatives and uncertainty.")["items"][0]]}
+    outcome, _, _ = _execute(candidate, ids=["B01", "B11"], profile=profile, extra={"selection_input": request})
+    assert outcome.status == "accepted", outcome.errors
+    selected = outcome.prep.generation_context["selectedQuestions"]
+    assert selected[0]["selectedEvidenceIds"] == [second["id"], facts[0]["id"]]
+    assert [row["evidenceSelectionMode"] for row in selected] == ["user_selected", "deterministic"]
+
+
+def test_rpc_forwards_explicit_evidence_choice_and_keeps_version_fence() -> None:
+    params = {"tenantId": "local", "jobId": _job()["job_id"], "selectedQuestionIds": ["B11"],
+              "evidenceProfileVersion": 1, "evidenceSelections": [{"questionId": "B11", "evidenceIds": []}]}
+    spec = build_interview_prep_workflow_spec(params)
+    assert spec.args[0].selection["evidenceSelections"] == params["evidenceSelections"]
+    assert spec.args[0].selection["evidenceProfileVersion"] == 1
+    del params["evidenceProfileVersion"]
+    with pytest.raises(InterviewSelectionError):
+        build_interview_prep_workflow_spec(params)
+
+
+@pytest.mark.parametrize("location", ["heading", "gap", "probe", "contraction"])
+def test_personal_fabrication_cannot_hide_in_outline_labels_clarifications_or_probes(location: str) -> None:
+    candidate = _question_candidate("B11", "Compare alternatives and conditions.")
+    raw = candidate["items"][0]
+    assertion = "I managed 50 direct reports."
+    if location == "heading":
+        raw["outline"][0]["heading"] = assertion
+    elif location == "gap":
+        raw["gaps"] = [{"prompt": assertion, "reason": "Missing detail"}]
+    elif location == "probe":
+        raw["probes"] = [assertion]
+    else:
+        raw["outline"][0]["text"] = "I've managed 50 direct reports."
+    outcome, llm, _ = _execute(candidate, ids=["B11"])
+    assert outcome.status == "failed" and len(llm.calls) == 1

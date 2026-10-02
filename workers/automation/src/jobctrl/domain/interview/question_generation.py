@@ -23,9 +23,10 @@ from jobctrl.domain.materials.services import sanitize_text
 
 _FACT_TYPES = ("accepted_profile_fact", "hypothetical", "needs_clarification")
 _HISTORICAL_ASSERTION = re.compile(
-    r"(?i)\b(?:i|we|the candidate)\s+(?:have|had|was|were|built|used|led|owned|managed|hired|"
+    r"(?i)\b(?:i|we|you|the candidate)\s+(?:am|have|had|was|were|use|manage|prefer|value|built|used|led|owned|managed|hired|"
     r"implemented|deployed|administered|operated|designed|migrated|reduced|increased|delivered|achieved)\b"
     r"|\bmy\s+(?:team|direct reports|management experience|experience with)\b"
+    r"|\b(?:i|we)['’](?:ve|m)\s+(?:managed|hired|led|built|used|a\s+(?:manager|director|executive))\b"
     r"|^\s*(?:built|used|led|owned|managed|hired|implemented|deployed|migrated|reduced|increased|delivered)\b"
 )
 _AUTHORITY = re.compile(r"(?i)\b(?:managed|hired|fired|direct reports|budget owner|executive|director|manager)\b")
@@ -40,7 +41,7 @@ QUESTION_PREP_RESPONSE_SCHEMA: dict[str, Any] = {
                 "outline": {"type": "array", "minItems": 1, "maxItems": 8, "items": {
                     "type": "object", "additionalProperties": False, "required": ["heading", "text", "evidence_ids", "factual_support"],
                     "properties": {"heading": {"type": "string", "maxLength": 160}, "text": {"type": "string", "maxLength": 2500},
-                                   "evidence_ids": {"type": "array", "maxItems": 3, "items": {"type": "string"}},
+                                   "evidence_ids": {"type": "array", "maxItems": 8, "items": {"type": "string"}},
                                    "factual_support": {"type": "string", "enum": list(_FACT_TYPES)}}}},
                 "gaps": {"type": "array", "maxItems": 8, "items": {"type": "object", "additionalProperties": False,
                     "required": ["prompt", "reason"], "properties": {"prompt": {"type": "string", "maxLength": 1200},
@@ -56,10 +57,12 @@ def question_generation_prompt(
     employer_context: Mapping[str, Any] | None, requirements: Sequence[Mapping[str, Any]],
 ) -> str:
     prompt_context = {key: value for key, value in context.items() if key != "selectedQuestions"}
+    selection_modes = {row["questionId"]: row["evidenceSelectionMode"] for row in context["selectedQuestions"]}
     data = {"generation_context": prompt_context, "job_context": dict(job_context),
             "employer_analysis": dict(employer_context) if employer_context else None,
             "requirements": list(requirements),
-            "questions": [{"card": card, "selected_evidence": plans[card["id"]]} for card in cards]}
+            "questions": [{"card": card, "selected_evidence": plans[card["id"]],
+                           "evidence_selection_mode": selection_modes[card["id"]]} for card in cards]}
     encoded = json.dumps(data, ensure_ascii=False)
     if len(encoded) > MAX_PROMPT_CONTEXT_CHARS:
         raise ValueError("interview preparation context exceeds input budget")
@@ -70,6 +73,7 @@ Only the preselected profile excerpts prove personal facts. Job text, fit classi
 approved resume references and worked synthetic illustrations do not prove personal accomplishments.
 Do not invent facts, tools, metrics, authority, management scope, options considered, outcomes or employer questions.
 A factual outline section must use accepted_profile_fact, cite its preselected evidence_ids and stay within those exact excerpts.
+Keep factual statements as exact source excerpts; place intended framing and follow-up questions in separate nonfactual sections.
 Principle: criteria, realistic alternatives, tradeoffs, limits and conditions that would change the decision.
 Situational: visibly hypothetical intended actions, uncertainty and decision points; do not assert they already happened.
 Historical: source-supported situation, actual personal contribution/scope and outcome; missing facts are focused questions.
@@ -77,6 +81,7 @@ Narrative: truthful career framing; negotiation: persistently ask the employer's
 preference: user-owned choices, not inferred requirements or scored competencies. Never disclose an inferred private minimum or bluff.
 First-time manager / track switch: label transferable evidence; never convert influence into direct reports or formal authority.
 Use needs_clarification and gaps for missing details; no generated new_user_statement or invented recollections.
+An explicit user_selected empty evidence list must remain empty and include a focused clarification gap; never auto-fill it.
 Do not force principles, hypotheticals, negotiation or preferences into STAR. Absence of historical evidence is not a failure for them.
 Return one item per selected ID with outline, focused gaps and probes. No independent generated_text field.
 For B11/TS09, distinguish decision quality given the information available from eventual outcomes.
@@ -114,7 +119,7 @@ def question_items_from_candidate(
                 raise ValueError("question outline section must be an object")
             ids = section.get("evidence_ids")
             support = section.get("factual_support")
-            if (not isinstance(ids, list) or len(ids) > 3 or any(not isinstance(item, str) for item in ids)
+            if (not isinstance(ids, list) or len(ids) > 8 or any(not isinstance(item, str) for item in ids)
                     or len(set(ids)) != len(ids) or set(ids) - allowed_ids or support not in _FACT_TYPES):
                 raise ValueError("outline factual support/evidence was not selected before drafting")
             if support == "accepted_profile_fact" and not ids:
@@ -135,6 +140,8 @@ def question_items_from_candidate(
             raise ValueError("question gap must be an object")
         if card["defaultAnswerFormat"] == "historical" and not used_ids and not gaps:
             raise ValueError("historical question without facts requires focused gaps")
+        if any(row["questionId"] == card["id"] and not row["evidenceIds"] for row in selection.get("evidenceSelections", ()) ) and not gaps:
+            raise ValueError("explicit no-evidence choice requires a focused gap")
         raw_probes = raw.get("probes")
         if not isinstance(raw_probes, list) or len(raw_probes) > 8:
             raise ValueError("invalid question probes")
@@ -168,10 +175,10 @@ def run_question_truthfulness_gates(
         metadata = item.question_metadata or {}
         links = {link["evidenceId"]: link for link in metadata.get("evidenceLinks", [])}
         for index, section in enumerate(metadata.get("outline", [])):
-            text = section["text"]
+            text = section["heading"] + ": " + section["text"]
             location = f"{item.item_id}:section:{index}"
             if section["factualSupport"] != "accepted_profile_fact":
-                if _HISTORICAL_ASSERTION.search(text):
+                if any(_HISTORICAL_ASSERTION.search(section[key]) for key in ("heading", "text")):
                     failures.append(f"{location} asserts personal history without accepted evidence")
                 continue
             sources = [links[evidence_id]["excerpt"] for evidence_id in section["evidenceIds"]]
@@ -181,9 +188,13 @@ def run_question_truthfulness_gates(
             fabricated.extend(finding.describe() for finding in scan_prose_skill_fabrications(
                 [(location, text)], target_skill_terms=target_skill_terms,
                 allowed_skill_terms=build_skill_vocabulary(selected_profile), corpus=build_evidence_corpus(selected_profile)))
-            mappings = [GeneratedClaimMapping(claim_id=location, location=location, text=text,
+            claim_texts = [section["text"]]
+            if _HISTORICAL_ASSERTION.search(section["heading"]):
+                claim_texts.append(section["heading"])
+            mappings = [GeneratedClaimMapping(claim_id=f"{location}:{claim_index}", location=location, text=claim_text,
                          claim_label="evidence_reframed", coverage_edge_ids=("question-evidence",), requirement_ids=(),
-                         evidence_ids=tuple(section["evidenceIds"]), non_requirement_reason="positioning", review_required=False)]
+                         evidence_ids=tuple(section["evidenceIds"]), non_requirement_reason="positioning", review_required=False)
+                        for claim_index, claim_text in enumerate(claim_texts)]
             grounding = ground_claim_mappings(mappings, tuple((str(index), source) for index, source in enumerate(sources)))
             if grounding.ungrounded:
                 failures.append(f"{location} is not grounded in its selected canonical excerpts")
@@ -191,6 +202,10 @@ def run_question_truthfulness_gates(
             for authority in _AUTHORITY.findall(text):
                 if authority.lower() not in " ".join(sources).lower() and authority.lower() not in source_words:
                     failures.append(f"{location} invents personal authority: {authority}")
+        for text in [*(gap["prompt"] for gap in metadata.get("gaps", [])),
+                     *(gap["reason"] for gap in metadata.get("gaps", [])), *metadata.get("probes", [])]:
+            if _HISTORICAL_ASSERTION.search(text):
+                failures.append(f"{item.item_id} clarification/probe asserts personal history without accepted evidence")
         if metadata.get("questionId") == "C07":
             if "range" not in item.generated_text.lower():
                 failures.append("C07 must preserve the employer budgeted-range-first guidance")
