@@ -7,8 +7,8 @@ import CandidateProfileFlow from "../.vitepress/theme/CandidateProfileFlow.vue";
 A Candidate Profile is JobCtrl's canonical, local record of facts about you:
 your experience, education, skills, evidence, application answers, resume
 baseline, and the preferences that control how those facts may be used. Scoring,
-materials, and Apply consume versioned snapshots of this record; they do not
-rewrite it to suit a job.
+materials, interview preparation, and Apply consume versioned snapshots of
+this record; they do not rewrite it to suit a job.
 
 <CandidateProfileFlow />
 
@@ -24,7 +24,8 @@ profile boundary works in this order:
    through the Candidate Profile domain rules, validates target places when
    present, and replaces the normalized profile rows in one database
    transaction. Every accepted save advances the local profile version.
-3. **Work receives an immutable snapshot.** Scoring, Materials, and Apply read a
+3. **Work receives an immutable snapshot.** Scoring, Materials, interview prep,
+   and Apply read a
    deep-copied `ProfileSnapshot`. Derived compatibility fields are regenerated
    from the canonical rows, and changing a returned object cannot mutate the
    source profile.
@@ -144,7 +145,19 @@ The profile's main ownership boundaries are:
   value edited on `/discovery` is SQLite-backed. See [Discovery](discovery.md).
 - **Materials own generated output.** A tailored resume, Apply Review draft, or
   rendered PDF does not back-write its wording into the profile. Promote a true
-  new fact by editing the Profile itself.
+  new fact by editing the Profile itself. Interview question guidance is public
+  research, not evidence about you. Generated outlines and personal preparation
+  notes do not change profile facts, fit scores, search preferences, approved
+  resumes, or Apply decisions. A new recollection saved in a preparation note
+  remains an unverified user statement; review and save a true fact through
+  Profile before using it as canonical evidence.
+
+Interview prep retains the profile version and relevant generation-time
+evidence excerpts it used. A later profile save marks that preparation stale;
+it does not rewrite its history or silently regenerate it. Inspect the retained
+source alongside the current Profile before choosing to regenerate. See
+[Interview preparation](materials-and-tailoring.md#interview-preparation) for
+question selection, notes, and accepted-history behavior.
 
 The Evidence map is a projection over these canonical profile rows and their
 downstream use. It does not create a second evidence store or infer evidence

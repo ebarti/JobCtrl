@@ -33,6 +33,7 @@ For a plain-language overview, read
 | Does Discovery use my browser profile? | ◐ **When the selected paired extension is connected.** Discovery and Enrich prefer its live profile for bounded HTTP/API tasks and temporary inactive tabs. Without it, they use guarded public HTTP or anonymous managed Playwright. They never copy or separately launch your profile, and a fetch failure does not change transport. |
 | Does application-submission browser automation run continuously? | ✕ **No.** It starts only through apply/dry-run work you initiate or a standing loop you explicitly enable. |
 | Does JobCtrl submit applications or send employer-facing email by default? | ✕ **No.** Browser submission and Gmail application sending are explicit guarded actions. |
+| Does browsing Interviews call a model? | ✕ **No.** The installed public catalog is local. Job-specific generation is a separate explicit provider-backed action. |
 | Does Outreach send messages automatically? | ✕ **No.** Drafts end at copy/export; send logs are user attestations. |
 | Does Plate PDF export upload or register my edited resume? | ✕ **No.** The browser renders the currently visible Plate document into a download; it does not call a generation provider, save the edits, or register a JobCtrl artifact. |
 
@@ -240,6 +241,40 @@ Contact research is supervised:
 Draft bodies, gate results, and claim provenance stay local. An approved draft
 can be copied/exported; JobCtrl has no outreach send transport. Logging a send
 records something you did. Follow-ups are reminders and never act automatically.
+
+### Interview Guidance, Preparation, And Notes
+
+The installed question catalog contains public editorial research and synthetic
+examples. Its source ledger records whether guidance comes directly from an
+interview source, extrapolates leadership practice, or is editorial synthesis,
+and how much of each source was read. Attribution does not imply author
+endorsement or prove any personal claim. The catalog and its criteria remain a
+research draft; they do not establish hiring outcomes or validated grading.
+
+Browsing the library needs no job, database, live worker, or provider call.
+Opening an external source link uses the browser's normal network access.
+Explicit job preparation sends only the selected cards and bounded relevant
+profile/job context to the configured model under the existing provider and
+spend controls. It does not generate a personalized answer for every card.
+
+Accepted prep, its retained input excerpts, generation history, and revisioned
+per-question notes are private local job data. Notes are user edits and new
+recollections remain unverified statements; saving or generating preparation
+does not promote them into Profile, change fit scores or Discovery intent,
+replace approved resumes, or authorize Apply. Question, job, generation, and
+revision IDs may enter events; answer, note, profile, and excerpt text may not.
+The local retention and job-deletion boundary applies to these records. Keep
+notes and prep out of screenshots, public issues, PRs, and shared logs.
+
+The compensation question C07 asks for the employer's budgeted range first.
+Public negotiation guidance is separate from your private compensation
+preferences. It must not disclose an inferred minimum or treat a deliberate
+user-chosen exception as a competency failure. The retired C08 ID remains
+reserved: logistics and authorization are your declared checklist facts.
+
+Reusable preparation without a job, typed rehearsal, calibrated assessment,
+and live interview assistance are not shipped by this integration. See
+[Interview preparation](materials-and-tailoring.md#interview-preparation).
 
 ## External Services
 
