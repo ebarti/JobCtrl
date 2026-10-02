@@ -182,14 +182,16 @@ const DEFAULT_NODE_BASE_URL = "http://127.0.0.1:8766";
 export class JobCtrlApiError extends Error {
   readonly status: number;
   readonly statusText: string;
+  readonly responseBody: unknown;
 
-  constructor(status: number, statusText: string, detail?: string) {
+  constructor(status: number, statusText: string, detail?: string, responseBody?: unknown) {
     super(
       detail?.trim() || `JobCtrl API request failed: ${status} ${statusText}`,
     );
     this.name = "JobCtrlApiError";
     this.status = status;
     this.statusText = statusText;
+    this.responseBody = responseBody;
   }
 }
 
@@ -1266,13 +1268,15 @@ export class JobCtrlApiClient {
     }
     if (!response.ok) {
       let detail: string | undefined;
+      let responseBody: unknown;
       try {
         const payload = (await response.json()) as { message?: unknown };
+        responseBody = payload;
         if (typeof payload.message === "string") detail = payload.message;
       } catch {
         // Preserve the status-only fallback for non-JSON error responses.
       }
-      throw new JobCtrlApiError(response.status, response.statusText, detail);
+      throw new JobCtrlApiError(response.status, response.statusText, detail, responseBody);
     }
     return (await response.json()) as T;
   }

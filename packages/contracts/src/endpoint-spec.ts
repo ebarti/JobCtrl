@@ -1,4 +1,16 @@
 import { z } from "zod";
+import {
+  InterviewCatalogQuerySchema,
+  InterviewCatalogResponseSchema,
+  InterviewQuestionCardSchema,
+  InterviewQuestionResponseSchema,
+  InterviewNotesQuerySchema,
+  InterviewNotesResponseSchema,
+  InterviewPrepHistoryQuerySchema,
+  InterviewPrepHistoryResponseSchema,
+  SaveInterviewQuestionNoteRequestSchema,
+  SaveInterviewQuestionNoteResponseSchema,
+} from "./interview.js";
 
 import {
   APPLICATION_OUTCOME_KINDS,
@@ -531,7 +543,65 @@ const rollbackFailure = (failure: EndpointDispatchFailure): EndpointFailureRespo
   message: "The tailoring policy rollback could not be completed.",
 });
 
+const interviewQuestionPath = defineEndpointPath({
+  route: "/v1/interviews/questions/:questionId",
+  paramName: "questionId",
+  paramSchema: InterviewQuestionCardSchema.shape.id,
+  invalid: { status: 400, error: "invalid_interview_question_id" },
+  build: (questionId: string) => `/v1/interviews/questions/${encodeURIComponent(questionId)}`,
+});
+
+function interviewJobPath(suffix: string) {
+  return defineEndpointPath({
+    route: `/v1/jobs/:jobKey/${suffix}`,
+    paramName: "jobKey",
+    paramSchema: z.string().trim().min(1).max(4096),
+    invalid: { status: 400, error: "invalid_job_key" },
+    build: (jobKey: string) => `/v1/jobs/${encodeURIComponent(jobKey)}/${suffix}`,
+  });
+}
+
 export const ENDPOINTS = {
+  interviewCatalog: defineEndpoint({
+    name: "interviewCatalog",
+    method: "GET",
+    path: "/v1/interviews/catalog",
+    request: InterviewCatalogQuerySchema.optional().transform((query) => InterviewCatalogQuerySchema.parse(query ?? {})),
+    response: InterviewCatalogResponseSchema,
+    demo: { class: "browser_local", reason: "The public editorial catalog is available offline." },
+  }),
+  interviewQuestion: defineEndpoint({
+    name: "interviewQuestion",
+    method: "GET",
+    path: interviewQuestionPath,
+    request: z.object({}).strict().optional(),
+    response: InterviewQuestionResponseSchema,
+    demo: { class: "browser_local", reason: "Question guidance reads the public editorial catalog." },
+  }),
+  interviewPrepHistory: defineEndpoint({
+    name: "interviewPrepHistory",
+    method: "GET",
+    path: interviewJobPath("interview-prep/history"),
+    request: InterviewPrepHistoryQuerySchema.optional().transform((query) => InterviewPrepHistoryQuerySchema.parse(query ?? {})),
+    response: InterviewPrepHistoryResponseSchema,
+    demo: { class: "browser_local", reason: "Synthetic preparation history is available in the demo." },
+  }),
+  interviewNotes: defineEndpoint({
+    name: "interviewNotes",
+    method: "GET",
+    path: interviewJobPath("interview-notes"),
+    request: InterviewNotesQuerySchema.optional().transform((query) => InterviewNotesQuerySchema.parse(query ?? {})),
+    response: InterviewNotesResponseSchema,
+    demo: { class: "browser_local", reason: "Interview note revisions are local user edits." },
+  }),
+  saveInterviewNote: defineEndpoint({
+    name: "saveInterviewNote",
+    method: "POST",
+    path: interviewJobPath("interview-notes"),
+    request: SaveInterviewQuestionNoteRequestSchema,
+    response: SaveInterviewQuestionNoteResponseSchema,
+    demo: { class: "browser_local", reason: "Note saving uses local compare-and-swap revisions." },
+  }),
   learningRecommendations: defineEndpoint({
     name: "learningRecommendations",
     method: "GET",
