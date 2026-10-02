@@ -11,6 +11,8 @@ import { InterviewContextForm } from "../forms/interview-context-form.js";
 import { InterviewNoteForm } from "../forms/interview-note-form.js";
 import { InterviewPrepPanel } from "./InterviewPrepPanel.js";
 
+type AcceptedPrepRead = { jobId: string; prep: InterviewPrep; readAt: number };
+
 // Mount only for an explicit canonical job. The offline catalog path never
 // creates a job query or passes an empty job ID into a job-backed hook.
 export function InterviewJobPreparation({ jobId, catalog, question }: {
@@ -20,15 +22,23 @@ export function InterviewJobPreparation({ jobId, catalog, question }: {
   const evidence = useEvidenceMapQuery();
   const [historyPage, setHistoryPage] = useState(1);
   const history = useInterviewPrepHistoryQuery(jobId, historyPage);
-  const [retainedPrep, setRetainedPrep] = useState<{ jobId: string; prep: InterviewPrep }>();
+  const [retainedPrep, setRetainedPrep] = useState<AcceptedPrepRead>();
   const acceptedHistory = history.data?.generations.find((generation) => generation.status === "accepted");
   // Job Detail reads the canonical latest accepted generation independently of
   // failed history rows. Also retain an accepted page encountered during lag.
-  const candidates = [detail.data?.interviewPrep, acceptedHistory, retainedPrep?.jobId === jobId ? retainedPrep.prep : null];
-  const prep = candidates.reduce<InterviewPrep | null>((latest, candidate) => candidate && candidate.status !== "failed" && (!latest || candidate.generation > latest.generation) ? candidate : latest, null);
+  // Staleness is derived from current inputs and can change without a new
+  // generation. Prefer the most recent canonical read on generation ties.
+  const candidates = [
+    detail.data?.interviewPrep ? { jobId, prep: detail.data.interviewPrep, readAt: detail.dataUpdatedAt } : null,
+    retainedPrep?.jobId === jobId ? retainedPrep : null,
+    acceptedHistory ? { jobId, prep: acceptedHistory, readAt: history.dataUpdatedAt } : null,
+  ];
+  const accepted = candidates.reduce<AcceptedPrepRead | null>((latest, candidate) => candidate && candidate.prep.status !== "failed" && (!latest || candidate.prep.generation > latest.prep.generation || candidate.prep.generation === latest.prep.generation && candidate.readAt >= latest.readAt) ? candidate : latest, null);
+  const prep = accepted?.prep ?? null;
+  const readAt = accepted?.readAt ?? 0;
   useEffect(() => {
-    if (prep) setRetainedPrep((previous) => previous?.jobId === jobId && previous.prep === prep ? previous : { jobId, prep });
-  }, [jobId, prep]);
+    if (prep) setRetainedPrep((previous) => previous?.jobId === jobId && previous.prep === prep && previous.readAt === readAt ? previous : { jobId, prep, readAt });
+  }, [jobId, prep, readAt]);
   if (!detail.data) return <Empty title={detail.error ? "Job unavailable. Open a canonical job from Jobs to prepare." : "Loading selected job."} />;
   const job = detail.data;
   const prepContext = prep?.generationContext;

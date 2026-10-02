@@ -158,6 +158,8 @@ function seedHistoricalPreparation(generation = 1001): void {
   const prep = makeQuestionPrep("B11", QA_PLATFORM_JOB_ID);
   const db = new Database(loadE2eDbPath());
   try {
+    const profile = db.prepare("SELECT version FROM candidate_profiles WHERE tenant_id='local' AND profile_id='default'").get() as { version: number };
+    prep.generationContext!.profile = { ...prep.generationContext!.profile, profileId: "default", version: profile.version };
     const insert = db.prepare(`INSERT INTO job_interview_prep
       (tenant_id, job_id, generation, status, model, generated_at, gate_status,
        fabrication_findings_json, grounding_findings_json, judge_verdict, warnings_json, failure_reason, generation_context_json)
@@ -184,6 +186,7 @@ function seedHistoricalPreparation(generation = 1001): void {
 }
 
 test("Interview history: accepted outlines and gaps survive failed runs and independent note revisions", async ({ page }) => {
+  test.setTimeout(60_000);
   seedHistoricalPreparation();
   const [jobRead] = await Promise.all([
     page.waitForResponse((response) => new URL(response.url()).pathname === `/v1/jobs/${QA_PLATFORM_JOB_ID}` && response.request().method() === "GET"),
@@ -195,6 +198,13 @@ test("Interview history: accepted outlines and gaps survive failed runs and inde
   await expect(accepted).toContainText("generation 1001");
   await expect(accepted.getByRole("paragraph").filter({ hasText: "Open B11 guidance · principle answer" })).toBeVisible();
   await expect(accepted.getByText("Preparation inputs have changed", { exact: true })).toBeVisible();
+  await expect(accepted).not.toContainText("profile changed");
+  const origin = new URL(page.url()).origin;
+  const profileResponse = await page.request.get("/v1/profile");
+  const profile = await profileResponse.json();
+  const profileUpdate = await page.request.patch("/v1/profile", { headers: { Origin: origin, "sec-fetch-site": "same-origin" }, data: { profile: { ...profile.profile, personal: { ...profile.profile.personal, preferred_name: "Synthetic QA preparation staleness" } } } });
+  expect(profileUpdate.status()).toBe(200);
+  await expect(accepted).toContainText("profile changed", { timeout: 15_000 });
   await accepted.getByText("Generation-time inputs and versions", { exact: true }).click();
   await expect(accepted).toContainText('"evidenceSelectionMode": "deterministic"');
   const failedAttempt = page.getByText(/Generation 1002 · failed/);

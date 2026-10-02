@@ -1,12 +1,14 @@
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, Outlet, RouterProvider } from "@tanstack/react-router";
 import { JobCtrlApiError } from "@jobctrl/api-client";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { LOCAL_TENANT } from "@jobctrl/domain-types";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { axe } from "jest-axe";
 import { http, HttpResponse } from "msw";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useInterviewDraftStore } from "../../contexts/materials/stores/interview-drafts.js";
+import { interviewKeys } from "../../contexts/operations/interviewKeys.js";
 import { interviewsSearchSchema } from "../../routes/-interviews.search.js";
 import { sampleInterviewCatalogResponse, makeQuestionPrep } from "../../test/fixtures/interviews.js";
 import { makeJobDetail, sampleInterviewPrep } from "../../test/fixtures/projections.js";
@@ -23,7 +25,7 @@ function renderInterviews(initialEntry = "/interviews?card=B11", ports = buildTe
   const job = createRoute({ getParentRoute: () => jobs, path: "$jobId", component: () => null });
   const evidence = createRoute({ getParentRoute: () => root, path: "/evidence-map", component: () => null });
   const router = createRouter({ routeTree: root.addChildren([interviews, jobs.addChildren([job]), evidence]), history: createMemoryHistory({ initialEntries: [initialEntry] }) });
-  return { router, ...render(<RouterProvider router={router} />, { wrapper: harness.Wrapper }) };
+  return { router, queryClient: harness.queryClient, ...render(<RouterProvider router={router} />, { wrapper: harness.Wrapper }) };
 }
 
 beforeEach(() => useInterviewDraftStore.setState({ selections: new Map(), notes: new Map() }));
@@ -152,5 +154,29 @@ describe("native interview library", () => {
     await screen.findByText("Note save failed. Your text has been preserved.");
     expect(text).toHaveValue("Retained local text");
     expect(save.mock.calls[0]).toEqual(["job-1", expect.objectContaining({ sourceGeneration: prep.generation, bindings: { catalogBinding: context.catalogBinding, cardRevision: "historic", cardDigest: "b".repeat(64), contextDigest: context.contextDigest } })]);
+  });
+
+  it.each(["profile_changed", "job_changed", "employer_analysis_changed", "approved_materials_changed", "catalog_changed"] as const)("uses refreshed same-generation %s metadata across paging and clears restored inputs", async (reason) => {
+    const user = userEvent.setup();
+    const prep = { ...makeQuestionPrep(), staleReasons: [] };
+    const response = { ok: true as const, jobId: "job-1", generations: [prep], page: 1, pageSize: 20, total: 21 };
+    const view = renderInterviews("/interviews?card=B11&job=job-1", buildTestPorts({ api: {
+      job: async () => makeJobDetail(undefined, { interviewPrep: prep }),
+      interviewPrepHistory: async (_jobId, input) => Number(input?.page) === 2 ? { ...response, page: 2, generations: [] } : response,
+    } }));
+    await screen.findByText(/Generation 2 · accepted/);
+    const current = screen.getAllByRole("region", { name: "Interview preparation" })[0]!;
+    expect(current).not.toHaveTextContent("Preparation inputs have changed");
+    const key = [...interviewKeys.history(LOCAL_TENANT, "job-1"), { page: 1 }];
+    act(() => view.queryClient.setQueryData(key, { ...response, generations: [{ ...prep, staleReasons: [reason] }] }));
+    await waitFor(() => expect(current).toHaveTextContent("Preparation inputs have changed"));
+    expect(current).toHaveTextContent(reason.replaceAll("_", " "));
+    await user.click(screen.getByRole("button", { name: "Older generations" }));
+    await screen.findByText("Page 2; 21 generations");
+    expect(current).toHaveTextContent("Preparation inputs have changed");
+    act(() => view.queryClient.setQueryData(key, response));
+    await user.click(screen.getByRole("button", { name: "Previous generations" }));
+    await waitFor(() => expect(current).not.toHaveTextContent("Preparation inputs have changed"));
+    expect(current).toHaveTextContent("generation 2");
   });
 });
