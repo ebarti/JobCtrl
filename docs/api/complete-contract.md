@@ -848,9 +848,11 @@ not from source labels or display text. `null` means the recorded estimate does
 not carry a valid canonical benchmark reference; it does not relabel legacy or
 malformed evidence as direct.
 
-`GET /v1/jobs/:jobKey` also includes top-level `interviewPrep`, sourced from
-`job_detail_projections.interview_prep_json`. The value is `null` until the user
-explicitly generates prep for that job. When present, it is the latest accepted
+`GET /v1/jobs/:jobKey` also includes top-level `interviewPrep`, loaded from the
+canonical latest accepted `job_interview_prep` generation. Projection JSON
+mirrors prep, but projection lag and history pagination cannot replace the
+current accepted result. The value is `null` when no accepted generation exists.
+When present, it is the latest accepted
 stored prep generation with item text, item kind, evidence IDs, requirement IDs,
 joined profile source snippets, gate/judge summary, and accepted-residual
 warnings. Optional `generationContext`, per-item `questionMetadata`, and
@@ -1093,7 +1095,8 @@ reads are bounded to 1 MiB. Unavailable or mismatched artifacts are excluded and
 labeled, and a maximum bullet-provenance generation is not approval proof.
 
 Current job-detail reads retain the latest accepted generation during pending
-or failed refresh. History query accepts optional positive `generation`,
+or failed refresh, independently of projection lag or the number of later
+failed attempts. History query accepts optional positive `generation`,
 `page` 1–1000 (default 1), and `pageSize` 1–100 (default 20). It exposes prior
 accepted/superseded and failed attempts, newest generation first. Relevant generation-time excerpts and
 snapshots stay immutable when current inputs change. Read-derived `staleReasons`
@@ -1125,7 +1128,15 @@ and context bindings from the retained selected question; optional supplied
 claims; it does not clear the server-derived origin. A source generation explains
 origin but never transfers a passed generation audit to the user edit.
 
-Omitting `sourceGeneration` preserves an existing origin. Explicit null creates
+Omitting `sourceGeneration` normally preserves an existing origin; an ordinary
+existing-note edit omitting origin claims safely detaches to null source/context
+if that generation was deleted. The new revision uses current card/catalog
+bindings when available, otherwise null; its earlier revision retains the
+original provenance. It never rebinds implicitly to the newest prep. A fresh or
+explicitly supplied missing origin still fails validation, as does a malformed
+or mismatched retained origin.
+
+Explicit null creates
 an independent note with the current active card/catalog binding and null
 context; it cannot claim a generation context. Existing orphaned or retired
 notes remain editable, with unavailable bindings represented as null. A new
