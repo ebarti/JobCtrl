@@ -38,6 +38,30 @@ EMBEDDED_CASES = [
     ("open_independent_assertion", "Is there a technical decision you want to discuss? I improved incident coordination.", False),
     ("input_prior_premise", "The list stays empty until you confirm your prior role as Director at Acme.", False),
     ("target_role_biography", "What does the Director role require? I worked as Director at Acme.", False),
+    ("reduced_if_metric", "I would review options if needed but I saved $2 million using Kubernetes.", False),
+    ("reduced_if_role", "I would review options if needed but I actually served as Director at Acme.", False),
+    ("reduced_if_history", "I would review options if needed but I rescued every critical launch.", False),
+    ("reduced_if_and_history", "I would review options if appropriate and I rescued every critical launch.", False),
+    ("modified_reduced_if", "I would review options if absolutely necessary but I rescued every critical launch.", False),
+    ("generic_reduced_if", "I would review options if practical but I saved $2 million using Kubernetes.", False),
+    ("generic_modified_reduced_if", "I would review options if politically prudent but I actually served as Director at Acme.", False),
+    ("adjunct_reduced_if", "I would review options if needed for the design but I rescued every critical launch.", False),
+    ("reduced_if_implicit_history", "I would review options if needed but rescued every critical launch.", False),
+    ("reduced_if_implicit_metric", "I would review options if needed and saved $2 million using Kubernetes.", False),
+    ("independent_future", "I would review options if needed but I would compare criteria before committing.", True),
+    ("modified_independent_future", "I would review options if needed but I actually would compare criteria before committing.", True),
+    ("implicit_future", "I would review options if needed and compare criteria before committing.", True),
+    ("full_conditional_contrast", "If you managed a team but you had limited authority, how would you compare criteria?", True),
+    ("full_conditional_coordination", "If you and your hypothetical team managed 50 engineers, how would you compare criteria?", True),
+    ("nominal_conditional_coordination", "If workload increased and you managed 50 engineers, how would you compare criteria?", True),
+    ("personal_conditional_assumption", "If I saved $2 million using Kubernetes, I would compare criteria.", True),
+    ("nested_conditional_assumption", "I would monitor whether a review is needed and step back if my review becomes the critical path.", True),
+    ("full_embedded_conditional_assumptions", "I would review options if I managed 50 engineers and I had limited authority.", True),
+    ("full_embedded_actual_metric", "I would review options if I managed a team but I actually saved $2 million using Kubernetes.", False),
+    ("full_embedded_actual_role", "I would review options if I managed a team but I previously served as Director at Acme.", False),
+    ("full_embedded_actual_history", "I would review options if I managed a team but I actually rescued every critical launch.", False),
+    ("fronted_actual_hypothesis", "If I actually saved $2 million using Kubernetes, I would compare criteria.", True),
+    ("embedded_actual_assumption", "I would review options if I actually managed 50 engineers and I had limited authority.", True),
 ]
 
 
@@ -48,9 +72,51 @@ def test_embedded_operator_has_local_scope(tmp_path: Path, name, phrase, accepte
     assert_proposition(tmp_path, name, phrase, accepted, location, support)
 
 
+@pytest.mark.parametrize("question_id", ["B11", "M02"])
+@pytest.mark.parametrize("location", ["heading", "text", "gap", "reason", "probe"])
+@pytest.mark.parametrize("support", ["hypothetical", "needs_clarification"])
+@pytest.mark.parametrize("phrase,accepted", [
+    ("I would review options if I managed 50 engineers and I had limited authority.", True),
+    ("I would review options if I actually managed 50 engineers and I actually had limited authority.", True),
+    ("If I actually saved $2 million using Kubernetes, I would compare criteria.", True),
+    ("I would review options if I managed a team but I actually saved $2 million using Kubernetes.", False),
+    ("I would review options if I managed a team but I previously served as Director at Acme.", False),
+    ("I would review options if I managed a team but I actually rescued every critical launch.", False),
+])
+def test_full_antecedent_pairs_keep_selected_and_empty_scope(tmp_path: Path, question_id, location, support, phrase, accepted):
+    conn = _init_conn(tmp_path)
+    try:
+        request = _request(question_id)
+        repository = SqliteInterviewPrepRepository(conn)
+        prior = GenerateInterviewPrepUseCase(repository=repository, llm=_FakeLlm([_candidate(question_id), _judge_pass()])).execute(
+            origin_run_id="prior", **request).prep
+        candidate = _candidate(question_id)
+        item = candidate["items"][0]
+        item["outline"][0]["factual_support"] = support
+        if location in {"heading", "text"}:
+            item["outline"][0][location] = phrase
+        elif location == "probe":
+            item["probes"] = [phrase]
+        else:
+            item["gaps"][0]["prompt" if location == "gap" else "reason"] = phrase
+        llm = _FakeLlm([candidate, _judge_pass()])
+        outcome = GenerateInterviewPrepUseCase(repository=repository, llm=llm).execute(origin_run_id="full-range", **request)
+        assert outcome.status == ("accepted" if accepted else "failed"), outcome.errors
+        assert len(llm.calls) == (2 if accepted else 1)
+        if accepted:
+            links = outcome.prep.items[0].question_metadata["evidenceLinks"]
+            assert [link["evidenceId"] for link in links] == (["ev-platform-latency"] if question_id == "B11" else [])
+        else:
+            assert repository.load_latest(LOCAL_TENANT, JOB_ID).to_read_model() == prior.to_read_model()
+    finally:
+        close_connection(tmp_path / "jobs.db")
+
+
 @pytest.mark.parametrize("location", ["heading", "text", "gap", "reason", "probe"])
 @pytest.mark.parametrize("selected", [True, False])
-def test_planned_concrete_account_requires_its_question_source(tmp_path: Path, location, selected):
+@pytest.mark.parametrize("phrase", ["I would describe how I reduced API latency by 30% using Python.",
+                                    "I would review options if needed, but how did you reduce API latency by 30% using Python?"])
+def test_planned_concrete_account_requires_its_question_source(tmp_path: Path, location, selected, phrase):
     conn = _init_conn(tmp_path)
     try:
         request = _request("B11" if selected else "M02")
@@ -60,7 +126,6 @@ def test_planned_concrete_account_requires_its_question_source(tmp_path: Path, l
             origin_run_id="prior", **request).prep
         candidate = _candidate(question_id)
         item = candidate["items"][0]
-        phrase = "I would describe how I reduced API latency by 30% using Python."
         if location in {"heading", "text"}:
             item["outline"][0][location] = phrase
         elif location == "probe":
@@ -109,7 +174,7 @@ def test_nonfactual_source_reference_is_rejected_without_relabeling(tmp_path: Pa
             origin_run_id="compliant-anchor", **request).prep
         assert accepted.status == "accepted"
         assert accepted.generation_context["model"]["promptVersion"] == "interview-questions-v4"
-        assert accepted.generation_context["model"]["gateVersion"] == "interview-question-grounding-v13"
+        assert accepted.generation_context["model"]["gateVersion"] == "interview-question-grounding-v14"
         invalid = deepcopy(candidate)
         invalid["items"][0]["outline"][1].update(evidence_ids=["ev-platform-latency"], factual_support=support)
         original = deepcopy(invalid)
