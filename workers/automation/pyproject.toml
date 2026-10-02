@@ -104,7 +104,7 @@ build-backend = "hatchling.build"
 packages = ["src/jobctrl"]
 
 [tool.hatch.build]
-artifacts = ["src/jobctrl/config/*.yaml", "src/jobctrl/assets/fonts/*", "src/jobctrl/infrastructure/migrations/*.sql"]
+artifacts = ["src/jobctrl/config/*.yaml", "src/jobctrl/assets/fonts/*", "src/jobctrl/assets/interview/*.json", "src/jobctrl/infrastructure/migrations/*.sql"]
 
 [tool.hatch.build.targets.sdist.force-include]
 "../../LICENSE" = "LICENSE"

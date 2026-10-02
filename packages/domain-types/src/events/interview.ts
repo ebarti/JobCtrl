@@ -50,5 +50,11 @@ export interface InterviewQuestionNoteSavedPayload {
 }
 export type InterviewQuestionNoteSaved = DomainEvent<"InterviewQuestionNoteSaved", InterviewQuestionNoteSavedPayload>;
 export function createInterviewQuestionNoteSaved(tenantId: TenantId, payload: InterviewQuestionNoteSavedPayload): InterviewQuestionNoteSaved {
-  return createDomainEvent("InterviewQuestionNoteSaved", tenantId, payload);
+  return createDomainEvent("InterviewQuestionNoteSaved", tenantId, {
+    jobId: payload.jobId,
+    questionId: payload.questionId,
+    revision: payload.revision,
+    sourceGeneration: payload.sourceGeneration,
+    updatedAt: payload.updatedAt,
+  });
 }
