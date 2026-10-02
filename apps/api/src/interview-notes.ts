@@ -1,8 +1,10 @@
 import {
+  InterviewGenerationContextSchema,
   InterviewNotesQuerySchema,
   InterviewNotesResponseSchema,
   InterviewQuestionNoteSchema,
   SaveInterviewQuestionNoteRequestSchema,
+  type InterviewCatalog,
   type InterviewNotesQuery,
   type InterviewNotesResponse,
 } from "./contracts.js";
@@ -31,7 +33,50 @@ export class InterviewNoteRevisionConflictError extends Error {
 }
 
 export class InterviewNoteSourceError extends Error {
-  constructor() { super("The source preparation generation does not belong to this job."); }
+  constructor() { super("The preparation origin does not identify this retained interview question."); }
+}
+
+export class InterviewNoteBindingsError extends Error {
+  constructor() { super("The note bindings do not match its interview question origin. Your edits have not been saved."); }
+}
+
+type NoteBindings = NonNullable<InterviewQuestionNote["bindings"]>;
+
+function authoritativeNoteBindings(
+  db: SqliteDatabase, tenantId: string, jobId: string, questionId: string, sourceGeneration: number | null,
+  catalog: InterviewCatalog | null,
+): NoteBindings | null {
+  if (sourceGeneration !== null) {
+    const row = db.prepare("SELECT generation_context_json FROM job_interview_prep WHERE tenant_id = ? AND job_id = ? AND generation = ?")
+      .get(tenantId, jobId, sourceGeneration) as { generation_context_json: string | null } | undefined;
+    let context;
+    try { context = InterviewGenerationContextSchema.safeParse(row?.generation_context_json ? JSON.parse(row.generation_context_json) : null); }
+    catch { throw new InterviewNoteSourceError(); }
+    if (!context.success || context.data.jobContext.jobId !== jobId) throw new InterviewNoteSourceError();
+    const selected = context.data.selectedQuestions.filter((question) => question.questionId === questionId);
+    const card = selected[0];
+    if (selected.length !== 1 || !card || !context.data.selectedQuestionIds.includes(questionId)
+      || card.snapshot.id !== questionId || card.cardRevision !== card.snapshot.cardRevision
+      || card.cardDigest !== card.snapshot.cardDigest) throw new InterviewNoteSourceError();
+    return { catalogBinding: context.data.catalogBinding, cardRevision: card.snapshot.cardRevision,
+      cardDigest: card.snapshot.cardDigest, contextDigest: context.data.contextDigest };
+  }
+  const card = catalog?.questions.find((question) => question.id === questionId);
+  return card && catalog ? { catalogBinding: { catalogRevision: catalog.catalogRevision, catalogDigest: catalog.catalogDigest },
+    cardRevision: card.cardRevision, cardDigest: card.cardDigest, contextDigest: null } : null;
+}
+
+function validateNoteBindingClaims(claims: SaveInterviewQuestionNoteRequest["bindings"], bindings: NoteBindings | null): void {
+  if (!claims) return;
+  for (const key of ["cardRevision", "cardDigest", "contextDigest"] as const) {
+    if (claims[key] !== undefined && claims[key] !== (bindings?.[key] ?? null)) throw new InterviewNoteBindingsError();
+  }
+  if (claims.catalogBinding !== undefined) {
+    const actual = bindings?.catalogBinding ?? null;
+    if (claims.catalogBinding === null ? actual !== null : !actual
+      || claims.catalogBinding.catalogRevision !== actual.catalogRevision
+      || claims.catalogBinding.catalogDigest !== actual.catalogDigest) throw new InterviewNoteBindingsError();
+  }
 }
 
 function noteFromRow(row: NoteRow): InterviewQuestionNote {
@@ -66,18 +111,16 @@ export function listInterviewNotes(db: SqliteDatabase, tenantId: string, jobId: 
 }
 
 /** Compare-and-swap, revision archive and safe event are one transaction. */
-export function saveInterviewNote(db: SqliteDatabase, tenantId: string, jobId: string, input: SaveInterviewQuestionNoteRequest): InterviewQuestionNote {
+export function saveInterviewNote(db: SqliteDatabase, tenantId: string, jobId: string, input: SaveInterviewQuestionNoteRequest, catalog: InterviewCatalog | null = null): InterviewQuestionNote {
   const request = SaveInterviewQuestionNoteRequestSchema.parse(input);
   return db.transaction(() => {
     const current = readInterviewNote(db, tenantId, jobId, request.questionId);
     if ((current?.revision ?? 0) !== request.expectedRevision) throw new InterviewNoteRevisionConflictError(current);
     const sourceGeneration = request.sourceGeneration === undefined ? (current?.sourceGeneration ?? null) : request.sourceGeneration;
-    if (sourceGeneration != null && !db.prepare(
-      "SELECT 1 FROM job_interview_prep WHERE tenant_id = ? AND job_id = ? AND generation = ?",
-    ).get(tenantId, jobId, sourceGeneration)) throw new InterviewNoteSourceError();
+    const bindings = authoritativeNoteBindings(db, tenantId, jobId, request.questionId, sourceGeneration, catalog);
+    validateNoteBindingClaims(request.bindings, bindings);
     const revision = request.expectedRevision + 1;
     const updatedAt = new Date().toISOString();
-    const bindings = request.bindings === undefined ? (current?.bindings ?? null) : request.bindings;
     const bindingsJson = bindings === null ? null : JSON.stringify(bindings);
     const support = request.factualSupport ?? "unverified_user_statement";
     if (current) {

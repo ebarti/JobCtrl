@@ -210,6 +210,7 @@ import {
   validateInterviewGenerationSelection,
 } from "./interview-catalog.js";
 import {
+  InterviewNoteBindingsError,
   InterviewNoteRevisionConflictError,
   InterviewNoteSourceError,
   listInterviewNotes,
@@ -973,13 +974,21 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
           const jobId = resolveExistingJobId(reply, db, jobKey);
           if (!jobId) return { ok: false, error: "job_not_found" };
           try {
-            // Existing notes remain editable if a later catalog retires their card.
-            if (!readInterviewNote(db, "local", jobId, request.questionId)) getInterviewQuestion(readInterviewCatalog(), request.questionId);
-            return { ok: true, note: saveInterviewNote(db, "local", jobId, request) };
+            const existing = readInterviewNote(db, "local", jobId, request.questionId);
+            if ((existing?.revision ?? 0) !== request.expectedRevision) throw new InterviewNoteRevisionConflictError(existing);
+            const sourceGeneration = request.sourceGeneration === undefined ? (existing?.sourceGeneration ?? null) : request.sourceGeneration;
+            const catalog = currentCatalogOrNull();
+            // Historical origins use retained cards; independent new notes require a current active card.
+            if (!existing && sourceGeneration === null) getInterviewQuestion(catalog ?? readInterviewCatalog(), request.questionId);
+            return { ok: true, note: saveInterviewNote(db, "local", jobId, request, catalog) };
           } catch (error) {
             if (error instanceof InterviewNoteRevisionConflictError) {
               void reply.code(409);
               return { ok: false, error: "interview_note_revision_conflict", message: error.message, currentNote: error.currentNote };
+            }
+            if (error instanceof InterviewNoteBindingsError) {
+              void reply.code(400);
+              return { ok: false, error: "invalid_interview_note_bindings", message: error.message };
             }
             if (error instanceof InterviewNoteSourceError) {
               void reply.code(400);
