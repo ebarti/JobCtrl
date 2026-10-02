@@ -8628,3 +8628,27 @@ input[type="radio"] {
   --font-heading: var(--jh-font-heading);
   --font-mono: var(--jh-font-mono);
 }
+
+/* Interviews uses the native Library workspace and semantic tokens. */
+.interview-connections__graph { display: grid; grid-template-columns: minmax(10rem, 1fr) minmax(0, 2fr); align-items: center; gap: 2rem; }
+.interview-connections__origin { border: 1px solid var(--border); padding: 1rem; overflow-wrap: anywhere; }
+.interview-connections__nodes { list-style: none; padding: 0; display: grid; gap: 1rem; min-width: 0; }
+.interview-connections__nodes li { position: relative; border: 1px solid var(--border); padding: .75rem; overflow-wrap: anywhere; }
+.interview-connections__nodes li > span:last-child { display: grid; gap: .25rem; }
+.interview-connections__edge { position: absolute; width: 2rem; left: -2rem; top: 50%; border-top: 1px solid var(--foreground); }
+.interview-connections__nodes li[data-edge-kind="editorial"] .interview-connections__edge { border-top-style: dashed; }
+.interview-connections__nodes li[data-edge-kind="evidence"] .interview-connections__edge { border-top-style: dotted; }
+@media (max-width: 640px) {
+  .interview-connections__graph { grid-template-columns: minmax(0, 1fr); gap: 1rem; }
+  .interview-connections__edge { display: none; }
+}
+.interview-library__filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(12rem, 100%), 1fr)); gap: .75rem; }
+.interview-library__workspace { display: grid; grid-template-columns: minmax(12rem, 1fr) minmax(0, 2.5fr); gap: 1.5rem; align-items: start; }
+.interview-library__list { min-width: 0; max-height: 70vh; overflow: auto; }
+.interview-library__list ul { list-style: none; padding: 0; margin: 0; }
+.interview-library__question { display: grid; gap: .35rem; padding: .8rem; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+.interview-library__question[aria-current="page"] { background: var(--muted); border-inline-start: 3px solid var(--foreground); }
+.interview-library__question:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+.interview-library__detail { min-width: 0; overflow-wrap: anywhere; }
+.interview-question-detail .section { border-top: 1px solid var(--border); padding-block: 1rem; }
+@media (max-width: 800px) { .interview-library__workspace { grid-template-columns: minmax(0, 1fr); } .interview-library__list { max-height: 20rem; } }
