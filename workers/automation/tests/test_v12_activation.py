@@ -1,0 +1,117 @@
+from __future__ import annotations
+
+import shutil
+import sqlite3
+from pathlib import Path
+
+import pytest
+
+from jobctrl.infrastructure.migrations import v12_activation as activation
+from jobctrl.infrastructure.migrations.schema_v11 import create_exact_v11_schema
+from jobctrl.infrastructure.migrations.schema_manifest import EXACT_V12_MANIFEST, assert_exact_manifest
+from jobctrl.infrastructure.migrations.v11_to_v12_execute import execute_v11_to_v12_candidate
+
+
+def _bound(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
+    source, live, candidate, receipt = (
+        tmp_path / name for name in ["paired.db", "live.db", "candidate.db", "binding.json"]
+    )
+    with sqlite3.connect(source) as conn:
+        create_exact_v11_schema(conn)
+        conn.execute(
+            "INSERT INTO jobs(tenant_id,job_id,url,title) VALUES('local','j','https://synthetic/post','paired title')"
+        )
+    shutil.copyfile(source, live)
+    execute_v11_to_v12_candidate(source, candidate)
+    activation.bind_source(source, live, candidate, receipt)
+    return source, live, candidate, receipt
+
+
+def test_atomic_activation_holds_writer_lock_through_rename(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    source, live, candidate, receipt = _bound(tmp_path)
+    original = activation.os.replace
+    checked = []
+
+    def guarded_replace(old, new):
+        with sqlite3.connect(live, timeout=0) as writer:
+            with pytest.raises(sqlite3.OperationalError, match="locked"):
+                writer.execute("UPDATE jobs SET title='late concurrent write'")
+        checked.append(True)
+        return original(old, new)
+
+    monkeypatch.setattr(activation.os, "replace", guarded_replace)
+    activation.activate(live, candidate, receipt)
+    assert checked == [True]
+    assert not candidate.exists() and not receipt.exists()
+    with sqlite3.connect(live) as conn:
+        assert_exact_manifest(conn, EXACT_V12_MANIFEST)
+        assert conn.execute("SELECT title FROM jobs").fetchone() == ("paired title",)
+
+
+@pytest.mark.parametrize("when", ["before_bind", "after_bind"])
+def test_live_write_after_paired_backup_is_retained_and_refused(tmp_path: Path, when: str) -> None:
+    source, live, candidate, receipt = _bound(tmp_path)
+    if when == "before_bind":
+        receipt.unlink()
+    with sqlite3.connect(live) as writer:
+        writer.execute("UPDATE jobs SET title='independent committed write'")
+    before = live.read_bytes()
+    with pytest.raises(activation.SourceChangedError):
+        if when == "before_bind":
+            activation.bind_source(source, live, candidate, receipt)
+        else:
+            activation.activate(live, candidate, receipt)
+    assert live.read_bytes() == before
+    assert candidate.exists()
+    with sqlite3.connect(live) as conn:
+        assert conn.execute("SELECT title FROM jobs").fetchone() == ("independent committed write",)
+
+
+def test_unmanaged_writer_before_activation_and_symlink_candidate_refuse(tmp_path: Path) -> None:
+    _, live, candidate, receipt = _bound(tmp_path)
+    before = live.read_bytes()
+    writer = sqlite3.connect(live)
+    try:
+        writer.execute("BEGIN IMMEDIATE")
+        with pytest.raises(activation.SourceChangedError):
+            activation.activate(live, candidate, receipt)
+    finally:
+        writer.rollback()
+        writer.close()
+    alternate = tmp_path / "linked-candidate.db"
+    alternate.symlink_to(candidate)
+    with pytest.raises(activation.SourceChangedError):
+        activation.activate(live, alternate, receipt)
+    assert live.read_bytes() == before
+
+
+def test_source_binding_requires_private_receipt_and_candidate_digest(tmp_path: Path) -> None:
+    _, live, candidate, receipt = _bound(tmp_path)
+    receipt.chmod(0o644)
+    with pytest.raises(activation.SourceChangedError):
+        activation.activate(live, candidate, receipt)
+    receipt.chmod(0o600)
+    with sqlite3.connect(candidate) as conn:
+        conn.execute("UPDATE jobs SET title='tampered candidate'")
+    before = live.read_bytes()
+    with pytest.raises(RuntimeError, match="invalid candidate"):
+        activation.activate(live, candidate, receipt)
+    assert live.read_bytes() == before
+
+
+def test_schema_drift_during_candidate_verification_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _, live, candidate, receipt = _bound(tmp_path)
+    original = activation.assert_exact_manifest
+
+    def mutate_live_after_initial_state_check(conn, manifest):
+        original(conn, manifest)
+        with sqlite3.connect(live) as writer:
+            writer.execute("CREATE VIEW independent_view AS SELECT title FROM jobs")
+
+    monkeypatch.setattr(activation, "assert_exact_manifest", mutate_live_after_initial_state_check)
+    with pytest.raises(activation.SourceChangedError):
+        activation.activate(live, candidate, receipt)
+    assert candidate.exists()
+    with sqlite3.connect(live) as conn:
+        assert conn.execute("SELECT title FROM independent_view").fetchone() == ("paired title",)
+        assert conn.execute("PRAGMA user_version").fetchone() == (11,)

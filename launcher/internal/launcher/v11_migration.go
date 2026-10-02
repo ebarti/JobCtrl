@@ -59,7 +59,7 @@ func buildSealedV11Candidate(candidate launchContext, pair databasePair, journal
 	var receipt sealedV11CandidateReceipt
 	if err := decodeSingleJSON(output, &receipt); err != nil ||
 		receipt.SchemaVersion != 1 || receipt.Status != "ready" ||
-		receipt.UserVersion != currentJobCtrlSchemaVersion || receipt.JobCount < 0 || receipt.TableCount < 1 ||
+		receipt.UserVersion != v11JobCtrlSchemaVersion || receipt.JobCount < 0 || receipt.TableCount < 1 ||
 		!validSHA256(receipt.SourceDataDigest) || !validSHA256(receipt.CandidateDataDigest) ||
 		receipt.SourceDataDigest != receipt.CandidateDataDigest || !validSHA256(receipt.CandidateSHA256) {
 		cleanupV11Candidate(candidate.Instance.StateDir, journalID)
@@ -76,7 +76,7 @@ func buildSealedV11Candidate(candidate launchContext, pair databasePair, journal
 		return "", errors.New("sealed v11 candidate digest verification failed")
 	}
 	version, versionErr := sqliteUserVersion(python, path)
-	if versionErr != nil || version != currentJobCtrlSchemaVersion {
+	if versionErr != nil || version != v11JobCtrlSchemaVersion {
 		cleanupV11Candidate(candidate.Instance.StateDir, journalID)
 		return "", errors.New("sealed v11 candidate schema verification failed")
 	}
@@ -119,7 +119,7 @@ func installSealedV11Candidate(candidate launchContext, candidatePath string) er
 		return err
 	}
 	python := filepath.Join(candidate.PayloadRoot, "python", "bin", "python3")
-	if version, err := sqliteUserVersion(python, live); err != nil || version != currentJobCtrlSchemaVersion {
+	if version, err := sqliteUserVersion(python, live); err != nil || version != v11JobCtrlSchemaVersion {
 		return errors.New("installed v11 database did not reopen at the exact schema version")
 	}
 	return nil
