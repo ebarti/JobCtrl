@@ -20,7 +20,7 @@ export type {
 } from "@jobctrl/domain-types";
 
 const Id = z.string().max(12).regex(/^[A-Z]+\d{2}$/);
-const EvidenceId = z.string().min(1).max(200);
+const EvidenceId = z.string().min(1).max(200).refine((id) => id.trim().length > 0, "blank evidence ID");
 const Revision = z.string().trim().min(1).max(100);
 const Digest = z.string().regex(/^[a-f0-9]{64}$/);
 const Text = z.string();
@@ -64,7 +64,7 @@ export type InterviewQuestionResponse = z.infer<typeof InterviewQuestionResponse
 
 export const InterviewEvidenceSelectionSchema = z.object({
   questionId: Id,
-  evidenceIds: z.array(EvidenceId.trim()).max(MAX_INTERVIEW_EVIDENCE_IDS_PER_QUESTION)
+  evidenceIds: z.array(EvidenceId).max(MAX_INTERVIEW_EVIDENCE_IDS_PER_QUESTION)
     .refine((ids) => new Set(ids).size === ids.length, "duplicate evidence IDs"),
 }).strict();
 /** Reused by worker-RPC schemas so derivation from .shape keeps the version fence. */

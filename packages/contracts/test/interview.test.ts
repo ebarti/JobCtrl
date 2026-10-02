@@ -74,6 +74,15 @@ describe("interview wire vocabulary", () => {
     expect(InterviewSelectedQuestionSchema.safeParse({ ...selected, selectedEvidenceIds: [evidenceId + "a"] }).success).toBe(false);
   });
 
+  it("preserves exact canonical evidence ID identity and rejects blank-only IDs", () => {
+    const evidenceIds = [" Fact-A ", "fact-a"];
+    const request = { selectedQuestionIds: ["C01"], evidenceProfileVersion: 1,
+      evidenceSelections: [{ questionId: "C01", evidenceIds }] };
+    expect(GenerateInterviewPrepRequestSchema.parse(request).evidenceSelections?.[0]?.evidenceIds).toEqual(evidenceIds);
+    expect(GenerateInterviewPrepRequestSchema.safeParse({ ...request,
+      evidenceSelections: [{ questionId: "C01", evidenceIds: ["   "] }] }).success).toBe(false);
+  });
+
   it("retains inspectable generation-time inputs and structured evidence without changing legacy prep", () => {
     const card = catalog.questions.find((question) => question.id === "B11")!;
     const evidence = { evidenceId: "evidence-1", sourceRef: "profile/experience/role-1/achievement-1", excerpt: "Synthetic verified contribution", scope: "transferable" as const };
