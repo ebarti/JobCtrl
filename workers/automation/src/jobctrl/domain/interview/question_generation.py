@@ -32,7 +32,7 @@ _HISTORICAL_ASSERTION = re.compile(
     r"|^\s*(?:built|used|led|owned|managed|hired|implemented|deployed|migrated|reduced|increased|delivered)\b"
 )
 _PERSONAL_SUBJECT = re.compile(r"(?i)\b(?:i|we|you|the candidate)\b(?!['’]s\b)(?:['’](?:ve|m|d|re))?")
-_INTENDED_ACTION = re.compile(r"(?i)^\s+(?:would|will|could|might|should|intend\s+to|plan\s+to)\b")
+_INTENDED_ACTION = re.compile(r"(?i)^\s+(?:(?:[a-z]+ly|in\s+fact)\s+)*(?:would|will|could|might|should|intend\s+to|plan\s+to)\b")
 _FUTURE_QUESTION = re.compile(r"(?i)\b(?:would|could|might|should|will)\s+(?:you|we|i|the candidate)\b")
 _QUESTION_AUXILIARY = re.compile(r"(?i)\b(?:would|could|might|should|will|can|did|do|does|have|has|was|were|is|are)\s*$")
 _QUESTION_START = re.compile(r"(?i)(?:^|[,;:—])\s*(?:what|how|which|when|where|why|who|would|could|might|should|will|can|did|do|does|is|are|was|were|have|has)\b")
@@ -80,9 +80,16 @@ _PERIOD_BOUNDARY = r"(?<!\b[a-z]\.[a-z])\.(?!\w)|(?<=\d)\.(?!\d)"
 _CLAUSE_BOUNDARIES = re.compile(_PERIOD_BOUNDARY + r"|[;\n!?]|\b(?:and|but|because|although|after|since|where)\b", re.IGNORECASE)
 _CONDITION_END = re.compile(r"(?<!\d)[,:]|[,:](?!\d)|\bthen\b", re.IGNORECASE)
 _PROPOSITION_BOUNDARIES = re.compile(_CLAUSE_BOUNDARIES.pattern + "|" + _CONDITION_END.pattern, re.IGNORECASE)
-_EMBEDDED_BOUNDARY = re.compile(r"(?i)(?=\b(?:what|whether|how|if)\s+(?:i|we|you|my|our|your)\b)")
+_EMBEDDED_BOUNDARY = re.compile(r"(?i)(?=\b(?:what|whether|how)\s+(?:i|we|you|my|our|your)\b|\bif\b)")
 _SENTENCE_BOUNDARIES = re.compile(_PERIOD_BOUNDARY + r"|[;\n!?]", re.IGNORECASE)
 _LOCAL_SCENARIO = re.compile(r"(?i)\b(?:hypothetically\b|in a hypothetical\b|suppose\b|imagine\b|if\b)")
+_REDUCED_CONDITION = re.compile(
+    r"(?i)^\s*(?:[a-z]+ly\s+)*(?!(?:i|we|you|it|they|my|our|your|a|an|the|this|that|there)\b)[a-z]+"
+    r"(?:\s+(?:for|to|in|at|on|by|with|under)\b.*)?\s*$")
+_ACTUAL_CONTRAST = re.compile(
+    r"(?i)\bbut\s+(?:(?:i|we|you|the candidate)(?:['’](?:ve|m|d|re))?\s+"
+    r"(?:actually|in\s+fact|previously|already|formerly)\b|"
+    r"(?:actually|in\s+fact|previously|already|formerly)\s+(?:i|we|you|the candidate)\b)")
 _ACCOUNT_COMPLEMENT = re.compile(r"(?i)^\s*(?:what|how|whether)\b")
 _ACCOUNT_REQUEST = re.compile(r"(?i)\b(?:explain|describe|recount|recall|discuss|outline|walk\s+through|honest\s+about)\b")
 _EXISTENTIAL_INPUT = re.compile(r"(?i)^\s*(?:is|are)\s+there\b")
@@ -355,10 +362,30 @@ class _ProseAssessment:
         return any(proposition.personal_assertion for proposition in self.propositions)
 
 
-def _in_hypothesis(text: str, position: int) -> bool:
-    preceding = _SENTENCE_BOUNDARIES.split(text[:position])[-1]
-    scenarios = list(_LOCAL_SCENARIO.finditer(preceding))
-    return bool(scenarios and not _CONDITION_END.search(preceding[scenarios[-1].end():]))
+def _hypothesis_ranges(text: str) -> tuple[tuple[int, int], ...]:
+    ranges: list[tuple[int, int]] = []
+    for scenario in _LOCAL_SCENARIO.finditer(text):
+        following = text[scenario.end():]
+        end_boundary = re.search(_CONDITION_END.pattern + "|" + _SENTENCE_BOUNDARIES.pattern, following, re.IGNORECASE)
+        end = scenario.end() + end_boundary.start() if end_boundary else len(text)
+        # A reduced adjunct modifies the preceding action. Its completed head
+        # cannot confer hypothetical scope on a later independent predicate.
+        clause_boundary = _CLAUSE_BOUNDARIES.search(text, scenario.end(), end)
+        if (scenario.group().lower() == "if" and clause_boundary
+                and _REDUCED_CONDITION.fullmatch(text[scenario.end():clause_boundary.start()])):
+            end = clause_boundary.start()
+        main_action = _SENTENCE_BOUNDARIES.split(text[:scenario.start()])[-1]
+        postposed = _FUTURE_QUESTION.search(main_action) or any(
+            _intended_action(main_action, actor) for actor in _PERSONAL_SUBJECT.finditer(main_action))
+        contrast = _ACTUAL_CONTRAST.search(text, scenario.end(), end)
+        if scenario.group().lower() == "if" and postposed and contrast:
+            end = contrast.start()
+        ranges.append((scenario.start(), end))
+    return tuple(ranges)
+
+
+def _in_hypothesis(ranges: tuple[tuple[int, int], ...], position: int) -> bool:
+    return any(start <= position < end for start, end in ranges)
 
 
 def _sentence_at(text: str, position: int) -> str:
@@ -380,12 +407,13 @@ def _in_recollection(text: str, position: int) -> bool:
     return bool(request and _RECOLLECTION_BRIDGE.fullmatch(preceding[request.end():]))
 
 
-def _subject_mode(text: str, start: int, clause: str, subject: re.Match[str], *, question: bool, future_question: bool) -> str:
+def _subject_mode(text: str, start: int, clause: str, subject: re.Match[str], *, question: bool, future_question: bool,
+                  hypothesis_ranges: tuple[tuple[int, int], ...]) -> str:
     prefix, rest = clause[:subject.start()], clause[subject.end():]
     if _PERSONAL_OBJECT_PREFIX.search(prefix) and _PERSONAL_OBJECT_REST.match(rest):
         return "object"
     if (_intended_action(clause, subject) or _intended_purpose(text, start, clause, subject)
-            or _in_hypothesis(text, start + subject.start())):
+            or _in_hypothesis(hypothesis_ranges, start + subject.start())):
         return "conditional"
     if _FUTURE_INPUT.search(prefix) and _INPUT_ACTION.match(rest):
         return "conditional"
@@ -413,8 +441,15 @@ def _dependent_actor(
             or _EXPLICIT_SCENARIO.match(clause)):
         return None
     previous = propositions[-1]
-    if (previous.governing_operator in {None, "object"} or previous.text.rstrip().endswith(("?", "!"))
-            or not _DEPENDENT_COORDINATION.fullmatch(text[previous.end:start])):
+    if not _DEPENDENT_COORDINATION.fullmatch(text[previous.end:start]):
+        return None
+    adjunct = re.match(r"(?is)^\s*if\b(.*)$", previous.text)
+    if (previous.governing_actor is None and adjunct and _REDUCED_CONDITION.fullmatch(adjunct.group(1))
+            and len(propositions) > 1 and not text[propositions[-2].end:previous.start].strip()):
+        # The adjunct modifies the main action; a following bare predicate
+        # inherits that action's actor/operator, never the adjunct's hypothesis.
+        previous = propositions[-2]
+    if previous.governing_operator in {None, "object"} or previous.text.rstrip().endswith(("?", "!")):
         return None
     return previous
 
@@ -438,6 +473,7 @@ def _account_actor(text: str, start: int, clause: str, propositions: Sequence[_P
 def _assess_prose(text: str) -> _ProseAssessment:
     """Keep operator, assertion and source-check spans together until validation."""
     propositions: list[_PropositionAssessment] = []
+    hypothesis_ranges = _hypothesis_ranges(text)
     start = 0
     ends = sorted({*(match.span() for match in _PROPOSITION_BOUNDARIES.finditer(text)),
                    *(match.span() for match in _EMBEDDED_BOUNDARY.finditer(text)), (len(text), len(text))})
@@ -453,7 +489,8 @@ def _assess_prose(text: str) -> _ProseAssessment:
         unknown_value = bool(question and _UNKNOWN_HISTORY_VALUE.fullmatch(clause.rstrip().rstrip("?") + "?"))
         account = _account_actor(text, start, clause, propositions)
         direct_bindings = tuple(
-            (subject, _subject_mode(text, start, clause, subject, question=question, future_question=future_question))
+            (subject, _subject_mode(text, start, clause, subject, question=question, future_question=future_question,
+                                    hypothesis_ranges=hypothesis_ranges))
             for subject in _PERSONAL_SUBJECT.finditer(clause))
         subject_bindings = tuple(
             (subject, "detail_question" if account and mode == "assertion"
@@ -471,12 +508,12 @@ def _assess_prose(text: str) -> _ProseAssessment:
                     and re.match(r"(?i)^\s*[a-z]+\b", clause) and not _CONTRACTED_BASE_ACTION.match(clause)):
                 governing_operator = "assertion"
             modes.append(governing_operator)
-        hypothesis = _in_hypothesis(text, end - 1)
+        hypothesis = _in_hypothesis(hypothesis_ranges, end - 1)
         requested = bool(question and _QUESTION_START.search(clause))
         personal_assertion = any(mode == "assertion" for mode in modes)
         source_query = "detail_question" in modes
         for premise in _BIOGRAPHICAL_PREMISE.finditer(clause):
-            governed = unknown_value or _in_hypothesis(text, start + premise.start())
+            governed = unknown_value or _in_hypothesis(hypothesis_ranges, start + premise.start())
             if (dependency and governing_operator in {"open_question", "detail_question", "conditional"}
                     and _DIRECT_PREDICATE.fullmatch(clause[:premise.start()])):
                 governed = True
@@ -489,7 +526,7 @@ def _assess_prose(text: str) -> _ProseAssessment:
             personal_assertion = True
         for possession in _PERSONAL_POSSESSION.finditer(clause):
             intended_choice = bool(_INTENDED_POSSESSION.match(clause[possession.end():]))
-            possession_hypothesis = _in_hypothesis(text, start + possession.start())
+            possession_hypothesis = _in_hypothesis(hypothesis_ranges, start + possession.start())
             possession_request = _in_recollection(text, start + possession.start())
             possession_query = bool(question and not future_question and not subject_bindings)
             source_query |= possession_request
