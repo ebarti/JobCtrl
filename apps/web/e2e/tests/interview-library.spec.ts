@@ -21,8 +21,8 @@ test.afterAll(() => {
       db.prepare("UPDATE candidate_profiles SET personal_preferred_name=?, version=?, updated_at=? WHERE tenant_id='local' AND profile_id='default'").run(originalProfile.personal_preferred_name, originalProfile.version, originalProfile.updated_at);
       db.prepare("DELETE FROM job_interview_prep_items WHERE tenant_id='local' AND job_id=? AND generation BETWEEN 1000 AND 1021").run(QA_PLATFORM_JOB_ID);
       db.prepare("DELETE FROM job_interview_prep WHERE tenant_id='local' AND job_id=? AND generation BETWEEN 1000 AND 1021").run(QA_PLATFORM_JOB_ID);
-      db.prepare("DELETE FROM job_interview_note_revisions WHERE tenant_id='local' AND job_id=? AND question_id IN ('B11','TS09')").run(QA_PLATFORM_JOB_ID);
-      db.prepare("DELETE FROM job_interview_notes WHERE tenant_id='local' AND job_id=? AND question_id IN ('B11','TS09')").run(QA_PLATFORM_JOB_ID);
+      db.prepare("DELETE FROM job_interview_note_revisions WHERE tenant_id='local' AND job_id=? AND question_id IN ('B11','TS09','C08','OLD01')").run(QA_PLATFORM_JOB_ID);
+      db.prepare("DELETE FROM job_interview_notes WHERE tenant_id='local' AND job_id=? AND question_id IN ('B11','TS09','C08','OLD01')").run(QA_PLATFORM_JOB_ID);
       db.prepare("UPDATE job_detail_projections SET interview_prep_json=? WHERE tenant_id='local' AND job_id=?").run(originalPrepProjection, QA_PLATFORM_JOB_ID);
     })();
   } finally { db.close(); }
@@ -261,6 +261,44 @@ test("Interview history: accepted outlines and gaps survive failed runs and inde
   await expect(page.getByRole("region", { name: "Interview preparation", exact: true }).first()).toContainText("generation 1003");
   await page.getByText("Saved note revision history", { exact: true }).click();
   await expect(page.getByText("Source preparation generation: 1001", { exact: true }).first()).toBeVisible();
+  await injectAxe(page);
+  await checkA11y(page, undefined, { includedImpacts: ["critical", "serious"] });
+});
+
+test("Interview notes: retired and unknown questions keep existing notes editable without generation", async ({ page }) => {
+  const db = new Database(loadE2eDbPath());
+  try {
+    db.transaction(() => {
+      for (const questionId of ["C08", "OLD01"]) {
+        db.prepare(`INSERT INTO job_interview_notes
+          (tenant_id, job_id, question_id, revision, note_text, factual_support, edit_status, source_generation, bindings_json, updated_at)
+          VALUES ('local', ?, ?, 1, 'Retained synthetic unavailable-question note', 'unverified_user_statement', 'user_edited', NULL, NULL, '2026-10-01T12:00:00Z')`)
+          .run(QA_PLATFORM_JOB_ID, questionId);
+        db.prepare(`INSERT INTO job_interview_note_revisions
+          SELECT * FROM job_interview_notes WHERE tenant_id='local' AND job_id=? AND question_id=?`)
+          .run(QA_PLATFORM_JOB_ID, questionId);
+      }
+    })();
+  } finally { db.close(); }
+  const generationRequests: string[] = [];
+  page.on("request", (request) => { if (request.url().includes("/actions/generate-interview-prep")) generationRequests.push(request.url()); });
+  for (const questionId of ["C08", "OLD01"]) {
+    await page.goto(`/interviews?card=${questionId}&job=${QA_PLATFORM_JOB_ID}`);
+    const notes = page.getByRole("textbox", { name: `Notes for ${questionId}` });
+    await expect(notes).toHaveValue("Retained synthetic unavailable-question note");
+    await expect(page.getByRole("button", { name: "Add question to preparation" })).toHaveCount(0);
+    await notes.fill(`Edited synthetic note for ${questionId}`);
+    const [saved] = await Promise.all([
+      page.waitForResponse((response) => response.url().includes("/interview-notes") && response.request().method() === "POST"),
+      page.getByRole("button", { name: "Save unverified note" }).click(),
+    ]);
+    expect(saved.status()).toBe(200);
+    expect(saved.request().postDataJSON()).not.toHaveProperty("sourceGeneration");
+    expect(saved.request().postDataJSON()).not.toHaveProperty("bindings");
+    expect(await saved.json()).toMatchObject({ note: { questionId, revision: 2, sourceGeneration: null, bindings: null, factualSupport: "unverified_user_statement" } });
+    await expect(notes).toHaveValue(`Edited synthetic note for ${questionId}`);
+  }
+  expect(generationRequests).toEqual([]);
   await injectAxe(page);
   await checkA11y(page, undefined, { includedImpacts: ["critical", "serious"] });
 });
