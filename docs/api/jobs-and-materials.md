@@ -19,8 +19,10 @@ For field-level schemas and every route variant, use the
 | `POST /v1/jobs/:key/score-correction` | A new score version plus explicit correction rationale. |
 | Job hide/restore/delete routes | Reversible lifecycle commands, plus a separate permanent-delete boundary. |
 
-List and detail endpoints read projection rows. They do not recompute scores,
-parse salary text, or replay events during a request.
+List and detail endpoints read projection rows. Job detail also reads the latest
+accepted interview prep directly from its canonical owner, independently of
+projection lag. These reads do not recompute scores, parse salary text, or replay
+events during a request.
 
 `POST /v1/jobs/import-url` accepts `{ url }`, validates that the destination is
 public HTTP(S), and awaits `JobUrlImportWorkflow` on the local worker. A readable

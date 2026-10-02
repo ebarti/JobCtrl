@@ -32,8 +32,9 @@ flowchart LR
 ```
 
 The read path never reconstructs domain state from raw events during a request.
-It reads precomputed projections; SSE only tells the client which projection to
-refetch or safely patch.
+It serves precomputed projections with authorized canonical detail overlays,
+including the latest accepted interview prep. SSE tells the client which reads
+to refetch or safely patch.
 
 ## Apply Review And Outcome Feedback
 
