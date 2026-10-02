@@ -202,3 +202,32 @@ def test_quiescent_wal_source_activates_in_delete_mode(tmp_path: Path) -> None:
         assert conn.execute("PRAGMA journal_mode").fetchone() == ("delete",)
         assert_exact_manifest(conn, EXACT_V12_MANIFEST)
         assert conn.execute("SELECT title FROM jobs").fetchone() == ("paired title",)
+
+
+def test_writer_on_new_live_inode_keeps_its_acknowledged_wal_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, live, candidate, receipt = _bound(tmp_path)
+    original = activation.os.replace
+    connections: list[sqlite3.Connection] = []
+
+    def write_to_new_live_after_replace(old, new):
+        original(old, new)
+        writer = sqlite3.connect(live, timeout=0)
+        connections.append(writer)
+        assert writer.execute("PRAGMA journal_mode=WAL").fetchone() == ("wal",)
+        writer.execute("UPDATE jobs SET title='new-inode acknowledged write'")
+        writer.commit()
+
+    monkeypatch.setattr(activation.os, "replace", write_to_new_live_after_replace)
+    try:
+        activation.activate(live, candidate, receipt)
+        reader = sqlite3.connect(live)
+        try:
+            assert reader.execute("SELECT title FROM jobs").fetchone() == ("new-inode acknowledged write",)
+            assert reader.execute("PRAGMA integrity_check").fetchone() == ("ok",)
+        finally:
+            reader.close()
+    finally:
+        for connection in connections:
+            connection.close()
