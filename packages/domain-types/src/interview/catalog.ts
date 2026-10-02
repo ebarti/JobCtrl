@@ -71,14 +71,14 @@ export interface InterviewCatalog {
   guidance: { overview: string; sourceLedger: string; evaluation: string; coverage: string; review: string };
 }
 export interface InterviewSelectionInput {
-  selectedQuestionIds?: string[];
-  catalogBinding?: InterviewCatalogBinding;
-  interviewStage?: InterviewStage;
-  interviewFormat?: InterviewFormat;
-  roleLens?: InterviewRoleLens;
-  roleResponsibilities?: string[];
-  knownCriteria?: string[];
-  selectionRationale?: string;
+  selectedQuestionIds?: string[] | undefined;
+  catalogBinding?: InterviewCatalogBinding | undefined;
+  interviewStage?: InterviewStage | undefined;
+  interviewFormat?: InterviewFormat | undefined;
+  roleLens?: InterviewRoleLens | undefined;
+  roleResponsibilities?: string[] | undefined;
+  knownCriteria?: string[] | undefined;
+  selectionRationale?: string | undefined;
 }
 export interface InterviewEvidenceExcerpt {
   evidenceId: string; sourceRef: string; excerpt: string;
@@ -129,8 +129,8 @@ export const INTERVIEW_STALE_REASONS = ["catalog_changed", "profile_changed", "j
 export type InterviewStaleReason = (typeof INTERVIEW_STALE_REASONS)[number];
 /** Notes are independent of prep/item replacement and never inherit a generation audit. */
 export interface InterviewNoteBindings {
-  catalogBinding?: InterviewCatalogBinding | null;
-  cardRevision?: string | null; cardDigest?: string | null; contextDigest?: string | null;
+  catalogBinding?: InterviewCatalogBinding | null | undefined;
+  cardRevision?: string | null | undefined; cardDigest?: string | null | undefined; contextDigest?: string | null | undefined;
 }
 export interface InterviewQuestionNote {
   jobId: string; questionId: string; revision: number; noteText: string;
@@ -140,6 +140,6 @@ export interface InterviewQuestionNote {
 }
 export interface SaveInterviewQuestionNoteRequest {
   questionId: string; expectedRevision: number; noteText: string;
-  factualSupport?: "unverified_user_statement" | "needs_clarification" | "hypothetical";
-  sourceGeneration?: number | null; bindings?: InterviewNoteBindings | null;
+  factualSupport?: "unverified_user_statement" | "needs_clarification" | "hypothetical" | undefined;
+  sourceGeneration?: number | null | undefined; bindings?: InterviewNoteBindings | null | undefined;
 }
