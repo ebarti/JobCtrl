@@ -34,6 +34,7 @@ export function InterviewsView() {
   ), [catalog, search.topic, search.role, search.source, search.format, normalized]);
   const selected = search.card ? selectedQuery.data?.question ?? catalog?.questions.find((question) => question.id === search.card) ?? null : questions[0] ?? null;
   const retired = catalog?.retiredQuestions.find((question) => question.id === search.card);
+  const unavailableQuestionId = !selected && search.card.length <= 12 && search.card.trim() && (retired || selectedQuery.error) ? search.card : undefined;
   const setSearch = (next: Partial<InterviewsSearch>) => { void navigate({ search: (previous: InterviewsSearch) => ({ ...previous, ...next }) }); };
   const selectQuestion = (card: string) => setSearch({ card });
   return (
@@ -68,7 +69,7 @@ export function InterviewsView() {
         </div>
         {catalog ? <details className="section"><summary>Catalog source ledger, reading coverage and maturity</summary>{Object.entries(catalog.guidance).map(([section, text]) => <section key={section}><h3>{section.replaceAll("_", " ")}</h3><MarkdownDocument text={text} /></section>)}<p>Reviewed {catalog.reviewedAt}; {catalog.sources.length} sources; {catalog.authors.length} author groups.</p></details> : null}
       </section>
-      {search.job && catalog ? <InterviewJobPreparation key={search.job} jobId={search.job} catalog={catalog} question={selected} /> : null}
+      {search.job && catalog ? <InterviewJobPreparation key={search.job} jobId={search.job} catalog={catalog} question={selected} unavailableQuestionId={unavailableQuestionId} /> : null}
     </>
   );
 }

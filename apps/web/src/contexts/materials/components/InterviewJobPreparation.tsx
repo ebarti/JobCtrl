@@ -15,8 +15,9 @@ type AcceptedPrepRead = { jobId: string; prep: InterviewPrep; readAt: number };
 
 // Mount only for an explicit canonical job. The offline catalog path never
 // creates a job query or passes an empty job ID into a job-backed hook.
-export function InterviewJobPreparation({ jobId, catalog, question }: {
+export function InterviewJobPreparation({ jobId, catalog, question, unavailableQuestionId }: {
   readonly jobId: string; readonly catalog: InterviewCatalog; readonly question: InterviewQuestionCard | null;
+  readonly unavailableQuestionId?: string | undefined;
 }) {
   const detail = useJobDetailQuery(jobId);
   const evidence = useEvidenceMapQuery();
@@ -42,11 +43,12 @@ export function InterviewJobPreparation({ jobId, catalog, question }: {
   if (!detail.data) return <Empty title={detail.error ? "Job unavailable. Open a canonical job from Jobs to prepare." : "Loading selected job."} />;
   const job = detail.data;
   const prepContext = prep?.generationContext;
-  const selectedSnapshot = question ? prepContext?.selectedQuestions.find((selected) => selected.questionId === question.id) : undefined;
-  const noteBindings = question ? selectedSnapshot && prepContext ? {
+  const noteQuestionId = question?.id ?? unavailableQuestionId ?? "";
+  const selectedSnapshot = prepContext?.selectedQuestions.find((selected) => selected.questionId === noteQuestionId);
+  const noteBindings = selectedSnapshot && prepContext ? {
     catalogBinding: prepContext.catalogBinding, cardRevision: selectedSnapshot.cardRevision,
     cardDigest: selectedSnapshot.cardDigest, contextDigest: prepContext.contextDigest,
-  } : {
+  } : question ? {
     catalogBinding: { catalogRevision: catalog.catalogRevision, catalogDigest: catalog.catalogDigest },
     cardRevision: question.cardRevision, cardDigest: question.cardDigest, contextDigest: null,
   } : null;
@@ -60,7 +62,7 @@ export function InterviewJobPreparation({ jobId, catalog, question }: {
       <h2 data-typography="section-title">Preparation for {job.job.title}</h2>
       <Link to="/jobs/$jobId" params={{ jobId: job.job.jobKey }}>Open canonical job</Link>
       <InterviewContextForm jobId={job.job.jobKey} catalog={catalog} questionId={question?.id ?? ""} context={prep?.generationContext} />
-      {question ? <InterviewNoteForm key={`${jobId}:${question.id}`} jobId={job.job.jobKey} questionId={question.id} sourceGeneration={selectedSnapshot ? prep?.generation ?? null : null} bindings={noteBindings} /> : null}
+      {noteQuestionId ? <InterviewNoteForm key={`${jobId}:${noteQuestionId}`} jobId={job.job.jobKey} questionId={noteQuestionId} sourceGeneration={selectedSnapshot ? prep?.generation ?? null : null} bindings={noteBindings} allowNewNote={Boolean(question || selectedSnapshot)} /> : null}
       <InterviewPrepPanel jobId={job.job.jobKey} prep={prep} requirements={job.employerAnalysis?.requirements ?? []} resolveEvidenceReference={resolveEvidenceReference} generationAction={null} emptyContent={history.isPending ? <Empty title="Loading saved preparation." /> : history.error ? <p role="alert">Saved preparation unavailable. Retry loading the accepted history.</p> : undefined} />
       <section className="section" aria-label="Preparation history"><h3 data-typography="component-title">Preparation history</h3>
         {history.error ? <p role="alert">Preparation history unavailable; the last accepted preparation remains above.</p> : null}

@@ -9,6 +9,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useInterviewDraftStore } from "../../contexts/materials/stores/interview-drafts.js";
 import { interviewKeys } from "../../contexts/operations/interviewKeys.js";
+import type { SaveInterviewQuestionNoteRequest } from "../../contexts/operations/types.js";
 import { interviewsSearchSchema } from "../../routes/-interviews.search.js";
 import { sampleInterviewCatalogResponse, makeQuestionPrep } from "../../test/fixtures/interviews.js";
 import { makeJobDetail, sampleInterviewPrep } from "../../test/fixtures/projections.js";
@@ -66,6 +67,38 @@ describe("native interview library", () => {
     expect(screen.queryByRole("button", { name: "Generate selected preparation" })).not.toBeInTheDocument();
     const result = await axe(view.container);
     expect(result.violations.filter((violation) => violation.impact === "critical" || violation.impact === "serious")).toEqual([]);
+  });
+
+  it.each(["C08", "OLD01"])("edits existing notes for unavailable %s without selecting it for generation", async (questionId) => {
+    const user = userEvent.setup();
+    let note = { jobId: "job-1", questionId, revision: 1, noteText: "Retained unavailable-question note", factualSupport: "unverified_user_statement" as const, editStatus: "user_edited" as const, sourceGeneration: null, bindings: null, updatedAt: "2026-10-01T12:00:00Z" };
+    const save = vi.fn(async (_jobId: string, body: SaveInterviewQuestionNoteRequest) => { note = { ...note, revision: 2, noteText: body.noteText }; return { ok: true as const, note }; });
+    const view = renderInterviews(`/interviews?card=${questionId}&job=job-1`, buildTestPorts({ api: {
+      interviewQuestion: async () => { throw new JobCtrlApiError(404, "Not found"); },
+      interviewNotes: async () => ({ ok: true, jobId: "job-1", notes: [note], page: 1, pageSize: 20, total: 1 }),
+      saveInterviewNote: save,
+    } }));
+    const text = await screen.findByRole("textbox", { name: `Notes for ${questionId}` });
+    await waitFor(() => expect(text).toHaveValue(note.noteText));
+    expect(screen.queryByRole("button", { name: "Add question to preparation" })).not.toBeInTheDocument();
+    await user.type(text, " retained edit");
+    await user.click(screen.getByRole("button", { name: "Save unverified note" }));
+    await waitFor(() => expect(text).toHaveValue("Retained unavailable-question note retained edit"));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(save.mock.calls[0]?.[1]).toMatchObject({ questionId, expectedRevision: 1, factualSupport: "unverified_user_statement" });
+    expect(save.mock.calls[0]?.[1]).not.toHaveProperty("sourceGeneration");
+    expect(save.mock.calls[0]?.[1]).not.toHaveProperty("bindings");
+    const result = await axe(view.container);
+    expect(result.violations.filter((violation) => violation.impact === "critical" || violation.impact === "serious")).toEqual([]);
+  });
+
+  it.each(["C08", "OLD01"])("does not create a new unbound note for unavailable %s", async (questionId) => {
+    renderInterviews(`/interviews?card=${questionId}&job=job-1`, buildTestPorts({ api: {
+      interviewQuestion: async () => { throw new JobCtrlApiError(404, "Not found"); },
+    } }));
+    await screen.findByText("No saved note exists for this unavailable question. Choose an active question to start a new note.");
+    expect(screen.getByRole("textbox", { name: `Notes for ${questionId}` })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save unverified note" })).toBeDisabled();
   });
 
   it("preserves context, ordered selection and accepted prep during failed generation", async () => {

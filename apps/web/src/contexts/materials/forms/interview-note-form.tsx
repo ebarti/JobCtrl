@@ -10,9 +10,10 @@ import { useInterviewNotesQuery } from "../../operations/hooks/useInterviewQueri
 import { useSaveInterviewNoteMutation } from "../hooks/useSaveInterviewNoteMutation.js";
 import { interviewDraftKey, useInterviewDraftStore } from "../stores/interview-drafts.js";
 
-export function InterviewNoteForm({ jobId, questionId, sourceGeneration, bindings }: {
+export function InterviewNoteForm({ jobId, questionId, sourceGeneration, bindings, allowNewNote = true }: {
   readonly jobId: string; readonly questionId: string; readonly sourceGeneration?: number | null;
   readonly bindings?: InterviewNoteBindings | null;
+  readonly allowNewNote?: boolean;
 }) {
   const tenantId = useTenantId();
   const key = interviewDraftKey(tenantId, jobId, questionId);
@@ -38,7 +39,7 @@ export function InterviewNoteForm({ jobId, questionId, sourceGeneration, binding
     } },
     onSubmit: async ({ value }) => {
       const current = useInterviewDraftStore.getState().notes.get(key);
-      if (!current || current.conflictRevision !== null || mutation.isPending) return;
+      if (!current || current.conflictRevision !== null || mutation.isPending || !allowNewNote && !note) return;
       const parsed = SaveInterviewQuestionNoteRequestSchema.safeParse({
         questionId, expectedRevision: current.expectedRevision, noteText: value.noteText,
         factualSupport: "unverified_user_statement",
@@ -61,13 +62,14 @@ export function InterviewNoteForm({ jobId, questionId, sourceGeneration, binding
       <h3 data-typography="component-title">Your notes</h3>
       <p>Notes and new recollections are unverified user statements. Saving them does not change your Profile or inherit a preparation audit.</p>
       <form onSubmit={(event) => { event.preventDefault(); void form.handleSubmit(); }} className="grid gap-3">
-        <form.Field name="noteText">{(field) => <Field><FieldLabel htmlFor={id}>Notes for {questionId}</FieldLabel><Textarea id={id} rows={7} maxLength={20_000} value={field.state.value} onBlur={field.handleBlur} onChange={(event) => { field.handleChange(event.target.value); edit(key, event.target.value); }} /></Field>}</form.Field>
+        <form.Field name="noteText">{(field) => <Field><FieldLabel htmlFor={id}>Notes for {questionId}</FieldLabel><Textarea id={id} rows={7} maxLength={20_000} disabled={!allowNewNote && !note} value={field.state.value} onBlur={field.handleBlur} onChange={(event) => { field.handleChange(event.target.value); edit(key, event.target.value); }} /></Field>}</form.Field>
+        {notes.data && !allowNewNote && !note ? <p>No saved note exists for this unavailable question. Choose an active question to start a new note.</p> : null}
         <p className="muted" role="status">{mutation.isPending ? "Saving submitted version; you can keep editing." : draft && draft.editVersion !== draft.savedVersion ? "Unsaved changes preserved in this session." : `Saved baseline revision ${draft?.expectedRevision ?? 0}.`}</p>
         <form.Subscribe selector={(state) => state.errors}>{(errors) => errors.length ? <p role="alert">{errors.flat().filter((error): error is string => typeof error === "string").join(" ")}</p> : null}</form.Subscribe>
         {notes.error ? <p role="alert">Saved notes could not be loaded. Your local text remains available.</p> : null}
         {mutation.error ? <p role="alert">{conflict ? "Another saved revision exists. Review it before saving your retained text." : "Note save failed. Your text has been preserved."}</p> : null}
         {conflict ? <div className="banner inline"><p>Save conflict. Your edited text is above.</p>{reviewableConflict ? <><SavedNote note={savedNote} /><Button type="button" variant="outline" onClick={() => rebase(key, savedNote.revision)}>Keep my text and use revision {savedNote.revision} as the saved baseline</Button></> : <p>Loading the current saved revision for review…</p>}</div> : null}
-        <Button type="submit" disabled={!notes.data || mutation.isPending || conflict || !draft || draft.editVersion === draft.savedVersion}>Save unverified note</Button>
+        <Button type="submit" disabled={!notes.data || mutation.isPending || conflict || !draft || !allowNewNote && !note || draft.editVersion === draft.savedVersion}>Save unverified note</Button>
       </form>
       <details className="section"><summary>Saved note revision history</summary>{history.data?.notes.map((entry) => <SavedNote key={entry.revision} note={entry} />)}{history.error ? <p>Note history unavailable.</p> : null}{history.data ? <div className="flex flex-wrap gap-2"><span>Page {historyPage}; {history.data.total} revisions</span><Button type="button" variant="outline" disabled={historyPage === 1} onClick={() => setHistoryPage((page) => page - 1)}>Newer note revisions</Button><Button type="button" variant="outline" disabled={historyPage * history.data.pageSize >= history.data.total} onClick={() => setHistoryPage((page) => page + 1)}>Older note revisions</Button></div> : null}</details>
     </section>
