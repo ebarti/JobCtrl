@@ -1,4 +1,5 @@
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, Outlet, RouterProvider } from "@tanstack/react-router";
+import { JobCtrlApiError } from "@jobctrl/api-client";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { axe } from "jest-axe";
@@ -111,5 +112,45 @@ describe("native interview library", () => {
     await screen.findAllByText("What did you personally own?");
     expect(screen.queryByText("No interview prep generated.")).not.toBeInTheDocument();
     expect(screen.getByText(/Generation 3 · failed/)).toBeInTheDocument();
+  });
+
+  it("retains accepted preparation across pages with 20 newer failures and a lagging job projection", async () => {
+    const user = userEvent.setup();
+    const accepted = makeQuestionPrep();
+    const failed = Array.from({ length: 20 }, (_, index) => ({ ...sampleInterviewPrep, generation: 22 - index, status: "failed" as const, items: [] }));
+    renderInterviews("/interviews?card=B11&job=job-1", buildTestPorts({ api: {
+      job: async () => makeJobDetail(undefined, { interviewPrep: null }),
+      interviewPrepHistory: async (_jobId, input) => ({ ok: true, jobId: "job-1", generations: Number(input?.page) === 2 ? [accepted] : failed, page: Number(input?.page ?? 1), pageSize: 20, total: 21 }),
+    } }));
+    await screen.findByText(/Generation 22 · failed/);
+    await user.click(screen.getByRole("button", { name: "Older generations" }));
+    await screen.findByText(/Generation 2 · accepted/);
+    expect(screen.getAllByRole("region", { name: "Interview preparation" })[0]).toHaveTextContent("generation 2");
+    await user.click(screen.getByRole("button", { name: "Previous generations" }));
+    await screen.findByText(/Generation 22 · failed/);
+    expect(screen.getAllByRole("region", { name: "Interview preparation" })[0]).toHaveTextContent("generation 2");
+    expect(screen.queryByText("No interview prep generated.")).not.toBeInTheDocument();
+  });
+
+  it("binds a new note to the matching retained card and preserves text on provenance rejection", async () => {
+    const user = userEvent.setup();
+    const prep = makeQuestionPrep();
+    const context = structuredClone(prep.generationContext!);
+    context.catalogBinding = { catalogRevision: "historic", catalogDigest: "a".repeat(64) };
+    context.selectedQuestions[0]!.cardRevision = "historic";
+    context.selectedQuestions[0]!.cardDigest = "b".repeat(64);
+    const retained = { ...prep, generationContext: context };
+    const save = vi.fn(async () => { throw new JobCtrlApiError(400, "Invalid bindings", "invalid_interview_note_bindings"); });
+    renderInterviews("/interviews?card=B11&job=job-1", buildTestPorts({ api: {
+      job: async () => makeJobDetail(undefined, { interviewPrep: retained }),
+      interviewPrepHistory: async () => ({ ok: true, jobId: "job-1", generations: [retained], page: 1, pageSize: 20, total: 1 }),
+      saveInterviewNote: save,
+    } }));
+    const text = await screen.findByRole("textbox", { name: "Notes for B11" });
+    await user.type(text, "Retained local text");
+    await user.click(screen.getByRole("button", { name: "Save unverified note" }));
+    await screen.findByText("Note save failed. Your text has been preserved.");
+    expect(text).toHaveValue("Retained local text");
+    expect(save.mock.calls[0]).toEqual(["job-1", expect.objectContaining({ sourceGeneration: prep.generation, bindings: { catalogBinding: context.catalogBinding, cardRevision: "historic", cardDigest: "b".repeat(64), contextDigest: context.contextDigest } })]);
   });
 });

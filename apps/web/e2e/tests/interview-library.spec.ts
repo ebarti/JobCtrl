@@ -5,9 +5,13 @@ import { makeQuestionPrep } from "../../src/test/fixtures/interviews.js";
 import { loadE2eDbPath, QA_PLATFORM_JOB_ID, refreshE2eWorkerHeartbeat } from "../fixtures/e2e-state.js";
 
 let originalProfile: { personal_preferred_name: string; version: number; updated_at: string };
+let originalPrepProjection: string | null;
 test.beforeAll(() => {
   const db = new Database(loadE2eDbPath());
-  try { originalProfile = db.prepare("SELECT personal_preferred_name, version, updated_at FROM candidate_profiles WHERE tenant_id='local' AND profile_id='default'").get() as typeof originalProfile; }
+  try {
+    originalProfile = db.prepare("SELECT personal_preferred_name, version, updated_at FROM candidate_profiles WHERE tenant_id='local' AND profile_id='default'").get() as typeof originalProfile;
+    originalPrepProjection = (db.prepare("SELECT interview_prep_json FROM job_detail_projections WHERE tenant_id='local' AND job_id=?").get(QA_PLATFORM_JOB_ID) as { interview_prep_json: string | null }).interview_prep_json;
+  }
   finally { db.close(); }
 });
 test.afterAll(() => {
@@ -15,10 +19,11 @@ test.afterAll(() => {
   try {
     db.transaction(() => {
       db.prepare("UPDATE candidate_profiles SET personal_preferred_name=?, version=?, updated_at=? WHERE tenant_id='local' AND profile_id='default'").run(originalProfile.personal_preferred_name, originalProfile.version, originalProfile.updated_at);
-      db.prepare("DELETE FROM job_interview_prep_items WHERE tenant_id='local' AND job_id=? AND generation BETWEEN 1000 AND 1003").run(QA_PLATFORM_JOB_ID);
-      db.prepare("DELETE FROM job_interview_prep WHERE tenant_id='local' AND job_id=? AND generation BETWEEN 1000 AND 1003").run(QA_PLATFORM_JOB_ID);
-      db.prepare("DELETE FROM job_interview_note_revisions WHERE tenant_id='local' AND job_id=? AND question_id='B11'").run(QA_PLATFORM_JOB_ID);
-      db.prepare("DELETE FROM job_interview_notes WHERE tenant_id='local' AND job_id=? AND question_id='B11'").run(QA_PLATFORM_JOB_ID);
+      db.prepare("DELETE FROM job_interview_prep_items WHERE tenant_id='local' AND job_id=? AND generation BETWEEN 1000 AND 1021").run(QA_PLATFORM_JOB_ID);
+      db.prepare("DELETE FROM job_interview_prep WHERE tenant_id='local' AND job_id=? AND generation BETWEEN 1000 AND 1021").run(QA_PLATFORM_JOB_ID);
+      db.prepare("DELETE FROM job_interview_note_revisions WHERE tenant_id='local' AND job_id=? AND question_id IN ('B11','TS09')").run(QA_PLATFORM_JOB_ID);
+      db.prepare("DELETE FROM job_interview_notes WHERE tenant_id='local' AND job_id=? AND question_id IN ('B11','TS09')").run(QA_PLATFORM_JOB_ID);
+      db.prepare("UPDATE job_detail_projections SET interview_prep_json=? WHERE tenant_id='local' AND job_id=?").run(originalPrepProjection, QA_PLATFORM_JOB_ID);
     })();
   } finally { db.close(); }
 });
@@ -162,7 +167,12 @@ function seedHistoricalPreparation(generation = 1001): void {
       insert.run(QA_PLATFORM_JOB_ID, 1000, "superseded", "passed", null);
       if (generation === 1003) db.prepare("UPDATE job_interview_prep SET status='superseded' WHERE tenant_id='local' AND job_id=? AND generation=1001").run(QA_PLATFORM_JOB_ID);
       insert.run(QA_PLATFORM_JOB_ID, generation, "accepted", "passed", JSON.stringify(prep.generationContext));
-      if (generation === 1001) insert.run(QA_PLATFORM_JOB_ID, 1002, "failed", "failed", null);
+      if (generation === 1001) {
+        for (let failed = 1002; failed <= 1021; failed += 1) insert.run(QA_PLATFORM_JOB_ID, failed, "failed", "failed", null);
+        db.prepare("DELETE FROM job_interview_note_revisions WHERE tenant_id='local' AND job_id=? AND question_id='B11'").run(QA_PLATFORM_JOB_ID);
+        db.prepare("DELETE FROM job_interview_notes WHERE tenant_id='local' AND job_id=? AND question_id='B11'").run(QA_PLATFORM_JOB_ID);
+      }
+      db.prepare("UPDATE job_detail_projections SET interview_prep_json=NULL WHERE tenant_id='local' AND job_id=?").run(QA_PLATFORM_JOB_ID);
       const item = prep.items[0]!;
       db.prepare(`INSERT INTO job_interview_prep_items
         (tenant_id, job_id, generation, item_id, kind, title, generated_text, evidence_ids_json,
@@ -175,9 +185,14 @@ function seedHistoricalPreparation(generation = 1001): void {
 
 test("Interview history: accepted outlines and gaps survive failed runs and independent note revisions", async ({ page }) => {
   seedHistoricalPreparation();
-  await page.goto(`/interviews?card=B11&job=${QA_PLATFORM_JOB_ID}`);
+  const [jobRead] = await Promise.all([
+    page.waitForResponse((response) => new URL(response.url()).pathname === `/v1/jobs/${QA_PLATFORM_JOB_ID}` && response.request().method() === "GET"),
+    page.goto(`/interviews?card=B11&job=${QA_PLATFORM_JOB_ID}`),
+  ]);
+  expect(await jobRead.json()).toMatchObject({ interviewPrep: { generation: 1001, status: "accepted" } });
   const accepted = page.getByRole("region", { name: "Interview preparation", exact: true }).first();
   await expect(accepted.getByText("What did you personally own?", { exact: true })).toBeVisible();
+  await expect(accepted).toContainText("generation 1001");
   await expect(accepted.getByRole("paragraph").filter({ hasText: "Open B11 guidance · principle answer" })).toBeVisible();
   await expect(accepted.getByText("Preparation inputs have changed", { exact: true })).toBeVisible();
   await accepted.getByText("Generation-time inputs and versions", { exact: true }).click();
@@ -185,20 +200,56 @@ test("Interview history: accepted outlines and gaps survive failed runs and inde
   await page.getByText(/Generation 1002 · failed/).click();
   await expect(page.getByText("Failed attempt; the accepted generation remains available.")).toBeVisible();
   await expect(accepted.getByText("What did you personally own?", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Older generations" }).click();
+  await expect(accepted).toContainText("generation 1001");
   await page.getByText(/Generation 1000 · superseded/).click();
   await expect(page.getByText("Legacy generation: profile, catalog and question versions were not recorded.")).toBeVisible();
+  await page.getByRole("navigation", { name: "Interview questions" }).getByRole("link", { name: /TS09/ }).click();
+  await page.getByRole("textbox", { name: "Notes for TS09" }).fill("Independent note for a question absent from the saved preparation.");
+  const [independent] = await Promise.all([
+    page.waitForResponse((response) => response.url().includes("/interview-notes") && response.request().method() === "POST"),
+    page.getByRole("button", { name: "Save unverified note" }).click(),
+  ]);
+  expect(independent.status()).toBe(200);
+  expect(independent.request().postDataJSON()).toMatchObject({ questionId: "TS09", sourceGeneration: null, bindings: { contextDigest: null } });
+  expect(await independent.json()).toMatchObject({ note: { questionId: "TS09", sourceGeneration: null, bindings: { contextDigest: null }, factualSupport: "unverified_user_statement" } });
+  await page.getByRole("navigation", { name: "Interview questions" }).getByRole("link", { name: /B11/ }).click();
   const notes = page.getByRole("textbox", { name: "Notes for B11" });
-  await expect(notes).toHaveValue("Synthetic recollection requiring personal verification.");
+  await expect(notes).toHaveValue("");
   await notes.fill("Independent synthetic note kept across preparation replacement.");
   const [saved] = await Promise.all([
     page.waitForResponse((response) => response.url().includes("/interview-notes") && response.request().method() === "POST"),
     page.getByRole("button", { name: "Save unverified note" }).click(),
   ]);
-  expect(await saved.json()).toMatchObject({ note: { revision: 2, sourceGeneration: 1001, factualSupport: "unverified_user_statement" } });
+  expect(await saved.json()).toMatchObject({ note: { revision: 1, sourceGeneration: 1001, factualSupport: "unverified_user_statement" } });
   seedHistoricalPreparation(1003);
   await page.reload();
   await expect(page.getByRole("textbox", { name: "Notes for B11" })).toHaveValue("Independent synthetic note kept across preparation replacement.");
   await expect(page.getByRole("region", { name: "Interview preparation", exact: true }).first()).toContainText("generation 1003");
+  await notes.fill("Retained note origin after preparation replacement.");
+  const [historical] = await Promise.all([
+    page.waitForResponse((response) => response.url().includes("/interview-notes") && response.request().method() === "POST"),
+    page.getByRole("button", { name: "Save unverified note" }).click(),
+  ]);
+  expect(historical.request().postDataJSON()).not.toHaveProperty("sourceGeneration");
+  expect(historical.request().postDataJSON()).not.toHaveProperty("bindings");
+  expect(await historical.json()).toMatchObject({ note: { revision: 2, sourceGeneration: 1001 } });
+  const db = new Database(loadE2eDbPath());
+  try {
+    db.prepare("DELETE FROM job_interview_prep_items WHERE tenant_id='local' AND job_id=? AND generation=1001").run(QA_PLATFORM_JOB_ID);
+    db.prepare("DELETE FROM job_interview_prep WHERE tenant_id='local' AND job_id=? AND generation=1001").run(QA_PLATFORM_JOB_ID);
+  } finally { db.close(); }
+  await notes.fill("Independent edit after its original preparation became unavailable.");
+  const [orphan] = await Promise.all([
+    page.waitForResponse((response) => response.url().includes("/interview-notes") && response.request().method() === "POST"),
+    page.getByRole("button", { name: "Save unverified note" }).click(),
+  ]);
+  expect(orphan.status()).toBe(200);
+  expect(await orphan.json()).toMatchObject({ note: { revision: 3, sourceGeneration: null, bindings: null } });
+  await expect(notes).toHaveValue("Independent edit after its original preparation became unavailable.");
+  await expect(page.getByRole("region", { name: "Interview preparation", exact: true }).first()).toContainText("generation 1003");
+  await page.getByText("Saved note revision history", { exact: true }).click();
+  await expect(page.getByText("Source preparation generation: 1001", { exact: true }).first()).toBeVisible();
   await injectAxe(page);
   await checkA11y(page, undefined, { includedImpacts: ["critical", "serious"] });
 });

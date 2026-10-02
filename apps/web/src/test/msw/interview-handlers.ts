@@ -32,7 +32,7 @@ export const interviewHandlers = [
     const revisions = notes.get(key) ?? [];
     const currentNote = revisions.at(-1) ?? null;
     if ((currentNote?.revision ?? 0) !== body.data.expectedRevision) return HttpResponse.json({ ok: false, error: "interview_note_revision_conflict", currentNote }, { status: 409 });
-    const note: InterviewQuestionNote = { jobId, questionId: body.data.questionId, revision: body.data.expectedRevision + 1, noteText: body.data.noteText, factualSupport: body.data.factualSupport ?? "unverified_user_statement", editStatus: "user_edited", sourceGeneration: body.data.sourceGeneration ?? null, bindings: body.data.bindings ?? null, updatedAt: "2026-10-01T12:00:00Z" };
+    const note: InterviewQuestionNote = { jobId, questionId: body.data.questionId, revision: body.data.expectedRevision + 1, noteText: body.data.noteText, factualSupport: body.data.factualSupport ?? "unverified_user_statement", editStatus: "user_edited", sourceGeneration: body.data.sourceGeneration === undefined ? currentNote?.sourceGeneration ?? null : body.data.sourceGeneration, bindings: body.data.bindings === undefined ? currentNote?.bindings ?? null : body.data.bindings, updatedAt: "2026-10-01T12:00:00Z" };
     notes.set(key, [...revisions, note]);
     return HttpResponse.json({ ok: true, note });
   }),
