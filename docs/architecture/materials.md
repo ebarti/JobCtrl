@@ -202,6 +202,14 @@ rather than an instruction that can add facts. B11/TS09 preserve decision
 criteria, limits, and alternatives; C07 never infers/discloses a private salary
 minimum.
 
+The grounding assessment must keep each local proposition's speech/operator
+scope, actual or presupposed claim status, source-query status, and source-check
+text together. Metric, tool, role, and possessive checks must use the same local
+spans; verdicts are aggregated only after local assessment. Fieldwide query
+flags or flattened prose cannot let a separate valid invitation or hypothetical
+clause exempt an independent assertion. Sentence, heading/newline, and
+independent-conjunct boundaries preserve local scope.
+
 `InterviewPrepWorkflow` retains the existing model port/lane, spend preflight,
 heartbeats, retry identity, and completed-run reuse. Its generation gate is a
 truthfulness/grounding check, not practice assessment or quality calibration.
