@@ -2524,7 +2524,10 @@ class ProjectionBuilder:
             return None
         if record is None:
             return None
-        return json.dumps(record, ensure_ascii=False)
+        read_model = dict(record)
+        read_model.pop("jobKey", None)
+        read_model["jobId"] = job_id
+        return json.dumps(read_model, ensure_ascii=False)
 
     def _load_bullet_provenance_by_artifact(self, job_id: str) -> "_ProvenanceProjection":
         """Project provenance + coverage + voice read shapes, keyed by artifact.
