@@ -26,6 +26,7 @@ _HISTORICAL_ASSERTION = re.compile(
     r"(?i)\b(?:i|we|the candidate)\s+(?:have|had|was|were|built|used|led|owned|managed|hired|"
     r"implemented|deployed|administered|operated|designed|migrated|reduced|increased|delivered|achieved)\b"
     r"|\bmy\s+(?:team|direct reports|management experience|experience with)\b"
+    r"|^\s*(?:built|used|led|owned|managed|hired|implemented|deployed|migrated|reduced|increased|delivered)\b"
 )
 _AUTHORITY = re.compile(r"(?i)\b(?:managed|hired|fired|direct reports|budget owner|executive|director|manager)\b")
 _CANDIDATE_COMPENSATION = re.compile(r"(?i)(?:my\s+(?:minimum|salary|target)|i\s+(?:need|expect|want|require)|minimum\s+(?:salary|compensation))[^\n]{0,100}(?:\d|[$€£])")
@@ -54,7 +55,8 @@ def question_generation_prompt(
     context: Mapping[str, Any], job_context: Mapping[str, Any],
     employer_context: Mapping[str, Any] | None, requirements: Sequence[Mapping[str, Any]],
 ) -> str:
-    data = {"generation_context": context, "job_context": dict(job_context),
+    prompt_context = {key: value for key, value in context.items() if key != "selectedQuestions"}
+    data = {"generation_context": prompt_context, "job_context": dict(job_context),
             "employer_analysis": dict(employer_context) if employer_context else None,
             "requirements": list(requirements),
             "questions": [{"card": card, "selected_evidence": plans[card["id"]]} for card in cards]}

@@ -423,7 +423,7 @@ def _load_accepted_materials(
         (str(tenant_id), str(job_id), materials.generation,
          materials.tailored_resume.artifact_id),
     ).fetchall()
-    return tuple(
+    result = tuple(
         {
             "bulletId": row["bullet_id"],
             "artifactId": row["artifact_id"],
@@ -435,6 +435,9 @@ def _load_accepted_materials(
         }
         for row in rows
     )
+
+    return result or ({"artifactId": materials.tailored_resume.artifact_id, "generation": materials.generation,
+                       "materialSha256": material_sha256},)
 
 
 def _load_json(value: str | None) -> dict[str, Any]:

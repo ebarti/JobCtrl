@@ -102,16 +102,17 @@ def choose_questions(
         target_words = words(" ".join([*context["roleResponsibilities"], *context["knownCriteria"],
                                        *(str(row.get("requirementText") or "") for row in requirements)]))
         stage_formats = {
-            "recruiter": {"narrative", "negotiation", "preference"},
-            "behavioral": {"historical"}, "management": {"historical", "situational"},
-            "technical": {"principle", "situational"}, "executive": {"principle", "historical"},
-        }.get(context["interviewStage"], set())
+            "recruiter": ["narrative", "negotiation", "preference"],
+            "behavioral": ["historical"], "management": ["historical", "situational"],
+            "technical": ["principle", "situational", "historical"], "executive": ["principle", "historical"],
+        }.get(context["interviewStage"], ["narrative", "historical", "principle", "situational", "preference", "negotiation"])
         eligible = [card for card in catalog["questions"] if context["roleLens"] == "unknown" or context["roleLens"] in card["roleLenses"]]
         if not eligible:
             raise InterviewSelectionError("invalid_selection")
         def rank(card: InterviewQuestionCard) -> tuple[int, int, str]:
             tags = words(" ".join([*card["responsibilityTags"], *card["competencyTags"]]))
-            return (-len(tags & target_words), -int(card["defaultAnswerFormat"] in stage_formats), card["id"])
+            format_rank = stage_formats.index(card["defaultAnswerFormat"]) if card["defaultAnswerFormat"] in stage_formats else len(stage_formats)
+            return (-len(tags & target_words), format_rank, card["id"])
         eligible.sort(key=rank)
         cards_list: list[InterviewQuestionCard] = []
         topics: set[str] = set()
@@ -140,6 +141,8 @@ def plan_evidence(
     """Select canonical excerpts deterministically; projections are hints, never facts."""
     profile = profile_snapshot.as_dict()
     achievements = get_achievement_evidence(profile)
+    if len(achievements) > 400:
+        raise ValueError("canonical evidence inventory exceeds preparation budget")
     sources: list[dict[str, Any]] = []
     seen: set[str] = set()
     for achievement in achievements:
@@ -178,7 +181,7 @@ def plan_evidence(
                 continue
             scope = "transferable" if selection["roleLens"] == "first_time_manager" else "direct"
             if selection["roleLens"] in {"engineering_manager", "director", "executive"}:
-                authority = re.search(r"(?i)\b(managed|hired|direct reports|performance reviews?|budget owner)\b", source["excerpt"])
+                authority = re.search(r"(?i)\b(hired|direct reports|performance reviews?|budget owner)\b", source["excerpt"])
                 if not authority:
                     scope = "transferable"
             links.append({"evidenceId": source["id"], "sourceRef": f"profile:{profile_snapshot.profile_id}:{profile_snapshot.version}:evidence:{source['id']}",
