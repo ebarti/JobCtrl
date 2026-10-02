@@ -116,7 +116,11 @@ export function saveInterviewNote(db: SqliteDatabase, tenantId: string, jobId: s
   return db.transaction(() => {
     const current = readInterviewNote(db, tenantId, jobId, request.questionId);
     if ((current?.revision ?? 0) !== request.expectedRevision) throw new InterviewNoteRevisionConflictError(current);
-    const sourceGeneration = request.sourceGeneration === undefined ? (current?.sourceGeneration ?? null) : request.sourceGeneration;
+    let sourceGeneration = request.sourceGeneration === undefined ? (current?.sourceGeneration ?? null) : request.sourceGeneration;
+    // Notes outlive preparation deletion; an ordinary edit becomes independent, while its archive keeps the old origin.
+    if (current && request.sourceGeneration === undefined && sourceGeneration !== null && !db.prepare(
+      "SELECT 1 FROM job_interview_prep WHERE tenant_id=? AND job_id=? AND generation=?",
+    ).get(tenantId, jobId, sourceGeneration)) sourceGeneration = null;
     const bindings = authoritativeNoteBindings(db, tenantId, jobId, request.questionId, sourceGeneration, catalog);
     validateNoteBindingClaims(request.bindings, bindings);
     const revision = request.expectedRevision + 1;

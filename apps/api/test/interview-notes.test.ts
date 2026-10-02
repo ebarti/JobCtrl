@@ -128,6 +128,31 @@ describe("revisioned interview notes", () => {
     await app.close();
   });
 
+  it("keeps an existing note editable after its preparation is deleted without accepting fresh invalid origins", async () => {
+    seedPrep(1, syntheticInterviewGenerationContext(JOB_ID));
+    const app = buildApp({ appDir: directory, dbPath, configPath: path.join(directory, "config.json"), interviewCatalogAssetLoader: syntheticInterviewCatalogAsset });
+    const url = `/v1/jobs/${JOB_ID}/interview-notes`;
+    const original = await app.inject({ method: "POST", url, payload: { questionId: "TS09", expectedRevision: 0, noteText: "original retained draft", sourceGeneration: 1 } });
+    expect(original.statusCode).toBe(200);
+    db.prepare("DELETE FROM job_interview_prep WHERE tenant_id='local' AND job_id=? AND generation=1").run(JOB_ID);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM job_interview_notes").get()).toEqual({ n: 1 });
+    const edited = await app.inject({ method: "POST", url, payload: { questionId: "TS09", expectedRevision: 1, noteText: "ordinary orphan edit" } });
+    expect(edited.statusCode, edited.body).toBe(200);
+    expect(edited.json().note).toMatchObject({ revision: 2, noteText: "ordinary orphan edit", sourceGeneration: null, bindings: { contextDigest: null } });
+    const history = listInterviewNotes(db, "local", JOB_ID, { ...query, questionId: "TS09", history: true });
+    expect(history.notes).toEqual([edited.json().note, original.json().note]);
+    for (const [questionId, expectedRevision] of [["TS09", 2], ["TS10", 0]] as const) {
+      const invalid = await app.inject({ method: "POST", url, payload: { questionId, expectedRevision, noteText: "unsaved explicit missing origin", sourceGeneration: 1 } });
+      expect(invalid.statusCode, invalid.body).toBe(400);
+      expect(invalid.json().error).toBe("invalid_interview_note_source");
+    }
+    expect(readInterviewNote(db, "local", JOB_ID, "TS09")).toEqual(edited.json().note);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM job_interview_note_revisions").get()).toEqual({ n: 2 });
+    expect(db.prepare("SELECT COUNT(*) AS n FROM job_events WHERE event_type='InterviewQuestionNoteSaved'").get()).toEqual({ n: 2 });
+    expect(JSON.stringify(db.prepare("SELECT payload_json,message FROM job_events").all())).not.toContain("ordinary orphan edit");
+    await app.close();
+  });
+
   it("creates independent notes and keeps saved revisions inspectable", () => {
     const first = saveInterviewNote(db, "local", JOB_ID, { questionId: "TS09", expectedRevision: 0, noteText: "unverified personal recollection" });
     expect(first).toMatchObject({ revision: 1, factualSupport: "unverified_user_statement", editStatus: "user_edited", sourceGeneration: null });
