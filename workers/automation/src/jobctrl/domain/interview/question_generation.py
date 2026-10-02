@@ -48,6 +48,15 @@ _INTENDED_POSSESSION = re.compile(
     r"(?:approach|preference|recommendation)\s*[?.!,;:])"
 )
 _ROLE_FRAMING = re.compile(r"(?i)\b(?:principle|framing|prospective|hypothetical|advertised|target)\b")
+_BIOGRAPHICAL_PREMISE = re.compile(
+    r"(?i)\b(?:learned|learnt|served|worked|held|gained|developed|acquired)\s+"
+    r"(?:(?:as|in)\s+(?:(?:a|an|the)\s+)?(?:(?:first[- ]time|engineering|technical|platform|software|senior)[ -]+)?"
+    r"(?:director|manager|executive|engineer|developer|architect|founder|head|chief|staff|principal)\b|"
+    r"(?:at|for)\s+(?:(?:a|an|the)\s+)?(?-i:[A-Z]))|"
+    r"\b(?:past|previous|prior|earlier)[ -]+(?:role|position|post|job|employment|tenure)\b|"
+    r"\b(?:experience|career|tenure|background)\s+(?:as|at)\b|"
+    r"\bformer\s+(?:director|manager|executive|engineer|developer|architect|founder|head|chief|staff|principal)\b"
+)
 _REFLECTIVE_STATE = re.compile(r"(?i)^\s+(?:are|were|have been|had been)\s+(?:rationalizing|rationalising|biased|overconfident|wrong|mistaken|uncertain)\b")
 _REFLECTION = re.compile(r"(?i)\b(?:know|detect|notice|recognize|recognise|tell)\s*$")
 _CONTRACTED_BASE_ACTION = re.compile(
@@ -304,6 +313,10 @@ def _intended_purpose(text: str, clause_start: int, clause: str, subject: re.Mat
 
 def _unsupported_personal_assertion(text: str, *, allow_question: bool = False) -> bool:
     """Personal assertions need facts regardless of verb or model support label."""
+    # Headings can assert a prior role/employer without any personal pronoun.
+    # A neutral-topic marker does not make that embedded biography a principle.
+    if _BIOGRAPHICAL_PREMISE.search(text):
+        return True
     question = _future_question(text) or bool(allow_question and text.strip().endswith("?") and _QUESTION_START.search(text))
     cursor = 0
     for clause in _CLAUSE_BOUNDARIES.split(text):

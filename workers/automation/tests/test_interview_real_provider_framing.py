@@ -22,6 +22,9 @@ CASES = [
     ("preferred_option", "TS09", "gap", "Which requirement makes your preferred option better?"),
     ("approach_question", "M02", "gap", "No evidence was selected for M02 — which concrete episode of choosing to engage, coach, or step back would you use to illustrate your technical-involvement approach?"),
     ("purpose_budget", "M02", "text", "I would compare alternatives and inspect the scenario, so I can allocate a hypothetical $2 million budget."),
+    ("launch_principle", "TS09", "text", "I would assess whether a design that worked at launch still fits today's constraints."),
+    ("launch_question", "TS09", "gap", "If it worked at launch but became expensive two years later, does that make the original decision bad?"),
+    ("language_origin", "TS09", "text", "I would compare a tool developed in Python with alternatives."),
 ]
 
 
@@ -113,6 +116,36 @@ def test_selected_fact_for_one_question_cannot_supply_empty_question_background(
         candidate["items"][2]["outline"][0]["text"] = "My relevant background is API latency optimization using Python."
         llm = _FakeLlm([candidate, _judge_pass()])
         outcome = GenerateInterviewPrepUseCase(repository=repository, llm=llm).execute(origin_run_id="cross-question", **request)
+        assert outcome.status == "failed"
+        assert len(llm.calls) == 1
+        assert repository.load_latest(LOCAL_TENANT, JOB_ID).to_read_model() == accepted.to_read_model()
+    finally:
+        close_connection(tmp_path / "jobs.db")
+
+
+@pytest.mark.parametrize("location", ["heading", "text"])
+@pytest.mark.parametrize("phrase", [
+    "Technical involvement principle learned as Director at Acme.",
+    "Technical involvement principle served as Director at Acme.",
+    "Technical involvement principle from a previous role as Director at Acme.",
+    "First-time-manager framing learned as Director at Acme.",
+    "Advertised technical involvement principle learned at Acme.",
+    "Technical involvement principle from experience as Director at Acme.",
+    "First-time-manager framing learned as director at Acme.",
+    "Technical involvement principle worked as a Director at Acme.",
+])
+def test_neutral_role_topics_cannot_hide_pronounless_biography(tmp_path: Path, location: str, phrase: str):
+    conn = _init_conn(tmp_path)
+    try:
+        repository = SqliteInterviewPrepRepository(conn)
+        request = _request("M02")
+        accepted = GenerateInterviewPrepUseCase(repository=repository, llm=_FakeLlm([_candidate("M02"), _judge_pass()])).execute(
+            origin_run_id="accepted", **request).prep
+        assert accepted.status == "accepted"
+        candidate = _candidate("M02")
+        candidate["items"][0]["outline"][0][location] = phrase
+        llm = _FakeLlm([candidate, _judge_pass()])
+        outcome = GenerateInterviewPrepUseCase(repository=repository, llm=llm).execute(origin_run_id="past-role", **request)
         assert outcome.status == "failed"
         assert len(llm.calls) == 1
         assert repository.load_latest(LOCAL_TENANT, JOB_ID).to_read_model() == accepted.to_read_model()
