@@ -55,7 +55,7 @@ export function interviewPrepStaleReasons(
   const description = (job?.full_description || job?.description || "").trim();
   const jobHash = createHash("sha256").update(title ? `${title}\n\n${description}` : description).digest("hex");
   if (!job || context.jobContext.jobId !== jobId || jobHash !== context.jobContext.snapshotHash
-    || (job.company ?? "").slice(0, 500) !== context.jobContext.company) reasons.push("job_changed");
+    || (job.company ?? "").trim() !== context.jobContext.company) reasons.push("job_changed");
   const analysis = db.prepare("SELECT generation, snapshot_hash FROM job_employer_analysis WHERE tenant_id = ? AND job_id = ? ORDER BY generation DESC LIMIT 1")
     .get(tenantId, jobId) as { generation: number; snapshot_hash: string } | undefined;
   if ((analysis?.generation ?? null) !== (context.employerAnalysis?.generation ?? null)
