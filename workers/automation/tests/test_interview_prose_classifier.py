@@ -37,6 +37,13 @@ PROPOSITIONS = [
     ("mixed_question", "Have you worked at Acme, where you supervised 50 direct reports?", False),
     ("mixed_condition", "If you worked as a manager, I supervised 50 direct reports at Acme.", False),
     ("unrelated_condition", "If you need an example, technical involvement principle learned as Director at Acme.", False),
+    ("unrelated_condition_colon", "If you need an example: I improved incident coordination.", False),
+    ("unrelated_condition_numeric_comma", "If you managed 3, I improved incident coordination.", False),
+    ("possessive_hypothesis", "Suppose your hypothetical team had 50 engineers. How would you prioritize coaching?", True),
+    ("possessive_imagine", "Imagine your hypothetical team had 50 engineers; I would prioritize coaching.", True),
+    ("subject_hypothesis", "Suppose you managed a hypothetical team of 50 engineers. How would you prioritize coaching?", True),
+    ("possessive_numeric_ratio", "Suppose your hypothetical team used a 1:2 coaching ratio; I would compare feedback.", True),
+    ("possessive_hypothesis_actual", "Suppose your hypothetical team had 50 engineers: I improved incident coordination.", False),
     ("mixed_future", "I would compare options, but I saved $2 million using Kubernetes.", False),
     ("numeric_assertion", "I saved $2 million by migrating the platform to Kubernetes.", False),
     ("authority_assertion", "At Acme, I supervised 50 direct reports and delivered a 75% margin increase.", False),
@@ -54,6 +61,9 @@ PROPOSITIONS = [
     ("generic_invitation", "Tell me about a time you handled conflict.", True),
     ("recollection_relative_when", "Describe a time when you handled conflict.", True),
     ("recollection_relative_where", "Share an example where you improved incident coordination.", True),
+    ("recollection_coordinated_owner", "Describe a time when you and your team handled conflict.", True),
+    ("recollection_coordinated_actual", "Describe a time when you and your team handled conflict. I improved incident coordination.", False),
+    ("neutral_tool_guidance", "Compare Kubernetes with alternatives for a hypothetical design.", True),
     ("recollection_mixed_colon", "Tell me about a time you handled conflict: I improved incident coordination.", False),
     ("recollection_mixed_metric", "Tell me about a time you handled conflict. I saved $2 million.", False),
     ("recollection_mixed_employer", "Tell me about a time you handled conflict. I worked at Acme.", False),
@@ -149,17 +159,25 @@ def test_actual_heading_claim_requires_its_own_selected_source(tmp_path: Path, s
 @pytest.mark.parametrize("location", ["heading", "text", "gap", "reason", "probe"])
 @pytest.mark.parametrize("question_id,accepted", [("B11", True), ("M02", False)])
 @pytest.mark.parametrize("surrounding", ["none", "prefix_invitation", "suffix_invitation", "prefix_future", "suffix_future",
-                                        "prefix_future_conjunct", "suffix_future_conjunct"])
-def test_concrete_past_question_uses_only_its_selected_source(tmp_path: Path, location: str, question_id: str, accepted: bool, surrounding: str):
+                                        "prefix_future_conjunct", "suffix_future_conjunct", "prefix_neutral", "suffix_neutral"])
+@pytest.mark.parametrize("query", ["How did you reduce API latency by 30% using Python?",
+                                   "Describe a time when you and your team reduced API latency by 30% using Python."])
+def test_concrete_past_question_uses_only_its_selected_source(tmp_path: Path, location: str, question_id: str, accepted: bool, surrounding: str, query: str):
     conn = _init_conn(tmp_path)
     try:
         candidate = _candidate(question_id)
-        phrase = "How did you reduce API latency by 30% using Python?"
+        repository = SqliteInterviewPrepRepository(conn)
+        request = _request(question_id)
+        prior = GenerateInterviewPrepUseCase(repository=repository, llm=_FakeLlm([candidate, _judge_pass()])).execute(
+            origin_run_id="accepted", **request).prep
+        assert prior.status == "accepted"
+        phrase = query
         if surrounding.endswith("conjunct"):
             clause = "What would you do next"
             phrase = ", and ".join([clause, phrase[:-1]] if surrounding.startswith("prefix") else [phrase[:-1], clause]) + "?"
         elif surrounding != "none":
-            clause = "Tell me about a time you handled conflict." if surrounding.endswith("invitation") else "What would you do next?"
+            clause = ("Compare Kubernetes with alternatives for a hypothetical design." if surrounding.endswith("neutral")
+                      else "Tell me about a time you handled conflict." if surrounding.endswith("invitation") else "What would you do next?")
             phrase = "\n".join([clause, phrase] if surrounding.startswith("prefix") else [phrase, clause])
         item = candidate["items"][0]
         if location in {"heading", "text"}:
@@ -171,8 +189,10 @@ def test_concrete_past_question_uses_only_its_selected_source(tmp_path: Path, lo
         else:
             item["probes"] = [phrase]
         llm = _FakeLlm([candidate, _judge_pass()])
-        outcome = GenerateInterviewPrepUseCase(repository=SqliteInterviewPrepRepository(conn), llm=llm).execute(**_request(question_id))
+        outcome = GenerateInterviewPrepUseCase(repository=repository, llm=llm).execute(origin_run_id="source-composition", **request)
         assert outcome.status == ("accepted" if accepted else "failed"), outcome.errors
         assert len(llm.calls) == (2 if accepted else 1)
+        latest = repository.load_latest(LOCAL_TENANT, JOB_ID)
+        assert latest.to_read_model() == (outcome.prep if accepted else prior).to_read_model()
     finally:
         close_connection(tmp_path / "jobs.db")
