@@ -48,6 +48,11 @@ def build(root: Path = ROOT) -> dict:
     metadata = json.loads((root / "catalog-metadata.v1.json").read_text())
     require(metadata["schemaVersion"] == "1", "unsupported authored metadata schema")
     require(metadata["catalogRevision"] == "2026-10-01.1", "v1 revision is immutable; create a retained new asset")
+    locked = metadata.get("catalogDigest")
+    require(isinstance(locked, str) and re.fullmatch(r"[a-f0-9]{64}", locked) is not None,
+            "published catalog digest seal must be present and well formed")
+    require(all(len(question_id) <= 12 and re.fullmatch(r"[A-Z]+\d{2}", question_id)
+                for question_id in metadata["questionMetadata"]), "invalid authored question ID")
     documents = {path.name: path.read_text() for path in sorted(root.glob("*.md")) if path.name != "catalog-contract.md"}
     source_files = [{"path": f"docs/research/interview-preparation/{name}", "sha256": hashlib.sha256((root / name).read_bytes()).hexdigest()}
                     for name in documents]
@@ -60,6 +65,7 @@ def build(root: Path = ROOT) -> dict:
         question_ids = []
         for offset in range(1, len(chunks), 3):
             question_id, title, body = chunks[offset:offset + 3]
+            require(len(question_id) <= 12, "invalid authored question ID")
             require(question_id in metadata["questionMetadata"], f"missing explicit metadata: {question_id}")
             authored = metadata["questionMetadata"][question_id]
             require(set(authored) == {"cardRevision", "rubricRevision", "roleLenses", "responsibilityTags", "competencyTags",
@@ -168,8 +174,7 @@ def build(root: Path = ROOT) -> dict:
                "guidance": {key: documents[name] for key, name in (("overview", "README.md"), ("sourceLedger", "sources.md"),
                             ("evaluation", "evaluation.md"), ("coverage", "coverage.md"), ("review", "review.md"))}}
     catalog["catalogDigest"] = digest(catalog)
-    locked = metadata.get("catalogDigest")
-    require(locked is None or locked == catalog["catalogDigest"], "immutable v1 catalog digest changed; retain a new revision")
+    require(locked == catalog["catalogDigest"], "immutable v1 catalog digest changed; retain a new revision")
     return catalog
 
 

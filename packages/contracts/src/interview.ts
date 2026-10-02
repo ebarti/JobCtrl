@@ -19,7 +19,8 @@ export type {
   InterviewStaleReason, InterviewQuestionNote, InterviewNoteBindings, SaveInterviewQuestionNoteRequest,
 } from "@jobctrl/domain-types";
 
-const Id = z.string().regex(/^[A-Z]+\d{2}$/);
+const Id = z.string().max(12).regex(/^[A-Z]+\d{2}$/);
+const EvidenceId = z.string().min(1).max(200);
 const Revision = z.string().trim().min(1).max(100);
 const Digest = z.string().regex(/^[a-f0-9]{64}$/);
 const Text = z.string();
@@ -63,7 +64,7 @@ export type InterviewQuestionResponse = z.infer<typeof InterviewQuestionResponse
 
 export const InterviewEvidenceSelectionSchema = z.object({
   questionId: Id,
-  evidenceIds: z.array(z.string().trim().min(1).max(240)).max(MAX_INTERVIEW_EVIDENCE_IDS_PER_QUESTION)
+  evidenceIds: z.array(EvidenceId.trim()).max(MAX_INTERVIEW_EVIDENCE_IDS_PER_QUESTION)
     .refine((ids) => new Set(ids).size === ids.length, "duplicate evidence IDs"),
 }).strict();
 /** Reused by worker-RPC schemas so derivation from .shape keeps the version fence. */
@@ -97,11 +98,11 @@ export const GenerateInterviewPrepRequestSchema = z.object({
   selectionRationale: z.string().trim().max(2000).optional(),
 }).strict().superRefine(refineInterviewEvidenceSelection);
 export type GenerateInterviewPrepRequest = z.infer<typeof GenerateInterviewPrepRequestSchema>;
-export const InterviewEvidenceExcerptSchema = z.object({ evidenceId: Text, sourceRef: Text, excerpt: Text, scope: z.enum(["direct", "transferable"]) }).strict();
+export const InterviewEvidenceExcerptSchema = z.object({ evidenceId: EvidenceId, sourceRef: Text, excerpt: Text, scope: z.enum(["direct", "transferable"]) }).strict();
 export const InterviewSelectedQuestionSchema = z.object({ questionId: Id, cardRevision: Revision, cardDigest: Digest,
   rubricRevision: Revision, rubricDigest: Digest, answerFormat: z.enum(INTERVIEW_ANSWER_FORMATS),
   selectionRationale: Text, snapshot: InterviewQuestionCardSchema, evidenceSelectionMode: z.enum(["user_selected", "deterministic"]),
-  selectedEvidenceIds: z.array(z.string().min(1).max(240)).max(MAX_INTERVIEW_EVIDENCE_IDS_PER_QUESTION), }).strict();
+  selectedEvidenceIds: z.array(EvidenceId).max(MAX_INTERVIEW_EVIDENCE_IDS_PER_QUESTION), }).strict();
 export const InterviewGenerationContextSchema = z.object({
   schemaVersion: z.literal("1"), catalogBinding: InterviewCatalogBindingSchema, contextDigest: Digest,
   selectedQuestionIds: z.array(Id).min(1).max(MAX_INTERVIEW_SELECTED_QUESTIONS),
@@ -127,7 +128,7 @@ export const InterviewQuestionMetadataSchema = z.object({
   questionId: Id, cardRevision: Revision, cardDigest: Digest, rubricRevision: Revision, rubricDigest: Digest,
   answerFormat: z.enum(INTERVIEW_ANSWER_FORMATS), selectionRationale: Text,
   evidenceLinks: z.array(InterviewEvidenceExcerptSchema),
-  outline: z.array(z.object({ heading: Text, text: Text, evidenceIds: z.array(Text), factualSupport: FactualSupport }).strict()),
+  outline: z.array(z.object({ heading: Text, text: Text, evidenceIds: z.array(EvidenceId), factualSupport: FactualSupport }).strict()),
   gaps: z.array(z.object({ id: Text, prompt: Text, reason: Text }).strict()), probes: z.array(Text), sourceGuidanceRefs: z.array(Text),
   factualSupport: FactualSupport, userEditStatus: z.enum(["generated", "user_edited"]),
 }).strict();

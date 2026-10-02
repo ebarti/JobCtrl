@@ -4,6 +4,7 @@ import { describe, expect, expectTypeOf, it } from "vitest";
 import type { InterviewCatalog, InterviewGenerationContext, InterviewQuestionMetadata, InterviewQuestionNote } from "@jobctrl/domain-types";
 import {
   GenerateInterviewPrepRequestSchema, InterviewCatalogSchema, InterviewGenerationContextSchema,
+  InterviewQuestionCardSchema, InterviewEvidenceSelectionSchema, InterviewSelectedQuestionSchema,
   InterviewQuestionMetadataSchema, InterviewQuestionNoteSchema, SaveInterviewQuestionNoteRequestSchema,
   InterviewPrepSchema, InterviewPrepHistoryQuerySchema, InterviewNotesQuerySchema,
   InterviewPrepHistoryResponseSchema, InterviewNotesResponseSchema,
@@ -50,6 +51,27 @@ describe("interview wire vocabulary", () => {
       { ...request, evidenceSelections: [{ questionId: "B11", evidenceIds: Array.from({ length: 9 }, (_, i) => `fact-${i}`) }] },
       { ...request, evidenceSelections: Array.from({ length: 17 }, (_, i) => ({ questionId: `B${String(i + 1).padStart(2, "0")}`, evidenceIds: [] })) },
     ]) expect(GenerateInterviewPrepRequestSchema.safeParse(input).success).toBe(false);
+  });
+
+  it("bounds question IDs independently from canonical evidence IDs", () => {
+    const oversized = "A".repeat(200_000) + "01";
+    const boundary = "A".repeat(10) + "01";
+    expect(GenerateInterviewPrepRequestSchema.safeParse({ selectedQuestionIds: [boundary] }).success).toBe(true);
+    expect(GenerateInterviewPrepRequestSchema.safeParse({ selectedQuestionIds: [oversized] }).success).toBe(false);
+    expect(GenerateInterviewPrepRequestSchema.safeParse({ evidenceProfileVersion: 1, evidenceSelections: [{ questionId: oversized, evidenceIds: [] }] }).success).toBe(false);
+    const card = catalog.questions[0]!;
+    expect(InterviewQuestionCardSchema.safeParse({ ...card, id: oversized }).success).toBe(false);
+    expect(SaveInterviewQuestionNoteRequestSchema.safeParse({ questionId: oversized, expectedRevision: 0, noteText: "" }).success).toBe(false);
+    expect(InterviewNotesQuerySchema.safeParse({ questionId: oversized }).success).toBe(false);
+    const evidenceId = "profile/accepted-fact:" + "a".repeat(178);
+    expect(evidenceId).toHaveLength(200);
+    expect(InterviewEvidenceSelectionSchema.safeParse({ questionId: "C01", evidenceIds: [evidenceId] }).success).toBe(true);
+    expect(InterviewEvidenceSelectionSchema.safeParse({ questionId: "C01", evidenceIds: [evidenceId + "a"] }).success).toBe(false);
+    const selected = { questionId: card.id, cardRevision: card.cardRevision, cardDigest: card.cardDigest,
+      rubricRevision: card.rubricRevision, rubricDigest: card.rubricDigest, answerFormat: card.defaultAnswerFormat,
+      selectionRationale: "Synthetic selection", snapshot: card, evidenceSelectionMode: "user_selected", selectedEvidenceIds: [evidenceId] };
+    expect(InterviewSelectedQuestionSchema.safeParse(selected).success).toBe(true);
+    expect(InterviewSelectedQuestionSchema.safeParse({ ...selected, selectedEvidenceIds: [evidenceId + "a"] }).success).toBe(false);
   });
 
   it("retains inspectable generation-time inputs and structured evidence without changing legacy prep", () => {

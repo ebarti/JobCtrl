@@ -46,6 +46,8 @@ rubric array. The asset adds one trailing newline. Its raw-byte SHA-256 is
 therefore a separate value, used to compare installed Python and TypeScript.
 
 The sidecar seals the published catalog digest and all original Markdown hashes.
+Compilation requires a present, lowercase 64-character hexadecimal digest seal
+that matches the complete catalog; omitting or changing it cannot unseal v1.
 Do not overwrite v1 or reinterpret a historical revision after publication.
 Content changes require a new catalog revision and retained asset, with an
 explicit loader/revision registry update. Historical preparation additionally
@@ -64,11 +66,15 @@ Python loads `catalog.v1.json` through
 and their digest. `get_interview_question()` distinguishes unknown and retired
 IDs. `validate_interview_selection()` preserves order and rejects empty,
 unknown, retired, duplicate, over-budget or stale-bound selections before model
-use. A preparation request selects at most 16 questions.
+use. Question IDs contain an uppercase prefix and two digits, with a maximum of
+12 characters checked by wire validation, the compiler and Python selection.
+A preparation request selects at most 16 questions.
 
 The request can additionally supply `evidenceSelections` per question, fenced
 by the required positive `evidenceProfileVersion`. Each entry preserves up to
-eight canonical accepted-fact IDs in the user's order. An explicit empty entry
+eight canonical accepted-fact IDs of at most 200 characters in the user's order.
+Evidence IDs retain their canonical string form rather than using the question
+ID format. An explicit empty entry
 means no personal evidence was selected and produces gaps; only an omitted
 entry permits deterministic evidence selection. Question snapshots retain
 `evidenceSelectionMode` and `selectedEvidenceIds` separately from question
