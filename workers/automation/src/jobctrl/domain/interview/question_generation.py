@@ -38,7 +38,7 @@ _QUESTION_AUXILIARY = re.compile(r"(?i)\b(?:would|could|might|should|will|can|di
 _QUESTION_START = re.compile(r"(?i)(?:^|[,;:—])\s*(?:what|how|which|when|where|why|who|would|could|might|should|will|can|did|do|does|is|are|was|were|have|has)\b")
 _POLAR_QUESTION = re.compile(r"(?i)^\s*[—:]?\s*(?:have|has|had|did|do|does|is|are|was|were|can)\b")
 _RECOLLECTION_REQUEST = re.compile(r"(?i)^\s*(?:tell|describe|share|give)\b[^.!?]{0,100}?\b(?:a|an|some)\s+(?:time|example|occasion|experience|decision|situation)\b")
-_RECOLLECTION_BRIDGE = re.compile(r"(?i)\s*(?:(?:when|where|that)\s+)?")
+_RECOLLECTION_BRIDGE = re.compile(r"(?i)\s*(?:(?:when|where|that)\s+)?(?:(?:i|we|you|the candidate)\s+(?:and|or)\s+)?")
 _EMBEDDED_REQUEST = re.compile(r"(?i)\b(?:how|what|whether|if)\s*$")
 _PURPOSE = re.compile(r"(?i)\bso(?:\s+that)?\s*$")
 _PERSONAL_OBJECT_PREFIX = re.compile(r"(?i)\b(?:from|with|for|to|by|about|without)\s*$")
@@ -78,9 +78,9 @@ _PERSONAL_POSSESSION = re.compile(rf"(?i)\b{_PERSONAL_OWNER}\b")
 _EXPLICIT_SCENARIO = re.compile(r"(?i)^\s*(?:hypothetically\b|in a hypothetical\b|suppose\b|imagine\b|if\b)")
 _PERIOD_BOUNDARY = r"(?<!\b[a-z]\.[a-z])\.(?!\w)|(?<=\d)\.(?!\d)"
 _CLAUSE_BOUNDARIES = re.compile(_PERIOD_BOUNDARY + r"|[;\n!?]|\b(?:and|but|because|although|after|since|where)\b", re.IGNORECASE)
-_PROPOSITION_BOUNDARIES = re.compile(_CLAUSE_BOUNDARIES.pattern + r"|(?<!\d),(?!\d)|\bthen\b", re.IGNORECASE)
+_CONDITION_END = re.compile(r"(?<!\d)[,:]|[,:](?!\d)|\bthen\b", re.IGNORECASE)
+_PROPOSITION_BOUNDARIES = re.compile(_CLAUSE_BOUNDARIES.pattern + "|" + _CONDITION_END.pattern, re.IGNORECASE)
 _SENTENCE_BOUNDARIES = re.compile(_PERIOD_BOUNDARY + r"|[;\n!?]", re.IGNORECASE)
-_CONDITION_END = re.compile(r"(?<!\d),(?!\d)|\bthen\b", re.IGNORECASE)
 _DIRECT_PREDICATE = re.compile(r"(?i)^\s*(?:(?:had|have|has|ever|previously|once|would|will|could|might|should)\s+)*$")
 _QUERY_EMPLOYER = re.compile(r"\b(?:at|for)\s+([A-Z][A-Za-z0-9&.-]*(?:\s+[A-Z][A-Za-z0-9&.-]*)*)")
 _PERSONAL_PAST = re.compile(rf"(?i)\b{_PERSONAL_OWNER}\s+(?:past|previous|prior|experience|track record|history|achievements)\b")
@@ -242,70 +242,47 @@ def run_question_truthfulness_gates(
         links = {link["evidenceId"]: link for link in metadata.get("evidenceLinks", [])}
         question_sources = [link["excerpt"] for link in links.values()]
         for index, section in enumerate(metadata.get("outline", [])):
-            text = section["heading"] + ": " + section["text"]
             location = f"{item.item_id}:section:{index}"
             sources = [links[evidence_id]["excerpt"] for evidence_id in section["evidenceIds"]]
             nonfactual = section["factualSupport"] != "accepted_profile_fact"
-            assessments = {field: _assess_prose(section[field]) for field in ("heading", "text")}
-            if nonfactual and any(assessment.personal_assertion for assessment in assessments.values()):
-                failures.append(f"{location} asserts personal history without accepted evidence")
-            # Inspect the prose, never trust the model's support label. Explicit
-            # conditional scenarios carry intended actions, not claimed history.
             for field in ("heading", "text"):
-                assessment = assessments[field]
-                inspected_text = assessment.retained_prose if nonfactual else section[field]
-                selected_profile = {"resume": {"experience_entries": [{"id": "selected", "bullets":
-                    question_sources if nonfactual and assessment.source_query else sources}]}}
-                corpus = build_evidence_corpus(selected_profile)
-                token_findings = scan_resume_bullets(
-                    [(f"{location}:{field}", inspected_text)], corpus)
-                fabricated.extend(finding.describe() for finding in _personal_title_findings(
-                    token_findings, section[field], assessment=assessment, allow_role_framing=nonfactual or field == "heading"))
-                # Neutral criteria and alternatives do not claim personal tool use.
-                skill_assertions = (" ".join(clause for clause in _CLAUSE_BOUNDARIES.split(inspected_text)
-                                             if _assess_prose(clause).personal_assertion)
-                                    if nonfactual and not assessment.source_query else inspected_text)
-                fabricated.extend(finding.describe() for finding in scan_prose_skill_fabrications(
-                    [(f"{location}:{field}", skill_assertions)],
-                    target_skill_terms=query_skill_terms if assessment.source_query else target_skill_terms,
-                    allowed_skill_terms=build_skill_vocabulary(selected_profile), corpus=corpus))
-                if assessment.source_query:
-                    fabricated.extend(f"{location}:{field} includes employer {match.group(1)!r} outside selected canonical excerpts"
-                                      for match in _QUERY_EMPLOYER.finditer(inspected_text) if not corpus.contains_term(match.group(1)))
-            if nonfactual:
-                continue
-            claim_texts = [section["text"]]
-            if assessments["heading"].personal_assertion:
-                claim_texts.append(section["heading"])
-            mappings = [GeneratedClaimMapping(claim_id=f"{location}:{claim_index}", location=location, text=claim_text,
-                         claim_label="evidence_reframed", coverage_edge_ids=("question-evidence",), requirement_ids=(),
-                         evidence_ids=tuple(section["evidenceIds"]), non_requirement_reason="positioning", review_required=False)
-                        for claim_index, claim_text in enumerate(claim_texts)]
-            grounding = ground_claim_mappings(mappings, tuple((str(index), source) for index, source in enumerate(sources)))
-            if grounding.ungrounded:
-                failures.append(f"{location} is not grounded in its selected canonical excerpts")
-            source_words = words(" ".join(sources))
-            for authority in _AUTHORITY.findall(text):
-                if authority.lower() not in " ".join(sources).lower() and authority.lower() not in source_words:
-                    failures.append(f"{location} invents personal authority: {authority}")
+                assessment = _assess_prose(section[field])
+                if nonfactual and assessment.personal_assertion:
+                    failures.append(f"{location} asserts personal history without accepted evidence")
+                for proposition in assessment.propositions:
+                    # A factual label adds proof obligations. Each record keeps
+                    # its own operator and source spans through every check.
+                    factual_body = not nonfactual and field == "text"
+                    checked_sources = question_sources if nonfactual and proposition.source_query else sources
+                    fabricated.extend(_proposition_fabrications(
+                        proposition, location=f"{location}:{field}", sources=checked_sources,
+                        target_skill_terms=target_skill_terms, query_skill_terms=query_skill_terms,
+                        factual_body=factual_body, allow_role_framing=nonfactual or field == "heading"))
+                    if nonfactual or not (factual_body or proposition.personal_assertion):
+                        continue
+                    claim_text = proposition.text if factual_body else proposition.source_check_text
+                    mapping = GeneratedClaimMapping(
+                        claim_id=f"{location}:{field}:{proposition.start}", location=location, text=claim_text,
+                        claim_label="evidence_reframed", coverage_edge_ids=("question-evidence",), requirement_ids=(),
+                        evidence_ids=tuple(section["evidenceIds"]), non_requirement_reason="positioning", review_required=False)
+                    grounding = ground_claim_mappings(
+                        [mapping], tuple((str(index), source) for index, source in enumerate(sources)))
+                    if grounding.ungrounded:
+                        failures.append(f"{location} is not grounded in its selected canonical excerpts")
+                    source_words = words(" ".join(sources))
+                    for authority in _AUTHORITY.findall(claim_text):
+                        if authority.lower() not in " ".join(sources).lower() and authority.lower() not in source_words:
+                            failures.append(f"{location} invents personal authority: {authority}")
         for text in [*(gap["prompt"] for gap in metadata.get("gaps", [])),
                      *(gap["reason"] for gap in metadata.get("gaps", [])), *metadata.get("probes", [])]:
             assessment = _assess_prose(text)
             if assessment.personal_assertion:
                 failures.append(f"{item.item_id} clarification/probe asserts personal history without accepted evidence")
-            inspected_text = assessment.retained_prose
-            selected_profile = {"resume": {"experience_entries": [{"id": "selected", "bullets": question_sources}]}}
-            corpus = build_evidence_corpus(selected_profile)
-            token_findings = scan_resume_bullets(
-                [(f"{item.item_id}:clarification", inspected_text)], corpus)
-            fabricated.extend(finding.describe() for finding in _personal_title_findings(
-                token_findings, text, assessment=assessment, allow_role_framing=True))
-            if assessment.source_query:
-                fabricated.extend(finding.describe() for finding in scan_prose_skill_fabrications(
-                    [(f"{item.item_id}:clarification", inspected_text)], target_skill_terms=query_skill_terms,
-                    allowed_skill_terms=build_skill_vocabulary(selected_profile), corpus=corpus))
-                fabricated.extend(f"{item.item_id} clarification includes employer {match.group(1)!r} outside selected canonical excerpts"
-                                  for match in _QUERY_EMPLOYER.finditer(inspected_text) if not corpus.contains_term(match.group(1)))
+            for proposition in assessment.propositions:
+                fabricated.extend(_proposition_fabrications(
+                    proposition, location=f"{item.item_id}:clarification", sources=question_sources,
+                    target_skill_terms=target_skill_terms, query_skill_terms=query_skill_terms,
+                    factual_body=False, allow_role_framing=True))
         if metadata.get("questionId") == "C07":
             negotiation = item.generated_text.lower()
             if "range" not in negotiation or not re.search(r"\b(?:employer|budgeted)\b", negotiation):
@@ -320,10 +297,6 @@ def run_question_truthfulness_gates(
                 failures.append("C07 discloses an unsupported candidate compensation figure")
     return InterviewPrepGateAudit(status="failed" if failures or fabricated else "passed",
                                   fabrication_findings=tuple(fabricated), grounding_findings=tuple(failures))
-
-
-def _future_question(text: str) -> bool:
-    return bool(text.strip().endswith("?") and _QUESTION_START.search(text) and _FUTURE_QUESTION.search(text))
 
 
 def _intended_action(clause: str, subject: re.Match[str]) -> bool:
@@ -345,10 +318,23 @@ def _intended_purpose(text: str, clause_start: int, clause: str, subject: re.Mat
 
 
 @dataclass(frozen=True)
-class _ProseAssessment:
+class _PropositionAssessment:
+    start: int
+    end: int
+    text: str
+    operator_modes: tuple[str, ...]
     personal_assertion: bool
-    retained_prose: str
     source_query: bool
+    source_check_text: str
+
+
+@dataclass(frozen=True)
+class _ProseAssessment:
+    propositions: tuple[_PropositionAssessment, ...]
+
+    @property
+    def personal_assertion(self) -> bool:
+        return any(proposition.personal_assertion for proposition in self.propositions)
 
 
 def _in_hypothesis(text: str, position: int) -> bool:
@@ -367,6 +353,8 @@ def _sentence_at(text: str, position: int) -> str:
 
 def _in_recollection(text: str, position: int) -> bool:
     preceding = _SENTENCE_BOUNDARIES.split(text[:position])[-1]
+    preceding = _CONDITION_END.split(preceding)[-1]
+    preceding = re.sub(r"(?i)^\s*(?:and|but)\s+", "", preceding)
     request = _RECOLLECTION_REQUEST.match(preceding)
     # The invitation governs its direct event subject. A completed predicate,
     # independent clause or later sentence cannot inherit the request operator.
@@ -395,27 +383,26 @@ def _subject_mode(text: str, start: int, clause: str, subject: re.Match[str], *,
 
 
 def _assess_prose(text: str) -> _ProseAssessment:
-    """Classify propositions once; labels and surrounding questions grant no waiver."""
-    personal_assertion = False
-    source_query = False
-    retained = []
+    """Keep operator, assertion and source-check spans together until validation."""
+    propositions: list[_PropositionAssessment] = []
     start = 0
     ends = [*(match.span() for match in _PROPOSITION_BOUNDARIES.finditer(text)), (len(text), len(text))]
     for end, next_start in ends:
-        clause = text[start:end + int(text[end:end + 1] in {"?", "!"})]
+        span_end = end + int(text[end:end + 1] in {"?", "!"})
+        clause = text[start:span_end]
         if not clause.strip():
             start = next_start
             continue
         sentence = _sentence_at(text, end - 1)
-        question = bool(sentence.strip().endswith("?") and _QUESTION_START.search(sentence))
-        future_question = _future_question(sentence)
+        question = bool(sentence.strip().endswith("?") and (_QUESTION_START.search(clause) or _QUESTION_START.search(sentence)))
+        future_question = bool(question and _FUTURE_QUESTION.search(clause))
         unknown_value = bool(question and _UNKNOWN_HISTORY_VALUE.fullmatch(clause.rstrip().rstrip("?") + "?"))
         subjects = list(_PERSONAL_SUBJECT.finditer(clause))
         modes = [_subject_mode(text, start, clause, subject, question=question, future_question=future_question) for subject in subjects]
         hypothesis = _in_hypothesis(text, end - 1)
         requested = bool(question and _QUESTION_START.search(clause))
-        personal_assertion |= any(mode == "assertion" for mode in modes)
-        source_query |= "detail_question" in modes
+        personal_assertion = any(mode == "assertion" for mode in modes)
+        source_query = "detail_question" in modes
         for premise in _BIOGRAPHICAL_PREMISE.finditer(clause):
             governed = unknown_value or _in_hypothesis(text, start + premise.start())
             for subject, mode in zip(subjects, modes, strict=True):
@@ -427,27 +414,60 @@ def _assess_prose(text: str) -> _ProseAssessment:
             personal_assertion = True
         for possession in _PERSONAL_POSSESSION.finditer(clause):
             intended_choice = bool(_INTENDED_POSSESSION.match(clause[possession.end():]))
-            if future_question and not intended_choice and not unknown_value:
+            possession_hypothesis = _in_hypothesis(text, start + possession.start())
+            possession_request = _in_recollection(text, start + possession.start())
+            source_query |= possession_request
+            if possession_hypothesis:
+                modes.append("conditional")
+            elif possession_request:
+                modes.append("detail_question")
+            if future_question and not intended_choice and not unknown_value and not possession_hypothesis:
                 personal_assertion = True
             input_request = bool(_PERSONAL_OBJECT_PREFIX.search(clause[:possession.start()])
                                  and _REQUESTED_INPUT.match(clause[possession.end():]))
-            if not modes and not requested and not input_request and not (question and intended_choice) and not unknown_value:
+            if (not modes and not requested and not input_request
+                    and not (question and intended_choice) and not unknown_value):
                 personal_assertion = True
-        if not subjects and _HISTORICAL_ASSERTION.search(clause) and not hypothesis:
+        if not subjects and _HISTORICAL_ASSERTION.search(clause) and not hypothesis and not source_query:
             personal_assertion = True
-        if not (unknown_value or hypothesis or (modes and all(mode in {"conditional", "open_question", "object"} for mode in modes))):
-            retained.append(clause)
+        nonasserting = unknown_value or hypothesis or (
+            modes and all(mode in {"conditional", "open_question", "object"} for mode in modes))
+        source_text = clause if personal_assertion or not nonasserting else ""
+        operators = tuple(modes) + (("hypothesis",) if hypothesis else ()) + (("unknown_value",) if unknown_value else ())
+        propositions.append(_PropositionAssessment(
+            start, span_end, clause, operators, personal_assertion, source_query, source_text))
         start = next_start
-    # An embedded real premise keeps the whole field available to source scans,
-    # including facts inside otherwise prospective or interrogative prose.
-    return _ProseAssessment(personal_assertion, text if personal_assertion else " ".join(retained), source_query)
+    return _ProseAssessment(tuple(propositions))
 
 
 def _personal_title_findings(
-    findings: Sequence[FabricationFinding], text: str, *, assessment: _ProseAssessment, allow_role_framing: bool,
+    findings: Sequence[FabricationFinding], proposition: _PropositionAssessment, *, allow_role_framing: bool,
 ) -> list[FabricationFinding]:
     """A neutral role topic/question does not claim the candidate held its title."""
-    neutral_role = allow_role_framing and not assessment.personal_assertion and not assessment.source_query
+    neutral_role = allow_role_framing and not proposition.personal_assertion and not proposition.source_query
     return [finding for finding in findings if not (neutral_role and finding.kind == "title"
-            and (_ROLE_FRAMING.search(text)
-                 or (finding.token.lower() == "manager" and _FIRST_MANAGER_CONTEXT.search(text))))]
+            and (_ROLE_FRAMING.search(proposition.text)
+                 or (finding.token.lower() == "manager" and _FIRST_MANAGER_CONTEXT.search(proposition.text))))]
+
+
+def _proposition_fabrications(
+    proposition: _PropositionAssessment, *, location: str, sources: Sequence[str],
+    target_skill_terms: tuple[str, ...], query_skill_terms: tuple[str, ...],
+    factual_body: bool, allow_role_framing: bool,
+) -> list[str]:
+    """Every lexical consumer reads the same local record and selected sources."""
+    checked_text = proposition.text if factual_body else proposition.source_check_text
+    selected_profile = {"resume": {"experience_entries": [{"id": "selected", "bullets": list(sources)}]}}
+    corpus = build_evidence_corpus(selected_profile)
+    findings = scan_resume_bullets([(location, checked_text)], corpus)
+    fabricated = [finding.describe() for finding in _personal_title_findings(
+        findings, proposition, allow_role_framing=allow_role_framing)]
+    if factual_body or proposition.personal_assertion or proposition.source_query:
+        fabricated.extend(finding.describe() for finding in scan_prose_skill_fabrications(
+            [(location, checked_text)],
+            target_skill_terms=query_skill_terms if proposition.source_query else target_skill_terms,
+            allowed_skill_terms=build_skill_vocabulary(selected_profile), corpus=corpus))
+    if proposition.source_query:
+        fabricated.extend(f"{location} includes employer {match.group(1)!r} outside selected canonical excerpts"
+                          for match in _QUERY_EMPLOYER.finditer(checked_text) if not corpus.contains_term(match.group(1)))
+    return fabricated
