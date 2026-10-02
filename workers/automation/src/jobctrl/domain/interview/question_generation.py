@@ -37,7 +37,8 @@ _FUTURE_QUESTION = re.compile(r"(?i)\b(?:would|could|might|should|will)\s+(?:you
 _QUESTION_AUXILIARY = re.compile(r"(?i)\b(?:would|could|might|should|will|can|did|do|does|have|has|was|were|is|are)\s*$")
 _QUESTION_START = re.compile(r"(?i)(?:^|[,;:—])\s*(?:what|how|which|when|where|why|who|would|could|might|should|will|can|did|do|does|is|are|was|were|have|has)\b")
 _POLAR_QUESTION = re.compile(r"(?i)^\s*[—:]?\s*(?:have|has|had|did|do|does|is|are|was|were|can)\b")
-_RECOLLECTION_REQUEST = re.compile(r"(?i)^\s*(?:tell|describe|share|give)\b[^.!?]{0,100}\b(?:a|an|some)\s+(?:time|example|occasion|experience|decision|situation)\b")
+_RECOLLECTION_REQUEST = re.compile(r"(?i)^\s*(?:tell|describe|share|give)\b[^.!?]{0,100}?\b(?:a|an|some)\s+(?:time|example|occasion|experience|decision|situation)\b")
+_RECOLLECTION_BRIDGE = re.compile(r"(?i)\s*(?:(?:when|where|that)\s+)?")
 _EMBEDDED_REQUEST = re.compile(r"(?i)\b(?:how|what|whether|if)\s*$")
 _PURPOSE = re.compile(r"(?i)\bso(?:\s+that)?\s*$")
 _PERSONAL_OBJECT_PREFIX = re.compile(r"(?i)\b(?:from|with|for|to|by|about|without)\s*$")
@@ -75,9 +76,10 @@ _UNKNOWN_HISTORY_VALUE = re.compile(
 )
 _PERSONAL_POSSESSION = re.compile(rf"(?i)\b{_PERSONAL_OWNER}\b")
 _EXPLICIT_SCENARIO = re.compile(r"(?i)^\s*(?:hypothetically\b|in a hypothetical\b|suppose\b|imagine\b|if\b)")
-_CLAUSE_BOUNDARIES = re.compile(r"(?<!\d)\.|\.(?!\d)|[;\n]|\b(?:and|but|because|although|after|since|where)\b", re.IGNORECASE)
+_PERIOD_BOUNDARY = r"(?<!\b[a-z]\.[a-z])\.(?!\w)|(?<=\d)\.(?!\d)"
+_CLAUSE_BOUNDARIES = re.compile(_PERIOD_BOUNDARY + r"|[;\n!?]|\b(?:and|but|because|although|after|since|where)\b", re.IGNORECASE)
 _PROPOSITION_BOUNDARIES = re.compile(_CLAUSE_BOUNDARIES.pattern + r"|(?<!\d),(?!\d)|\bthen\b", re.IGNORECASE)
-_SENTENCE_BOUNDARIES = re.compile(r"(?<!\d)\.|\.(?!\d)|[;\n]")
+_SENTENCE_BOUNDARIES = re.compile(_PERIOD_BOUNDARY + r"|[;\n!?]", re.IGNORECASE)
 _CONDITION_END = re.compile(r"(?<!\d),(?!\d)|\bthen\b", re.IGNORECASE)
 _DIRECT_PREDICATE = re.compile(r"(?i)^\s*(?:(?:had|have|has|ever|previously|once|would|will|could|might|should)\s+)*$")
 _QUERY_EMPLOYER = re.compile(r"\b(?:at|for)\s+([A-Z][A-Za-z0-9&.-]*(?:\s+[A-Z][A-Za-z0-9&.-]*)*)")
@@ -354,43 +356,62 @@ def _in_hypothesis(text: str, position: int) -> bool:
     return bool(_EXPLICIT_SCENARIO.match(preceding) and not _CONDITION_END.search(preceding))
 
 
-def _subject_mode(text: str, start: int, clause: str, subject: re.Match[str], *, question: bool, recollection: bool) -> str:
+def _sentence_at(text: str, position: int) -> str:
+    start = 0
+    for boundary in _SENTENCE_BOUNDARIES.finditer(text):
+        if boundary.start() >= position:
+            return text[start:boundary.end()]
+        start = boundary.end()
+    return text[start:]
+
+
+def _in_recollection(text: str, position: int) -> bool:
+    preceding = _SENTENCE_BOUNDARIES.split(text[:position])[-1]
+    request = _RECOLLECTION_REQUEST.match(preceding)
+    # The invitation governs its direct event subject. A completed predicate,
+    # independent clause or later sentence cannot inherit the request operator.
+    return bool(request and _RECOLLECTION_BRIDGE.fullmatch(preceding[request.end():]))
+
+
+def _subject_mode(text: str, start: int, clause: str, subject: re.Match[str], *, question: bool, future_question: bool) -> str:
     prefix, rest = clause[:subject.start()], clause[subject.end():]
     if _PERSONAL_OBJECT_PREFIX.search(prefix) and _PERSONAL_OBJECT_REST.match(rest):
         return "object"
     if (_intended_action(clause, subject) or _intended_purpose(text, start, clause, subject)
             or _in_hypothesis(text, start + subject.start())):
         return "conditional"
-    if _future_question(text) and _REFLECTION.search(prefix) and _REFLECTIVE_STATE.match(rest):
+    if future_question and _REFLECTION.search(prefix) and _REFLECTIVE_STATE.match(rest):
         return "conditional"
-    if question and _QUESTION_AUXILIARY.search(prefix):
-        if _future_question(text) or _POLAR_QUESTION.match(prefix):
+    auxiliary = _QUESTION_AUXILIARY.search(prefix)
+    if question and auxiliary:
+        if auxiliary.group().strip().lower() in {"would", "could", "might", "should", "will"} or _POLAR_QUESTION.match(prefix):
             return "open_question"
         return "detail_question"
-    if recollection:
+    if _in_recollection(text, start + subject.start()):
         return "detail_question"
-    if question and not _future_question(text) and _EMBEDDED_REQUEST.search(prefix):
+    if question and not future_question and _EMBEDDED_REQUEST.search(prefix):
         return "input_question"
     return "assertion"
 
 
 def _assess_prose(text: str) -> _ProseAssessment:
     """Classify propositions once; labels and surrounding questions grant no waiver."""
-    question = bool(text.strip().endswith("?") and _QUESTION_START.search(text))
-    unknown_value = bool(_UNKNOWN_HISTORY_VALUE.fullmatch(text))
-    recollection = bool(_RECOLLECTION_REQUEST.match(text))
     personal_assertion = False
     source_query = False
     retained = []
     start = 0
     ends = [*(match.span() for match in _PROPOSITION_BOUNDARIES.finditer(text)), (len(text), len(text))]
     for end, next_start in ends:
-        clause = text[start:end]
+        clause = text[start:end + int(text[end:end + 1] in {"?", "!"})]
         if not clause.strip():
             start = next_start
             continue
+        sentence = _sentence_at(text, end - 1)
+        question = bool(sentence.strip().endswith("?") and _QUESTION_START.search(sentence))
+        future_question = _future_question(sentence)
+        unknown_value = bool(question and _UNKNOWN_HISTORY_VALUE.fullmatch(clause.rstrip().rstrip("?") + "?"))
         subjects = list(_PERSONAL_SUBJECT.finditer(clause))
-        modes = [_subject_mode(text, start, clause, subject, question=question, recollection=recollection) for subject in subjects]
+        modes = [_subject_mode(text, start, clause, subject, question=question, future_question=future_question) for subject in subjects]
         hypothesis = _in_hypothesis(text, end - 1)
         requested = bool(question and _QUESTION_START.search(clause))
         personal_assertion |= any(mode == "assertion" for mode in modes)
@@ -406,7 +427,7 @@ def _assess_prose(text: str) -> _ProseAssessment:
             personal_assertion = True
         for possession in _PERSONAL_POSSESSION.finditer(clause):
             intended_choice = bool(_INTENDED_POSSESSION.match(clause[possession.end():]))
-            if _future_question(text) and not intended_choice:
+            if future_question and not intended_choice and not unknown_value:
                 personal_assertion = True
             input_request = bool(_PERSONAL_OBJECT_PREFIX.search(clause[:possession.start()])
                                  and _REQUESTED_INPUT.match(clause[possession.end():]))

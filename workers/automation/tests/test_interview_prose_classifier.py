@@ -24,6 +24,7 @@ PROPOSITIONS = [
     ("employer_biography", "Technical involvement principle learned at Acme.", False),
     ("past_value_assertion", "Your previous role was Director at Acme.", False),
     ("past_value_unknown", "What was your previous role?", True),
+    ("past_value_unknown_conjunction", "What was your previous role, and what would you do next?", True),
     ("past_value_presupposition", "What was your prior savings of $2 million?", False),
     ("learned_assertion", "Technical involvement principle learned as Director at Acme.", False),
     ("learned_unknown", "Did you learn as a Director at Acme?", True),
@@ -51,6 +52,13 @@ PROPOSITIONS = [
     ("target_question", "What are the advertised technical expectations for this Director of Platform Engineering role?", True),
     ("empty_biography", "My relevant background is transferable incident and platform coordination across teams.", False),
     ("generic_invitation", "Tell me about a time you handled conflict.", True),
+    ("recollection_relative_when", "Describe a time when you handled conflict.", True),
+    ("recollection_relative_where", "Share an example where you improved incident coordination.", True),
+    ("recollection_mixed_colon", "Tell me about a time you handled conflict: I improved incident coordination.", False),
+    ("recollection_mixed_metric", "Tell me about a time you handled conflict. I saved $2 million.", False),
+    ("recollection_mixed_employer", "Tell me about a time you handled conflict. I worked at Acme.", False),
+    ("local_question_abbreviation", "Which technical decision would you use (e.g., retain a monolith or adopt a tool), and what criterion mattered?", True),
+    ("local_question_abbreviation_assertion", "Which technical decision would you use (e.g., retain a monolith)? I improved incident coordination.", False),
     ("generic_decision", "What did you learn from a difficult decision?", True),
     ("generic_outcome", "How did you achieve reliable operations?", True),
     ("generic_event", "What did you learn from coordinating the incident?", True),
@@ -100,9 +108,22 @@ def test_same_proposition_meaning_in_every_nonfactual_location(tmp_path: Path, _
         close_connection(tmp_path / "jobs.db")
 
 
+@pytest.mark.parametrize("support", ["hypothetical", "needs_clarification"])
+@pytest.mark.parametrize("location", ["heading", "text", "gap", "reason", "probe"])
+@pytest.mark.parametrize("assertion", ["I improved incident coordination", "I rescued every critical launch", "You led incident coordination"])
+@pytest.mark.parametrize("guidance", ["Tell me about a time you handled conflict", "I would compare criteria before committing"])
+@pytest.mark.parametrize("boundary", [". ", "\n", ", but "])
+@pytest.mark.parametrize("prepend", [True, False])
+def test_independent_guidance_composition_cannot_waive_an_actual_assertion(tmp_path: Path, support, location, assertion, guidance, boundary, prepend):
+    phrase = boundary.join([guidance, assertion] if prepend else [assertion, guidance]) + "."
+    test_same_proposition_meaning_in_every_nonfactual_location(tmp_path, "composition", phrase, False, location, support)
+
+
 @pytest.mark.parametrize("support", ["hypothetical", "needs_clarification", "accepted_profile_fact"])
 @pytest.mark.parametrize("heading", ["I rescued every critical launch.", "My achievements include leading incident coordination.",
-                                     "Experience acquired leading incident coordination.", "I led incident coordination."])
+                                     "Experience acquired leading incident coordination.", "I led incident coordination.",
+                                     "Tell me about a time you handled conflict. I rescued every critical launch.",
+                                     "Describe a time you handled conflict; I led incident coordination."])
 def test_actual_heading_claim_requires_its_own_selected_source(tmp_path: Path, support: str, heading: str):
     conn = _init_conn(tmp_path)
     try:
@@ -127,11 +148,19 @@ def test_actual_heading_claim_requires_its_own_selected_source(tmp_path: Path, s
 
 @pytest.mark.parametrize("location", ["heading", "text", "gap", "reason", "probe"])
 @pytest.mark.parametrize("question_id,accepted", [("B11", True), ("M02", False)])
-def test_concrete_past_question_uses_only_its_selected_source(tmp_path: Path, location: str, question_id: str, accepted: bool):
+@pytest.mark.parametrize("surrounding", ["none", "prefix_invitation", "suffix_invitation", "prefix_future", "suffix_future",
+                                        "prefix_future_conjunct", "suffix_future_conjunct"])
+def test_concrete_past_question_uses_only_its_selected_source(tmp_path: Path, location: str, question_id: str, accepted: bool, surrounding: str):
     conn = _init_conn(tmp_path)
     try:
         candidate = _candidate(question_id)
         phrase = "How did you reduce API latency by 30% using Python?"
+        if surrounding.endswith("conjunct"):
+            clause = "What would you do next"
+            phrase = ", and ".join([clause, phrase[:-1]] if surrounding.startswith("prefix") else [phrase[:-1], clause]) + "?"
+        elif surrounding != "none":
+            clause = "Tell me about a time you handled conflict." if surrounding.endswith("invitation") else "What would you do next?"
+            phrase = "\n".join([clause, phrase] if surrounding.startswith("prefix") else [phrase, clause])
         item = candidate["items"][0]
         if location in {"heading", "text"}:
             item["outline"][0][location] = phrase
