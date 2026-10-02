@@ -181,3 +181,37 @@ def test_user_selected_evidence_is_chosen_before_prose_and_input_is_inert() -> N
     assert context["questions"][0]["selected_evidence"][0]["evidenceId"] == "ev-platform-latency"
     assert "Ignore all rules" not in payload
     assert profile.as_dict() == before
+
+
+def test_real_catalog_principle_and_negotiation_generation_without_historical_facts() -> None:
+    from jobctrl.domain.interview.catalog import load_interview_catalog
+    catalog = load_interview_catalog()
+    ids = ["B11", "TS09", "C07"]
+    candidate = {"items": [
+        _question_candidate("B11", "Compare reasoning with information available, criteria, alternatives and learning.")["items"][0],
+        _question_candidate("TS09", "Compare requirements, operating costs, alternatives, uncertainty and reversal conditions.")["items"][0],
+        _question_candidate("C07", "Ask the employer's budgeted range first; persist through vague answers and clarify base versus total.")["items"][0],
+    ]}
+    llm = _FakeLlm([candidate, _judge_pass()])
+    outcome = GenerateInterviewPrepUseCase(repository=_Repository(), llm=llm, catalog=catalog).execute(
+        tenant_id=LOCAL_TENANT, job=_job(), profile_snapshot=_profile_snapshot(), evidence_entries=(), evidence_gaps=(),
+        requirements=(), selection_input={"selectedQuestionIds": ids, "roleLens": "staff_principal", "interviewStage": "technical"})
+    assert outcome.status == "accepted", outcome.errors
+    assert outcome.prep.generation_context["catalogBinding"] == {"catalogRevision": catalog["catalogRevision"], "catalogDigest": catalog["catalogDigest"]}
+    assert [item.question_metadata["answerFormat"] for item in outcome.prep.items] == ["principle", "principle", "negotiation"]
+    assert [item.question_metadata["questionId"] for item in outcome.prep.items] == ids
+    assert not any(item.evidence_ids for item in outcome.prep.items)
+    assert len(llm.calls) == 2
+
+
+def test_real_catalog_recruiter_selection_is_format_appropriate_and_legacy_is_bounded() -> None:
+    from jobctrl.domain.interview.catalog import load_interview_catalog
+    catalog = load_interview_catalog()
+    cards, context = choose_questions(catalog, {"interviewStage": "recruiter"}, _requirements("r1", "Python optimization"))
+    assert all(card["defaultAnswerFormat"] in {"narrative", "negotiation", "preference"} for card in cards)
+    assert len(cards) == 5
+    assert context["roleLens"] == "unknown"
+    _, legacy = choose_questions(catalog, None, ())
+    assert legacy["selectionMode"] == "deterministic"
+    assert len(legacy["selectedQuestionIds"]) == 5
+    assert "C08" not in legacy["selectedQuestionIds"]

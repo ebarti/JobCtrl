@@ -112,7 +112,8 @@ def choose_questions(
         def rank(card: InterviewQuestionCard) -> tuple[int, int, str]:
             tags = words(" ".join([*card["responsibilityTags"], *card["competencyTags"]]))
             format_rank = stage_formats.index(card["defaultAnswerFormat"]) if card["defaultAnswerFormat"] in stage_formats else len(stage_formats)
-            return (-len(tags & target_words), format_rank, card["id"])
+            return ((format_rank, -len(tags & target_words), card["id"]) if context["interviewStage"] == "recruiter"
+                    else (-len(tags & target_words), format_rank, card["id"]))
         eligible.sort(key=rank)
         cards_list: list[InterviewQuestionCard] = []
         topics: set[str] = set()
