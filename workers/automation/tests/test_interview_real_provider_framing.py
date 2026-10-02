@@ -112,7 +112,7 @@ def test_selected_fact_for_one_question_cannot_supply_empty_question_background(
         assert accepted.status == "accepted"
         assert [link["evidenceId"] for link in accepted.items[0].question_metadata["evidenceLinks"]] == ["ev-platform-latency"]
         assert accepted.items[2].question_metadata["evidenceLinks"] == []
-        assert accepted.generation_context["model"]["promptVersion"] == "interview-questions-v3"
+        assert accepted.generation_context["model"]["promptVersion"] == "interview-questions-v4"
         candidate["items"][2]["outline"][0]["text"] = "My relevant background is API latency optimization using Python."
         llm = _FakeLlm([candidate, _judge_pass()])
         outcome = GenerateInterviewPrepUseCase(repository=repository, llm=llm).execute(origin_run_id="cross-question", **request)

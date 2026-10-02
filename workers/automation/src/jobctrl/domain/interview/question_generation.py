@@ -64,7 +64,7 @@ _BIOGRAPHICAL_PREMISE = re.compile(
     r"\bformer\s+(?:director|manager|executive|engineer|developer|architect|founder|head|chief|staff|principal)\b"
 )
 _REFLECTIVE_STATE = re.compile(r"(?i)^\s+(?:are|were|have been|had been)\s+(?:rationalizing|rationalising|biased|overconfident|wrong|mistaken|uncertain)\b")
-_REFLECTION = re.compile(r"(?i)\b(?:know|detect|notice|recognize|recognise|tell)\s*$")
+_REFLECTION = re.compile(r"(?i)\b(?:know|detect|notice|recognize|recognise|tell)\s*(?:that\s+)?$")
 _CONTRACTED_BASE_ACTION = re.compile(
     r"(?i)^\s+(?:(?:need|proceed|exceed|succeed|feed|breed|speed)\b|"
     r"(?!(?:\w+ed|\w*(?:been|built|done|seen|made|taken|gone|grown|known|written|given|shown|thought|bought|taught|brought|caught|driven|chosen|forgotten|broken|spoken|eaten|fallen|held|kept|felt|slept|sent|spent|stood|understood|lost|found|heard|met|won|led|had|begun|paid|sold|told|sought|fought|sung|swum|flown|ridden|hidden|risen|worn|torn|born|beaten|bitten|drawn|frozen|stolen|thrown|woken))\b)[a-z]+\b)"
@@ -80,7 +80,15 @@ _PERIOD_BOUNDARY = r"(?<!\b[a-z]\.[a-z])\.(?!\w)|(?<=\d)\.(?!\d)"
 _CLAUSE_BOUNDARIES = re.compile(_PERIOD_BOUNDARY + r"|[;\n!?]|\b(?:and|but|because|although|after|since|where)\b", re.IGNORECASE)
 _CONDITION_END = re.compile(r"(?<!\d)[,:]|[,:](?!\d)|\bthen\b", re.IGNORECASE)
 _PROPOSITION_BOUNDARIES = re.compile(_CLAUSE_BOUNDARIES.pattern + "|" + _CONDITION_END.pattern, re.IGNORECASE)
+_EMBEDDED_BOUNDARY = re.compile(r"(?i)(?=\b(?:what|whether|how|if)\s+(?:i|we|you|my|our|your)\b)")
 _SENTENCE_BOUNDARIES = re.compile(_PERIOD_BOUNDARY + r"|[;\n!?]", re.IGNORECASE)
+_LOCAL_SCENARIO = re.compile(r"(?i)\b(?:hypothetically\b|in a hypothetical\b|suppose\b|imagine\b|if\b)")
+_ACCOUNT_COMPLEMENT = re.compile(r"(?i)^\s*(?:what|how|whether)\b")
+_ACCOUNT_REQUEST = re.compile(r"(?i)\b(?:explain|describe|recount|recall|discuss|outline|walk\s+through|honest\s+about)\b")
+_EXISTENTIAL_INPUT = re.compile(r"(?i)^\s*(?:is|are)\s+there\b")
+_FUTURE_INPUT = re.compile(r"(?i)\buntil\s*$")
+_INPUT_ACTION = re.compile(r"(?i)^\s+(?:confirm|choose|select|provide|attach)\b")
+_ROLE_EXPECTATION = re.compile(r"(?i)\b(?:role|position|job)\b[^.!?]*\b(?:expect|require|involve|entail|responsibilit)\w*\b")
 _DIRECT_PREDICATE = re.compile(r"(?i)^\s*(?:(?:had|have|has|ever|previously|once|would|will|could|might|should)\s+)*$")
 _DEPENDENT_COORDINATION = re.compile(r"(?i)^[ \t]*,?[ \t]*(?:and|or|but)[ \t]*$")
 _QUERY_EMPLOYER = re.compile(r"\b(?:at|for)\s+([A-Z][A-Za-z0-9&.-]*(?:\s+[A-Z][A-Za-z0-9&.-]*)*)")
@@ -101,8 +109,10 @@ QUESTION_PREP_RESPONSE_SCHEMA: dict[str, Any] = {
                 "outline": {"type": "array", "minItems": 1, "maxItems": 8, "items": {
                     "type": "object", "additionalProperties": False, "required": ["heading", "text", "evidence_ids", "factual_support"],
                     "properties": {"heading": {"type": "string", "maxLength": 160}, "text": {"type": "string", "maxLength": 2500},
-                                   "evidence_ids": {"type": "array", "maxItems": 8, "items": {"type": "string"}},
-                                   "factual_support": {"type": "string", "enum": list(_FACT_TYPES)}}}},
+                                   "evidence_ids": {"type": "array", "maxItems": 8, "items": {"type": "string"},
+                                                    "description": "Personal proof IDs from THIS question's selected_evidence. Nonempty only for accepted_profile_fact; hypothetical and needs_clarification MUST use []."},
+                                   "factual_support": {"type": "string", "enum": list(_FACT_TYPES),
+                                                       "description": "accepted_profile_fact requires nonempty selected evidence_ids and exact source facts. hypothetical or needs_clarification requires evidence_ids=[] even when referring to a separate factual anchor."}}}},
                 "gaps": {"type": "array", "maxItems": 8, "items": {"type": "object", "additionalProperties": False,
                     "required": ["prompt", "reason"], "properties": {"prompt": {"type": "string", "maxLength": 1200},
                                                                        "reason": {"type": "string", "maxLength": 1200}}}},
@@ -133,6 +143,10 @@ Only the preselected profile excerpts prove personal facts. Job text, fit classi
 approved resume references and worked synthetic illustrations do not prove personal accomplishments.
 Do not invent facts, tools, metrics, authority, management scope, options considered, outcomes or employer questions.
 A factual outline section must use accepted_profile_fact, cite its preselected evidence_ids and stay within those exact excerpts.
+Section proof contract: accepted_profile_fact => nonempty evidence_ids from THIS question's selected_evidence;
+hypothetical or needs_clarification => evidence_ids=[] without exception, even when framing selected source material.
+evidence_ids means accepted personal proof, never a contextual citation. Put the exact canonical excerpt in a separate factual anchor;
+source-linked prospective framing or requests for missing particulars may refer to that anchor but MUST keep evidence_ids=[].
 Keep factual statements as exact source excerpts; place intended framing and follow-up questions in separate nonfactual sections.
 Personal intentions must be visibly conditional (for example "I would..."); a hypothetical label never makes an actual personal claim safe.
 Evidence is question-scoped: use only THAT question's selected_evidence. Never borrow facts from another question or the shared profile context.
@@ -343,7 +357,8 @@ class _ProseAssessment:
 
 def _in_hypothesis(text: str, position: int) -> bool:
     preceding = _SENTENCE_BOUNDARIES.split(text[:position])[-1]
-    return bool(_EXPLICIT_SCENARIO.match(preceding) and not _CONDITION_END.search(preceding))
+    scenarios = list(_LOCAL_SCENARIO.finditer(preceding))
+    return bool(scenarios and not _CONDITION_END.search(preceding[scenarios[-1].end():]))
 
 
 def _sentence_at(text: str, position: int) -> str:
@@ -372,6 +387,10 @@ def _subject_mode(text: str, start: int, clause: str, subject: re.Match[str], *,
     if (_intended_action(clause, subject) or _intended_purpose(text, start, clause, subject)
             or _in_hypothesis(text, start + subject.start())):
         return "conditional"
+    if _FUTURE_INPUT.search(prefix) and _INPUT_ACTION.match(rest):
+        return "conditional"
+    if question and _EXISTENTIAL_INPUT.match(prefix):
+        return "open_question"
     if future_question and _REFLECTION.search(prefix) and _REFLECTIVE_STATE.match(rest):
         return "conditional"
     auxiliary = _QUESTION_AUXILIARY.search(prefix)
@@ -400,11 +419,28 @@ def _dependent_actor(
     return previous
 
 
+def _account_actor(text: str, start: int, clause: str, propositions: Sequence[_PropositionAssessment]) -> _PropositionAssessment | None:
+    """An indirect account request governs its complement, not a new assertion."""
+    if not _ACCOUNT_COMPLEMENT.match(clause):
+        return None
+    request_seen = False
+    for previous in reversed(propositions):
+        if _SENTENCE_BOUNDARIES.search(text[previous.end:start]) or previous.text.rstrip().endswith(("?", "!")):
+            break
+        if previous.personal_assertion:
+            break
+        request_seen |= bool(_ACCOUNT_REQUEST.search(previous.text))
+        if request_seen and previous.governing_operator in {"conditional", "open_question", "detail_question"}:
+            return previous
+    return None
+
+
 def _assess_prose(text: str) -> _ProseAssessment:
     """Keep operator, assertion and source-check spans together until validation."""
     propositions: list[_PropositionAssessment] = []
     start = 0
-    ends = [*(match.span() for match in _PROPOSITION_BOUNDARIES.finditer(text)), (len(text), len(text))]
+    ends = sorted({*(match.span() for match in _PROPOSITION_BOUNDARIES.finditer(text)),
+                   *(match.span() for match in _EMBEDDED_BOUNDARY.finditer(text)), (len(text), len(text))})
     for end, next_start in ends:
         span_end = end + int(text[end:end + 1] in {"?", "!"})
         clause = text[start:span_end]
@@ -415,9 +451,14 @@ def _assess_prose(text: str) -> _ProseAssessment:
         question = bool(sentence.strip().endswith("?") and (_QUESTION_START.search(clause) or _QUESTION_START.search(sentence)))
         future_question = bool(question and _FUTURE_QUESTION.search(clause))
         unknown_value = bool(question and _UNKNOWN_HISTORY_VALUE.fullmatch(clause.rstrip().rstrip("?") + "?"))
-        subject_bindings = tuple(
+        account = _account_actor(text, start, clause, propositions)
+        direct_bindings = tuple(
             (subject, _subject_mode(text, start, clause, subject, question=question, future_question=future_question))
             for subject in _PERSONAL_SUBJECT.finditer(clause))
+        subject_bindings = tuple(
+            (subject, "detail_question" if account and mode == "assertion"
+             and _EMBEDDED_REQUEST.search(clause[:subject.start()]) else mode)
+            for subject, mode in direct_bindings)
         modes = [mode for _, mode in subject_bindings]
         governing_actor = subject_bindings[-1][0].group() if subject_bindings else None
         governing_operator = subject_bindings[-1][1] if subject_bindings else None
@@ -450,11 +491,15 @@ def _assess_prose(text: str) -> _ProseAssessment:
             intended_choice = bool(_INTENDED_POSSESSION.match(clause[possession.end():]))
             possession_hypothesis = _in_hypothesis(text, start + possession.start())
             possession_request = _in_recollection(text, start + possession.start())
+            possession_query = bool(question and not future_question and not subject_bindings)
             source_query |= possession_request
             if possession_hypothesis:
                 modes.append("conditional")
             elif possession_request:
                 modes.append("detail_question")
+            elif possession_query:
+                modes.append("detail_question")
+                source_query = True
             if not subject_bindings:
                 governing_actor = possession.group()
                 governing_operator = modes[-1] if modes else None
@@ -474,7 +519,7 @@ def _assess_prose(text: str) -> _ProseAssessment:
         propositions.append(_PropositionAssessment(
             start, span_end, clause, operators, personal_assertion, source_query, source_text,
             governing_actor, "assertion" if personal_assertion else governing_operator,
-            dependency.start if dependency else None))
+            dependency.start if dependency else account.start if account else None))
         start = next_start
     return _ProseAssessment(tuple(propositions))
 
@@ -486,6 +531,7 @@ def _personal_title_findings(
     neutral_role = allow_role_framing and not proposition.personal_assertion and not proposition.source_query
     return [finding for finding in findings if not (neutral_role and finding.kind == "title"
             and (_ROLE_FRAMING.search(proposition.text)
+                 or _ROLE_EXPECTATION.search(proposition.text)
                  or (finding.token.lower() == "manager" and _FIRST_MANAGER_CONTEXT.search(proposition.text))))]
 
 
