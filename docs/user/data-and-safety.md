@@ -147,8 +147,8 @@ Unless a row says otherwise, every path below is relative to JOBCTRL_DIR
 | `tailored_resumes/`, `cover_letters/` | Generated text, HTML, and PDF artifacts. |
 | `logs/`, `apply-workers/`, `chrome-workers/` | Logs and local browser/apply state, including CAPTCHA usage metadata when applicable. |
 | `browser-profiles/` | Consented copied profiles retained for separate compatibility capabilities. Integrated `DiscoverWorkflow` never reads or launches them. Non-secret adoption metadata lives in `config.json`. |
-| `extension-capability-token` | Private local browser-extension pairing secret. Discovery bridge task bodies and results are memory-only and are not stored beside it. |
-| `backups/` | Timestamped SQLite snapshots created by `jobctrl backup`. |
+| `extension-capability-token`, `extension-discovery-installation-id` | Private local browser-extension pairing secret and the extension installation selected for Discovery. Discovery bridge task bodies and results are memory-only and are not stored beside them. |
+| `backups/` | Database snapshots: `pair-<id>/` directories written by the installed launcher's `backup`, `update`, and `rollback`; `jobctrl-<timestamp>.db` files from a source checkout's `backup`; and job-data purge recovery bundles. See [Back Up And Restore](#back-up-and-restore). |
 | `gmail/` | Gmail OAuth client and token files. |
 | Baseline/legacy resume files | `resume.txt`, `resume.pdf`, and older local style/template files. |
 
@@ -159,6 +159,42 @@ that copy as a material artifact or use it to replace an accepted generation.
 
 The development launcher writes PIDs and logs under the checkout's `.dev/`
 directory; treat those logs as sensitive too.
+
+### Back Up And Restore
+
+```bash
+jobctrl backup
+```
+
+The installed command snapshots `jobctrl.db` and `temporal.db` together into a
+new `backups/pair-<id>/` directory. If JobCtrl is running, it stops for the
+snapshot and starts again afterward. `--output` takes an absolute directory.
+The two files are one restore unit: never restore just one of them. The
+launcher has no restore command for these pairs; updates and rollbacks write and
+restore their own, as described in
+[Update, Roll Back, Or Remove JobCtrl](getting-started.md#update-roll-back-or-remove-jobctrl).
+
+In a source checkout, `uv --project workers/automation run jobctrl backup`
+writes one consistent copy of `jobctrl.db` to `backups/jobctrl-<timestamp>.db`
+with SQLite `VACUUM INTO`. It is safe while the app runs and never deletes
+anything; `--output` takes a file or directory. To restore it, stop
+`corepack pnpm dev`, clear the stale WAL sidecars, and copy the backup over the
+live database:
+
+```bash
+rm -f ~/.jobctrl/jobctrl.db-wal ~/.jobctrl/jobctrl.db-shm
+cp ~/.jobctrl/backups/jobctrl-<timestamp>.db ~/.jobctrl/jobctrl.db
+```
+
+Always restore the whole file; never hand-import individual tables. Read-model
+projection watermarks only move forward, so if a database is ever rebuilt
+piecemeal, delete the Python and TypeScript operations-projection watermarks to
+rebuild projections:
+
+```bash
+sqlite3 ~/.jobctrl/jobctrl.db \
+  "DELETE FROM event_watermarks WHERE projection_name LIKE '%operations_projections%';"
+```
 
 ### Credentials Outside The Workspace
 
@@ -211,7 +247,8 @@ records something you did. Follow-ups are reminders and never act automatically.
 | --- | --- | --- |
 | LLM providers | Scoring, employer analysis, materials, contact extraction, stored interview prep | Posting text, relevant profile evidence, generated text, or opted-in fetched page text. The current production target-role suggestion route makes no provider call because the managed adapters cannot enforce its required token and maximum-cost bounds; its model validator uses synthetic adapters in tests. |
 | Job boards, ATS APIs, posting pages | Discovery and Enrich prefer the connected paired extension; otherwise acquisition uses guarded public HTTP or anonymous Playwright | Both modes send search terms, URLs, and page/API requests. Connected Chrome may also send cookies or session state belonging to that site; its cookie values are never copied into worker tasks or results, and its user-agent string is returned as transport metadata. Anonymous acquisition uses no personal Chrome profile or ambient netrc credentials. |
-| Apply model and browser | Apply/dry-run work you start, or a standing loop you enable | Apply prompt, reviewed materials, profile application fields, and page interaction. |
+| Apply model and browser | Apply/dry-run work you start, or a standing loop you enable | The reviewed application URL and the page content observed during the transport-locked inspection. Profile fields, job-description prose, resume and cover-letter text, local artifact paths, and upload authority are excluded; see [Apply](apply.md#approval-and-automation-modes). |
+| Salary data sources | At the end of a Discover run, only for benchmark slices that are missing or past their seven-day freshness window; Levels.fyi or Glassdoor only when their Settings policy permits | Requests for public benchmark data from Euro Top Tech, ECB exchange rates when a currency conversion is needed, and Eurostat price levels when a slice has no direct benchmark. Levels.fyi public-page URLs name the role and location being benchmarked. |
 | Gmail | Authenticated verification, bounded outcome feedback, or an approved email application | Scoped queries/evidence or the exact approved recipient/attachment. |
 | Google Maps | Profile location autocomplete with a configured key | Address text typed into the location field. |
 | CAPTCHA provider | Supported widget during an apply run you explicitly start or a standing loop you enable, with a configured solver | Site key and page URL through the owned local tool. |

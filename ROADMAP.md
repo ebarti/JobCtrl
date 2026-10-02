@@ -42,5 +42,5 @@ disposition of earlier backlog entries; an issue is not an execution commitment.
 - Define portable workspace export and import
   ([#904](https://github.com/ebarti/JobCtrl/issues/904)).
 
-Delivered behavior belongs in the [README](README.md) and owning documentation;
+Delivered behavior belongs in its owning [documentation](docs/README.md);
 delivery evidence remains in the git log and [plan records](docs/plans/).

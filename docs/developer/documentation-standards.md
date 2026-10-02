@@ -15,8 +15,9 @@ only enough context to orient the reader, then link to the owner.
 
 | Concept | Canonical owner |
 | --- | --- |
-| Public product behavior, command surface, runtime requirements, generated artifacts, and top-level safety | Root [`README.md`](../../README.md) |
-| End-user setup, tour, normal flows, configuration, data, and security | The matching page under [`docs/user/`](../user/getting-started.md) |
+| Project summary, install quick start, top-level safety, outbound-data summary, and documentation links | Root [`README.md`](../../README.md), kept short: it links to owners instead of repeating their detail |
+| End-user behavior, setup, tour, normal flows, configuration, data, and security | The matching page under [`docs/user/`](../user/getting-started.md) |
+| CLI command reference | [Daily Workflow](../user/normal-flows.md#command-reference) |
 | Contributor entry and reading path | [Contributor Start](README.md) |
 | Repository layout and source ownership | [Repository & Ownership Map](repository-and-ownership-map.md) |
 | Documentation governance and style | This page |
@@ -65,7 +66,7 @@ Update the existing owner rather than creating a parallel page:
 
 | What changed | Update |
 | --- | --- |
-| User-facing behavior, CLI commands, runtime requirements, generated artifacts, or safety notes | Root `README.md` and the owning `docs/user/` page when detailed guidance changes |
+| User-facing behavior, CLI commands, runtime requirements, generated artifacts, or safety notes | The owning `docs/user/` page; CLI commands also update the [command reference](../user/normal-flows.md#command-reference). Edit the root `README.md` only when its install steps, pipeline summary, safety list, or outbound-data list becomes wrong; never add feature detail to it |
 | Install, run, verify, or frontend-development commands | `docs/local-development.md` |
 | QA expectations, regression matrix, or manually verified product paths | `docs/local-reliability-qa.md` or its focused `docs/developer/qa/` owner |
 | API route family, JSON-RPC dispatch behavior, or SSE contract | `docs/local-ts-api.md` and the owning `docs/api/` page; field-level changes also update `docs/api/complete-contract.md` |

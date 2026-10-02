@@ -18,7 +18,8 @@ scripts/install
 ```
 
 `scripts/install` is the first-run path for new contributors. It checks for
-Node.js 22.13 or newer, Corepack, uv, and the Temporal CLI, offers
+Node.js 22.13 or newer, Corepack, uv (the Python worker needs Python 3.11 or
+newer), and the Temporal CLI, offers
 Homebrew installs for missing machine-level tools when available, then runs the
 repository dependency setup: frozen corepack pnpm install, uv sync, and Playwright
 Chromium installs for both the web package and the Python worker. This direct
@@ -167,6 +168,8 @@ launcher defaults above.
 | `VITE_DEV_API_PROXY_TARGET`     | `http://127.0.0.1:8766`     | Vite dev-server `/v1` proxy target; override it for isolated or multi-worktree stacks.                                                                                                                                 |
 | `VITE_DEMO_API_PROXY_TARGET`    | launcher-managed            | Vite dev-server `/api` proxy target for demo mode. The launcher sets it to the tracked local Wrangler process so consent stays same-origin.                                                                            |
 | `VITE_GOOGLE_MAPS_API_KEY`      | unset                       | Enables Google Maps address search in the Profile form.                                                                                                                                                                |
+| `JOBCTRL_SKIP_BROWSER_PREFLIGHT` | unset                    | Set to `1` to skip the worker's startup Chromium check, for a worker that runs only non-browser activities. |
+| `PLAYWRIGHT_SKIP_BROWSER_GC`    | unset                       | Set to `1` when running `playwright install` from another checkout, so it keeps the browser revisions other worktrees still use in the shared Playwright cache. |
 
 Inspect the foreground stack from another terminal:
 
