@@ -118,8 +118,10 @@ returns `410 retired_question`, and a missing/invalid packaged asset fails
 closed with `503 interview_catalog_unavailable`.
 
 Generation accepts up to 16 unique active question IDs, catalog binding,
-stage/format, role lens/responsibilities, known criteria, and rationale. It
-validates selection before worker dispatch and provider spend. Legacy requests
+per-question accepted-evidence choices with a current profile-version fence,
+stage/format, role lens/responsibilities, known criteria, and rationale. An
+explicit empty evidence choice remains a gap; omitted entries allow automatic
+selection. It validates selection before worker dispatch and provider spend. Legacy requests
 without a selection use deterministic bounded selection; older unbound stored
 prep remains explicitly legacy. The returned current job-detail prep remains
 the last accepted generation through pending or failed replacement. Its
