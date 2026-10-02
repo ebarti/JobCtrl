@@ -7,15 +7,16 @@ no live, in-session, streaming, transcript, or agent-participation state.
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Literal
 
 from jobctrl.domain.identifiers import JobId, canonical_job_id
 
-InterviewPrepItemKind = Literal["theme", "star_draft", "gap_drill", "company_note"]
+InterviewPrepItemKind = Literal["theme", "star_draft", "gap_drill", "company_note", "question_outline"]
 InterviewPrepStatus = Literal["accepted", "failed", "superseded"]
 
-INTERVIEW_PREP_ITEM_KINDS = ("theme", "star_draft", "gap_drill", "company_note")
+INTERVIEW_PREP_ITEM_KINDS = ("theme", "star_draft", "gap_drill", "company_note", "question_outline")
 INTERVIEW_PREP_STATUSES = ("accepted", "failed", "superseded")
 
 
@@ -85,6 +86,7 @@ class InterviewPrepItem:
     grounding_audit: tuple[str, ...] = ()
     warnings: tuple[str, ...] = ()
     position: int = 0
+    question_metadata: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if not self.item_id.strip():
@@ -99,6 +101,10 @@ class InterviewPrepItem:
             raise ValueError("star_draft prep items require at least one evidence id")
         if self.kind == "gap_drill" and not self.requirement_ids:
             raise ValueError("gap_drill prep items require at least one requirement id")
+        if self.question_metadata is not None:
+            if not isinstance(self.question_metadata, dict):
+                raise TypeError("InterviewPrepItem.question_metadata must be an object")
+            object.__setattr__(self, "question_metadata", deepcopy(self.question_metadata))
         if self.position < 0:
             raise ValueError("InterviewPrepItem.position must be >= 0")
 
@@ -116,6 +122,8 @@ class InterviewPrepItem:
             "groundingAudit": list(self.grounding_audit),
             "warnings": list(self.warnings),
             "position": self.position,
+            **({"questionMetadata": deepcopy(self.question_metadata)}
+               if self.question_metadata is not None else {}),
         }
 
     @classmethod
@@ -133,6 +141,7 @@ class InterviewPrepItem:
             grounding_audit=_text_tuple(data.get("groundingAudit")),
             warnings=_text_tuple(data.get("warnings")),
             position=int(data.get("position") or 0),
+            question_metadata=data.get("questionMetadata"),
         )
 
 
@@ -147,9 +156,14 @@ class InterviewPrep:
     gate_audit: InterviewPrepGateAudit
     items: tuple[InterviewPrepItem, ...]
     model: str | None = None
+    generation_context: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "job_id", canonical_job_id(str(self.job_id)))
+        if self.generation_context is not None:
+            if not isinstance(self.generation_context, dict):
+                raise TypeError("InterviewPrep.generation_context must be an object")
+            object.__setattr__(self, "generation_context", deepcopy(self.generation_context))
         if self.generation < 1:
             raise ValueError("InterviewPrep.generation must be >= 1")
         if self.status not in INTERVIEW_PREP_STATUSES:
@@ -175,6 +189,8 @@ class InterviewPrep:
             "model": self.model,
             "gateAudit": self.gate_audit.to_read_model(),
             "items": [item.to_read_model() for item in self.items],
+            **({"generationContext": deepcopy(self.generation_context)}
+               if self.generation_context is not None else {}),
         }
 
     @classmethod
@@ -185,6 +201,7 @@ class InterviewPrep:
             status=str(data["status"]),  # type: ignore[arg-type]
             generated_at=str(data["generatedAt"]),
             model=_optional_text(data.get("model")),
+            generation_context=data.get("generationContext"),
             gate_audit=InterviewPrepGateAudit.from_dict(data.get("gateAudit")),
             items=tuple(InterviewPrepItem.from_dict(item) for item in data.get("items", ())),
         )

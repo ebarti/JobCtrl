@@ -643,6 +643,51 @@ async def test_generate_activity_offloads_generation_and_heartbeats(
     assert forwarded["origin_run_id"] == "wf-run-heartbeat"
 
 
+
+@pytest.mark.parametrize("tenant_id", [LOCAL_TENANT, OTHER_TENANT])
+def test_prep_material_input_uses_only_current_approved_artifact(
+    tmp_path: Path, tenant_id: TenantId,
+) -> None:
+    conn = _init_conn(tmp_path)
+    try:
+        if tenant_id != LOCAL_TENANT:
+            _insert_job(conn, tenant_id, JOB_ID, JOB_URL)
+        for generation, status in ((1, "approved"), (2, "rejected")):
+            conn.execute(
+                "INSERT INTO job_materials (tenant_id, job_id, generation, status, "
+                "created_at, updated_at) VALUES (?, ?, ?, 'resume_in_progress', 'now', 'now')",
+                (tenant_id, JOB_ID, generation),
+            )
+            conn.execute(
+                "INSERT INTO job_materials_artifacts (tenant_id, job_id, generation, "
+                "artifact_type, artifact_id, status, path, render_format, created_at) "
+                "VALUES (?, ?, ?, 'tailored_resume', ?, ?, '/synthetic/resume.txt', 'text', 'now')",
+                (tenant_id, JOB_ID, generation, f"resume-{generation}", status),
+            )
+            for suffix, artifact_id in (("owned", f"resume-{generation}"), ("unrelated", "other-artifact")):
+                conn.execute(
+                    "INSERT INTO job_bullet_provenance (tenant_id, job_id, generation, "
+                    "bullet_id, artifact_id, section, transform_type, control, generated_text, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, 'experience', 'paraphrase', 'never_fabricate', ?, 'now')",
+                    (tenant_id, JOB_ID, generation, f"bullet-{generation}-{suffix}", artifact_id,
+                     f"synthetic generation {generation} {suffix}"),
+                )
+        conn.commit()
+
+        rows = interview_activities._load_accepted_materials(conn, tenant_id, JOB_ID)
+
+        assert [(row["generation"], row["artifactId"], row["bulletId"]) for row in rows] == [
+            (1, "resume-1", "bullet-1-owned")
+        ]
+        conn.execute(
+            "UPDATE job_materials_artifacts SET status = 'rejected' WHERE tenant_id = ? AND job_id = ?",
+            (tenant_id, JOB_ID),
+        )
+        assert interview_activities._load_accepted_materials(conn, tenant_id, JOB_ID) == ()
+    finally:
+        close_connection(tmp_path / "jobs.db")
+
+
 def _init_conn(tmp_path: Path, *, seed_local_job: bool = True):
     db_path = tmp_path / "jobs.db"
     conn = get_connection(db_path)
