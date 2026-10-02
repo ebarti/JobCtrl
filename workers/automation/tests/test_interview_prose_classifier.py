@@ -196,3 +196,65 @@ def test_concrete_past_question_uses_only_its_selected_source(tmp_path: Path, lo
         assert latest.to_read_model() == (outcome.prep if accepted else prior).to_read_model()
     finally:
         close_connection(tmp_path / "jobs.db")
+
+
+COORDINATED_SOURCE_PAIRS = [
+    ("How did you reduce API latency by 30% and use Kubernetes?", False, False),
+    ("How did you reduce API latency by 30% and use Python?", True, False),
+    ("How did you use Python and reduce API latency by 30%?", True, False),
+    ("How did you use Python and reduce API latency by 40%?", False, False),
+    ("How did you use Python and work at Acme?", False, False),
+    ("How did you use Python and manage 50 direct reports?", False, False),
+    ("How did you use Python and reduce API latency by 30% and use Kubernetes?", False, False),
+    ("Describe a time you reduced API latency by 30% and used Python.", True, False),
+    ("Describe a time you reduced API latency by 30% and used Kubernetes.", False, False),
+    ("Have you ever used Python and Kubernetes?", True, True),
+    ("Have you ever used Python and supervised 50 direct reports?", True, True),
+    ("Have you ever used Python and managed 50 direct reports?", True, True),
+    ("How would you use Python and manage a hypothetical team of 50 engineers?", True, True),
+    ("I would compare Python and Kubernetes for a hypothetical design.", True, True),
+    ("How did you reduce API latency by 30%, and how would you evaluate Kubernetes for a hypothetical change?", True, False),
+    ("How did you reduce API latency by 30%, and I improved incident coordination.", False, False),
+    ("How did you reduce API latency by 30% and I rescued every critical launch?", False, False),
+    ("Tell me about a time you handled conflict, and I improved incident coordination.", False, False),
+    ("I would compare criteria and I improved incident coordination.", False, False),
+    ("I would compare criteria and saved $2 million.", False, False),
+    ("I would compare criteria and led incident coordination.", False, False),
+    ("How would you use Python and apply your prior experience managing 50 engineers at Acme?", False, False),
+    ("I would compare Python and use my prior savings of $2 million.", False, False),
+]
+
+
+@pytest.mark.parametrize("support", ["hypothetical", "needs_clarification"])
+@pytest.mark.parametrize("location", ["heading", "text", "gap", "reason", "probe"])
+@pytest.mark.parametrize("question_id", ["B11", "M02"])
+@pytest.mark.parametrize("phrase,b11_accepted,m02_accepted", COORDINATED_SOURCE_PAIRS)
+def test_dependent_predicate_retains_actor_operator_and_selected_sources(
+    tmp_path: Path, support: str, location: str, question_id: str, phrase: str, b11_accepted: bool, m02_accepted: bool,
+):
+    conn = _init_conn(tmp_path)
+    try:
+        repository = SqliteInterviewPrepRepository(conn)
+        request = _request(question_id)
+        prior = GenerateInterviewPrepUseCase(repository=repository, llm=_FakeLlm([_candidate(question_id), _judge_pass()])).execute(
+            origin_run_id="accepted", **request).prep
+        assert prior.status == "accepted"
+        candidate = _candidate(question_id)
+        item = candidate["items"][0]
+        item["outline"][0]["factual_support"] = support
+        if location in {"heading", "text"}:
+            item["outline"][0][location] = phrase
+        elif location == "gap":
+            item["gaps"][0]["prompt"] = phrase
+        elif location == "reason":
+            item["gaps"][0]["reason"] = phrase
+        else:
+            item["probes"] = [phrase]
+        llm = _FakeLlm([candidate, _judge_pass()])
+        outcome = GenerateInterviewPrepUseCase(repository=repository, llm=llm).execute(origin_run_id="dependent-source", **request)
+        accepted = b11_accepted if question_id == "B11" else m02_accepted
+        assert outcome.status == ("accepted" if accepted else "failed"), outcome.errors
+        assert len(llm.calls) == (2 if accepted else 1)
+        assert repository.load_latest(LOCAL_TENANT, JOB_ID).to_read_model() == (outcome.prep if accepted else prior).to_read_model()
+    finally:
+        close_connection(tmp_path / "jobs.db")

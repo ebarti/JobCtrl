@@ -82,6 +82,7 @@ _CONDITION_END = re.compile(r"(?<!\d)[,:]|[,:](?!\d)|\bthen\b", re.IGNORECASE)
 _PROPOSITION_BOUNDARIES = re.compile(_CLAUSE_BOUNDARIES.pattern + "|" + _CONDITION_END.pattern, re.IGNORECASE)
 _SENTENCE_BOUNDARIES = re.compile(_PERIOD_BOUNDARY + r"|[;\n!?]", re.IGNORECASE)
 _DIRECT_PREDICATE = re.compile(r"(?i)^\s*(?:(?:had|have|has|ever|previously|once|would|will|could|might|should)\s+)*$")
+_DEPENDENT_COORDINATION = re.compile(r"(?i)^[ \t]*,?[ \t]*(?:and|or|but)[ \t]*$")
 _QUERY_EMPLOYER = re.compile(r"\b(?:at|for)\s+([A-Z][A-Za-z0-9&.-]*(?:\s+[A-Z][A-Za-z0-9&.-]*)*)")
 _PERSONAL_PAST = re.compile(rf"(?i)\b{_PERSONAL_OWNER}\s+(?:past|previous|prior|experience|track record|history|achievements)\b")
 _AUTHORITY = re.compile(r"(?i)\b(?:managed|hired|fired|direct reports|budget owner|executive|director|manager)\b")
@@ -326,6 +327,9 @@ class _PropositionAssessment:
     personal_assertion: bool
     source_query: bool
     source_check_text: str
+    governing_actor: str | None
+    governing_operator: str | None
+    dependency_start: int | None
 
 
 @dataclass(frozen=True)
@@ -382,6 +386,20 @@ def _subject_mode(text: str, start: int, clause: str, subject: re.Match[str], *,
     return "assertion"
 
 
+def _dependent_actor(
+    text: str, start: int, clause: str, propositions: Sequence[_PropositionAssessment],
+) -> _PropositionAssessment | None:
+    if (not propositions or _PERSONAL_SUBJECT.search(clause) or _PERSONAL_POSSESSION.search(clause)
+            or _QUESTION_START.match(clause) or _RECOLLECTION_REQUEST.match(clause)
+            or _EXPLICIT_SCENARIO.match(clause)):
+        return None
+    previous = propositions[-1]
+    if (previous.governing_operator in {None, "object"} or previous.text.rstrip().endswith(("?", "!"))
+            or not _DEPENDENT_COORDINATION.fullmatch(text[previous.end:start])):
+        return None
+    return previous
+
+
 def _assess_prose(text: str) -> _ProseAssessment:
     """Keep operator, assertion and source-check spans together until validation."""
     propositions: list[_PropositionAssessment] = []
@@ -399,12 +417,26 @@ def _assess_prose(text: str) -> _ProseAssessment:
         unknown_value = bool(question and _UNKNOWN_HISTORY_VALUE.fullmatch(clause.rstrip().rstrip("?") + "?"))
         subjects = list(_PERSONAL_SUBJECT.finditer(clause))
         modes = [_subject_mode(text, start, clause, subject, question=question, future_question=future_question) for subject in subjects]
+        governing_actor = subjects[-1].group() if subjects else None
+        governing_operator = modes[-1] if modes else None
+        dependency = _dependent_actor(text, start, clause, propositions)
+        if dependency:
+            governing_actor, governing_operator = dependency.governing_actor, dependency.governing_operator
+            # An intended base action cannot confer future scope on a separate
+            # past-tense predicate; explicit hypothetical assumptions may.
+            if (governing_operator == "conditional" and "hypothesis" not in dependency.operator_modes
+                    and re.match(r"(?i)^\s*[a-z]+\b", clause) and not _CONTRACTED_BASE_ACTION.match(clause)):
+                governing_operator = "assertion"
+            modes.append(governing_operator)
         hypothesis = _in_hypothesis(text, end - 1)
         requested = bool(question and _QUESTION_START.search(clause))
         personal_assertion = any(mode == "assertion" for mode in modes)
         source_query = "detail_question" in modes
         for premise in _BIOGRAPHICAL_PREMISE.finditer(clause):
             governed = unknown_value or _in_hypothesis(text, start + premise.start())
+            if (dependency and governing_operator in {"open_question", "detail_question", "conditional"}
+                    and _DIRECT_PREDICATE.fullmatch(clause[:premise.start()])):
+                governed = True
             for subject, mode in zip(subjects, modes, strict=True):
                 if (subject.end() <= premise.start() and mode in {"open_question", "detail_question", "conditional"}
                         and _DIRECT_PREDICATE.fullmatch(clause[subject.end():premise.start()])):
@@ -421,6 +453,9 @@ def _assess_prose(text: str) -> _ProseAssessment:
                 modes.append("conditional")
             elif possession_request:
                 modes.append("detail_question")
+            if not subjects:
+                governing_actor = possession.group()
+                governing_operator = modes[-1] if modes else None
             if future_question and not intended_choice and not unknown_value and not possession_hypothesis:
                 personal_assertion = True
             input_request = bool(_PERSONAL_OBJECT_PREFIX.search(clause[:possession.start()])
@@ -428,14 +463,16 @@ def _assess_prose(text: str) -> _ProseAssessment:
             if (not modes and not requested and not input_request
                     and not (question and intended_choice) and not unknown_value):
                 personal_assertion = True
-        if not subjects and _HISTORICAL_ASSERTION.search(clause) and not hypothesis and not source_query:
-            personal_assertion = True
         nonasserting = unknown_value or hypothesis or (
             modes and all(mode in {"conditional", "open_question", "object"} for mode in modes))
+        if not subjects and _HISTORICAL_ASSERTION.search(clause) and not nonasserting and not source_query:
+            personal_assertion = True
         source_text = clause if personal_assertion or not nonasserting else ""
         operators = tuple(modes) + (("hypothesis",) if hypothesis else ()) + (("unknown_value",) if unknown_value else ())
         propositions.append(_PropositionAssessment(
-            start, span_end, clause, operators, personal_assertion, source_query, source_text))
+            start, span_end, clause, operators, personal_assertion, source_query, source_text,
+            governing_actor, "assertion" if personal_assertion else governing_operator,
+            dependency.start if dependency else None))
         start = next_start
     return _ProseAssessment(tuple(propositions))
 
