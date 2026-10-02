@@ -16,6 +16,7 @@ import { Route as PreferencesRouteImport } from "./routes/preferences";
 import { Route as PipelinesRouteImport } from "./routes/pipelines";
 import { Route as OutreachRouteImport } from "./routes/outreach";
 import { Route as JobsRouteImport } from "./routes/jobs";
+import { Route as InterviewsRouteImport } from "./routes/interviews";
 import { Route as EvidenceMapRouteImport } from "./routes/evidence-map";
 import { Route as DiscoveryRouteImport } from "./routes/discovery";
 import { Route as DebugRouteImport } from "./routes/debug";
@@ -79,6 +80,11 @@ const OutreachRoute = OutreachRouteImport.update({
 const JobsRoute = JobsRouteImport.update({
   id: "/jobs",
   path: "/jobs",
+  getParentRoute: () => rootRouteImport,
+} as any);
+const InterviewsRoute = InterviewsRouteImport.update({
+  id: "/interviews",
+  path: "/interviews",
   getParentRoute: () => rootRouteImport,
 } as any);
 const EvidenceMapRoute = EvidenceMapRouteImport.update({
@@ -236,6 +242,7 @@ export interface FileRoutesByFullPath {
   "/debug": typeof DebugRoute;
   "/discovery": typeof DiscoveryRoute;
   "/evidence-map": typeof EvidenceMapRoute;
+  "/interviews": typeof InterviewsRoute;
   "/jobs": typeof JobsRouteWithChildren;
   "/outreach": typeof OutreachRouteWithChildren;
   "/pipelines": typeof PipelinesRoute;
@@ -273,6 +280,7 @@ export interface FileRoutesByTo {
   "/debug": typeof DebugRoute;
   "/discovery": typeof DiscoveryRoute;
   "/evidence-map": typeof EvidenceMapRoute;
+  "/interviews": typeof InterviewsRoute;
   "/pipelines": typeof PipelinesRoute;
   "/preferences": typeof PreferencesRoute;
   "/activity/$eventId": typeof ActivityEventIdRoute;
@@ -306,6 +314,7 @@ export interface FileRoutesById {
   "/debug": typeof DebugRoute;
   "/discovery": typeof DiscoveryRoute;
   "/evidence-map": typeof EvidenceMapRoute;
+  "/interviews": typeof InterviewsRoute;
   "/jobs": typeof JobsRouteWithChildren;
   "/outreach": typeof OutreachRouteWithChildren;
   "/pipelines": typeof PipelinesRoute;
@@ -346,6 +355,7 @@ export interface FileRouteTypes {
     | "/debug"
     | "/discovery"
     | "/evidence-map"
+    | "/interviews"
     | "/jobs"
     | "/outreach"
     | "/pipelines"
@@ -383,6 +393,7 @@ export interface FileRouteTypes {
     | "/debug"
     | "/discovery"
     | "/evidence-map"
+    | "/interviews"
     | "/pipelines"
     | "/preferences"
     | "/activity/$eventId"
@@ -415,6 +426,7 @@ export interface FileRouteTypes {
     | "/debug"
     | "/discovery"
     | "/evidence-map"
+    | "/interviews"
     | "/jobs"
     | "/outreach"
     | "/pipelines"
@@ -454,6 +466,7 @@ export interface RootRouteChildren {
   DebugRoute: typeof DebugRoute;
   DiscoveryRoute: typeof DiscoveryRoute;
   EvidenceMapRoute: typeof EvidenceMapRoute;
+  InterviewsRoute: typeof InterviewsRoute;
   JobsRoute: typeof JobsRouteWithChildren;
   OutreachRoute: typeof OutreachRouteWithChildren;
   PipelinesRoute: typeof PipelinesRoute;
@@ -514,6 +527,13 @@ declare module "@tanstack/react-router" {
       path: "/jobs";
       fullPath: "/jobs";
       preLoaderRoute: typeof JobsRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/interviews": {
+      id: "/interviews";
+      path: "/interviews";
+      fullPath: "/interviews";
+      preLoaderRoute: typeof InterviewsRouteImport;
       parentRoute: typeof rootRouteImport;
     };
     "/evidence-map": {
@@ -844,6 +864,7 @@ const rootRouteChildren: RootRouteChildren = {
   DebugRoute: DebugRoute,
   DiscoveryRoute: DiscoveryRoute,
   EvidenceMapRoute: EvidenceMapRoute,
+  InterviewsRoute: InterviewsRoute,
   JobsRoute: JobsRouteWithChildren,
   OutreachRoute: OutreachRouteWithChildren,
   PipelinesRoute: PipelinesRoute,
