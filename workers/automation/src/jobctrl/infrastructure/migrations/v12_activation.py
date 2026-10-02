@@ -142,10 +142,13 @@ def activate(live: Path, candidate: Path, receipt: Path) -> None:
             raise SourceChangedError()
         if _table_data_digest(lock, _columns(lock)) != expected["sourceDigest"]:
             raise SourceChangedError()
-        # DELETE mode and the exclusive lock stay on the old inode through replacement.
-        os.replace(candidate, live)
+        # Clean only the locked source's sidecars before publishing the new
+        # inode. A writer can open that new inode immediately after rename;
+        # deleting its acknowledged WAL afterwards would lose its commit.
         for suffix in ("-journal", "-wal", "-shm"):
             Path(f"{live}{suffix}").unlink(missing_ok=True)
+        # DELETE mode and the exclusive lock stay on the old inode through replacement.
+        os.replace(candidate, live)
         _fsync_directory(live.parent)
     finally:
         lock.rollback()
