@@ -471,9 +471,12 @@ examples where available.
 For personal preparation, choose a job or follow its Job Detail **Interview
 prep** link. Set the interview stage/format when known, role responsibilities,
 and known employer criteria. Review the selection rationale, add or remove
-questions, and choose the order. Generate a bounded set of at most 16 selected
-questions. JobCtrl selects relevant accepted evidence before creating
-format-appropriate outlines; missing details remain questions and gaps.
+questions, and choose the order. For each question, keep automatic evidence
+selection, choose up to eight accepted profile evidence records, or explicitly
+choose none. A changed profile requires reselection while retaining your draft
+choices. Generate a bounded set of at most 16 questions with format-appropriate
+outlines; missing details and explicit empty evidence choices remain questions
+and gaps.
 
 </WorkflowSurfacePanel>
 

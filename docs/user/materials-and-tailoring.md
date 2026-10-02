@@ -192,6 +192,13 @@ it does not limit the library. Old callers without a selection receive a
 deterministic selection. JobCtrl generates only the selected cards, rather than
 121 personalized answers.
 
+Choose accepted profile evidence for each selected question before generating.
+You can keep automatic selection, explicitly choose up to eight evidence
+records, or choose none to ask for gaps instead of a factual outline. An empty
+choice is preserved; JobCtrl does not silently fill it. If the profile changes,
+review and reselect against its current version before generating. Notes and
+new recollections cannot be selected as accepted facts.
+
 Evidence selection precedes prose. Historical answers use relevant accepted
 profile evidence; transferable experience keeps its scope limits. Principle,
 situational, narrative, negotiation, and preference answers use their own
@@ -206,7 +213,8 @@ claim.
 
 Accepted question outlines expose linked profile excerpts, selection rationale,
 missing details, probes, and guidance references. Each generation retains its
-catalog/card/rubric bindings, selected-card snapshots, profile version and
+catalog/card/rubric bindings, selected-card snapshots, automatic or user-selected
+evidence mode and ordered evidence IDs for each question, profile version and
 relevant evidence excerpts, job/requirement excerpts, employer-analysis binding,
 approved-material references, and model/prompt/gate versions. Inspect these original inputs even
 after the current profile or job changes. Changed inputs mark the prep stale;
@@ -225,6 +233,10 @@ user edit does not inherit a generated answer's passed audit. A save checks the
 revision you loaded; a conflict requires reconciliation rather than overwriting
 a newer note. Failed saves keep your draft available for correction and retry.
 Generating replacement prep does not delete saved notes.
+
+Question choices and unsaved notes survive page navigation within the current
+app session. Save a note to retain it across a browser reload; private draft
+text is not stored in the URL or browser storage.
 
 Preparation does not modify Profile, fit scores, Discovery intent, approved
 resumes, or Apply state. Review and save a true new fact through

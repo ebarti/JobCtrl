@@ -174,7 +174,16 @@ reads are bounded to 1 MiB; unavailable or mismatched inputs are excluded and
 labeled. The maximum bullet-provenance generation alone is not proof of an
 approved resume input.
 
-Evidence is selected before prose. `question_outline` items retain their
+Evidence is selected before prose. Per-question user selections bind accepted
+canonical evidence IDs to the current tenant/profile version. They are bounded
+to eight records for each of at most 16 selected questions. Omitted selections
+allow automatic selection; an explicit empty list produces gaps without silent
+replacement. Ownership, accepted status, version, question membership, unique
+IDs, and bounds are validated before provider spending. Stale selection rejects
+the request while preserving the browser draft for reselection. Notes and new
+recollections cannot enter this accepted-evidence path.
+
+`question_outline` items retain their
 question/card/rubric bindings, answer format, selection rationale, evidence
 links with direct/transferable scope, structured outline, marked gaps, probes,
 and guidance references. Historical claims must be grounded. Principle and
@@ -191,7 +200,8 @@ truthfulness/grounding check, not practice assessment or quality calibration.
 ### Immutable Inputs, Independent Notes
 
 `generationContext` preserves the catalog binding and selected-card snapshots,
-selected IDs/order/reasons, profile ID/version and relevant evidence excerpts,
+selected IDs/order/reasons and per-question evidence-selection mode/ordered IDs,
+profile ID/version and relevant evidence excerpts,
 job title/company/description excerpt and the full canonical description hash,
 employer-analysis binding plus relevant role/requirement excerpts, fit status,
 approved-material references/hashes, context digest, and model/prompt/gate

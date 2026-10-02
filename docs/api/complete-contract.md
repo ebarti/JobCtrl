@@ -1029,6 +1029,8 @@ The generate body remains optional for older callers. Its strict schema accepts:
 | `llmModel` | Optional nonempty model string, at most 120 characters. |
 | `selectedQuestionIds` | Optional ordered array of 1–16 unique active IDs. |
 | `catalogBinding` | Optional `{ catalogRevision, catalogDigest }`; revision is 1–100 characters and digest is lowercase SHA-256. |
+| `evidenceSelections` | Optional array of at most 16 `{ questionId, evidenceIds }` entries. Question IDs are unique and belong to the selected set; each ordered evidence list has at most eight unique canonical IDs, each 1–240 characters. |
+| `evidenceProfileVersion` | Positive integer required whenever `evidenceSelections` is present. It must match the current canonical profile version. |
 | `interviewStage` | `unknown`, `recruiter`, `behavioral`, `management`, `technical`, `executive`, or `mixed`; omission preserves unknown stage. |
 | `interviewFormat` | `phone`, `video`, `onsite`, `written`, or `unspecified`. |
 | `roleLens` | `unknown`, `ic`, `senior_ic`, `staff_principal`, `first_time_manager`, `engineering_manager`, `director`, or `executive`. |
@@ -1045,6 +1047,15 @@ mismatch are rejected before provider spending. Semantic errors use
 `404 unknown_question`, `410 retired_question`, or `409 catalog_mismatch`;
 malformed bodies, duplicate IDs, and array-budget violations fail validation
 with `400`. Worker-backed dispatch retains its readiness and spend preflight.
+
+An omitted question evidence entry uses deterministic accepted-evidence
+selection. An explicit entry with `evidenceIds: []` requests gaps without
+automatic replacement. The owning path validates tenant/profile ownership,
+accepted factual status, current profile version, question membership, unique
+IDs, and bounds before provider spending. Stale or invalid choices are rejected
+as `evidence_profile_changed` or `invalid_evidence_selection`; the client keeps
+the draft for reselection. Notes and new recollections are not accepted facts.
+The same conditional version fence applies to HTTP and worker RPC schemas.
 
 Each stored prep contains `jobId`, `generation`, status
 `accepted | failed | superseded`, `generatedAt`, model, gate audit, and items.
@@ -1064,7 +1075,7 @@ Optional nullable `generationContext` retains these generation-time fields:
 | Field | Stored shape / meaning |
 | --- | --- |
 | `schemaVersion`, `catalogBinding`, `contextDigest` | Schema `"1"`, catalog revision/digest, and immutable context SHA-256. |
-| `selectedQuestionIds`, `selectedQuestions` | Ordered IDs and 1–16 selected snapshots; each has question ID, card/rubric revision/digest, answer format, rationale, and full `snapshot` card. |
+| `selectedQuestionIds`, `selectedQuestions` | Ordered IDs and 1–16 selected snapshots; each has question ID, card/rubric revision/digest, answer format, rationale, full `snapshot` card, `evidenceSelectionMode: user_selected | deterministic`, and ordered `selectedEvidenceIds` (at most eight). |
 | `selectionMode` | `user_selected | deterministic`. |
 | `interviewStage`, `interviewFormat`, `roleLens`, `roleResponsibilities`, `knownCriteria` | Recorded interview context; inferred guidance cannot become known employer criteria. |
 | `profile` | `{ profileId, version, evidence }` with canonical evidence ID/source/excerpt and direct/transferable scope. |

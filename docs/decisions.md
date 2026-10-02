@@ -1652,7 +1652,13 @@ repository prose or depend on a plugin. Explicit responsibility tags and answer
 formats avoid deriving applicability from a title or forcing every answer into
 STAR.
 
-Job preparation retains selected-card snapshots, relevant generation-time
+Question-specific evidence choices are explicit: automatic selection, a bounded
+ordered set of accepted profile evidence, or an empty choice that produces gaps.
+The request binds user choices to the current profile version and rejects stale
+or foreign evidence before provider spending. User notes cannot become accepted
+evidence through this path.
+
+Job preparation retains selected-card snapshots, evidence-selection mode/IDs, relevant generation-time
 profile excerpts, input bindings, rationale, and model/prompt/gate versions.
 Current changes produce read-side stale annotations instead of rewriting old
 prep. Version numbers alone are insufficient when the old source is not
