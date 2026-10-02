@@ -81,6 +81,15 @@ describe("canonical interview prep history and dispatch", () => {
     await app.close();
   });
 
+  it("uses generation's canonical whitespace normalization for job bindings", () => {
+    const context = syntheticInterviewGenerationContext(JOB_ID);
+    const catalog = syntheticInterviewCatalogAsset().data as InterviewCatalog;
+    db.prepare("UPDATE jobs SET title='  Synthetic job  ',company=' Example ',description=' Synthetic responsibilities ' WHERE tenant_id='local' AND job_id=?").run(JOB_ID);
+    expect(interviewPrepStaleReasons(db, "local", JOB_ID, context, catalog, directory)).toEqual([]);
+    db.prepare("UPDATE jobs SET company='Changed employer' WHERE tenant_id='local' AND job_id=?").run(JOB_ID);
+    expect(interviewPrepStaleReasons(db, "local", JOB_ID, context, catalog, directory)).toEqual(["job_changed"]);
+  });
+
   it("binds current approved material bytes instead of newer unapproved provenance", () => {
     const context = syntheticInterviewGenerationContext(JOB_ID);
     const approvedPath = path.join(directory, "approved.txt"); fs.writeFileSync(approvedPath, "synthetic approved material");
