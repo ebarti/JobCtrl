@@ -36,7 +36,7 @@ export function listInterviewPrepHistory(
 
 export function interviewPrepStaleReasons(
   db: SqliteDatabase, tenantId: string, jobId: string, context: InterviewGenerationContext | null,
-  catalog: InterviewCatalog | null, appDir: string,
+  catalog: InterviewCatalog | null, _appDir: string,
 ): InterviewStaleReason[] {
   if (!context) return ["legacy_unbound"];
   const reasons: InterviewStaleReason[] = [];
@@ -60,27 +60,41 @@ export function interviewPrepStaleReasons(
     .get(tenantId, jobId) as { generation: number; snapshot_hash: string } | undefined;
   if ((analysis?.generation ?? null) !== (context.employerAnalysis?.generation ?? null)
     || (analysis?.snapshot_hash ?? null) !== (context.employerAnalysis?.snapshotHash ?? null)) reasons.push("employer_analysis_changed");
-  const materials = currentApprovedMaterialBindings(db, tenantId, jobId, appDir);
+  const materials = currentApprovedMaterialBindings(db, tenantId, jobId);
   if (materials === null || JSON.stringify(materials) !== JSON.stringify(context.approvedMaterials)) reasons.push("approved_materials_changed");
   return reasons;
 }
 
-function currentApprovedMaterialBindings(db: SqliteDatabase, tenantId: string, jobId: string, appDir: string) {
+function currentApprovedMaterialBindings(db: SqliteDatabase, tenantId: string, jobId: string) {
   const row = db.prepare(`SELECT artifact_id, generation, path FROM job_materials_artifacts
     WHERE tenant_id = ? AND job_id = ? AND artifact_type = 'tailored_resume' AND status = 'approved'
     ORDER BY generation DESC LIMIT 1`).get(tenantId, jobId) as { artifact_id: string; generation: number; path: string } | undefined;
   if (!row) return [];
+  let descriptor: number | undefined;
   try {
-    const root = fs.realpathSync(appDir);
-    const artifactPath = fs.realpathSync(path.isAbsolute(row.path) ? row.path : path.join(root, row.path));
-    const relative = path.relative(root, artifactPath);
-    if (relative.startsWith("..") || path.isAbsolute(relative)) return null;
-    const stat = fs.statSync(artifactPath);
+    if (!path.isAbsolute(row.path)) return null;
+    // Match generation's registered absolute-path rule, including every parent.
+    let cursor = path.parse(row.path).root;
+    for (const component of row.path.slice(cursor.length).split(path.sep).filter(Boolean)) {
+      cursor = path.join(cursor, component);
+      if (fs.lstatSync(cursor).isSymbolicLink()) return null;
+    }
+    descriptor = fs.openSync(row.path, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    const stat = fs.fstatSync(descriptor);
     if (!stat.isFile() || stat.size > 1024 * 1024) return null;
-    const raw = fs.readFileSync(artifactPath);
-    if (raw.length > 1024 * 1024) return null;
-    return [{ materialId: row.artifact_id, generation: row.generation, sha256: createHash("sha256").update(raw).digest("hex") }];
+    const buffer = Buffer.alloc(1024 * 1024 + 1);
+    let length = 0;
+    while (length < buffer.length) {
+      const count = fs.readSync(descriptor, buffer, length, buffer.length - length, length);
+      if (count === 0) break;
+      length += count;
+    }
+    if (length > 1024 * 1024) return null;
+    return [{ materialId: row.artifact_id, generation: row.generation,
+      sha256: createHash("sha256").update(buffer.subarray(0, length)).digest("hex") }];
   } catch {
     return null;
+  } finally {
+    if (descriptor !== undefined) fs.closeSync(descriptor);
   }
 }

@@ -21,7 +21,7 @@ describe("canonical interview prep history and dispatch", () => {
   let db: Database.Database;
   const options = () => ({ appDir: directory, dbPath, configPath: path.join(directory, "config.json"), interviewCatalogAssetLoader: syntheticInterviewCatalogAsset });
   beforeEach(() => {
-    directory = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-prep-history-"));
+    directory = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-prep-history-")));
     dbPath = path.join(directory, "jobctrl.db"); initializeExactV7Database(dbPath);
     db = new Database(dbPath); db.pragma("foreign_keys = ON");
     for (const [tenantId, jobId] of [["local", JOB_ID], ["local", OTHER_JOB_ID], ["other", JOB_ID]]) {
@@ -100,6 +100,21 @@ describe("canonical interview prep history and dispatch", () => {
     db.prepare("INSERT INTO job_materials_artifacts (tenant_id,job_id,generation,artifact_type,artifact_id,status,path,render_format,created_at) VALUES ('local',?,2,'tailored_resume','rejected-artifact','rejected',?,'txt','2026-10-02')").run(JOB_ID, path.join(directory, "not-approved.txt"));
     const catalog = syntheticInterviewCatalogAsset().data as InterviewCatalog;
     expect(interviewPrepStaleReasons(db, "local", JOB_ID, context, catalog, directory)).toEqual([]);
+    // Registration authority may point outside the app directory; never guess relative paths.
+    const appDirectory = path.join(directory, "nested-app"); fs.mkdirSync(appDirectory);
+    expect(interviewPrepStaleReasons(db, "local", JOB_ID, context, catalog, appDirectory)).toEqual([]);
+    const updatePath = (value: string) => db.prepare("UPDATE job_materials_artifacts SET path=? WHERE artifact_id='approved-artifact'").run(value);
+    updatePath("approved.txt");
+    expect(interviewPrepStaleReasons(db, "local", JOB_ID, context, catalog, directory)).toContain("approved_materials_changed");
+    const symlink = path.join(directory, "linked-approved.txt"); fs.symlinkSync(approvedPath, symlink);
+    updatePath(symlink);
+    expect(interviewPrepStaleReasons(db, "local", JOB_ID, context, catalog, directory)).toContain("approved_materials_changed");
+    const parentLink = path.join(directory, "linked-parent"); fs.symlinkSync(directory, parentLink);
+    updatePath(path.join(parentLink, "approved.txt"));
+    expect(interviewPrepStaleReasons(db, "local", JOB_ID, context, catalog, directory)).toContain("approved_materials_changed");
+    updatePath(approvedPath);
+    fs.truncateSync(approvedPath, 1024 * 1024 + 1);
+    expect(interviewPrepStaleReasons(db, "local", JOB_ID, context, catalog, directory)).toContain("approved_materials_changed");
     fs.writeFileSync(approvedPath, "changed bytes");
     expect(interviewPrepStaleReasons(db, "local", JOB_ID, context, catalog, directory)).toContain("approved_materials_changed");
     fs.rmSync(approvedPath);
