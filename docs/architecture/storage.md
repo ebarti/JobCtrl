@@ -73,6 +73,7 @@ The remaining tables group by owner:
 | Owner | Tables |
 | --- | --- |
 | Candidate Profile | `candidate_profiles` plus 12 `candidate_profile_*` child tables (experience, bullets, skills, education, achievement evidence, required-content sets, resume constraint metrics) |
+| Interview preparation | `job_interview_prep`, `job_interview_prep_items`, independent `job_interview_notes` and immutable `job_interview_note_revisions` |
 | Resume templates | `resume_templates`, `resume_template_versions`, `resume_template_defaults`, `resume_template_refresh_attempts`, `job_resume_template_assignments` |
 | Compensation | `job_posted_compensation_facts`, per-job `job_market_compensation_estimates`, versioned `compensation_role_families` and mappings, immutable direct/price-level/extrapolated benchmark facts, relational extrapolation inputs, and `compensation_market_refresh_state` |
 | Scoring | `job_scores`, versioned/indexed `job_score_keywords`, `scoring_policies`, `job_score_staleness` |
@@ -136,14 +137,14 @@ invariants still verify, the command reports the committed purge, recovery
 bundle, and free-space/compaction guidance. A failed post-commit invariant keeps
 the stronger stop-and-restore guidance because the live result was not verified.
 
-### Exact v11 runtime and compatible cutovers
+### Exact v12 runtime and compatible cutovers
 
-Schema v11 is the exact runtime contract. The native lifecycle upgrades admitted
-v6, exact-v7, exact-v8, exact-v9, and exact-v10 installations only while the application is
+Schema v12 is the exact runtime contract. The native lifecycle upgrades admitted
+v6, exact-v7, exact-v8, exact-v9, exact-v10, and exact-v11 installations only while the application is
 stopped. It first creates a paired backup of `jobctrl.db` and Temporal state.
 A v6 source retains the Temporal quiescence proof and identity rewrite through
 private exact-v7/v8/v9 intermediates; newer sources start at their next schema
-step. Only the final exact-v11 candidate can become live. Intermediate databases
+step. Only the final exact-v12 candidate can become live. Intermediate databases
 and their sidecars are removed after success and during failure recovery.
 
 V10 removes `jobs.application_url`. `job_enrichments.application_url` is the
@@ -175,7 +176,39 @@ v10 rows move byte-for-value into the migration-only `legacy` lane. Global
 totals sum all lane rows, including legacy; new runtime writes accept only the
 nine named product lanes.
 
-The TypeScript API and Python worker accept exact v11 and reject direct v6/v7/v8/v9/v10
+V12 adds nullable `generation_context_json` and `question_metadata_json` to the
+prep generation and item respectively. They retain the generation-time catalog,
+question/rubric revisions, context snapshots and evidence links. Old rows keep
+null bindings and project `legacy_unbound`; migration never invents associations.
+The comparable migration digest includes every old column and sequence, and the
+new columns must remain null while both new note tables start empty.
+
+Notes belong to `(tenant_id, job_id, question_id)`, independently of generation
+and item replacement. Saving with `expectedRevision = 0` creates revision 1;
+later saves compare the exact current revision and atomically append the same
+row to history. A stale comparison changes neither row. User edits always carry
+`user_edited` and default to `unverified_user_statement`; the save boundary
+rejects self-assigned supported facts. Note text is bounded at 20,000 characters.
+Both note tables cascade with their tenant-scoped Job and never promote profile,
+fit or Apply facts. Events carry only safe identities, revision and time, never
+note text or retained context.
+
+Before native activation, the live source must match the paired source's exact
+schema and retained cells. A private binding seals its file identity/state and
+candidate digest. Activation requires a quiescent transition to DELETE journal
+mode, then rechecks those bindings under SQLite's exclusive lock through the
+atomic rename. This refuses a WAL connection that could acknowledge a write to
+the replaced inode. Source-sidecar cleanup completes under this lock before
+publication; sidecars created on the new live database belong to its writers.
+An unmanaged writer or a commit after backup refuses activation. When the candidate has not changed the live database,
+recovery preserves the live source, including an independent committed write,
+instead of restoring an older backup over it. Failed readiness after activation
+still restores the paired application/Temporal backup and previous release.
+A private intent receipt binds preactivation source preservation to the exact
+journal, backup and source version, and survives interrupted old-runtime restart.
+An old schema header during partial paired restore cannot bypass Temporal recovery.
+
+The TypeScript API and Python worker accept exact v12 and reject direct v6/v7/v8/v9/v10/v11
 operation; runtime constructors do not migrate schema or commit caller work.
 Each projection refresh owns only derived writes and its consumer cursor inside a
 transaction or the caller's savepoint. Refresh compares existing projected targets
@@ -184,7 +217,7 @@ and watermarks cannot hide a URL promoted during migration.
 
 The remaining URL consumers are classified in the
 [application URL authority inventory](application-url-authority.md). Historical
-v6 preparation and v7/v8/v9/v10 schema/executor definitions remain frozen to admit
+v6 preparation and v7/v8/v9/v10/v11 schema/executor definitions remain frozen to admit
 previous installations, and do not provide a current-runtime fallback.
 
 V9 adds one optional per-position summary to normalized Candidate Profile

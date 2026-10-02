@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -81,7 +82,7 @@ exit 43
 		SchemaVersion:       1,
 		SourceDataDigest:    strings.Repeat("a", 64),
 		Status:              "ready",
-		TableCount:          118,
+		TableCount:          120,
 		UserVersion:         v10JobCtrlSchemaVersion,
 	})
 	if err != nil {
@@ -105,14 +106,17 @@ exit 43
 	return ctx, pair, "journal-v10-builder", argumentsPath
 }
 
-func fakeV11BuilderContext(t *testing.T, sourceVersion int64) (launchContext, databasePair, string, string) {
+func fakeV12BuilderContext(t *testing.T, sourceVersion int64) (launchContext, databasePair, string, string) {
 	t.Helper()
+	previousBinder := v12SourceBinder
+	v12SourceBinder = func(launchContext, string, string) error { return nil }
+	t.Cleanup(func() { v12SourceBinder = previousBinder })
 	ctx, pair, _, argumentsPath := fakeV10BuilderContext(t, sourceVersion)
 	python := filepath.Join(ctx.PayloadRoot, "python", "bin", "python3")
 	script := `#!/bin/sh
 set -eu
 if [ "$3" = "-m" ]; then
-  [ "$4" = "jobctrl.infrastructure.migrations.legacy_to_v11_execute" ] || exit 41
+  [ "$4" = "jobctrl.infrastructure.migrations.legacy_to_v12_execute" ] || exit 41
   printf '%s\n' "$@" > "$JOBCTRL_TEST_ARGUMENTS"
   candidate=""
   previous=""
@@ -125,22 +129,22 @@ if [ "$3" = "-m" ]; then
   printf '%s\n' "$JOBCTRL_TEST_RECEIPT"
   exit 0
 fi
-if [ "$3" = "-c" ]; then printf '11\n'; exit 0; fi
+if [ "$3" = "-c" ]; then printf '12\n'; exit 0; fi
 exit 43
 `
 	if err := os.WriteFile(python, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	candidateBytes := "sealed exact-v11 candidate"
+	candidateBytes := "sealed exact-v12 candidate"
 	digest := sha256.Sum256([]byte(candidateBytes))
-	receipt, err := json.Marshal(sealedV11CandidateReceipt{
+	receipt, err := json.Marshal(sealedV12CandidateReceipt{
 		CandidateDataDigest: strings.Repeat("a", 64),
 		CandidateSHA256:     hex.EncodeToString(digest[:]),
 		JobCount:            1,
 		SchemaVersion:       1,
 		SourceDataDigest:    strings.Repeat("a", 64),
 		Status:              "ready",
-		TableCount:          118,
+		TableCount:          120,
 		UserVersion:         currentJobCtrlSchemaVersion,
 	})
 	if err != nil {
@@ -151,18 +155,18 @@ exit 43
 		"JOBCTRL_TEST_CANDIDATE=" + candidateBytes,
 		"JOBCTRL_TEST_RECEIPT=" + string(receipt),
 	}
-	return ctx, pair, "journal-v11-builder", argumentsPath
+	return ctx, pair, "journal-v12-builder", argumentsPath
 }
 
-func TestBuildSealedV11CandidateDispatchesEveryAdmittedSource(t *testing.T) {
-	for _, sourceVersion := range []int64{6, 7, 8, 9, 10} {
+func TestBuildSealedV12CandidateDispatchesEveryAdmittedSource(t *testing.T) {
+	for _, sourceVersion := range []int64{6, 7, 8, 9, 10, 11} {
 		t.Run("source-v"+strconv.FormatInt(sourceVersion, 10), func(t *testing.T) {
-			ctx, pair, journalID, argumentsPath := fakeV11BuilderContext(t, sourceVersion)
-			candidate, err := buildSealedV11Candidate(ctx, pair, journalID)
+			ctx, pair, journalID, argumentsPath := fakeV12BuilderContext(t, sourceVersion)
+			candidate, err := buildSealedV12Candidate(ctx, pair, journalID)
 			if err != nil {
-				t.Fatalf("build exact-v11 candidate: %v", err)
+				t.Fatalf("build exact-v12 candidate: %v", err)
 			}
-			if candidate != v11CandidatePath(ctx.Instance.StateDir, journalID) {
+			if candidate != v12CandidatePath(ctx.Instance.StateDir, journalID) {
 				t.Fatalf("candidate path = %q", candidate)
 			}
 			arguments, err := os.ReadFile(argumentsPath)
@@ -250,11 +254,15 @@ func v10CandidateArtifactPaths(stateDir, journalID string) []string {
 	return paths
 }
 
-func v11CandidateArtifactPaths(stateDir, journalID string) []string {
-	candidate := v11CandidatePath(stateDir, journalID)
-	v10Intermediate := candidate + ".exact-v10-intermediate"
+func v12CandidateArtifactPaths(stateDir, journalID string) []string {
+	candidate := v12CandidatePath(stateDir, journalID)
+	v11Intermediate := candidate + ".exact-v11-intermediate"
+	v10Intermediate := v11Intermediate + ".exact-v10-intermediate"
 	basePaths := []string{
 		candidate,
+		candidate + ".source-binding.json",
+		v12SourcePreservationPath(stateDir, journalID),
+		v11Intermediate,
 		v10Intermediate,
 		v10Intermediate + ".exact-v9-intermediate",
 		v10Intermediate + ".exact-v9-intermediate.exact-v8-intermediate",
@@ -322,21 +330,21 @@ func TestInterruptedV10MigrationRecoveryRemovesCandidatesIntermediatesAndSidecar
 	}
 }
 
-func syntheticV11CandidateBuilder(t *testing.T, python string, expectedSourceVersion int64) func(launchContext, databasePair, string) (string, error) {
+func syntheticV12CandidateBuilder(t *testing.T, python string, expectedSourceVersion int64) func(launchContext, databasePair, string) (string, error) {
 	t.Helper()
 	return func(candidate launchContext, pair databasePair, journalID string) (string, error) {
 		source, err := pairedDatabasePath(candidate.Instance.StateDir, pair, "jobctrl.db", expectedSourceVersion)
 		if err != nil {
 			return "", err
 		}
-		path := v11CandidatePath(candidate.Instance.StateDir, journalID)
+		path := v12CandidatePath(candidate.Instance.StateDir, journalID)
 		if _, err := sqliteOnlineBackup(python, source, path); err != nil {
 			return "", err
 		}
 		if err := os.Chmod(path, 0o600); err != nil {
 			return "", err
 		}
-		code := "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute('PRAGMA user_version=11'); c.commit(); c.close()"
+		code := "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute('PRAGMA user_version=12'); c.commit(); c.close()"
 		if output, err := exec.Command(python, "-c", code, path).CombinedOutput(); err != nil {
 			return "", errors.New(strings.TrimSpace(string(output)))
 		}
@@ -344,7 +352,7 @@ func syntheticV11CandidateBuilder(t *testing.T, python string, expectedSourceVer
 	}
 }
 
-func TestLifecycleMigratesV6ThroughV10ToV11AndRestoresExactSourceOnRollback(t *testing.T) {
+func TestLifecycleMigratesV6ThroughV10ToV12AndRestoresExactSourceOnRollback(t *testing.T) {
 	for _, sourceVersion := range []int64{
 		legacyJobCtrlSchemaVersion,
 		exactJobCtrlSchemaVersion,
@@ -361,8 +369,10 @@ func TestLifecycleMigratesV6ThroughV10ToV11AndRestoresExactSourceOnRollback(t *t
 				proofs++
 				return nil
 			}
-			sealedV7CandidateBuilder = syntheticV11CandidateBuilder(t, fixture.python, sourceVersion)
-			sealedV7CandidateInstaller = installSealedV11Candidate
+			sealedV7CandidateBuilder = syntheticV12CandidateBuilder(t, fixture.python, sourceVersion)
+			sealedV7CandidateInstaller = func(ctx launchContext, path string) error {
+				return os.Rename(path, filepath.Join(ctx.Instance.StateDir, "jobctrl.db"))
+			}
 			candidateStarts, oldStarts := 0, 0
 			startReleaseCommand = func(_ launchContext, receipt release.Receipt, journalID string) error {
 				if journalID == "" {
@@ -384,7 +394,7 @@ func TestLifecycleMigratesV6ThroughV10ToV11AndRestoresExactSourceOnRollback(t *t
 			}
 
 			if err := promoteExisting(fixture.ctx, fixture.store, fixture.active, fixture.candidate.BuildID, "update", io.Discard); err != nil {
-				t.Fatalf("promote v%d to v11: %v", sourceVersion, err)
+				t.Fatalf("promote v%d to v12: %v", sourceVersion, err)
 			}
 			if candidateStarts != 1 || oldStarts != 0 {
 				t.Fatalf("promotion starts candidate=%d old=%d", candidateStarts, oldStarts)
@@ -413,11 +423,11 @@ func TestLifecycleMigratesV6ThroughV10ToV11AndRestoresExactSourceOnRollback(t *t
 
 // Cross the production Go/Python boundary using exact, populated source schemas.
 // Startup is intercepted, but admission still runs in both shipped runtimes.
-func TestV11NativeExactSourcesRestorePairedState(t *testing.T) {
+func TestV12NativeExactSourcesRestorePairedState(t *testing.T) {
 	for _, scenario := range []struct {
 		version       int64
 		failReadiness bool
-	}{{7, false}, {8, false}, {9, false}, {9, true}} {
+	}{{7, false}, {8, false}, {9, false}, {9, true}, {10, false}, {10, true}, {11, false}, {11, true}} {
 		name := "source-v" + strconv.FormatInt(scenario.version, 10)
 		if scenario.failReadiness {
 			name += "-readiness-failure"
@@ -434,14 +444,18 @@ func TestV11NativeExactSourcesRestorePairedState(t *testing.T) {
 v=int(sys.argv[2]); c=sqlite3.connect(sys.argv[1])
 m=importlib.import_module('jobctrl.infrastructure.migrations.schema_v'+str(v))
 getattr(m,'create_exact_v'+str(v)+'_schema')(c)
-c.execute("INSERT INTO jobs(tenant_id,job_id,url,title,application_url) VALUES('local','019ed290-3340-7000-8000-000000000891','https://jobs.example/shipped-v6','Preserved title','https://apply.example/legacy')")
+if v < 10:
+ c.execute("INSERT INTO jobs(tenant_id,job_id,url,title,application_url) VALUES('local','019ed290-3340-7000-8000-000000000891','https://jobs.example/shipped-v6','Preserved title','https://apply.example/legacy')")
+else:
+ c.execute("INSERT INTO jobs(tenant_id,job_id,url,title) VALUES('local','019ed290-3340-7000-8000-000000000891','https://jobs.example/shipped-v6','Preserved title')")
+ c.executemany("INSERT INTO job_application_locators(tenant_id,job_id,application_url) VALUES('local','019ed290-3340-7000-8000-000000000891',?)", [('https://apply.example/legacy',),('https://apply.example/canonical',)])
 c.execute("INSERT INTO job_enrichments(tenant_id,job_id,current_status,application_url,attempts_json,updated_at) VALUES('local','019ed290-3340-7000-8000-000000000891','completed','https://apply.example/canonical','[]','preserved-time')")
 c.commit(); c.close()`
 			if output, err := exec.Command(python, "-I", "-B", "-c", code, database, strconv.FormatInt(scenario.version, 10)).CombinedOutput(); err != nil {
 				t.Fatalf("seed exact source: %v %s", err, output)
 			}
-			sealedV7CandidateBuilder = buildSealedV11Candidate
-			sealedV7CandidateInstaller = installSealedV11Candidate
+			sealedV7CandidateBuilder = buildSealedV12Candidate
+			sealedV7CandidateInstaller = installSealedV12Candidate
 			temporalQuiescenceProof = func(_, _ launchContext) error { t.Fatal("v7+ requested v6 Temporal identity proof"); return nil }
 			assertRestored := func() {
 				t.Helper()
@@ -461,7 +475,8 @@ c=sqlite3.connect('file:'+sys.argv[1]+'?mode=ro',uri=True)
 v=int(sys.argv[2])
 assert c.execute('PRAGMA user_version').fetchone()[0] == v
 schema_manifest.assert_exact_manifest(c,getattr(schema_manifest,'EXACT_V'+str(v)+'_MANIFEST'))
-assert c.execute('SELECT application_url FROM jobs').fetchone() == ('https://apply.example/legacy',)
+if v < 10: assert c.execute('SELECT application_url FROM jobs').fetchone() == ('https://apply.example/legacy',)
+else: assert c.execute('SELECT application_url FROM job_enrichments').fetchone() == ('https://apply.example/canonical',)
 c.close()`
 				if output, err := exec.Command(python, "-I", "-B", "-c", code, database, strconv.FormatInt(scenario.version, 10)).CombinedOutput(); err != nil {
 					t.Fatalf("reopen restored schema: %v %s", err, output)
@@ -482,9 +497,9 @@ c.close()`
 				}
 				candidateStarts++
 				code := `import sys
-from jobctrl.database import open_exact_v11_database,close_connection
-c=open_exact_v11_database(sys.argv[1])
-assert c.execute('PRAGMA user_version').fetchone()[0] == 11
+from jobctrl.database import open_exact_v12_database,close_connection
+c=open_exact_v12_database(sys.argv[1])
+assert c.execute('PRAGMA user_version').fetchone()[0] == 12
 assert 'application_url' not in {r[1] for r in c.execute('PRAGMA table_info(jobs)')}
 assert tuple(c.execute('SELECT title FROM jobs').fetchone()) == ('Preserved title',)
 assert tuple(c.execute('SELECT application_url,updated_at FROM job_enrichments').fetchone()) == ('https://apply.example/canonical','preserved-time')
@@ -492,9 +507,9 @@ assert {r[0] for r in c.execute('SELECT application_url FROM job_application_loc
 assert not c.execute('PRAGMA foreign_key_check').fetchall()
 close_connection(sys.argv[1])`
 				if output, err := exec.Command(python, "-I", "-B", "-c", code, database).CombinedOutput(); err != nil {
-					t.Fatalf("native v11 admission/transfer: %v %s", err, output)
+					t.Fatalf("native v12 admission/transfer: %v %s", err, output)
 				}
-				if err := reopenMigratedV11WithTypeScriptAPI(database); err != nil {
+				if err := reopenMigratedV12WithTypeScriptAPI(database); err != nil {
 					t.Fatal(err)
 				}
 				// Make Temporal restoration observable rather than relying on an unchanged file.
@@ -503,7 +518,7 @@ close_connection(sys.argv[1])`
 					t.Fatalf("write owned Temporal marker: %v %s", err, output)
 				}
 				if scenario.failReadiness {
-					return errors.New("synthetic v11 readiness failure")
+					return errors.New("synthetic v12 readiness failure")
 				}
 				return nil
 			}
@@ -514,7 +529,7 @@ close_connection(sys.argv[1])`
 			}
 			migrationJournalID := journal.ID
 			if scenario.failReadiness {
-				if err == nil || !strings.Contains(err.Error(), "synthetic v11 readiness failure") {
+				if err == nil || !strings.Contains(err.Error(), "synthetic v12 readiness failure") {
 					t.Fatalf("readiness failure result: %v", err)
 				}
 			} else {
@@ -534,7 +549,7 @@ close_connection(sys.argv[1])`
 				t.Fatalf("final pointer=%#v candidate=%d old=%d err=%v", active, candidateStarts, oldStarts, err)
 			}
 			assertRestored()
-			for _, path := range v11CandidateArtifactPaths(fixture.state, migrationJournalID) {
+			for _, path := range v12CandidateArtifactPaths(fixture.state, migrationJournalID) {
 				if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
 					t.Errorf("left migration artifact %s: %v", path, err)
 				}
@@ -543,7 +558,7 @@ close_connection(sys.argv[1])`
 	}
 }
 
-func TestV11FreshRuntimePromotesWithoutMigration(t *testing.T) {
+func TestV12FreshRuntimePromotesWithoutMigration(t *testing.T) {
 	preserveMigrationSeams(t)
 	python := migrationIntegrationPython(t)
 	fixture := newV6ActivationFixtureWithPython(t, python)
@@ -552,16 +567,16 @@ func TestV11FreshRuntimePromotesWithoutMigration(t *testing.T) {
 		t.Fatal(err)
 	}
 	code := `import sys
-from jobctrl.database import create_exact_v11_database,close_connection
-c=create_exact_v11_database(sys.argv[1])
-assert c.execute('PRAGMA user_version').fetchone()[0] == 11
+from jobctrl.database import create_exact_v12_database,close_connection
+c=create_exact_v12_database(sys.argv[1])
+assert c.execute('PRAGMA user_version').fetchone()[0] == 12
 assert 'application_url' not in {r[1] for r in c.execute('PRAGMA table_info(jobs)')}
 close_connection(sys.argv[1])`
 	if output, err := exec.Command(python, "-I", "-B", "-c", code, database).CombinedOutput(); err != nil {
-		t.Fatalf("fresh v11 creation: %v %s", err, output)
+		t.Fatalf("fresh v12 creation: %v %s", err, output)
 	}
 	sealedV7CandidateBuilder = func(_ launchContext, _ databasePair, _ string) (string, error) {
-		t.Fatal("fresh v11 attempted migration")
+		t.Fatal("fresh v12 attempted migration")
 		return "", nil
 	}
 	starts := 0
@@ -570,9 +585,9 @@ close_connection(sys.argv[1])`
 			t.Fatalf("unexpected fresh startup %#v", receipt)
 		}
 		starts++
-		code := "import sys; from jobctrl.database import open_exact_v11_database,close_connection; open_exact_v11_database(sys.argv[1]); close_connection(sys.argv[1])"
+		code := "import sys; from jobctrl.database import open_exact_v12_database,close_connection; open_exact_v12_database(sys.argv[1]); close_connection(sys.argv[1])"
 		if output, err := exec.Command(python, "-I", "-B", "-c", code, database).CombinedOutput(); err != nil {
-			t.Fatalf("fresh v11 admission: %v %s", err, output)
+			t.Fatalf("fresh v12 admission: %v %s", err, output)
 		}
 		return nil
 	}
@@ -649,5 +664,167 @@ func TestV10NativeExecutorRejectsMerelyStampedV9WithoutChangingPair(t *testing.T
 		if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
 			t.Errorf("rejected source left artifact %s: %v", path, err)
 		}
+	}
+}
+
+func TestV12NativeRefusesLateSourceWriteWithoutRestoringOverIt(t *testing.T) {
+	preserveMigrationSeams(t)
+	python := migrationIntegrationPython(t)
+	fixture := newV6ActivationFixtureWithPython(t, python)
+	database := filepath.Join(fixture.state, "jobctrl.db")
+	if err := os.Remove(database); err != nil {
+		t.Fatal(err)
+	}
+	code := `import sqlite3,sys
+from jobctrl.infrastructure.migrations.schema_v11 import create_exact_v11_schema
+c=sqlite3.connect(sys.argv[1]);create_exact_v11_schema(c)
+c.execute("INSERT INTO jobs(tenant_id,job_id,url,title) VALUES('local','019ed290-3340-7000-8000-000000000891','https://jobs.example/shipped-v6','paired title')")
+c.commit();c.close()`
+	if output, err := exec.Command(python, "-I", "-B", "-c", code, database).CombinedOutput(); err != nil {
+		t.Fatalf("seed v11 source: %v %s", err, output)
+	}
+	temporalQuiescenceProof = func(_, _ launchContext) error { t.Fatal("v11 requested v6 proof"); return nil }
+	sealedV7CandidateBuilder = buildSealedV12Candidate
+	sealedV7CandidateInstaller = func(candidate launchContext, path string) error {
+		code := `import sqlite3,sys
+c=sqlite3.connect(sys.argv[1]);c.execute("UPDATE jobs SET title='independent late source write'");c.commit();c.close()`
+		if output, err := exec.Command(python, "-I", "-B", "-c", code, database).CombinedOutput(); err != nil {
+			t.Fatalf("late writer fixture: %v %s", err, output)
+		}
+		return installSealedV12Candidate(candidate, path)
+	}
+	oldStarts := 0
+	startReleaseCommand = func(_ launchContext, receipt release.Receipt, _ string) error {
+		if receipt != fixture.old {
+			t.Fatal("refused candidate was started")
+		}
+		oldStarts++
+		code := `import sqlite3,sys
+c=sqlite3.connect(sys.argv[1]);assert c.execute('PRAGMA user_version').fetchone()[0]==11
+assert c.execute('SELECT title FROM jobs').fetchone()==('independent late source write',)
+c.close()`
+		if output, err := exec.Command(python, "-I", "-B", "-c", code, database).CombinedOutput(); err != nil {
+			return fmt.Errorf("late write preservation: %w %s", err, output)
+		}
+		return nil
+	}
+	err := promoteExisting(fixture.ctx, fixture.store, fixture.active, fixture.candidate.BuildID, "update", io.Discard)
+	if !errors.Is(err, errV12SourceChanged) {
+		t.Fatalf("late source guard returned %v", err)
+	}
+	if oldStarts != 1 {
+		t.Fatalf("old starts = %d", oldStarts)
+	}
+	active, err := fixture.store.ReadActive()
+	if err != nil || active.Receipt != fixture.old {
+		t.Fatalf("old selection not retained: %#v %v", active, err)
+	}
+	journal, err := fixture.store.ReadJournal()
+	if err != nil || journal.State != release.RolledBack {
+		t.Fatalf("refusal journal: %#v %v", journal, err)
+	}
+	for _, path := range v12CandidateArtifactPaths(fixture.state, journal.ID) {
+		if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("left artifact %s: %v", path, err)
+		}
+	}
+}
+
+// A crash after restoring the application DB but before restoring Temporal
+// cannot be classified as preactivation merely from the old schema header.
+func TestV12InterruptedRollbackRestoresHalfRestoredPair(t *testing.T) {
+	preserveMigrationSeams(t)
+	fixture := newV6ActivationFixture(t)
+	pair, err := snapshotPair(fixture.ctx, fixture.old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	journal, err := fixture.store.Begin("update", &fixture.old, &fixture.candidate, fixture.candidate.DescriptorSHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	journal.BackupID = pair.ID
+	// Model the first restore rename having completed byte-for-byte.
+	if err := os.Remove(filepath.Join(fixture.state, "jobctrl.db")); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyRegular(filepath.Join(fixture.state, "backups", pair.ID, "jobctrl.db"), filepath.Join(fixture.state, "jobctrl.db")); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.store.Advance(&journal, release.RollbackRestoring, errors.New("post-activation readiness failure")); err != nil {
+		t.Fatal(err)
+	}
+	code := "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute(\"UPDATE t SET v='candidate-temporal-before-crash'\"); c.commit(); c.close()"
+	if output, err := exec.Command(fixture.python, "-I", "-B", "-c", code, filepath.Join(fixture.state, "temporal.db")).CombinedOutput(); err != nil {
+		t.Fatalf("seed interrupted Temporal: %v %s", err, output)
+	}
+	startReleaseCommand = func(_ launchContext, receipt release.Receipt, _ string) error {
+		if receipt != fixture.old {
+			t.Fatal("recovery started candidate")
+		}
+		for _, expected := range pair.Files {
+			actual, err := sha256Path(filepath.Join(fixture.state, expected.Name))
+			if err != nil || actual != expected.SHA256 {
+				return fmt.Errorf("half-restored pair retained %s: %v", expected.Name, err)
+			}
+		}
+		return nil
+	}
+	if recovered, err := recoverInterruptedTransition(fixture.ctx, fixture.store); !recovered || err != nil {
+		t.Fatalf("half-restored recovery: %v %v", recovered, err)
+	}
+}
+
+func TestV12InterruptedSourcePreservationSurvivesRecoveryRestartFailure(t *testing.T) {
+	for _, stage := range []release.State{release.PairBackedUp, release.PolicyPending, release.MigrationCandidateReady} {
+		t.Run(string(stage), func(t *testing.T) {
+			preserveMigrationSeams(t)
+			fixture := newV6ActivationFixture(t)
+			pair, err := snapshotPair(fixture.ctx, fixture.old)
+			if err != nil {
+				t.Fatal(err)
+			}
+			journal, err := fixture.store.Begin("update", &fixture.old, &fixture.candidate, fixture.candidate.DescriptorSHA256)
+			if err != nil {
+				t.Fatal(err)
+			}
+			journal.BackupID = pair.ID
+			if err := fixture.store.Advance(&journal, stage, nil); err != nil {
+				t.Fatal(err)
+			}
+			code := "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute(\"UPDATE t SET v='independent-source-write'\"); c.commit(); c.close()"
+			if output, err := exec.Command(fixture.python, "-I", "-B", "-c", code, filepath.Join(fixture.state, "jobctrl.db")).CombinedOutput(); err != nil {
+				t.Fatalf("seed independent source: %v %s", err, output)
+			}
+			starts := 0
+			startReleaseCommand = func(_ launchContext, receipt release.Receipt, _ string) error {
+				if receipt != fixture.old {
+					t.Fatal("recovery started candidate")
+				}
+				starts++
+				if starts == 1 {
+					return errors.New("synthetic old restart interruption")
+				}
+				code := "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); assert c.execute('SELECT v FROM t').fetchone() == ('independent-source-write',); c.close()"
+				if output, err := exec.Command(fixture.python, "-I", "-B", "-c", code, filepath.Join(fixture.state, "jobctrl.db")).CombinedOutput(); err != nil {
+					return fmt.Errorf("independent source overwritten: %w %s", err, output)
+				}
+				return nil
+			}
+			if recovered, err := recoverInterruptedTransition(fixture.ctx, fixture.store); recovered || err == nil {
+				t.Fatalf("first recovery: %v %v", recovered, err)
+			}
+			intent, err := readV12SourcePreservation(fixture.state, journal.ID)
+			if err != nil || intent == nil || intent.BackupID != pair.ID {
+				t.Fatalf("lost durable refusal intent: %#v %v", intent, err)
+			}
+			if recovered, err := recoverInterruptedTransition(fixture.ctx, fixture.store); !recovered || err != nil {
+				t.Fatalf("second recovery: %v %v", recovered, err)
+			}
+			if _, err := os.Lstat(v12SourcePreservationPath(fixture.state, journal.ID)); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("completed recovery retained intent: %v", err)
+			}
+
+		})
 	}
 }
