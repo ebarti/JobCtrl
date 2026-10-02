@@ -3,7 +3,7 @@
 This route family covers the projection-backed job read model, score and career
 evidence, generated materials, review decisions, outcomes, contacts, and
 outreach. It is the main implementation reference for Jobs, Artifacts, Apply
-Review, and Outreach views.
+Review, Interviews, and Outreach views.
 
 For field-level schemas and every route variant, use the
 [complete contract](complete-contract.md#jobs-read-model-and-lifecycle).
@@ -99,6 +99,44 @@ and layout evidence. Artifact summaries include a nullable canonical
 `generation` when one was recorded; lifecycle `status` remains unchanged.
 An older generation can still be approved, so clients must not treat age alone
 as a superseded status.
+
+## Interviews: Catalog, Preparation, And Notes
+
+| Route | Purpose |
+| --- | --- |
+| `GET /v1/interviews/catalog` | Bounded, filtered installed public catalog with source/reading metadata. |
+| `GET /v1/interviews/questions/:questionId` | One active card plus its immutable catalog binding. |
+| `POST /v1/jobs/:jobKey/actions/generate-interview-prep` | Explicit bounded selection/context dispatched to `InterviewPrepWorkflow`; returns `202`. |
+| `GET /v1/jobs/:jobKey/interview-prep/history` | Paginated generations, including superseded and failed attempts. |
+| `GET /v1/jobs/:jobKey/interview-notes` | Latest independent per-question notes, or one question's revision history. |
+| `POST /v1/jobs/:jobKey/interview-notes` | Expected-revision note save; a stale edit returns `409`. |
+
+Catalog reads are direct TypeScript asset handlers. They need no SQLite, job,
+live worker, or provider and retain normal loopback/browser security hooks.
+An unknown card returns `404 unknown_question`, a retired card such as C08
+returns `410 retired_question`, and a missing/invalid packaged asset fails
+closed with `503 interview_catalog_unavailable`.
+
+Generation accepts up to 16 unique active question IDs, catalog binding,
+stage/format, role lens/responsibilities, known criteria, and rationale. It
+validates selection before worker dispatch and provider spend. Legacy requests
+without a selection use deterministic bounded selection; older unbound stored
+prep remains explicitly legacy. The returned current job-detail prep remains
+the last accepted generation through pending or failed replacement. Its
+retained card/input context and question metadata support inspectable history
+and read-side stale diagnostics without rewriting old results.
+
+Note saves are independent of generation/item replacement and default to
+unverified user statements. They append revision history, verify any source
+generation belongs to the same tenant/job, and never inherit a passed generation
+audit or update Profile, fit, or Apply. The conflict response includes
+`currentNote`; clients preserve the dirty draft and reconcile with that saved
+revision before retrying. Events carry safe IDs/versions/counts only.
+
+The [complete interview contract](complete-contract.md#interview-catalog-preparation-and-notes)
+owns every field, pagination default, status, and error. The
+[Materials audit owner](../architecture/materials.md#stored-interview-preparation)
+explains source authority and the research-draft/assessment boundary.
 
 ## Compensation
 
