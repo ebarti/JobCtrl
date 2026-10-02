@@ -10,12 +10,13 @@ from pathlib import Path
 from typing import Any
 
 from temporalio import activity
+from temporalio.exceptions import ApplicationError
 
 from jobctrl.database import get_connection
 from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.interview import GenerateInterviewPrepUseCase
-from jobctrl.domain.interview.catalog import load_interview_catalog, validate_interview_selection
-from jobctrl.domain.interview.preparation import job_context_snapshot, normalize_selection
+from jobctrl.domain.interview.catalog import InterviewSelectionError, load_interview_catalog, validate_interview_selection
+from jobctrl.domain.interview.preparation import choose_questions, job_context_snapshot, normalize_selection, plan_evidence
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 from jobctrl.infrastructure.interview import SqliteInterviewPrepRepository
 from jobctrl.infrastructure.llm import LlmAdapter, get_llm_adapter
@@ -72,18 +73,21 @@ async def generate_interview_prep_activity(
     # starving the shared event loop. ``workflow_run_id`` makes a retried
     # attempt reuse this run's already-generated prep instead of re-spending.
     origin_run_id = activity.info().workflow_run_id
-    return await run_blocking_with_heartbeat(
-        lambda: generate_interview_prep_by_job_id(
-            payload.job_id,
-            tenant_id=TenantId(payload.tenant_id or LOCAL_TENANT),
-            llm_model=payload.llm_model,
-            origin_run_id=origin_run_id,
-            **({"selection": payload.selection} if payload.selection else {}),
-        ),
-        starting_message="interview-prep starting",
-        progress_message="interview-prep still running",
-        activity_name="generate_interview_prep",
-    )
+    try:
+        return await run_blocking_with_heartbeat(
+            lambda: generate_interview_prep_by_job_id(
+                payload.job_id,
+                tenant_id=TenantId(payload.tenant_id or LOCAL_TENANT),
+                llm_model=payload.llm_model,
+                origin_run_id=origin_run_id,
+                **({"selection": payload.selection} if payload.selection else {}),
+            ),
+            starting_message="interview-prep starting",
+            progress_message="interview-prep still running",
+            activity_name="generate_interview_prep",
+        )
+    except InterviewSelectionError as exc:
+        raise ApplicationError(str(exc), type=exc.code, non_retryable=True) from exc
 
 
 def generate_interview_prep_by_job_id(
@@ -117,6 +121,10 @@ def generate_interview_prep_by_job_id(
         conn, tenant_id, stable_job_id, profile_snapshot.version,
         current_job_hash=job_context_snapshot(job)["snapshotHash"],
     )
+    cards, checked_selection = choose_questions(catalog, selection, requirements)
+    if profile_snapshot.tenant_id != tenant_id:
+        raise ValueError("profile snapshot belongs to another tenant")
+    plan_evidence(cards, profile_snapshot, checked_selection, requirements)
     llm = LlmAdapter(default_model=llm_model) if llm_model else get_llm_adapter()
     use_case = GenerateInterviewPrepUseCase(
         repository=repository,
@@ -353,45 +361,6 @@ def _load_employer_and_fit_context(
                     requirement["fitStatus"] = "source_identity_mismatch"
     return employer_context, fit_context, tuple(requirements)
 
-def _load_requirements(
-    conn: sqlite3.Connection,
-    tenant_id: TenantId,
-    job_id: JobId,
-) -> tuple[dict[str, Any], ...]:
-    try:
-        rows = conn.execute(
-            """
-            SELECT requirement_id, requirement_text, tier, weight, fit_json
-            FROM job_requirement_fit_items
-            WHERE tenant_id = ?
-              AND job_id = ?
-              AND score_version = (
-                SELECT MAX(score_version)
-                FROM job_requirement_fit_reports
-                WHERE tenant_id = ? AND job_id = ?
-              )
-            ORDER BY position, requirement_id
-            """,
-            (str(tenant_id), str(job_id), str(tenant_id), str(job_id)),
-        ).fetchall()
-    except sqlite3.OperationalError:
-        return ()
-    requirements: list[dict[str, Any]] = []
-    for row in rows:
-        fit = _load_json(row["fit_json"])
-        requirements.append(
-            {
-                "requirementId": row["requirement_id"],
-                "requirementText": row["requirement_text"],
-                "tier": row["tier"],
-                "weight": row["weight"],
-                "fitKind": fit.get("kind") if isinstance(fit, dict) else None,
-                "evidenceIds": fit.get("evidenceIds", []) if isinstance(fit, dict) else [],
-            }
-        )
-    return tuple(requirements)
-
-
 def _load_accepted_materials(
     conn: sqlite3.Connection,
     tenant_id: TenantId,
@@ -401,15 +370,18 @@ def _load_accepted_materials(
     if materials is None or materials.tailored_resume is None:
         return ()
     artifact_path = Path(materials.tailored_resume.path)
-    if artifact_path.is_symlink():
-        raise ValueError("approved material path cannot be a symlink")
+    unavailable = ({"inputWarning": "Current approved resume is unavailable as a preparation input."},)
+    if not artifact_path.is_absolute():
+        return unavailable
     try:
+        if any(part.is_symlink() for part in (artifact_path, *artifact_path.parents)):
+            return unavailable
         with artifact_path.open("rb") as material_file:
             raw_bytes = material_file.read(1_048_577)
-    except (FileNotFoundError, PermissionError):
-        return ()
+    except OSError:
+        return unavailable
     if len(raw_bytes) > 1_048_576:
-        raise ValueError("approved material exceeds preparation byte budget")
+        return ({"inputWarning": "Current approved resume exceeds the preparation input byte budget."},)
     material_sha256 = hashlib.sha256(raw_bytes).hexdigest()
     rows = conn.execute(
         """

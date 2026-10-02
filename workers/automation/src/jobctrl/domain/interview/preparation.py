@@ -28,7 +28,8 @@ MAX_PROMPT_CONTEXT_CHARS = 110_000
 MAX_EVIDENCE_EXCERPT_CHARS = 4_000
 DEFAULT_QUESTION_COUNT = 5
 _SELECTION_KEYS = frozenset({"selectedQuestionIds", "catalogBinding", "interviewStage", "interviewFormat",
-                             "roleLens", "roleResponsibilities", "knownCriteria", "selectionRationale"})
+                             "roleLens", "roleResponsibilities", "knownCriteria", "selectionRationale",
+                             "evidenceSelections", "evidenceProfileVersion"})
 _WORDS = re.compile(r"[a-z][a-z0-9+#.-]{2,}", re.IGNORECASE)
 _STOP_WORDS = frozenset({"the", "and", "with", "from", "this", "that", "your", "what", "how", "for", "you", "our"})
 
@@ -74,11 +75,36 @@ def normalize_selection(value: Mapping[str, Any] | None) -> dict[str, Any]:
             raise InterviewSelectionError("invalid_selection")
         if len(ids) > 16:
             raise InterviewSelectionError("selection_over_budget")
-        if any(not isinstance(question_id, str) or not re.fullmatch(r"[A-Z]+\d{2}", question_id) for question_id in ids):
+        if any(not isinstance(question_id, str) or len(question_id) > 12 or not re.fullmatch(r"[A-Z]+\d{2}", question_id) for question_id in ids):
             raise InterviewSelectionError("invalid_selection")
         if len(set(ids)) != len(ids):
             raise InterviewSelectionError("duplicate_question")
         result["selectedQuestionIds"] = list(ids)
+    if "evidenceProfileVersion" in result:
+        version = result["evidenceProfileVersion"]
+        if not isinstance(version, int) or isinstance(version, bool) or version < 1:
+            raise InterviewSelectionError("invalid_evidence_selection")
+    if "evidenceSelections" in result:
+        rows = result["evidenceSelections"]
+        if ("evidenceProfileVersion" not in result or not isinstance(rows, (list, tuple))
+                or len(rows) > 16):
+            raise InterviewSelectionError("invalid_evidence_selection")
+        seen: set[str] = set()
+        for row in rows:
+            if not isinstance(row, Mapping) or set(row) != {"questionId", "evidenceIds"}:
+                raise InterviewSelectionError("invalid_evidence_selection")
+            question_id, evidence_ids = row["questionId"], row["evidenceIds"]
+            if (not isinstance(question_id, str) or len(question_id) > 12 or not re.fullmatch(r"[A-Z]+\d{2}", question_id)
+                    or question_id in seen or not isinstance(evidence_ids, (list, tuple))
+                    or len(evidence_ids) > 8
+                    or any(not isinstance(item, str) or not item.strip() or len(item) > 200 for item in evidence_ids)):
+                raise InterviewSelectionError("invalid_evidence_selection")
+            ids = list(evidence_ids)
+            if len(set(ids)) != len(ids) or ("selectedQuestionIds" in result and question_id not in result["selectedQuestionIds"]):
+                raise InterviewSelectionError("invalid_evidence_selection", question_id)
+            seen.add(question_id)
+            row["evidenceIds"] = ids
+        result["evidenceSelections"] = list(rows)
     return result
 
 
@@ -107,6 +133,10 @@ def choose_questions(
             "technical": ["principle", "situational", "historical"], "executive": ["principle", "historical"],
         }.get(context["interviewStage"], ["narrative", "historical", "principle", "situational", "preference", "negotiation"])
         eligible = [card for card in catalog["questions"] if context["roleLens"] == "unknown" or context["roleLens"] in card["roleLenses"]]
+        if context["interviewStage"] == "recruiter":
+            preferred = [card for card in eligible if card["defaultAnswerFormat"] in stage_formats]
+            if preferred:
+                eligible = preferred
         if not eligible:
             raise InterviewSelectionError("invalid_selection")
         def rank(card: InterviewQuestionCard) -> tuple[int, int, str]:
@@ -140,8 +170,53 @@ def plan_evidence(
     selection: Mapping[str, Any], requirements: Sequence[Mapping[str, Any]],
 ) -> dict[str, list[dict[str, str]]]:
     """Select canonical excerpts deterministically; projections are hints, never facts."""
-    profile = profile_snapshot.as_dict()
-    achievements = get_achievement_evidence(profile)
+    sources = accepted_evidence_sources(profile_snapshot)
+    overrides = {row["questionId"]: row["evidenceIds"] for row in selection.get("evidenceSelections", ())}
+    if "evidenceSelections" in selection and selection["evidenceProfileVersion"] != profile_snapshot.version:
+        raise InterviewSelectionError("evidence_profile_changed")
+    if set(overrides) - {card["id"] for card in cards}:
+        raise InterviewSelectionError("invalid_evidence_selection")
+    by_id = {source["id"]: source for source in sources}
+    for question_id, ids in overrides.items():
+        if any(evidence_id not in by_id for evidence_id in ids):
+            raise InterviewSelectionError("invalid_evidence_selection", question_id)
+    plans: dict[str, list[dict[str, str]]] = {}
+    for card in cards:
+        card_words = words(" ".join([*card["responsibilityTags"], *card["competencyTags"], card["intent"]]))
+        relevant_requirements = [requirement for requirement in requirements
+                                 if words(str(requirement.get("requirementText") or "")) & card_words]
+        hinted_ids = {str(evidence_id) for requirement in relevant_requirements for evidence_id in requirement.get("evidenceIds") or ()}
+        explicit = card["id"] in overrides
+        ranked = ([by_id[evidence_id] for evidence_id in overrides[card["id"]]] if explicit else
+                  sorted(sources, key=lambda source: (
+                      -int(source["id"] in hinted_ids),
+                      -len(words(source["excerpt"] + " " + " ".join(str(tag) for tag in source["tags"])) & card_words), source["id"],
+                  )))
+        links: list[dict[str, str]] = []
+        for source in ranked:
+            overlap = words(source["excerpt"] + " " + " ".join(str(tag) for tag in source["tags"])) & card_words
+            if not explicit and not overlap and source["id"] not in hinted_ids:
+                continue
+            scope = "transferable" if selection["roleLens"] == "first_time_manager" else "direct"
+            if selection["roleLens"] in {"engineering_manager", "director", "executive"}:
+                authority = re.search(r"(?i)\b(hired|direct reports|performance reviews?|budget owner)\b", source["excerpt"])
+                if not authority:
+                    scope = "transferable"
+            links.append({"evidenceId": source["id"], "sourceRef": f"profile:{profile_snapshot.profile_id}:{profile_snapshot.version}:evidence:{source['id']}",
+                          "excerpt": source["excerpt"], "scope": scope})
+            if not explicit and len(links) == 3:
+                break
+        plans[card["id"]] = links
+    return plans
+
+
+def accepted_evidence_sources(profile_snapshot: ProfileSnapshot) -> list[dict[str, Any]]:
+    """Current canonical accepted facts; IDs are exact saved IDs, without aliases.
+
+    Supported imported evidence is user accepted, not externally verified. Draft,
+    inferred and unconfirmed evidence, and independent notes, cannot ground prose.
+    """
+    achievements = get_achievement_evidence(profile_snapshot.as_dict())
     if len(achievements) > 400:
         raise ValueError("canonical evidence inventory exceeds preparation budget")
     sources: list[dict[str, Any]] = []
@@ -153,44 +228,24 @@ def plan_evidence(
         if not isinstance(evidence_id, str) or not evidence_id.strip():
             continue
         if evidence_id in seen:
-            raise ValueError("ambiguous canonical evidence id")
+            raise InterviewSelectionError("invalid_evidence_selection")
         seen.add(evidence_id)
+        if (achievement.get("user_confirmed") is not True
+                or achievement.get("evidence_strength") not in {"supported", "verified"}):
+            continue
+        if len(evidence_id) > 200:
+            raise InterviewSelectionError("invalid_evidence_selection")
         fragments = [str(achievement.get(key) or "").strip() for key in ("source_text", "scope", "action", "outcome")]
+        if not any(fragments):
+            continue
         fragments += [" ".join(str(item) for item in achievement.get(key) or ()) for key in ("metrics", "tools")]
         excerpt = " | ".join(part for part in fragments if part)
         if not excerpt:
             continue
         if len(excerpt) > MAX_EVIDENCE_EXCERPT_CHARS:
             raise ValueError("canonical evidence excerpt exceeds preparation budget")
-        sources.append({"id": evidence_id, "excerpt": excerpt, "tags": achievement.get("tags") or [],
-                        "confirmed": achievement.get("user_confirmed") is True})
-    plans: dict[str, list[dict[str, str]]] = {}
-    for card in cards:
-        card_words = words(" ".join([*card["responsibilityTags"], *card["competencyTags"], card["intent"]]))
-        relevant_requirements = [requirement for requirement in requirements
-                                 if words(str(requirement.get("requirementText") or "")) & card_words]
-        hinted_ids = {str(evidence_id) for requirement in relevant_requirements for evidence_id in requirement.get("evidenceIds") or ()}
-        ranked = sorted(sources, key=lambda source: (
-            -int(source["id"] in hinted_ids),
-            -len(words(source["excerpt"] + " " + " ".join(str(tag) for tag in source["tags"])) & card_words),
-            -int(source["confirmed"]), source["id"],
-        ))
-        links: list[dict[str, str]] = []
-        for source in ranked:
-            overlap = words(source["excerpt"] + " " + " ".join(str(tag) for tag in source["tags"])) & card_words
-            if not overlap and source["id"] not in hinted_ids:
-                continue
-            scope = "transferable" if selection["roleLens"] == "first_time_manager" else "direct"
-            if selection["roleLens"] in {"engineering_manager", "director", "executive"}:
-                authority = re.search(r"(?i)\b(hired|direct reports|performance reviews?|budget owner)\b", source["excerpt"])
-                if not authority:
-                    scope = "transferable"
-            links.append({"evidenceId": source["id"], "sourceRef": f"profile:{profile_snapshot.profile_id}:{profile_snapshot.version}:evidence:{source['id']}",
-                          "excerpt": source["excerpt"], "scope": scope})
-            if len(links) == 3:
-                break
-        plans[card["id"]] = links
-    return plans
+        sources.append({"id": evidence_id, "excerpt": excerpt, "tags": achievement.get("tags") or []})
+    return sources
 
 
 def generation_context(
@@ -200,12 +255,17 @@ def generation_context(
     employer_context: Mapping[str, Any] | None, fit_context: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     evidence = {link["evidenceId"]: link for links in plans.values() for link in links}
+    explicit_questions = {row["questionId"] for row in selection.get("evidenceSelections", ())}
     selected = [{"questionId": card["id"], "cardRevision": card["cardRevision"], "cardDigest": card["cardDigest"],
                  "rubricRevision": card["rubricRevision"], "rubricDigest": card["rubricDigest"],
                  "answerFormat": card["defaultAnswerFormat"], "selectionRationale": rationale(card, selection),
-                 "snapshot": deepcopy(card)} for card in cards]
+                 "snapshot": deepcopy(card),
+                 "evidenceSelectionMode": "user_selected" if card["id"] in explicit_questions else "deterministic",
+                 "selectedEvidenceIds": [link["evidenceId"] for link in plans[card["id"]]]} for card in cards]
     materials: dict[tuple[str, int], list[Mapping[str, Any]]] = {}
     for material in accepted_materials:
+        if "materialSha256" not in material:
+            continue
         key = (str(material["artifactId"]), int(material["generation"]))
         materials.setdefault(key, []).append(material)
     context = {
