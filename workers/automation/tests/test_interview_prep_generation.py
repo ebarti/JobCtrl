@@ -34,6 +34,7 @@ from jobctrl.interview.activities import (
     InterviewPrepEventRecorder,
     generate_interview_prep_activity,
 )
+from jobctrl.interview import workflow as interview_workflow
 from jobctrl.interview.workflow import InterviewPrepWorkflowInput, InterviewPrepWorkflowResult
 
 
@@ -652,6 +653,8 @@ def test_prep_material_input_uses_only_current_approved_artifact(
     try:
         if tenant_id != LOCAL_TENANT:
             _insert_job(conn, tenant_id, JOB_ID, JOB_URL)
+        material_path = tmp_path / "approved-synthetic-resume.txt"
+        material_path.write_text("Synthetic approved resume.")
         for generation, status in ((1, "approved"), (2, "rejected")):
             conn.execute(
                 "INSERT INTO job_materials (tenant_id, job_id, generation, status, "
@@ -661,8 +664,8 @@ def test_prep_material_input_uses_only_current_approved_artifact(
             conn.execute(
                 "INSERT INTO job_materials_artifacts (tenant_id, job_id, generation, "
                 "artifact_type, artifact_id, status, path, render_format, created_at) "
-                "VALUES (?, ?, ?, 'tailored_resume', ?, ?, '/synthetic/resume.txt', 'text', 'now')",
-                (tenant_id, JOB_ID, generation, f"resume-{generation}", status),
+                "VALUES (?, ?, ?, 'tailored_resume', ?, ?, ?, 'text', 'now')",
+                (tenant_id, JOB_ID, generation, f"resume-{generation}", status, str(material_path)),
             )
             for suffix, artifact_id in (("owned", f"resume-{generation}"), ("unrelated", "other-artifact")):
                 conn.execute(
@@ -686,6 +689,105 @@ def test_prep_material_input_uses_only_current_approved_artifact(
         assert interview_activities._load_accepted_materials(conn, tenant_id, JOB_ID) == ()
     finally:
         close_connection(tmp_path / "jobs.db")
+
+
+
+@pytest.mark.parametrize("judge_failure", [False, True])
+def test_provider_or_judge_failure_preserves_accepted_and_retry_reuses_failure(
+    tmp_path: Path, judge_failure: bool,
+) -> None:
+    conn = _init_conn(tmp_path)
+    try:
+        repository = SqliteInterviewPrepRepository(conn)
+        candidate = _candidate("star_draft", "Latency", "Reduced API latency by 30% using Python.",
+                               evidence_ids=["ev-platform-latency"], requirement_ids=["req-python"])
+        request = dict(tenant_id=LOCAL_TENANT, job=_job(), profile_snapshot=_profile_snapshot(),
+                       evidence_entries=_evidence_entries(), evidence_gaps=(),
+                       requirements=_requirements("req-python", "Python service optimization"))
+        accepted = GenerateInterviewPrepUseCase(repository=repository, llm=_FakeLlm([candidate, _judge_pass()]))
+        assert accepted.execute(origin_run_id="accepted", **request).status == "accepted"
+        failing_llm = _FakeLlm([candidate] if judge_failure else [])
+        use_case = GenerateInterviewPrepUseCase(repository=repository, llm=failing_llm)
+
+        failed = use_case.execute(origin_run_id="failed", **request)
+        retried = use_case.execute(origin_run_id="failed", **request)
+
+        assert failed.status == retried.status == "failed"
+        assert failed.prep.generation == retried.prep.generation == 2
+        assert repository.load_latest(LOCAL_TENANT, JOB_ID).generation == 1
+        assert len(failing_llm.calls) == (2 if judge_failure else 1)
+        assert any(("judge_error" if judge_failure else "generation_error") in error for error in failed.errors)
+    finally:
+        close_connection(tmp_path / "jobs.db")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("raise_error", [False, True])
+async def test_workflow_terminal_events_do_not_include_private_failure_text(
+    monkeypatch: pytest.MonkeyPatch, raise_error: bool,
+) -> None:
+    from datetime import datetime, timezone
+    outcomes: list[dict[str, Any]] = []
+    async def record_outcome(**kwargs: Any) -> None:
+        outcomes.append(kwargs)
+    async def started(**_kwargs: Any) -> None:
+        pass
+    async def execute(fn: Any, *_args: Any, **_kwargs: Any) -> Any:
+        if fn == interview_workflow.check_spend_budget:
+            return None
+        if raise_error:
+            raise RuntimeError("PRIVATE candidate answer and employer excerpt")
+        return GenerateInterviewPrepActivityOutput(status="failed", job_id=JOB_ID, generation=2,
+                                                   item_count=0, errors=("PRIVATE candidate answer",))
+    monkeypatch.setattr(interview_workflow, "emit_workflow_outcome", record_outcome)
+    monkeypatch.setattr(interview_workflow, "emit_workflow_started", started)
+    monkeypatch.setattr(interview_workflow.workflow, "execute_activity", execute)
+    monkeypatch.setattr(interview_workflow.workflow, "now", lambda: datetime.now(timezone.utc))
+
+    result = await interview_workflow.InterviewPrepWorkflow().run(
+        InterviewPrepWorkflowInput(tenant_id="local", job_id=JOB_ID)
+    )
+
+    assert result.status == "failed"
+    assert len(outcomes) == 1
+    assert "PRIVATE" not in json.dumps(outcomes, default=str)
+
+
+
+@pytest.mark.parametrize("fit_profile,fit_analysis,expected", [(1, 3, "current"), (2, 3, "stale_excluded"), (1, 2, "stale_excluded")])
+def test_stale_fit_is_labeled_and_does_not_supply_evidence(
+    tmp_path: Path, fit_profile: int, fit_analysis: int, expected: str,
+) -> None:
+    import sqlite3
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.executescript("""
+    CREATE TABLE job_employer_analysis (tenant_id, job_id, generation, snapshot_hash, prompt_version,
+                                       role_framing, inferred_seniority, requirements_json);
+    CREATE TABLE job_requirement_fit_reports (tenant_id, job_id, score_version, employer_analysis_generation,
+                                            profile_snapshot_version, scoring_policy_version, formula_version, created_at);
+    CREATE TABLE job_requirement_fit_items (tenant_id, job_id, score_version, requirement_id, requirement_text, fit_json, position);
+    """)
+    try:
+        for tenant in (LOCAL_TENANT, OTHER_TENANT):
+            conn.execute("INSERT INTO job_employer_analysis VALUES (?, ?, 3, 'snapshot', 'prompt', 'Platform ownership', 'staff', ?)",
+                         (tenant, JOB_ID, json.dumps([{"id": "r1", "text": "Python service optimization", "evidence_span": "Python"}])))
+            conn.execute("INSERT INTO job_requirement_fit_reports VALUES (?, ?, 4, ?, ?, 1, 'v1', 'now')",
+                         (tenant, JOB_ID, fit_analysis, fit_profile))
+            conn.execute("INSERT INTO job_requirement_fit_items VALUES (?, ?, 4, 'r1', 'Python service optimization', ?, 0)",
+                         (tenant, JOB_ID, json.dumps({"kind": "matched", "evidenceIds": [f"evidence-{tenant}"]})))
+        employer, fit, requirements = interview_activities._load_employer_and_fit_context(conn, LOCAL_TENANT, JOB_ID, 1)
+        assert employer["generation"] == 3
+        assert fit["status"] == expected
+        assert requirements[0]["evidenceIds"] == (["evidence-local"] if expected == "current" else [])
+        assert "evidence-other" not in json.dumps((employer, fit, requirements))
+        if expected == "current":
+            conn.execute("UPDATE job_requirement_fit_items SET requirement_text = 'changed source' WHERE tenant_id = 'local'")
+            _, _, requirements = interview_activities._load_employer_and_fit_context(conn, LOCAL_TENANT, JOB_ID, 1)
+            assert requirements[0]["evidenceIds"] == []
+            assert requirements[0]["fitStatus"] == "source_identity_mismatch"
+    finally:
+        conn.close()
 
 
 def _init_conn(tmp_path: Path, *, seed_local_job: bool = True):
