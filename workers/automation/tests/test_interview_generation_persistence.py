@@ -23,10 +23,12 @@ from jobctrl.interview.activities import GenerateInterviewPrepActivityInput, gen
 from tests.test_interview_prep_generation import JOB_ID, _FakeLlm, _init_conn, _job, _judge_pass, _profile_snapshot
 from tests.test_interview_question_generation import _question_candidate
 from tests.test_sqlite_profile_repository import _valid_profile
+from tests.interview_question_fixtures import canonical_evidence
 
 
 def _request():
     return dict(tenant_id=LOCAL_TENANT, job=_job(), profile_snapshot=_profile_snapshot(),
+                canonical_evidence=canonical_evidence(_profile_snapshot()),
                 evidence_entries=(), evidence_gaps=(), requirements=(),
                 selection_input={"selectedQuestionIds": ["B01"], "evidenceProfileVersion": 1,
                                  "evidenceSelections": [{"questionId": "B01", "evidenceIds": ["ev-platform-latency"]}]})

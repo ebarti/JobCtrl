@@ -11,6 +11,8 @@ from typing import Any
 
 import pytest
 
+from tests.interview_question_fixtures import canonical_evidence
+
 from jobctrl.database import close_connection, get_connection
 from jobctrl.domain.events import (
     InterviewPrepFailedPayload,
@@ -118,6 +120,7 @@ def test_generates_accepted_prep_through_existing_truthfulness_gates(tmp_path: P
             tenant_id=LOCAL_TENANT,
             job=_job(),
             profile_snapshot=_profile_snapshot(),
+            canonical_evidence=canonical_evidence(_profile_snapshot()),
             evidence_entries=_evidence_entries(),
             evidence_gaps=(),
             requirements=_requirements("req-python", "Python service optimization"),
@@ -166,6 +169,7 @@ def test_fabricated_metric_fails_without_superseding_last_accepted_prep(tmp_path
             tenant_id=LOCAL_TENANT,
             job=_job(),
             profile_snapshot=_profile_snapshot(),
+            canonical_evidence=canonical_evidence(_profile_snapshot()),
             evidence_entries=_evidence_entries(),
             evidence_gaps=(),
             requirements=_requirements("req-python", "Python service optimization"),
@@ -191,6 +195,7 @@ def test_fabricated_metric_fails_without_superseding_last_accepted_prep(tmp_path
             tenant_id=LOCAL_TENANT,
             job=_job(),
             profile_snapshot=_profile_snapshot(),
+            canonical_evidence=canonical_evidence(_profile_snapshot()),
             evidence_entries=_evidence_entries(),
             evidence_gaps=(),
             requirements=_requirements("req-python", "Python service optimization"),
@@ -246,6 +251,7 @@ def test_star_draft_claim_must_ground_in_referenced_evidence_source(tmp_path: Pa
             tenant_id=LOCAL_TENANT,
             job=_job(),
             profile_snapshot=_profile_snapshot(),
+            canonical_evidence=canonical_evidence(_profile_snapshot()),
             evidence_entries=_evidence_entries(),
             evidence_gaps=(),
             requirements=_requirements("req-python", "Python service optimization"),
@@ -288,6 +294,7 @@ def test_gap_drill_must_name_gap_without_claiming_experience(tmp_path: Path) -> 
             tenant_id=LOCAL_TENANT,
             job=_job(),
             profile_snapshot=_profile_snapshot(),
+            canonical_evidence=canonical_evidence(_profile_snapshot()),
             evidence_entries=_evidence_entries(),
             evidence_gaps=(
                 {
@@ -431,6 +438,7 @@ def test_interview_prep_rejects_url_shaped_job_identity(tmp_path: Path) -> None:
                 tenant_id=LOCAL_TENANT,
                 job={**_job(), "job_id": JOB_URL},
                 profile_snapshot=_profile_snapshot(),
+                canonical_evidence=canonical_evidence(_profile_snapshot()),
                 evidence_entries=(),
                 evidence_gaps=(),
                 requirements=(),
@@ -502,6 +510,7 @@ def test_retry_with_same_origin_run_reuses_completed_generation(tmp_path: Path) 
             "tenant_id": LOCAL_TENANT,
             "job": _job(),
             "profile_snapshot": _profile_snapshot(),
+            "canonical_evidence": canonical_evidence(_profile_snapshot()),
             "evidence_entries": _evidence_entries(),
             "evidence_gaps": (),
             "requirements": _requirements("req-python", "Python service optimization"),
@@ -538,6 +547,7 @@ def test_new_workflow_run_generates_a_fresh_generation(tmp_path: Path) -> None:
             "tenant_id": LOCAL_TENANT,
             "job": _job(),
             "profile_snapshot": _profile_snapshot(),
+            "canonical_evidence": canonical_evidence(_profile_snapshot()),
             "evidence_entries": _evidence_entries(),
             "evidence_gaps": (),
             "requirements": _requirements("req-python", "Python service optimization"),
@@ -710,7 +720,7 @@ def test_provider_or_judge_failure_preserves_accepted_and_retry_reuses_failure(
         repository = SqliteInterviewPrepRepository(conn)
         candidate = _candidate("star_draft", "Latency", "Reduced API latency by 30% using Python.",
                                evidence_ids=["ev-platform-latency"], requirement_ids=["req-python"])
-        request = dict(tenant_id=LOCAL_TENANT, job=_job(), profile_snapshot=_profile_snapshot(),
+        request = dict(tenant_id=LOCAL_TENANT, job=_job(), profile_snapshot=_profile_snapshot(), canonical_evidence=canonical_evidence(_profile_snapshot()),
                        evidence_entries=_evidence_entries(), evidence_gaps=(),
                        requirements=_requirements("req-python", "Python service optimization"))
         accepted = GenerateInterviewPrepUseCase(catalog=_generation_catalog(), repository=repository, llm=_FakeLlm([candidate, _judge_pass()]))

@@ -19,6 +19,7 @@ from jobctrl.domain.events import (
 from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.interview.catalog import InterviewCatalog, load_interview_catalog
 from jobctrl.domain.interview.preparation import choose_questions, generation_context, plan_evidence
+from jobctrl.domain.interview.evidence import InterviewEvidenceSnapshot
 from jobctrl.domain.interview.question_generation import (
     QUESTION_PREP_RESPONSE_SCHEMA, question_generation_prompt, question_items_from_candidate,
     run_question_truthfulness_gates,
@@ -38,7 +39,6 @@ from jobctrl.domain.ports.llm import LlmMessage, LlmPort
 from jobctrl.llm_lanes import lane_bound
 from jobctrl.domain.profile.snapshot import ProfileSnapshot
 from jobctrl.domain.tenant import TenantId
-from jobctrl.resume_profile import get_achievement_evidence
 
 log = logging.getLogger(__name__)
 
@@ -92,6 +92,7 @@ class GenerateInterviewPrepUseCase:
         evidence_gaps: Sequence[Mapping[str, Any]],
         requirements: Sequence[Mapping[str, Any]],
         accepted_materials: Sequence[Mapping[str, Any]] = (),
+        canonical_evidence: InterviewEvidenceSnapshot | None = None,
         selection_input: Mapping[str, Any] | None = None,
         employer_context: Mapping[str, Any] | None = None,
         fit_context: Mapping[str, Any] | None = None,
@@ -107,7 +108,7 @@ class GenerateInterviewPrepUseCase:
             raise ValueError("profile snapshot belongs to another tenant")
         catalog = self._catalog if self._catalog is not None else load_interview_catalog()
         cards, selection = choose_questions(catalog, selection_input, requirements)
-        plans = plan_evidence(cards, profile_snapshot, selection, requirements)
+        plans = plan_evidence(cards, profile_snapshot, selection, requirements, canonical_evidence=canonical_evidence)
         context = generation_context(cards=cards, selection=selection, plans=plans,
                                      profile_snapshot=profile_snapshot, accepted_materials=accepted_materials,
                                      model=model or str(getattr(self._llm, "model", "") or "default"), job=job,
@@ -363,27 +364,6 @@ def _outcome_from_existing(prep: InterviewPrep) -> InterviewPrepGenerationOutcom
     return InterviewPrepGenerationOutcome(prep=prep, status="accepted")
 
 
-def _source_text_by_evidence_id(profile: Mapping[str, Any]) -> dict[str, str]:
-    sources: dict[str, str] = {}
-    for item in get_achievement_evidence(dict(profile)):
-        if not isinstance(item, Mapping):
-            continue
-        evidence_id = str(item.get("id") or "").strip()
-        if not evidence_id:
-            continue
-        fragments = [
-            str(item.get("source_text") or "").strip(),
-            str(item.get("scope") or "").strip(),
-            str(item.get("action") or "").strip(),
-            str(item.get("outcome") or "").strip(),
-            " ".join(str(value) for value in item.get("metrics") or ()),
-            " ".join(str(value) for value in item.get("tools") or ()),
-        ]
-        source = " | ".join(fragment for fragment in fragments if fragment)
-        sources[evidence_id] = source or evidence_id
-    return sources
-
-
 def _target_skill_terms(
     requirements: Sequence[Mapping[str, Any]],
     gaps: Sequence[Mapping[str, Any]],
@@ -414,7 +394,8 @@ def _judge_prompt(
 ) -> str:
     context = {
         "job": _safe_job(job),
-        "profile_evidence_ids": sorted(_source_text_by_evidence_id(profile)),
+        "profile_evidence_ids": sorted({link["evidenceId"] for item in items
+                                       for link in (item.question_metadata or {}).get("evidenceLinks", [])}),
         "format_rules": "Principles and hypothetical intentions need no historic evidence; every personal factual assertion needs selected canonical excerpts. Transferable experience is not direct management authority. Never infer compensation minimums. This is a safety gate, not calibrated practice assessment.",
         "requirements": list(requirements)[:20],
         "prep_items": [item.to_read_model() for item in items],
