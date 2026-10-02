@@ -1052,29 +1052,41 @@ The new `question_outline` kind coexists with legacy `theme`, `star_draft`,
 `gap_drill`, and `company_note`. `questionMetadata` adds question/card/rubric
 bindings, answer format, rationale, evidence links (`evidenceId`, `sourceRef`,
 `excerpt`, `scope: direct | transferable`), structured outline segments,
-gaps, probes, guidance refs, factual support, and generated/user-edited status.
-Outline support is `accepted_profile_fact`, `hypothetical`,
+gaps (`id`, `prompt`, `reason`), `probes`, `sourceGuidanceRefs`, factual support,
+and `userEditStatus: generated | user_edited`. Each `outline` segment has
+`heading`, `text`, `evidenceIds`, and `factualSupport`. Outline support is `accepted_profile_fact`, `hypothetical`,
 `new_user_statement`, or `needs_clarification`. A principle/hypothetical answer
 may lack historical evidence; personal factual assertions still require
 support and pass the gates. Missing evidence remains a question or marked gap.
 
-`generationContext` pins schema/catalog binding and context digest, selected
-IDs/order and full card snapshots, deterministic/user selection mode, interview
-context, responsibilities/known criteria, profile ID/version and relevant
-canonical excerpts, retained job context and employer-analysis requirements,
-fit linkage/status, approved-material refs/hashes, and model/prompt/gate
-versions. `catalogDigest` is semantic SHA-256 over canonical sorted-key compact
-UTF-8 JSON excluding itself; it differs from raw asset-byte SHA-256.
-Current approved-material inputs must bind the actual approved tailored-resume
-artifact, its generation, and raw byte hash. An unavailable, mismatched, or
-stale input cannot silently become accepted evidence.
+Optional nullable `generationContext` retains these generation-time fields:
+
+| Field | Stored shape / meaning |
+| --- | --- |
+| `schemaVersion`, `catalogBinding`, `contextDigest` | Schema `"1"`, catalog revision/digest, and immutable context SHA-256. |
+| `selectedQuestionIds`, `selectedQuestions` | Ordered IDs and 1–16 selected snapshots; each has question ID, card/rubric revision/digest, answer format, rationale, and full `snapshot` card. |
+| `selectionMode` | `user_selected | deterministic`. |
+| `interviewStage`, `interviewFormat`, `roleLens`, `roleResponsibilities`, `knownCriteria` | Recorded interview context; inferred guidance cannot become known employer criteria. |
+| `profile` | `{ profileId, version, evidence }` with canonical evidence ID/source/excerpt and direct/transferable scope. |
+| `jobContext` | `{ jobId, title, company, descriptionExcerpt, snapshotHash }`; title/company are at most 500 characters each, excerpt at most 12,000. The hash covers the full uncapped canonical job description. |
+| `employerAnalysis` | Nullable `{ generation, snapshotHash, snapshot }`; snapshot retains role framing (at most 4000 characters), inferred seniority (at most 500), and at most 20 relevant `{ requirementId, requirementText, sourceExcerpt }` entries with text/excerpt at most 3000 characters each. |
+| `fitReport` | Nullable `{ generation, employerAnalysisGeneration, profileSnapshotVersion, status: current | stale_excluded }`; excluded fit cannot support a personal fact. |
+| `approvedMaterials` | `{ materialId, generation, sha256 }` refs bound to the actual current approved tailored-resume artifact and its raw bytes. |
+| `model` | `{ model, promptVersion, gateVersion }`. |
+
+`catalogDigest` is semantic SHA-256 over canonical sorted-key compact UTF-8 JSON
+excluding itself; it differs from raw asset-byte SHA-256. Approved-material
+reads are bounded to 1 MiB. Unavailable or mismatched artifacts are excluded and
+labeled, and a maximum bullet-provenance generation is not approval proof.
 
 Current job-detail reads retain the latest accepted generation during pending
 or failed refresh. History query accepts optional positive `generation`,
 `page` 1–1000 (default 1), and `pageSize` 1–100 (default 20). It exposes prior
 accepted/superseded and failed attempts. Relevant generation-time excerpts and
-snapshots stay immutable when current inputs change; read-derived stale reasons
-ask for user-controlled regeneration rather than rewriting history. Missing
+snapshots stay immutable when current inputs change. Read-derived `staleReasons`
+are `catalog_changed`, `profile_changed`, `job_changed`,
+`employer_analysis_changed`, `approved_materials_changed`, or `legacy_unbound`.
+They ask for user-controlled regeneration rather than rewriting history. Missing
 legacy context remains unbound with `legacy_unbound` semantics and no fabricated
 question/rubric association. The workflow/run's completed retry reuses the
 persisted generation rather than spending again.

@@ -1,5 +1,5 @@
 ---
-description: "Learn how JobCtrl creates truthful, job-specific resumes and cover letters with provenance, fabrication gates, validation, repair, and human approval."
+description: "Create truthful job-specific resumes, cover letters, and interview preparation with inspectable evidence, accepted history, and separate personal notes."
 ---
 
 # Materials & Tailoring
