@@ -256,7 +256,7 @@
         "judge_verdict": "grounded",
         "warnings_json": "[\"Mention Kubernetes scope without adding new metrics.\"]",
         "failure_reason": "",
-        "generation_context_json": "{\"schemaVersion\": \"1\", \"catalogBinding\": {\"catalogRevision\": \"synthetic.v1\", \"catalogDigest\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}, \"contextDigest\": \"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\", \"selectedQuestionIds\": [\"B01\"], \"selectedQuestions\": [{\"questionId\": \"B01\", \"cardRevision\": \"1\", \"cardDigest\": \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\", \"rubricRevision\": \"1\", \"rubricDigest\": \"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\", \"answerFormat\": \"historical\", \"selectionRationale\": \"Synthetic responsibility match\", \"snapshot\": {\"id\": \"B01\", \"title\": \"Synthetic ownership question\", \"topic\": \"behavioral\", \"status\": \"active\", \"maturity\": \"research_draft\", \"cardRevision\": \"1\", \"cardDigest\": \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\", \"rubricRevision\": \"1\", \"rubricDigest\": \"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\", \"roleLenses\": [\"senior_ic\"], \"responsibilityTags\": [\"ownership\"], \"competencyTags\": [\"decision_quality\"], \"answerFormats\": [\"historical\"], \"defaultAnswerFormat\": \"historical\", \"attributionKind\": \"editorial_synthesis\", \"sourceRef\": \"synthetic/editorial\", \"variants\": \"Synthetic variant\", \"intent\": \"Explain a decision\", \"answer\": \"Use accepted facts\", \"adaptation\": \"State personal scope\", \"alternatives\": \"Explain plausible alternatives\", \"probes\": \"What changed?\", \"failures\": \"Inventing facts\", \"provenance\": \"Synthetic public test guidance\", \"rubric\": [{\"dimension\": \"ownership\", \"weak\": \"Unclear\", \"strong\": \"Explicit\"}], \"sources\": [], \"examples\": []}}], \"selectionMode\": \"user_selected\", \"interviewStage\": \"behavioral\", \"interviewFormat\": \"video\", \"roleLens\": \"senior_ic\", \"roleResponsibilities\": [\"ownership\"], \"knownCriteria\": [\"decision quality\"], \"profile\": {\"profileId\": \"default\", \"version\": 1, \"evidence\": [{\"evidenceId\": \"ev-platform-latency\", \"sourceRef\": \"profile:default/experience:platform\", \"excerpt\": \"Synthetic accepted excerpt\", \"scope\": \"direct\"}]}, \"jobContext\": {\"jobId\": \"https://example.com/jobs/parity-developer-platform\", \"title\": \"Senior Platform Engineer\", \"company\": \"ParityCo\", \"descriptionExcerpt\": \"Synthetic target context\", \"snapshotHash\": \"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"}, \"employerAnalysis\": null, \"fitReport\": null, \"approvedMaterials\": [], \"model\": {\"model\": \"synthetic\", \"promptVersion\": \"1\", \"gateVersion\": \"1\"}}"
+        "generation_context_json": "{\"schemaVersion\": \"1\", \"catalogBinding\": {\"catalogRevision\": \"synthetic.v1\", \"catalogDigest\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}, \"contextDigest\": \"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\", \"selectedQuestionIds\": [\"B01\"], \"selectedQuestions\": [{\"questionId\": \"B01\", \"cardRevision\": \"1\", \"cardDigest\": \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\", \"rubricRevision\": \"1\", \"rubricDigest\": \"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\", \"answerFormat\": \"historical\", \"selectionRationale\": \"Synthetic responsibility match\", \"snapshot\": {\"id\": \"B01\", \"title\": \"Synthetic ownership question\", \"topic\": \"behavioral\", \"status\": \"active\", \"maturity\": \"research_draft\", \"cardRevision\": \"1\", \"cardDigest\": \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\", \"rubricRevision\": \"1\", \"rubricDigest\": \"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\", \"roleLenses\": [\"senior_ic\"], \"responsibilityTags\": [\"ownership\"], \"competencyTags\": [\"decision_quality\"], \"answerFormats\": [\"historical\"], \"defaultAnswerFormat\": \"historical\", \"attributionKind\": \"editorial_synthesis\", \"sourceRef\": \"synthetic/editorial\", \"variants\": \"Synthetic variant\", \"intent\": \"Explain a decision\", \"answer\": \"Use accepted facts\", \"adaptation\": \"State personal scope\", \"alternatives\": \"Explain plausible alternatives\", \"probes\": \"What changed?\", \"failures\": \"Inventing facts\", \"provenance\": \"Synthetic public test guidance\", \"rubric\": [{\"dimension\": \"ownership\", \"weak\": \"Unclear\", \"strong\": \"Explicit\"}], \"sources\": [], \"examples\": []}, \"evidenceSelectionMode\": \"deterministic\", \"selectedEvidenceIds\": [\"ev-platform-latency\"]}], \"selectionMode\": \"user_selected\", \"interviewStage\": \"behavioral\", \"interviewFormat\": \"video\", \"roleLens\": \"senior_ic\", \"roleResponsibilities\": [\"ownership\"], \"knownCriteria\": [\"decision quality\"], \"profile\": {\"profileId\": \"default\", \"version\": 1, \"evidence\": [{\"evidenceId\": \"ev-platform-latency\", \"sourceRef\": \"profile:default/experience:platform\", \"excerpt\": \"Synthetic accepted excerpt\", \"scope\": \"direct\"}]}, \"jobContext\": {\"jobId\": \"https://example.com/jobs/parity-developer-platform\", \"title\": \"Senior Platform Engineer\", \"company\": \"ParityCo\", \"descriptionExcerpt\": \"Synthetic target context\", \"snapshotHash\": \"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\"}, \"employerAnalysis\": null, \"fitReport\": null, \"approvedMaterials\": [], \"model\": {\"model\": \"synthetic\", \"promptVersion\": \"1\", \"gateVersion\": \"1\"}}"
       },
       {
         "generation": 3,
@@ -929,7 +929,11 @@
                 ],
                 "sources": [],
                 "examples": []
-              }
+              },
+              "evidenceSelectionMode": "deterministic",
+              "selectedEvidenceIds": [
+                "ev-platform-latency"
+              ]
             }
           ],
           "selectionMode": "user_selected",
@@ -1634,7 +1638,11 @@
               ],
               "sources": [],
               "examples": []
-            }
+            },
+            "evidenceSelectionMode": "deterministic",
+            "selectedEvidenceIds": [
+              "ev-platform-latency"
+            ]
           }
         ],
         "selectionMode": "user_selected",
@@ -1765,11 +1773,11 @@
       "expected": "Madrid, Community of Madrid, Spain"
     },
     {
-      "input": "Málaga, AN, ESP",
-      "expected": "Málaga, Andalusia, Spain"
+      "input": "M\u00e1laga, AN, ESP",
+      "expected": "M\u00e1laga, Andalusia, Spain"
     },
     {
-      "input": "Madrid, España",
+      "input": "Madrid, Espa\u00f1a",
       "expected": "Madrid, Spain"
     },
     {
