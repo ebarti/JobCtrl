@@ -1077,13 +1077,13 @@ Optional nullable `generationContext` retains these generation-time fields:
 | Field | Stored shape / meaning |
 | --- | --- |
 | `schemaVersion`, `catalogBinding`, `contextDigest` | Schema `"1"`, catalog revision/digest, and immutable context SHA-256. |
-| `selectedQuestionIds`, `selectedQuestions` | Ordered IDs and 1–16 selected snapshots; each has question ID, card/rubric revision/digest, answer format, rationale, full `snapshot` card, `evidenceSelectionMode: user_selected | deterministic`, and ordered `selectedEvidenceIds` (at most eight). |
-| `selectionMode` | `user_selected | deterministic`. |
+| `selectedQuestionIds`, `selectedQuestions` | Ordered IDs and 1–16 selected snapshots; each has question ID, card/rubric revision/digest, answer format, rationale, full `snapshot` card, `evidenceSelectionMode: user_selected \| deterministic`, and ordered `selectedEvidenceIds` (at most eight). |
+| `selectionMode` | `user_selected \| deterministic`. |
 | `interviewStage`, `interviewFormat`, `roleLens`, `roleResponsibilities`, `knownCriteria` | Recorded interview context; inferred guidance cannot become known employer criteria. |
 | `profile` | `{ profileId, version, evidence }` with canonical evidence ID/source/excerpt and direct/transferable scope. |
 | `jobContext` | `{ jobId, title, company, descriptionExcerpt, snapshotHash }`; title/company are at most 500 characters each, excerpt at most 12,000. The hash covers the full uncapped canonical job description. |
 | `employerAnalysis` | Nullable `{ generation, snapshotHash, snapshot }`; snapshot retains role framing (at most 4000 characters), inferred seniority (at most 500), and at most 20 relevant `{ requirementId, requirementText, sourceExcerpt }` entries with text/excerpt at most 3000 characters each. |
-| `fitReport` | Nullable `{ generation, employerAnalysisGeneration, profileSnapshotVersion, status: current | stale_excluded }`; excluded fit cannot support a personal fact. |
+| `fitReport` | Nullable `{ generation, employerAnalysisGeneration, profileSnapshotVersion, status: current \| stale_excluded }`; excluded fit cannot support a personal fact. |
 | `approvedMaterials` | `{ materialId, generation, sha256 }` refs bound to the actual current approved tailored-resume artifact and its raw bytes. |
 | `model` | `{ model, promptVersion, gateVersion }`. |
 
