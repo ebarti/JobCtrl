@@ -20,6 +20,7 @@ import {
   EXACT_V9_SCHEMA_MANIFEST,
   EXACT_V10_SCHEMA_MANIFEST,
   EXACT_V11_SCHEMA_MANIFEST,
+  EXACT_V12_SCHEMA_MANIFEST,
   hasExactV8SchemaManifest,
   hasExactV9SchemaManifest,
   schemaManifest,
@@ -34,7 +35,7 @@ function makeDbWithUserVersion(userVersion: number): { dbPath: string; cleanup: 
   return { dbPath, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
 }
 
-function makeExactV11Database(): { dbPath: string; cleanup: () => void } {
+function makeExactV12Database(): { dbPath: string; cleanup: () => void } {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-api-exact-v9-"));
   const dbPath = path.join(dir, "jobs.db");
   const migrations = path.resolve(
@@ -47,6 +48,7 @@ function makeExactV11Database(): { dbPath: string; cleanup: () => void } {
   db.exec(fs.readFileSync(path.join(migrations, "schema_v9.sql"), "utf8"));
   db.exec(fs.readFileSync(path.join(migrations, "schema_v10.sql"), "utf8"));
   db.exec(fs.readFileSync(path.join(migrations, "schema_v11.sql"), "utf8"));
+  db.exec(fs.readFileSync(path.join(migrations, "schema_v12.sql"), "utf8"));
   db.pragma(`user_version = ${SUPPORTED_SCHEMA_VERSION}`);
   db.close();
   return { dbPath, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
@@ -62,7 +64,7 @@ function tableColumns(db: Database.Database, tableName: string): string[] {
 }
 
 describe("schema version guard at DB open", () => {
-  it.each([0, 6, 7, 8, 9, 10, 12])("refuses schema version %i before runtime writes", (userVersion) => {
+  it.each([0, 6, 7, 8, 9, 10, 11, 13])("refuses schema version %i before runtime writes", (userVersion) => {
     const { dbPath, cleanup } = makeDbWithUserVersion(userVersion);
     try {
       const token = "job" + "ctl";
@@ -91,8 +93,8 @@ describe("schema version guard at DB open", () => {
     }
   });
 
-  it("opens the exact v11 schema", () => {
-    const { dbPath, cleanup } = makeExactV11Database();
+  it("opens the exact v12 schema", () => {
+    const { dbPath, cleanup } = makeExactV12Database();
     try {
       openDatabase(dbPath).close();
       openReadOnlyDatabase(dbPath).close();
@@ -191,11 +193,18 @@ describe("schema version guard at DB open", () => {
     });
     expect(pythonManifest).toContain(`fingerprint="${EXACT_V11_SCHEMA_MANIFEST.fingerprint}",`);
     expect(EXACT_V11_SCHEMA_MANIFEST).toEqual({
-      version: SUPPORTED_SCHEMA_VERSION,
+      version: 11,
       objectCount: 274,
       tableCount: 118,
       fingerprint: "6a653761d23c9c17f4e8000f13d14003d265cc5739877063212991569564e542",
     });
+  });
+
+  it("seals the same v12 manifest in both runtimes", () => {
+    const {dbPath, cleanup} = makeExactV12Database();
+    const db = new Database(dbPath);
+    try { expect(schemaManifest(db, SUPPORTED_SCHEMA_VERSION)).toEqual(EXACT_V12_SCHEMA_MANIFEST); }
+    finally { db.close(); cleanup(); }
   });
 
   it("computes the exact v8 manifest from the frozen v7 schema plus v8 additions", () => {
