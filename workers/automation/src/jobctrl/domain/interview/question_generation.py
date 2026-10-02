@@ -272,7 +272,12 @@ def _unsupported_personal_assertion(text: str, *, allow_question: bool = False) 
     for clause in _CLAUSE_BOUNDARIES.split(text):
         subjects = list(_PERSONAL_SUBJECT.finditer(clause))
         requested = bool(question and _INTERROGATIVE.match(clause))
-        if _PERSONAL_PAST.search(clause) and not requested:
+        if _PERSONAL_PAST.search(clause):
+            return True
+        # A future question can carry an asserted personal past/current scope.
+        # Only explicitly hypothetical possessions belong to its future frame.
+        if question and any(not re.match(r"(?i)\s+(?:hypothetical|future|potential)\b", clause[possession.end():])
+                            for possession in _PERSONAL_POSSESSION.finditer(clause)):
             return True
         intentions = []
         for subject in subjects:
@@ -291,13 +296,17 @@ def _unsupported_personal_assertion(text: str, *, allow_question: bool = False) 
 
 def _assertion_text(text: str) -> str:
     """Exclude clearly conditional actions while keeping actual asserted facts."""
-    if _future_question(text) and not _unsupported_personal_assertion(text, allow_question=True):
-        return ""
+    future_question = _future_question(text)
+    unsupported = _unsupported_personal_assertion(text, allow_question=True)
     assertions = []
     for clause in _CLAUSE_BOUNDARIES.split(text):
         subjects = list(_PERSONAL_SUBJECT.finditer(clause))
-        conditional = subjects and all(_intended_action(clause, subject) for subject in subjects)
-        if (conditional or _EXPLICIT_SCENARIO.match(clause)) and not _unsupported_personal_assertion(clause):
+        conditional = subjects and all(
+            _intended_action(clause, subject) or (future_question and _QUESTION_AUXILIARY.search(clause[:subject.start()]))
+            for subject in subjects)
+        # Strip conditional clauses only after checking the entire text for
+        # factual personal premises; interrogative punctuation grants no waiver.
+        if (conditional or _EXPLICIT_SCENARIO.match(clause)) and not unsupported:
             continue
         assertions.append(clause)
     return " ".join(assertions)
