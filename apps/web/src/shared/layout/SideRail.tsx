@@ -9,6 +9,7 @@ import {
   IconHistory,
   IconLayoutDashboard,
   IconMap2,
+  IconNotebook,
   IconRadar,
   IconSettings,
   IconSitemap,
@@ -32,6 +33,7 @@ type NavTarget =
   | "/discovery"
   | "/artifacts"
   | "/evidence-map"
+  | "/interviews"
   | "/outreach"
   | "/runs"
   | "/debug"
@@ -72,6 +74,7 @@ export const NAV_GROUPS: readonly NavGroup[] = [
     items: [
       { label: "Artifacts", to: "/artifacts", icon: IconFileText },
       { label: "Evidence", to: "/evidence-map", icon: IconMap2 },
+      { label: "Interviews", to: "/interviews", icon: IconNotebook },
       { label: "Contacts", to: "/outreach", icon: IconAddressBook },
     ],
   },
