@@ -9,9 +9,9 @@ from temporalio import workflow
 from temporalio.exceptions import ActivityError, ApplicationError, CancelledError
 
 from jobctrl.domain.identifiers import JobId, canonical_job_id
-from jobctrl.domain.interview.preparation import normalize_selection
 
 with workflow.unsafe.imports_passed_through():
+    from jobctrl.domain.interview.preparation import normalize_selection
     from jobctrl.infrastructure.temporal.finalize import (
         emit_workflow_outcome,
         emit_workflow_started,
