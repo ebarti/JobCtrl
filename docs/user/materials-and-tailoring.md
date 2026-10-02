@@ -241,6 +241,10 @@ claim. Editing an existing note keeps its origin instead of attaching it to
 newer prep. If that generation was deleted, a normal edit becomes independent;
 the earlier note revision keeps its original provenance.
 
+Reopen the job/question bookmark to edit an existing note for a retired or
+unavailable card. Start new preparation or an independent note with an active
+card.
+
 Question choices and unsaved notes survive page navigation within the current
 app session. Save a note to retain it across a browser reload; private draft
 text is not stored in the URL or browser storage.
