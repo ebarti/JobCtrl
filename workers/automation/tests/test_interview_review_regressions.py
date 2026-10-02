@@ -16,6 +16,7 @@ from jobctrl.infrastructure.interview import SqliteInterviewPrepRepository
 from jobctrl.infrastructure.profile import SqliteProfileRepository
 from jobctrl.interview import activities
 from tests.test_interview_prep_generation import JOB_ID, _FakeLlm, _init_conn, _job, _judge_pass, _profile_snapshot, _requirements
+from tests.interview_question_fixtures import canonical_evidence
 from tests.test_interview_question_generation import _question_candidate
 from tests.test_sqlite_profile_repository import _valid_profile
 
@@ -27,6 +28,9 @@ from tests.test_sqlite_profile_repository import _valid_profile
     "I would compare options, but I saved $2 million using Kubernetes.",
     "I would mentor my team after my previous team saved $2 million.",
     "If you need an example, I saved $2 million using Kubernetes.",
+    "I'd saved $2 million using Kubernetes.",
+    "I’d chosen Kubernetes and delivered a 75% margin increase.",
+    "I’d overseen 50 direct reports at Acme.",
 ])
 def test_nonfactual_labels_cannot_accept_unsupported_personal_assertions(tmp_path: Path, support: str, text: str) -> None:
     conn = _init_conn(tmp_path)
@@ -51,6 +55,12 @@ def test_nonfactual_labels_cannot_accept_unsupported_personal_assertions(tmp_pat
     "Compare criteria and realistic alternatives with the information available.",
     "Compare Kubernetes with simpler deployment alternatives before committing.",
     "I would compare Kubernetes with simpler deployment alternatives before committing.",
+    "I'd compare Kubernetes with simpler deployment alternatives before committing.",
+    "I’d compare alternatives before committing.",
+    "I’d need more information before committing.",
+    "I’d proceed only after comparing alternatives.",
+    "I’d run a comparison before committing.",
+    "I would compare options for a hypothetical $2.5 million budget.",
     "If the role had 50 direct reports, I would delegate coaching with explicit feedback loops.",
 ])
 def test_legitimate_principles_and_hypothetical_intentions_need_no_historical_facts(tmp_path: Path, text: str) -> None:
@@ -132,5 +142,47 @@ def test_activity_automatic_selection_uses_only_exact_current_rows_and_preserves
         assert saved.items[0].question_metadata["evidenceLinks"] == []
         assert "role_1_bullet_1" not in llm.calls[0]["messages"][1].content
         assert conn.execute("SELECT COUNT(*) FROM candidate_profile_achievement_evidence").fetchone()[0] == 0
+    finally:
+        close_connection(tmp_path / "jobs.db")
+
+
+@pytest.mark.parametrize("location", ["probe", "gap"])
+@pytest.mark.parametrize("question", [
+    "What would you do in the first 90 days?",
+    "What would you do with a $2 million budget?",
+    "How would you manage a hypothetical team of 50 direct reports?",
+])
+def test_future_questions_do_not_claim_personal_history(tmp_path: Path, location: str, question: str) -> None:
+    conn = _init_conn(tmp_path)
+    try:
+        candidate = _question_candidate("B11", "Compare criteria and realistic alternatives.")
+        if location == "probe":
+            candidate["items"][0]["probes"] = [question]
+        else:
+            candidate["items"][0]["gaps"] = [{"prompt": question, "reason": "Clarify the intended approach."}]
+        outcome = GenerateInterviewPrepUseCase(repository=SqliteInterviewPrepRepository(conn), llm=_FakeLlm([
+            candidate, _judge_pass()])).execute(
+                tenant_id=LOCAL_TENANT, job=_job(), profile_snapshot=_profile_snapshot(),
+                evidence_entries=(), evidence_gaps=(), requirements=(), selection_input={"selectedQuestionIds": ["B11"]})
+        assert outcome.status == "accepted", outcome.errors
+        assert outcome.prep.items[0].question_metadata["evidenceLinks"] == []
+    finally:
+        close_connection(tmp_path / "jobs.db")
+
+
+def test_supported_metric_clarification_uses_selected_canonical_excerpts(tmp_path: Path) -> None:
+    conn = _init_conn(tmp_path)
+    try:
+        profile = _profile_snapshot()
+        candidate = _question_candidate("B01", "Reduced API latency by 30% using Python.",
+                                        ids=["ev-platform-latency"], support="accepted_profile_fact")
+        candidate["items"][0]["probes"] = ["What evidence supports the 30% latency reduction?"]
+        outcome = GenerateInterviewPrepUseCase(repository=SqliteInterviewPrepRepository(conn), llm=_FakeLlm([
+            candidate, _judge_pass()])).execute(
+                tenant_id=LOCAL_TENANT, job=_job(), profile_snapshot=profile, canonical_evidence=canonical_evidence(profile),
+                evidence_entries=(), evidence_gaps=(), requirements=(),
+                selection_input={"selectedQuestionIds": ["B01"], "evidenceProfileVersion": 1,
+                                 "evidenceSelections": [{"questionId": "B01", "evidenceIds": ["ev-platform-latency"]}]})
+        assert outcome.status == "accepted", outcome.errors
     finally:
         close_connection(tmp_path / "jobs.db")
