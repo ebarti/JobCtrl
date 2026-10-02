@@ -37,12 +37,27 @@ describe("interview wire vocabulary", () => {
     ]) expect(GenerateInterviewPrepRequestSchema.safeParse(input).success).toBe(false);
   });
 
+  it("version-fences explicit evidence choices and preserves an explicit empty choice", () => {
+    const request = { selectedQuestionIds: ["B11", "TS09"], evidenceProfileVersion: 3,
+      evidenceSelections: [{ questionId: "B11", evidenceIds: [] }, { questionId: "TS09", evidenceIds: ["fact-b", "fact-a"] }] };
+    expect(GenerateInterviewPrepRequestSchema.parse(request).evidenceSelections).toEqual(request.evidenceSelections);
+    expect(GenerateInterviewPrepRequestSchema.parse({ selectedQuestionIds: ["B11"] }).evidenceSelections).toBeUndefined();
+    const { evidenceProfileVersion: _version, ...unfenced } = request;
+    for (const input of [unfenced, { ...request, evidenceProfileVersion: 0 },
+      { ...request, evidenceSelections: [{ questionId: "B11", evidenceIds: ["fact-a", "fact-a"] }] },
+      { ...request, evidenceSelections: [{ questionId: "B11", evidenceIds: [] }, { questionId: "B11", evidenceIds: [] }] },
+      { ...request, evidenceSelections: [{ questionId: "C01", evidenceIds: [] }] },
+      { ...request, evidenceSelections: [{ questionId: "B11", evidenceIds: Array.from({ length: 9 }, (_, i) => `fact-${i}`) }] },
+      { ...request, evidenceSelections: Array.from({ length: 17 }, (_, i) => ({ questionId: `B${String(i + 1).padStart(2, "0")}`, evidenceIds: [] })) },
+    ]) expect(GenerateInterviewPrepRequestSchema.safeParse(input).success).toBe(false);
+  });
+
   it("retains inspectable generation-time inputs and structured evidence without changing legacy prep", () => {
     const card = catalog.questions.find((question) => question.id === "B11")!;
     const evidence = { evidenceId: "evidence-1", sourceRef: "profile/experience/role-1/achievement-1", excerpt: "Synthetic verified contribution", scope: "transferable" as const };
     const context = InterviewGenerationContextSchema.parse({
       schemaVersion: "1", catalogBinding: { catalogRevision: catalog.catalogRevision, catalogDigest: catalog.catalogDigest }, contextDigest: digest,
-      selectedQuestionIds: [card.id], selectedQuestions: [{ questionId: card.id, cardRevision: card.cardRevision, cardDigest: card.cardDigest, rubricRevision: card.rubricRevision, rubricDigest: card.rubricDigest, answerFormat: "principle", selectionRationale: "Decision criteria for this loop", snapshot: card }],
+      selectedQuestionIds: [card.id], selectedQuestions: [{ questionId: card.id, cardRevision: card.cardRevision, cardDigest: card.cardDigest, rubricRevision: card.rubricRevision, rubricDigest: card.rubricDigest, answerFormat: "principle", selectionRationale: "Decision criteria for this loop", snapshot: card, evidenceSelectionMode: "deterministic", selectedEvidenceIds: [evidence.evidenceId] }],
       selectionMode: "user_selected", interviewStage: "technical", interviewFormat: "video", roleLens: "staff_principal",
       roleResponsibilities: ["technical decision quality"], knownCriteria: ["Explain alternatives"],
       profile: { profileId: "synthetic-profile", version: 2, evidence: [evidence] },

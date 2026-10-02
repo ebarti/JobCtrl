@@ -2,19 +2,19 @@ import { z } from "zod";
 import {
   INTERVIEW_ANSWER_FORMATS, INTERVIEW_ROLE_LENSES, INTERVIEW_STAGES, INTERVIEW_FORMATS,
   INTERVIEW_SELECTION_ERROR_CODES, INTERVIEW_STALE_REASONS,
-  MAX_INTERVIEW_SELECTED_QUESTIONS, MAX_INTERVIEW_NOTE_TEXT_LENGTH,
+  MAX_INTERVIEW_SELECTED_QUESTIONS, MAX_INTERVIEW_EVIDENCE_IDS_PER_QUESTION, MAX_INTERVIEW_NOTE_TEXT_LENGTH,
   INTERVIEW_PREP_ITEM_KINDS, INTERVIEW_PREP_STATUSES,
 } from "@jobctrl/domain-types";
 export {
   INTERVIEW_ANSWER_FORMATS, INTERVIEW_ROLE_LENSES, INTERVIEW_STAGES, INTERVIEW_FORMATS,
   INTERVIEW_SELECTION_ERROR_CODES, INTERVIEW_STALE_REASONS,
-  MAX_INTERVIEW_SELECTED_QUESTIONS, MAX_INTERVIEW_NOTE_TEXT_LENGTH,
+  MAX_INTERVIEW_SELECTED_QUESTIONS, MAX_INTERVIEW_EVIDENCE_IDS_PER_QUESTION, MAX_INTERVIEW_NOTE_TEXT_LENGTH,
 } from "@jobctrl/domain-types";
 export type {
   InterviewAnswerFormat, InterviewRoleLens, InterviewStage, InterviewFormat,
   InterviewSelectionErrorCode, InterviewCatalogBinding, InterviewQuestionCard,
   InterviewCatalog, InterviewCatalogSource, InterviewRubricDimension, InterviewWorkedExample,
-  InterviewSelectionInput, InterviewEvidenceExcerpt, InterviewSelectedQuestion,
+  InterviewSelectionInput, InterviewEvidenceSelection, InterviewEvidenceExcerpt, InterviewSelectedQuestion,
   InterviewGenerationContext, InterviewFactualSupport, InterviewQuestionMetadata,
   InterviewStaleReason, InterviewQuestionNote, InterviewNoteBindings, SaveInterviewQuestionNoteRequest,
 } from "@jobctrl/domain-types";
@@ -61,21 +61,47 @@ export type InterviewCatalogResponse = z.infer<typeof InterviewCatalogResponseSc
 export const InterviewQuestionResponseSchema = z.object({ ok: z.literal(true), catalogBinding: InterviewCatalogBindingSchema, question: InterviewQuestionCardSchema }).strict();
 export type InterviewQuestionResponse = z.infer<typeof InterviewQuestionResponseSchema>;
 
+export const InterviewEvidenceSelectionSchema = z.object({
+  questionId: Id,
+  evidenceIds: z.array(z.string().trim().min(1).max(240)).max(MAX_INTERVIEW_EVIDENCE_IDS_PER_QUESTION)
+    .refine((ids) => new Set(ids).size === ids.length, "duplicate evidence IDs"),
+}).strict();
+/** Reused by worker-RPC schemas so derivation from .shape keeps the version fence. */
+export function refineInterviewEvidenceSelection(
+  request: { evidenceSelections?: { questionId: string; evidenceIds: string[] }[] | undefined; evidenceProfileVersion?: number | undefined; selectedQuestionIds?: string[] | undefined },
+  context: z.RefinementCtx,
+): void {
+  if (request.evidenceSelections === undefined) return;
+  if (request.evidenceProfileVersion === undefined) {
+    context.addIssue({ code: "custom", path: ["evidenceProfileVersion"], message: "evidenceProfileVersion is required for explicit evidence selection" });
+  }
+  const seen = new Set<string>();
+  for (const [index, selection] of request.evidenceSelections.entries()) {
+    if (seen.has(selection.questionId)) context.addIssue({ code: "custom", path: ["evidenceSelections", index, "questionId"], message: "duplicate question evidence selection" });
+    seen.add(selection.questionId);
+    if (request.selectedQuestionIds && !request.selectedQuestionIds.includes(selection.questionId)) {
+      context.addIssue({ code: "custom", path: ["evidenceSelections", index, "questionId"], message: "evidence question is outside selectedQuestionIds" });
+    }
+  }
+}
 export const GenerateInterviewPrepRequestSchema = z.object({
   llmModel: z.string().trim().min(1).max(120).optional(),
   selectedQuestionIds: z.array(Id).min(1).max(MAX_INTERVIEW_SELECTED_QUESTIONS).refine((ids) => new Set(ids).size === ids.length, "duplicate_question").optional(),
   catalogBinding: InterviewCatalogBindingSchema.optional(),
+  evidenceSelections: z.array(InterviewEvidenceSelectionSchema).max(MAX_INTERVIEW_SELECTED_QUESTIONS).optional(),
+  evidenceProfileVersion: z.number().int().min(1).optional(),
   interviewStage: z.enum(INTERVIEW_STAGES).optional(), interviewFormat: z.enum(INTERVIEW_FORMATS).optional(),
   roleLens: z.enum(INTERVIEW_ROLE_LENSES).optional(),
   roleResponsibilities: z.array(z.string().trim().min(1).max(160)).max(20).optional(),
   knownCriteria: z.array(z.string().trim().min(1).max(1000)).max(20).optional(),
   selectionRationale: z.string().trim().max(2000).optional(),
-}).strict();
+}).strict().superRefine(refineInterviewEvidenceSelection);
 export type GenerateInterviewPrepRequest = z.infer<typeof GenerateInterviewPrepRequestSchema>;
 export const InterviewEvidenceExcerptSchema = z.object({ evidenceId: Text, sourceRef: Text, excerpt: Text, scope: z.enum(["direct", "transferable"]) }).strict();
 export const InterviewSelectedQuestionSchema = z.object({ questionId: Id, cardRevision: Revision, cardDigest: Digest,
   rubricRevision: Revision, rubricDigest: Digest, answerFormat: z.enum(INTERVIEW_ANSWER_FORMATS),
-  selectionRationale: Text, snapshot: InterviewQuestionCardSchema }).strict();
+  selectionRationale: Text, snapshot: InterviewQuestionCardSchema, evidenceSelectionMode: z.enum(["user_selected", "deterministic"]),
+  selectedEvidenceIds: z.array(z.string().min(1).max(240)).max(MAX_INTERVIEW_EVIDENCE_IDS_PER_QUESTION), }).strict();
 export const InterviewGenerationContextSchema = z.object({
   schemaVersion: z.literal("1"), catalogBinding: InterviewCatalogBindingSchema, contextDigest: Digest,
   selectedQuestionIds: z.array(Id).min(1).max(MAX_INTERVIEW_SELECTED_QUESTIONS),

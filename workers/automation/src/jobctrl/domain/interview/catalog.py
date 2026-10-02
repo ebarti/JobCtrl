@@ -21,6 +21,7 @@ INTERVIEW_ROLE_LENSES = ("ic", "senior_ic", "staff_principal", "first_time_manag
 INTERVIEW_STAGES = ("recruiter", "behavioral", "management", "technical", "executive", "mixed", "unknown")
 INTERVIEW_FORMATS = ("phone", "video", "onsite", "written", "unspecified")
 MAX_INTERVIEW_SELECTED_QUESTIONS = 16
+MAX_INTERVIEW_EVIDENCE_IDS_PER_QUESTION = 8
 MAX_INTERVIEW_NOTE_TEXT_LENGTH = 20_000
 CATALOG_RESOURCE_NAME = "catalog.v1.json"
 MAX_CATALOG_BYTES = 2_000_000
@@ -94,6 +95,8 @@ class InterviewSelectedQuestion(TypedDict):
     answerFormat: InterviewAnswerFormat
     selectionRationale: str
     snapshot: InterviewQuestionCard
+    evidenceSelectionMode: Literal["user_selected", "deterministic"]
+    selectedEvidenceIds: list[str]
 
 
 class InterviewProfileContext(TypedDict):
@@ -184,9 +187,16 @@ class InterviewQuestionMetadata(TypedDict):
     userEditStatus: Literal["generated", "user_edited"]
 
 
+class InterviewEvidenceSelection(TypedDict):
+    questionId: str
+    evidenceIds: list[str]
+
+
 class InterviewSelectionInput(TypedDict):
     selectedQuestionIds: NotRequired[list[str]]
     catalogBinding: NotRequired[InterviewCatalogBinding]
+    evidenceSelections: NotRequired[list[InterviewEvidenceSelection]]
+    evidenceProfileVersion: NotRequired[int]
     interviewStage: NotRequired[InterviewStage]
     interviewFormat: NotRequired[InterviewFormat]
     roleLens: NotRequired[InterviewRoleLens]

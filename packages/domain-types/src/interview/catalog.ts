@@ -7,9 +7,10 @@ export const INTERVIEW_STAGES = ["recruiter", "behavioral", "management", "techn
 export type InterviewStage = (typeof INTERVIEW_STAGES)[number];
 export const INTERVIEW_FORMATS = ["phone", "video", "onsite", "written", "unspecified"] as const;
 export type InterviewFormat = (typeof INTERVIEW_FORMATS)[number];
-export const INTERVIEW_SELECTION_ERROR_CODES = ["unknown_question", "retired_question", "duplicate_question", "selection_over_budget", "catalog_mismatch", "invalid_selection"] as const;
+export const INTERVIEW_SELECTION_ERROR_CODES = ["unknown_question", "retired_question", "duplicate_question", "selection_over_budget", "catalog_mismatch", "invalid_selection", "evidence_profile_changed", "invalid_evidence_selection"] as const;
 export type InterviewSelectionErrorCode = (typeof INTERVIEW_SELECTION_ERROR_CODES)[number];
 export const MAX_INTERVIEW_SELECTED_QUESTIONS = 16;
+export const MAX_INTERVIEW_EVIDENCE_IDS_PER_QUESTION = 8;
 export const MAX_INTERVIEW_NOTE_TEXT_LENGTH = 20_000;
 
 export interface InterviewCatalogBinding {
@@ -70,9 +71,12 @@ export interface InterviewCatalog {
   relationships: { fromQuestionId: string; toQuestionId: string; kind: "editorial_related"; reason: string }[];
   guidance: { overview: string; sourceLedger: string; evaluation: string; coverage: string; review: string };
 }
+export interface InterviewEvidenceSelection { questionId: string; evidenceIds: string[] }
 export interface InterviewSelectionInput {
   selectedQuestionIds?: string[] | undefined;
   catalogBinding?: InterviewCatalogBinding | undefined;
+  evidenceSelections?: InterviewEvidenceSelection[] | undefined;
+  evidenceProfileVersion?: number | undefined;
   interviewStage?: InterviewStage | undefined;
   interviewFormat?: InterviewFormat | undefined;
   roleLens?: InterviewRoleLens | undefined;
@@ -88,6 +92,8 @@ export interface InterviewSelectedQuestion {
   questionId: string; cardRevision: string; cardDigest: string;
   rubricRevision: string; rubricDigest: string; answerFormat: InterviewAnswerFormat;
   selectionRationale: string; snapshot: InterviewQuestionCard;
+  evidenceSelectionMode: "user_selected" | "deterministic";
+  selectedEvidenceIds: string[];
 }
 /** Generation-time inputs remain available after current profile/job/catalog changes. */
 export interface InterviewGenerationContext {
