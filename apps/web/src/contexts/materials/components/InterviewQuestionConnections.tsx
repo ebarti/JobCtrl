@@ -21,12 +21,13 @@ export function InterviewQuestionConnections(props: Props) {
 function JobConnections({ jobId, question, connections, onSelectQuestion }: Props & { jobId: string; connections: InterviewConnection[] }) {
   const detail = useJobDetailQuery(jobId);
   const evidence = useEvidenceMapQuery();
-  const links = detail.data?.interviewPrep?.items.find((item) => item.questionMetadata?.questionId === question.id)?.questionMetadata?.evidenceLinks ?? [];
+  const prep = detail.data?.interviewPrep;
+  const links = prep?.items.find((item) => item.questionMetadata?.questionId === question.id)?.questionMetadata?.evidenceLinks ?? [];
   return <InterviewConnections questionTitle={question.title} connections={[
     ...connections,
     ...links.map((link, index) => {
       const entry = evidence.data?.entries.find((item) => item.evidenceId === link.evidenceId || item.entryId === link.evidenceId);
-      return { id: `evidence:${index}`, kind: "evidence" as const, label: `${link.scope}: ${link.excerpt}`, ...(entry ? { evidenceEntryId: entry.entryId, jobId } : {}) };
+      return { id: `evidence:${index}`, kind: "evidence" as const, label: `Saved generation ${prep?.generation ?? "unknown"}${prep?.staleReasons?.length ? " — inputs changed" : ""} · ${link.scope}: ${link.excerpt}`, ...(entry ? { evidenceEntryId: entry.entryId, jobId } : {}) };
     }),
   ]} onSelectQuestion={onSelectQuestion} />;
 }

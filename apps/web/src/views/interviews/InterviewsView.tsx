@@ -23,7 +23,7 @@ export function InterviewsView() {
   const navigate = useNavigate({ from: "/interviews" });
   const query = useInterviewCatalogQuery();
   const catalog = query.data?.catalog;
-  const selectedQuery = useInterviewQuestionQuery(search.card);
+  const selectedQuery = useInterviewQuestionQuery(catalog && !catalog.retiredQuestions.some((question) => question.id === search.card) ? search.card : "");
   const normalized = search.q.trim().toLowerCase();
   const questions = useMemo(() => (catalog?.questions ?? []).filter((question) =>
     (!search.topic || question.topic === search.topic || catalog?.topics.find((topic) => topic.id === search.topic)?.questionIds.includes(question.id)) &&
