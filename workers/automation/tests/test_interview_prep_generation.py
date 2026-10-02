@@ -110,6 +110,7 @@ def test_generates_accepted_prep_through_existing_truthfulness_gates(tmp_path: P
         )
 
         outcome = GenerateInterviewPrepUseCase(
+            catalog=_generation_catalog(),
             repository=repository,
             llm=llm,
             publisher=publisher,
@@ -156,6 +157,7 @@ def test_fabricated_metric_fails_without_superseding_last_accepted_prep(tmp_path
             ]
         )
         use_case = GenerateInterviewPrepUseCase(
+            catalog=_generation_catalog(),
             repository=repository,
             llm=first_llm,
             publisher=publisher,
@@ -181,6 +183,7 @@ def test_fabricated_metric_fails_without_superseding_last_accepted_prep(tmp_path
             ]
         )
         outcome = GenerateInterviewPrepUseCase(
+            catalog=_generation_catalog(),
             repository=repository,
             llm=second_llm,
             publisher=publisher,
@@ -235,6 +238,7 @@ def test_star_draft_claim_must_ground_in_referenced_evidence_source(tmp_path: Pa
         )
 
         outcome = GenerateInterviewPrepUseCase(
+            catalog=_generation_catalog(),
             repository=repository,
             llm=llm,
             publisher=_RecordingPublisher(),
@@ -249,7 +253,7 @@ def test_star_draft_claim_must_ground_in_referenced_evidence_source(tmp_path: Pa
 
         assert outcome.status == "failed"
         assert any(
-            "claim-prep-1 ungrounded: text_not_in_shipped_resume" in error
+            "not grounded in its selected canonical excerpts" in error
             for error in outcome.errors
         )
         assert [call["response_schema"] for call in llm.calls] == [
@@ -276,6 +280,7 @@ def test_gap_drill_must_name_gap_without_claiming_experience(tmp_path: Path) -> 
         )
 
         outcome = GenerateInterviewPrepUseCase(
+            catalog=_generation_catalog(),
             repository=repository,
             llm=llm,
             publisher=_RecordingPublisher(),
@@ -295,7 +300,7 @@ def test_gap_drill_must_name_gap_without_claiming_experience(tmp_path: Path) -> 
         )
 
         assert outcome.status == "failed"
-        assert any("gap drill asserts experience" in error for error in outcome.errors)
+        assert any("asserts personal history without accepted evidence" in error for error in outcome.errors)
     finally:
         close_connection(tmp_path / "jobs.db")
 
@@ -416,6 +421,7 @@ def test_interview_prep_rejects_url_shaped_job_identity(tmp_path: Path) -> None:
     conn = _init_conn(tmp_path)
     try:
         use_case = GenerateInterviewPrepUseCase(
+            catalog=_generation_catalog(),
             repository=SqliteInterviewPrepRepository(conn),
             llm=_FakeLlm([]),
         )
@@ -487,6 +493,7 @@ def test_retry_with_same_origin_run_reuses_completed_generation(tmp_path: Path) 
             ]
         )
         use_case = GenerateInterviewPrepUseCase(
+            catalog=_generation_catalog(),
             repository=repository,
             llm=llm,
             publisher=publisher,
@@ -550,6 +557,7 @@ def test_new_workflow_run_generates_a_fresh_generation(tmp_path: Path) -> None:
             ]
         )
         first = GenerateInterviewPrepUseCase(
+            catalog=_generation_catalog(),
             repository=repository,
             llm=first_llm,
             publisher=_RecordingPublisher(),
@@ -571,6 +579,7 @@ def test_new_workflow_run_generates_a_fresh_generation(tmp_path: Path) -> None:
             ]
         )
         second = GenerateInterviewPrepUseCase(
+            catalog=_generation_catalog(),
             repository=repository,
             llm=second_llm,
             publisher=_RecordingPublisher(),
@@ -704,10 +713,10 @@ def test_provider_or_judge_failure_preserves_accepted_and_retry_reuses_failure(
         request = dict(tenant_id=LOCAL_TENANT, job=_job(), profile_snapshot=_profile_snapshot(),
                        evidence_entries=_evidence_entries(), evidence_gaps=(),
                        requirements=_requirements("req-python", "Python service optimization"))
-        accepted = GenerateInterviewPrepUseCase(repository=repository, llm=_FakeLlm([candidate, _judge_pass()]))
+        accepted = GenerateInterviewPrepUseCase(catalog=_generation_catalog(), repository=repository, llm=_FakeLlm([candidate, _judge_pass()]))
         assert accepted.execute(origin_run_id="accepted", **request).status == "accepted"
         failing_llm = _FakeLlm([candidate] if judge_failure else [])
-        use_case = GenerateInterviewPrepUseCase(repository=repository, llm=failing_llm)
+        use_case = GenerateInterviewPrepUseCase(catalog=_generation_catalog(), repository=repository, llm=failing_llm)
 
         failed = use_case.execute(origin_run_id="failed", **request)
         retried = use_case.execute(origin_run_id="failed", **request)
@@ -897,17 +906,18 @@ def _candidate(
     evidence_ids: list[str],
     requirement_ids: list[str],
 ) -> dict[str, Any]:
-    return {
-        "items": [
-            {
-                "kind": kind,
-                "title": title,
-                "generated_text": generated_text,
-                "evidence_ids": evidence_ids,
-                "requirement_ids": requirement_ids,
-            }
-        ]
-    }
+    return {"items": [{"question_id": "B01", "outline": [{"heading": title,
+             "text": generated_text, "evidence_ids": evidence_ids,
+             "factual_support": "accepted_profile_fact" if evidence_ids else "needs_clarification"}],
+             "gaps": ([{"prompt": "What actual evidence could clarify the missing requirement?",
+                        "reason": "Missing supported experience."}] if kind == "gap_drill" else []),
+             "probes": []}]}
+
+
+def _generation_catalog() -> dict[str, Any]:
+    from tests.interview_question_fixtures import card
+    return {"schemaVersion": "1", "catalogRevision": "synthetic-1", "catalogDigest": "c" * 64,
+            "questions": [card("B01", "historical")], "retiredQuestions": [{"id": "C08"}]}
 
 
 def _judge_pass() -> dict[str, Any]:
