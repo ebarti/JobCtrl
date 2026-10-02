@@ -1,4 +1,4 @@
-import type { InterviewPrep } from "@jobctrl/domain-types";
+import type { InterviewPrep, InterviewSelectionInput } from "@jobctrl/domain-types";
 import { z } from "zod";
 import { CONTACT_ROLES, CONTACT_SOURCE_KINDS } from "@jobctrl/domain-types";
 
@@ -4469,7 +4469,7 @@ export interface ProfileImportResponse {
   action?: ActionRunResponse;
 }
 
-export interface ActionCommandPayload {
+export interface ActionCommandPayload extends InterviewSelectionInput {
   action:
     | "run_stage"
     | "retry_stage"

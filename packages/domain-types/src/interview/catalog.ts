@@ -1,9 +1,9 @@
 /** Public editorial guidance. Personal facts and saved notes never belong here. */
 export const INTERVIEW_ANSWER_FORMATS = ["historical", "situational", "principle", "negotiation", "narrative", "preference"] as const;
 export type InterviewAnswerFormat = (typeof INTERVIEW_ANSWER_FORMATS)[number];
-export const INTERVIEW_ROLE_LENSES = ["ic", "senior_ic", "staff_principal", "first_time_manager", "engineering_manager", "director", "executive"] as const;
+export const INTERVIEW_ROLE_LENSES = ["ic", "senior_ic", "staff_principal", "first_time_manager", "engineering_manager", "director", "executive", "unknown"] as const;
 export type InterviewRoleLens = (typeof INTERVIEW_ROLE_LENSES)[number];
-export const INTERVIEW_STAGES = ["recruiter", "behavioral", "management", "technical", "executive", "mixed"] as const;
+export const INTERVIEW_STAGES = ["recruiter", "behavioral", "management", "technical", "executive", "mixed", "unknown"] as const;
 export type InterviewStage = (typeof INTERVIEW_STAGES)[number];
 export const INTERVIEW_FORMATS = ["phone", "video", "onsite", "written", "unspecified"] as const;
 export type InterviewFormat = (typeof INTERVIEW_FORMATS)[number];
@@ -103,7 +103,11 @@ export interface InterviewGenerationContext {
   roleResponsibilities: string[];
   knownCriteria: string[];
   profile: { profileId: string; version: number; evidence: InterviewEvidenceExcerpt[] };
-  employerAnalysis: { generation: number; snapshotHash: string } | null;
+  jobContext: { jobId: string; title: string; company: string; descriptionExcerpt: string; snapshotHash: string };
+  employerAnalysis: { generation: number; snapshotHash: string; snapshot: {
+    roleFraming: string; inferredSeniority: string;
+    requirements: { requirementId: string; requirementText: string; sourceExcerpt: string }[];
+  } } | null;
   fitReport: { generation: number; employerAnalysisGeneration: number; profileSnapshotVersion: number; status: "current" | "stale_excluded" } | null;
   approvedMaterials: { materialId: string; generation: number; sha256: string }[];
   model: { model: string; promptVersion: string; gateVersion: string };
@@ -121,7 +125,7 @@ export interface InterviewQuestionMetadata {
   factualSupport: InterviewFactualSupport;
   userEditStatus: "generated" | "user_edited";
 }
-export const INTERVIEW_STALE_REASONS = ["catalog_changed", "profile_changed", "employer_analysis_changed", "approved_materials_changed", "legacy_unbound"] as const;
+export const INTERVIEW_STALE_REASONS = ["catalog_changed", "profile_changed", "job_changed", "employer_analysis_changed", "approved_materials_changed", "legacy_unbound"] as const;
 export type InterviewStaleReason = (typeof INTERVIEW_STALE_REASONS)[number];
 /** Notes are independent of prep/item replacement and never inherit a generation audit. */
 export interface InterviewNoteBindings {
