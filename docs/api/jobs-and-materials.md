@@ -130,7 +130,8 @@ and read-side stale diagnostics without rewriting old results.
 
 Note saves are independent of generation/item replacement and default to
 unverified user statements. They append revision history, verify any source
-generation belongs to the same tenant/job, and never inherit a passed generation
+generation retains the same question for the tenant/job, derive matching origin
+bindings at the server, and never inherit a passed generation
 audit or update Profile, fit, or Apply. The conflict response includes
 `currentNote`; clients preserve the dirty draft and reconcile with that saved
 revision before retrying. Events carry safe IDs/versions/counts only.
