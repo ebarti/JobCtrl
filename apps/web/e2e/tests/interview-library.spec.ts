@@ -10,7 +10,7 @@ test.beforeAll(() => {
   const db = new Database(loadE2eDbPath());
   try {
     originalProfile = db.prepare("SELECT personal_preferred_name, version, updated_at FROM candidate_profiles WHERE tenant_id='local' AND profile_id='default'").get() as typeof originalProfile;
-    originalPrepProjection = (db.prepare("SELECT interview_prep_json FROM job_detail_projections WHERE tenant_id='local' AND job_id=?").get(QA_PLATFORM_JOB_ID) as { interview_prep_json: string | null }).interview_prep_json;
+    originalPrepProjection = (db.prepare("SELECT interview_prep_json FROM job_detail_projections WHERE tenant_id='local' AND job_id=?").get(QA_PLATFORM_JOB_ID) as { interview_prep_json: string | null } | undefined)?.interview_prep_json ?? null;
   }
   finally { db.close(); }
 });
@@ -197,8 +197,9 @@ test("Interview history: accepted outlines and gaps survive failed runs and inde
   await expect(accepted.getByText("Preparation inputs have changed", { exact: true })).toBeVisible();
   await accepted.getByText("Generation-time inputs and versions", { exact: true }).click();
   await expect(accepted).toContainText('"evidenceSelectionMode": "deterministic"');
-  await page.getByText(/Generation 1002 · failed/).click();
-  await expect(page.getByText("Failed attempt; the accepted generation remains available.")).toBeVisible();
+  const failedAttempt = page.getByText(/Generation 1002 · failed/);
+  await failedAttempt.click();
+  await expect(failedAttempt.locator("..").getByText("Failed attempt; the accepted generation remains available.")).toBeVisible();
   await expect(accepted.getByText("What did you personally own?", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Older generations" }).click();
   await expect(accepted).toContainText("generation 1001");
@@ -245,7 +246,7 @@ test("Interview history: accepted outlines and gaps survive failed runs and inde
     page.getByRole("button", { name: "Save unverified note" }).click(),
   ]);
   expect(orphan.status()).toBe(200);
-  expect(await orphan.json()).toMatchObject({ note: { revision: 3, sourceGeneration: null, bindings: null } });
+  expect(await orphan.json()).toMatchObject({ note: { revision: 3, sourceGeneration: null, bindings: { contextDigest: null } } });
   await expect(notes).toHaveValue("Independent edit after its original preparation became unavailable.");
   await expect(page.getByRole("region", { name: "Interview preparation", exact: true }).first()).toContainText("generation 1003");
   await page.getByText("Saved note revision history", { exact: true }).click();

@@ -700,22 +700,26 @@ export class DemoApiClientAdapter implements ApiClientPort {
       if ((current?.revision ?? 0) !== parsed.expectedRevision) throw new JobCtrlApiError(409, "Another saved note revision exists.", "interview_note_revision_conflict", { currentNote: current ?? null });
       let sourceGeneration = parsed.sourceGeneration === undefined ? current?.sourceGeneration ?? null : parsed.sourceGeneration;
       let bindings: InterviewQuestionNote["bindings"] = null;
-      let unavailableOrigin = false;
       const prep = draft.state.readModel.jobs.details[jobKey]?.interviewPrep;
       if (sourceGeneration !== null) {
         const context = prep?.generation === sourceGeneration ? prep.generationContext : null;
         const selected = context?.selectedQuestions.find((question) => question.questionId === parsed.questionId);
-        if (!context || !selected) {
-          if (current && parsed.sourceGeneration === undefined) { sourceGeneration = null; unavailableOrigin = true; }
+        if (!context || !selected || context.jobContext.jobId !== jobKey || !context.selectedQuestionIds.includes(parsed.questionId) || selected.snapshot.id !== parsed.questionId || selected.snapshot.cardRevision !== selected.cardRevision || selected.snapshot.cardDigest !== selected.cardDigest) {
+          if (current && parsed.sourceGeneration === undefined && prep?.generation !== sourceGeneration) sourceGeneration = null;
           else throw new JobCtrlApiError(400, "The preparation does not retain this question.", "invalid_interview_note_source");
         } else bindings = { catalogBinding: context.catalogBinding, cardRevision: selected.cardRevision, cardDigest: selected.cardDigest, contextDigest: context.contextDigest };
       }
-      if (sourceGeneration === null && !unavailableOrigin) {
+      if (sourceGeneration === null) {
         const question = catalog.questions.find((card) => card.id === parsed.questionId);
         if (question) bindings = { catalogBinding: { catalogRevision: catalog.catalogRevision, catalogDigest: catalog.catalogDigest }, cardRevision: question.cardRevision, cardDigest: question.cardDigest, contextDigest: null };
         else if (!current) throw new JobCtrlApiError(catalog.retiredQuestions.some((card) => card.id === parsed.questionId) ? 410 : 404, "Question guidance is unavailable.", "unknown_question");
       }
-      if (parsed.bindings && (!bindings || parsed.bindings.catalogBinding?.catalogRevision !== bindings.catalogBinding?.catalogRevision || parsed.bindings.catalogBinding?.catalogDigest !== bindings.catalogBinding?.catalogDigest || parsed.bindings.cardRevision !== bindings.cardRevision || parsed.bindings.cardDigest !== bindings.cardDigest || parsed.bindings.contextDigest !== bindings.contextDigest)) throw new JobCtrlApiError(400, "The supplied bindings do not match the retained source.", "invalid_interview_note_bindings");
+      if (parsed.bindings) {
+        for (const key of ["cardRevision", "cardDigest", "contextDigest"] as const) if (parsed.bindings[key] !== undefined && parsed.bindings[key] !== (bindings?.[key] ?? null)) throw new JobCtrlApiError(400, "The supplied bindings do not match the retained source.", "invalid_interview_note_bindings");
+        const claim = parsed.bindings.catalogBinding;
+        const actual = bindings?.catalogBinding ?? null;
+        if (claim !== undefined && (claim === null ? actual !== null : !actual || claim.catalogRevision !== actual.catalogRevision || claim.catalogDigest !== actual.catalogDigest)) throw new JobCtrlApiError(400, "The supplied catalog does not match the retained source.", "invalid_interview_note_bindings");
+      }
       const note: InterviewQuestionNote = {
         jobId: jobKey, questionId: parsed.questionId, revision: parsed.expectedRevision + 1, noteText: parsed.noteText,
         factualSupport: parsed.factualSupport ?? "unverified_user_statement", editStatus: "user_edited", sourceGeneration,
