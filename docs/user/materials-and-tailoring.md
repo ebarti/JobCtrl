@@ -206,6 +206,9 @@ structures. An open prompt such as “Tell me about a time you handled conflict�
 invites recollection; it does not establish that an event occurred.
 Hypothetical reasoning, prospective first-time-manager guidance, and advertised
 job responsibilities can guide preparation without implying past experience.
+“I would explain what I stopped investigating and why” leaves missing particulars
+for you to supply. Asking about the advertised role's expectations clarifies the
+job; it does not prove that you held that role.
 
 Specific claims or presuppositions about your history, including factual
 headings, need support from that question's selected accepted evidence, even
@@ -213,6 +216,11 @@ inside future or conditional wording. Another question's evidence, source
 examples, and job responsibilities cannot supply that support. Choosing no
 evidence leaves focused questions and marked gaps without filling in personal
 history, metrics, tools, or authority.
+
+Factual sections cite the selected evidence that supports their claims.
+Guidance and clarifying questions keep proof citations separate: they may refer
+back to a supported fact and ask for missing details, while contextual question
+links do not confirm personal experience.
 Current approved materials provide context only when their registered artifact
 bindings are valid; an unrelated or stale fit report cannot prove a personal
 claim.

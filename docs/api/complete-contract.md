@@ -1075,11 +1075,23 @@ bindings, answer format, rationale, evidence links (`evidenceId`, `sourceRef`,
 gaps (`id`, `prompt`, `reason`), `probes`, `sourceGuidanceRefs`, factual support,
 and `userEditStatus: generated | user_edited`. Each `outline` segment has
 `heading`, `text`, `evidenceIds`, and `factualSupport`. Outline support is `accepted_profile_fact`, `hypothetical`,
-`new_user_statement`, or `needs_clarification`. Generic behavioral invitations
-and open questions request recollection or clarification without accepting an
-event as fact. Genuinely hypothetical or prospective guidance, including
+`new_user_statement`, or `needs_clarification`.
+
+For generated segments, `accepted_profile_fact` requires nonempty `evidenceIds`
+from that question's selected canonical evidence and claims within those
+excerpts. `hypothetical` and `needs_clarification` require `evidenceIds: []`, even
+when referring to a separate factual anchor. These IDs mean accepted personal
+proof; contextual question links remain separately in `evidenceLinks`. A
+clarification may refer to an `accepted_profile_fact` anchor without carrying
+its proof IDs. Incompatible support/ID combinations reject the candidate rather
+than dropping IDs or relabeling the original segment.
+
+Generic behavioral invitations and open questions request recollection or
+clarification without accepting an event as fact. Genuinely hypothetical or prospective guidance, including
 first-time-manager scenarios and advertised job responsibilities, may lack
-historical evidence.
+historical evidence. Generic planned missing-answer slots request particulars;
+questions about the canonical advertised role's expectations clarify job
+context rather than assert candidate history.
 
 Personal assertions and specific past presuppositions require that question's
 selected canonical support, including factual headings and assertions embedded
