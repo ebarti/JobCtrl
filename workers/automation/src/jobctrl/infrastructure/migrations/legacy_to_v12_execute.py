@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sqlite3
 import sys
 from collections.abc import Sequence
 from dataclasses import asdict
@@ -19,7 +20,7 @@ from jobctrl.infrastructure.migrations.v11_to_v12_execute import (
     CandidateExecutionError,
     execute_v11_to_v12_candidate,
 )
-from jobctrl.infrastructure.migrations.v7_to_v8_execute import CandidateExecutionResult, _fsync_directory
+from jobctrl.infrastructure.migrations.v7_to_v8_execute import CandidateExecutionResult, _assert_paths, _fsync_directory
 
 
 def execute_legacy_to_v12_candidate(
@@ -37,8 +38,12 @@ def execute_legacy_to_v12_candidate(
     intermediate = Path(f"{candidate}.exact-v11-intermediate")
     identity: tuple[int, int] | None = None
     candidate_identity: tuple[int, int] | None = None
+    source_lock: sqlite3.Connection | None = None
     try:
+        _assert_paths(source, candidate)
         source_files = _source_file_state(source)
+        source_lock = sqlite3.connect(f"{source.resolve().as_uri()}?mode=rw", uri=True, timeout=0)
+        source_lock.execute("BEGIN IMMEDIATE")
         if source_version in (6, 7, 8, 9, 10):
             execute_legacy_to_v11_candidate(
                 source,
@@ -54,11 +59,17 @@ def execute_legacy_to_v12_candidate(
         info = candidate.lstat()
         candidate_identity = (info.st_dev, info.st_ino)
         _remove_created_candidate(intermediate, identity)
+        source_lock.rollback()
+        source_lock.close()
+        source_lock = None
         if os.path.lexists(intermediate) or _source_file_state(source) != source_files:
             raise CandidateExecutionError("legacy-to-v12 candidate migration failed")
         _fsync_directory(candidate.parent)
         return result
     except BaseException as error:
+        if source_lock is not None:
+            source_lock.rollback()
+            source_lock.close()
         if candidate_identity is not None:
             _remove_created_candidate(candidate, candidate_identity)
         if identity is not None:

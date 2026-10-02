@@ -938,6 +938,7 @@ func recoverInterruptedTransition(ctx launchContext, store *release.Store) (bool
 	cleanupV9Candidate(ctx.Instance.StateDir, journal.ID)
 	cleanupV10Candidate(ctx.Instance.StateDir, journal.ID)
 	cleanupV11Candidate(ctx.Instance.StateDir, journal.ID)
+	cleanupV12Candidate(ctx.Instance.StateDir, journal.ID)
 	if journal.BackupID != "" {
 		var pair databasePair
 		if err := decodeStrictRegular(filepath.Join(ctx.Instance.StateDir, "backups", journal.BackupID, "pair.json"), &pair); err != nil {
@@ -946,8 +947,16 @@ func recoverInterruptedTransition(ctx launchContext, store *release.Store) (bool
 		if pair.ReleaseReceipt != *journal.Old {
 			return false, errors.New("interrupted transition backup does not bind the prior release")
 		}
-		if err := restorePair(ctx, pair); err != nil {
-			return false, err
+		preserveUnactivatedSource := false
+		if sourceVersion, sourceErr := pairedV12SourceSchemaVersion(pair); sourceErr == nil {
+			python := filepath.Join(ctx.PayloadRoot, "python", "bin", "python3")
+			liveVersion, liveErr := sqliteUserVersion(python, filepath.Join(ctx.Instance.StateDir, "jobctrl.db"))
+			preserveUnactivatedSource = liveErr == nil && liveVersion == sourceVersion
+		}
+		if !preserveUnactivatedSource {
+			if err := restorePair(ctx, pair); err != nil {
+				return false, err
+			}
 		}
 	}
 	active, activeErr := store.ReadActive()
@@ -1133,8 +1142,10 @@ func promoteExisting(ctx launchContext, store *release.Store, active release.Act
 		// Exact v9 upgrades transfer URL authority after the paired backup.
 	case v10JobCtrlSchemaVersion:
 		// Exact v10 upgrades move global LLM spend into the legacy lane.
+	case v11JobCtrlSchemaVersion:
+		// Exact v11 upgrades add generation bindings and independently revisioned notes.
 	case currentJobCtrlSchemaVersion:
-		// Ordinary exact-v11 release promotion uses the paired lifecycle unchanged.
+		// Ordinary exact-v12 release promotion uses the paired lifecycle unchanged.
 	default:
 		return restartBeforeBackup(fmt.Errorf("unsupported stopped JobCtrl schema version %d", databaseVersion))
 	}
@@ -1159,17 +1170,22 @@ func promoteExisting(ctx launchContext, store *release.Store, active release.Act
 		return err
 	}
 
+	migrationActivationStarted := false
 	rollbackFailure := func(cause error) error {
 		_ = store.Advance(&journal, release.RollbackRestoring, cause)
 		cleanupV7Candidate(ctx.Instance.StateDir, journal.ID)
 		cleanupV9Candidate(ctx.Instance.StateDir, journal.ID)
 		cleanupV10Candidate(ctx.Instance.StateDir, journal.ID)
 		cleanupV11Candidate(ctx.Instance.StateDir, journal.ID)
+		cleanupV12Candidate(ctx.Instance.StateDir, journal.ID)
 		if stopErr := stop(ctx); stopErr != nil { // Candidate records share the canonical state identity.
 			return fmt.Errorf("%v; refusing paired rollback restore while the candidate could not be quiesced: %w", cause, stopErr)
 		}
-		if restoreErr := restorePair(ctx, pair); restoreErr != nil {
-			return fmt.Errorf("%v; paired rollback restore failed: %w", cause, restoreErr)
+		preserveLiveSource := (databaseVersion != currentJobCtrlSchemaVersion && !migrationActivationStarted) || errors.Is(cause, errV12SourceChanged)
+		if !preserveLiveSource {
+			if restoreErr := restorePair(ctx, pair); restoreErr != nil {
+				return fmt.Errorf("%v; paired rollback restore failed: %w", cause, restoreErr)
+			}
 		}
 		if _, activateErr := store.WriteSelectedActive(active.Receipt, active.Generation, active.SelectorBuildID, active.Acquisition); activateErr != nil {
 			return fmt.Errorf("%v; restore active release pointer: %w", cause, activateErr)
@@ -1186,13 +1202,14 @@ func promoteExisting(ctx launchContext, store *release.Store, active release.Act
 	if databaseVersion != currentJobCtrlSchemaVersion {
 		candidatePath, err := sealedV7CandidateBuilder(candidateRuntime, pair, journal.ID)
 		if err != nil {
-			return rollbackFailure(fmt.Errorf("build exact-v11 migration candidate: %w", err))
+			return rollbackFailure(fmt.Errorf("build exact-v12 migration candidate: %w", err))
 		}
 		if err := advance(store, &journal, release.MigrationCandidateReady); err != nil {
 			return rollbackFailure(err)
 		}
+		migrationActivationStarted = true
 		if err := sealedV7CandidateInstaller(candidateRuntime, candidatePath); err != nil {
-			return rollbackFailure(fmt.Errorf("activate exact-v11 database: %w", err))
+			return rollbackFailure(fmt.Errorf("activate exact-v12 database: %w", err))
 		}
 		if err := advance(store, &journal, release.MigrationActivated); err != nil {
 			return rollbackFailure(err)

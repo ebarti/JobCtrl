@@ -33,6 +33,21 @@ def _source(path: Path) -> None:
             "INSERT INTO job_interview_prep_items(tenant_id,job_id,generation,item_id,kind,title,generated_text) VALUES('local','j',1,'i','star_draft','Prior','Retained outline')"
         )
         conn.execute("INSERT INTO llm_spend(day,lane,input_tokens) VALUES('2026-10-01','legacy',11)")
+        conn.execute(
+            "INSERT INTO jobs(tenant_id,job_id,url,title) VALUES('other','j','https://other/post','Other tenant retained')"
+        )
+        conn.execute(
+            "INSERT INTO application_outcomes(tenant_id,outcome_id,job_id,kind,source,note,occurred_at,recorded_at,interview_prep_generation) VALUES('local','reflection','j','interview','manual','Synthetic reflection','2026-10-01','2026-10-01',1)"
+        )
+        conn.execute(
+            "INSERT INTO candidate_profiles(tenant_id,profile_id,personal_full_name,version,updated_at) VALUES('local','synthetic','Synthetic Candidate',3,'2026-10-01')"
+        )
+        conn.execute(
+            "INSERT INTO discovery_settings(tenant_id,search_config_json,created_at,updated_at) VALUES('local','{\"synthetic\":true}','2026-10-01','2026-10-01')"
+        )
+        conn.execute(
+            "INSERT INTO job_events(tenant_id,job_id,identity_version,event_type,occurred_at,payload_json) VALUES('local','j',1,'SyntheticControl','2026-10-01','{\"retained\":true}')"
+        )
 
 
 def test_fresh_and_upgraded_v12_are_identical() -> None:
@@ -65,9 +80,13 @@ def test_failed_schema_upgrade_rolls_back_ddl_and_stamp() -> None:
 def test_independent_private_candidate_preserves_every_old_cell(tmp_path: Path) -> None:
     source, candidate = tmp_path / "source.db", tmp_path / "candidate.db"
     _source(source)
+    config = tmp_path / "config.json"
+    config.write_text('{"synthetic": true, "unchanged": "exact bytes"}\n')
+    config_before = config.read_bytes()
     before = source.read_bytes()
     result = execute_v11_to_v12_candidate(source, candidate)
     assert source.read_bytes() == before
+    assert config.read_bytes() == config_before
     assert candidate.stat().st_mode & 0o077 == 0
     assert candidate.stat().st_ino != source.stat().st_ino
     assert result.user_version == 12 and result.status == "ready"
