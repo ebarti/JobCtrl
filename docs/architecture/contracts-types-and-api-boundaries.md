@@ -80,7 +80,10 @@ maintained runtime content. Catalog reads are direct asset handlers;
 prep/history/notes keep canonical Materials ownership and exact-schema storage.
 The generated endpoint/client path, frontend port/local/demo adapters, RPC
 selection mirror, both projection builders, and event/invalidation registries
-must evolve together. Note conflicts preserve structured `responseBody` in
+must evolve together. HTTP and RPC validation preserve the conditional
+profile-version fence for explicit evidence choices; worker validation resolves
+their actual current tenant/profile ownership and accepted status before spend.
+Note conflicts preserve structured `responseBody` in
 `JobCtrlApiError` for form reconciliation. See the
 [complete interview contract](../api/complete-contract.md#interview-catalog-preparation-and-notes).
 
