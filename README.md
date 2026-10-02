@@ -481,12 +481,13 @@ employers, accounts, provider APIs, and third-party sites as live operations:
 - LLM work can spend money and send job, profile, and generated-material text
   to configured providers. `dailyBudgetUsd` caps new spendful workflows
   locally, but it is an estimate rather than the provider bill.
-- Beta interview prep is stored pre-interview material only; its output quality
-  has not yet been validated through real-user usage. You can record
+- The Interviews catalog and criteria remain a research draft; Beta prep is
+  stored pre-interview material whose quality lacks real-user validation.
+  Fixtures do not establish grading or readiness. You can record
   post-interview reflections against an accepted prep generation, but JobCtrl
   is not a live interview assistant; it has no transcript, microphone,
   streaming, websocket, or real-time answer surface.
-- Profiles, generated materials, browser state, logs, SQLite databases, and
+- Profiles, generated materials, interview prep/notes, browser state, logs, SQLite databases, and
   local worker state are sensitive local artifacts. Public bug reports and
   screenshots should use synthetic data only; `pnpm qa:seed` creates a
   disposable synthetic workspace for that purpose.
@@ -691,8 +692,9 @@ fixtures are never a production upgrade path.
 5. Open Evidence from the main nav, Profile, or the Job Detail workspace to
    inspect which profile evidence backs generated materials and
    requirement-fit gaps.
-6. Generate or inspect materials and Beta stored interview prep for promising
-   jobs; review it carefully because output quality lacks real-user validation.
+6. Generate or inspect materials for promising jobs. Browse Interviews, select
+   questions and accepted evidence for a job, and inspect the Beta preparation
+   and retained input history; its quality lacks real-user validation.
 7. Use Apply Review's rich-text resume editor to edit text, formatting, and
    hyperlinks, review comments, and compare a rendered draft against the
    accepted artifact before approval. The desktop queue stays beside a
