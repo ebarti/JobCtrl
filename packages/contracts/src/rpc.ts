@@ -6,7 +6,7 @@
  * worker over the local subprocess transport (target §6.5).
  */
 import { z } from "zod";
-import { GenerateInterviewPrepRequestSchema } from "./interview.js";
+import { GenerateInterviewPrepRequestSchema, refineInterviewEvidenceSelection } from "./interview.js";
 
 import {
   DEFAULT_PIPELINE_LLM_MODEL,
@@ -390,7 +390,7 @@ export const GenerateInterviewPrepParamsSchema = z
     jobId: CanonicalJobIdParam,
     llmModel: z.string().trim().min(1).max(120).default(DEFAULT_PIPELINE_LLM_MODEL),
   })
-  .strict();
+  .strict().superRefine(refineInterviewEvidenceSelection);
 export type GenerateInterviewPrepParams = z.infer<typeof GenerateInterviewPrepParamsSchema>;
 
 /**

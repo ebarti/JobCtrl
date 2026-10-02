@@ -598,6 +598,8 @@ function mapCommandToRpc(command: ActionCommandPayload, context: ActionDispatchC
         llmModel: command.llmModel ?? DEFAULT_PIPELINE_LLM_MODEL,
         ...(command.selectedQuestionIds !== undefined ? { selectedQuestionIds: command.selectedQuestionIds } : {}),
         ...(command.catalogBinding !== undefined ? { catalogBinding: command.catalogBinding } : {}),
+        ...(command.evidenceSelections !== undefined ? { evidenceSelections: command.evidenceSelections } : {}),
+        ...(command.evidenceProfileVersion !== undefined ? { evidenceProfileVersion: command.evidenceProfileVersion } : {}),
         ...(command.interviewStage !== undefined ? { interviewStage: command.interviewStage } : {}),
         ...(command.interviewFormat !== undefined ? { interviewFormat: command.interviewFormat } : {}),
         ...(command.roleLens !== undefined ? { roleLens: command.roleLens } : {}),

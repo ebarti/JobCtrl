@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { buildSync } from "esbuild";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { InterviewCatalogAssetError, loadInterviewCatalogAsset } from "../src/interview-catalog-asset.js";
@@ -35,6 +38,26 @@ describe("interview catalog asset ownership", () => {
     });
     expect(asset.rawBytes).toEqual(rawBytes);
     expect(asset.rawDigest).toBe(createHash("sha256").update(rawBytes).digest("hex"));
+  });
+
+  it("loads the installed asset through an esbuild ESM bundle outside the source tree", () => {
+    const installed = writeAsset("payload/worker/site-packages/jobctrl/assets/interview/catalog.v1.json");
+    const committed = fs.readFileSync(fileURLToPath(new URL("../../../workers/automation/src/jobctrl/assets/interview/catalog.v1.json", import.meta.url)));
+    fs.writeFileSync(installed, committed);
+    const bundle = path.join(directory, "isolated/bundle.mjs");
+    fs.mkdirSync(path.dirname(bundle), { recursive: true });
+    buildSync({ entryPoints: [fileURLToPath(new URL("../src/interview-catalog-asset.ts", import.meta.url))],
+      outfile: bundle, bundle: true, platform: "node", format: "esm", target: "node22", logLevel: "silent" });
+    const script = `import {loadInterviewCatalogAsset} from ${JSON.stringify(pathToFileURL(bundle).href)}; process.stdout.write(loadInterviewCatalogAsset().rawDigest);`;
+    const digest = execFileSync(process.execPath, ["--input-type=module", "-e", script], {
+      cwd: path.dirname(bundle), env: { ...process.env, JOBCTRL_PAYLOAD_DIR: path.join(directory, "payload") }, encoding: "utf8",
+    });
+    expect(digest).toBe(createHash("sha256").update(committed).digest("hex"));
+    expect(digest).toBe("20fab11dab969ecd619f1c98fe1ae6e6b46392019f6d48322952de5d832d121f");
+    fs.rmSync(installed);
+    expect(() => execFileSync(process.execPath, ["--input-type=module", "-e", script], {
+      cwd: path.dirname(bundle), env: { ...process.env, JOBCTRL_PAYLOAD_DIR: path.join(directory, "payload") }, stdio: "pipe",
+    })).toThrow();
   });
 
   it("fails closed when the installed asset is absent despite a valid source asset", () => {
