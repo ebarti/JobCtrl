@@ -73,8 +73,9 @@ A preparation request selects at most 16 questions.
 The request can additionally supply `evidenceSelections` per question, fenced
 by the required positive `evidenceProfileVersion`. Each entry preserves up to
 eight canonical accepted-fact IDs of at most 200 characters in the user's order.
-Evidence IDs retain their canonical string form rather than using the question
-ID format. An explicit empty entry
+Evidence IDs retain their exact canonical string identity and case; validation
+rejects blank-only IDs without trimming or normalizing them. They do not use the
+question ID format. An explicit empty entry
 means no personal evidence was selected and produces gaps; only an omitted
 entry permits deterministic evidence selection. Question snapshots retain
 `evidenceSelectionMode` and `selectedEvidenceIds` separately from question
