@@ -708,6 +708,18 @@ describe("preparation RPC contracts", () => {
     expect(() => GenerateInterviewPrepRequestSchema.parse({ llmModel: "" })).toThrow();
   });
 
+  it("keeps the conditional evidence version fence on both REST and derived RPC schemas", () => {
+    const choice = { selectedQuestionIds: ["TS09"], evidenceSelections: [{ questionId: "TS09", evidenceIds: [] }], evidenceProfileVersion: 3 };
+    for (const schema of [GenerateInterviewPrepRequestSchema, GenerateInterviewPrepParamsSchema]) {
+      const base = schema === GenerateInterviewPrepParamsSchema ? { jobId: CANONICAL_JOB_ID } : {};
+      expect(schema.parse({ ...base, ...choice })).toMatchObject(choice);
+      const { evidenceProfileVersion: _version, ...unfenced } = choice;
+      expect(() => schema.parse({ ...base, ...unfenced })).toThrow();
+      expect(() => schema.parse({ ...base, ...choice, evidenceSelections: [{ questionId: "TS10", evidenceIds: [] }] })).toThrow();
+      expect(() => schema.parse({ ...base, ...choice, evidenceSelections: [{ questionId: "TS09", evidenceIds: ["fact", "fact"] }] })).toThrow();
+    }
+  });
+
   it("keeps interview prep off live-assistance contract names", () => {
     const exposedNames = [
       RpcMethods.GenerateInterviewPrep,

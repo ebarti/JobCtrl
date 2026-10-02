@@ -1507,6 +1507,22 @@
                                   "examples"
                                 ],
                                 "additionalProperties": false
+                              },
+                              "evidenceSelectionMode": {
+                                "type": "string",
+                                "enum": [
+                                  "user_selected",
+                                  "deterministic"
+                                ]
+                              },
+                              "selectedEvidenceIds": {
+                                "maxItems": 8,
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 240
+                                }
                               }
                             },
                             "required": [
@@ -1517,7 +1533,9 @@
                               "rubricDigest",
                               "answerFormat",
                               "selectionRationale",
-                              "snapshot"
+                              "snapshot",
+                              "evidenceSelectionMode",
+                              "selectedEvidenceIds"
                             ],
                             "additionalProperties": false
                           }

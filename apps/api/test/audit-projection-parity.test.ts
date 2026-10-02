@@ -572,9 +572,12 @@ describe("Cross-runtime projection parity (AUDIT-02)", () => {
         // (2) Read path: the read model serves the canonical employer analysis
         // and interview prep on the job detail.
         expect(detailRes.json().employerAnalysis).toEqual(fixture.expected.employerAnalysisJson);
-        expect(detailRes.json().interviewPrep).toEqual(
-          withExactV7JobIds(fixture.expected.interviewPrepJson),
-        );
+        // Current staleness is derived at the HTTP boundary; retained snapshots
+        // and the cross-runtime canonical projection above remain unchanged.
+        expect(detailRes.json().interviewPrep).toEqual({
+          ...withExactV7JobIds(fixture.expected.interviewPrepJson) as object,
+          staleReasons: ["catalog_changed", "profile_changed", "job_changed", "employer_analysis_changed", "approved_materials_changed"],
+        });
         expect(JSON.stringify(detailRes.json().interviewPrep)).not.toContain("promptText");
         expect(JSON.stringify(detailRes.json().interviewPrep)).not.toContain("rawPrompt");
         expect(JSON.stringify(detailRes.json().interviewPrep)).not.toContain("full_description");

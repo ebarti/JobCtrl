@@ -38,7 +38,7 @@ export function syntheticInterviewGenerationContext(jobId: string): InterviewGen
     contextDigest: "d".repeat(64), selectedQuestionIds: [card.id],
     selectedQuestions: [{ questionId: card.id, cardRevision: card.cardRevision, cardDigest: card.cardDigest,
       rubricRevision: card.rubricRevision, rubricDigest: card.rubricDigest, answerFormat: "principle",
-      selectionRationale: "Explicit synthetic selection", snapshot: card }],
+      selectionRationale: "Explicit synthetic selection", snapshot: card, evidenceSelectionMode: "deterministic", selectedEvidenceIds: ["evidence-1"] }],
     selectionMode: "user_selected", interviewStage: "technical", interviewFormat: "video", roleLens: "staff_principal",
     roleResponsibilities: ["technical_strategy"], knownCriteria: ["decision_quality"],
     profile: { profileId: "default", version: 1, evidence: [{ evidenceId: "evidence-1", sourceRef: "resume.experience_entries[role-1].bullets[0]", excerpt: "Synthetic supported contribution", scope: "direct" }] },
