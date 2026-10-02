@@ -39,6 +39,7 @@ import {
   createEmployerAnalyzed,
   createInterviewPrepFailed,
   createInterviewPrepGenerated,
+  createInterviewQuestionNoteSaved,
   createMaterialsExhausted,
   createPdfRendered,
   createPreparationWorkItemCompleted,
@@ -370,6 +371,9 @@ export const eventByType = {
     generation: 1,
     itemCount: 4,
     generatedAt: NOW,
+  }),
+  InterviewQuestionNoteSaved: createInterviewQuestionNoteSaved(LOCAL_TENANT, {
+    jobId: JOB_ID, questionId: "B11", revision: 2, sourceGeneration: 1, updatedAt: "2026-10-01T12:00:00Z",
   }),
   InterviewPrepFailed: createInterviewPrepFailed(LOCAL_TENANT, {
     jobId: JOB_ID,
