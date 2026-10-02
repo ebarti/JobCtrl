@@ -945,7 +945,8 @@ func recoverInterruptedTransition(ctx launchContext, store *release.Store) (bool
 		if intent != nil && (sourceErr != nil || intent.BackupID != pair.ID || intent.SourceVersion != sourceVersion) {
 			return false, errors.New("v12 source preservation intent does not bind the paired backup")
 		}
-		preactivation := journal.State == release.PairBackedUp || journal.State == release.MigrationCandidateReady
+		// These are every durable phase after paired backup and before activation.
+		preactivation := journal.State == release.PairBackedUp || journal.State == release.PolicyPending || journal.State == release.MigrationCandidateReady
 		if sourceErr == nil && (preactivation || intent != nil) {
 			python := filepath.Join(ctx.PayloadRoot, "python", "bin", "python3")
 			liveVersion, liveErr := sqliteUserVersion(python, filepath.Join(ctx.Instance.StateDir, "jobctrl.db"))

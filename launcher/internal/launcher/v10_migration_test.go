@@ -776,50 +776,55 @@ func TestV12InterruptedRollbackRestoresHalfRestoredPair(t *testing.T) {
 }
 
 func TestV12InterruptedSourcePreservationSurvivesRecoveryRestartFailure(t *testing.T) {
-	preserveMigrationSeams(t)
-	fixture := newV6ActivationFixture(t)
-	pair, err := snapshotPair(fixture.ctx, fixture.old)
-	if err != nil {
-		t.Fatal(err)
-	}
-	journal, err := fixture.store.Begin("update", &fixture.old, &fixture.candidate, fixture.candidate.DescriptorSHA256)
-	if err != nil {
-		t.Fatal(err)
-	}
-	journal.BackupID = pair.ID
-	if err := fixture.store.Advance(&journal, release.MigrationCandidateReady, nil); err != nil {
-		t.Fatal(err)
-	}
-	code := "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute(\"UPDATE t SET v='independent-source-write'\"); c.commit(); c.close()"
-	if output, err := exec.Command(fixture.python, "-I", "-B", "-c", code, filepath.Join(fixture.state, "jobctrl.db")).CombinedOutput(); err != nil {
-		t.Fatalf("seed independent source: %v %s", err, output)
-	}
-	starts := 0
-	startReleaseCommand = func(_ launchContext, receipt release.Receipt, _ string) error {
-		if receipt != fixture.old {
-			t.Fatal("recovery started candidate")
-		}
-		starts++
-		if starts == 1 {
-			return errors.New("synthetic old restart interruption")
-		}
-		code := "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); assert c.execute('SELECT v FROM t').fetchone() == ('independent-source-write',); c.close()"
-		if output, err := exec.Command(fixture.python, "-I", "-B", "-c", code, filepath.Join(fixture.state, "jobctrl.db")).CombinedOutput(); err != nil {
-			return fmt.Errorf("independent source overwritten: %w %s", err, output)
-		}
-		return nil
-	}
-	if recovered, err := recoverInterruptedTransition(fixture.ctx, fixture.store); recovered || err == nil {
-		t.Fatalf("first recovery: %v %v", recovered, err)
-	}
-	intent, err := readV12SourcePreservation(fixture.state, journal.ID)
-	if err != nil || intent == nil || intent.BackupID != pair.ID {
-		t.Fatalf("lost durable refusal intent: %#v %v", intent, err)
-	}
-	if recovered, err := recoverInterruptedTransition(fixture.ctx, fixture.store); !recovered || err != nil {
-		t.Fatalf("second recovery: %v %v", recovered, err)
-	}
-	if _, err := os.Lstat(v12SourcePreservationPath(fixture.state, journal.ID)); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("completed recovery retained intent: %v", err)
+	for _, stage := range []release.State{release.PairBackedUp, release.PolicyPending, release.MigrationCandidateReady} {
+		t.Run(string(stage), func(t *testing.T) {
+			preserveMigrationSeams(t)
+			fixture := newV6ActivationFixture(t)
+			pair, err := snapshotPair(fixture.ctx, fixture.old)
+			if err != nil {
+				t.Fatal(err)
+			}
+			journal, err := fixture.store.Begin("update", &fixture.old, &fixture.candidate, fixture.candidate.DescriptorSHA256)
+			if err != nil {
+				t.Fatal(err)
+			}
+			journal.BackupID = pair.ID
+			if err := fixture.store.Advance(&journal, stage, nil); err != nil {
+				t.Fatal(err)
+			}
+			code := "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute(\"UPDATE t SET v='independent-source-write'\"); c.commit(); c.close()"
+			if output, err := exec.Command(fixture.python, "-I", "-B", "-c", code, filepath.Join(fixture.state, "jobctrl.db")).CombinedOutput(); err != nil {
+				t.Fatalf("seed independent source: %v %s", err, output)
+			}
+			starts := 0
+			startReleaseCommand = func(_ launchContext, receipt release.Receipt, _ string) error {
+				if receipt != fixture.old {
+					t.Fatal("recovery started candidate")
+				}
+				starts++
+				if starts == 1 {
+					return errors.New("synthetic old restart interruption")
+				}
+				code := "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); assert c.execute('SELECT v FROM t').fetchone() == ('independent-source-write',); c.close()"
+				if output, err := exec.Command(fixture.python, "-I", "-B", "-c", code, filepath.Join(fixture.state, "jobctrl.db")).CombinedOutput(); err != nil {
+					return fmt.Errorf("independent source overwritten: %w %s", err, output)
+				}
+				return nil
+			}
+			if recovered, err := recoverInterruptedTransition(fixture.ctx, fixture.store); recovered || err == nil {
+				t.Fatalf("first recovery: %v %v", recovered, err)
+			}
+			intent, err := readV12SourcePreservation(fixture.state, journal.ID)
+			if err != nil || intent == nil || intent.BackupID != pair.ID {
+				t.Fatalf("lost durable refusal intent: %#v %v", intent, err)
+			}
+			if recovered, err := recoverInterruptedTransition(fixture.ctx, fixture.store); !recovered || err != nil {
+				t.Fatalf("second recovery: %v %v", recovered, err)
+			}
+			if _, err := os.Lstat(v12SourcePreservationPath(fixture.state, journal.ID)); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("completed recovery retained intent: %v", err)
+			}
+
+		})
 	}
 }
