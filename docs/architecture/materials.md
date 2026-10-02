@@ -222,8 +222,10 @@ User notes are tenant/job/question scoped, independent of item replacement, and
 append revision history with an expected-revision comparison. A conflict cannot
 overwrite a newer edit. Input cannot self-declare supported factual status;
 new recollections default to `unverified_user_statement`, and `user_edited`
-notes never inherit the generation audit. Optional source-generation/catalog/
-card/context bindings explain the draft's origin without promoting it to
+notes never inherit the generation audit. A source generation must retain the
+same selected question; the server derives its catalog/card/context bindings
+and rejects inconsistent client claims. An independent note carries no
+generation context. Those bindings explain the draft's origin without promoting it to
 Profile. Generation and note saving change no profile, fit, Discovery, approved
 resume, or Apply state.
 

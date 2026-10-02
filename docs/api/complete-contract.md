@@ -1118,24 +1118,35 @@ subsequent saves compare the loaded revision and append the next revision.
 Optional `factualSupport` is `unverified_user_statement` (default),
 `needs_clarification`, or `hypothetical`; input cannot self-declare `supported`.
 Optional `sourceGeneration` is positive or null and must belong to the same
-job. Optional nullable `bindings` holds catalog binding, card revision/digest,
-and context digest. Omission preserves an existing source generation or binding;
-explicit null clears it. A source generation explains origin but never transfers a
-passed generation audit to the user edit.
+job and retain that question in its selected-card context. Historical and
+retired-card origins are allowed. The server derives matching catalog, card,
+and context bindings from the retained selected question; optional supplied
+`bindings` are checked against that authority. `bindings: null` supplies no
+claims; it does not clear the server-derived origin. A source generation explains
+origin but never transfers a passed generation audit to the user edit.
+
+Omitting `sourceGeneration` preserves an existing origin. Explicit null creates
+an independent note with the current active card/catalog binding and null
+context; it cannot claim a generation context. Existing orphaned or retired
+notes remain editable, with unavailable bindings represented as null. A new
+independent note requires an active card; a retained origin can bind a historical
+retired card.
 
 The returned note has canonical `jobId`/`questionId`, positive `revision`,
 `noteText`, factual support, `editStatus: user_edited`, nullable source generation
 and bindings, and `updatedAt`. Response vocabulary reserves `supported` for an
 owning grounded path; ordinary user saves cannot produce it. Existing notes
-remain editable when a later catalog retires their card; first creation requires
-an active card. Save revision, history append, and safe event commit together.
+remain editable when a later catalog retires their card. Save revision, history
+append, and safe event commit together.
 
 A stale `expectedRevision` returns `409` with
 `{ ok: false, error: "interview_note_revision_conflict", message, currentNote }`.
 `currentNote` is the current saved note or null when no saved baseline exists.
 The client exposes `JobCtrlApiError.responseBody` so the form can reconcile with
 the current saved note while retaining its dirty draft. An invalid source
-generation returns `400 invalid_interview_note_source`; an unknown job returns
+generation, missing/legacy-unbound context, or absent selected question returns
+`400 invalid_interview_note_source`. Forged/mismatched bindings or non-null
+context without an origin return `400 invalid_interview_note_bindings`. An unknown job returns
 `404 job_not_found`. Failed save/generation cannot delete independent notes or
 overwrite a newer revision. These actions write no Profile, fit, approved
 resume, Discovery, or Apply state.

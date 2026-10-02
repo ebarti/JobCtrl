@@ -234,6 +234,10 @@ revision you loaded; a conflict requires reconciliation rather than overwriting
 a newer note. Failed saves keep your draft available for correction and retry.
 Generating replacement prep does not delete saved notes.
 
+A note's generation origin refers to that question's retained preparation;
+JobCtrl derives the matching card and input bindings. A question outside the
+saved generation starts an independent note with no generation-context claim.
+
 Question choices and unsaved notes survive page navigation within the current
 app session. Save a note to retain it across a browser reload; private draft
 text is not stored in the URL or browser storage.

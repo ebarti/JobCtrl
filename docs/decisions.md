@@ -1665,6 +1665,9 @@ prep. Version numbers alone are insufficient when the old source is not
 retained. User notes have independent tenant/job/question revision history and
 expected-revision saves; their user-statement status and edits cannot inherit
 generated-audit support or mutate Profile, fit, or Apply.
+The server binds a note origin to the same retained selected question and
+derives its card/catalog/context provenance; client claims cannot manufacture
+that association. Independent notes carry no generation context.
 
 Exact-schema v12 uses the existing stopped, independent candidate migration and
 native activation/rollback boundary. No runtime ensure-column or hidden event/
