@@ -198,7 +198,9 @@ schema and retained cells. A private binding seals its file identity/state and
 candidate digest. Activation requires a quiescent transition to DELETE journal
 mode, then rechecks those bindings under SQLite's exclusive lock through the
 atomic rename. This refuses a WAL connection that could acknowledge a write to
-the replaced inode. An unmanaged writer or a commit after backup refuses activation. When the candidate has not changed the live database,
+the replaced inode. Source-sidecar cleanup completes under this lock before
+publication; sidecars created on the new live database belong to its writers.
+An unmanaged writer or a commit after backup refuses activation. When the candidate has not changed the live database,
 recovery preserves the live source, including an independent committed write,
 instead of restoring an older backup over it. Failed readiness after activation
 still restores the paired application/Temporal backup and previous release.
