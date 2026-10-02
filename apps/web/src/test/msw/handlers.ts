@@ -1,3 +1,4 @@
+import { interviewHandlers } from "./interview-handlers.js";
 import type {
   ContactAttributeDto,
   ContactCreateRequest,
@@ -266,6 +267,7 @@ function makeStoryArtifactDetail(artifactId: string) {
 }
 
 export const handlers = [
+  ...interviewHandlers,
   http.get("*/v1/health", () => HttpResponse.json(sampleHealthResponse)),
   http.get("*/v1/dashboard/summary", () => HttpResponse.json(sampleDashboardSummary)),
   http.get("*/v1/analytics/outcomes", () => HttpResponse.json(sampleOutcomeAnalyticsSummary)),

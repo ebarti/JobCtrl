@@ -109,6 +109,10 @@ async function replaceJobs(
 }
 
 const READ_CASES = [
+  ["interviewCatalog", (api: ApiClientPort) => api.interviewCatalog()],
+  ["interviewQuestion", (api: ApiClientPort) => api.interviewQuestion("B11")],
+  ["interviewPrepHistory", (api: ApiClientPort) => api.interviewPrepHistory("job-contoso-reliability")],
+  ["interviewNotes", (api: ApiClientPort) => api.interviewNotes("job-contoso-reliability")],
   ["health", (api: ApiClientPort) => api.health()],
   ["dashboardSummary", (api: ApiClientPort) => api.dashboardSummary()],
   ["outcomeAnalytics", (api: ApiClientPort) => api.outcomeAnalytics()],
@@ -1330,5 +1334,33 @@ describe("DemoApiClientAdapter", () => {
       durationBucket: expect.stringMatching(/ms|s/),
     });
     adapter.dispose();
+  });
+});
+
+
+describe("interview demo contract", () => {
+  it("shares all 121 questions with principle, negotiation and retired semantics", async () => {
+    const { adapter } = await createAdapter();
+    const response = await adapter.interviewCatalog();
+    expect(response.total).toBe(121);
+    expect((await adapter.interviewQuestion("B11")).question.defaultAnswerFormat).toBe("principle");
+    expect((await adapter.interviewQuestion("TS09")).question.defaultAnswerFormat).toBe("principle");
+    expect((await adapter.interviewQuestion("C07")).question.answer).toMatch(/range/i);
+    await expect(adapter.interviewQuestion("C08")).rejects.toMatchObject({ status: 410 });
+  });
+
+  it("keeps independent notes, CAS conflicts, history and safe events inside the workspace", async () => {
+    const { adapter, repository } = await createAdapter();
+    const before = await adapter.profile();
+    const saved = await adapter.saveInterviewNote("job-contoso-reliability", { questionId: "B11", expectedRevision: 0, noteText: "Synthetic unverified recollection" });
+    expect(saved.note).toMatchObject({ revision: 1, factualSupport: "unverified_user_statement", editStatus: "user_edited" });
+    await expect(adapter.saveInterviewNote("job-contoso-reliability", { questionId: "B11", expectedRevision: 0, noteText: "stale text" })).rejects.toMatchObject({ status: 409 });
+    await adapter.saveInterviewNote("job-contoso-reliability", { questionId: "B11", expectedRevision: 1, noteText: "Newer synthetic note" });
+    expect((await adapter.interviewNotes("job-contoso-reliability", { questionId: "B11", history: true })).notes).toHaveLength(2);
+    expect((await adapter.interviewNotes("job-contoso-reliability", { questionId: "B11" })).notes[0]?.noteText).toBe("Newer synthetic note");
+    expect((await adapter.interviewNotes("job-contoso-reliability", { questionId: "TS09" })).notes).toHaveLength(0);
+    expect(await adapter.profile()).toEqual(before);
+    const snapshot = await repository.snapshot();
+    expect(JSON.stringify(snapshot.eventLog)).not.toContain("Synthetic unverified recollection");
   });
 });

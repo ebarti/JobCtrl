@@ -4,6 +4,7 @@ import { afterAll, afterEach, beforeAll, expect } from "vitest";
 
 import { toHaveNoViolations as jestAxeToHaveNoViolations } from "jest-axe";
 
+import { resetInterviewMocks } from "./msw/interview-handlers.js";
 import { server } from "./msw/server.js";
 
 const jestAxeFn = jestAxeToHaveNoViolations.toHaveNoViolations as unknown as (
@@ -24,6 +25,7 @@ beforeAll(() => {
 afterEach(() => {
   cleanup();
   server.resetHandlers();
+  resetInterviewMocks();
 });
 
 afterAll(() => {

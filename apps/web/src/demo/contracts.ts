@@ -211,6 +211,7 @@ export interface DemoReadModel {
   };
   readonly evidence: ApiClientResponse<"evidenceMap">;
   readonly materials: {
+    readonly interviewNotes?: Readonly<Record<string, Readonly<Record<string, readonly import("@jobctrl/contracts").InterviewQuestionNote[]>>>>;
     readonly list: ApiClientResponse<"artifacts">;
     readonly details: Readonly<Record<string, ApiClientResponse<"artifact">>>;
     readonly resumeReviewDrafts: Readonly<Record<string, ApiClientResponse<"resumeReviewDraft">>>;
