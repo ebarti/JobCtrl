@@ -299,7 +299,7 @@ import {
 import { listTailoringPolicyRevisions } from "./tailoring-policy-revisions.js";
 import { loadInterviewPrepReadModel, refreshProjections } from "./projections.js";
 import { InterviewEvidenceSelectionError, validateInterviewEvidenceSelection } from "./interview-evidence-selection.js";
-import { interviewPrepStaleReasons, listInterviewPrepHistory } from "./interview-prep-history.js";
+import { interviewPrepStaleReasons, listInterviewPrepHistory, loadLatestAcceptedInterviewPrep } from "./interview-prep-history.js";
 import { createResumeHtmlPdfRenderer, ResumeRenderError, type ResumeHtmlPdfRenderer } from "./resume-pdf-render.js";
 import {
   defaultSourcePythonRuntime,
@@ -1883,6 +1883,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         return { ok: false, error: "job_not_found" };
       }
       const response = structuredClone(detail);
+      response.interviewPrep = loadLatestAcceptedInterviewPrep(db, "local", response.job.jobKey, loadInterviewPrepReadModel);
       if (response.interviewPrep) response.interviewPrep.staleReasons = interviewPrepStaleReasons(
         db, "local", response.job.jobKey, response.interviewPrep.generationContext ?? null, currentCatalogOrNull(), appDir,
       );

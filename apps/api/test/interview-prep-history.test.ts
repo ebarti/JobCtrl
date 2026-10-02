@@ -61,6 +61,36 @@ describe("canonical interview prep history and dispatch", () => {
     await app.close();
   });
 
+  it("keeps the canonical latest accepted prep visible despite null or stale projections and paginated failed refreshes", async () => {
+    const context = syntheticInterviewGenerationContext(JOB_ID);
+    seed(1, "accepted", null); seed(2, "accepted", context);
+    for (let generation = 3; generation <= 22; generation += 1) seed(generation, "failed", context);
+    seed(100, "accepted", null, "other"); seed(200, "failed", null, "local", OTHER_JOB_ID);
+    const app = buildApp(options());
+    const url = `/v1/jobs/${JOB_ID}`;
+    const initial = await app.inject({ method: "GET", url });
+    expect(initial.json().interviewPrep.generation).toBe(2);
+    const page = await app.inject({ method: "GET", url: `${url}/interview-prep/history?pageSize=20` });
+    expect(page.json().generations).toHaveLength(20);
+    expect(page.json().generations.every((prep: { status: string }) => prep.status === "failed")).toBe(true);
+    db.prepare("UPDATE job_detail_projections SET interview_prep_json=NULL WHERE tenant_id='local' AND job_id=?").run(JOB_ID);
+    const missing = await app.inject({ method: "GET", url });
+    expect(missing.statusCode, missing.body).toBe(200);
+    expect(missing.json().interviewPrep).toMatchObject({ generation: 2, status: "accepted", generationContext: context });
+    expect(db.prepare("SELECT interview_prep_json FROM job_detail_projections WHERE tenant_id='local' AND job_id=?").get(JOB_ID)).toEqual({ interview_prep_json: null });
+    const legacy = (await app.inject({ method: "GET", url: `${url}/interview-prep/history?generation=1` })).json().generations[0];
+    db.prepare("UPDATE job_detail_projections SET interview_prep_json=? WHERE tenant_id='local' AND job_id=?").run(JSON.stringify(legacy), JOB_ID);
+    db.prepare("UPDATE candidate_profiles SET version=2 WHERE tenant_id='local' AND profile_id='default'").run();
+    const stale = await app.inject({ method: "GET", url });
+    expect(stale.json().interviewPrep).toMatchObject({ generation: 2, status: "accepted", generationContext: context, staleReasons: ["profile_changed"] });
+    const failed = page.json().generations[0];
+    db.prepare("UPDATE job_detail_projections SET interview_prep_json=? WHERE tenant_id='local' AND job_id=?").run(JSON.stringify(failed), JOB_ID);
+    expect((await app.inject({ method: "GET", url })).json().interviewPrep.generation).toBe(2);
+    expect((await app.inject({ method: "GET", url: `/v1/jobs/${OTHER_JOB_ID}` })).json().interviewPrep).toBeNull();
+    expect(JSON.parse((db.prepare("SELECT generation_context_json FROM job_interview_prep WHERE tenant_id='local' AND job_id=? AND generation=2").get(JOB_ID) as { generation_context_json: string }).generation_context_json)).toEqual(context);
+    await app.close();
+  });
+
   it("compares canonical profile, full current enrichment and catalog while preserving pinned snapshots", async () => {
     const context = syntheticInterviewGenerationContext(JOB_ID);
     seed(1, "accepted", context);
