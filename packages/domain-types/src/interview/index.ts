@@ -42,7 +42,7 @@ export interface InterviewPrepItem {
   groundingAudit: string[];
   warnings: string[];
   position: number;
-  questionMetadata?: InterviewQuestionMetadata | null;
+  questionMetadata?: InterviewQuestionMetadata | null | undefined;
 }
 
 export interface InterviewPrep {
@@ -53,6 +53,6 @@ export interface InterviewPrep {
   model: string | null;
   gateAudit: InterviewPrepGateAudit;
   items: InterviewPrepItem[];
-  generationContext?: InterviewGenerationContext | null;
-  staleReasons?: InterviewStaleReason[];
+  generationContext?: InterviewGenerationContext | null | undefined;
+  staleReasons?: InterviewStaleReason[] | undefined;
 }
