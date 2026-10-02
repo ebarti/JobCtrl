@@ -117,7 +117,9 @@ worker, or provider. It is authored guidance, not a projection over personal
 facts and not a second evidence store.
 
 Job detail's `interviewPrep` remains the latest accepted canonical generation,
-including while a replacement is pending or failed. Python and TypeScript
+including while a replacement is pending or failed. The detail handler reads
+that canonical row independently of projection lag and the history page, even
+when many later attempts failed. Python and TypeScript
 project the same nullable `generationContext` and per-item `questionMetadata`.
 Retained card snapshots, evidence excerpts, and input bindings describe the
 original generation; reads must not replace them with current profile prose.
@@ -133,7 +135,10 @@ or missing fit report cannot authorize personal factual evidence.
 Independent per-question note reads use canonical tenant/job/question revisions.
 Latest reads and append-only note history stay separate from prep-item lifecycle.
 Expected-revision saves preserve newer edits on conflict; generated metadata
-cannot confer passed-audit status on a user edit. Notes and relevant source
+cannot confer passed-audit status on a user edit. If an existing origin was
+deleted, an ordinary edit without origin claims detaches the new revision to
+independent provenance while retaining the old revision's original binding.
+It does not bind the note to a newer prep generation. Notes and relevant source
 excerpts are private authorized detail data. They never enter broad lists,
 curated audit timelines, SSE frames, or telemetry.
 

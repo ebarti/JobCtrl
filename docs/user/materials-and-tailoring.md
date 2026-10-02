@@ -235,8 +235,11 @@ a newer note. Failed saves keep your draft available for correction and retry.
 Generating replacement prep does not delete saved notes.
 
 A note's generation origin refers to that question's retained preparation;
-JobCtrl derives the matching card and input bindings. A question outside the
-saved generation starts an independent note with no generation-context claim.
+JobCtrl derives the matching card and input bindings. New notes for questions
+outside the saved generation are independent, with no generation-context
+claim. Editing an existing note keeps its origin instead of attaching it to
+newer prep. If that generation was deleted, a normal edit becomes independent;
+the earlier note revision keeps its original provenance.
 
 Question choices and unsaved notes survive page navigation within the current
 app session. Save a note to retain it across a browser reload; private draft

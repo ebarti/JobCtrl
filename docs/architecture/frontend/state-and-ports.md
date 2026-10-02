@@ -109,7 +109,9 @@ keeping edits made after submission dirty. A `409` includes `currentNote` throug
 `JobCtrlApiError.responseBody`; displaying it does not overwrite the draft or
 retry on a newer revision automatically. Concurrent mutation rollback must not
 restore an older whole-query snapshot over a newer saved note. Prep generation
-is asynchronous: terminal events reconcile history/current prep, while the
+does not rebind an existing note: ordinary edits omit origin claims, and new
+bound notes use their retained selected-card origin or server-derived bindings.
+Generation is asynchronous: terminal events reconcile history/current prep, while the
 last accepted result stays visible through pending or failed replacement.
 
 ### 5.4 Stale Time and Garbage Collection

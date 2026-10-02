@@ -229,6 +229,10 @@ generation context. Those bindings explain the draft's origin without promoting 
 Profile. Generation and note saving change no profile, fit, Discovery, approved
 resume, or Apply state.
 
+Ordinary edits preserve a valid origin. If its generation was deleted, the new
+revision detaches to independent provenance while the archived revision keeps
+its original binding; a newer prep never becomes the note's implicit origin.
+
 Prep uses exact-schema v12; [Storage](storage.md) owns the stopped candidate
 migration, admission, preservation, and rollback contract. Runtime startup does
 not silently mutate a real database. Notes follow the job graph's tenant and
