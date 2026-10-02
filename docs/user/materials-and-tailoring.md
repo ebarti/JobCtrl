@@ -202,9 +202,17 @@ new recollections cannot be selected as accepted facts.
 Evidence selection precedes prose. Historical answers use relevant accepted
 profile evidence; transferable experience keeps its scope limits. Principle,
 situational, narrative, negotiation, and preference answers use their own
-structures. Hypothetical reasoning stays hypothetical, and personal factual
-assertions still need support. Missing experience or details become focused
-questions and marked gaps rather than invented metrics, tools, or authority.
+structures. An open prompt such as “Tell me about a time you handled conflict”
+invites recollection; it does not establish that an event occurred.
+Hypothetical reasoning, prospective first-time-manager guidance, and advertised
+job responsibilities can guide preparation without implying past experience.
+
+Specific claims or presuppositions about your history, including factual
+headings, need support from that question's selected accepted evidence, even
+inside future or conditional wording. Another question's evidence, source
+examples, and job responsibilities cannot supply that support. Choosing no
+evidence leaves focused questions and marked gaps without filling in personal
+history, metrics, tools, or authority.
 Current approved materials provide context only when their registered artifact
 bindings are valid; an unrelated or stale fit report cannot prove a personal
 claim.

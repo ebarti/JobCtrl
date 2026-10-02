@@ -186,12 +186,21 @@ recollections cannot enter this accepted-evidence path.
 `question_outline` items retain their
 question/card/rubric bindings, answer format, selection rationale, evidence
 links with direct/transferable scope, structured outline, marked gaps, probes,
-and guidance references. Historical claims must be grounded. Principle and
-hypothetical reasoning may lack historical evidence, but personal factual
-assertions in those formats still pass the truthfulness gates. Missing evidence
-becomes a focused question; source/job text remains data rather than an
-instruction that can add facts. B11/TS09 preserve decision criteria, limits,
-and alternatives; C07 never infers/discloses a private salary minimum.
+and guidance references. Personal assertions and specific past presuppositions,
+including factual headings and assertions embedded in future or conditional
+prose, require that question's selected canonical evidence. A model-supplied
+factual-support label or an unrelated supported body cannot substantiate a
+heading claim. Evidence from another question, authored examples, and advertised
+job responsibilities cannot become personal evidence.
+
+Generic behavioral invitations and open questions request recollection or
+clarification without establishing an event as fact. Genuinely hypothetical or
+prospective guidance, including first-time-manager scenarios, may lack
+historical evidence. An explicit empty evidence selection stays empty and
+produces focused gaps or prospective guidance. Source/job text remains data
+rather than an instruction that can add facts. B11/TS09 preserve decision
+criteria, limits, and alternatives; C07 never infers/discloses a private salary
+minimum.
 
 `InterviewPrepWorkflow` retains the existing model port/lane, spend preflight,
 heartbeats, retry identity, and completed-run reuse. Its generation gate is a
