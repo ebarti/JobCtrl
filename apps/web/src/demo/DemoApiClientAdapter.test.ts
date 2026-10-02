@@ -1351,7 +1351,7 @@ describe("interview demo contract", () => {
     expect(saved.note).toMatchObject({ sourceGeneration: prep.generation, bindings: { catalogBinding: prep.generationContext!.catalogBinding, contextDigest: prep.generationContext!.contextDigest } });
     await repository.mutate((draft) => { draft.state.readModel.jobs.details[jobId]!.interviewPrep = null; });
     const orphan = await adapter.saveInterviewNote(jobId, { questionId: "B11", expectedRevision: 1, noteText: "Retained independent edit" });
-    expect(orphan.note).toMatchObject({ sourceGeneration: null, bindings: null, revision: 2 });
+    expect(orphan.note).toMatchObject({ sourceGeneration: null, bindings: { contextDigest: null }, revision: 2 });
     const history = await adapter.interviewNotes(jobId, { questionId: "B11", history: true });
     expect(history.notes.find((note) => note.revision === 1)?.sourceGeneration).toBe(prep.generation);
   });
