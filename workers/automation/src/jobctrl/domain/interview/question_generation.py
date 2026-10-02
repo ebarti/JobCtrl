@@ -12,6 +12,7 @@ from jobctrl.domain.interview.preparation import MAX_PROMPT_CONTEXT_CHARS, ratio
 from jobctrl.domain.interview.value_objects import InterviewPrepGateAudit, InterviewPrepItem
 from jobctrl.domain.materials.claim_grounding import ground_claim_mappings
 from jobctrl.domain.materials.fabrication_detector import (
+    FabricationFinding,
     build_evidence_corpus,
     build_skill_vocabulary,
     employer_name_set,
@@ -31,9 +32,24 @@ _HISTORICAL_ASSERTION = re.compile(
 )
 _PERSONAL_SUBJECT = re.compile(r"(?i)\b(?:i|we|you|the candidate)\b(?!['’]s\b)(?:['’](?:ve|m|d|re))?")
 _INTENDED_ACTION = re.compile(r"(?i)^\s+(?:would|will|could|might|should|intend\s+to|plan\s+to)\b")
-_INTERROGATIVE = re.compile(r"(?i)^\s*(?:what|how|which|when|where|why|who|would|could|might|should|will|can|did|do|does|is|are|was|were|have|has)\b")
 _FUTURE_QUESTION = re.compile(r"(?i)\b(?:would|could|might|should|will)\s+(?:you|we|i|the candidate)\b")
-_QUESTION_AUXILIARY = re.compile(r"(?i)\b(?:would|could|might|should|will|can|did|do|does|have|has)\s*$")
+_QUESTION_AUXILIARY = re.compile(r"(?i)\b(?:would|could|might|should|will|can|did|do|does|have|has|was|were|is|are)\s*$")
+_QUESTION_START = re.compile(r"(?i)(?:^|[,;:—])\s*(?:what|how|which|when|where|why|who|would|could|might|should|will|can|did|do|does|is|are|was|were|have|has)\b")
+_EMBEDDED_REQUEST = re.compile(r"(?i)\b(?:how|what|whether|if)\s*$")
+_PURPOSE = re.compile(r"(?i)\bso(?:\s+that)?\s*$")
+_PERSONAL_OBJECT_PREFIX = re.compile(r"(?i)\b(?:from|with|for|to|by|about|without)\s*$")
+_PERSONAL_OBJECT_REST = re.compile(r"(?i)^\s*(?:$|[,.!?;:]|rather\b|instead\b|as\b|to\b)")
+_REQUESTED_INPUT = re.compile(r"(?i)^\s+(?:specifics|input|details)\b")
+_INTENDED_POSSESSION = re.compile(
+    r"(?i)^\s+(?:(?:hypothetical|future|potential)\b|"
+    r"(?:preferred|proposed|intended)\s+(?:option|approach|choice|recommendation)\b"
+    r"(?:\s+(?:better|appropriate|suitable))?\s*[?.!,;:]|"
+    r"(?:(?:technical[- ]involvement|management|decision[- ]making)\s+)?"
+    r"(?:approach|preference|recommendation)\s*[?.!,;:])"
+)
+_ROLE_FRAMING = re.compile(r"(?i)\b(?:principle|framing|prospective|hypothetical|advertised|target)\b")
+_REFLECTIVE_STATE = re.compile(r"(?i)^\s+(?:are|were|have been|had been)\s+(?:rationalizing|rationalising|biased|overconfident|wrong|mistaken|uncertain)\b")
+_REFLECTION = re.compile(r"(?i)\b(?:know|detect|notice|recognize|recognise|tell)\s*$")
 _CONTRACTED_BASE_ACTION = re.compile(
     r"(?i)^\s+(?:(?:need|proceed|exceed|succeed|feed|breed|speed)\b|"
     r"(?!(?:\w+ed|\w*(?:been|built|done|seen|made|taken|gone|grown|known|written|given|shown|thought|bought|taught|brought|caught|driven|chosen|forgotten|broken|spoken|eaten|fallen|held|kept|felt|slept|sent|spent|stood|understood|lost|found|heard|met|won|led|had|begun|paid|sold|told|sought|fought|sung|swum|flown|ridden|hidden|risen|worn|torn|born|beaten|bitten|drawn|frozen|stolen|thrown|woken))\b)[a-z]+\b)"
@@ -42,6 +58,7 @@ _PERSONAL_OWNER = r"(?:my|our|your|(?:the\s+)?candidate['’]s)"
 _PERSONAL_POSSESSION = re.compile(rf"(?i)\b{_PERSONAL_OWNER}\b")
 _EXPLICIT_SCENARIO = re.compile(r"(?i)^\s*(?:hypothetically\b|in a hypothetical\b|suppose\b|imagine\b|if\b)")
 _CLAUSE_BOUNDARIES = re.compile(r"(?<!\d)\.|\.(?!\d)|[;\n]|\b(?:and|but|because|although|after|since|where|which)\b", re.IGNORECASE)
+_SENTENCE_BOUNDARIES = re.compile(r"(?<!\d)\.|\.(?!\d)|[;\n]")
 _PERSONAL_PAST = re.compile(rf"(?i)\b{_PERSONAL_OWNER}\s+(?:past|previous|prior|experience|track record|history|achievements)\b")
 _AUTHORITY = re.compile(r"(?i)\b(?:managed|hired|fired|direct reports|budget owner|executive|director|manager)\b")
 _CANDIDATE_COMPENSATION = re.compile(r"(?i)(?:my\s+(?:minimum|salary|target)|i(?:['’]d|\s+would)?\s+(?:need|expect|want|require|anchor|offer)|minimum\s+(?:salary|compensation)|(?:candidate|expected)\s+(?:salary|compensation)|salary\s+expectation)[^\n]{0,100}(?:\d|[$€£])")
@@ -93,6 +110,11 @@ Do not invent facts, tools, metrics, authority, management scope, options consid
 A factual outline section must use accepted_profile_fact, cite its preselected evidence_ids and stay within those exact excerpts.
 Keep factual statements as exact source excerpts; place intended framing and follow-up questions in separate nonfactual sections.
 Personal intentions must be visibly conditional (for example "I would..."); a hypothetical label never makes an actual personal claim safe.
+Evidence is question-scoped: use only THAT question's selected_evidence. Never borrow facts from another question or the shared profile context.
+If a question has no selected_evidence, do not describe the candidate's background, accomplishments, tools or prior authority, even as transferable.
+Do not assert absence of experience or authority either: first_time_manager is a framing choice, not proof of the candidate's history.
+For empty evidence, write prospective principles/intentions and focused questions about missing facts; do not append a personal biography disclaimer.
+Keep headings as neutral topics. Ask open scope questions without supplying invented past metrics, employers, tools or authority as premises.
 Principle: criteria, realistic alternatives, tradeoffs, limits and conditions that would change the decision.
 Situational: visibly hypothetical intended actions, uncertainty and decision points; do not assert they already happened.
 Historical: source-supported situation, actual personal contribution/scope and outcome; missing facts are focused questions.
@@ -203,17 +225,19 @@ def run_question_truthfulness_gates(
             selected_profile = {"resume": {"experience_entries": [{"id": "selected", "bullets": sources}]}}
             # Inspect the prose, never trust the model's support label. Explicit
             # conditional scenarios carry intended actions, not claimed history.
-            inspected_text = " ".join(_assertion_text(section[key]) for key in ("heading", "text")) if nonfactual else text
-            fabricated.extend(finding.describe() for finding in scan_resume_bullets(
-                [(location, inspected_text)], build_evidence_corpus(selected_profile), employers=employer_name_set(dict(profile))))
-            # The resume tool scanner treats every technology mention as an
-            # experience claim. Neutral criteria and alternatives are not claims
-            # of personal tool use; inspect personal assertions in these sections.
-            skill_assertions = " ".join(clause for clause in _CLAUSE_BOUNDARIES.split(inspected_text)
-                                        if _unsupported_personal_assertion(clause)) if nonfactual else inspected_text
-            fabricated.extend(finding.describe() for finding in scan_prose_skill_fabrications(
-                [(location, skill_assertions)], target_skill_terms=target_skill_terms,
-                allowed_skill_terms=build_skill_vocabulary(selected_profile), corpus=build_evidence_corpus(selected_profile)))
+            for field in ("heading", "text"):
+                inspected_text = _assertion_text(section[field]) if nonfactual else section[field]
+                token_findings = scan_resume_bullets(
+                    [(f"{location}:{field}", inspected_text)], build_evidence_corpus(selected_profile),
+                    employers=employer_name_set(dict(profile)))
+                fabricated.extend(finding.describe() for finding in _personal_title_findings(
+                    token_findings, section[field], allow_role_framing=nonfactual))
+                # Neutral criteria and alternatives do not claim personal tool use.
+                skill_assertions = " ".join(clause for clause in _CLAUSE_BOUNDARIES.split(inspected_text)
+                                            if _unsupported_personal_assertion(clause)) if nonfactual else inspected_text
+                fabricated.extend(finding.describe() for finding in scan_prose_skill_fabrications(
+                    [(f"{location}:{field}", skill_assertions)], target_skill_terms=target_skill_terms,
+                    allowed_skill_terms=build_skill_vocabulary(selected_profile), corpus=build_evidence_corpus(selected_profile)))
             if nonfactual:
                 continue
             claim_texts = [section["text"]]
@@ -235,9 +259,11 @@ def run_question_truthfulness_gates(
             if _unsupported_personal_assertion(text, allow_question=True):
                 failures.append(f"{item.item_id} clarification/probe asserts personal history without accepted evidence")
             inspected_text = _assertion_text(text)
-            fabricated.extend(finding.describe() for finding in scan_resume_bullets(
+            token_findings = scan_resume_bullets(
                 [(f"{item.item_id}:clarification", inspected_text)], build_evidence_corpus({"resume": {"experience_entries": [
-                    {"id": "selected", "bullets": [link["excerpt"] for link in links.values()]}]}})))
+                    {"id": "selected", "bullets": [link["excerpt"] for link in links.values()]}]}}))
+            fabricated.extend(finding.describe() for finding in _personal_title_findings(
+                token_findings, text, allow_role_framing=True))
         if metadata.get("questionId") == "C07":
             negotiation = item.generated_text.lower()
             if "range" not in negotiation or not re.search(r"\b(?:employer|budgeted)\b", negotiation):
@@ -255,7 +281,7 @@ def run_question_truthfulness_gates(
 
 
 def _future_question(text: str) -> bool:
-    return bool(text.strip().endswith("?") and _INTERROGATIVE.match(text) and _FUTURE_QUESTION.search(text))
+    return bool(text.strip().endswith("?") and _QUESTION_START.search(text) and _FUTURE_QUESTION.search(text))
 
 
 def _intended_action(clause: str, subject: re.Match[str]) -> bool:
@@ -267,29 +293,51 @@ def _intended_action(clause: str, subject: re.Match[str]) -> bool:
     return bool(subject.group().lower().endswith(("'d", "’d")) and _CONTRACTED_BASE_ACTION.match(rest))
 
 
+def _intended_purpose(text: str, clause_start: int, clause: str, subject: re.Match[str]) -> bool:
+    if not (_PURPOSE.search(clause[:subject.start()]) and re.match(r"(?i)^\s+can\b", clause[subject.end():])):
+        return False
+    # Coordination can separate the conditional action from its purpose. Keep
+    # that scope within the same sentence; a standalone ability is still a fact.
+    preceding = _SENTENCE_BOUNDARIES.split(text[:clause_start + subject.start()])[-1]
+    return any(_intended_action(preceding, actor) for actor in _PERSONAL_SUBJECT.finditer(preceding))
+
+
 def _unsupported_personal_assertion(text: str, *, allow_question: bool = False) -> bool:
     """Personal assertions need facts regardless of verb or model support label."""
-    question = _future_question(text) or bool(allow_question and text.strip().endswith("?") and _INTERROGATIVE.match(text))
+    question = _future_question(text) or bool(allow_question and text.strip().endswith("?") and _QUESTION_START.search(text))
+    cursor = 0
     for clause in _CLAUSE_BOUNDARIES.split(text):
+        clause_start = text.find(clause, cursor)
+        cursor = clause_start + len(clause)
         subjects = list(_PERSONAL_SUBJECT.finditer(clause))
-        requested = bool(question and _INTERROGATIVE.match(clause))
+        requested = bool(question and _QUESTION_START.search(clause))
         if _PERSONAL_PAST.search(clause):
             return True
         # A future question can carry an asserted personal past/current scope.
-        # Only explicitly hypothetical possessions belong to its future frame.
-        if question and any(not re.match(r"(?i)\s+(?:hypothetical|future|potential)\b", clause[possession.end():])
+        # Explicit scenarios and intended choices are not personal history.
+        if _future_question(text) and any(not _INTENDED_POSSESSION.match(clause[possession.end():])
                             for possession in _PERSONAL_POSSESSION.finditer(clause)):
             return True
         intentions = []
         for subject in subjects:
+            prefix, rest = clause[:subject.start()], clause[subject.end():]
+            if _PERSONAL_OBJECT_PREFIX.search(prefix) and _PERSONAL_OBJECT_REST.match(rest):
+                continue
             conditional = _intended_action(clause, subject)
-            asked = bool(question and _QUESTION_AUXILIARY.search(clause[:subject.start()]))
+            conditional_purpose = _intended_purpose(text, clause_start, clause, subject)
+            asked = bool(question and (_QUESTION_AUXILIARY.search(prefix)
+                         or (not _future_question(text) and _EMBEDDED_REQUEST.search(prefix))))
+            reflection = bool(_future_question(text) and _REFLECTION.search(prefix) and _REFLECTIVE_STATE.match(rest))
             scenario_subject = re.fullmatch(r"(?i)\s*(?:if|suppose|imagine)\s*", clause[:subject.start()])
-            if not conditional and not asked and not scenario_subject:
+            if not conditional and not conditional_purpose and not asked and not reflection and not scenario_subject:
                 return True
-            intentions.append(conditional or asked)
-        if _PERSONAL_POSSESSION.search(clause) and not any(intentions) and not requested:
-            return True
+            intentions.append(conditional or conditional_purpose or asked or reflection)
+        for possession in _PERSONAL_POSSESSION.finditer(clause):
+            input_request = bool(_PERSONAL_OBJECT_PREFIX.search(clause[:possession.start()])
+                                 and _REQUESTED_INPUT.match(clause[possession.end():]))
+            intended_choice = bool(question and _INTENDED_POSSESSION.match(clause[possession.end():]))
+            if not any(intentions) and not requested and not input_request and not intended_choice:
+                return True
         if not subjects and _HISTORICAL_ASSERTION.search(clause) and not _EXPLICIT_SCENARIO.match(clause):
             return True
     return False
@@ -300,10 +348,14 @@ def _assertion_text(text: str) -> str:
     future_question = _future_question(text)
     unsupported = _unsupported_personal_assertion(text, allow_question=True)
     assertions = []
+    cursor = 0
     for clause in _CLAUSE_BOUNDARIES.split(text):
+        clause_start = text.find(clause, cursor)
+        cursor = clause_start + len(clause)
         subjects = list(_PERSONAL_SUBJECT.finditer(clause))
         conditional = subjects and all(
-            _intended_action(clause, subject) or (future_question and _QUESTION_AUXILIARY.search(clause[:subject.start()]))
+            _intended_action(clause, subject) or _intended_purpose(text, clause_start, clause, subject)
+            or (future_question and _QUESTION_AUXILIARY.search(clause[:subject.start()]))
             for subject in subjects)
         # Strip conditional clauses only after checking the entire text for
         # factual personal premises; interrogative punctuation grants no waiver.
@@ -311,3 +363,12 @@ def _assertion_text(text: str) -> str:
             continue
         assertions.append(clause)
     return " ".join(assertions)
+
+
+def _personal_title_findings(
+    findings: Sequence[FabricationFinding], text: str, *, allow_role_framing: bool,
+) -> list[FabricationFinding]:
+    """A neutral role topic/question does not claim the candidate held its title."""
+    neutral_role = (allow_role_framing and _ROLE_FRAMING.search(text)
+                    and not _unsupported_personal_assertion(text, allow_question=True))
+    return [finding for finding in findings if not (neutral_role and finding.kind == "title")]
