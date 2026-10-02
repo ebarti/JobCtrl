@@ -30,7 +30,16 @@ def test_wheel_sdist_and_source_absent_install_have_identical_raw_catalog(tmp_pa
     installed = tmp_path / "worker/site-packages"
     uv = shutil.which("uv")
     assert uv is not None
-    subprocess.run([uv, "pip", "install", "--no-deps", "--target", str(installed), str(wheel)], check=True, capture_output=True, text=True, timeout=60)
+    isolated = tmp_path / "isolated-python"
+    environment = {key: value for key, value in os.environ.items() if key not in {"PYTHONPATH", "UV_EXCLUDE_NEWER"}}
+    subprocess.run([uv, "venv", "--python", sys.executable, str(isolated)], env=environment, check=True, capture_output=True, text=True, timeout=60)
+    executable = isolated / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    requirements = tmp_path / "production-requirements.txt"
+    subprocess.run([uv, "--project", str(project), "export", "--locked", "--no-default-groups", "--no-dev", "--no-emit-project", "--format", "requirements-txt", "--output-file", str(requirements)], env=environment, check=True, capture_output=True, text=True, timeout=60)
+    # The real installed worker includes these already-declared, locked runtime
+    # dependencies. No editable source install or provider pack is involved.
+    subprocess.run([uv, "pip", "sync", "--python", str(executable), str(requirements)], env=environment, check=True, capture_output=True, text=True, timeout=120)
+    subprocess.run([uv, "pip", "install", "--no-deps", "--target", str(installed), str(wheel)], env=environment, check=True, capture_output=True, text=True, timeout=60)
     sandbox = tmp_path / "source-absent"
     sandbox.mkdir()
     script = """
@@ -42,11 +51,12 @@ from jobctrl.domain.interview.catalog import catalog_raw_digest, load_interview_
 catalog = load_interview_catalog()
 assert Path(jobctrl.__file__).is_relative_to(Path(sys.argv[1]))
 assert not Path('docs').exists()
+assert not any('JobHunter' in entry or '/plugins/' in entry for entry in sys.path)
 print(json.dumps({'rawDigest':catalog_raw_digest(),'catalogDigest':catalog['catalogDigest'],'questionCount':len(catalog['questions']),'loadedFromWheel':True}))
 """
-    result = subprocess.run([sys.executable, "-I", "-c", script, str(installed)], cwd=sandbox, env={key: value for key, value in os.environ.items() if key != "PYTHONPATH"}, check=True, capture_output=True, text=True, timeout=30)
+    result = subprocess.run([str(executable), "-I", "-c", script, str(installed)], cwd=sandbox, env=environment, check=True, capture_output=True, text=True, timeout=30)
     observed = json.loads(result.stdout)
     assert observed == {"rawDigest": expected, "catalogDigest": json.loads(raw)["catalogDigest"], "questionCount": 121, "loadedFromWheel": True}
     (installed / "jobctrl/assets/interview/catalog.v1.json").unlink()
-    missing = subprocess.run([sys.executable, "-I", "-c", script, str(installed)], cwd=sandbox, capture_output=True, text=True, timeout=30)
+    missing = subprocess.run([str(executable), "-I", "-c", script, str(installed)], cwd=sandbox, env=environment, capture_output=True, text=True, timeout=30)
     assert missing.returncode != 0 and "FileNotFoundError" in missing.stderr

@@ -66,6 +66,17 @@ IDs. `validate_interview_selection()` preserves order and rejects empty,
 unknown, retired, duplicate, over-budget or stale-bound selections before model
 use. A preparation request selects at most 16 questions.
 
+The request can additionally supply `evidenceSelections` per question, fenced
+by the required positive `evidenceProfileVersion`. Each entry preserves up to
+eight canonical accepted-fact IDs in the user's order. An explicit empty entry
+means no personal evidence was selected and produces gaps; only an omitted
+entry permits deterministic evidence selection. Question snapshots retain
+`evidenceSelectionMode` and `selectedEvidenceIds` separately from question
+selection. The worker checks current tenant/profile ownership, accepted-fact
+membership and the profile version before provider spend. Notes and new
+recollections cannot satisfy accepted-fact membership. A changed profile returns
+`evidence_profile_changed`; invalid choices return `invalid_evidence_selection`.
+
 The wheel and source distribution include the resource explicitly. The installed
 TypeScript API must load the same resource at
 `JOBCTRL_PAYLOAD_DIR/worker/site-packages/jobctrl/assets/interview/catalog.v1.json`.
