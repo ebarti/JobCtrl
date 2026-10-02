@@ -19,14 +19,18 @@ export function useInterviewEvidenceChoices(jobId: string) {
   for (const entry of entries) if (entry.evidenceId) occurrences.set(entry.evidenceId, (occurrences.get(entry.evidenceId) ?? 0) + 1);
   const parsedProfile = ProfileSchema.safeParse(profile.data?.profile);
   const profileIds = new Map<string, number>();
-  if (parsedProfile.success) for (const role of parsedProfile.data.resume.experience_entries) for (const fact of role.achievement_evidence) if (fact.id) profileIds.set(fact.id, (profileIds.get(fact.id) ?? 0) + 1);
-  const choices = entries.filter((entry) => entry.kind === "achievement_evidence" && entry.evidenceId && entry.entryId === entry.evidenceId && occurrences.get(entry.evidenceId) === 1 && (profileIds.get(entry.evidenceId) ?? 0) <= 1 && entry.freshness.userConfirmed && ["supported", "verified"].includes(entry.freshness.evidenceStrength ?? "") && entry.story && [entry.story.scope, entry.story.action, entry.story.outcome].some((text) => text.trim())).map((entry) => ({
+  const sourceExcerpts = new Map<string, string>();
+  if (parsedProfile.success) for (const role of parsedProfile.data.resume.experience_entries) for (const fact of role.achievement_evidence) if (fact.id) {
+    profileIds.set(fact.id, (profileIds.get(fact.id) ?? 0) + 1);
+    sourceExcerpts.set(fact.id, fact.source_text);
+  }
+  const choices = entries.filter((entry) => entry.kind === "achievement_evidence" && entry.evidenceId && entry.evidenceId.length <= 200 && entry.evidenceId.trim().length > 0 && entry.entryId === entry.evidenceId && occurrences.get(entry.evidenceId) === 1 && (profileIds.get(entry.evidenceId) ?? 0) <= 1 && entry.freshness.userConfirmed && ["supported", "verified"].includes(entry.freshness.evidenceStrength ?? "") && (sourceExcerpts.get(entry.evidenceId)?.trim() || (entry.story && [entry.story.scope, entry.story.action, entry.story.outcome].some((text) => text.trim())))).map((entry) => ({
     evidenceId: entry.evidenceId!, title: entry.title,
-    excerpt: [entry.story!.scope, entry.story!.action, entry.story!.outcome, ...entry.story!.metrics].filter(Boolean).join(" · "),
+    excerpt: [sourceExcerpts.get(entry.evidenceId!), entry.story?.scope, entry.story?.action, entry.story?.outcome, ...(entry.story?.metrics ?? [])].filter(Boolean).join(" · "),
     scope: entry.requirementUsages.some((usage) => usage.jobKey === jobId && usage.requirementFitKind === "matched") ? "direct" : "transferable",
     strength: entry.freshness.evidenceStrength,
   }));
-  return { choices, profileVersion: profile.data?.profileVersion ?? null, isPending: profile.isPending || evidence.isPending, error: profile.error ?? evidence.error, refetch: async () => { await Promise.all([profile.refetch(), evidence.refetch()]); } };
+  return { choices, profileVersion: profile.data?.profileVersion ?? null, isPending: profile.isPending || evidence.isPending || profile.isFetching || evidence.isFetching, error: profile.error ?? evidence.error, refetch: async () => { await Promise.all([profile.refetch(), evidence.refetch()]); } };
 }
 
 export function useInterviewCatalogQuery() {

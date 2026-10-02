@@ -94,6 +94,7 @@ export function InterviewContextForm({ jobId, catalog, questionId, context }: {
       {draft.selectedQuestionIds.length ? <section aria-label="Canonical evidence choices" className="grid gap-3">
         <h4>Choose saved profile evidence</h4>
         <p>Saved Profile version {evidence.profileVersion ?? "unavailable"}. Confirmed supported or verified achievements only. Supported means saved personal support, and does not imply external verification. Notes and declared skills cannot be selected.</p>
+        {evidence.isPending ? <p role="status">Refreshing saved Profile evidence…</p> : null}
         {evidence.error ? <p role="alert">Saved evidence could not be loaded. Explicit choices are retained.</p> : null}
         {draft.selectedQuestionIds.map((selectedId) => {
           const selected = draft.evidenceSelections[selectedId];
