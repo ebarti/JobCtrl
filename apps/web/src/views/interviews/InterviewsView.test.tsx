@@ -100,4 +100,16 @@ describe("native interview library", () => {
     expect(screen.getByText(/Generation 1 · superseded/)).toBeInTheDocument();
     expect(screen.getAllByText(/Generation-time inputs and versions/)).not.toHaveLength(0);
   });
+
+  it("shows canonical accepted history when a job projection has not caught up", async () => {
+    const prep = makeQuestionPrep();
+    server.use(
+      http.get("*/v1/jobs/job-1", () => HttpResponse.json(makeJobDetail(undefined, { interviewPrep: null }))),
+      http.get("*/v1/jobs/job-1/interview-prep/history", () => HttpResponse.json({ ok: true, jobId: "job-1", generations: [{ ...sampleInterviewPrep, generation: 3, status: "failed" }, prep], page: 1, pageSize: 20, total: 2 })),
+    );
+    renderInterviews("/interviews?card=B11&job=job-1");
+    await screen.findAllByText("What did you personally own?");
+    expect(screen.queryByText("No interview prep generated.")).not.toBeInTheDocument();
+    expect(screen.getByText(/Generation 3 · failed/)).toBeInTheDocument();
+  });
 });

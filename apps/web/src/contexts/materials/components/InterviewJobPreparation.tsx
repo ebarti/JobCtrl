@@ -20,9 +20,13 @@ export function InterviewJobPreparation({ jobId, catalog, question }: {
   const evidence = useEvidenceMapQuery();
   const [historyPage, setHistoryPage] = useState(1);
   const history = useInterviewPrepHistoryQuery(jobId, historyPage);
+  const recentHistory = useInterviewPrepHistoryQuery(jobId);
   if (!detail.data) return <Empty title={detail.error ? "Job unavailable. Open a canonical job from Jobs to prepare." : "Loading selected job."} />;
   const job = detail.data;
-  const prep = history.data?.generations.find((generation) => generation.generation === job.interviewPrep?.generation) ?? job.interviewPrep;
+  const acceptedHistory = recentHistory.data?.generations.find((generation) => generation.status === "accepted");
+  // The canonical history can advance before the job projection catches up.
+  // Keep the latest accepted preparation independent of the history pager.
+  const prep = acceptedHistory && (!job.interviewPrep || acceptedHistory.generation >= job.interviewPrep.generation) ? acceptedHistory : job.interviewPrep;
   const selectedIsBound = Boolean(question && prep?.generationContext?.selectedQuestionIds.includes(question.id));
   const resolveEvidenceReference = (evidenceId: string) => {
     if (!evidence.data) return evidence.isPending ? undefined : null;
