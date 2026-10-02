@@ -14,7 +14,7 @@ from jobctrl.domain.interview.use_cases import GenerateInterviewPrepUseCase
 from jobctrl.domain.interview.value_objects import InterviewPrep
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 from jobctrl.workflow_specs import build_interview_prep_workflow_spec
-from tests.interview_question_fixtures import card
+from tests.interview_question_fixtures import canonical_evidence, card
 from tests.test_interview_prep_generation import _FakeLlm, _job, _judge_pass, _profile_snapshot, _requirements
 
 
@@ -51,6 +51,7 @@ def _execute(candidate: dict[str, Any], *, ids: list[str], role: str = "unknown"
                    evidence_entries=(), evidence_gaps=(), requirements=_requirements("req-python", "Python service optimization"),
                    selection_input={"selectedQuestionIds": ids, "roleLens": role})
     request.update(extra or {})
+    request["canonical_evidence"] = canonical_evidence(request["profile_snapshot"])
     outcome = use_case.execute(**request)
     return outcome, llm, repository
 
@@ -123,7 +124,7 @@ def test_missing_historical_evidence_is_a_focused_gap_not_invented_experience() 
 
 def test_first_time_manager_retains_transferable_scope() -> None:
     cards, selection = choose_questions(_catalog(), {"selectedQuestionIds": ["B01"], "roleLens": "first_time_manager"}, ())
-    plans = plan_evidence(cards, _profile_snapshot(), selection, ())
+    plans = plan_evidence(cards, _profile_snapshot(), selection, (), canonical_evidence=canonical_evidence(_profile_snapshot()))
     assert plans["B01"][0]["scope"] == "transferable"
 
 
@@ -251,17 +252,17 @@ def test_unaccepted_canonical_evidence_cannot_be_chosen_or_auto_selected(confirm
     profile = _profile_snapshot()
     fact = profile._data["resume"]["experience_entries"][0]["achievement_evidence"][0]
     fact["user_confirmed"], fact["evidence_strength"] = confirmed, strength
-    assert accepted_evidence_sources(profile) == []
+    assert accepted_evidence_sources(canonical_evidence(profile)) == []
     cards, selection = choose_questions(_catalog(), {"selectedQuestionIds": ["B11"], "evidenceProfileVersion": 1,
                                                    "evidenceSelections": [{"questionId": "B11", "evidenceIds": [fact["id"]]}]}, ())
     with pytest.raises(InterviewSelectionError) as caught:
-        plan_evidence(cards, profile, selection, ())
+        plan_evidence(cards, profile, selection, (), canonical_evidence=canonical_evidence(profile))
     assert caught.value.code == "invalid_evidence_selection"
 
 
 def test_explicit_empty_evidence_is_retained_with_gap_and_never_autofilled() -> None:
     candidate = _question_candidate("B01", "Clarify the personal contribution before preparing an example.", support="needs_clarification",
-                                    gaps=[{"prompt": "Which accepted experience do you want to use?", "reason": "You selected no evidence."}])
+                                    gaps=[{"prompt": "Which accepted experience do you want to use?", "reason": "No evidence was selected."}])
     selection = {"selectedQuestionIds": ["B01"], "evidenceProfileVersion": 1,
                  "evidenceSelections": [{"questionId": "B01", "evidenceIds": []}]}
     outcome, llm, _ = _execute(candidate, ids=["B01"], extra={"selection_input": selection})
@@ -283,7 +284,7 @@ def test_explicit_evidence_preserves_order_and_omitted_questions_use_auto_select
     request = {"selectedQuestionIds": ["B01", "B11"], "evidenceProfileVersion": 1,
                "evidenceSelections": [{"questionId": "B01", "evidenceIds": [second["id"], facts[0]["id"]]}]}
     cards, selection = choose_questions(_catalog(), request, ())
-    plans = plan_evidence(cards, profile, selection, ())
+    plans = plan_evidence(cards, profile, selection, (), canonical_evidence=canonical_evidence(profile))
     assert [link["evidenceId"] for link in plans["B01"]] == [second["id"], facts[0]["id"]]
     assert plans["B11"]
     candidate = {"items": [_question_candidate("B01", "Reduced API latency by 30% using Python.", ids=[facts[0]["id"]], support="accepted_profile_fact")["items"][0],

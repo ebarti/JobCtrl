@@ -29,6 +29,12 @@ _HISTORICAL_ASSERTION = re.compile(
     r"|\b(?:i|we)['’](?:ve|m)\s+(?:managed|hired|led|built|used|a\s+(?:manager|director|executive))\b"
     r"|^\s*(?:built|used|led|owned|managed|hired|implemented|deployed|migrated|reduced|increased|delivered)\b"
 )
+_PERSONAL_SUBJECT = re.compile(r"(?i)\b(?:i|we|you|the candidate)\b(?:['’](?:ve|m|d|re))?")
+_INTENDED_ACTION = re.compile(r"(?i)^\s+(?:would|will|could|might|should|intend\s+to|plan\s+to)\b")
+_PERSONAL_POSSESSION = re.compile(r"(?i)\b(?:my|our)\b")
+_EXPLICIT_SCENARIO = re.compile(r"(?i)^\s*(?:hypothetically\b|in a hypothetical\b|suppose\b|imagine\b|if\b)")
+_CLAUSE_BOUNDARIES = re.compile(r"[.;\n]|\b(?:and|but|because|although|after|since|where|which)\b", re.IGNORECASE)
+_PERSONAL_PAST = re.compile(r"(?i)\b(?:my|our)\s+(?:past|previous|prior|experience|track record|history|achievements)\b")
 _AUTHORITY = re.compile(r"(?i)\b(?:managed|hired|fired|direct reports|budget owner|executive|director|manager)\b")
 _CANDIDATE_COMPENSATION = re.compile(r"(?i)(?:my\s+(?:minimum|salary|target)|i(?:['’]d|\s+would)?\s+(?:need|expect|want|require|anchor|offer)|minimum\s+(?:salary|compensation)|(?:candidate|expected)\s+(?:salary|compensation)|salary\s+expectation)[^\n]{0,100}(?:\d|[$€£])")
 _RANGE_ORDER_REVERSAL = re.compile(
@@ -78,6 +84,7 @@ approved resume references and worked synthetic illustrations do not prove perso
 Do not invent facts, tools, metrics, authority, management scope, options considered, outcomes or employer questions.
 A factual outline section must use accepted_profile_fact, cite its preselected evidence_ids and stay within those exact excerpts.
 Keep factual statements as exact source excerpts; place intended framing and follow-up questions in separate nonfactual sections.
+Personal intentions must be visibly conditional (for example "I would..."); a hypothetical label never makes an actual personal claim safe.
 Principle: criteria, realistic alternatives, tradeoffs, limits and conditions that would change the decision.
 Situational: visibly hypothetical intended actions, uncertainty and decision points; do not assert they already happened.
 Historical: source-supported situation, actual personal contribution/scope and outcome; missing facts are focused questions.
@@ -181,17 +188,26 @@ def run_question_truthfulness_gates(
         for index, section in enumerate(metadata.get("outline", [])):
             text = section["heading"] + ": " + section["text"]
             location = f"{item.item_id}:section:{index}"
-            if section["factualSupport"] != "accepted_profile_fact":
-                if any(_HISTORICAL_ASSERTION.search(section[key]) for key in ("heading", "text")):
-                    failures.append(f"{location} asserts personal history without accepted evidence")
-                continue
             sources = [links[evidence_id]["excerpt"] for evidence_id in section["evidenceIds"]]
+            nonfactual = section["factualSupport"] != "accepted_profile_fact"
+            if nonfactual and any(_unsupported_personal_assertion(section[key]) for key in ("heading", "text")):
+                failures.append(f"{location} asserts personal history without accepted evidence")
             selected_profile = {"resume": {"experience_entries": [{"id": "selected", "bullets": sources}]}}
+            # Inspect the prose, never trust the model's support label. Explicit
+            # conditional scenarios carry intended actions, not claimed history.
+            inspected_text = " ".join(_assertion_text(section[key]) for key in ("heading", "text")) if nonfactual else text
             fabricated.extend(finding.describe() for finding in scan_resume_bullets(
-                [(location, text)], build_evidence_corpus(selected_profile), employers=employer_name_set(dict(profile))))
+                [(location, inspected_text)], build_evidence_corpus(selected_profile), employers=employer_name_set(dict(profile))))
+            # The resume tool scanner treats every technology mention as an
+            # experience claim. Neutral criteria and alternatives are not claims
+            # of personal tool use; inspect personal assertions in these sections.
+            skill_assertions = " ".join(clause for clause in _CLAUSE_BOUNDARIES.split(inspected_text)
+                                        if _unsupported_personal_assertion(clause)) if nonfactual else inspected_text
             fabricated.extend(finding.describe() for finding in scan_prose_skill_fabrications(
-                [(location, text)], target_skill_terms=target_skill_terms,
+                [(location, skill_assertions)], target_skill_terms=target_skill_terms,
                 allowed_skill_terms=build_skill_vocabulary(selected_profile), corpus=build_evidence_corpus(selected_profile)))
+            if nonfactual:
+                continue
             claim_texts = [section["text"]]
             if _HISTORICAL_ASSERTION.search(section["heading"]):
                 claim_texts.append(section["heading"])
@@ -208,8 +224,11 @@ def run_question_truthfulness_gates(
                     failures.append(f"{location} invents personal authority: {authority}")
         for text in [*(gap["prompt"] for gap in metadata.get("gaps", [])),
                      *(gap["reason"] for gap in metadata.get("gaps", [])), *metadata.get("probes", [])]:
-            if _HISTORICAL_ASSERTION.search(text):
+            if _unsupported_personal_assertion(text, allow_question=True):
                 failures.append(f"{item.item_id} clarification/probe asserts personal history without accepted evidence")
+            inspected_text = _assertion_text(text)
+            fabricated.extend(finding.describe() for finding in scan_resume_bullets(
+                [(f"{item.item_id}:clarification", inspected_text)], build_evidence_corpus({})))
         if metadata.get("questionId") == "C07":
             negotiation = item.generated_text.lower()
             if "range" not in negotiation or not re.search(r"\b(?:employer|budgeted)\b", negotiation):
@@ -224,3 +243,35 @@ def run_question_truthfulness_gates(
                 failures.append("C07 discloses an unsupported candidate compensation figure")
     return InterviewPrepGateAudit(status="failed" if failures or fabricated else "passed",
                                   fabrication_findings=tuple(fabricated), grounding_findings=tuple(failures))
+
+
+def _unsupported_personal_assertion(text: str, *, allow_question: bool = False) -> bool:
+    """Personal assertions need facts regardless of verb or model support label."""
+    if allow_question and text.strip().endswith("?"):
+        return False
+    for clause in _CLAUSE_BOUNDARIES.split(text):
+        subjects = list(_PERSONAL_SUBJECT.finditer(clause))
+        if _PERSONAL_PAST.search(clause):
+            return True
+        for subject in subjects:
+            conditional = _INTENDED_ACTION.match(clause[subject.end():])
+            scenario_subject = re.fullmatch(r"(?i)\s*(?:if|suppose|imagine)\s*", clause[:subject.start()])
+            if not conditional and not scenario_subject:
+                return True
+        if _PERSONAL_POSSESSION.search(clause) and not any(_INTENDED_ACTION.match(clause[subject.end():]) for subject in subjects):
+            return True
+        if not subjects and _HISTORICAL_ASSERTION.search(clause) and not _EXPLICIT_SCENARIO.match(clause):
+            return True
+    return False
+
+
+def _assertion_text(text: str) -> str:
+    """Exclude clearly conditional actions while keeping actual asserted facts."""
+    assertions = []
+    for clause in _CLAUSE_BOUNDARIES.split(text):
+        subjects = list(_PERSONAL_SUBJECT.finditer(clause))
+        conditional = subjects and all(_INTENDED_ACTION.match(clause[subject.end():]) for subject in subjects)
+        if (conditional or _EXPLICIT_SCENARIO.match(clause)) and not _unsupported_personal_assertion(clause):
+            continue
+        assertions.append(clause)
+    return " ".join(assertions)

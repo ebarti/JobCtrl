@@ -20,12 +20,11 @@ from jobctrl.domain.interview.catalog import (
 from jobctrl.domain.materials.analysis import compute_snapshot_hash
 from jobctrl.domain.materials.analyze_use_case import build_jd_snapshot
 from jobctrl.domain.profile.snapshot import ProfileSnapshot
-from jobctrl.resume_profile import get_achievement_evidence
+from jobctrl.domain.interview.evidence import InterviewEvidenceSnapshot
 
-PROMPT_VERSION = "interview-questions-v1"
-GATE_VERSION = "interview-question-grounding-v1"
+PROMPT_VERSION = "interview-questions-v2"
+GATE_VERSION = "interview-question-grounding-v2"
 MAX_PROMPT_CONTEXT_CHARS = 110_000
-MAX_EVIDENCE_EXCERPT_CHARS = 4_000
 DEFAULT_QUESTION_COUNT = 5
 _SELECTION_KEYS = frozenset({"selectedQuestionIds", "catalogBinding", "interviewStage", "interviewFormat",
                              "roleLens", "roleResponsibilities", "knownCriteria", "selectionRationale",
@@ -168,9 +167,16 @@ def choose_questions(
 def plan_evidence(
     cards: tuple[InterviewQuestionCard, ...], profile_snapshot: ProfileSnapshot,
     selection: Mapping[str, Any], requirements: Sequence[Mapping[str, Any]],
+    *, canonical_evidence: InterviewEvidenceSnapshot | None = None,
 ) -> dict[str, list[dict[str, str]]]:
     """Select canonical excerpts deterministically; projections are hints, never facts."""
-    sources = accepted_evidence_sources(profile_snapshot)
+    if canonical_evidence is not None and (
+        canonical_evidence.tenant_id != profile_snapshot.tenant_id
+        or canonical_evidence.profile_id != profile_snapshot.profile_id
+        or canonical_evidence.profile_version != profile_snapshot.version
+    ):
+        raise InterviewSelectionError("evidence_profile_changed")
+    sources = accepted_evidence_sources(canonical_evidence)
     overrides = {row["questionId"]: row["evidenceIds"] for row in selection.get("evidenceSelections", ())}
     if "evidenceSelections" in selection and selection["evidenceProfileVersion"] != profile_snapshot.version:
         raise InterviewSelectionError("evidence_profile_changed")
@@ -210,42 +216,14 @@ def plan_evidence(
     return plans
 
 
-def accepted_evidence_sources(profile_snapshot: ProfileSnapshot) -> list[dict[str, Any]]:
+def accepted_evidence_sources(canonical_evidence: InterviewEvidenceSnapshot | None) -> list[dict[str, Any]]:
     """Current canonical accepted facts; IDs are exact saved IDs, without aliases.
 
-    Supported imported evidence is user accepted, not externally verified. Draft,
-    inferred and unconfirmed evidence, and independent notes, cannot ground prose.
+    The canonical input reader supplies raw accepted rows. Profile display
+    reconciliation, legacy bullets and independent notes are never authority.
     """
-    achievements = get_achievement_evidence(profile_snapshot.as_dict())
-    if len(achievements) > 400:
-        raise ValueError("canonical evidence inventory exceeds preparation budget")
-    sources: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for achievement in achievements:
-        if not isinstance(achievement, Mapping):
-            continue
-        evidence_id = achievement.get("id")
-        if not isinstance(evidence_id, str) or not evidence_id.strip():
-            continue
-        if evidence_id in seen:
-            raise InterviewSelectionError("invalid_evidence_selection")
-        seen.add(evidence_id)
-        if (achievement.get("user_confirmed") is not True
-                or achievement.get("evidence_strength") not in {"supported", "verified"}):
-            continue
-        if len(evidence_id) > 200:
-            raise InterviewSelectionError("invalid_evidence_selection")
-        fragments = [str(achievement.get(key) or "").strip() for key in ("source_text", "scope", "action", "outcome")]
-        if not any(fragments):
-            continue
-        fragments += [" ".join(str(item) for item in achievement.get(key) or ()) for key in ("metrics", "tools")]
-        excerpt = " | ".join(part for part in fragments if part)
-        if not excerpt:
-            continue
-        if len(excerpt) > MAX_EVIDENCE_EXCERPT_CHARS:
-            raise ValueError("canonical evidence excerpt exceeds preparation budget")
-        sources.append({"id": evidence_id, "excerpt": excerpt, "tags": achievement.get("tags") or []})
-    return sources
+    return [{"id": source.evidence_id, "excerpt": source.excerpt, "tags": source.tags}
+            for source in canonical_evidence.sources] if canonical_evidence is not None else []
 
 
 def generation_context(

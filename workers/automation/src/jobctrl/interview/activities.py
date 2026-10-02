@@ -15,6 +15,8 @@ from temporalio.exceptions import ApplicationError
 from jobctrl.database import get_connection
 from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.interview import GenerateInterviewPrepUseCase
+from jobctrl.domain.interview.evidence import InterviewEvidenceSnapshot
+from jobctrl.domain.profile.snapshot import ProfileSnapshot
 from jobctrl.domain.interview.catalog import InterviewSelectionError, load_interview_catalog, validate_interview_selection
 from jobctrl.domain.interview.preparation import choose_questions, job_context_snapshot, normalize_selection, plan_evidence
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
@@ -124,7 +126,8 @@ def generate_interview_prep_by_job_id(
     cards, checked_selection = choose_questions(catalog, selection, requirements)
     if profile_snapshot.tenant_id != tenant_id:
         raise ValueError("profile snapshot belongs to another tenant")
-    plan_evidence(cards, profile_snapshot, checked_selection, requirements)
+    canonical_evidence = _load_canonical_evidence(conn, tenant_id, profile_snapshot)
+    plan_evidence(cards, profile_snapshot, checked_selection, requirements, canonical_evidence=canonical_evidence)
     llm = LlmAdapter(default_model=llm_model) if llm_model else get_llm_adapter()
     use_case = GenerateInterviewPrepUseCase(
         repository=repository,
@@ -136,6 +139,7 @@ def generate_interview_prep_by_job_id(
         tenant_id=tenant_id,
         job=job,
         profile_snapshot=profile_snapshot,
+        canonical_evidence=canonical_evidence,
         evidence_entries=_load_evidence_entries(conn, tenant_id, stable_job_id),
         evidence_gaps=_load_evidence_gaps(conn, tenant_id, stable_job_id),
         requirements=requirements,
@@ -153,6 +157,36 @@ def generate_interview_prep_by_job_id(
         item_count=len(outcome.prep.items),
         errors=outcome.errors,
     )
+
+
+def _load_canonical_evidence(
+    conn: sqlite3.Connection, tenant_id: TenantId, profile: ProfileSnapshot,
+) -> InterviewEvidenceSnapshot:
+    """Fence the exact tenant/default-profile canonical rows, never display fallback."""
+    if profile.tenant_id != tenant_id or profile.profile_id != "default":
+        raise InterviewSelectionError("invalid_evidence_selection")
+    conn.execute("SAVEPOINT interview_evidence_read")
+    try:
+        current = conn.execute(
+            "SELECT version FROM candidate_profiles WHERE tenant_id=? AND profile_id='default'",
+            (str(tenant_id),),
+        ).fetchone()
+        if current is None or current["version"] != profile.version:
+            raise InterviewSelectionError("evidence_profile_changed")
+        rows = conn.execute(
+            """SELECT evidence_id,source_text,scope,action,outcome,metrics_json,tools_json,tags_json,
+                      user_confirmed,evidence_strength
+               FROM candidate_profile_achievement_evidence
+               WHERE tenant_id=? AND profile_id='default'
+               ORDER BY entry_id,evidence_index""", (str(tenant_id),),
+        ).fetchall()
+        result = InterviewEvidenceSnapshot.from_canonical_rows(
+            tenant_id=tenant_id, profile_id="default", profile_version=profile.version,
+            rows=[dict(row) for row in rows],
+        )
+    finally:
+        conn.execute("RELEASE SAVEPOINT interview_evidence_read")
+    return result
 
 
 class InterviewPrepEventRecorder:
