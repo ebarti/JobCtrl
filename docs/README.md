@@ -9,8 +9,8 @@ product is unpublished.
 
 ## Public Project Docs
 
-- [`../README.md`](../README.md): product overview, quick start, safety notes,
-  command summary, and top-level documentation map.
+- [`../README.md`](../README.md): short product overview, install quick start,
+  safety summary, and top-level documentation map.
 - [`../ROADMAP.md`](../ROADMAP.md): public roadmap and open-source readiness
   direction.
 - [`../CONTRIBUTING.md`](../CONTRIBUTING.md): contributor workflow, validation,

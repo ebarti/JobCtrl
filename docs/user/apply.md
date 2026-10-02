@@ -86,7 +86,7 @@ under `/settings/**` is stored in
 
 | Setting | Where to edit it | Storage | Default | What it does |
 | --- | --- | --- | --- | --- |
-| `autoApply` | **Discovery → Automation settings** | SQLite `jobctrl.db` | `false` | When `true`, a running worker keeps exactly one continuous Apply workflow active for eligible prepared jobs only while `auto-apply-browser` is explicitly ready. The loop appears in Runs as the standing apply loop. It can run transport-locked rehearsals and exact-approved email sends; browser forms still require manual final submit. Turning it back off cancels that loop. |
+| `autoApply` | **Discovery → Automation settings** | SQLite `jobctrl.db` | `false` | When `true`, a running worker keeps exactly one continuous Apply workflow active for eligible prepared jobs only while `auto-apply-browser` is explicitly ready. The loop appears in Runs as the standing apply loop. It sends exact-approved email applications; browser-form claims stop for manual completion and final submit. Turning it back off cancels that loop. |
 | `applyApprovalRequired` | **Discovery → Automation settings** | SQLite `jobctrl.db` | `true` | When `true`, live claims wait for Apply Review approval and the standing loop parks unapproved jobs. Turning it off removes that claim-time gate, but does not grant browser-submit authority or bypass the owned email sender's exact recipient/attachment approval. |
 | `minFitScore` | **Discovery → Automation settings** | SQLite `jobctrl.db` | `7` | Minimum score for jobs claimed by apply automation, including the standing loop. |
 | `applyConcurrency` | **Settings → General** | `config.json` | `1` | Number of concurrent apply workers used by apply automation. The standing loop re-reads this setting when it polls. |

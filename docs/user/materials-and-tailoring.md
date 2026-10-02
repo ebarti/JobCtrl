@@ -118,8 +118,8 @@ The user-visible surfaces divide the work:
   [Apply](apply.md#materials-and-resume-rendering). Its Plate toolbar can export
   the current document, including unsaved edits, directly to a PDF download.
 - `/preferences` owns tailoring permissions, writing style, resume templates,
-  and template selection. Template payloads hold style/layout only, not
-  candidate or job facts.
+  and the default template; Apply Review can override the template for one job.
+  Template payloads hold style/layout only, not candidate or job facts.
 - `/settings/models` owns the generator/judge execution policy used by newly
   started work. The current fields and fallback rules belong to
   [Configuration](configuration.md), not this page.

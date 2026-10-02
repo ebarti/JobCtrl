@@ -638,8 +638,8 @@ jobctrl runs
 jobctrl runs --failed-only
 ```
 
-These print your pipeline status, show the local daily digest, list all workflow
-runs, and list only failed runs, respectively. The digest is read-only unless
+These print your pipeline status, show the local daily digest, list recent
+apply runs, and list only failed apply runs, respectively. The digest is read-only unless
 you pass `--acknowledge`, which marks the displayed digest as reviewed.
 
 </WorkflowSurfacePanel>
@@ -744,3 +744,42 @@ follow-up reminders are web app workflows. The CLI can check overall status, but
 it does not send messages or replace the review surfaces.
 
 </WorkflowSurfacePanel>
+
+## Command Reference
+
+Run each command as `jobctrl <command>` from any directory. The installed
+launcher handles the lifecycle commands and passes the rest to the Python CLI.
+In a source checkout, run the Python commands with
+`uv --project workers/automation run jobctrl <command>`; the lifecycle commands
+exist only in the installed launcher.
+
+| Lifecycle command | What it does |
+| --- | --- |
+| `start` | Start the local services and open the app (`--no-open`, `--foreground`). |
+| `stop` / `status` / `open` | Stop the runtime, report its state (`--json`, or `--pipeline` for pipeline stats), or open the app. |
+| `logs [component]` | Show the last 200 lines of the `temporal`, `worker`, or `api` log, or of all three when no component is given. |
+| `version` | Print the installed version (`--json`). |
+| `update` / `rollback` / `uninstall` | Install a newer release, return to an earlier one (`--to <build-id>`), or remove JobCtrl. `uninstall --remove-data` also deletes your local data after you type a confirmation phrase. |
+| `backup` | Snapshot `jobctrl.db` and `temporal.db` as a pair (`--output <directory>`); see [Back Up And Restore](data-and-safety.md#back-up-and-restore). |
+
+| Domain command | What it does |
+| --- | --- |
+| `init` | Run the terminal setup wizard for a starter profile, resume, and search configuration. The web app does not need it. |
+| `setup` | Detect provider auth, save the enabled employer-analysis legs, and finish with a `doctor` report. In a source checkout it also syncs pnpm/uv dependencies and Playwright Chromium. |
+| `doctor` | Report setup checks for the database, LLM providers, Temporal, browser, Gmail, and telemetry. Read every row: it exits zero even when a check prints `MISSING`. |
+| `run [stages]` | Start pipeline workflows (default `all`, which maps to `discover`). |
+| `discover` / `enrich` / `score` / `tailor` / `cover` | Start one stage; `score --rescore` re-scores jobs that already have a score. |
+| `job <url>` | Tailor and/or apply one job (`--tailor`, `--apply`, `--dry-run`). |
+| `apply` | Start apply automation (`--dry-run`, `--url`, `--continuous` to keep polling for new jobs). Utility modes: `--mark-applied`, `--mark-failed`, `--reset-failed`, and `--gen` (inspection-only dry-run prompt). |
+| `retry <stage> <url>` | Reset one failed stage for one job (`--reset-attempts`, `--run`). |
+| `action <stage>` | Low-level single-action dispatch with JSON output, for scripts. |
+| `compensation-refresh` | Re-parse posted salaries and refresh market estimates for all jobs or one (`--job-id`, `--observations-json`, `--no-eurotoptech`). |
+| `pipeline-status` / `runs` | Show pipeline stats, or recent apply runs and one run's event timeline (`runs --failed-only`, `--run-id`). |
+| `digest` | Print the local daily digest; it sends no notifications. Only `--acknowledge` marks it reviewed (`--json`, `--min-fit-score`). |
+| `capability list` / `enable` / `disable` | Inspect or change optional browser capabilities, for example `capability enable auto-apply-browser --browser-path <path>`. |
+| `credentials migrate` | Move allowlisted provider secrets from legacy `.env` files into the native credential store. |
+| `gmail-auth` | Connect Gmail for verification codes, outcome lookup, and approved email applications. |
+| `migrate-resume-html` | Convert or refresh approved resume PDFs onto the HTML/CSS renderer. |
+| `backup` | Source checkout only: write a `VACUUM INTO` copy of `jobctrl.db` (`--output`). |
+| `worker` | Run the long-lived Temporal worker. |
+| `rpc` | JSON-RPC server started by the TypeScript API (internal). |
