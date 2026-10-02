@@ -51,12 +51,12 @@ export const InterviewCatalogSchema = z.object({
   guidance: z.object({ overview: Text, sourceLedger: Text, evaluation: Text, coverage: Text, review: Text }).strict(),
 }).strict();
 export const InterviewCatalogQuerySchema = z.object({
-  topic: z.string().trim().min(1).max(80).optional(), roleLens: z.enum(INTERVIEW_ROLE_LENSES).optional(),
-  answerFormat: z.enum(INTERVIEW_ANSWER_FORMATS).optional(), sourceId: z.string().trim().min(1).max(20).optional(),
-  search: z.string().trim().max(200).optional(), limit: z.coerce.number().int().min(1).max(121).default(121),
+  topic: z.string().trim().min(1).max(80).optional(), role: z.enum(INTERVIEW_ROLE_LENSES).optional(),
+  answerFormat: z.enum(INTERVIEW_ANSWER_FORMATS).optional(), source: z.string().trim().min(1).max(20).optional(),
+  search: z.string().trim().max(200).optional(), page: z.coerce.number().int().min(1).max(1000).default(1), pageSize: z.coerce.number().int().min(1).max(121).default(121),
 }).strict();
 export type InterviewCatalogQuery = z.infer<typeof InterviewCatalogQuerySchema>;
-export const InterviewCatalogResponseSchema = z.object({ ok: z.literal(true), catalog: InterviewCatalogSchema }).strict();
+export const InterviewCatalogResponseSchema = z.object({ ok: z.literal(true), catalog: InterviewCatalogSchema, page: z.number().int().min(1), pageSize: z.number().int().min(1), total: z.number().int().min(0) }).strict();
 export type InterviewCatalogResponse = z.infer<typeof InterviewCatalogResponseSchema>;
 export const InterviewQuestionResponseSchema = z.object({ ok: z.literal(true), catalogBinding: InterviewCatalogBindingSchema, question: InterviewQuestionCardSchema }).strict();
 export type InterviewQuestionResponse = z.infer<typeof InterviewQuestionResponseSchema>;
@@ -112,8 +112,16 @@ export const SaveInterviewQuestionNoteRequestSchema = z.object({
   factualSupport: z.enum(["unverified_user_statement", "needs_clarification", "hypothetical"]).optional(),
   sourceGeneration: z.number().int().min(1).nullable().optional(), bindings: InterviewNoteBindingsSchema.nullable().optional(),
 }).strict();
-export const InterviewNotesQuerySchema = z.object({ questionId: Id.optional() }).strict();
-export const InterviewNotesResponseSchema = z.object({ ok: z.literal(true), jobId: Text, notes: z.array(InterviewQuestionNoteSchema) }).strict();
+const QueryBoolean = z.preprocess((value) => value === "true" ? true : value === "false" ? false : value, z.boolean());
+export const InterviewNotesQuerySchema = z.object({ questionId: Id.optional(), history: QueryBoolean.optional(),
+  page: z.coerce.number().int().min(1).max(1000).default(1), pageSize: z.coerce.number().int().min(1).max(100).default(20),
+}).strict().refine((value) => !value.history || Boolean(value.questionId), "note history requires questionId");
+export type InterviewNotesQuery = z.infer<typeof InterviewNotesQuerySchema>;
+export const InterviewPrepHistoryQuerySchema = z.object({ generation: z.coerce.number().int().min(1).optional(),
+  page: z.coerce.number().int().min(1).max(1000).default(1), pageSize: z.coerce.number().int().min(1).max(100).default(20),
+}).strict();
+export type InterviewPrepHistoryQuery = z.infer<typeof InterviewPrepHistoryQuerySchema>;
+export const InterviewNotesResponseSchema = z.object({ ok: z.literal(true), jobId: Text, notes: z.array(InterviewQuestionNoteSchema), page: z.number().int().min(1), pageSize: z.number().int().min(1), total: z.number().int().min(0) }).strict();
 export type InterviewNotesResponse = z.infer<typeof InterviewNotesResponseSchema>;
 export const SaveInterviewQuestionNoteResponseSchema = z.object({ ok: z.literal(true), note: InterviewQuestionNoteSchema }).strict();
 export type SaveInterviewQuestionNoteResponse = z.infer<typeof SaveInterviewQuestionNoteResponseSchema>;
@@ -129,5 +137,5 @@ export const InterviewPrepSchema = z.object({ jobId: Text, generation: z.number(
   items: z.array(InterviewPrepItemSchema), generationContext: InterviewGenerationContextSchema.nullable().optional(),
   staleReasons: z.array(z.enum(INTERVIEW_STALE_REASONS)).optional(),
 }).strict();
-export const InterviewPrepHistoryResponseSchema = z.object({ ok: z.literal(true), jobId: Text, generations: z.array(InterviewPrepSchema) }).strict();
+export const InterviewPrepHistoryResponseSchema = z.object({ ok: z.literal(true), jobId: Text, generations: z.array(InterviewPrepSchema), page: z.number().int().min(1), pageSize: z.number().int().min(1), total: z.number().int().min(0) }).strict();
 export type InterviewPrepHistoryResponse = z.infer<typeof InterviewPrepHistoryResponseSchema>;
