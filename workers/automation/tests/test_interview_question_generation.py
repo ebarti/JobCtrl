@@ -129,8 +129,12 @@ def test_first_time_manager_retains_transferable_scope() -> None:
 
 @pytest.mark.parametrize("text,accepted", [
     ("Ask for the employer's budgeted range, clarify base versus total, and persist if redirected.", True),
+    ("Never volunteer a number before asking the employer's budgeted range; persist if redirected.", True),
     ("My minimum salary is $200000; ask for the employer range.", False),
     ("Volunteer a number before discussing compensation.", False),
+    ("Before asking the employer range, volunteer a salary number; persist afterward.", False),
+    ("Ask the employer range once, then change the topic.", False),
+    ("I'd anchor at $200000, then ask the employer range and persist.", False),
 ])
 def test_c07_range_first_has_no_inferred_private_minimum(text, accepted) -> None:
     profile = _profile_snapshot()
