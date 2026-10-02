@@ -12,12 +12,12 @@ from importlib.resources import files
 from typing import Any, Literal, NotRequired, TypedDict
 
 InterviewAnswerFormat = Literal["historical", "situational", "principle", "negotiation", "narrative", "preference"]
-InterviewRoleLens = Literal["ic", "senior_ic", "staff_principal", "first_time_manager", "engineering_manager", "director", "executive"]
-InterviewStage = Literal["recruiter", "behavioral", "management", "technical", "executive", "mixed"]
+InterviewRoleLens = Literal["ic", "senior_ic", "staff_principal", "first_time_manager", "engineering_manager", "director", "executive", "unknown"]
+InterviewStage = Literal["recruiter", "behavioral", "management", "technical", "executive", "mixed", "unknown"]
 InterviewFormat = Literal["phone", "video", "onsite", "written", "unspecified"]
 INTERVIEW_ANSWER_FORMATS = ("historical", "situational", "principle", "negotiation", "narrative", "preference")
-INTERVIEW_ROLE_LENSES = ("ic", "senior_ic", "staff_principal", "first_time_manager", "engineering_manager", "director", "executive")
-INTERVIEW_STAGES = ("recruiter", "behavioral", "management", "technical", "executive", "mixed")
+INTERVIEW_ROLE_LENSES = ("ic", "senior_ic", "staff_principal", "first_time_manager", "engineering_manager", "director", "executive", "unknown")
+INTERVIEW_STAGES = ("recruiter", "behavioral", "management", "technical", "executive", "mixed", "unknown")
 INTERVIEW_FORMATS = ("phone", "video", "onsite", "written", "unspecified")
 MAX_INTERVIEW_SELECTED_QUESTIONS = 16
 MAX_INTERVIEW_NOTE_TEXT_LENGTH = 20_000
@@ -94,6 +94,57 @@ class InterviewSelectedQuestion(TypedDict):
     snapshot: InterviewQuestionCard
 
 
+class InterviewProfileContext(TypedDict):
+    profileId: str
+    version: int
+    evidence: list[InterviewEvidenceExcerpt]
+
+
+class InterviewJobContext(TypedDict):
+    jobId: str
+    title: str
+    company: str
+    descriptionExcerpt: str
+    snapshotHash: str
+
+
+class InterviewRequirementExcerpt(TypedDict):
+    requirementId: str
+    requirementText: str
+    sourceExcerpt: str
+
+
+class InterviewEmployerSnapshot(TypedDict):
+    roleFraming: str
+    inferredSeniority: str
+    requirements: list[InterviewRequirementExcerpt]
+
+
+class InterviewEmployerContext(TypedDict):
+    generation: int
+    snapshotHash: str
+    snapshot: InterviewEmployerSnapshot
+
+
+class InterviewFitContext(TypedDict):
+    generation: int
+    employerAnalysisGeneration: int
+    profileSnapshotVersion: int
+    status: Literal["current", "stale_excluded"]
+
+
+class InterviewApprovedMaterialRef(TypedDict):
+    materialId: str
+    generation: int
+    sha256: str
+
+
+class InterviewModelContext(TypedDict):
+    model: str
+    promptVersion: str
+    gateVersion: str
+
+
 class InterviewGenerationContext(TypedDict):
     schemaVersion: Literal["1"]
     catalogBinding: InterviewCatalogBinding
@@ -106,11 +157,12 @@ class InterviewGenerationContext(TypedDict):
     roleLens: InterviewRoleLens
     roleResponsibilities: list[str]
     knownCriteria: list[str]
-    profile: dict[str, Any]
-    employerAnalysis: dict[str, Any] | None
-    fitReport: dict[str, Any] | None
-    approvedMaterials: list[dict[str, Any]]
-    model: dict[str, str]
+    profile: InterviewProfileContext
+    jobContext: InterviewJobContext
+    employerAnalysis: InterviewEmployerContext | None
+    fitReport: InterviewFitContext | None
+    approvedMaterials: list[InterviewApprovedMaterialRef]
+    model: InterviewModelContext
 
 
 class InterviewQuestionMetadata(TypedDict):

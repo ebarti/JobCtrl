@@ -84,7 +84,13 @@ export const InterviewGenerationContextSchema = z.object({
   interviewFormat: z.enum(INTERVIEW_FORMATS), roleLens: z.enum(INTERVIEW_ROLE_LENSES),
   roleResponsibilities: z.array(Text), knownCriteria: z.array(Text),
   profile: z.object({ profileId: Text, version: z.number().int().min(1), evidence: z.array(InterviewEvidenceExcerptSchema) }).strict(),
-  employerAnalysis: z.object({ generation: z.number().int().min(1), snapshotHash: Digest }).strict().nullable(),
+  jobContext: z.object({ jobId: Text, title: z.string().max(500), company: z.string().max(500),
+    descriptionExcerpt: z.string().max(12000), snapshotHash: Digest }).strict(),
+  employerAnalysis: z.object({ generation: z.number().int().min(1), snapshotHash: Digest,
+    snapshot: z.object({ roleFraming: z.string().max(4000), inferredSeniority: z.string().max(500),
+      requirements: z.array(z.object({ requirementId: Text, requirementText: z.string().max(3000), sourceExcerpt: z.string().max(3000) }).strict()).max(20),
+    }).strict(),
+  }).strict().nullable(),
   fitReport: z.object({ generation: z.number().int().min(1), employerAnalysisGeneration: z.number().int().min(1),
     profileSnapshotVersion: z.number().int().min(1), status: z.enum(["current", "stale_excluded"]) }).strict().nullable(),
   approvedMaterials: z.array(z.object({ materialId: Text, generation: z.number().int().min(1), sha256: Digest }).strict()),
@@ -121,7 +127,7 @@ export const InterviewPrepHistoryQuerySchema = z.object({ generation: z.coerce.n
   page: z.coerce.number().int().min(1).max(1000).default(1), pageSize: z.coerce.number().int().min(1).max(100).default(20),
 }).strict();
 export type InterviewPrepHistoryQuery = z.infer<typeof InterviewPrepHistoryQuerySchema>;
-export const InterviewNotesResponseSchema = z.object({ ok: z.literal(true), jobId: Text, notes: z.array(InterviewQuestionNoteSchema), page: z.number().int().min(1), pageSize: z.number().int().min(1), total: z.number().int().min(0) }).strict();
+export const InterviewNotesResponseSchema = z.object({ ok: z.literal(true), jobId: Text, notes: z.array(InterviewQuestionNoteSchema).max(100), page: z.number().int().min(1), pageSize: z.number().int().min(1), total: z.number().int().min(0) }).strict();
 export type InterviewNotesResponse = z.infer<typeof InterviewNotesResponseSchema>;
 export const SaveInterviewQuestionNoteResponseSchema = z.object({ ok: z.literal(true), note: InterviewQuestionNoteSchema }).strict();
 export type SaveInterviewQuestionNoteResponse = z.infer<typeof SaveInterviewQuestionNoteResponseSchema>;
@@ -137,5 +143,5 @@ export const InterviewPrepSchema = z.object({ jobId: Text, generation: z.number(
   items: z.array(InterviewPrepItemSchema), generationContext: InterviewGenerationContextSchema.nullable().optional(),
   staleReasons: z.array(z.enum(INTERVIEW_STALE_REASONS)).optional(),
 }).strict();
-export const InterviewPrepHistoryResponseSchema = z.object({ ok: z.literal(true), jobId: Text, generations: z.array(InterviewPrepSchema), page: z.number().int().min(1), pageSize: z.number().int().min(1), total: z.number().int().min(0) }).strict();
+export const InterviewPrepHistoryResponseSchema = z.object({ ok: z.literal(true), jobId: Text, generations: z.array(InterviewPrepSchema).max(100), page: z.number().int().min(1), pageSize: z.number().int().min(1), total: z.number().int().min(0) }).strict();
 export type InterviewPrepHistoryResponse = z.infer<typeof InterviewPrepHistoryResponseSchema>;

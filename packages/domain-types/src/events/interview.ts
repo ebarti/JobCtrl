@@ -39,3 +39,16 @@ export function createInterviewPrepFailed(
 ): InterviewPrepFailed {
   return createDomainEvent("InterviewPrepFailed", tenantId, payload);
 }
+
+/** Notification only: never carry note text, profile excerpts, or generated prose. */
+export interface InterviewQuestionNoteSavedPayload {
+  readonly jobId: string;
+  readonly questionId: string;
+  readonly revision: number;
+  readonly sourceGeneration: number | null;
+  readonly updatedAt: string;
+}
+export type InterviewQuestionNoteSaved = DomainEvent<"InterviewQuestionNoteSaved", InterviewQuestionNoteSavedPayload>;
+export function createInterviewQuestionNoteSaved(tenantId: TenantId, payload: InterviewQuestionNoteSavedPayload): InterviewQuestionNoteSaved {
+  return createDomainEvent("InterviewQuestionNoteSaved", tenantId, payload);
+}
