@@ -713,6 +713,10 @@ describe("preparation RPC contracts", () => {
     for (const schema of [GenerateInterviewPrepRequestSchema, GenerateInterviewPrepParamsSchema]) {
       const base = schema === GenerateInterviewPrepParamsSchema ? { jobId: CANONICAL_JOB_ID } : {};
       expect(schema.parse({ ...base, ...choice })).toMatchObject(choice);
+      const rawChoice = { ...choice, evidenceSelections: [{ questionId: "TS09", evidenceIds: [" raw canonical ID "] }] };
+      expect(schema.parse({ ...base, ...rawChoice })).toMatchObject(rawChoice);
+      expect(() => schema.parse({ ...base, selectedQuestionIds: ["A".repeat(13) + "01"] })).toThrow();
+      expect(() => schema.parse({ ...base, ...choice, evidenceSelections: [{ questionId: "TS09", evidenceIds: ["x".repeat(201)] }] })).toThrow();
       const { evidenceProfileVersion: _version, ...unfenced } = choice;
       expect(() => schema.parse({ ...base, ...unfenced })).toThrow();
       expect(() => schema.parse({ ...base, ...choice, evidenceSelections: [{ questionId: "TS10", evidenceIds: [] }] })).toThrow();

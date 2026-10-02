@@ -71,6 +71,7 @@ describe("global interview catalog", () => {
     expect(retired.json()).toMatchObject({ error: "retired_question", questionId: "C08" });
     expect((await app.inject({ method: "GET", url: "/v1/interviews/questions/ZZ99" })).statusCode).toBe(404);
     expect((await app.inject({ method: "GET", url: "/v1/interviews/questions/bad" })).statusCode).toBe(400);
+    expect((await app.inject({ method: "GET", url: "/v1/interviews/questions/" + "A".repeat(13) + "01" })).statusCode).toBe(400);
     await app.close();
   });
 

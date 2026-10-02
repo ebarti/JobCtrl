@@ -19,7 +19,7 @@ describe("canonical explicit interview evidence admission", () => {
     dbPath = path.join(directory, "jobctrl.db"); initializeExactV7Database(dbPath); db = new Database(dbPath);
     db.prepare("INSERT INTO jobs (tenant_id,job_id,url,title) VALUES ('local',?,'https://example.test/job','Synthetic')").run(JOB_ID);
     db.prepare("INSERT INTO candidate_profiles (tenant_id,profile_id,version,updated_at) VALUES ('local','default',3,'2026-10-01')").run();
-    evidence("Role_Bullet_1", 1, "supported"); evidence("verified-fact", 1, "verified");
+    evidence("Role_Bullet_1", 1, "supported"); evidence("verified-fact", 1, "verified"); evidence(" raw canonical ID ", 1, "supported"); evidence("x".repeat(200), 1, "supported");
     evidence("unconfirmed", 0, "supported"); evidence("inferred", 1, "inferred"); evidence("draft", 1, "draft");
     evidence("empty", 1, "supported", ""); evidence("other-tenant", 1, "supported", "Synthetic accepted fact", "other");
     evidence("other-profile", 1, "supported", "Synthetic accepted fact", "local", "alternate");
@@ -40,7 +40,7 @@ describe("canonical explicit interview evidence admission", () => {
   it("keeps exact user order and an explicit empty choice through dispatch", async () => {
     const dispatch = vi.fn<ActionDispatcher>(async () => ({ status: "queued" as const, runId: "synthetic" }));
     const app = appWith(dispatch);
-    for (const ids of [["verified-fact", "Role_Bullet_1"], []]) {
+    for (const ids of [["verified-fact", "Role_Bullet_1"], [" raw canonical ID "], ["x".repeat(200)], []]) {
       const body = payload(ids);
       const response = await app.inject({ method: "POST", url: `/v1/jobs/${JOB_ID}/actions/generate-interview-prep`, payload: body });
       expect(response.statusCode, response.body).toBe(202);
@@ -74,7 +74,7 @@ describe("canonical explicit interview evidence admission", () => {
     const valid = payload(["Role_Bullet_1"]);
     const { evidenceProfileVersion: _version, ...unfenced } = valid;
     for (const body of [unfenced, { ...valid, evidenceProfileVersion: 0 }, payload(["Role_Bullet_1", "Role_Bullet_1"]),
-      payload(Array.from({ length: 9 }, (_, index) => `id-${index}`)),
+      payload(["x".repeat(201)]), payload(Array.from({ length: 9 }, (_, index) => `id-${index}`)),
       { ...valid, evidenceSelections: [valid.evidenceSelections[0], valid.evidenceSelections[0]] },
       { ...valid, evidenceSelections: [{ questionId: "TS10", evidenceIds: [] }] }]) {
       expect((await app.inject({ method: "POST", url: `/v1/jobs/${JOB_ID}/actions/generate-interview-prep`, payload: body })).statusCode).toBe(400);
