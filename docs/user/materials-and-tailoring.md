@@ -141,8 +141,8 @@ or make the exported file eligible for submission.
 ## Interview Preparation
 
 Open **Interviews** (`/interviews`) to explore the installed question library.
-Browsing works without a job or provider call. Search question wording and
-variants, filter by topic, role responsibilities, answer format, and source,
+Browsing works without a job or provider call. Search question text,
+responsibilities, or competencies; filter by topic, role responsibilities, answer format, and source,
 and switch between graph and list. The selected card and filters live in the
 URL, so you can bookmark the same view. The list provides the same card content
 and preparation actions as the graph.
