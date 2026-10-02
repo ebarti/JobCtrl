@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 from temporalio import workflow
 from temporalio.exceptions import ActivityError, ApplicationError, CancelledError
 
 from jobctrl.domain.identifiers import JobId, canonical_job_id
+from jobctrl.domain.interview.preparation import normalize_selection
 
 with workflow.unsafe.imports_passed_through():
     from jobctrl.infrastructure.temporal.finalize import (
@@ -35,9 +37,11 @@ class InterviewPrepWorkflowInput:
     expected_app_dir: str | None = None
     expected_db_path: str | None = None
     llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
+    selection: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "job_id", canonical_job_id(str(self.job_id)))
+        object.__setattr__(self, "selection", normalize_selection(self.selection))
 
 
 @dataclass(frozen=True)
@@ -83,6 +87,7 @@ class InterviewPrepWorkflow:
                     tenant_id=payload.tenant_id,
                     job_id=payload.job_id,
                     llm_model=payload.llm_model,
+                    selection=payload.selection,
                 ),
                 start_to_close_timeout=_DEFAULT_TIMEOUT,
                 heartbeat_timeout=_DEFAULT_HEARTBEAT_TIMEOUT,
@@ -113,7 +118,7 @@ class InterviewPrepWorkflow:
                 status="failed",
                 started_at=started_at,
                 error_code=result.error_code,
-                error_message=result.failure,
+                error_message="Interview preparation failed; inspect the local generation audit.",
                 expected_app_dir=payload.expected_app_dir,
                 expected_db_path=payload.expected_db_path,
             )
@@ -131,7 +136,7 @@ class InterviewPrepWorkflow:
                 status="failed",
                 started_at=started_at,
                 error_code=result.error_code,
-                error_message=result.failure,
+                error_message="Interview preparation failed; inspect the local generation audit.",
                 expected_app_dir=payload.expected_app_dir,
                 expected_db_path=payload.expected_db_path,
             )
@@ -144,7 +149,7 @@ class InterviewPrepWorkflow:
             status="succeeded" if result.status == "accepted" else "failed",
             started_at=started_at,
             error_code=None if result.status == "accepted" else "interview_prep_rejected",
-            error_message=None if result.status == "accepted" else "; ".join(result.errors),
+            error_message=None if result.status == "accepted" else "Interview preparation was rejected; inspect the local generation audit.",
             expected_app_dir=payload.expected_app_dir,
             expected_db_path=payload.expected_db_path,
         )
