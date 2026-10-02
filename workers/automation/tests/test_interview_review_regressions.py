@@ -151,6 +151,7 @@ def test_activity_automatic_selection_uses_only_exact_current_rows_and_preserves
     "What would you do in the first 90 days?",
     "What would you do with a $2 million budget?",
     "How would you manage a hypothetical team of 50 direct reports?",
+    "How would you manage my hypothetical team of 50 direct reports?",
 ])
 def test_future_questions_do_not_claim_personal_history(tmp_path: Path, location: str, question: str) -> None:
     conn = _init_conn(tmp_path)
@@ -184,5 +185,38 @@ def test_supported_metric_clarification_uses_selected_canonical_excerpts(tmp_pat
                 selection_input={"selectedQuestionIds": ["B01"], "evidenceProfileVersion": 1,
                                  "evidenceSelections": [{"questionId": "B01", "evidenceIds": ["ev-platform-latency"]}]})
         assert outcome.status == "accepted", outcome.errors
+    finally:
+        close_connection(tmp_path / "jobs.db")
+
+
+@pytest.mark.parametrize("location", ["text", "heading", "gap", "probe"])
+@pytest.mark.parametrize("question", [
+    "How would you apply my prior experience supervising 50 direct reports at Acme?",
+    "How would you use my prior savings of $2 million from migrating the platform to Kubernetes?",
+    "What would you do with my 50 direct reports at Acme?",
+    "How would you apply my experience using Kubernetes?",
+])
+def test_future_questions_cannot_supply_unsupported_personal_premises(tmp_path: Path, location: str, question: str) -> None:
+    conn = _init_conn(tmp_path)
+    try:
+        repository = SqliteInterviewPrepRepository(conn)
+        request = dict(tenant_id=LOCAL_TENANT, job=_job(), profile_snapshot=_profile_snapshot(),
+                       evidence_entries=(), evidence_gaps=(), requirements=(), selection_input={"selectedQuestionIds": ["B11"]})
+        accepted = GenerateInterviewPrepUseCase(repository=repository, llm=_FakeLlm([
+            _question_candidate("B11", "Compare alternatives with the information available."), _judge_pass()])).execute(
+                origin_run_id="accepted", **request).prep
+        assert accepted.status == "accepted"
+        candidate = _question_candidate("B11", "Compare criteria and realistic alternatives.")
+        if location in {"text", "heading"}:
+            candidate["items"][0]["outline"][0][location] = question
+        elif location == "gap":
+            candidate["items"][0]["gaps"] = [{"prompt": question, "reason": "Clarify the intended approach."}]
+        else:
+            candidate["items"][0]["probes"] = [question]
+        llm = _FakeLlm([candidate, _judge_pass()])
+        outcome = GenerateInterviewPrepUseCase(repository=repository, llm=llm).execute(origin_run_id="false-premise", **request)
+        assert outcome.status == "failed"
+        assert len(llm.calls) == 1
+        assert repository.load_latest(LOCAL_TENANT, JOB_ID).to_read_model() == accepted.to_read_model()
     finally:
         close_connection(tmp_path / "jobs.db")
