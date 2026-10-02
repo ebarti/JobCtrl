@@ -15,6 +15,7 @@ from jobctrl.domain.interview import GenerateInterviewPrepUseCase
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 from jobctrl.infrastructure.interview import SqliteInterviewPrepRepository
 from jobctrl.infrastructure.llm import LlmAdapter, get_llm_adapter
+from jobctrl.infrastructure.materials.sqlite_repository import SqliteMaterialsRepository
 from jobctrl.infrastructure.preparation import SqlitePreparationTargetReader
 from jobctrl.infrastructure.profile import get_profile_repository
 from jobctrl.infrastructure.projections.projection_builder import ProjectionBuilder
@@ -282,25 +283,21 @@ def _load_accepted_materials(
     tenant_id: TenantId,
     job_id: JobId,
 ) -> tuple[dict[str, Any], ...]:
-    try:
-        rows = conn.execute(
-            """
-            SELECT bullet_id, artifact_id, generation, evidence_ids_json,
-                   requirement_ids_json, generated_text, position
-            FROM job_bullet_provenance
-            WHERE tenant_id = ?
-              AND job_id = ?
-              AND generation = (
-                SELECT MAX(generation)
-                FROM job_bullet_provenance
-                WHERE tenant_id = ? AND job_id = ?
-              )
-            ORDER BY position, bullet_id
-            """,
-            (str(tenant_id), str(job_id), str(tenant_id), str(job_id)),
-        ).fetchall()
-    except sqlite3.OperationalError:
+    materials = SqliteMaterialsRepository(conn).load_current_approved(tenant_id, job_id)
+    if materials is None or materials.tailored_resume is None:
         return ()
+    rows = conn.execute(
+        """
+        SELECT bullet_id, artifact_id, generation, evidence_ids_json,
+               requirement_ids_json, generated_text, position
+        FROM job_bullet_provenance
+        WHERE tenant_id = ? AND job_id = ? AND generation = ? AND artifact_id = ?
+        ORDER BY position, bullet_id
+        LIMIT 20
+        """,
+        (str(tenant_id), str(job_id), materials.generation,
+         materials.tailored_resume.artifact_id),
+    ).fetchall()
     return tuple(
         {
             "bulletId": row["bullet_id"],
