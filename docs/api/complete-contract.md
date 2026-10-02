@@ -1075,9 +1075,19 @@ bindings, answer format, rationale, evidence links (`evidenceId`, `sourceRef`,
 gaps (`id`, `prompt`, `reason`), `probes`, `sourceGuidanceRefs`, factual support,
 and `userEditStatus: generated | user_edited`. Each `outline` segment has
 `heading`, `text`, `evidenceIds`, and `factualSupport`. Outline support is `accepted_profile_fact`, `hypothetical`,
-`new_user_statement`, or `needs_clarification`. A principle/hypothetical answer
-may lack historical evidence; personal factual assertions still require
-support and pass the gates. Missing evidence remains a question or marked gap.
+`new_user_statement`, or `needs_clarification`. Generic behavioral invitations
+and open questions request recollection or clarification without accepting an
+event as fact. Genuinely hypothetical or prospective guidance, including
+first-time-manager scenarios and advertised job responsibilities, may lack
+historical evidence.
+
+Personal assertions and specific past presuppositions require that question's
+selected canonical support, including factual headings and assertions embedded
+in future or conditional text. A factual-support label or unrelated supported
+body cannot substantiate another claim. Another question's evidence, authored
+examples, and job responsibilities are not personal evidence. An explicit empty
+selection stays empty; missing evidence remains a focused question or marked gap
+without automatic replacement.
 
 Optional nullable `generationContext` retains these generation-time fields:
 
