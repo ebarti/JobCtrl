@@ -11,6 +11,7 @@ import {
 
 import type { ApiClientPort } from "../shared/ports/ApiClientPort.js";
 import { sampleProviderModelsResponse } from "../test/fixtures/projections.js";
+import { makeQuestionPrep } from "../test/fixtures/interviews.js";
 import { FakeTelemetryPort } from "../test/testPorts.js";
 import { DEMO_CAPABILITY_MANIFEST } from "./capabilities.js";
 import {
@@ -1339,6 +1340,22 @@ describe("DemoApiClientAdapter", () => {
 
 
 describe("interview demo contract", () => {
+  it("derives note origins, rejects forged bindings and detaches missing retained origins without rewriting history", async () => {
+    const { adapter, repository } = await createAdapter();
+    const jobId = "job-contoso-reliability";
+    const prep = makeQuestionPrep("B11", jobId);
+    await repository.mutate((draft) => { draft.state.readModel.jobs.details[jobId]!.interviewPrep = prep; });
+    await expect(adapter.saveInterviewNote(jobId, { questionId: "TS09", expectedRevision: 0, noteText: "Invalid origin", sourceGeneration: prep.generation })).rejects.toMatchObject({ status: 400, message: "invalid_interview_note_source" });
+    await expect(adapter.saveInterviewNote(jobId, { questionId: "B11", expectedRevision: 0, noteText: "Forged context", sourceGeneration: prep.generation, bindings: { catalogBinding: null, cardRevision: null, cardDigest: null, contextDigest: "a".repeat(64) } })).rejects.toMatchObject({ status: 400, message: "invalid_interview_note_bindings" });
+    const saved = await adapter.saveInterviewNote(jobId, { questionId: "B11", expectedRevision: 0, noteText: "Retained note", sourceGeneration: prep.generation });
+    expect(saved.note).toMatchObject({ sourceGeneration: prep.generation, bindings: { catalogBinding: prep.generationContext!.catalogBinding, contextDigest: prep.generationContext!.contextDigest } });
+    await repository.mutate((draft) => { draft.state.readModel.jobs.details[jobId]!.interviewPrep = null; });
+    const orphan = await adapter.saveInterviewNote(jobId, { questionId: "B11", expectedRevision: 1, noteText: "Retained independent edit" });
+    expect(orphan.note).toMatchObject({ sourceGeneration: null, bindings: null, revision: 2 });
+    const history = await adapter.interviewNotes(jobId, { questionId: "B11", history: true });
+    expect(history.notes.find((note) => note.revision === 1)?.sourceGeneration).toBe(prep.generation);
+  });
+
   it("shares all 121 questions with principle, negotiation and retired semantics", async () => {
     const { adapter } = await createAdapter();
     const response = await adapter.interviewCatalog();

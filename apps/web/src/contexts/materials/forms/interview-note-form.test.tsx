@@ -23,6 +23,36 @@ function deferred<T>() {
 }
 
 describe("independently revisioned interview notes", () => {
+  it("leaves an existing note's origin to the server when a newer preparation is displayed", async () => {
+    const user = userEvent.setup();
+    const stored = { ...initial, sourceGeneration: 1001 };
+    const pending = deferred<{ ok: true; note: InterviewQuestionNote }>();
+    const save = vi.fn((_jobId: string, _body: SaveInterviewQuestionNoteRequest) => pending.promise);
+    const view = renderWithProviders(<InterviewNoteForm jobId="job-1" questionId="B11" sourceGeneration={1003} />, { ports: buildTestPorts({ api: { interviewNotes: async () => notesResponse(stored), saveInterviewNote: save } }) });
+    const text = await screen.findByRole("textbox", { name: "Notes for B11" });
+    await waitFor(() => expect(text).toHaveValue(stored.noteText));
+    await user.type(text, " retained edit");
+    await user.click(screen.getByRole("button", { name: "Save unverified note" }));
+    await screen.findByText("Saving submitted version; you can keep editing.");
+    expect(save.mock.calls[0]?.[1]).not.toHaveProperty("sourceGeneration");
+    expect(save.mock.calls[0]?.[1]).not.toHaveProperty("bindings");
+    expect(view.queryClient.getQueryData(interviewKeys.note(LOCAL_TENANT, "job-1", "B11"))).toMatchObject({ notes: [{ sourceGeneration: 1001 }] });
+    await act(async () => pending.resolve({ ok: true, note: { ...stored, revision: 2, noteText: `${stored.noteText} retained edit` } }));
+  });
+
+  it.each(["invalid_interview_note_source", "invalid_interview_note_bindings"])("retains the edited draft when provenance is rejected with %s", async (code) => {
+    const user = userEvent.setup();
+    const save = vi.fn(async () => { throw new JobCtrlApiError(400, "Invalid note provenance", code); });
+    renderWithProviders(<InterviewNoteForm jobId="job-1" questionId="B11" />, { ports: buildTestPorts({ api: { interviewNotes: async () => ({ ...notesResponse(initial), notes: [] }), saveInterviewNote: save } }) });
+    const text = await screen.findByRole("textbox", { name: "Notes for B11" });
+    await user.type(text, "Retained personal recollection");
+    await user.click(screen.getByRole("button", { name: "Save unverified note" }));
+    await screen.findByText("Note save failed. Your text has been preserved.");
+    expect(text).toHaveValue("Retained personal recollection");
+    expect(screen.getByRole("button", { name: "Save unverified note" })).toBeEnabled();
+    expect(useInterviewDraftStore.getState().notes.get(key)).toMatchObject({ text: "Retained personal recollection", expectedRevision: 0, conflictRevision: null });
+  });
+
   it("preserves newer edits while a delayed save accepts only the submitted text", async () => {
     const user = userEvent.setup();
     const pending = deferred<{ ok: true; note: InterviewQuestionNote }>();

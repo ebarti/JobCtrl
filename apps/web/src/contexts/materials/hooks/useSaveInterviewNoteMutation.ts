@@ -28,7 +28,8 @@ export function useSaveInterviewNoteMutation(jobId: string, questionId: string) 
         return { ...current, pendingEditVersion: editVersion, notes: [{
           jobId, questionId, revision: body.expectedRevision + 1, noteText: body.noteText,
           factualSupport: body.factualSupport ?? "unverified_user_statement", editStatus: "user_edited",
-          sourceGeneration: body.sourceGeneration ?? null, bindings: body.bindings ?? null,
+          sourceGeneration: body.sourceGeneration === undefined ? current.notes[0]?.sourceGeneration ?? null : body.sourceGeneration,
+          bindings: body.bindings === undefined ? current.notes[0]?.bindings ?? null : body.bindings,
           updatedAt: current.notes[0]?.updatedAt ?? "",
         }] } satisfies PendingResponse;
       },

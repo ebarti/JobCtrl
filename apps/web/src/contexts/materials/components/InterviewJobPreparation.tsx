@@ -1,6 +1,6 @@
-import type { InterviewCatalog, InterviewQuestionCard } from "../../operations/types.js";
+import type { InterviewCatalog, InterviewPrep, InterviewQuestionCard } from "../../operations/types.js";
 import { Link } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { Empty } from "../../../shared/ui/empty.js";
 import { Button } from "../../../shared/ui/button.js";
@@ -20,14 +20,26 @@ export function InterviewJobPreparation({ jobId, catalog, question }: {
   const evidence = useEvidenceMapQuery();
   const [historyPage, setHistoryPage] = useState(1);
   const history = useInterviewPrepHistoryQuery(jobId, historyPage);
-  const recentHistory = useInterviewPrepHistoryQuery(jobId);
+  const [retainedPrep, setRetainedPrep] = useState<{ jobId: string; prep: InterviewPrep }>();
+  const acceptedHistory = history.data?.generations.find((generation) => generation.status === "accepted");
+  // Job Detail reads the canonical latest accepted generation independently of
+  // failed history rows. Also retain an accepted page encountered during lag.
+  const candidates = [detail.data?.interviewPrep, acceptedHistory, retainedPrep?.jobId === jobId ? retainedPrep.prep : null];
+  const prep = candidates.reduce<InterviewPrep | null>((latest, candidate) => candidate && candidate.status !== "failed" && (!latest || candidate.generation > latest.generation) ? candidate : latest, null);
+  useEffect(() => {
+    if (prep) setRetainedPrep((previous) => previous?.jobId === jobId && previous.prep === prep ? previous : { jobId, prep });
+  }, [jobId, prep]);
   if (!detail.data) return <Empty title={detail.error ? "Job unavailable. Open a canonical job from Jobs to prepare." : "Loading selected job."} />;
   const job = detail.data;
-  const acceptedHistory = recentHistory.data?.generations.find((generation) => generation.status === "accepted");
-  // The canonical history can advance before the job projection catches up.
-  // Keep the latest accepted preparation independent of the history pager.
-  const prep = acceptedHistory && (!job.interviewPrep || acceptedHistory.generation >= job.interviewPrep.generation) ? acceptedHistory : job.interviewPrep;
-  const selectedIsBound = Boolean(question && prep?.generationContext?.selectedQuestionIds.includes(question.id));
+  const prepContext = prep?.generationContext;
+  const selectedSnapshot = question ? prepContext?.selectedQuestions.find((selected) => selected.questionId === question.id) : undefined;
+  const noteBindings = question ? selectedSnapshot && prepContext ? {
+    catalogBinding: prepContext.catalogBinding, cardRevision: selectedSnapshot.cardRevision,
+    cardDigest: selectedSnapshot.cardDigest, contextDigest: prepContext.contextDigest,
+  } : {
+    catalogBinding: { catalogRevision: catalog.catalogRevision, catalogDigest: catalog.catalogDigest },
+    cardRevision: question.cardRevision, cardDigest: question.cardDigest, contextDigest: null,
+  } : null;
   const resolveEvidenceReference = (evidenceId: string) => {
     if (!evidence.data) return evidence.isPending ? undefined : null;
     const entry = evidence.data.entries.find((item) => item.entryId === evidenceId || item.evidenceId === evidenceId);
@@ -38,8 +50,8 @@ export function InterviewJobPreparation({ jobId, catalog, question }: {
       <h2 data-typography="section-title">Preparation for {job.job.title}</h2>
       <Link to="/jobs/$jobId" params={{ jobId: job.job.jobKey }}>Open canonical job</Link>
       <InterviewContextForm jobId={job.job.jobKey} catalog={catalog} questionId={question?.id ?? ""} context={prep?.generationContext} />
-      {question ? <InterviewNoteForm key={`${jobId}:${question.id}`} jobId={job.job.jobKey} questionId={question.id} sourceGeneration={selectedIsBound ? prep?.generation ?? null : null} bindings={{ catalogBinding: { catalogRevision: catalog.catalogRevision, catalogDigest: catalog.catalogDigest }, cardRevision: question.cardRevision, cardDigest: question.cardDigest, contextDigest: selectedIsBound ? prep?.generationContext?.contextDigest ?? null : null }} /> : null}
-      <InterviewPrepPanel jobId={job.job.jobKey} prep={prep} requirements={job.employerAnalysis?.requirements ?? []} resolveEvidenceReference={resolveEvidenceReference} generationAction={null} />
+      {question ? <InterviewNoteForm key={`${jobId}:${question.id}`} jobId={job.job.jobKey} questionId={question.id} sourceGeneration={selectedSnapshot ? prep?.generation ?? null : null} bindings={noteBindings} /> : null}
+      <InterviewPrepPanel jobId={job.job.jobKey} prep={prep} requirements={job.employerAnalysis?.requirements ?? []} resolveEvidenceReference={resolveEvidenceReference} generationAction={null} emptyContent={history.isPending ? <Empty title="Loading saved preparation." /> : history.error ? <p role="alert">Saved preparation unavailable. Retry loading the accepted history.</p> : undefined} />
       <section className="section" aria-label="Preparation history"><h3 data-typography="component-title">Preparation history</h3>
         {history.error ? <p role="alert">Preparation history unavailable; the last accepted preparation remains above.</p> : null}
         {history.data?.generations.map((generation) => <details key={generation.generation}><summary>Generation {generation.generation} · {generation.status} · {generation.generatedAt}</summary>{generation.status === "failed" ? <><p>Failed attempt; the accepted generation remains available.</p><pre className="whitespace-pre-wrap break-all">{JSON.stringify(generation, null, 2)}</pre></> : <InterviewPrepPanel jobId={jobId} prep={generation} requirements={job.employerAnalysis?.requirements ?? []} resolveEvidenceReference={resolveEvidenceReference} generationAction={null} />}</details>)}

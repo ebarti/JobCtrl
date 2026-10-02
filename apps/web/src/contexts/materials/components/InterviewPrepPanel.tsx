@@ -29,6 +29,7 @@ export interface InterviewPrepPanelProps {
   resolveEvidenceReference?: ResolveAuditEvidenceReference;
   reflectionContent?: ReactNode;
   generationAction?: ReactNode;
+  emptyContent?: ReactNode;
 }
 
 const KIND_LABELS: Record<InterviewPrepItemKind, string> = {
@@ -266,6 +267,7 @@ export function InterviewPrepPanel({
   resolveEvidenceReference,
   reflectionContent,
   generationAction,
+  emptyContent,
 }: InterviewPrepPanelProps): JSX.Element {
   const requirementsById = new Map(
     requirements.map((requirement) => [requirement.id, requirement]),
@@ -311,7 +313,7 @@ export function InterviewPrepPanel({
           ) : null}
         </>
       ) : (
-        <Empty title="No interview prep generated." />
+        emptyContent ?? <Empty title="No interview prep generated." />
       )}
     </section>
   );

@@ -41,7 +41,10 @@ export function InterviewNoteForm({ jobId, questionId, sourceGeneration, binding
       if (!current || current.conflictRevision !== null || mutation.isPending) return;
       const parsed = SaveInterviewQuestionNoteRequestSchema.safeParse({
         questionId, expectedRevision: current.expectedRevision, noteText: value.noteText,
-        factualSupport: "unverified_user_statement", sourceGeneration: sourceGeneration ?? null, bindings: bindings ?? null,
+        factualSupport: "unverified_user_statement",
+        // Existing notes keep their own retained origin through preparation
+        // replacement. The server revalidates and derives its bindings.
+        ...(note ? {} : { sourceGeneration: sourceGeneration ?? null, bindings: bindings ?? null }),
       });
       if (!parsed.success) return;
       try { await mutation.mutateAsync({ body: parsed.data, editVersion: current.editVersion }); } catch { /* Preserve the draft. */ }

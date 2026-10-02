@@ -688,7 +688,7 @@ export class DemoApiClientAdapter implements ApiClientPort {
 
   async saveInterviewNote(jobKey: string, body: Parameters<ApiClientPort["saveInterviewNote"]>[1]) {
     const parsed = SaveInterviewQuestionNoteRequestSchema.parse(body);
-    await this.interviewQuestion(parsed.questionId);
+    const { catalog } = await this.interviewCatalog();
     let saved: InterviewQuestionNote | undefined;
     await this.workspace.mutate((draft, context) => {
       if (!Object.hasOwn(draft.state.readModel.jobs.details, jobKey)) throw new DemoResourceNotFoundError("job_not_found", jobKey);
@@ -697,11 +697,29 @@ export class DemoApiClientAdapter implements ApiClientPort {
       const jobNotes = all[jobKey] ?? {};
       const revisions = jobNotes[parsed.questionId] ?? [];
       const current = revisions.at(-1);
-      if ((current?.revision ?? 0) !== parsed.expectedRevision) throw new JobCtrlApiError(409, "interview_note_revision_conflict", "Another saved note revision exists.");
+      if ((current?.revision ?? 0) !== parsed.expectedRevision) throw new JobCtrlApiError(409, "Another saved note revision exists.", "interview_note_revision_conflict", { currentNote: current ?? null });
+      let sourceGeneration = parsed.sourceGeneration === undefined ? current?.sourceGeneration ?? null : parsed.sourceGeneration;
+      let bindings: InterviewQuestionNote["bindings"] = null;
+      let unavailableOrigin = false;
+      const prep = draft.state.readModel.jobs.details[jobKey]?.interviewPrep;
+      if (sourceGeneration !== null) {
+        const context = prep?.generation === sourceGeneration ? prep.generationContext : null;
+        const selected = context?.selectedQuestions.find((question) => question.questionId === parsed.questionId);
+        if (!context || !selected) {
+          if (current && parsed.sourceGeneration === undefined) { sourceGeneration = null; unavailableOrigin = true; }
+          else throw new JobCtrlApiError(400, "The preparation does not retain this question.", "invalid_interview_note_source");
+        } else bindings = { catalogBinding: context.catalogBinding, cardRevision: selected.cardRevision, cardDigest: selected.cardDigest, contextDigest: context.contextDigest };
+      }
+      if (sourceGeneration === null && !unavailableOrigin) {
+        const question = catalog.questions.find((card) => card.id === parsed.questionId);
+        if (question) bindings = { catalogBinding: { catalogRevision: catalog.catalogRevision, catalogDigest: catalog.catalogDigest }, cardRevision: question.cardRevision, cardDigest: question.cardDigest, contextDigest: null };
+        else if (!current) throw new JobCtrlApiError(catalog.retiredQuestions.some((card) => card.id === parsed.questionId) ? 410 : 404, "Question guidance is unavailable.", "unknown_question");
+      }
+      if (parsed.bindings && (!bindings || parsed.bindings.catalogBinding?.catalogRevision !== bindings.catalogBinding?.catalogRevision || parsed.bindings.catalogBinding?.catalogDigest !== bindings.catalogBinding?.catalogDigest || parsed.bindings.cardRevision !== bindings.cardRevision || parsed.bindings.cardDigest !== bindings.cardDigest || parsed.bindings.contextDigest !== bindings.contextDigest)) throw new JobCtrlApiError(400, "The supplied bindings do not match the retained source.", "invalid_interview_note_bindings");
       const note: InterviewQuestionNote = {
         jobId: jobKey, questionId: parsed.questionId, revision: parsed.expectedRevision + 1, noteText: parsed.noteText,
-        factualSupport: parsed.factualSupport ?? "unverified_user_statement", editStatus: "user_edited", sourceGeneration: parsed.sourceGeneration ?? null,
-        bindings: parsed.bindings ?? null, updatedAt: new Date().toISOString(),
+        factualSupport: parsed.factualSupport ?? "unverified_user_statement", editStatus: "user_edited", sourceGeneration,
+        bindings, updatedAt: new Date().toISOString(),
       };
       Object.assign(materials, { interviewNotes: { ...all, [jobKey]: { ...jobNotes, [parsed.questionId]: [...revisions, note] } } });
       context.appendDomainEvent(createInterviewQuestionNoteSaved(LOCAL_TENANT, { jobId: jobKey, questionId: note.questionId, revision: note.revision, sourceGeneration: note.sourceGeneration, updatedAt: note.updatedAt }));
