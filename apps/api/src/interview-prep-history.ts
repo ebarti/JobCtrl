@@ -7,6 +7,7 @@ import {
   InterviewPrepSchema,
   type InterviewCatalog,
   type InterviewGenerationContext,
+  type InterviewPrep,
   type InterviewPrepHistoryQuery,
   type InterviewPrepHistoryResponse,
   type InterviewStaleReason,
@@ -14,6 +15,17 @@ import {
 import type { SqliteDatabase } from "./db.js";
 
 type PrepReader = (db: SqliteDatabase, tenantId: string, jobId: string, generation: number) => Record<string, unknown> | null;
+
+/** Current preparation comes from accepted storage, independently of projection/history lag. */
+export function loadLatestAcceptedInterviewPrep(
+  db: SqliteDatabase, tenantId: string, jobId: string, loadPrep: PrepReader,
+): InterviewPrep | null {
+  return db.transaction(() => {
+    const row = db.prepare("SELECT generation FROM job_interview_prep WHERE tenant_id=? AND job_id=? AND status='accepted' ORDER BY generation DESC LIMIT 1")
+      .get(tenantId, jobId) as { generation: number } | undefined;
+    return row ? InterviewPrepSchema.parse(loadPrep(db, tenantId, jobId, row.generation)) : null;
+  })();
+}
 
 export function listInterviewPrepHistory(
   db: SqliteDatabase, tenantId: string, jobId: string, input: InterviewPrepHistoryQuery,
