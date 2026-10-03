@@ -58,7 +58,7 @@ guidance.
 | Surface | Starting command / selected recipe |
 | --- | --- |
 | API | `corepack pnpm api:check`, focused `api:test` / `api` |
-| Destructive job-data purge | `corepack pnpm api:check`; `corepack pnpm --filter @jobctrl/api exec vitest run test/job-data-purge.test.ts test/permanent-delete-v7.test.ts`; then inventory, confirmed purge, and a second inventory against a disposable exact-v11 workspace only |
+| Destructive job-data purge | `corepack pnpm api:check`; `corepack pnpm --filter @jobctrl/api exec vitest run test/job-data-purge.test.ts test/permanent-delete-v7.test.ts`; then inventory, confirmed purge, and a second inventory against a disposable exact-v12 workspace only |
 | Web | `corepack pnpm web:lint`, `corepack pnpm web:check`, focused `web:test`, `web:build`; types/stories/browser when affected |
 | Extension | `extension:check`, `extension:test`, `extension:build`, `extension:e2e` through Corepack |
 | Worker | Locked focused Ruff/pytest; full worker suite for worker-wide changes |
@@ -108,7 +108,7 @@ that its connection-object mutex is independent of `busy_timeout`. Run these pro
 behind subprocess deadlines so a failed concurrency assertion cannot retain a test
 runner thread. Confirm the real activity worker pool reuses a connection only on its
 own thread, and record the production connection budgets (10 seconds for a new WAL
-connection and 30 seconds for a freshly admitted exact-v11 connection). The short
+connection and 30 seconds for a freshly admitted exact-v12 connection). The short
 fixture timeout proves mechanism and recovery; it is not a production latency bound.
 
 Also repeat an already-claimed robots retry with a real enrichment lease, inject

@@ -2517,14 +2517,14 @@ class ProjectionBuilder:
         from jobctrl.infrastructure.interview import SqliteInterviewPrepRepository
 
         try:
-            record = SqliteInterviewPrepRepository(self._conn).load_latest(
-                self._tenant_id, JobId(job_id), status="accepted"
+            record = SqliteInterviewPrepRepository(self._conn).load_latest_read_model(
+                self._tenant_id, JobId(job_id)
             )
         except sqlite3.OperationalError:
             return None
         if record is None:
             return None
-        read_model = record.to_read_model()
+        read_model = dict(record)
         read_model.pop("jobKey", None)
         read_model["jobId"] = job_id
         return json.dumps(read_model, ensure_ascii=False)

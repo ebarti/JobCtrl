@@ -47,6 +47,13 @@ export const EXACT_V11_SCHEMA_MANIFEST: SchemaManifest = {
   fingerprint: "6a653761d23c9c17f4e8000f13d14003d265cc5739877063212991569564e542",
 };
 
+export const EXACT_V12_SCHEMA_MANIFEST: SchemaManifest = {
+  version: 12,
+  objectCount: 276,
+  tableCount: 120,
+  fingerprint: "10a8edc30fbfa77e7bea57f3c939a80d836ef3d579f4c5378e7e6e49c6754b56",
+};
+
 type SqliteMasterRow = [type: string, name: string, tableName: string, sql: string];
 
 type SqliteMasterQueryRow = {
@@ -129,6 +136,10 @@ export function hasExactV10SchemaManifest(db: Pick<Database.Database, "prepare">
 
 export function hasExactV11SchemaManifest(db: Pick<Database.Database, "prepare">): boolean {
   return hasExactSchemaManifest(db, EXACT_V11_SCHEMA_MANIFEST);
+}
+
+export function hasExactV12SchemaManifest(db: Pick<Database.Database, "prepare">): boolean {
+  return hasExactSchemaManifest(db, EXACT_V12_SCHEMA_MANIFEST);
 }
 
 function hasExactSchemaManifest(
