@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useRef, useState, type PointerEvent } from "react";
+import { Fragment, useMemo, useRef, useState, type CSSProperties, type PointerEvent } from "react";
 
 import type { InterviewCatalog, InterviewQuestionCard } from "../../operations/types.js";
 import { Button } from "../../../shared/ui/button.js";
@@ -16,27 +16,24 @@ interface Props {
 }
 interface Group { id: string; label: string; children: { id: string; label: string }[] }
 const RESPONSIVE_LAYOUTS = [
-  { name: "wide", columns: 4, rowHeight: 260, center: 90 },
-  { name: "medium", columns: 3, rowHeight: 260, center: 90 },
+  { name: "wide", columns: 5, rowHeight: 156, center: 54 },
+  { name: "medium", columns: 4, rowHeight: 156, center: 54 },
+  { name: "narrow", columns: 3, rowHeight: 156, center: 54 },
   { name: "small", columns: 3, rowHeight: 160, center: 32 },
 ] as const;
 
-// A 28px hexagonal lattice keeps native 24px targets disjoint, including
-// dense author groups. The centre is reserved for the topic/author action.
+// Three hexagonal rows keep native 24px targets disjoint and grow horizontally
+// with the canonical count. Dense groups receive the columns their extent needs.
 function satellitePositions(count: number) {
   const positions: { x: number; y: number }[] = [];
-  for (let ring = 1; positions.length < count; ring++) {
-    const points: { x: number; y: number }[] = [];
-    for (let q = -ring; q <= ring; q++) {
-      for (let r = -ring; r <= ring; r++) {
-        if (Math.max(Math.abs(q), Math.abs(r), Math.abs(q + r)) === ring) points.push({ x: 28 * (q + r / 2), y: 28 * Math.sqrt(3) / 2 * r });
-      }
+  const limit = Math.ceil(count / 6) + 1;
+  for (let q = -limit; q <= limit; q++) {
+    for (let r = -1; r <= 1; r++) {
+      if (q || r) positions.push({ x: 28 * (q + r / 2), y: 28 * Math.sqrt(3) / 2 * r });
     }
-    // Partial outer rings grow vertically first, keeping narrow columns usable.
-    points.sort((a, b) => Math.abs(a.x) - Math.abs(b.x) || a.y - b.y || a.x - b.x);
-    positions.push(...points.slice(0, count - positions.length));
   }
-  return positions;
+  positions.sort((a, b) => Math.hypot(a.x, a.y) - Math.hypot(b.x, b.y) || a.y - b.y || a.x - b.x);
+  return positions.slice(0, count);
 }
 
 // The overview has one native button per card/source. Only decorative linework
@@ -79,7 +76,7 @@ export function InterviewLibraryGraph({ catalog, questions, selectedQuestionId, 
     drag.current = { id: event.pointerId, x: event.clientX, y: event.clientY, originX: pan.x, originY: pan.y };
     event.currentTarget.setPointerCapture(event.pointerId);
   }
-  return <section className="interview-atlas" aria-label="Whole interview library graph">
+  return <section className="interview-atlas" data-perspective={perspective} aria-label="Whole interview library graph">
     <header className="interview-atlas__header">
       <div><h2 data-typography="section-title">{focusTitle ?? (perspective === "questions" ? "Question map" : "Source map")}</h2><p className="muted">{focusTitle ? focusedItems?.length ? `${focusKind} · select a connected ${focusedSources ? "source" : "question"}` : "No linked questions in the current filters." : perspective === "questions" ? `${questions.length} questions across ${groups.length} topics` : `${sources.length} sources across ${groups.length} authors`}</p></div>
       <div className="interview-atlas__perspective" role="group" aria-label="Graph perspective">
@@ -113,14 +110,14 @@ export function InterviewLibraryGraph({ catalog, questions, selectedQuestionId, 
               return <path key={`${edge.from}:${edge.to}`} data-edge-kind="editorial" d={`M${a.x.toFixed(1)} ${a.y.toFixed(1)} Q${((a.x+b.x)/2).toFixed(1)} ${((a.y+b.y)/2-35).toFixed(1)} ${b.x.toFixed(1)} ${b.y.toFixed(1)}`} />;
             })}</g>)}
           </svg> : null}
-          {groups.map((group) => { const positions = satellitePositions(group.children.length); return <div key={group.id} className="interview-atlas__cluster" data-selected={perspective === "questions" && group.children.some((item) => item.id === selectedQuestionId)}>
+          {groups.map((group) => { const positions = satellitePositions(group.children.length); const extent = Math.max(108, ...positions.map((point) => Math.abs(point.x) * 2 + 24)); const geometry: CSSProperties & { "--interview-atlas-column-span": number; "--interview-atlas-aura-width": string } = { "--interview-atlas-column-span": Math.ceil(extent / 136), "--interview-atlas-aura-width": `${extent}px` }; return <div key={group.id} className="interview-atlas__cluster" style={geometry} data-selected={perspective === "questions" && group.children.some((item) => item.id === selectedQuestionId)}>
             <div className="interview-atlas__aura" aria-hidden="true" />
             <Button variant="ghost" className="interview-atlas__hub" aria-label={`${group.label}: ${group.children.length} ${perspective === "questions" ? "questions" : "sources"}`} onClick={() => { setPan({ x: 0, y: 0, zoom: 1 }); if (perspective === "questions") onSelectTopic(group.id); else setAuthorId(group.id); }}>
               <span className={`interview-atlas__mark ${perspective === "sources" ? "is-author" : ""}`} aria-hidden="true" /><span>{group.label}</span><small className="muted">{group.children.length} {perspective === "questions" ? "questions" : "sources"}</small>
             </Button>
             {group.children.map((item, index) => {
               const point = positions[index]!;
-              return <Fragment key={item.id}><span className="interview-atlas__spoke" data-edge-kind={perspective === "sources" ? "source" : "topic"} aria-hidden="true" style={{ width: Math.hypot(point.x, point.y), transform: `rotate(${Math.atan2(point.y, point.x)}rad)` }} /><Button variant="ghost" size="icon" className={`interview-atlas__satellite${perspective === "sources" ? " is-source" : ""}`} data-graph-question-id={perspective === "questions" ? item.id : undefined} data-graph-source-id={perspective === "sources" ? item.id : undefined} aria-label={`${item.id}: ${item.label}`} aria-pressed={perspective === "questions" ? selectedQuestionId === item.id : sourceId === item.id} title={`${item.id}: ${item.label}`} style={{ left: `calc(50% + ${point.x.toFixed(1)}px)`, top: `${(90+point.y).toFixed(1)}px` }} onClick={() => perspective === "questions" ? onSelectQuestion(item.id) : onSelectSource(item.id)}><span className="interview-atlas__mark" aria-hidden="true" /></Button></Fragment>;
+              return <Fragment key={item.id}><span className="interview-atlas__spoke" data-edge-kind={perspective === "sources" ? "source" : "topic"} aria-hidden="true" style={{ width: Math.hypot(point.x, point.y), transform: `rotate(${Math.atan2(point.y, point.x)}rad)` }} /><Button variant="ghost" size="icon" className={`interview-atlas__satellite${perspective === "sources" ? " is-source" : ""}`} data-graph-question-id={perspective === "questions" ? item.id : undefined} data-graph-source-id={perspective === "sources" ? item.id : undefined} aria-label={`${item.id}: ${item.label}`} aria-pressed={perspective === "questions" ? selectedQuestionId === item.id : sourceId === item.id} title={`${item.id}: ${item.label}`} style={{ left: `calc(50% + ${point.x.toFixed(1)}px)`, top: `${(54+point.y).toFixed(1)}px` }} onClick={() => perspective === "questions" ? onSelectQuestion(item.id) : onSelectSource(item.id)}><span className="interview-atlas__mark" aria-hidden="true" /></Button></Fragment>;
             })}
           </div>; })}
         </div>}
