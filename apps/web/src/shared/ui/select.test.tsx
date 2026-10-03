@@ -3,7 +3,7 @@ import {
   DirectionProvider,
   useDirection,
 } from "@base-ui/react/direction-provider";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -137,7 +137,7 @@ describe("<Select>", () => {
     expect(disabledTrigger).toHaveTextContent("Regular");
   });
 
-  it("maps group labels and trigger-edge positioning to Base UI parts", () => {
+  it("maps group labels and trigger-edge positioning to Base UI parts", async () => {
     render(
       <Select
         items={[{ label: "Compact", value: "compact" }]}
@@ -165,7 +165,10 @@ describe("<Select>", () => {
     const popup = screen.getByTestId("select-popup");
     expect(popup).toHaveAttribute("data-align-trigger", "false");
     expect(popup).toHaveAttribute("data-align", "end");
-    expect(popup.parentElement).toHaveStyle({ position: "absolute" });
+    // Base UI starts fixed to avoid focus scroll jumps until it measures the anchor.
+    await waitFor(() => {
+      expect(popup.parentElement).toHaveStyle({ position: "absolute" });
+    });
     expect(
       screen.getByRole("group", { name: "Density choices" }),
     ).toBeInTheDocument();
