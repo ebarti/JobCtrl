@@ -1,6 +1,6 @@
 import { INTERVIEW_ANSWER_FORMATS, INTERVIEW_ROLE_LENSES } from "../../contexts/operations/types.js";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
-import { useMemo } from "react";
+import { useId, useMemo } from "react";
 
 import { InterviewQuestionDetail } from "../../contexts/materials/components/InterviewQuestionDetail.js";
 import { InterviewQuestionConnections } from "../../contexts/materials/components/InterviewQuestionConnections.js";
@@ -16,7 +16,9 @@ import { PageHead } from "../../shared/ui/page-head.js";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../shared/ui/select.js";
 
 function Filter({ label, value, choices, onChange }: { readonly label: string; readonly value: string; readonly choices: readonly { value: string; label: string }[]; readonly onChange: (value: string) => void }) {
-  return <div className="grid gap-1"><span data-typography="label">{label}</span><Select value={value} onValueChange={(next) => onChange(next ?? "")}><SelectTrigger aria-label={label} className="w-full"><SelectValue>{choices.find((choice) => choice.value === value)?.label ?? `All ${label.toLowerCase()}`}</SelectValue></SelectTrigger><SelectContent><SelectItem value="">All {label.toLowerCase()}</SelectItem>{choices.map((choice) => <SelectItem key={choice.value} value={choice.value}>{choice.label}</SelectItem>)}</SelectContent></Select></div>;
+  const valueId = useId();
+  const selectedLabel = choices.find((choice) => choice.value === value)?.label ?? `All ${label.toLowerCase()}`;
+  return <div className="grid gap-1"><span data-typography="label">{label}</span><Select value={value} onValueChange={(next) => onChange(next ?? "")}><SelectTrigger aria-label={label} aria-describedby={valueId} title={selectedLabel} className="w-full"><SelectValue id={valueId}>{selectedLabel}</SelectValue></SelectTrigger><SelectContent><SelectItem value="">All {label.toLowerCase()}</SelectItem>{choices.map((choice) => <SelectItem key={choice.value} value={choice.value}>{choice.label}</SelectItem>)}</SelectContent></Select></div>;
 }
 
 export function InterviewsView() {
