@@ -48,17 +48,36 @@ test("Interview atlas hub labels and native targets survive desktop widths and d
     await page.goto("/interviews?mode=graph");
     const map = page.getByRole("region", { name: "Whole interview library graph" });
     await expect(map.locator("[data-graph-question-id]")).toHaveCount(121);
-    for (const density of ["compact", "regular", "comfy"]) {
-      await page.locator(".app-shell").evaluate((element, value) => element.setAttribute("data-density", value), density);
-      await expect(map.locator(".interview-atlas__hub").first()).toHaveCSS("height", "52px");
-      await expect(map.locator(".interview-atlas__satellite").first()).toHaveCSS("height", "24px");
-      await expect(map.locator(".interview-atlas__satellite").first()).toHaveCSS("width", "24px");
-      expect(await map.locator('.interview-atlas__navigation button').evaluateAll((elements) => elements.every((element) => { const rect = element.getBoundingClientRect(); return rect.top >= 0 && rect.bottom <= innerHeight; }))).toBe(true);
-      if (width === 1705) {
-        expect(await map.locator('.interview-atlas__hub, .interview-atlas__satellite, .interview-atlas__navigation button').evaluateAll((elements) => elements.every((element) => { const rect = element.getBoundingClientRect(); return rect.top >= 0 && rect.bottom <= innerHeight && rect.left >= 0 && rect.right <= innerWidth; }))).toBe(true);
+    // Real persisted preference actions on fresh zero-scroll pages, before hit probes scroll.
+    for (const density of ["Compact", "Regular", "Comfortable"]) {
+      for (const perspective of ["Questions", "Sources"]) {
+        await page.goto("/interviews?mode=graph");
+        await expect(map.locator("[data-graph-question-id]")).toHaveCount(121);
+        await page.getByRole("button", { name: density, exact: true }).click();
+        if (perspective === "Sources") await map.getByRole("button", { name: "Sources", exact: true }).click();
+        await expect(map.locator(perspective === "Questions" ? "[data-graph-question-id]" : "[data-graph-source-id]")).toHaveCount(perspective === "Questions" ? 121 : 57);
+        await expect.poll(() => map.evaluate((element, allTargets) => {
+          const errors: string[] = [];
+          if (window.scrollY || element.querySelector(".interview-atlas__viewport")!.scrollTop) errors.push("Scrolled before initial fit capture");
+          for (const root of document.querySelectorAll(".app-shell, main.main")) if (root.scrollTop) errors.push("Shell scrolled before initial fit capture");
+          const canvas = element.querySelector(".interview-atlas__viewport")!.getBoundingClientRect();
+          if (canvas.bottom > innerHeight) errors.push("Map stage exceeds viewport");
+          const targets = element.querySelectorAll(allTargets ? ".interview-atlas__hub, .interview-atlas__satellite, .interview-atlas__navigation button" : ".interview-atlas__navigation button");
+          for (const target of targets) {
+            const rect = target.getBoundingClientRect();
+            if (rect.top < 0 || rect.bottom > innerHeight || rect.left < 0 || rect.right > innerWidth) errors.push(`Outside first viewport: ${target.getAttribute("aria-label") || target.textContent}`);
+          }
+          return errors;
+        }, width === 1705)).toEqual([]);
+        await page.screenshot({ path: `/tmp/jobctrl-993-ui-repair-first-${width}-${density.toLowerCase()}-${perspective.toLowerCase()}.png` });
+        await expect(map.locator(".interview-atlas__hub").first()).toHaveCSS("height", "52px");
+        await expect(map.locator(".interview-atlas__satellite").first()).toHaveCSS("height", "24px");
+        await expect(map.locator(".interview-atlas__satellite").first()).toHaveCSS("width", "24px");
+        await expectUnobstructedGraph(map);
       }
-      await expectUnobstructedGraph(map);
     }
+    await page.goto("/interviews?mode=graph");
+    await expect(map.locator("[data-graph-question-id]")).toHaveCount(121);
     await map.getByRole("button", { name: "Behavioral: 11 questions", exact: true }).locator(".interview-atlas__mark").click();
     await expect(page).toHaveURL(/topic=behavioral/);
     await expect(map.locator(".interview-atlas__named-node")).toHaveCount(11);
@@ -67,14 +86,6 @@ test("Interview atlas hub labels and native targets survive desktop widths and d
     await map.getByRole("button", { name: "Overview", exact: true }).click();
     await map.getByRole("button", { name: "Sources", exact: true }).click();
     await expect(map.locator("[data-graph-source-id]")).toHaveCount(57);
-    for (const density of ["compact", "regular", "comfy"]) {
-      await page.locator(".app-shell").evaluate((element, value) => element.setAttribute("data-density", value), density);
-      expect(await map.locator('.interview-atlas__navigation button').evaluateAll((elements) => elements.every((element) => { const rect = element.getBoundingClientRect(); return rect.top >= 0 && rect.bottom <= innerHeight; }))).toBe(true);
-      if (width === 1705) {
-        expect(await map.locator('.interview-atlas__hub, .interview-atlas__satellite, .interview-atlas__navigation button').evaluateAll((elements) => elements.every((element) => { const rect = element.getBoundingClientRect(); return rect.top >= 0 && rect.bottom <= innerHeight && rect.left >= 0 && rect.right <= innerWidth; }))).toBe(true);
-      }
-      await expectUnobstructedGraph(map);
-    }
     await expectUnobstructedGraph(map);
     await page.screenshot({ path: `/tmp/jobctrl-993-ui-repair-${width}-sources.png` });
     await map.getByRole("button", { name: "Will Larson: 21 sources", exact: true }).click();

@@ -8688,13 +8688,13 @@ input[type="radio"] {
 .interview-atlas__bridges { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 .interview-atlas__bridges path { fill: none; stroke: var(--muted-foreground); stroke-width: 1; stroke-dasharray: 3 5; opacity: .35; vector-effect: non-scaling-stroke; }
 .interview-atlas__lines--wide, .interview-atlas__lines--narrow, .interview-atlas__lines--small { display: none; }
-.interview-atlas__cluster { position: relative; height: 156px; min-width: 0; grid-column: span var(--interview-atlas-column-span, 1); }
-.interview-atlas__aura { position: absolute; top: 0; left: 50%; transform: translateX(-50%); width: var(--interview-atlas-aura-width); height: 108px; border-radius: 50%; background: var(--muted); }
+.interview-atlas__cluster { position: relative; height: 132px; min-width: 0; grid-column: span var(--interview-atlas-column-span, 1); }
+.interview-atlas__aura { position: absolute; top: 0; left: 50%; transform: translateX(-50%); width: var(--interview-atlas-aura-width); height: 78px; border-radius: 50%; background: var(--muted); }
 .interview-atlas__cluster[data-selected="true"] .interview-atlas__aura { background: var(--accent); box-shadow: inset 0 0 0 1px var(--border); }
 .interview-library .interview-atlas .interview-atlas__hub { position: absolute; inset: auto 0 4px; width: 100%; height: 52px; min-height: 52px; padding: 0 6px; display: flex; flex-direction: column; justify-content: center; gap: 2px; text-align: center; white-space: normal; font-size: 12px; line-height: 16px; }
 .interview-atlas__hub:hover { background: transparent; text-decoration: underline; }
 .interview-atlas__mark { display: inline-block; width: 16px; height: 16px; flex-shrink: 0; border-radius: 50%; background: var(--muted-foreground); }
-.interview-atlas__hub > .interview-atlas__mark { position: absolute; width: 20px; height: 20px; top: -56px; left: calc(50% - 10px); background: var(--foreground); box-shadow: 0 0 0 3px var(--card); }
+.interview-atlas__hub > .interview-atlas__mark { position: absolute; width: 20px; height: 20px; top: -47px; left: calc(50% - 10px); background: var(--foreground); box-shadow: 0 0 0 3px var(--card); }
 .interview-atlas__mark.is-author { background: var(--card); border: 2px solid var(--foreground); }
 .interview-atlas__mark.is-source, .interview-atlas__satellite.is-source > .interview-atlas__mark { border-radius: 0; transform: rotate(45deg); }
 .interview-atlas__mark.is-question { width: 8px; height: 8px; }
@@ -8702,20 +8702,19 @@ input[type="radio"] {
 .interview-atlas__satellite .interview-atlas__mark { width: 8px; height: 8px; }
 .interview-atlas__satellite[aria-pressed="true"] .interview-atlas__mark { background: var(--foreground); box-shadow: 0 0 0 3px var(--card), 0 0 0 5px var(--foreground); }
 .interview-atlas__satellite:focus-visible { outline-offset: 1px; }
-.interview-atlas__spoke { position: absolute; top: 54px; left: 50%; border-top: 1px solid var(--border); transform-origin: left center; pointer-events: none; }
+.interview-atlas__spoke { position: absolute; top: 39px; left: 50%; border-top: 1px solid var(--border); transform-origin: left center; pointer-events: none; }
 .interview-atlas__branch { padding: 20px 4px; min-height: 420px; }
 .interview-atlas__branch-root { display: flex; align-items: center; justify-content: center; gap: 12px; text-align: center; max-width: 48ch; margin: 0 auto 32px; line-height: 1.5; font-weight: var(--jh-type-strong-body-weight); }
 .interview-atlas__branch-list { list-style: none; padding: 24px 0 0; margin: 0; border-top: 1px solid var(--border); display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
 .interview-library .interview-atlas .interview-atlas__named-node { display: flex; flex-direction: column; justify-content: start; align-items: start; text-align: left; white-space: normal; width: 100%; height: auto; min-height: 84px; padding: 12px; gap: 6px; background: var(--muted); }
 .interview-atlas__named-node[aria-pressed="true"] { box-shadow: inset 2px 0 var(--foreground); background: var(--accent); }
-.interview-atlas__footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; padding-top: 16px; border-top: 1px solid var(--border); }
+.interview-atlas__footer { width: 100%; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding-top: 10px; border-top: 1px solid var(--border); }
 .interview-atlas__navigation { display: flex; align-items: center; gap: 6px; }
 .interview-atlas__legend { display: flex; flex-wrap: wrap; gap: 12px; font-size: var(--jh-type-metadata-size); color: var(--muted-foreground); }
 .interview-atlas__legend > span { display: inline-flex; align-items: center; gap: 6px; }
 .interview-atlas__legend .interview-atlas__mark { width: 10px; height: 10px; }
 .interview-atlas__legend .interview-atlas__mark.is-question { width: 6px; height: 6px; }
 .interview-atlas__legend-edge { width: 16px; border-top: 1px dashed var(--muted-foreground); }
-.interview-atlas__hint { margin: 14px 0 0; line-height: 1.6; }
 .interview-atlas__empty { padding: 40px; text-align: center; }
 @container (min-width: 750px) {
   .interview-atlas__clusters { grid-template-columns: repeat(5, minmax(0, 1fr)); }
@@ -8740,9 +8739,6 @@ input[type="radio"] {
   .interview-atlas__lines--narrow { display: none; }
   .interview-atlas__lines--small { display: initial; }
   .interview-atlas__header { gap: 16px; }
-}
-@media (min-width: 901px) {
-  .interview-atlas__viewport { max-height: max(168px, calc(100vh - 475px)); }
 }
 @media (max-width: 1100px) {
   .interview-library__filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }

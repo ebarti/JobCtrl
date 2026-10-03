@@ -54,7 +54,7 @@ describe("whole interview atlas", () => {
     const p = props(); const source = catalog.sources.find((item) => item.id === "TR02")!;
     const view = render(<InterviewLibraryGraph {...p} questions={[]} sourceId={source.id} />);
     expect(screen.getByRole("heading", { name: source.title })).toBeInTheDocument();
-    expect(screen.getByText("No linked questions in the current filters.")).toBeInTheDocument();
+    expect(screen.getByText(/^No linked questions in the current filters\./)).toBeInTheDocument();
     expect(view.container.querySelectorAll(".interview-atlas__named-node")).toHaveLength(0);
   });
 });

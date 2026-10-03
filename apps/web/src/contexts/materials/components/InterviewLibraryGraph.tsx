@@ -1,6 +1,7 @@
-import { Fragment, useMemo, useRef, useState, type CSSProperties, type PointerEvent } from "react";
+import { Fragment, useId, useMemo, useRef, useState, type CSSProperties, type PointerEvent } from "react";
 
 import type { InterviewCatalog, InterviewQuestionCard } from "../../operations/types.js";
+import { useAvailableViewportHeight } from "../../../shared/hooks/useAvailableViewportHeight.js";
 import { Button } from "../../../shared/ui/button.js";
 
 interface Props {
@@ -16,9 +17,9 @@ interface Props {
 }
 interface Group { id: string; label: string; children: { id: string; label: string }[] }
 const RESPONSIVE_LAYOUTS = [
-  { name: "wide", columns: 5, rowHeight: 156, center: 54 },
-  { name: "medium", columns: 4, rowHeight: 156, center: 54 },
-  { name: "narrow", columns: 3, rowHeight: 156, center: 54 },
+  { name: "wide", columns: 5, rowHeight: 132, center: 39 },
+  { name: "medium", columns: 4, rowHeight: 132, center: 39 },
+  { name: "narrow", columns: 3, rowHeight: 132, center: 39 },
   { name: "small", columns: 3, rowHeight: 160, center: 32 },
 ] as const;
 
@@ -37,8 +38,11 @@ function satellitePositions(count: number) {
 }
 
 // The overview has one native button per card/source. Only decorative linework
-// changes with container width; no ResizeObserver, canvas, or browser port is needed.
+// changes with container width; the shared layout hook bounds its desktop stage.
 export function InterviewLibraryGraph({ catalog, questions, selectedQuestionId, topicId, sourceId, onSelectQuestion, onSelectTopic, onSelectSource, onOverview }: Props) {
+  const canvas = useRef<HTMLDivElement>(null);
+  const availableHeight = useAvailableViewportHeight(canvas, 20);
+  const instructionsId = useId();
   const [perspective, setPerspective] = useState<"questions" | "sources">("questions");
   const [authorId, setAuthorId] = useState("");
   const [pan, setPan] = useState({ x: 0, y: 0, zoom: 1 });
@@ -78,13 +82,18 @@ export function InterviewLibraryGraph({ catalog, questions, selectedQuestionId, 
   }
   return <section className="interview-atlas" data-perspective={perspective} aria-label="Whole interview library graph">
     <header className="interview-atlas__header">
-      <div><h2 data-typography="section-title">{focusTitle ?? (perspective === "questions" ? "Question map" : "Source map")}</h2><p className="muted">{focusTitle ? focusedItems?.length ? `${focusKind} · select a connected ${focusedSources ? "source" : "question"}` : "No linked questions in the current filters." : perspective === "questions" ? `${questions.length} questions across ${groups.length} topics` : `${sources.length} sources across ${groups.length} authors`}</p></div>
+      <div><h2 data-typography="section-title">{focusTitle ?? (perspective === "questions" ? "Question map" : "Source map")}</h2><p className="muted">{focusTitle ? focusedItems?.length ? `${focusKind} · select a connected ${focusedSources ? "source" : "question"}` : "No linked questions in the current filters." : perspective === "questions" ? `${questions.length} questions across ${groups.length} topics` : `${sources.length} sources across ${groups.length} authors`} · <a href="#interview-question-title">Read selected question ↓</a></p></div>
       <div className="interview-atlas__perspective" role="group" aria-label="Graph perspective">
         <Button size="sm" variant={perspective === "questions" ? "secondary" : "ghost"} aria-pressed={perspective === "questions"} onClick={() => { setPerspective("questions"); setAuthorId(""); }}>Questions</Button>
         <Button size="sm" variant={perspective === "sources" ? "secondary" : "ghost"} aria-pressed={perspective === "sources"} onClick={() => { setPerspective("sources"); setAuthorId(""); }}>Sources</Button>
       </div>
+    <div className="interview-atlas__footer">
+      <div className="interview-atlas__navigation"><Button size="icon" variant="outline" aria-label="Zoom out" disabled={pan.zoom <= .65} onClick={() => setPan((previous) => ({ ...previous, zoom: Math.max(.65, previous.zoom/1.2) }))}>−</Button><Button size="icon" variant="outline" aria-label="Zoom in" disabled={pan.zoom >= 2} onClick={() => setPan((previous) => ({ ...previous, zoom: Math.min(2, previous.zoom*1.2) }))}>+</Button><Button size="sm" variant="outline" onClick={overview}>Overview</Button><span className="muted" data-typography="metadata">{Math.round(pan.zoom*100)}%</span></div>
+      <div className="interview-atlas__legend" aria-label="Graph legend"><span><i className="interview-atlas__mark" />Topic</span><span><i className="interview-atlas__mark is-question" />Question</span><span><i className="interview-atlas__mark is-source" />Source attribution</span><span><i className="interview-atlas__legend-edge" />Editorial bridge</span></div>
+    </div>
     </header>
-    <div className={`interview-atlas__viewport${pan.zoom !== 1 ? " is-zoomed" : ""}`} role="group" aria-label="Interview graph canvas" tabIndex={0}
+    <p id={instructionsId} className="sr-only">Select a topic or author to read its labels. Drag empty space or focus the canvas and use arrow keys to pan.</p>
+    <div ref={canvas} style={{ maxHeight: availableHeight }} className={`interview-atlas__viewport${pan.zoom !== 1 ? " is-zoomed" : ""}`} role="group" aria-label="Interview graph canvas" aria-describedby={instructionsId} tabIndex={0}
       onPointerDown={startDrag}
       onPointerMove={(event) => { const current = drag.current; if (current?.id === event.pointerId) setPan((previous) => ({ ...previous, x: current.originX + event.clientX - current.x, y: current.originY + event.clientY - current.y })); }}
       onPointerUp={() => { drag.current = null; }} onPointerCancel={() => { drag.current = null; }}
@@ -117,17 +126,12 @@ export function InterviewLibraryGraph({ catalog, questions, selectedQuestionId, 
             </Button>
             {group.children.map((item, index) => {
               const point = positions[index]!;
-              return <Fragment key={item.id}><span className="interview-atlas__spoke" data-edge-kind={perspective === "sources" ? "source" : "topic"} aria-hidden="true" style={{ width: Math.hypot(point.x, point.y), transform: `rotate(${Math.atan2(point.y, point.x)}rad)` }} /><Button variant="ghost" size="icon" className={`interview-atlas__satellite${perspective === "sources" ? " is-source" : ""}`} data-graph-question-id={perspective === "questions" ? item.id : undefined} data-graph-source-id={perspective === "sources" ? item.id : undefined} aria-label={`${item.id}: ${item.label}`} aria-pressed={perspective === "questions" ? selectedQuestionId === item.id : sourceId === item.id} title={`${item.id}: ${item.label}`} style={{ left: `calc(50% + ${point.x.toFixed(1)}px)`, top: `${(54+point.y).toFixed(1)}px` }} onClick={() => perspective === "questions" ? onSelectQuestion(item.id) : onSelectSource(item.id)}><span className="interview-atlas__mark" aria-hidden="true" /></Button></Fragment>;
+              return <Fragment key={item.id}><span className="interview-atlas__spoke" data-edge-kind={perspective === "sources" ? "source" : "topic"} aria-hidden="true" style={{ width: Math.hypot(point.x, point.y), transform: `rotate(${Math.atan2(point.y, point.x)}rad)` }} /><Button variant="ghost" size="icon" className={`interview-atlas__satellite${perspective === "sources" ? " is-source" : ""}`} data-graph-question-id={perspective === "questions" ? item.id : undefined} data-graph-source-id={perspective === "sources" ? item.id : undefined} aria-label={`${item.id}: ${item.label}`} aria-pressed={perspective === "questions" ? selectedQuestionId === item.id : sourceId === item.id} title={`${item.id}: ${item.label}`} style={{ left: `calc(50% + ${point.x.toFixed(1)}px)`, top: `${(39+point.y).toFixed(1)}px` }} onClick={() => perspective === "questions" ? onSelectQuestion(item.id) : onSelectSource(item.id)}><span className="interview-atlas__mark" aria-hidden="true" /></Button></Fragment>;
             })}
           </div>; })}
         </div>}
       </div>
       {!groups.length && !source ? <p className="interview-atlas__empty muted">No connections match these filters. Try Overview.</p> : null}
     </div>
-    <footer className="interview-atlas__footer">
-      <div className="interview-atlas__navigation"><Button size="icon" variant="outline" aria-label="Zoom out" disabled={pan.zoom <= .65} onClick={() => setPan((previous) => ({ ...previous, zoom: Math.max(.65, previous.zoom/1.2) }))}>−</Button><Button size="icon" variant="outline" aria-label="Zoom in" disabled={pan.zoom >= 2} onClick={() => setPan((previous) => ({ ...previous, zoom: Math.min(2, previous.zoom*1.2) }))}>+</Button><Button size="sm" variant="outline" onClick={overview}>Overview</Button><span className="muted" data-typography="metadata">{Math.round(pan.zoom*100)}%</span></div>
-      <div className="interview-atlas__legend" aria-label="Graph legend"><span><i className="interview-atlas__mark" />Topic</span><span><i className="interview-atlas__mark is-question" />Question</span><span><i className="interview-atlas__mark is-source" />Source attribution</span><span><i className="interview-atlas__legend-edge" />Editorial bridge</span></div>
-    </footer>
-    <p className="interview-atlas__hint muted" data-typography="metadata">Select a topic or author to read its labels. Drag empty space or focus the canvas and use arrow keys to pan. <a href="#interview-question-title">Read selected question ↓</a></p>
   </section>;
 }
