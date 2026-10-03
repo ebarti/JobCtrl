@@ -32,7 +32,13 @@ _HISTORICAL_ASSERTION = re.compile(
     r"|^\s*(?:built|used|led|owned|managed|hired|implemented|deployed|migrated|reduced|increased|delivered)\b"
 )
 _PERSONAL_SUBJECT = re.compile(r"(?i)\b(?:i|we|you|the candidate)\b(?!['’]s\b)(?:['’](?:ve|m|d|re))?")
-_INTENDED_ACTION = re.compile(r"(?i)^\s+(?:(?:[a-z]+ly|in\s+fact)\s+)*(?:would|will|could|might|should|intend\s+to|plan\s+to)\b")
+_OPERATOR_MODIFIER = r"(?:[a-z]+ly|already|in\s+(?:fact|reality))"
+_INTENDED_ACTION = re.compile(rf"(?i)^\s+(?:{_OPERATOR_MODIFIER}\s+)*(?:would|will|could|might|should|intend\s+to|plan\s+to)\b")
+_ACTOR_OPERATOR_PREFIX = re.compile(rf"(?i)^\s*(?:{_OPERATOR_MODIFIER}\s+)*$")
+_PREDICATE_OPERATOR_PREFIX = re.compile(
+    rf"(?i)^\s+(?:(?:{_OPERATOR_MODIFIER}|not|am|is|are|was|were|have|has|had|do|does|did)\s+)*")
+_NONMODAL_AUXILIARY = re.compile(r"(?i)\b(?:am|is|are|was|were|have|has|had|do|does|did)\b")
+_ACTUAL_OPERATOR = re.compile(r"(?i)\b(?:actually|previously|already|formerly|in\s+(?:fact|reality)|do|does|did)\b")
 _FUTURE_QUESTION = re.compile(r"(?i)\b(?:would|could|might|should|will)\s+(?:you|we|i|the candidate)\b")
 _QUESTION_AUXILIARY = re.compile(r"(?i)\b(?:would|could|might|should|will|can|did|do|does|have|has|was|were|is|are)\s*$")
 _QUESTION_START = re.compile(r"(?i)(?:^|[,;:—])\s*(?:what|how|which|when|where|why|who|would|could|might|should|will|can|did|do|does|is|are|was|were|have|has)\b")
@@ -86,10 +92,6 @@ _LOCAL_SCENARIO = re.compile(r"(?i)\b(?:hypothetically\b|in a hypothetical\b|sup
 _REDUCED_CONDITION = re.compile(
     r"(?i)^\s*(?:[a-z]+ly\s+)*(?!(?:i|we|you|it|they|my|our|your|a|an|the|this|that|there)\b)[a-z]+"
     r"(?:\s+(?:for|to|in|at|on|by|with|under)\b.*)?\s*$")
-_ACTUAL_CONTRAST = re.compile(
-    r"(?i)\bbut\s+(?:(?:i|we|you|the candidate)(?:['’](?:ve|m|d|re))?\s+"
-    r"(?:actually|in\s+fact|previously|already|formerly)\b|"
-    r"(?:actually|in\s+fact|previously|already|formerly)\s+(?:i|we|you|the candidate)\b)")
 _ACCOUNT_COMPLEMENT = re.compile(r"(?i)^\s*(?:what|how|whether)\b")
 _ACCOUNT_REQUEST = re.compile(r"(?i)\b(?:explain|describe|recount|recall|discuss|outline|walk\s+through|honest\s+about)\b")
 _EXISTENTIAL_INPUT = re.compile(r"(?i)^\s*(?:is|are)\s+there\b")
@@ -351,6 +353,8 @@ class _PropositionAssessment:
     governing_actor: str | None
     governing_operator: str | None
     dependency_start: int | None
+    hypothesis_start: int | None
+    hypothesis_postposed: bool
 
 
 @dataclass(frozen=True)
@@ -362,8 +366,15 @@ class _ProseAssessment:
         return any(proposition.personal_assertion for proposition in self.propositions)
 
 
-def _hypothesis_ranges(text: str) -> tuple[tuple[int, int], ...]:
-    ranges: list[tuple[int, int]] = []
+@dataclass(frozen=True)
+class _HypothesisCandidate:
+    start: int
+    end: int
+
+
+def _hypothesis_candidates(text: str) -> tuple[_HypothesisCandidate, ...]:
+    """Syntactic bounds identify eligible antecedents, never grant a license."""
+    candidates: list[_HypothesisCandidate] = []
     for scenario in _LOCAL_SCENARIO.finditer(text):
         following = text[scenario.end():]
         end_boundary = re.search(_CONDITION_END.pattern + "|" + _SENTENCE_BOUNDARIES.pattern, following, re.IGNORECASE)
@@ -374,18 +385,69 @@ def _hypothesis_ranges(text: str) -> tuple[tuple[int, int], ...]:
         if (scenario.group().lower() == "if" and clause_boundary
                 and _REDUCED_CONDITION.fullmatch(text[scenario.end():clause_boundary.start()])):
             end = clause_boundary.start()
-        main_action = _SENTENCE_BOUNDARIES.split(text[:scenario.start()])[-1]
-        postposed = _FUTURE_QUESTION.search(main_action) or any(
-            _intended_action(main_action, actor) for actor in _PERSONAL_SUBJECT.finditer(main_action))
-        contrast = _ACTUAL_CONTRAST.search(text, scenario.end(), end)
-        if scenario.group().lower() == "if" and postposed and contrast:
-            end = contrast.start()
-        ranges.append((scenario.start(), end))
-    return tuple(ranges)
+        candidates.append(_HypothesisCandidate(scenario.start(), end))
+    return tuple(candidates)
 
 
-def _in_hypothesis(ranges: tuple[tuple[int, int], ...], position: int) -> bool:
-    return any(start <= position < end for start, end in ranges)
+def _actual_predicate_operator(prefix: str, rest: str) -> bool:
+    if _INTENDED_ACTION.match(rest) or not _ACTOR_OPERATOR_PREFIX.fullmatch(prefix):
+        return False
+    operators = _PREDICATE_OPERATOR_PREFIX.match(rest)
+    if not operators or not re.match(r"(?i)[a-z]+\b", rest[operators.end():]):
+        return False
+    # Only the parsed grammatical prefix contributes an actuality operator;
+    # words inside a lexical predicate or embedded premise cannot confer it.
+    return bool(_ACTUAL_OPERATOR.search(prefix + operators.group()))
+
+
+def _has_actual_operator(clause: str, subject: re.Match[str]) -> bool:
+    """Bind a speech operator to this actor's predicate, across auxiliaries."""
+    return not _intended_action(clause, subject) and _actual_predicate_operator(
+        clause[:subject.start()], clause[subject.end():])
+
+
+def _auxiliary_predicate(clause: str) -> bool:
+    rest = " " + clause.lstrip()
+    if _INTENDED_ACTION.match(rest):
+        return True
+    operators = _PREDICATE_OPERATOR_PREFIX.match(rest)
+    return bool(operators and _NONMODAL_AUXILIARY.search(operators.group())
+                and re.match(r"(?i)[a-z]+\b", rest[operators.end():]))
+
+
+def _local_hypothesis_license(
+    text: str, start: int, end: int, clause: str, candidates: Sequence[_HypothesisCandidate],
+    propositions: Sequence[_PropositionAssessment], direct_bindings: Sequence[tuple[re.Match[str], str]],
+    dependency: _PropositionAssessment | None,
+) -> tuple[int, bool] | None:
+    candidate = next((candidate for candidate in reversed(candidates) if candidate.start <= end - 1 < candidate.end), None)
+    if candidate is None:
+        return None
+    if start <= candidate.start < end:
+        previous = propositions[-1] if propositions else None
+        attached = bool(re.match(r"(?i)if\b", text[candidate.start:]) and previous
+                        and not text[previous.end:start].strip() and previous.hypothesis_start is None
+                        and previous.governing_actor and (previous.governing_operator == "conditional"
+                            or (previous.governing_operator == "open_question" and _FUTURE_QUESTION.search(previous.text))))
+        return candidate.start, attached
+    if not propositions or propositions[-1].hypothesis_start != candidate.start:
+        return None
+    previous = propositions[-1]
+    connector = text[previous.end:start]
+    coordinated = bool(_CLAUSE_BOUNDARIES.fullmatch(connector.strip()))
+    complement = not connector.strip() and bool(_ACCOUNT_COMPLEMENT.match(clause))
+    if not coordinated and not complement:
+        return None
+    # A local actual actor/predicate at a contrast boundary has its own speech
+    # status. It cannot inherit an earlier postposed assumption's license.
+    if previous.hypothesis_postposed and connector.strip().lower() == "but":
+        if any(mode in {"conditional", "open_question", "detail_question", "input_question"}
+               or (mode == "assertion" and _has_actual_operator(clause, subject)) for subject, mode in direct_bindings):
+            return None
+        if dependency and (_INTENDED_ACTION.match(" " + clause.lstrip())
+                           or _actual_predicate_operator("", " " + clause.lstrip())):
+            return None
+    return candidate.start, previous.hypothesis_postposed
 
 
 def _sentence_at(text: str, position: int) -> str:
@@ -407,13 +469,11 @@ def _in_recollection(text: str, position: int) -> bool:
     return bool(request and _RECOLLECTION_BRIDGE.fullmatch(preceding[request.end():]))
 
 
-def _subject_mode(text: str, start: int, clause: str, subject: re.Match[str], *, question: bool, future_question: bool,
-                  hypothesis_ranges: tuple[tuple[int, int], ...]) -> str:
+def _subject_mode(text: str, start: int, clause: str, subject: re.Match[str], *, question: bool, future_question: bool) -> str:
     prefix, rest = clause[:subject.start()], clause[subject.end():]
     if _PERSONAL_OBJECT_PREFIX.search(prefix) and _PERSONAL_OBJECT_REST.match(rest):
         return "object"
-    if (_intended_action(clause, subject) or _intended_purpose(text, start, clause, subject)
-            or _in_hypothesis(hypothesis_ranges, start + subject.start())):
+    if _intended_action(clause, subject) or _intended_purpose(text, start, clause, subject):
         return "conditional"
     if _FUTURE_INPUT.search(prefix) and _INPUT_ACTION.match(rest):
         return "conditional"
@@ -437,7 +497,7 @@ def _dependent_actor(
     text: str, start: int, clause: str, propositions: Sequence[_PropositionAssessment],
 ) -> _PropositionAssessment | None:
     if (not propositions or _PERSONAL_SUBJECT.search(clause) or _PERSONAL_POSSESSION.search(clause)
-            or _QUESTION_START.match(clause) or _RECOLLECTION_REQUEST.match(clause)
+            or (_QUESTION_START.match(clause) and not _auxiliary_predicate(clause)) or _RECOLLECTION_REQUEST.match(clause)
             or _EXPLICIT_SCENARIO.match(clause)):
         return None
     previous = propositions[-1]
@@ -473,7 +533,7 @@ def _account_actor(text: str, start: int, clause: str, propositions: Sequence[_P
 def _assess_prose(text: str) -> _ProseAssessment:
     """Keep operator, assertion and source-check spans together until validation."""
     propositions: list[_PropositionAssessment] = []
-    hypothesis_ranges = _hypothesis_ranges(text)
+    hypothesis_candidates = _hypothesis_candidates(text)
     start = 0
     ends = sorted({*(match.span() for match in _PROPOSITION_BOUNDARIES.finditer(text)),
                    *(match.span() for match in _EMBEDDED_BOUNDARY.finditer(text)), (len(text), len(text))})
@@ -489,31 +549,36 @@ def _assess_prose(text: str) -> _ProseAssessment:
         unknown_value = bool(question and _UNKNOWN_HISTORY_VALUE.fullmatch(clause.rstrip().rstrip("?") + "?"))
         account = _account_actor(text, start, clause, propositions)
         direct_bindings = tuple(
-            (subject, _subject_mode(text, start, clause, subject, question=question, future_question=future_question,
-                                    hypothesis_ranges=hypothesis_ranges))
+            (subject, _subject_mode(text, start, clause, subject, question=question, future_question=future_question))
             for subject in _PERSONAL_SUBJECT.finditer(clause))
+        dependency = _dependent_actor(text, start, clause, propositions)
+        license_binding = _local_hypothesis_license(
+            text, start, end, clause, hypothesis_candidates, propositions, direct_bindings, dependency)
+        hypothesis_start, hypothesis_postposed = license_binding if license_binding else (None, False)
+        hypothesis = license_binding is not None
         subject_bindings = tuple(
-            (subject, "detail_question" if account and mode == "assertion"
+            (subject, "conditional" if hypothesis and mode != "object" else
+             "detail_question" if account and mode == "assertion"
              and _EMBEDDED_REQUEST.search(clause[:subject.start()]) else mode)
             for subject, mode in direct_bindings)
         modes = [mode for _, mode in subject_bindings]
         governing_actor = subject_bindings[-1][0].group() if subject_bindings else None
         governing_operator = subject_bindings[-1][1] if subject_bindings else None
-        dependency = _dependent_actor(text, start, clause, propositions)
         if dependency:
             governing_actor, governing_operator = dependency.governing_actor, dependency.governing_operator
+            if not hypothesis and _actual_predicate_operator("", " " + clause.lstrip()):
+                governing_operator = "assertion"
             # An intended base action cannot confer future scope on a separate
             # past-tense predicate; explicit hypothetical assumptions may.
             if (governing_operator == "conditional" and "hypothesis" not in dependency.operator_modes
                     and re.match(r"(?i)^\s*[a-z]+\b", clause) and not _CONTRACTED_BASE_ACTION.match(clause)):
                 governing_operator = "assertion"
             modes.append(governing_operator)
-        hypothesis = _in_hypothesis(hypothesis_ranges, end - 1)
         requested = bool(question and _QUESTION_START.search(clause))
         personal_assertion = any(mode == "assertion" for mode in modes)
         source_query = "detail_question" in modes
         for premise in _BIOGRAPHICAL_PREMISE.finditer(clause):
-            governed = unknown_value or _in_hypothesis(hypothesis_ranges, start + premise.start())
+            governed = unknown_value or hypothesis
             if (dependency and governing_operator in {"open_question", "detail_question", "conditional"}
                     and _DIRECT_PREDICATE.fullmatch(clause[:premise.start()])):
                 governed = True
@@ -526,7 +591,7 @@ def _assess_prose(text: str) -> _ProseAssessment:
             personal_assertion = True
         for possession in _PERSONAL_POSSESSION.finditer(clause):
             intended_choice = bool(_INTENDED_POSSESSION.match(clause[possession.end():]))
-            possession_hypothesis = _in_hypothesis(hypothesis_ranges, start + possession.start())
+            possession_hypothesis = hypothesis
             possession_request = _in_recollection(text, start + possession.start())
             possession_query = bool(question and not future_question and not subject_bindings)
             source_query |= possession_request
@@ -556,7 +621,7 @@ def _assess_prose(text: str) -> _ProseAssessment:
         propositions.append(_PropositionAssessment(
             start, span_end, clause, operators, personal_assertion, source_query, source_text,
             governing_actor, "assertion" if personal_assertion else governing_operator,
-            dependency.start if dependency else account.start if account else None))
+            dependency.start if dependency else account.start if account else None, hypothesis_start, hypothesis_postposed))
         start = next_start
     return _ProseAssessment(tuple(propositions))
 
