@@ -181,9 +181,11 @@ inspector panes stack when the desktop three-pane layout no longer fits.
 ### Interviews
 
 Interviews (`/interviews`) browses the full local question library without a job
-or provider call. Search and topic/role/format/source filters, graph/list mode,
-and the selected card are bookmarkable. Cards expose draft guidance, criteria,
-alternatives, probes, and source-reading limits.
+or provider call. The **Questions** and **Sources** graph perspectives explore
+topics and authors; **List** offers the same card actions. Search and
+topic/role/format/source filters, graph/list mode, and the selected card are
+bookmarkable. The **Answer**, **Rubric**, and **Sources** inspector separates
+guidance, draft criteria, and source-reading limits.
 
 Choose a job to select questions and accepted profile evidence for Beta
 preparation. Inspect retained inputs, stale warnings, generation history, and

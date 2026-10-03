@@ -44,7 +44,8 @@ is the canonical decision matrix.
 | Job detail | **Server** (Query) | Same. |
 | Saved resume review draft | **Server** (Query) | The apply-context reconciler publishes create/save/seed/render/reply responses to the initiating tenant/job key. Draft identity and base generation precede revision/state/time ordering; threads, replies and feedback signals merge independently by their IDs. |
 | Unsaved resume review edits | **Mounted Plate session** | Acknowledging saved snapshot A updates the baseline while later text or formatting B stays dirty. Comment-only updates do not reset focus or selection. |
-| Interviews filters, graph/list mode, selected card, and optional canonical job | **URL** | The library view is bookmarkable and remains distinct from generated prep. |
+| Interviews filters, graph/list mode, selected card, and optional canonical job | **URL** | The library view is bookmarkable and remains distinct from generated prep; navigation and browser Back/Forward use this state. |
+| Interviews Questions/Sources perspective, author drill-down, graph pan/zoom, and inspector tab | **Component** (`useState` / tabs) | Transient exploration controls; they do not shadow URL-owned card/job/filters, accepted evidence selections, or private drafts. |
 | Installed interview catalog and job prep/history/notes | **Server** (Query) | Public Operations read hooks use the API port; catalog browsing does not require a job/worker/provider. |
 | Unsaved interview question selection/order, context, and note text | **Materials session store + Form library state** | TanStack Form validates mutations; a tenant/job/question-keyed in-memory Zustand store preserves drafts through navigation. Dirty edits survive delayed responses, save failures, and revision conflicts; a newer query result cannot overwrite them. Personal text is not persisted in browser storage or URL state. |
 | Artifacts list / detail | **Server** (Query) | Same. |

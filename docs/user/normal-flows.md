@@ -463,8 +463,9 @@ or validated grading. Review personal claims against their linked evidence.
 <WorkflowSurfacePanel surface="web">
 
 Open **Interviews** to browse the full local library without a job or provider
-call. Search and filter cards, switch graph/list views, and bookmark a question
-or filtered view. Cards expose guidance, responsibility-based adaptation,
+call. Explore topics and authors through the **Questions** and **Sources**
+graph perspectives, or use **List**. Search and filter cards, inspect a selected
+question, and bookmark its URL or a filtered view. Cards expose guidance, responsibility-based adaptation,
 alternatives, probes, draft criteria, source-reading coverage, and synthetic
 examples where available.
 

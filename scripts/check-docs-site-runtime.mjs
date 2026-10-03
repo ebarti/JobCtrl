@@ -1875,7 +1875,9 @@ try {
   const privacyContract = await page.evaluate(() => {
     const heading = document.querySelector("#privacy-quick-answer");
     const table = heading?.nextElementSibling;
-    const text = document.querySelector(".vp-doc")?.textContent ?? "";
+    const text = (document.querySelector(".vp-doc")?.textContent ?? "")
+      .replace(/\s+/g, " ")
+      .trim();
     return {
       headerCount: table?.querySelectorAll("thead th").length ?? 0,
       rowCount: table?.querySelectorAll("tbody tr").length ?? 0,
@@ -1884,17 +1886,21 @@ try {
         "every path below is relative to JOBCTRL_DIR",
       ),
       hasMacOnlyBoundary: text.includes("macOS credential panel"),
-      hasRuntimeBoundary: text.includes("loads a Keychain entry at startup"),
+      hasRuntimeBoundary:
+        text.includes("Python loads native credentials at startup") &&
+        text.includes("corresponding environment value is missing or empty"),
       hasPrecedenceBoundary: text.includes(
-        "Any non-empty environment value already present wins",
+        "Any non-empty inherited value wins",
       ),
       hasRestartBoundary: text.includes("Restart JobCtrl"),
       hasWindowsBoundary: text.includes("Windows Credential Manager"),
-      hasLinuxBoundary: text.includes("Linux Secret Service/keyring"),
+      hasLinuxBoundary: text.includes("Linux Secret Service"),
       hasInspectionFailureBoundary:
         text.includes("inspection_failed") &&
         text.includes("not that a credential is absent"),
-      hasRetryBoundary: text.includes("unlock it and retry"),
+      hasRetryBoundary: text.includes(
+        "Unlock or restore access to the native store and retry",
+      ),
       hasDefaultProtection: text.includes("Protected by default"),
       hasDocsAnalyticsDisclosure:
         Boolean(document.querySelector("#documentation-site-analytics")) &&
@@ -2006,9 +2012,11 @@ try {
         "only into that process's environment",
       ),
       hasNoHotReloadBoundary: text.includes("There is no hot reload"),
-      hasPlatformBoundary: text.includes(
-        "native Windows and Linux stores are planned",
-      ),
+      hasPlatformBoundary:
+        text.includes("macOS uses Keychain") &&
+        text.includes("Windows uses Credential Manager") &&
+        text.includes("Linux uses Secret Service") &&
+        text.includes("No adapter persists a plaintext fallback"),
       hasProviderStatusBoundary:
         text.includes("GET /v1/providers/status") &&
         text.includes(

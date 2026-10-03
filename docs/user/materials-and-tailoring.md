@@ -147,13 +147,27 @@ and switch between graph and list. The selected card and filters live in the
 URL, so you can bookmark the same view. The list provides the same card content
 and preparation actions as the graph.
 
-The library contains 121 active question families across 15 topics. Each card
-separates strong-answer guidance, adaptation to responsibilities, and your
-personal preparation. Read its acceptable alternatives, follow-up probes,
-failure modes, draft criteria, synthetic illustrations when present, and source
-attribution. Source edges, editorial related-question edges, and links to
-personal evidence have different meanings: a source citation supports guidance;
-it cannot prove that you did something.
+The library contains 121 active question families across 15 topics, with 57
+sources and 20 author groups. In **Graph**, **Questions** shows all matching
+questions grouped by topic, with editorial connections between topics. Choose a
+topic to read its question labels. **Sources** groups research resources by
+author; choose an author, then a source to explore its linked questions.
+Selecting a question updates the inspector while keeping the catalog map
+available. Drag empty space or use the focused canvas's arrow keys to pan, use
+the zoom controls, and choose **Overview** to return to the unfiltered map.
+
+The selected card's inspector has **Answer**, **Rubric**, and **Sources** tabs.
+**Answer** contains guidance, responsibility adaptations, alternatives, probes,
+failure patterns, and synthetic illustrations when present. **Rubric** contains
+draft criteria for reflection; do not add them into a readiness score.
+**Sources** shows attribution, actual reading coverage, and original resources.
+
+**Connections and saved evidence** is a separate, focused view of the selected
+card's relationships and, when a job is selected, personal evidence. Source and
+author attribution, editorial related-question edges, and accepted personal
+evidence have different meanings: research supports guidance; it cannot prove
+that you did something. Selecting a resource or following an editorial edge
+does not select accepted profile evidence for preparation.
 
 ::: warning Research draft and beta output
 The source ledger records actual reading coverage and distinguishes direct
