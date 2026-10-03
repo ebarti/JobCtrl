@@ -11,6 +11,8 @@ from typing import Any
 
 import pytest
 
+from tests.interview_question_fixtures import canonical_evidence
+
 from jobctrl.database import close_connection, get_connection
 from jobctrl.domain.events import (
     InterviewPrepFailedPayload,
@@ -34,6 +36,7 @@ from jobctrl.interview.activities import (
     InterviewPrepEventRecorder,
     generate_interview_prep_activity,
 )
+from jobctrl.interview import workflow as interview_workflow
 from jobctrl.interview.workflow import InterviewPrepWorkflowInput, InterviewPrepWorkflowResult
 
 
@@ -109,6 +112,7 @@ def test_generates_accepted_prep_through_existing_truthfulness_gates(tmp_path: P
         )
 
         outcome = GenerateInterviewPrepUseCase(
+            catalog=_generation_catalog(),
             repository=repository,
             llm=llm,
             publisher=publisher,
@@ -116,6 +120,7 @@ def test_generates_accepted_prep_through_existing_truthfulness_gates(tmp_path: P
             tenant_id=LOCAL_TENANT,
             job=_job(),
             profile_snapshot=_profile_snapshot(),
+            canonical_evidence=canonical_evidence(_profile_snapshot()),
             evidence_entries=_evidence_entries(),
             evidence_gaps=(),
             requirements=_requirements("req-python", "Python service optimization"),
@@ -155,6 +160,7 @@ def test_fabricated_metric_fails_without_superseding_last_accepted_prep(tmp_path
             ]
         )
         use_case = GenerateInterviewPrepUseCase(
+            catalog=_generation_catalog(),
             repository=repository,
             llm=first_llm,
             publisher=publisher,
@@ -163,6 +169,7 @@ def test_fabricated_metric_fails_without_superseding_last_accepted_prep(tmp_path
             tenant_id=LOCAL_TENANT,
             job=_job(),
             profile_snapshot=_profile_snapshot(),
+            canonical_evidence=canonical_evidence(_profile_snapshot()),
             evidence_entries=_evidence_entries(),
             evidence_gaps=(),
             requirements=_requirements("req-python", "Python service optimization"),
@@ -180,6 +187,7 @@ def test_fabricated_metric_fails_without_superseding_last_accepted_prep(tmp_path
             ]
         )
         outcome = GenerateInterviewPrepUseCase(
+            catalog=_generation_catalog(),
             repository=repository,
             llm=second_llm,
             publisher=publisher,
@@ -187,6 +195,7 @@ def test_fabricated_metric_fails_without_superseding_last_accepted_prep(tmp_path
             tenant_id=LOCAL_TENANT,
             job=_job(),
             profile_snapshot=_profile_snapshot(),
+            canonical_evidence=canonical_evidence(_profile_snapshot()),
             evidence_entries=_evidence_entries(),
             evidence_gaps=(),
             requirements=_requirements("req-python", "Python service optimization"),
@@ -234,6 +243,7 @@ def test_star_draft_claim_must_ground_in_referenced_evidence_source(tmp_path: Pa
         )
 
         outcome = GenerateInterviewPrepUseCase(
+            catalog=_generation_catalog(),
             repository=repository,
             llm=llm,
             publisher=_RecordingPublisher(),
@@ -241,6 +251,7 @@ def test_star_draft_claim_must_ground_in_referenced_evidence_source(tmp_path: Pa
             tenant_id=LOCAL_TENANT,
             job=_job(),
             profile_snapshot=_profile_snapshot(),
+            canonical_evidence=canonical_evidence(_profile_snapshot()),
             evidence_entries=_evidence_entries(),
             evidence_gaps=(),
             requirements=_requirements("req-python", "Python service optimization"),
@@ -248,7 +259,7 @@ def test_star_draft_claim_must_ground_in_referenced_evidence_source(tmp_path: Pa
 
         assert outcome.status == "failed"
         assert any(
-            "claim-prep-1 ungrounded: text_not_in_shipped_resume" in error
+            "not grounded in its selected canonical excerpts" in error
             for error in outcome.errors
         )
         assert [call["response_schema"] for call in llm.calls] == [
@@ -275,6 +286,7 @@ def test_gap_drill_must_name_gap_without_claiming_experience(tmp_path: Path) -> 
         )
 
         outcome = GenerateInterviewPrepUseCase(
+            catalog=_generation_catalog(),
             repository=repository,
             llm=llm,
             publisher=_RecordingPublisher(),
@@ -282,6 +294,7 @@ def test_gap_drill_must_name_gap_without_claiming_experience(tmp_path: Path) -> 
             tenant_id=LOCAL_TENANT,
             job=_job(),
             profile_snapshot=_profile_snapshot(),
+            canonical_evidence=canonical_evidence(_profile_snapshot()),
             evidence_entries=_evidence_entries(),
             evidence_gaps=(
                 {
@@ -294,7 +307,7 @@ def test_gap_drill_must_name_gap_without_claiming_experience(tmp_path: Path) -> 
         )
 
         assert outcome.status == "failed"
-        assert any("gap drill asserts experience" in error for error in outcome.errors)
+        assert any("asserts personal history without accepted evidence" in error for error in outcome.errors)
     finally:
         close_connection(tmp_path / "jobs.db")
 
@@ -415,6 +428,7 @@ def test_interview_prep_rejects_url_shaped_job_identity(tmp_path: Path) -> None:
     conn = _init_conn(tmp_path)
     try:
         use_case = GenerateInterviewPrepUseCase(
+            catalog=_generation_catalog(),
             repository=SqliteInterviewPrepRepository(conn),
             llm=_FakeLlm([]),
         )
@@ -424,6 +438,7 @@ def test_interview_prep_rejects_url_shaped_job_identity(tmp_path: Path) -> None:
                 tenant_id=LOCAL_TENANT,
                 job={**_job(), "job_id": JOB_URL},
                 profile_snapshot=_profile_snapshot(),
+                canonical_evidence=canonical_evidence(_profile_snapshot()),
                 evidence_entries=(),
                 evidence_gaps=(),
                 requirements=(),
@@ -486,6 +501,7 @@ def test_retry_with_same_origin_run_reuses_completed_generation(tmp_path: Path) 
             ]
         )
         use_case = GenerateInterviewPrepUseCase(
+            catalog=_generation_catalog(),
             repository=repository,
             llm=llm,
             publisher=publisher,
@@ -494,6 +510,7 @@ def test_retry_with_same_origin_run_reuses_completed_generation(tmp_path: Path) 
             "tenant_id": LOCAL_TENANT,
             "job": _job(),
             "profile_snapshot": _profile_snapshot(),
+            "canonical_evidence": canonical_evidence(_profile_snapshot()),
             "evidence_entries": _evidence_entries(),
             "evidence_gaps": (),
             "requirements": _requirements("req-python", "Python service optimization"),
@@ -530,6 +547,7 @@ def test_new_workflow_run_generates_a_fresh_generation(tmp_path: Path) -> None:
             "tenant_id": LOCAL_TENANT,
             "job": _job(),
             "profile_snapshot": _profile_snapshot(),
+            "canonical_evidence": canonical_evidence(_profile_snapshot()),
             "evidence_entries": _evidence_entries(),
             "evidence_gaps": (),
             "requirements": _requirements("req-python", "Python service optimization"),
@@ -549,6 +567,7 @@ def test_new_workflow_run_generates_a_fresh_generation(tmp_path: Path) -> None:
             ]
         )
         first = GenerateInterviewPrepUseCase(
+            catalog=_generation_catalog(),
             repository=repository,
             llm=first_llm,
             publisher=_RecordingPublisher(),
@@ -570,6 +589,7 @@ def test_new_workflow_run_generates_a_fresh_generation(tmp_path: Path) -> None:
             ]
         )
         second = GenerateInterviewPrepUseCase(
+            catalog=_generation_catalog(),
             repository=repository,
             llm=second_llm,
             publisher=_RecordingPublisher(),
@@ -641,6 +661,152 @@ async def test_generate_activity_offloads_generation_and_heartbeats(
     assert output.status == "accepted"
     assert heartbeats[-1] == "done"
     assert forwarded["origin_run_id"] == "wf-run-heartbeat"
+
+
+
+@pytest.mark.parametrize("tenant_id", [LOCAL_TENANT, OTHER_TENANT])
+def test_prep_material_input_uses_only_current_approved_artifact(
+    tmp_path: Path, tenant_id: TenantId,
+) -> None:
+    conn = _init_conn(tmp_path)
+    try:
+        if tenant_id != LOCAL_TENANT:
+            _insert_job(conn, tenant_id, JOB_ID, JOB_URL)
+        material_path = tmp_path / "approved-synthetic-resume.txt"
+        material_path.write_text("Synthetic approved resume.")
+        for generation, status in ((1, "approved"), (2, "rejected")):
+            conn.execute(
+                "INSERT INTO job_materials (tenant_id, job_id, generation, status, "
+                "created_at, updated_at) VALUES (?, ?, ?, 'resume_in_progress', 'now', 'now')",
+                (tenant_id, JOB_ID, generation),
+            )
+            conn.execute(
+                "INSERT INTO job_materials_artifacts (tenant_id, job_id, generation, "
+                "artifact_type, artifact_id, status, path, render_format, created_at) "
+                "VALUES (?, ?, ?, 'tailored_resume', ?, ?, ?, 'text', 'now')",
+                (tenant_id, JOB_ID, generation, f"resume-{generation}", status, str(material_path)),
+            )
+            for suffix, artifact_id in (("owned", f"resume-{generation}"), ("unrelated", "other-artifact")):
+                conn.execute(
+                    "INSERT INTO job_bullet_provenance (tenant_id, job_id, generation, "
+                    "bullet_id, artifact_id, section, transform_type, control, generated_text, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, 'experience', 'paraphrase', 'never_fabricate', ?, 'now')",
+                    (tenant_id, JOB_ID, generation, f"bullet-{generation}-{suffix}", artifact_id,
+                     f"synthetic generation {generation} {suffix}"),
+                )
+        conn.commit()
+
+        rows = interview_activities._load_accepted_materials(conn, tenant_id, JOB_ID)
+
+        assert [(row["generation"], row["artifactId"], row["bulletId"]) for row in rows] == [
+            (1, "resume-1", "bullet-1-owned")
+        ]
+        conn.execute(
+            "UPDATE job_materials_artifacts SET status = 'rejected' WHERE tenant_id = ? AND job_id = ?",
+            (tenant_id, JOB_ID),
+        )
+        assert interview_activities._load_accepted_materials(conn, tenant_id, JOB_ID) == ()
+    finally:
+        close_connection(tmp_path / "jobs.db")
+
+
+
+@pytest.mark.parametrize("judge_failure", [False, True])
+def test_provider_or_judge_failure_preserves_accepted_and_retry_reuses_failure(
+    tmp_path: Path, judge_failure: bool,
+) -> None:
+    conn = _init_conn(tmp_path)
+    try:
+        repository = SqliteInterviewPrepRepository(conn)
+        candidate = _candidate("star_draft", "Latency", "Reduced API latency by 30% using Python.",
+                               evidence_ids=["ev-platform-latency"], requirement_ids=["req-python"])
+        request = dict(tenant_id=LOCAL_TENANT, job=_job(), profile_snapshot=_profile_snapshot(), canonical_evidence=canonical_evidence(_profile_snapshot()),
+                       evidence_entries=_evidence_entries(), evidence_gaps=(),
+                       requirements=_requirements("req-python", "Python service optimization"))
+        accepted = GenerateInterviewPrepUseCase(catalog=_generation_catalog(), repository=repository, llm=_FakeLlm([candidate, _judge_pass()]))
+        assert accepted.execute(origin_run_id="accepted", **request).status == "accepted"
+        failing_llm = _FakeLlm([candidate] if judge_failure else [])
+        use_case = GenerateInterviewPrepUseCase(catalog=_generation_catalog(), repository=repository, llm=failing_llm)
+
+        failed = use_case.execute(origin_run_id="failed", **request)
+        retried = use_case.execute(origin_run_id="failed", **request)
+
+        assert failed.status == retried.status == "failed"
+        assert failed.prep.generation == retried.prep.generation == 2
+        assert repository.load_latest(LOCAL_TENANT, JOB_ID).generation == 1
+        assert len(failing_llm.calls) == (2 if judge_failure else 1)
+        assert any(("judge_error" if judge_failure else "generation_error") in error for error in failed.errors)
+    finally:
+        close_connection(tmp_path / "jobs.db")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("raise_error", [False, True])
+async def test_workflow_terminal_events_do_not_include_private_failure_text(
+    monkeypatch: pytest.MonkeyPatch, raise_error: bool,
+) -> None:
+    from datetime import datetime, timezone
+    outcomes: list[dict[str, Any]] = []
+    async def record_outcome(**kwargs: Any) -> None:
+        outcomes.append(kwargs)
+    async def started(**_kwargs: Any) -> None:
+        pass
+    async def execute(fn: Any, *_args: Any, **_kwargs: Any) -> Any:
+        if fn == interview_workflow.check_spend_budget:
+            return None
+        if raise_error:
+            raise RuntimeError("PRIVATE candidate answer and employer excerpt")
+        return GenerateInterviewPrepActivityOutput(status="failed", job_id=JOB_ID, generation=2,
+                                                   item_count=0, errors=("PRIVATE candidate answer",))
+    monkeypatch.setattr(interview_workflow, "emit_workflow_outcome", record_outcome)
+    monkeypatch.setattr(interview_workflow, "emit_workflow_started", started)
+    monkeypatch.setattr(interview_workflow.workflow, "execute_activity", execute)
+    monkeypatch.setattr(interview_workflow.workflow, "now", lambda: datetime.now(timezone.utc))
+
+    result = await interview_workflow.InterviewPrepWorkflow().run(
+        InterviewPrepWorkflowInput(tenant_id="local", job_id=JOB_ID)
+    )
+
+    assert result.status == "failed"
+    assert len(outcomes) == 1
+    assert "PRIVATE" not in json.dumps(outcomes, default=str)
+
+
+
+@pytest.mark.parametrize("fit_profile,fit_analysis,expected", [(1, 3, "current"), (2, 3, "stale_excluded"), (1, 2, "stale_excluded")])
+def test_stale_fit_is_labeled_and_does_not_supply_evidence(
+    tmp_path: Path, fit_profile: int, fit_analysis: int, expected: str,
+) -> None:
+    import sqlite3
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.executescript("""
+    CREATE TABLE job_employer_analysis (tenant_id, job_id, generation, snapshot_hash, prompt_version,
+                                       role_framing, inferred_seniority, requirements_json);
+    CREATE TABLE job_requirement_fit_reports (tenant_id, job_id, score_version, employer_analysis_generation,
+                                            profile_snapshot_version, scoring_policy_version, formula_version, created_at);
+    CREATE TABLE job_requirement_fit_items (tenant_id, job_id, score_version, requirement_id, requirement_text, fit_json, position);
+    """)
+    try:
+        for tenant in (LOCAL_TENANT, OTHER_TENANT):
+            conn.execute("INSERT INTO job_employer_analysis VALUES (?, ?, 3, 'snapshot', 'prompt', 'Platform ownership', 'staff', ?)",
+                         (tenant, JOB_ID, json.dumps([{"id": "r1", "text": "Python service optimization", "evidence_span": "Python"}])))
+            conn.execute("INSERT INTO job_requirement_fit_reports VALUES (?, ?, 4, ?, ?, 1, 'v1', 'now')",
+                         (tenant, JOB_ID, fit_analysis, fit_profile))
+            conn.execute("INSERT INTO job_requirement_fit_items VALUES (?, ?, 4, 'r1', 'Python service optimization', ?, 0)",
+                         (tenant, JOB_ID, json.dumps({"kind": "matched", "evidenceIds": [f"evidence-{tenant}"]})))
+        employer, fit, requirements = interview_activities._load_employer_and_fit_context(conn, LOCAL_TENANT, JOB_ID, 1)
+        assert employer["generation"] == 3
+        assert fit["status"] == expected
+        assert requirements[0]["evidenceIds"] == (["evidence-local"] if expected == "current" else [])
+        assert "evidence-other" not in json.dumps((employer, fit, requirements))
+        if expected == "current":
+            conn.execute("UPDATE job_requirement_fit_items SET requirement_text = 'changed source' WHERE tenant_id = 'local'")
+            _, _, requirements = interview_activities._load_employer_and_fit_context(conn, LOCAL_TENANT, JOB_ID, 1)
+            assert requirements[0]["evidenceIds"] == []
+            assert requirements[0]["fitStatus"] == "source_identity_mismatch"
+    finally:
+        conn.close()
 
 
 def _init_conn(tmp_path: Path, *, seed_local_job: bool = True):
@@ -750,17 +916,18 @@ def _candidate(
     evidence_ids: list[str],
     requirement_ids: list[str],
 ) -> dict[str, Any]:
-    return {
-        "items": [
-            {
-                "kind": kind,
-                "title": title,
-                "generated_text": generated_text,
-                "evidence_ids": evidence_ids,
-                "requirement_ids": requirement_ids,
-            }
-        ]
-    }
+    return {"items": [{"question_id": "B01", "outline": [{"heading": title,
+             "text": generated_text, "evidence_ids": evidence_ids,
+             "factual_support": "accepted_profile_fact" if evidence_ids else "needs_clarification"}],
+             "gaps": ([{"prompt": "What actual evidence could clarify the missing requirement?",
+                        "reason": "Missing supported experience."}] if kind == "gap_drill" else []),
+             "probes": []}]}
+
+
+def _generation_catalog() -> dict[str, Any]:
+    from tests.interview_question_fixtures import card
+    return {"schemaVersion": "1", "catalogRevision": "synthetic-1", "catalogDigest": "c" * 64,
+            "questions": [card("B01", "historical")], "retiredQuestions": [{"id": "C08"}]}
 
 
 def _judge_pass() -> dict[str, Any]:

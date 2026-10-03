@@ -28,6 +28,8 @@ from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.rpc.messages import WorkflowStartSpec
 from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.interview.workflow import InterviewPrepWorkflow, InterviewPrepWorkflowInput
+from jobctrl.domain.interview.catalog import load_interview_catalog, validate_interview_selection
+from jobctrl.domain.interview.preparation import selection_from_rpc
 from jobctrl.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
 from jobctrl.pipeline.runner import PRIMARY_STAGE_ORDER
 from jobctrl.pipeline.workflow import JobPipelineWorkflow, JobPipelineWorkflowInput
@@ -351,12 +353,20 @@ def build_interview_prep_workflow_spec(params: dict[str, Any]) -> WorkflowStartS
             "interview prep requires jobId; jobUrl is only a locator at the RPC boundary"
         )
     job_id = canonical_job_id(str(_require(params, "jobId")))
+    selection = selection_from_rpc(params)
+    if "selectedQuestionIds" in selection:
+        validate_interview_selection(selection["selectedQuestionIds"], catalog_binding=selection.get("catalogBinding"))
+    elif "catalogBinding" in selection:
+        catalog = load_interview_catalog()
+        if selection["catalogBinding"] != {"catalogRevision": catalog["catalogRevision"], "catalogDigest": catalog["catalogDigest"]}:
+            raise ValueError("catalog_mismatch")
     payload = InterviewPrepWorkflowInput(
         tenant_id=tenant_id,
         expected_app_dir=params.get("expectedAppDir"),
         expected_db_path=params.get("expectedDbPath"),
         job_id=job_id,
         llm_model=str(params.get("llmModel") or DEFAULT_PIPELINE_LLM_MODEL_SPEC),
+        selection=selection,
     )
     return WorkflowStartSpec(
         workflow=InterviewPrepWorkflow,
