@@ -10713,6 +10713,7 @@ describe("local TypeScript API", () => {
     }));
     const app = buildApp({
       ...options,
+      placeValidator: async (place) => place === "Barcelona",
       providerDispatcher: { call: providerCall, close: vi.fn(async () => undefined) },
     });
     const initial = await app.inject({
@@ -10720,6 +10721,7 @@ describe("local TypeScript API", () => {
       url: "/v1/profile",
       payload: { profile: profileWithTargetSearch("Synthetic Candidate", "Barcelona", "Remote") },
     });
+    expect(initial.statusCode, initial.body).toBe(200);
     const version = initial.json().profileVersion as number;
     const beforeDb = new Database(options.dbPath, { readonly: true });
     const beforeEvents = beforeDb.prepare(
