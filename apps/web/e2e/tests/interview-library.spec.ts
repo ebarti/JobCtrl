@@ -104,6 +104,8 @@ test("Interview library responsive graph preserves touch and keyboard question a
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto("/interviews?card=TS09&mode=graph");
   await expect(page.getByRole("heading", { name: "Interviews", exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Whole interview library graph" })).toBeVisible();
+  await page.getByText("Connections and saved evidence", { exact: true }).click();
   await expect(page.getByRole("region", { name: "Question connections" })).toBeVisible();
   await page.getByRole("button", { name: "List", exact: true }).click();
   await expect(page).toHaveURL(/mode=list/);
