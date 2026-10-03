@@ -50,9 +50,13 @@ test("Interview atlas hub labels and native targets survive desktop widths and d
     await expect(map.locator("[data-graph-question-id]")).toHaveCount(121);
     for (const density of ["compact", "regular", "comfy"]) {
       await page.locator(".app-shell").evaluate((element, value) => element.setAttribute("data-density", value), density);
-      await expect(map.locator(".interview-atlas__hub").first()).toHaveCSS("height", "64px");
+      await expect(map.locator(".interview-atlas__hub").first()).toHaveCSS("height", "52px");
       await expect(map.locator(".interview-atlas__satellite").first()).toHaveCSS("height", "24px");
       await expect(map.locator(".interview-atlas__satellite").first()).toHaveCSS("width", "24px");
+      expect(await map.locator('.interview-atlas__navigation button').evaluateAll((elements) => elements.every((element) => { const rect = element.getBoundingClientRect(); return rect.top >= 0 && rect.bottom <= innerHeight; }))).toBe(true);
+      if (width === 1705) {
+        expect(await map.locator('.interview-atlas__hub, .interview-atlas__satellite, .interview-atlas__navigation button').evaluateAll((elements) => elements.every((element) => { const rect = element.getBoundingClientRect(); return rect.top >= 0 && rect.bottom <= innerHeight && rect.left >= 0 && rect.right <= innerWidth; }))).toBe(true);
+      }
       await expectUnobstructedGraph(map);
     }
     await map.getByRole("button", { name: "Behavioral: 11 questions", exact: true }).locator(".interview-atlas__mark").click();
@@ -63,6 +67,14 @@ test("Interview atlas hub labels and native targets survive desktop widths and d
     await map.getByRole("button", { name: "Overview", exact: true }).click();
     await map.getByRole("button", { name: "Sources", exact: true }).click();
     await expect(map.locator("[data-graph-source-id]")).toHaveCount(57);
+    for (const density of ["compact", "regular", "comfy"]) {
+      await page.locator(".app-shell").evaluate((element, value) => element.setAttribute("data-density", value), density);
+      expect(await map.locator('.interview-atlas__navigation button').evaluateAll((elements) => elements.every((element) => { const rect = element.getBoundingClientRect(); return rect.top >= 0 && rect.bottom <= innerHeight; }))).toBe(true);
+      if (width === 1705) {
+        expect(await map.locator('.interview-atlas__hub, .interview-atlas__satellite, .interview-atlas__navigation button').evaluateAll((elements) => elements.every((element) => { const rect = element.getBoundingClientRect(); return rect.top >= 0 && rect.bottom <= innerHeight && rect.left >= 0 && rect.right <= innerWidth; }))).toBe(true);
+      }
+      await expectUnobstructedGraph(map);
+    }
     await expectUnobstructedGraph(map);
     await page.screenshot({ path: `/tmp/jobctrl-993-ui-repair-${width}-sources.png` });
     await map.getByRole("button", { name: "Will Larson: 21 sources", exact: true }).click();
