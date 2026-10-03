@@ -40,13 +40,15 @@ test("Interview library: all authored guidance without a job, range-first advice
   await expect(page).toHaveTitle(/Interviews/);
   await expect(page.getByRole("heading", { name: "Interviews", exact: true })).toBeVisible();
   await expect(page.getByRole("navigation", { name: "Interview questions" }).getByRole("link")).toHaveCount(121);
+  await page.getByRole("tab", { name: "Sources", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Sources and reading limits" })).toBeVisible();
   await expect(page.locator("vite-error-overlay")).toHaveCount(0);
   await page.getByRole("button", { name: "Graph", exact: true }).click();
   await expect(page).toHaveURL(/mode=graph/);
-  await expect(page.getByRole("region", { name: "Question connections" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Whole interview library graph" })).toBeVisible();
+  await expect(page.locator("[data-graph-question-id]")).toHaveCount(121);
   await page.getByRole("textbox", { name: "Search questions" }).fill("C07");
-  await expect(page.getByRole("navigation", { name: "Interview questions" }).getByRole("link")).toHaveCount(1);
+  await expect(page.locator("[data-graph-question-id]")).toHaveCount(1);
   await expect(page.locator(".interview-question-detail")).toContainText(/budgeted range/i);
   await expect(page.locator(".interview-question-detail")).toContainText(/persist/i);
   await page.screenshot({ path: "/tmp/jobctrl-993-interview-desktop.png", fullPage: false });

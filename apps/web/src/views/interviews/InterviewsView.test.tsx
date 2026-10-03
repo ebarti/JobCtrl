@@ -33,30 +33,34 @@ beforeEach(() => useInterviewDraftStore.setState({ selections: new Map(), notes:
 
 describe("native interview library", () => {
   it("browses all 121 authored questions with attribution and no job/provider read", async () => {
+    const user = userEvent.setup();
     const job = vi.fn(async () => { throw new Error("Offline library must not query a job"); });
     renderInterviews("/interviews?card=B11", buildTestPorts({ api: { job } }));
     const catalog = sampleInterviewCatalogResponse.catalog;
     await screen.findByRole("heading", { name: catalog.questions.find((card) => card.id === "B11")!.title });
     expect(within(screen.getByRole("navigation", { name: "Interview questions" })).getAllByRole("link")).toHaveLength(121);
     expect(screen.getAllByText(/B11 · .*principle/).length).toBeGreaterThan(0);
-    expect(screen.getByRole("heading", { name: "Acceptable alternatives" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Sources and reading limits" })).toBeInTheDocument();
+    expect(screen.getByText("Acceptable alternatives", { exact: true })).toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: "Rubric" }));
     expect(screen.getByRole("heading", { name: "Draft answer criteria" })).toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: "Sources" }));
+    expect(screen.getByRole("heading", { name: "Sources and reading limits" })).toBeInTheDocument();
     expect(job).not.toHaveBeenCalled();
   });
 
   it("keeps filters and graph connections in the URL and exposes equal keyboard actions", async () => {
     const user = userEvent.setup();
     const { router } = renderInterviews();
-    await screen.findByRole("heading", { name: "Draft answer criteria" });
+    await screen.findByRole("heading", { name: "Answer guidance" });
     await user.click(screen.getByRole("button", { name: "Graph" }));
-    expect(screen.getByRole("region", { name: "Question connections" })).toHaveTextContent("Author/source attribution");
+    expect(screen.getByRole("region", { name: "Whole interview library graph" }).querySelectorAll("[data-graph-question-id]")).toHaveLength(121);
     expect(router.state.location.search["mode"]).toBe("graph");
     await user.type(screen.getByRole("textbox", { name: "Search questions" }), "C07");
-    await waitFor(() => expect(within(screen.getByRole("navigation", { name: "Interview questions" })).getAllByRole("link")).toHaveLength(1));
+    await waitFor(() => expect(screen.getByRole("region", { name: "Whole interview library graph" }).querySelectorAll("[data-graph-question-id]")).toHaveLength(1));
     expect(router.state.location.search["q"]).toBe("C07");
     expect(screen.getByRole("heading", { name: "Answer guidance" }).parentElement).toHaveTextContent(/range/i);
     await user.click(screen.getByRole("button", { name: "Clear filters" }));
+    await user.click(screen.getByRole("button", { name: "List" }));
     await user.click(within(screen.getByRole("navigation", { name: "Interview questions" })).getByRole("link", { name: /TS09/ }));
     expect(screen.getAllByText(/TS09 · .*principle/).length).toBeGreaterThan(0);
   });
