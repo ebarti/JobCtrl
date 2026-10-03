@@ -237,6 +237,7 @@ DOMAIN_EVENT_TYPES: tuple[str, ...] = (
     "BulletProvenanceRecorded",
     "InterviewPrepGenerated",
     "InterviewPrepFailed",
+    "InterviewQuestionNoteSaved",
     "TailorRetailorRequested",
     "TailoredArtifactsSuppressed",
     "ResumeTemplateVersionSaved",

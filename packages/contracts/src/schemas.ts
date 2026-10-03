@@ -1,3 +1,4 @@
+import type { InterviewPrep, InterviewSelectionInput } from "@jobctrl/domain-types";
 import { z } from "zod";
 import { CONTACT_ROLES, CONTACT_SOURCE_KINDS } from "@jobctrl/domain-types";
 
@@ -360,12 +361,8 @@ export const GenerateMaterialsRequestSchema = z
   .strict();
 export type GenerateMaterialsRequest = z.infer<typeof GenerateMaterialsRequestSchema>;
 
-export const GenerateInterviewPrepRequestSchema = z
-  .object({
-    llmModel: z.string().trim().min(1).max(120).optional(),
-  })
-  .strict();
-export type GenerateInterviewPrepRequest = z.infer<typeof GenerateInterviewPrepRequestSchema>;
+export { GenerateInterviewPrepRequestSchema } from "./interview.js";
+export type { GenerateInterviewPrepRequest } from "./interview.js";
 
 export const ApplyJobRequestSchema = z
   .object({
@@ -3005,49 +3002,8 @@ export interface EvidenceMapResponse {
   generatedAt: string;
 }
 
-export const INTERVIEW_PREP_ITEM_KINDS = [
-  "theme",
-  "star_draft",
-  "gap_drill",
-  "company_note",
-] as const;
-export type InterviewPrepItemKind = (typeof INTERVIEW_PREP_ITEM_KINDS)[number];
-
-export const INTERVIEW_PREP_STATUSES = ["accepted", "failed", "superseded"] as const;
-export type InterviewPrepStatus = (typeof INTERVIEW_PREP_STATUSES)[number];
-
-export interface InterviewPrepGateAudit {
-  status: "passed" | "failed";
-  fabricationFindings: string[];
-  groundingFindings: string[];
-  judgeVerdict: string | null;
-  warnings: string[];
-}
-
-export interface InterviewPrepItem {
-  itemId: string;
-  kind: InterviewPrepItemKind;
-  title: string;
-  generatedText: string;
-  evidenceIds: string[];
-  requirementIds: string[];
-  sourceText: string[];
-  transformType: string;
-  control: string;
-  groundingAudit: string[];
-  warnings: string[];
-  position: number;
-}
-
-export interface InterviewPrep {
-  jobId: string;
-  generation: number;
-  status: InterviewPrepStatus;
-  generatedAt: string;
-  model: string | null;
-  gateAudit: InterviewPrepGateAudit;
-  items: InterviewPrepItem[];
-}
+export { INTERVIEW_PREP_ITEM_KINDS, INTERVIEW_PREP_STATUSES } from "@jobctrl/domain-types";
+export type { InterviewPrepItemKind, InterviewPrepStatus, InterviewPrepGateAudit, InterviewPrepItem, InterviewPrep } from "@jobctrl/domain-types";
 
 export interface InterviewPrepResponse {
   ok: true;
@@ -4513,7 +4469,7 @@ export interface ProfileImportResponse {
   action?: ActionRunResponse;
 }
 
-export interface ActionCommandPayload {
+export interface ActionCommandPayload extends InterviewSelectionInput {
   action:
     | "run_stage"
     | "retry_stage"

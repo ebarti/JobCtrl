@@ -157,6 +157,9 @@ export {
   type InterviewPrepFailedPayload,
   type InterviewPrepFailed,
   createInterviewPrepFailed,
+  type InterviewQuestionNoteSavedPayload,
+  type InterviewQuestionNoteSaved,
+  createInterviewQuestionNoteSaved,
 } from "./interview.js";
 
 export {
@@ -425,7 +428,7 @@ import type {
   TailorRetailorRequested,
   JobResumeTemplateAssigned,
 } from "./materials.js";
-import type { InterviewPrepFailed, InterviewPrepGenerated } from "./interview.js";
+import type { InterviewPrepFailed, InterviewPrepGenerated, InterviewQuestionNoteSaved } from "./interview.js";
 import type {
   PreparationWorkItemCompleted,
   PreparationWorkItemFailed,
@@ -533,6 +536,7 @@ export type DomainEventUnion =
   | BulletProvenanceRecorded
   | InterviewPrepGenerated
   | InterviewPrepFailed
+  | InterviewQuestionNoteSaved
   | TailorRetailorRequested
   | TailoredArtifactsSuppressed
   | ResumeTemplateVersionSaved
@@ -639,6 +643,7 @@ export const DOMAIN_EVENT_TYPES = [
   "BulletProvenanceRecorded",
   "InterviewPrepGenerated",
   "InterviewPrepFailed",
+  "InterviewQuestionNoteSaved",
   "TailorRetailorRequested",
   "TailoredArtifactsSuppressed",
   "ResumeTemplateVersionSaved",

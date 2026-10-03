@@ -28,7 +28,7 @@ test("evidence-map contracts are exported with camelCase read-model fields", () 
 
 test("interview-prep contracts expose generated prep only, never live session state", () => {
   expectTypeOf<InterviewPrepItem>().toMatchTypeOf<{
-    kind: "theme" | "star_draft" | "gap_drill" | "company_note";
+    kind: "theme" | "star_draft" | "gap_drill" | "company_note" | "question_outline";
     evidenceIds: string[];
     requirementIds: string[];
     generatedText: string;
