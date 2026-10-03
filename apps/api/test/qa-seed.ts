@@ -543,7 +543,7 @@ function insertCanonicalMaterials(
     `INSERT INTO job_materials (
       tenant_id, job_id, generation, status, created_at, updated_at, metadata_json
     ) VALUES ('local', ?, ?, ?, ?, ?, ?)`,
-  ).run(QA_PLATFORM_JOB_ID, 1, "approved", QA_NOW, QA_NOW, requirementLedMetadata);
+  ).run(QA_PLATFORM_JOB_ID, 1, "resume_approved", QA_NOW, QA_NOW, requirementLedMetadata);
   const insert = db.prepare(
     `INSERT INTO job_materials_artifacts (
       tenant_id, job_id, generation, artifact_type, artifact_id, status, path,
@@ -903,7 +903,7 @@ function insertBulletProvenance(db: Database.Database): void {
     JSON.stringify(["ev-platform"]),
     JSON.stringify(["r1"]),
     JSON.stringify(["platform reliability"]),
-    "rephrased",
+    "rephrase",
     "rephrase_allowed",
     "Reframed the bullet toward platform reliability.",
     QA_SHIPPED_SUMMARY,
