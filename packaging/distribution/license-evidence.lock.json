@@ -3,9 +3,9 @@
   "inputs": [
     {
       "package": "opentelemetry-util-http",
-      "version": "0.62b1",
+      "version": "0.65b0",
       "license": "Apache-2.0",
-      "url": "https://raw.githubusercontent.com/open-telemetry/opentelemetry-python-contrib/beabf5636fb4999e994cda55358453948078aa54/LICENSE",
+      "url": "https://raw.githubusercontent.com/open-telemetry/opentelemetry-python-contrib/a5470c666947acddc24fd4064ec7c1b169dfe8b6/LICENSE",
       "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
       "sizeBytes": 11357
     },
