@@ -11,7 +11,10 @@ from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.infrastructure.interview import SqliteInterviewPrepRepository
 from tests.test_interview_prep_generation import JOB_ID, _FakeLlm, _init_conn, _judge_pass
 from tests.test_interview_real_provider_framing import _candidate, _request
-from tests.test_interview_prose_classifier import test_same_proposition_meaning_in_every_nonfactual_location as assert_proposition
+from tests.test_interview_prose_classifier import (
+    test_actual_heading_claim_requires_its_own_selected_source as assert_actual_heading,
+    test_same_proposition_meaning_in_every_nonfactual_location as assert_proposition,
+)
 
 
 EMBEDDED_CASES = [
@@ -98,6 +101,26 @@ ACTUALITY_BINDING_CASES = [
 ]
 
 
+WHOLE_PREDICATE_CASES = [
+    (f"I would review options if I managed a team but {predicate}.", False)
+    for verb, rest in [("saved", "$2 million using Kubernetes"), ("served", "as Director at Acme"),
+                       ("rescued", "every critical launch")]
+    for predicate in [f"I {verb} in reality {rest}", f"I {verb} {rest} in reality", f"I {verb} {rest}, in fact",
+                      f"{verb} {rest} in reality"]
+] + [
+    ("If I saved in reality $2 million using Kubernetes, I would compare criteria.", True),
+    ("If I served as Director at Acme in reality, I would compare criteria.", True),
+    ("If I rescued every critical launch, in fact, I would compare criteria.", True),
+    ("I would compare criteria if I saved $2 million using Kubernetes in reality and I had limited authority.", True),
+    ("I would review options if I managed a team but I would save in reality $2 million using Kubernetes.", True),
+    ("I would review options if I managed a team but I would serve as Director at Acme in reality.", True),
+    ("I would review options if I managed a team but I would rescue every critical launch, in fact.", True),
+    ("If I managed a team but served as Director at Acme in reality, I would compare criteria.", True),
+    ("I would review options if I managed a team but I referred to \"in reality\" as a phrase.", True),
+    ("I rescued every critical launch if in reality I had limited authority.", False),
+]
+
+
 @pytest.mark.parametrize("support", ["hypothetical", "needs_clarification"])
 @pytest.mark.parametrize("location", ["heading", "text", "gap", "reason", "probe"])
 @pytest.mark.parametrize("name,phrase,accepted", EMBEDDED_CASES)
@@ -115,7 +138,7 @@ def test_embedded_operator_has_local_scope(tmp_path: Path, name, phrase, accepte
     ("I would review options if I managed a team but I actually saved $2 million using Kubernetes.", False),
     ("I would review options if I managed a team but I previously served as Director at Acme.", False),
     ("I would review options if I managed a team but I actually rescued every critical launch.", False),
-] + ACTUALITY_BINDING_CASES)
+] + ACTUALITY_BINDING_CASES + WHOLE_PREDICATE_CASES)
 def test_full_antecedent_pairs_keep_selected_and_empty_scope(tmp_path: Path, question_id, location, support, phrase, accepted):
     conn = _init_conn(tmp_path)
     try:
@@ -143,6 +166,19 @@ def test_full_antecedent_pairs_keep_selected_and_empty_scope(tmp_path: Path, que
             assert repository.load_latest(LOCAL_TENANT, JOB_ID).to_read_model() == prior.to_read_model()
     finally:
         close_connection(tmp_path / "jobs.db")
+
+
+@pytest.mark.parametrize("support", ["hypothetical", "needs_clarification", "accepted_profile_fact"])
+@pytest.mark.parametrize("heading", [
+    "I would review options if I managed a team but I saved $2 million using Kubernetes in reality.",
+    "I would review options if I managed a team but I served as Director at Acme in reality.",
+    "I would review options if I managed a team but I rescued every critical launch, in fact.",
+    "I would review options if I managed a team but I saved in reality $2 million using Kubernetes.",
+    "I would review options if I managed a team but I served in fact as Director at Acme.",
+    "I would review options if I managed a team but I rescued in reality every critical launch.",
+])
+def test_whole_predicate_actual_heading_has_its_own_source(tmp_path: Path, support, heading):
+    assert_actual_heading(tmp_path, support, heading)
 
 
 @pytest.mark.parametrize("location", ["heading", "text", "gap", "reason", "probe"])
@@ -208,7 +244,7 @@ def test_nonfactual_source_reference_is_rejected_without_relabeling(tmp_path: Pa
             origin_run_id="compliant-anchor", **request).prep
         assert accepted.status == "accepted"
         assert accepted.generation_context["model"]["promptVersion"] == "interview-questions-v4"
-        assert accepted.generation_context["model"]["gateVersion"] == "interview-question-grounding-v15"
+        assert accepted.generation_context["model"]["gateVersion"] == "interview-question-grounding-v16"
         invalid = deepcopy(candidate)
         invalid["items"][0]["outline"][1].update(evidence_ids=["ev-platform-latency"], factual_support=support)
         original = deepcopy(invalid)

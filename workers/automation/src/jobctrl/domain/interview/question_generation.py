@@ -33,12 +33,16 @@ _HISTORICAL_ASSERTION = re.compile(
 )
 _PERSONAL_SUBJECT = re.compile(r"(?i)\b(?:i|we|you|the candidate)\b(?!['’]s\b)(?:['’](?:ve|m|d|re))?")
 _OPERATOR_MODIFIER = r"(?:[a-z]+ly|already|in\s+(?:fact|reality))"
-_INTENDED_ACTION = re.compile(rf"(?i)^\s+(?:{_OPERATOR_MODIFIER}\s+)*(?:would|will|could|might|should|intend\s+to|plan\s+to)\b")
-_ACTOR_OPERATOR_PREFIX = re.compile(rf"(?i)^\s*(?:{_OPERATOR_MODIFIER}\s+)*$")
+_ACTUAL_STANCE_TERM = r"(?:actually|previously|already|formerly|in\s+(?:fact|reality))"
+_INTENDED_ACTION = re.compile(rf"(?i)^[\s,]+(?:{_OPERATOR_MODIFIER}(?:\s+|\s*,\s*))*(?:would|will|could|might|should|intend\s+to|plan\s+to)\b")
+_ACTOR_OPERATOR_PREFIX = re.compile(rf"(?i)^\s*(?:{_OPERATOR_MODIFIER}(?:\s+|\s*,\s*))*$")
 _PREDICATE_OPERATOR_PREFIX = re.compile(
-    rf"(?i)^\s+(?:(?:{_OPERATOR_MODIFIER}|not|am|is|are|was|were|have|has|had|do|does|did)\s+)*")
+    rf"(?i)^[\s,]*(?:(?:{_OPERATOR_MODIFIER}|not|am|is|are|was|were|have|has|had|do|does|did)(?:\s+|\s*,\s*))*")
 _NONMODAL_AUXILIARY = re.compile(r"(?i)\b(?:am|is|are|was|were|have|has|had|do|does|did)\b")
-_ACTUAL_OPERATOR = re.compile(r"(?i)\b(?:actually|previously|already|formerly|in\s+(?:fact|reality)|do|does|did)\b")
+_ACTUAL_OPERATOR = re.compile(rf"(?i)\b(?:{_ACTUAL_STANCE_TERM}|do|does|did)\b")
+_ACTUAL_STANCE = re.compile(rf"(?i)\b{_ACTUAL_STANCE_TERM}\b")
+_OPERATOR_ADJUNCT = re.compile(rf"(?i)^\s*(?:{_ACTUAL_STANCE_TERM}\s*)+$")
+_QUOTED_LEXEME = re.compile(r'''"(?:\\.|[^"\\])*"|“[^”]*”|(?<!\w)'(?:\\.|[^'\\])*'(?!\w)|‘[^’]*’''')
 _FUTURE_QUESTION = re.compile(r"(?i)\b(?:would|could|might|should|will)\s+(?:you|we|i|the candidate)\b")
 _QUESTION_AUXILIARY = re.compile(r"(?i)\b(?:would|could|might|should|will|can|did|do|does|have|has|was|were|is|are)\s*$")
 _QUESTION_START = re.compile(r"(?i)(?:^|[,;:—])\s*(?:what|how|which|when|where|why|who|would|could|might|should|will|can|did|do|does|is|are|was|were|have|has)\b")
@@ -395,9 +399,13 @@ def _actual_predicate_operator(prefix: str, rest: str) -> bool:
     operators = _PREDICATE_OPERATOR_PREFIX.match(rest)
     if not operators or not re.match(r"(?i)[a-z]+\b", rest[operators.end():]):
         return False
-    # Only the parsed grammatical prefix contributes an actuality operator;
-    # words inside a lexical predicate or embedded premise cannot confer it.
-    return bool(_ACTUAL_OPERATOR.search(prefix + operators.group()))
+    # Speech modifiers attach across this whole predicate; child propositions
+    # remain separate spans, and quoted operator names are lexical data.
+    clause = prefix + rest
+    quoted = tuple(match.span() for match in _QUOTED_LEXEME.finditer(clause))
+    stance = any(not any(start <= match.start() < end for start, end in quoted)
+                 for match in _ACTUAL_STANCE.finditer(clause))
+    return bool(_ACTUAL_OPERATOR.search(prefix + operators.group()) or stance)
 
 
 def _has_actual_operator(clause: str, subject: re.Match[str]) -> bool:
@@ -420,7 +428,7 @@ def _local_hypothesis_license(
     propositions: Sequence[_PropositionAssessment], direct_bindings: Sequence[tuple[re.Match[str], str]],
     dependency: _PropositionAssessment | None,
 ) -> tuple[int, bool] | None:
-    candidate = next((candidate for candidate in reversed(candidates) if candidate.start <= end - 1 < candidate.end), None)
+    candidate = next((candidate for candidate in reversed(candidates) if candidate.start < end and start < candidate.end), None)
     if candidate is None:
         return None
     if start <= candidate.start < end:
@@ -530,13 +538,36 @@ def _account_actor(text: str, start: int, clause: str, propositions: Sequence[_P
     return None
 
 
+def _own_proposition_ends(text: str) -> list[tuple[int, int]]:
+    """Keep operator-only comma adjuncts with their own predicate."""
+    raw = sorted({*(match.span() for match in _PROPOSITION_BOUNDARIES.finditer(text)),
+                  *(match.span() for match in _EMBEDDED_BOUNDARY.finditer(text)), (len(text), len(text))})
+    ends: list[tuple[int, int]] = []
+    start = raw_start = 0
+    for index, (end, next_start) in enumerate(raw):
+        if text[end:next_start] == "," and index + 1 < len(raw):
+            following = text[next_start:raw[index + 1][0]]
+            preceding = text[raw_start:end]
+            prefix_only = not (_PERSONAL_SUBJECT.search(text[start:end]) or _PERSONAL_POSSESSION.search(text[start:end])
+                               or _HISTORICAL_ASSERTION.search(text[start:end]) or _BIOGRAPHICAL_PREMISE.search(text[start:end]))
+            fresh = (_PERSONAL_SUBJECT.search(following) or _PERSONAL_POSSESSION.search(following)
+                     or (_QUESTION_START.match(following) and not _auxiliary_predicate(following))
+                     or _EXPLICIT_SCENARIO.match(following) or _RECOLLECTION_REQUEST.match(following))
+            if (_OPERATOR_ADJUNCT.fullmatch(following.strip())
+                    or (_OPERATOR_ADJUNCT.fullmatch(preceding.strip()) and (prefix_only or not fresh))):
+                raw_start = next_start
+                continue
+        ends.append((end, next_start))
+        start = raw_start = next_start
+    return ends
+
+
 def _assess_prose(text: str) -> _ProseAssessment:
     """Keep operator, assertion and source-check spans together until validation."""
     propositions: list[_PropositionAssessment] = []
     hypothesis_candidates = _hypothesis_candidates(text)
     start = 0
-    ends = sorted({*(match.span() for match in _PROPOSITION_BOUNDARIES.finditer(text)),
-                   *(match.span() for match in _EMBEDDED_BOUNDARY.finditer(text)), (len(text), len(text))})
+    ends = _own_proposition_ends(text)
     for end, next_start in ends:
         span_end = end + int(text[end:end + 1] in {"?", "!"})
         clause = text[start:span_end]
