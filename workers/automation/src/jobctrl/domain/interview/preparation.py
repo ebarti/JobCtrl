@@ -23,7 +23,7 @@ from jobctrl.domain.profile.snapshot import ProfileSnapshot
 from jobctrl.domain.interview.evidence import InterviewEvidenceSnapshot
 
 PROMPT_VERSION = "interview-questions-v4"
-GATE_VERSION = "interview-question-grounding-v16"
+GATE_VERSION = "interview-question-grounding-v29"
 MAX_PROMPT_CONTEXT_CHARS = 110_000
 DEFAULT_QUESTION_COUNT = 5
 _SELECTION_KEYS = frozenset({"selectedQuestionIds", "catalogBinding", "interviewStage", "interviewFormat",
