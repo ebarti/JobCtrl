@@ -10,7 +10,8 @@ import {
   Outlet,
   RouterProvider,
 } from "@tanstack/react-router";
-import { initialize, mswLoader } from "msw-storybook-addon";
+import { setupWorker } from "msw/browser";
+import { mswLoader } from "msw-storybook-addon/csf3";
 import { useEffect, useMemo, type ReactElement, type ReactNode } from "react";
 
 import { handlers } from "../src/test/msw/handlers.js";
@@ -24,10 +25,6 @@ import { ThemeProvider } from "../src/shared/providers/ThemeProvider.js";
 import { ToasterProvider } from "../src/shared/providers/ToasterProvider.js";
 import { TooltipProvider } from "../src/shared/ui/tooltip.js";
 import { useUiPreferencesStore } from "../src/shared/stores/ui-preferences.js";
-
-initialize({
-  onUnhandledRequest: "bypass",
-});
 
 function makeStoryQueryClient(): QueryClient {
   return new QueryClient({
@@ -162,7 +159,13 @@ const preview: Preview = {
     },
   },
   decorators: [withProviders],
-  loaders: [mswLoader],
+  loaders: [
+    mswLoader(async () => {
+      const worker = setupWorker();
+      await worker.start({ onUnhandledRequest: "bypass" });
+      return worker;
+    }),
+  ],
   tags: ["autodocs"],
 };
 
