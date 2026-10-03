@@ -265,6 +265,15 @@ in one context lets the aggregate enforce these dependencies directly rather
 than through cross-aggregate eventual consistency. LLM calls, file I/O, and DB
 writes remain adapter concerns.
 
+Materials also owns explicit job-specific interview preparation and independent
+revisioned question notes. The shared catalog is authored public guidance;
+prepared outlines retain canonical evidence and generation-time input context;
+notes retain user-statement/edit status. The Interviews page is a composing
+view over Materials commands and Operations reads. Neither notes nor generated
+prep promotes facts to Profile, changes fit or Apply, or introduces a practice
+aggregate. The [Materials interview contract](../materials.md#stored-interview-preparation)
+owns selection, format gates, provenance, history, privacy, and maturity.
+
 ---
 
 ## 3.6 Apply Automation

@@ -310,6 +310,18 @@ Two patterns exist; both have a place:
 The router never resets component-owned filters, selection, pagination, or
 scroll position. A query update changes data under the existing view state.
 
+### Interview preparation and independent notes
+
+Materials handles `InterviewPrepGenerated` and `InterviewPrepFailed` by
+reconciling the affected job's current prep and paginated history. A failed
+refresh cannot clear the accepted generation. `InterviewQuestionNoteSaved`
+reconciles tenant/job/question note reads and revision history; its safe payload
+has no note text or private input bindings. The form keeps unsaved edits while
+Operations refreshes canonical data, and an older completion cannot overwrite
+a newer note revision. The catalog is an immutable local asset and browsing
+needs no job detail, SSE event, live worker, or provider. Event payloads signal
+refresh; they cannot manufacture an audited answer or supported user statement.
+
 ### Submission completion
 
 `ApplicationSubmitted` retains the launcher's persisted `run_id` through SSE
