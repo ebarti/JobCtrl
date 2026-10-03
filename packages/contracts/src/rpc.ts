@@ -6,6 +6,7 @@
  * worker over the local subprocess transport (target §6.5).
  */
 import { z } from "zod";
+import { GenerateInterviewPrepRequestSchema, refineInterviewEvidenceSelection } from "./interview.js";
 
 import {
   DEFAULT_PIPELINE_LLM_MODEL,
@@ -382,13 +383,14 @@ export type RefreshCompensationResult = z.infer<typeof RefreshCompensationResult
 
 export const GenerateInterviewPrepParamsSchema = z
   .object({
+    ...GenerateInterviewPrepRequestSchema.shape,
     tenantId: TenantParam,
     expectedAppDir: z.string().trim().min(1).optional(),
     expectedDbPath: z.string().trim().min(1).optional(),
     jobId: CanonicalJobIdParam,
     llmModel: z.string().trim().min(1).max(120).default(DEFAULT_PIPELINE_LLM_MODEL),
   })
-  .strict();
+  .strict().superRefine(refineInterviewEvidenceSelection);
 export type GenerateInterviewPrepParams = z.infer<typeof GenerateInterviewPrepParamsSchema>;
 
 /**
