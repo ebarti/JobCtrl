@@ -26,6 +26,7 @@ import {
   DEFAULT_PIPELINE_LLM_MODEL,
   PIPELINE_ACTION_JOB_KEY,
   RederiveLearningRecommendationsResultSchema,
+  GenerateInterviewPrepParamsSchema,
   type ActionCommandPayload,
   type ActionRunResponse,
   type ResumeTemplateTheme,
@@ -589,13 +590,23 @@ function mapCommandToRpc(command: ActionCommandPayload, context: ActionDispatchC
   if (command.action === "generate_interview_prep") {
     return {
       method: "generate_interview_prep",
-      params: {
+      params: GenerateInterviewPrepParamsSchema.parse({
         tenantId: "local",
         expectedAppDir: context.appDir,
         expectedDbPath: context.dbPath,
         jobId: command.jobId,
         llmModel: command.llmModel ?? DEFAULT_PIPELINE_LLM_MODEL,
-      },
+        ...(command.selectedQuestionIds !== undefined ? { selectedQuestionIds: command.selectedQuestionIds } : {}),
+        ...(command.catalogBinding !== undefined ? { catalogBinding: command.catalogBinding } : {}),
+        ...(command.evidenceSelections !== undefined ? { evidenceSelections: command.evidenceSelections } : {}),
+        ...(command.evidenceProfileVersion !== undefined ? { evidenceProfileVersion: command.evidenceProfileVersion } : {}),
+        ...(command.interviewStage !== undefined ? { interviewStage: command.interviewStage } : {}),
+        ...(command.interviewFormat !== undefined ? { interviewFormat: command.interviewFormat } : {}),
+        ...(command.roleLens !== undefined ? { roleLens: command.roleLens } : {}),
+        ...(command.roleResponsibilities !== undefined ? { roleResponsibilities: command.roleResponsibilities } : {}),
+        ...(command.knownCriteria !== undefined ? { knownCriteria: command.knownCriteria } : {}),
+        ...(command.selectionRationale !== undefined ? { selectionRationale: command.selectionRationale } : {}),
+      }),
     };
   }
   if (command.action === "generate_materials") return null;
