@@ -65,6 +65,39 @@ EMBEDDED_CASES = [
 ]
 
 
+ACTUALITY_BINDING_CASES = [
+    (f"I would review options if I managed a team but {clause}.", False)
+    for past, base, participle in [
+        ("saved $2 million using Kubernetes", "save $2 million using Kubernetes", "saved $2 million using Kubernetes"),
+        ("served as Director at Acme", "serve as Director at Acme", "served as Director at Acme"),
+        ("rescued every critical launch", "rescue every critical launch", "rescued every critical launch"),
+    ]
+    for clause in [f"in reality I {past}", f"I did in fact {base}", f"I have in fact {participle}", f"in fact I {past}"]
+] + [
+    ("I would review options if I managed a team but in reality I would compare criteria.", True),
+    ("I would review options if I managed a team but I in reality would compare criteria.", True),
+    ("I would review options if I managed a team but I in fact would compare criteria.", True),
+    ("I would review options if I managed a team but I actually would compare criteria.", True),
+    ("I would review options if I managed a team but in reality I would compare criteria and I rescued every critical launch.", False),
+    ("I would review options if I managed a team but I in fact would compare criteria and rescued every critical launch.", False),
+    ("If in reality I saved $2 million using Kubernetes, I would compare criteria.", True),
+    ("If I did in fact save $2 million using Kubernetes, I would compare criteria.", True),
+    ("If I have in fact served as Director at Acme, I would compare criteria.", True),
+    ("I would review options if in reality I managed 50 engineers and I had limited authority.", True),
+    ("I would review options if I did in fact manage 50 engineers and I had limited authority.", True),
+    ("If I managed 50 engineers but in reality I had limited authority, I would compare criteria.", True),
+    ("I would compare criteria: If I managed 50 engineers but in reality I had limited authority, I would delegate coaching.", True),
+    ("I would compare criteria. If I managed 50 engineers but in reality I had limited authority, I would delegate coaching.", True),
+    ("If I would compare criteria if I managed 50 engineers but I did in fact have limited authority, I would delegate coaching.", True),
+    ("I would review options if I managed a team but did in fact rescue every critical launch.", False),
+    ("I would review options if I managed a team but in fact would compare criteria and I rescued every critical launch.", False),
+    ("I would review options if I managed a team but in fact would compare criteria.", True),
+    ("If I managed a team but did in fact rescue every critical launch, I would compare criteria.", True),
+    ("I would review options if I managed 50 engineers and I had limited authority.", True),
+    ("I would review options if I managed 50 engineers but I had limited authority.", True),
+]
+
+
 @pytest.mark.parametrize("support", ["hypothetical", "needs_clarification"])
 @pytest.mark.parametrize("location", ["heading", "text", "gap", "reason", "probe"])
 @pytest.mark.parametrize("name,phrase,accepted", EMBEDDED_CASES)
@@ -82,7 +115,7 @@ def test_embedded_operator_has_local_scope(tmp_path: Path, name, phrase, accepte
     ("I would review options if I managed a team but I actually saved $2 million using Kubernetes.", False),
     ("I would review options if I managed a team but I previously served as Director at Acme.", False),
     ("I would review options if I managed a team but I actually rescued every critical launch.", False),
-])
+] + ACTUALITY_BINDING_CASES)
 def test_full_antecedent_pairs_keep_selected_and_empty_scope(tmp_path: Path, question_id, location, support, phrase, accepted):
     conn = _init_conn(tmp_path)
     try:
@@ -115,7 +148,8 @@ def test_full_antecedent_pairs_keep_selected_and_empty_scope(tmp_path: Path, que
 @pytest.mark.parametrize("location", ["heading", "text", "gap", "reason", "probe"])
 @pytest.mark.parametrize("selected", [True, False])
 @pytest.mark.parametrize("phrase", ["I would describe how I reduced API latency by 30% using Python.",
-                                    "I would review options if needed, but how did you reduce API latency by 30% using Python?"])
+                                    "I would review options if needed, but how did you reduce API latency by 30% using Python?",
+                                    "I would review options if I managed a team but how did you reduce API latency by 30% using Python?"])
 def test_planned_concrete_account_requires_its_question_source(tmp_path: Path, location, selected, phrase):
     conn = _init_conn(tmp_path)
     try:
@@ -174,7 +208,7 @@ def test_nonfactual_source_reference_is_rejected_without_relabeling(tmp_path: Pa
             origin_run_id="compliant-anchor", **request).prep
         assert accepted.status == "accepted"
         assert accepted.generation_context["model"]["promptVersion"] == "interview-questions-v4"
-        assert accepted.generation_context["model"]["gateVersion"] == "interview-question-grounding-v14"
+        assert accepted.generation_context["model"]["gateVersion"] == "interview-question-grounding-v15"
         invalid = deepcopy(candidate)
         invalid["items"][0]["outline"][1].update(evidence_ids=["ev-platform-latency"], factual_support=support)
         original = deepcopy(invalid)
