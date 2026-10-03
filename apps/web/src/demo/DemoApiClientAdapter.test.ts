@@ -11,6 +11,7 @@ import {
 
 import type { ApiClientPort } from "../shared/ports/ApiClientPort.js";
 import { sampleProviderModelsResponse } from "../test/fixtures/projections.js";
+import { makeQuestionPrep } from "../test/fixtures/interviews.js";
 import { FakeTelemetryPort } from "../test/testPorts.js";
 import { DEMO_CAPABILITY_MANIFEST } from "./capabilities.js";
 import {
@@ -109,6 +110,10 @@ async function replaceJobs(
 }
 
 const READ_CASES = [
+  ["interviewCatalog", (api: ApiClientPort) => api.interviewCatalog()],
+  ["interviewQuestion", (api: ApiClientPort) => api.interviewQuestion("B11")],
+  ["interviewPrepHistory", (api: ApiClientPort) => api.interviewPrepHistory("job-contoso-reliability")],
+  ["interviewNotes", (api: ApiClientPort) => api.interviewNotes("job-contoso-reliability")],
   ["health", (api: ApiClientPort) => api.health()],
   ["dashboardSummary", (api: ApiClientPort) => api.dashboardSummary()],
   ["outcomeAnalytics", (api: ApiClientPort) => api.outcomeAnalytics()],
@@ -1330,5 +1335,49 @@ describe("DemoApiClientAdapter", () => {
       durationBucket: expect.stringMatching(/ms|s/),
     });
     adapter.dispose();
+  });
+});
+
+
+describe("interview demo contract", () => {
+  it("derives note origins, rejects forged bindings and detaches missing retained origins without rewriting history", async () => {
+    const { adapter, repository } = await createAdapter();
+    const jobId = "job-contoso-reliability";
+    const prep = makeQuestionPrep("B11", jobId);
+    await repository.mutate((draft) => { draft.state.readModel.jobs.details[jobId]!.interviewPrep = prep; });
+    await expect(adapter.saveInterviewNote(jobId, { questionId: "TS09", expectedRevision: 0, noteText: "Invalid origin", sourceGeneration: prep.generation })).rejects.toMatchObject({ status: 400, message: "invalid_interview_note_source" });
+    await expect(adapter.saveInterviewNote(jobId, { questionId: "B11", expectedRevision: 0, noteText: "Forged context", sourceGeneration: prep.generation, bindings: { catalogBinding: null, cardRevision: null, cardDigest: null, contextDigest: "a".repeat(64) } })).rejects.toMatchObject({ status: 400, message: "invalid_interview_note_bindings" });
+    const saved = await adapter.saveInterviewNote(jobId, { questionId: "B11", expectedRevision: 0, noteText: "Retained note", sourceGeneration: prep.generation });
+    expect(saved.note).toMatchObject({ sourceGeneration: prep.generation, bindings: { catalogBinding: prep.generationContext!.catalogBinding, contextDigest: prep.generationContext!.contextDigest } });
+    await repository.mutate((draft) => { draft.state.readModel.jobs.details[jobId]!.interviewPrep = null; });
+    const orphan = await adapter.saveInterviewNote(jobId, { questionId: "B11", expectedRevision: 1, noteText: "Retained independent edit" });
+    expect(orphan.note).toMatchObject({ sourceGeneration: null, bindings: { contextDigest: null }, revision: 2 });
+    const history = await adapter.interviewNotes(jobId, { questionId: "B11", history: true });
+    expect(history.notes.find((note) => note.revision === 1)?.sourceGeneration).toBe(prep.generation);
+  });
+
+  it("shares all 121 questions with principle, negotiation and retired semantics", async () => {
+    const { adapter } = await createAdapter();
+    const response = await adapter.interviewCatalog();
+    expect(response.total).toBe(121);
+    expect((await adapter.interviewQuestion("B11")).question.defaultAnswerFormat).toBe("principle");
+    expect((await adapter.interviewQuestion("TS09")).question.defaultAnswerFormat).toBe("principle");
+    expect((await adapter.interviewQuestion("C07")).question.answer).toMatch(/range/i);
+    await expect(adapter.interviewQuestion("C08")).rejects.toMatchObject({ status: 410 });
+  });
+
+  it("keeps independent notes, CAS conflicts, history and safe events inside the workspace", async () => {
+    const { adapter, repository } = await createAdapter();
+    const before = await adapter.profile();
+    const saved = await adapter.saveInterviewNote("job-contoso-reliability", { questionId: "B11", expectedRevision: 0, noteText: "Synthetic unverified recollection" });
+    expect(saved.note).toMatchObject({ revision: 1, factualSupport: "unverified_user_statement", editStatus: "user_edited" });
+    await expect(adapter.saveInterviewNote("job-contoso-reliability", { questionId: "B11", expectedRevision: 0, noteText: "stale text" })).rejects.toMatchObject({ status: 409 });
+    await adapter.saveInterviewNote("job-contoso-reliability", { questionId: "B11", expectedRevision: 1, noteText: "Newer synthetic note" });
+    expect((await adapter.interviewNotes("job-contoso-reliability", { questionId: "B11", history: true })).notes).toHaveLength(2);
+    expect((await adapter.interviewNotes("job-contoso-reliability", { questionId: "B11" })).notes[0]?.noteText).toBe("Newer synthetic note");
+    expect((await adapter.interviewNotes("job-contoso-reliability", { questionId: "TS09" })).notes).toHaveLength(0);
+    expect(await adapter.profile()).toEqual(before);
+    const snapshot = await repository.snapshot();
+    expect(JSON.stringify(snapshot.eventLog)).not.toContain("Synthetic unverified recollection");
   });
 });

@@ -12,6 +12,8 @@ import { artifactsKeys } from "./artifactsKeys.js";
 import { dashboardKeys } from "./dashboardKeys.js";
 import { digestKeys } from "./digestKeys.js";
 import { invalidationRouter } from "./invalidation-router.js";
+import { interviewKeys } from "./interviewKeys.js";
+import { evidenceMapKeys } from "./evidenceMapKeys.js";
 import { jobsKeys } from "./jobsKeys.js";
 import { outcomesKeys } from "./outcomesKeys.js";
 import { workflowRunsKeys } from "./workflowRunsKeys.js";
@@ -37,7 +39,7 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     dashboardKeys.summary(LOCAL_TENANT),
     digestKeys.all(LOCAL_TENANT),
   ],
-  JobUpdated: [dashboardKeys.summary(LOCAL_TENANT), jobsKeys.detail(LOCAL_TENANT, JOB_ID)],
+  JobUpdated: [interviewKeys.history(LOCAL_TENANT, JOB_ID), dashboardKeys.summary(LOCAL_TENANT), jobsKeys.detail(LOCAL_TENANT, JOB_ID)],
   JobDeleted: [
     jobsKeys.lists(LOCAL_TENANT),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
@@ -139,6 +141,7 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     dashboardKeys.summary(LOCAL_TENANT),
   ],
   PostingContentSnapshotCaptured: [
+    interviewKeys.history(LOCAL_TENANT, JOB_ID),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     discoveryKeys.sourceQuality(LOCAL_TENANT),
   ],
@@ -180,6 +183,7 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     dashboardKeys.summary(LOCAL_TENANT),
   ],
   ResumeApproved: [
+    interviewKeys.history(LOCAL_TENANT, JOB_ID),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     jobsKeys.lists(LOCAL_TENANT),
     dashboardKeys.summary(LOCAL_TENANT),
@@ -206,19 +210,22 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     jobsKeys.lists(LOCAL_TENANT),
     dashboardKeys.summary(LOCAL_TENANT),
   ],
-  EmployerAnalyzed: [jobsKeys.detail(LOCAL_TENANT, JOB_ID)],
+  EmployerAnalyzed: [
+    interviewKeys.history(LOCAL_TENANT, JOB_ID),jobsKeys.detail(LOCAL_TENANT, JOB_ID)],
   BulletProvenanceRecorded: [
     artifactsKeys.detail(LOCAL_TENANT, ARTIFACT_ID),
     artifactsKeys.lists(LOCAL_TENANT),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
   ],
   InterviewPrepGenerated: [
+    interviewKeys.history(LOCAL_TENANT, JOB_ID),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     jobsKeys.lists(LOCAL_TENANT),
     dashboardKeys.summary(LOCAL_TENANT),
   ],
-  InterviewQuestionNoteSaved: [],
+  InterviewQuestionNoteSaved: [interviewKeys.note(LOCAL_TENANT, JOB_ID, "B11")],
   InterviewPrepFailed: [
+    interviewKeys.history(LOCAL_TENANT, JOB_ID),
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     jobsKeys.lists(LOCAL_TENANT),
     dashboardKeys.summary(LOCAL_TENANT),
@@ -442,8 +449,8 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     digestKeys.all(LOCAL_TENANT),
     pipelineKeys.operations(LOCAL_TENANT),
   ],
-  ProfileUpdated: [profileKeys.profile(LOCAL_TENANT)],
-  ProfileImported: [profileKeys.profile(LOCAL_TENANT)],
+  ProfileUpdated: [profileKeys.profile(LOCAL_TENANT), evidenceMapKeys.list(LOCAL_TENANT), interviewKeys.jobs(LOCAL_TENANT), jobsKeys.details(LOCAL_TENANT)],
+  ProfileImported: [profileKeys.profile(LOCAL_TENANT), evidenceMapKeys.list(LOCAL_TENANT), interviewKeys.jobs(LOCAL_TENANT), jobsKeys.details(LOCAL_TENANT)],
   WorkflowStarted: [
     workflowRunsKeys.lists(LOCAL_TENANT),
     workflowRunsKeys.detail(LOCAL_TENANT, WORKFLOW_ID),
