@@ -638,8 +638,10 @@ corepack pnpm --filter @jobctrl/api exec vitest run \
 corepack pnpm web:lint
 corepack pnpm web:check
 corepack pnpm --filter @jobctrl/web exec vitest run \
+  src/demo/capabilities.test.ts \
   src/demo/DemoApiClientAdapter.test.ts \
   src/demo/DemoLocalCommandExecutor.test.ts \
+  src/demo/DemoScenarioEngine.test.ts \
   src/contexts/profile/components/RequiredBulletSuggestions.test.tsx \
   src/contexts/profile/forms/profile-form.test.tsx \
   src/contexts/profile/hooks/useUpdateProfileMutation.test.ts

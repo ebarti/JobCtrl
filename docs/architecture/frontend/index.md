@@ -142,6 +142,38 @@ literal expected responses. Domain and consumer tests check ordering, wording,
 source bindings, version identities, applicability and incomplete inspections.
 See [local verification](../../local-development.md#required-bullet-coaching-verification).
 
+### Supported Demo Scenarios
+
+`apps/web/src/demo/capabilities.ts` is the public demo capability manifest.
+Required-bullet inspection supports the same four coaching kinds, evidence and
+identity checks, and scan limits as production. Inspection and rejection leave
+the saved synthetic profile unchanged; only an individually accepted whitespace
+cleanup uses the existing version-checked browser-local save.
+
+The public scenario support is deliberately bounded:
+
+| Capability | Supported synthetic behavior |
+| --- | --- |
+| `rescoreJob` | Queued, running and terminal score projections with synthetic version/event updates. |
+| `retailorJob`, `retryStage`, `runJobStage` | Seeded stage execution and retry branches, including source/failed-stage guards and preservation of accepted artifacts during a failed refresh. |
+| `openArtifact` | Safe bundled same-origin browser previews with a rehearsal receipt. |
+| `applyJob`, `markApplied` | Synthetic approval/dry-run and manual-marking rehearsals recorded only in the demo workspace. |
+| `discoverySourcePreview` | Bundled lead previews without fetching a source site. |
+
+The internal `DemoScenarioEngine` also has fixture implementations for draft
+rendering, material freshness, bulk preparation/scoring/tailoring, Discover,
+outreach generation/revision and interview preparation. Their existence does
+not enable the corresponding public adapter methods: those capabilities remain
+`unavailable`. `capabilities.test.ts` checks the explicit public allowlists and
+proves those deferred operations cannot schedule work, write state or fetch.
+
+New production capabilities must first be classified as `unavailable`, with an
+explanation. A new non-registry port member requires an explicit manifest entry
+to type-check; registry endpoints carry their own demo classification. Enable a
+capability only when its synthetic scenario, adapter behavior, tests and this
+support inventory are intentionally supplied. Demo scenarios make no provider
+calls or external submissions and do not establish production worker behavior.
+
 The remaining production/demo policy duplication is descriptive inventory:
 
 | Policy | Current owners and shared parts |
