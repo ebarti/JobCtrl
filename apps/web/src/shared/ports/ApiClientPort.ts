@@ -76,6 +76,15 @@ import type {
   ExtensionCapabilityTokenResponse,
   EvidenceMapResponse,
   GenerateInterviewPrepRequest,
+  InterviewCatalogQuery,
+  InterviewCatalogResponse,
+  InterviewQuestionResponse,
+  InterviewPrepHistoryQuery,
+  InterviewPrepHistoryResponse,
+  InterviewNotesQuery,
+  InterviewNotesResponse,
+  SaveInterviewQuestionNoteRequest,
+  SaveInterviewQuestionNoteResponse,
   GenerateMaterialsRequest,
   JobDetail,
   EnsureCurrentResumeMaterialsRequest,
@@ -433,6 +442,11 @@ export interface ApiClientPort extends EndpointClientMethods {
   retryStage(jobKey: string, body: RetryStageRequest): Promise<ActionRunResponse>;
   runJobStage(jobKey: string, body: RunJobStageRequest): Promise<ActionRunResponse>;
   generateMaterials(jobKey: string, body?: Partial<GenerateMaterialsRequest>): Promise<ActionRunResponse>;
+  interviewCatalog: EndpointClientMethods["interviewCatalog"];
+  interviewQuestion: EndpointClientMethods["interviewQuestion"];
+  interviewPrepHistory: EndpointClientMethods["interviewPrepHistory"];
+  interviewNotes: EndpointClientMethods["interviewNotes"];
+  saveInterviewNote: EndpointClientMethods["saveInterviewNote"];
   generateInterviewPrep(jobKey: string, body?: Partial<GenerateInterviewPrepRequest>): Promise<ActionRunResponse>;
   applyJob(jobKey: string, body?: Partial<ApplyJobRequest>): Promise<ActionRunResponse>;
   cancelJobAction(jobKey: string, body?: CancelJobActionRequest): Promise<ActionRunResponse>;

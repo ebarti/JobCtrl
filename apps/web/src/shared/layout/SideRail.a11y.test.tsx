@@ -21,6 +21,7 @@ const NAV_PATHS = [
   "/discovery",
   "/artifacts",
   "/evidence-map",
+  "/interviews",
   "/outreach",
   "/runs",
   "/debug",

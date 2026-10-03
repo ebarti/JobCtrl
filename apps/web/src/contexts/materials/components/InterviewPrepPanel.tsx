@@ -28,6 +28,8 @@ export interface InterviewPrepPanelProps {
   requirements?: readonly EmployerAnalysisRequirement[];
   resolveEvidenceReference?: ResolveAuditEvidenceReference;
   reflectionContent?: ReactNode;
+  generationAction?: ReactNode;
+  emptyContent?: ReactNode;
 }
 
 const KIND_LABELS: Record<InterviewPrepItemKind, string> = {
@@ -106,6 +108,17 @@ function PrepItemCard({
         <h4 aria-label={item.title}>{item.title} <ContextHelp label="Interview prep item" description="Generated practice material, not a verified personal claim or a response to send unchanged. Its kind identifies a theme, STAR draft, gap drill, or company note; inspect the linked evidence and requirements below." /></h4>
       </div>
       <p>{item.generatedText}</p>
+      {item.questionMetadata ? (
+        <section className="section" aria-label="Question-driven preparation">
+          <p><Link to="/interviews" search={{ q: "", topic: "", role: "", source: "", format: "", mode: "list", card: item.questionMetadata.questionId, job: jobId }}>Open {item.questionMetadata.questionId} guidance</Link> · {item.questionMetadata.answerFormat} answer</p>
+          <p><strong>Selection reason:</strong> {item.questionMetadata.selectionRationale}</p>
+          <p className="muted">{item.questionMetadata.factualSupport.replaceAll("_", " ")} · {item.questionMetadata.userEditStatus.replaceAll("_", " ")}</p>
+          {item.questionMetadata.outline.map((part, index) => <div key={index}><h5>{part.heading}</h5><p>{part.text}</p><p className="muted">{part.factualSupport.replaceAll("_", " ")}</p></div>)}
+          {item.questionMetadata.gaps.length ? <section><h5>Missing details to clarify</h5><ul>{item.questionMetadata.gaps.map((gap) => <li key={gap.id}><strong>{gap.prompt}</strong><p>{gap.reason}</p></li>)}</ul></section> : null}
+          {item.questionMetadata.probes.length ? <section><h5>Follow-up questions</h5><ul>{item.questionMetadata.probes.map((probe, index) => <li key={index}>{probe}</li>)}</ul></section> : null}
+          <details><summary>Retained evidence and guidance versions</summary><p>Card {item.questionMetadata.cardRevision} · Rubric {item.questionMetadata.rubricRevision}</p>{item.questionMetadata.evidenceLinks.map((evidence, index) => <div key={index}><Link to="/evidence-map" search={{ q: "", job: jobId, entry: evidence.evidenceId }}>{evidence.sourceRef}</Link><p>{evidence.excerpt}</p><p>{evidence.scope} experience</p></div>)}<ul>{item.questionMetadata.sourceGuidanceRefs.map((ref) => <li key={ref}>{ref}</li>)}</ul></details>
+        </section>
+      ) : <p className="muted">Legacy item: no recorded catalog question or rubric association.</p>}
       {item.evidenceIds.length || item.requirementIds.length ? (
         <dl className="interview-prep-provenance">
           {item.evidenceIds.length ? (
@@ -253,6 +266,8 @@ export function InterviewPrepPanel({
   requirements = EMPTY_REQUIREMENTS,
   resolveEvidenceReference,
   reflectionContent,
+  generationAction,
+  emptyContent,
 }: InterviewPrepPanelProps): JSX.Element {
   const requirementsById = new Map(
     requirements.map((requirement) => [requirement.id, requirement]),
@@ -264,14 +279,22 @@ export function InterviewPrepPanel({
     >
       <div className="interview-prep-heading">
         <h3 aria-label="Interview prep">Interview prep <ContextHelp label="Interview prep" description="Generated interview practice grounded in recorded candidate evidence and role requirements when references exist. No prep generated means no accepted set is stored; generating a new draft does not submit an application." /></h3>
-        <GenerateInterviewPrepButton
+        <Link
+          to="/interviews"
+          search={{ q: "", topic: "", role: "", source: "", format: "", mode: "list", card: "", job: jobId }}
+        >
+          Open interview library
+        </Link>
+        {generationAction === undefined ? <GenerateInterviewPrepButton
           jobId={jobId}
           hasAcceptedPrep={Boolean(prep)}
-        />
+        /> : generationAction}
       </div>
       {prep ? (
         <>
           <GateAudit prep={prep} />
+          {prep.staleReasons?.length ? <Alert><AlertTitle>Preparation inputs have changed</AlertTitle><AlertDescription>{prep.staleReasons.map((reason) => reason.replaceAll("_", " ")).join("; ")}. This saved generation remains inspectable. Regenerate when you choose.</AlertDescription></Alert> : null}
+          {prep.generationContext ? <details className="section"><summary>Generation-time inputs and versions</summary><p>Selection: {prep.generationContext.selectionMode.replaceAll("_", " ")}; {prep.generationContext.selectedQuestionIds.join(", ")}</p><p>Stage: {prep.generationContext.interviewStage}; format: {prep.generationContext.interviewFormat}; responsibility lens: {prep.generationContext.roleLens.replaceAll("_", " ")}</p><p>Known criteria: {prep.generationContext.knownCriteria.join("; ") || "Unknown"}</p><p>Responsibilities: {prep.generationContext.roleResponsibilities.join("; ") || "Unspecified"}</p><pre className="whitespace-pre-wrap break-all">{JSON.stringify(prep.generationContext, null, 2)}</pre></details> : <p className="muted">Legacy generation: profile, catalog and question versions were not recorded.</p>}
           <div className="interview-prep-items">
             {prep.items.map((item) => (
               <PrepItemCard
@@ -290,7 +313,7 @@ export function InterviewPrepPanel({
           ) : null}
         </>
       ) : (
-        <Empty title="No interview prep generated." />
+        emptyContent ?? <Empty title="No interview prep generated." />
       )}
     </section>
   );

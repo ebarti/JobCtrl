@@ -1,6 +1,12 @@
 import { JobCtrlApiError } from "@jobctrl/api-client";
 import {
   ActivityListQuerySchema,
+  InterviewCatalogSchema,
+  InterviewCatalogQuerySchema,
+  InterviewNotesQuerySchema,
+  InterviewPrepHistoryQuerySchema,
+  SaveInterviewQuestionNoteRequestSchema,
+  type InterviewQuestionNote,
   ArtifactListQuerySchema,
   ContactListQuerySchema,
   ContactResearchListQuerySchema,
@@ -27,6 +33,8 @@ import {
   type TargetRoleSuggestionResponse,
   type WorkflowRunSummary,
 } from "@jobctrl/contracts";
+
+import { createInterviewQuestionNoteSaved, LOCAL_TENANT } from "@jobctrl/domain-types";
 
 import type { ApiClientPort } from "../shared/ports/ApiClientPort.js";
 import type { TelemetryPort } from "../shared/ports/TelemetryPort.js";
@@ -639,6 +647,90 @@ export class DemoApiClientAdapter implements ApiClientPort {
 
   evidenceMap() {
     return this.read((model) => model.evidence);
+  }
+
+  async interviewCatalog(query: Parameters<ApiClientPort["interviewCatalog"]>[0] = {}) {
+    const parsed = InterviewCatalogQuerySchema.parse(query);
+    const shared = await import("../../../../workers/automation/src/jobctrl/assets/interview/catalog.v1.json");
+    const catalog = InterviewCatalogSchema.parse(shared.default);
+    const needle = parsed.search?.toLowerCase() ?? "";
+    const questions = catalog.questions.filter((question) =>
+      (!parsed.topic || question.topic === parsed.topic || catalog.topics.find((topic) => topic.id === parsed.topic)?.questionIds.includes(question.id)) &&
+      (!parsed.role || question.roleLenses.includes(parsed.role)) &&
+      (!parsed.answerFormat || question.answerFormats.includes(parsed.answerFormat)) &&
+      (!parsed.source || question.sources.includes(parsed.source) || catalog.sources.find((source) => source.id === parsed.source)?.questionIds.includes(question.id)) &&
+      (!needle || [question.id, question.title, question.intent, question.answer].join(" ").toLowerCase().includes(needle)));
+    return { ok: true as const, catalog: { ...catalog, questions: questions.slice((parsed.page - 1) * parsed.pageSize, parsed.page * parsed.pageSize) }, page: parsed.page, pageSize: parsed.pageSize, total: questions.length };
+  }
+
+  async interviewQuestion(questionId: string) {
+    const { catalog } = await this.interviewCatalog();
+    if (catalog.retiredQuestions.some((question) => question.id === questionId)) throw new JobCtrlApiError(410, "retired_question", "This question identifier is retired.");
+    const question = catalog.questions.find((card) => card.id === questionId);
+    if (!question) throw new DemoResourceNotFoundError("unknown_question", questionId);
+    return { ok: true as const, catalogBinding: { catalogRevision: catalog.catalogRevision, catalogDigest: catalog.catalogDigest }, question };
+  }
+
+  async interviewPrepHistory(jobKey: string, query: Parameters<ApiClientPort["interviewPrepHistory"]>[1] = {}) {
+    const parsed = InterviewPrepHistoryQuerySchema.parse(query);
+    const job = await this.job(jobKey);
+    const generations = job.interviewPrep && (!parsed.generation || parsed.generation === job.interviewPrep.generation) ? [job.interviewPrep] : [];
+    return { ok: true as const, jobId: jobKey, generations: generations.slice((parsed.page - 1) * parsed.pageSize, parsed.page * parsed.pageSize), page: parsed.page, pageSize: parsed.pageSize, total: generations.length };
+  }
+
+  async interviewNotes(jobKey: string, query: Parameters<ApiClientPort["interviewNotes"]>[1] = {}) {
+    const parsed = InterviewNotesQuerySchema.parse(query);
+    await this.job(jobKey);
+    const byQuestion = await this.read((model) => model.materials.interviewNotes?.[jobKey] ?? {});
+    const rows = Object.entries(byQuestion).filter(([questionId]) => !parsed.questionId || parsed.questionId === questionId).flatMap(([, notes]) => parsed.history ? [...notes] : notes.slice(-1)).sort((a, b) => b.revision - a.revision);
+    return { ok: true as const, jobId: jobKey, notes: rows.slice((parsed.page - 1) * parsed.pageSize, parsed.page * parsed.pageSize), page: parsed.page, pageSize: parsed.pageSize, total: rows.length };
+  }
+
+  async saveInterviewNote(jobKey: string, body: Parameters<ApiClientPort["saveInterviewNote"]>[1]) {
+    const parsed = SaveInterviewQuestionNoteRequestSchema.parse(body);
+    const { catalog } = await this.interviewCatalog();
+    let saved: InterviewQuestionNote | undefined;
+    await this.workspace.mutate((draft, context) => {
+      if (!Object.hasOwn(draft.state.readModel.jobs.details, jobKey)) throw new DemoResourceNotFoundError("job_not_found", jobKey);
+      const materials = draft.state.readModel.materials;
+      const all = materials.interviewNotes ?? {};
+      const jobNotes = all[jobKey] ?? {};
+      const revisions = jobNotes[parsed.questionId] ?? [];
+      const current = revisions.at(-1);
+      if ((current?.revision ?? 0) !== parsed.expectedRevision) throw new JobCtrlApiError(409, "Another saved note revision exists.", "interview_note_revision_conflict", { currentNote: current ?? null });
+      let sourceGeneration = parsed.sourceGeneration === undefined ? current?.sourceGeneration ?? null : parsed.sourceGeneration;
+      let bindings: InterviewQuestionNote["bindings"] = null;
+      const prep = draft.state.readModel.jobs.details[jobKey]?.interviewPrep;
+      if (sourceGeneration !== null) {
+        const context = prep?.generation === sourceGeneration ? prep.generationContext : null;
+        const selected = context?.selectedQuestions.find((question) => question.questionId === parsed.questionId);
+        if (!context || !selected || context.jobContext.jobId !== jobKey || !context.selectedQuestionIds.includes(parsed.questionId) || selected.snapshot.id !== parsed.questionId || selected.snapshot.cardRevision !== selected.cardRevision || selected.snapshot.cardDigest !== selected.cardDigest) {
+          if (current && parsed.sourceGeneration === undefined && prep?.generation !== sourceGeneration) sourceGeneration = null;
+          else throw new JobCtrlApiError(400, "The preparation does not retain this question.", "invalid_interview_note_source");
+        } else bindings = { catalogBinding: context.catalogBinding, cardRevision: selected.cardRevision, cardDigest: selected.cardDigest, contextDigest: context.contextDigest };
+      }
+      if (sourceGeneration === null) {
+        const question = catalog.questions.find((card) => card.id === parsed.questionId);
+        if (question) bindings = { catalogBinding: { catalogRevision: catalog.catalogRevision, catalogDigest: catalog.catalogDigest }, cardRevision: question.cardRevision, cardDigest: question.cardDigest, contextDigest: null };
+        else if (!current) throw new JobCtrlApiError(catalog.retiredQuestions.some((card) => card.id === parsed.questionId) ? 410 : 404, "Question guidance is unavailable.", "unknown_question");
+      }
+      if (parsed.bindings) {
+        for (const key of ["cardRevision", "cardDigest", "contextDigest"] as const) if (parsed.bindings[key] !== undefined && parsed.bindings[key] !== (bindings?.[key] ?? null)) throw new JobCtrlApiError(400, "The supplied bindings do not match the retained source.", "invalid_interview_note_bindings");
+        const claim = parsed.bindings.catalogBinding;
+        const actual = bindings?.catalogBinding ?? null;
+        if (claim !== undefined && (claim === null ? actual !== null : !actual || claim.catalogRevision !== actual.catalogRevision || claim.catalogDigest !== actual.catalogDigest)) throw new JobCtrlApiError(400, "The supplied catalog does not match the retained source.", "invalid_interview_note_bindings");
+      }
+      const note: InterviewQuestionNote = {
+        jobId: jobKey, questionId: parsed.questionId, revision: parsed.expectedRevision + 1, noteText: parsed.noteText,
+        factualSupport: parsed.factualSupport ?? "unverified_user_statement", editStatus: "user_edited", sourceGeneration,
+        bindings, updatedAt: new Date().toISOString(),
+      };
+      Object.assign(materials, { interviewNotes: { ...all, [jobKey]: { ...jobNotes, [parsed.questionId]: [...revisions, note] } } });
+      context.appendDomainEvent(createInterviewQuestionNoteSaved(LOCAL_TENANT, { jobId: jobKey, questionId: note.questionId, revision: note.revision, sourceGeneration: note.sourceGeneration, updatedAt: note.updatedAt }));
+      saved = note;
+    });
+    if (!saved) throw new Error("Note save did not return a revision.");
+    return { ok: true as const, note: saved };
   }
 
   async workflowRuns(

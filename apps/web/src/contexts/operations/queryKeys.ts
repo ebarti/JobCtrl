@@ -20,3 +20,5 @@ export { materialsKeys } from "../materials/queryKeys.js";
 export { applyKeys } from "../apply/queryKeys.js";
 export { pipelineKeys } from "../pipeline/queryKeys.js";
 export { outreachKeys } from "../outreach/queryKeys.js";
+
+export { interviewKeys } from "./interviewKeys.js";
