@@ -20,6 +20,9 @@ async function expectUnobstructedGraph(map: Locator) {
       }
       const mark = hub.querySelector(".interview-atlas__mark")!;
       if (satellites.some((satellite) => overlaps(mark.getBoundingClientRect(), satellite.getBoundingClientRect()))) errors.push(`Covered hub mark: ${hub.getAttribute("aria-label")}`);
+      mark.scrollIntoView({ block: "center", behavior: "instant" });
+      const markRect = mark.getBoundingClientRect();
+      if (document.elementFromPoint(markRect.x + markRect.width / 2, markRect.y + markRect.height / 2)?.closest("button") !== hub) errors.push(`Intercepted hub mark: ${hub.getAttribute("aria-label")}`);
       const labels = Array.from(hub.children).filter((child) => !child.classList.contains("interview-atlas__mark"));
       for (const label of labels) {
         const a = label.getBoundingClientRect();
@@ -52,7 +55,7 @@ test("Interview atlas hub labels and native targets survive desktop widths and d
       await expect(map.locator(".interview-atlas__satellite").first()).toHaveCSS("width", "24px");
       await expectUnobstructedGraph(map);
     }
-    await map.getByRole("button", { name: "Behavioral: 11 questions", exact: true }).click();
+    await map.getByRole("button", { name: "Behavioral: 11 questions", exact: true }).locator(".interview-atlas__mark").click();
     await expect(page).toHaveURL(/topic=behavioral/);
     await expect(map.locator(".interview-atlas__named-node")).toHaveCount(11);
     await expect(map.locator(".interview-atlas__named-node").first()).toHaveCSS("min-height", "84px");
