@@ -1,7 +1,36 @@
-import { ProfileSchema, RequiredBulletSuggestionResponseSchema } from "@jobctrl/contracts";
+import {
+  ProfileSchema,
+  RequiredBulletSuggestionResponseSchema,
+  type RequiredBulletSuggestionResponse,
+} from "@jobctrl/contracts";
+import { type RequiredBulletCoachingInput } from "@jobctrl/domain-types";
 import { describe, expect, it } from "vitest";
 
-import { generateRequiredBulletSuggestions } from "../src/required-bullet-suggestions.js";
+import fixtureData from "../../../packages/domain-types/test/fixtures/required-bullet-suggestions.json" with { type: "json" };
+import {
+  generateRequiredBulletSuggestions,
+  MAX_REQUIRED_COACHING_ENTRIES,
+  MAX_REQUIRED_COACHING_SOURCE_ROWS,
+} from "../src/required-bullet-suggestions.js";
+
+describe("API coaching compatibility boundary", () => {
+  it.each(fixtureData)("$name", (fixture) => {
+    // Saved-profile validation supplies defaults at the boundary; the expected
+    // response is literal fixture data, independent of either consumer.
+    const saved = ProfileSchema.parse(fixture.profile);
+    const readonlyInput: RequiredBulletCoachingInput = saved;
+    const response: RequiredBulletSuggestionResponse = generateRequiredBulletSuggestions(
+      readonlyInput, fixture.profileVersion, fixture.maximumSuggestions,
+    );
+    expect(response).toEqual(fixture.expected);
+    expect(RequiredBulletSuggestionResponseSchema.parse(response)).toEqual(fixture.expected);
+  });
+
+  it("retains the server's pre-materialization read-limit exports", () => {
+    expect(MAX_REQUIRED_COACHING_ENTRIES).toBe(256);
+    expect(MAX_REQUIRED_COACHING_SOURCE_ROWS).toBe(4_096);
+  });
+});
 
 function profile() {
   return ProfileSchema.parse({

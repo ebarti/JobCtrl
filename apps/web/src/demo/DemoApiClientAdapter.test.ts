@@ -3,12 +3,14 @@ import { describe, expect, it, vi } from "vitest";
 import {
   JOB_SORT_FIELDS,
   ProfileSchema,
+  RequiredBulletSuggestionResponseSchema,
   type ActivityEventSummary,
   type ArtifactDetail,
   type JobCompensationSummary,
   type JobSummary,
 } from "@jobctrl/contracts";
 
+import coachingFixtures from "../../../../packages/domain-types/test/fixtures/required-bullet-suggestions.json" with { type: "json" };
 import type { ApiClientPort } from "../shared/ports/ApiClientPort.js";
 import { sampleProviderModelsResponse } from "../test/fixtures/projections.js";
 import { FakeTelemetryPort } from "../test/testPorts.js";
@@ -248,6 +250,50 @@ describe("DemoApiClientAdapter", () => {
     await expect(
       adapter.targetRoleSuggestions({ expectedProfileVersion: 2, maximumSuggestions: 1 }),
     ).rejects.toMatchObject({ status: 409, statusText: "stale_profile_version" });
+  });
+
+  it.each(coachingFixtures)("conforms to the shared coaching fixture: $name", async (fixture) => {
+    const { adapter, repository } = await createAdapter();
+    await repository.mutate((draft) => {
+      draft.state.readModel.profile.config.profile = ProfileSchema.parse(fixture.profile);
+      draft.state.readModel.profile.config.profileVersion = fixture.profileVersion;
+    });
+    const before = repository.snapshotNow();
+    const inspected = await adapter.requiredBulletSuggestions({
+      expectedProfileVersion: fixture.profileVersion,
+      maximumSuggestions: fixture.maximumSuggestions,
+    });
+    expect(inspected).toEqual(fixture.expected);
+    expect(RequiredBulletSuggestionResponseSchema.parse(inspected)).toEqual(fixture.expected);
+    // Read-only means no profile, revision, event, pending action or blob writes.
+    expect(repository.snapshotNow()).toEqual(before);
+    expect(await adapter.requiredBulletSuggestions({
+      expectedProfileVersion: fixture.profileVersion,
+      maximumSuggestions: fixture.maximumSuggestions,
+    })).toEqual(fixture.expected);
+    await expect(adapter.requiredBulletSuggestions({
+      expectedProfileVersion: fixture.profileVersion + 1,
+      maximumSuggestions: fixture.maximumSuggestions,
+    })).rejects.toMatchObject({ status: 409, statusText: "stale_profile_version" });
+    expect(repository.snapshotNow()).toEqual(before);
+  });
+
+  it("rejects invalid saved synthetic evidence without a workspace write", async () => {
+    const { adapter, repository } = await createAdapter();
+    await repository.mutate((draft) => {
+      draft.state.readModel.profile.config.profile = {
+        resume: { experience_entries: [{
+          id: "invalid-evidence", title: "Synthetic Engineer", company: "Synthetic Co",
+          achievement_evidence: [{ user_confirmed: "yes", claim_confidence: 2 }],
+        }] },
+      };
+    });
+    const before = repository.snapshotNow();
+    await expect(adapter.requiredBulletSuggestions({
+      expectedProfileVersion: before.state.readModel.profile.config.profileVersion!,
+      maximumSuggestions: 12,
+    })).rejects.toMatchObject({ status: 422, statusText: "invalid_saved_profile" });
+    expect(repository.snapshotNow()).toEqual(before);
   });
 
   it("inspects saved synthetic Required bullets without changing the demo profile", async () => {

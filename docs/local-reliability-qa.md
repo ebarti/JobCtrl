@@ -89,6 +89,19 @@ root aggregates do not cover separate web unit/type/E2E/Storybook suites.
 Temporal fault injection, recovery and cumulative Rhea/Base UI scenarios now live
 in the [detailed matrix](developer/qa/complete-checklist.md).
 
+## Required-Bullet Coaching
+
+Use the [focused verification commands](local-development.md#required-bullet-coaching-verification)
+and [auditability invariants](developer/qa/regression-catalog.md#auditability-checks)
+for changes to Required-bullet coaching. The domain policy and API/demo
+consumers use one set of synthetic fixtures with literal expected responses.
+Passing pure-policy tests proves deterministic conformance; actual API and
+browser assertions must separately prove saved-version binding, read-only
+inspection/rejection and individually accepted, version-checked persistence.
+Demo command regressions cover durable save/event behavior, failed storage and
+competing save payloads; Profile form/mutation tests cover write coordination.
+Require observed review/QA results and final checks before publication.
+
 ## Discovery Transaction Recovery
 
 Run the `discovery-transactions` recipe for preparation or enrichment transaction

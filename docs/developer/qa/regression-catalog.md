@@ -153,6 +153,17 @@ Any fix to evidence, rationale, keywords, persona judgments, or generated-materi
 
 Before claiming "fixed" on these surfaces, add or update a regression fixture that proves the exact invariant the human complained about. Prefer a fixture that reproduces the bad state from canonical data rather than a shallow component snapshot. State what was verified and what was not; do not use "fixed" for cosmetic masking.
 
+Required-bullet coaching has one pure TypeScript owner,
+`packages/domain-types/src/profile/required-bullet-suggestions.ts`, used by
+API and demo. Its shared synthetic JSON fixtures contain explicit expected
+ordering, guidance, source/version bindings, applicability and truncation.
+Conformance must be checked against those expectations in each consumer,
+alongside domain immutability/repeatability and raw-length getter guards.
+Exercise both sides of the 256-entry, 4,096-source-row and
+512-Required-occurrence limits; budget rejection must precede row-content
+reads. Follow the [focused commands](../../local-development.md#required-bullet-coaching-verification)
+for policy, adapter, save/event, form/mutation and isolated browser proof.
+
 For Required-bullet coaching, use an owned saved profile with required and
 optional bullets, a supported metric, and incomplete achievement evidence.
 Trace each source reference to the exact saved entry, bullet, and profile

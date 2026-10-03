@@ -613,6 +613,55 @@ imports cannot silently widen them. See the
 [frontend boundary checks](architecture/frontend/state-and-ports.md#automated-boundary-checks)
 for the enforced rules, legitimate infrastructure access, and review limits.
 
+### Required-bullet coaching verification
+
+The shared browser-safe policy lives in
+`packages/domain-types/src/profile/required-bullet-suggestions.ts`. Its
+synthetic JSON conformance fixtures provide literal expected responses for
+the domain, API compatibility boundary and demo adapter. They cover all four
+kinds, verified/confirmed evidence, action counts versus results, contextual
+and grammatical restatements, duplicates and unusable identities, cleanup
+collisions, reserved own keys, orphan pins, excerpts and output truncation.
+Domain tests also exercise immutability, repeatability and getter guards around
+the 256-entry, 4,096-source-row and 512-Required-occurrence budgets.
+
+Run these focused checks with prepared workspace dependencies:
+
+```bash
+corepack pnpm --filter @jobctrl/domain-types check
+corepack pnpm --filter @jobctrl/domain-types test
+corepack pnpm --filter @jobctrl/contracts check
+corepack pnpm --filter @jobctrl/api-client check
+corepack pnpm api:check
+corepack pnpm --filter @jobctrl/api exec vitest run \
+  test/required-bullet-suggestions.test.ts test/server.test.ts
+corepack pnpm web:lint
+corepack pnpm web:check
+corepack pnpm --filter @jobctrl/web exec vitest run \
+  src/demo/DemoApiClientAdapter.test.ts \
+  src/demo/DemoLocalCommandExecutor.test.ts \
+  src/contexts/profile/components/RequiredBulletSuggestions.test.tsx \
+  src/contexts/profile/forms/profile-form.test.tsx \
+  src/contexts/profile/hooks/useUpdateProfileMutation.test.ts
+JOBCTRL_E2E_ISOLATED=1 corepack pnpm --filter @jobctrl/web exec playwright test \
+  --config=e2e/playwright.config.ts e2e/tests/required-bullet-coaching.spec.ts
+corepack pnpm web:build
+corepack pnpm demo:build
+corepack pnpm docs:build
+git diff --check origin/main...HEAD
+```
+
+The Playwright configuration creates an owned disposable synthetic workspace
+and starts its own API/web servers; choose available isolated
+`JOBCTRL_E2E_API_PORT` and `JOBCTRL_E2E_WEB_PORT` values when the defaults are
+occupied. Generation, rejection, acceptance, persistence/reload, delayed
+responses, conflicts and lost-response recovery must execute. Skips or failed
+browser startup do not pass this gate. The [auditability checks](developer/qa/regression-catalog.md#auditability-checks)
+define the preservation invariants; the [frontend inventory](architecture/frontend/index.md#shared-production-and-demo-coaching)
+describes other shared helpers and remaining adapter/simulation duplication.
+
+### Frontend test pyramid
+
 Run the test pyramid (Vitest unit / hook / component, type-level tests, and
 Playwright end-to-end) through the root aliases:
 

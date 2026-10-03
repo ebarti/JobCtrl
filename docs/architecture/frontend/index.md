@@ -124,6 +124,36 @@ it is the target deployment model.
 
 ---
 
+## Shared Production And Demo Coaching
+
+Required-bullet coaching is owned by
+`packages/domain-types/src/profile/required-bullet-suggestions.ts`, exported
+through the Profile barrel and `@jobctrl/domain-types`. The API compatibility
+module and `DemoApiClientAdapter` call the same deterministic implementation.
+It accepts a readonly structural view of a validated saved profile directly,
+so adapters do not copy bullet/evidence collections before the scan budgets.
+It has no runtime I/O or dependency on contracts. Wire validation remains in
+contracts; saved snapshots, version checks and explicit acceptance remain at
+the existing API, demo workspace and Profile form boundaries.
+
+The common synthetic fixtures in
+`packages/domain-types/test/fixtures/required-bullet-suggestions.json` contain
+literal expected responses. Domain and consumer tests check ordering, wording,
+source bindings, version identities, applicability and incomplete inspections.
+See [local verification](../../local-development.md#required-bullet-coaching-verification).
+
+The remaining production/demo policy duplication is descriptive inventory:
+
+| Policy | Current owners and shared parts |
+| --- | --- |
+| Job lifecycle filtering | API projections resolve hidden/deleted/closed facets in SQL; `demo/job-filter.ts` resolves them in memory. Both use the contracts query vocabulary. The non-lifecycle filter core, sorting, timestamps and pagination already live in `packages/contracts/src/jobs-query.ts`. |
+| Apply approval binding | API `application-feedback.ts` resolves current material/profile/URL and dry-run evidence from canonical storage; `DemoLocalCommandExecutor` checks synthetic review gates. Contracts and domain types already share decisions and gate-reason vocabulary. The demo checks are a rehearsal of approval, with no external submission. |
+| Profile version fencing | API `profile-store.ts` checks the expected version inside the SQLite save; `DemoLocalCommandExecutor` checks it inside a workspace transaction. The shared Profile form owns acceptance, manual-save and autosave coordination in both compositions. Persistence and conflict reporting remain adapter responsibilities. |
+| Score and template behavior | Production scoring and `resume-templates.ts` use canonical policies, versions and artifacts. Demo scenario/executor code updates synthetic score projections and bundled template metadata with synthetic identities. Those updates intentionally simulate lifecycle results; they do not establish production score or artifact equivalence. |
+
+Only the deterministic Required-bullet rules are extracted. The inventory does
+not introduce a policy framework or change the other capabilities/scenarios.
+
 ## 2. Modeling Principles
 
 ### 2.1 The Three Layers of State

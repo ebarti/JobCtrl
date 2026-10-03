@@ -182,10 +182,12 @@ fill every available slot.
 
 Required-bullet coaching is opt-in and uses the saved profile, with inspectable
 source text and references. It covers conservative grammar cleanup, relevance,
-achievement framing, and missing evidence. The current coaching is deterministic;
-it does not call a model or infer new facts, metrics, achievements, or job
-requirements. Questions about missing evidence are prompts for your own truthful
-manual edits, not proposed facts that can be accepted automatically.
+achievement framing, and missing evidence. Production and the demo share the
+same deterministic rules; the demo inspects its saved synthetic profile in
+the browser. Coaching does not call a model or infer new facts, metrics,
+achievements, or job requirements. Questions about missing evidence are prompts
+for your own truthful manual edits, not proposed facts that can be accepted
+automatically.
 Identical bullets or Required pins cannot identify one occurrence, so coaching
 skips them. Cleanup also stays manual when its resulting text would duplicate
 another bullet or Required pin. A claim's own text, including a number
@@ -243,3 +245,4 @@ promotion, or selection-policy migrations in the proposed
 | Web implementation | `apps/web/src/contexts/profile/`, the `/profile`, `/preferences`, and `/profile/import/*` route files, and `apps/web/src/views/evidence-map/`. |
 | Domain and persistence | `workers/automation/src/jobctrl/domain/profile/` and `workers/automation/src/jobctrl/infrastructure/profile/`; normalized table ownership is summarized in [Storage](../architecture/storage.md#schema-at-a-glance). |
 | Cross-context contract | `ProfileSnapshot` in the Profile domain; the aggregate and published-language boundary are documented in [Tactical Design](../architecture/domain-model/tactical.md). |
+| Required-bullet coaching | The shared deterministic owner is `packages/domain-types/src/profile/required-bullet-suggestions.ts`; API/demo reuse, fixtures and remaining policy duplication are described in [Frontend Architecture](../architecture/frontend/index.md#shared-production-and-demo-coaching). |
