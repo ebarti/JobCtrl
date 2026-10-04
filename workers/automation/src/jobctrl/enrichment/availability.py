@@ -384,9 +384,13 @@ def _anonymous_browser_in_process(url: str, *, fetcher: Callable[[str, str], Res
                     catch (_) { attempted = true; }
                 }
                 if (navigator.serviceWorker) {
-                    try { Object.defineProperty(navigator.serviceWorker, 'register', {
-                        value: blocked, configurable: false, writable: false
-                    }); } catch (_) { attempted = true; }
+                    // Native prototype calls bypass an instance-only shadow,
+                    // including Playwright's service_workers=block wrapper.
+                    for (const target of [Object.getPrototypeOf(navigator.serviceWorker), navigator.serviceWorker]) {
+                        try { Object.defineProperty(target, 'register', {
+                            value: blocked, configurable: false, writable: false
+                        }); } catch (_) { attempted = true; }
+                    }
                 }
             })();""")
             def fetch_route(request_url: str, method: str, headers: Any) -> RouteFulfillment:

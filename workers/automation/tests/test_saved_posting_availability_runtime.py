@@ -298,7 +298,11 @@ def native_sinks():
         def do_GET(self):
             hits.append(self.path)
             self.send_response(200)
+            if self.path == "/service-worker.js":
+                self.send_header("Content-Type", "application/javascript")
             self.end_headers()
+            if self.path == "/service-worker.js":
+                self.wfile.write(b"fetch('/worker-owned-sink'); self.addEventListener('install', event => event.waitUntil(self.skipWaiting()));")
         def log_message(self, *_):
             pass
     http = ThreadingHTTPServer(("127.0.0.1", 0), Sink)
@@ -314,6 +318,33 @@ def native_sinks():
         http.server_close()
         thread.join(timeout=1)
         udp.close()
+
+
+def test_real_context_guard_blocks_native_service_worker_prototype_without_unowned_requests(native_sinks, monkeypatch):
+    from jobctrl.infrastructure.network import url_safety
+    # Own loopback gives Chromium a secure service-worker origin. Only the
+    # deterministic main document is admitted; every other URL uses real policy.
+    main_url = native_sinks.http + "/jobs/service-worker-prototype"
+    validate = url_safety.validate_public_http_url
+    monkeypatch.setattr(url_safety, "validate_public_http_url",
+                        lambda url, **kwargs: url_safety.PublicUrlDecision(True) if url == main_url else validate(url, **kwargs))
+    metadata = json.dumps({"@type": "JobPosting", "url": main_url, "description": "Current synthetic role"})
+    html = ("<html><head><title>Synthetic guarded role</title></head><body><main>Current synthetic role</main><script>"
+            "const ld = document.createElement('script'); ld.type = 'application/ld+json'; "
+            f"ld.textContent = JSON.stringify({metadata}); document.head.appendChild(ld); "
+            "try {ServiceWorkerContainer.prototype.register.call(navigator.serviceWorker, '/service-worker.js').catch(() => {});} catch (_) {}"
+            "const until = performance.now() + 1500; while (performance.now() < until) {}"
+            "</script></body></html>").encode()
+    calls = []
+    def fetch(url, method):
+        calls.append((url, method))
+        assert url == main_url, "service-worker URL reached the guarded transport"
+        return availability.Response(url, url, 200, html)
+    rendered = availability._anonymous_browser_in_process(main_url, fetcher=fetch, deadline=time.monotonic() + 20)
+    assert native_sinks.hits == []
+    assert not rendered.status_evidence_complete
+    assert rendered.status_evidence_reason == "unsupported_browser_channel"
+    assert calls == [(main_url, "browser_resource")]
 
 
 @pytest.mark.parametrize("channel", ["popup", "service_worker", "worker", "shared_worker", "websocket", "webtransport", "webrtc"])
