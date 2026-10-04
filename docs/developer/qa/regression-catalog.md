@@ -753,9 +753,14 @@ exact endpoints; missing/partial Ashby rows cannot prove closure and an unlisted
 matching direct link can be active. API/page/browser fallbacks retain hashes and
 method lineage; extension pairing alone cannot fabricate authenticated evidence.
 
-Exercise completed-job startup/reconnect/heartbeat catch-up, 25-job selection,
+Exercise saved-job startup/reconnect/heartbeat catch-up before, during and after
+enrichment, 25-job selection,
 100 acquisitions/hour, once/minute coalescing, two-second actual-host pacing,
 backoff/Retry-After, independent process leases, crash recovery and stale fences.
+Hidden/inactive status templates cannot close a visible posting. Computed browser
+visibility and blocked subresources must survive conversion; incomplete renders
+remain unknown with reason/hash lineage. Refused commands surface durable request
+deferral/retry feedback without inventing an acquisition attempt.
 Prove a second writer can acquire during transport. GET must make zero employer
 requests. Failed observations retain success clocks and byte-identical accepted
 content/material/generation/approval/outcome fingerprints. Closure must never

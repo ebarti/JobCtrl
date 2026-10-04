@@ -726,8 +726,11 @@ def tailor_job_by_id(
     # provider setup and release any reconciler writes before network I/O.
     conn.commit()
     from jobctrl.enrichment.availability import require_fresh_active
-    require_fresh_active(str(stable_job_id), tenant_id=str(tenant_id), conn=conn, expected_posting_url=job["url"])
-    job = target_reader.load(tenant_id, stable_job_id)
+    expected_posting_url = job["url"]
+    require_fresh_active(str(stable_job_id), tenant_id=str(tenant_id), conn=conn, expected_posting_url=expected_posting_url)
+    with claim_preparation_reservation(conn, tenant_id=tenant_id, job_id=stable_job_id,
+            stage="tailor", workflow_id=None, cancel_event=cancel_event, expected_posting_url=expected_posting_url):
+        job = target_reader.load(tenant_id, stable_job_id)
     if job is None:
         return {"job_id": str(stable_job_id), "status": "skipped", "reason": "availability_candidate_changed"}
 
@@ -755,6 +758,7 @@ def tailor_job_by_id(
     with claim_preparation_reservation(
         conn, tenant_id=tenant_id, job_id=stable_job_id,
         stage="tailor", workflow_id=recovery_workflow_id, cancel_event=cancel_event,
+        expected_posting_url=expected_posting_url,
     ):
         ensure_job_stage_rows(
             conn,

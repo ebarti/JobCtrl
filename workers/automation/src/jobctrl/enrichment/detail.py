@@ -417,13 +417,15 @@ def _page_to_detail_page(page, url: str, status: int | None = None) -> DetailPag
         pass
     json_ld = _collect_json_ld(page)
     html = _collect_main_content(page)
-    status_html, status_complete, raw_hash = _collect_status_html(page)
+    visibility = []
+    status_html, status_complete, raw_hash = _collect_status_html(page, visibility_out=visibility)
     return DetailPage(
         url=url,
         final_url=final_url,
         page_title=page_title,
         html=html,
         status_html=status_html, status_evidence_complete=status_complete, raw_html_hash=raw_hash,
+        status_visibility_verified=bool(visibility),
         json_ld=tuple(json_ld),
         status=status,
         fetched_at=fetched_at,

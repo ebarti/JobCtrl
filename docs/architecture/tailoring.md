@@ -985,7 +985,9 @@ represent a "sent" state.
 The canonical tailoring entry point requires successfully verified active
 posting evidence no more than six hours old before provider generation. It
 acquires missing/stale evidence outside a writer transaction and re-reads the
-JobId/URL after acquisition. Latest unknown, deferred or unavailable observations
+JobId/URL after acquisition. Its short queued/manual-to-running writer claim
+checks that original URL and fresh evidence again before recording an attempt,
+and releases the writer before provider work. Latest unknown, deferred or unavailable observations
 stop generation with a check/retry/manual-inspection action. Accepted materials,
 validation, generations and approval bindings are preserved. Availability owns
 this clock independently of posting-content hashes; see

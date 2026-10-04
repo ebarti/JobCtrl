@@ -82,7 +82,8 @@ explicit errors; the command never launches Apply.
 Jobs list/detail read the latest `availability` observation directly from the
 Enrichment event ledger, independently of projection lag. The response exposes
 separate attempt/success clocks, latest uncertainty, bounded hashed acquisition
-lineage, next due, and calculated overdue/in-progress state. It performs no
+lineage, next due, calculated overdue/in-progress state, and optional deferred
+command reason/request time/retry time. Refusal does not invent an attempt. It performs no
 employer network calls and appends no events. The
 [complete contract](complete-contract.md#saved-posting-availability) owns fields;
 the [enrichment guide](../user/enrichment-and-extraction.md#saved-posting-availability)

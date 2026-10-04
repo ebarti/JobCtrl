@@ -205,6 +205,7 @@ class DetailPage:
     status_html: str = ""
     status_evidence_complete: bool = True
     status_evidence_reason: str = ""
+    status_visibility_verified: bool = False
     raw_html_hash: str = ""
 
     def __post_init__(self) -> None:

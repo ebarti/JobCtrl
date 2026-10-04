@@ -424,7 +424,8 @@ Named-not-built evolution paths (also see §9):
 Enrichment handles `JobAvailabilityObserved` by invalidating the exact tenant/job
 detail and tenant job lists. The observation DTO keeps the latest unknown
 attempt separate from an earlier successful verification. Internal
-`AvailabilityLeaseChanged` is covered by the exhaustive router with an explicit
-empty invalidation result; reservation churn does not reload unrelated views.
+`AvailabilityLeaseChanged` invalidates detail/lists for persisted job-scoped
+request deferral feedback. Workspace/host leases return an empty invalidation
+result; reservation churn does not reload unrelated views.
 Ordinary reconnect invalidation refreshes overdue wall-clock state without
 requesting employer acquisition.

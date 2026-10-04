@@ -2554,6 +2554,12 @@ export function postingAvailability(db: SqliteDatabase, jobId: string, now = Dat
     "AND entity_ref = ? ORDER BY event_id DESC LIMIT 1", [DEFAULT_TENANT, `job:${jobId}`]);
   const value = parseJsonRecord(latest?.payload_json ?? null) ?? {};
   const reservation = parseJsonRecord(lease?.payload_json ?? null) ?? {};
+  const requestRow = getRow<{ payload_json: string | null }>(db,
+    "SELECT payload_json FROM job_events WHERE tenant_id = ? AND entity_kind = 'posting_availability_request' " +
+    "AND entity_ref = ? ORDER BY event_id DESC LIMIT 1", [DEFAULT_TENANT, jobId]);
+  const request = parseJsonRecord(requestRow?.payload_json ?? null) ?? {};
+  const requestedAt = nullableString(request.requestedAt);
+  const lastAttemptedAt = nullableString(value.lastAttemptedAt);
   const nextDueAt = nullableString(value.nextDueAt);
   const rawLineage = Array.isArray(value.lineage) ? value.lineage.slice(0, 24) : [];
   return {
@@ -2567,6 +2573,11 @@ export function postingAvailability(db: SqliteDatabase, jobId: string, now = Dat
     nextDueAt, evidenceRef: nullableString(value.evidenceRef),
     overdue: !nextDueAt || !Number.isFinite(Date.parse(nextDueAt)) || Date.parse(nextDueAt) <= now,
     checkInProgress: Boolean(reservation.owner && Date.parse(String(reservation.expiresAt)) > now),
+    ...(request.status === "deferred" && requestedAt && Number.isFinite(Date.parse(requestedAt)) &&
+      (!lastAttemptedAt || Date.parse(requestedAt) >= Date.parse(lastAttemptedAt)) ? {
+        request: { status: "deferred" as const, reason: nullableString(request.reason) ?? "check_deferred",
+          requestedAt, retryAt: nullableString(request.retryAt) },
+      } : {}),
     lineage: rawLineage.flatMap((entry) => {
       if (!entry || typeof entry !== "object") return [];
       const item = entry as Record<string, unknown>;

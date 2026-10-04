@@ -121,6 +121,9 @@ workspace, at least two seconds between requests to a host, and one request in
 flight per host. Repeated clicks coalesce, and a job can acquire new evidence
 at most once a minute. Unknown results retry after five minutes, with increasing
 delays capped at 24 hours; retry cannot bypass quotas or rate-limit cooldowns.
+If a command coalesces or is deferred, Job Detail shows its separate request
+reason and retry time. A refused request does not create an acquisition attempt
+or advance the last successful verification.
 Sleep, an offline machine or a stopped worker leaves the recorded times intact
 and can make a check overdue.
 
@@ -131,6 +134,10 @@ use guarded public HTTP and a bounded anonymous browser fallback. Pairing the
 extension does not enable authenticated availability capture. Login,
 challenge, access-limited, malformed or identity-lost pages remain unknown;
 ordinary Discovery/Enrich extension selection keeps its own behavior.
+CSS-dependent status must be verified by the guarded renderer; hidden templates
+cannot close a posting. Blocked subresources and incomplete rendering remain
+unknown. Each outbound request has a 20-second total deadline and a full check
+has a 120-second acquisition budget, below crash-lease expiry.
 
 Scoring, tailoring and cover generation need successfully verified active
 evidence no more than six hours old. Reviewed Apply needs evidence no more than

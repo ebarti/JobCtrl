@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 import hashlib
 import json
+import multiprocessing
 import sqlite3
 import time
 from typing import Any, Callable
@@ -35,6 +36,8 @@ SWEEP_LIMIT = 25
 HOURLY_LIMIT = 100
 MAX_BODY_BYTES = 1_000_000
 MAX_REQUESTS = 12
+REQUEST_TIMEOUT_SECONDS = 20
+ACQUISITION_TIMEOUT_SECONDS = 120
 
 
 def _now() -> datetime:
@@ -64,7 +67,13 @@ def read_availability(conn: sqlite3.Connection, job_id: str, *, tenant_id: str =
     now = now or _now()
     due = _instant(observation.get("nextDueAt"))
     lease = _latest(conn, tenant_id, "availability_lease", f"job:{job_id}")
+    request = _latest(conn, tenant_id, "posting_availability_request", job_id)
+    requested = _instant(request.get("requestedAt"))
+    attempted = _instant(observation.get("lastAttemptedAt"))
     return {**observation, "jobId": job_id, "overdue": due is None or due <= now,
+            **({"request": {"status": "deferred", "reason": str(request.get("reason") or "check_deferred")[:160],
+                             "requestedAt": requested.isoformat(), "retryAt": request.get("retryAt")}}
+               if request.get("status") == "deferred" and requested and (not attempted or requested >= attempted) else {}),
             "checkInProgress": bool(lease.get("owner") and (_instant(lease.get("expiresAt")) or now) > now)}
 
 
@@ -236,7 +245,7 @@ class Response:
     redirect_url: str | None = None
 
 
-def public_get(url: str) -> Response:
+def _public_get_in_process(url: str) -> Response:
     from jobctrl.infrastructure.network.public_http import build_public_http_opener
     from jobctrl.infrastructure.network.politeness import resolve_honest_user_agent
     request = Request(url, headers={"User-Agent": resolve_honest_user_agent().header_value(),
@@ -247,15 +256,65 @@ def public_get(url: str) -> Response:
     except HTTPError as error:
         result = error
     with result:
-        body = result.read(MAX_BODY_BYTES + 1)
-        if len(body) > MAX_BODY_BYTES:
-            raise DeferredCheck("response_body_budget")
+        deadline = time.monotonic() + REQUEST_TIMEOUT_SECONDS
+        chunks, size = [], 0
+        while True:
+            if time.monotonic() >= deadline:
+                raise DeferredCheck("request_deadline")
+            chunk = getattr(result, "read1", result.read)(min(65536, MAX_BODY_BYTES + 1 - size))
+            if time.monotonic() >= deadline:
+                raise DeferredCheck("request_deadline")
+            if not chunk:
+                break
+            chunks.append(chunk)
+            size += len(chunk)
+            if size > MAX_BODY_BYTES:
+                raise DeferredCheck("response_body_budget")
+        body = b"".join(chunks)
         status = result.code
         final_url = result.geturl()
         retry = _retry_after(result.headers.get("Retry-After"))
         location = result.headers.get("Location") if 300 <= status < 400 else None
         return Response(url, final_url, status, body, retry, result.headers.get("Content-Type", "text/html"),
                         urljoin(url, location) if location else None)
+
+
+
+def _transport_process(url: str, sender: Any) -> None:
+    try:
+        sender.send(("response", _public_get_in_process(url)))
+    except Exception as error:
+        sender.send(("error", str(error) if isinstance(error, DeferredCheck) else "transport_failure"))
+    finally:
+        sender.close()
+
+
+def public_get(url: str, *, timeout: float = REQUEST_TIMEOUT_SECONDS) -> Response:
+    """Hard total DNS/header/body deadline; kill and reap the owned transport."""
+    context = multiprocessing.get_context("spawn")
+    receiver, sender = context.Pipe(duplex=False)
+    process = context.Process(target=_transport_process, args=(url, sender), daemon=True)
+    process.start()
+    sender.close()
+    try:
+        if not receiver.poll(max(0, min(REQUEST_TIMEOUT_SECONDS, timeout))):
+            raise DeferredCheck("request_deadline")
+        kind, value = receiver.recv()
+        if kind != "response":
+            raise DeferredCheck(value)
+        return value
+    finally:
+        receiver.close()
+        if process.is_alive():
+            process.terminate()
+        process.join(timeout=1)
+        if process.is_alive():
+            process.kill()
+            process.join(timeout=1)
+        process.close()
+
+
+_PRODUCTION_PUBLIC_GET = public_get
 
 
 def _retry_after(value: object) -> float:
@@ -286,14 +345,15 @@ def _provider(url: str) -> tuple[str, str, str, str] | None:
     return None
 
 
-def anonymous_browser(url: str, *, fetcher: Callable[[str, str], Response]) -> DetailPage:
+def anonymous_browser(url: str, *, fetcher: Callable[[str, str], Response], deadline: float | None = None) -> DetailPage:
     """Existing guarded anonymous browser; never creates an authenticated profile."""
     from playwright.sync_api import sync_playwright
     from jobctrl.enrichment.detail import _page_to_detail_page
     from jobctrl.infrastructure.network import PublicHttpUrlRouteGuard
     from jobctrl.infrastructure.network.url_safety import RouteFulfillment
+    deadline = deadline or time.monotonic() + ACQUISITION_TIMEOUT_SECONDS
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=True)
+        browser = playwright.chromium.launch(headless=True, timeout=max(1, min(20, deadline - time.monotonic()) * 1000))
         try:
             context = browser.new_context()
             page = context.new_page()
@@ -302,8 +362,10 @@ def anonymous_browser(url: str, *, fetcher: Callable[[str, str], Response]) -> D
                 return RouteFulfillment(response.status, {"content-type": response.content_type}, response.body)
             guard = PublicHttpUrlRouteGuard(page, fetch_public_requests=True, request_fetcher=fetch_route).install()
             try:
-                response = page.goto(url, wait_until="domcontentloaded", timeout=20_000)
+                response = page.goto(url, wait_until="domcontentloaded", timeout=max(1, min(20, deadline - time.monotonic()) * 1000))
                 rendered = _page_to_detail_page(page, url, response.status if response else None)
+                if time.monotonic() >= deadline:
+                    return replace(rendered, status_evidence_complete=False, status_evidence_reason="acquisition_deadline")
                 if guard.blocked:
                     return replace(rendered, status_evidence_complete=False,
                                    status_evidence_reason=f"browser_guard: {guard.blocked_reason}")
@@ -321,6 +383,7 @@ class Acquisition:
                  browser: Callable[[str], DetailPage] | None = None) -> None:
         self.conn, self.claim, self.transport, self.browser = conn, claim, transport or public_get, browser
         self.lineage: list[dict[str, Any]] = []
+        self.deadline = time.monotonic() + ACQUISITION_TIMEOUT_SECONDS
 
     def _get(self, url: str, method: str) -> Response:
         original = url
@@ -342,6 +405,8 @@ class Acquisition:
                 time.sleep(delay)
 
     def _single_get(self, url: str, method: str) -> Response:
+        if time.monotonic() >= self.deadline:
+            raise DeferredCheck("acquisition_deadline")
         if len(self.lineage) >= MAX_REQUESTS:
             raise DeferredCheck("request_budget")
         # A fallback may reuse a host immediately after its prior request.
@@ -359,13 +424,19 @@ class Acquisition:
             with gateway.guard(url, policy, RunBudgetCounter(1)) as decision:
                 if not decision.allowed:
                     raise DeferredCheck("shared_host_cooldown")
-                response = self.transport(url)
+                remaining = self.deadline - time.monotonic()
+                if remaining <= 0:
+                    raise DeferredCheck("acquisition_deadline")
+                response = (self.transport(url, timeout=remaining) if self.transport is _PRODUCTION_PUBLIC_GET
+                            else self.transport(url))
             retry = response.retry_after
             if retry:
                 gateway.note_retry_after(url, retry)
             self.lineage.append({"sourceUrl": url, "finalUrl": response.final_url, "status": response.status,
                                  "method": method, "rawHash": hashlib.sha256(response.body).hexdigest(),
                                  **({"redirectUrl": response.redirect_url} if response.redirect_url else {})})
+            if time.monotonic() >= self.deadline:
+                raise DeferredCheck("acquisition_deadline")
             return response
         except Exception as error:
             self.lineage.append({"sourceUrl": url, "finalUrl": None, "status": None,
@@ -430,7 +501,7 @@ class Acquisition:
         if verdict is not ActiveState.UNKNOWN or reason in {"http_error", "access_challenge", "identity_lost", "identity_mismatch", "invalid_deadline", "conflicting_signals"}:
             return verdict.value, reason, "public_http"
         if self.browser is None:
-            rendered = anonymous_browser(url, fetcher=self._get)
+            rendered = anonymous_browser(url, fetcher=self._get, deadline=self.deadline)
         else:
             # Transport-only fixtures retain the real browser-page reservation.
             self._pace(url)
@@ -498,6 +569,22 @@ def check_availability(job_id: str, *, tenant_id: str = str(LOCAL_TENANT), conn:
     conn = conn if conn is not None else get_connection()
     claim, reason = claim_job(conn, job_id, tenant_id=tenant_id, automatic=automatic)
     if claim is None:
+        now = _now()
+        latest = _latest(conn, tenant_id, "posting_availability", job_id)
+        lease = _latest(conn, tenant_id, "availability_lease", f"job:{job_id}")
+        workspace = _latest(conn, tenant_id, "availability_lease", "workspace")
+        retry = (_instant(latest.get("nextDueAt")) if reason == "retry_backoff" else
+                 (_instant(lease.get("startedAt")) or now) + timedelta(minutes=1) if reason == "minimum_interval" else
+                 max(_instant(lease.get("expiresAt")) or now, _instant(workspace.get("expiresAt")) or now) if reason == "check_in_progress" else None)
+        request = {"jobId": job_id, "status": "deferred", "reason": reason,
+                   "requestedAt": now.isoformat(), "retryAt": retry.isoformat() if retry else None}
+        _begin(conn)
+        try:
+            _event(conn, tenant_id, "posting_availability_request", job_id, request, job_id=job_id, now=now)
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
         return {**read_availability(conn, job_id, tenant_id=tenant_id), "requestStatus": "deferred", "requestReason": reason}
     acquisition = Acquisition(conn, claim, transport=transport, browser=browser)
     try:
@@ -519,6 +606,17 @@ def require_fresh_active(job_id: str, *, max_age: timedelta = timedelta(hours=6)
         expected_posting_url is not None and read_availability(conn, job_id, tenant_id=tenant_id).get("postingUrl") != expected_posting_url
     ):
         raise MissingInputError("Posting availability is unverified or unavailable. Check availability or inspect the employer posting before retrying.")
+
+
+def assert_fresh_candidate(conn: sqlite3.Connection, job_id: str, expected_posting_url: str,
+                           *, tenant_id: str = str(LOCAL_TENANT), max_age: timedelta = timedelta(hours=6)) -> None:
+    """Recheck URL/evidence under the stage owner's short SQLite writer claim."""
+    from jobctrl.domain.errors import MissingInputError
+    if not conn.in_transaction:
+        raise RuntimeError("Availability candidate fencing requires the stage writer transaction")
+    row = conn.execute("SELECT url FROM jobs WHERE tenant_id = ? AND job_id = ?", (str(tenant_id), str(job_id))).fetchone()
+    if row is None or row[0] != expected_posting_url or not fresh_active(conn, str(job_id), tenant_id=str(tenant_id), max_age=max_age):
+        raise MissingInputError("Posting availability candidate changed. Check availability or inspect the employer posting before retrying.")
 
 
 def due_jobs(conn: sqlite3.Connection, *, tenant_id: str = str(LOCAL_TENANT),

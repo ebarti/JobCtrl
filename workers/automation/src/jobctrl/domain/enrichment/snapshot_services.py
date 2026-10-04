@@ -152,6 +152,16 @@ class ActiveStateVerifier:
                 signals.append({"kind": "acquisition_failure", "value": reason})
             return ActiveState.UNKNOWN, reason
         soup = BeautifulSoup(page.status_html or page.html or "", "html.parser")
+        has_unverified_css = not page.status_visibility_verified and bool(soup.select('style, link[rel="stylesheet"]'))
+        # Templates and unavailable controls are not current visible status.
+        for element in list(soup.find_all(True)):
+            if element.parent is None:
+                continue
+            style = str(element.get("style") or "")
+            if element.name in {"template", "noscript"} or element.has_attr("hidden") or element.has_attr("inert") or (
+                str(element.get("aria-hidden") or "").lower() == "true"
+            ) or re.search(r"(?:display\s*:\s*none|visibility\s*:\s*(?:hidden|collapse)|content-visibility\s*:\s*hidden)", style, re.I):
+                element.decompose()
         if soup.select_one('input[type="password"], .g-recaptcha, #challenge-form') or any(
             phrase in soup.get_text(" ", strip=True).lower()[:1000]
             for phrase in ("verify you are human", "access denied", "sign in to continue", "just a moment")
@@ -191,6 +201,8 @@ class ActiveStateVerifier:
         visible = soup.get_text(" ", strip=True).lower()
         closed = closed or (len(visible) < 300 and any(marker in visible for marker in _CLOSED_MARKERS)
                             and not postings)
+        if closed and has_unverified_css:
+            return ActiveState.UNKNOWN, "unverified_status_visibility"
         if signals is not None and closed:
             signals.append({"kind": "current_closed_status", "value": True})
         deadlines: list[bool] = []

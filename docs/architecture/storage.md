@@ -420,7 +420,10 @@ tries to submit.
 
 Schema v12 is unchanged. Enrichment persists `JobAvailabilityObserved` and
 internal `AvailabilityLeaseChanged` rows in indexed `job_events`, scoped by
-`tenant_id`, `entity_kind`, `entity_ref` and latest `event_id`. Entity kinds are
+`tenant_id`, `entity_kind`, `entity_ref` and latest `event_id`.
+The `posting_availability_request` reference records
+deferred command reason/request time/retry time independently of observation
+clocks; job-scoped records also notify detail/list reads. Other entity kinds are
 `posting_availability` (canonical JobId), `availability_lease` (job/workspace/
 actual host), `availability_request` (hourly outbound budget), and
 `availability_sweep` (minimum admission interval).

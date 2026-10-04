@@ -650,6 +650,21 @@ def test_email_only_live_send_records_intent_before_owned_send(repo):
     assert event_types.index("ApplySubmitIntended") < event_types.index("EmailApplicationSent")
 
 
+def test_unverified_availability_stops_email_before_intent_or_send(repo):
+    sender = _FakeEmailSender()
+    def refuse(_tenant, _job, _posting, _run):
+        raise RuntimeError("Check availability")
+    saga = ApplySaga(browser_port=_FakeBrowser(), agent_port=_FakeAgent(behaviour="email_only"),
+                     repository=repo, email_sender=sender, availability_authorizer=refuse)
+    outcome = saga.run(apply_run=_starting(), browser_config=_config(), prompt=_prompt(), model="sonnet",
+                       email_application_context=_email_context(approved_recipient_email="apply@example.com",
+                                                                approved_attachment_artifact_id="resume-pdf-1"))
+    assert sender.sent == []
+    event_types = [event.event_type for event in outcome.apply_run.events]
+    assert "ApplySubmissionBlocked" in event_types
+    assert "ApplySubmitIntended" not in event_types and "EmailApplicationSent" not in event_types
+
+
 def test_email_sender_exception_is_ambiguous_after_submit_intent(repo):
     sender = _FakeEmailSender(fail=True)
     saga = ApplySaga(

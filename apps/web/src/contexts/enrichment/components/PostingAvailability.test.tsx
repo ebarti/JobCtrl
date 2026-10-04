@@ -22,6 +22,21 @@ const evidence: Availability = {
 };
 
 describe("posting availability", () => {
+  it("replaces queued feedback with persisted coalescing or cooldown feedback without inventing an attempt", async () => {
+    const checkPostingAvailability = vi.fn(async () => ({ ok: true as const, status: "queued" as const, runId: "run", workflowId: "workflow" }));
+    const view = renderWithProviders(<PostingAvailability jobId={sampleJob.jobKey} postingUrl={sampleJob.url} availability={evidence} />,
+      { ports: buildTestPorts({ api: { checkPostingAvailability } }) });
+    fireEvent.click(screen.getByRole("button", { name: "Check availability" }));
+    await screen.findByText(/Check requested/);
+    for (const reason of ["check_in_progress", "retry_backoff"]) {
+      view.rerender(<PostingAvailability jobId={sampleJob.jobKey} postingUrl={sampleJob.url} availability={{ ...evidence,
+        request: { status: "deferred", reason, requestedAt: new Date(Date.now() + 1000).toISOString(), retryAt: "2026-10-04T10:05:00Z" } }} />);
+      expect(screen.getByText(new RegExp(`Check deferred: ${reason.replaceAll("_", " ")}`))).toHaveTextContent(/Retry after/);
+      expect(screen.queryByText(/Check requested/)).not.toBeInTheDocument();
+      expect(screen.getByText(/Last attempt:/)).toHaveTextContent(/Last successful verification/);
+    }
+  });
+
   it("keeps latest uncertainty, earlier success and offline freshness visible and accessible", async () => {
     const view = renderWithProviders(<PostingAvailability jobId={sampleJob.jobKey} postingUrl={sampleJob.url} availability={evidence} />);
     expect(screen.getByText(/Availability unverified.*Check overdue/)).toBeVisible();

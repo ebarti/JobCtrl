@@ -5,6 +5,8 @@ import json
 import sqlite3
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 import multiprocessing
+import threading
+import time
 
 from jobctrl.database import init_db
 from jobctrl.enrichment import availability as availability
@@ -59,6 +61,107 @@ def test_plain_current_aside_conflicts_with_source_bound_future_deadline():
     signals = []
     assert ActiveStateVerifier().verify(page, signals=signals)[1] == "conflicting_signals"
     assert {signal["kind"] for signal in signals} == {"current_closed_status", "posting_deadline"}
+
+
+@pytest.mark.parametrize("status_html", [
+    '<div role="alert" hidden>Applications are closed</div>',
+    '<div role="alert" aria-hidden="true">Applications are closed</div>',
+    '<div style="display: none"><aside>Applications are closed</aside></div>',
+    '<div style="visibility: hidden"><aside>Applications are closed</aside></div>',
+    '<template><aside>Applications are closed</aside></template>',
+])
+def test_hidden_status_templates_do_not_close_a_current_active_posting(status_html):
+    assert ActiveStateVerifier().verify(replace(active_page(), status_html=status_html))[0].value == "active"
+
+
+def test_static_css_status_requires_rendered_visibility_before_it_can_prove_closure():
+    html = '<style>.status-template{display:none}</style><aside class="status-template">Applications are closed</aside>'
+    assert ActiveStateVerifier().verify(replace(active_page(), status_html=html)) == (availability.ActiveState.UNKNOWN, "unverified_status_visibility")
+
+
+def test_slow_trickle_read_has_monotonic_deadline_and_closes_response(monkeypatch):
+    from types import SimpleNamespace
+    instant = [0.0]
+    closed = []
+    class SlowResponse:
+        def __enter__(self):
+            return self
+        def __exit__(self, *_):
+            closed.append(True)
+        def read1(self, _size):
+            instant[0] += 19
+            return b"x"
+        read = read1
+    monkeypatch.setattr(availability.time, "monotonic", lambda: instant[0])
+    monkeypatch.setattr("jobctrl.infrastructure.network.public_http.build_public_http_opener", lambda **_: SimpleNamespace(open=lambda *_a, **_k: SlowResponse()))
+    with pytest.raises(availability.DeferredCheck, match="request_deadline"):
+        availability._public_get_in_process(URL)
+    assert instant[0] == 38 and closed == [True]
+
+
+def test_total_request_deadline_cancels_and_reaps_owned_transport(monkeypatch):
+    from types import SimpleNamespace
+    events = []
+    class Process:
+        alive = True
+        def start(self):
+            events.append("started")
+        def is_alive(self):
+            return self.alive
+        def terminate(self):
+            self.alive = False
+            events.append("terminated")
+        def join(self, **_):
+            events.append("reaped")
+        def close(self):
+            events.append("closed")
+    receiver = SimpleNamespace(poll=lambda timeout: events.append(timeout) or False, close=lambda: None)
+    sender = SimpleNamespace(close=lambda: None)
+    context = SimpleNamespace(Pipe=lambda **_: (receiver, sender), Process=lambda **_: Process())
+    monkeypatch.setattr(availability.multiprocessing, "get_context", lambda _: context)
+    with pytest.raises(availability.DeferredCheck, match="request_deadline"):
+        availability.public_get(URL)
+    assert events == ["started", 20, "terminated", "reaped", "closed"]
+
+
+def _blocking_owned_transport(_url, _sender):
+    threading.Event().wait(60)
+
+
+def test_actual_spawned_transport_is_cancelled_and_no_child_survives_the_deadline(monkeypatch):
+    before = {process.pid for process in multiprocessing.active_children()}
+    monkeypatch.setattr(availability, "_transport_process", _blocking_owned_transport)
+    started = time.monotonic()
+    with pytest.raises(availability.DeferredCheck, match="request_deadline"):
+        availability.public_get(URL, timeout=.15)
+    assert time.monotonic() - started < 2
+    assert {process.pid for process in multiprocessing.active_children()} == before
+
+
+def test_aggregate_acquisition_deadline_stops_before_lease_can_expire(saved_job, monkeypatch):
+    instant = [0.0]
+    monkeypatch.setattr(availability.time, "monotonic", lambda: instant[0])
+    monkeypatch.setattr(availability, "_now", lambda: NOW + timedelta(seconds=instant[0]))
+    claim, _ = availability.claim_job(saved_job, JOB_ID, now=NOW)
+    def slow(url):
+        instant[0] = 121
+        return availability.Response(url, url, 200, b"Synthetic response")
+    acquisition = availability.Acquisition(saved_job, claim, transport=slow)
+    with pytest.raises(availability.DeferredCheck, match="acquisition_deadline"):
+        acquisition.acquire()
+    assert acquisition.lineage[0]["rawHash"]
+    assert availability.claim_job(saved_job, JOB_ID, now=NOW + timedelta(seconds=121))[1] == "check_in_progress"
+    assert not availability._latest(saved_job, "local", "availability_lease", "host:careers.example.org").get("owner")
+
+
+def test_computed_hidden_browser_status_and_control_state_survive_capture():
+    from types import SimpleNamespace
+    from jobctrl.infrastructure.enrichment.playwright_fetcher import _collect_status_html
+    raw = '<aside class="css-hidden">Applications are closed</aside><button>Apply</button>'
+    computed = '<aside hidden>Applications are closed</aside><button disabled>Apply</button>'
+    html, complete, raw_hash = _collect_status_html(SimpleNamespace(content=lambda: raw, evaluate=lambda *_: {"statusHtml": computed}))
+    assert complete and html == computed and len(raw_hash) == 64
+    assert ActiveStateVerifier().verify(replace(active_page(), status_html=html))[0].value == "active"
 
 
 def test_empty_and_unbound_pages_are_unknown():
@@ -118,6 +221,24 @@ def test_independent_processes_share_the_durable_job_and_workspace_claim(saved_j
     assert {reason for _, reason in results} == {"claimed", "check_in_progress"}
 
 
+def _process_reserve_host(args):
+    path, claim = args
+    with sqlite3.connect(path, timeout=5) as conn:
+        try:
+            return availability.reserve_request(conn, claim, URL, now=NOW)
+        except availability.DeferredCheck as error:
+            return str(error)
+
+
+def test_independent_processes_share_actual_host_pacing_and_inflight_reservation(saved_job):
+    path = saved_job.execute("PRAGMA database_list").fetchone()[2]
+    claim, _ = availability.claim_job(saved_job, JOB_ID, now=NOW)
+    with ProcessPoolExecutor(max_workers=2, mp_context=multiprocessing.get_context("spawn")) as pool:
+        results = list(pool.map(_process_reserve_host, [(path, claim)] * 2))
+    assert sorted(results) == ["careers.example.org", "host_pacing_or_cooldown"]
+    assert saved_job.execute("SELECT COUNT(*) FROM job_events WHERE entity_kind = 'availability_request'").fetchone()[0] == 1
+
+
 def test_success_clock_advances_unknown_preserves_success_and_content(saved_job):
     saved_job.execute("INSERT INTO job_enrichments (tenant_id, job_id, current_status, full_description, attempts_json, updated_at) "
                       "VALUES ('local', ?, 'enriched', 'Accepted synthetic description', '[]', ?)", (JOB_ID, NOW.isoformat()))
@@ -133,6 +254,23 @@ def test_success_clock_advances_unknown_preserves_success_and_content(saved_job)
     assert value["nextDueAt"] == (NOW + timedelta(minutes=9)).isoformat()
     assert tuple(saved_job.execute("SELECT * FROM job_enrichments").fetchone()) == before
     assert not availability.fresh_active(saved_job, JOB_ID, now=NOW + timedelta(minutes=4), max_age=timedelta(hours=6))
+
+
+@pytest.mark.parametrize("verdict, reason", [("active", "minimum_interval"), ("unknown", "retry_backoff")])
+def test_refused_explicit_check_persists_request_feedback_without_inventing_attempt(saved_job, monkeypatch, verdict, reason):
+    monkeypatch.setattr(availability, "_now", lambda: NOW)
+    claim, _ = availability.claim_job(saved_job, JOB_ID)
+    original = availability.complete_check(saved_job, claim, verdict=verdict, reason="fixture", method="fixture", lineage=[])
+    now = NOW + timedelta(seconds=10 if verdict == "active" else 70)
+    monkeypatch.setattr(availability, "_now", lambda: now)
+    value = availability.check_availability(JOB_ID, conn=saved_job,
+        transport=lambda _: pytest.fail("deferred command acquired employer evidence"))
+    assert value["request"] == {"status": "deferred", "reason": reason, "requestedAt": now.isoformat(),
+                                "retryAt": (NOW + timedelta(minutes=1 if verdict == "active" else 5)).isoformat()}
+    assert value["lastAttemptedAt"] == original["lastAttemptedAt"]
+    assert value.get("lastSuccessfullyVerifiedAt") == original.get("lastSuccessfullyVerifiedAt")
+    assert saved_job.execute("SELECT COUNT(*) FROM job_events WHERE event_type = 'JobAvailabilityObserved'").fetchone()[0] == 1
+    assert availability.read_availability(saved_job, JOB_ID)["request"] == value["request"]
 
 
 def test_closed_to_active_is_reversible_and_reads_do_no_network(saved_job, monkeypatch):
@@ -245,6 +383,22 @@ def test_all_visible_saved_jobs_are_immediately_due_before_first_observation(sav
     assert availability.due_jobs(saved_job, now=NOW) == [JOB_ID]
 
 
+def test_overdue_catchup_is_bounded_prioritized_and_excludes_user_or_application_terminal_state(saved_job):
+    ids = [f"10000000-0000-4000-8000-{i:012d}" for i in range(1, 31)]
+    for i, job_id in enumerate(ids):
+        saved_job.execute("INSERT INTO jobs (tenant_id, job_id, url, title, site, discovered_at) VALUES ('local', ?, ?, 'Synthetic role', 'synthetic', ?)",
+                          (job_id, f"{URL}-{i}", (NOW + timedelta(seconds=i+1)).isoformat()))
+    saved_job.execute("INSERT INTO jobctrl_hidden_jobs (tenant_id, job_id, hidden_at) VALUES ('local', ?, ?)", (ids[0], NOW.isoformat()))
+    saved_job.execute("INSERT INTO jobctrl_deleted_jobs (tenant_id, job_id, deleted_at) VALUES ('local', ?, ?)", (ids[1], NOW.isoformat()))
+    saved_job.execute("INSERT INTO application_outcomes (tenant_id, outcome_id, job_id, kind, source, occurred_at, recorded_at) VALUES ('local', 'outcome', ?, 'offer', 'user', ?, ?)", (ids[2], NOW.isoformat(), NOW.isoformat()))
+    saved_job.execute("INSERT INTO job_stage_states (tenant_id, job_id, stage, state, updated_at) VALUES ('local', ?, 'apply', 'running', ?)", (ids[3], NOW.isoformat()))
+    saved_job.execute("INSERT INTO job_stage_states (tenant_id, job_id, stage, state, updated_at) VALUES ('local', ?, 'score', 'pending', ?)", (ids[-1], NOW.isoformat()))
+    saved_job.commit()
+    selected = availability.due_jobs(saved_job, now=NOW)
+    assert len(selected) == 25 and selected[0] == ids[-1] and selected[1] == JOB_ID
+    assert not set(ids[:4]).intersection(selected)
+
+
 def test_anonymous_browser_guard_failure_retains_hash_and_cannot_authorize(saved_job, monkeypatch):
     from types import SimpleNamespace
     from contextlib import nullcontext
@@ -337,12 +491,18 @@ def test_outside_main_current_banner_survives_conversion():
 def test_source_unavailability_cannot_delete_hide_or_change_outcomes(saved_job, monkeypatch):
     monkeypatch.setattr("jobctrl.infrastructure.discovery.production_wiring.retire_invalid_source_jobs",
                         lambda *a, **kw: pytest.fail("availability invoked policy deletion"))
+    saved_job.execute("INSERT INTO job_artifacts (tenant_id, job_id, stage, artifact_type, status, path, created_at) VALUES ('local', ?, 'tailor', 'resume_pdf', 'approved', '/synthetic/resume.pdf', ?)", (JOB_ID, NOW.isoformat()))
+    saved_job.execute("INSERT INTO job_materials (tenant_id, job_id, generation, status, created_at, updated_at) VALUES ('local', ?, 1, 'approved', ?, ?)", (JOB_ID, NOW.isoformat(), NOW.isoformat()))
+    saved_job.execute("INSERT INTO application_review_decisions (tenant_id, decision_id, job_id, decision, decided_at, materials_generation, application_url) VALUES ('local', 'accepted', ?, 'approve_submit', ?, 1, ?)", (JOB_ID, NOW.isoformat(), URL))
+    saved_job.execute("INSERT INTO application_outcomes (tenant_id, outcome_id, job_id, kind, source, occurred_at, recorded_at) VALUES ('local', 'withdrawn', ?, 'withdrawn', 'user', ?, ?)", (JOB_ID, NOW.isoformat(), NOW.isoformat()))
+    saved_job.commit()
     before = {name: saved_job.execute(f"SELECT * FROM {name}").fetchall()
               for name in ["jobs", "jobctrl_deleted_jobs", "jobctrl_hidden_jobs", "application_outcomes", "job_artifacts", "job_materials", "application_review_decisions"]}
-    claim, _ = availability.claim_job(saved_job, JOB_ID, now=NOW)
-    availability.complete_check(saved_job, claim, verdict="removed", reason="exact", method="fixture", lineage=[], now=NOW)
-    for name, rows in before.items():
-        assert saved_job.execute(f"SELECT * FROM {name}").fetchall() == rows
+    for minute, verdict in [(0, "removed"), (2, "active"), (4, "unknown")]:
+        claim, _ = availability.claim_job(saved_job, JOB_ID, now=NOW + timedelta(minutes=minute))
+        availability.complete_check(saved_job, claim, verdict=verdict, reason="exact", method="fixture", lineage=[], now=NOW + timedelta(minutes=minute))
+        for name, rows in before.items():
+            assert saved_job.execute(f"SELECT * FROM {name}").fetchall() == rows
     assert not saved_job.execute("SELECT 1 FROM job_events WHERE event_type = 'JobDeleted'").fetchone()
 
 

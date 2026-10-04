@@ -688,5 +688,10 @@ workers leave clocks intact and the UI honestly reports overdue evidence.
 Failures preserve accepted content/materials, approvals, application attempts
 and outcomes. Reopening updates availability without another Discover run.
 Current unknown or unavailable evidence blocks expensive preparation/Apply
-preflight; reads never trigger acquisition. See the
+preflight; reads never trigger acquisition.
+Candidate posting URL and successful evidence are rechecked under the short
+queued/manual-to-running writer claim for Score, Tailor and Cover, then released
+before provider work. Reviewed email intent carries the original posting URL
+and checks it with freshness and run ownership under the intent writer boundary;
+replacement-posting evidence cannot authorize the original intent. See the
 [Enrichment user policy](../../user/enrichment-and-extraction.md#saved-posting-availability).

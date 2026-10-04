@@ -125,6 +125,8 @@ def _insert_job(
                 timestamp,
             ),
         )
+    from .availability_fixture import seed_fresh_availability
+    seed_fresh_availability(conn, str(job_id))
     conn.commit()
     return job_id
 

@@ -11,6 +11,12 @@ without turning the job description into evidence about you.
 For a plain-language walkthrough of that boundary, read
 [Resume Tailoring Without Fabrication](../guides/resume-tailoring-without-fabrication.md).
 
+Before generating a resume or cover letter, JobCtrl requires a successfully
+verified active posting check from the last six hours. An uncertain or unavailable
+posting stops new work and preserves accepted materials and approvals. Use Job
+Detail’s **Check availability** to retry; see
+[saved posting availability](enrichment-and-extraction.md#saved-posting-availability).
+
 ## How JobCtrl Chooses A Resume
 
 Tailoring is a candidate-selection pipeline, not one unconstrained prompt:

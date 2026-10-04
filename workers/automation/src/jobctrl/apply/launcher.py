@@ -23,6 +23,7 @@ so we don't need a brand-new presentation adapter just yet.
 from __future__ import annotations
 
 import atexit
+from contextlib import contextmanager
 import html
 import json
 import logging
@@ -781,30 +782,22 @@ def acquire_job(
     # Select without a writer, acquire evidence, then re-read the same candidate
     # under the original apply lock before claiming an attempt or submit intent.
     candidates = _select_apply_candidates(conn, tenant_id, target_job_id, min_score)[:25]
-    selected = None
+    verified_candidates = {}
     for candidate in candidates:
         try:
             require_fresh_active(candidate["job_id"], tenant_id=tenant_id, conn=conn, max_age=timedelta(minutes=15), expected_posting_url=candidate["url"])
         except Exception:
             logger.info("Apply deferred for %s: check availability or inspect employer posting", candidate["job_id"])
             continue
-        selected = candidate
-        break
-    if selected is None:
+        verified_candidates[str(candidate["job_id"])] = candidate["url"]
+    if not verified_candidates:
         return None
-    availability_candidate_id = canonical_job_id(selected["job_id"])
     try:
         conn.execute("BEGIN IMMEDIATE")
-        current = conn.execute("SELECT url FROM jobs WHERE tenant_id = ? AND job_id = ?", (tenant_id, str(availability_candidate_id))).fetchone()
-        if current is None or current[0] != selected["url"] or not fresh_active(
-            conn, str(availability_candidate_id), tenant_id=tenant_id, max_age=timedelta(minutes=15)
-        ):
-            conn.rollback()
-            return None
-
         candidate_rows = _select_apply_candidates(conn, tenant_id, target_job_id, min_score)
-
-        candidate_rows = [candidate for candidate in candidate_rows if candidate["job_id"] == str(availability_candidate_id)]
+        candidate_rows = [candidate for candidate in candidate_rows
+                          if verified_candidates.get(str(candidate["job_id"])) == candidate["url"]
+                          and fresh_active(conn, str(candidate["job_id"]), tenant_id=tenant_id, max_age=timedelta(minutes=15))]
         if not candidate_rows:
             conn.rollback()
             return None
@@ -1942,10 +1935,28 @@ def gen_prompt(
 # ---------------------------------------------------------------------------
 
 
-def _authorize_posting_before_submit(tenant_id: str, job_id: str) -> None:
+@contextmanager
+def _authorize_posting_before_submit(tenant_id: str, job_id: str, posting_url: str, run_id: str):
     from datetime import timedelta
-    from jobctrl.enrichment.availability import require_fresh_active
-    require_fresh_active(job_id, tenant_id=tenant_id, max_age=timedelta(minutes=15))
+    from jobctrl.domain.errors import MissingInputError
+    from jobctrl.enrichment.availability import require_fresh_active, assert_fresh_candidate
+    conn = get_connection()
+    require_fresh_active(job_id, tenant_id=tenant_id, conn=conn, max_age=timedelta(minutes=15), expected_posting_url=posting_url)
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        assert_fresh_candidate(conn, job_id, posting_url, tenant_id=tenant_id, max_age=timedelta(minutes=15))
+        owner = conn.execute("SELECT json_extract(payload_json, '$.run_id') FROM job_events WHERE tenant_id = ? "
+                             "AND job_id = ? AND event_type = 'ApplyRunStarted' ORDER BY event_id DESC LIMIT 1",
+                             (tenant_id, job_id)).fetchone()
+        running = conn.execute("SELECT state FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'apply'",
+                               (tenant_id, job_id)).fetchone()
+        if not owner or owner[0] != run_id or not running or running[0] != "running":
+            raise MissingInputError("Apply intent no longer owns the original posting attempt")
+        yield
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
 
 
 def _build_use_case():

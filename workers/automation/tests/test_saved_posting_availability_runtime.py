@@ -2,6 +2,8 @@
 from datetime import datetime, timedelta, timezone
 import io
 import json
+import sqlite3
+import socket
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -128,3 +130,113 @@ def test_unknown_preflight_stops_apply_before_attempt_or_provider(runtime, monke
     assert launcher.run_job({"job_id": JOB, "url": POSTING_URL}, 1, tenant_id=LOCAL_TENANT, dry_run=True) == ("blocked", 0)
     assert runtime.conn.execute("SELECT * FROM job_stage_states").fetchall() == before
     assert not runtime.conn.execute("SELECT 1 FROM job_events WHERE event_type IN ('ApplyRunStarted','ApplySubmissionIntentRecorded')").fetchone()
+
+
+@pytest.mark.parametrize("stage", ["score", "tailor", "cover"])
+def test_canonical_posting_change_after_real_preflight_stops_costly_preparation_and_attempt(runtime, monkeypatch, stage):
+    from jobctrl.scoring import scorer, tailor, cover_letter
+    from jobctrl.domain.identifiers import JobId
+    from .test_apply_regressions import _insert_ready_job
+    url = POSTING_URL + "-race"
+    job_id = _insert_ready_job(runtime.conn, url=url)
+    runtime.conn.execute("UPDATE job_materials SET status = 'resume_approved' WHERE job_id = ?", (job_id,))
+    runtime.conn.commit()
+    real_guard = availability.require_fresh_active
+    def race(*args, **kwargs):
+        real_guard(*args, **kwargs)
+        with sqlite3.connect(runtime.path) as peer:
+            peer.execute("UPDATE jobs SET url = ? WHERE tenant_id = 'local' AND job_id = ?", (url + "-replacement", job_id))
+    monkeypatch.setattr(availability, "require_fresh_active", race)
+    for module in (scorer, tailor, cover_letter):
+        monkeypatch.setattr(module, "get_connection", lambda: runtime.conn)
+    monkeypatch.setattr(tailor, "_tailor_one_job", lambda *_a, **_k: pytest.fail("changed posting dispatched tailoring"))
+    monkeypatch.setattr(cover_letter, "_build_use_case", lambda *_a, **_k: pytest.fail("changed posting dispatched cover"))
+    monkeypatch.setattr(scorer, "_build_use_case", lambda *_a, **_k: pytest.fail("changed posting dispatched scoring"))
+    before = runtime.conn.execute("SELECT * FROM job_stage_states").fetchall()
+    with pytest.raises(MissingInputError, match="candidate changed"):
+        if stage == "tailor":
+            tailor.tailor_job_by_id(JobId(job_id), tenant_id=LOCAL_TENANT, retailor=True, snapshot=SimpleNamespace())
+        elif stage == "cover":
+            cover_letter.cover_letter_by_id(JobId(job_id), tenant_id=LOCAL_TENANT, snapshot=SimpleNamespace())
+        else:
+            scorer.score_job_by_id(JobId(job_id), tenant_id=LOCAL_TENANT, profile_snapshot=SimpleNamespace(), resume_text="Synthetic", require_employer_analysis=False)
+    assert runtime.conn.execute("SELECT * FROM job_stage_states").fetchall() == before
+    assert not runtime.conn.in_transaction
+
+
+def test_reviewed_submit_guard_cannot_use_replacement_posting_evidence_for_original_intent(runtime, monkeypatch):
+    from jobctrl.apply import launcher
+    from .availability_fixture import seed_fresh_availability
+    monkeypatch.setattr(launcher, "get_connection", lambda: runtime.conn)
+    replacement = POSTING_URL + "-replacement"
+    runtime.conn.execute("UPDATE jobs SET url = ? WHERE job_id = ?", (replacement, JOB))
+    seed_fresh_availability(runtime.conn, JOB)
+    runtime.conn.commit()
+    with pytest.raises(MissingInputError):
+        with launcher._authorize_posting_before_submit("local", JOB, POSTING_URL, "original-run"):
+            pytest.fail("replacement posting authorized original submit intent")
+    assert not runtime.conn.execute("SELECT 1 FROM job_events WHERE event_type = 'ApplySubmitIntended'").fetchone()
+
+
+def test_batch_scoring_fences_posting_changes_before_stage_attempt_or_provider(runtime, monkeypatch):
+    from jobctrl.scoring import scorer
+    from jobctrl.domain.scoring.value_objects import ScoringCriteria
+    from jobctrl.domain.profile.aggregate import Profile
+    from jobctrl.domain.profile.snapshot import ProfileSnapshot
+    real_guard = availability.require_fresh_active
+    def race(job_id, **kwargs):
+        real_guard(job_id, **kwargs)
+        with sqlite3.connect(runtime.path) as peer:
+            peer.execute("UPDATE jobs SET url = ? WHERE tenant_id = 'local' AND job_id = ?", (POSTING_URL + "-replacement", job_id))
+    monkeypatch.setattr(availability, "require_fresh_active", race)
+    monkeypatch.setattr(scorer, "get_connection", lambda: runtime.conn)
+    monkeypatch.setattr(scorer, "_build_use_case", lambda **_: SimpleNamespace(execute=lambda **_: pytest.fail("changed posting executed scoring")))
+    monkeypatch.setattr(scorer, "_ensure_employer_analysis_for_job", lambda **_: pytest.fail("changed posting spent analysis work"))
+    before = runtime.conn.execute("SELECT * FROM job_stage_states").fetchall()
+    snapshot = ProfileSnapshot.from_profile(Profile.from_dict(LOCAL_TENANT, {"personal": {"full_name": "Synthetic Tester"}, "resume": {"executive_profile": {"baseline_text": "Synthetic engineer"}, "experience_entries": [{"id": "synthetic-role", "title": "Engineer", "company": "Synthetic Employer"}], "education_entries": [], "skill_categories": []}}))
+    result = scorer.run_scoring(profile_snapshot=snapshot, resume_text="Synthetic", criteria=ScoringCriteria(),
+                                rescore=True, require_employer_analysis=False)
+    assert result["scored"] == 0
+    assert runtime.conn.execute("SELECT * FROM job_stage_states").fetchall() == before
+    assert not runtime.conn.in_transaction
+
+
+def test_real_chromium_hidden_css_status_requires_visibility_and_retains_fallback_lineage(runtime, monkeypatch):
+    html = ('<html><head><style>.status-template{display:none}</style><script type="application/ld+json">'
+            + json.dumps({"@type": "JobPosting", "url": POSTING_URL, "description": "Synthetic accepted role"})
+            + '</script></head><body><aside class="status-template">Applications are closed</aside>'
+              '<main><div class="job-description">Synthetic accepted role</div></main></body></html>')
+    real_resolver = socket.getaddrinfo
+    def synthetic_dns(host, port, **kwargs):
+        if host == "careers.example.org":
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", port))]
+        return real_resolver(host, port, **kwargs)
+    monkeypatch.setattr(socket, "getaddrinfo", synthetic_dns)
+    value = availability.check_availability(JOB, conn=runtime.conn,
+        transport=lambda url: availability.Response(url, url, 200, html.encode()))
+    assert value["verdict"] == "active", value
+    assert value["method"] == "anonymous_browser"
+    assert [step["method"] for step in value["lineage"]] == ["public_http", "browser_resource", "anonymous_browser"]
+    assert all(step["rawHash"] for step in value["lineage"])
+
+
+def test_reviewed_submit_fences_original_posting_and_run_until_intent_persistence(runtime, monkeypatch):
+    from jobctrl.apply import launcher
+    from jobctrl.state import ensure_job_stage_rows, record_job_event, set_stage_state
+    from .availability_fixture import seed_fresh_availability
+    monkeypatch.setattr(launcher, "get_connection", lambda: runtime.conn)
+    ensure_job_stage_rows(runtime.conn, JOB)
+    set_stage_state(runtime.conn, JOB, "apply", "running", validate_transition=False)
+    record_job_event(runtime.conn, JOB, "apply", "ApplyRunStarted", payload={"run_id": "owned-run"})
+    seed_fresh_availability(runtime.conn, JOB)
+    runtime.conn.commit()
+    with launcher._authorize_posting_before_submit("local", JOB, POSTING_URL, "owned-run"):
+        assert runtime.conn.in_transaction
+        with sqlite3.connect(runtime.path, timeout=0) as peer:
+            with pytest.raises(sqlite3.OperationalError, match="locked"):
+                peer.execute("UPDATE jobs SET url = ? WHERE job_id = ?", (POSTING_URL + "-replacement", JOB))
+        record_job_event(runtime.conn, JOB, "apply", "ApplySubmitIntended", payload={"run_id": "owned-run"})
+    assert not runtime.conn.in_transaction
+    assert runtime.conn.execute("SELECT 1 FROM job_events WHERE event_type = 'ApplySubmitIntended'").fetchone()
+    with sqlite3.connect(runtime.path, timeout=0) as peer:
+        peer.execute("UPDATE jobs SET title = 'Synthetic after intent' WHERE job_id = ?", (JOB,))

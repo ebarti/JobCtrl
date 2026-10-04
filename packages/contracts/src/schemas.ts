@@ -3135,6 +3135,7 @@ export interface PostingAvailability {
   evidenceRef: string | null;
   overdue: boolean;
   checkInProgress: boolean;
+  request?: { status: "deferred"; reason: string; requestedAt: string; retryAt: string | null };
   lineage: { sourceUrl: string; finalUrl: string | null; status: number | null; method: string; rawHash: string | null;
     signals?: { kind: string; value: string | boolean; past?: boolean }[] }[];
 }

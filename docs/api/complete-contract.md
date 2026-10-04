@@ -2290,6 +2290,7 @@ A repeated start uses the existing `availability-{tenantId}-{jobId}` workflow.
 | `lastSuccessfullyVerifiedAt`, `lastSuccessfulState`, `lastSuccessfulEvidenceRef` | Last successful verification, preserved across unknown attempts. |
 | `nextDueAt` | Persisted active/unavailable cadence or failure backoff. |
 | `overdue`, `checkInProgress` | Read-time wall-clock calculation from due time and the fenced job lease. |
+| Optional `request` | A deferred command's `status`, `reason`, `requestedAt`, and nullable `retryAt`, independent of actual attempt/success clocks. A later observation clears older request feedback. |
 | `lineage` | At most 24 entries containing `sourceUrl`, nullable `finalUrl`/`status`/`rawHash`, acquisition `method`, and optional bounded `signals` (`kind`, `value`, optional `past`). Response-less failures have no fabricated hash. |
 
 The raw observation also retains source and exact provider identity in the
@@ -2297,7 +2298,8 @@ Enrichment ledger. No raw page or accepted material text is exposed by this
 field. GET computes freshness without employer requests, dispatch or writes.
 `JobAvailabilityObserved` carries `jobId`, `verdict`, `lastAttemptedAt` and
 `nextDueAt` as an additive SSE event. Internal `AvailabilityLeaseChanged`
-records reservations and intentionally causes no broad cache invalidation.
+records reservations and deferred command results. Records with a canonical
+`jobId` invalidate that detail and tenant lists; workspace/host records do not.
 
 Preparation requires successful active evidence at most six hours old; reviewed
 Apply requires at most 15 minutes, including the owned email submit-intent

@@ -233,9 +233,14 @@ import sys
 from jobctrl.apply.launcher import acquire_job
 from jobctrl.database import get_connection, init_db
 from jobctrl.state import set_stage_state
+from workers.automation.tests.availability_fixture import seed_fresh_availability
 
 target_job_id = sys.argv[1]
 init_db()
+# This repeat-confirmation fixture starts from an explicitly verified posting.
+# Availability acquisition has its own real workflow/transport regressions.
+seed_fresh_availability(get_connection(), target_job_id)
+get_connection().commit()
 run_ctx = {
     "dry_run": False,
     "run_id": "e2e-worker-repeat-claim",

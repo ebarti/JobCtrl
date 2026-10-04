@@ -272,6 +272,7 @@ employer fetch or projection replay is hidden inside GET.
 
 The cross-language registry includes `JobAvailabilityObserved` and internal
 `AvailabilityLeaseChanged`. SSE treats the former as tenant/job list/detail
-invalidation; the latter has an explicit no-invalidation handler. Internal lease,
+invalidation; the latter invalidates detail/lists only for job-scoped command
+feedback and ignores workspace/host reservation churn. Internal lease,
 request and sweep facts do not become user application outcomes. Source closure
 never calls Discovery's policy-deletion routine and cannot emit `JobDeleted`.

@@ -105,6 +105,8 @@ def _insert_job(
         ),
     )
     if ready:
+        from .availability_fixture import seed_fresh_availability
+        seed_fresh_availability(conn, str(stable_job_id), str(tenant_id))
         conn.execute(
             """
             INSERT OR REPLACE INTO candidate_profiles (

@@ -35,16 +35,19 @@ def owns_preparation_reservation(conn, *, tenant_id, job_id, stage, workflow_id)
 
 
 @contextmanager
-def claim_preparation_reservation(conn, *, tenant_id, job_id, stage, workflow_id, cancel_event):
+def claim_preparation_reservation(conn, *, tenant_id, job_id, stage, workflow_id, cancel_event, expected_posting_url=None):
     """Fence the queued-to-running transition, releasing the lock before I/O."""
-    if not workflow_id:
+    if not workflow_id and expected_posting_url is None:
         yield
         return
     conn.execute("BEGIN IMMEDIATE")
     try:
+        if expected_posting_url is not None:
+            from jobctrl.enrichment.availability import assert_fresh_candidate
+            assert_fresh_candidate(conn, str(job_id), expected_posting_url, tenant_id=str(tenant_id))
         if cancel_event is not None and cancel_event.is_set():
             raise RuntimeError(f"{stage} activity canceled before dispatch")
-        if not owns_preparation_reservation(
+        if workflow_id and not owns_preparation_reservation(
             conn, tenant_id=tenant_id, job_id=job_id, stage=stage, workflow_id=workflow_id
         ):
             raise PreparationReservationLost(f"{stage} activity no longer owns its queued reservation")

@@ -879,8 +879,13 @@ Jobs reads calculate overdue from retained timestamps.
 `enrichment/availability.py` owns acquisition and observation without invoking
 Discovery hygiene or policy deletion. Its durable event-ledger leases serialize
 checks per workspace and job and reserve each actual request host; acquisition
-runs after short writer transactions commit. The explicit API/RPC/CLI command
-uses the same activity and runtime identity guard. Availability uses exact
+runs after short writer transactions commit. Each check
+caps a full acquisition at 120 seconds. Public requests run in an owned spawned
+transport process with a 20-second total DNS/header/body deadline; timeout kills
+and reaps it before releasing the host reservation. The aggregate page/fallback
+budget remains below the five-minute lease lifetime.
+The explicit API/RPC/CLI command uses the same activity and runtime identity
+guard. Availability uses exact
 public ATS APIs, guarded HTTP, and guarded anonymous Playwright. It does not
 select paired-extension capture: the extension's Discovery ownership and
 resource authorization remain separate. Authenticated/challenge/access-limited

@@ -36,6 +36,17 @@ flowchart TB
 Retrieval narrows the candidate pool before any LLM call; a user correction feeds
 back as a new score version and a calibration anchor on the scoring policy.
 
+## Posting Freshness Before An Attempt
+
+Single-job and batch scoring require successfully verified active posting
+evidence no more than six hours old. Acquisition occurs outside the writer.
+The short stage claim checks the original canonical URL and freshness again
+before recording an attempt, then releases the writer before provider analysis
+and scoring. A changed URL, unavailable posting or uncertain latest observation
+defers work without replacing accepted scores or recording a stage attempt.
+The acquisition and scheduling policy is owned by
+[saved posting availability](../user/enrichment-and-extraction.md#saved-posting-availability).
+
 ## Retrieval Before Scoring
 
 The Scoring context owns a local hybrid retrieval service under

@@ -363,4 +363,5 @@ port, snapshots the tenant-first job detail, marks a check optimistically and
 rolls back on failure, then invalidates that detail and tenant job lists. It
 exposes worker-offline failure and retry without erasing older successful
 evidence or accepted artifacts. A queued acknowledgement is not a verified
-active posting.
+active posting. Persisted request deferral/retry feedback replaces the queued
+acknowledgement separately from acquisition attempt/success clocks.

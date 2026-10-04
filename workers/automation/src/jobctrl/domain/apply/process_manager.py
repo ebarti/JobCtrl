@@ -44,6 +44,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass
+from contextlib import nullcontext
 from datetime import datetime, timezone
 from typing import Any, Callable, Mapping
 
@@ -144,7 +145,7 @@ class ApplySaga:
         email_sender: EmailApplicationSenderPort | None = None,
         timeout_seconds: int | None = None,
         submission_authorizer: Callable[[], None] | None = None,
-        availability_authorizer: Callable[[str, str], None] | None = None,
+        availability_authorizer: Callable[[str, str, str, str], Any] | None = None,
     ) -> None:
         self._browser = browser_port
         self._agent = agent_port
@@ -156,7 +157,7 @@ class ApplySaga:
         # commit externally, the composition root must re-authorize the
         # capability. The model-driven browser remains transport-locked.
         self._submission_authorizer = submission_authorizer or (lambda: None)
-        self._availability_authorizer = availability_authorizer or (lambda tenant_id, job_id: None)
+        self._availability_authorizer = availability_authorizer or (lambda tenant_id, job_id, posting_url, run_id: nullcontext())
 
     # ------------------------------------------------------------------
     # Public API
@@ -172,6 +173,7 @@ class ApplySaga:
         material_version: str = "",
         materials_generation: int | str | None = None,
         application_url: str | None = None,
+        posting_url: str = "",
         profile_version: int | str | None = None,
         email_application_context: EmailApplicationContext | None = None,
     ) -> SagaOutcome:
@@ -352,6 +354,7 @@ class ApplySaga:
                     email_application_context,
                     duration_ms=duration_ms,
                     material_version=material_version,
+                    posting_url=posting_url,
                 )
             elif not run.dry_run and isinstance(
                 submission_result,
@@ -476,6 +479,7 @@ class ApplySaga:
         *,
         duration_ms: int,
         material_version: str,
+        posting_url: str,
     ) -> tuple[ApplyRun, SubmissionResult]:
         if context is None:
             run = run.record_event(
@@ -538,13 +542,6 @@ class ApplySaga:
             return run, Failed(error="email_sender_unavailable", retryable=False)
 
         try:
-            self._availability_authorizer(str(run.tenant_id), str(run.job_id))
-        except Exception:  # noqa: BLE001 - freshness authorization port
-            run = run.record_event(event_type="ApplySubmissionBlocked", occurred_at=_utc_now(), level="warn",
-                                   message="Check availability or inspect the employer posting before retrying.",
-                                   payload={"reason": "posting_availability_unverified", "submission_channel": "email"})
-            return run, Failed(error="POSTING_AVAILABILITY_UNVERIFIED: check availability or inspect the employer posting", retryable=True)
-        try:
             self._submission_authorizer()
         except Exception as exc:  # noqa: BLE001 - external authorization port
             log.info("ApplySaga: email submission authorization was revoked: %s", exc)
@@ -563,22 +560,30 @@ class ApplySaga:
                 retryable=True,
             )
 
-        intended_at = _utc_now()
-        run = run.record_event(
-            event_type="ApplySubmitIntended",
-            occurred_at=intended_at,
-            level="info",
-            message="owned email application intent recorded",
-            payload={
-                "tenant_id": str(run.tenant_id),
-                "job_key": str(run.job_id),
-                "run_id": str(run.run_id),
-                "material_version": str(material_version or ""),
-                "submission_channel": "email",
-                "intended_at": intended_at,
-            },
-        )
-        self._repository.save(run)
+        try:
+            with self._availability_authorizer(str(run.tenant_id), str(run.job_id), posting_url, str(run.run_id)):
+                intended_at = _utc_now()
+                intended_run = run.record_event(
+                    event_type="ApplySubmitIntended",
+                    occurred_at=intended_at,
+                    level="info",
+                    message="owned email application intent recorded",
+                    payload={
+                        "tenant_id": str(run.tenant_id),
+                        "job_key": str(run.job_id),
+                        "run_id": str(run.run_id),
+                        "material_version": str(material_version or ""),
+                        "submission_channel": "email",
+                        "intended_at": intended_at,
+                    },
+                )
+                self._repository.save(intended_run)
+            run = intended_run
+        except Exception:  # noqa: BLE001 - freshness/intent ownership port
+            run = run.record_event(event_type="ApplySubmissionBlocked", occurred_at=_utc_now(), level="warn",
+                                   message="Check availability or inspect the employer posting before retrying.",
+                                   payload={"reason": "posting_availability_unverified", "submission_channel": "email"})
+            return run, Failed(error="POSTING_AVAILABILITY_UNVERIFIED: check availability or inspect the employer posting", retryable=True)
 
         try:
             send_result = self._email_sender.send_email_application(candidate)

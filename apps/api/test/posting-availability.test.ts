@@ -53,12 +53,17 @@ describe("saved posting availability", () => {
           { kind: "posting_deadline", value: "2999-01-01T00:00:00Z", past: false }] }] };
     db.prepare("INSERT INTO job_events (tenant_id, job_id, identity_version, stage, event_type, entity_kind, entity_ref, occurred_at, payload_json) VALUES ('local', ?, 1, 'enrich', 'JobAvailabilityObserved', 'posting_availability', ?, ?, ?)")
       .run(JOB, JOB, value.lastAttemptedAt, JSON.stringify(value));
+    const deferred = { jobId: JOB, status: "deferred", reason: "retry_backoff", requestedAt: "2026-10-04T00:01:00Z", retryAt: value.nextDueAt };
+    db.prepare("INSERT INTO job_events (tenant_id, job_id, identity_version, stage, event_type, entity_kind, entity_ref, occurred_at, payload_json) VALUES ('local', ?, 1, 'enrich', 'AvailabilityLeaseChanged', 'posting_availability_request', ?, ?, ?)")
+      .run(JOB, JOB, deferred.requestedAt, JSON.stringify(deferred));
     const reader = new Database(dbPath, { readonly: true });
     try {
       const count = db.prepare("SELECT COUNT(*) AS n FROM job_events").get();
       const observation = postingAvailability(reader, JOB, Date.parse("2026-10-05T00:00:00Z"));
       expect(observation).toMatchObject({ verdict: "unknown", lastSuccessfulState: "active", overdue: true });
       expect(observation.lineage[0]?.signals).toHaveLength(2);
+      expect(observation.request).toEqual({ status: deferred.status, reason: deferred.reason,
+        requestedAt: deferred.requestedAt, retryAt: deferred.retryAt });
       expect(db.prepare("SELECT COUNT(*) AS n FROM job_events").get()).toEqual(count);
     } finally { reader.close(); }
   });

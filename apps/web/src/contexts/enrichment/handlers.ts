@@ -109,3 +109,7 @@ export const jobAvailabilityObservedHandler = (event: JobAvailabilityObserved): 
   invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
   invalidate(jobsKeys.lists(event.tenantId)),
 ];
+
+export const availabilityRequestChangedHandler = (event: import("@jobctrl/domain-types").AvailabilityLeaseChanged): readonly InvalidationItem[] =>
+  typeof event.payload.jobId === "string" ? [invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
+    invalidate(jobsKeys.lists(event.tenantId))] : [];

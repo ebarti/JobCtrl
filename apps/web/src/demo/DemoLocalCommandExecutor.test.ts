@@ -229,7 +229,7 @@ const LOCAL_CASES = [
 ] as const satisfies readonly LocalCase[];
 
 describe("DemoLocalCommandExecutor", () => {
-  it("keeps the 143-member capability manifest exhaustive with exact class counts", () => {
+  it("keeps the 144-member capability manifest exhaustive with exact class counts", () => {
     const counts = Object.values(DEMO_CAPABILITY_MANIFEST).reduce<Record<string, number>>(
       (result, capability) => {
         result[capability.class] = (result[capability.class] ?? 0) + 1;
@@ -237,12 +237,12 @@ describe("DemoLocalCommandExecutor", () => {
       },
       {},
     );
-    expect(Object.keys(DEMO_CAPABILITY_MANIFEST)).toHaveLength(143);
+    expect(Object.keys(DEMO_CAPABILITY_MANIFEST)).toHaveLength(144);
     expect(counts).toEqual({
       browser_local: 99,
       simulated_async: 4,
       rehearsed_external: 4,
-      unavailable: 36,
+      unavailable: 37,
     });
     expect(DEMO_CAPABILITY_MANIFEST.requiredBulletSuggestions).toMatchObject({
       class: "browser_local",

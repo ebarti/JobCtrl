@@ -10,6 +10,9 @@ export function PostingAvailability({ jobId, postingUrl, availability }: {
 }) {
   const check = useCheckAvailabilityMutation();
   const busy = check.isPending || availability?.checkInProgress;
+  const requestResolved = (availability?.request && Date.parse(availability.request.requestedAt) >= check.submittedAt) ||
+    (availability?.lastAttemptedAt && Date.parse(availability.lastAttemptedAt) >= check.submittedAt &&
+      Date.parse(availability.lastAttemptedAt) <= Date.now());
   return <section aria-label="Posting availability" className="section">
     <h3>Posting availability</h3>
     <p role="status">
@@ -22,7 +25,9 @@ export function PostingAvailability({ jobId, postingUrl, availability }: {
     <p className="muted">Checks run while your local worker is available. Sleep or offline time can leave evidence overdue. Saved descriptions and materials remain available after a failed check.</p>
     <Button variant="outline" size="sm" disabled={busy} onClick={() => check.mutate(jobId)}>Check availability</Button>{" "}
     <a href={postingUrl} target="_blank" rel="noopener noreferrer">Inspect employer posting</a>
-    {check.isSuccess ? <p role="status">Check requested. Employer evidence will update when the worker finishes.</p> : null}
+    {availability?.request ? <p role="status">Check deferred: {availability.request.reason.replaceAll("_", " ")}.
+      {availability.request.retryAt ? ` Retry after ${time(availability.request.retryAt)}, or inspect the employer posting.` : " Inspect the employer posting."}</p> : null}
+    {check.isSuccess && !requestResolved ? <p role="status">Check requested. Employer evidence will update when the worker finishes.</p> : null}
     {check.isError ? <p role="alert">Check could not start. {check.error.message} Retry when the local worker is available.</p> : null}
     <details><summary>Availability evidence</summary>
       <p>Method: {availability?.method ?? "unknown"}. Next due: {time(availability?.nextDueAt)}.</p>

@@ -1,4 +1,4 @@
-import { LOCAL_TENANT, createTenantId, type DomainEventUnion } from "@jobctrl/domain-types";
+import { LOCAL_TENANT, createTenantId, createAvailabilityLeaseChanged, type DomainEventUnion } from "@jobctrl/domain-types";
 import { QueryClient, QueryObserver, type QueryKey } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -569,6 +569,16 @@ describe("invalidationRouter", () => {
   let queryClient: QueryClient;
   let invalidateSpy: ReturnType<typeof vi.spyOn>;
   let setQueryDataSpy: ReturnType<typeof vi.spyOn>;
+
+  it("refreshes persisted job-scoped availability deferral feedback without treating host leases as job state", async () => {
+    const client = new QueryClient();
+    const invalidations = vi.spyOn(client, "invalidateQueries");
+    invalidationRouter.handle(createAvailabilityLeaseChanged(LOCAL_TENANT, {
+      jobId: JOB_ID, status: "deferred", reason: "retry_backoff",
+    }), client);
+    expect(invalidations).toHaveBeenCalledWith({ queryKey: jobsKeys.detail(LOCAL_TENANT, JOB_ID) });
+    expect(invalidations).toHaveBeenCalledWith({ queryKey: jobsKeys.lists(LOCAL_TENANT) });
+  });
 
   it.each([0, null])("refreshes only the submitted run details from launcher SSE (worker %s)", async (workerId) => {
     // Independent wire fixture: launcher lifecycle fields are not camelized by SSE.

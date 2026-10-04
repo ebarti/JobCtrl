@@ -12,6 +12,12 @@ participate; this page owns how that accepted input becomes a fit decision.
 For a shorter conceptual introduction, read
 [Evidence-based Job Fit Scoring](../guides/evidence-based-job-fit-scoring.md).
 
+Before a new scoring attempt, JobCtrl requires a successfully verified active
+posting check from the last six hours. An uncertain or unavailable posting stops
+new provider work while preserving the accepted score and evidence. Use Job
+Detail’s **Check availability** to retry; see
+[saved posting availability](enrichment-and-extraction.md#saved-posting-availability).
+
 ## How The Score Is Calculated
 
 JobCtrl does not ask a model for one opaque number and save it. The model
