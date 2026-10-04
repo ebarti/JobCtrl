@@ -174,11 +174,13 @@ class RateLimiterPort(Protocol):
         *,
         min_interval_seconds: float,
         max_concurrency: int,
+        timeout_seconds: float | None = None,
     ) -> AbstractContextManager[None]:
         """Acquire a per-host slot, blocking to honor min-interval + concurrency.
 
         The slot is held for the duration of the ``with`` block (one fetch or
-        navigation) and released on exit.
+        navigation) and released on exit. An optional timeout bounds both
+        admission and pacing; expiry raises TimeoutError without outbound work.
         """
         ...
 

@@ -129,7 +129,7 @@ class PolitenessGateway(PolitenessGatewayPort):
 
     @contextmanager
     def guard(
-        self, url: str, policy: SourcePolicy, budget: RunBudget
+        self, url: str, policy: SourcePolicy, budget: RunBudget, *, timeout_seconds: float | None = None
     ) -> Iterator[PolitenessDecision]:
         if budget.remaining() <= 0:
             yield self._budget_exhausted()
@@ -149,6 +149,7 @@ class PolitenessGateway(PolitenessGatewayPort):
             host,
             min_interval_seconds=policy.min_request_interval_seconds,
             max_concurrency=policy.max_concurrent_requests_per_host,
+            **({"timeout_seconds": timeout_seconds} if timeout_seconds is not None else {}),
         ):
             yield PolitenessDecision(True, PolitenessOutcome.ALLOWED, self._ua_header)
 

@@ -12,6 +12,9 @@ from email.utils import parsedate_to_datetime
 import hashlib
 import json
 import multiprocessing
+import os
+import signal
+import subprocess
 import sqlite3
 import time
 from typing import Any, Callable
@@ -38,6 +41,7 @@ MAX_BODY_BYTES = 1_000_000
 MAX_REQUESTS = 12
 REQUEST_TIMEOUT_SECONDS = 20
 ACQUISITION_TIMEOUT_SECONDS = 120
+BROWSER_CLEANUP_GRACE_SECONDS = 3
 
 
 def _now() -> datetime:
@@ -118,7 +122,11 @@ class Claim:
 
 
 class DeferredCheck(Exception):
-    """A durable or shared acquisition bound refused work without network I/O."""
+    """A durable or shared acquisition bound refused or canceled work."""
+
+    def __init__(self, reason: str, *, browser_phase: str | None = None) -> None:
+        super().__init__(reason)
+        self.browser_phase = browser_phase
 
 
 def claim_job(conn: sqlite3.Connection, job_id: str, *, tenant_id: str = str(LOCAL_TENANT),
@@ -345,7 +353,7 @@ def _provider(url: str) -> tuple[str, str, str, str] | None:
     return None
 
 
-def anonymous_browser(url: str, *, fetcher: Callable[[str, str], Response], deadline: float | None = None) -> DetailPage:
+def _anonymous_browser_in_process(url: str, *, fetcher: Callable[[str, str], Response], deadline: float, progress: Callable[[str], None] | None = None) -> DetailPage:
     """Existing guarded anonymous browser; never creates an authenticated profile."""
     from playwright.sync_api import sync_playwright
     from jobctrl.enrichment.detail import _page_to_detail_page
@@ -363,6 +371,8 @@ def anonymous_browser(url: str, *, fetcher: Callable[[str, str], Response], dead
             guard = PublicHttpUrlRouteGuard(page, fetch_public_requests=True, request_fetcher=fetch_route).install()
             try:
                 response = page.goto(url, wait_until="domcontentloaded", timeout=max(1, min(20, deadline - time.monotonic()) * 1000))
+                if progress:
+                    progress("capture")
                 rendered = _page_to_detail_page(page, url, response.status if response else None)
                 if time.monotonic() >= deadline:
                     return replace(rendered, status_evidence_complete=False, status_evidence_reason="acquisition_deadline")
@@ -373,7 +383,136 @@ def anonymous_browser(url: str, *, fetcher: Callable[[str, str], Response], dead
             finally:
                 guard.close()
         finally:
+            if progress:
+                progress("cleanup")
             browser.close()
+
+
+def _browser_process(url: str, channel: Any, deadline: float) -> None:
+    # Playwright's driver inherits this group; Chromium may create its own.
+    # The parent supervises the complete descendant tree, including capture
+    # and cleanup RPCs that have no Playwright timeout.
+    if os.name != "nt":
+        os.setsid()
+    def fetch(request_url: str, method: str) -> Response:
+        channel.send(("fetch", (request_url, method)))
+        kind, value = channel.recv()
+        if kind != "response":
+            raise DeferredCheck(value)
+        return value
+    try:
+        rendered = _anonymous_browser_in_process(url, fetcher=fetch, deadline=deadline,
+                                                progress=lambda phase: channel.send(("phase", phase)))
+        # Send only after browser/context/driver cleanup has completed.
+        channel.send(("rendered", rendered))
+    except Exception as error:
+        channel.send(("error", str(error) if isinstance(error, DeferredCheck) else "browser_failure"))
+    finally:
+        channel.close()
+
+
+
+def _owned_browser_groups(process_id: int) -> set[int]:
+    inventory = subprocess.run(["ps", "-axo", "pid=,ppid=,pgid="], capture_output=True,
+                               text=True, check=True, timeout=1)
+    rows = [tuple(map(int, line.split())) for line in inventory.stdout.splitlines() if line.strip()]
+    owned = {process_id}
+    while True:
+        descendants = {pid for pid, parent, _group in rows if parent in owned}
+        if descendants <= owned:
+            break
+        owned.update(descendants)
+    return {group for pid, _parent, group in rows if pid in owned and group != os.getpgrp()}
+
+def _stop_browser_process(process: Any, known_groups: set[int] | None = None) -> None:
+    """Kill/reap owned browser descendants even if Playwright close hangs."""
+    if os.name == "nt":
+        try:
+            subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    else:
+        try:
+            # Freeze the driver group before inspecting detached Chromium groups.
+            # Never signal the parent's group if startup has not reached setsid.
+            if os.getpgid(process.pid) != os.getpgrp():
+                os.killpg(os.getpgid(process.pid), signal.SIGSTOP)
+            else:
+                os.kill(process.pid, signal.SIGSTOP)
+        except ProcessLookupError:
+            pass
+        groups = set(known_groups or ())
+        try:
+            groups.update(_owned_browser_groups(process.pid))
+            for group in groups:
+                try:
+                    os.killpg(group, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+        except (OSError, subprocess.SubprocessError, ValueError):
+            for group in groups:
+                try:
+                    os.killpg(group, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            # The original child/driver group still has a bounded fallback.
+            try:
+                if os.getpgid(process.pid) != os.getpgrp():
+                    os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+    if process.is_alive():
+        process.kill()
+    process.join(timeout=1)
+    if process.is_alive():
+        raise DeferredCheck("browser_cleanup_failed")
+    process.close()
+
+
+def anonymous_browser(url: str, *, fetcher: Callable[[str, str], Response], deadline: float | None = None) -> DetailPage:
+    """Supervise every browser RPC/resource/cleanup under the acquisition deadline.
+
+    Outbound resource reads are requested over IPC and performed by the parent's
+    real acquisition owner, retaining durable host pacing, quotas and lineage.
+    The child owns only an anonymous browser and its guarded rendered capture.
+    """
+    deadline = deadline or time.monotonic() + ACQUISITION_TIMEOUT_SECONDS
+    operation_deadline = deadline - BROWSER_CLEANUP_GRACE_SECONDS
+    phase = "launch"
+    context = multiprocessing.get_context("spawn")
+    parent, child = context.Pipe(duplex=True)
+    process = context.Process(target=_browser_process, args=(url, child, operation_deadline), daemon=True)
+    process.start()
+    child.close()
+    known_groups: set[int] = set()
+    try:
+        while True:
+            remaining = operation_deadline - time.monotonic()
+            if remaining <= 0 or not parent.poll(remaining):
+                raise DeferredCheck("acquisition_deadline", browser_phase=phase)
+            kind, value = parent.recv()
+            if kind == "phase":
+                phase = str(value)
+                continue
+            if kind == "rendered":
+                if time.monotonic() >= deadline:
+                    raise DeferredCheck("acquisition_deadline")
+                return value
+            if kind != "fetch":
+                raise DeferredCheck(value)
+            if os.name != "nt":
+                known_groups.update(_owned_browser_groups(process.pid))
+            try:
+                response = fetcher(*value)
+                if time.monotonic() >= deadline:
+                    raise DeferredCheck("acquisition_deadline")
+                parent.send(("response", response))
+            except Exception as error:
+                parent.send(("error", str(error) if isinstance(error, DeferredCheck) else "transport_failure"))
+    finally:
+        parent.close()
+        _stop_browser_process(process, known_groups)
 
 
 class Acquisition:
@@ -385,10 +524,11 @@ class Acquisition:
         self.lineage: list[dict[str, Any]] = []
         self.deadline = time.monotonic() + ACQUISITION_TIMEOUT_SECONDS
 
-    def _get(self, url: str, method: str) -> Response:
+    def _get(self, url: str, method: str, *, deadline: float | None = None) -> Response:
+        deadline = min(self.deadline, deadline if deadline is not None else self.deadline)
         original = url
         for _ in range(4):
-            response = self._single_get(url, method)
+            response = self._single_get(url, method, deadline=deadline)
             if not response.redirect_url:
                 return response
             if not same_posting_url(original, response.redirect_url):
@@ -396,22 +536,25 @@ class Acquisition:
             url = response.redirect_url
         raise DeferredCheck("redirect_budget")
 
-    def _pace(self, url: str) -> None:
+    def _pace(self, url: str, *, deadline: float | None = None) -> None:
         host_state = _latest(self.conn, self.claim.tenant_id, "availability_lease", f"host:{urlsplit(url).hostname}")
         next_start = _instant(host_state.get("nextStartAt"))
         if next_start:
             delay = (next_start - _now()).total_seconds()
             if 0 < delay <= 2:
-                time.sleep(delay)
+                time.sleep(min(delay, max(0, deadline - time.monotonic())) if deadline is not None else delay)
 
-    def _single_get(self, url: str, method: str) -> Response:
-        if time.monotonic() >= self.deadline:
+    def _single_get(self, url: str, method: str, *, deadline: float | None = None) -> Response:
+        deadline = min(self.deadline, deadline if deadline is not None else self.deadline)
+        if time.monotonic() >= deadline:
             raise DeferredCheck("acquisition_deadline")
         if len(self.lineage) >= MAX_REQUESTS:
             raise DeferredCheck("request_budget")
         # A fallback may reuse a host immediately after its prior request.
         # Wait only for the fixed pacing interval, outside any write transaction.
-        self._pace(url)
+        self._pace(url, deadline=deadline)
+        if time.monotonic() >= deadline:
+            raise DeferredCheck("acquisition_deadline")
         host = reserve_request(self.conn, self.claim, url)
         retry = 0.0
         from jobctrl.domain.discovery.source_registry import ENRICHMENT_CRAWL_POLICY
@@ -421,10 +564,10 @@ class Acquisition:
                          min_request_interval_seconds=max(2, ENRICHMENT_CRAWL_POLICY.min_request_interval_seconds),
                          max_concurrent_requests_per_host=1)
         try:
-            with gateway.guard(url, policy, RunBudgetCounter(1)) as decision:
+            with gateway.guard(url, policy, RunBudgetCounter(1), timeout_seconds=max(0, deadline - time.monotonic())) as decision:
                 if not decision.allowed:
                     raise DeferredCheck("shared_host_cooldown")
-                remaining = self.deadline - time.monotonic()
+                remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     raise DeferredCheck("acquisition_deadline")
                 response = (self.transport(url, timeout=remaining) if self.transport is _PRODUCTION_PUBLIC_GET
@@ -435,12 +578,14 @@ class Acquisition:
             self.lineage.append({"sourceUrl": url, "finalUrl": response.final_url, "status": response.status,
                                  "method": method, "rawHash": hashlib.sha256(response.body).hexdigest(),
                                  **({"redirectUrl": response.redirect_url} if response.redirect_url else {})})
-            if time.monotonic() >= self.deadline:
+            if time.monotonic() >= deadline:
                 raise DeferredCheck("acquisition_deadline")
             return response
         except Exception as error:
             self.lineage.append({"sourceUrl": url, "finalUrl": None, "status": None,
                                  "method": method, "rawHash": None, "error": type(error).__name__})
+            if isinstance(error, TimeoutError):
+                raise DeferredCheck("acquisition_deadline") from error
             raise
         finally:
             release_host(self.conn, self.claim, host, retry_after=retry)
@@ -500,16 +645,24 @@ class Acquisition:
         self.lineage[-1]["signals"] = signals
         if verdict is not ActiveState.UNKNOWN or reason in {"http_error", "access_challenge", "identity_lost", "identity_mismatch", "invalid_deadline", "conflicting_signals"}:
             return verdict.value, reason, "public_http"
-        if self.browser is None:
-            rendered = anonymous_browser(url, fetcher=self._get, deadline=self.deadline)
-        else:
-            # Transport-only fixtures retain the real browser-page reservation.
-            self._pace(url)
-            host = reserve_request(self.conn, self.claim, url)
-            try:
-                rendered = self.browser(url)
-            finally:
-                release_host(self.conn, self.claim, host)
+        try:
+            if self.browser is None:
+                rendered = anonymous_browser(url, fetcher=lambda request_url, method: self._get(
+                    request_url, method, deadline=self.deadline - BROWSER_CLEANUP_GRACE_SECONDS), deadline=self.deadline)
+            else:
+                # Transport-only fixtures retain the real browser-page reservation.
+                self._pace(url)
+                host = reserve_request(self.conn, self.claim, url)
+                try:
+                    rendered = self.browser(url)
+                finally:
+                    release_host(self.conn, self.claim, host)
+        except Exception as error:
+            self.lineage.append({"sourceUrl": url, "finalUrl": None, "status": None,
+                                 "method": "anonymous_browser", "rawHash": None, "error": str(error)[:160],
+                                 **({"signals": [{"kind": "browser_phase", "value": error.browser_phase}]}
+                                    if isinstance(error, DeferredCheck) and error.browser_phase else {})})
+            raise
         signals = []
         verdict, reason = ActiveStateVerifier().verify(rendered, signals=signals)
         self.lineage.append({"sourceUrl": url, "finalUrl": rendered.final_url, "status": rendered.status,

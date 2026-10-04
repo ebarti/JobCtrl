@@ -95,21 +95,28 @@ class HostRateLimiter:
         *,
         min_interval_seconds: float,
         max_concurrency: int,
+        timeout_seconds: float | None = None,
     ) -> Iterator[None]:
         slot = self._slot_for(host, max_concurrency)
-        slot.semaphore.acquire()
+        deadline = self._clock() + max(0, timeout_seconds) if timeout_seconds is not None else None
+        admitted = (slot.semaphore.acquire(timeout=max(0, deadline - self._clock()))
+                    if deadline is not None else slot.semaphore.acquire())
+        if not admitted:
+            raise TimeoutError("Host request admission exceeded its deadline")
         try:
-            self._wait_for_turn(slot, min_interval_seconds)
+            self._wait_for_turn(slot, min_interval_seconds, deadline=deadline)
             yield
         finally:
             slot.semaphore.release()
 
-    def _wait_for_turn(self, slot: _HostSlot, min_interval_seconds: float) -> None:
+    def _wait_for_turn(self, slot: _HostSlot, min_interval_seconds: float, *, deadline: float | None = None) -> None:
         interval = max(0.0, min_interval_seconds)
         cap = self._max_retry_after_seconds
         while True:
             with slot.lock:
                 now = self._clock()
+                if deadline is not None and now >= deadline:
+                    raise TimeoutError("Host request pacing exceeded its deadline")
                 earliest = max(slot.next_start_allowed, slot.retry_after_until)
                 if now >= earliest:
                     slot.next_start_allowed = now + interval
@@ -119,7 +126,10 @@ class HostRateLimiter:
             # bounded at the sink (:meth:`note_retry_after`); this is a defensive
             # ceiling on any one sleep so a future writer of the deadline cannot
             # freeze the thread, and it keeps the wait responsive between naps.
-            self._sleep(min(wait, cap) if cap > 0 else wait)
+            bounded_wait = min(wait, cap) if cap > 0 else wait
+            if deadline is not None:
+                bounded_wait = min(bounded_wait, max(0, deadline - self._clock()))
+            self._sleep(bounded_wait)
 
     def note_retry_after(self, host: str, retry_after_seconds: float) -> float:
         """Record a server ``Retry-After`` so the next slot for ``host`` waits.

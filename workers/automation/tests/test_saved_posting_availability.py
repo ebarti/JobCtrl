@@ -420,7 +420,7 @@ def test_anonymous_browser_guard_failure_retains_hash_and_cannot_authorize(saved
     monkeypatch.setattr(detail, "_page_to_detail_page", lambda *_: replace(active_page(), raw_html_hash="b" * 64))
     def refused(*_args):
         raise availability.DeferredCheck("request_budget")
-    rendered = availability.anonymous_browser(URL, fetcher=refused)
+    rendered = availability._anonymous_browser_in_process(URL, fetcher=refused, deadline=time.monotonic() + 120)
     assert not rendered.status_evidence_complete
     claim, _ = availability.claim_job(saved_job, JOB_ID)
     acquisition = availability.Acquisition(saved_job, claim,
@@ -584,3 +584,19 @@ def test_prep_freshness_is_stricter_than_background_cadence_and_changed_url_is_f
     monkeypatch.setattr(availability, "_now", lambda: NOW)
     with pytest.raises(MissingInputError, match="inspect"):
         availability.require_fresh_active(JOB_ID, conn=saved_job, expected_posting_url=URL + "-old")
+
+
+def test_shared_host_slot_wait_cannot_outlive_acquisition_deadline(saved_job, monkeypatch):
+    from jobctrl.infrastructure.network import politeness
+    from jobctrl.infrastructure.network.rate_limiter import HostRateLimiter
+    limiter = HostRateLimiter()
+    monkeypatch.setattr(politeness, "get_shared_rate_limiter", lambda: limiter)
+    monkeypatch.setattr(availability, "ACQUISITION_TIMEOUT_SECONDS", .03)
+    with limiter.slot("careers.example.org", min_interval_seconds=0, max_concurrency=1):
+        started = time.monotonic()
+        value = availability.check_availability(JOB_ID, conn=saved_job,
+            transport=lambda _: pytest.fail("busy shared host admitted outbound request"))
+        assert time.monotonic() - started < .3
+    assert value["verdict"] == "unknown" and value["reason"] == "acquisition_deadline"
+    assert not value["checkInProgress"] and not saved_job.in_transaction
+    assert not availability._latest(saved_job, "local", "availability_lease", "host:careers.example.org").get("owner")

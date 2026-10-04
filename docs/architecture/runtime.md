@@ -880,7 +880,11 @@ Jobs reads calculate overdue from retained timestamps.
 Discovery hygiene or policy deletion. Its durable event-ledger leases serialize
 checks per workspace and job and reserve each actual request host; acquisition
 runs after short writer transactions commit. Each check
-caps a full acquisition at 120 seconds. Public requests run in an owned spawned
+caps a full acquisition at 120 seconds, including rendered capture and browser
+cleanup. Browser supervision reserves the final three seconds for cancellation
+and reaping. Its admission and pacing waits in the shared politeness gateway
+also receive the remaining deadline; other fetch surfaces retain their existing
+wait policy. Public requests run in an owned spawned
 transport process with a 20-second total DNS/header/body deadline; timeout kills
 and reaps it before releasing the host reservation. The aggregate page/fallback
 budget remains below the five-minute lease lifetime.
@@ -890,3 +894,9 @@ public ATS APIs, guarded HTTP, and guarded anonymous Playwright. It does not
 select paired-extension capture: the extension's Discovery ownership and
 resource authorization remain separate. Authenticated/challenge/access-limited
 pages stay unknown. Ordinary Discovery/Enrich transport selection is unchanged.
+Anonymous availability renders run in an owned supervised process. Browser
+resource reads return over IPC to the acquisition owner, which retains durable
+actual-host reservations, pacing and response lineage. The total acquisition
+deadline covers launch, page navigation, every capture RPC and cleanup. If the
+renderer or close stalls, the supervisor terminates the owned driver and
+detached Chromium process groups and reaps its child before releasing the lease.

@@ -3,7 +3,8 @@ from datetime import datetime, timedelta, timezone
 import io
 import json
 import sqlite3
-import socket
+import subprocess
+import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -202,16 +203,13 @@ def test_batch_scoring_fences_posting_changes_before_stage_attempt_or_provider(r
 
 
 def test_real_chromium_hidden_css_status_requires_visibility_and_retains_fallback_lineage(runtime, monkeypatch):
+    public_url = "https://93.184.216.34/jobs/role-123"
+    runtime.conn.execute("UPDATE jobs SET url = ? WHERE job_id = ?", (public_url, JOB))
+    runtime.conn.commit()
     html = ('<html><head><style>.status-template{display:none}</style><script type="application/ld+json">'
-            + json.dumps({"@type": "JobPosting", "url": POSTING_URL, "description": "Synthetic accepted role"})
+            + json.dumps({"@type": "JobPosting", "url": public_url, "description": "Synthetic accepted role"})
             + '</script></head><body><aside class="status-template">Applications are closed</aside>'
               '<main><div class="job-description">Synthetic accepted role</div></main></body></html>')
-    real_resolver = socket.getaddrinfo
-    def synthetic_dns(host, port, **kwargs):
-        if host == "careers.example.org":
-            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", port))]
-        return real_resolver(host, port, **kwargs)
-    monkeypatch.setattr(socket, "getaddrinfo", synthetic_dns)
     value = availability.check_availability(JOB, conn=runtime.conn,
         transport=lambda url: availability.Response(url, url, 200, html.encode()))
     assert value["verdict"] == "active", value
@@ -240,3 +238,51 @@ def test_reviewed_submit_fences_original_posting_and_run_until_intent_persistenc
     assert runtime.conn.execute("SELECT 1 FROM job_events WHERE event_type = 'ApplySubmitIntended'").fetchone()
     with sqlite3.connect(runtime.path, timeout=0) as peer:
         peer.execute("UPDATE jobs SET title = 'Synthetic after intent' WHERE job_id = ?", (JOB,))
+
+
+def test_real_chromium_renderer_hang_is_cancelled_before_lease_expiry_and_successor_admitted(runtime, monkeypatch):
+    public_url = "https://93.184.216.34/jobs/hanging-renderer"
+    runtime.conn.execute("UPDATE jobs SET url = ? WHERE job_id = ?", (public_url, JOB))
+    runtime.conn.commit()
+    html = b"""<html><head><title>Synthetic hanging role</title><script>
+        document.addEventListener('DOMContentLoaded', () => setTimeout(() => { while (true) {} }, 0));
+        </script></head><body><main>Synthetic unresolved posting</main></body></html>"""
+    groups = set()
+    real_stop = availability._stop_browser_process
+    def stop(process, known_groups=None):
+        inventory = subprocess.run(["ps", "-axo", "pid=,ppid=,pgid="], capture_output=True, text=True, check=True, timeout=1)
+        rows = [tuple(map(int, line.split())) for line in inventory.stdout.splitlines() if line.strip()]
+        owned = {process.pid}
+        while True:
+            descendants = {pid for pid, parent, _group in rows if parent in owned}
+            if descendants <= owned:
+                break
+            owned.update(descendants)
+        groups.update(group for pid, _parent, group in rows if pid in owned)
+        real_stop(process, known_groups)
+    monkeypatch.setattr(availability, "_stop_browser_process", stop)
+    monkeypatch.setattr(availability, "ACQUISITION_TIMEOUT_SECONDS", 8)
+    started = time.monotonic()
+    before = runtime.conn.execute("SELECT full_description FROM job_enrichments WHERE job_id = ?", (JOB,)).fetchone()[0]
+    value = availability.check_availability(JOB, conn=runtime.conn,
+        transport=lambda url: availability.Response(url, url, 200, html))
+    assert value["verdict"] == "unknown" and value["reason"] == "acquisition_deadline", value
+    assert time.monotonic() - started < 10 < availability.LEASE_TTL.total_seconds()
+    assert not value["checkInProgress"] and value["lastSuccessfullyVerifiedAt"] is None
+    assert [step["method"] for step in value["lineage"]] == ["public_http", "browser_resource", "anonymous_browser"]
+    assert all(step["rawHash"] for step in value["lineage"][:2])
+    assert value["lineage"][-1]["error"] == "acquisition_deadline"
+    assert value["lineage"][-1]["signals"] == [{"kind": "browser_phase", "value": "capture"}]
+    assert runtime.conn.execute("SELECT full_description FROM job_enrichments WHERE job_id = ?", (JOB,)).fetchone()[0] == before
+    assert len(groups) >= 2, "fixture did not launch the owned driver and Chromium groups"
+    inventory = subprocess.run(["ps", "-axo", "pgid=,stat="], capture_output=True, text=True, check=True, timeout=1)
+    assert not [row for row in inventory.stdout.splitlines() if row.strip() and int(row.split()[0]) in groups and not row.split()[1].startswith("Z")]
+    successor_id = "20000000-0000-4000-8000-000000000123"
+    runtime.conn.execute("INSERT INTO jobs (tenant_id, job_id, url, title, site, discovered_at) VALUES ('local', ?, ?, 'Synthetic successor', 'synthetic', ?)",
+                         (successor_id, public_url + "-successor", datetime.now(timezone.utc).isoformat()))
+    runtime.conn.commit()
+    claim, reason = availability.claim_job(runtime.conn, successor_id)
+    assert claim and reason == "claimed"
+    host = availability.reserve_request(runtime.conn, claim, public_url)
+    availability.release_host(runtime.conn, claim, host)
+    availability.complete_check(runtime.conn, claim, verdict="unknown", reason="synthetic_successor", method="fixture", lineage=[])
