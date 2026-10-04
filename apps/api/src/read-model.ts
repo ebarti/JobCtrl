@@ -2547,15 +2547,15 @@ export function readSettingsConfig(
 /** Persisted observations and wall-clock freshness only; Jobs GET never acquires. */
 export function postingAvailability(db: SqliteDatabase, jobId: string, now = Date.now()): PostingAvailability {
   const latest = getRow<{ payload_json: string | null }>(db,
-    "SELECT payload_json FROM job_events WHERE tenant_id = ? AND entity_kind = 'posting_availability' " +
+    "SELECT payload_json FROM job_events INDEXED BY idx_job_events_entity WHERE tenant_id = ? AND entity_kind = 'posting_availability' " +
     "AND entity_ref = ? ORDER BY event_id DESC LIMIT 1", [DEFAULT_TENANT, jobId]);
   const lease = getRow<{ payload_json: string | null }>(db,
-    "SELECT payload_json FROM job_events WHERE tenant_id = ? AND entity_kind = 'availability_lease' " +
+    "SELECT payload_json FROM job_events INDEXED BY idx_job_events_entity WHERE tenant_id = ? AND entity_kind = 'availability_lease' " +
     "AND entity_ref = ? ORDER BY event_id DESC LIMIT 1", [DEFAULT_TENANT, `job:${jobId}`]);
   const value = parseJsonRecord(latest?.payload_json ?? null) ?? {};
   const reservation = parseJsonRecord(lease?.payload_json ?? null) ?? {};
   const requestRow = getRow<{ payload_json: string | null }>(db,
-    "SELECT payload_json FROM job_events WHERE tenant_id = ? AND entity_kind = 'posting_availability_request' " +
+    "SELECT payload_json FROM job_events INDEXED BY idx_job_events_entity WHERE tenant_id = ? AND entity_kind = 'posting_availability_request' " +
     "AND entity_ref = ? ORDER BY event_id DESC LIMIT 1", [DEFAULT_TENANT, jobId]);
   const request = parseJsonRecord(requestRow?.payload_json ?? null) ?? {};
   const requestedAt = nullableString(request.requestedAt);

@@ -115,17 +115,7 @@ def test_disconnected_guest_linkedin_persists_clean_description_without_llm(
     class Page(_GuestLinkedInPage, _SpyPage):
         def goto(self, target, **kwargs):
             self.url = target
-            canonical = self.soup.new_tag("link", rel="canonical", href=target)
-            self.soup.body.append(canonical)
-            form = self.soup.new_tag("form", action=target + "/apply")
-            button = self.soup.new_tag("button")
-            button.string = "Apply"
-            form.append(button)
-            self.soup.body.append(form)
             return _SpyPage.goto(self, target, **kwargs)
-
-        def content(self):
-            return str(self.soup)
 
     page = Page(_guest_linkedin_html(
         oversized=True, removable_prefix=removable_prefix, main_container=main_container,
@@ -184,7 +174,8 @@ def test_disconnected_guest_linkedin_persists_clean_description_without_llm(
         snapshots = SqlitePostingSnapshotSetRepository(conn).load(LOCAL_TENANT, job_id)
         assert snapshots is not None and snapshots.latest_snapshot is not None
         assert snapshots.latest_snapshot.extraction_tier == "css_selectors"
-        assert not snapshots.latest_snapshot.is_quarantined
+        assert snapshots.latest_active_state.value == "unknown"
+        assert snapshots.latest_snapshot.quarantine_reason.value == "unknown_active_state"
         event = conn.execute(
             "SELECT payload_json FROM job_events WHERE job_id = ? AND stage = 'enrich' AND event_type = 'StageCompleted'",
             (str(job_id),),

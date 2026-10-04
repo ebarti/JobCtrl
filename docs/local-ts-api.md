@@ -97,7 +97,8 @@ empty strict body and a canonical JobId, dispatches runtime-bound JSON-RPC
 `check_posting_availability`, and returns `202` with workflow/run IDs.
 `JobAvailabilityObserved` invalidates the selected detail and tenant job lists.
 Job-scoped `AvailabilityLeaseChanged` command-deferral records invalidate the
-same reads. They expose request feedback without fabricating an observation.
+same reads. Only explicit requests own coalesced deferral feedback; automatic
+and preflight refusals do not create user requests or employer observations.
 See [Jobs & Materials](api/jobs-and-materials.md#saved-posting-availability)
 and the [field contract](api/complete-contract.md#saved-posting-availability).
 

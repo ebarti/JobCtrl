@@ -775,29 +775,13 @@ def acquire_job(
     """
     conn = get_connection()
     from datetime import timedelta
-    from jobctrl.enrichment.availability import require_fresh_active, fresh_active
+    from jobctrl.enrichment.availability import require_fresh_active, assert_fresh_candidate
     tenant_id = str(tenant_id or (run_ctx.get("tenant_id") if run_ctx else None) or LOCAL_TENANT)
     if target_job_id is not None:
         target_job_id = canonical_job_id(str(target_job_id))
-    # Select without a writer, acquire evidence, then re-read the same candidate
-    # under the original apply lock before claiming an attempt or submit intent.
-    candidates = _select_apply_candidates(conn, tenant_id, target_job_id, min_score)[:25]
-    verified_candidates = {}
-    for candidate in candidates:
-        try:
-            require_fresh_active(candidate["job_id"], tenant_id=tenant_id, conn=conn, max_age=timedelta(minutes=15), expected_posting_url=candidate["url"])
-        except Exception:
-            logger.info("Apply deferred for %s: check availability or inspect employer posting", candidate["job_id"])
-            continue
-        verified_candidates[str(candidate["job_id"])] = candidate["url"]
-    if not verified_candidates:
-        return None
     try:
         conn.execute("BEGIN IMMEDIATE")
         candidate_rows = _select_apply_candidates(conn, tenant_id, target_job_id, min_score)
-        candidate_rows = [candidate for candidate in candidate_rows
-                          if verified_candidates.get(str(candidate["job_id"])) == candidate["url"]
-                          and fresh_active(conn, str(candidate["job_id"]), tenant_id=tenant_id, max_age=timedelta(minutes=15))]
         if not candidate_rows:
             conn.rollback()
             return None
@@ -910,6 +894,42 @@ def acquire_job(
                     refusal_reason,
                 )
                 return None
+
+        # Release the local-selection writer before any employer request. Only
+        # this eligible candidate is checked; an approval poll never acquires.
+        conn.commit()
+        try:
+            require_fresh_active(job_id, tenant_id=tenant_id, conn=conn, max_age=timedelta(minutes=15),
+                                 expected_posting_url=url, allow_unknown=approval_required or dry_run)
+        except Exception:
+            logger.info("Apply deferred for %s: check availability or use supervised Apply", job_id)
+            return None
+        conn.execute("BEGIN IMMEDIATE")
+        current_rows = _select_apply_candidates(conn, tenant_id, canonical_job_id(job_id), min_score)
+        current = current_rows[0] if current_rows else None
+        if (current is None or current["url"] != url or current["materials_generation"] != row["materials_generation"]
+                or (current["application_url"] or current["url"]) != apply_url
+                or _has_active_apply(conn, tenant_id=tenant_id, job_id=job_id)
+                or _has_succeeded_apply(conn, tenant_id=tenant_id, job_id=job_id)
+                or _has_needs_verification_apply(conn, tenant_id=tenant_id, job_id=job_id)
+                or _attempt_count_for(conn, tenant_id=tenant_id, job_id=job_id) >= int(config.DEFAULTS["max_apply_attempts"])):
+            conn.rollback()
+            return None
+        if not dry_run:
+            repeat_assessment = evaluate_repeat_application(conn, tenant_id=tenant_id, target_job_id=job_id)
+            if repeat_assessment["status"] not in {"clear", "override_ready"}:
+                conn.commit()
+                return None
+            if approval_required and _approval_refusal_reason(
+                conn, tenant_id=tenant_id, job_id=job_id, materials_generation=current["materials_generation"],
+                profile_version=_current_profile_version(conn, tenant_id=tenant_id), application_url=apply_url
+            ):
+                conn.commit()
+                return None
+        assert_fresh_candidate(conn, job_id, url, tenant_id=tenant_id, max_age=timedelta(minutes=15),
+                               allow_unknown=approval_required or dry_run)
+        row = current
+        attempts = _attempt_count_for(conn, tenant_id=tenant_id, job_id=job_id)
 
         now = _utc_now()
         run_id = ApplyRunId((run_ctx.get("run_id") if run_ctx else None) or new_apply_run_id())
@@ -1935,16 +1955,29 @@ def gen_prompt(
 # ---------------------------------------------------------------------------
 
 
+def _has_current_apply_review(conn, tenant_id: str, job_id: str) -> bool:
+    rows = _select_apply_candidates(conn, tenant_id, canonical_job_id(job_id), 0)
+    if not rows:
+        return False
+    row = rows[0]
+    return _approval_refusal_reason(conn, tenant_id=tenant_id, job_id=job_id,
+                                    materials_generation=row["materials_generation"],
+                                    profile_version=_current_profile_version(conn, tenant_id=tenant_id),
+                                    application_url=row["application_url"] or row["url"]) is None
+
+
 @contextmanager
 def _authorize_posting_before_submit(tenant_id: str, job_id: str, posting_url: str, run_id: str):
     from datetime import timedelta
     from jobctrl.domain.errors import MissingInputError
     from jobctrl.enrichment.availability import require_fresh_active, assert_fresh_candidate
     conn = get_connection()
-    require_fresh_active(job_id, tenant_id=tenant_id, conn=conn, max_age=timedelta(minutes=15), expected_posting_url=posting_url)
+    require_fresh_active(job_id, tenant_id=tenant_id, conn=conn, max_age=timedelta(minutes=15), expected_posting_url=posting_url,
+                         allow_unknown=_has_current_apply_review(conn, tenant_id, job_id))
     conn.execute("BEGIN IMMEDIATE")
     try:
-        assert_fresh_candidate(conn, job_id, posting_url, tenant_id=tenant_id, max_age=timedelta(minutes=15))
+        assert_fresh_candidate(conn, job_id, posting_url, tenant_id=tenant_id, max_age=timedelta(minutes=15),
+                               allow_unknown=_has_current_apply_review(conn, tenant_id, job_id))
         owner = conn.execute("SELECT json_extract(payload_json, '$.run_id') FROM job_events WHERE tenant_id = ? "
                              "AND job_id = ? AND event_type = 'ApplyRunStarted' ORDER BY event_id DESC LIMIT 1",
                              (tenant_id, job_id)).fetchone()
@@ -2239,7 +2272,8 @@ def run_job(
     from datetime import timedelta
     from jobctrl.enrichment.availability import require_fresh_active
     try:
-        require_fresh_active(str(job["job_id"]), tenant_id=str(tenant_id), conn=get_connection(), max_age=timedelta(minutes=15), expected_posting_url=job["url"])
+        require_fresh_active(str(job["job_id"]), tenant_id=str(tenant_id), conn=get_connection(), max_age=timedelta(minutes=15), expected_posting_url=job["url"],
+                             allow_unknown=dry_run or _has_current_apply_review(get_connection(), str(tenant_id), str(job["job_id"])))
     except Exception:
         return "blocked", 0
     run_ctx = run_ctx or {}

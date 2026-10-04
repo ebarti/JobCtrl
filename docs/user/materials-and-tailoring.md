@@ -11,9 +11,10 @@ without turning the job description into evidence about you.
 For a plain-language walkthrough of that boundary, read
 [Resume Tailoring Without Fabrication](../guides/resume-tailoring-without-fabrication.md).
 
-Before generating a resume or cover letter, JobCtrl requires a successfully
-verified active posting check from the last six hours. An uncertain or unavailable
-posting stops new work and preserves accepted materials and approvals. Use Job
+Before generating a resume or cover letter, JobCtrl attempts to refresh active
+evidence older than six hours. Usable content can feed preparation while
+availability remains unknown. Confirmed unavailable postings stop new work;
+failed checks preserve accepted materials and approvals. Use Job
 Detail’s **Check availability** to retry; see
 [saved posting availability](enrichment-and-extraction.md#saved-posting-availability).
 

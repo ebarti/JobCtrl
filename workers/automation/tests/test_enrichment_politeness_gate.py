@@ -177,7 +177,7 @@ class _SpyPage:
         return "Role"
 
     def content(self) -> str:
-        return f'<link rel="canonical" href="{self.url}"><form action="{self.url}/apply"><button>Apply</button></form>'
+        return ""
 
     def on(self, *_args: object, **_kwargs: object) -> None:
         return None
@@ -273,7 +273,7 @@ def tier1_extraction(monkeypatch: pytest.MonkeyPatch) -> None:
             {
                 "@type": "JobPosting",
                 "description": LONG_DESC,
-                "url": _page.url,
+                "url": "https://example.test/apply",
                 "directApply": True,
             }
         ],
@@ -552,7 +552,7 @@ class _FakeLiveChrome:
             {
                 "@type": "JobPosting",
                 "description": LONG_DESC,
-                "url": url,
+                "url": "https://example.test/apply",
                 "directApply": True,
             }
         )
@@ -1021,7 +1021,7 @@ def test_live_browser_task_failure_isolated_from_remaining_enrich_jobs(
             "contentType": "text/html", "title": "Role", "bodyText": LONG_DESC,
             "bodyHtml": '<html><body><script type="application/ld+json">' + json.dumps({
                 "@type": "JobPosting", "description": LONG_DESC,
-                "url": url, "directApply": True,
+                "url": "https://example.test/apply", "directApply": True,
             }) + f'</script><main><article class="job-description">{LONG_DESC}</article></main></body></html>',
         }
 

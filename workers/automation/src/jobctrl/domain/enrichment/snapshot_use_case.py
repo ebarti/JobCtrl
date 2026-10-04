@@ -40,6 +40,7 @@ from jobctrl.domain.enrichment.snapshot_value_objects import (
     ActiveState,
     FilterOverrideAudit,
     QuarantineReason,
+    SnapshotConfidence,
     SnapshotApplyUrl,
 )
 from jobctrl.domain.enrichment.value_objects import ExtractionTier
@@ -223,8 +224,9 @@ class CapturePostingSnapshotUseCase:
             promote_to_job_enrichment
             and self._enrichment_repository is not None
             and result.description is not None
-            and result.active_state is ActiveState.ACTIVE
-            and result.quarantine_reason is QuarantineReason.NONE
+            and result.active_state in {ActiveState.ACTIVE, ActiveState.UNKNOWN}
+            and result.quarantine_reason in {QuarantineReason.NONE, QuarantineReason.UNKNOWN_ACTIVE_STATE}
+            and (result.confidence is not SnapshotConfidence.LOW or filter_override is not None)
         ):
             promoted = self._maybe_seed_job_enrichment(
                 tenant_id=tenant_id,

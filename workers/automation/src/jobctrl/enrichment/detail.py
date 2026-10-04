@@ -661,7 +661,7 @@ def _extract_detail_page(
             result["full_description"] = extracted.full_description.text
             result["application_url"] = apply_final.value if apply_final else None
             result["tier_used"] = tier_num
-            if active_state is ActiveState.ACTIVE:
+            if active_state in {ActiveState.ACTIVE, ActiveState.UNKNOWN}:
                 result["status"] = "ok" if result["application_url"] else "partial"
             else:
                 result["status"] = "inactive"
@@ -694,6 +694,10 @@ def _detail_failure_retryable(cascade_result: dict) -> bool:
             return PublicFetchFailureKind(cascade_result["fetch_failure_kind"]).retryable
         except ValueError:
             return False
+    # Missing current evidence is not confirmed closure, including access
+    # challenges. URL-safety/fetch-policy failures above retain their own rules.
+    if ActiveState.from_optional(cascade_result.get("active_state")) is ActiveState.UNKNOWN:
+        return True
     status = cascade_result.get("http_status")
     if isinstance(status, int):
         if status in _RETRYABLE_STATUSES:
@@ -704,7 +708,7 @@ def _detail_failure_retryable(cascade_result: dict) -> bool:
     verification_method = str(cascade_result.get("verification_method") or "")
     if (
         active_state is not None
-        and active_state is not ActiveState.ACTIVE
+        and active_state not in {ActiveState.ACTIVE, ActiveState.UNKNOWN}
         and verification_method
         and verification_method != "unknown"
     ):

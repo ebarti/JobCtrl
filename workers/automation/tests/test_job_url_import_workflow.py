@@ -236,7 +236,7 @@ def test_greenhouse_application_heading_is_split_into_role_and_employer(
             "<h1>Job Application for Senior Cybersecurity Engineer at Super Technologies</h1>"
             f"<article class='job-description'>{_DESCRIPTION * 3}</article>"
         ),
-        json_ld=({"@type": "JobPosting", "@id": url, "description": _DESCRIPTION * 3},),
+        json_ld=(),
         status=200,
         fetched_at="2026-08-13T15:00:00+00:00",
     )

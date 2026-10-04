@@ -30,6 +30,9 @@ from jobctrl.infrastructure.temporal.registry import ACTIVITIES, WORKFLOWS
 from .availability_transports import POSTING_URL, SyntheticAvailabilityTransport
 from .temporal_env import time_skipping_env
 from .rpc_contract_probe import build_server
+from .test_scorer import profile_snapshot as _profile_snapshot
+
+profile_snapshot = _profile_snapshot
 
 JOB = "10000000-0000-4000-8000-000000000123"
 
@@ -113,16 +116,16 @@ def test_registered_rpc_server_and_cli_dispatch_the_strict_saved_job_command(run
     assert '"verdict": "active"' in result.stdout
 
 
-def test_unknown_preflight_stops_real_scoring_before_provider_and_keeps_stage_attempts(runtime, monkeypatch):
+def test_closed_preflight_stops_real_scoring_before_provider_and_keeps_stage_attempts(runtime, monkeypatch):
     from jobctrl.scoring import scorer
-    runtime.control.write_text(json.dumps({"state": "unknown"}))
+    runtime.control.write_text(json.dumps({"state": "closed"}))
     monkeypatch.setattr(scorer, "get_connection", lambda: runtime.conn)
     monkeypatch.setattr(scorer, "_ensure_employer_analysis_for_job", lambda **kw: pytest.fail("unknown posting spent provider work"))
     before = runtime.conn.execute("SELECT * FROM job_stage_states").fetchall()
     with pytest.raises(MissingInputError, match="Check availability"):
         scorer.score_job_by_id(JOB, tenant_id=LOCAL_TENANT, profile_snapshot=SimpleNamespace(), resume_text="Synthetic", require_employer_analysis=False)
     assert runtime.conn.execute("SELECT * FROM job_stage_states").fetchall() == before
-    assert availability.read_availability(runtime.conn, JOB)["verdict"] == "unknown"
+    assert availability.read_availability(runtime.conn, JOB)["verdict"] == "closed"
 
 
 def test_unknown_preflight_stops_apply_before_attempt_or_provider(runtime, monkeypatch):
@@ -131,7 +134,7 @@ def test_unknown_preflight_stops_apply_before_attempt_or_provider(runtime, monke
     monkeypatch.setattr(launcher, "get_connection", lambda: runtime.conn)
     monkeypatch.setattr(launcher, "_build_use_case", lambda: pytest.fail("unknown posting launched application"))
     before = runtime.conn.execute("SELECT * FROM job_stage_states").fetchall()
-    assert launcher.run_job({"job_id": JOB, "url": POSTING_URL}, 1, tenant_id=LOCAL_TENANT, dry_run=True) == ("blocked", 0)
+    assert launcher.run_job({"job_id": JOB, "url": POSTING_URL}, 1, tenant_id=LOCAL_TENANT, dry_run=False) == ("blocked", 0)
     assert runtime.conn.execute("SELECT * FROM job_stage_states").fetchall() == before
     assert not runtime.conn.execute("SELECT 1 FROM job_events WHERE event_type IN ('ApplyRunStarted','ApplySubmissionIntentRecorded')").fetchone()
 
@@ -450,3 +453,61 @@ def test_real_context_guard_keeps_failed_status_resource_uncertain_with_its_hash
     assert value["verdict"] == "unknown" and value["reason"] == "browser_guard: browser_resource_http_503", value
     assert any(step["sourceUrl"] == module_url and step["status"] == 503 and step["rawHash"] for step in value["lineage"])
     assert not value["checkInProgress"]
+
+
+def test_real_anonymous_fallback_renders_resource_rich_closed_page_without_exhausting_quota(runtime):
+    public_url = 'https://93.184.216.34/jobs/resource-rich-closed'
+    runtime.conn.execute('UPDATE jobs SET url=? WHERE job_id=?', (public_url, JOB))
+    runtime.conn.commit()
+    styles = ''.join(f'<link rel="stylesheet" href="/style-{i}.css">' for i in range(16))
+    html = f'<html><head><title>Synthetic role</title>{styles}</head><body><aside>Applications are closed</aside><img src="/optional.png"></body></html>'.encode()
+    calls = []
+    def fetch(url):
+        calls.append(url)
+        if url == public_url:
+            return availability.Response(url, url, 200, html)
+        if url.endswith('.css'):
+            return availability.Response(url, url, 200, b'body { color: black; }', content_type='text/css')
+        return availability.Response(url, url, 404, b'Optional asset not found', content_type='image/png')
+    value = availability.check_availability(JOB, conn=runtime.conn, transport=fetch)
+    assert value['verdict'] == 'closed', value
+    assert value['method'] == 'anonymous_browser'
+    assert sum(url.endswith('.css') for url in calls) == 16
+    assert len(calls) > availability.MAX_REQUESTS
+    assert runtime.conn.execute("SELECT COUNT(*) FROM job_events WHERE entity_kind='availability_acquisition'").fetchone()[0] == 1
+    assert not value['checkInProgress']
+    assert all(step['rawHash'] for step in value['lineage'])
+
+
+@pytest.mark.parametrize('stage', ['score', 'tailor', 'cover'])
+def test_unknown_availability_reaches_real_preparation_provider_boundary(runtime, monkeypatch, profile_snapshot, stage):
+    from jobctrl.scoring import scorer, tailor, cover_letter
+    from jobctrl.domain.identifiers import JobId
+    from .test_apply_regressions import _insert_ready_job
+    job_id = _insert_ready_job(runtime.conn, url=POSTING_URL + '-preparation')
+    runtime.conn.execute("UPDATE job_materials SET status='resume_approved' WHERE job_id=?", (job_id,))
+    runtime.conn.commit()
+    claim, _ = availability.claim_job(runtime.conn, job_id)
+    availability.complete_check(runtime.conn, claim, verdict='unknown', reason='access_challenge', method='fixture', lineage=[])
+    for module in (scorer, tailor, cover_letter):
+        monkeypatch.setattr(module, 'get_connection', lambda: runtime.conn)
+    class ReachedProvider(Exception):
+        pass
+    def provider(*_a, **_kw):
+        assert not runtime.conn.in_transaction
+        raise ReachedProvider(stage)
+    monkeypatch.setattr(scorer, '_ensure_employer_analysis_for_job', lambda **_kw: None)
+    monkeypatch.setattr(scorer, '_build_use_case', provider)
+    monkeypatch.setattr(tailor, '_build_llm_policy', provider)
+    monkeypatch.setattr(cover_letter, '_build_use_case', provider)
+    with pytest.raises(ReachedProvider, match=stage):
+        if stage == 'score':
+            scorer.score_job_by_id(JobId(job_id), tenant_id=LOCAL_TENANT, profile_snapshot=profile_snapshot,
+                                   resume_text='Synthetic', require_employer_analysis=False, rescore=True)
+        elif stage == 'tailor':
+            tailor.tailor_job_by_id(JobId(job_id), tenant_id=LOCAL_TENANT, retailor=True, snapshot=profile_snapshot, min_score=0,
+                                   allow_low_fit_override=True, pdf_renderer=SimpleNamespace())
+        else:
+            cover_letter.cover_letter_by_id(JobId(job_id), tenant_id=LOCAL_TENANT, snapshot=profile_snapshot)
+    assert availability.read_availability(runtime.conn, job_id)['verdict'] == 'unknown'
+    assert not runtime.conn.execute("SELECT 1 FROM job_events WHERE entity_kind='posting_availability_request'").fetchone()

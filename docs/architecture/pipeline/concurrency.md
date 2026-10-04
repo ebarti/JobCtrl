@@ -214,14 +214,16 @@ or shared queue contention cannot be bounded.
 
 ## Saved Posting Check Bounds
 
-Availability conservatively runs one check per workspace at a time. Durable
-job/workspace/actual-host leases expire after five minutes and fence completion;
-crashed or superseded owners cannot publish late evidence. A workspace admits
-at most one sweep per minute, 25 jobs per sweep and 100 actual outbound
-acquisitions per hour. Manual/preflight checks share those bounds and the
-once-per-minute job limit. Every redirect and anonymous browser resource
-reserves its actual host with at least two seconds between starts and one
-in-flight request, retaining stricter shared policy/cooldown. Requests are
-bounded to 12 per check, four canonical redirect hops, 20-second HTTP/browser
-operations and one million response bytes. All waits and network work happen
-outside SQLite writer transactions.
+Availability owns per-job five-minute leases and actual-host reservations;
+independent jobs do not contend for a workspace-wide execution lease. Completion
+is fenced against crash recovery, supersession and canonical URL changes. A
+workspace admits at most one sweep per minute, 25 jobs per sweep and 100 posting
+acquisitions per hour; sweeps may use 80, preserving 20 for foreground work.
+Each acquisition is charged once, independently of its request/resource count.
+Every redirect and anonymous browser resource reserves its actual host, with at
+least two seconds between starts and one in flight, retaining stricter shared
+policy/cooldown. Each check permits 12 posting/API requests plus 64 browser
+resources, four canonical redirect hops, 20-second HTTP/browser operations,
+one million bytes per response and 12 million bytes per check. All waits and
+network work happen outside SQLite writer transactions. Local refusals release
+job ownership without recording employer evidence or increasing evidence backoff.

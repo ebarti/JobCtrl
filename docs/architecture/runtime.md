@@ -878,7 +878,8 @@ Jobs reads calculate overdue from retained timestamps.
 
 `enrichment/availability.py` owns acquisition and observation without invoking
 Discovery hygiene or policy deletion. Its durable event-ledger leases serialize
-checks per workspace and job and reserve each actual request host; acquisition
+checks per job and reserve each actual request host; independent jobs can overlap,
+with foreground capacity reserved in the hourly acquisition quota; acquisition
 runs after short writer transactions commit. Each check
 caps a full acquisition at 120 seconds, including rendered capture and browser
 cleanup. Browser supervision reserves the final three seconds for cancellation

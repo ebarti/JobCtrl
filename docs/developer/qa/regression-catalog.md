@@ -755,12 +755,14 @@ method lineage; extension pairing alone cannot fabricate authenticated evidence.
 
 Exercise saved-job startup/reconnect/heartbeat catch-up before, during and after
 enrichment, 25-job selection,
-100 acquisitions/hour, once/minute coalescing, two-second actual-host pacing,
+100 posting acquisitions/hour with 20 reserved for foreground work, once/minute
+coalescing, two-second actual-host pacing,
 backoff/Retry-After, independent process leases, crash recovery and stale fences.
 Hidden/inactive status templates cannot close a visible posting. Computed browser
 visibility and blocked subresources must survive conversion; incomplete renders
-remain unknown with reason/hash lineage. Refused commands surface durable request
-deferral/retry feedback without inventing an acquisition attempt.
+remain unknown with reason/hash lineage. Only explicit refused commands surface coalesced durable request
+deferral/retry feedback. Local contention, quota and pacing refusals preserve
+observation clocks and failure backoff. Independent job claims can overlap.
 Real Chromium fixtures must cover the first popup request and iframe resources
 through actual-host reservations, blocked service-worker/native connections with
 owned HTTP/UDP sinks, and failed status-resource hashes. A hung renderer or
@@ -773,7 +775,14 @@ call `retire_invalid_source_jobs`, emit `JobDeleted` or write tombstones.
 
 Real Temporal worker, API/RPC/CLI and rendered browser QA must show explicit
 refresh, uncertainty, overdue/offline state and closed-to-active reversal without
-Discover. Before expensive preparation and reviewed Apply, stale/unknown evidence
-must stop provider/browser work and submit intent without consuming attempt
-ownership. No application is submitted during QA. External transports may be
+Discover. Restore the original body-only, unbound JSON-LD, unzoned-deadline and
+guest-LinkedIn fixtures: unknown availability must preserve usable content and
+allow preparation and independently bound human-reviewed/rehearsal paths.
+Unattended Apply must remain blocked without positive evidence. Confirmed closure
+and canonical URL races stop provider work and submit intent. Approval polls and
+manual-ATS refusals must perform zero acquisition; an eligible claim checks only
+one candidate. Exercise a real CSS-dependent closed page with more than 12
+resources, one hourly acquisition charge and harmless optional asset errors;
+failed required status scripts must remain uncertain. Use 300,000 unrelated
+events and 500 unchecked jobs, without ANALYZE, to bound read and sweep work. No application is submitted during QA. External transports may be
 deterministic; production claims/classifier/dispatch/persistence remain real.

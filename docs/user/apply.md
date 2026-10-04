@@ -71,13 +71,15 @@ wrap below their binding explanation; no decision or audit section is removed.
 
 ## Approval And Automation Modes
 
-Before Apply claims a prepared job or opens its provider/browser path, it needs
-a successful active posting check from the last 15 minutes. The owned email
-sender checks the original posting again before recording submit intent, so a
-replacement posting cannot authorize the approved attempt. An unknown, deferred or
-unavailable result stops the attempt; use Job Detail's **Check availability**
-or inspect the employer posting before retrying. This read-only check preserves
-your approved materials and decision, and grants no submission authority.
+Apply checks only the locally eligible candidate after repeat-application,
+attempt and approval gates. When availability stays unknown, dry-run rehearsals
+and the existing human-reviewed/manual Apply path remain available; approval must
+still match the current materials, profile, application URL and rehearsal.
+Unattended Apply requires positive active evidence within 15 minutes. The owned
+email sender rechecks the original posting and current bound review before
+submit intent. Confirmed unavailability or a changed posting stops the attempt.
+Use Job Detail's **Check availability** or **Inspect employer posting** to review
+uncertainty. Checks preserve approved materials and grant no submission authority.
 See [saved posting availability](enrichment-and-extraction.md#saved-posting-availability)
 for cadence, offline behavior and acquisition limits.
 

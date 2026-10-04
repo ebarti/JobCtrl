@@ -6,6 +6,7 @@ import { RpcMethods } from "@jobctrl/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { buildApp } from "../src/server.js";
+import { BUILT_IN_RESUME_TEMPLATE_THEME } from "../src/resume-templates.js";
 import { postingAvailability } from "../src/read-model.js";
 import { initializeExactV7Database } from "./v7-schema.js";
 
@@ -19,6 +20,11 @@ function fixture() {
   const dbPath = path.join(appDir, "jobs.db");
   initializeExactV7Database(dbPath);
   const db = new Database(dbPath);
+  db.prepare("INSERT INTO resume_templates (tenant_id, template_id, display_name, status, built_in, created_at, updated_at) " +
+    "VALUES ('local', 'built_in:modern-html', 'Modern HTML', 'active', 1, ?, ?)").run("2026-10-01", "2026-10-01");
+  db.prepare("INSERT INTO resume_template_versions (tenant_id, version_id, template_id, version_number, display_name, status, theme_json, layout_json, content_hash, created_at) " +
+    "VALUES ('local', 'built_in:modern-html:v1', 'built_in:modern-html', 1, 'Modern HTML', 'active', ?, '{}', 'seed-hash', ?)")
+    .run(JSON.stringify(BUILT_IN_RESUME_TEMPLATE_THEME), "2026-10-01");
   db.prepare("INSERT INTO jobs (tenant_id, job_id, url, title, site, discovered_at) VALUES ('local', ?, ?, 'Synthetic role', 'synthetic', '2026-10-01T00:00:00Z')").run(JOB, URL);
   cleanups.push(() => { db.close(); fs.rmSync(appDir, { recursive: true, force: true }); });
   return { db, appDir, dbPath };
@@ -67,4 +73,25 @@ describe("saved posting availability", () => {
       expect(db.prepare("SELECT COUNT(*) AS n FROM job_events").get()).toEqual(count);
     } finally { reader.close(); }
   });
+
+  it("bounds Jobs GET and missing-observation reads with a 300k-event ledger before ANALYZE", async () => {
+    const { db, dbPath, appDir } = fixture();
+    db.prepare("WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<300000) " +
+      "INSERT INTO job_events (tenant_id, identity_version, stage, event_type, entity_kind, entity_ref, occurred_at, payload_json) " +
+      "SELECT 'local', 1, 'enrich', 'AvailabilityLeaseChanged', 'unrelated', 'ledger', '2026-10-01T00:00:00Z', '{}' FROM n").run();
+    const start = performance.now();
+    for (let i = 0; i < 500; i++) {
+      expect(postingAvailability(db, `20000000-0000-4000-8000-${String(i).padStart(12, "0")}`).verdict).toBe("unknown");
+    }
+    expect(performance.now() - start).toBeLessThan(2000);
+    const call = vi.fn(async () => { throw new Error("Jobs GET attempted acquisition"); });
+    const app = buildApp({ dbPath, configPath: path.join(appDir, "config.json"), providerDispatcher: { call, close: async () => undefined } });
+    cleanups.push(() => app.close());
+    const before = db.prepare("SELECT COUNT(*) AS n FROM job_events").get();
+    const response = await app.inject({ method: "GET", url: "/v1/jobs" });
+    expect(response.statusCode, response.body).toBe(200);
+    expect(call).not.toHaveBeenCalled();
+    expect(db.prepare("SELECT COUNT(*) AS n FROM job_events").get()).toEqual(before);
+  });
+
 });

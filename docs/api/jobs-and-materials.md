@@ -83,7 +83,9 @@ Jobs list/detail read the latest `availability` observation directly from the
 Enrichment event ledger, independently of projection lag. The response exposes
 separate attempt/success clocks, latest uncertainty, bounded hashed acquisition
 lineage, next due, calculated overdue/in-progress state, and optional deferred
-command reason/request time/retry time. Refusal does not invent an attempt. It performs no
+explicit command reason/request time/retry time. Unchanged refusals coalesce;
+automatic/preflight checks do not create user request feedback. Local refusal does
+not invent an attempt or raise evidence backoff. It performs no
 employer network calls and appends no events. The
 [complete contract](complete-contract.md#saved-posting-availability) owns fields;
 the [enrichment guide](../user/enrichment-and-extraction.md#saved-posting-availability)

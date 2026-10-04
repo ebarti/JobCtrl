@@ -39,6 +39,10 @@ SWEEP_LIMIT = 25
 HOURLY_LIMIT = 100
 MAX_BODY_BYTES = 1_000_000
 MAX_REQUESTS = 12
+MAX_BROWSER_REQUESTS = 64
+MAX_ACQUISITION_BYTES = 12_000_000
+FOREGROUND_RESERVE = 20
+LOCAL_DEFERRALS = frozenset({"workspace_hourly_quota", "host_pacing_or_cooldown", "shared_host_cooldown", "stale_lease", "candidate_changed"})
 REQUEST_TIMEOUT_SECONDS = 20
 ACQUISITION_TIMEOUT_SECONDS = 120
 BROWSER_CLEANUP_GRACE_SECONDS = 3
@@ -57,7 +61,8 @@ def _instant(value: object) -> datetime | None:
 
 
 def _latest(conn: sqlite3.Connection, tenant_id: str, kind: str, ref: str) -> dict[str, Any]:
-    row = conn.execute("SELECT payload_json FROM job_events WHERE tenant_id = ? "
+    # Pin the entity index: append-order lookup must never scan a tenant ledger.
+    row = conn.execute("SELECT payload_json FROM job_events INDEXED BY idx_job_events_entity WHERE tenant_id = ? "
                        "AND entity_kind = ? AND entity_ref = ? ORDER BY event_id DESC LIMIT 1",
                        (tenant_id, kind, ref)).fetchone()
     return json.loads(row[0]) if row and row[0] else {}
@@ -93,8 +98,7 @@ def fresh_active(conn: sqlite3.Connection, job_id: str, *, max_age: timedelta,
     if policy and policy[0] != "active":
         return False
     return bool(value.get("verdict") == "active" and value.get("lastSuccessfulState") == "active"
-                and verified and timedelta(0) <= (now or _now()) - verified <= max_age
-                and not value.get("checkInProgress"))
+                and verified and timedelta(0) <= (now or _now()) - verified <= max_age)
 
 
 def _event(conn: sqlite3.Connection, tenant_id: str, kind: str, ref: str, payload: dict[str, Any],
@@ -119,6 +123,7 @@ class Claim:
     source: str
     owner: str
     expires_at: datetime
+    automatic: bool = False
 
 
 class DeferredCheck(Exception):
@@ -130,7 +135,7 @@ class DeferredCheck(Exception):
 
 
 def claim_job(conn: sqlite3.Connection, job_id: str, *, tenant_id: str = str(LOCAL_TENANT),
-              now: datetime | None = None, automatic: bool = False) -> tuple[Claim | None, str]:
+              now: datetime | None = None, automatic: bool = False, explicit: bool = True) -> tuple[Claim | None, str]:
     now = now or _now()
     job_id = str(canonical_job_id(job_id))
     _begin(conn)
@@ -142,8 +147,7 @@ def claim_job(conn: sqlite3.Connection, job_id: str, *, tenant_id: str = str(LOC
             return None, "job_unavailable"
         latest = _latest(conn, tenant_id, "posting_availability", job_id)
         lease = _latest(conn, tenant_id, "availability_lease", f"job:{job_id}")
-        workspace = _latest(conn, tenant_id, "availability_lease", "workspace")
-        for current in (lease, workspace):
+        for current in (lease,):
             if current.get("owner") and (_instant(current.get("expiresAt")) or now) > now:
                 conn.rollback()
                 return None, "check_in_progress"
@@ -152,12 +156,12 @@ def claim_job(conn: sqlite3.Connection, job_id: str, *, tenant_id: str = str(LOC
             conn.rollback()
             return None, "minimum_interval"
         due = _instant(latest.get("nextDueAt"))
-        if due and due > now and (automatic or latest.get("verdict") == "unknown"):
+        if due and due > now and (automatic or not explicit and latest.get("verdict") == "unknown"):
             conn.rollback()
             return None, "retry_backoff"
-        claim = Claim(tenant_id, job_id, row[0], row[1] or "unknown", uuid4().hex, now + LEASE_TTL)
+        claim = Claim(tenant_id, job_id, row[0], row[1] or "unknown", uuid4().hex, now + LEASE_TTL, automatic)
         payload = {"owner": claim.owner, "expiresAt": claim.expires_at.isoformat(), "startedAt": now.isoformat()}
-        for ref in (f"job:{job_id}", "workspace"):
+        for ref in (f"job:{job_id}",):
             _event(conn, tenant_id, "availability_lease", ref, payload, now=now)
         conn.commit()
         return claim, "claimed"
@@ -184,7 +188,7 @@ def _eligible(conn: sqlite3.Connection, tenant_id: str, job_id: str) -> bool:
 
 
 def _fence(conn: sqlite3.Connection, claim: Claim, now: datetime) -> None:
-    for ref in (f"job:{claim.job_id}", "workspace"):
+    for ref in (f"job:{claim.job_id}",):
         lease = _latest(conn, claim.tenant_id, "availability_lease", ref)
         if lease.get("owner") != claim.owner or (_instant(lease.get("expiresAt")) or now) <= now:
             raise DeferredCheck("stale_lease")
@@ -195,17 +199,19 @@ def _fence(conn: sqlite3.Connection, claim: Claim, now: datetime) -> None:
 
 
 def reserve_request(conn: sqlite3.Connection, claim: Claim, url: str, *, now: datetime | None = None) -> str:
-    """Reserve the actual host and hourly acquisition before each outbound request."""
+    """Reserve each actual host; charge the hourly quota once per acquisition."""
     now = now or _now()
     host = (urlsplit(url).hostname or "").lower()
     _begin(conn)
     try:
         _fence(conn, claim, now)
-        count = conn.execute("SELECT COUNT(*) FROM job_events WHERE tenant_id = ? "
-                             "AND entity_kind = 'availability_request' AND julianday(occurred_at) > julianday(?)",
+        admitted = _latest(conn, claim.tenant_id, "availability_acquisition", claim.owner)
+        count = conn.execute("SELECT COUNT(*) FROM job_events INDEXED BY idx_job_events_entity WHERE tenant_id = ? "
+                             "AND entity_kind = 'availability_acquisition' AND occurred_at > ?",
                              (claim.tenant_id, (now - timedelta(hours=1)).isoformat())).fetchone()[0]
         host_state = _latest(conn, claim.tenant_id, "availability_lease", f"host:{host}")
-        if count >= HOURLY_LIMIT:
+        limit = HOURLY_LIMIT - FOREGROUND_RESERVE if claim.automatic else HOURLY_LIMIT
+        if not admitted and count >= limit:
             raise DeferredCheck("workspace_hourly_quota")
         if (host_state.get("owner") and (_instant(host_state.get("expiresAt")) or now) > now
                 or (_instant(host_state.get("nextStartAt")) or now) > now
@@ -215,6 +221,9 @@ def reserve_request(conn: sqlite3.Connection, claim: Claim, url: str, *, now: da
                {"owner": claim.owner, "expiresAt": claim.expires_at.isoformat(),
                 "nextStartAt": (now + timedelta(seconds=2)).isoformat(),
                 "cooldownUntil": host_state.get("cooldownUntil")}, now=now)
+        if not admitted:
+            _event(conn, claim.tenant_id, "availability_acquisition", claim.owner,
+                   {"owner": claim.owner, "automatic": claim.automatic}, now=now)
         _event(conn, claim.tenant_id, "availability_request", uuid4().hex,
                {"owner": claim.owner, "host": host, "url": url}, job_id=claim.job_id, now=now)
         conn.commit()
@@ -256,6 +265,9 @@ class Response:
 def _public_get_in_process(url: str) -> Response:
     from jobctrl.infrastructure.network.public_http import build_public_http_opener
     from jobctrl.infrastructure.network.politeness import resolve_honest_user_agent
+    from jobctrl.infrastructure.network.url_safety import validate_public_http_url
+    if not validate_public_http_url(url).allowed:
+        raise DeferredCheck("unsafe_posting_url")
     request = Request(url, headers={"User-Agent": resolve_honest_user_agent().header_value(),
                                     "Accept": "application/json,text/html"}, method="GET")
     # Each redirect is acquired separately so its actual host is reserved first.
@@ -395,7 +407,11 @@ def _anonymous_browser_in_process(url: str, *, fetcher: Callable[[str, str], Res
             })();""")
             def fetch_route(request_url: str, method: str, headers: Any) -> RouteFulfillment:
                 response = fetcher(request_url, "browser_resource")
-                if response.status not in range(200, 300):
+                # Optional assets may fail normally. Failed executable/status
+                # dependencies cannot prove a complete current status capture.
+                destination = str(headers.get("sec-fetch-dest", ""))
+                if response.status >= 400 and (destination in {"script", "style", "iframe"}
+                        or urlsplit(request_url).path.lower().endswith((".js", ".mjs", ".css"))):
                     raise DeferredCheck(f"browser_resource_http_{response.status}")
                 return RouteFulfillment(response.status, {"content-type": response.content_type}, response.body)
             # Context routing covers the first popup request and every frame.
@@ -558,6 +574,7 @@ class Acquisition:
                  browser: Callable[[str], DetailPage] | None = None) -> None:
         self.conn, self.claim, self.transport, self.browser = conn, claim, transport or public_get, browser
         self.lineage: list[dict[str, Any]] = []
+        self.bytes_received = 0
         self.deadline = time.monotonic() + ACQUISITION_TIMEOUT_SECONDS
 
     def _get(self, url: str, method: str, *, deadline: float | None = None) -> Response:
@@ -584,7 +601,10 @@ class Acquisition:
         deadline = min(self.deadline, deadline if deadline is not None else self.deadline)
         if time.monotonic() >= deadline:
             raise DeferredCheck("acquisition_deadline")
-        if len(self.lineage) >= MAX_REQUESTS:
+        browser_resource = method == "browser_resource"
+        used = sum(entry.get("method") == "browser_resource" for entry in self.lineage) if browser_resource else sum(
+            entry.get("method") != "browser_resource" for entry in self.lineage)
+        if used >= (MAX_BROWSER_REQUESTS if browser_resource else MAX_REQUESTS):
             raise DeferredCheck("request_budget")
         # A fallback may reuse a host immediately after its prior request.
         # Wait only for the fixed pacing interval, outside any write transaction.
@@ -593,6 +613,7 @@ class Acquisition:
             raise DeferredCheck("acquisition_deadline")
         host = reserve_request(self.conn, self.claim, url)
         retry = 0.0
+        transport_started = False
         from jobctrl.domain.discovery.source_registry import ENRICHMENT_CRAWL_POLICY
         from jobctrl.infrastructure.network import PolitenessGateway, RunBudgetCounter
         gateway = PolitenessGateway()
@@ -600,14 +621,18 @@ class Acquisition:
                          min_request_interval_seconds=max(2, ENRICHMENT_CRAWL_POLICY.min_request_interval_seconds),
                          max_concurrent_requests_per_host=1)
         try:
-            with gateway.guard(url, policy, RunBudgetCounter(1), timeout_seconds=max(0, deadline - time.monotonic())) as decision:
+            with gateway.guard(url, policy, RunBudgetCounter(1), timeout_seconds=max(0, min(2, deadline - time.monotonic()))) as decision:
                 if not decision.allowed:
                     raise DeferredCheck("shared_host_cooldown")
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     raise DeferredCheck("acquisition_deadline")
+                transport_started = True
                 response = (self.transport(url, timeout=remaining) if self.transport is _PRODUCTION_PUBLIC_GET
                             else self.transport(url))
+            self.bytes_received += len(response.body)
+            if len(response.body) > MAX_BODY_BYTES or self.bytes_received > MAX_ACQUISITION_BYTES:
+                raise DeferredCheck("response_body_budget")
             retry = response.retry_after
             if retry:
                 gateway.note_retry_after(url, retry)
@@ -621,7 +646,7 @@ class Acquisition:
             self.lineage.append({"sourceUrl": url, "finalUrl": None, "status": None,
                                  "method": method, "rawHash": None, "error": type(error).__name__})
             if isinstance(error, TimeoutError):
-                raise DeferredCheck("acquisition_deadline") from error
+                raise DeferredCheck("acquisition_deadline" if transport_started else "shared_host_cooldown") from error
             raise
         finally:
             release_host(self.conn, self.claim, host, retry_after=retry)
@@ -713,6 +738,13 @@ def complete_check(conn: sqlite3.Connection, claim: Claim, *, verdict: str, reas
     _begin(conn)
     try:
         _fence(conn, claim, now)
+        if reason in LOCAL_DEFERRALS:
+            lease = _latest(conn, claim.tenant_id, "availability_lease", f"job:{claim.job_id}")
+            _event(conn, claim.tenant_id, "availability_lease", f"job:{claim.job_id}",
+                   {**lease, "owner": None, "startedAt": None, "expiresAt": now.isoformat()}, now=now)
+            conn.commit()
+            return {**read_availability(conn, claim.job_id, tenant_id=claim.tenant_id, now=now),
+                    "requestStatus": "deferred", "requestReason": reason}
         old = _latest(conn, claim.tenant_id, "posting_availability", claim.job_id)
         failures = min(10, int(old.get("consecutiveFailures", 0)) + 1) if verdict == "unknown" else 0
         interval = timedelta(seconds=min(86400, 300 * 2 ** (failures - 1))) if failures else (
@@ -740,7 +772,7 @@ def complete_check(conn: sqlite3.Connection, claim: Claim, *, verdict: str, reas
                                      "previousState": previous.value, "verificationMethod": method, "verifiedAt": now.isoformat()})
         _event(conn, claim.tenant_id, "posting_availability", claim.job_id, value,
                job_id=claim.job_id, observed=True, now=now)
-        for ref in (f"job:{claim.job_id}", "workspace"):
+        for ref in (f"job:{claim.job_id}",):
             lease = _latest(conn, claim.tenant_id, "availability_lease", ref)
             _event(conn, claim.tenant_id, "availability_lease", ref,
                    {**lease, "owner": None, "expiresAt": now.isoformat()}, now=now)
@@ -751,61 +783,110 @@ def complete_check(conn: sqlite3.Connection, claim: Claim, *, verdict: str, reas
         raise
 
 
+def _record_deferred_request(conn: sqlite3.Connection, tenant_id: str, job_id: str, request: dict[str, Any]) -> None:
+    _begin(conn)
+    try:
+        previous = _latest(conn, tenant_id, "posting_availability_request", job_id)
+        observation = _latest(conn, tenant_id, "posting_availability", job_id)
+        if (previous.get("reason") != request["reason"] or previous.get("retryAt") != request["retryAt"]
+                or (_instant(previous.get("requestedAt")) or datetime.min.replace(tzinfo=timezone.utc)) <
+                   (_instant(observation.get("lastAttemptedAt")) or datetime.min.replace(tzinfo=timezone.utc))):
+            _event(conn, tenant_id, "posting_availability_request", job_id, request, job_id=job_id)
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+
+
 def check_availability(job_id: str, *, tenant_id: str = str(LOCAL_TENANT), conn: sqlite3.Connection | None = None,
-                       automatic: bool = False, transport: Callable[[str], Response] | None = None,
+                       automatic: bool = False, explicit: bool = True, transport: Callable[[str], Response] | None = None,
                        browser: Callable[[str], DetailPage] | None = None) -> dict[str, Any]:
     from jobctrl.database import get_connection
     conn = conn if conn is not None else get_connection()
-    claim, reason = claim_job(conn, job_id, tenant_id=tenant_id, automatic=automatic)
+    claim, reason = claim_job(conn, job_id, tenant_id=tenant_id, automatic=automatic, explicit=explicit)
     if claim is None:
         now = _now()
         latest = _latest(conn, tenant_id, "posting_availability", job_id)
         lease = _latest(conn, tenant_id, "availability_lease", f"job:{job_id}")
-        workspace = _latest(conn, tenant_id, "availability_lease", "workspace")
         retry = (_instant(latest.get("nextDueAt")) if reason == "retry_backoff" else
                  (_instant(lease.get("startedAt")) or now) + timedelta(minutes=1) if reason == "minimum_interval" else
-                 max(_instant(lease.get("expiresAt")) or now, _instant(workspace.get("expiresAt")) or now) if reason == "check_in_progress" else None)
+                 (_instant(lease.get("expiresAt")) or now) if reason == "check_in_progress" else None)
         request = {"jobId": job_id, "status": "deferred", "reason": reason,
                    "requestedAt": now.isoformat(), "retryAt": retry.isoformat() if retry else None}
-        _begin(conn)
-        try:
-            _event(conn, tenant_id, "posting_availability_request", job_id, request, job_id=job_id, now=now)
-            conn.commit()
-        except BaseException:
-            conn.rollback()
-            raise
+        if explicit and not automatic:
+            _record_deferred_request(conn, tenant_id, job_id, request)
         return {**read_availability(conn, job_id, tenant_id=tenant_id), "requestStatus": "deferred", "requestReason": reason}
     acquisition = Acquisition(conn, claim, transport=transport, browser=browser)
     try:
         verdict, reason, method = acquisition.acquire()
     except Exception as error:
         verdict, reason, method = "unknown", str(error) if isinstance(error, DeferredCheck) else "transport_failure", "acquisition_failed"
-    return complete_check(conn, claim, verdict=verdict, reason=reason, method=method, lineage=acquisition.lineage)
+    value = complete_check(conn, claim, verdict=verdict, reason=reason, method=method, lineage=acquisition.lineage)
+    if explicit and not automatic and value.get("requestStatus") == "deferred":
+        now = _now()
+        _record_deferred_request(conn, tenant_id, job_id, {"jobId": job_id, "status": "deferred", "reason": reason,
+                                 "requestedAt": now.isoformat(), "retryAt": None})
+        value = {**read_availability(conn, job_id, tenant_id=tenant_id), "requestStatus": "deferred", "requestReason": reason}
+    return value
+
+
+def candidate_ready(conn: sqlite3.Connection, job_id: str, *, max_age: timedelta,
+                    tenant_id: str = str(LOCAL_TENANT), allow_unknown: bool = False) -> bool:
+    """Unknown is usable only for preparation or an independently supervised path.
+
+    This never promotes uncertainty to active or overrides confirmed closure.
+    """
+    if fresh_active(conn, job_id, max_age=max_age, tenant_id=tenant_id):
+        return True
+    if not allow_unknown:
+        return False
+    row = conn.execute("SELECT url FROM jobs WHERE tenant_id = ? AND job_id = ?", (tenant_id, job_id)).fetchone()
+    if row is None or _deleted(conn, tenant_id, job_id):
+        return False
+    value = read_availability(conn, job_id, tenant_id=tenant_id)
+    policy = conn.execute("SELECT latest_active_state FROM posting_snapshot_sets WHERE tenant_id = ? AND job_id = ?",
+                          (tenant_id, job_id)).fetchone()
+    return bool(value.get("verdict", "unknown") in {"active", "unknown"}
+                and value.get("lastSuccessfulState") not in {"closed", "expired", "removed", "location_incompatible"}
+                and value.get("postingUrl", row[0]) == row[0]
+                and (not policy or policy[0] in {"active", "unknown"}))
 
 
 def require_fresh_active(job_id: str, *, max_age: timedelta = timedelta(hours=6),
                          tenant_id: str = str(LOCAL_TENANT), conn: sqlite3.Connection | None = None,
-                         expected_posting_url: str | None = None) -> None:
+                         expected_posting_url: str | None = None, allow_unknown: bool = False) -> None:
     from jobctrl.database import get_connection
-    from jobctrl.domain.errors import MissingInputError
+    from jobctrl.domain.errors import MissingInputError, SourceUnavailableError
     conn = conn if conn is not None else get_connection()
+    row = conn.execute("SELECT url FROM jobs WHERE tenant_id = ? AND job_id = ?", (tenant_id, job_id)).fetchone()
+    if row is None or _deleted(conn, tenant_id, job_id) or (expected_posting_url is not None and row[0] != expected_posting_url):
+        raise MissingInputError("Posting availability candidate changed. Check availability before retrying.")
+    # Attempt a refresh even for the supervised unknown path, subject to local
+    # admission and automatic evidence backoff. Deferrals do not fabricate evidence.
     if not fresh_active(conn, job_id, max_age=max_age, tenant_id=tenant_id):
-        check_availability(job_id, tenant_id=tenant_id, conn=conn)
-    if not fresh_active(conn, job_id, max_age=max_age, tenant_id=tenant_id) or (
-        expected_posting_url is not None and read_availability(conn, job_id, tenant_id=tenant_id).get("postingUrl") != expected_posting_url
-    ):
-        raise MissingInputError("Posting availability is unverified or unavailable. Check availability or inspect the employer posting before retrying.")
+        check_availability(job_id, tenant_id=tenant_id, conn=conn, explicit=False)
+    row = conn.execute("SELECT url FROM jobs WHERE tenant_id = ? AND job_id = ?", (tenant_id, job_id)).fetchone()
+    if row is None or (expected_posting_url is not None and row[0] != expected_posting_url):
+        raise MissingInputError("Posting availability candidate changed. Check availability before retrying.")
+    if not candidate_ready(conn, job_id, max_age=max_age, tenant_id=tenant_id, allow_unknown=allow_unknown):
+        value = read_availability(conn, job_id, tenant_id=tenant_id)
+        if value.get("verdict", "unknown") in {"active", "unknown"} or value.get("checkInProgress"):
+            raise SourceUnavailableError("Posting availability is unverified. Check availability or use the human-reviewed/manual Apply path.")
+        raise MissingInputError("Posting is unavailable. Check availability before retrying.")
 
 
 def assert_fresh_candidate(conn: sqlite3.Connection, job_id: str, expected_posting_url: str,
-                           *, tenant_id: str = str(LOCAL_TENANT), max_age: timedelta = timedelta(hours=6)) -> None:
+                           *, tenant_id: str = str(LOCAL_TENANT), max_age: timedelta = timedelta(hours=6),
+                           allow_unknown: bool = False) -> None:
     """Recheck URL/evidence under the stage owner's short SQLite writer claim."""
     from jobctrl.domain.errors import MissingInputError
     if not conn.in_transaction:
         raise RuntimeError("Availability candidate fencing requires the stage writer transaction")
     row = conn.execute("SELECT url FROM jobs WHERE tenant_id = ? AND job_id = ?", (str(tenant_id), str(job_id))).fetchone()
-    if row is None or row[0] != expected_posting_url or not fresh_active(conn, str(job_id), tenant_id=str(tenant_id), max_age=max_age):
-        raise MissingInputError("Posting availability candidate changed. Check availability or inspect the employer posting before retrying.")
+    if row is None or row[0] != expected_posting_url or not candidate_ready(
+        conn, str(job_id), tenant_id=str(tenant_id), max_age=max_age, allow_unknown=allow_unknown
+    ):
+        raise MissingInputError("Posting availability candidate changed. Check availability before retrying.")
 
 
 def due_jobs(conn: sqlite3.Connection, *, tenant_id: str = str(LOCAL_TENANT),
@@ -814,7 +895,7 @@ def due_jobs(conn: sqlite3.Connection, *, tenant_id: str = str(LOCAL_TENANT),
     rows = conn.execute("""
         WITH candidates AS (
             SELECT j.job_id, j.discovered_at,
-              (SELECT json_extract(e.payload_json, '$.nextDueAt') FROM job_events e
+              (SELECT json_extract(e.payload_json, '$.nextDueAt') FROM job_events e INDEXED BY idx_job_events_entity
                WHERE e.tenant_id = j.tenant_id AND e.entity_kind = 'posting_availability'
                  AND e.entity_ref = j.job_id ORDER BY e.event_id DESC LIMIT 1) AS due,
               CASE WHEN EXISTS (SELECT 1 FROM job_stage_states s WHERE s.tenant_id = j.tenant_id

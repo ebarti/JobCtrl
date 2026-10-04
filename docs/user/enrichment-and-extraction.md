@@ -43,7 +43,8 @@ posting detail to use it.” The current decision path is:
 4. **Quarantine instead of guessing.** Unknown active state or low content
    confidence without an override is held for review. An explicit operator
    override can admit a low-confidence snapshot and is persisted with the audit
-   trail; unknown active state remains quarantined. Application-target readiness
+   trail; unknown active state remains labeled for review while readable, trusted
+   content can feed preparation. Application-target readiness
    is a separate fact, so a missing external application URL cannot quarantine
    readable posting content or block Tailor. A posting verified as closed,
    expired, or removed is recorded separately as `posting_inactive` rather than
@@ -115,15 +116,19 @@ and reconnect catch up in groups of at most 25. Hidden/deleted jobs, running
 applications and terminal application outcomes are excluded from automatic
 checks. Manual checks remain available for saved, inspectable jobs.
 
-The worker checks one posting at a time and admits a sweep at most once a
-minute. All checks share a limit of 100 outbound acquisitions per hour per
-workspace, at least two seconds between requests to a host, and one request in
-flight per host. Repeated clicks coalesce, and a job can acquire new evidence
-at most once a minute. Unknown results retry after five minutes, with increasing
-delays capped at 24 hours; retry cannot bypass quotas or rate-limit cooldowns.
-If a command coalesces or is deferred, Job Detail shows its separate request
-reason and retry time. A refused request does not create an acquisition attempt
-or advance the last successful verification.
+A sweep checks its selected postings sequentially and is admitted at most once
+per minute. Independent jobs can be checked concurrently. All checks share a
+limit of 100 posting acquisitions per hour per workspace; automatic sweeps may
+use at most 80, reserving 20 for foreground checks and preparation. Each check
+is charged once, including its bounded browser resources. Requests retain at
+least two seconds between starts and one in flight per actual host. Repeated
+clicks coalesce, and a job starts at most once a minute. Unknown employer
+observations retry automatically after five minutes, with increasing delays
+capped at 24 hours. An explicit check can retry after the one-minute job limit,
+but cannot bypass quotas, safety checks or host cooldowns. Local quota, pacing
+and contention refusals do not create unknown observations or increase evidence
+backoff. Only explicit commands record deferred request feedback, with unchanged
+refusals coalesced. Refusals preserve attempt and successful-verification clocks.
 Sleep, an offline machine or a stopped worker leaves the recorded times intact
 and can make a check overdue.
 
@@ -141,14 +146,23 @@ has a 120-second acquisition budget, below crash-lease expiry.
 
 The anonymous fallback checks popup and frame requests through the same host
 limits and URL checks. It blocks service workers and unsupported socket or
-worker connections; an attempted unsupported connection or failed resource
-keeps availability unknown.
+worker connections; an attempted unsupported connection or failed required script/stylesheet
+keeps availability unknown. Optional asset HTTP errors are handled by the browser.
+Each check permits 12 posting/API requests and 64 browser resources, at most one
+million bytes per response and 12 million bytes in total.
 
-Scoring, tailoring and cover generation need successfully verified active
-evidence no more than six hours old. Reviewed Apply needs evidence no more than
-15 minutes old, checked again before an owned email submit intent. Unknown,
-deferred or unavailable evidence stops that work and offers check/retry/manual
-inspection. Failed checks preserve accepted content, scores, material
+Scoring, tailoring and cover generation attempt a check when active evidence
+is older than six hours, and can proceed with usable content while availability
+stays unknown. Unknown is shown honestly and remains retryable; confirmed
+unavailable postings stop preparation. Dry-run rehearsals and human-reviewed
+Apply can also proceed when availability stays unknown, using the existing exact
+approval, material, profile, application-URL and rehearsal bindings. Inspect the
+employer posting when evidence is uncertain; manual browser submission remains
+user-controlled. Unattended Apply requires active evidence within 15 minutes.
+Owned email submit intent rechecks the original posting and, for unknown
+availability, the current bound human approval. Checking availability grants no
+submission authority. A changed posting or confirmed closure stops every path.
+Failed checks preserve accepted content, scores, material
 generations, approvals and outcomes. Availability never hides/deletes a job or
 starts an application.
 

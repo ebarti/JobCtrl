@@ -44,7 +44,7 @@ def claim_preparation_reservation(conn, *, tenant_id, job_id, stage, workflow_id
     try:
         if expected_posting_url is not None:
             from jobctrl.enrichment.availability import assert_fresh_candidate
-            assert_fresh_candidate(conn, str(job_id), expected_posting_url, tenant_id=str(tenant_id))
+            assert_fresh_candidate(conn, str(job_id), expected_posting_url, tenant_id=str(tenant_id), allow_unknown=True)
         if cancel_event is not None and cancel_event.is_set():
             raise RuntimeError(f"{stage} activity canceled before dispatch")
         if workflow_id and not owns_preparation_reservation(

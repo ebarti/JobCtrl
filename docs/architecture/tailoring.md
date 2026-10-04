@@ -982,13 +982,16 @@ represent a "sent" state.
 
 ## Posting Freshness Input Gate
 
-The canonical tailoring entry point requires successfully verified active
-posting evidence no more than six hours old before provider generation. It
+The canonical tailoring entry point attempts a refresh when active posting
+evidence is older than six hours before provider generation. Usable accepted
+content remains eligible while availability is unknown; positive active evidence
+is not fabricated. Confirmed closure stops preparation. It
 acquires missing/stale evidence outside a writer transaction and re-reads the
 JobId/URL after acquisition. Its short queued/manual-to-running writer claim
-checks that original URL and fresh evidence again before recording an attempt,
-and releases the writer before provider work. Latest unknown, deferred or unavailable observations
-stop generation with a check/retry/manual-inspection action. Accepted materials,
+checks that original URL and availability policy again before recording an attempt,
+and releases the writer before provider work. Local acquisition refusals do not fail preparation or increase evidence backoff.
+Unknown observations remain visible and retryable; unavailable evidence stops
+generation with a check/retry/manual-inspection action. Accepted materials,
 validation, generations and approval bindings are preserved. Availability owns
 this clock independently of posting-content hashes; see
 [Enrichment](../user/enrichment-and-extraction.md#saved-posting-availability).

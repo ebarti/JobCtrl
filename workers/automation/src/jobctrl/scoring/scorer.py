@@ -344,7 +344,7 @@ def run_scoring(
     availability_deferred = 0
     for job in jobs:
         try:
-            require_fresh_active(str(job["job_id"]), tenant_id=str(tenant_id), conn=conn, expected_posting_url=job["url"])
+            require_fresh_active(str(job["job_id"]), tenant_id=str(tenant_id), conn=conn, expected_posting_url=job["url"], allow_unknown=True)
         except Exception as exc:
             log.info("Scoring deferred for %s: %s", job["job_id"], exc)
             availability_deferred += 1
@@ -789,7 +789,7 @@ def score_job_by_id(
     from jobctrl.infrastructure.preparation_recovery import claim_preparation_reservation
     expected_posting_url = job["url"]
     conn.commit()
-    require_fresh_active(str(stable_job_id), tenant_id=str(tenant_id), conn=conn, expected_posting_url=expected_posting_url)
+    require_fresh_active(str(stable_job_id), tenant_id=str(tenant_id), conn=conn, expected_posting_url=expected_posting_url, allow_unknown=True)
     # Acquisition released its writer and fenced URL; reload the preparation target.
     with claim_preparation_reservation(conn, tenant_id=tenant_id, job_id=stable_job_id,
             stage="score", workflow_id=None, cancel_event=cancel_event, expected_posting_url=expected_posting_url):
@@ -803,7 +803,7 @@ def score_job_by_id(
             raise ValueError("Owned scoring requires the reserved workflow and activity owner")
         conn.execute("BEGIN IMMEDIATE")
         try:
-            assert_fresh_candidate(conn, str(stable_job_id), expected_posting_url, tenant_id=str(tenant_id))
+            assert_fresh_candidate(conn, str(stable_job_id), expected_posting_url, tenant_id=str(tenant_id), allow_unknown=True)
         except BaseException:
             conn.rollback()
             raise

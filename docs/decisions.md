@@ -2565,7 +2565,7 @@ existing indexed event ledger, preserving schema v12 and accepted content.
 Latest attempt uncertainty and prior successful verification have independent
 clocks/evidence. Known active checks are due after 24 hours, unavailable after
 seven days and unknown after five-minute exponential backoff capped at 24 hours.
-Startup/reconnect/heartbeat catch-up is bounded; durable job/workspace/actual-host
+Startup/reconnect/heartbeat catch-up is bounded; durable job/actual-host
 leases and completion fences protect concurrent processes and crash recovery.
 
 Exact Greenhouse/Lever (including EU) API records and source-bound current page
@@ -2579,13 +2579,20 @@ access-limited availability stays unknown; pairing alone is not fresh evidence.
 
 Rationale: external employer state varies independently of saved content,
 materials, user visibility and application outcomes. Body presence, historical
-closure text, malformed dates and lost posting identity cannot safely authorize
-costly or employer-facing work. Fresh active evidence gates preparation (six
-hours) and reviewed Apply (15 minutes), outside SQLite writer transactions.
+closure text, malformed dates and lost posting identity cannot safely prove
+active availability. Preparation refreshes evidence after six hours and preserves
+a path through unknown results; bound human-reviewed/manual Apply and rehearsals
+also remain available. Unattended Apply requires active success within 15 minutes.
+Confirmed closure stops all paths. Existing review bindings independently authorize
+submission; uncertainty never invents employer evidence. Network checks run outside
+SQLite writer transactions.
 
 Consequences: Jobs GET remains network-free, failed refreshes retain accepted
 artifacts/approvals/outcomes, and closure never invokes Discovery policy deletion.
-Conservative workspace concurrency is one, with 25 jobs/sweep, 100 outbound
-acquisitions/hour, once/minute job starts, at least two-second host spacing and
-five-minute leases. Runtime-offline time leaves freshness honest. Live external
+Job-scoped ownership allows unrelated work to overlap, with 25 jobs/sweep, 100
+posting acquisitions/hour (80 for sweeps and 20 reserved for foreground work),
+once/minute job starts, at least two-second host spacing and
+five-minute leases. Each acquisition charges the quota once; local refusals
+do not increase evidence backoff. Explicit commands alone own coalesced deferral
+feedback. Runtime-offline time leaves freshness honest. Live external
 ATS reliability is not inferred from deterministic transport QA.

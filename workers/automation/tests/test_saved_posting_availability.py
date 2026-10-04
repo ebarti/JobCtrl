@@ -81,6 +81,7 @@ def test_static_css_status_requires_rendered_visibility_before_it_can_prove_clos
 
 def test_slow_trickle_read_has_monotonic_deadline_and_closes_response(monkeypatch):
     from types import SimpleNamespace
+    monkeypatch.setattr("jobctrl.infrastructure.network.url_safety.validate_public_http_url", lambda _: SimpleNamespace(allowed=True))
     instant = [0.0]
     closed = []
     class SlowResponse:
@@ -256,17 +257,17 @@ def test_success_clock_advances_unknown_preserves_success_and_content(saved_job)
     assert not availability.fresh_active(saved_job, JOB_ID, now=NOW + timedelta(minutes=4), max_age=timedelta(hours=6))
 
 
-@pytest.mark.parametrize("verdict, reason", [("active", "minimum_interval"), ("unknown", "retry_backoff")])
+@pytest.mark.parametrize("verdict, reason", [("active", "minimum_interval"), ("unknown", "minimum_interval")])
 def test_refused_explicit_check_persists_request_feedback_without_inventing_attempt(saved_job, monkeypatch, verdict, reason):
     monkeypatch.setattr(availability, "_now", lambda: NOW)
     claim, _ = availability.claim_job(saved_job, JOB_ID)
     original = availability.complete_check(saved_job, claim, verdict=verdict, reason="fixture", method="fixture", lineage=[])
-    now = NOW + timedelta(seconds=10 if verdict == "active" else 70)
+    now = NOW + timedelta(seconds=10)
     monkeypatch.setattr(availability, "_now", lambda: now)
     value = availability.check_availability(JOB_ID, conn=saved_job,
         transport=lambda _: pytest.fail("deferred command acquired employer evidence"))
     assert value["request"] == {"status": "deferred", "reason": reason, "requestedAt": now.isoformat(),
-                                "retryAt": (NOW + timedelta(minutes=1 if verdict == "active" else 5)).isoformat()}
+                                "retryAt": (NOW + timedelta(minutes=1)).isoformat()}
     assert value["lastAttemptedAt"] == original["lastAttemptedAt"]
     assert value.get("lastSuccessfullyVerifiedAt") == original.get("lastSuccessfullyVerifiedAt")
     assert saved_job.execute("SELECT COUNT(*) FROM job_events WHERE event_type = 'JobAvailabilityObserved'").fetchone()[0] == 1
@@ -292,11 +293,18 @@ def test_host_spacing_workspace_quota_and_failed_writer_release(saved_job):
     assert not saved_job.in_transaction
     assert availability.reserve_request(saved_job, claim, URL, now=NOW + timedelta(seconds=2)) == host
     availability.release_host(saved_job, claim, host, now=NOW + timedelta(seconds=2))
-    for i in range(98):
-        availability._event(saved_job, "local", "availability_request", f"fixture-{i}", {}, now=NOW)
+    for i in range(99):
+        availability._event(saved_job, "local", "availability_acquisition", f"fixture-{i}", {}, now=NOW)
+    saved_job.commit()
+    # Already admitted render resources do not spend a second acquisition.
+    host = availability.reserve_request(saved_job, claim, URL, now=NOW + timedelta(seconds=4))
+    availability.release_host(saved_job, claim, host, now=NOW + timedelta(seconds=4))
+    successor = replace(claim, owner="synthetic-new-acquisition")
+    availability._event(saved_job, "local", "availability_lease", f"job:{JOB_ID}",
+                        {"owner": successor.owner, "expiresAt": successor.expires_at.isoformat()}, now=NOW)
     saved_job.commit()
     with pytest.raises(availability.DeferredCheck, match="workspace_hourly_quota"):
-        availability.reserve_request(saved_job, claim, URL, now=NOW + timedelta(seconds=4))
+        availability.reserve_request(saved_job, successor, URL, now=NOW + timedelta(seconds=6))
     assert not saved_job.in_transaction
 
 
@@ -571,7 +579,7 @@ def test_unknown_backoff_caps_and_safety_bounds_cannot_be_bypassed(saved_job):
         value = availability.complete_check(saved_job, claim, verdict="unknown", reason="timeout", method="fixture", lineage=[], now=instant)
         due = datetime.fromisoformat(value["nextDueAt"])
         assert due - instant == timedelta(seconds=min(86400, 300 * 2 ** min(attempt, 9)))
-        assert availability.claim_job(saved_job, JOB_ID, now=instant + timedelta(minutes=2))[1] == "retry_backoff"
+        assert availability.claim_job(saved_job, JOB_ID, now=instant + timedelta(minutes=2), explicit=False)[1] == "retry_backoff"
         instant = due
     assert availability._retry_after("9999999") == 300
 
@@ -584,7 +592,7 @@ def test_prep_freshness_is_stricter_than_background_cadence_and_changed_url_is_f
     assert not availability.fresh_active(saved_job, JOB_ID, max_age=timedelta(minutes=15), now=NOW + timedelta(minutes=16))
     monkeypatch.setattr(availability, "check_availability", lambda *a, **k: pytest.fail("fresh guard unexpectedly fetched"))
     monkeypatch.setattr(availability, "_now", lambda: NOW)
-    with pytest.raises(MissingInputError, match="inspect"):
+    with pytest.raises(MissingInputError, match="candidate changed"):
         availability.require_fresh_active(JOB_ID, conn=saved_job, expected_posting_url=URL + "-old")
 
 
@@ -599,6 +607,8 @@ def test_shared_host_slot_wait_cannot_outlive_acquisition_deadline(saved_job, mo
         value = availability.check_availability(JOB_ID, conn=saved_job,
             transport=lambda _: pytest.fail("busy shared host admitted outbound request"))
         assert time.monotonic() - started < .3
-    assert value["verdict"] == "unknown" and value["reason"] == "acquisition_deadline"
+    assert value["requestStatus"] == "deferred" and value["requestReason"] == "shared_host_cooldown"
+    assert not value.get("lastAttemptedAt") and not value.get("consecutiveFailures")
+    assert not saved_job.execute("SELECT 1 FROM job_events WHERE event_type = 'JobAvailabilityObserved'").fetchone()
     assert not value["checkInProgress"] and not saved_job.in_transaction
     assert not availability._latest(saved_job, "local", "availability_lease", "host:careers.example.org").get("owner")

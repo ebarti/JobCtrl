@@ -727,7 +727,7 @@ def tailor_job_by_id(
     conn.commit()
     from jobctrl.enrichment.availability import require_fresh_active
     expected_posting_url = job["url"]
-    require_fresh_active(str(stable_job_id), tenant_id=str(tenant_id), conn=conn, expected_posting_url=expected_posting_url)
+    require_fresh_active(str(stable_job_id), tenant_id=str(tenant_id), conn=conn, expected_posting_url=expected_posting_url, allow_unknown=True)
     with claim_preparation_reservation(conn, tenant_id=tenant_id, job_id=stable_job_id,
             stage="tailor", workflow_id=None, cancel_event=cancel_event, expected_posting_url=expected_posting_url):
         job = target_reader.load(tenant_id, stable_job_id)

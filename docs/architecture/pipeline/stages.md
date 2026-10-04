@@ -574,11 +574,14 @@ errors. No candidate value ever enters an event or projection — only
 
 ## Availability Preflight
 
-Scoring, tailoring and cover entry points require active success within six
-hours before provider work. Reviewed Apply acquires evidence within 15 minutes
-before claiming/opening expensive work and again before the owned email submit
-intent. These checks commit short claim/reservation transactions before network
-I/O, re-read the canonical posting and reject a changed candidate. No failed
-availability check consumes a scoring/material/apply attempt or replaces an
-accepted artifact. These gates add evidence requirements; they grant no browser,
-email or submission authorization and do not start Apply from a check.
+Scoring, tailoring and cover entry points refresh active evidence older than six
+hours and permit usable content with unknown availability. Confirmed closure
+still stops preparation. Apply performs cheap local eligibility/approval checks
+before acquiring only its chosen candidate's evidence. Dry-run and bound
+human-reviewed Apply may proceed with unknown availability; unattended Apply
+requires active success within 15 minutes. Owned email intent rechecks the
+original posting and, for unknown evidence, the current exact review binding.
+Checks release short claim/reservation transactions before network I/O and fence
+the canonical posting again under the stage writer. Local refusals do not create
+evidence failures or consume stage attempts. Accepted content and artifacts
+survive failed refreshes. These gates grant no submission authority.

@@ -681,15 +681,18 @@ of Discover. All visible saved jobs are due immediately before the first check,
 then active evidence is due after 24 hours and confirmed unavailable evidence
 after seven days. Unknown acquisition retries after five minutes with exponential
 backoff capped at 24 hours; bounded Retry-After contributes a shared host cooldown.
-A manual request cannot bypass backoff, quotas or safety checks. Preparation/
+An explicit request can bypass evidence backoff after the one-minute job limit,
+but cannot bypass quotas, cooldowns or safety checks. Local refusals preserve
+evidence clocks and backoff; only explicit commands own coalesced deferral feedback. Preparation/
 review jobs are preferred, then oldest due with stable JobId ordering. Stopped
 workers leave clocks intact and the UI honestly reports overdue evidence.
 
 Failures preserve accepted content/materials, approvals, application attempts
 and outcomes. Reopening updates availability without another Discover run.
-Current unknown or unavailable evidence blocks expensive preparation/Apply
-preflight; reads never trigger acquisition.
-Candidate posting URL and successful evidence are rechecked under the short
+Confirmed unavailable evidence blocks preparation/Apply. Unknown evidence permits
+preparation and independently authorized rehearsals or bound human-reviewed Apply,
+while unattended Apply retains the positive active-evidence gate. Reads never acquire.
+Candidate posting URL and the applicable availability policy are rechecked under the short
 queued/manual-to-running writer claim for Score, Tailor and Cover, then released
 before provider work. Reviewed email intent carries the original posting URL
 and checks it with freshness and run ownership under the intent writer boundary;

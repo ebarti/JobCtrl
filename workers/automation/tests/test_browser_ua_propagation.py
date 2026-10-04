@@ -321,7 +321,7 @@ def test_enrichment_batch_context_uses_owner_overridden_ua(
             {
                 "@type": "JobPosting",
                 "description": LONG_DESC,
-                "url": "https://example.test/jobs/1",
+                "url": "https://example.test/apply",
                 "directApply": True,
             }
         ],
