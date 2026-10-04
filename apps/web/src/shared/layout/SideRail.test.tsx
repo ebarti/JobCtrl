@@ -20,6 +20,7 @@ const NAV_PATHS = [
   "/discovery",
   "/artifacts",
   "/evidence-map",
+  "/interviews",
   "/outreach",
   "/runs",
   "/debug",
@@ -53,7 +54,7 @@ function renderRail(initialEntry = "/dashboard") {
 }
 
 describe("<SideRail>", () => {
-  it("renders all fourteen nav links grouped under section labels", async () => {
+  it("renders all fifteen nav links grouped under section labels", async () => {
     renderRail();
 
     await waitFor(() =>
@@ -75,7 +76,7 @@ describe("<SideRail>", () => {
     const expectedLabels = NAV_GROUPS.flatMap((group) =>
       group.items.map((item) => item.label),
     );
-    expect(expectedLabels).toHaveLength(14);
+    expect(expectedLabels).toHaveLength(15);
     for (const label of expectedLabels) {
       expect(screen.getByRole("link", { name: label })).toHaveAttribute(
         "data-typography",
