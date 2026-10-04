@@ -107,6 +107,17 @@ all historical event families: pipeline failures can persist an exception
 message. Treat exception text as potentially durable and sanitize it at the
 producer rather than placing sensitive values in exceptions.
 
+Interview preparation has three separate authorities: the installed immutable
+public catalog, generation-versioned job prep with retained source context,
+and independently revisioned tenant/job/question notes. The catalog list/detail
+path is asset-backed and needs no database; personal prep/history/notes use
+canonical local state and authorized detail reads. `InterviewPrepGenerated`,
+`InterviewPrepFailed`, and `InterviewQuestionNoteSaved` contain safe IDs,
+versions, timestamps, and counts only. Outline text, user notes, profile
+excerpts, and note/context bindings never enter events or telemetry. See
+[Materials](materials.md#stored-interview-preparation) and the
+[interview read model](read-model.md#interview-preparation-and-notes).
+
 ## Write And Publish Path Today
 
 Python and TypeScript can both perform canonical local writes, but each write

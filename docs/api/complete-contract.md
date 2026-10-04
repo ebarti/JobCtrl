@@ -848,13 +848,18 @@ not from source labels or display text. `null` means the recorded estimate does
 not carry a valid canonical benchmark reference; it does not relabel legacy or
 malformed evidence as direct.
 
-`GET /v1/jobs/:jobKey` also includes top-level `interviewPrep`, sourced from
-`job_detail_projections.interview_prep_json`. The value is `null` until the user
-explicitly generates prep for that job. When present, it is the latest accepted
+`GET /v1/jobs/:jobKey` also includes top-level `interviewPrep`, loaded from the
+canonical latest accepted `job_interview_prep` generation. Projection JSON
+mirrors prep, but projection lag and history pagination cannot replace the
+current accepted result. The value is `null` when no accepted generation exists.
+When present, it is the latest accepted
 stored prep generation with item text, item kind, evidence IDs, requirement IDs,
 joined profile source snippets, gate/judge summary, and accepted-residual
-warnings. It does not expose raw prompts, full profile JSON, or full job
-descriptions.
+warnings. Optional `generationContext`, per-item `questionMetadata`, and
+read-derived `staleReasons` are defined by the
+[interview contract](#interview-catalog-preparation-and-notes). They retain
+relevant original input excerpts and bindings, not raw prompts or full profile
+JSON. Legacy rows do not receive fabricated card/rubric associations.
 
 `GET /v1/jobs/:jobKey/compensation/market` returns the read-only
 inspection contract for canonical company-role reported compensation estimate
@@ -968,6 +973,238 @@ record/parse state, market record/estimate state, and timestamp. It does not
 contain source text, market source snapshots, profile compensation preferences,
 credentials, local paths, or provider payloads. The frontend Operations
 invalidation router uses the event to refresh job list/detail queries.
+
+## Interview catalog, preparation, and notes
+
+Public editorial guidance is an installed asset; personal prep and notes are
+private tenant/job-scoped canonical data. Browsing never dispatches a workflow
+or provider call. Normal loopback Host/origin protections apply to every route.
+
+| Endpoint | Success shape / behavior |
+| --- | --- |
+| `GET /v1/interviews/catalog` | `{ ok: true, catalog, page, pageSize, total }`; `catalog.questions` is the filtered page. |
+| `GET /v1/interviews/questions/:questionId` | `{ ok: true, catalogBinding, question }`. |
+| `POST /v1/jobs/:jobKey/actions/generate-interview-prep` | Normal action response: `202` when queued, `200` for a completed dispatch response. |
+| `GET /v1/jobs/:jobKey/interview-prep/history` | `{ ok: true, jobId, generations, page, pageSize, total }`. |
+| `GET /v1/jobs/:jobKey/interview-notes` | `{ ok: true, jobId, notes, page, pageSize, total }`. |
+| `POST /v1/jobs/:jobKey/interview-notes` | `{ ok: true, note }` after an expected-revision save. |
+
+### Catalog list and detail
+
+The global GETs are direct TypeScript handlers and do not open SQLite or require
+a job, live worker, or provider. The source loader and installed
+`JOBCTRL_PAYLOAD_DIR/worker/site-packages/jobctrl/assets/interview/catalog.v1.json`
+reader consume the same tracked bytes; absent or invalid assets return
+`503 interview_catalog_unavailable` without a docs/plugin fallback.
+
+List query fields are optional `topic` (1–80 characters), `role` (a role lens),
+`answerFormat`, `source` (1–20 characters), and `search` (at most 200 characters).
+Search covers ID, title, variants, intent, responsibility tags, and competency
+tags. Filters combine with AND. `page` is 1–1000 (default 1); `pageSize` is
+1–121 (default 121). Unknown topic/source values yield an empty matching page.
+`total` counts all matching active cards before pagination. Catalog metadata,
+sources, authors, retired IDs, and relationships remain available with the page.
+The returned catalog binding names the full immutable revision; filtering does
+not create a new authoritative catalog digest.
+
+The schema-v1 catalog contains 121 active research-draft cards and reserves C08
+as retired. Cards include stable ID, topic, active status, maturity,
+`cardRevision`/`cardDigest`, `rubricRevision`/`rubricDigest`, explicit role lenses,
+responsibility/competency tags, supported/default answer formats, variants,
+intent, guidance/adaptation/alternatives/probes/failure modes, rubric dimensions,
+worked examples, source refs, and attribution kind. Source records expose URL,
+author, actual reading coverage/kind, and linked question IDs. Relationships are
+explicit `editorial_related` edges. Source citations do not prove candidate
+facts, full-book reading, author endorsement, or validated assessment.
+
+Question IDs contain at most 12 characters and match uppercase letters followed
+by two digits. A malformed detail ID fails
+with `400 invalid_interview_question_id`; an unknown valid ID returns
+`404 unknown_question`; a reserved retired ID returns `410 retired_question`.
+Selection errors include the safe `questionId` when relevant.
+
+### Generation request and input binding
+
+The generate body remains optional for older callers. Its strict schema accepts:
+
+| Field | Contract |
+| --- | --- |
+| `llmModel` | Optional nonempty model string, at most 120 characters. |
+| `selectedQuestionIds` | Optional ordered array of 1–16 unique active IDs. |
+| `catalogBinding` | Optional `{ catalogRevision, catalogDigest }`; revision is 1–100 characters and digest is lowercase SHA-256. |
+| `evidenceSelections` | Optional array of at most 16 `{ questionId, evidenceIds }` entries. Question IDs are unique and belong to the selected set; each ordered evidence list has at most eight unique canonical IDs, each 1–200 raw characters. |
+| `evidenceProfileVersion` | Positive integer required whenever `evidenceSelections` is present. It must match the current canonical profile version. |
+| `interviewStage` | `unknown`, `recruiter`, `behavioral`, `management`, `technical`, `executive`, or `mixed`; omission preserves unknown stage. |
+| `interviewFormat` | `phone`, `video`, `onsite`, `written`, or `unspecified`. |
+| `roleLens` | `unknown`, `ic`, `senior_ic`, `staff_principal`, `first_time_manager`, `engineering_manager`, `director`, or `executive`. |
+| `roleResponsibilities` | At most 20 nonempty entries, each at most 160 characters. |
+| `knownCriteria` | At most 20 nonempty user/employer-supplied criteria, each at most 1000 characters. |
+| `selectionRationale` | Optional text at most 2000 characters. |
+
+Supported answer formats are `historical`, `situational`, `principle`,
+`negotiation`, `narrative`, and `preference`. Explicit responsibility metadata
+guides applicability; job titles/prefixes cannot invent applicability or known
+employer criteria. Legacy requests without selected IDs use deterministic
+bounded selection. Unknown/retired/duplicate/over-budget IDs and catalog
+mismatch are rejected before provider spending. Semantic errors use
+`404 unknown_question`, `410 retired_question`, or `409 catalog_mismatch`;
+malformed bodies, duplicate IDs, and array-budget violations fail validation
+with `400`. Worker-backed dispatch retains its readiness and spend preflight.
+
+An omitted question evidence entry uses deterministic accepted-evidence
+selection. An explicit entry with `evidenceIds: []` requests gaps without
+automatic replacement. The owning path validates tenant/profile ownership,
+accepted factual status, current profile version, question membership, unique
+IDs, and bounds before provider spending. Evidence IDs retain their exact
+canonical identity: the schema does not trim, normalize, or change case, and
+rejects blank-only IDs. The same 1–200 raw-character bound applies to returned
+evidence links, outline evidence IDs, and retained selected evidence IDs.
+Eligible IDs identify current-profile
+achievement evidence with `user_confirmed = 1`, strength `supported | verified`,
+and nonempty source/scope/action/outcome support. Stale or invalid choices return
+`409 evidence_profile_changed` or `400 invalid_evidence_selection`; the client keeps
+the draft for reselection. Notes and new recollections are not accepted facts.
+The same conditional version fence applies to HTTP and worker RPC schemas.
+
+Each stored prep contains `jobId`, `generation`, status
+`accepted | failed | superseded`, `generatedAt`, model, gate audit, and items.
+The new `question_outline` kind coexists with legacy `theme`, `star_draft`,
+`gap_drill`, and `company_note`. `questionMetadata` adds question/card/rubric
+bindings, answer format, rationale, evidence links (`evidenceId`, `sourceRef`,
+`excerpt`, `scope: direct | transferable`), structured outline segments,
+gaps (`id`, `prompt`, `reason`), `probes`, `sourceGuidanceRefs`, factual support,
+and `userEditStatus: generated | user_edited`. Each `outline` segment has
+`heading`, `text`, `evidenceIds`, and `factualSupport`. Outline support is `accepted_profile_fact`, `hypothetical`,
+`new_user_statement`, or `needs_clarification`.
+
+For generated segments, `accepted_profile_fact` requires nonempty `evidenceIds`
+from that question's selected canonical evidence and claims within those
+excerpts. `hypothetical` and `needs_clarification` require `evidenceIds: []`, even
+when referring to a separate factual anchor. These IDs mean accepted personal
+proof; contextual question links remain separately in `evidenceLinks`. A
+clarification may refer to an `accepted_profile_fact` anchor without carrying
+its proof IDs. Incompatible support/ID combinations reject the candidate rather
+than dropping IDs or relabeling the original segment.
+
+Generic behavioral invitations and open questions request recollection or
+clarification without accepting an event as fact. Genuinely hypothetical or prospective guidance, including
+first-time-manager scenarios and advertised job responsibilities, may lack
+historical evidence. Generic planned missing-answer slots request particulars;
+questions about the canonical advertised role's expectations clarify job
+context rather than assert candidate history.
+
+Personal assertions and specific past presuppositions require that question's
+selected canonical support, including factual headings and assertions embedded
+in future or conditional text. A factual-support label or unrelated supported
+body cannot substantiate another claim. Another question's evidence, authored
+examples, and job responsibilities are not personal evidence. An explicit empty
+selection stays empty; missing evidence remains a focused question or marked gap
+without automatic replacement.
+
+Optional nullable `generationContext` retains these generation-time fields:
+
+| Field | Stored shape / meaning |
+| --- | --- |
+| `schemaVersion`, `catalogBinding`, `contextDigest` | Schema `"1"`, catalog revision/digest, and immutable context SHA-256. |
+| `selectedQuestionIds`, `selectedQuestions` | Ordered IDs and 1–16 selected snapshots; each has question ID, card/rubric revision/digest, answer format, rationale, full `snapshot` card, `evidenceSelectionMode: user_selected \| deterministic`, and ordered `selectedEvidenceIds` (at most eight). |
+| `selectionMode` | `user_selected \| deterministic`. |
+| `interviewStage`, `interviewFormat`, `roleLens`, `roleResponsibilities`, `knownCriteria` | Recorded interview context; inferred guidance cannot become known employer criteria. |
+| `profile` | `{ profileId, version, evidence }` with canonical evidence ID/source/excerpt and direct/transferable scope. |
+| `jobContext` | `{ jobId, title, company, descriptionExcerpt, snapshotHash }`; title/company are at most 500 characters each, excerpt at most 12,000. The hash covers the full uncapped canonical job description. |
+| `employerAnalysis` | Nullable `{ generation, snapshotHash, snapshot }`; snapshot retains role framing (at most 4000 characters), inferred seniority (at most 500), and at most 20 relevant `{ requirementId, requirementText, sourceExcerpt }` entries with text/excerpt at most 3000 characters each. |
+| `fitReport` | Nullable `{ generation, employerAnalysisGeneration, profileSnapshotVersion, status: current \| stale_excluded }`; excluded fit cannot support a personal fact. |
+| `approvedMaterials` | `{ materialId, generation, sha256 }` refs bound to the actual current approved tailored-resume artifact and its raw bytes. |
+| `model` | `{ model, promptVersion, gateVersion }`. |
+
+`catalogDigest` is semantic SHA-256 over canonical sorted-key compact UTF-8 JSON
+excluding itself; it differs from raw asset-byte SHA-256. Approved-material
+reads are bounded to 1 MiB. Unavailable or mismatched artifacts are excluded and
+labeled, and a maximum bullet-provenance generation is not approval proof.
+
+Current job-detail reads retain the latest accepted generation during pending
+or failed refresh, independently of projection lag or the number of later
+failed attempts. History query accepts optional positive `generation`,
+`page` 1–1000 (default 1), and `pageSize` 1–100 (default 20). It exposes prior
+accepted/superseded and failed attempts, newest generation first. Relevant generation-time excerpts and
+snapshots stay immutable when current inputs change. Read-derived `staleReasons`
+are `catalog_changed`, `profile_changed`, `job_changed`,
+`employer_analysis_changed`, `approved_materials_changed`, or `legacy_unbound`.
+They ask for user-controlled regeneration rather than rewriting history. Missing
+legacy context remains unbound with `legacy_unbound` semantics and no fabricated
+question/rubric association. The workflow/run's completed retry reuses the
+persisted generation rather than spending again.
+
+### Independent revisioned notes
+
+Note GET accepts optional `questionId`, `history: true | false`, and the same
+page bounds/defaults as prep history. `history: true` requires `questionId` and
+returns that question's append-only revision history; ordinary reads return the
+latest note per question. Rows sort by question ID ascending, then revision
+descending. Reads remain tenant/job scoped.
+
+Save accepts required `questionId`, integer `expectedRevision >= 0`, and
+`noteText` of at most 20,000 characters (empty text is valid). Revision 0 creates the first note;
+subsequent saves compare the loaded revision and append the next revision.
+Optional `factualSupport` is `unverified_user_statement` (default),
+`needs_clarification`, or `hypothetical`; input cannot self-declare `supported`.
+Optional `sourceGeneration` is positive or null and must belong to the same
+job and retain that question in its selected-card context. Historical and
+retired-card origins are allowed. The server derives matching catalog, card,
+and context bindings from the retained selected question; optional supplied
+`bindings` are checked against that authority. `bindings: null` supplies no
+claims; it does not clear the server-derived origin. A source generation explains
+origin but never transfers a passed generation audit to the user edit.
+
+Omitting `sourceGeneration` normally preserves an existing origin; an ordinary
+existing-note edit omitting origin claims safely detaches to null source/context
+if that generation was deleted. The new revision uses current card/catalog
+bindings when available, otherwise null; its earlier revision retains the
+original provenance. It never rebinds implicitly to the newest prep. A fresh or
+explicitly supplied missing origin still fails validation, as does a malformed
+or mismatched retained origin.
+
+Explicit null creates
+an independent note with the current active card/catalog binding and null
+context; it cannot claim a generation context. Existing orphaned or retired
+notes remain editable, with unavailable bindings represented as null. A new
+independent note requires an active card; a retained origin can bind a historical
+retired card.
+
+The returned note has canonical `jobId`/`questionId`, positive `revision`,
+`noteText`, factual support, `editStatus: user_edited`, nullable source generation
+and bindings, and `updatedAt`. Response vocabulary reserves `supported` for an
+owning grounded path; ordinary user saves cannot produce it. Existing notes
+remain editable when a later catalog retires their card. Save revision, history
+append, and safe event commit together.
+
+A stale `expectedRevision` returns `409` with
+`{ ok: false, error: "interview_note_revision_conflict", message, currentNote }`.
+`currentNote` is the current saved note or null when no saved baseline exists.
+The client exposes `JobCtrlApiError.responseBody` so the form can reconcile with
+the current saved note while retaining its dirty draft. An invalid source
+generation, missing/legacy-unbound context, or absent selected question returns
+`400 invalid_interview_note_source`. Forged/mismatched bindings or non-null
+context without an origin return `400 invalid_interview_note_bindings`. An unknown job returns
+`404 job_not_found`. Failed save/generation cannot delete independent notes or
+overwrite a newer revision. These actions write no Profile, fit, approved
+resume, Discovery, or Apply state.
+
+### Events, privacy, and maturity
+
+`InterviewPrepGenerated` carries `{ jobId, generation, itemCount, generatedAt }`;
+`InterviewPrepFailed` carries `{ jobId, generation, failedAt, reasonCount }`;
+`InterviewQuestionNoteSaved` carries
+`{ jobId, questionId, revision, sourceGeneration, updatedAt }`.
+Events, telemetry, and broad read models never carry outline/note/profile text,
+evidence excerpts, or note/context bindings. Private history and note content
+stay in authorized detail reads and follow the job graph's tenant/purge boundary.
+
+Prep is explicit pre-interview material, not an automatic pipeline stage.
+Manual post-interview reflections keep the Apply outcome path and may link to a
+prep generation. This release has no reusable no-job preparation, practice
+attempt, validated grading/readiness score, transcript, microphone, streaming,
+or live assistance contract. Synthetic fixtures and generation judges do not
+establish content efficacy or calibrated assessment.
 
 ## Workflow runs
 
@@ -1502,7 +1739,8 @@ the apply JSON-RPC method (and so `ApplyWorkflow`) for one job;
 cover preparation stages for one job and returns `202` when the worker is
 ready; `POST /v1/jobs/:jobKey/actions/generate-interview-prep` dispatches the
 explicit `generate_interview_prep` workflow action for one job and returns `202`
-when queued; `POST /v1/jobs/:jobKey/actions/cancel` requests cooperative
+when queued (`200` for a completed dispatch response);
+`POST /v1/jobs/:jobKey/actions/cancel` requests cooperative
 cancellation of that job's in-flight work; and
 `POST /v1/jobs/:jobKey/actions/mark-applied` /
 `POST /v1/jobs/:jobKey/actions/mark-skipped` record manual pipeline outcomes
@@ -1519,17 +1757,16 @@ cached analysis (keyed by posting snapshot hash) rather than re-reasoning;
 `force: true` recomputes and supersedes the prior generation. The standalone
 inspector surface can build on the same method, persistence, and read path.
 
-The `generate_interview_prep` JSON-RPC method (params `jobUrl`, optional
-`llmModel`) starts `InterviewPrepWorkflow` and returns the normal workflow-start
-shape (`runId`, `workflowId`, `firstExecutionRunId`). It is an explicit
-stored-preparation action, not a pipeline stage and not an automatic discovery /
-tailoring side effect. The workflow runs the standard spend-budget preflight,
-loads the job, career evidence-map projections, requirement-fit rows, and the
-latest accepted materials, then persists generation-versioned
-`job_interview_prep` / `job_interview_prep_items` rows. Failed generations are
-durable audit history and do not supersede the last accepted prep. The method
-does not expose live, in-session, transcript, microphone, streaming, or
-real-time interview assistance surfaces.
+The `generate_interview_prep` JSON-RPC method starts `InterviewPrepWorkflow`
+and returns the normal workflow-start shape (`runId`, `workflowId`,
+`firstExecutionRunId`). It forwards the bounded selection/context fields from
+the [interview contract](#interview-catalog-preparation-and-notes), preserves
+workflow/run identity and completed-run reuse, and uses standard spend preflight
+and activity heartbeats/retries. Current approved materials use verified
+artifact bindings; the maximum bullet-provenance generation is not approval
+proof. Failed generations remain audit history and retain the last accepted
+prep. This is an explicit Materials action, outside automatic Discovery/Tailor
+and without a practice or live-assistance contract.
 
 The minimum fit score is a live eligibility threshold, not a scoring policy
 version. Lowering it can make existing persisted scores eligible for

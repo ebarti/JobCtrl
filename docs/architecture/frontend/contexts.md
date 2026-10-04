@@ -18,8 +18,8 @@ ubiquitous language as-is and does not push back against the shape.
 There is **one frontend context folder per backend context** — Discovery,
 Enrichment, Profile, Scoring, Materials, Apply, Pipeline Orchestration,
 Operations, and Contact & Outreach. Views (Dashboard, Jobs, Artifacts, Apply
-Review, Runs, Pipelines, Discovery, Contacts, Debug) are **not** contexts; they
-are composers that live under `views/` (§3.10, §11).
+Review, Interviews, Runs, Pipelines, Discovery, Contacts, Debug) are **not**
+contexts; they are composers that live under `views/` (§3.10, §11).
 
 ## 3.1 Frontend Context Map
 
@@ -276,6 +276,12 @@ backend domain model [§4.5](../domain-model/tactical.md)):
   `MaterialsExhausted`) drive query-cache invalidation. The mutation
   resolves with `runId`; the UI shows "queued" until the corresponding
   events arrive (§7).
+- Interview prep commands and personal note saves stay Materials-owned, with
+  reusable selection/detail/prep/notes components and validated forms. Generated
+  prep remains visible while refresh fails; independently revisioned edits keep
+  their own factual-support labels and conflict handling. The public catalog
+  and private history/note read hooks stay in Operations. `/interviews` and Job
+  Detail compose the same public surfaces rather than maintaining two libraries.
 
 **What it does NOT own:**
 
@@ -419,6 +425,11 @@ the SSE subscription that fans events out to invalidate query keys.
   `@jobctrl/domain-types` via `@jobctrl/contracts`) through
   `contexts/operations/types.ts` so feature contexts and views can import
   them from one place. (This is the frontend Anti-Corruption Layer — §6.5.)
+- Expose catalog/card and job prep-history/note reads through the public
+  Operations kernel and tenant-first query keys. Global catalog reads must not
+  require a job detail query; optional job preparation is composed in a child
+  only after a canonical job is selected. No view calls `api.job("")` or depends
+  on a worker/provider merely to browse guidance.
 
 **What it does NOT own:**
 
@@ -430,7 +441,7 @@ the SSE subscription that fans events out to invalidate query keys.
 ## 3.10 Views (Composition Layer — NOT Bounded Contexts)
 
 The `views/` folder holds the sibling composers of `contexts/`, including
-`dashboard/`, `jobs/`, `artifacts/`, `apply-review/`, `runs/`,
+`dashboard/`, `jobs/`, `artifacts/`, `apply-review/`, `interviews/`, `runs/`,
 `pipelines/`, `discovery/`, `outreach/`, and `debug/`. They are _not_ bounded contexts;
 they are presentation composers. The dichotomy is intentional and binding:
 
@@ -453,6 +464,7 @@ another view (cross-view navigation goes through the URL).
 | `views/dashboard/`    | `<KpiGrid>`, `<ConversionPanel>`, `<Funnel>`, `<SourceHealthCard>`, `<ApplyRunsCard>` (operations: `useDashboardSummaryQuery`), plus an outcome-suggestions section (operations: `useApplicationOutcomesQuery`; apply: `<OutcomeSuggestionsPanel>`). Funnel/ApplyRunsCard compose pipeline `<StageBadge>` and apply `<ApplyRunBadge>`.                                                                                                                                                |
 | `views/jobs/`         | `<JobsTable>` (operations: `useJobsListQuery`; column cells use `<ScoreBadge>`/`<StageBadge>`; product filters, including the server-backed Job state filter, bind to URL state), `<JobBulkActions>` (discovery: state-qualified delete / hide / restore / unhide / permanent-delete bulk mutations), legacy-named `<JobDetailDrawer>` rendered as a full `RouteWorkspace` (composes `<JobOverview>` + `<JobActions>` + `<StageTimeline>` + artifact status rows + `<EmployerAnalysisPanel>` + `<ApplyHistory>` + `<JobOutcomePanel>` + `<JobAuditHistory>`). |
 | `views/artifacts/`    | `<ArtifactsTable>` (operations: `useArtifactsListQuery`), `<ArtifactFilterBar>` (URL-bound), `<ArtifactDetailPanel>` (operations: `useArtifactDetailQuery`; materials: `useOpenArtifactMutation`, `<TailoringExplanationSection>`); its summary/evidence/comparison audit precedes the full-width document preview. |
+| `views/interviews/` | Native searchable whole-catalog graph/list and selected-card workspace with URL-owned filters, mode, question, and optional canonical job. Questions groups matching cards by topic; Sources groups resources by author, with topic/author drill-down, pan/zoom, and Overview. Selecting a question updates the Answer/Rubric/Sources inspector without replacing the catalog map with its adjacency. Focused card connections and optional personal evidence are a separate layer; research attribution/editorial links never become accepted personal evidence. Composes Operations reads and Materials preparation/note forms; the Materials session store owns unsaved selection/order and private drafts. List exposes the same card actions. |
 | `views/apply-review/` | `<ApplyReviewView>` — the human apply-approval workstation. A left review queue (operations: `useApplyReviewQueueQuery`) sits beside one full-width sequence of decision, repeat-application evidence and one-attempt confirmation, materials, and other audit sections, including the live Plate resume editor (`<ResumePlateEditor>` from materials, wired to the apply-context draft/comment/reply/render mutations via `useResumeReviewDraftQuery`), grounding-risk + requirement audit panels, `<ApplyReviewDecisionControls>`, and `<CancelApplyButton>`. Repeat protection disables only live authorization while dry run remains available. The queue stacks above the review and decision controls wrap when the surface becomes narrow. |
 | `views/runs/`         | `<RunsView>` — unified workflow-runs browser. `<RunsTable>` (operations: `useWorkflowRunsListQuery`), `<RunsFilterBar>` (URL-bound), per-row `<CancelWorkflowRunButton>` ("Stop") and a Temporal Web-UI deep link; legacy-named `<WorkflowRunDrawer>` renders a full detail workspace at `/runs/$runId`.                                                                                                                                                                              |
 | `views/pipelines/`    | `<PipelinesView>` — reads `usePipelineOperationsQuery`, composes its workspace from the typed snapshot and `<StageTriggerPanel>` (global/batch stage triggers + `<CancelWorkflowRunButton>`). The workspace renders a live current-execution stage flow, exact outcome disclosure, source/reconciliation progress, collapsed sweep/global-backlog diagnostics, worker capacity, active work, explicit stop, and zero-inventory-gated replacement setup. |

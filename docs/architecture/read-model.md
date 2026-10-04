@@ -32,8 +32,9 @@ flowchart LR
 ```
 
 The read path never reconstructs domain state from raw events during a request.
-It reads precomputed projections; SSE only tells the client which projection to
-refetch or safely patch.
+It serves precomputed projections with authorized canonical detail overlays,
+including the latest accepted interview prep. SSE tells the client which reads
+to refetch or safely patch.
 
 ## Apply Review And Outcome Feedback
 
@@ -108,6 +109,50 @@ classification. The user accepts, corrects, or declines the suggestion.
 
 Raw mail bodies never enter events, broad projections, logs, telemetry, or the
 scan API response.
+
+## Interview Preparation And Notes
+
+The public catalog is an installed immutable asset served directly by the
+TypeScript API. Its global list/detail reads require no SQLite, job, live
+worker, or provider. It is authored guidance, not a projection over personal
+facts and not a second evidence store.
+
+Job detail's `interviewPrep` remains the latest accepted canonical generation,
+including while a replacement is pending or failed. The detail handler reads
+that canonical row independently of projection lag and the history page, even
+when many later attempts failed. Python and TypeScript
+project the same nullable `generationContext` and per-item `questionMetadata`.
+Retained card snapshots, evidence excerpts, and input bindings describe the
+original generation; reads must not replace them with current profile prose.
+Unbound legacy rows stay explicitly legacy. A history read includes accepted,
+superseded, and failed attempts instead of pretending every attempt became the
+active generation.
+
+Stale diagnostics compare the recorded catalog/profile/job/employer-analysis/
+approved-material bindings with current canonical inputs. They are a read-side
+annotation, not a mutation of prep history or an automatic regeneration. A stale
+or missing fit report cannot authorize personal factual evidence.
+
+Independent per-question note reads use canonical tenant/job/question revisions.
+Latest reads and append-only note history stay separate from prep-item lifecycle.
+Expected-revision saves preserve newer edits on conflict; generated metadata
+cannot confer passed-audit status on a user edit. If an existing origin was
+deleted, an ordinary edit without origin claims detaches the new revision to
+independent provenance while retaining the old revision's original binding.
+It does not bind the note to a newer prep generation. Notes and relevant source
+excerpts are private authorized detail data. They never enter broad lists,
+curated audit timelines, SSE frames, or telemetry.
+
+`InterviewPrepGenerated`, `InterviewPrepFailed`, and
+`InterviewQuestionNoteSaved` signal which tenant/job/generation/question reads
+need reconciliation. They carry IDs, versions, times, and counts, not outline,
+note, evidence, or binding text. The frontend refetches through Operations and
+keeps the accepted prep and unsaved form draft through failure. Post-interview
+reflections retain the separate Apply outcome boundary.
+
+See [Materials](materials.md#stored-interview-preparation) for authority and
+generation rules and the [complete API contract](../api/complete-contract.md#interview-catalog-preparation-and-notes)
+for history, pagination, and conflict responses.
 
 ## Projection Catalog
 
