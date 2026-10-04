@@ -286,7 +286,20 @@ def test_real_chromium_renderer_hang_is_cancelled_before_lease_expiry_and_succes
     runtime.conn.commit()
     claim, reason = availability.claim_job(runtime.conn, successor_id)
     assert claim and reason == "claimed"
+    host_state = availability._latest(runtime.conn, "local", "availability_lease", "host:93.184.216.34")
+    assert not host_state.get("owner")
+    expires_at = availability._instant(host_state["expiresAt"])
+    assert expires_at is not None and expires_at <= availability._now()
+    assert not runtime.conn.in_transaction
+    previous_next_start = availability._instant(host_state["nextStartAt"])
+    assert previous_next_start is not None
+    # Released ownership retains the required spacing from the last host start.
+    availability.Acquisition(runtime.conn, claim)._pace(public_url)
     host = availability.reserve_request(runtime.conn, claim, public_url)
+    successor_next_start = availability._instant(availability._latest(
+        runtime.conn, "local", "availability_lease", "host:93.184.216.34")["nextStartAt"])
+    assert successor_next_start is not None
+    assert successor_next_start - timedelta(seconds=2) >= previous_next_start
     availability.release_host(runtime.conn, claim, host)
     availability.complete_check(runtime.conn, claim, verdict="unknown", reason="synthetic_successor", method="fixture", lineage=[])
 
