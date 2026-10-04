@@ -24,6 +24,10 @@ posting detail to use it.” The current decision path is:
 2. **Verify active state independently.** Extraction quality and whether the job
    still appears active are separate findings, so a well-extracted but
    unverifiable posting is not silently treated as active.
+   Availability requires current evidence bound to the exact posting. Historical
+   description text cannot prove closure. Login/challenge pages, HTTP access
+   failures, lost posting identity, invalid deadlines and conflicting current
+   signals remain unknown. A nonempty body alone cannot prove availability.
 3. **Assign confidence from the posting-content evidence.** Description length
    and extraction tier determine whether the posting text is trustworthy. An
    application URL can strengthen structured extraction, but its absence never

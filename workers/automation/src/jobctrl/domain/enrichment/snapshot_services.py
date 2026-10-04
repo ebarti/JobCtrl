@@ -28,6 +28,10 @@ Three services live here:
 from __future__ import annotations
 
 import logging
+import hashlib
+from datetime import datetime, timezone
+
+from bs4 import BeautifulSoup
 import re
 from dataclasses import dataclass, field
 from typing import Callable, Iterable, Sequence
@@ -137,43 +141,91 @@ class ActiveStateVerifier:
     """
 
     def verify(self, page: DetailPage) -> tuple[ActiveState, str]:
-        """Return ``(active_state, verification_method)``.
+        """Verify current source-bound evidence; body presence is never proof."""
+        if page.status is not None and page.status not in {200, 201, 202, 203, 204, 404, 410}:
+            return ActiveState.UNKNOWN, "http_error"
+        if not same_posting_url(page.url, page.final_url or page.url):
+            return ActiveState.UNKNOWN, "identity_lost"
+        soup = BeautifulSoup(page.html or "", "html.parser")
+        if soup.select_one('input[type="password"], .g-recaptcha, #challenge-form') or any(
+            phrase in soup.get_text(" ", strip=True).lower()[:1000]
+            for phrase in ("verify you are human", "access denied", "sign in to continue", "just a moment")
+        ):
+            return ActiveState.UNKNOWN, "access_challenge"
+        if page.status in {404, 410}:
+            return ActiveState.REMOVED, "http_status"
+        postings = [posting for ld in page.json_ld if (posting := _find_job_posting(ld))]
+        for posting in postings:
+            identity_url = posting.get("url") or posting.get("@id")
+            if isinstance(identity_url, str) and not same_posting_url(page.url, identity_url):
+                return ActiveState.UNKNOWN, "identity_mismatch"
+        # Remove historical descriptions and script text before inspecting current
+        # status controls. Closure language in accepted content is not a banner.
+        for element in soup.select('script, style, [itemprop="description"], .job-description, '
+                                   '.posting-description, #job-description, #content .description'):
+            element.decompose()
+        for posting in postings:
+            description = posting.get("description")
+            if isinstance(description, str):
+                description_text = BeautifulSoup(description, "html.parser").get_text(" ", strip=True)
+                for node in list(soup.find_all(string=True)):
+                    if description_text and description_text in str(node):
+                        node.replace_with(str(node).replace(description_text, ""))
+        controls = soup.select('[role="alert"], [role="status"], .alert, .job-closed, '
+                               '.posting-closed, h1, h2, button, input[type="submit"]')
+        closed = any(marker in control.get_text(" ", strip=True).lower()
+                     for control in controls for marker in _CLOSED_MARKERS)
+        # A short standalone status page also counts; full descriptions do not.
+        visible = soup.get_text(" ", strip=True).lower()
+        closed = closed or (len(visible) < 300 and any(marker in visible for marker in _CLOSED_MARKERS)
+                            and not postings)
+        deadlines: list[bool] = []
+        for posting in postings:
+            deadline = posting.get("validThrough")
+            if deadline is not None:
+                parsed = _parse_deadline(deadline)
+                if parsed is None:
+                    return ActiveState.UNKNOWN, "invalid_deadline"
+                deadlines.append(parsed < datetime.now(timezone.utc))
+        if (closed and any(not past for past in deadlines)) or (any(deadlines) and not all(deadlines)):
+            return ActiveState.UNKNOWN, "conflicting_signals"
+        if closed:
+            return ActiveState.CLOSED, "closed_marker"
+        if deadlines and all(deadlines):
+            return ActiveState.EXPIRED, "json_ld_valid_through"
+        if postings and any(isinstance(posting.get("description"), str)
+                            and posting["description"].strip() for posting in postings):
+            return ActiveState.ACTIVE, "json_ld_valid_through" if deadlines else "source_job_posting"
+        if page.page_title and any(
+            "apply" in control.get_text(" ", strip=True).lower()
+            and not control.has_attr("disabled") for control in controls
+        ):
+            return ActiveState.ACTIVE, "source_apply_control"
+        return ActiveState.UNKNOWN, "missing_current_evidence"
 
-        ``verification_method`` is one of ``"http_status"``,
-        ``"json_ld_valid_through"``, ``"closed_marker"``,
-        ``"removed_marker"``, ``"default_body_present"``, or
-        ``"unknown"``. The caller writes the method onto the resulting
-        ``JobActiveStateChanged`` event so Operations can break down
-        which signal moved which job.
-        """
-        # 1. HTTP status is the cheapest signal.
-        if page.status is not None:
-            if page.status == 410:
-                return ActiveState.REMOVED, "http_status"
-            if page.status == 404:
-                return ActiveState.REMOVED, "http_status"
-        # 2. JSON-LD ``validThrough`` carries an ISO-8601 deadline.
-        for ld in page.json_ld:
-            posting = _find_job_posting(ld)
-            if not posting:
-                continue
-            valid_through = posting.get("validThrough")
-            if isinstance(valid_through, str) and valid_through.strip():
-                if _is_past(valid_through):
-                    return ActiveState.EXPIRED, "json_ld_valid_through"
-                return ActiveState.ACTIVE, "json_ld_valid_through"
-        # 3. Body markers — closed, then removed.
-        body = page.html.lower() if page.html else ""
-        if body:
-            for marker in _CLOSED_MARKERS:
-                if marker in body:
-                    return ActiveState.CLOSED, "closed_marker"
-            for marker in _REMOVED_MARKERS:
-                if marker in body:
-                    return ActiveState.REMOVED, "removed_marker"
-            # 4. Plain success body without closed markers — assume active.
-            return ActiveState.ACTIVE, "default_body_present"
-        return ActiveState.UNKNOWN, "unknown"
+
+def same_posting_url(expected: str, actual: str) -> bool:
+    """Bind a response to its exact posting, allowing only /apply and tracking."""
+    try:
+        first, second = urlsplit(expected), urlsplit(actual)
+        def path(value: str) -> str:
+            return value.rstrip("/").removesuffix("/apply")
+        return bool(first.hostname and path(first.path) and first.scheme in {"http", "https"}
+                    and second.scheme in {"http", "https"} and first.hostname == second.hostname
+                    and first.port == second.port and path(first.path) == path(second.path))
+    except ValueError:
+        return False
+
+
+def _parse_deadline(value: object) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    # An unzoned date cannot prove an instant; do not silently assume UTC.
+    return parsed if parsed.tzinfo is not None else None
 
 
 def _find_job_posting(data: object) -> dict | None:
@@ -195,27 +247,8 @@ def _find_job_posting(data: object) -> dict | None:
 
 
 def _is_past(iso_text: str) -> bool:
-    """Return True when ``iso_text`` parses to a past instant.
-
-    Returns False on parse failure to keep the verifier conservative
-    (a broken date should not auto-expire a posting).
-    """
-    from datetime import datetime, timezone
-
-    text = iso_text.strip()
-    candidates = (
-        text,
-        text.replace("Z", "+00:00") if text.endswith("Z") else text,
-    )
-    for candidate in candidates:
-        try:
-            parsed = datetime.fromisoformat(candidate)
-        except ValueError:
-            continue
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=timezone.utc)
-        return parsed < datetime.now(tz=timezone.utc)
-    return False
+    parsed = _parse_deadline(iso_text)
+    return parsed is not None and parsed < datetime.now(timezone.utc)
 
 
 # ---------------------------------------------------------------------------
@@ -410,7 +443,7 @@ class ContentAcquisitionService:
                         description=description,
                         description_hash=hash_,
                         apply_url=final_apply,
-                        raw_text_hash="",  # Reserved for forensics; populated by future fetchers.
+                        raw_text_hash=hashlib.sha256(page.html.encode("utf-8")).hexdigest(),
                         evidence=evidence,
                     )
 
