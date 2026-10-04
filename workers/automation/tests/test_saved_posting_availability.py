@@ -52,6 +52,15 @@ def test_future_deadline_cannot_mask_current_closed_banner():
     assert ActiveStateVerifier().verify(page)[1] == "conflicting_signals"
 
 
+def test_plain_current_aside_conflicts_with_source_bound_future_deadline():
+    page = replace(active_page(), html='<h1>Synthetic Platform Engineer</h1><aside>Applications are closed</aside>',
+                   json_ld=({"@type": "JobPosting", "url": URL, "description": "Synthetic role",
+                             "validThrough": "2099-01-01T00:00:00Z"},))
+    signals = []
+    assert ActiveStateVerifier().verify(page, signals=signals)[1] == "conflicting_signals"
+    assert {signal["kind"] for signal in signals} == {"current_closed_status", "posting_deadline"}
+
+
 def test_empty_and_unbound_pages_are_unknown():
     for page in [DetailPage(url=URL, status=200, html="error"), DetailPage(url="https://example.org", status=404)]:
         assert ActiveStateVerifier().verify(page)[0].value == "unknown"
@@ -167,7 +176,7 @@ def test_completed_enrichment_is_due_without_discovery(saved_job):
 @pytest.mark.parametrize("kind, url, endpoint, payload", [
     ("greenhouse", "https://boards.greenhouse.io/acme/jobs/123", "https://boards-api.greenhouse.io/v1/boards/acme/jobs/123", {"id":123,"absolute_url":"https://boards.greenhouse.io/acme/jobs/123","title":"Role","content":"Job content"}),
     ("lever", "https://jobs.eu.lever.co/acme/123", "https://api.eu.lever.co/v0/postings/acme/123?mode=json", {"id":"123","hostedUrl":"https://jobs.eu.lever.co/acme/123","text":"Role"}),
-    ("ashby", "https://jobs.ashbyhq.com/acme/123", "https://api.ashbyhq.com/posting-api/job-board/acme", {"jobs":[{"id":"123","jobUrl":"https://jobs.ashbyhq.com/acme/123","title":"Role","isListed":False}]}),
+    ("ashby", "https://jobs.ashbyhq.com/acme/123", "https://api.ashbyhq.com/posting-api/job-board/acme", {"jobs":[{"jobUrl":"https://jobs.ashbyhq.com/acme/123","title":"Role","isListed":False}]}),
 ])
 def test_api_first_exact_source_identity_and_hash(saved_job, kind, url, endpoint, payload):
     saved_job.execute("UPDATE jobs SET url = ?", (url,))
@@ -186,6 +195,86 @@ def test_api_first_exact_source_identity_and_hash(saved_job, kind, url, endpoint
     assert acquisition.acquire() == ("active", "exact_provider_posting", f"{kind}_api")
     assert calls == [endpoint]
     assert len(acquisition.lineage[0]["rawHash"]) == 64
+
+
+@pytest.mark.parametrize("status", [301, 400, 401, 402, 403, 405, 429, 500, 503])
+def test_exact_provider_error_response_cannot_become_active(saved_job, status):
+    url = "https://jobs.eu.lever.co/acme/123"
+    saved_job.execute("UPDATE jobs SET url = ?", (url,))
+    saved_job.commit()
+    claim, _ = availability.claim_job(saved_job, JOB_ID)
+    payload = {"id": "123", "hostedUrl": url, "text": "Synthetic role"}
+    acquisition = availability.Acquisition(saved_job, claim,
+        transport=lambda endpoint: availability.Response(endpoint, endpoint, status, json.dumps(payload).encode()),
+        browser=lambda _: pytest.fail("provider error fell through to browser"))
+    assert acquisition.acquire() == ("unknown", "http_error", "lever_api")
+    assert acquisition.lineage[0]["status"] == status
+
+
+@pytest.mark.parametrize("confidence, overridden, expected", [
+    ("high", False, "none"), ("medium", False, "none"),
+    ("low", False, "low_confidence_extraction"), ("low", True, "none"),
+])
+def test_reversal_restores_content_confidence_and_override_policy(confidence, overridden, expected):
+    from jobctrl.domain.enrichment.snapshot_set import PostingSnapshotSet
+    from jobctrl.domain.enrichment.snapshot_value_objects import (
+        ActiveState, FilterOverrideAudit, QuarantineReason, SnapshotConfidence, SnapshotDescriptionHash,
+    )
+    from jobctrl.domain.identifiers import JobId
+    from jobctrl.domain.tenant import LOCAL_TENANT
+    audit = FilterOverrideAudit("synthetic", "low_confidence_extraction", "Approved synthetic source", "user", NOW.isoformat()) if overridden else None
+    snapshot_set = PostingSnapshotSet.empty(tenant_id=LOCAL_TENANT, job_id=JobId(JOB_ID), updated_at=NOW.isoformat())
+    snapshot_set, _ = snapshot_set.record_snapshot(source_id="synthetic", extraction_tier="css_selectors",
+        description_hash=SnapshotDescriptionHash("a" * 64), apply_url=None, active_state=ActiveState.CLOSED,
+        confidence=SnapshotConfidence(confidence), quarantine_reason=QuarantineReason.POSTING_INACTIVE,
+        captured_at=NOW.isoformat(), filter_override=audit, evidence=("Accepted synthetic content",))
+    reopened, previous = snapshot_set.mark_active_state(active_state=ActiveState.ACTIVE, verified_at=NOW.isoformat())
+    assert previous is ActiveState.CLOSED
+    assert reopened.latest_snapshot.quarantine_reason.value == expected
+    assert reopened.latest_snapshot.confidence is SnapshotConfidence(confidence)
+    assert reopened.latest_snapshot.filter_override == audit
+    assert reopened.latest_snapshot.description_hash == snapshot_set.latest_snapshot.description_hash
+
+
+@pytest.mark.parametrize("enrichment_status", [None, "failed", "enriched"])
+def test_all_visible_saved_jobs_are_immediately_due_before_first_observation(saved_job, enrichment_status):
+    if enrichment_status:
+        saved_job.execute("INSERT INTO job_enrichments (tenant_id, job_id, current_status, updated_at) VALUES ('local', ?, ?, ?)",
+                          (JOB_ID, enrichment_status, NOW.isoformat()))
+        saved_job.commit()
+    assert availability.due_jobs(saved_job, now=NOW) == [JOB_ID]
+
+
+def test_anonymous_browser_guard_failure_retains_hash_and_cannot_authorize(saved_job, monkeypatch):
+    from types import SimpleNamespace
+    from contextlib import nullcontext
+    from jobctrl.infrastructure.network import url_safety
+    from jobctrl.enrichment import detail
+    class Page:
+        def route(self, pattern, handler):
+            self.handler = handler
+        def unroute(self, *args):
+            pass
+        def goto(self, url, **kwargs):
+            self.handler(SimpleNamespace(abort=lambda *_: None),
+                         SimpleNamespace(url="https://careers.example.org/status-module.js", method="GET", headers={}))
+            return SimpleNamespace(status=200)
+    page = Page()
+    browser = SimpleNamespace(new_context=lambda: SimpleNamespace(new_page=lambda: page), close=lambda: None)
+    monkeypatch.setattr("playwright.sync_api.sync_playwright", lambda: nullcontext(SimpleNamespace(chromium=SimpleNamespace(launch=lambda **_: browser))))
+    monkeypatch.setattr(url_safety, "validate_public_http_url", lambda *_args, **_kwargs: url_safety.PublicUrlDecision(True))
+    monkeypatch.setattr(detail, "_page_to_detail_page", lambda *_: replace(active_page(), raw_html_hash="b" * 64))
+    def refused(*_args):
+        raise availability.DeferredCheck("request_budget")
+    rendered = availability.anonymous_browser(URL, fetcher=refused)
+    assert not rendered.status_evidence_complete
+    claim, _ = availability.claim_job(saved_job, JOB_ID)
+    acquisition = availability.Acquisition(saved_job, claim,
+        transport=lambda url: availability.Response(url, url, 200, b"<main>Rendering shell</main>"),
+        browser=lambda _: rendered)
+    assert acquisition.acquire()[:2] == ("unknown", "browser_guard: request_budget")
+    assert acquisition.lineage[-1]["rawHash"] == "b" * 64
+    assert acquisition.lineage[-1]["signals"] == [{"kind": "acquisition_failure", "value": "browser_guard: request_budget"}]
 
 
 def test_query_posting_identity_is_preserved_and_only_tracking_ignored():

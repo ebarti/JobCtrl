@@ -677,7 +677,7 @@ defensive dashboard read keep them truthful on existing databases:
 ## Recurring Saved Posting Checks
 
 Startup and heartbeat/reconnect admit bounded availability sweeps independently
-of Discover. Completed visible jobs are due immediately before the first check,
+of Discover. All visible saved jobs are due immediately before the first check,
 then active evidence is due after 24 hours and confirmed unavailable evidence
 after seven days. Unknown acquisition retries after five minutes with exponential
 backoff capped at 24 hours; bounded Retry-After contributes a shared host cooldown.

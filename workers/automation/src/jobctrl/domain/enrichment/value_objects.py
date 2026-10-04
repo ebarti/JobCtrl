@@ -204,6 +204,7 @@ class DetailPage:
     fetched_at: str = ""
     status_html: str = ""
     status_evidence_complete: bool = True
+    status_evidence_reason: str = ""
     raw_html_hash: str = ""
 
     def __post_init__(self) -> None:

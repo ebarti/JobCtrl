@@ -870,8 +870,8 @@ historical execution API.
 
 The local worker admits `SavedPostingAvailabilityWorkflow` at startup and on
 heartbeat/reconnect, at most once a minute per workspace. This is independent
-of Discover and completed Enrich rows remain eligible. Each sweep selects at
-most 25 due, visible completed/unavailable jobs, preferring preparation/review
+of Discover and includes saved jobs before, during, or after enrichment. Each
+sweep selects at most 25 due, visible saved jobs, preferring preparation/review
 and then oldest due. Hidden/deleted jobs, running Apply and terminal application
 outcomes are excluded. Sleeping or offline runtimes append no observations;
 Jobs reads calculate overdue from retained timestamps.

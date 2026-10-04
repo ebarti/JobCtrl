@@ -77,7 +77,7 @@ def fresh_active(conn: sqlite3.Connection, job_id: str, *, max_age: timedelta,
         return False
     policy = conn.execute("SELECT latest_active_state FROM posting_snapshot_sets WHERE tenant_id = ? AND job_id = ?",
                           (tenant_id, job_id)).fetchone()
-    if policy and policy[0] == "location_incompatible":
+    if policy and policy[0] != "active":
         return False
     return bool(value.get("verdict") == "active" and value.get("lastSuccessfulState") == "active"
                 and verified and timedelta(0) <= (now or _now()) - verified <= max_age
@@ -303,7 +303,11 @@ def anonymous_browser(url: str, *, fetcher: Callable[[str, str], Response]) -> D
             guard = PublicHttpUrlRouteGuard(page, fetch_public_requests=True, request_fetcher=fetch_route).install()
             try:
                 response = page.goto(url, wait_until="domcontentloaded", timeout=20_000)
-                return _page_to_detail_page(page, url, response.status if response else None)
+                rendered = _page_to_detail_page(page, url, response.status if response else None)
+                if guard.blocked:
+                    return replace(rendered, status_evidence_complete=False,
+                                   status_evidence_reason=f"browser_guard: {guard.blocked_reason}")
+                return rendered
             finally:
                 guard.close()
         finally:
@@ -380,7 +384,7 @@ class Acquisition:
                 return "unknown", "api_identity_lost", f"{kind}_api"
             if response.status in {404, 410} and kind in {"greenhouse", "lever"}:
                 return "removed", "exact_provider_http_status", f"{kind}_api"
-            if response.status in {403, 429} or response.status >= 500:
+            if not 200 <= response.status <= 204:
                 return "unknown", "http_error", f"{kind}_api"
             try:
                 data = json.loads(response.body)
@@ -390,9 +394,14 @@ class Acquisition:
                 for row in rows:
                     if not isinstance(row, dict):
                         continue
-                    raw_identity = row.get("id")
-                    identity = str(raw_identity) if type(raw_identity) in {str, int} else ""
                     locator = row.get("absolute_url") if kind == "greenhouse" else row.get("hostedUrl") if kind == "lever" else row.get("jobUrl")
+                    if kind == "ashby":
+                        # The public board contract has jobUrl, not a separate id.
+                        located = _provider(locator) if isinstance(locator, str) else None
+                        identity = located[2] if located and located[:2] == (kind, board) else ""
+                    else:
+                        raw_identity = row.get("id")
+                        identity = str(raw_identity) if type(raw_identity) in {str, int} else ""
                     if identity == native_id and isinstance(locator, str) and same_posting_url(url, locator):
                         title = row.get("text") if kind == "lever" else row.get("title")
                         if not isinstance(title, str) or not title.strip():
@@ -528,10 +537,6 @@ def due_jobs(conn: sqlite3.Connection, *, tenant_id: str = str(LOCAL_TENANT),
                   WHERE r.tenant_id = j.tenant_id AND r.job_id = j.job_id) THEN 0 ELSE 1 END AS priority
             FROM jobs j
             WHERE j.tenant_id = ?
-              AND (EXISTS (SELECT 1 FROM job_enrichments e WHERE e.tenant_id = j.tenant_id
-                   AND e.job_id = j.job_id AND e.current_status = 'enriched')
-                OR EXISTS (SELECT 1 FROM posting_snapshot_sets p WHERE p.tenant_id = j.tenant_id
-                   AND p.job_id = j.job_id AND p.latest_active_state IN ('closed','expired','removed','location_incompatible')))
               AND NOT EXISTS (SELECT 1 FROM jobctrl_deleted_jobs d WHERE d.tenant_id = j.tenant_id
                 AND d.job_id = j.job_id AND (d.restored_at IS NULL OR julianday(d.restored_at) <= julianday(d.deleted_at)))
               AND NOT EXISTS (SELECT 1 FROM jobctrl_hidden_jobs h WHERE h.tenant_id = j.tenant_id

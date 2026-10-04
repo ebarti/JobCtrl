@@ -147,7 +147,10 @@ class ActiveStateVerifier:
         if not same_posting_url(page.url, page.final_url or page.url):
             return ActiveState.UNKNOWN, "identity_lost"
         if not page.status_evidence_complete:
-            return ActiveState.UNKNOWN, "incomplete_status_evidence"
+            reason = page.status_evidence_reason or "incomplete_status_evidence"
+            if signals is not None:
+                signals.append({"kind": "acquisition_failure", "value": reason})
+            return ActiveState.UNKNOWN, reason
         soup = BeautifulSoup(page.status_html or page.html or "", "html.parser")
         if soup.select_one('input[type="password"], .g-recaptcha, #challenge-form') or any(
             phrase in soup.get_text(" ", strip=True).lower()[:1000]
@@ -181,7 +184,7 @@ class ActiveStateVerifier:
                     if element.parent is not None and description_text and " ".join(element.stripped_strings) == description_text:
                         element.decompose()
         controls = soup.select('[role="alert"], [role="status"], .alert, .job-closed, '
-                               '.posting-closed, .job-unavailable, .job-alert, h1, h2, button, input[type="submit"]')
+                               '.posting-closed, .job-unavailable, .job-alert, aside, header, h1, h2, button, input[type="submit"]')
         closed = any(marker in control.get_text(" ", strip=True).lower()
                      for control in controls for marker in _CLOSED_MARKERS)
         # A short standalone status page also counts; full descriptions do not.

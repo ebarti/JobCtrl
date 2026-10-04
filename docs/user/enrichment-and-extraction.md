@@ -100,9 +100,7 @@ source and resumes Tailor without requiring browser access. Resolver exception
 details remain local diagnostics; the product surfaces only the stable outcome
 code, message, method, and retry policy.
 
-## What You Can See And Control
-
-### Saved Posting Availability
+## Saved Posting Availability
 
 Job Detail shows **Posting availability**, with **Check availability** and
 **Inspect employer posting** actions. The latest attempt, last successful
@@ -110,7 +108,7 @@ verification, next due time, reason, acquisition method and evidence remain
 separate. A recent successful check does not hide a later unknown result.
 Reading Jobs does not contact employers.
 
-While the local worker runs, visible completed postings are checked every 24
+While the local worker runs, visible saved postings are checked every 24
 hours when active and every seven days when unavailable. Unavailable jobs stay
 saved and can become active again. The first check is due immediately; startup
 and reconnect catch up in groups of at most 25. Hidden/deleted jobs, running
@@ -148,6 +146,8 @@ jobctrl check-availability 10000000-0000-4000-8000-000000000123
 
 This checks one saved canonical job through the local worker and prints its
 recorded availability result. Replace the example ID with the selected JobId.
+
+## What You Can See And Control
 
 Enrichment is internal work under the user-facing **Discover** stage, not a
 separate primary page or pipeline stage. Its results remain inspectable:

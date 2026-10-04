@@ -337,8 +337,9 @@ class PostingSnapshotSet:
                 QuarantineReason.POSTING_INACTIVE, QuarantineReason.UNKNOWN_ACTIVE_STATE,
             }:
                 from jobctrl.domain.enrichment.snapshot_value_objects import SnapshotConfidence
-                quarantine = (QuarantineReason.NONE if tail.confidence is SnapshotConfidence.HIGH
-                              else QuarantineReason.LOW_CONFIDENCE_EXTRACTION)
+                quarantine = (QuarantineReason.LOW_CONFIDENCE_EXTRACTION
+                              if tail.confidence is SnapshotConfidence.LOW and tail.filter_override is None
+                              else QuarantineReason.NONE)
             new_tail = replace(tail, active_state=active_state, quarantine_reason=quarantine)
             new_snapshots = self.snapshots[:-1] + (new_tail,)
         else:
