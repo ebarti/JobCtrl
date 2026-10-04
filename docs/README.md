@@ -141,6 +141,7 @@ has one defining page; other pages summarize it briefly and link to that owner.
   evidence, policy, and calibration.
 - [`architecture/materials.md`](architecture/materials.md): employer analysis
   and cross-artifact auditability.
+- [Material Variant Comparison](architecture/material-variant-comparison.md): future proposal (not implemented).
 - [`architecture/tailoring.md`](architecture/tailoring.md): resume-tailoring
   prompt and validation contract.
 - [`architecture/contracts-types-and-api-boundaries.md`](architecture/contracts-types-and-api-boundaries.md):

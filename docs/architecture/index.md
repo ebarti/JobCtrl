@@ -35,6 +35,7 @@ boundary, or you need to know which page answers a given question.
 - [Application URL Authority Inventory](application-url-authority.md) — Which readers and writers still touch an application URL after exact v10, and how does a URL resolve to a job?
 - [Scoring Policy](scoring.md) — How does a discovered job become a defensible fit score?
 - [Employer Analysis & Materials Audit](materials.md) — How are generated artifacts and their claims audited?
+- [Material Variant Comparison](material-variant-comparison.md) — Future proposal (not implemented).
 - [Tailoring Contract](tailoring.md) — What is the model asked, and which gates approve a resume?
 - [Contracts, Types & API Boundaries](contracts-types-and-api-boundaries.md) — Where is each cross-process schema defined and enforced?
 - [Observability](observability.md) — How are LLM, workflow, and JSON-RPC spans traced to Langfuse?
