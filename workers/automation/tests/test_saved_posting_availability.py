@@ -414,7 +414,9 @@ def test_anonymous_browser_guard_failure_retains_hash_and_cannot_authorize(saved
                          SimpleNamespace(url="https://careers.example.org/status-module.js", method="GET", headers={}))
             return SimpleNamespace(status=200)
     page = Page()
-    browser = SimpleNamespace(new_context=lambda: SimpleNamespace(new_page=lambda: page), close=lambda: None)
+    context = SimpleNamespace(new_page=lambda: page, route=page.route, unroute=page.unroute,
+                              route_web_socket=lambda *_: None, add_init_script=lambda *_: None, pages=[])
+    browser = SimpleNamespace(new_context=lambda **_: context, close=lambda: None)
     monkeypatch.setattr("playwright.sync_api.sync_playwright", lambda: nullcontext(SimpleNamespace(chromium=SimpleNamespace(launch=lambda **_: browser))))
     monkeypatch.setattr(url_safety, "validate_public_http_url", lambda *_args, **_kwargs: url_safety.PublicUrlDecision(True))
     monkeypatch.setattr(detail, "_page_to_detail_page", lambda *_: replace(active_page(), raw_html_hash="b" * 64))

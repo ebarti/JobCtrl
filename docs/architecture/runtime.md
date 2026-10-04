@@ -900,3 +900,10 @@ actual-host reservations, pacing and response lineage. The total acquisition
 deadline covers launch, page navigation, every capture RPC and cleanup. If the
 renderer or close stalls, the supervisor terminates the owned driver and
 detached Chromium process groups and reaps its child before releasing the lease.
+
+Anonymous availability guards the complete browser context before creating a
+page, so first popup requests and frame resources pass through the same actual
+host reservations and URL checks. Service workers, WebSockets, WebTransport,
+WebRTC and dedicated/shared workers are blocked; an attempted unsupported
+channel or a failed resource keeps the result unknown. Guards remain installed
+until the browser has closed. Ordinary enrichment transport selection is unchanged.

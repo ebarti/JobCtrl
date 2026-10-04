@@ -1,8 +1,11 @@
 """Production workflow/dispatch and preflight entry points with synthetic transport."""
 from datetime import datetime, timedelta, timezone
 import io
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import sqlite3
+import socket
+import threading
 import subprocess
 import time
 from types import SimpleNamespace
@@ -286,3 +289,120 @@ def test_real_chromium_renderer_hang_is_cancelled_before_lease_expiry_and_succes
     host = availability.reserve_request(runtime.conn, claim, public_url)
     availability.release_host(runtime.conn, claim, host)
     availability.complete_check(runtime.conn, claim, verdict="unknown", reason="synthetic_successor", method="fixture", lineage=[])
+
+
+@pytest.fixture
+def native_sinks():
+    hits = []
+    class Sink(BaseHTTPRequestHandler):
+        def do_GET(self):
+            hits.append(self.path)
+            self.send_response(200)
+            self.end_headers()
+        def log_message(self, *_):
+            pass
+    http = ThreadingHTTPServer(("127.0.0.1", 0), Sink)
+    thread = threading.Thread(target=http.serve_forever, kwargs={"poll_interval": .01}, daemon=True)
+    thread.start()
+    udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    udp.bind(("127.0.0.1", 0))
+    udp.settimeout(.05)
+    try:
+        yield SimpleNamespace(hits=hits, http=f"http://127.0.0.1:{http.server_port}", udp=udp, udp_port=udp.getsockname()[1])
+    finally:
+        http.shutdown()
+        http.server_close()
+        thread.join(timeout=1)
+        udp.close()
+
+
+@pytest.mark.parametrize("channel", ["popup", "service_worker", "worker", "shared_worker", "websocket", "webtransport", "webrtc"])
+def test_real_context_guard_blocks_private_popup_and_unowned_native_channels_before_outbound(runtime, native_sinks, channel):
+    public_url = "https://93.184.216.34/jobs/context-guard"
+    runtime.conn.execute("UPDATE jobs SET url = ? WHERE job_id = ?", (public_url, JOB))
+    runtime.conn.commit()
+    target = native_sinks.http + "/" + channel
+    scripts = {
+        "popup": f"window.open({json.dumps(target)})",
+        "service_worker": "navigator.serviceWorker.register('/service-worker.js')",
+        "worker": "new Worker('/worker.js')",
+        "shared_worker": "new SharedWorker('/shared-worker.js')",
+        "websocket": f"new WebSocket({json.dumps(target.replace('http:', 'ws:'))})",
+        "webtransport": f"new WebTransport({json.dumps(target.replace('http:', 'https:'))})",
+        "webrtc": f"const peer = new RTCPeerConnection({{iceServers: [{{urls: 'stun:127.0.0.1:{native_sinks.udp_port}'}}]}}); peer.createDataChannel('probe'); peer.createOffer().then(value => peer.setLocalDescription(value))",
+    }
+    metadata = json.dumps({"@type": "JobPosting", "url": public_url, "description": "Current synthetic role"})
+    html = ("<html><head><title>Synthetic guarded role</title></head><body><main>Current synthetic role</main><script>"
+            "const ld = document.createElement('script'); ld.type = 'application/ld+json'; "
+            f"ld.textContent = JSON.stringify({metadata}); document.head.appendChild(ld); "
+            f"try {{ {scripts[channel]}; }} catch (_) {{}}"
+            "</script></body></html>").encode()
+    calls = []
+    def fetch(url):
+        calls.append(url)
+        assert url == public_url, "unsupported destination escaped the guarded acquisition"
+        return availability.Response(url, url, 200, html)
+    value = availability.check_availability(JOB, conn=runtime.conn, transport=fetch)
+    assert value["verdict"] == "unknown", value
+    assert (value["reason"].startswith("browser_guard:") if channel == "popup"
+            else value["reason"] == "unsupported_browser_channel"), value
+    assert calls == [public_url, public_url]
+    assert native_sinks.hits == []
+    with pytest.raises(socket.timeout):
+        native_sinks.udp.recvfrom(1024)
+    assert not value["checkInProgress"] and not runtime.conn.in_transaction
+    assert value["lastSuccessfullyVerifiedAt"] is None
+    assert value["lineage"][-1]["method"] == "anonymous_browser" and value["lineage"][-1]["rawHash"]
+
+
+@pytest.mark.parametrize("secondary", ["popup", "popup_worker", "iframe_worker"])
+def test_real_context_guard_routes_first_public_popup_through_actual_host_ledger_and_ipc(runtime, secondary):
+    public_url = "https://93.184.216.34/jobs/public-popup"
+    popup_url = "https://1.1.1.1/synthetic-popup"
+    runtime.conn.execute("UPDATE jobs SET url = ? WHERE job_id = ?", (public_url, JOB))
+    runtime.conn.commit()
+    metadata = json.dumps({"@type": "JobPosting", "url": public_url, "description": "Current synthetic role"})
+    launch = (f"const frame = document.createElement('iframe'); frame.src = {json.dumps(popup_url)}; document.body.appendChild(frame)"
+              if secondary == "iframe_worker" else f"window.open({json.dumps(popup_url)})")
+    html = ("<html><head><title>Synthetic guarded role</title></head><body><main>Current synthetic role</main><script>"
+            "const ld = document.createElement('script'); ld.type = 'application/ld+json'; "
+            f"ld.textContent = JSON.stringify({metadata}); document.head.appendChild(ld); {launch};"
+            "</script></body></html>").encode()
+    calls = []
+    def fetch(url):
+        calls.append(url)
+        assert url in {public_url, popup_url}
+        secondary_body = b"<html><body>Synthetic secondary page</body></html>"
+        if secondary.endswith("worker"):
+            secondary_body = b"<html><body><script>try {new Worker('/secondary-worker.js')} catch (_) {}</script></body></html>"
+        return availability.Response(url, url, 200, html if url == public_url else secondary_body)
+    value = availability.check_availability(JOB, conn=runtime.conn, transport=fetch)
+    assert value["verdict"] == ("active" if secondary == "popup" else "unknown"), value
+    if secondary.endswith("worker"):
+        assert value["reason"] == "unsupported_browser_channel", value
+    assert calls == [public_url, public_url, popup_url]
+    host = availability._latest(runtime.conn, "local", "availability_lease", "host:1.1.1.1")
+    assert host["nextStartAt"] and host["expiresAt"] and not host.get("owner")
+    outbound = runtime.conn.execute("SELECT payload_json FROM job_events WHERE entity_kind = 'availability_request'").fetchall()
+    assert sum(json.loads(row[0])["host"] == "1.1.1.1" for row in outbound) == 1
+    assert any(step["sourceUrl"] == popup_url and step["method"] == "browser_resource" and step["rawHash"] for step in value["lineage"])
+
+
+def test_real_context_guard_keeps_failed_status_resource_uncertain_with_its_hash(runtime):
+    public_url = "https://93.184.216.34/jobs/resource-failure"
+    module_url = "https://1.1.1.1/synthetic-status.js"
+    runtime.conn.execute("UPDATE jobs SET url = ? WHERE job_id = ?", (public_url, JOB))
+    runtime.conn.commit()
+    metadata = json.dumps({"@type": "JobPosting", "url": public_url, "description": "Current synthetic role"})
+    html = ("<html><head><title>Synthetic guarded role</title></head><body><main>Current synthetic role</main><script>"
+            "const ld = document.createElement('script'); ld.type = 'application/ld+json'; "
+            f"ld.textContent = JSON.stringify({metadata}); document.head.appendChild(ld);"
+            f"</script><script src='{module_url}'></script></body></html>").encode()
+    def fetch(url):
+        assert url in {public_url, module_url}
+        return availability.Response(url, url, 200 if url == public_url else 503,
+                                     html if url == public_url else b"Synthetic status endpoint failure")
+    value = availability.check_availability(JOB, conn=runtime.conn, transport=fetch)
+    assert value["verdict"] == "unknown" and value["reason"] == "browser_guard: browser_resource_http_503", value
+    assert any(step["sourceUrl"] == module_url and step["status"] == 503 and step["rawHash"] for step in value["lineage"])
+    assert not value["checkInProgress"]

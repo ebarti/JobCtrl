@@ -139,6 +139,11 @@ cannot close a posting. Blocked subresources and incomplete rendering remain
 unknown. Each outbound request has a 20-second total deadline and a full check
 has a 120-second acquisition budget, below crash-lease expiry.
 
+The anonymous fallback checks popup and frame requests through the same host
+limits and URL checks. It blocks service workers and unsupported socket or
+worker connections; an attempted unsupported connection or failed resource
+keeps availability unknown.
+
 Scoring, tailoring and cover generation need successfully verified active
 evidence no more than six hours old. Reviewed Apply needs evidence no more than
 15 minutes old, checked again before an owned email submit intent. Unknown,

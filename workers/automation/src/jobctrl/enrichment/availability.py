@@ -363,29 +363,61 @@ def _anonymous_browser_in_process(url: str, *, fetcher: Callable[[str, str], Res
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True, timeout=max(1, min(20, deadline - time.monotonic()) * 1000))
         try:
-            context = browser.new_context()
-            page = context.new_page()
+            context = browser.new_context(service_workers="block")
+            unsupported_channels: list[str] = []
+            def block_websocket(route: Any) -> None:
+                unsupported_channels.append("websocket")
+                route.close(code=1008, reason="Availability transport is read-only")
+            context.route_web_socket("**/*", block_websocket)
+            context.add_init_script("""(() => {
+                let attempted = false;
+                function blocked() {
+                    attempted = true;
+                    throw new DOMException('Unsupported availability transport', 'NotSupportedError');
+                }
+                Object.defineProperty(window, '__jobctrlAvailabilityUnsupported', {
+                    get: () => attempted, configurable: false
+                });
+                for (const name of Object.getOwnPropertyNames(window).filter(name =>
+                    /^(?:RTC|webkitRTC)/.test(name) || ['WebSocket', 'WebTransport', 'Worker', 'SharedWorker'].includes(name))) {
+                    try { Object.defineProperty(window, name, {value: blocked, configurable: false, writable: false}); }
+                    catch (_) { attempted = true; }
+                }
+                if (navigator.serviceWorker) {
+                    try { Object.defineProperty(navigator.serviceWorker, 'register', {
+                        value: blocked, configurable: false, writable: false
+                    }); } catch (_) { attempted = true; }
+                }
+            })();""")
             def fetch_route(request_url: str, method: str, headers: Any) -> RouteFulfillment:
                 response = fetcher(request_url, "browser_resource")
+                if response.status not in range(200, 300):
+                    raise DeferredCheck(f"browser_resource_http_{response.status}")
                 return RouteFulfillment(response.status, {"content-type": response.content_type}, response.body)
-            guard = PublicHttpUrlRouteGuard(page, fetch_public_requests=True, request_fetcher=fetch_route).install()
-            try:
-                response = page.goto(url, wait_until="domcontentloaded", timeout=max(1, min(20, deadline - time.monotonic()) * 1000))
-                if progress:
-                    progress("capture")
-                rendered = _page_to_detail_page(page, url, response.status if response else None)
-                if time.monotonic() >= deadline:
-                    return replace(rendered, status_evidence_complete=False, status_evidence_reason="acquisition_deadline")
-                if guard.blocked:
-                    return replace(rendered, status_evidence_complete=False,
-                                   status_evidence_reason=f"browser_guard: {guard.blocked_reason}")
-                return rendered
-            finally:
-                guard.close()
+            # Context routing covers the first popup request and every frame.
+            # Install all guards before the first page can run employer code.
+            guard = PublicHttpUrlRouteGuard(context, fetch_public_requests=True, request_fetcher=fetch_route).install()
+            page = context.new_page()
+            response = page.goto(url, wait_until="domcontentloaded", timeout=max(1, min(20, deadline - time.monotonic()) * 1000))
+            if progress:
+                progress("capture")
+            rendered = _page_to_detail_page(page, url, response.status if response else None)
+            unsupported_frame = any(frame.evaluate("Boolean(window.__jobctrlAvailabilityUnsupported)")
+                                    for candidate in context.pages for frame in candidate.frames)
         finally:
             if progress:
                 progress("cleanup")
+            # Keep HTTP and socket guards installed through browser shutdown.
+            # Context disposal removes the routes after every page is closed.
             browser.close()
+    if time.monotonic() >= deadline:
+        return replace(rendered, status_evidence_complete=False, status_evidence_reason="acquisition_deadline")
+    if guard.blocked:
+        return replace(rendered, status_evidence_complete=False,
+                       status_evidence_reason=f"browser_guard: {guard.blocked_reason}")
+    if unsupported_channels or unsupported_frame:
+        return replace(rendered, status_evidence_complete=False, status_evidence_reason="unsupported_browser_channel")
+    return rendered
 
 
 def _browser_process(url: str, channel: Any, deadline: float) -> None:
