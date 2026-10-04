@@ -40,6 +40,7 @@ boundary, or you need to know which page answers a given question.
 - [Observability](observability.md) — How are LLM, workflow, and JSON-RPC spans traced to Langfuse?
 - [Backend Domain Model](domain-model/index.md) — How is the domain designed (bounded contexts, aggregates, ports)?
 - [Frontend Architecture](frontend/index.md) — How is the web app designed (state layers, contexts, ports, realtime)?
+- [Leadership Practice](leadership-practice.md) — Future architecture (not implemented): bounded management reflection and evidence-promotion boundaries.
 
 This page is the canonical architecture reference for JobCtrl. The domain
 model this implementation realises is defined in the

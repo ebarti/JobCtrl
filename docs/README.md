@@ -123,6 +123,8 @@ has one defining page; other pages summarize it briefly and link to that owner.
 
 - [`architecture/index.md`](architecture/index.md): current system map and
   bounded-context composition.
+- [`architecture/leadership-practice.md`](architecture/leadership-practice.md):
+  future architecture (not implemented) for bounded management reflection.
 - [`architecture/runtime.md`](architecture/runtime.md): process ownership,
   lifetimes, readiness, and TypeScript-to-Python boundaries.
 - [`architecture/pipeline/`](architecture/pipeline/index.md): Temporal workflow
