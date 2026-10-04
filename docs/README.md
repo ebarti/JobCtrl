@@ -132,6 +132,8 @@ has one defining page; other pages summarize it briefly and link to that owner.
   the distinction between domain state, events, projections, and telemetry.
 - [`architecture/storage.md`](architecture/storage.md): physical SQLite and file
   authorities.
+- [`architecture/portable-workspace.md`](architecture/portable-workspace.md): future
+  proposal (not implemented) for owned workspace bundles and safe import.
 - [`architecture/application-url-authority.md`](architecture/application-url-authority.md):
   application URL readers and writers after the exact-v10 migration, and the
   unique-match job lookup rule.
