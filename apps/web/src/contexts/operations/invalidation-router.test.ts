@@ -149,6 +149,8 @@ const expectedInvalidations: Record<DomainEventUnion["eventType"], ExpectedKeys>
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     discoveryKeys.sourceQuality(LOCAL_TENANT),
   ],
+  AvailabilityLeaseChanged: [],
+  JobAvailabilityObserved: [jobsKeys.detail(LOCAL_TENANT, JOB_ID), jobsKeys.lists(LOCAL_TENANT)],
   JobActiveStateChanged: [
     jobsKeys.detail(LOCAL_TENANT, JOB_ID),
     discoveryKeys.sourceQuality(LOCAL_TENANT),

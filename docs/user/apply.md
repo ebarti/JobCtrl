@@ -71,6 +71,15 @@ wrap below their binding explanation; no decision or audit section is removed.
 
 ## Approval And Automation Modes
 
+Before Apply claims a prepared job or opens its provider/browser path, it needs
+a successful active posting check from the last 15 minutes. The owned email
+sender checks again before recording submit intent. An unknown, deferred or
+unavailable result stops the attempt; use Job Detail's **Check availability**
+or inspect the employer posting before retrying. This read-only check preserves
+your approved materials and decision, and grants no submission authority.
+See [saved posting availability](enrichment-and-extraction.md#saved-posting-availability)
+for cadence, offline behavior and acquisition limits.
+
 Apply Review's **Submit gates** table shows each gate, its current state, and
 the reason behind that state. It covers recorded approval, dry-run evidence,
 materials, profile version, application URL, repeat-application protection,

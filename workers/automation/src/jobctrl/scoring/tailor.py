@@ -722,6 +722,15 @@ def tailor_job_by_id(
             "reason": "not_eligible",
         }
 
+    # Eligibility/idempotency are local reads. Acquire current evidence before
+    # provider setup and release any reconciler writes before network I/O.
+    conn.commit()
+    from jobctrl.enrichment.availability import require_fresh_active
+    require_fresh_active(str(stable_job_id), tenant_id=str(tenant_id), conn=conn, expected_posting_url=job["url"])
+    job = target_reader.load(tenant_id, stable_job_id)
+    if job is None:
+        return {"job_id": str(stable_job_id), "status": "skipped", "reason": "availability_candidate_changed"}
+
     if snapshot is None:
         from jobctrl.infrastructure.profile import get_profile_repository
 

@@ -110,6 +110,8 @@ def _seed_apply_selector_job(
         ),
     )
     assert cursor.rowcount == 1
+    from .availability_fixture import seed_fresh_availability
+    seed_fresh_availability(conn, str(job_id))
     conn.commit()
     return job_id, url
 

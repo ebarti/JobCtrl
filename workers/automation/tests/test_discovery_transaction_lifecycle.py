@@ -295,7 +295,7 @@ async def test_real_discover_workflow_closes_empty_fanout_before_enrichment(
 
         def query_selector_all(self, selector):
             assert selector == 'script[type="application/ld+json"]'
-            return [SimpleNamespace(inner_text=lambda: json.dumps(posting))]
+            return [SimpleNamespace(inner_text=lambda: json.dumps({**posting, "url": self.url}))]
 
         def query_selector(self, _selector):
             return SimpleNamespace(inner_text=lambda: description, inner_html=lambda: description)
@@ -313,7 +313,7 @@ async def test_real_discover_workflow_closes_empty_fanout_before_enrichment(
             "contentType": "text/html",
             "title": "Engineering lead",
             "bodyText": description,
-            "bodyHtml": html,
+            "bodyHtml": html.replace("https://fixture.example/apply", url),
         },
         connected=connected,
     )

@@ -683,6 +683,78 @@ def _apply_candidate_select_parts() -> tuple[str, str]:
     return columns, joins
 
 
+def _select_apply_candidates(conn, tenant_id, target_job_id, min_score):
+    common_columns, common_joins = _apply_candidate_select_parts()
+
+    if target_job_id is not None:
+        target_row = conn.execute(
+            f"""
+            SELECT {common_columns}
+            FROM jobs {common_joins}
+            WHERE jobs.tenant_id = ?
+              AND jobs.job_id = ?
+              AND {_READY_TAILORED_RESUME_WITH_PDF}
+              AND {_SCORE_ELIGIBLE_FOR_DOWNSTREAM}
+              AND {_SCORE_CURRENT_FOR_DOWNSTREAM}
+              AND {_NOT_CLOSED_ACTIVE_STATE}
+            LIMIT 1
+            """,
+            (tenant_id, str(canonical_job_id(str(target_job_id)))),
+        ).fetchone()
+        candidate_rows = [target_row] if target_row is not None else []
+    else:
+        blocked_sites, blocked_patterns = _load_blocked()
+        params: list[Any] = [
+            tenant_id,
+            config.DEFAULTS["max_apply_attempts"],
+            min_score,
+        ]
+        site_clause = ""
+        if blocked_sites:
+            placeholders = ",".join("?" * len(blocked_sites))
+            site_clause = f"AND jobs.site NOT IN ({placeholders})"
+            params.extend(blocked_sites)
+        url_clauses = ""
+        if blocked_patterns:
+            url_clauses = " ".join("AND jobs.url NOT LIKE ?" for _ in blocked_patterns)
+            params.extend(blocked_patterns)
+        rows = conn.execute(
+            f"""
+            SELECT {common_columns}
+            FROM jobs {common_joins}
+            WHERE jobs.tenant_id = ?
+              AND {_READY_TAILORED_RESUME_WITH_PDF}
+              AND {_EFFECTIVE_APPLY_TARGET_URL} IS NOT NULL
+              AND {_EFFECTIVE_APPLY_TARGET_URL} != ''
+              AND NOT EXISTS (
+                  SELECT 1 FROM job_stage_states jss_active
+                  WHERE jss_active.tenant_id = jobs.tenant_id
+                    AND jss_active.job_id = jobs.job_id
+                    AND jss_active.stage = 'apply'
+                    AND jss_active.state IN ('running', 'succeeded', 'needs_verification')
+              )
+              AND COALESCE(
+                  (SELECT jss_a.attempt_count FROM job_stage_states jss_a
+                   WHERE jss_a.tenant_id = jobs.tenant_id
+                     AND jss_a.job_id = jobs.job_id
+                     AND jss_a.stage = 'apply'
+                   LIMIT 1), 0
+              ) < ?
+              AND {_EFFECTIVE_FIT_SCORE} >= ?
+              AND {_SCORE_ELIGIBLE_FOR_DOWNSTREAM}
+              AND {_SCORE_CURRENT_FOR_DOWNSTREAM}
+              AND {_NOT_CLOSED_ACTIVE_STATE}
+              AND {_ENRICHMENT_NOT_QUARANTINED}
+              {site_clause}
+              {url_clauses}
+            ORDER BY {_EFFECTIVE_FIT_SCORE} DESC, jobs.url
+            """,
+            params,
+        ).fetchall()
+        candidate_rows = rows
+    return candidate_rows
+
+
 def acquire_job(
     target_job_id: JobId | None = None,
     min_score: int = 7,
@@ -701,79 +773,38 @@ def acquire_job(
     ``apply_run_projections`` row on the next refresh.
     """
     conn = get_connection()
+    from datetime import timedelta
+    from jobctrl.enrichment.availability import require_fresh_active, fresh_active
+    tenant_id = str(tenant_id or (run_ctx.get("tenant_id") if run_ctx else None) or LOCAL_TENANT)
+    if target_job_id is not None:
+        target_job_id = canonical_job_id(str(target_job_id))
+    # Select without a writer, acquire evidence, then re-read the same candidate
+    # under the original apply lock before claiming an attempt or submit intent.
+    candidates = _select_apply_candidates(conn, tenant_id, target_job_id, min_score)[:25]
+    selected = None
+    for candidate in candidates:
+        try:
+            require_fresh_active(candidate["job_id"], tenant_id=tenant_id, conn=conn, max_age=timedelta(minutes=15), expected_posting_url=candidate["url"])
+        except Exception:
+            logger.info("Apply deferred for %s: check availability or inspect employer posting", candidate["job_id"])
+            continue
+        selected = candidate
+        break
+    if selected is None:
+        return None
+    availability_candidate_id = canonical_job_id(selected["job_id"])
     try:
         conn.execute("BEGIN IMMEDIATE")
-        tenant_id = str(tenant_id or (run_ctx.get("tenant_id") if run_ctx else None) or LOCAL_TENANT)
+        current = conn.execute("SELECT url FROM jobs WHERE tenant_id = ? AND job_id = ?", (tenant_id, str(availability_candidate_id))).fetchone()
+        if current is None or current[0] != selected["url"] or not fresh_active(
+            conn, str(availability_candidate_id), tenant_id=tenant_id, max_age=timedelta(minutes=15)
+        ):
+            conn.rollback()
+            return None
 
-        common_columns, common_joins = _apply_candidate_select_parts()
+        candidate_rows = _select_apply_candidates(conn, tenant_id, target_job_id, min_score)
 
-        if target_job_id is not None:
-            target_row = conn.execute(
-                f"""
-                SELECT {common_columns}
-                FROM jobs {common_joins}
-                WHERE jobs.tenant_id = ?
-                  AND jobs.job_id = ?
-                  AND {_READY_TAILORED_RESUME_WITH_PDF}
-                  AND {_SCORE_ELIGIBLE_FOR_DOWNSTREAM}
-                  AND {_SCORE_CURRENT_FOR_DOWNSTREAM}
-                  AND {_NOT_CLOSED_ACTIVE_STATE}
-                LIMIT 1
-                """,
-                (tenant_id, str(canonical_job_id(str(target_job_id)))),
-            ).fetchone()
-            candidate_rows = [target_row] if target_row is not None else []
-        else:
-            blocked_sites, blocked_patterns = _load_blocked()
-            params: list[Any] = [
-                tenant_id,
-                config.DEFAULTS["max_apply_attempts"],
-                min_score,
-            ]
-            site_clause = ""
-            if blocked_sites:
-                placeholders = ",".join("?" * len(blocked_sites))
-                site_clause = f"AND jobs.site NOT IN ({placeholders})"
-                params.extend(blocked_sites)
-            url_clauses = ""
-            if blocked_patterns:
-                url_clauses = " ".join("AND jobs.url NOT LIKE ?" for _ in blocked_patterns)
-                params.extend(blocked_patterns)
-            rows = conn.execute(
-                f"""
-                SELECT {common_columns}
-                FROM jobs {common_joins}
-                WHERE jobs.tenant_id = ?
-                  AND {_READY_TAILORED_RESUME_WITH_PDF}
-                  AND {_EFFECTIVE_APPLY_TARGET_URL} IS NOT NULL
-                  AND {_EFFECTIVE_APPLY_TARGET_URL} != ''
-                  AND NOT EXISTS (
-                      SELECT 1 FROM job_stage_states jss_active
-                      WHERE jss_active.tenant_id = jobs.tenant_id
-                        AND jss_active.job_id = jobs.job_id
-                        AND jss_active.stage = 'apply'
-                        AND jss_active.state IN ('running', 'succeeded', 'needs_verification')
-                  )
-                  AND COALESCE(
-                      (SELECT jss_a.attempt_count FROM job_stage_states jss_a
-                       WHERE jss_a.tenant_id = jobs.tenant_id
-                         AND jss_a.job_id = jobs.job_id
-                         AND jss_a.stage = 'apply'
-                       LIMIT 1), 0
-                  ) < ?
-                  AND {_EFFECTIVE_FIT_SCORE} >= ?
-                  AND {_SCORE_ELIGIBLE_FOR_DOWNSTREAM}
-                  AND {_SCORE_CURRENT_FOR_DOWNSTREAM}
-                  AND {_NOT_CLOSED_ACTIVE_STATE}
-                  AND {_ENRICHMENT_NOT_QUARANTINED}
-                  {site_clause}
-                  {url_clauses}
-                ORDER BY {_EFFECTIVE_FIT_SCORE} DESC, jobs.url
-                """,
-                params,
-            ).fetchall()
-            candidate_rows = rows
-
+        candidate_rows = [candidate for candidate in candidate_rows if candidate["job_id"] == str(availability_candidate_id)]
         if not candidate_rows:
             conn.rollback()
             return None
@@ -1911,6 +1942,12 @@ def gen_prompt(
 # ---------------------------------------------------------------------------
 
 
+def _authorize_posting_before_submit(tenant_id: str, job_id: str) -> None:
+    from datetime import timedelta
+    from jobctrl.enrichment.availability import require_fresh_active
+    require_fresh_active(job_id, tenant_id=tenant_id, max_age=timedelta(minutes=15))
+
+
 def _build_use_case():
     """Construct the canonical local-mode use case wiring.
 
@@ -1942,6 +1979,7 @@ def _build_use_case():
         email_sender=GmailEmailApplicationSender(),
         timeout_seconds=config.get_apply_timeout_seconds(),
         submission_authorizer=lambda: require_system_browser_capability("auto-apply-browser"),
+        availability_authorizer=_authorize_posting_before_submit,
     )
     return SubmitApplicationUseCase(
         repository=SqliteApplyRunRepository(),
@@ -2187,6 +2225,12 @@ def run_job(
     ``status_string`` is derived from the saga's terminal
     ``SubmissionResult``.
     """
+    from datetime import timedelta
+    from jobctrl.enrichment.availability import require_fresh_active
+    try:
+        require_fresh_active(str(job["job_id"]), tenant_id=str(tenant_id), conn=get_connection(), max_age=timedelta(minutes=15), expected_posting_url=job["url"])
+    except Exception:
+        return "blocked", 0
     run_ctx = run_ctx or {}
     run_id = run_ctx.setdefault("run_id", uuid.uuid4().hex)
     run_ctx.setdefault("worker_id", worker_id)

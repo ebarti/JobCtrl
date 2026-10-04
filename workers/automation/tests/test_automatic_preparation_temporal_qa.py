@@ -123,6 +123,9 @@ def world(tmp_path, monkeypatch):
     original_score = scorer.score_job_by_id
 
     def synthetic_score(job_id, **kwargs):
+        from .availability_fixture import seed_fresh_availability
+        seed_fresh_availability(database.get_connection(), str(job_id))
+        database.get_connection().commit()
         return original_score(
             job_id,
             **kwargs,
@@ -157,6 +160,8 @@ def seed_for_stage(world, number, stage):
     if stage == "cover":
         _seed_approved_resume(world.conn, world.app, tenant_id=LOCAL_TENANT, job_id=job_id)
         set_stage_state(world.conn, job_id, "tailor", "succeeded", validate_transition=False)
+    from .availability_fixture import seed_fresh_availability
+    seed_fresh_availability(world.conn, str(job_id), str(LOCAL_TENANT))
     world.conn.commit()
     return job_id
 
@@ -874,6 +879,8 @@ def evidence_world(world, monkeypatch):
 def seed(world, number=1):
     job_id = _job(world.conn, number=number, enriched=True)
     world.conn.execute("UPDATE job_enrichments SET full_description='Need Python.' WHERE job_id=?", (str(job_id),))
+    from .availability_fixture import seed_fresh_availability
+    seed_fresh_availability(world.conn, str(job_id), str(LOCAL_TENANT))
     world.conn.commit()
     analysis = _employer_analysis(
         f"https://example.test/jobs/{number}",

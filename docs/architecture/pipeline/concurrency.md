@@ -211,3 +211,17 @@ count/age, and add/dispatch rates. The capacity response preserves
 `unsupported`, `unavailable`, and `stale` states. The ETA estimator therefore
 refuses to divide domain work by nominal slots when runtime telemetry is stale
 or shared queue contention cannot be bounded.
+
+## Saved Posting Check Bounds
+
+Availability conservatively runs one check per workspace at a time. Durable
+job/workspace/actual-host leases expire after five minutes and fence completion;
+crashed or superseded owners cannot publish late evidence. A workspace admits
+at most one sweep per minute, 25 jobs per sweep and 100 actual outbound
+acquisitions per hour. Manual/preflight checks share those bounds and the
+once-per-minute job limit. Every redirect and anonymous browser resource
+reserves its actual host with at least two seconds between starts and one
+in-flight request, retaining stricter shared policy/cooldown. Requests are
+bounded to 12 per check, four canonical redirect hops, 20-second HTTP/browser
+operations and one million response bytes. All waits and network work happen
+outside SQLite writer transactions.

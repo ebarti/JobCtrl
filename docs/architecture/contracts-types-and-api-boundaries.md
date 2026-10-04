@@ -252,3 +252,14 @@ local Temporal, and SQLite. See the explicitly future sections in
 [Cross-Context Integration](domain-model/integration.md) and
 [Cloud Evolution](domain-model/cloud.md); do not describe those adapters as
 available current contracts.
+
+## Availability Command And Read Boundary
+
+The strict endpoint spec owns `POST /v1/jobs/:jobId/actions/check-availability`
+and its queued acknowledgement. The API supplies trusted runtime identity to
+`check_posting_availability`; Python validates it before starting the registered
+Temporal workflow. The frontend consumes the generated API client through its
+port, re-exporting availability types through the operations boundary. Jobs GET
+exposes persisted observation DTOs and calculated freshness without transport
+side effects. Python and TypeScript event registries, endpoint JSON Schema
+fixtures and RPC registration observations are updated together.

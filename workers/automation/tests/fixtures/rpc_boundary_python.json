@@ -29,6 +29,10 @@
       "mode": "sync"
     },
     {
+      "method": "check_posting_availability",
+      "mode": "workflow"
+    },
+    {
       "method": "generate_interview_prep",
       "mode": "workflow"
     },

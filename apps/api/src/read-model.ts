@@ -49,6 +49,7 @@ import type {
   InterviewPrep,
   JobListQuery,
   JobSummary,
+  PostingAvailability,
   OutcomeAnalyticsSummary,
   PaginatedResponse,
   PreparationSummary,
@@ -2543,6 +2544,46 @@ export function readSettingsConfig(
 
 // ============================================================== mappings
 
+/** Persisted observations and wall-clock freshness only; Jobs GET never acquires. */
+export function postingAvailability(db: SqliteDatabase, jobId: string, now = Date.now()): PostingAvailability {
+  const latest = getRow<{ payload_json: string | null }>(db,
+    "SELECT payload_json FROM job_events WHERE tenant_id = ? AND entity_kind = 'posting_availability' " +
+    "AND entity_ref = ? ORDER BY event_id DESC LIMIT 1", [DEFAULT_TENANT, jobId]);
+  const lease = getRow<{ payload_json: string | null }>(db,
+    "SELECT payload_json FROM job_events WHERE tenant_id = ? AND entity_kind = 'availability_lease' " +
+    "AND entity_ref = ? ORDER BY event_id DESC LIMIT 1", [DEFAULT_TENANT, `job:${jobId}`]);
+  const value = parseJsonRecord(latest?.payload_json ?? null) ?? {};
+  const reservation = parseJsonRecord(lease?.payload_json ?? null) ?? {};
+  const nextDueAt = nullableString(value.nextDueAt);
+  const rawLineage = Array.isArray(value.lineage) ? value.lineage.slice(0, 24) : [];
+  return {
+    jobId, postingUrl: nullableString(value.postingUrl),
+    verdict: isActiveState(value.verdict) ? value.verdict : "unknown",
+    reason: nullableString(value.reason) ?? "not_yet_checked", method: nullableString(value.method) ?? "unknown",
+    lastAttemptedAt: nullableString(value.lastAttemptedAt),
+    lastSuccessfullyVerifiedAt: nullableString(value.lastSuccessfullyVerifiedAt),
+    lastSuccessfulState: isActiveState(value.lastSuccessfulState) ? value.lastSuccessfulState : null,
+    lastSuccessfulEvidenceRef: nullableString(value.lastSuccessfulEvidenceRef),
+    nextDueAt, evidenceRef: nullableString(value.evidenceRef),
+    overdue: !nextDueAt || !Number.isFinite(Date.parse(nextDueAt)) || Date.parse(nextDueAt) <= now,
+    checkInProgress: Boolean(reservation.owner && Date.parse(String(reservation.expiresAt)) > now),
+    lineage: rawLineage.flatMap((entry) => {
+      if (!entry || typeof entry !== "object") return [];
+      const item = entry as Record<string, unknown>;
+      const signals = Array.isArray(item.signals) ? item.signals.slice(0, 24).flatMap((signal) => {
+        if (!signal || typeof signal !== "object") return [];
+        const value = signal as Record<string, unknown>;
+        if (typeof value.kind !== "string" || !["string", "boolean"].includes(typeof value.value)) return [];
+        return [{ kind: value.kind, value: value.value as string | boolean,
+          ...(typeof value.past === "boolean" ? { past: value.past } : {}) }];
+      }) : [];
+      return [{ sourceUrl: nullableString(item.sourceUrl) ?? "", finalUrl: nullableString(item.finalUrl),
+        status: nullableNumber(item.status), method: nullableString(item.method) ?? "unknown",
+        rawHash: nullableString(item.rawHash), signals }];
+    }),
+  };
+}
+
 function rowToJobSummary(row: JobListProjectionRow, db?: SqliteDatabase): JobSummary {
   const jobKey = requireCanonicalJobId(row.job_id);
   const currentStagePresentation = publicStagePresentation(
@@ -2589,6 +2630,7 @@ function rowToJobSummary(row: JobListProjectionRow, db?: SqliteDatabase): JobSum
     applyStatus: row.apply_status,
     appliedAt: row.applied_at,
     activeState: isActiveState(row.active_state) ? row.active_state : "unknown",
+    ...(db ? { availability: postingAvailability(db, jobKey) } : {}),
     deletedAt: row.deleted_at,
     hiddenAt: row.hidden_at,
     resumeTemplate: db ? resumeTemplateStateForJob(db, jobKey) : null,

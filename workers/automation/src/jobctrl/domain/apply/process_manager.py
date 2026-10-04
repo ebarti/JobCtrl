@@ -144,6 +144,7 @@ class ApplySaga:
         email_sender: EmailApplicationSenderPort | None = None,
         timeout_seconds: int | None = None,
         submission_authorizer: Callable[[], None] | None = None,
+        availability_authorizer: Callable[[str, str], None] | None = None,
     ) -> None:
         self._browser = browser_port
         self._agent = agent_port
@@ -155,6 +156,7 @@ class ApplySaga:
         # commit externally, the composition root must re-authorize the
         # capability. The model-driven browser remains transport-locked.
         self._submission_authorizer = submission_authorizer or (lambda: None)
+        self._availability_authorizer = availability_authorizer or (lambda tenant_id, job_id: None)
 
     # ------------------------------------------------------------------
     # Public API
@@ -535,6 +537,13 @@ class ApplySaga:
             )
             return run, Failed(error="email_sender_unavailable", retryable=False)
 
+        try:
+            self._availability_authorizer(str(run.tenant_id), str(run.job_id))
+        except Exception:  # noqa: BLE001 - freshness authorization port
+            run = run.record_event(event_type="ApplySubmissionBlocked", occurred_at=_utc_now(), level="warn",
+                                   message="Check availability or inspect the employer posting before retrying.",
+                                   payload={"reason": "posting_availability_unverified", "submission_channel": "email"})
+            return run, Failed(error="POSTING_AVAILABILITY_UNVERIFIED: check availability or inspect the employer posting", retryable=True)
         try:
             self._submission_authorizer()
         except Exception as exc:  # noqa: BLE001 - external authorization port

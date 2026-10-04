@@ -70,6 +70,9 @@ def _job(conn, number=1, *, state="failed", attempts=1, retryable=True, enriched
     conn.execute(
         "UPDATE job_stage_states SET updated_at = ? WHERE tenant_id = ? AND job_id = ?", (_OLD, tenant, str(job_id))
     )
+    if enriched:
+        from .availability_fixture import seed_fresh_availability
+        seed_fresh_availability(conn, str(job_id), tenant)
     conn.commit()
     return job_id
 

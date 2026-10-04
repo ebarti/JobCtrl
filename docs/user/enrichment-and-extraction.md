@@ -102,6 +102,53 @@ code, message, method, and retry policy.
 
 ## What You Can See And Control
 
+### Saved Posting Availability
+
+Job Detail shows **Posting availability**, with **Check availability** and
+**Inspect employer posting** actions. The latest attempt, last successful
+verification, next due time, reason, acquisition method and evidence remain
+separate. A recent successful check does not hide a later unknown result.
+Reading Jobs does not contact employers.
+
+While the local worker runs, visible completed postings are checked every 24
+hours when active and every seven days when unavailable. Unavailable jobs stay
+saved and can become active again. The first check is due immediately; startup
+and reconnect catch up in groups of at most 25. Hidden/deleted jobs, running
+applications and terminal application outcomes are excluded from automatic
+checks. Manual checks remain available for saved, inspectable jobs.
+
+The worker checks one posting at a time and admits a sweep at most once a
+minute. All checks share a limit of 100 outbound acquisitions per hour per
+workspace, at least two seconds between requests to a host, and one request in
+flight per host. Repeated clicks coalesce, and a job can acquire new evidence
+at most once a minute. Unknown results retry after five minutes, with increasing
+delays capped at 24 hours; retry cannot bypass quotas or rate-limit cooldowns.
+Sleep, an offline machine or a stopped worker leaves the recorded times intact
+and can make a check overdue.
+
+Greenhouse and Lever (including Lever EU) are checked through exact posting
+APIs. Ashby contributes only a matching positive posting, including unlisted
+direct links; absence from a board cannot prove closure. Other supported pages
+use guarded public HTTP and a bounded anonymous browser fallback. Pairing the
+extension does not enable authenticated availability capture. Login,
+challenge, access-limited, malformed or identity-lost pages remain unknown;
+ordinary Discovery/Enrich extension selection keeps its own behavior.
+
+Scoring, tailoring and cover generation need successfully verified active
+evidence no more than six hours old. Reviewed Apply needs evidence no more than
+15 minutes old, checked again before an owned email submit intent. Unknown,
+deferred or unavailable evidence stops that work and offers check/retry/manual
+inspection. Failed checks preserve accepted content, scores, material
+generations, approvals and outcomes. Availability never hides/deletes a job or
+starts an application.
+
+```bash
+jobctrl check-availability 10000000-0000-4000-8000-000000000123
+```
+
+This checks one saved canonical job through the local worker and prints its
+recorded availability result. Replace the example ID with the selected JobId.
+
 Enrichment is internal work under the user-facing **Discover** stage, not a
 separate primary page or pipeline stage. Its results remain inspectable:
 

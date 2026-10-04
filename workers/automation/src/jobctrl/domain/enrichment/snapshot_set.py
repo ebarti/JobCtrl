@@ -330,7 +330,16 @@ class PostingSnapshotSet:
         previous = self.latest_active_state
         if self.snapshots:
             tail = self.snapshots[-1]
-            new_tail = replace(tail, active_state=active_state)
+            # Availability reversals clear only availability-owned quarantine.
+            # Content quality and user/policy decisions keep their own gates.
+            quarantine = tail.quarantine_reason
+            if active_state is ActiveState.ACTIVE and quarantine in {
+                QuarantineReason.POSTING_INACTIVE, QuarantineReason.UNKNOWN_ACTIVE_STATE,
+            }:
+                from jobctrl.domain.enrichment.snapshot_value_objects import SnapshotConfidence
+                quarantine = (QuarantineReason.NONE if tail.confidence is SnapshotConfidence.HIGH
+                              else QuarantineReason.LOW_CONFIDENCE_EXTRACTION)
+            new_tail = replace(tail, active_state=active_state, quarantine_reason=quarantine)
             new_snapshots = self.snapshots[:-1] + (new_tail,)
         else:
             new_snapshots = self.snapshots

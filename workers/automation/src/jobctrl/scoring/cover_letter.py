@@ -161,6 +161,8 @@ def generate_cover_letter(
     keeps its single-call ergonomics. New callers should construct
     :class:`GenerateCoverLetterUseCase` directly.
     """
+    from jobctrl.enrichment.availability import require_fresh_active
+    require_fresh_active(str(job["job_id"]), expected_posting_url=job["url"])
     _ = resume_text  # use case reads the tailored resume from the repo
     use_case = _build_use_case()
     use_case._max_retries = max_retries  # noqa: SLF001 — DI seam
@@ -249,6 +251,12 @@ def cover_letter_by_id(
         return _skipped_result(stable_job_id, reason="missing_approved_resume_pdf", url=str(job.get("url") or ""))
     if _cover_stage_succeeded(conn, tenant_id=tenant_id, job_id=stable_job_id):
         return _skipped_result(stable_job_id, reason="already_done", url=str(job.get("url") or ""), status="already_done")
+
+    from jobctrl.enrichment.availability import require_fresh_active
+    require_fresh_active(str(stable_job_id), tenant_id=str(tenant_id), conn=conn, expected_posting_url=job["url"])
+    job = SqlitePreparationTargetReader(conn).load(tenant_id, stable_job_id)
+    if job is None:
+        return _skipped_result(stable_job_id, reason="availability_candidate_changed")
 
     if snapshot is None:
         from jobctrl.infrastructure.profile import get_profile_repository

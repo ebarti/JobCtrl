@@ -742,3 +742,28 @@ name, or host path.
 <a id="saved-views-smoke"></a>
 <a id="daily-digest-smoke"></a>
 <a id="resume-tailoring-quality-eval-gate"></a>
+
+### Saved posting availability
+
+Use owned synthetic data to verify current closure status outside historical
+description, malformed/missing identity and metadata, HTTP 403/429/5xx/login/
+timeout uncertainty, timezone-aware deadlines, canonical retained/lost redirects,
+conflicting retained signals and exact ATS identity. Greenhouse/Lever EU must use
+exact endpoints; missing/partial Ashby rows cannot prove closure and an unlisted
+matching direct link can be active. API/page/browser fallbacks retain hashes and
+method lineage; extension pairing alone cannot fabricate authenticated evidence.
+
+Exercise completed-job startup/reconnect/heartbeat catch-up, 25-job selection,
+100 acquisitions/hour, once/minute coalescing, two-second actual-host pacing,
+backoff/Retry-After, independent process leases, crash recovery and stale fences.
+Prove a second writer can acquire during transport. GET must make zero employer
+requests. Failed observations retain success clocks and byte-identical accepted
+content/material/generation/approval/outcome fingerprints. Closure must never
+call `retire_invalid_source_jobs`, emit `JobDeleted` or write tombstones.
+
+Real Temporal worker, API/RPC/CLI and rendered browser QA must show explicit
+refresh, uncertainty, overdue/offline state and closed-to-active reversal without
+Discover. Before expensive preparation and reviewed Apply, stale/unknown evidence
+must stop provider/browser work and submit intent without consuming attempt
+ownership. No application is submitted during QA. External transports may be
+deterministic; production claims/classifier/dispatch/persistence remain real.

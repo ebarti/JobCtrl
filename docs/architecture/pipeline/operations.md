@@ -673,3 +673,20 @@ defensive dashboard read keep them truthful on existing databases:
 - **Nothing stays "running" forever.** Finalize records the terminal outcome on
   every normal/cancel path; the describe-based reconciler backstops killed
   workers, timeouts, and dev-server history loss.
+
+## Recurring Saved Posting Checks
+
+Startup and heartbeat/reconnect admit bounded availability sweeps independently
+of Discover. Completed visible jobs are due immediately before the first check,
+then active evidence is due after 24 hours and confirmed unavailable evidence
+after seven days. Unknown acquisition retries after five minutes with exponential
+backoff capped at 24 hours; bounded Retry-After contributes a shared host cooldown.
+A manual request cannot bypass backoff, quotas or safety checks. Preparation/
+review jobs are preferred, then oldest due with stable JobId ordering. Stopped
+workers leave clocks intact and the UI honestly reports overdue evidence.
+
+Failures preserve accepted content/materials, approvals, application attempts
+and outcomes. Reopening updates availability without another Discover run.
+Current unknown or unavailable evidence blocks expensive preparation/Apply
+preflight; reads never trigger acquisition. See the
+[Enrichment user policy](../../user/enrichment-and-extraction.md#saved-posting-availability).

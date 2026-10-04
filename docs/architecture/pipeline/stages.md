@@ -571,3 +571,14 @@ Rate-limit, budget-exhaustion, and historical robots-denial are recorded as firs
 `ResearchSourceAttempt` outcomes (the provenance of the search), never scrape
 errors. No candidate value ever enters an event or projection — only
 `contact_candidates.attributes_json` holds the proposed names/emails.
+
+## Availability Preflight
+
+Scoring, tailoring and cover entry points require active success within six
+hours before provider work. Reviewed Apply acquires evidence within 15 minutes
+before claiming/opening expensive work and again before the owned email submit
+intent. These checks commit short claim/reservation transactions before network
+I/O, re-read the canonical posting and reject a changed candidate. No failed
+availability check consumes a scoring/material/apply attempt or replaces an
+accepted artifact. These gates add evidence requirements; they grant no browser,
+email or submission authorization and do not start Apply from a check.

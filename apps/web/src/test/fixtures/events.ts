@@ -23,6 +23,8 @@ import {
   createDuplicateJobLinkRejected,
   createEnrichmentFailed,
   createJobActiveStateChanged,
+  createJobAvailabilityObserved,
+  createAvailabilityLeaseChanged,
   createPostingContentSnapshotCaptured,
   createPostingContentSnapshotFailed,
   createJobDeleted,
@@ -265,6 +267,8 @@ export const eventByType = {
     retryable: true,
     failedAt: NOW,
   }),
+  AvailabilityLeaseChanged: createAvailabilityLeaseChanged(LOCAL_TENANT, { owner: "synthetic" }),
+  JobAvailabilityObserved: createJobAvailabilityObserved(LOCAL_TENANT, { jobId: JOB_ID, verdict: "unknown", lastAttemptedAt: NOW, nextDueAt: NOW }),
   JobActiveStateChanged: createJobActiveStateChanged(LOCAL_TENANT, {
     jobId: JOB_ID,
     activeState: "active",

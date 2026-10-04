@@ -49,7 +49,9 @@ covers first-run setup in detail. `jobctrl uninstall` removes JobCtrl and keeps
 
 1. **Discover:** searches job boards and configured company sources for your
    target roles, locations, and seniority.
-2. **Enrich:** fetches the full posting and its apply link.
+2. **Enrich:** fetches the full posting and its apply link. While the local
+   worker runs, it also rechecks saved postings and shows overdue or uncertain
+   availability without replacing saved descriptions or materials.
 3. **Score:** rates fit from 1 to 10 by checking each requirement against your
    profile evidence.
 4. **Tailor:** writes a resume and cover letter from your profile. Each resume
@@ -87,13 +89,15 @@ its guidance is a research draft, and personal prep remains in beta.
 
 ## What Leaves Your Machine
 
-Nothing, until you run a step that needs an outside service:
+Outside requests run when you start a step that needs them, and while the local
+worker rechecks due saved postings:
 
 - **LLM providers:** posting text, relevant profile evidence, and generated
   text. During a dry run, Claude also sees the application page, but never your
   profile or documents.
 - **Job boards and other sites:** Discover, Enrich, and dry-run requests, plus
-  opt-in contact research. With the browser extension paired and connected,
+  opt-in contact research and bounded saved-posting availability checks. The
+  availability checks use public APIs or an anonymous browser. With the browser extension paired and connected,
   Discover and Enrich run in your Chrome session and carry its cookies.
 - **Salary data sources:** when a benchmark is missing or over a week old, a
   Discover run fetches public data from Euro Top Tech, plus ECB exchange rates

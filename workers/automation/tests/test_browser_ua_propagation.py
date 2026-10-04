@@ -71,6 +71,7 @@ class _RecordingPage:
         self.url = "https://example.test/final"
 
     def goto(self, url: str, **_kw: object) -> _Resp:
+        self.url = url
         self._recorder.goto_urls.append(url)
         return _Resp()
 
@@ -212,7 +213,7 @@ def test_playwright_fetcher_context_uses_owner_overridden_ua(
     assert rec.context_user_agents == [expected]  # fetch identity == override
     assert rec.goto_urls == ["https://example.test/jobs/1"]
     assert page.status == 200 and page.page_title == "Role"
-    assert page.final_url == "https://example.test/final"
+    assert page.final_url == "https://example.test/jobs/1"
     assert robots.seen_user_agents == []
 
 
@@ -237,7 +238,7 @@ def test_playwright_fetcher_uses_owner_ua_without_consulting_denying_robots(
     page = PlaywrightDetailPageFetcher(session=session).fetch("https://example.test/jobs/1")
 
     assert page.status == 200 and page.page_title == "Role"
-    assert page.final_url == "https://example.test/final"
+    assert page.final_url == "https://example.test/jobs/1"
     assert recorder.context_user_agents == [_expected_ua()]
     assert recorder.page_user_agents == []
     assert recorder.goto_urls == ["https://example.test/jobs/1"]
@@ -320,7 +321,7 @@ def test_enrichment_batch_context_uses_owner_overridden_ua(
             {
                 "@type": "JobPosting",
                 "description": LONG_DESC,
-                "url": "https://example.test/apply",
+                "url": "https://example.test/jobs/1",
                 "directApply": True,
             }
         ],

@@ -415,3 +415,20 @@ instruction. The guard attaches to page targets, blocks non-local
 POST/PUT/PATCH requests with `Fetch.failRequest`, and injects a form-submit
 interceptor that marks `window.__jobctrl_dryrun_blocked` when a hostile page
 tries to submit.
+
+## Enrichment Availability Ledger
+
+Schema v12 is unchanged. Enrichment persists `JobAvailabilityObserved` and
+internal `AvailabilityLeaseChanged` rows in indexed `job_events`, scoped by
+`tenant_id`, `entity_kind`, `entity_ref` and latest `event_id`. Entity kinds are
+`posting_availability` (canonical JobId), `availability_lease` (job/workspace/
+actual host), `availability_request` (hourly outbound budget), and
+`availability_sweep` (minimum admission interval).
+
+Attempts, latest verdict and successful-verification clocks are separate from
+accepted snapshot content and job enrichment. Five-minute lease owners fence
+late completion after a crash or changed posting URL. Observation success can
+update availability on `posting_snapshot_sets`; unchanged positives advance
+only the observation clock. No availability path writes hide/delete tombstones,
+application outcomes, approvals, scores or materials. A location-policy finding
+keeps its separate gate when external availability becomes active.

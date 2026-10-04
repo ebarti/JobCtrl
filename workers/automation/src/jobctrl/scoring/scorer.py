@@ -338,6 +338,18 @@ def run_scoring(
     worker_count = max(1, workers)
     log.info("Scoring %d jobs with %d worker(s)...", len(jobs), worker_count)
 
+    from jobctrl.enrichment.availability import require_fresh_active
+    available_jobs = []
+    availability_deferred = 0
+    for job in jobs:
+        try:
+            require_fresh_active(str(job["job_id"]), tenant_id=str(tenant_id), conn=conn, expected_posting_url=job["url"])
+        except Exception as exc:
+            log.info("Scoring deferred for %s: %s", job["job_id"], exc)
+            availability_deferred += 1
+        else:
+            available_jobs.append(job)
+    jobs = available_jobs
     started_ats: dict[str, str] = {}
     activity_metadata: dict[str, dict[str, object]] = {}
     for job in jobs:
@@ -568,6 +580,7 @@ def run_scoring(
 
     errors = sum(1 for _, outcome in results if not outcome.ok)
     scored_count = len(results) - errors
+    errors += availability_deferred
 
     finished_at = utc_now()
     for job, outcome in results:
@@ -758,6 +771,13 @@ def score_job_by_id(
         return ScoreJobOutcome(ok=True, score=committed_score)
     if not job.get("full_description"):
         return ScoreJobOutcome(ok=False, score=None, error=f"Job is not enriched: {stable_job_id}")
+
+    from jobctrl.enrichment.availability import require_fresh_active
+    require_fresh_active(str(stable_job_id), tenant_id=str(tenant_id), conn=conn, expected_posting_url=job["url"])
+    # Acquisition released its writer and fenced URL; reload the preparation target.
+    job = SqlitePreparationTargetReader(conn).load(tenant_id, stable_job_id)
+    if job is None:
+        return ScoreJobOutcome(ok=False, score=None, error="Availability candidate changed")
 
     owned_metadata = None
     if enforce_workflow_ownership:

@@ -550,6 +550,14 @@ def browser_profile_copy(params: dict[str, Any]) -> dict[str, object]:
     return _browser_capabilities_payload()
 
 
+def check_posting_availability(params: dict[str, Any]) -> WorkflowStartSpec:
+    from jobctrl.enrichment.availability_workflow import availability_workflow_spec
+    try:
+        return availability_workflow_spec(params)
+    except ValueError as exc:
+        raise invalid_params(str(exc)) from exc
+
+
 def refresh_compensation(params: dict[str, Any]) -> WorkflowStartSpec:
     """Build a workflow spec for compensation refresh."""
     try:
@@ -1073,6 +1081,7 @@ def register_default_handlers(server: JsonRpcServer, *, canceler: WorkflowCancel
     server.register("rollback_tailoring_policy", rollback_tailoring_policy, mode="sync")
     server.register("render_resume_pdf", render_resume_pdf, mode="sync")
     server.register("gmail_feedback_scan", gmail_feedback_scan, mode="sync")
+    server.register("check_posting_availability", check_posting_availability, mode="workflow")
     server.register("refresh_compensation", refresh_compensation, mode="workflow")
     server.register("generate_interview_prep", generate_interview_prep, mode="workflow")
     server.register("run_contact_research", run_contact_research, mode="workflow")

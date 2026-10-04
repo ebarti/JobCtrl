@@ -3,6 +3,7 @@ import type {
   ContentDuplicateCandidateDetected,
   EnrichmentFailed,
   JobActiveStateChanged,
+  JobAvailabilityObserved,
   JobEnriched,
   PostingContentSnapshotCaptured,
   PostingContentSnapshotFailed,
@@ -102,4 +103,9 @@ export const compensationFactsUpdatedHandler = (
 ): readonly InvalidationItem[] => [
   invalidate(jobsKeys.lists(event.tenantId)),
   invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
+];
+
+export const jobAvailabilityObservedHandler = (event: JobAvailabilityObserved): readonly InvalidationItem[] => [
+  invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
+  invalidate(jobsKeys.lists(event.tenantId)),
 ];

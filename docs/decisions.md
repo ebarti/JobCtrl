@@ -2555,3 +2555,37 @@ whole window that may contain user-added tabs. Window creation failure fails the
 task without switching acquisition transport. No new extension permission or
 personal-profile copy is needed. Browser fixtures must distinguish Playwright's
 focus emulation from native visibility proof.
+
+## 2026-10-04: Persist Bounded Saved-Posting Availability Separately
+
+Status: accepted
+
+Decision: Enrichment owns recurring and explicit posting observations in the
+existing indexed event ledger, preserving schema v12 and accepted content.
+Latest attempt uncertainty and prior successful verification have independent
+clocks/evidence. Known active checks are due after 24 hours, unavailable after
+seven days and unknown after five-minute exponential backoff capped at 24 hours.
+Startup/reconnect/heartbeat catch-up is bounded; durable job/workspace/actual-host
+leases and completion fences protect concurrent processes and crash recovery.
+
+Exact Greenhouse/Lever (including EU) API records and source-bound current page
+signals can establish availability. Ashby board absence cannot establish
+closure. Guarded public HTTP and anonymous Playwright reserve redirects and
+subresources at the actual host. Paired-extension capture is deliberately unused
+for this capability because it cannot traverse the same actual-host reservation
+boundary without changing Discovery ownership. Ordinary Discovery/Enrich
+extension preference and authorization remain intact. Authenticated/challenge/
+access-limited availability stays unknown; pairing alone is not fresh evidence.
+
+Rationale: external employer state varies independently of saved content,
+materials, user visibility and application outcomes. Body presence, historical
+closure text, malformed dates and lost posting identity cannot safely authorize
+costly or employer-facing work. Fresh active evidence gates preparation (six
+hours) and reviewed Apply (15 minutes), outside SQLite writer transactions.
+
+Consequences: Jobs GET remains network-free, failed refreshes retain accepted
+artifacts/approvals/outcomes, and closure never invokes Discovery policy deletion.
+Conservative workspace concurrency is one, with 25 jobs/sweep, 100 outbound
+acquisitions/hour, once/minute job starts, at least two-second host spacing and
+five-minute leases. Runtime-offline time leaves freshness honest. Live external
+ATS reliability is not inferred from deterministic transport QA.

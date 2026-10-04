@@ -165,6 +165,7 @@ class _SpyPage:
         self.url = "https://example.test/final"
 
     def goto(self, url: str, **_kwargs: object) -> _Resp:
+        self.url = url
         with self._lock:
             self._sink.append(url)
         return _Resp()
@@ -174,6 +175,9 @@ class _SpyPage:
 
     def title(self) -> str:
         return "Role"
+
+    def content(self) -> str:
+        return f'<link rel="canonical" href="{self.url}"><form action="{self.url}/apply"><button>Apply</button></form>'
 
     def on(self, *_args: object, **_kwargs: object) -> None:
         return None
@@ -269,7 +273,7 @@ def tier1_extraction(monkeypatch: pytest.MonkeyPatch) -> None:
             {
                 "@type": "JobPosting",
                 "description": LONG_DESC,
-                "url": "https://example.test/apply",
+                "url": _page.url,
                 "directApply": True,
             }
         ],
@@ -548,7 +552,7 @@ class _FakeLiveChrome:
             {
                 "@type": "JobPosting",
                 "description": LONG_DESC,
-                "url": "https://example.test/apply",
+                "url": url,
                 "directApply": True,
             }
         )
@@ -1017,7 +1021,7 @@ def test_live_browser_task_failure_isolated_from_remaining_enrich_jobs(
             "contentType": "text/html", "title": "Role", "bodyText": LONG_DESC,
             "bodyHtml": '<html><body><script type="application/ld+json">' + json.dumps({
                 "@type": "JobPosting", "description": LONG_DESC,
-                "url": "https://example.test/apply", "directApply": True,
+                "url": url, "directApply": True,
             }) + f'</script><main><article class="job-description">{LONG_DESC}</article></main></body></html>',
         }
 

@@ -89,6 +89,16 @@ field.
 
 ## Jobs Read Model And Lifecycle
 
+Jobs list/detail include Enrichment's persisted `availability` observation:
+latest attempt/verdict, last successful verification, next due, acquisition
+evidence and computed overdue/in-progress state. These GETs never fetch an
+employer posting. `POST /v1/jobs/:jobId/actions/check-availability` accepts an
+empty strict body and a canonical JobId, dispatches runtime-bound JSON-RPC
+`check_posting_availability`, and returns `202` with workflow/run IDs.
+`JobAvailabilityObserved` invalidates the selected detail and tenant job lists.
+See [Jobs & Materials](api/jobs-and-materials.md#saved-posting-availability)
+and the [field contract](api/complete-contract.md#saved-posting-availability).
+
 The jobs list and detail routes read stable projections. Lifecycle changes—hide,
 restore, delete, score correction, stage retry, and per-job actions—are explicit
 commands. See [Jobs & Materials](api/jobs-and-materials.md).

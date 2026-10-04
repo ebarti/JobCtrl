@@ -226,6 +226,8 @@ DOMAIN_EVENT_TYPES: tuple[str, ...] = (
     "PostingContentSnapshotCaptured",
     "PostingContentSnapshotFailed",
     "JobActiveStateChanged",
+    "JobAvailabilityObserved",
+    "AvailabilityLeaseChanged",
     "ContentDuplicateCandidateDetected",
     "JobScored",
     "ScoreCorrected",

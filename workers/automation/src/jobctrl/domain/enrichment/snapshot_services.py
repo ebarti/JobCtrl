@@ -35,7 +35,7 @@ from bs4 import BeautifulSoup
 import re
 from dataclasses import dataclass, field
 from typing import Callable, Iterable, Sequence
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import parse_qsl, urljoin, urlsplit, urlunsplit
 
 from jobctrl.domain.enrichment.services import (
     ExtractionResult,
@@ -140,13 +140,15 @@ class ActiveStateVerifier:
     ``QuarantineReason.UNKNOWN_ACTIVE_STATE`` upstream.
     """
 
-    def verify(self, page: DetailPage) -> tuple[ActiveState, str]:
+    def verify(self, page: DetailPage, *, signals: list[dict[str, object]] | None = None) -> tuple[ActiveState, str]:
         """Verify current source-bound evidence; body presence is never proof."""
         if page.status is not None and page.status not in {200, 201, 202, 203, 204, 404, 410}:
             return ActiveState.UNKNOWN, "http_error"
         if not same_posting_url(page.url, page.final_url or page.url):
             return ActiveState.UNKNOWN, "identity_lost"
-        soup = BeautifulSoup(page.html or "", "html.parser")
+        if not page.status_evidence_complete:
+            return ActiveState.UNKNOWN, "incomplete_status_evidence"
+        soup = BeautifulSoup(page.status_html or page.html or "", "html.parser")
         if soup.select_one('input[type="password"], .g-recaptcha, #challenge-form') or any(
             phrase in soup.get_text(" ", strip=True).lower()[:1000]
             for phrase in ("verify you are human", "access denied", "sign in to continue", "just a moment")
@@ -154,39 +156,52 @@ class ActiveStateVerifier:
             return ActiveState.UNKNOWN, "access_challenge"
         if page.status in {404, 410}:
             return ActiveState.REMOVED, "http_status"
-        postings = [posting for ld in page.json_ld if (posting := _find_job_posting(ld))]
+        postings = [posting for ld in page.json_ld for posting in _find_job_postings(ld)]
         for posting in postings:
             identity_url = posting.get("url") or posting.get("@id")
-            if isinstance(identity_url, str) and not same_posting_url(page.url, identity_url):
+            if not isinstance(identity_url, str) or not identity_url.strip():
+                return ActiveState.UNKNOWN, "missing_posting_identity"
+            if not same_posting_url(page.url, identity_url):
                 return ActiveState.UNKNOWN, "identity_mismatch"
         # Remove historical descriptions and script text before inspecting current
         # status controls. Closure language in accepted content is not a banner.
         for element in soup.select('script, style, [itemprop="description"], .job-description, '
-                                   '.posting-description, #job-description, #content .description'):
+                                   '.posting-description, #job-description, .description, '
+                                   '[data-testid*="description"], .jobs-description, '
+                                   '.show-more-less-html__markup, .description__text, '
+                                   '.jobs-box__html-content, .job-details-description'):
             element.decompose()
         for posting in postings:
             description = posting.get("description")
             if isinstance(description, str):
-                description_text = BeautifulSoup(description, "html.parser").get_text(" ", strip=True)
-                for node in list(soup.find_all(string=True)):
-                    if description_text and description_text in str(node):
-                        node.replace_with(str(node).replace(description_text, ""))
+                description_text = " ".join(BeautifulSoup(description, "html.parser").stripped_strings)
+                # Match a whole DOM subtree, including fragmented h2/p text.
+                # Never remove an ancestor carrying a separate status/control.
+                for element in list(soup.find_all(True)):
+                    if element.parent is not None and description_text and " ".join(element.stripped_strings) == description_text:
+                        element.decompose()
         controls = soup.select('[role="alert"], [role="status"], .alert, .job-closed, '
-                               '.posting-closed, h1, h2, button, input[type="submit"]')
+                               '.posting-closed, .job-unavailable, .job-alert, h1, h2, button, input[type="submit"]')
         closed = any(marker in control.get_text(" ", strip=True).lower()
                      for control in controls for marker in _CLOSED_MARKERS)
         # A short standalone status page also counts; full descriptions do not.
         visible = soup.get_text(" ", strip=True).lower()
         closed = closed or (len(visible) < 300 and any(marker in visible for marker in _CLOSED_MARKERS)
                             and not postings)
+        if signals is not None and closed:
+            signals.append({"kind": "current_closed_status", "value": True})
         deadlines: list[bool] = []
         for posting in postings:
             deadline = posting.get("validThrough")
             if deadline is not None:
                 parsed = _parse_deadline(deadline)
                 if parsed is None:
+                    if signals is not None:
+                        signals.append({"kind": "invalid_deadline", "value": str(deadline)[:120]})
                     return ActiveState.UNKNOWN, "invalid_deadline"
                 deadlines.append(parsed < datetime.now(timezone.utc))
+                if signals is not None and len(signals) < 24:
+                    signals.append({"kind": "posting_deadline", "value": parsed.isoformat(), "past": deadlines[-1]})
         if (closed and any(not past for past in deadlines)) or (any(deadlines) and not all(deadlines)):
             return ActiveState.UNKNOWN, "conflicting_signals"
         if closed:
@@ -196,23 +211,43 @@ class ActiveStateVerifier:
         if postings and any(isinstance(posting.get("description"), str)
                             and posting["description"].strip() for posting in postings):
             return ActiveState.ACTIVE, "json_ld_valid_through" if deadlines else "source_job_posting"
-        if page.page_title and any(
-            "apply" in control.get_text(" ", strip=True).lower()
-            and not control.has_attr("disabled") for control in controls
-        ):
-            return ActiveState.ACTIVE, "source_apply_control"
+        canonical = soup.select_one('link[rel="canonical"]')
+        bound_page = canonical is not None and isinstance(canonical.get("href"), str) and same_posting_url(
+            page.url, str(canonical["href"])
+        )
+        if page.page_title and bound_page:
+            for control in soup.select('button, input[type="submit"], a[href]'):
+                label = control.get_text(" ", strip=True) or str(control.get("value") or "")
+                if not re.fullmatch(r"apply(?: now| for this (?:job|position))?", label, re.I):
+                    continue
+                if control.has_attr("disabled") or control.get("aria-disabled") == "true":
+                    continue
+                form = control.find_parent("form")
+                target = control.get("href") or (form.get("action") if form else None)
+                if isinstance(target, str) and same_posting_url(page.url, urljoin(page.final_url or page.url, target)):
+                    return ActiveState.ACTIVE, "source_apply_control"
         return ActiveState.UNKNOWN, "missing_current_evidence"
 
 
+_TRACKING_QUERY_KEYS = frozenset({"utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "ref", "source", "gh_src", "lever-source"})
+
+
 def same_posting_url(expected: str, actual: str) -> bool:
-    """Bind a response to its exact posting, allowing only /apply and tracking."""
+    """Preserve every identity query field; discard only known tracking keys."""
     try:
         first, second = urlsplit(expected), urlsplit(actual)
         def path(value: str) -> str:
             return value.rstrip("/").removesuffix("/apply")
+        def query(value: str) -> list[tuple[str, str]]:
+            return sorted((key, item) for key, item in parse_qsl(value, keep_blank_values=True)
+                          if key.lower() not in _TRACKING_QUERY_KEYS)
+        host_match = first.hostname == second.hostname or {first.hostname, second.hostname} <= {
+            "boards.greenhouse.io", "job-boards.greenhouse.io"
+        }
         return bool(first.hostname and path(first.path) and first.scheme in {"http", "https"}
-                    and second.scheme in {"http", "https"} and first.hostname == second.hostname
-                    and first.port == second.port and path(first.path) == path(second.path))
+                    and second.scheme in {"http", "https"} and host_match
+                    and first.port == second.port and path(first.path) == path(second.path)
+                    and query(first.query) == query(second.query))
     except ValueError:
         return False
 
@@ -228,22 +263,19 @@ def _parse_deadline(value: object) -> datetime | None:
     return parsed if parsed.tzinfo is not None else None
 
 
-def _find_job_posting(data: object) -> dict | None:
+def _find_job_postings(data: object) -> list[dict]:
     if isinstance(data, dict):
-        if data.get("@type") == "JobPosting":
-            return data
-        graph = data.get("@graph")
-        if isinstance(graph, list):
-            for item in graph:
-                result = _find_job_posting(item)
-                if result:
-                    return result
-    elif isinstance(data, list):
-        for item in data:
-            result = _find_job_posting(item)
-            if result:
-                return result
-    return None
+        type_ = data.get("@type")
+        current = [data] if type_ == "JobPosting" or isinstance(type_, list) and "JobPosting" in type_ else []
+        return current + _find_job_postings(data.get("@graph"))
+    if isinstance(data, list):
+        return [posting for item in data for posting in _find_job_postings(item)]
+    return []
+
+
+def _find_job_posting(data: object) -> dict | None:
+    postings = _find_job_postings(data)
+    return postings[0] if postings else None
 
 
 def _is_past(iso_text: str) -> bool:
@@ -443,7 +475,7 @@ class ContentAcquisitionService:
                         description=description,
                         description_hash=hash_,
                         apply_url=final_apply,
-                        raw_text_hash=hashlib.sha256(page.html.encode("utf-8")).hexdigest(),
+                        raw_text_hash=page.raw_html_hash or hashlib.sha256((page.status_html or page.html).encode("utf-8")).hexdigest(),
                         evidence=evidence,
                     )
 

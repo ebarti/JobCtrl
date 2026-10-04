@@ -342,3 +342,16 @@ Every retrying workflow lists
 configuration/precondition errors stop immediately, while transient failures
 retry up to the policy's attempt cap and then surface as a stage/workflow
 failure. `RuntimeIdentityMismatch` is also non-retryable.
+
+## Availability Workflow Envelope
+
+`SavedPostingAvailabilityWorkflow` records the shared start/terminal envelope
+and calls `check_saved_posting_availability` under the runtime guard and blocking
+heartbeat wrapper. Explicit IDs are `availability-{tenant}-{JobId}`; recurring
+IDs are `availability-sweep-{tenant}`. Both coalesce running executions with
+`USE_EXISTING` and permit later completed runs. The activity has a 30-minute
+start-to-close timeout, a two-minute heartbeat timeout and one Temporal attempt.
+Observation uncertainty completes the workflow with an explicit unknown result;
+it does not imply business availability. Persistence/activity failures fail the
+workflow. Durable observation backoff, rather than immediate activity retries,
+owns later acquisitions.

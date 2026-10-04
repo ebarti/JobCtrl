@@ -865,3 +865,23 @@ worker/task-queue telemetry at request time. Because heartbeat state is
 ephemeral and no point-in-time lineage reconstruction is implemented,
 `GET /v1/pipeline/operations` is explicitly a current snapshot rather than a
 historical execution API.
+
+## Saved Posting Availability Runtime
+
+The local worker admits `SavedPostingAvailabilityWorkflow` at startup and on
+heartbeat/reconnect, at most once a minute per workspace. This is independent
+of Discover and completed Enrich rows remain eligible. Each sweep selects at
+most 25 due, visible completed/unavailable jobs, preferring preparation/review
+and then oldest due. Hidden/deleted jobs, running Apply and terminal application
+outcomes are excluded. Sleeping or offline runtimes append no observations;
+Jobs reads calculate overdue from retained timestamps.
+
+`enrichment/availability.py` owns acquisition and observation without invoking
+Discovery hygiene or policy deletion. Its durable event-ledger leases serialize
+checks per workspace and job and reserve each actual request host; acquisition
+runs after short writer transactions commit. The explicit API/RPC/CLI command
+uses the same activity and runtime identity guard. Availability uses exact
+public ATS APIs, guarded HTTP, and guarded anonymous Playwright. It does not
+select paired-extension capture: the extension's Discovery ownership and
+resource authorization remain separate. Authenticated/challenge/access-limited
+pages stay unknown. Ordinary Discovery/Enrich transport selection is unchanged.

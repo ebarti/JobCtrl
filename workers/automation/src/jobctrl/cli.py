@@ -1531,6 +1531,19 @@ def cover(
     )
 
 
+@app.command("check-availability")
+def check_posting_availability(job_id: str = typer.Argument(..., help="Canonical saved JobId.")) -> None:
+    """Check one employer posting through the bounded worker acquisition path."""
+    _bootstrap()
+    from jobctrl.enrichment.availability_workflow import availability_workflow_spec
+    from jobctrl.infrastructure.runtime_identity import current_runtime_identity
+    identity = current_runtime_identity()
+    result = _run_workflow_spec_from_cli(availability_workflow_spec({"tenantId": "local", "jobId": job_id,
+                                         "expectedAppDir": str(identity.app_dir), "expectedDbPath": str(identity.db_path)}),
+                                         label="posting availability")
+    console.print_json(data=result)
+
+
 @app.command("compensation-refresh")
 def compensation_refresh(
     observations_json: Optional[Path] = typer.Option(
@@ -2384,6 +2397,7 @@ def worker(
         from jobctrl.apply.auto_apply import reconcile_auto_apply_loop
 
         identity = current_runtime_identity()
+        await _reconcile_saved_postings(client, queue, identity)
         await _reconcile_automatic_preparation(client, queue, identity)
         startup_auto_apply = await reconcile_auto_apply_loop(
             client,
@@ -2524,6 +2538,7 @@ async def _worker_heartbeat_loop(
                 from jobctrl.infrastructure.runtime_identity import current_runtime_identity
 
                 identity = current_runtime_identity()
+                await _reconcile_saved_postings(temporal_client, task_queue, identity)
                 await _reconcile_automatic_preparation(temporal_client, task_queue, identity)
                 auto_apply = await reconcile_auto_apply_loop(
                     temporal_client,
@@ -2536,6 +2551,14 @@ async def _worker_heartbeat_loop(
             else:
                 if auto_apply.changed:
                     console.print(f"[yellow]Auto-apply loop {auto_apply.action}: {auto_apply.workflow_id}.[/yellow]")
+
+
+async def _reconcile_saved_postings(client: Any, task_queue: str, identity: Any) -> None:
+    from jobctrl.enrichment.availability_workflow import reconcile_saved_posting_availability
+    try:
+        await reconcile_saved_posting_availability(client, task_queue, identity)
+    except Exception:
+        log.warning("Saved-posting availability sweep deferred; will retry", exc_info=True)
 
 
 async def _reconcile_automatic_preparation(client: Any, task_queue: str, identity: Any) -> None:

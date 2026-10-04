@@ -52,7 +52,7 @@ def test_shared_cases_execute_through_default_server() -> None:
 def test_default_registration_inventory_and_guard_mutation() -> None:
     server = build_server()
     inventory = {method: spec.mode for method, spec in server._handlers.items()}
-    assert len(inventory) == 29
+    assert len(inventory) == 30
     assert inventory["provider_models"] == "sync"
     assert inventory["run_stage"] == "workflow"
 

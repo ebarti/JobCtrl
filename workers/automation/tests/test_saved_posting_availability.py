@@ -1,5 +1,13 @@
 """Source-bound saved-posting observation regressions (synthetic employer data)."""
 from dataclasses import replace
+from datetime import datetime, timedelta, timezone
+import json
+import sqlite3
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+import multiprocessing
+
+from jobctrl.database import init_db
+from jobctrl.enrichment import availability as availability
 
 import pytest
 
@@ -47,3 +55,283 @@ def test_future_deadline_cannot_mask_current_closed_banner():
 def test_empty_and_unbound_pages_are_unknown():
     for page in [DetailPage(url=URL, status=200, html="error"), DetailPage(url="https://example.org", status=404)]:
         assert ActiveStateVerifier().verify(page)[0].value == "unknown"
+
+
+JOB_ID = "10000000-0000-4000-8000-000000000123"
+NOW = datetime(2026, 10, 4, tzinfo=timezone.utc)
+
+
+@pytest.fixture
+def saved_job(tmp_path):
+    conn = init_db(tmp_path / "availability.db")
+    conn.execute("INSERT INTO jobs (tenant_id, job_id, url, title, site, discovered_at) "
+                 "VALUES ('local', ?, ?, 'Synthetic role', 'synthetic', ?)", (JOB_ID, URL, NOW.isoformat()))
+    conn.commit()
+    yield conn
+    conn.close()
+
+
+def test_claim_coalesces_expired_recovers_and_old_owner_is_fenced(saved_job):
+    first, _ = availability.claim_job(saved_job, JOB_ID, now=NOW)
+    assert first
+    assert availability.claim_job(saved_job, JOB_ID, now=NOW)[1] == "check_in_progress"
+    second, _ = availability.claim_job(saved_job, JOB_ID, now=NOW + timedelta(minutes=6))
+    assert second and first.owner != second.owner
+    with pytest.raises(availability.DeferredCheck, match="stale_lease"):
+        availability.complete_check(saved_job, first, verdict="active", reason="exact", method="fixture", lineage=[], now=NOW + timedelta(minutes=6))
+
+
+def test_independent_sqlite_connections_have_exactly_one_owner(saved_job):
+    path = saved_job.execute("PRAGMA database_list").fetchone()[2]
+    def claim_one(_):
+        conn = sqlite3.connect(path, timeout=5)
+        try:
+            return availability.claim_job(conn, JOB_ID, now=NOW)[0]
+        finally:
+            conn.close()
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        owners = list(pool.map(claim_one, range(2)))
+    assert sum(owner is not None for owner in owners) == 1
+
+
+def _process_claim(args):
+    path, job_id, instant = args
+    with sqlite3.connect(path, timeout=5) as conn:
+        claim, reason = availability.claim_job(conn, job_id, now=datetime.fromisoformat(instant))
+        return claim.owner if claim else None, reason
+
+
+def test_independent_processes_share_the_durable_job_and_workspace_claim(saved_job):
+    path = saved_job.execute("PRAGMA database_list").fetchone()[2]
+    with ProcessPoolExecutor(max_workers=2, mp_context=multiprocessing.get_context("spawn")) as pool:
+        results = list(pool.map(_process_claim, [(path, JOB_ID, NOW.isoformat())] * 2))
+    assert sum(owner is not None for owner, _ in results) == 1
+    assert {reason for _, reason in results} == {"claimed", "check_in_progress"}
+
+
+def test_success_clock_advances_unknown_preserves_success_and_content(saved_job):
+    saved_job.execute("INSERT INTO job_enrichments (tenant_id, job_id, current_status, full_description, attempts_json, updated_at) "
+                      "VALUES ('local', ?, 'enriched', 'Accepted synthetic description', '[]', ?)", (JOB_ID, NOW.isoformat()))
+    saved_job.commit()
+    before = tuple(saved_job.execute("SELECT * FROM job_enrichments").fetchone())
+    for minute, verdict in [(0, "active"), (2, "active"), (4, "unknown")]:
+        claim, _ = availability.claim_job(saved_job, JOB_ID, now=NOW + timedelta(minutes=minute))
+        assert claim
+        value = availability.complete_check(saved_job, claim, verdict=verdict, reason="fixture", method="fixture", lineage=[], now=NOW + timedelta(minutes=minute))
+    assert value["lastAttemptedAt"] == (NOW + timedelta(minutes=4)).isoformat()
+    assert value["lastSuccessfullyVerifiedAt"] == (NOW + timedelta(minutes=2)).isoformat()
+    assert value["verdict"] == "unknown"
+    assert value["nextDueAt"] == (NOW + timedelta(minutes=9)).isoformat()
+    assert tuple(saved_job.execute("SELECT * FROM job_enrichments").fetchone()) == before
+    assert not availability.fresh_active(saved_job, JOB_ID, now=NOW + timedelta(minutes=4), max_age=timedelta(hours=6))
+
+
+def test_closed_to_active_is_reversible_and_reads_do_no_network(saved_job, monkeypatch):
+    monkeypatch.setattr(availability, "public_get", lambda url: pytest.fail("read attempted network"))
+    for minute, verdict in [(0, "closed"), (2, "active")]:
+        claim, _ = availability.claim_job(saved_job, JOB_ID, now=NOW + timedelta(minutes=minute))
+        value = availability.complete_check(saved_job, claim, verdict=verdict, reason="fixture", method="fixture", lineage=[], now=NOW + timedelta(minutes=minute))
+    assert value["lastSuccessfulState"] == "active"
+    assert availability.read_availability(saved_job, JOB_ID, now=NOW + timedelta(days=2))["overdue"]
+
+
+def test_host_spacing_workspace_quota_and_failed_writer_release(saved_job):
+    claim, _ = availability.claim_job(saved_job, JOB_ID, now=NOW)
+    host = availability.reserve_request(saved_job, claim, URL, now=NOW)
+    assert host == "careers.example.org"
+    availability.release_host(saved_job, claim, host, now=NOW)
+    with pytest.raises(availability.DeferredCheck, match="host_pacing"):
+        availability.reserve_request(saved_job, claim, URL, now=NOW + timedelta(seconds=1))
+    assert not saved_job.in_transaction
+    assert availability.reserve_request(saved_job, claim, URL, now=NOW + timedelta(seconds=2)) == host
+    availability.release_host(saved_job, claim, host, now=NOW + timedelta(seconds=2))
+    for i in range(98):
+        availability._event(saved_job, "local", "availability_request", f"fixture-{i}", {}, now=NOW)
+    saved_job.commit()
+    with pytest.raises(availability.DeferredCheck, match="workspace_hourly_quota"):
+        availability.reserve_request(saved_job, claim, URL, now=NOW + timedelta(seconds=4))
+    assert not saved_job.in_transaction
+
+
+def test_completed_enrichment_is_due_without_discovery(saved_job):
+    saved_job.execute("INSERT INTO job_enrichments (tenant_id, job_id, current_status, full_description, attempts_json, updated_at) "
+                      "VALUES ('local', ?, 'enriched', 'Accepted synthetic description', '[]', ?)", (JOB_ID, NOW.isoformat()))
+    saved_job.commit()
+    assert availability.due_jobs(saved_job, now=NOW) == [JOB_ID]
+    claim, _ = availability.claim_job(saved_job, JOB_ID, now=NOW)
+    availability.complete_check(saved_job, claim, verdict="active", reason="fixture", method="fixture", lineage=[], now=NOW)
+    assert availability.due_jobs(saved_job, now=NOW + timedelta(hours=23)) == []
+    assert availability.due_jobs(saved_job, now=NOW + timedelta(hours=25)) == [JOB_ID]
+
+
+@pytest.mark.parametrize("kind, url, endpoint, payload", [
+    ("greenhouse", "https://boards.greenhouse.io/acme/jobs/123", "https://boards-api.greenhouse.io/v1/boards/acme/jobs/123", {"id":123,"absolute_url":"https://boards.greenhouse.io/acme/jobs/123","title":"Role","content":"Job content"}),
+    ("lever", "https://jobs.eu.lever.co/acme/123", "https://api.eu.lever.co/v0/postings/acme/123?mode=json", {"id":"123","hostedUrl":"https://jobs.eu.lever.co/acme/123","text":"Role"}),
+    ("ashby", "https://jobs.ashbyhq.com/acme/123", "https://api.ashbyhq.com/posting-api/job-board/acme", {"jobs":[{"id":"123","jobUrl":"https://jobs.ashbyhq.com/acme/123","title":"Role","isListed":False}]}),
+])
+def test_api_first_exact_source_identity_and_hash(saved_job, kind, url, endpoint, payload):
+    saved_job.execute("UPDATE jobs SET url = ?", (url,))
+    saved_job.commit()
+    claim, _ = availability.claim_job(saved_job, JOB_ID)
+    calls = []
+    def transport(request_url):
+        # Another connection can acquire a writer while the transport is running.
+        path = saved_job.execute("PRAGMA database_list").fetchone()[2]
+        with sqlite3.connect(path, timeout=.1) as peer:
+            peer.execute("BEGIN IMMEDIATE")
+            peer.rollback()
+        calls.append(request_url)
+        return availability.Response(endpoint, endpoint, 200, json.dumps(payload).encode())
+    acquisition = availability.Acquisition(saved_job, claim, transport=transport, browser=lambda url: pytest.fail("API success rendered browser"))
+    assert acquisition.acquire() == ("active", "exact_provider_posting", f"{kind}_api")
+    assert calls == [endpoint]
+    assert len(acquisition.lineage[0]["rawHash"]) == 64
+
+
+def test_query_posting_identity_is_preserved_and_only_tracking_ignored():
+    url = "https://careers.example.org/career?career_job_req_id=123"
+    other = "https://careers.example.org/career?career_job_req_id=999"
+    page = replace(active_page(), url=url, final_url=other, json_ld=({"@type":"JobPosting", "url":other,"description":"Role"},))
+    assert ActiveStateVerifier().verify(page)[0].value == "unknown"
+    from jobctrl.domain.enrichment.snapshot_services import same_posting_url
+    assert same_posting_url(url, url + "&utm_source=fixture")
+    assert not same_posting_url(url, other)
+
+
+@pytest.mark.parametrize("identity", [None, 123, {}, ""])
+def test_metadata_requires_real_posting_identity(identity):
+    page = replace(active_page(), json_ld=({"@type":"JobPosting", "url":identity, "description":"Role"},))
+    assert ActiveStateVerifier().verify(page)[0].value == "unknown"
+
+
+def test_heading_apply_words_are_not_an_application_control():
+    page = replace(active_page(), json_ld=(), html='<h1>Apply your expertise here</h1>')
+    assert ActiveStateVerifier().verify(page)[0].value == "unknown"
+
+
+@pytest.mark.parametrize("selector", ['data-testid="job-description"', 'class="jobs-description"', 'class="description__text"'])
+def test_fragmented_historical_description_stays_active(selector):
+    text = "Applications are closed Our historical launch."
+    page = replace(active_page(), html=f'<div {selector}><h2>Applications are closed</h2><p>Our historical launch.</p></div>',
+                   json_ld=({"@type":"JobPosting", "url":URL,"description":text},))
+    assert ActiveStateVerifier().verify(page)[0].value == "active"
+
+
+def test_all_same_posting_graph_deadlines_are_compared():
+    page = replace(active_page(), json_ld=({"@graph":[
+        {"@type":"JobPosting", "url":URL,"description":"Role","validThrough":"2999-01-01T00:00:00Z"},
+        {"@type":"JobPosting", "url":URL,"description":"Role","validThrough":"2000-01-01T00:00:00Z"},
+    ]},))
+    signals = []
+    assert ActiveStateVerifier().verify(page, signals=signals)[1] == "conflicting_signals"
+    assert {signal["past"] for signal in signals} == {False, True}
+
+
+def test_disabled_apply_survives_cleaning():
+    from jobctrl.infrastructure.enrichment.playwright_fetcher import _clean_content_html
+    html = f'<link rel="canonical" href="{URL}"><form action="{URL}/apply"><button disabled>Apply</button></form>'
+    assert 'disabled' in _clean_content_html(html)
+    page = replace(active_page(), html=_clean_content_html(html), json_ld=())
+    assert ActiveStateVerifier().verify(page)[0].value == "unknown"
+
+
+def test_outside_main_current_banner_survives_conversion():
+    from jobctrl.enrichment.detail import _live_result_to_detail_page
+    from jobctrl.infrastructure.discovery.live_browser import LiveBrowserResult
+    html = f'<div role="alert">Applications are closed</div><main>{"Role content. " * 50}</main>'
+    page = _live_result_to_detail_page(LiveBrowserResult(final_url=URL, status_code=200, content_type="text/html",
+                                      title="Role", body_text="", body_html=html), URL)
+    assert "Applications are closed" in page.status_html
+    assert ActiveStateVerifier().verify(page)[0].value == "closed"
+
+
+def test_source_unavailability_cannot_delete_hide_or_change_outcomes(saved_job, monkeypatch):
+    monkeypatch.setattr("jobctrl.infrastructure.discovery.production_wiring.retire_invalid_source_jobs",
+                        lambda *a, **kw: pytest.fail("availability invoked policy deletion"))
+    before = {name: saved_job.execute(f"SELECT * FROM {name}").fetchall()
+              for name in ["jobs", "jobctrl_deleted_jobs", "jobctrl_hidden_jobs", "application_outcomes", "job_artifacts", "job_materials", "application_review_decisions"]}
+    claim, _ = availability.claim_job(saved_job, JOB_ID, now=NOW)
+    availability.complete_check(saved_job, claim, verdict="removed", reason="exact", method="fixture", lineage=[], now=NOW)
+    for name, rows in before.items():
+        assert saved_job.execute(f"SELECT * FROM {name}").fetchall() == rows
+    assert not saved_job.execute("SELECT 1 FROM job_events WHERE event_type = 'JobDeleted'").fetchone()
+
+
+@pytest.mark.parametrize("payload", [b"broken", b"[]", b'{"id":999,"absolute_url":"https://boards.greenhouse.io/acme/jobs/999","title":"Peer"}',
+                                      b'{"id":123,"absolute_url":"https://boards.greenhouse.io/acme/jobs/999","title":"Peer"}'])
+def test_malformed_or_mismatched_exact_api_cannot_fall_back_into_active(saved_job, payload):
+    url = "https://boards.greenhouse.io/acme/jobs/123"
+    saved_job.execute("UPDATE jobs SET url = ?", (url,))
+    saved_job.commit()
+    claim, _ = availability.claim_job(saved_job, JOB_ID)
+    calls = []
+    def transport(endpoint):
+        calls.append(endpoint)
+        return availability.Response(endpoint, endpoint, 200, payload)
+    acquisition = availability.Acquisition(saved_job, claim, transport=transport)
+    assert acquisition.acquire()[0] == "unknown"
+    assert len(calls) == 1 and acquisition.lineage[0]["rawHash"]
+
+
+def test_missing_ashby_inventory_never_proves_closure_and_browser_lineage_is_retained(saved_job, monkeypatch):
+    url = "https://jobs.ashbyhq.com/acme/123"
+    saved_job.execute("UPDATE jobs SET url = ?", (url,))
+    saved_job.commit()
+    claim, _ = availability.claim_job(saved_job, JOB_ID)
+    def transport(endpoint):
+        return availability.Response(endpoint, endpoint, 200, b'{"jobs":[]}' if "posting-api" in endpoint else b'<main>Shell</main>')
+    rendered = replace(active_page(), url=url, final_url=url,
+                       json_ld=({"@type":"JobPosting", "url":url,"description":"Synthetic role"},),
+                       status_html="<main>Full rendered evidence</main>", raw_html_hash="b" * 64)
+    acquisition = availability.Acquisition(saved_job, claim, transport=transport, browser=lambda _: rendered)
+    assert acquisition.acquire()[0] == "active"
+    assert [step["method"] for step in acquisition.lineage] == ["ashby_api", "public_http", "anonymous_browser"]
+    assert acquisition.lineage[-1]["rawHash"] == "b" * 64
+
+
+def test_canonical_redirect_is_reserved_and_hashed_but_board_landing_loses_identity(saved_job):
+    claim, _ = availability.claim_job(saved_job, JOB_ID)
+    calls = []
+    def transport(url):
+        calls.append(url)
+        if len(calls) == 1:
+            return availability.Response(url, url, 302, b"canonical redirect", redirect_url=url + "?utm_source=fixture")
+        return availability.Response(url, url, 404, b"exact posting removed")
+    acquisition = availability.Acquisition(saved_job, claim, transport=transport)
+    assert acquisition.acquire()[:2] == ("removed", "http_status")
+    assert len(calls) == 2 and all(len(step["rawHash"]) == 64 for step in acquisition.lineage)
+
+
+def test_pairing_extension_cannot_fabricate_active_access_limited_evidence(saved_job, monkeypatch):
+    monkeypatch.setattr("jobctrl.infrastructure.discovery.live_browser.LiveChromeDiscoveryClient",
+                        lambda *a, **k: pytest.fail("availability selected a paired Discovery extension"))
+    claim, _ = availability.claim_job(saved_job, JOB_ID)
+    acquisition = availability.Acquisition(saved_job, claim,
+        transport=lambda url: availability.Response(url, url, 200, b'<form><input type="password"></form>'),
+        browser=lambda url: pytest.fail("login failure triggered another transport"))
+    assert acquisition.acquire()[:2] == ("unknown", "access_challenge")
+
+
+def test_unknown_backoff_caps_and_safety_bounds_cannot_be_bypassed(saved_job):
+    instant = NOW
+    for attempt in range(11):
+        claim, _ = availability.claim_job(saved_job, JOB_ID, now=instant)
+        assert claim
+        value = availability.complete_check(saved_job, claim, verdict="unknown", reason="timeout", method="fixture", lineage=[], now=instant)
+        due = datetime.fromisoformat(value["nextDueAt"])
+        assert due - instant == timedelta(seconds=min(86400, 300 * 2 ** min(attempt, 9)))
+        assert availability.claim_job(saved_job, JOB_ID, now=instant + timedelta(minutes=2))[1] == "retry_backoff"
+        instant = due
+    assert availability._retry_after("9999999") == 300
+
+
+def test_prep_freshness_is_stricter_than_background_cadence_and_changed_url_is_fenced(saved_job, monkeypatch):
+    from jobctrl.domain.errors import MissingInputError
+    claim, _ = availability.claim_job(saved_job, JOB_ID, now=NOW)
+    availability.complete_check(saved_job, claim, verdict="active", reason="fixture", method="fixture", lineage=[], now=NOW)
+    assert availability.fresh_active(saved_job, JOB_ID, max_age=timedelta(hours=6), now=NOW + timedelta(hours=5))
+    assert not availability.fresh_active(saved_job, JOB_ID, max_age=timedelta(minutes=15), now=NOW + timedelta(minutes=16))
+    monkeypatch.setattr(availability, "check_availability", lambda *a, **k: pytest.fail("fresh guard unexpectedly fetched"))
+    monkeypatch.setattr(availability, "_now", lambda: NOW)
+    with pytest.raises(MissingInputError, match="inspect"):
+        availability.require_fresh_active(JOB_ID, conn=saved_job, expected_posting_url=URL + "-old")

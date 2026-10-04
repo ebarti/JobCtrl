@@ -18,6 +18,7 @@ use case is responsible for persistence via ``EnrichmentRepository``.
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
 import re
 from datetime import datetime, timezone
@@ -283,6 +284,7 @@ class PlaywrightDetailPageFetcher:
                             fetched_at=fetched_at,
                         )
 
+                    status_html, status_complete, raw_hash = _collect_status_html(page)
                     return DetailPage(
                         url=url,
                         final_url=final_url,
@@ -291,6 +293,7 @@ class PlaywrightDetailPageFetcher:
                         json_ld=tuple(json_ld_payloads),
                         status=status,
                         fetched_at=fetched_at,
+                        status_html=status_html, status_evidence_complete=status_complete, raw_html_hash=raw_hash,
                     )
                 finally:
                     route_guard.close()
@@ -315,6 +318,18 @@ def _collect_json_ld(page: Any) -> list[Any]:
     except Exception:
         pass
     return payloads
+
+
+def _collect_status_html(page: Any) -> tuple[str, bool, str]:
+    """Keep current controls outside main and raw evidence within a fixed budget."""
+    try:
+        raw = page.content()
+        if not isinstance(raw, str):
+            return "", False, ""
+        return raw[:1_000_000], len(raw) <= 1_000_000, hashlib.sha256(raw.encode()).hexdigest()
+    except Exception:
+        # Missing status capture cannot be replaced with an active body default.
+        return "", False, ""
 
 
 def _collect_main_content(page: Any) -> str:
@@ -365,6 +380,9 @@ def _clean_content_html(html: str) -> str:
                 "name",
                 "for",
                 "type",
+                "disabled",
+                "action",
+                "value",
             ):
                 if attr == "class":
                     classes = val if isinstance(val, list) else val.split()

@@ -499,6 +499,8 @@ def _seed_job(
         """,
         (str(tenant_id), str(job_id)),
     )
+    from .availability_fixture import seed_fresh_availability
+    seed_fresh_availability(conn, str(job_id), str(tenant_id))
     conn.commit()
 
 
@@ -1799,6 +1801,7 @@ def test_tailor_job_by_id_rejects_deleted_and_url_shaped_targets_before_generati
         lambda *_args, **_kwargs: pytest.fail("rejected job reached generation"),
     )
 
+    before_events = conn.execute("SELECT COUNT(*) FROM job_events").fetchone()[0]
     deleted = tailor_module.tailor_job_by_id(
         _JOB_ID,
         tenant_id=_TENANT_A,
@@ -1811,7 +1814,7 @@ def test_tailor_job_by_id_rejects_deleted_and_url_shaped_targets_before_generati
         "status": "skipped",
         "reason": "not_found",
     }
-    assert conn.execute("SELECT COUNT(*) FROM job_events").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM job_events").fetchone()[0] == before_events
     monkeypatch.setattr(
         tailor_module,
         "get_connection",
