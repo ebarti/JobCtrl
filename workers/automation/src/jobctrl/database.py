@@ -254,6 +254,8 @@ def create_exact_v12_database(
             f"exact v12 creation requires a missing database path, found {path}"
         )
     path.parent.mkdir(parents=True, exist_ok=True)
+    # A deleted predecessor can still have a live connection cached by path.
+    close_connection(path)
     conn = get_connection(path)
     try:
         if schema_dump(conn):
