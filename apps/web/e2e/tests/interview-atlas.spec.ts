@@ -42,15 +42,13 @@ async function expectUnobstructedGraph(map: Locator) {
   expect(defects).toEqual([]);
 }
 
-test("Interview atlas hub labels and native targets survive desktop widths and density", async ({ page }) => {
-  for (const width of [1280, 1705]) {
-    await page.setViewportSize({ width, height: width === 1280 ? 720 : 1111 });
-    await page.goto("/interviews?mode=graph");
-    const map = page.getByRole("region", { name: "Whole interview library graph" });
-    await expect(map.locator("[data-graph-question-id]")).toHaveCount(121);
-    // Real persisted preference actions on fresh zero-scroll pages, before hit probes scroll.
-    for (const density of ["Compact", "Regular", "Comfortable"]) {
-      for (const perspective of ["Questions", "Sources"]) {
+for (const width of [1280, 1705]) {
+  for (const density of ["Compact", "Regular", "Comfortable"]) {
+    for (const perspective of ["Questions", "Sources"]) {
+      test(`Interview atlas native targets at ${width}px, ${density}, ${perspective}`, async ({ page }) => {
+        await page.setViewportSize({ width, height: width === 1280 ? 720 : 1111 });
+        const map = page.getByRole("region", { name: "Whole interview library graph" });
+        // Real persisted preference actions before hit probes scroll.
         await page.goto("/interviews?mode=graph");
         await expect(map.locator("[data-graph-question-id]")).toHaveCount(121);
         await page.getByRole("button", { name: density, exact: true }).click();
@@ -69,25 +67,28 @@ test("Interview atlas hub labels and native targets survive desktop widths and d
           }
           return errors;
         }, width === 1705)).toEqual([]);
-        await page.screenshot({ path: `/tmp/jobctrl-993-ui-repair-first-${width}-${density.toLowerCase()}-${perspective.toLowerCase()}.png` });
         await expect(map.locator(".interview-atlas__hub").first()).toHaveCSS("height", "52px");
         await expect(map.locator(".interview-atlas__satellite").first()).toHaveCSS("height", "24px");
         await expect(map.locator(".interview-atlas__satellite").first()).toHaveCSS("width", "24px");
         await expectUnobstructedGraph(map);
-      }
+      });
     }
+  }
+
+  test(`Interview atlas topic and author navigation at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: width === 1280 ? 720 : 1111 });
+    const map = page.getByRole("region", { name: "Whole interview library graph" });
     await page.goto("/interviews?mode=graph");
     await expect(map.locator("[data-graph-question-id]")).toHaveCount(121);
+    await page.getByRole("button", { name: "Comfortable", exact: true }).click();
     await map.getByRole("button", { name: "Behavioral: 11 questions", exact: true }).locator(".interview-atlas__mark").click();
     await expect(page).toHaveURL(/topic=behavioral/);
     await expect(map.locator(".interview-atlas__named-node")).toHaveCount(11);
     await expect(map.locator(".interview-atlas__named-node").first()).toHaveCSS("min-height", "84px");
-    await page.screenshot({ path: `/tmp/jobctrl-993-ui-repair-${width}-topic.png` });
     await map.getByRole("button", { name: "Overview", exact: true }).click();
     await map.getByRole("button", { name: "Sources", exact: true }).click();
     await expect(map.locator("[data-graph-source-id]")).toHaveCount(57);
     await expectUnobstructedGraph(map);
-    await page.screenshot({ path: `/tmp/jobctrl-993-ui-repair-${width}-sources.png` });
     await map.getByRole("button", { name: "Will Larson: 21 sources", exact: true }).click();
     await expect(map.locator(".interview-atlas__named-node")).toHaveCount(21);
     await expect(page).not.toHaveURL(/source=L21/);
@@ -95,13 +96,12 @@ test("Interview atlas hub labels and native targets survive desktop widths and d
     await map.getByRole("button", { name: "Will Larson: 21 sources", exact: true }).focus();
     await page.keyboard.press("Enter");
     await expect(map.locator(".interview-atlas__named-node")).toHaveCount(21);
-    await page.screenshot({ path: `/tmp/jobctrl-993-ui-repair-${width}-author.png` });
     await map.locator(".interview-atlas__named-node").filter({ hasText: "Managing technical quality in a codebase" }).click();
     await expect(page).toHaveURL(/source=L21/);
     const bounded = await page.locator('.interview-library__filters [data-slot="select-trigger"]').evaluateAll((elements) => elements.every((element) => { const rect = element.getBoundingClientRect(); const track = element.parentElement!.getBoundingClientRect(); return rect.left >= track.left && rect.right <= track.right + 1; }));
     expect(bounded).toBe(true);
-  }
-});
+  });
+}
 
 test("Interview atlas overview, topics, sources, history navigation and inspector", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
