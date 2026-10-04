@@ -535,6 +535,8 @@ class AshbyBoardAdapter:
         query: str,
         location: str,
     ) -> ScrapedJobPosting | None:
+        if raw.get("isListed") is False:
+            return None
         title = str(raw.get("title") or "").strip()
         job_url = str(raw.get("jobUrl") or raw.get("applyUrl") or "").strip()
         posting_id = str(raw.get("id") or "").strip()
@@ -542,7 +544,7 @@ class AshbyBoardAdapter:
             return None
         if not title_matches_query(title, query):
             return None
-        loc = str(raw.get("location") or raw.get("locationName") or "").strip()
+        loc = _ashby_location(raw)
         if not location_matches_target(
             loc,
             accept=self._location_accept,
@@ -569,6 +571,23 @@ class AshbyBoardAdapter:
             canonical_url=job_url,
             ats_kind=AtsKind.ASHBY,
         )
+
+
+def _ashby_location(raw: dict[str, Any]) -> str:
+    """Keep primary provenance first, followed by distinct secondary names."""
+    names = [str(raw.get("location") or raw.get("locationName") or "").strip()]
+    secondary = raw.get("secondaryLocations")
+    if isinstance(secondary, list):
+        for entry in secondary:
+            if isinstance(entry, dict) and isinstance(entry.get("location"), str):
+                names.append(entry["location"].strip())
+    seen: set[str] = set()
+    distinct: list[str] = []
+    for name in names:
+        if name and name.casefold() not in seen:
+            seen.add(name.casefold())
+            distinct.append(name)
+    return "; ".join(distinct)
 
 
 def _lever_description(raw: dict[str, Any]) -> str:
