@@ -35,6 +35,7 @@ const KIND_LABELS: Record<InterviewPrepItemKind, string> = {
   star_draft: "STAR draft",
   gap_drill: "Gap drill",
   company_note: "Company note",
+  question_outline: "Question outline",
 };
 const EMPTY_REQUIREMENTS: readonly EmployerAnalysisRequirement[] = [];
 

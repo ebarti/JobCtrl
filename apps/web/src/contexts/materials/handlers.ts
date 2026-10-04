@@ -4,6 +4,7 @@ import type {
   EmployerAnalyzed,
   InterviewPrepFailed,
   InterviewPrepGenerated,
+  InterviewQuestionNoteSaved,
   MaterialsExhausted,
   PdfRendered,
   ResumeApproved,
@@ -179,3 +180,7 @@ export const resumeTemplateRefreshFailedHandler = (
   invalidate(jobsKeys.lists(event.tenantId)),
   invalidate(applyReviewKeys.all(event.tenantId)),
 ];
+
+// The lower contract slice has no notes cache yet. Activity is refreshed by
+// the router; the Interviews slice installs the targeted note invalidation.
+export const interviewQuestionNoteSavedHandler = (_event: InterviewQuestionNoteSaved): readonly InvalidationItem[] => [];

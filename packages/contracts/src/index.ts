@@ -26,3 +26,5 @@ export {
   PROJECTION_WATERMARK_NAME,
   type ProjectionTable,
 } from "@jobctrl/domain-types";
+
+export * from "./interview.js";
