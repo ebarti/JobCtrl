@@ -26,7 +26,7 @@ from jobctrl.domain.ports.llm import LlmMessage
 from jobctrl.domain.profile.snapshot import ProfileSnapshot
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 from jobctrl.infrastructure.interview import SqliteInterviewPrepRepository
-from jobctrl.infrastructure.migrations.schema_v7 import create_exact_v7_schema
+from jobctrl.infrastructure.migrations.schema_v12 import create_exact_v12_schema
 from jobctrl.interview import activities as interview_activities
 from jobctrl.interview.activities import (
     GenerateInterviewPrepActivityInput,
@@ -646,7 +646,7 @@ async def test_generate_activity_offloads_generation_and_heartbeats(
 def _init_conn(tmp_path: Path, *, seed_local_job: bool = True):
     db_path = tmp_path / "jobs.db"
     conn = get_connection(db_path)
-    create_exact_v7_schema(conn)
+    create_exact_v12_schema(conn)
     if seed_local_job:
         _insert_job(conn, LOCAL_TENANT, JOB_ID, JOB_URL)
     conn.commit()

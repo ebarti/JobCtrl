@@ -20,6 +20,7 @@ from typing import Any
 from jobctrl.config import DB_PATH, DEFAULTS
 from jobctrl.infrastructure.migrations.schema_manifest import (
     EXACT_V11_MANIFEST,
+    EXACT_V12_MANIFEST,
     SchemaManifestError,
     assert_exact_manifest,
     schema_dump,
@@ -52,7 +53,7 @@ from jobctrl.scoring.eligibility_sql import (
 # without changing any v7 table. v9 adds the optional per-position summary to
 # Candidate Profile experience rows. Posting URLs remain unique locators,
 # never aggregate identity.
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 
 class IncompatibleSchemaVersionError(RuntimeError):
@@ -227,14 +228,14 @@ def open_exact_v11_database(
     if not path.exists():
         raise FileNotFoundError(f"No database to open at {path}")
     conn = get_connection(path, enable_wal=False)
-    current_version = _assert_schema_version_supported(conn)
+    current_version = _assert_schema_version_supported(conn, supported_version=11)
     if current_version in (6, 7, 8, 9, 10):
         raise SchemaMigrationRequiredError(
             f"JobCtrl database is schema v{current_version}. Run `jobctrl update` so "
             "the native lifecycle can stop JobCtrl, create the paired backup, "
             "and activate schema v11 before starting the runtime."
         )
-    if current_version != SCHEMA_VERSION:
+    if current_version != 11:
         raise SchemaMigrationRequiredError(
             "JobCtrl can only open the exact schema v11 at runtime; "
             f"found schema version {current_version}."
@@ -243,12 +244,68 @@ def open_exact_v11_database(
     return conn
 
 
-def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
-    """Create a missing v11 database or read-only validate an existing one."""
+def create_exact_v12_database(
+    db_path: Path | str | None = None,
+) -> sqlite3.Connection:
+    """Create a brand-new database directly from the exact v12 schema."""
+    path = Path(db_path or DB_PATH)
+    if path.exists():
+        raise FileExistsError(
+            f"exact v12 creation requires a missing database path, found {path}"
+        )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = get_connection(path)
+    try:
+        if schema_dump(conn):
+            raise SchemaManifestError("fresh v12 creation found pre-existing schema")
+
+        from jobctrl.infrastructure.migrations.schema_v12 import create_exact_v12_schema
+
+        create_exact_v12_schema(conn)
+        conn.commit()
+        return conn
+    except BaseException:
+        close_connection(path)
+        for created_path in (
+            path,
+            Path(f"{path}-wal"),
+            Path(f"{path}-shm"),
+            Path(f"{path}-journal"),
+        ):
+            created_path.unlink(missing_ok=True)
+        raise
+
+
+def open_exact_v12_database(
+    db_path: Path | str | None = None,
+) -> sqlite3.Connection:
+    """Open an existing exact-v12 database without performing any writes."""
     path = Path(db_path or DB_PATH)
     if not path.exists():
-        return create_exact_v11_database(path)
-    return open_exact_v11_database(path)
+        raise FileNotFoundError(f"No database to open at {path}")
+    conn = get_connection(path, enable_wal=False)
+    current_version = _assert_schema_version_supported(conn)
+    if current_version in (6, 7, 8, 9, 10, 11):
+        raise SchemaMigrationRequiredError(
+            f"JobCtrl database is schema v{current_version}. Run `jobctrl update` so "
+            "the native lifecycle can stop JobCtrl, create the paired backup, "
+            "and activate schema v12 before starting the runtime."
+        )
+    if current_version != SCHEMA_VERSION:
+        raise SchemaMigrationRequiredError(
+            "JobCtrl can only open the exact schema v12 at runtime; "
+            f"found schema version {current_version}."
+        )
+    assert_exact_manifest(conn, EXACT_V12_MANIFEST)
+    return conn
+
+
+def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
+    """Create a missing v12 database or read-only validate an existing one."""
+    path = Path(db_path or DB_PATH)
+    if not path.exists():
+        return create_exact_v12_database(path)
+    return open_exact_v12_database(path)
 
 
 def ensure_projection_tables_in_db(conn: sqlite3.Connection | None = None) -> list[str]:

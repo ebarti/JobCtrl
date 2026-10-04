@@ -343,13 +343,16 @@ def _seed_rows(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
             ),
         )
     for prep in rows["jobInterviewPrep"]:
+        context = prep["generation_context_json"]
+        if context is not None:
+            context = json.dumps(_with_exact_v7_job_ids(json.loads(context)))
         conn.execute(
             """
             INSERT INTO job_interview_prep (
                 tenant_id, job_id, generation, status, model, generated_at,
                 gate_status, fabrication_findings_json, grounding_findings_json,
-                judge_verdict, warnings_json, failure_reason
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                judge_verdict, warnings_json, failure_reason, generation_context_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 LOCAL_TENANT,
@@ -364,6 +367,7 @@ def _seed_rows(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
                 prep["judge_verdict"],
                 prep["warnings_json"],
                 prep["failure_reason"],
+                context,
             ),
         )
     for item in rows["jobInterviewPrepItems"]:
@@ -373,8 +377,8 @@ def _seed_rows(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
                 tenant_id, job_id, generation, item_id, kind, title,
                 generated_text, evidence_ids_json, requirement_ids_json,
                 source_text_json, transform_type, control, grounding_audit_json,
-                warnings_json, position
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                warnings_json, position, question_metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 LOCAL_TENANT,
@@ -392,6 +396,7 @@ def _seed_rows(conn: sqlite3.Connection, fixture: dict[str, Any]) -> None:
                 item["grounding_audit_json"],
                 item["warnings_json"],
                 item["position"],
+                item["question_metadata_json"],
             ),
         )
     # A job_events row marks the job dirty so the builder rebuilds its projection.
@@ -632,7 +637,8 @@ def test_python_builder_projects_audit_rows_matching_shared_fixture(
     assert json.loads(detail["employer_analysis_json"]) == expected["employerAnalysisJson"]
     prep = json.loads(detail["interview_prep_json"])
     assert prep == expected["interviewPrepJson"]
-    assert "prompt" not in json.dumps(prep)
+    assert "promptText" not in json.dumps(prep)
+    assert "rawPrompt" not in json.dumps(prep)
     assert "full_description" not in json.dumps(prep)
 
     # The text resume row carries the per-bullet provenance + coverage + voice.
