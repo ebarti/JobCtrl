@@ -761,6 +761,11 @@ Hidden/inactive status templates cannot close a visible posting. Computed browse
 visibility and blocked subresources must survive conversion; incomplete renders
 remain unknown with reason/hash lineage. Refused commands surface durable request
 deferral/retry feedback without inventing an acquisition attempt.
+Real Chromium fixtures must cover the first popup request and iframe resources
+through actual-host reservations, blocked service-worker/native connections with
+owned HTTP/UDP sinks, and failed status-resource hashes. A hung renderer or
+capture/close RPC must terminate and reap the owned browser processes within the
+acquisition budget, before five-minute leases admit a successor.
 Prove a second writer can acquire during transport. GET must make zero employer
 requests. Failed observations retain success clocks and byte-identical accepted
 content/material/generation/approval/outcome fingerprints. Closure must never
