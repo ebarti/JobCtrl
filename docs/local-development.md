@@ -617,8 +617,10 @@ for the enforced rules, legitimate infrastructure access, and review limits.
 
 The shared browser-safe policy lives in
 `packages/domain-types/src/profile/required-bullet-suggestions.ts`. Its
-synthetic JSON conformance fixtures provide literal expected responses for
-the domain, API compatibility boundary and demo adapter. They cover all four
+synthetic JSON fixtures provide behavior and source-binding expectations for
+the domain, API wire validation and demo adapter, without pinning prose or
+phrase-list triggers. Profile form tests accept real shared-policy output,
+including canonical identities and bounded excerpts. Fixtures cover all four
 kinds, verified/confirmed evidence, action counts versus results, contextual
 and grammatical restatements, duplicates and unusable identities, cleanup
 collisions, reserved own keys, orphan pins, excerpts and output truncation.

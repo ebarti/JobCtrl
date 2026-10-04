@@ -255,7 +255,8 @@ describe("DemoLocalCommandExecutor", () => {
     const inspected = await adapter.requiredBulletSuggestions({
       expectedProfileVersion: saved.profileVersion!, maximumSuggestions: 24,
     });
-    expect(inspected).toEqual(fixture.expected);
+    expect(inspected).toMatchObject(fixture.expected);
+    expect(inspected.suggestions).toHaveLength(fixture.expected.suggestions.length);
     expect(repository.snapshotNow()).toEqual(before);
 
     // Only an explicit acceptance sends the individually edited profile through
@@ -298,7 +299,7 @@ describe("DemoLocalCommandExecutor", () => {
     expect(await adapter.profile()).toEqual(saved);
     expect(await adapter.requiredBulletSuggestions({
       expectedProfileVersion: saved.profileVersion!, maximumSuggestions: 24,
-    })).toEqual(fixture.expected);
+    })).toMatchObject(fixture.expected);
     expect(repository.snapshotNow()).toEqual(before);
     repository.dispose();
   });

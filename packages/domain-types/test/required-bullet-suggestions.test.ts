@@ -15,7 +15,7 @@ interface Fixture {
   profile: RequiredBulletCoachingInput;
   profileVersion: number;
   maximumSuggestions: number;
-  expected: RequiredBulletCoachingResponse;
+  expected: { truncated: boolean; suggestions: Partial<RequiredBulletCoachingResponse["suggestions"][number]>[] };
 }
 
 const fixtures = fixtureData as readonly Fixture[];
@@ -64,10 +64,22 @@ describe("shared Required-bullet coaching policy", () => {
     const first = generateRequiredBulletSuggestions(profile, fixture.profileVersion, fixture.maximumSuggestions);
     const second = generateRequiredBulletSuggestions(profile, fixture.profileVersion, fixture.maximumSuggestions);
 
-    expect(first).toEqual(fixture.expected);
-    expect(second).toEqual(fixture.expected);
+    expect(first).toMatchObject(fixture.expected);
+    expect(first.suggestions).toHaveLength(fixture.expected.suggestions.length);
+    expect(second).toEqual(first);
     expect(second).not.toBe(first);
     expect(JSON.stringify(profile)).toBe(before);
+  });
+
+  it.each([
+    ["Reduced pick distance by 28% without increasing errors", ["missing_evidence"]],
+    ["Didn’t cut pick distance by 28%", ["achievement_framing", "missing_evidence"]],
+    ["Worked to cut pick distance by 28%", ["achievement_framing", "missing_evidence"]],
+  ])("separates achieved results from qualification and intent: %s", (text, kinds) => {
+    const profile = candidate();
+    profile.resume.experience_entries[0]!.bullets = [text as string];
+    profile.resume.tailoring_rules.required_bullets_by_experience_id["exp-1"] = [text as string];
+    expect(generateRequiredBulletSuggestions(profile, 7, 24).suggestions.map((item) => item.kind)).toEqual(kinds);
   });
 
   it.each([255, 256, 257])("checks the raw entry budget at %i entries", (count: number) => {
@@ -78,7 +90,7 @@ describe("shared Required-bullet coaching policy", () => {
     })));
     const result = generateRequiredBulletSuggestions(profile, 7, 24);
     expect(result.truncated).toBe(count > MAX_REQUIRED_COACHING_ENTRIES);
-    expect(result.suggestions).toHaveLength(count > MAX_REQUIRED_COACHING_ENTRIES ? 0 : 4);
+    expect(result.suggestions).toHaveLength(count > MAX_REQUIRED_COACHING_ENTRIES ? 0 : 3);
   });
 
   it("rejects excess entries before reading their identities or row contents", () => {
@@ -101,7 +113,7 @@ describe("shared Required-bullet coaching policy", () => {
     );
     const result = generateRequiredBulletSuggestions(profile, 7, 24);
     expect(result.truncated).toBe(rows > MAX_REQUIRED_COACHING_SOURCE_ROWS);
-    expect(result.suggestions).toHaveLength(rows > MAX_REQUIRED_COACHING_SOURCE_ROWS ? 0 : 4);
+    expect(result.suggestions).toHaveLength(rows > MAX_REQUIRED_COACHING_SOURCE_ROWS ? 0 : 3);
   });
 
   it.each(["bullets", "achievement_evidence"] as const)(
@@ -165,7 +177,7 @@ describe("shared Required-bullet coaching policy", () => {
     profile.resume.tailoring_rules.required_bullets_by_experience_id["exp-1"] = [...entry.bullets];
     const result = generateRequiredBulletSuggestions(profile, 7, 24);
     expect(result.truncated).toBe(true);
-    expect(result.suggestions).toEqual(fixtures[0]!.expected.suggestions);
+    expect(result.suggestions).toMatchObject(fixtures[0]!.expected.suggestions);
   });
 
   it.each([2_000, 2_001])("checks raw Required text length at %i characters", (length: number) => {
@@ -175,7 +187,7 @@ describe("shared Required-bullet coaching policy", () => {
     profile.resume.tailoring_rules.required_bullets_by_experience_id["exp-1"] = [text];
     const result = generateRequiredBulletSuggestions(profile, 7, 24);
     expect(result.truncated).toBe(length > 2_000);
-    expect(result.suggestions).toHaveLength(length > 2_000 ? 0 : 2);
+    expect(result.suggestions).toHaveLength(length > 2_000 ? 0 : 3);
     expect(result.suggestions.every((item) => item.source.excerpt.length <= 500)).toBe(true);
   });
 
@@ -187,7 +199,7 @@ describe("shared Required-bullet coaching policy", () => {
       profile.resume.tailoring_rules.required_bullets_by_experience_id = { [entry.id]: [REQUIRED_TEXT] };
       const result = generateRequiredBulletSuggestions(profile, 7, 24);
       expect(result.truncated).toBe(text.length > 160 || !text.trim());
-      expect(result.suggestions).toHaveLength(text.length > 160 || !text.trim() ? 0 : 4);
+      expect(result.suggestions).toHaveLength(text.length > 160 || !text.trim() ? 0 : 3);
     }
   });
 

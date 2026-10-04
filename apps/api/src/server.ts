@@ -352,7 +352,7 @@ import {
   generateRequiredBulletSuggestions,
   MAX_REQUIRED_COACHING_ENTRIES,
   MAX_REQUIRED_COACHING_SOURCE_ROWS,
-} from "./required-bullet-suggestions.js";
+} from "@jobctrl/domain-types";
 import { validateProfileTargetPlaces, type PlaceValidator } from "./place-validation.js";
 import {
   claimNextProfileContinuationEvent,

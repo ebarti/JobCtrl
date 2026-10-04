@@ -268,14 +268,15 @@ describe("DemoApiClientAdapter", () => {
       expectedProfileVersion: fixture.profileVersion,
       maximumSuggestions: fixture.maximumSuggestions,
     });
-    expect(inspected).toEqual(fixture.expected);
-    expect(RequiredBulletSuggestionResponseSchema.parse(inspected)).toEqual(fixture.expected);
+    expect(inspected).toMatchObject(fixture.expected);
+    expect(inspected.suggestions).toHaveLength(fixture.expected.suggestions.length);
+    expect(RequiredBulletSuggestionResponseSchema.parse(inspected)).toEqual(inspected);
     // Read-only means no profile, revision, event, pending action or blob writes.
     expect(repository.snapshotNow()).toEqual(before);
     expect(await adapter.requiredBulletSuggestions({
       expectedProfileVersion: fixture.profileVersion,
       maximumSuggestions: fixture.maximumSuggestions,
-    })).toEqual(fixture.expected);
+    })).toMatchObject(fixture.expected);
     await expect(adapter.requiredBulletSuggestions({
       expectedProfileVersion: fixture.profileVersion + 1,
       maximumSuggestions: fixture.maximumSuggestions,
@@ -335,7 +336,7 @@ describe("DemoApiClientAdapter", () => {
       source: { experienceId: entry.id, fieldPath: "profile.resume.experience_entries[0].bullets[0]" },
     });
     expect(inspected.suggestions.map((suggestion) => suggestion.kind)).toEqual([
-      "grammar", "relevance", "achievement_framing", "missing_evidence",
+      "grammar", "achievement_framing", "missing_evidence",
     ]);
     expect(inspected.suggestions.filter((suggestion) => suggestion.kind !== "grammar")
       .every((suggestion) => suggestion.proposedText === null && !suggestion.canApply)).toBe(true);
@@ -389,7 +390,7 @@ describe("DemoApiClientAdapter", () => {
     })).toMatchObject({ suggestions: [], truncated: true, modelUsed: false });
   });
 
-  it("keeps grammar-only restatements as questions in saved demo evidence", async () => {
+  it("keeps independent evidence questions for stated results in saved demo evidence", async () => {
     const { adapter } = await createAdapter();
     const before = await adapter.profile();
     const profile = ProfileSchema.parse(before.profile);
@@ -422,7 +423,7 @@ describe("DemoApiClientAdapter", () => {
     });
     expect(inspected.suggestions.filter((suggestion) =>
       suggestion.source.sourceId === "demo-possessive-restatement",
-    ).map((suggestion) => suggestion.kind)).toEqual(["achievement_framing", "missing_evidence"]);
+    ).map((suggestion) => suggestion.kind)).toEqual(["missing_evidence"]);
     expect(await adapter.profile()).toEqual(saved);
 
     entry.achievement_evidence[0]!.outcome = "Improved reliability across the platform.";
@@ -439,7 +440,7 @@ describe("DemoApiClientAdapter", () => {
     ).map((suggestion) => suggestion.kind)).toEqual(["missing_evidence"]);
   });
 
-  it("keeps result framing for a contextual restatement in the saved demo profile", async () => {
+  it("recognizes a stated qualitative result in the saved demo profile", async () => {
     const { adapter } = await createAdapter();
     const before = await adapter.profile();
     const profile = ProfileSchema.parse(before.profile);
@@ -470,7 +471,7 @@ describe("DemoApiClientAdapter", () => {
     });
     expect(inspected.suggestions.filter((suggestion) =>
       suggestion.source.sourceId === "demo-context-only-outcome",
-    ).map((suggestion) => suggestion.kind)).toEqual(["achievement_framing"]);
+    ).map((suggestion) => suggestion.kind)).toEqual([]);
     expect(await adapter.profile()).toEqual(saved);
 
     entry.achievement_evidence[0]!.outcome = "Reduced API latency by 35%.";

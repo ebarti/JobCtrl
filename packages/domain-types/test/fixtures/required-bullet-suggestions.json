@@ -1,6 +1,6 @@
 [
   {
-    "name": "all four kinds with snapshot identity",
+    "name": "specific activity with snapshot identity",
     "profile": {
       "resume": {
         "experience_entries": [
@@ -27,8 +27,7 @@
     "profileVersion": 7,
     "maximumSuggestions": 24,
     "expected": {
-      "ok": true,
-      "profileVersion": 7,
+      "truncated": false,
       "suggestions": [
         {
           "id": "profile:v7:experience[0]:bullet[0]:required[0]:grammar",
@@ -36,26 +35,6 @@
           "originalText": "  Worked   on synthetic queues  ",
           "proposedText": "Worked on synthetic queues",
           "canApply": true,
-          "guidance": "Trim leading or trailing space and collapse repeated whitespace without changing the words or facts.",
-          "source": {
-            "sourceId": "profile:v7:experience[0]:bullet[0]",
-            "identityKind": "snapshot_bullet",
-            "excerpt": "  Worked   on synthetic queues  ",
-            "fieldPath": "profile.resume.experience_entries[0].bullets[0]",
-            "experienceId": "exp-1",
-            "experienceTitle": "Synthetic Engineer",
-            "experienceCompany": "Synthetic Co",
-            "bulletIndex": 0,
-            "requiredBulletIndex": 0
-          }
-        },
-        {
-          "id": "profile:v7:experience[0]:bullet[0]:required[0]:relevance",
-          "kind": "relevance",
-          "originalText": "  Worked   on synthetic queues  ",
-          "proposedText": null,
-          "canApply": false,
-          "guidance": "Which specific responsibility or result makes this required bullet relevant? Add only details you can verify in the normal editor.",
           "source": {
             "sourceId": "profile:v7:experience[0]:bullet[0]",
             "identityKind": "snapshot_bullet",
@@ -74,7 +53,6 @@
           "originalText": "  Worked   on synthetic queues  ",
           "proposedText": null,
           "canApply": false,
-          "guidance": "What truthful outcome, scale, frequency, or comparison followed from this action? Leave it unchanged if no supported result is available.",
           "source": {
             "sourceId": "profile:v7:experience[0]:bullet[0]",
             "identityKind": "snapshot_bullet",
@@ -93,7 +71,6 @@
           "originalText": "  Worked   on synthetic queues  ",
           "proposedText": null,
           "canApply": false,
-          "guidance": "No unambiguous canonical achievement record matches this bullet. Which saved source supports its claim? Add only evidence you can verify in the normal editor.",
           "source": {
             "sourceId": "profile:v7:experience[0]:bullet[0]",
             "identityKind": "snapshot_bullet",
@@ -106,10 +83,7 @@
             "requiredBulletIndex": 0
           }
         }
-      ],
-      "strategy": "deterministic_rules_v1",
-      "modelUsed": false,
-      "truncated": false
+      ]
     }
   },
   {
@@ -140,8 +114,7 @@
     "profileVersion": 7,
     "maximumSuggestions": 2,
     "expected": {
-      "ok": true,
-      "profileVersion": 7,
+      "truncated": true,
       "suggestions": [
         {
           "id": "profile:v7:experience[0]:bullet[0]:required[0]:grammar",
@@ -149,7 +122,6 @@
           "originalText": "  Worked   on synthetic queues  ",
           "proposedText": "Worked on synthetic queues",
           "canApply": true,
-          "guidance": "Trim leading or trailing space and collapse repeated whitespace without changing the words or facts.",
           "source": {
             "sourceId": "profile:v7:experience[0]:bullet[0]",
             "identityKind": "snapshot_bullet",
@@ -163,12 +135,11 @@
           }
         },
         {
-          "id": "profile:v7:experience[0]:bullet[0]:required[0]:relevance",
-          "kind": "relevance",
+          "id": "profile:v7:experience[0]:bullet[0]:required[0]:achievement-framing",
+          "kind": "achievement_framing",
           "originalText": "  Worked   on synthetic queues  ",
           "proposedText": null,
           "canApply": false,
-          "guidance": "Which specific responsibility or result makes this required bullet relevant? Add only details you can verify in the normal editor.",
           "source": {
             "sourceId": "profile:v7:experience[0]:bullet[0]",
             "identityKind": "snapshot_bullet",
@@ -181,10 +152,7 @@
             "requiredBulletIndex": 0
           }
         }
-      ],
-      "strategy": "deterministic_rules_v1",
-      "modelUsed": false,
-      "truncated": true
+      ]
     }
   },
   {
@@ -213,10 +181,9 @@
       }
     },
     "profileVersion": 7,
-    "maximumSuggestions": 4,
+    "maximumSuggestions": 3,
     "expected": {
-      "ok": true,
-      "profileVersion": 7,
+      "truncated": false,
       "suggestions": [
         {
           "id": "profile:v7:experience[0]:bullet[0]:required[0]:grammar",
@@ -224,26 +191,6 @@
           "originalText": "  Worked   on synthetic queues  ",
           "proposedText": "Worked on synthetic queues",
           "canApply": true,
-          "guidance": "Trim leading or trailing space and collapse repeated whitespace without changing the words or facts.",
-          "source": {
-            "sourceId": "profile:v7:experience[0]:bullet[0]",
-            "identityKind": "snapshot_bullet",
-            "excerpt": "  Worked   on synthetic queues  ",
-            "fieldPath": "profile.resume.experience_entries[0].bullets[0]",
-            "experienceId": "exp-1",
-            "experienceTitle": "Synthetic Engineer",
-            "experienceCompany": "Synthetic Co",
-            "bulletIndex": 0,
-            "requiredBulletIndex": 0
-          }
-        },
-        {
-          "id": "profile:v7:experience[0]:bullet[0]:required[0]:relevance",
-          "kind": "relevance",
-          "originalText": "  Worked   on synthetic queues  ",
-          "proposedText": null,
-          "canApply": false,
-          "guidance": "Which specific responsibility or result makes this required bullet relevant? Add only details you can verify in the normal editor.",
           "source": {
             "sourceId": "profile:v7:experience[0]:bullet[0]",
             "identityKind": "snapshot_bullet",
@@ -262,7 +209,6 @@
           "originalText": "  Worked   on synthetic queues  ",
           "proposedText": null,
           "canApply": false,
-          "guidance": "What truthful outcome, scale, frequency, or comparison followed from this action? Leave it unchanged if no supported result is available.",
           "source": {
             "sourceId": "profile:v7:experience[0]:bullet[0]",
             "identityKind": "snapshot_bullet",
@@ -281,7 +227,6 @@
           "originalText": "  Worked   on synthetic queues  ",
           "proposedText": null,
           "canApply": false,
-          "guidance": "No unambiguous canonical achievement record matches this bullet. Which saved source supports its claim? Add only evidence you can verify in the normal editor.",
           "source": {
             "sourceId": "profile:v7:experience[0]:bullet[0]",
             "identityKind": "snapshot_bullet",
@@ -294,14 +239,11 @@
             "requiredBulletIndex": 0
           }
         }
-      ],
-      "strategy": "deterministic_rules_v1",
-      "modelUsed": false,
-      "truncated": false
+      ]
     }
   },
   {
-    "name": "all four kinds with supported canonical evidence",
+    "name": "specific activity with supported canonical evidence",
     "profile": {
       "resume": {
         "experience_entries": [
@@ -336,8 +278,7 @@
     "profileVersion": 11,
     "maximumSuggestions": 24,
     "expected": {
-      "ok": true,
-      "profileVersion": 11,
+      "truncated": false,
       "suggestions": [
         {
           "id": "profile:v11:experience[0]:bullet[0]:required[0]:grammar",
@@ -345,26 +286,6 @@
           "originalText": "  Worked   on synthetic queues  ",
           "proposedText": "Worked on synthetic queues",
           "canApply": true,
-          "guidance": "Trim leading or trailing space and collapse repeated whitespace without changing the words or facts.",
-          "source": {
-            "sourceId": "saved-achievement",
-            "identityKind": "canonical_achievement",
-            "excerpt": "  Worked   on synthetic queues  ",
-            "fieldPath": "profile.resume.experience_entries[0].bullets[0]",
-            "experienceId": "exp-1",
-            "experienceTitle": "Synthetic Engineer",
-            "experienceCompany": "Synthetic Co",
-            "bulletIndex": 0,
-            "requiredBulletIndex": 0
-          }
-        },
-        {
-          "id": "profile:v11:experience[0]:bullet[0]:required[0]:relevance",
-          "kind": "relevance",
-          "originalText": "  Worked   on synthetic queues  ",
-          "proposedText": null,
-          "canApply": false,
-          "guidance": "Which specific responsibility or result makes this required bullet relevant? Add only details you can verify in the normal editor.",
           "source": {
             "sourceId": "saved-achievement",
             "identityKind": "canonical_achievement",
@@ -383,7 +304,6 @@
           "originalText": "  Worked   on synthetic queues  ",
           "proposedText": null,
           "canApply": false,
-          "guidance": "What truthful outcome, scale, frequency, or comparison followed from this action? Leave it unchanged if no supported result is available.",
           "source": {
             "sourceId": "saved-achievement",
             "identityKind": "canonical_achievement",
@@ -402,7 +322,6 @@
           "originalText": "  Worked   on synthetic queues  ",
           "proposedText": null,
           "canApply": false,
-          "guidance": "The matching achievement is not marked verified. Which independent source confirms the claim or metric? Add only verified details in the normal editor.",
           "source": {
             "sourceId": "saved-achievement",
             "identityKind": "canonical_achievement",
@@ -415,10 +334,7 @@
             "requiredBulletIndex": 0
           }
         }
-      ],
-      "strategy": "deterministic_rules_v1",
-      "modelUsed": false,
-      "truncated": false
+      ]
     }
   },
   {
@@ -461,8 +377,7 @@
     "profileVersion": 2,
     "maximumSuggestions": 24,
     "expected": {
-      "ok": true,
-      "profileVersion": 2,
+      "truncated": false,
       "suggestions": [
         {
           "id": "profile:v2:experience[0]:bullet[1]:required[0]:grammar",
@@ -470,7 +385,6 @@
           "originalText": " \tReduced   synthetic latency by 35% using SQL.  ",
           "proposedText": "Reduced synthetic latency by 35% using SQL.",
           "canApply": true,
-          "guidance": "Trim leading or trailing space and collapse repeated whitespace without changing the words or facts.",
           "source": {
             "sourceId": "verified-metric",
             "identityKind": "canonical_achievement",
@@ -483,10 +397,7 @@
             "requiredBulletIndex": 0
           }
         }
-      ],
-      "strategy": "deterministic_rules_v1",
-      "modelUsed": false,
-      "truncated": false
+      ]
     }
   },
   {
@@ -531,8 +442,7 @@
     "profileVersion": 19,
     "maximumSuggestions": 24,
     "expected": {
-      "ok": true,
-      "profileVersion": 19,
+      "truncated": false,
       "suggestions": [
         {
           "id": "profile:v19:experience[0]:bullet[2]:required[0]:grammar",
@@ -540,26 +450,6 @@
           "originalText": "  Worked   on synthetic queues  ",
           "proposedText": "Worked on synthetic queues",
           "canApply": true,
-          "guidance": "Trim leading or trailing space and collapse repeated whitespace without changing the words or facts.",
-          "source": {
-            "sourceId": "profile:v19:experience[0]:bullet[2]",
-            "identityKind": "snapshot_bullet",
-            "excerpt": "  Worked   on synthetic queues  ",
-            "fieldPath": "profile.resume.experience_entries[0].bullets[2]",
-            "experienceId": "later-pin-key",
-            "experienceTitle": "Synthetic Engineer",
-            "experienceCompany": "Synthetic Co",
-            "bulletIndex": 2,
-            "requiredBulletIndex": 0
-          }
-        },
-        {
-          "id": "profile:v19:experience[0]:bullet[2]:required[0]:relevance",
-          "kind": "relevance",
-          "originalText": "  Worked   on synthetic queues  ",
-          "proposedText": null,
-          "canApply": false,
-          "guidance": "Which specific responsibility or result makes this required bullet relevant? Add only details you can verify in the normal editor.",
           "source": {
             "sourceId": "profile:v19:experience[0]:bullet[2]",
             "identityKind": "snapshot_bullet",
@@ -578,7 +468,6 @@
           "originalText": "  Worked   on synthetic queues  ",
           "proposedText": null,
           "canApply": false,
-          "guidance": "What truthful outcome, scale, frequency, or comparison followed from this action? Leave it unchanged if no supported result is available.",
           "source": {
             "sourceId": "profile:v19:experience[0]:bullet[2]",
             "identityKind": "snapshot_bullet",
@@ -597,7 +486,6 @@
           "originalText": "  Worked   on synthetic queues  ",
           "proposedText": null,
           "canApply": false,
-          "guidance": "No unambiguous canonical achievement record matches this bullet. Which saved source supports its claim? Add only evidence you can verify in the normal editor.",
           "source": {
             "sourceId": "profile:v19:experience[0]:bullet[2]",
             "identityKind": "snapshot_bullet",
@@ -616,7 +504,6 @@
           "originalText": "Managed 10 projects,",
           "proposedText": null,
           "canApply": false,
-          "guidance": "What truthful outcome, scale, frequency, or comparison followed from this action? Leave it unchanged if no supported result is available.",
           "source": {
             "sourceId": "profile:v19:experience[0]:bullet[1]",
             "identityKind": "snapshot_bullet",
@@ -635,7 +522,6 @@
           "originalText": "Managed 10 projects,",
           "proposedText": null,
           "canApply": false,
-          "guidance": "No unambiguous canonical achievement record matches this bullet. Which saved source supports its claim? Add only evidence you can verify in the normal editor.",
           "source": {
             "sourceId": "profile:v19:experience[0]:bullet[1]",
             "identityKind": "snapshot_bullet",
@@ -654,7 +540,6 @@
           "originalText": "Delivered synthetic service.",
           "proposedText": null,
           "canApply": false,
-          "guidance": "What truthful outcome, scale, frequency, or comparison followed from this action? Leave it unchanged if no supported result is available.",
           "source": {
             "sourceId": "profile:v19:experience[1]:bullet[0]",
             "identityKind": "snapshot_bullet",
@@ -673,7 +558,6 @@
           "originalText": "Delivered synthetic service.",
           "proposedText": null,
           "canApply": false,
-          "guidance": "No unambiguous canonical achievement record matches this bullet. Which saved source supports its claim? Add only evidence you can verify in the normal editor.",
           "source": {
             "sourceId": "profile:v19:experience[1]:bullet[0]",
             "identityKind": "snapshot_bullet",
@@ -686,10 +570,7 @@
             "requiredBulletIndex": 0
           }
         }
-      ],
-      "strategy": "deterministic_rules_v1",
-      "modelUsed": false,
-      "truncated": false
+      ]
     }
   },
   {
@@ -730,8 +611,7 @@
     "profileVersion": 5,
     "maximumSuggestions": 24,
     "expected": {
-      "ok": true,
-      "profileVersion": 5,
+      "truncated": false,
       "suggestions": [
         {
           "id": "profile:v5:experience[0]:bullet[0]:required[0]:achievement-framing",
@@ -739,7 +619,6 @@
           "originalText": "Improved 10 dashboards.",
           "proposedText": null,
           "canApply": false,
-          "guidance": "What truthful outcome, scale, frequency, or comparison followed from this action? Leave it unchanged if no supported result is available.",
           "source": {
             "sourceId": "achievement-1",
             "identityKind": "canonical_achievement",
@@ -752,10 +631,7 @@
             "requiredBulletIndex": 0
           }
         }
-      ],
-      "strategy": "deterministic_rules_v1",
-      "modelUsed": false,
-      "truncated": false
+      ]
     }
   },
   {
@@ -796,8 +672,7 @@
     "profileVersion": 5,
     "maximumSuggestions": 24,
     "expected": {
-      "ok": true,
-      "profileVersion": 5,
+      "truncated": false,
       "suggestions": [
         {
           "id": "profile:v5:experience[0]:bullet[0]:required[0]:achievement-framing",
@@ -805,7 +680,6 @@
           "originalText": "Improved 10 dashboards.",
           "proposedText": null,
           "canApply": false,
-          "guidance": "What truthful outcome, scale, frequency, or comparison followed from this action? Leave it unchanged if no supported result is available.",
           "source": {
             "sourceId": "achievement-1",
             "identityKind": "canonical_achievement",
@@ -818,10 +692,7 @@
             "requiredBulletIndex": 0
           }
         }
-      ],
-      "strategy": "deterministic_rules_v1",
-      "modelUsed": false,
-      "truncated": false
+      ]
     }
   },
   {
@@ -862,12 +733,8 @@
     "profileVersion": 5,
     "maximumSuggestions": 24,
     "expected": {
-      "ok": true,
-      "profileVersion": 5,
-      "suggestions": [],
-      "strategy": "deterministic_rules_v1",
-      "modelUsed": false,
-      "truncated": false
+      "truncated": false,
+      "suggestions": []
     }
   },
   {
@@ -908,16 +775,12 @@
     "profileVersion": 5,
     "maximumSuggestions": 24,
     "expected": {
-      "ok": true,
-      "profileVersion": 5,
-      "suggestions": [],
-      "strategy": "deterministic_rules_v1",
-      "modelUsed": false,
-      "truncated": false
+      "truncated": false,
+      "suggestions": []
     }
   },
   {
-    "name": "supported measured restatement still needs verification and framing",
+    "name": "supported measured restatement still needs verification ",
     "profile": {
       "resume": {
         "experience_entries": [
@@ -954,35 +817,14 @@
     "profileVersion": 5,
     "maximumSuggestions": 24,
     "expected": {
-      "ok": true,
-      "profileVersion": 5,
+      "truncated": false,
       "suggestions": [
-        {
-          "id": "profile:v5:experience[0]:bullet[0]:required[0]:achievement-framing",
-          "kind": "achievement_framing",
-          "originalText": "Reduced deployment time by 40%.",
-          "proposedText": null,
-          "canApply": false,
-          "guidance": "What truthful outcome, scale, frequency, or comparison followed from this action? Leave it unchanged if no supported result is available.",
-          "source": {
-            "sourceId": "achievement-1",
-            "identityKind": "canonical_achievement",
-            "excerpt": "Reduced deployment time by 40%.",
-            "fieldPath": "profile.resume.experience_entries[0].bullets[0]",
-            "experienceId": "exp-1",
-            "experienceTitle": "Synthetic Engineer",
-            "experienceCompany": "Synthetic Co",
-            "bulletIndex": 0,
-            "requiredBulletIndex": 0
-          }
-        },
         {
           "id": "profile:v5:experience[0]:bullet[0]:required[0]:missing-evidence",
           "kind": "missing_evidence",
           "originalText": "Reduced deployment time by 40%.",
           "proposedText": null,
           "canApply": false,
-          "guidance": "The matching achievement is not marked verified. Which independent source confirms the claim or metric? Add only verified details in the normal editor.",
           "source": {
             "sourceId": "achievement-1",
             "identityKind": "canonical_achievement",
@@ -995,14 +837,11 @@
             "requiredBulletIndex": 0
           }
         }
-      ],
-      "strategy": "deterministic_rules_v1",
-      "modelUsed": false,
-      "truncated": false
+      ]
     }
   },
   {
-    "name": "verified contextual result restatement adds no result",
+    "name": "a stated qualitative result needs no invented second outcome",
     "profile": {
       "resume": {
         "experience_entries": [
@@ -1037,36 +876,12 @@
     "profileVersion": 5,
     "maximumSuggestions": 24,
     "expected": {
-      "ok": true,
-      "profileVersion": 5,
-      "suggestions": [
-        {
-          "id": "profile:v5:experience[0]:bullet[0]:required[0]:achievement-framing",
-          "kind": "achievement_framing",
-          "originalText": "Reduced API latency.",
-          "proposedText": null,
-          "canApply": false,
-          "guidance": "What truthful outcome, scale, frequency, or comparison followed from this action? Leave it unchanged if no supported result is available.",
-          "source": {
-            "sourceId": "achievement-1",
-            "identityKind": "canonical_achievement",
-            "excerpt": "Reduced API latency.",
-            "fieldPath": "profile.resume.experience_entries[0].bullets[0]",
-            "experienceId": "exp-1",
-            "experienceTitle": "Synthetic Engineer",
-            "experienceCompany": "Synthetic Co",
-            "bulletIndex": 0,
-            "requiredBulletIndex": 0
-          }
-        }
-      ],
-      "strategy": "deterministic_rules_v1",
-      "modelUsed": false,
-      "truncated": false
+      "truncated": false,
+      "suggestions": []
     }
   },
   {
-    "name": "plural possessive and changed result verb add no result",
+    "name": "plural possessive and changed result verb do not verify the stated result",
     "profile": {
       "resume": {
         "experience_entries": [
@@ -1101,35 +916,14 @@
     "profileVersion": 5,
     "maximumSuggestions": 24,
     "expected": {
-      "ok": true,
-      "profileVersion": 5,
+      "truncated": false,
       "suggestions": [
-        {
-          "id": "profile:v5:experience[0]:bullet[0]:required[0]:achievement-framing",
-          "kind": "achievement_framing",
-          "originalText": "Reduced process latency.",
-          "proposedText": null,
-          "canApply": false,
-          "guidance": "What truthful outcome, scale, frequency, or comparison followed from this action? Leave it unchanged if no supported result is available.",
-          "source": {
-            "sourceId": "achievement-1",
-            "identityKind": "canonical_achievement",
-            "excerpt": "Reduced process latency.",
-            "fieldPath": "profile.resume.experience_entries[0].bullets[0]",
-            "experienceId": "exp-1",
-            "experienceTitle": "Synthetic Engineer",
-            "experienceCompany": "Synthetic Co",
-            "bulletIndex": 0,
-            "requiredBulletIndex": 0
-          }
-        },
         {
           "id": "profile:v5:experience[0]:bullet[0]:required[0]:missing-evidence",
           "kind": "missing_evidence",
           "originalText": "Reduced process latency.",
           "proposedText": null,
           "canApply": false,
-          "guidance": "The matching achievement is not marked verified. Which independent source confirms the claim or metric? Add only verified details in the normal editor.",
           "source": {
             "sourceId": "achievement-1",
             "identityKind": "canonical_achievement",
@@ -1142,10 +936,7 @@
             "requiredBulletIndex": 0
           }
         }
-      ],
-      "strategy": "deterministic_rules_v1",
-      "modelUsed": false,
-      "truncated": false
+      ]
     }
   },
   {
@@ -1184,12 +975,8 @@
     "profileVersion": 5,
     "maximumSuggestions": 24,
     "expected": {
-      "ok": true,
-      "profileVersion": 5,
-      "suggestions": [],
-      "strategy": "deterministic_rules_v1",
-      "modelUsed": false,
-      "truncated": false
+      "truncated": false,
+      "suggestions": []
     }
   },
   {
@@ -1228,8 +1015,7 @@
     "profileVersion": 5,
     "maximumSuggestions": 24,
     "expected": {
-      "ok": true,
-      "profileVersion": 5,
+      "truncated": false,
       "suggestions": [
         {
           "id": "profile:v5:experience[0]:bullet[0]:required[0]:missing-evidence",
@@ -1237,7 +1023,6 @@
           "originalText": "Built synthetic service.",
           "proposedText": null,
           "canApply": false,
-          "guidance": "The matching achievement is not marked verified. Which independent source confirms the claim or metric? Add only verified details in the normal editor.",
           "source": {
             "sourceId": "achievement-1",
             "identityKind": "canonical_achievement",
@@ -1250,10 +1035,7 @@
             "requiredBulletIndex": 0
           }
         }
-      ],
-      "strategy": "deterministic_rules_v1",
-      "modelUsed": false,
-      "truncated": false
+      ]
     }
   },
   {
@@ -1292,8 +1074,7 @@
     "profileVersion": 5,
     "maximumSuggestions": 24,
     "expected": {
-      "ok": true,
-      "profileVersion": 5,
+      "truncated": false,
       "suggestions": [
         {
           "id": "profile:v5:experience[0]:bullet[0]:required[0]:missing-evidence",
@@ -1301,7 +1082,6 @@
           "originalText": "Built synthetic service.",
           "proposedText": null,
           "canApply": false,
-          "guidance": "This achievement is marked draft, inferred, or unconfirmed. Which source verifies its claim? Review and confirm it in the normal editor before strengthening the wording.",
           "source": {
             "sourceId": "achievement-1",
             "identityKind": "canonical_achievement",
@@ -1314,10 +1094,7 @@
             "requiredBulletIndex": 0
           }
         }
-      ],
-      "strategy": "deterministic_rules_v1",
-      "modelUsed": false,
-      "truncated": false
+      ]
     }
   },
   {
@@ -1356,8 +1133,7 @@
     "profileVersion": 5,
     "maximumSuggestions": 24,
     "expected": {
-      "ok": true,
-      "profileVersion": 5,
+      "truncated": false,
       "suggestions": [
         {
           "id": "profile:v5:experience[0]:bullet[0]:required[0]:missing-evidence",
@@ -1365,7 +1141,6 @@
           "originalText": "Built synthetic service.",
           "proposedText": null,
           "canApply": false,
-          "guidance": "This achievement is marked draft, inferred, or unconfirmed. Which source verifies its claim? Review and confirm it in the normal editor before strengthening the wording.",
           "source": {
             "sourceId": "achievement-1",
             "identityKind": "canonical_achievement",
@@ -1378,10 +1153,7 @@
             "requiredBulletIndex": 0
           }
         }
-      ],
-      "strategy": "deterministic_rules_v1",
-      "modelUsed": false,
-      "truncated": false
+      ]
     }
   },
   {
@@ -1420,8 +1192,7 @@
     "profileVersion": 5,
     "maximumSuggestions": 24,
     "expected": {
-      "ok": true,
-      "profileVersion": 5,
+      "truncated": false,
       "suggestions": [
         {
           "id": "profile:v5:experience[0]:bullet[0]:required[0]:missing-evidence",
@@ -1429,7 +1200,6 @@
           "originalText": "Built synthetic service.",
           "proposedText": null,
           "canApply": false,
-          "guidance": "This achievement is marked draft, inferred, or unconfirmed. Which source verifies its claim? Review and confirm it in the normal editor before strengthening the wording.",
           "source": {
             "sourceId": "achievement-1",
             "identityKind": "canonical_achievement",
@@ -1442,10 +1212,7 @@
             "requiredBulletIndex": 0
           }
         }
-      ],
-      "strategy": "deterministic_rules_v1",
-      "modelUsed": false,
-      "truncated": false
+      ]
     }
   },
   {
@@ -1485,12 +1252,8 @@
     "profileVersion": 7,
     "maximumSuggestions": 24,
     "expected": {
-      "ok": true,
-      "profileVersion": 7,
-      "suggestions": [],
-      "strategy": "deterministic_rules_v1",
-      "modelUsed": false,
-      "truncated": false
+      "truncated": false,
+      "suggestions": []
     }
   },
   {
@@ -1521,12 +1284,8 @@
     "profileVersion": 7,
     "maximumSuggestions": 24,
     "expected": {
-      "ok": true,
-      "profileVersion": 7,
-      "suggestions": [],
-      "strategy": "deterministic_rules_v1",
-      "modelUsed": false,
-      "truncated": false
+      "truncated": false,
+      "suggestions": []
     }
   },
   {
@@ -1557,12 +1316,8 @@
     "profileVersion": 7,
     "maximumSuggestions": 24,
     "expected": {
-      "ok": true,
-      "profileVersion": 7,
-      "suggestions": [],
-      "strategy": "deterministic_rules_v1",
-      "modelUsed": false,
-      "truncated": false
+      "truncated": false,
+      "suggestions": []
     }
   },
   {
@@ -1609,8 +1364,7 @@
     "profileVersion": 7,
     "maximumSuggestions": 24,
     "expected": {
-      "ok": true,
-      "profileVersion": 7,
+      "truncated": false,
       "suggestions": [
         {
           "id": "profile:v7:experience[0]:bullet[0]:required[0]:grammar",
@@ -1618,7 +1372,6 @@
           "originalText": "  Built   synthetic queues  ",
           "proposedText": null,
           "canApply": false,
-          "guidance": "The saved achievement identity is ambiguous. Resolve it and edit whitespace manually; this suggestion cannot choose one record.",
           "source": {
             "sourceId": "profile:v7:experience[0]:bullet[0]",
             "identityKind": "snapshot_bullet",
@@ -1637,7 +1390,6 @@
           "originalText": "  Built   synthetic queues  ",
           "proposedText": null,
           "canApply": false,
-          "guidance": "What truthful outcome, scale, frequency, or comparison followed from this action? Leave it unchanged if no supported result is available.",
           "source": {
             "sourceId": "profile:v7:experience[0]:bullet[0]",
             "identityKind": "snapshot_bullet",
@@ -1656,7 +1408,6 @@
           "originalText": "  Built   synthetic queues  ",
           "proposedText": null,
           "canApply": false,
-          "guidance": "No unambiguous canonical achievement record matches this bullet. Which saved source supports its claim? Add only evidence you can verify in the normal editor.",
           "source": {
             "sourceId": "profile:v7:experience[0]:bullet[0]",
             "identityKind": "snapshot_bullet",
@@ -1669,10 +1420,7 @@
             "requiredBulletIndex": 0
           }
         }
-      ],
-      "strategy": "deterministic_rules_v1",
-      "modelUsed": false,
-      "truncated": false
+      ]
     }
   },
   {
@@ -1719,8 +1467,7 @@
     "profileVersion": 7,
     "maximumSuggestions": 24,
     "expected": {
-      "ok": true,
-      "profileVersion": 7,
+      "truncated": false,
       "suggestions": [
         {
           "id": "profile:v7:experience[0]:bullet[0]:required[0]:grammar",
@@ -1728,7 +1475,6 @@
           "originalText": "  Built   synthetic queues  ",
           "proposedText": null,
           "canApply": false,
-          "guidance": "The saved achievement identity is ambiguous. Resolve it and edit whitespace manually; this suggestion cannot choose one record.",
           "source": {
             "sourceId": "profile:v7:experience[0]:bullet[0]",
             "identityKind": "snapshot_bullet",
@@ -1747,7 +1493,6 @@
           "originalText": "  Built   synthetic queues  ",
           "proposedText": null,
           "canApply": false,
-          "guidance": "What truthful outcome, scale, frequency, or comparison followed from this action? Leave it unchanged if no supported result is available.",
           "source": {
             "sourceId": "profile:v7:experience[0]:bullet[0]",
             "identityKind": "snapshot_bullet",
@@ -1766,7 +1511,6 @@
           "originalText": "  Built   synthetic queues  ",
           "proposedText": null,
           "canApply": false,
-          "guidance": "No unambiguous canonical achievement record matches this bullet. Which saved source supports its claim? Add only evidence you can verify in the normal editor.",
           "source": {
             "sourceId": "profile:v7:experience[0]:bullet[0]",
             "identityKind": "snapshot_bullet",
@@ -1779,10 +1523,7 @@
             "requiredBulletIndex": 0
           }
         }
-      ],
-      "strategy": "deterministic_rules_v1",
-      "modelUsed": false,
-      "truncated": false
+      ]
     }
   },
   {
@@ -1821,8 +1562,7 @@
     "profileVersion": 7,
     "maximumSuggestions": 24,
     "expected": {
-      "ok": true,
-      "profileVersion": 7,
+      "truncated": false,
       "suggestions": [
         {
           "id": "profile:v7:experience[0]:bullet[0]:required[0]:grammar",
@@ -1830,7 +1570,6 @@
           "originalText": "  Built   synthetic queues  ",
           "proposedText": null,
           "canApply": false,
-          "guidance": "The saved achievement identity is ambiguous. Resolve it and edit whitespace manually; this suggestion cannot choose one record.",
           "source": {
             "sourceId": "profile:v7:experience[0]:bullet[0]",
             "identityKind": "snapshot_bullet",
@@ -1849,7 +1588,6 @@
           "originalText": "  Built   synthetic queues  ",
           "proposedText": null,
           "canApply": false,
-          "guidance": "What truthful outcome, scale, frequency, or comparison followed from this action? Leave it unchanged if no supported result is available.",
           "source": {
             "sourceId": "profile:v7:experience[0]:bullet[0]",
             "identityKind": "snapshot_bullet",
@@ -1868,7 +1606,6 @@
           "originalText": "  Built   synthetic queues  ",
           "proposedText": null,
           "canApply": false,
-          "guidance": "No unambiguous canonical achievement record matches this bullet. Which saved source supports its claim? Add only evidence you can verify in the normal editor.",
           "source": {
             "sourceId": "profile:v7:experience[0]:bullet[0]",
             "identityKind": "snapshot_bullet",
@@ -1881,10 +1618,7 @@
             "requiredBulletIndex": 0
           }
         }
-      ],
-      "strategy": "deterministic_rules_v1",
-      "modelUsed": false,
-      "truncated": false
+      ]
     }
   },
   {
@@ -1923,8 +1657,7 @@
     "profileVersion": 7,
     "maximumSuggestions": 24,
     "expected": {
-      "ok": true,
-      "profileVersion": 7,
+      "truncated": false,
       "suggestions": [
         {
           "id": "profile:v7:experience[0]:bullet[0]:required[0]:grammar",
@@ -1932,7 +1665,6 @@
           "originalText": "  Built   synthetic queues  ",
           "proposedText": null,
           "canApply": false,
-          "guidance": "The saved achievement identity is ambiguous. Resolve it and edit whitespace manually; this suggestion cannot choose one record.",
           "source": {
             "sourceId": "profile:v7:experience[0]:bullet[0]",
             "identityKind": "snapshot_bullet",
@@ -1951,7 +1683,6 @@
           "originalText": "  Built   synthetic queues  ",
           "proposedText": null,
           "canApply": false,
-          "guidance": "What truthful outcome, scale, frequency, or comparison followed from this action? Leave it unchanged if no supported result is available.",
           "source": {
             "sourceId": "profile:v7:experience[0]:bullet[0]",
             "identityKind": "snapshot_bullet",
@@ -1970,7 +1701,6 @@
           "originalText": "  Built   synthetic queues  ",
           "proposedText": null,
           "canApply": false,
-          "guidance": "No unambiguous canonical achievement record matches this bullet. Which saved source supports its claim? Add only evidence you can verify in the normal editor.",
           "source": {
             "sourceId": "profile:v7:experience[0]:bullet[0]",
             "identityKind": "snapshot_bullet",
@@ -1983,10 +1713,7 @@
             "requiredBulletIndex": 0
           }
         }
-      ],
-      "strategy": "deterministic_rules_v1",
-      "modelUsed": false,
-      "truncated": false
+      ]
     }
   },
   {
@@ -2043,8 +1770,7 @@
     "profileVersion": 7,
     "maximumSuggestions": 24,
     "expected": {
-      "ok": true,
-      "profileVersion": 7,
+      "truncated": false,
       "suggestions": [
         {
           "id": "profile:v7:experience[0]:bullet[0]:required[0]:grammar",
@@ -2052,7 +1778,6 @@
           "originalText": "  Built   synthetic queues  ",
           "proposedText": null,
           "canApply": false,
-          "guidance": "The saved achievement identity is ambiguous. Resolve it and edit whitespace manually; this suggestion cannot choose one record.",
           "source": {
             "sourceId": "profile:v7:experience[0]:bullet[0]",
             "identityKind": "snapshot_bullet",
@@ -2071,7 +1796,6 @@
           "originalText": "  Built   synthetic queues  ",
           "proposedText": null,
           "canApply": false,
-          "guidance": "What truthful outcome, scale, frequency, or comparison followed from this action? Leave it unchanged if no supported result is available.",
           "source": {
             "sourceId": "profile:v7:experience[0]:bullet[0]",
             "identityKind": "snapshot_bullet",
@@ -2090,7 +1814,6 @@
           "originalText": "  Built   synthetic queues  ",
           "proposedText": null,
           "canApply": false,
-          "guidance": "No unambiguous canonical achievement record matches this bullet. Which saved source supports its claim? Add only evidence you can verify in the normal editor.",
           "source": {
             "sourceId": "profile:v7:experience[0]:bullet[0]",
             "identityKind": "snapshot_bullet",
@@ -2103,10 +1826,7 @@
             "requiredBulletIndex": 0
           }
         }
-      ],
-      "strategy": "deterministic_rules_v1",
-      "modelUsed": false,
-      "truncated": false
+      ]
     }
   },
   {
@@ -2137,8 +1857,7 @@
     "profileVersion": 7,
     "maximumSuggestions": 24,
     "expected": {
-      "ok": true,
-      "profileVersion": 7,
+      "truncated": false,
       "suggestions": [
         {
           "id": "profile:v7:experience[0]:bullet[0]:required[0]:grammar",
@@ -2146,26 +1865,6 @@
           "originalText": "  Worked   on synthetic queues  ",
           "proposedText": null,
           "canApply": false,
-          "guidance": "Whitespace cleanup would duplicate another saved bullet or Required pin. Resolve the duplicate identity before editing this text.",
-          "source": {
-            "sourceId": "profile:v7:experience[0]:bullet[0]",
-            "identityKind": "snapshot_bullet",
-            "excerpt": "  Worked   on synthetic queues  ",
-            "fieldPath": "profile.resume.experience_entries[0].bullets[0]",
-            "experienceId": "exp-1",
-            "experienceTitle": "Synthetic Engineer",
-            "experienceCompany": "Synthetic Co",
-            "bulletIndex": 0,
-            "requiredBulletIndex": 0
-          }
-        },
-        {
-          "id": "profile:v7:experience[0]:bullet[0]:required[0]:relevance",
-          "kind": "relevance",
-          "originalText": "  Worked   on synthetic queues  ",
-          "proposedText": null,
-          "canApply": false,
-          "guidance": "Which specific responsibility or result makes this required bullet relevant? Add only details you can verify in the normal editor.",
           "source": {
             "sourceId": "profile:v7:experience[0]:bullet[0]",
             "identityKind": "snapshot_bullet",
@@ -2184,7 +1883,6 @@
           "originalText": "  Worked   on synthetic queues  ",
           "proposedText": null,
           "canApply": false,
-          "guidance": "What truthful outcome, scale, frequency, or comparison followed from this action? Leave it unchanged if no supported result is available.",
           "source": {
             "sourceId": "profile:v7:experience[0]:bullet[0]",
             "identityKind": "snapshot_bullet",
@@ -2203,7 +1901,6 @@
           "originalText": "  Worked   on synthetic queues  ",
           "proposedText": null,
           "canApply": false,
-          "guidance": "No unambiguous canonical achievement record matches this bullet. Which saved source supports its claim? Add only evidence you can verify in the normal editor.",
           "source": {
             "sourceId": "profile:v7:experience[0]:bullet[0]",
             "identityKind": "snapshot_bullet",
@@ -2216,10 +1913,7 @@
             "requiredBulletIndex": 0
           }
         }
-      ],
-      "strategy": "deterministic_rules_v1",
-      "modelUsed": false,
-      "truncated": false
+      ]
     }
   },
   {
@@ -2250,8 +1944,7 @@
     "profileVersion": 7,
     "maximumSuggestions": 24,
     "expected": {
-      "ok": true,
-      "profileVersion": 7,
+      "truncated": false,
       "suggestions": [
         {
           "id": "profile:v7:experience[0]:bullet[0]:required[0]:grammar",
@@ -2259,26 +1952,6 @@
           "originalText": "  Worked   on synthetic queues  ",
           "proposedText": null,
           "canApply": false,
-          "guidance": "Whitespace cleanup would duplicate another saved bullet or Required pin. Resolve the duplicate identity before editing this text.",
-          "source": {
-            "sourceId": "profile:v7:experience[0]:bullet[0]",
-            "identityKind": "snapshot_bullet",
-            "excerpt": "  Worked   on synthetic queues  ",
-            "fieldPath": "profile.resume.experience_entries[0].bullets[0]",
-            "experienceId": "exp-1",
-            "experienceTitle": "Synthetic Engineer",
-            "experienceCompany": "Synthetic Co",
-            "bulletIndex": 0,
-            "requiredBulletIndex": 0
-          }
-        },
-        {
-          "id": "profile:v7:experience[0]:bullet[0]:required[0]:relevance",
-          "kind": "relevance",
-          "originalText": "  Worked   on synthetic queues  ",
-          "proposedText": null,
-          "canApply": false,
-          "guidance": "Which specific responsibility or result makes this required bullet relevant? Add only details you can verify in the normal editor.",
           "source": {
             "sourceId": "profile:v7:experience[0]:bullet[0]",
             "identityKind": "snapshot_bullet",
@@ -2297,7 +1970,6 @@
           "originalText": "  Worked   on synthetic queues  ",
           "proposedText": null,
           "canApply": false,
-          "guidance": "What truthful outcome, scale, frequency, or comparison followed from this action? Leave it unchanged if no supported result is available.",
           "source": {
             "sourceId": "profile:v7:experience[0]:bullet[0]",
             "identityKind": "snapshot_bullet",
@@ -2316,7 +1988,6 @@
           "originalText": "  Worked   on synthetic queues  ",
           "proposedText": null,
           "canApply": false,
-          "guidance": "No unambiguous canonical achievement record matches this bullet. Which saved source supports its claim? Add only evidence you can verify in the normal editor.",
           "source": {
             "sourceId": "profile:v7:experience[0]:bullet[0]",
             "identityKind": "snapshot_bullet",
@@ -2329,10 +2000,7 @@
             "requiredBulletIndex": 0
           }
         }
-      ],
-      "strategy": "deterministic_rules_v1",
-      "modelUsed": false,
-      "truncated": false
+      ]
     }
   },
   {
@@ -2386,8 +2054,7 @@
     "profileVersion": 7,
     "maximumSuggestions": 24,
     "expected": {
-      "ok": true,
-      "profileVersion": 7,
+      "truncated": false,
       "suggestions": [
         {
           "id": "profile:v7:experience[0]:bullet[0]:required[0]:grammar",
@@ -2395,7 +2062,6 @@
           "originalText": "  Built   synthetic queues  ",
           "proposedText": "Built synthetic queues",
           "canApply": true,
-          "guidance": "Trim leading or trailing space and collapse repeated whitespace without changing the words or facts.",
           "source": {
             "sourceId": "profile:v7:experience[0]:bullet[0]",
             "identityKind": "snapshot_bullet",
@@ -2414,7 +2080,6 @@
           "originalText": "  Built   synthetic queues  ",
           "proposedText": null,
           "canApply": false,
-          "guidance": "What truthful outcome, scale, frequency, or comparison followed from this action? Leave it unchanged if no supported result is available.",
           "source": {
             "sourceId": "profile:v7:experience[0]:bullet[0]",
             "identityKind": "snapshot_bullet",
@@ -2433,7 +2098,6 @@
           "originalText": "  Built   synthetic queues  ",
           "proposedText": null,
           "canApply": false,
-          "guidance": "No unambiguous canonical achievement record matches this bullet. Which saved source supports its claim? Add only evidence you can verify in the normal editor.",
           "source": {
             "sourceId": "profile:v7:experience[0]:bullet[0]",
             "identityKind": "snapshot_bullet",
@@ -2452,7 +2116,6 @@
           "originalText": "  Built   synthetic queues  ",
           "proposedText": "Built synthetic queues",
           "canApply": true,
-          "guidance": "Trim leading or trailing space and collapse repeated whitespace without changing the words or facts.",
           "source": {
             "sourceId": "profile:v7:experience[1]:bullet[0]",
             "identityKind": "snapshot_bullet",
@@ -2471,7 +2134,6 @@
           "originalText": "  Built   synthetic queues  ",
           "proposedText": null,
           "canApply": false,
-          "guidance": "What truthful outcome, scale, frequency, or comparison followed from this action? Leave it unchanged if no supported result is available.",
           "source": {
             "sourceId": "profile:v7:experience[1]:bullet[0]",
             "identityKind": "snapshot_bullet",
@@ -2490,7 +2152,6 @@
           "originalText": "  Built   synthetic queues  ",
           "proposedText": null,
           "canApply": false,
-          "guidance": "No unambiguous canonical achievement record matches this bullet. Which saved source supports its claim? Add only evidence you can verify in the normal editor.",
           "source": {
             "sourceId": "profile:v7:experience[1]:bullet[0]",
             "identityKind": "snapshot_bullet",
@@ -2509,7 +2170,6 @@
           "originalText": "  Built   synthetic queues  ",
           "proposedText": null,
           "canApply": false,
-          "guidance": "This saved experience ID prevents a safe profile save. Correct the experience identity before editing this Required bullet.",
           "source": {
             "sourceId": "profile:v7:experience[2]:bullet[0]",
             "identityKind": "snapshot_bullet",
@@ -2528,7 +2188,6 @@
           "originalText": "  Built   synthetic queues  ",
           "proposedText": null,
           "canApply": false,
-          "guidance": "What truthful outcome, scale, frequency, or comparison followed from this action? Leave it unchanged if no supported result is available.",
           "source": {
             "sourceId": "profile:v7:experience[2]:bullet[0]",
             "identityKind": "snapshot_bullet",
@@ -2547,7 +2206,6 @@
           "originalText": "  Built   synthetic queues  ",
           "proposedText": null,
           "canApply": false,
-          "guidance": "No unambiguous canonical achievement record matches this bullet. Which saved source supports its claim? Add only evidence you can verify in the normal editor.",
           "source": {
             "sourceId": "profile:v7:experience[2]:bullet[0]",
             "identityKind": "snapshot_bullet",
@@ -2560,10 +2218,7 @@
             "requiredBulletIndex": 0
           }
         }
-      ],
-      "strategy": "deterministic_rules_v1",
-      "modelUsed": false,
-      "truncated": false
+      ]
     }
   },
   {
@@ -2620,8 +2275,7 @@
     "profileVersion": 7,
     "maximumSuggestions": 24,
     "expected": {
-      "ok": true,
-      "profileVersion": 7,
+      "truncated": false,
       "suggestions": [
         {
           "id": "profile:v7:experience[3]:bullet[0]:required[0]:grammar",
@@ -2629,7 +2283,6 @@
           "originalText": "  Built   synthetic queues  ",
           "proposedText": "Built synthetic queues",
           "canApply": true,
-          "guidance": "Trim leading or trailing space and collapse repeated whitespace without changing the words or facts.",
           "source": {
             "sourceId": "profile:v7:experience[3]:bullet[0]",
             "identityKind": "snapshot_bullet",
@@ -2648,7 +2301,6 @@
           "originalText": "  Built   synthetic queues  ",
           "proposedText": null,
           "canApply": false,
-          "guidance": "What truthful outcome, scale, frequency, or comparison followed from this action? Leave it unchanged if no supported result is available.",
           "source": {
             "sourceId": "profile:v7:experience[3]:bullet[0]",
             "identityKind": "snapshot_bullet",
@@ -2667,7 +2319,6 @@
           "originalText": "  Built   synthetic queues  ",
           "proposedText": null,
           "canApply": false,
-          "guidance": "No unambiguous canonical achievement record matches this bullet. Which saved source supports its claim? Add only evidence you can verify in the normal editor.",
           "source": {
             "sourceId": "profile:v7:experience[3]:bullet[0]",
             "identityKind": "snapshot_bullet",
@@ -2680,10 +2331,7 @@
             "requiredBulletIndex": 0
           }
         }
-      ],
-      "strategy": "deterministic_rules_v1",
-      "modelUsed": false,
-      "truncated": false
+      ]
     }
   },
   {
@@ -2716,8 +2364,7 @@
     "profileVersion": 7,
     "maximumSuggestions": 24,
     "expected": {
-      "ok": true,
-      "profileVersion": 7,
+      "truncated": true,
       "suggestions": [
         {
           "id": "profile:v7:experience[0]:bullet[0]:required[0]:grammar",
@@ -2725,26 +2372,6 @@
           "originalText": "  Worked   on synthetic queues  ",
           "proposedText": "Worked on synthetic queues",
           "canApply": true,
-          "guidance": "Trim leading or trailing space and collapse repeated whitespace without changing the words or facts.",
-          "source": {
-            "sourceId": "profile:v7:experience[0]:bullet[0]",
-            "identityKind": "snapshot_bullet",
-            "excerpt": "  Worked   on synthetic queues  ",
-            "fieldPath": "profile.resume.experience_entries[0].bullets[0]",
-            "experienceId": "exp-1",
-            "experienceTitle": "Synthetic Engineer",
-            "experienceCompany": "Synthetic Co",
-            "bulletIndex": 0,
-            "requiredBulletIndex": 0
-          }
-        },
-        {
-          "id": "profile:v7:experience[0]:bullet[0]:required[0]:relevance",
-          "kind": "relevance",
-          "originalText": "  Worked   on synthetic queues  ",
-          "proposedText": null,
-          "canApply": false,
-          "guidance": "Which specific responsibility or result makes this required bullet relevant? Add only details you can verify in the normal editor.",
           "source": {
             "sourceId": "profile:v7:experience[0]:bullet[0]",
             "identityKind": "snapshot_bullet",
@@ -2763,7 +2390,6 @@
           "originalText": "  Worked   on synthetic queues  ",
           "proposedText": null,
           "canApply": false,
-          "guidance": "What truthful outcome, scale, frequency, or comparison followed from this action? Leave it unchanged if no supported result is available.",
           "source": {
             "sourceId": "profile:v7:experience[0]:bullet[0]",
             "identityKind": "snapshot_bullet",
@@ -2782,7 +2408,6 @@
           "originalText": "  Worked   on synthetic queues  ",
           "proposedText": null,
           "canApply": false,
-          "guidance": "No unambiguous canonical achievement record matches this bullet. Which saved source supports its claim? Add only evidence you can verify in the normal editor.",
           "source": {
             "sourceId": "profile:v7:experience[0]:bullet[0]",
             "identityKind": "snapshot_bullet",
@@ -2795,10 +2420,7 @@
             "requiredBulletIndex": 0
           }
         }
-      ],
-      "strategy": "deterministic_rules_v1",
-      "modelUsed": false,
-      "truncated": true
+      ]
     }
   },
   {
@@ -2826,12 +2448,8 @@
     "profileVersion": 7,
     "maximumSuggestions": 24,
     "expected": {
-      "ok": true,
-      "profileVersion": 7,
-      "suggestions": [],
-      "strategy": "deterministic_rules_v1",
-      "modelUsed": false,
-      "truncated": false
+      "truncated": false,
+      "suggestions": []
     }
   },
   {
@@ -2861,12 +2479,8 @@
     "profileVersion": 7,
     "maximumSuggestions": 24,
     "expected": {
-      "ok": true,
-      "profileVersion": 7,
-      "suggestions": [],
-      "strategy": "deterministic_rules_v1",
-      "modelUsed": false,
-      "truncated": true
+      "truncated": true,
+      "suggestions": []
     }
   },
   {
@@ -2896,12 +2510,8 @@
     "profileVersion": 7,
     "maximumSuggestions": 24,
     "expected": {
-      "ok": true,
-      "profileVersion": 7,
-      "suggestions": [],
-      "strategy": "deterministic_rules_v1",
-      "modelUsed": false,
-      "truncated": true
+      "truncated": true,
+      "suggestions": []
     }
   },
   {
@@ -2931,8 +2541,7 @@
     "profileVersion": 7,
     "maximumSuggestions": 24,
     "expected": {
-      "ok": true,
-      "profileVersion": 7,
+      "truncated": false,
       "suggestions": [
         {
           "id": "profile:v7:experience[0]:bullet[0]:required[0]:grammar",
@@ -2940,7 +2549,24 @@
           "originalText": "  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx  ",
           "proposedText": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
           "canApply": true,
-          "guidance": "Trim leading or trailing space and collapse repeated whitespace without changing the words or facts.",
+          "source": {
+            "sourceId": "profile:v7:experience[0]:bullet[0]",
+            "identityKind": "snapshot_bullet",
+            "excerpt": "  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx...",
+            "fieldPath": "profile.resume.experience_entries[0].bullets[0]",
+            "experienceId": "exp-1",
+            "experienceTitle": "Synthetic Engineer",
+            "experienceCompany": "Synthetic Co",
+            "bulletIndex": 0,
+            "requiredBulletIndex": 0
+          }
+        },
+        {
+          "id": "profile:v7:experience[0]:bullet[0]:required[0]:relevance",
+          "kind": "relevance",
+          "originalText": "  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx  ",
+          "proposedText": null,
+          "canApply": false,
           "source": {
             "sourceId": "profile:v7:experience[0]:bullet[0]",
             "identityKind": "snapshot_bullet",
@@ -2959,7 +2585,6 @@
           "originalText": "  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx  ",
           "proposedText": null,
           "canApply": false,
-          "guidance": "What truthful outcome, scale, frequency, or comparison followed from this action? Leave it unchanged if no supported result is available.",
           "source": {
             "sourceId": "profile:v7:experience[0]:bullet[0]",
             "identityKind": "snapshot_bullet",
@@ -2978,7 +2603,6 @@
           "originalText": "  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx  ",
           "proposedText": null,
           "canApply": false,
-          "guidance": "No unambiguous canonical achievement record matches this bullet. Which saved source supports its claim? Add only evidence you can verify in the normal editor.",
           "source": {
             "sourceId": "profile:v7:experience[0]:bullet[0]",
             "identityKind": "snapshot_bullet",
@@ -2991,10 +2615,430 @@
             "requiredBulletIndex": 0
           }
         }
-      ],
-      "strategy": "deterministic_rules_v1",
-      "modelUsed": false,
-      "truncated": false
+      ]
+    }
+  },
+  {
+    "name": "review regression: concrete payments result without linked evidence",
+    "profile": {
+      "resume": {
+        "experience_entries": [
+          {
+            "id": "exp-1",
+            "title": "Synthetic Engineer",
+            "company": "Synthetic Co",
+            "bullets": [
+              "Worked on the payments API, cutting p99 latency 40%"
+            ],
+            "achievement_evidence": []
+          }
+        ],
+        "tailoring_rules": {
+          "required_bullets_by_experience_id": {
+            "exp-1": [
+              "Worked on the payments API, cutting p99 latency 40%"
+            ]
+          }
+        }
+      }
+    },
+    "profileVersion": 7,
+    "maximumSuggestions": 24,
+    "expected": {
+      "truncated": false,
+      "suggestions": [
+        {
+          "kind": "missing_evidence",
+          "canApply": false,
+          "proposedText": null,
+          "source": {
+            "identityKind": "snapshot_bullet",
+            "sourceId": "profile:v7:experience[0]:bullet[0]"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "same result with a different opening",
+    "profile": {
+      "resume": {
+        "experience_entries": [
+          {
+            "id": "exp-1",
+            "title": "Synthetic Engineer",
+            "company": "Synthetic Co",
+            "bullets": [
+              "Helped with the payments API, cutting p99 latency 40%"
+            ],
+            "achievement_evidence": []
+          }
+        ],
+        "tailoring_rules": {
+          "required_bullets_by_experience_id": {
+            "exp-1": [
+              "Helped with the payments API, cutting p99 latency 40%"
+            ]
+          }
+        }
+      }
+    },
+    "profileVersion": 7,
+    "maximumSuggestions": 24,
+    "expected": {
+      "truncated": false,
+      "suggestions": [
+        {
+          "kind": "missing_evidence",
+          "canApply": false,
+          "proposedText": null,
+          "source": {
+            "identityKind": "snapshot_bullet",
+            "sourceId": "profile:v7:experience[0]:bullet[0]"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "unlisted result domain is still an outcome",
+    "profile": {
+      "resume": {
+        "experience_entries": [
+          {
+            "id": "exp-1",
+            "title": "Synthetic Engineer",
+            "company": "Synthetic Co",
+            "bullets": [
+              "Worked on warehouse routing, reducing pick distance by 28%"
+            ],
+            "achievement_evidence": []
+          }
+        ],
+        "tailoring_rules": {
+          "required_bullets_by_experience_id": {
+            "exp-1": [
+              "Worked on warehouse routing, reducing pick distance by 28%"
+            ]
+          }
+        }
+      }
+    },
+    "profileVersion": 7,
+    "maximumSuggestions": 24,
+    "expected": {
+      "truncated": false,
+      "suggestions": [
+        {
+          "kind": "missing_evidence",
+          "canApply": false,
+          "proposedText": null,
+          "source": {
+            "identityKind": "snapshot_bullet",
+            "sourceId": "profile:v7:experience[0]:bullet[0]"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "qualitative consequence is a result",
+    "profile": {
+      "resume": {
+        "experience_entries": [
+          {
+            "id": "exp-1",
+            "title": "Synthetic Engineer",
+            "company": "Synthetic Co",
+            "bullets": [
+              "Built a self-service portal enabling customers to reset credentials"
+            ],
+            "achievement_evidence": []
+          }
+        ],
+        "tailoring_rules": {
+          "required_bullets_by_experience_id": {
+            "exp-1": [
+              "Built a self-service portal enabling customers to reset credentials"
+            ]
+          }
+        }
+      }
+    },
+    "profileVersion": 7,
+    "maximumSuggestions": 24,
+    "expected": {
+      "truncated": false,
+      "suggestions": [
+        {
+          "kind": "missing_evidence",
+          "canApply": false,
+          "proposedText": null,
+          "source": {
+            "identityKind": "snapshot_bullet",
+            "sourceId": "profile:v7:experience[0]:bullet[0]"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "an unlisted vague opening still needs context",
+    "profile": {
+      "resume": {
+        "experience_entries": [
+          {
+            "id": "exp-1",
+            "title": "Synthetic Engineer",
+            "company": "Synthetic Co",
+            "bullets": [
+              "Owned various tasks"
+            ],
+            "achievement_evidence": []
+          }
+        ],
+        "tailoring_rules": {
+          "required_bullets_by_experience_id": {
+            "exp-1": [
+              "Owned various tasks"
+            ]
+          }
+        }
+      }
+    },
+    "profileVersion": 7,
+    "maximumSuggestions": 24,
+    "expected": {
+      "truncated": false,
+      "suggestions": [
+        {
+          "kind": "relevance",
+          "canApply": false,
+          "proposedText": null,
+          "source": {
+            "identityKind": "snapshot_bullet",
+            "sourceId": "profile:v7:experience[0]:bullet[0]"
+          }
+        },
+        {
+          "kind": "achievement_framing",
+          "canApply": false,
+          "proposedText": null,
+          "source": {
+            "identityKind": "snapshot_bullet",
+            "sourceId": "profile:v7:experience[0]:bullet[0]"
+          }
+        },
+        {
+          "kind": "missing_evidence",
+          "canApply": false,
+          "proposedText": null,
+          "source": {
+            "identityKind": "snapshot_bullet",
+            "sourceId": "profile:v7:experience[0]:bullet[0]"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "a specific responsibility needs framing but not relevance advice",
+    "profile": {
+      "resume": {
+        "experience_entries": [
+          {
+            "id": "exp-1",
+            "title": "Synthetic Engineer",
+            "company": "Synthetic Co",
+            "bullets": [
+              "Owned database migrations"
+            ],
+            "achievement_evidence": []
+          }
+        ],
+        "tailoring_rules": {
+          "required_bullets_by_experience_id": {
+            "exp-1": [
+              "Owned database migrations"
+            ]
+          }
+        }
+      }
+    },
+    "profileVersion": 7,
+    "maximumSuggestions": 24,
+    "expected": {
+      "truncated": false,
+      "suggestions": [
+        {
+          "kind": "achievement_framing",
+          "canApply": false,
+          "proposedText": null,
+          "source": {
+            "identityKind": "snapshot_bullet",
+            "sourceId": "profile:v7:experience[0]:bullet[0]"
+          }
+        },
+        {
+          "kind": "missing_evidence",
+          "canApply": false,
+          "proposedText": null,
+          "source": {
+            "identityKind": "snapshot_bullet",
+            "sourceId": "profile:v7:experience[0]:bullet[0]"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "an activity count does not prove an outcome",
+    "profile": {
+      "resume": {
+        "experience_entries": [
+          {
+            "id": "exp-1",
+            "title": "Synthetic Engineer",
+            "company": "Synthetic Co",
+            "bullets": [
+              "Managed 10 projects"
+            ],
+            "achievement_evidence": []
+          }
+        ],
+        "tailoring_rules": {
+          "required_bullets_by_experience_id": {
+            "exp-1": [
+              "Managed 10 projects"
+            ]
+          }
+        }
+      }
+    },
+    "profileVersion": 7,
+    "maximumSuggestions": 24,
+    "expected": {
+      "truncated": false,
+      "suggestions": [
+        {
+          "kind": "achievement_framing",
+          "canApply": false,
+          "proposedText": null,
+          "source": {
+            "identityKind": "snapshot_bullet",
+            "sourceId": "profile:v7:experience[0]:bullet[0]"
+          }
+        },
+        {
+          "kind": "missing_evidence",
+          "canApply": false,
+          "proposedText": null,
+          "source": {
+            "identityKind": "snapshot_bullet",
+            "sourceId": "profile:v7:experience[0]:bullet[0]"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "a planned improvement is not an achieved result",
+    "profile": {
+      "resume": {
+        "experience_entries": [
+          {
+            "id": "exp-1",
+            "title": "Synthetic Engineer",
+            "company": "Synthetic Co",
+            "bullets": [
+              "Planned to reduce pick distance by 28%"
+            ],
+            "achievement_evidence": []
+          }
+        ],
+        "tailoring_rules": {
+          "required_bullets_by_experience_id": {
+            "exp-1": [
+              "Planned to reduce pick distance by 28%"
+            ]
+          }
+        }
+      }
+    },
+    "profileVersion": 7,
+    "maximumSuggestions": 24,
+    "expected": {
+      "truncated": false,
+      "suggestions": [
+        {
+          "kind": "achievement_framing",
+          "canApply": false,
+          "proposedText": null,
+          "source": {
+            "identityKind": "snapshot_bullet",
+            "sourceId": "profile:v7:experience[0]:bullet[0]"
+          }
+        },
+        {
+          "kind": "missing_evidence",
+          "canApply": false,
+          "proposedText": null,
+          "source": {
+            "identityKind": "snapshot_bullet",
+            "sourceId": "profile:v7:experience[0]:bullet[0]"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "a negated improvement is not an achieved result",
+    "profile": {
+      "resume": {
+        "experience_entries": [
+          {
+            "id": "exp-1",
+            "title": "Synthetic Engineer",
+            "company": "Synthetic Co",
+            "bullets": [
+              "Did not reduce pick distance by 28%"
+            ],
+            "achievement_evidence": []
+          }
+        ],
+        "tailoring_rules": {
+          "required_bullets_by_experience_id": {
+            "exp-1": [
+              "Did not reduce pick distance by 28%"
+            ]
+          }
+        }
+      }
+    },
+    "profileVersion": 7,
+    "maximumSuggestions": 24,
+    "expected": {
+      "truncated": false,
+      "suggestions": [
+        {
+          "kind": "achievement_framing",
+          "canApply": false,
+          "proposedText": null,
+          "source": {
+            "identityKind": "snapshot_bullet",
+            "sourceId": "profile:v7:experience[0]:bullet[0]"
+          }
+        },
+        {
+          "kind": "missing_evidence",
+          "canApply": false,
+          "proposedText": null,
+          "source": {
+            "identityKind": "snapshot_bullet",
+            "sourceId": "profile:v7:experience[0]:bullet[0]"
+          }
+        }
+      ]
     }
   }
 ]

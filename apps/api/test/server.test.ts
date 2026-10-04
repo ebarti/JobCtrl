@@ -9937,7 +9937,6 @@ describe("local TypeScript API", () => {
           originalText: "  Helped   with incident response  ",
           proposedText: "Helped with incident response",
         }),
-        expect.objectContaining({ kind: "relevance", canApply: false }),
         expect.objectContaining({ kind: "missing_evidence", canApply: false }),
       ]),
     });
@@ -10386,6 +10385,31 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("recognizes the saved bullet's own result independently of its evidence status", async () => {
+    const app = buildApp(options);
+    const profile = validProfileFixture("Synthetic Candidate");
+    const resume = profile.resume as Record<string, unknown>;
+    const entry = (resume.experience_entries as Array<Record<string, unknown>>)[0]!;
+    const text = "Worked on the payments API, cutting p99 latency 40%";
+    entry.bullets = [text];
+    entry.achievement_evidence = [];
+    resume.tailoring_rules = { required_bullets_by_experience_id: { role_1: [text] } };
+    const saved = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile } });
+    expect(saved.statusCode, saved.body).toBe(200);
+    const version = saved.json().profileVersion as number;
+    const before = (await app.inject({ method: "GET", url: "/v1/profile" })).json();
+    const inspection = await app.inject({
+      method: "POST", url: "/v1/profile/required-bullet-suggestions",
+      payload: { expectedProfileVersion: version },
+    });
+    expect(inspection.statusCode, inspection.body).toBe(200);
+    expect(inspection.json().suggestions.map((item: { kind: string }) => item.kind)).toEqual(["missing_evidence"]);
+    expect(inspection.json().suggestions[0]).toMatchObject({ originalText: text, proposedText: null, canApply: false });
+    expect(inspection.json().suggestions[0].guidance).toContain("cutting p99 latency 40%");
+    expect((await app.inject({ method: "GET", url: "/v1/profile" })).json()).toEqual(before);
+    await app.close();
+  });
+
   it("does not promote a possessive restatement in saved Required evidence", async () => {
     const app = buildApp(options);
     const profile = validProfileFixture("Synthetic Candidate");
@@ -10414,9 +10438,8 @@ describe("local TypeScript API", () => {
     });
     expect(inspection.statusCode, inspection.body).toBe(200);
     expect(inspection.json().suggestions.map((item: { kind: string }) => item.kind))
-      .toEqual(["achievement_framing", "missing_evidence"]);
+      .toEqual(["missing_evidence"]);
     expect(inspection.json().suggestions).toEqual([
-      expect.objectContaining({ source: expect.objectContaining({ sourceId: "saved-possessive-restatement" }), proposedText: null, canApply: false }),
       expect.objectContaining({ source: expect.objectContaining({ sourceId: "saved-possessive-restatement" }), proposedText: null, canApply: false }),
     ]);
     expect((await app.inject({ method: "GET", url: "/v1/profile" })).json().profileVersion).toBe(version);
@@ -10453,7 +10476,7 @@ describe("local TypeScript API", () => {
     const restatement = await inspect(version);
     expect(restatement.statusCode, restatement.body).toBe(200);
     expect(restatement.json().suggestions.map((item: { kind: string }) => item.kind))
-      .toEqual(["achievement_framing", "missing_evidence"]);
+      .toEqual(["missing_evidence"]);
 
     achievement.outcome = "Improved reliability across the platform.";
     const revised = await app.inject({
@@ -10471,7 +10494,7 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
-  it("retains framing advice when verified saved outcome only adds context", async () => {
+  it("recognizes a saved bullet result even when its linked outcome only adds context", async () => {
     const app = buildApp(options);
     const profile = validProfileFixture("Synthetic Candidate");
     const resume = profile.resume as Record<string, unknown>;
@@ -10501,7 +10524,7 @@ describe("local TypeScript API", () => {
     const contextual = await inspect(version);
     expect(contextual.statusCode, contextual.body).toBe(200);
     expect(contextual.json().suggestions.map((item: { kind: string }) => item.kind))
-      .toEqual(["achievement_framing"]);
+      .toEqual([]);
     expect(RequiredBulletSuggestionResponseSchema.safeParse(contextual.json()).success).toBe(true);
     expect((await app.inject({ method: "GET", url: "/v1/profile" })).json().profileVersion)
       .toBe(version);

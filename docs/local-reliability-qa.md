@@ -94,7 +94,9 @@ in the [detailed matrix](developer/qa/complete-checklist.md).
 Use the [focused verification commands](local-development.md#required-bullet-coaching-verification)
 and [auditability invariants](developer/qa/regression-catalog.md#auditability-checks)
 for changes to Required-bullet coaching. The domain policy and API/demo
-consumers use one set of synthetic fixtures with literal expected responses.
+consumers use one set of synthetic behavior/source-binding fixtures without
+freezing coaching prose. Form tests must feed the real policy output into Accept
+and prove its applicable cleanup is saved with the original version fence.
 Passing pure-policy tests proves deterministic conformance; actual API and
 browser assertions must separately prove saved-version binding, read-only
 inspection/rejection and individually accepted, version-checked persistence.

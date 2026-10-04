@@ -1,6 +1,6 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
-import { LOCAL_TENANT } from "@jobctrl/domain-types";
+import { generateRequiredBulletSuggestions, LOCAL_TENANT } from "@jobctrl/domain-types";
 import {
   ProfileSchema,
   type ProfileShape,
@@ -9,6 +9,7 @@ import {
 } from "@jobctrl/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useState } from "react";
+import coachingFixtures from "../../../../../../packages/domain-types/test/fixtures/required-bullet-suggestions.json" with { type: "json" };
 
 import {
   sampleProfileResponse,
@@ -40,32 +41,8 @@ function requiredBulletCoachingFixture() {
     "exp-1": ["  Scaled   the platform 10x.  "],
   };
   initial.profile = profile;
-  const requiredBulletSuggestions = vi.fn(async () => ({
-    ok: true as const,
-    profileVersion: 3,
-    suggestions: [{
-      id: "profile:v3:experience[0]:bullet[0]:required[0]:grammar",
-      kind: "grammar" as const,
-      originalText: "  Scaled   the platform 10x.  ",
-      proposedText: "Scaled the platform 10x.",
-      canApply: true,
-      guidance: "Collapse whitespace only.",
-      source: {
-        sourceId: "profile:v3:experience[0]:bullet[0]",
-        identityKind: "snapshot_bullet" as const,
-        excerpt: "  Scaled   the platform 10x.  ",
-        fieldPath: "profile.resume.experience_entries[0].bullets[0]",
-        experienceId: "exp-1",
-        experienceTitle: "Director of Platform",
-        experienceCompany: "Initech",
-        bulletIndex: 0,
-        requiredBulletIndex: 0,
-      },
-    }],
-    strategy: "deterministic_rules_v1" as const,
-    modelUsed: false as const,
-    truncated: false,
-  }));
+  const generated = generateRequiredBulletSuggestions(profile, 3, 24);
+  const requiredBulletSuggestions = vi.fn(async () => structuredClone(generated));
   return { initial, requiredBulletSuggestions };
 }
 
@@ -110,6 +87,41 @@ async function renderSkillProjection(items: string[]) {
 }
 
 describe("<ProfileForm>", () => {
+  it.each(coachingFixtures.flatMap((fixture) => fixture.expected.suggestions
+    .filter((item) => item.kind === "grammar" && item.canApply)
+    .map((_item, applicableIndex) => ({ name: `${fixture.name} (${applicableIndex + 1})`, fixture, applicableIndex }))))(
+    "accepts shared-policy cleanup through the form: $name", async ({ fixture, applicableIndex }) => {
+      const user = userEvent.setup();
+      const initial = structuredClone(sampleProfileResponse);
+      const profile = ProfileSchema.parse(fixture.profile);
+      initial.profile = profile;
+      initial.profileVersion = fixture.profileVersion;
+      const generated = generateRequiredBulletSuggestions(profile, fixture.profileVersion, fixture.maximumSuggestions);
+      const applicable = generated.suggestions.filter((item) => item.kind === "grammar" && item.canApply);
+      expect(applicable.length).toBeGreaterThan(0);
+      const selected = applicable[applicableIndex]!;
+      const updateProfile = vi.fn(async (request: ProfileUpdateRequest) => ({
+        ...initial, profileVersion: fixture.profileVersion + 1, profile: JSON.parse(request.profileText!),
+      }));
+      renderWithProviders(<ProfileForm initial={initial} />, {
+        ports: buildTestPorts({ api: {
+          requiredBulletSuggestions: vi.fn(async () => generated), updateProfile,
+        } }), withRouter: true,
+      });
+      await user.click(await screen.findByRole("button", { name: "Inspect Required bullets" }));
+      await user.click((await screen.findAllByRole("button", { name: "Accept" }))[applicableIndex]!);
+      await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(1));
+      const request = updateProfile.mock.calls[0]![0];
+      expect(request.expectedProfileVersion).toBe(fixture.profileVersion);
+      const saved = JSON.parse(request.profileText!);
+      const index = profile.resume.experience_entries.findIndex((entry) => entry.id === selected.source.experienceId);
+      const expected = structuredClone(profile);
+      expected.resume.experience_entries[index]!.bullets[selected.source.bulletIndex] = selected.proposedText!;
+      expected.resume.tailoring_rules.required_bullets_by_experience_id![selected.source.experienceId]![selected.source.requiredBulletIndex] = selected.proposedText!;
+      expect(saved).toEqual(expected);
+    },
+  );
+
   afterEach(() => {
     vi.useRealTimers();
   });
@@ -2258,7 +2270,8 @@ describe("<ProfileForm>", () => {
     }));
     expect(await screen.findByText(/suggestion save did not return a confirmed result/i)).toBeInTheDocument();
     expect(screen.getByText("Proposed text: “Scaled the platform 10x.”")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Reject" })).toBeEnabled();
+    const cleanupCard = screen.getByText("Proposed text: “Scaled the platform 10x.”").closest('[data-slot="card-content"]')!;
+    expect(within(cleanupCard as HTMLElement).getByRole("button", { name: "Reject" })).toBeEnabled();
   });
 
   for (const outcome of ["success", "failure"] as const) {

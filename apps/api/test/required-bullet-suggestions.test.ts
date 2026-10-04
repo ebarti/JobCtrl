@@ -3,32 +3,23 @@ import {
   RequiredBulletSuggestionResponseSchema,
   type RequiredBulletSuggestionResponse,
 } from "@jobctrl/contracts";
-import { type RequiredBulletCoachingInput } from "@jobctrl/domain-types";
+import { generateRequiredBulletSuggestions, type RequiredBulletCoachingInput } from "@jobctrl/domain-types";
 import { describe, expect, it } from "vitest";
 
 import fixtureData from "../../../packages/domain-types/test/fixtures/required-bullet-suggestions.json" with { type: "json" };
-import {
-  generateRequiredBulletSuggestions,
-  MAX_REQUIRED_COACHING_ENTRIES,
-  MAX_REQUIRED_COACHING_SOURCE_ROWS,
-} from "../src/required-bullet-suggestions.js";
 
-describe("API coaching compatibility boundary", () => {
+describe("shared coaching wire validation", () => {
   it.each(fixtureData)("$name", (fixture) => {
     // Saved-profile validation supplies defaults at the boundary; the expected
-    // response is literal fixture data, independent of either consumer.
+    // behavior expectations are fixture data, independent of either consumer.
     const saved = ProfileSchema.parse(fixture.profile);
     const readonlyInput: RequiredBulletCoachingInput = saved;
     const response: RequiredBulletSuggestionResponse = generateRequiredBulletSuggestions(
       readonlyInput, fixture.profileVersion, fixture.maximumSuggestions,
     );
-    expect(response).toEqual(fixture.expected);
-    expect(RequiredBulletSuggestionResponseSchema.parse(response)).toEqual(fixture.expected);
-  });
-
-  it("retains the server's pre-materialization read-limit exports", () => {
-    expect(MAX_REQUIRED_COACHING_ENTRIES).toBe(256);
-    expect(MAX_REQUIRED_COACHING_SOURCE_ROWS).toBe(4_096);
+    expect(response).toMatchObject(fixture.expected);
+    expect(response.suggestions).toHaveLength(fixture.expected.suggestions.length);
+    expect(RequiredBulletSuggestionResponseSchema.parse(response)).toEqual(response);
   });
 });
 
@@ -263,7 +254,7 @@ describe("generateRequiredBulletSuggestions", () => {
     expect(generateRequiredBulletSuggestions(candidate, 7, 24).suggestions).toEqual([]);
     entry.achievement_evidence[0]!.evidence_strength = "supported";
     expect(generateRequiredBulletSuggestions(candidate, 7, 24).suggestions.map((item) => item.kind))
-      .toEqual(["achievement_framing", "missing_evidence"]);
+      .toEqual(["missing_evidence"]);
   });
 
   it.each(["constructor", "toString", "__proto__"])(
@@ -334,7 +325,7 @@ describe("generateRequiredBulletSuggestions", () => {
     expect(secondBullet[0]?.guidance).toMatch(/not marked verified/);
   });
 
-  it("keeps framing and evidence questions for plural possessives and contextual filler", () => {
+  it("retains evidence questions for a stated result with contextual filler", () => {
     const candidate = profile();
     const entry = candidate.resume.experience_entries[0]!;
     entry.bullets = ["Reduced process latency."];
@@ -350,10 +341,10 @@ describe("generateRequiredBulletSuggestions", () => {
       "exp-1": [entry.bullets[0]!],
     };
     expect(generateRequiredBulletSuggestions(candidate, 7, 24).suggestions.map((item) => item.kind))
-      .toEqual(["achievement_framing", "missing_evidence"]);
+      .toEqual(["missing_evidence"]);
   });
 
-  it("does not count contextual wording as a new result in verified saved evidence", () => {
+  it("recognizes the bullet result without requiring novel wording in saved evidence", () => {
     const candidate = profile();
     const entry = candidate.resume.experience_entries[0]!;
     entry.bullets = ["Reduced API latency."];
@@ -371,12 +362,12 @@ describe("generateRequiredBulletSuggestions", () => {
     };
 
     expect(generateRequiredBulletSuggestions(candidate, 7, 24).suggestions.map((item) => item.kind))
-      .toEqual(["achievement_framing"]);
+      .toEqual([]);
     entry.achievement_evidence[0]!.outcome = "Reduced API latency by 35%.";
     expect(generateRequiredBulletSuggestions(candidate, 7, 24).suggestions).toEqual([]);
   });
 
-  it("asks both questions when a possessive is the only new outcome token", () => {
+  it("keeps verification separate from grammatical restatements", () => {
     const candidate = profile();
     const entry = candidate.resume.experience_entries[0]!;
     entry.bullets = ["Reduced team latency."];
@@ -400,7 +391,7 @@ describe("generateRequiredBulletSuggestions", () => {
     ]) {
       entry.achievement_evidence[0]!.outcome = outcome;
       expect(generateRequiredBulletSuggestions(candidate, 7, 24).suggestions.map((item) => item.kind))
-        .toEqual(["achievement_framing", "missing_evidence"]);
+        .toEqual(["missing_evidence"]);
     }
   });
 

@@ -63,75 +63,56 @@ export interface RequiredBulletCoachingResponse {
   truncated: boolean;
 }
 
-const VAGUE_RELEVANCE = /\b(responsible for|worked on|helped(?: with)?|participated in|various|multiple tasks|duties included)\b/i;
 const MAX_INSPECTED_REQUIRED_BULLETS = 512;
 export const MAX_REQUIRED_COACHING_ENTRIES = 256;
 export const MAX_REQUIRED_COACHING_SOURCE_ROWS = 4_096;
-const RESULT_LANGUAGE = /\b(reduced|decreased|lowered|cut|improved|increased|raised|boosted|grew|accelerated|shortened|eliminated|prevented|faster|slower|fewer)\b/i;
-const RESULT_TARGET = /\b(latency|response time|load time|deployment time|uptime|downtime|error rate|errors?|defects?|incidents?|costs?|expenses?|spend|revenue|conversion|retention|throughput|processing time|cycle time|reliability|performance)\b/i;
-const RESULT_DIRECTION = /\b(reduced|reduction|decreased|decrease|lowered|cut|improved|improvement|increased|increase|raised|boosted|grew|growth|accelerated|shortened|eliminated|prevented|faster|slower|fewer|saved|savings)\b/i;
-const RESULT_QUANTITY = /(?:\b\d+(?:[.,]\d+)?\s*(?:%|percent\b|ms\b|milliseconds?\b|seconds?\b|minutes?\b|hours?\b|days?\b)|[$£€]\s*\d+(?:[.,]\d+)?)/i;
-const BARE_RESULT_QUANTITY = /^(?:\d+(?:[.,]\d+)?\s*(?:%|percent|ms|milliseconds?|seconds?|minutes?|hours?|days?)|[$£€]\s*\d+(?:[.,]\d+)?)$/i;
 
 function normalizedText(value: string): string {
   return value.trim().replace(/\s+/g, " ");
 }
 
-function claimSignature(value: string): string {
-  return value.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
-}
-
-const CLAIM_CONNECTORS = new Set([
-  "a", "an", "and", "at", "be", "been", "by", "for", "from", "in", "is", "of", "on", "role", "s", "the", "this", "to", "was", "were", "with",
+// Describe the claim rather than penalizing an opening phrase. Function words
+// and unspecified objects cannot supply context; domain nouns are unrestricted.
+const CONTEXTLESS_WORDS = new Set([
+  "a", "an", "and", "at", "by", "for", "from", "in", "of", "on", "the", "to", "with",
+  "i", "we", "it", "this", "that", "these", "those", "some", "various", "multiple",
+  "things", "stuff", "tasks", "duties", "work", "initiatives", "responsibilities",
 ]);
 
-function claimFacts(value: string): string[] {
-  return claimSignature(value.normalize("NFKC")
-    .replace(/([\p{L}\p{N}])['’]s\b/gu, "$1")
-    .replace(/%/g, " percent "))
-    .split(" ")
-    .filter((token) => (token.length > 1 || /^\d$/.test(token))
-      && !CLAIM_CONNECTORS.has(token)
-      && !RESULT_LANGUAGE.test(token))
-    .map((token) => token.length > 5 && token.endsWith("sses")
-      ? token.slice(0, -2)
-      : token.length > 4 && token.endsWith("ies")
-      ? `${token.slice(0, -3)}y`
-      : token.length > 4 && token.endsWith("s") && !token.endsWith("ss") && !token.endsWith("is")
-        ? token.slice(0, -1)
-        : token);
+function claimContext(text: string): string[] {
+  // The first word is normally the resume action, not its object. Relevance
+  // here means inspectable responsibility/result context, never job-fit scoring.
+  return (text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []).slice(1)
+    .filter((word) => !CONTEXTLESS_WORDS.has(word) && !/^\d+$/.test(word));
 }
 
-function addsOutcomeDetail(sourceText: string, outcome: string): boolean {
-  if (!RESULT_LANGUAGE.test(outcome) || !RESULT_TARGET.test(outcome)) return false;
-  // Context such as "during planning" or "across teams" does not add a
-  // result. Compare only result targets and result measures, never arbitrary
-  // lexical novelty in a restated outcome.
-  const resultTargets = (value: string) => Array.from(
-    value.matchAll(new RegExp(RESULT_TARGET.source, "gi")),
-    ([target]) => claimFacts(target).join(" "),
-  );
-  const resultMeasures = (value: string) => Array.from(
-    value.matchAll(new RegExp(RESULT_QUANTITY.source, "gi")),
-    ([measure]) => measure.toLowerCase().replace(/\s+/g, "")
-      .replace(/percent\b/g, "%")
-      .replace(/milliseconds?\b/g, "ms"),
-  );
-  const sourceTargets = new Set(resultTargets(sourceText));
-  const sourceMeasures = new Set(resultMeasures(sourceText));
-  return resultTargets(outcome).some((target) => !sourceTargets.has(target))
-    || resultMeasures(outcome).some((measure) => !sourceMeasures.has(measure));
-}
-
-function hasVerifiedResultMeasure(
-  evidence: RequiredBulletCoachingEvidence,
-): boolean {
-  if (evidence.evidence_strength !== "verified" || !evidence.user_confirmed) return false;
-  const sourceDescribesResult = RESULT_LANGUAGE.test(evidence.source_text)
-    && RESULT_TARGET.test(evidence.source_text);
-  return evidence.metrics.some((metric) => RESULT_QUANTITY.test(metric)
-    && ((BARE_RESULT_QUANTITY.test(metric.trim()) && sourceDescribesResult)
-      || (RESULT_DIRECTION.test(metric) && RESULT_TARGET.test(metric))));
+function statedResult(text: string): string | null {
+  // Assess each clause separately so a goal, negation or activity count does
+  // not become an achieved result merely because it contains a result verb.
+  const clauses = text.split(/[,;]|\.(?:\s|$)/);
+  for (const raw of clauses) {
+    const clause = raw.trim();
+    // Comparative structure works for any domain: "p99 latency 40%", "from
+    // three days to one", "10x", or an explicit consequence of an action.
+    const change = /\b(?:reduc(?:ed|ing|tion)|decreas(?:ed|ing|e)|lower(?:ed|ing)|cut(?:ting)?|improv(?:ed|ing|ement)|increas(?:ed|ing|e)|rais(?:ed|ing)|boost(?:ed|ing)|grew|grow(?:ing|th)|accelerat(?:ed|ing)|shorten(?:ed|ing)|eliminat(?:ed|ing)|prevent(?:ed|ing)|sav(?:ed|ing|ings)|scal(?:ed|ing)|doubl(?:ed|ing)|tripl(?:ed|ing))\b/i.exec(clause);
+    const comparison = /\bfrom\s+\S+(?:\s+\S+){0,5}\s+to\s+\S+|\b\d+(?:[.,]\d+)?\s*(?:%|percent\b|x\b)|\b(?:faster|fewer|less|more)\b/i.test(clause);
+    const consequence = /\b(?:enabl(?:ed|ing)|result(?:ed|ing) in|so that)\s+(.+)/i.exec(clause);
+    const predicate = change ?? consequence;
+    if (!predicate) continue;
+    const prefix = clause.slice(0, predicate.index).replace(/\bnot only\b/gi, "");
+    if (/\b(?:not|never|without|aimed|aiming|hoped|hoping|planned|planning|targeted|targeting|would|could|failed|tried)\b|n['’]t\b/i.test(prefix)
+      || /\bto\s*(?:have\s+)?$/i.test(prefix)) continue;
+    if (consequence && !/^no\b/i.test(consequence[1]!)
+      && claimContext(`Result ${consequence[1]}`).length > 0) return clause;
+    if (!change || claimContext(clause).length === 0) continue;
+    // "Improved 10 dashboards" states inventory, not what changed about it.
+    const object = clause.slice(change.index + change[0].length).trim();
+    if (/^\d+(?:[.,]\d+)?\s+\p{L}/u.test(object) && !comparison) continue;
+    if (object && !/^no\b/i.test(object) && (comparison || !/^\d/u.test(object))) return clause;
+    // Passive result wording and metric labels: "35% latency reduction".
+    if (comparison && claimContext(`Result ${clause}`).length > 1) return clause;
+  }
+  return null;
 }
 
 function boundedExcerpt(value: string): string {
@@ -266,17 +247,18 @@ export function generateRequiredBulletSuggestions(
         || (uniqueMatch !== undefined && achievementIdCounts.get(uniqueMatch.id) !== 1);
       const achievement = ambiguousAchievement ? undefined : uniqueMatch;
       const hasSubstantiveEvidence = achievement ? isSubstantiveEvidence(achievement) : false;
-      // An extracted number such as "10 projects" measures action scale, not
-      // necessarily a result. Restated actions also need a result, not a new
-      // punctuation mark or a different verb for the same activity.
-      const hasOutcome = Boolean(achievement && (
-        addsOutcomeDetail(achievement.source_text, achievement.outcome)
-        || hasVerifiedResultMeasure(achievement)
-      ));
-      const needsEvidence = !hasSubstantiveEvidence
-        || achievement?.evidence_strength === "inferred"
-        || achievement?.evidence_strength === "draft"
-        || achievement?.user_confirmed === false;
+      // A stated outcome and independent verification are separate facts.
+      // Read the bullet first, even without any canonical achievement. A saved
+      // outcome or contextualized metric can supply framing, never proof.
+      const bulletResult = statedResult(normalizedOriginal);
+      const savedResult = achievement
+        ? statedResult(achievement.outcome)
+          ?? achievement.metrics.map(statedResult).find((result) => result !== null)
+        : null;
+      const hasOutcome = bulletResult !== null || Boolean(savedResult);
+      const needsEvidence = !hasSubstantiveEvidence || achievement?.user_confirmed === false;
+      const lacksContext = claimContext(normalizedOriginal).length === 0 && !hasOutcome;
+      const claim = boundedExcerpt(normalizedOriginal).slice(0, 180);
       const identityKind = achievement ? "canonical_achievement" as const : "snapshot_bullet" as const;
       const sourceId = achievement
         ? achievement.id
@@ -313,14 +295,14 @@ export function generateRequiredBulletSuggestions(
           source,
         });
       }
-      if (VAGUE_RELEVANCE.test(normalizedOriginal)) {
+      if (lacksContext) {
         suggestions.push({
           id: `${idPrefix}:relevance`,
           kind: "relevance",
           originalText,
           proposedText: null,
           canApply: false,
-          guidance: "Which specific responsibility or result makes this required bullet relevant? Add only details you can verify in the normal editor.",
+          guidance: `“${claim}” does not identify a specific responsibility or result in your ${entry.title} role. Which system, audience or deliverable did you work on? Add only details you can verify.`,
           source,
         });
       }
@@ -331,7 +313,7 @@ export function generateRequiredBulletSuggestions(
           originalText,
           proposedText: null,
           canApply: false,
-          guidance: "What truthful outcome, scale, frequency, or comparison followed from this action? Leave it unchanged if no supported result is available.",
+          guidance: `“${claim}” describes an activity${/\d/.test(normalizedOriginal) ? " or its scale" : ""}, but does not state what changed because of it. What supported result followed? Leave it unchanged if none is available.`,
           source,
         });
       }
@@ -342,13 +324,13 @@ export function generateRequiredBulletSuggestions(
           originalText,
           proposedText: null,
           canApply: false,
-          guidance: !achievement
+          guidance: `${hasOutcome ? `The stated result “${boundedExcerpt(bulletResult ?? savedResult ?? "").slice(0, 160)}” still needs independent support. ` : `The claim “${claim}” needs independent support. `}${!achievement
             ? "No unambiguous canonical achievement record matches this bullet. Which saved source supports its claim? Add only evidence you can verify in the normal editor."
             : achievement.evidence_strength === "draft"
               || achievement.evidence_strength === "inferred"
               || !achievement.user_confirmed
               ? "This achievement is marked draft, inferred, or unconfirmed. Which source verifies its claim? Review and confirm it in the normal editor before strengthening the wording."
-              : "The matching achievement is not marked verified. Which independent source confirms the claim or metric? Add only verified details in the normal editor.",
+              : "The matching achievement is not marked verified. Which independent source confirms the claim or metric? Add only verified details in the normal editor."}`,
           source,
         });
       }
@@ -363,4 +345,21 @@ export function generateRequiredBulletSuggestions(
     modelUsed: false,
     truncated: scanTruncated || suggestions.length > maximumSuggestions,
   };
+}
+
+/** Recheck applicability against the saved snapshot using the policy's identity
+ * and collision rules. Adapters still own validation, version/write fencing.
+ * Guidance and presentation IDs do not authorize a write. */
+export function isApplicableRequiredBulletCleanup(
+  profile: RequiredBulletCoachingInput,
+  profileVersion: number,
+  suggestion: RequiredBulletCoachingSuggestion,
+): boolean {
+  if (suggestion.kind !== "grammar" || !suggestion.canApply || suggestion.proposedText === null) return false;
+  return generateRequiredBulletSuggestions(profile, profileVersion, MAX_INSPECTED_REQUIRED_BULLETS * 4)
+    .suggestions.some((candidate) => candidate.kind === "grammar" && candidate.canApply
+      && candidate.originalText === suggestion.originalText
+      && candidate.proposedText === suggestion.proposedText
+      && (Object.keys(candidate.source) as (keyof typeof candidate.source)[])
+        .every((key) => candidate.source[key] === suggestion.source[key]));
 }

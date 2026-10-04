@@ -155,8 +155,15 @@ Before claiming "fixed" on these surfaces, add or update a regression fixture th
 
 Required-bullet coaching has one pure TypeScript owner,
 `packages/domain-types/src/profile/required-bullet-suggestions.ts`, used by
-API and demo. Its shared synthetic JSON fixtures contain explicit expected
-ordering, guidance, source/version bindings, applicability and truncation.
+API and demo, including the cleanup applicability guard used by the Profile form.
+Its shared synthetic JSON fixtures contain explicit expected kinds, ordering,
+source/version bindings, applicability and truncation, without pinning prose or
+phrase-list triggers. A specific stated result must not receive missing-outcome
+or vague-relevance advice because of its opening phrase or absent achievement
+record. Verification remains independent: even a clear result needs verified,
+confirmed evidence. Test action counts, vague objects, and planned/negated results
+as counterexamples. Feed actual policy output into the form and assert Accept
+preserves other bullets/evidence while changing the intended bullet and pin.
 Conformance must be checked against those expectations in each consumer,
 alongside domain immutability/repeatability and raw-length getter guards.
 Exercise both sides of the 256-entry, 4,096-source-row and
@@ -185,7 +192,7 @@ applicable. Rebase a different
 bullet in the same experience entry after a committed write with a lost
 response; keep overlapping or reordered bullet identities blocked. An outcome
 that only changes punctuation and a metric copied from an action count must not
-prove independent evidence or a result. A verified “Improved 10 dashboards”
+prove independent evidence. An activity count alone does not state a result. A verified “Improved 10 dashboards”
 with only “10 dashboards” as its metric must still receive framing advice;
 test production and demo parity with a separately measured result. Exercise
 `constructor`, `toString`, and `__proto__` as own saved experience-ID keys,
@@ -204,10 +211,11 @@ repeating the same request will expose omitted sources. Reordered source claims
 or grammar-only variations must not count as independent outcome evidence.
 Include plural possessives and contextual filler; supported novel outcome
 wording still requires a missing-evidence question unless the canonical
-achievement is verified and user-confirmed. Even verified, confirmed evidence
-must keep framing advice when its outcome only restates the same result with
-context such as “during planning”; a new saved result target or measure is
-needed to resolve that framing. Check production and demo parity. Hold an accept
+achievement is verified and user-confirmed. A result already stated in the bullet must not require a second, novel outcome
+just because linked wording adds context such as “during planning”. Planned or
+negated improvements must still receive framing advice; a real result qualified
+by “without increasing errors” must retain its result recognition. Check
+production and demo parity. Hold an accept
 pending, advance
 the five-second autosave timer, and prove no second write occurs on either
 success or failure while unrelated draft fields remain. Fence ordinary manual

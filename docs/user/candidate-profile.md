@@ -208,7 +208,12 @@ to a restated outcome also add no evidence. An action count such as the number
 of projects managed is not automatically a result. Rearranging the same claim
 or changing only its result verb, plural, or possessive in an outcome does not
 independently verify it. “Improved 10 dashboards” with “10 dashboards” saved as
-a metric still needs a distinct outcome or verified result measure. New words
+a metric still needs a stated result, in the bullet or its linked outcome/metric.
+A clear result such as “Worked on the payments API, cutting p99 latency 40%”
+needs no extra outcome or relevance question; absent verified evidence, it still
+gets an evidence question. Relevance questions concern missing responsibility
+context, rather than particular opening phrases. Result checks use conservative
+English structural cues and do not establish fit for an individual job. New words
 alone do not verify a claim: the matching
 achievement must be user-confirmed and marked verified to avoid a missing-
 evidence question. If a saved profile exceeds the bounded inspection limit, or

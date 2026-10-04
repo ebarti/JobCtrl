@@ -128,8 +128,10 @@ it is the target deployment model.
 
 Required-bullet coaching is owned by
 `packages/domain-types/src/profile/required-bullet-suggestions.ts`, exported
-through the Profile barrel and `@jobctrl/domain-types`. The API compatibility
-module and `DemoApiClientAdapter` call the same deterministic implementation.
+through the Profile barrel and `@jobctrl/domain-types`. The API route and
+`DemoApiClientAdapter` import that owner directly. The Profile form calls its
+`isApplicableRequiredBulletCleanup` guard before accepting a suggestion, so
+normalization, source identities, excerpts and collision checks have one owner.
 It accepts a readonly structural view of a validated saved profile directly,
 so adapters do not copy bullet/evidence collections before the scan budgets.
 It has no runtime I/O or dependency on contracts. Wire validation remains in
@@ -138,15 +140,28 @@ the existing API, demo workspace and Profile form boundaries.
 
 The common synthetic fixtures in
 `packages/domain-types/test/fixtures/required-bullet-suggestions.json` contain
-literal expected responses. Domain and consumer tests check ordering, wording,
-source bindings, version identities, applicability and incomplete inspections.
+behavior expectations for kinds, ordering, source/version bindings, applicability
+and incomplete inspections. They do not freeze coaching prose or trigger phrases.
+The policy examines responsibility context and stated result clauses in the
+bullet before consulting linked outcomes/metrics. Stated results and independent
+verification are separate judgments. Its bounded English structural cues are
+conservative; they do not establish job fit or general semantic understanding.
+Form tests feed actual policy output into Accept and check the exact saved
+bullet, Required pin, evidence preservation and expected version.
+See the [contract boundaries](../contracts-types-and-api-boundaries.md#contract-owners)
+and [source ownership map](../../developer/repository-and-ownership-map.md#top-level-owners)
+for the domain-result/wire-schema arrangement.
 See [local verification](../../local-development.md#required-bullet-coaching-verification).
 
 ### Supported Demo Scenarios
 
 `apps/web/src/demo/capabilities.ts` is the public demo capability manifest.
 Required-bullet inspection supports the same four coaching kinds, evidence and
-identity checks, and scan limits as production. Inspection and rejection leave
+identity checks, and shared in-memory scan limits as production. The API also
+applies a pre-materialization SQLite budget over all profile child tables,
+including education and skills; the demo has no corresponding database read, so
+that additional guard can produce an empty truncated production response where
+the demo can still inspect its already-loaded profile. Inspection and rejection leave
 the saved synthetic profile unchanged; only an individually accepted whitespace
 cleanup uses the existing version-checked browser-local save.
 
@@ -180,6 +195,7 @@ The remaining production/demo policy duplication is descriptive inventory:
 | --- | --- |
 | Job lifecycle filtering | API projections resolve hidden/deleted/closed facets in SQL; `demo/job-filter.ts` resolves them in memory. Both use the contracts query vocabulary. The non-lifecycle filter core, sorting, timestamps and pagination already live in `packages/contracts/src/jobs-query.ts`. |
 | Apply approval binding | API `application-feedback.ts` resolves current material/profile/URL and dry-run evidence from canonical storage; `DemoLocalCommandExecutor` checks synthetic review gates. Contracts and domain types already share decisions and gate-reason vocabulary. The demo checks are a rehearsal of approval, with no external submission. |
+| Required-bullet acceptance | The Profile form uses the shared cleanup applicability guard, including normalized matching, 240-character achievement identities, snapshot IDs, field paths, 500-character excerpts and collision checks. The form owns write coordination; its former duplicate identity checks have been removed. |
 | Profile version fencing | API `profile-store.ts` checks the expected version inside the SQLite save; `DemoLocalCommandExecutor` checks it inside a workspace transaction. The shared Profile form owns acceptance, manual-save and autosave coordination in both compositions. Persistence and conflict reporting remain adapter responsibilities. |
 | Score and template behavior | Production scoring and `resume-templates.ts` use canonical policies, versions and artifacts. Demo scenario/executor code updates synthetic score projections and bundled template metadata with synthetic identities. Those updates intentionally simulate lifecycle results; they do not establish production score or artifact equivalence. |
 

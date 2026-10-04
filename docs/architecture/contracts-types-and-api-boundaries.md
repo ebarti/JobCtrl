@@ -45,7 +45,7 @@ flowchart TD
 | Layer | Source owner | Contains | Must not contain |
 | --- | --- | --- | --- |
 | Python domain model | `workers/automation/src/jobctrl/domain/` | Aggregate behavior, invariants, value objects, use cases, and Python domain events | HTTP status codes, fetch behavior, or database/provider mechanics |
-| Shared TypeScript domain vocabulary | `packages/domain-types/` | Branded identities, shared stage/state values, the TypeScript domain-event union, and projection shapes consumed across packages | Claiming authority over Python aggregate behavior, HTTP status codes, database access, or browser globals |
+| Shared TypeScript domain vocabulary | `packages/domain-types/` | Branded identities, shared stage/state values, the TypeScript domain-event union, projection shapes consumed across packages, and browser-safe pure product policies such as Required-bullet coaching | Claiming authority over Python aggregate behavior, HTTP status codes, database access, or browser globals |
 | REST and JSON-RPC wire contract | `packages/contracts/` | Zod request/response schemas, DTOs, wire enums, API query shapes, JSON-RPC envelopes, params, and result schemas | Route registration, persistence, fetch calls, or ownership of the domain-event union |
 | Typed HTTP transport | `packages/api-client/` | URL/query encoding, HTTP methods, request timeout, typed return values, and transport errors | Business rules, server validation, or canonical state |
 | HTTP implementation | `apps/api/` | Fastify routing, security gates, status codes, schema application, DTO mapping, projection reads, simple commands, JSON-RPC dispatch, and SSE framing | Provider/browser workflow execution or a second copy of shared DTOs |
@@ -58,6 +58,16 @@ projection types. That is a dependency, not duplicate ownership: shared
 TypeScript vocabulary stays in `domain-types`, while Python aggregates remain
 authoritative for their behavior and invariants. The contract package exposes
 only the wire-safe shapes API consumers need.
+
+Required-bullet coaching and its cleanup applicability guard live in
+`packages/domain-types/src/profile/required-bullet-suggestions.ts`. Its readonly
+input and structural result interfaces are domain policy shapes, without a
+dependency on Zod or contracts. `packages/contracts` owns the corresponding
+`RequiredBulletSuggestionResponseSchema` and inferred wire DTO. The API directly
+imports the domain policy; wire tests check structural assignability and validate
+the actual result with the contract schema. The demo and form consume the same
+policy/guard. A shape change must update both domain interfaces and wire schemas
+and pass these checks; the structural result does not become a second wire owner.
 
 `ApplicationSubmitted` models the existing launcher payload in the shared event
 union: `run_id`, `result: "applied"`, `finished_at`, nullable `duration_ms`,
