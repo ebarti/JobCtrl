@@ -455,41 +455,61 @@ human approval.
 ## 7. Generate Interview Prep (Beta)
 
 ::: warning Beta maturity boundary
-The grounding and fabrication gates are shipped, but interview-prep output
-quality has not yet been validated through real-user usage. Review every note
-against its linked evidence before relying on it.
+The question library and its criteria remain a research draft. Grounding and
+fabrication gates do not establish coaching quality, hiring outcomes, readiness,
+or validated grading. Review personal claims against their linked evidence.
 :::
 
 <WorkflowSurfacePanel surface="web">
 
-From a Job Detail workspace, use "generate interview prep" when you want stored
-pre-interview notes for that job. Prep is generated only after you ask for it and
-uses JobCtrl's grounded data: profile evidence, requirement fit, accepted
-materials, employer analysis, and evidence-map usage.
+Open **Interviews** to browse the full local library without a job or provider
+call. Explore topics and authors through the **Questions** and **Sources**
+graph perspectives, or use **List**. Search and filter cards, inspect a selected
+question, and bookmark its URL or a filtered view. Cards expose guidance, responsibility-based adaptation,
+alternatives, probes, draft criteria, source-reading coverage, and synthetic
+examples where available.
+
+For personal preparation, choose a job or follow its Job Detail **Interview
+prep** link. Set the interview stage/format when known, role responsibilities,
+and known employer criteria. Review the selection rationale, add or remove
+questions, and choose the order. For each question, keep automatic evidence
+selection, choose up to eight accepted profile evidence records, or explicitly
+choose none. A changed profile requires reselection while retaining your draft
+choices. Generate a bounded set of at most 16 questions with format-appropriate
+outlines; missing details and explicit empty evidence choices remain questions
+and gaps.
 
 </WorkflowSurfacePanel>
 
 <WorkflowSurfacePanel surface="cli">
 
-Interview prep is initiated from Job Detail so the generated notes
-stay tied to the selected job, accepted materials, and visible evidence links.
-Use the CLI only for workflow status checks around the run.
+The Interviews explorer and personal preparation controls are web surfaces.
+Use the CLI for workflow status checks around an explicitly started run.
 
 </WorkflowSurfacePanel>
 
-The workspace shows the latest accepted prep as themes, STAR-story drafts, gap
-drills, and company notes. Each item keeps its evidence IDs, requirement IDs, and
-profile source snippets visible, with evidence links back into the Evidence map.
+Inspect each outline's evidence excerpts and original input bindings. Current
+profile, job-analysis, catalog, or approved-material changes mark older prep
+stale and leave regeneration under your control. Legacy themes, STAR drafts,
+gap drills, and company notes remain readable without invented card bindings.
 Regeneration keeps the last accepted prep visible until a replacement is
-accepted.
+accepted, including during provider failure or gate rejection.
 
-After the interview, record reflection notes from the same prep panel. Each
-reflection is saved as a normal manual `interview` outcome linked to that prep
-generation, so it also appears in the job's application outcome timeline.
+Save personal notes separately from generated prep. Notes have their own
+revision and factual-support label; new recollections remain unverified, and
+edits do not inherit a passed generation audit. Failed saves preserve your
+draft, and a conflicting revision requires reconciliation. Preparation does
+not change Profile, fit, or Apply decisions.
 
-Interview prep is not live interview assistance. JobCtrl does not provide
-in-session answers, transcript upload, microphone input, websocket streaming, or
-real-time interview participation.
+After the interview, record a reflection from the prep panel. It remains a
+manual `interview` outcome linked to a prep generation and appears in the job's
+application outcome timeline.
+
+[Interview preparation](materials-and-tailoring.md#interview-preparation) owns
+the detailed flow, sources, history, and note boundaries. Reusable preparation
+without a job, typed rehearsal, calibrated feedback, and live assistance remain
+future phases; this release has no microphone, transcript, answer grading, or
+in-session answer surface.
 
 ## 8. Review And Edit The Resume
 

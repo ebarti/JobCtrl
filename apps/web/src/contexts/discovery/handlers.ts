@@ -29,6 +29,7 @@ import {
   reconcileQuery,
   type InvalidationItem,
 } from "../operations/invalidation-router.js";
+import { interviewKeys } from "../operations/interviewKeys.js";
 import { jobsKeys } from "../operations/jobsKeys.js";
 import { patchDashboardJobLabels, reconcileJobUpdatedPage } from "../operations/realtimePatches.js";
 import type { JobsListInput } from "../operations/types.js";
@@ -43,6 +44,7 @@ export const jobDiscoveredHandler = (event: JobDiscovered): readonly Invalidatio
 ];
 
 export const jobUpdatedHandler = (event: JobUpdated): readonly InvalidationItem[] => [
+  invalidate(interviewKeys.history(event.tenantId, event.payload.jobId)),
   reconcileQuery(jobsKeys.lists(event.tenantId), (current, key) =>
     reconcileJobUpdatedPage(current, key[4] as JobsListInput, event.payload)),
   patchQuery(dashboardKeys.summary(event.tenantId), (current) => patchDashboardJobLabels(current, event.payload)),

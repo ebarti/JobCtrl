@@ -184,3 +184,7 @@ These documents remain in the repository but are not separate site sections:
   design-only, fail-closed contract and proof gates for a future local/custom
   LLM provider; the capability is currently unavailable.
 - [`incidents/`](incidents/): incident records and corrective actions.
+- [`research/interview-preparation/README.md`](research/interview-preparation/README.md):
+  canonical interview research draft, source-reading ledger, question guidance,
+  synthetic examples, and catalog authoring contract; rehearsal and validated
+  grading remain future work.

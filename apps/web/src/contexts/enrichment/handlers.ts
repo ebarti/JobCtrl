@@ -16,6 +16,7 @@ import {
   reconcileQuery,
   type InvalidationItem,
 } from "../operations/invalidation-router.js";
+import { interviewKeys } from "../operations/interviewKeys.js";
 import { jobsKeys } from "../operations/jobsKeys.js";
 import { patchJobActiveState, reconcileJobActiveStatePage } from "../operations/realtimePatches.js";
 import type { JobsListInput } from "../operations/types.js";
@@ -46,6 +47,7 @@ export const enrichmentFailedHandler = (
 export const postingContentSnapshotCapturedHandler = (
   event: PostingContentSnapshotCaptured,
 ): readonly InvalidationItem[] => [
+  invalidate(interviewKeys.history(event.tenantId, event.payload.jobId)),
   invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
   invalidate(discoveryKeys.sourceQuality(event.tenantId)),
 ];

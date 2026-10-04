@@ -178,6 +178,22 @@ reusable stories visible. Human-readable labels lead each usage, with raw
 storage identifiers behind **Technical details**. The entry, detail, and
 inspector panes stack when the desktop three-pane layout no longer fits.
 
+### Interviews
+
+Interviews (`/interviews`) browses the full local question library without a job
+or provider call. The **Questions** and **Sources** graph perspectives explore
+topics and authors; **List** offers the same card actions. Search and
+topic/role/format/source filters, graph/list mode, and the selected card are
+bookmarkable. The **Answer**, **Rubric**, and **Sources** inspector separates
+guidance, draft criteria, and source-reading limits.
+
+Choose a job to select questions and accepted profile evidence for Beta
+preparation. Inspect retained inputs, stale warnings, generation history, and
+independently saved notes; failed refreshes keep the last accepted prep visible.
+Notes remain unverified user statements. See
+[Interview preparation](materials-and-tailoring.md#interview-preparation) for
+the workflow and research-draft limits.
+
 ### Contacts
 
 ![JobCtrl Contacts workspace with filters, provenance, due follow-ups, import, and contact actions](../assets/screenshots/contacts.png)

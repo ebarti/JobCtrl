@@ -140,3 +140,6 @@ export { usePipelineOperationsQuery } from "./hooks/usePipelineOperationsQuery.j
 export { useWorkflowRunsListQuery } from "./hooks/useWorkflowRunsListQuery.js";
 
 export { EventStreamProvider, useEventStreamStatus } from "./providers/EventStreamProvider.js";
+
+export { interviewKeys } from "./interviewKeys.js";
+export { useInterviewCatalogQuery, useInterviewQuestionQuery, useInterviewPrepHistoryQuery, useInterviewNotesQuery } from "./hooks/useInterviewQueries.js";

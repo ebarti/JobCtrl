@@ -2,14 +2,14 @@ import { openDatabase, openReadOnlyDatabase } from "../../src/db.js";
 
 const databasePath = process.argv[2];
 if (!databasePath) {
-  throw new Error("exact-v11 reopen probe requires a database path");
+  throw new Error("exact-v12 reopen probe requires a database path");
 }
 
 for (const open of [openDatabase, openReadOnlyDatabase]) {
   const database = open(databasePath);
   try {
-    if (database.pragma("user_version", { simple: true }) !== 11) {
-      throw new Error("TypeScript API did not reopen schema v11");
+    if (database.pragma("user_version", { simple: true }) !== 12) {
+      throw new Error("TypeScript API did not reopen schema v12");
     }
     const spendColumns = database.prepare("PRAGMA table_info(llm_spend)").all() as Array<{
       name: string;

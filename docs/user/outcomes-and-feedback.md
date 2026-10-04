@@ -83,6 +83,10 @@ preserving earlier reviews and accepted policy revisions.
   the ordered outcome timeline and any pending suggestion for that job.
 - After using stored interview prep, record a reflection in the prep panel. The
   resulting interview outcome can link to the prep generation that preceded it.
+  A reflection records what happened after the interview. Editable per-question
+  preparation notes remain separate drafts; saving one does not create an
+  outcome, confirm a profile fact, or assess your answer. See
+  [Interview preparation](materials-and-tailoring.md#interview-preparation).
 - `/dashboard` surfaces pending outcome suggestions and the high-level
   applied-to-response funnel.
 - `/analytics` groups recorded outcomes by source, score band, requirement-fit

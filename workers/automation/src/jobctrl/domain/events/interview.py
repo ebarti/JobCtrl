@@ -45,9 +45,31 @@ def create_interview_prep_failed(
     return create_domain_event("InterviewPrepFailed", tenant_id, asdict(payload))
 
 
+@dataclass(frozen=True)
+class InterviewQuestionNoteSavedPayload:
+    job_id: JobId
+    question_id: str
+    revision: int
+    source_generation: int | None
+    updated_at: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "job_id", canonical_job_id(str(self.job_id)))
+        if not self.question_id or self.revision < 1:
+            raise ValueError("note event requires question ID and positive revision")
+
+
+def create_interview_question_note_saved(
+    tenant_id: TenantId, payload: InterviewQuestionNoteSavedPayload,
+) -> DomainEvent:
+    return create_domain_event("InterviewQuestionNoteSaved", tenant_id, asdict(payload))
+
+
 __all__ = [
     "InterviewPrepFailedPayload",
     "InterviewPrepGeneratedPayload",
+    "InterviewQuestionNoteSavedPayload",
+    "create_interview_question_note_saved",
     "create_interview_prep_failed",
     "create_interview_prep_generated",
 ]

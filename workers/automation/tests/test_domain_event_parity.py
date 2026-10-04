@@ -9,6 +9,7 @@ from pathlib import Path
 from jobctrl.domain.events import (
     ApplicationEmailFeedbackIngestedPayload,
     DOMAIN_EVENT_TYPES,
+    InterviewQuestionNoteSavedPayload,
     EnrichmentFetchRecheckedPayload,
     DiscoveryExecutionRefLike,
     DuplicateJobLinkedPayload,
@@ -111,3 +112,10 @@ def test_application_email_feedback_payload_fields_match_typescript() -> None:
     )
 def test_fetch_recheck_payload_fields_match_typescript() -> None:
     _assert_payload_field_parity(EnrichmentFetchRecheckedPayload, "EnrichmentFetchRecheckedPayload")
+
+
+def test_interview_note_event_contains_only_safe_binding_fields() -> None:
+    _assert_payload_field_parity(InterviewQuestionNoteSavedPayload, "InterviewQuestionNoteSavedPayload")
+    assert {field.name for field in dataclasses.fields(InterviewQuestionNoteSavedPayload)} == {
+        "job_id", "question_id", "revision", "source_generation", "updated_at"
+    }

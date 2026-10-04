@@ -201,6 +201,22 @@ import {
 } from "./discovery-controls.js";
 import { registerEventStreamRoute } from "./event-stream.js";
 import { registerEndpointRoutes } from "./endpoint-routes.js";
+import { InterviewCatalogAssetError, loadInterviewCatalogAsset, type InterviewCatalogAsset } from "./interview-catalog-asset.js";
+import {
+  createInterviewCatalogReader,
+  getInterviewQuestion,
+  InterviewSelectionInputError,
+  listInterviewCatalog,
+  validateInterviewGenerationSelection,
+} from "./interview-catalog.js";
+import {
+  InterviewNoteBindingsError,
+  InterviewNoteRevisionConflictError,
+  InterviewNoteSourceError,
+  listInterviewNotes,
+  readInterviewNote,
+  saveInterviewNote,
+} from "./interview-notes.js";
 import {
   assertLiveApplicationMayDispatch,
   recordRepeatApplicationOverride,
@@ -281,7 +297,9 @@ import {
   listLearningRecommendations,
 } from "./learning-recommendations.js";
 import { listTailoringPolicyRevisions } from "./tailoring-policy-revisions.js";
-import { refreshProjections } from "./projections.js";
+import { loadInterviewPrepReadModel, refreshProjections } from "./projections.js";
+import { InterviewEvidenceSelectionError, validateInterviewEvidenceSelection } from "./interview-evidence-selection.js";
+import { interviewPrepStaleReasons, listInterviewPrepHistory, loadLatestAcceptedInterviewPrep } from "./interview-prep-history.js";
 import { createResumeHtmlPdfRenderer, ResumeRenderError, type ResumeHtmlPdfRenderer } from "./resume-pdf-render.js";
 import {
   defaultSourcePythonRuntime,
@@ -433,6 +451,8 @@ export interface BuildAppOptions {
   resumePdfRenderer?: ResumeHtmlPdfRenderer;
   requireHealthyWorkerForActions?: boolean;
   logger?: boolean;
+  /** Injectable packaged asset boundary; catalog reads never need a database or worker. */
+  interviewCatalogAssetLoader?: () => InterviewCatalogAsset;
 }
 
 export function buildApp(options: BuildAppOptions): FastifyInstance {
@@ -440,6 +460,13 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   const app = Fastify({ logger: options.logger ?? false, routerOptions: { maxParamLength: 4096 } });
   installVitestInjectMutationDefaults(app);
   const appDir = options.appDir ?? path.dirname(options.dbPath);
+  const readInterviewCatalog = createInterviewCatalogReader(options.interviewCatalogAssetLoader
+    ?? (() => loadInterviewCatalogAsset({ environment: options.runtimeEnvironment ?? process.env })));
+  function currentCatalogOrNull() {
+    try { return readInterviewCatalog(); }
+    catch (error) { if (error instanceof InterviewCatalogAssetError) return null; throw error; }
+  }
+
   const pythonRuntime = options.pythonRuntime ?? defaultSourcePythonRuntime;
   const actionContext = { appDir, dbPath: options.dbPath, configPath: options.configPath };
   const actionDispatcher =
@@ -917,6 +944,59 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       dbPath: options.dbPath,
     },
     handlers: {
+      interviewCatalog: ({ request }, reply) => {
+        try {
+          return listInterviewCatalog(readInterviewCatalog(), request);
+        } catch (error) {
+          return interviewCatalogError(reply, error);
+        }
+      },
+      interviewQuestion: ({ pathParam: questionId }, reply) => {
+        try {
+          return getInterviewQuestion(readInterviewCatalog(), questionId);
+        } catch (error) {
+          return interviewCatalogError(reply, error);
+        }
+      },
+      interviewPrepHistory: ({ request, pathParam: jobKey }, reply) =>
+        withReadOnlyDb(reply, options.dbPath, (db) => {
+          const jobId = resolveExistingJobId(reply, db, jobKey);
+          if (!jobId) return { ok: false, error: "job_not_found" };
+          return listInterviewPrepHistory(db, "local", jobId, request, currentCatalogOrNull(), appDir, loadInterviewPrepReadModel);
+        }),
+      interviewNotes: ({ request, pathParam: jobKey }, reply) =>
+        withReadOnlyDb(reply, options.dbPath, (db) => {
+          const jobId = resolveExistingJobId(reply, db, jobKey);
+          return jobId ? listInterviewNotes(db, "local", jobId, request) : { ok: false, error: "job_not_found" };
+        }),
+      saveInterviewNote: ({ request, pathParam: jobKey }, reply) =>
+        withWritableDb(reply, options.dbPath, (db) => {
+          const jobId = resolveExistingJobId(reply, db, jobKey);
+          if (!jobId) return { ok: false, error: "job_not_found" };
+          try {
+            const existing = readInterviewNote(db, "local", jobId, request.questionId);
+            if ((existing?.revision ?? 0) !== request.expectedRevision) throw new InterviewNoteRevisionConflictError(existing);
+            const sourceGeneration = request.sourceGeneration === undefined ? (existing?.sourceGeneration ?? null) : request.sourceGeneration;
+            const catalog = currentCatalogOrNull();
+            // Historical origins use retained cards; independent new notes require a current active card.
+            if (!existing && sourceGeneration === null) getInterviewQuestion(catalog ?? readInterviewCatalog(), request.questionId);
+            return { ok: true, note: saveInterviewNote(db, "local", jobId, request, catalog) };
+          } catch (error) {
+            if (error instanceof InterviewNoteRevisionConflictError) {
+              void reply.code(409);
+              return { ok: false, error: "interview_note_revision_conflict", message: error.message, currentNote: error.currentNote };
+            }
+            if (error instanceof InterviewNoteBindingsError) {
+              void reply.code(400);
+              return { ok: false, error: "invalid_interview_note_bindings", message: error.message };
+            }
+            if (error instanceof InterviewNoteSourceError) {
+              void reply.code(400);
+              return { ok: false, error: "invalid_interview_note_source", message: error.message };
+            }
+            return interviewCatalogError(reply, error);
+          }
+        }),
       learningRecommendations: ({ request }, reply) =>
         withDb(reply, options.dbPath, (db) =>
           listLearningRecommendations(db, request!),
@@ -1802,7 +1882,12 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         void reply.code(404);
         return { ok: false, error: "job_not_found" };
       }
-      return detail;
+      const response = structuredClone(detail);
+      response.interviewPrep = loadLatestAcceptedInterviewPrep(db, "local", response.job.jobKey, loadInterviewPrepReadModel);
+      if (response.interviewPrep) response.interviewPrep.staleReasons = interviewPrepStaleReasons(
+        db, "local", response.job.jobKey, response.interviewPrep.generationContext ?? null, currentCatalogOrNull(), appDir,
+      );
+      return response;
     }),
   );
 
@@ -2189,10 +2274,21 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     if (!body) {
       return undefined;
     }
+    try {
+      validateInterviewGenerationSelection(readInterviewCatalog(), body);
+    } catch (error) {
+      return interviewCatalogError(reply, error);
+    }
     return withWritableDb(reply, options.dbPath, async (db) => {
       const jobUrl = resolveExistingJob(reply, db, decodeRouteParam(request.params.jobKey));
       if (!jobUrl) {
         return { ok: false, error: "job_not_found" };
+      }
+      try { validateInterviewEvidenceSelection(db, "local", "default", body); }
+      catch (error) {
+        if (!(error instanceof InterviewEvidenceSelectionError)) throw error;
+        void reply.code(error.code === "evidence_profile_changed" ? 409 : 400);
+        return { ok: false, error: error.code, message: error.message };
       }
       refreshProjections(db);
       const jobId = requireJobId(db, jobUrl);
@@ -2201,9 +2297,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         jobKey: jobId,
         jobId,
       };
-      if (body.llmModel) {
-        command.llmModel = body.llmModel;
-      }
+      Object.assign(command, body);
       insertJobEvent(db, {
         jobUrl,
         stage: "tailor",
@@ -3905,6 +3999,19 @@ function normalizeExistingDatabase(dbPath: string): void {
     }
     throw error;
   }
+}
+
+function interviewCatalogError(reply: FastifyReply, error: unknown) {
+  if (error instanceof InterviewSelectionInputError) {
+    void reply.code(error.code === "retired_question" ? 410 : error.code === "unknown_question" ? 404 : 409);
+    return { ok: false as const, error: error.code, message: error.message,
+      ...(error.questionId ? { questionId: error.questionId } : {}) };
+  }
+  if (error instanceof InterviewCatalogAssetError) {
+    void reply.code(503);
+    return { ok: false as const, error: "interview_catalog_unavailable", message: error.message };
+  }
+  throw error;
 }
 
 function outreachTransitionError(reply: FastifyReply, error: unknown): { ok: false; error: string; message: string } {

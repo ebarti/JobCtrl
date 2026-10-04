@@ -1157,6 +1157,7 @@ interface RequirementFitItemRow extends Record<string, unknown> {
 }
 
 interface InterviewPrepRow extends Record<string, unknown> {
+  generation_context_json: string | null;
   job_id: string;
   generation: number;
   status: string;
@@ -1170,6 +1171,7 @@ interface InterviewPrepRow extends Record<string, unknown> {
 }
 
 interface InterviewPrepItemRow extends Record<string, unknown> {
+  question_metadata_json: string | null;
   item_id: string;
   kind: string;
   title: string;
@@ -1394,29 +1396,45 @@ function loadLatestRequirementFitBand(
   return nullableString(row?.fit_band);
 }
 
-function loadInterviewPrepJson(
+function loadInterviewPrepJson(db: SqliteDatabase, tenantId: string, jobId: string): string | null {
+  const row = getRow<{generation: number}>(db,
+    "SELECT generation FROM job_interview_prep WHERE tenant_id=? AND job_id=? AND status='accepted' ORDER BY generation DESC LIMIT 1",
+    [tenantId, jobId]);
+  if (!row) return null;
+  const model = loadInterviewPrepReadModel(db, tenantId, jobId, Number(row.generation));
+  return model === null ? null : JSON.stringify(model);
+}
+
+function parseInterviewMetadata(value: string | null): Record<string, unknown> | null {
+  if (value === null) return null;
+  const parsed: unknown = JSON.parse(value);
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error("Invalid saved interview metadata");
+  }
+  return parsed as Record<string, unknown>;
+}
+
+export function loadInterviewPrepReadModel(
   db: SqliteDatabase,
   tenantId: string,
   jobId: string,
-): string | null {
+  generation: number,
+): Record<string, unknown> | null {
   const row = getRow<InterviewPrepRow>(
     db,
     `SELECT job_id, generation, status, model, generated_at, gate_status,
             fabrication_findings_json, grounding_findings_json, judge_verdict,
-            warnings_json
+            warnings_json, generation_context_json
        FROM job_interview_prep
-      WHERE tenant_id = ? AND job_id = ? AND status = 'accepted'
-      ORDER BY generation DESC
-      LIMIT 1`,
-    [tenantId, jobId],
+      WHERE tenant_id = ? AND job_id = ? AND generation = ?`,
+    [tenantId, jobId, generation],
   );
   if (!row) return null;
-  const generation = Number(row.generation);
   const items = allRows<InterviewPrepItemRow>(
     db,
     `SELECT item_id, kind, title, generated_text, evidence_ids_json,
             requirement_ids_json, source_text_json, transform_type, control,
-            grounding_audit_json, warnings_json, position
+            grounding_audit_json, warnings_json, position, question_metadata_json
        FROM job_interview_prep_items
       WHERE tenant_id = ? AND job_id = ? AND generation = ?
       ORDER BY position ASC, item_id ASC`,
@@ -1428,6 +1446,8 @@ function loadInterviewPrepJson(
     status: row.status,
     generatedAt: row.generated_at,
     model: row.model ?? null,
+    generationContext: parseInterviewMetadata(row.generation_context_json),
+    staleReasons: row.generation_context_json === null ? ["legacy_unbound"] : [],
     gateAudit: {
       status: row.gate_status,
       fabricationFindings: parseStringList(parseJsonArray(row.fabrication_findings_json)),
@@ -1448,9 +1468,10 @@ function loadInterviewPrepJson(
       groundingAudit: parseStringList(parseJsonArray(item.grounding_audit_json)),
       warnings: parseStringList(parseJsonArray(item.warnings_json)),
       position: Number(item.position ?? 0),
+      questionMetadata: parseInterviewMetadata(item.question_metadata_json),
     })),
   };
-  return JSON.stringify(readModel);
+  return readModel;
 }
 
 function requirementFitAssessmentToReadModel(row: RequirementFitItemRow): Record<string, unknown> {

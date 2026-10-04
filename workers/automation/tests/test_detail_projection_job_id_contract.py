@@ -39,8 +39,8 @@ def test_detail_projection_roots_use_the_passed_job_id_without_job_key(
     )
     monkeypatch.setattr(
         SqliteInterviewPrepRepository,
-        "load_latest",
-        lambda *_args, **_kwargs: interview_prep,
+        "load_latest_read_model",
+        lambda *_args, **_kwargs: interview_prep.to_read_model(),
     )
 
     with builder._bind(conn):

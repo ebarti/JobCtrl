@@ -221,7 +221,7 @@ corepack pnpm data:purge-jobs --app-dir /path/to/disposable-jobctrl-dir \
   --confirm DELETE-ALL-JOB-DATA
 ```
 
-The command backs up first, purges the exact-v11 local Job graph, archives live
+The command backs up first, purges the exact-v12 local Job graph, archives live
 generated resume/cover-letter entries and registered job logs, removes the
 job/Discovery execution ledger, source-quality summaries, job-stage operational
 attempts, and projection-rebuilding lifecycle events, compacts SQLite, and
@@ -422,9 +422,9 @@ consent read, and exact denied/granted cookie boundary.
 
 ## Verify
 
-Schema v11 migrations must run with JobCtrl stopped and must write a separate
-candidate. For a synthetic exact-v10 source, exercise the private boundary with
-`python -m jobctrl.infrastructure.migrations.v10_to_v11_execute --source
+Schema v12 migrations must run with JobCtrl stopped and must write a separate
+candidate. For a synthetic exact-v11 source, exercise the private boundary with
+`python -m jobctrl.infrastructure.migrations.v11_to_v12_execute --source
 <source.db> --candidate <candidate.db>`. The command never installs the
 candidate. Normal installations use `jobctrl update`, whose native lifecycle
 owns quiescence, paired backup, candidate activation, readiness, and rollback.

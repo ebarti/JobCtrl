@@ -1,5 +1,5 @@
 ---
-description: "Learn how JobCtrl creates truthful, job-specific resumes and cover letters with provenance, fabrication gates, validation, repair, and human approval."
+description: "Create truthful job-specific resumes, cover letters, and interview preparation with inspectable evidence, accepted history, and separate personal notes."
 ---
 
 # Materials & Tailoring
@@ -138,11 +138,157 @@ Likewise, **Export PDF** is a browser-local copy of the current editor state. It
 does not save the draft, render a replacement generation, register an artifact,
 or make the exported file eligible for submission.
 
-Interview prep is an explicit, job-scoped generation from the Job Detail
-workspace. It is not an automatic pipeline stage or live interview assistant.
-Review its linked profile and requirement evidence before relying on it; the
-current maturity boundary is described in
-[Daily Workflow → Generate Interview Prep](normal-flows.md).
+## Interview Preparation
+
+Open **Interviews** (`/interviews`) to explore the installed question library.
+Browsing works without a job or provider call. Search question text,
+responsibilities, or competencies; filter by topic, role responsibilities, answer format, and source,
+and switch between graph and list. The selected card and filters live in the
+URL, so you can bookmark the same view. The list provides the same card content
+and preparation actions as the graph.
+
+The library contains 121 active question families across 15 topics, with 57
+sources and 20 author groups. In **Graph**, **Questions** shows all matching
+questions grouped by topic, with editorial connections between topics. Choose a
+topic to read its question labels. **Sources** groups research resources by
+author; choose an author, then a source to explore its linked questions.
+Selecting a question updates the inspector while keeping the catalog map
+available. Drag empty space or use the focused canvas's arrow keys to pan, use
+the zoom controls, and choose **Overview** to return to the unfiltered map.
+
+The selected card's inspector has **Answer**, **Rubric**, and **Sources** tabs.
+**Answer** contains guidance, responsibility adaptations, alternatives, probes,
+failure patterns, and synthetic illustrations when present. **Rubric** contains
+draft criteria for reflection; do not add them into a readiness score.
+**Sources** shows attribution, actual reading coverage, and original resources.
+
+**Connections and saved evidence** is a separate, focused view of the selected
+card's relationships and, when a job is selected, personal evidence. Source and
+author attribution, editorial related-question edges, and accepted personal
+evidence have different meanings: research supports guidance; it cannot prove
+that you did something. Selecting a resource or following an editorial edge
+does not select accepted profile evidence for preparation.
+
+::: warning Research draft and beta output
+The source ledger records actual reading coverage and distinguishes direct
+interview guidance, extrapolation from leadership practice, and editorial
+synthesis. Citations do not imply author endorsement or full-book reading.
+Staff/executive coverage and neighboring-question distinctions still need
+review. Draft criteria and synthetic examples do not establish coaching
+quality, hiring outcomes, readiness, or validated grading. Review generated
+personal claims against their linked evidence before relying on them.
+:::
+
+B11 asks what makes a decision good, separating the reasoning available at the
+time from its eventual outcome. TS09 asks the same for technical decisions,
+including requirements, realistic alternatives, whole-life costs, and conditions
+that would change the decision. These principle answers need criteria, limits,
+and application rather than a forced STAR success story. C07 persistently asks
+for the employer's budgeted compensation range first, including ambiguity and
+redirection; it must not invent leverage or reveal an inferred private minimum.
+A deliberate user-chosen exception is a choice, not a competency failure. C08
+is retired and reserved: availability, location, travel, and authorization
+remain declared checklist facts.
+
+### Prepare For A Job
+
+Choose a canonical job from Interviews or follow the **Interview prep** link
+from Job Detail. Browsing remains available without that choice; generating
+personal preparation requires a job. Set the stage and format when known, the
+role-responsibility lens, and any known employer criteria. Unknown stage is
+valid, and an unspecified role lens remains unknown. Employer/user-supplied
+criteria remain distinct from suggestions inferred from the role; a recommendation does not prove that an employer will ask it.
+
+Review the focused question selection and its rationale. Add or remove cards
+and adjust the order before generating. A request accepts at most 16 unique,
+active questions from the selected catalog revision. This bounds a generation;
+it does not limit the library. Old callers without a selection receive a
+deterministic selection. JobCtrl generates only the selected cards, rather than
+121 personalized answers.
+
+Choose accepted profile evidence for each selected question before generating.
+You can keep automatic selection, explicitly choose up to eight evidence
+records, or choose none to ask for gaps instead of a factual outline. An empty
+choice is preserved; JobCtrl does not silently fill it. If the profile changes,
+review and reselect against its current version before generating. Notes and
+new recollections cannot be selected as accepted facts.
+
+Evidence selection precedes prose. Historical answers use relevant accepted
+profile evidence; transferable experience keeps its scope limits. Principle,
+situational, narrative, negotiation, and preference answers use their own
+structures. An open prompt such as “Tell me about a time you handled conflict”
+invites recollection; it does not establish that an event occurred.
+Hypothetical reasoning, prospective first-time-manager guidance, and advertised
+job responsibilities can guide preparation without implying past experience.
+“I would explain what I stopped investigating and why” leaves missing particulars
+for you to supply. Asking about the advertised role's expectations clarifies the
+job; it does not prove that you held that role.
+
+Specific claims or presuppositions about your history, including factual
+headings, need support from that question's selected accepted evidence, even
+inside future or conditional wording. Another question's evidence, source
+examples, and job responsibilities cannot supply that support. Choosing no
+evidence leaves focused questions and marked gaps without filling in personal
+history, metrics, tools, or authority.
+
+Factual sections cite the selected evidence that supports their claims.
+Guidance and clarifying questions keep proof citations separate: they may refer
+back to a supported fact and ask for missing details, while contextual question
+links do not confirm personal experience.
+Current approved materials provide context only when their registered artifact
+bindings are valid; an unrelated or stale fit report cannot prove a personal
+claim.
+
+### Inspect History And Keep Your Notes
+
+Accepted question outlines expose linked profile excerpts, selection rationale,
+missing details, probes, and guidance references. Each generation retains its
+catalog/card/rubric bindings, selected-card snapshots, automatic or user-selected
+evidence mode and ordered evidence IDs for each question, profile version and
+relevant evidence excerpts, job/requirement excerpts, employer-analysis binding,
+approved-material references, and model/prompt/gate versions. Inspect these original inputs even
+after the current profile or job changes. Changed inputs mark the prep stale;
+regeneration is your decision and does not rewrite the older result.
+
+Legacy themes, STAR drafts, gap drills, and company notes remain readable as
+legacy generated prep. They have no invented question or rubric association.
+Older accepted and superseded prep remains inspectable. A pending or failed
+refresh, including provider or gate rejection, leaves the last accepted prep
+visible.
+
+Save your editable notes/outlines separately for each job and question. A note
+keeps an independent revision, optional source generation, and its own factual
+support label. New recollections default to unverified user statements, and a
+user edit does not inherit a generated answer's passed audit. A save checks the
+revision you loaded; a conflict requires reconciliation rather than overwriting
+a newer note. Failed saves keep your draft available for correction and retry.
+Generating replacement prep does not delete saved notes.
+
+A note's generation origin refers to that question's retained preparation;
+JobCtrl derives the matching card and input bindings. New notes for questions
+outside the saved generation are independent, with no generation-context
+claim. Editing an existing note keeps its origin instead of attaching it to
+newer prep. If that generation was deleted, a normal edit becomes independent;
+the earlier note revision keeps its original provenance.
+
+Reopen the job/question bookmark to edit an existing note for a retired or
+unavailable card. Start new preparation or an independent note with an active
+card.
+
+Question choices and unsaved notes survive page navigation within the current
+app session. Save a note to retain it across a browser reload; private draft
+text is not stored in the URL or browser storage.
+
+Preparation does not modify Profile, fit scores, Discovery intent, approved
+resumes, or Apply state. Review and save a true new fact through
+[Candidate Profile](candidate-profile.md). Post-interview reflections remain
+manual Apply outcomes linked to a prep generation; they are separate from
+preparation notes. See [Outcomes & Feedback](outcomes-and-feedback.md).
+
+Reusable preparation across jobs or without a job, typed rehearsal, calibrated
+assessment, and live assistance are future phases. This release has no answer
+grading, readiness score, transcript upload, microphone, or in-session answer
+surface.
 
 ## Policy History And Rollback
 

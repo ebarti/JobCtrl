@@ -8,6 +8,7 @@ file holding the same tables and rows as the source.
 
 from __future__ import annotations
 
+import shutil
 import sqlite3
 
 import pytest
@@ -18,6 +19,8 @@ from jobctrl.database import (
     SchemaMigrationRequiredError,
     backup_database,
     close_connection,
+    create_exact_v12_database,
+    get_connection,
     init_db,
 )
 
@@ -36,6 +39,34 @@ def test_fresh_db_is_stamped_with_schema_version(tmp_path) -> None:
     close_connection(db_path)
 
     assert _user_version(db_path) == SCHEMA_VERSION
+
+
+def test_fresh_creation_evicts_cached_connection_for_reused_missing_path(tmp_path) -> None:
+    case_dir = tmp_path / "reused-case"
+    case_dir.mkdir()
+    db_path = case_dir / "jobctrl.db"
+    original = create_exact_v12_database(db_path)
+    try:
+        original.execute("CREATE TABLE predecessor_only (value TEXT)")
+        original.commit()
+        # Passing tmp_path cleanup removes the file while its connection may
+        # still be cached; a later case can reuse the same numbered directory.
+        shutil.rmtree(case_dir)
+        case_dir.mkdir()
+
+        fresh = create_exact_v12_database(db_path)
+        assert fresh is not original
+        assert fresh.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+        assert fresh.execute("SELECT name FROM sqlite_master WHERE name = 'predecessor_only'").fetchone() is None
+        with pytest.raises(sqlite3.ProgrammingError):
+            original.execute("SELECT 1")
+
+        with pytest.raises(FileExistsError):
+            create_exact_v12_database(db_path)
+        assert get_connection(db_path) is fresh
+        assert fresh.execute("SELECT 1").fetchone()[0] == 1
+    finally:
+        close_connection(db_path)
 
 
 def test_schema_version_persists_across_reopen(tmp_path) -> None:

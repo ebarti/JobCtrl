@@ -78,6 +78,8 @@ from jobctrl.domain.events.materials import (
 )
 from jobctrl.domain.events.interview import (
     InterviewPrepGeneratedPayload,
+    InterviewQuestionNoteSavedPayload,
+    create_interview_question_note_saved,
     create_interview_prep_generated,
     InterviewPrepFailedPayload,
     create_interview_prep_failed,
@@ -237,6 +239,7 @@ DOMAIN_EVENT_TYPES: tuple[str, ...] = (
     "BulletProvenanceRecorded",
     "InterviewPrepGenerated",
     "InterviewPrepFailed",
+    "InterviewQuestionNoteSaved",
     "TailorRetailorRequested",
     "TailoredArtifactsSuppressed",
     "ResumeTemplateVersionSaved",
@@ -381,6 +384,8 @@ __all__ = [
     "BulletProvenanceRecordedPayload",
     "create_bullet_provenance_recorded",
     "InterviewPrepGeneratedPayload",
+    "InterviewQuestionNoteSavedPayload",
+    "create_interview_question_note_saved",
     "create_interview_prep_generated",
     "InterviewPrepFailedPayload",
     "create_interview_prep_failed",
