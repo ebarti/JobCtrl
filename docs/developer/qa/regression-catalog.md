@@ -138,6 +138,263 @@ scripts/reliability-demo.sh 3 40
 The script uses a throwaway `JOBCTRL_DIR` and isolated ports. Do not adapt it to
 run against `~/.jobctrl`.
 
+## Dense HTML Resume Pagination (#907)
+
+This bounded trial measures the current `HtmlResumePdfAdapter` and
+`render_resume_html_to_pdf` path: structured synthetic profile → shipped
+HTML/CSS with embedded Geist → fresh Playwright Chromium → physical PDF.
+It does not change the pagination architecture. Issue [#907](https://github.com/ebarti/JobCtrl/issues/907)
+owns the follow-up; completion of measurement does not establish universal
+pagination stability or accurate Apply Review highlights.
+The supplied current issue acceptance requires synthetic PDF/layout-box evidence
+and repeatability, page-break, clipping and reading-order observations before
+any conditional pagination change. The allowed trial also measures layout-box
+correspondence; an architecture rewrite remains outside its scope.
+
+The deterministic fixture and measurement code live in
+`workers/automation/tests/test_pdf_renderer_ports.py`, selected by
+`test_dense_resume_pagination_trial`. Only invented candidate facts are used.
+Each case includes summary, role headings, education, skills, wrapped text and
+a 144-character unbroken token. Ordered `R907M00001`-style markers identify
+fields and individual segments inside the oversized bullet.
+
+| Case, for both A4 and Letter | Required physical coverage |
+| --- | --- |
+| Dense | Six roles with eight verbose bullets each; at least two printed pages |
+| Boundary below | One role with the largest one-page bullet count found by a bounded physical-PDF search |
+| Boundary above | The adjacent count, one additional short bullet, must print two pages |
+| Oversized | One role with one bullet containing 96 uniquely marked segments; that single target must fragment across pages |
+
+The boundary search brackets counts 1 and 96 and bisects using the shared
+renderer and pypdf page counts. It assumes monotonic growth only to find an
+adjacent pair, not to characterize every possible breakpoint. The measured
+pair is rerendered by both entry points. `boundaries.json` records every probe,
+count and page count; final case reports include the selected pair. A failed
+bracket or adjacent-pair assertion fails the trial rather than silently
+substituting a smaller case. Calibration PDFs are separate from the repeated
+case measurements.
+
+The theme is explicit: A4 or Letter, bundled `sans` Geist, balanced density,
+normal bullet spacing, font scale 1.0, left text alignment, centered header,
+rule section headings, all four sections in summary/experience/education/skills
+order, `#111111`, and margins top/right/bottom/left 16.5/17.5/18/17.5 mm.
+The renderer viewport remains 794 × 1123 CSS pixels. No CSS is injected to
+simulate pagination or repair the result.
+
+### Run and evidence
+
+Use the repository lock and a controller-owned artifact directory. Prerequisites
+are the locked worker environment, its matching Playwright Chromium, and
+Poppler `pdftotext` plus `pdftoppm` on `PATH`. Browser preparation is a separate
+controller gate; where authorized, its command is
+`env PLAYWRIGHT_BROWSERS_PATH=workers/automation/.venv/ms-playwright uv --project workers/automation run --locked --all-extras playwright install --only-shell chromium`.
+Do not install a floating PDF library or substitute a host browser. Set
+`JOBCTRL_QA_ARTIFACT_ROOT` to an existing, disposable, owned directory before
+running these commands from the repository root:
+
+```sh
+trial_root="$(mktemp -d "${JOBCTRL_QA_ARTIFACT_ROOT:?set an owned artifact directory}/resume-pagination-XXXXXX")"
+env -u UV_PROJECT_ENVIRONMENT -u VIRTUAL_ENV -u UV_EXCLUDE_NEWER -u UV_EXCLUDE_NEWER_PACKAGE \
+  uv run --project workers/automation --locked --all-extras --no-sync --exclude-newer false \
+  ruff check workers/automation/tests/test_pdf_renderer_ports.py --cache-dir="$trial_root/ruff-cache"
+env -u UV_PROJECT_ENVIRONMENT -u VIRTUAL_ENV -u UV_EXCLUDE_NEWER -u UV_EXCLUDE_NEWER_PACKAGE \
+  JOBCTRL_RUN_DENSE_HTML_PAGINATION_TESTS=1 TMPDIR="$trial_root" \
+  PLAYWRIGHT_BROWSERS_PATH="$PWD/workers/automation/.venv/ms-playwright" \
+  uv run --project workers/automation --locked --all-extras --no-sync --exclude-newer false \
+  pytest -q workers/automation/tests/test_pdf_renderer_ports.py \
+  --basetemp="$trial_root/pytest" --junitxml="$trial_root/junit.xml" \
+  -o cache_dir="$trial_root/pytest-cache"
+```
+
+The trial comprises **eight required cases** (four cases × two paper sizes).
+Each runs three adapter renders and three shared-entry renders, all with fresh
+Chromium lifecycles and separate `repeat-1`/`repeat-2`/`repeat-3` directories:
+**48 measured PDFs**, plus the boundary probes and a browser/font preflight.
+The focused selector is `-k dense_resume_pagination_trial`; it must execute
+eight cases with zero skips. Ordinary port-test runs without the explicit flag
+skip these eight browser cases and supply no trial evidence. With the flag,
+missing imports, Chromium, fonts or Poppler are failures. Do not count a docs
+build, fake renderer, zero-test run or skipped case as product QA.
+`JOBCTRL_RUN_PAGINATION_TRIAL=1` remains an accepted alias for older invocations;
+the managed gate's `JOBCTRL_RUN_DENSE_HTML_PAGINATION_TESTS=1` enables the same
+required scenarios even when the alias is unset.
+
+Each case writes `measurements.json` after every completed render and again
+before assertions. Reports include the exact Python, OS, Playwright, Chromium,
+pypdf, pytest and Poppler versions, worker lock and bundled-font SHA-256,
+theme, viewport, source marker sequence, physical page dimensions/counts,
+first/last markers per page, PDF words and geometry, layout correspondence,
+and repeat comparisons. The reports, saved HTML, PDFs, bbox extraction and
+110-DPI PNG for every measured page remain temporary. Calibration files and
+any partial report are diagnostic evidence, not a completed run.
+
+| Dimension | Measurement and interpretation |
+| --- | --- |
+| Repeatability | Compare all six outputs per case against the first adapter render: page count, normalized text per page, marker page assignment, independent PDF word sequence and maximum coordinate delta. Geometry tolerance is 0.25 pt. PDF bytes, IDs, creation times and compression are not compared. |
+| Page breaks | Record first/last marker and marker count on every physical page, blank pages, adjacent boundary counts and the oversized target's physical fragments. Record orphan section/role heading candidates where the following target starts on another page. |
+| Clipping | Poppler word rectangles more than 1 pt outside the page and word intersections over 1 pt in both axes are visual-review candidates. Inspect every page for cropped glyphs, overlap, bottom-edge loss, whitespace/blank pages and fragments; text extraction alone cannot show painted clipping. |
+| Reading order | Locked pypdf extracts each physical page. Whitespace and CSS heading case are normalized; every HTML target's text must be present, including the long token. Canonical fixture markers must occur exactly once in source order across the pages. Check the visual column/order and heading-to-body association as well. |
+| Layout-box correspondence | Parse target text from saved HTML without browser geometry, locate it in Poppler's PDF word stream, and union words separately on each physical page. Compare those fragments with the renderer metadata; report missing PDF/layout targets, duplicate/extra layout IDs, invalid page numbers, page/fragment mismatch and text escaping the predicted rectangle. |
+
+PDF dimensions and word rectangles are points (72 pt/in). Poppler bbox already
+uses a top-left origin. For a conventional bottom-left PDF rectangle
+`(x0, y0, x1, y1)` on height `H`, convert to
+`(x0, H-y1, x1, H-y0)`. Convert the renderer's percentages using the **physical**
+page dimensions: left = `left_pct × W / 100`, top = `top_pct × H / 100`, right
+and bottom add the corresponding percentage width/height. Physical A4/Letter
+dimensions allow 1 pt of Chromium rounding. Text must fit inside its declared
+box within a 2 pt tolerance; line-box padding and glyph bounds need not be
+identical. Fragmented targets require multiple physical rectangles, and a
+single matching anchor does not establish full correspondence. Poppler's word
+rectangles include font metrics, so an escape is a candidate for inspection,
+not proof of painted glyph loss. An unlocated PDF target is a measurement gap,
+never an accurate-box result or an independently observed page mismatch.
+
+The current renderer measures `getBoundingClientRect()` before `page.pdf()`
+and uses the full `.resume-page` height as its page divisor. That source-level
+observation is a reason to measure, not an observed PDF defect. A wrong
+pre-pagination approximation must stay visible in the report; the trial does
+not assert that incorrect boxes are correct or require their incorrect values
+as an invariant.
+
+### Results and independent completion
+
+On 2026-10-03 the implementation measurement ran with Python 3.12.13 on macOS
+26.6.2 arm64, Playwright 1.58.0, bundled Chromium headless shell 145.0.7632.6
+(revision 1208), pypdf 6.19.0, pytest 9.1.1, Ruff 0.15.8 and Poppler 26.09.0.
+Geist's Latin face loaded; the unused Latin-ext face remained unloaded for these
+ASCII inputs. Worker lock SHA-256 was
+`c7a3609dab6c93fdaa9f247ef88a943d74629457042ce64d7a92320092ba40d6`.
+The Latin font SHA-256 was
+`19f9c92546aa300c312235e3125af1b81394d8db9a4bc4a425cd5b641d2d54e1`;
+Latin-ext was `824f485b5d26e2f2da3c2b236132ece1bc8e4e43373452950bb0e40548b4313f`.
+The explicit themes above produced A4 media boxes 594.95996 × 841.91998 pt and
+Letter boxes 612 × 792 pt, zero rotation, with matching crop boxes.
+
+Focused Ruff passed. The full focused module executed **27 tests: 27 passed,
+zero errors/failures/skips**, including all eight browser cases. The final run
+took 51.48 seconds and generated 48 measured PDFs with 132 pages. Both entry
+points used three fresh browser lifecycles per case. An earlier gate supplied
+`JOBCTRL_RUN_DENSE_HTML_PAGINATION_TESTS=1` while the harness recognized only
+the alias; that defect is repaired and the alias was explicitly unset during
+this run. Earlier skipped cases supply no product evidence.
+
+The six page counts below are adapter/shared for repeats 1, 2 and 3. Marker
+ranges use the `R907M` prefix; slash-separated ranges are successive physical
+pages. Markers bound content positions, not necessarily the first/last word of
+a fragmented paragraph.
+
+| Case | Paper | Six page counts | First–last markers on each page |
+| --- | --- | --- | --- |
+| Dense | A4 | 3, 3, 3, 3, 3, 3 | 00001–00024 / 00025–00046 / 00047–00074 |
+| Dense | Letter | 3, 3, 3, 3, 3, 3 | 00001–00024 / 00025–00046 / 00047–00074 |
+| Boundary below, 28 bullets | A4 | 1, 1, 1, 1, 1, 1 | 00001–00039 |
+| Boundary above, 29 bullets | A4 | 2, 2, 2, 2, 2, 2 | 00001–00037 / 00038–00040 |
+| Boundary below, 25 bullets | Letter | 1, 1, 1, 1, 1, 1 | 00001–00036 |
+| Boundary above, 26 bullets | Letter | 2, 2, 2, 2, 2, 2 | 00001–00034 / 00035–00037 |
+| Oversized | A4 | 5, 5, 5, 5, 5, 5 | 00001–00002 / 00003–00005 / 00006–00056 / 00057–00104 / 00105–00107 |
+| Oversized | Letter | 5, 5, 5, 5, 5, 5 | 00001–00002 / 00003–00005 / 00006–00055 / 00056–00101 / 00102–00107 |
+
+**Repeatability and reading order:** All six renders per case had identical
+normalized per-page content, marker assignments, independent word sequence and
+coordinates: maximum geometry delta **0.0 pt**. Every expected target's text,
+including the long token, was present. Markers occurred once in canonical order;
+there were no omissions, duplications or blank measured pages. These observed
+results support the focused content/order and repeat assertions.
+
+**Printed appearance and fragmentation:** The 132 page images formed 22 groups
+of six identical PNGs. Each unique page was visually inspected at 110 DPI;
+exact image hashes accounted for every repeat and entry point, and the final
+run's image hashes matched the inspected set. No unreadable clipping or painted
+overlap was observed. Continuation pages begin at the top edge without a repeated
+top inset. Poppler rectangle candidates per PDF (outside-page / intersecting
+words) were dense A4 12/926, dense Letter 12/867, below both 0/13, above both
+7/13, oversized A4 29/2139 and oversized Letter 46/2134. Font-bound rectangles
+can intersect between adjacent lines or extend above the page while the painted
+glyphs remain readable; these counts are not confirmed clipping/overlap defects.
+Higher-resolution independent inspection remains a separate QA gate.
+
+The oversized role moves to page 2, and its one bullet genuinely fragments
+across pages 3 and 4. Large unused areas on pages 1 and 2 result from the current
+native break-avoid rules. Visually confirmed **Medium** presentation findings
+are Skills orphaned on page 1 of both boundary-above cases, with its body on
+page 2; Experience orphaned on page 1 of both oversized cases, with the role
+on page 2; and Education orphaned on page 4 of oversized Letter, with its body
+on page 5. Reproduce these with the documented command and
+`-k 'dense_resume_pagination_trial and boundary-above'` or
+`-k 'dense_resume_pagination_trial and oversized'`. The measurement does not
+assert these undesirable breaks as invariants.
+
+**Layout-box correspondence:** All expected metadata IDs were returned exactly
+once, with no missing/extra layout IDs. The following counts were identical
+across all six renders. Page/fragment differences are independently observed;
+rectangle escapes use the declared 2 pt threshold and require interpretation
+against font metrics. Extraction gaps remain explicit and are excluded from
+physical mismatch counts.
+
+| Case / paper | Targets | Located / clean comparisons | Page/fragment differences | Rectangle escape candidates | PDF extraction gaps |
+| --- | --- | --- | --- | --- | --- |
+| Dense / A4 | 70 | 69 / 0 | 45 | 24 | 1 |
+| Dense / Letter | 70 | 69 / 0 | 45 | 24 | 1 |
+| Boundary below / A4 | 40 | 38 / 32 | 0 | 6 | 2 |
+| Boundary below / Letter | 37 | 35 / 28 | 0 | 7 | 2 |
+| Boundary above / A4 | 41 | 39 / 16 | 1 | 22 | 2 |
+| Boundary above / Letter | 38 | 36 / 2 | 1 | 33 | 2 |
+| Oversized / A4 | 13 | 11 / 0 | 7 | 4 | 2 |
+| Oversized / Letter | 13 | 11 / 0 | 7 | 4 | 2 |
+
+For example, dense A4 `experience:trial-role-2:heading` has an independently
+extracted rectangle on **page 2**, `(49.61, -1.30, 545.66, 29.23)` pt. Metadata
+declares **page 1**, `(49.58, 294.15, 545.38, 305.51)` pt after percentage
+conversion. The oversized bullet's two physical fragments on pages 3 and 4
+are represented by one metadata box on page 1. These are reproducible **Medium**
+correspondence findings affecting audit highlighting, not repeat instability.
+Their source is the pre-print DOM calculation described above; that owning
+renderer is outside the frozen feature paths. Reproduce the dense example with
+`-k 'dense_resume_pagination_trial and dense and a4'`, then inspect
+`layout_correspondence.targets` in the case report alongside its PDF.
+
+The dense extraction gap is `education:trial-education:subtitle`; other cases
+also have `experience:trial-role-0:heading`. Poppler orders right-aligned date
+and location words differently from the target's contiguous source text, so
+the rectangle matcher cannot locate the complete target. Locked pypdf and the
+images confirm those fields are present. These are measurement gaps, not lost
+resume content or proof of accurate metadata. Even a single-page name produces
+about 6.6 pt of font-bound escape without proving a painted-box defect.
+
+This sample reproduced orphan headings and layout correspondence errors while
+preserving repeatable content and order. It supplies evidence for targeted
+follow-up, not a requirement to replace pagination architecture. Independent
+review, browser/API QA, applicable CI, the full docs build and publication are
+**pending controller gates**. The docs build passed its install-asset check but
+stopped at missing VitePress/Node dependencies. Implementation measurements
+do not replace those gates. Keep JUnit and non-sensitive summaries in an owned
+evidence location; remove owned generated HTML/PDF/images and browser workspaces
+after inspection. The controller reproduces its required scenarios independently
+and records any differences or raised severity before publication.
+
+For every instability or mismatch, report the case, paper size, entry point,
+repeat, marker/target, page, expected versus observed geometry/content and a
+reproduction command. Classify lost/duplicated content, changed reading order,
+unreadable clipping/overlap or nondeterministic page assignment as High;
+layout highlight correspondence errors and isolated orphan headings are
+Medium unless they make approval materially misleading. Extraction gaps and
+visual-review candidates remain unresolved measurements until corroborated.
+Any unresolved Blocker/High prevents completion. Independent QA must inspect
+**every measured page of every repeat**, record outcomes for all five dimensions,
+and reconcile its findings with the JSON and JUnit evidence. Eight passing
+automated cases alone do not complete visual QA or prove universal stability.
+
+Add further regression assertions only for behavior supported by these actual
+observations. The trial currently checks content/order, physical coverage,
+nonblank pages and repeat comparisons; it has no hardcoded dense-page count
+or assertion that the DOM layout map is physically accurate. More fonts,
+densities, themes, non-ASCII scripts, viewer versions and arbitrary document
+sizes are outside this bounded sample. The controller owns current-issue
+reconciliation, independent review/QA, mandatory checks and publication at an
+unmerged verified head. After it records the summary, remove only the owned
+trial artifacts and processes; retain no generated candidate material in Git.
+
 ## Auditability Checks
 
 When the human flags a visible defect, especially in review, rationale, audit, evidence, scoring, tailoring, or apply-approval surfaces, treat the screenshot as a symptom, not the bug. Do not start by hiding, filtering, renaming, or moving the displayed value. First state the product invariant the surface is supposed to prove, then trace the value end to end: source input, extraction, profile evidence, selected controls, prompt or deterministic transform, generated artifact, validator/judge output, persistence, projection/API read model, and UI rendering.
