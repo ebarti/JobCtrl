@@ -383,3 +383,13 @@ bounded cadences so quiet connections remain observable.
 Native `EventSource` reconnect plus durable event IDs is the normal recovery
 path. Projection refetches remain the correctness backstop if a client misses an
 invalidation.
+
+### Required-Bullet Coaching
+
+The opt-in `POST /v1/profile/required-bullet-suggestions` route calls the configured
+LLM through the synchronous `profile_required_bullet_suggestions` worker RPC.
+Findings bind to canonical saved sources and the expected profile version;
+provider failures have no heuristic fallback. Only an exact model-proposed
+whitespace cleanup can be accepted through the ordinary fenced profile save.
+See [Profile & Settings](api/profile-and-settings.md) and the
+[complete contract](api/complete-contract.md#candidate-profile) for bounds and errors.

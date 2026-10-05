@@ -15,7 +15,7 @@ For every request/response field, use the
 | `GET /v1/profile` | Read the normalized candidate profile and current preferences. |
 | `PATCH /v1/profile` | Save validated profile fields and preference changes. |
 | `POST /v1/profile/target-role-suggestions` | Generate transient evidence-backed role proposals from an exact saved profile version. |
-| `POST /v1/profile/required-bullet-suggestions` | Inspect deterministic coaching for Required bullets from an exact saved profile version. |
+| `POST /v1/profile/required-bullet-suggestions` | Inspect LLM coaching for Required bullets from an exact saved profile version. |
 | `GET /v1/profile/preview.html` | Render the baseline profile resume as HTML. |
 | `GET /v1/profile/preview.pdf` | Render the baseline profile resume as PDF. |
 
@@ -80,85 +80,17 @@ The guard covers accepted roles and historical preference rows, including
 subsequent edits to those draft values.
 Overlapping edits remain blocked for manual resolution or discard.
 
-Required-bullet coaching uses the separate `required-bullet-suggestions` route.
-It accepts a saved `expectedProfileVersion` and optional `maximumSuggestions`
-(`1–24`, default `12`). It reads canonical profile rows without dispatching a
-worker or model, and returns transient suggestions with
-`strategy: "deterministic_rules_v1"` and `modelUsed: false`. The response reports
-whether the bounded result was truncated. Inspection stops after 512 Required
-occurrences or once enough suggestions establish output truncation. Before
-materializing saved rows, the API also limits inspection to 256 experience
-entries and 4,096 normalized profile child rows. A larger profile returns an
-empty `truncated: true` result; it is not a claim that its Required bullets are
-complete. A Required bullet or its owning entry fields that exceed the response
-source bounds also make the inspection incomplete (`truncated: true`), even if
-the Required pin has no matching saved bullet. Nonempty truncated results cover
-only an inspected subset; repeating the same request may not reveal skipped
-sources. Pins stored under a deleted experience ID also report an incomplete
-inspection, even when other valid entries have suggestions. Invalid saved rows
-return `422 invalid_saved_profile`. Malformed stored evidence JSON
-arrays, confirmation integers other than `0` or `1`, and confidence values
-outside `0–1` return 422 rather than being treated as usable evidence.
+Required-bullet coaching accepts a saved `expectedProfileVersion` and optional
+`maximumSuggestions` (`1–24`, default `12`). It calls the configured LLM once
+with selected saved bullets, role/company context and matching achievement
+evidence. All coaching determinations come from the model; there is no heuristic
+fallback. Source binding and acceptance remain version-checked, and only an exact
+model-proposed whitespace cleanup can be applied automatically. Provider/invalid
+response failures preserve saved facts and the previous reviewed suggestions.
+The offline demo reports this capability unavailable. See the
+[complete Required-bullet contract](complete-contract.md#candidate-profile) for
+source fields, input/output limits, model-use flags and error codes.
 
-Each suggestion identifies its grammar, relevance, achievement-framing, or
-missing-evidence purpose; includes the original text and concise guidance; and
-exposes its saved experience identity, bullet position, field path, source
-excerpt, and canonical achievement ID when available. A snapshot-only bullet
-reference is explicitly distinguished from a canonical achievement ID. These
-references are valid for the returned profile version, not promises of permanent
-identity after future profile edits.
-
-Only conservative wording cleanup supplies an applicable replacement. Coaching
-questions have no proposed text and require the user's own truthful manual
-edits. An outcome that only reorders the source claim or changes its result verb
-or grammar does not independently support that claim. A count of improved
-activities is still an action count; a separate outcome detail or verified,
-user-confirmed result measure is needed to suppress framing advice. Nor does novel wording
-alone verify it: only a user-confirmed achievement marked `verified` avoids the
-missing-evidence question. The browser accepts
-replacements individually through the ordinary
-version-checked profile save, preserving bullet order, achievement identity,
-and Required selection. Generation, rejection, unavailable requests, and stale
-results do not promote evidence or alter the saved profile. Every browser save
-remains bound to its saved form version while query refresh is pending. The
-editor offers rebase for non-overlapping drafts after a newer version arrives.
-That rebase can combine different bullet edits in one experience entry only
-when the saved entry ID, bullet positions, and text identities remain clear;
-overlapping or reordered bullets require manual resolution. A failed accept
-keeps the reviewed suggestion through a same-version optimistic query rollback,
-keeps a unique concurrent manual Required edit pinned, and blocks ambiguous
-duplicates from being saved.
-Prototype-shaped experience IDs are read as own Required-pin keys. Cleanup for
-an exact saved `__proto__` pin remains non-applicable because the guarded profile
-JSON input cannot save that key.
-
-This route does not enable #902's model path or implement #883's proposed
-evidence migrations.
-
-Identical bullet or Required-pin occurrences are skipped because their saved
-text does not identify one occurrence. A whitespace cleanup that would equal
-another saved bullet or Required pin has no applicable replacement. When
-multiple achievement records match
-one otherwise unique bullet, or an achievement ID is reused, the coaching can
-explain the ambiguity but cannot offer a directly applicable replacement.
-Supported, draft, inferred, unconfirmed, or bullet-only evidence prompts a
-source-confirmation question; an extracted metric from the bullet alone is not independent
-verification.
-
-Each `resume.experience_entries[]` record may include `summary`. The field
-defaults to an empty string, remains optional for existing and new roles, and
-renders as non-bulleted position context between the role heading and its
-achievement bullets only when non-empty.
-
-Achievement numbers are authored with the experience bullet or its structured
-achievement evidence. `resume_constraints.real_metrics` remains in the profile
-wire shape only as a non-authoritative compatibility projection. Derived
-achievement values lead the list; unmatched values already present in normalized
-storage are carried forward as unassigned legacy data so `GET`/`PATCH` round-trips
-cannot silently delete user facts. `PATCH` does not accept new free-floating
-metrics, and it drops derived values whose achievement was removed or changed.
-Neither compatibility category authorizes a generated claim; claim authority
-comes from the mapped achievement itself.
 
 ## Discovery Controls
 

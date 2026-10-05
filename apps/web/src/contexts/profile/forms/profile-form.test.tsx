@@ -1,6 +1,6 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
-import { generateRequiredBulletSuggestions, LOCAL_TENANT } from "@jobctrl/domain-types";
+import { bindRequiredBulletSuggestions, prepareRequiredBulletCoaching, LOCAL_TENANT } from "@jobctrl/domain-types";
 import {
   ProfileSchema,
   type ProfileShape,
@@ -41,7 +41,8 @@ function requiredBulletCoachingFixture() {
     "exp-1": ["  Scaled   the platform 10x.  "],
   };
   initial.profile = profile;
-  const generated = generateRequiredBulletSuggestions(profile, 3, 24);
+  const generated = bindRequiredBulletSuggestions(profile, 3, 24,
+    [{ reference: prepareRequiredBulletCoaching(profile, 3).sources[0]!.reference, kind: "grammar", guidance: "Review this bullet’s spacing.", proposedText: "Scaled the platform 10x." }], true);
   const requiredBulletSuggestions = vi.fn(async () => structuredClone(generated));
   return { initial, requiredBulletSuggestions };
 }
@@ -96,7 +97,7 @@ describe("<ProfileForm>", () => {
       const profile = ProfileSchema.parse(fixture.profile);
       initial.profile = profile;
       initial.profileVersion = fixture.profileVersion;
-      const generated = generateRequiredBulletSuggestions(profile, fixture.profileVersion, fixture.maximumSuggestions);
+      const generated = bindRequiredBulletSuggestions(profile, fixture.profileVersion, fixture.maximumSuggestions, fixture.judgments as Parameters<typeof bindRequiredBulletSuggestions>[3], true);
       const applicable = generated.suggestions.filter((item) => item.kind === "grammar" && item.canApply);
       expect(applicable.length).toBeGreaterThan(0);
       const selected = applicable[applicableIndex]!;
@@ -1774,8 +1775,8 @@ describe("<ProfileForm>", () => {
           requiredBulletIndex: 0,
         },
       }],
-      strategy: "deterministic_rules_v1" as const,
-      modelUsed: false as const,
+      strategy: "model_v1" as const,
+      modelUsed: true as const,
       truncated: false,
     }));
     const updateProfile = vi.fn(async (request) => ({
@@ -1887,8 +1888,8 @@ describe("<ProfileForm>", () => {
           requiredBulletIndex: 0,
         },
       }],
-      strategy: "deterministic_rules_v1" as const,
-      modelUsed: false as const,
+      strategy: "model_v1" as const,
+      modelUsed: true as const,
       truncated: false,
     }));
     let resolveSave!: (value: typeof initial) => void;
@@ -1950,8 +1951,8 @@ describe("<ProfileForm>", () => {
           requiredBulletIndex: 0,
         },
       }],
-      strategy: "deterministic_rules_v1" as const,
-      modelUsed: false as const,
+      strategy: "model_v1" as const,
+      modelUsed: true as const,
       truncated: false,
     }));
     let rejectSave!: (reason: Error) => void;

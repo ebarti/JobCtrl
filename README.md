@@ -90,7 +90,8 @@ its guidance is a research draft, and personal prep remains in beta.
 Nothing, until you run a step that needs an outside service:
 
 - **LLM providers:** posting text, relevant profile evidence, and generated
-  text. During a dry run, Claude also sees the application page, but never your
+  text. Opt-in Required-bullet coaching sends the selected saved bullets and
+  linked evidence to your configured provider. During a dry run, Claude also sees the application page, but never your
   profile or documents.
 - **Job boards and other sites:** Discover, Enrich, and dry-run requests, plus
   opt-in contact research. With the browser extension paired and connected,

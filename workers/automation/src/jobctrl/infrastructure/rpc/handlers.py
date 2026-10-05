@@ -392,6 +392,69 @@ def profile_target_role_suggestions(params: dict[str, Any]) -> dict[str, Any]:
     return result.as_dict()
 
 
+def profile_required_bullet_suggestions(params: dict[str, Any]) -> dict[str, Any]:
+    """Call the configured provider for a version-fenced, read-only inspection."""
+    import re
+    from jobctrl.domain.profile.required_bullet_coaching import coach_required_bullets
+    from jobctrl.infrastructure.profile.factory import get_profile_repository
+    from jobctrl.infrastructure.llm.llm_client import get_llm_adapter
+    from jobctrl.llm import enforce_spend_budget
+    from jobctrl.llm_lanes import bind_llm_lane
+
+    assert_expected_runtime(expected_app_dir=str(_require(params, "expectedAppDir")),
+                            expected_db_path=str(_require(params, "expectedDbPath")))
+    if set(params) - {"tenantId", "expectedAppDir", "expectedDbPath", "expectedProfileVersion", "maximumSuggestions", "sources"}:
+        raise invalid_params("Unknown Required coaching parameter")
+    version = _require(params, "expectedProfileVersion")
+    maximum = _require(params, "maximumSuggestions")
+    sources = _require(params, "sources")
+    if type(version) is not int or version < 1 or type(maximum) is not int or not 1 <= maximum <= 24:
+        raise invalid_params("Invalid Required coaching version or maximum")
+    if not isinstance(sources, list) or not 1 <= len(sources) <= 512:
+        raise invalid_params("Invalid Required coaching sources")
+    repository = get_profile_repository()
+    snapshot = repository.load_snapshot(TenantId(_tenant_id(params)))
+    if snapshot.version != version:
+        raise invalid_params("stale_profile_version")
+    profile = snapshot.as_dict()["resume"]
+    entries = profile["experience_entries"]
+    pins = profile.get("tailoring_rules", {}).get("required_bullets_by_experience_id", {})
+    references: set[str] = set()
+    for source in sources:
+        if not isinstance(source, dict) or set(source) != {
+            "reference", "originalText", "experienceTitle", "experienceCompany", "evidence"
+        }:
+            raise invalid_params("Invalid Required coaching source shape")
+        reference = source["reference"]
+        match = re.fullmatch(r"profile:v(\d+):experience\[(\d+)\]:bullet\[(\d+)\]:required\[(\d+)\]", reference) if isinstance(reference, str) else None
+        if not match or reference in references or int(match[1]) != version:
+            raise invalid_params("Invalid Required coaching reference")
+        references.add(reference)
+        try:
+            entry = entries[int(match[2])]
+            text = entry["bullets"][int(match[3])]
+            required = pins[entry["id"]][int(match[4])]
+            def normalize(value: str) -> str:
+                return " ".join(value.split())
+            evidence = [item for item in entry["achievement_evidence"]
+                        if normalize(item["source_text"]) == normalize(text)]
+            expected = {"reference": reference, "originalText": text,
+                        "experienceTitle": entry["title"], "experienceCompany": entry["company"],
+                        "evidence": [{key: item[key] for key in (
+                            "id", "source_text", "metrics", "outcome", "evidence_strength", "user_confirmed"
+                        )} for item in evidence]}
+            if text != required or source != expected:
+                raise invalid_params("Required coaching source does not match saved profile")
+        except (KeyError, IndexError, TypeError) as exc:
+            raise invalid_params("Invalid Required coaching source") from exc
+    with bind_llm_lane("profile"):
+        enforce_spend_budget(lane="profile")
+        result = coach_required_bullets(sources, llm=get_llm_adapter(), maximum=maximum)
+    if repository.load_snapshot(TenantId(_tenant_id(params))).version != version:
+        raise invalid_params("stale_profile_version")
+    return {"profileVersion": version, **result}
+
+
 def provider_verify(params: dict[str, Any]) -> dict[str, Any]:
     """Reuse and verify Codex CLI auth without making a model-generation call."""
 
@@ -1031,6 +1094,7 @@ def rollback_tailoring_policy(params: dict[str, Any]) -> dict[str, Any]:
 
 def register_default_handlers(server: JsonRpcServer, *, canceler: WorkflowCanceler) -> None:
     """Wire the default JobCtrl method set onto *server*."""
+    server.register("profile_required_bullet_suggestions", profile_required_bullet_suggestions, mode="sync")
     server.register("profile_import", profile_import, mode="workflow")
     server.register("job_url_import", job_url_import, mode="workflow")
     server.register("manual_capture_import", manual_capture_import, mode="workflow")

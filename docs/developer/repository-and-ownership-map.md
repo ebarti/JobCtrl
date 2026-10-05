@@ -65,11 +65,14 @@ flowchart TB
 | `.github/workflows/` | CI, publication, deployment, and protected release orchestration | Locally reproducible product behavior |
 | `docs/` | Canonical user, contributor, architecture, API, requirement, decision, QA, and delivery records | Implementation authority when documentation and current code diverge |
 
-Required-bullet coaching generation and cleanup applicability are pure Profile
-policies in `packages/domain-types/src/profile/required-bullet-suggestions.ts`.
-The API route, demo adapter and Profile form import this owner directly. Domain
-result interfaces are structurally checked against the wire response; Zod schema
-and inferred DTO ownership remain in `packages/contracts`. See
+Required-bullet semantic findings are owned by
+`workers/automation/src/jobctrl/domain/profile/required_bullet_coaching.py` through
+`LlmPort`. The RPC handler verifies runtime, canonical sources and profile version,
+admits spend and selects the configured adapter. Shared TypeScript source binding
+and cleanup applicability live in
+`packages/domain-types/src/profile/required-bullet-suggestions.ts`, imported by
+the API and Profile form. Wire schemas/DTOs remain in `packages/contracts`.
+The offline demo marks coaching unavailable. See
 [contract boundaries](../architecture/contracts-types-and-api-boundaries.md#contract-owners).
 
 ## Inside The Runnable Boundaries

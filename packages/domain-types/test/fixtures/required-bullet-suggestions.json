@@ -46,45 +46,17 @@
             "bulletIndex": 0,
             "requiredBulletIndex": 0
           }
-        },
-        {
-          "id": "profile:v7:experience[0]:bullet[0]:required[0]:achievement-framing",
-          "kind": "achievement_framing",
-          "originalText": "  Worked   on synthetic queues  ",
-          "proposedText": null,
-          "canApply": false,
-          "source": {
-            "sourceId": "profile:v7:experience[0]:bullet[0]",
-            "identityKind": "snapshot_bullet",
-            "excerpt": "  Worked   on synthetic queues  ",
-            "fieldPath": "profile.resume.experience_entries[0].bullets[0]",
-            "experienceId": "exp-1",
-            "experienceTitle": "Synthetic Engineer",
-            "experienceCompany": "Synthetic Co",
-            "bulletIndex": 0,
-            "requiredBulletIndex": 0
-          }
-        },
-        {
-          "id": "profile:v7:experience[0]:bullet[0]:required[0]:missing-evidence",
-          "kind": "missing_evidence",
-          "originalText": "  Worked   on synthetic queues  ",
-          "proposedText": null,
-          "canApply": false,
-          "source": {
-            "sourceId": "profile:v7:experience[0]:bullet[0]",
-            "identityKind": "snapshot_bullet",
-            "excerpt": "  Worked   on synthetic queues  ",
-            "fieldPath": "profile.resume.experience_entries[0].bullets[0]",
-            "experienceId": "exp-1",
-            "experienceTitle": "Synthetic Engineer",
-            "experienceCompany": "Synthetic Co",
-            "bulletIndex": 0,
-            "requiredBulletIndex": 0
-          }
         }
       ]
-    }
+    },
+    "judgments": [
+      {
+        "reference": "profile:v7:experience[0]:bullet[0]:required[0]",
+        "kind": "grammar",
+        "guidance": "Review the spacing in this saved bullet.",
+        "proposedText": "Worked on synthetic queues"
+      }
+    ]
   },
   {
     "name": "output truncation keeps the first two suggestions",
@@ -133,27 +105,17 @@
             "bulletIndex": 0,
             "requiredBulletIndex": 0
           }
-        },
-        {
-          "id": "profile:v7:experience[0]:bullet[0]:required[0]:achievement-framing",
-          "kind": "achievement_framing",
-          "originalText": "  Worked   on synthetic queues  ",
-          "proposedText": null,
-          "canApply": false,
-          "source": {
-            "sourceId": "profile:v7:experience[0]:bullet[0]",
-            "identityKind": "snapshot_bullet",
-            "excerpt": "  Worked   on synthetic queues  ",
-            "fieldPath": "profile.resume.experience_entries[0].bullets[0]",
-            "experienceId": "exp-1",
-            "experienceTitle": "Synthetic Engineer",
-            "experienceCompany": "Synthetic Co",
-            "bulletIndex": 0,
-            "requiredBulletIndex": 0
-          }
         }
       ]
-    }
+    },
+    "judgments": [
+      {
+        "reference": "profile:v7:experience[0]:bullet[0]:required[0]",
+        "kind": "grammar",
+        "guidance": "Review the spacing in this saved bullet.",
+        "proposedText": "Worked on synthetic queues"
+      }
+    ]
   },
   {
     "name": "exact output capacity is complete",
@@ -202,45 +164,17 @@
             "bulletIndex": 0,
             "requiredBulletIndex": 0
           }
-        },
-        {
-          "id": "profile:v7:experience[0]:bullet[0]:required[0]:achievement-framing",
-          "kind": "achievement_framing",
-          "originalText": "  Worked   on synthetic queues  ",
-          "proposedText": null,
-          "canApply": false,
-          "source": {
-            "sourceId": "profile:v7:experience[0]:bullet[0]",
-            "identityKind": "snapshot_bullet",
-            "excerpt": "  Worked   on synthetic queues  ",
-            "fieldPath": "profile.resume.experience_entries[0].bullets[0]",
-            "experienceId": "exp-1",
-            "experienceTitle": "Synthetic Engineer",
-            "experienceCompany": "Synthetic Co",
-            "bulletIndex": 0,
-            "requiredBulletIndex": 0
-          }
-        },
-        {
-          "id": "profile:v7:experience[0]:bullet[0]:required[0]:missing-evidence",
-          "kind": "missing_evidence",
-          "originalText": "  Worked   on synthetic queues  ",
-          "proposedText": null,
-          "canApply": false,
-          "source": {
-            "sourceId": "profile:v7:experience[0]:bullet[0]",
-            "identityKind": "snapshot_bullet",
-            "excerpt": "  Worked   on synthetic queues  ",
-            "fieldPath": "profile.resume.experience_entries[0].bullets[0]",
-            "experienceId": "exp-1",
-            "experienceTitle": "Synthetic Engineer",
-            "experienceCompany": "Synthetic Co",
-            "bulletIndex": 0,
-            "requiredBulletIndex": 0
-          }
         }
       ]
-    }
+    },
+    "judgments": [
+      {
+        "reference": "profile:v7:experience[0]:bullet[0]:required[0]",
+        "kind": "grammar",
+        "guidance": "Review the spacing in this saved bullet.",
+        "proposedText": "Worked on synthetic queues"
+      }
+    ]
   },
   {
     "name": "specific activity with supported canonical evidence",
@@ -297,45 +231,17 @@
             "bulletIndex": 0,
             "requiredBulletIndex": 0
           }
-        },
-        {
-          "id": "profile:v11:experience[0]:bullet[0]:required[0]:achievement-framing",
-          "kind": "achievement_framing",
-          "originalText": "  Worked   on synthetic queues  ",
-          "proposedText": null,
-          "canApply": false,
-          "source": {
-            "sourceId": "saved-achievement",
-            "identityKind": "canonical_achievement",
-            "excerpt": "  Worked   on synthetic queues  ",
-            "fieldPath": "profile.resume.experience_entries[0].bullets[0]",
-            "experienceId": "exp-1",
-            "experienceTitle": "Synthetic Engineer",
-            "experienceCompany": "Synthetic Co",
-            "bulletIndex": 0,
-            "requiredBulletIndex": 0
-          }
-        },
-        {
-          "id": "profile:v11:experience[0]:bullet[0]:required[0]:missing-evidence",
-          "kind": "missing_evidence",
-          "originalText": "  Worked   on synthetic queues  ",
-          "proposedText": null,
-          "canApply": false,
-          "source": {
-            "sourceId": "saved-achievement",
-            "identityKind": "canonical_achievement",
-            "excerpt": "  Worked   on synthetic queues  ",
-            "fieldPath": "profile.resume.experience_entries[0].bullets[0]",
-            "experienceId": "exp-1",
-            "experienceTitle": "Synthetic Engineer",
-            "experienceCompany": "Synthetic Co",
-            "bulletIndex": 0,
-            "requiredBulletIndex": 0
-          }
         }
       ]
-    }
+    },
+    "judgments": [
+      {
+        "reference": "profile:v11:experience[0]:bullet[0]:required[0]",
+        "kind": "grammar",
+        "guidance": "Review the spacing in this saved bullet.",
+        "proposedText": "Worked on synthetic queues"
+      }
+    ]
   },
   {
     "name": "conservative canonical cleanup preserves factual tokens",
@@ -398,7 +304,15 @@
           }
         }
       ]
-    }
+    },
+    "judgments": [
+      {
+        "reference": "profile:v2:experience[0]:bullet[1]:required[0]",
+        "kind": "grammar",
+        "guidance": "Review the spacing in this saved bullet.",
+        "proposedText": "Reduced synthetic latency by 35% using SQL."
+      }
+    ]
   },
   {
     "name": "entry traversal and Required pin order retain saved positions",
@@ -461,117 +375,17 @@
             "bulletIndex": 2,
             "requiredBulletIndex": 0
           }
-        },
-        {
-          "id": "profile:v19:experience[0]:bullet[2]:required[0]:achievement-framing",
-          "kind": "achievement_framing",
-          "originalText": "  Worked   on synthetic queues  ",
-          "proposedText": null,
-          "canApply": false,
-          "source": {
-            "sourceId": "profile:v19:experience[0]:bullet[2]",
-            "identityKind": "snapshot_bullet",
-            "excerpt": "  Worked   on synthetic queues  ",
-            "fieldPath": "profile.resume.experience_entries[0].bullets[2]",
-            "experienceId": "later-pin-key",
-            "experienceTitle": "Synthetic Engineer",
-            "experienceCompany": "Synthetic Co",
-            "bulletIndex": 2,
-            "requiredBulletIndex": 0
-          }
-        },
-        {
-          "id": "profile:v19:experience[0]:bullet[2]:required[0]:missing-evidence",
-          "kind": "missing_evidence",
-          "originalText": "  Worked   on synthetic queues  ",
-          "proposedText": null,
-          "canApply": false,
-          "source": {
-            "sourceId": "profile:v19:experience[0]:bullet[2]",
-            "identityKind": "snapshot_bullet",
-            "excerpt": "  Worked   on synthetic queues  ",
-            "fieldPath": "profile.resume.experience_entries[0].bullets[2]",
-            "experienceId": "later-pin-key",
-            "experienceTitle": "Synthetic Engineer",
-            "experienceCompany": "Synthetic Co",
-            "bulletIndex": 2,
-            "requiredBulletIndex": 0
-          }
-        },
-        {
-          "id": "profile:v19:experience[0]:bullet[1]:required[1]:achievement-framing",
-          "kind": "achievement_framing",
-          "originalText": "Managed 10 projects,",
-          "proposedText": null,
-          "canApply": false,
-          "source": {
-            "sourceId": "profile:v19:experience[0]:bullet[1]",
-            "identityKind": "snapshot_bullet",
-            "excerpt": "Managed 10 projects,",
-            "fieldPath": "profile.resume.experience_entries[0].bullets[1]",
-            "experienceId": "later-pin-key",
-            "experienceTitle": "Synthetic Engineer",
-            "experienceCompany": "Synthetic Co",
-            "bulletIndex": 1,
-            "requiredBulletIndex": 1
-          }
-        },
-        {
-          "id": "profile:v19:experience[0]:bullet[1]:required[1]:missing-evidence",
-          "kind": "missing_evidence",
-          "originalText": "Managed 10 projects,",
-          "proposedText": null,
-          "canApply": false,
-          "source": {
-            "sourceId": "profile:v19:experience[0]:bullet[1]",
-            "identityKind": "snapshot_bullet",
-            "excerpt": "Managed 10 projects,",
-            "fieldPath": "profile.resume.experience_entries[0].bullets[1]",
-            "experienceId": "later-pin-key",
-            "experienceTitle": "Synthetic Engineer",
-            "experienceCompany": "Synthetic Co",
-            "bulletIndex": 1,
-            "requiredBulletIndex": 1
-          }
-        },
-        {
-          "id": "profile:v19:experience[1]:bullet[0]:required[0]:achievement-framing",
-          "kind": "achievement_framing",
-          "originalText": "Delivered synthetic service.",
-          "proposedText": null,
-          "canApply": false,
-          "source": {
-            "sourceId": "profile:v19:experience[1]:bullet[0]",
-            "identityKind": "snapshot_bullet",
-            "excerpt": "Delivered synthetic service.",
-            "fieldPath": "profile.resume.experience_entries[1].bullets[0]",
-            "experienceId": "earlier-pin-key",
-            "experienceTitle": "Synthetic Engineer",
-            "experienceCompany": "Synthetic Co",
-            "bulletIndex": 0,
-            "requiredBulletIndex": 0
-          }
-        },
-        {
-          "id": "profile:v19:experience[1]:bullet[0]:required[0]:missing-evidence",
-          "kind": "missing_evidence",
-          "originalText": "Delivered synthetic service.",
-          "proposedText": null,
-          "canApply": false,
-          "source": {
-            "sourceId": "profile:v19:experience[1]:bullet[0]",
-            "identityKind": "snapshot_bullet",
-            "excerpt": "Delivered synthetic service.",
-            "fieldPath": "profile.resume.experience_entries[1].bullets[0]",
-            "experienceId": "earlier-pin-key",
-            "experienceTitle": "Synthetic Engineer",
-            "experienceCompany": "Synthetic Co",
-            "bulletIndex": 0,
-            "requiredBulletIndex": 0
-          }
         }
       ]
-    }
+    },
+    "judgments": [
+      {
+        "reference": "profile:v19:experience[0]:bullet[2]:required[0]",
+        "kind": "grammar",
+        "guidance": "Review the spacing in this saved bullet.",
+        "proposedText": "Worked on synthetic queues"
+      }
+    ]
   },
   {
     "name": "verified action count with contextual outcome still needs a result",
@@ -612,27 +426,9 @@
     "maximumSuggestions": 24,
     "expected": {
       "truncated": false,
-      "suggestions": [
-        {
-          "id": "profile:v5:experience[0]:bullet[0]:required[0]:achievement-framing",
-          "kind": "achievement_framing",
-          "originalText": "Improved 10 dashboards.",
-          "proposedText": null,
-          "canApply": false,
-          "source": {
-            "sourceId": "achievement-1",
-            "identityKind": "canonical_achievement",
-            "excerpt": "Improved 10 dashboards.",
-            "fieldPath": "profile.resume.experience_entries[0].bullets[0]",
-            "experienceId": "exp-1",
-            "experienceTitle": "Synthetic Engineer",
-            "experienceCompany": "Synthetic Co",
-            "bulletIndex": 0,
-            "requiredBulletIndex": 0
-          }
-        }
-      ]
-    }
+      "suggestions": []
+    },
+    "judgments": []
   },
   {
     "name": "bare quantity cannot turn an action into a result",
@@ -673,27 +469,9 @@
     "maximumSuggestions": 24,
     "expected": {
       "truncated": false,
-      "suggestions": [
-        {
-          "id": "profile:v5:experience[0]:bullet[0]:required[0]:achievement-framing",
-          "kind": "achievement_framing",
-          "originalText": "Improved 10 dashboards.",
-          "proposedText": null,
-          "canApply": false,
-          "source": {
-            "sourceId": "achievement-1",
-            "identityKind": "canonical_achievement",
-            "excerpt": "Improved 10 dashboards.",
-            "fieldPath": "profile.resume.experience_entries[0].bullets[0]",
-            "experienceId": "exp-1",
-            "experienceTitle": "Synthetic Engineer",
-            "experienceCompany": "Synthetic Co",
-            "bulletIndex": 0,
-            "requiredBulletIndex": 0
-          }
-        }
-      ]
-    }
+      "suggestions": []
+    },
+    "judgments": []
   },
   {
     "name": "verified independent result measure resolves framing",
@@ -735,7 +513,8 @@
     "expected": {
       "truncated": false,
       "suggestions": []
-    }
+    },
+    "judgments": []
   },
   {
     "name": "verified confirmed bare measure binds to a result source",
@@ -777,7 +556,8 @@
     "expected": {
       "truncated": false,
       "suggestions": []
-    }
+    },
+    "judgments": []
   },
   {
     "name": "supported measured restatement still needs verification ",
@@ -818,27 +598,9 @@
     "maximumSuggestions": 24,
     "expected": {
       "truncated": false,
-      "suggestions": [
-        {
-          "id": "profile:v5:experience[0]:bullet[0]:required[0]:missing-evidence",
-          "kind": "missing_evidence",
-          "originalText": "Reduced deployment time by 40%.",
-          "proposedText": null,
-          "canApply": false,
-          "source": {
-            "sourceId": "achievement-1",
-            "identityKind": "canonical_achievement",
-            "excerpt": "Reduced deployment time by 40%.",
-            "fieldPath": "profile.resume.experience_entries[0].bullets[0]",
-            "experienceId": "exp-1",
-            "experienceTitle": "Synthetic Engineer",
-            "experienceCompany": "Synthetic Co",
-            "bulletIndex": 0,
-            "requiredBulletIndex": 0
-          }
-        }
-      ]
-    }
+      "suggestions": []
+    },
+    "judgments": []
   },
   {
     "name": "a stated qualitative result needs no invented second outcome",
@@ -878,7 +640,8 @@
     "expected": {
       "truncated": false,
       "suggestions": []
-    }
+    },
+    "judgments": []
   },
   {
     "name": "plural possessive and changed result verb do not verify the stated result",
@@ -917,27 +680,9 @@
     "maximumSuggestions": 24,
     "expected": {
       "truncated": false,
-      "suggestions": [
-        {
-          "id": "profile:v5:experience[0]:bullet[0]:required[0]:missing-evidence",
-          "kind": "missing_evidence",
-          "originalText": "Reduced process latency.",
-          "proposedText": null,
-          "canApply": false,
-          "source": {
-            "sourceId": "achievement-1",
-            "identityKind": "canonical_achievement",
-            "excerpt": "Reduced process latency.",
-            "fieldPath": "profile.resume.experience_entries[0].bullets[0]",
-            "experienceId": "exp-1",
-            "experienceTitle": "Synthetic Engineer",
-            "experienceCompany": "Synthetic Co",
-            "bulletIndex": 0,
-            "requiredBulletIndex": 0
-          }
-        }
-      ]
-    }
+      "suggestions": []
+    },
+    "judgments": []
   },
   {
     "name": "verified novel outcome resolves both questions",
@@ -977,7 +722,8 @@
     "expected": {
       "truncated": false,
       "suggestions": []
-    }
+    },
+    "judgments": []
   },
   {
     "name": "supported novel outcome still requires verification",
@@ -1016,27 +762,9 @@
     "maximumSuggestions": 24,
     "expected": {
       "truncated": false,
-      "suggestions": [
-        {
-          "id": "profile:v5:experience[0]:bullet[0]:required[0]:missing-evidence",
-          "kind": "missing_evidence",
-          "originalText": "Built synthetic service.",
-          "proposedText": null,
-          "canApply": false,
-          "source": {
-            "sourceId": "achievement-1",
-            "identityKind": "canonical_achievement",
-            "excerpt": "Built synthetic service.",
-            "fieldPath": "profile.resume.experience_entries[0].bullets[0]",
-            "experienceId": "exp-1",
-            "experienceTitle": "Synthetic Engineer",
-            "experienceCompany": "Synthetic Co",
-            "bulletIndex": 0,
-            "requiredBulletIndex": 0
-          }
-        }
-      ]
-    }
+      "suggestions": []
+    },
+    "judgments": []
   },
   {
     "name": "draft novel outcome still requires confirmation",
@@ -1075,27 +803,9 @@
     "maximumSuggestions": 24,
     "expected": {
       "truncated": false,
-      "suggestions": [
-        {
-          "id": "profile:v5:experience[0]:bullet[0]:required[0]:missing-evidence",
-          "kind": "missing_evidence",
-          "originalText": "Built synthetic service.",
-          "proposedText": null,
-          "canApply": false,
-          "source": {
-            "sourceId": "achievement-1",
-            "identityKind": "canonical_achievement",
-            "excerpt": "Built synthetic service.",
-            "fieldPath": "profile.resume.experience_entries[0].bullets[0]",
-            "experienceId": "exp-1",
-            "experienceTitle": "Synthetic Engineer",
-            "experienceCompany": "Synthetic Co",
-            "bulletIndex": 0,
-            "requiredBulletIndex": 0
-          }
-        }
-      ]
-    }
+      "suggestions": []
+    },
+    "judgments": []
   },
   {
     "name": "inferred novel outcome still requires confirmation",
@@ -1134,27 +844,9 @@
     "maximumSuggestions": 24,
     "expected": {
       "truncated": false,
-      "suggestions": [
-        {
-          "id": "profile:v5:experience[0]:bullet[0]:required[0]:missing-evidence",
-          "kind": "missing_evidence",
-          "originalText": "Built synthetic service.",
-          "proposedText": null,
-          "canApply": false,
-          "source": {
-            "sourceId": "achievement-1",
-            "identityKind": "canonical_achievement",
-            "excerpt": "Built synthetic service.",
-            "fieldPath": "profile.resume.experience_entries[0].bullets[0]",
-            "experienceId": "exp-1",
-            "experienceTitle": "Synthetic Engineer",
-            "experienceCompany": "Synthetic Co",
-            "bulletIndex": 0,
-            "requiredBulletIndex": 0
-          }
-        }
-      ]
-    }
+      "suggestions": []
+    },
+    "judgments": []
   },
   {
     "name": "verified unconfirmed outcome still needs user confirmation",
@@ -1193,27 +885,9 @@
     "maximumSuggestions": 24,
     "expected": {
       "truncated": false,
-      "suggestions": [
-        {
-          "id": "profile:v5:experience[0]:bullet[0]:required[0]:missing-evidence",
-          "kind": "missing_evidence",
-          "originalText": "Built synthetic service.",
-          "proposedText": null,
-          "canApply": false,
-          "source": {
-            "sourceId": "achievement-1",
-            "identityKind": "canonical_achievement",
-            "excerpt": "Built synthetic service.",
-            "fieldPath": "profile.resume.experience_entries[0].bullets[0]",
-            "experienceId": "exp-1",
-            "experienceTitle": "Synthetic Engineer",
-            "experienceCompany": "Synthetic Co",
-            "bulletIndex": 0,
-            "requiredBulletIndex": 0
-          }
-        }
-      ]
-    }
+      "suggestions": []
+    },
+    "judgments": []
   },
   {
     "name": "duplicate experience identities are skipped",
@@ -1254,7 +928,8 @@
     "expected": {
       "truncated": false,
       "suggestions": []
-    }
+    },
+    "judgments": []
   },
   {
     "name": "duplicate bullet occurrences are skipped",
@@ -1286,7 +961,8 @@
     "expected": {
       "truncated": false,
       "suggestions": []
-    }
+    },
+    "judgments": []
   },
   {
     "name": "duplicate Required pins are skipped",
@@ -1318,7 +994,8 @@
     "expected": {
       "truncated": false,
       "suggestions": []
-    }
+    },
+    "judgments": []
   },
   {
     "name": "multiple normalized evidence matches cannot choose an identity",
@@ -1383,45 +1060,17 @@
             "bulletIndex": 0,
             "requiredBulletIndex": 0
           }
-        },
-        {
-          "id": "profile:v7:experience[0]:bullet[0]:required[0]:achievement-framing",
-          "kind": "achievement_framing",
-          "originalText": "  Built   synthetic queues  ",
-          "proposedText": null,
-          "canApply": false,
-          "source": {
-            "sourceId": "profile:v7:experience[0]:bullet[0]",
-            "identityKind": "snapshot_bullet",
-            "excerpt": "  Built   synthetic queues  ",
-            "fieldPath": "profile.resume.experience_entries[0].bullets[0]",
-            "experienceId": "exp-1",
-            "experienceTitle": "Synthetic Engineer",
-            "experienceCompany": "Synthetic Co",
-            "bulletIndex": 0,
-            "requiredBulletIndex": 0
-          }
-        },
-        {
-          "id": "profile:v7:experience[0]:bullet[0]:required[0]:missing-evidence",
-          "kind": "missing_evidence",
-          "originalText": "  Built   synthetic queues  ",
-          "proposedText": null,
-          "canApply": false,
-          "source": {
-            "sourceId": "profile:v7:experience[0]:bullet[0]",
-            "identityKind": "snapshot_bullet",
-            "excerpt": "  Built   synthetic queues  ",
-            "fieldPath": "profile.resume.experience_entries[0].bullets[0]",
-            "experienceId": "exp-1",
-            "experienceTitle": "Synthetic Engineer",
-            "experienceCompany": "Synthetic Co",
-            "bulletIndex": 0,
-            "requiredBulletIndex": 0
-          }
         }
       ]
-    }
+    },
+    "judgments": [
+      {
+        "reference": "profile:v7:experience[0]:bullet[0]:required[0]",
+        "kind": "grammar",
+        "guidance": "Review the spacing in this saved bullet.",
+        "proposedText": null
+      }
+    ]
   },
   {
     "name": "blank matching evidence still counts in ambiguity",
@@ -1486,45 +1135,17 @@
             "bulletIndex": 0,
             "requiredBulletIndex": 0
           }
-        },
-        {
-          "id": "profile:v7:experience[0]:bullet[0]:required[0]:achievement-framing",
-          "kind": "achievement_framing",
-          "originalText": "  Built   synthetic queues  ",
-          "proposedText": null,
-          "canApply": false,
-          "source": {
-            "sourceId": "profile:v7:experience[0]:bullet[0]",
-            "identityKind": "snapshot_bullet",
-            "excerpt": "  Built   synthetic queues  ",
-            "fieldPath": "profile.resume.experience_entries[0].bullets[0]",
-            "experienceId": "exp-1",
-            "experienceTitle": "Synthetic Engineer",
-            "experienceCompany": "Synthetic Co",
-            "bulletIndex": 0,
-            "requiredBulletIndex": 0
-          }
-        },
-        {
-          "id": "profile:v7:experience[0]:bullet[0]:required[0]:missing-evidence",
-          "kind": "missing_evidence",
-          "originalText": "  Built   synthetic queues  ",
-          "proposedText": null,
-          "canApply": false,
-          "source": {
-            "sourceId": "profile:v7:experience[0]:bullet[0]",
-            "identityKind": "snapshot_bullet",
-            "excerpt": "  Built   synthetic queues  ",
-            "fieldPath": "profile.resume.experience_entries[0].bullets[0]",
-            "experienceId": "exp-1",
-            "experienceTitle": "Synthetic Engineer",
-            "experienceCompany": "Synthetic Co",
-            "bulletIndex": 0,
-            "requiredBulletIndex": 0
-          }
         }
       ]
-    }
+    },
+    "judgments": [
+      {
+        "reference": "profile:v7:experience[0]:bullet[0]:required[0]",
+        "kind": "grammar",
+        "guidance": "Review the spacing in this saved bullet.",
+        "proposedText": null
+      }
+    ]
   },
   {
     "name": "a lone blank achievement identity is unsafe",
@@ -1581,45 +1202,17 @@
             "bulletIndex": 0,
             "requiredBulletIndex": 0
           }
-        },
-        {
-          "id": "profile:v7:experience[0]:bullet[0]:required[0]:achievement-framing",
-          "kind": "achievement_framing",
-          "originalText": "  Built   synthetic queues  ",
-          "proposedText": null,
-          "canApply": false,
-          "source": {
-            "sourceId": "profile:v7:experience[0]:bullet[0]",
-            "identityKind": "snapshot_bullet",
-            "excerpt": "  Built   synthetic queues  ",
-            "fieldPath": "profile.resume.experience_entries[0].bullets[0]",
-            "experienceId": "exp-1",
-            "experienceTitle": "Synthetic Engineer",
-            "experienceCompany": "Synthetic Co",
-            "bulletIndex": 0,
-            "requiredBulletIndex": 0
-          }
-        },
-        {
-          "id": "profile:v7:experience[0]:bullet[0]:required[0]:missing-evidence",
-          "kind": "missing_evidence",
-          "originalText": "  Built   synthetic queues  ",
-          "proposedText": null,
-          "canApply": false,
-          "source": {
-            "sourceId": "profile:v7:experience[0]:bullet[0]",
-            "identityKind": "snapshot_bullet",
-            "excerpt": "  Built   synthetic queues  ",
-            "fieldPath": "profile.resume.experience_entries[0].bullets[0]",
-            "experienceId": "exp-1",
-            "experienceTitle": "Synthetic Engineer",
-            "experienceCompany": "Synthetic Co",
-            "bulletIndex": 0,
-            "requiredBulletIndex": 0
-          }
         }
       ]
-    }
+    },
+    "judgments": [
+      {
+        "reference": "profile:v7:experience[0]:bullet[0]:required[0]",
+        "kind": "grammar",
+        "guidance": "Review the spacing in this saved bullet.",
+        "proposedText": null
+      }
+    ]
   },
   {
     "name": "raw overlong padded achievement identity is unsafe",
@@ -1676,45 +1269,17 @@
             "bulletIndex": 0,
             "requiredBulletIndex": 0
           }
-        },
-        {
-          "id": "profile:v7:experience[0]:bullet[0]:required[0]:achievement-framing",
-          "kind": "achievement_framing",
-          "originalText": "  Built   synthetic queues  ",
-          "proposedText": null,
-          "canApply": false,
-          "source": {
-            "sourceId": "profile:v7:experience[0]:bullet[0]",
-            "identityKind": "snapshot_bullet",
-            "excerpt": "  Built   synthetic queues  ",
-            "fieldPath": "profile.resume.experience_entries[0].bullets[0]",
-            "experienceId": "exp-1",
-            "experienceTitle": "Synthetic Engineer",
-            "experienceCompany": "Synthetic Co",
-            "bulletIndex": 0,
-            "requiredBulletIndex": 0
-          }
-        },
-        {
-          "id": "profile:v7:experience[0]:bullet[0]:required[0]:missing-evidence",
-          "kind": "missing_evidence",
-          "originalText": "  Built   synthetic queues  ",
-          "proposedText": null,
-          "canApply": false,
-          "source": {
-            "sourceId": "profile:v7:experience[0]:bullet[0]",
-            "identityKind": "snapshot_bullet",
-            "excerpt": "  Built   synthetic queues  ",
-            "fieldPath": "profile.resume.experience_entries[0].bullets[0]",
-            "experienceId": "exp-1",
-            "experienceTitle": "Synthetic Engineer",
-            "experienceCompany": "Synthetic Co",
-            "bulletIndex": 0,
-            "requiredBulletIndex": 0
-          }
         }
       ]
-    }
+    },
+    "judgments": [
+      {
+        "reference": "profile:v7:experience[0]:bullet[0]:required[0]",
+        "kind": "grammar",
+        "guidance": "Review the spacing in this saved bullet.",
+        "proposedText": null
+      }
+    ]
   },
   {
     "name": "achievement identity reused across entries is unsafe",
@@ -1789,45 +1354,17 @@
             "bulletIndex": 0,
             "requiredBulletIndex": 0
           }
-        },
-        {
-          "id": "profile:v7:experience[0]:bullet[0]:required[0]:achievement-framing",
-          "kind": "achievement_framing",
-          "originalText": "  Built   synthetic queues  ",
-          "proposedText": null,
-          "canApply": false,
-          "source": {
-            "sourceId": "profile:v7:experience[0]:bullet[0]",
-            "identityKind": "snapshot_bullet",
-            "excerpt": "  Built   synthetic queues  ",
-            "fieldPath": "profile.resume.experience_entries[0].bullets[0]",
-            "experienceId": "exp-1",
-            "experienceTitle": "Synthetic Engineer",
-            "experienceCompany": "Synthetic Co",
-            "bulletIndex": 0,
-            "requiredBulletIndex": 0
-          }
-        },
-        {
-          "id": "profile:v7:experience[0]:bullet[0]:required[0]:missing-evidence",
-          "kind": "missing_evidence",
-          "originalText": "  Built   synthetic queues  ",
-          "proposedText": null,
-          "canApply": false,
-          "source": {
-            "sourceId": "profile:v7:experience[0]:bullet[0]",
-            "identityKind": "snapshot_bullet",
-            "excerpt": "  Built   synthetic queues  ",
-            "fieldPath": "profile.resume.experience_entries[0].bullets[0]",
-            "experienceId": "exp-1",
-            "experienceTitle": "Synthetic Engineer",
-            "experienceCompany": "Synthetic Co",
-            "bulletIndex": 0,
-            "requiredBulletIndex": 0
-          }
         }
       ]
-    }
+    },
+    "judgments": [
+      {
+        "reference": "profile:v7:experience[0]:bullet[0]:required[0]",
+        "kind": "grammar",
+        "guidance": "Review the spacing in this saved bullet.",
+        "proposedText": null
+      }
+    ]
   },
   {
     "name": "cleanup collision with a saved bullet is non-applicable",
@@ -1876,45 +1413,17 @@
             "bulletIndex": 0,
             "requiredBulletIndex": 0
           }
-        },
-        {
-          "id": "profile:v7:experience[0]:bullet[0]:required[0]:achievement-framing",
-          "kind": "achievement_framing",
-          "originalText": "  Worked   on synthetic queues  ",
-          "proposedText": null,
-          "canApply": false,
-          "source": {
-            "sourceId": "profile:v7:experience[0]:bullet[0]",
-            "identityKind": "snapshot_bullet",
-            "excerpt": "  Worked   on synthetic queues  ",
-            "fieldPath": "profile.resume.experience_entries[0].bullets[0]",
-            "experienceId": "exp-1",
-            "experienceTitle": "Synthetic Engineer",
-            "experienceCompany": "Synthetic Co",
-            "bulletIndex": 0,
-            "requiredBulletIndex": 0
-          }
-        },
-        {
-          "id": "profile:v7:experience[0]:bullet[0]:required[0]:missing-evidence",
-          "kind": "missing_evidence",
-          "originalText": "  Worked   on synthetic queues  ",
-          "proposedText": null,
-          "canApply": false,
-          "source": {
-            "sourceId": "profile:v7:experience[0]:bullet[0]",
-            "identityKind": "snapshot_bullet",
-            "excerpt": "  Worked   on synthetic queues  ",
-            "fieldPath": "profile.resume.experience_entries[0].bullets[0]",
-            "experienceId": "exp-1",
-            "experienceTitle": "Synthetic Engineer",
-            "experienceCompany": "Synthetic Co",
-            "bulletIndex": 0,
-            "requiredBulletIndex": 0
-          }
         }
       ]
-    }
+    },
+    "judgments": [
+      {
+        "reference": "profile:v7:experience[0]:bullet[0]:required[0]",
+        "kind": "grammar",
+        "guidance": "Review the spacing in this saved bullet.",
+        "proposedText": null
+      }
+    ]
   },
   {
     "name": "cleanup collision with a saved pin is non-applicable",
@@ -1963,45 +1472,17 @@
             "bulletIndex": 0,
             "requiredBulletIndex": 0
           }
-        },
-        {
-          "id": "profile:v7:experience[0]:bullet[0]:required[0]:achievement-framing",
-          "kind": "achievement_framing",
-          "originalText": "  Worked   on synthetic queues  ",
-          "proposedText": null,
-          "canApply": false,
-          "source": {
-            "sourceId": "profile:v7:experience[0]:bullet[0]",
-            "identityKind": "snapshot_bullet",
-            "excerpt": "  Worked   on synthetic queues  ",
-            "fieldPath": "profile.resume.experience_entries[0].bullets[0]",
-            "experienceId": "exp-1",
-            "experienceTitle": "Synthetic Engineer",
-            "experienceCompany": "Synthetic Co",
-            "bulletIndex": 0,
-            "requiredBulletIndex": 0
-          }
-        },
-        {
-          "id": "profile:v7:experience[0]:bullet[0]:required[0]:missing-evidence",
-          "kind": "missing_evidence",
-          "originalText": "  Worked   on synthetic queues  ",
-          "proposedText": null,
-          "canApply": false,
-          "source": {
-            "sourceId": "profile:v7:experience[0]:bullet[0]",
-            "identityKind": "snapshot_bullet",
-            "excerpt": "  Worked   on synthetic queues  ",
-            "fieldPath": "profile.resume.experience_entries[0].bullets[0]",
-            "experienceId": "exp-1",
-            "experienceTitle": "Synthetic Engineer",
-            "experienceCompany": "Synthetic Co",
-            "bulletIndex": 0,
-            "requiredBulletIndex": 0
-          }
         }
       ]
-    }
+    },
+    "judgments": [
+      {
+        "reference": "profile:v7:experience[0]:bullet[0]:required[0]",
+        "kind": "grammar",
+        "guidance": "Review the spacing in this saved bullet.",
+        "proposedText": null
+      }
+    ]
   },
   {
     "name": "own reserved keys preserve identity and block proto cleanup",
@@ -2075,83 +1556,11 @@
           }
         },
         {
-          "id": "profile:v7:experience[0]:bullet[0]:required[0]:achievement-framing",
-          "kind": "achievement_framing",
-          "originalText": "  Built   synthetic queues  ",
-          "proposedText": null,
-          "canApply": false,
-          "source": {
-            "sourceId": "profile:v7:experience[0]:bullet[0]",
-            "identityKind": "snapshot_bullet",
-            "excerpt": "  Built   synthetic queues  ",
-            "fieldPath": "profile.resume.experience_entries[0].bullets[0]",
-            "experienceId": "constructor",
-            "experienceTitle": "Synthetic Engineer",
-            "experienceCompany": "Synthetic Co",
-            "bulletIndex": 0,
-            "requiredBulletIndex": 0
-          }
-        },
-        {
-          "id": "profile:v7:experience[0]:bullet[0]:required[0]:missing-evidence",
-          "kind": "missing_evidence",
-          "originalText": "  Built   synthetic queues  ",
-          "proposedText": null,
-          "canApply": false,
-          "source": {
-            "sourceId": "profile:v7:experience[0]:bullet[0]",
-            "identityKind": "snapshot_bullet",
-            "excerpt": "  Built   synthetic queues  ",
-            "fieldPath": "profile.resume.experience_entries[0].bullets[0]",
-            "experienceId": "constructor",
-            "experienceTitle": "Synthetic Engineer",
-            "experienceCompany": "Synthetic Co",
-            "bulletIndex": 0,
-            "requiredBulletIndex": 0
-          }
-        },
-        {
           "id": "profile:v7:experience[1]:bullet[0]:required[0]:grammar",
           "kind": "grammar",
           "originalText": "  Built   synthetic queues  ",
           "proposedText": "Built synthetic queues",
           "canApply": true,
-          "source": {
-            "sourceId": "profile:v7:experience[1]:bullet[0]",
-            "identityKind": "snapshot_bullet",
-            "excerpt": "  Built   synthetic queues  ",
-            "fieldPath": "profile.resume.experience_entries[1].bullets[0]",
-            "experienceId": "toString",
-            "experienceTitle": "Synthetic Engineer",
-            "experienceCompany": "Synthetic Co",
-            "bulletIndex": 0,
-            "requiredBulletIndex": 0
-          }
-        },
-        {
-          "id": "profile:v7:experience[1]:bullet[0]:required[0]:achievement-framing",
-          "kind": "achievement_framing",
-          "originalText": "  Built   synthetic queues  ",
-          "proposedText": null,
-          "canApply": false,
-          "source": {
-            "sourceId": "profile:v7:experience[1]:bullet[0]",
-            "identityKind": "snapshot_bullet",
-            "excerpt": "  Built   synthetic queues  ",
-            "fieldPath": "profile.resume.experience_entries[1].bullets[0]",
-            "experienceId": "toString",
-            "experienceTitle": "Synthetic Engineer",
-            "experienceCompany": "Synthetic Co",
-            "bulletIndex": 0,
-            "requiredBulletIndex": 0
-          }
-        },
-        {
-          "id": "profile:v7:experience[1]:bullet[0]:required[0]:missing-evidence",
-          "kind": "missing_evidence",
-          "originalText": "  Built   synthetic queues  ",
-          "proposedText": null,
-          "canApply": false,
           "source": {
             "sourceId": "profile:v7:experience[1]:bullet[0]",
             "identityKind": "snapshot_bullet",
@@ -2181,45 +1590,29 @@
             "bulletIndex": 0,
             "requiredBulletIndex": 0
           }
-        },
-        {
-          "id": "profile:v7:experience[2]:bullet[0]:required[0]:achievement-framing",
-          "kind": "achievement_framing",
-          "originalText": "  Built   synthetic queues  ",
-          "proposedText": null,
-          "canApply": false,
-          "source": {
-            "sourceId": "profile:v7:experience[2]:bullet[0]",
-            "identityKind": "snapshot_bullet",
-            "excerpt": "  Built   synthetic queues  ",
-            "fieldPath": "profile.resume.experience_entries[2].bullets[0]",
-            "experienceId": "__proto__",
-            "experienceTitle": "Synthetic Engineer",
-            "experienceCompany": "Synthetic Co",
-            "bulletIndex": 0,
-            "requiredBulletIndex": 0
-          }
-        },
-        {
-          "id": "profile:v7:experience[2]:bullet[0]:required[0]:missing-evidence",
-          "kind": "missing_evidence",
-          "originalText": "  Built   synthetic queues  ",
-          "proposedText": null,
-          "canApply": false,
-          "source": {
-            "sourceId": "profile:v7:experience[2]:bullet[0]",
-            "identityKind": "snapshot_bullet",
-            "excerpt": "  Built   synthetic queues  ",
-            "fieldPath": "profile.resume.experience_entries[2].bullets[0]",
-            "experienceId": "__proto__",
-            "experienceTitle": "Synthetic Engineer",
-            "experienceCompany": "Synthetic Co",
-            "bulletIndex": 0,
-            "requiredBulletIndex": 0
-          }
         }
       ]
-    }
+    },
+    "judgments": [
+      {
+        "reference": "profile:v7:experience[0]:bullet[0]:required[0]",
+        "kind": "grammar",
+        "guidance": "Review the spacing in this saved bullet.",
+        "proposedText": "Built synthetic queues"
+      },
+      {
+        "reference": "profile:v7:experience[1]:bullet[0]:required[0]",
+        "kind": "grammar",
+        "guidance": "Review the spacing in this saved bullet.",
+        "proposedText": "Built synthetic queues"
+      },
+      {
+        "reference": "profile:v7:experience[2]:bullet[0]:required[0]",
+        "kind": "grammar",
+        "guidance": "Review the spacing in this saved bullet.",
+        "proposedText": null
+      }
+    ]
   },
   {
     "name": "unpinned reserved keys do not mask a later Required entry",
@@ -2294,45 +1687,17 @@
             "bulletIndex": 0,
             "requiredBulletIndex": 0
           }
-        },
-        {
-          "id": "profile:v7:experience[3]:bullet[0]:required[0]:achievement-framing",
-          "kind": "achievement_framing",
-          "originalText": "  Built   synthetic queues  ",
-          "proposedText": null,
-          "canApply": false,
-          "source": {
-            "sourceId": "profile:v7:experience[3]:bullet[0]",
-            "identityKind": "snapshot_bullet",
-            "excerpt": "  Built   synthetic queues  ",
-            "fieldPath": "profile.resume.experience_entries[3].bullets[0]",
-            "experienceId": "ordinary",
-            "experienceTitle": "Synthetic Engineer",
-            "experienceCompany": "Synthetic Co",
-            "bulletIndex": 0,
-            "requiredBulletIndex": 0
-          }
-        },
-        {
-          "id": "profile:v7:experience[3]:bullet[0]:required[0]:missing-evidence",
-          "kind": "missing_evidence",
-          "originalText": "  Built   synthetic queues  ",
-          "proposedText": null,
-          "canApply": false,
-          "source": {
-            "sourceId": "profile:v7:experience[3]:bullet[0]",
-            "identityKind": "snapshot_bullet",
-            "excerpt": "  Built   synthetic queues  ",
-            "fieldPath": "profile.resume.experience_entries[3].bullets[0]",
-            "experienceId": "ordinary",
-            "experienceTitle": "Synthetic Engineer",
-            "experienceCompany": "Synthetic Co",
-            "bulletIndex": 0,
-            "requiredBulletIndex": 0
-          }
         }
       ]
-    }
+    },
+    "judgments": [
+      {
+        "reference": "profile:v7:experience[3]:bullet[0]:required[0]",
+        "kind": "grammar",
+        "guidance": "Review the spacing in this saved bullet.",
+        "proposedText": "Built synthetic queues"
+      }
+    ]
   },
   {
     "name": "orphan pins make a partial inspection incomplete",
@@ -2383,45 +1748,17 @@
             "bulletIndex": 0,
             "requiredBulletIndex": 0
           }
-        },
-        {
-          "id": "profile:v7:experience[0]:bullet[0]:required[0]:achievement-framing",
-          "kind": "achievement_framing",
-          "originalText": "  Worked   on synthetic queues  ",
-          "proposedText": null,
-          "canApply": false,
-          "source": {
-            "sourceId": "profile:v7:experience[0]:bullet[0]",
-            "identityKind": "snapshot_bullet",
-            "excerpt": "  Worked   on synthetic queues  ",
-            "fieldPath": "profile.resume.experience_entries[0].bullets[0]",
-            "experienceId": "exp-1",
-            "experienceTitle": "Synthetic Engineer",
-            "experienceCompany": "Synthetic Co",
-            "bulletIndex": 0,
-            "requiredBulletIndex": 0
-          }
-        },
-        {
-          "id": "profile:v7:experience[0]:bullet[0]:required[0]:missing-evidence",
-          "kind": "missing_evidence",
-          "originalText": "  Worked   on synthetic queues  ",
-          "proposedText": null,
-          "canApply": false,
-          "source": {
-            "sourceId": "profile:v7:experience[0]:bullet[0]",
-            "identityKind": "snapshot_bullet",
-            "excerpt": "  Worked   on synthetic queues  ",
-            "fieldPath": "profile.resume.experience_entries[0].bullets[0]",
-            "experienceId": "exp-1",
-            "experienceTitle": "Synthetic Engineer",
-            "experienceCompany": "Synthetic Co",
-            "bulletIndex": 0,
-            "requiredBulletIndex": 0
-          }
         }
       ]
-    }
+    },
+    "judgments": [
+      {
+        "reference": "profile:v7:experience[0]:bullet[0]:required[0]",
+        "kind": "grammar",
+        "guidance": "Review the spacing in this saved bullet.",
+        "proposedText": "Worked on synthetic queues"
+      }
+    ]
   },
   {
     "name": "empty orphan pin lists are complete",
@@ -2450,7 +1787,8 @@
     "expected": {
       "truncated": false,
       "suggestions": []
-    }
+    },
+    "judgments": []
   },
   {
     "name": "unmatched overlong Required pins are incomplete",
@@ -2481,7 +1819,8 @@
     "expected": {
       "truncated": true,
       "suggestions": []
-    }
+    },
+    "judgments": []
   },
   {
     "name": "orphan overlong Required pins are incomplete",
@@ -2512,7 +1851,8 @@
     "expected": {
       "truncated": true,
       "suggestions": []
-    }
+    },
+    "judgments": []
   },
   {
     "name": "source excerpt is bounded without changing original or proposed text",
@@ -2560,63 +1900,17 @@
             "bulletIndex": 0,
             "requiredBulletIndex": 0
           }
-        },
-        {
-          "id": "profile:v7:experience[0]:bullet[0]:required[0]:relevance",
-          "kind": "relevance",
-          "originalText": "  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx  ",
-          "proposedText": null,
-          "canApply": false,
-          "source": {
-            "sourceId": "profile:v7:experience[0]:bullet[0]",
-            "identityKind": "snapshot_bullet",
-            "excerpt": "  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx...",
-            "fieldPath": "profile.resume.experience_entries[0].bullets[0]",
-            "experienceId": "exp-1",
-            "experienceTitle": "Synthetic Engineer",
-            "experienceCompany": "Synthetic Co",
-            "bulletIndex": 0,
-            "requiredBulletIndex": 0
-          }
-        },
-        {
-          "id": "profile:v7:experience[0]:bullet[0]:required[0]:achievement-framing",
-          "kind": "achievement_framing",
-          "originalText": "  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx  ",
-          "proposedText": null,
-          "canApply": false,
-          "source": {
-            "sourceId": "profile:v7:experience[0]:bullet[0]",
-            "identityKind": "snapshot_bullet",
-            "excerpt": "  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx...",
-            "fieldPath": "profile.resume.experience_entries[0].bullets[0]",
-            "experienceId": "exp-1",
-            "experienceTitle": "Synthetic Engineer",
-            "experienceCompany": "Synthetic Co",
-            "bulletIndex": 0,
-            "requiredBulletIndex": 0
-          }
-        },
-        {
-          "id": "profile:v7:experience[0]:bullet[0]:required[0]:missing-evidence",
-          "kind": "missing_evidence",
-          "originalText": "  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx  ",
-          "proposedText": null,
-          "canApply": false,
-          "source": {
-            "sourceId": "profile:v7:experience[0]:bullet[0]",
-            "identityKind": "snapshot_bullet",
-            "excerpt": "  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx...",
-            "fieldPath": "profile.resume.experience_entries[0].bullets[0]",
-            "experienceId": "exp-1",
-            "experienceTitle": "Synthetic Engineer",
-            "experienceCompany": "Synthetic Co",
-            "bulletIndex": 0,
-            "requiredBulletIndex": 0
-          }
         }
       ]
-    }
+    },
+    "judgments": [
+      {
+        "reference": "profile:v7:experience[0]:bullet[0]:required[0]",
+        "kind": "grammar",
+        "guidance": "Review the spacing in this saved bullet.",
+        "proposedText": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      }
+    ]
   },
   {
     "name": "review regression: concrete payments result without linked evidence",
@@ -2646,18 +1940,9 @@
     "maximumSuggestions": 24,
     "expected": {
       "truncated": false,
-      "suggestions": [
-        {
-          "kind": "missing_evidence",
-          "canApply": false,
-          "proposedText": null,
-          "source": {
-            "identityKind": "snapshot_bullet",
-            "sourceId": "profile:v7:experience[0]:bullet[0]"
-          }
-        }
-      ]
-    }
+      "suggestions": []
+    },
+    "judgments": []
   },
   {
     "name": "same result with a different opening",
@@ -2687,18 +1972,9 @@
     "maximumSuggestions": 24,
     "expected": {
       "truncated": false,
-      "suggestions": [
-        {
-          "kind": "missing_evidence",
-          "canApply": false,
-          "proposedText": null,
-          "source": {
-            "identityKind": "snapshot_bullet",
-            "sourceId": "profile:v7:experience[0]:bullet[0]"
-          }
-        }
-      ]
-    }
+      "suggestions": []
+    },
+    "judgments": []
   },
   {
     "name": "unlisted result domain is still an outcome",
@@ -2728,18 +2004,9 @@
     "maximumSuggestions": 24,
     "expected": {
       "truncated": false,
-      "suggestions": [
-        {
-          "kind": "missing_evidence",
-          "canApply": false,
-          "proposedText": null,
-          "source": {
-            "identityKind": "snapshot_bullet",
-            "sourceId": "profile:v7:experience[0]:bullet[0]"
-          }
-        }
-      ]
-    }
+      "suggestions": []
+    },
+    "judgments": []
   },
   {
     "name": "qualitative consequence is a result",
@@ -2769,18 +2036,9 @@
     "maximumSuggestions": 24,
     "expected": {
       "truncated": false,
-      "suggestions": [
-        {
-          "kind": "missing_evidence",
-          "canApply": false,
-          "proposedText": null,
-          "source": {
-            "identityKind": "snapshot_bullet",
-            "sourceId": "profile:v7:experience[0]:bullet[0]"
-          }
-        }
-      ]
-    }
+      "suggestions": []
+    },
+    "judgments": []
   },
   {
     "name": "an unlisted vague opening still needs context",
@@ -2810,36 +2068,9 @@
     "maximumSuggestions": 24,
     "expected": {
       "truncated": false,
-      "suggestions": [
-        {
-          "kind": "relevance",
-          "canApply": false,
-          "proposedText": null,
-          "source": {
-            "identityKind": "snapshot_bullet",
-            "sourceId": "profile:v7:experience[0]:bullet[0]"
-          }
-        },
-        {
-          "kind": "achievement_framing",
-          "canApply": false,
-          "proposedText": null,
-          "source": {
-            "identityKind": "snapshot_bullet",
-            "sourceId": "profile:v7:experience[0]:bullet[0]"
-          }
-        },
-        {
-          "kind": "missing_evidence",
-          "canApply": false,
-          "proposedText": null,
-          "source": {
-            "identityKind": "snapshot_bullet",
-            "sourceId": "profile:v7:experience[0]:bullet[0]"
-          }
-        }
-      ]
-    }
+      "suggestions": []
+    },
+    "judgments": []
   },
   {
     "name": "a specific responsibility needs framing but not relevance advice",
@@ -2869,27 +2100,9 @@
     "maximumSuggestions": 24,
     "expected": {
       "truncated": false,
-      "suggestions": [
-        {
-          "kind": "achievement_framing",
-          "canApply": false,
-          "proposedText": null,
-          "source": {
-            "identityKind": "snapshot_bullet",
-            "sourceId": "profile:v7:experience[0]:bullet[0]"
-          }
-        },
-        {
-          "kind": "missing_evidence",
-          "canApply": false,
-          "proposedText": null,
-          "source": {
-            "identityKind": "snapshot_bullet",
-            "sourceId": "profile:v7:experience[0]:bullet[0]"
-          }
-        }
-      ]
-    }
+      "suggestions": []
+    },
+    "judgments": []
   },
   {
     "name": "an activity count does not prove an outcome",
@@ -2919,27 +2132,9 @@
     "maximumSuggestions": 24,
     "expected": {
       "truncated": false,
-      "suggestions": [
-        {
-          "kind": "achievement_framing",
-          "canApply": false,
-          "proposedText": null,
-          "source": {
-            "identityKind": "snapshot_bullet",
-            "sourceId": "profile:v7:experience[0]:bullet[0]"
-          }
-        },
-        {
-          "kind": "missing_evidence",
-          "canApply": false,
-          "proposedText": null,
-          "source": {
-            "identityKind": "snapshot_bullet",
-            "sourceId": "profile:v7:experience[0]:bullet[0]"
-          }
-        }
-      ]
-    }
+      "suggestions": []
+    },
+    "judgments": []
   },
   {
     "name": "a planned improvement is not an achieved result",
@@ -2969,27 +2164,9 @@
     "maximumSuggestions": 24,
     "expected": {
       "truncated": false,
-      "suggestions": [
-        {
-          "kind": "achievement_framing",
-          "canApply": false,
-          "proposedText": null,
-          "source": {
-            "identityKind": "snapshot_bullet",
-            "sourceId": "profile:v7:experience[0]:bullet[0]"
-          }
-        },
-        {
-          "kind": "missing_evidence",
-          "canApply": false,
-          "proposedText": null,
-          "source": {
-            "identityKind": "snapshot_bullet",
-            "sourceId": "profile:v7:experience[0]:bullet[0]"
-          }
-        }
-      ]
-    }
+      "suggestions": []
+    },
+    "judgments": []
   },
   {
     "name": "a negated improvement is not an achieved result",
@@ -3019,26 +2196,8 @@
     "maximumSuggestions": 24,
     "expected": {
       "truncated": false,
-      "suggestions": [
-        {
-          "kind": "achievement_framing",
-          "canApply": false,
-          "proposedText": null,
-          "source": {
-            "identityKind": "snapshot_bullet",
-            "sourceId": "profile:v7:experience[0]:bullet[0]"
-          }
-        },
-        {
-          "kind": "missing_evidence",
-          "canApply": false,
-          "proposedText": null,
-          "source": {
-            "identityKind": "snapshot_bullet",
-            "sourceId": "profile:v7:experience[0]:bullet[0]"
-          }
-        }
-      ]
-    }
+      "suggestions": []
+    },
+    "judgments": []
   }
 ]

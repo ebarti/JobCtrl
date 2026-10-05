@@ -153,23 +153,23 @@ Any fix to evidence, rationale, keywords, persona judgments, or generated-materi
 
 Before claiming "fixed" on these surfaces, add or update a regression fixture that proves the exact invariant the human complained about. Prefer a fixture that reproduces the bad state from canonical data rather than a shallow component snapshot. State what was verified and what was not; do not use "fixed" for cosmetic masking.
 
-Required-bullet coaching has one pure TypeScript owner,
-`packages/domain-types/src/profile/required-bullet-suggestions.ts`, used by
-API and demo, including the cleanup applicability guard used by the Profile form.
-Its shared synthetic JSON fixtures contain explicit expected kinds, ordering,
-source/version bindings, applicability and truncation, without pinning prose or
-phrase-list triggers. A specific stated result must not receive missing-outcome
-or vague-relevance advice because of its opening phrase or absent achievement
-record. Verification remains independent: even a clear result needs verified,
-confirmed evidence. Test action counts, vague objects, and planned/negated results
-as counterexamples. Feed actual policy output into the form and assert Accept
-preserves other bullets/evidence while changing the intended bullet and pin.
-Conformance must be checked against those expectations in each consumer,
-alongside domain immutability/repeatability and raw-length getter guards.
-Exercise both sides of the 256-entry, 4,096-source-row and
-512-Required-occurrence limits; budget rejection must precede row-content
-reads. Follow the [focused commands](../../local-development.md#required-bullet-coaching-verification)
-for policy, adapter, save/event, form/mutation and isolated browser proof.
+Required-bullet findings must come from `LlmPort.chat_json` in
+`domain/profile/required_bullet_coaching.py`. No word lists, opening phrases,
+strength flags or result regexes may independently create/suppress findings.
+Verify identical input can bind different valid model decisions without added
+questions. Inspect the actual minimized prompt for the saved claim and linked
+evidence. Test unavailable/error/invalid model responses with no heuristic
+fallback; failed refreshes preserve the last reviewed output. Worker tests must
+check canonical sources and version before spend, the profile accounting lane,
+strict references/kinds/guidance, and version after the model returns.
+
+Shared TypeScript fixtures cover mechanical source/version binding, whitespace
+applicability, collision/identity safeguards and payload limits, using explicit
+model test doubles. Feed bound output into the real form's Accept path and
+verify the exact saved bullet/pin/version and preserved evidence. The offline
+demo must report coaching unavailable. Follow the
+[focused commands](../../local-development.md#required-bullet-coaching-verification)
+for worker, API, form and isolated browser proof.
 
 For Required-bullet coaching, use an owned saved profile with required and
 optional bullets, a supported metric, and incomplete achievement evidence.
@@ -190,32 +190,11 @@ query snapshot must not offer or perform a rebase. A proposed
 cleanup that would equal another saved bullet or Required pin must not be
 applicable. Rebase a different
 bullet in the same experience entry after a committed write with a lost
-response; keep overlapping or reordered bullet identities blocked. An outcome
-that only changes punctuation and a metric copied from an action count must not
-prove independent evidence. An activity count alone does not state a result. A verified “Improved 10 dashboards”
-with only “10 dashboards” as its metric must still receive framing advice;
-test production and demo parity with a separately measured result. Exercise
-`constructor`, `toString`, and `__proto__` as own saved experience-ID keys,
-including an unpinned key before another valid Required bullet. A saved
-`__proto__` key must not mutate an object prototype or produce an applicable
-profile JSON edit. Bound optional bullet and evidence
-reads before the generator scans them; an over-budget response must report
-truncation, not a clean inspection. Overlong Required bullet text or entry
-source fields must likewise report incomplete inspection. Corrupt exact-schema
-saved rows, including raw non-boolean evidence confirmation and out-of-range
-confidence, must return `422 invalid_saved_profile` without changing the profile.
-An overlong Required pin must report incomplete inspection even when it has no
-matching saved bullet or owning experience entry. A nonempty truncated response
-must not tell users that
-repeating the same request will expose omitted sources. Reordered source claims
-or grammar-only variations must not count as independent outcome evidence.
-Include plural possessives and contextual filler; supported novel outcome
-wording still requires a missing-evidence question unless the canonical
-achievement is verified and user-confirmed. A result already stated in the bullet must not require a second, novel outcome
-just because linked wording adds context such as “during planning”. Planned or
-negated improvements must still receive framing advice; a real result qualified
-by “without increasing errors” must retain its result recognition. Check
-production and demo parity. Hold an accept
+response; keep overlapping or reordered bullet identities blocked.
+Model evaluation cases should distinguish stated results from verification,
+action counts from changed outcomes, and real results from planned or negated
+claims. These are prompt/model evaluation cases, never lexical assertions in
+runtime code. Hold an accept
 pending, advance
 the five-second autosave timer, and prove no second write occurs on either
 success or failure while unrelated draft fields remain. Fence ordinary manual

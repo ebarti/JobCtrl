@@ -35,7 +35,18 @@ const unavailable = async () => {
 };
 const providerDispatcher: JsonRpcDispatcher = {
   call: async (method, params) =>
-    method === RpcMethods.ProfileTargetRoleSuggestions && suggestionRpc
+    method === RpcMethods.ProfileRequiredBulletSuggestions
+      ? {
+          jsonrpc: "2.0", id: 1,
+          // Explicit model test double: this entry point never makes semantic judgments.
+          result: { profileVersion: params.expectedProfileVersion, suggestions: [
+            { reference: (params.sources as Array<{ reference: string }>)[0]!.reference,
+              kind: "grammar", guidance: "Review the repeated spacing in the incident response bullet.", proposedText: "Helped with incident response" },
+            { reference: (params.sources as Array<{ reference: string }>)[0]!.reference,
+              kind: "missing_evidence", guidance: "Which saved incident report supports the incident response claim?", proposedText: null },
+          ] },
+        }
+      : method === RpcMethods.ProfileTargetRoleSuggestions && suggestionRpc
       ? suggestionRpc.call(method, params)
       : method === "browser_capabilities_list"
       ? {

@@ -247,22 +247,15 @@ describe("DemoLocalCommandExecutor", () => {
   it("persists one explicitly accepted coaching cleanup with one ProfileUpdated event and reloads it", async () => {
     const store = new InMemoryDemoWorkspaceStore();
     const { adapter, repository } = await harness(store);
-    const { fixture, original, accepted } = coachingSaveFixture();
+    const { original, accepted } = coachingSaveFixture();
     const saved = await adapter.updateProfile({
       expectedProfileVersion: 1, profileText: JSON.stringify(original),
     });
     const before = repository.snapshotNow();
-    const inspected = await adapter.requiredBulletSuggestions({
-      expectedProfileVersion: saved.profileVersion!, maximumSuggestions: 24,
-    });
-    expect(inspected).toMatchObject(fixture.expected);
-    expect(inspected.suggestions).toHaveLength(fixture.expected.suggestions.length);
-    expect(repository.snapshotNow()).toEqual(before);
-
     // Only an explicit acceptance sends the individually edited profile through
     // the existing fenced writer.
     const result = await adapter.updateProfile({
-      expectedProfileVersion: inspected.profileVersion, profileText: JSON.stringify(accepted),
+      expectedProfileVersion: saved.profileVersion!, profileText: JSON.stringify(accepted),
     });
     const after = repository.snapshotNow();
     expect(result.profile).toEqual(accepted);
@@ -285,7 +278,7 @@ describe("DemoLocalCommandExecutor", () => {
   it("preserves the reviewed profile, Required pin and event history when accepting cleanup cannot persist", async () => {
     const store = new QuotaOnNextTransactionStore();
     const { adapter, repository } = await harness(store);
-    const { fixture, original, accepted } = coachingSaveFixture();
+    const { original, accepted } = coachingSaveFixture();
     const saved = await adapter.updateProfile({
       expectedProfileVersion: 1, profileText: JSON.stringify(original),
     });
@@ -297,9 +290,6 @@ describe("DemoLocalCommandExecutor", () => {
     expect(repository.snapshotNow()).toEqual(before);
     expect(await store.readSnapshot()).toEqual(before);
     expect(await adapter.profile()).toEqual(saved);
-    expect(await adapter.requiredBulletSuggestions({
-      expectedProfileVersion: saved.profileVersion!, maximumSuggestions: 24,
-    })).toMatchObject(fixture.expected);
     expect(repository.snapshotNow()).toEqual(before);
     repository.dispose();
   });
@@ -335,9 +325,6 @@ describe("DemoLocalCommandExecutor", () => {
       expect(after.revision).toBe(before.revision + 1);
       expect(after.eventLog.slice(before.eventLog.length).map((record) => record.event.eventType))
         .toEqual(["ProfileUpdated"]);
-      await expect(adapter.requiredBulletSuggestions({
-        expectedProfileVersion: saved.profileVersion!, maximumSuggestions: 24,
-      })).rejects.toMatchObject({ status: 409, statusText: "stale_profile_version" });
       expect(repository.snapshotNow()).toEqual(after);
       repository.dispose();
     },
@@ -353,13 +340,13 @@ describe("DemoLocalCommandExecutor", () => {
     );
     expect(Object.keys(DEMO_CAPABILITY_MANIFEST)).toHaveLength(143);
     expect(counts).toEqual({
-      browser_local: 99,
+      browser_local: 98,
       simulated_async: 4,
       rehearsed_external: 4,
-      unavailable: 36,
+      unavailable: 37,
     });
     expect(DEMO_CAPABILITY_MANIFEST.requiredBulletSuggestions).toMatchObject({
-      class: "browser_local",
+      class: "unavailable",
     });
   });
 

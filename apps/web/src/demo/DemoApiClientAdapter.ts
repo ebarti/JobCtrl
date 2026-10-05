@@ -1,5 +1,4 @@
 import { JobCtrlApiError } from "@jobctrl/api-client";
-import { generateRequiredBulletSuggestions } from "@jobctrl/domain-types";
 import {
   ActivityListQuerySchema,
   InterviewCatalogSchema,
@@ -13,7 +12,6 @@ import {
   ContactResearchListQuerySchema,
   ENDPOINTS,
   JobListQuerySchema,
-  ProfileSchema,
   WorkflowRunsListQuerySchema,
   compareJobs,
   compareValues,
@@ -558,23 +556,8 @@ export class DemoApiClientAdapter implements ApiClientPort {
   async requiredBulletSuggestions(
     body: RequiredBulletSuggestionRequest,
   ): Promise<RequiredBulletSuggestionResponse> {
-    const profile = await this.read((model) => model.profile.config);
-    if (profile.profileVersion !== body.expectedProfileVersion) {
-      throw new JobCtrlApiError(
-        409,
-        "stale_profile_version",
-        `stale_profile_version: expected ${body.expectedProfileVersion}, current ${profile.profileVersion ?? "none"}`,
-      );
-    }
-    const parsed = ProfileSchema.safeParse(profile.profile);
-    if (!parsed.success) {
-      throw new JobCtrlApiError(422, "invalid_saved_profile", "The saved synthetic profile is invalid.");
-    }
-    return generateRequiredBulletSuggestions(
-      parsed.data,
-      body.expectedProfileVersion,
-      body.maximumSuggestions,
-    );
+    void body;
+    throw new DemoCapabilityError("requiredBulletSuggestions");
   }
 
   profilePreviewPdfUrl(cacheKey?: CacheKey): string {

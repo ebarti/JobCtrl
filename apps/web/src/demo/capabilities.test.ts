@@ -21,7 +21,7 @@ describe("supported public demo scenarios", () => {
     expect(methodsInClass("rehearsed_external")).toEqual([
       "applyJob", "discoverySourcePreview", "markApplied", "openArtifact",
     ]);
-    expect(DEMO_CAPABILITY_MANIFEST.requiredBulletSuggestions.class).toBe("browser_local");
+    expect(DEMO_CAPABILITY_MANIFEST.requiredBulletSuggestions.class).toBe("unavailable");
   });
 
   it("does not expose deferred operations just because the internal scenario engine supports them", async () => {

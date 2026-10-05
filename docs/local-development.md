@@ -615,21 +615,20 @@ for the enforced rules, legitimate infrastructure access, and review limits.
 
 ### Required-bullet coaching verification
 
-The shared browser-safe policy lives in
-`packages/domain-types/src/profile/required-bullet-suggestions.ts`. Its
-synthetic JSON fixtures provide behavior and source-binding expectations for
-the domain, API wire validation and demo adapter, without pinning prose or
-phrase-list triggers. Profile form tests accept real shared-policy output,
-including canonical identities and bounded excerpts. Fixtures cover all four
-kinds, verified/confirmed evidence, action counts versus results, contextual
-and grammatical restatements, duplicates and unusable identities, cleanup
-collisions, reserved own keys, orphan pins, excerpts and output truncation.
-Domain tests also exercise immutability, repeatability and getter guards around
-the 256-entry, 4,096-source-row and 512-Required-occurrence budgets.
+Required-bullet semantic findings live in
+`workers/automation/src/jobctrl/domain/profile/required_bullet_coaching.py` and
+must originate in `LlmPort.chat_json`. Shared TypeScript fixtures cover mechanical
+source binding and safe acceptance using explicit model test doubles. They never
+encode phrase-trigger expectations. Test an identical saved claim with different
+model findings, provider failure without fallback, forged sources, malformed
+output, spend/lane binding and saves during a pending call. Pure tests and stubbed
+browser runs do not prove a real configured provider response; verify that
+separately using only synthetic source facts in an owned QA workspace.
 
 Run these focused checks with prepared workspace dependencies:
 
 ```bash
+UV_EXCLUDE_NEWER=false uv --project workers/automation run --locked --all-extras pytest -q workers/automation/tests/test_required_bullet_coaching.py
 corepack pnpm --filter @jobctrl/domain-types check
 corepack pnpm --filter @jobctrl/domain-types test
 corepack pnpm --filter @jobctrl/contracts check

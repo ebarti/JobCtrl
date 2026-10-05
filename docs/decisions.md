@@ -2555,3 +2555,13 @@ whole window that may contain user-added tabs. Window creation failure fails the
 task without switching acquisition transport. No new extension permission or
 personal-profile copy is needed. Browser fixtures must distinguish Playwright's
 focus emulation from native visibility proof.
+
+## Required-Bullet Coaching Uses LLM Determinations (2026-10-05)
+
+Grammar, relevance, achieved-result framing and evidence support require a
+configured model call. Code owns canonical source binding, payload/identity
+validation, version fencing and safe whitespace acceptance. Provider failures
+remain failures and preserve reviewed output; no lexical or canned-question
+fallback is allowed. The offline demo therefore reports this capability
+unavailable. See [the API contract](api/complete-contract.md) and
+[source ownership](developer/repository-and-ownership-map.md).

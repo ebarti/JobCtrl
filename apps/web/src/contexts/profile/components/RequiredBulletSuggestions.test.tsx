@@ -28,8 +28,8 @@ const response = {
       requiredBulletIndex: 0,
     },
   }],
-  strategy: "deterministic_rules_v1" as const,
-  modelUsed: false as const,
+  strategy: "model_v1" as const,
+  modelUsed: true as const,
   truncated: false,
 };
 
@@ -142,6 +142,23 @@ describe("RequiredBulletSuggestions", () => {
 
     expect(screen.queryByText("Proposed text: “Saved bullet”")).not.toBeInTheDocument();
     expect(onAccept).not.toHaveBeenCalled();
+  });
+
+  it("preserves the last reviewed findings when a model refresh fails", async () => {
+    const user = userEvent.setup();
+    const requiredBulletSuggestions = vi.fn()
+      .mockResolvedValueOnce(response)
+      .mockRejectedValueOnce(new Error("The coaching provider is unavailable"));
+    renderWithProviders(
+      <RequiredBulletSuggestions isDraftClean profileVersion={3} resetToken={0} onAccept={vi.fn()} />,
+      { ports: buildTestPorts({ api: { requiredBulletSuggestions } }) },
+    );
+    await user.click(screen.getByRole("button", { name: "Inspect Required bullets" }));
+    expect(await screen.findByText("Collapse whitespace only.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Inspect Required bullets" }));
+    expect(await screen.findByText("The coaching provider is unavailable")).toBeInTheDocument();
+    expect(screen.getByText("Collapse whitespace only.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Accept" })).toBeEnabled();
   });
 
   it("keeps the manual path open after a failed inspection and allows retry", async () => {

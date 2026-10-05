@@ -63,9 +63,6 @@ export function RequiredBulletSuggestions({
     preserveReviewedAfterFailure.current = false;
     const sequence = requestSequence.current + 1;
     requestSequence.current = sequence;
-    setSuggestions([]);
-    setGeneratedVersion(null);
-    setEmptyMessage("");
     generation.reset();
     try {
       const result = await generation.mutateAsync({
@@ -83,7 +80,7 @@ export function RequiredBulletSuggestions({
       if (result.truncated && result.suggestions.length === 0) {
         setEmptyMessage("Inspection is incomplete: saved Required sources exceed a safe inspection or response limit. Edit them manually; repeating this request on the same saved version may omit the same sources.");
       } else if (result.suggestions.length === 0) {
-        setEmptyMessage("No deterministic coaching suggestions were found for saved Required bullets.");
+        setEmptyMessage(result.modelUsed ? "No coaching findings were returned." : "There are no inspectable saved Required bullets. Review your Required selections in the editor.");
       } else if (result.truncated) {
         setEmptyMessage("Inspection is incomplete. These suggestions cover only part of the saved Required bullets; other sources may exceed a safe limit or the response cap. Review these items and edit omitted bullets manually.");
       }
@@ -125,7 +122,7 @@ export function RequiredBulletSuggestions({
       <CardHeader>
         <CardTitle>Required bullet coaching</CardTitle>
         <CardDescription>
-          Opt in to deterministic checks of saved Required experience bullets. No model or provider is used.
+          Opt in to LLM coaching of saved Required experience bullets. Your configured provider receives these bullets and their linked evidence.
         </CardDescription>
         <CardAction>
           <Button
@@ -171,7 +168,7 @@ export function RequiredBulletSuggestions({
           <div className="flex flex-col gap-3">
             <div className="flex flex-wrap gap-2">
               <Badge variant="category">{suggestion.kind.replace("_", " ")}</Badge>
-              <Badge variant="outline">deterministic · no model</Badge>
+              <Badge variant="outline">LLM coaching</Badge>
               <Badge variant="outline">
                 {suggestion.source.identityKind === "canonical_achievement"
                   ? `Achievement ${suggestion.source.sourceId}`

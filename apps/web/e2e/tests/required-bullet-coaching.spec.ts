@@ -96,8 +96,8 @@ test("Required coaching inspects saved sources, rejects without writes, and acce
   const generated = await generatedResponse.json();
   expect(generated).toMatchObject({
     profileVersion: saved.profileVersion,
-    strategy: "deterministic_rules_v1",
-    modelUsed: false,
+    strategy: "model_v1",
+    modelUsed: true,
     truncated: false,
   });
   expect(generated.suggestions.some((item: { originalText: string }) => item.originalText === optionalBullet)).toBe(false);
@@ -181,7 +181,8 @@ test("cleanup is not applicable when its text already belongs to another saved b
   expect(generated.profileVersion).toBe(version);
   expect(generated.suggestions.find((item: { kind: string }) => item.kind === "grammar"))
     .toMatchObject({ originalText: originalBullet, proposedText: null, canApply: false });
-  await expect(page.getByText(/Whitespace cleanup would duplicate another saved bullet/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Accept", exact: true })).toHaveCount(0);
+  await expect(page.getByText("Review the repeated spacing in the incident response bullet.")).toBeVisible();
   expect(profileEventCount()).toBe(eventsBeforeInspection);
   expect((await (await page.request.get(`${apiOrigin}/v1/profile`)).json()).profileVersion).toBe(version);
 });

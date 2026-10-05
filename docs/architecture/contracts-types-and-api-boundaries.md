@@ -59,15 +59,17 @@ TypeScript vocabulary stays in `domain-types`, while Python aggregates remain
 authoritative for their behavior and invariants. The contract package exposes
 only the wire-safe shapes API consumers need.
 
-Required-bullet coaching and its cleanup applicability guard live in
-`packages/domain-types/src/profile/required-bullet-suggestions.ts`. Its readonly
-input and structural result interfaces are domain policy shapes, without a
-dependency on Zod or contracts. `packages/contracts` owns the corresponding
-`RequiredBulletSuggestionResponseSchema` and inferred wire DTO. The API directly
-imports the domain policy; wire tests check structural assignability and validate
-the actual result with the contract schema. The demo and form consume the same
-policy/guard. A shape change must update both domain interfaces and wire schemas
-and pass these checks; the structural result does not become a second wire owner.
+Required-bullet source preparation, result binding and cleanup applicability
+live in `packages/domain-types/src/profile/required-bullet-suggestions.ts`.
+They share readonly structural inputs/results without runtime I/O or upward
+contract dependencies. `packages/contracts` owns the wire schemas and inferred
+DTOs, including strict model references/kinds/guidance/nullable proposals. The API validates a saved
+snapshot, dispatches the worker and fences the returned version. Python's
+`domain/profile/required_bullet_coaching.py` calls `LlmPort` for all semantic
+findings. Only mechanical source identity, bounds and exact whitespace acceptance
+remain in TypeScript; no adapter determines findings from text heuristics.
+The Profile form consumes the shared acceptance guard. The offline demo marks
+coaching unavailable. Shape changes update structural and wire owners together.
 
 `ApplicationSubmitted` models the existing launcher payload in the shared event
 union: `run_id`, `result: "applied"`, `finished_at`, nullable `duration_ms`,

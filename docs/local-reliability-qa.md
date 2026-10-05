@@ -93,15 +93,15 @@ in the [detailed matrix](developer/qa/complete-checklist.md).
 
 Use the [focused verification commands](local-development.md#required-bullet-coaching-verification)
 and [auditability invariants](developer/qa/regression-catalog.md#auditability-checks)
-for changes to Required-bullet coaching. The domain policy and API/demo
-consumers use one set of synthetic behavior/source-binding fixtures without
-freezing coaching prose. Form tests must feed the real policy output into Accept
-and prove its applicable cleanup is saved with the original version fence.
-Passing pure-policy tests proves deterministic conformance; actual API and
-browser assertions must separately prove saved-version binding, read-only
-inspection/rejection and individually accepted, version-checked persistence.
-Demo command regressions cover durable save/event behavior, failed storage and
-competing save payloads; Profile form/mutation tests cover write coordination.
+for changes to Required-bullet coaching. Require model-call tests that demonstrate
+all findings come from the configured adapter, with no lexical fallback. Source
+fixtures and form tests separately prove canonical binding, exact whitespace
+acceptance, read-only inspection/rejection and individually fenced persistence.
+Exercise malformed/provider failures and concurrent profile saves. A failed
+refresh preserves the reviewed suggestions. The offline demo must report the
+capability unavailable and leave local state untouched. Isolated browser fixtures
+use explicit model test doubles; additionally verify one configured provider call
+with synthetic facts in an owned QA workspace before claiming live model proof.
 Require observed review/QA results and final checks before publication.
 
 ## Discovery Transaction Recovery

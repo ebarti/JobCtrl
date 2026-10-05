@@ -98,6 +98,7 @@ export const RpcMethods = {
   RollbackTailoringPolicy: "rollback_tailoring_policy",
   RenderResumePdf: "render_resume_pdf",
   GmailFeedbackScan: "gmail_feedback_scan",
+  ProfileRequiredBulletSuggestions: "profile_required_bullet_suggestions",
   ProfileTargetRoleSuggestions: "profile_target_role_suggestions",
 } as const;
 export type RpcMethod = (typeof RpcMethods)[keyof typeof RpcMethods];
@@ -122,6 +123,35 @@ export const ProfileTargetRoleSuggestionsParamsSchema = z
 export type ProfileTargetRoleSuggestionsParams = z.infer<
   typeof ProfileTargetRoleSuggestionsParamsSchema
 >;
+
+export const ProfileRequiredBulletSuggestionsParamsSchema = z.object({
+  tenantId: TenantParam,
+  expectedAppDir: z.string().trim().min(1),
+  expectedDbPath: z.string().trim().min(1),
+  expectedProfileVersion: z.number().int().positive(),
+  maximumSuggestions: z.number().int().min(1).max(24),
+  sources: z.array(z.object({
+    reference: z.string().min(1).max(240),
+    originalText: z.string().min(1).max(2_000),
+    experienceTitle: z.string().min(1).max(160),
+    experienceCompany: z.string().min(1).max(160),
+    evidence: z.array(z.object({
+      id: z.string(), source_text: z.string(), metrics: z.array(z.string()), outcome: z.string(),
+      evidence_strength: z.enum(["draft", "inferred", "supported", "verified"]), user_confirmed: z.boolean(),
+    }).strict()),
+  }).strict()).min(1).max(512),
+}).strict().refine((params) => JSON.stringify(params.sources).length <= 32_000, "Coaching sources exceed payload limit");
+export type ProfileRequiredBulletSuggestionsParams = z.infer<typeof ProfileRequiredBulletSuggestionsParamsSchema>;
+
+export const RequiredBulletModelResultSchema = z.object({
+  profileVersion: z.number().int().positive(),
+  suggestions: z.array(z.object({
+    reference: z.string().min(1).max(240),
+    kind: z.enum(["grammar", "relevance", "achievement_framing", "missing_evidence"]),
+    guidance: z.string().trim().min(1).max(500),
+    proposedText: z.string().min(1).max(2_000).nullable(),
+  }).strict()).max(24),
+}).strict();
 
 /* --- complex commands (delegated to Python JSON-RPC / Temporal) ---------- */
 
