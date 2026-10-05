@@ -44,7 +44,7 @@ def _question_candidate(question_id: str, text: str, *, ids: list[str] | None = 
 
 
 def _execute(candidate: dict[str, Any], *, ids: list[str], role: str = "unknown", profile=None, extra: dict[str, Any] | None = None):
-    llm = _FakeLlm([candidate, _judge_pass()])
+    llm = _FakeLlm([*({"items": [item]} for item in candidate["items"]), _judge_pass()])
     repository = _Repository()
     use_case = GenerateInterviewPrepUseCase(repository=repository, llm=llm, catalog=_catalog())
     request = dict(tenant_id=LOCAL_TENANT, job=_job(), profile_snapshot=profile or _profile_snapshot(),
@@ -197,7 +197,7 @@ def test_real_catalog_principle_and_negotiation_generation_without_historical_fa
         _question_candidate("TS09", "Compare requirements, operating costs, alternatives, uncertainty and reversal conditions.")["items"][0],
         _question_candidate("C07", "Ask the employer's budgeted range first; persist through vague answers and clarify base versus total.")["items"][0],
     ]}
-    llm = _FakeLlm([candidate, _judge_pass()])
+    llm = _FakeLlm([*({"items": [item]} for item in candidate["items"]), _judge_pass()])
     outcome = GenerateInterviewPrepUseCase(repository=_Repository(), llm=llm, catalog=catalog).execute(
         tenant_id=LOCAL_TENANT, job=_job(), profile_snapshot=_profile_snapshot(), evidence_entries=(), evidence_gaps=(),
         requirements=(), selection_input={"selectedQuestionIds": ids, "roleLens": "staff_principal", "interviewStage": "technical"})
@@ -206,7 +206,7 @@ def test_real_catalog_principle_and_negotiation_generation_without_historical_fa
     assert [item.question_metadata["answerFormat"] for item in outcome.prep.items] == ["principle", "principle", "negotiation"]
     assert [item.question_metadata["questionId"] for item in outcome.prep.items] == ids
     assert not any(item.evidence_ids for item in outcome.prep.items)
-    assert len(llm.calls) == 2
+    assert len(llm.calls) == len(ids) + 1
 
 
 def test_real_catalog_recruiter_selection_is_format_appropriate_and_legacy_is_bounded() -> None:

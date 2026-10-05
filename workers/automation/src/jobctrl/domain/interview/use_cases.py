@@ -6,7 +6,7 @@ import json
 import logging
 import re
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any, Protocol
 
@@ -121,12 +121,24 @@ class GenerateInterviewPrepUseCase:
         input_warnings = tuple(str(row["inputWarning"]) for row in accepted_materials if row.get("inputWarning"))
 
         try:
-            prompt = question_generation_prompt(cards=cards, plans=plans, context=context,
-                                                job_context=context["jobContext"], employer_context=employer_context,
-                                                requirements=requirements)
-            candidate = self._generate_question_candidate(prompt=prompt, model=model)
-            items = question_items_from_candidate(candidate, cards=cards, plans=plans,
-                                                  selection=selection, requirements=requirements)
+            drafted: list[InterviewPrepItem] = []
+            for card in cards:
+                question_selection = {**selection, "evidenceSelections": [
+                    row for row in selection.get("evidenceSelections", ()) if row["questionId"] == card["id"]]}
+                prompt = question_generation_prompt(cards=(card,), plans=plans, context=context,
+                                                    job_context=context["jobContext"], employer_context=employer_context,
+                                                    requirements=requirements)
+                candidate = self._generate_question_candidate(prompt=prompt, model=model)
+                question_items = question_items_from_candidate(candidate, cards=(card,), plans=plans,
+                                                              selection=question_selection, requirements=requirements)
+                drafted.append(replace(question_items[0], position=len(drafted)))
+                gate = run_question_truthfulness_gates(question_items, profile, target_skill_terms)
+                if gate.status == "failed":
+                    return self._fail(
+                        tenant_id=tenant_id, job_id=job_id, generation=generation, generated_at=generated_at,
+                        model=model_label, reasons=(*gate.fabrication_findings, *gate.grounding_findings),
+                        warnings=input_warnings, origin_run_id=origin_run_id, context=context)
+            items = tuple(drafted)
         except Exception as exc:  # noqa: BLE001
             log.exception("Interview prep candidate generation failed for %s", job_id)
             return self._fail(

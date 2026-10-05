@@ -57,6 +57,7 @@ def test_default_registration_inventory_and_guard_mutation() -> None:
         for entry in json.loads(PYTHON_OBSERVATION.read_text())["inventory"]
     }
     assert inventory == expected_inventory
+    assert inventory["check_posting_availability"] == "workflow"
     assert inventory["provider_models"] == "sync"
     assert inventory["run_stage"] == "workflow"
 

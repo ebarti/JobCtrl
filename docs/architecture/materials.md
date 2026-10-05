@@ -183,6 +183,13 @@ IDs, and bounds are validated before provider spending. Stale selection rejects
 the request while preserving the browser draft for reselection. Notes and new
 recollections cannot enter this accepted-evidence path.
 
+Each selected question is drafted in a separate provider call containing only
+its own selected evidence. The shared profile evidence pool stays in the saved
+audit context, outside drafting prompts. Each draft passes parsing and grounding
+before the next question is sent; one final judge reviews the complete ordered
+preparation. Any failed draft stops the request without promoting partial items
+or replacing accepted preparation and notes.
+
 `question_outline` items retain their
 question/card/rubric bindings, answer format, selection rationale, evidence
 links with direct/transferable scope, structured outline, marked gaps, probes,

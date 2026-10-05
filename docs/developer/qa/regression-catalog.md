@@ -430,6 +430,16 @@ trial artifacts and processes; retain no generated candidate material in Git.
 
 ## Auditability Checks
 
+For interview preparation, replay a request with a supported question, an
+automatic empty question, and an explicitly empty question. Inspect each actual
+model-call prompt: it must contain only that question's selected personal
+evidence, with no shared profile-evidence pool or other question's excerpts.
+Replay ordinary prospective revision guidance and an open target-role
+responsibility question alongside inverses that supply prior authority,
+employers, tools or metrics. Unsupported inverses must fail before the judge;
+accepted preparation and independently revisioned notes must survive the failure.
+Completed-run retries must reuse stored outcomes without new provider calls.
+
 When the human flags a visible defect, especially in review, rationale, audit, evidence, scoring, tailoring, or apply-approval surfaces, treat the screenshot as a symptom, not the bug. Do not start by hiding, filtering, renaming, or moving the displayed value. First state the product invariant the surface is supposed to prove, then trace the value end to end: source input, extraction, profile evidence, selected controls, prompt or deterministic transform, generated artifact, validator/judge output, persistence, projection/API read model, and UI rendering.
 
 For auditability features, every displayed claim must have an explicit source of truth. Before editing code, identify whether the source is canonical user profile data, the job post, score evidence, tailoring policy, generated artifact text/PDF, validator output, judge/adversarial response, event log, projection row, or derived read-model computation. If the correct source is missing, compute or persist the missing audit data at the owning layer; do not remove the UI field just because the current data is embarrassing.

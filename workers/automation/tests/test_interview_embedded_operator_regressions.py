@@ -842,8 +842,8 @@ def test_nonfactual_source_reference_is_rejected_without_relabeling(tmp_path: Pa
         accepted = GenerateInterviewPrepUseCase(repository=repository, llm=_FakeLlm([candidate, _judge_pass()])).execute(
             origin_run_id="compliant-anchor", **request).prep
         assert accepted.status == "accepted"
-        assert accepted.generation_context["model"]["promptVersion"] == "interview-questions-v4"
-        assert accepted.generation_context["model"]["gateVersion"] == "interview-question-grounding-v29"
+        assert accepted.generation_context["model"]["promptVersion"] == "interview-questions-v5"
+        assert accepted.generation_context["model"]["gateVersion"] == "interview-question-grounding-v30"
         invalid = deepcopy(candidate)
         invalid["items"][0]["outline"][1].update(evidence_ids=["ev-platform-latency"], factual_support=support)
         original = deepcopy(invalid)

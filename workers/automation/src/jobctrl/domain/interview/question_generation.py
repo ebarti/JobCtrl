@@ -119,6 +119,7 @@ _EXISTENTIAL_INPUT = re.compile(r"(?i)^\s*(?:is|are)\s+there\b")
 _FUTURE_INPUT = re.compile(r"(?i)\buntil\s*$")
 _INPUT_ACTION = re.compile(r"(?i)^\s+(?:confirm|choose|select|provide|attach)\b")
 _ROLE_EXPECTATION = re.compile(r"(?i)\b(?:role|position|job)\b[^.!?]*\b(?:expect|require|involve|entail|responsibilit)\w*\b")
+_EXPECTED_ROLE_RESPONSIBILITY = re.compile(r"(?i)\b(?:technical\s+)?responsibilities\s+expected\s+of\s+(?:the\s+)?(?:manager|director|executive)\b")
 _DIRECT_PREDICATE = re.compile(r"(?i)^\s*(?:(?:had|have|has|ever|previously|once|would|will|could|might|should)\s+)*$")
 _DEPENDENT_COORDINATION = re.compile(r"(?i)^[ \t]*,?[ \t]*(?:and|or|but)[ \t]*$")
 _QUERY_EMPLOYER = re.compile(r"\b(?:at|for)\s+([A-Z][A-Za-z0-9&.-]*(?:\s+[A-Z][A-Za-z0-9&.-]*)*)")
@@ -213,11 +214,23 @@ def question_generation_prompt(
     context: Mapping[str, Any], job_context: Mapping[str, Any],
     employer_context: Mapping[str, Any] | None, requirements: Sequence[Mapping[str, Any]],
 ) -> str:
-    prompt_context = {key: value for key, value in context.items() if key != "selectedQuestions"}
+    # Persist the complete snapshot, but send only this question's proof to
+    # its drafting call. Profile identity remains available for audit binding.
+    if len(cards) != 1:
+        raise ValueError("question drafting requires one isolated question")
+    prompt_context = {key: value for key, value in context.items() if key not in {"selectedQuestions", "profile"}}
+    prompt_context["profile"] = {key: value for key, value in context["profile"].items() if key != "evidence"}
+    prompt_context["selectedQuestionIds"] = [cards[0]["id"]]
     selection_modes = {row["questionId"]: row["evidenceSelectionMode"] for row in context["selectedQuestions"]}
+    # Fit-report hints can rank evidence before drafting, but cannot supply
+    # personal evidence IDs or rationale to an explicitly empty question.
+    target_requirements = [{key: row[key] for key in ("requirementId", "requirementText", "sourceExcerpt", "tier", "weight")
+                            if key in row} for row in requirements]
+    target_employer = ({**{key: employer_context[key] for key in ("generation", "snapshotHash", "roleFraming", "inferredSeniority")
+                          if key in employer_context}, "requirements": target_requirements} if employer_context else None)
     data = {"generation_context": prompt_context, "job_context": dict(job_context),
-            "employer_analysis": dict(employer_context) if employer_context else None,
-            "requirements": list(requirements),
+            "employer_analysis": target_employer,
+            "requirements": target_requirements,
             "questions": [{"card": card, "selected_evidence": plans[card["id"]],
                            "evidence_selection_mode": selection_modes[card["id"]]} for card in cards]}
     encoded = json.dumps(data, ensure_ascii=False)
@@ -1262,6 +1275,15 @@ def _property_input_binding(
                 and re.fullmatch(r"(?i)\s*if\s+any\s*", text[adjunct.start:adjunct.end])):
             prefix = text[variable.start:variable.end] + " " + prefix
             variable_start = variable.start
+    # A prospective speech act can introduce its own unanswered variable.
+    # Bind that child to its exact input prefix; a modal elsewhere cannot
+    # waive a supplied recommendation or its qualifications.
+    introduction = re.match(
+        r"(?i)\s*(?:i|we|you)\s+(?:would|could|might|should|will)\s+"
+        r"(?:state|explain|clarify|ask)(?:\s+in\s+advance)?\s+(?=what|which|why)", prefix)
+    if introduction:
+        variable_start += introduction.end()
+        prefix = prefix[introduction.end():]
     query = re.fullmatch(
         r"(?i)\s*(?P<variable>(?:what|which)(?:\s+(?:[a-z]+\s+)?[a-z]+)?|why)\s+"
         r"(?:\(\s*if\s+any\s*\)\s+)?"
@@ -2372,6 +2394,7 @@ def _personal_title_findings(
     return [finding for finding in findings if not (neutral_role and finding.kind == "title"
             and (_ROLE_FRAMING.search(proposition.text)
                  or _ROLE_EXPECTATION.search(proposition.text)
+                 or _EXPECTED_ROLE_RESPONSIBILITY.search(proposition.text)
                  or (finding.token.lower() == "manager" and _FIRST_MANAGER_CONTEXT.search(proposition.text))))]
 
 

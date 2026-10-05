@@ -51,12 +51,38 @@ if len(sys.argv) > 3:
     sys.path.append(sys.argv[3])
 import jobctrl
 from jobctrl.domain.interview.catalog import catalog_raw_digest, load_interview_catalog
+from jobctrl.domain.interview.question_generation import (
+    question_generation_prompt, question_items_from_candidate, run_question_truthfulness_gates,
+)
 catalog = load_interview_catalog()
 assert Path(jobctrl.__file__).is_relative_to(Path(sys.argv[1]))
 assert not Path('docs').exists()
 source_root = Path(sys.argv[2]).resolve()
 assert not any(Path(entry).resolve().is_relative_to(source_root) for entry in sys.path)
 assert not any('/plugins/' in entry for entry in sys.path)
+# Execute the repaired boundary from the installed wheel, with the source
+# checkout absent. Another question's synthetic evidence must never be sent.
+card = next(card for card in catalog['questions'] if card['id'] == 'M02')
+context = {'profile': {'profileId': 'default', 'version': 1,
+                      'evidence': [{'evidenceId': 'other-question-sentinel'}]},
+           'selectedQuestionIds': ['B11', 'M02'],
+           'selectedQuestions': [{'questionId': 'M02', 'evidenceSelectionMode': 'user_selected'}]}
+prompt = question_generation_prompt(cards=(card,), plans={'M02': []}, context=context,
+                                    job_context={}, employer_context=None, requirements=())
+assert 'other-question-sentinel' not in prompt
+data = json.loads(prompt.split('CONTEXT:\\n', 1)[1])
+assert data['generation_context']['selectedQuestionIds'] == ['M02']
+candidate = {'items': [{'question_id': 'M02', 'outline': [{
+    'heading': 'Prospective criteria', 'text': 'I would state what evidence would change my recommendation.',
+    'evidence_ids': [], 'factual_support': 'hypothetical'}],
+    'gaps': [{'prompt': 'What is the team context for this role, including the technical responsibilities expected of the manager?',
+              'reason': 'Role expectations remain open.'}], 'probes': []}]}
+selection = {'selectionMode': 'user_selected', 'evidenceSelections': [{'questionId': 'M02', 'evidenceIds': []}]}
+items = question_items_from_candidate(candidate, cards=(card,), plans={'M02': []}, selection=selection, requirements=())
+assert run_question_truthfulness_gates(items, {}, ()).status == 'passed'
+candidate['items'][0]['outline'][0]['text'] = 'My previous role was manager at Acme.'
+items = question_items_from_candidate(candidate, cards=(card,), plans={'M02': []}, selection=selection, requirements=())
+assert run_question_truthfulness_gates(items, {}, ()).status == 'failed'
 print(json.dumps({'rawDigest':catalog_raw_digest(),'catalogDigest':catalog['catalogDigest'],'questionCount':len(catalog['questions']),'loadedFromWheel':True}))
 """
     command = [str(executable), "-I", "-c", script, str(installed), str(source_root)]

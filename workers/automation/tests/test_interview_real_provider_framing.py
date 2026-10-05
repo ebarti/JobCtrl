@@ -1,5 +1,6 @@
 """Bounded hand-authored framing cases from owned synthetic product QA."""
 
+import json
 from pathlib import Path
 
 import pytest
@@ -25,6 +26,9 @@ CASES = [
     ("launch_principle", "TS09", "text", "I would assess whether a design that worked at launch still fits today's constraints."),
     ("launch_question", "TS09", "gap", "If it worked at launch but became expensive two years later, does that make the original decision bad?"),
     ("language_origin", "TS09", "text", "I would compare a tool developed in Python with alternatives."),
+    ("role_responsibilities", "M02", "gap", "What is the team context for this role, including the technical responsibilities expected of the manager?"),
+    ("prospective_revision", "B11", "text", "I would state in advance what evidence would change my recommendation, so revision remains possible."),
+    ("prospective_input", "TS09", "text", "I would explain which option would change my recommendation."),
 ]
 
 
@@ -75,6 +79,10 @@ def test_neutral_roles_open_scope_and_conditional_purpose_are_not_personal_histo
     "I would inspect designs, and I can assess quality because I supervised 50 direct reports.",
     "I would review designs. So I can manage a team of 50 direct reports.",
     "I would compare alternatives. How would you apply your prior experience supervising 50 direct reports at Acme?",
+    "I would state what evidence would change my recommendation from leading 50 direct reports.",
+    "I would state what evidence would change my recommendation based on my prior role at Acme.",
+    "I would state what evidence would change my recommendation. I supervised 50 direct reports.",
+    "What are the technical responsibilities expected of the manager, given your prior role at Acme?",
 ])
 def test_explicit_empty_management_evidence_cannot_borrow_personal_background(tmp_path: Path, phrase: str):
     conn = _init_conn(tmp_path)
@@ -107,18 +115,82 @@ def test_selected_fact_for_one_question_cannot_supply_empty_question_background(
                                 ids=["ev-platform-latency"], support="accepted_profile_fact")["items"][0],
             _candidate("TS09")["items"][0], _candidate("M02")["items"][0],
         ]}
-        accepted = GenerateInterviewPrepUseCase(repository=repository, llm=_FakeLlm([candidate, _judge_pass()])).execute(
+        accepted_llm = _FakeLlm([*({"items": [item]} for item in candidate["items"]), _judge_pass()])
+        accepted = GenerateInterviewPrepUseCase(repository=repository, llm=accepted_llm).execute(
             origin_run_id="question-scoped", **request).prep
         assert accepted.status == "accepted"
         assert [link["evidenceId"] for link in accepted.items[0].question_metadata["evidenceLinks"]] == ["ev-platform-latency"]
         assert accepted.items[2].question_metadata["evidenceLinks"] == []
-        assert accepted.generation_context["model"]["promptVersion"] == "interview-questions-v4"
+        assert [item.position for item in accepted.items] == [0, 1, 2]
+        note = repository.save_note(
+            LOCAL_TENANT, JOB_ID, "M02", expected_revision=0,
+            note_text="Synthetic draft kept across generation failure.", source_generation=accepted.generation,
+            bindings={"contextDigest": accepted.generation_context["contextDigest"],
+                      "catalogBinding": accepted.generation_context["catalogBinding"]})
+        assert accepted.generation_context["model"]["promptVersion"] == "interview-questions-v5"
+        for call, question_id in zip(accepted_llm.calls[:3], ["B11", "TS09", "M02"], strict=True):
+            data = json.loads(call["messages"][1].content.split("CONTEXT:\n", 1)[1])
+            assert data["generation_context"]["selectedQuestionIds"] == [question_id]
+            assert "evidence" not in data["generation_context"]["profile"]
+            assert [row["card"]["id"] for row in data["questions"]] == [question_id]
+            assert [row["evidenceId"] for row in data["questions"][0]["selected_evidence"]] == (
+                ["ev-platform-latency"] if question_id == "B11" else [])
+            if question_id != "B11":
+                assert "ev-platform-latency" not in call["messages"][1].content
+                assert "Reduced API latency" not in call["messages"][1].content
         candidate["items"][2]["outline"][0]["text"] = "My relevant background is API latency optimization using Python."
-        llm = _FakeLlm([candidate, _judge_pass()])
-        outcome = GenerateInterviewPrepUseCase(repository=repository, llm=llm).execute(origin_run_id="cross-question", **request)
+        llm = _FakeLlm([*({"items": [item]} for item in candidate["items"]), _judge_pass()])
+        use_case = GenerateInterviewPrepUseCase(repository=repository, llm=llm)
+        outcome = use_case.execute(origin_run_id="cross-question", **request)
         assert outcome.status == "failed"
-        assert len(llm.calls) == 1
+        assert len(llm.calls) == 3
         assert repository.load_latest(LOCAL_TENANT, JOB_ID).to_read_model() == accepted.to_read_model()
+        assert repository.load_note(LOCAL_TENANT, JOB_ID, "M02") == note
+        retry = use_case.execute(origin_run_id="cross-question", **request)
+        assert retry.prep.to_read_model() == outcome.prep.to_read_model()
+        assert len(llm.calls) == 3
+    finally:
+        close_connection(tmp_path / "jobs.db")
+
+
+def test_empty_question_prompt_excludes_fit_hints_and_employer_personal_rationale(tmp_path: Path):
+    conn = _init_conn(tmp_path)
+    try:
+        request = _request("M02")
+        requirements = [{"requirementId": "role-scope", "requirementText": "Management responsibilities",
+                         "evidenceIds": ["ev-platform-latency"], "rationale": "Reduced API latency by 30% using Python."}]
+        request["requirements"] = requirements
+        request["employer_context"] = {"generation": 1, "snapshotHash": "a" * 64, "roleFraming": "Management responsibilities",
+                                       "inferredSeniority": "manager", "requirements": requirements,
+                                       "personalRationale": "Reduced API latency by 30% using Python."}
+        llm = _FakeLlm([_candidate("M02"), _judge_pass()])
+        result = GenerateInterviewPrepUseCase(repository=SqliteInterviewPrepRepository(conn), llm=llm).execute(**request)
+        assert result.status == "accepted", result.errors
+        prompt = llm.calls[0]["messages"][1].content
+        assert "Management responsibilities" in prompt
+        assert "ev-platform-latency" not in prompt
+        assert "Reduced API latency" not in prompt
+    finally:
+        close_connection(tmp_path / "jobs.db")
+
+
+@pytest.mark.parametrize("wrong_response", ["extra_question", "wrong_question", "borrowed_fact"])
+def test_bad_first_question_stops_before_drafting_peer_or_judging(tmp_path: Path, wrong_response: str):
+    conn = _init_conn(tmp_path)
+    try:
+        request = _request("M02")
+        request["selection_input"]["selectedQuestionIds"] = ["M02", "B11"]
+        candidate = _candidate("M02")
+        if wrong_response == "extra_question":
+            candidate["items"].append(_candidate("B11")["items"][0])
+        elif wrong_response == "wrong_question":
+            candidate["items"][0]["question_id"] = "B11"
+        else:
+            candidate["items"][0]["outline"][0]["text"] = "My prior role was manager at Acme."
+        llm = _FakeLlm([candidate])
+        result = GenerateInterviewPrepUseCase(repository=SqliteInterviewPrepRepository(conn), llm=llm).execute(**request)
+        assert result.status == "failed"
+        assert len(llm.calls) == 1
     finally:
         close_connection(tmp_path / "jobs.db")
 

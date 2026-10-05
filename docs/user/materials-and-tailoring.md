@@ -220,6 +220,11 @@ choice is preserved; JobCtrl does not silently fill it. If the profile changes,
 review and reselect against its current version before generating. Notes and
 new recollections cannot be selected as accepted facts.
 
+Generation drafts each question separately with its selected evidence, then
+reviews the complete preparation. More selected questions mean more provider
+calls. If a question fails its checks, generation stops and keeps your last
+accepted preparation and notes.
+
 Evidence selection precedes prose. Historical answers use relevant accepted
 profile evidence; transferable experience keeps its scope limits. Principle,
 situational, narrative, negotiation, and preference answers use their own
