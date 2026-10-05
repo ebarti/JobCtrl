@@ -47,7 +47,8 @@
             "requiredBulletIndex": 0
           }
         }
-      ]
+      ],
+      "sourceCount": 1
     },
     "judgments": [
       {
@@ -59,7 +60,7 @@
     ]
   },
   {
-    "name": "output truncation keeps the first two suggestions",
+    "name": "model-bound cleanup respects a two-item response capacity",
     "profile": {
       "resume": {
         "experience_entries": [
@@ -86,7 +87,7 @@
     "profileVersion": 7,
     "maximumSuggestions": 2,
     "expected": {
-      "truncated": true,
+      "truncated": false,
       "suggestions": [
         {
           "id": "profile:v7:experience[0]:bullet[0]:required[0]:grammar",
@@ -106,7 +107,8 @@
             "requiredBulletIndex": 0
           }
         }
-      ]
+      ],
+      "sourceCount": 1
     },
     "judgments": [
       {
@@ -118,7 +120,7 @@
     ]
   },
   {
-    "name": "exact output capacity is complete",
+    "name": "model-bound cleanup respects a three-item response capacity",
     "profile": {
       "resume": {
         "experience_entries": [
@@ -165,7 +167,8 @@
             "requiredBulletIndex": 0
           }
         }
-      ]
+      ],
+      "sourceCount": 1
     },
     "judgments": [
       {
@@ -232,7 +235,8 @@
             "requiredBulletIndex": 0
           }
         }
-      ]
+      ],
+      "sourceCount": 1
     },
     "judgments": [
       {
@@ -303,7 +307,8 @@
             "requiredBulletIndex": 0
           }
         }
-      ]
+      ],
+      "sourceCount": 1
     },
     "judgments": [
       {
@@ -376,7 +381,8 @@
             "requiredBulletIndex": 0
           }
         }
-      ]
+      ],
+      "sourceCount": 3
     },
     "judgments": [
       {
@@ -386,508 +392,6 @@
         "proposedText": "Worked on synthetic queues"
       }
     ]
-  },
-  {
-    "name": "verified action count with contextual outcome still needs a result",
-    "profile": {
-      "resume": {
-        "experience_entries": [
-          {
-            "id": "exp-1",
-            "title": "Synthetic Engineer",
-            "company": "Synthetic Co",
-            "bullets": [
-              "Improved 10 dashboards."
-            ],
-            "achievement_evidence": [
-              {
-                "id": "achievement-1",
-                "source_text": "Improved 10 dashboards.",
-                "metrics": [
-                  "10 dashboards"
-                ],
-                "outcome": "Improved 10 dashboards for teams.",
-                "evidence_strength": "verified",
-                "user_confirmed": true
-              }
-            ]
-          }
-        ],
-        "tailoring_rules": {
-          "required_bullets_by_experience_id": {
-            "exp-1": [
-              "Improved 10 dashboards."
-            ]
-          }
-        }
-      }
-    },
-    "profileVersion": 5,
-    "maximumSuggestions": 24,
-    "expected": {
-      "truncated": false,
-      "suggestions": []
-    },
-    "judgments": []
-  },
-  {
-    "name": "bare quantity cannot turn an action into a result",
-    "profile": {
-      "resume": {
-        "experience_entries": [
-          {
-            "id": "exp-1",
-            "title": "Synthetic Engineer",
-            "company": "Synthetic Co",
-            "bullets": [
-              "Improved 10 dashboards."
-            ],
-            "achievement_evidence": [
-              {
-                "id": "achievement-1",
-                "source_text": "Improved 10 dashboards.",
-                "metrics": [
-                  "35%"
-                ],
-                "outcome": "",
-                "evidence_strength": "verified",
-                "user_confirmed": true
-              }
-            ]
-          }
-        ],
-        "tailoring_rules": {
-          "required_bullets_by_experience_id": {
-            "exp-1": [
-              "Improved 10 dashboards."
-            ]
-          }
-        }
-      }
-    },
-    "profileVersion": 5,
-    "maximumSuggestions": 24,
-    "expected": {
-      "truncated": false,
-      "suggestions": []
-    },
-    "judgments": []
-  },
-  {
-    "name": "verified independent result measure resolves framing",
-    "profile": {
-      "resume": {
-        "experience_entries": [
-          {
-            "id": "exp-1",
-            "title": "Synthetic Engineer",
-            "company": "Synthetic Co",
-            "bullets": [
-              "Improved 10 dashboards."
-            ],
-            "achievement_evidence": [
-              {
-                "id": "achievement-1",
-                "source_text": "Improved 10 dashboards.",
-                "metrics": [
-                  "35% latency reduction"
-                ],
-                "outcome": "",
-                "evidence_strength": "verified",
-                "user_confirmed": true
-              }
-            ]
-          }
-        ],
-        "tailoring_rules": {
-          "required_bullets_by_experience_id": {
-            "exp-1": [
-              "Improved 10 dashboards."
-            ]
-          }
-        }
-      }
-    },
-    "profileVersion": 5,
-    "maximumSuggestions": 24,
-    "expected": {
-      "truncated": false,
-      "suggestions": []
-    },
-    "judgments": []
-  },
-  {
-    "name": "verified confirmed bare measure binds to a result source",
-    "profile": {
-      "resume": {
-        "experience_entries": [
-          {
-            "id": "exp-1",
-            "title": "Synthetic Engineer",
-            "company": "Synthetic Co",
-            "bullets": [
-              "Reduced deployment time by 40%."
-            ],
-            "achievement_evidence": [
-              {
-                "id": "achievement-1",
-                "source_text": "Reduced deployment time by 40%.",
-                "metrics": [
-                  "40%"
-                ],
-                "outcome": "Reduced deployment time by 40%.",
-                "evidence_strength": "verified",
-                "user_confirmed": true
-              }
-            ]
-          }
-        ],
-        "tailoring_rules": {
-          "required_bullets_by_experience_id": {
-            "exp-1": [
-              "Reduced deployment time by 40%."
-            ]
-          }
-        }
-      }
-    },
-    "profileVersion": 5,
-    "maximumSuggestions": 24,
-    "expected": {
-      "truncated": false,
-      "suggestions": []
-    },
-    "judgments": []
-  },
-  {
-    "name": "supported measured restatement still needs verification ",
-    "profile": {
-      "resume": {
-        "experience_entries": [
-          {
-            "id": "exp-1",
-            "title": "Synthetic Engineer",
-            "company": "Synthetic Co",
-            "bullets": [
-              "Reduced deployment time by 40%."
-            ],
-            "achievement_evidence": [
-              {
-                "id": "achievement-1",
-                "source_text": "Reduced deployment time by 40%.",
-                "metrics": [
-                  "40%"
-                ],
-                "outcome": "Deployment time was reduced by 40 percent.",
-                "evidence_strength": "supported",
-                "user_confirmed": true
-              }
-            ]
-          }
-        ],
-        "tailoring_rules": {
-          "required_bullets_by_experience_id": {
-            "exp-1": [
-              "Reduced deployment time by 40%."
-            ]
-          }
-        }
-      }
-    },
-    "profileVersion": 5,
-    "maximumSuggestions": 24,
-    "expected": {
-      "truncated": false,
-      "suggestions": []
-    },
-    "judgments": []
-  },
-  {
-    "name": "a stated qualitative result needs no invented second outcome",
-    "profile": {
-      "resume": {
-        "experience_entries": [
-          {
-            "id": "exp-1",
-            "title": "Synthetic Engineer",
-            "company": "Synthetic Co",
-            "bullets": [
-              "Reduced API latency."
-            ],
-            "achievement_evidence": [
-              {
-                "id": "achievement-1",
-                "source_text": "Reduced API latency.",
-                "metrics": [],
-                "outcome": "Reduced API latency during planning.",
-                "evidence_strength": "verified",
-                "user_confirmed": true
-              }
-            ]
-          }
-        ],
-        "tailoring_rules": {
-          "required_bullets_by_experience_id": {
-            "exp-1": [
-              "Reduced API latency."
-            ]
-          }
-        }
-      }
-    },
-    "profileVersion": 5,
-    "maximumSuggestions": 24,
-    "expected": {
-      "truncated": false,
-      "suggestions": []
-    },
-    "judgments": []
-  },
-  {
-    "name": "plural possessive and changed result verb do not verify the stated result",
-    "profile": {
-      "resume": {
-        "experience_entries": [
-          {
-            "id": "exp-1",
-            "title": "Synthetic Engineer",
-            "company": "Synthetic Co",
-            "bullets": [
-              "Reduced process latency."
-            ],
-            "achievement_evidence": [
-              {
-                "id": "achievement-1",
-                "source_text": "Reduced process latency.",
-                "metrics": [],
-                "outcome": "Decreased processes' latency in this role.",
-                "evidence_strength": "supported",
-                "user_confirmed": true
-              }
-            ]
-          }
-        ],
-        "tailoring_rules": {
-          "required_bullets_by_experience_id": {
-            "exp-1": [
-              "Reduced process latency."
-            ]
-          }
-        }
-      }
-    },
-    "profileVersion": 5,
-    "maximumSuggestions": 24,
-    "expected": {
-      "truncated": false,
-      "suggestions": []
-    },
-    "judgments": []
-  },
-  {
-    "name": "verified novel outcome resolves both questions",
-    "profile": {
-      "resume": {
-        "experience_entries": [
-          {
-            "id": "exp-1",
-            "title": "Synthetic Engineer",
-            "company": "Synthetic Co",
-            "bullets": [
-              "Built synthetic service."
-            ],
-            "achievement_evidence": [
-              {
-                "id": "achievement-1",
-                "source_text": "Built synthetic service.",
-                "metrics": [],
-                "outcome": "Improved reliability across the platform.",
-                "evidence_strength": "verified",
-                "user_confirmed": true
-              }
-            ]
-          }
-        ],
-        "tailoring_rules": {
-          "required_bullets_by_experience_id": {
-            "exp-1": [
-              "Built synthetic service."
-            ]
-          }
-        }
-      }
-    },
-    "profileVersion": 5,
-    "maximumSuggestions": 24,
-    "expected": {
-      "truncated": false,
-      "suggestions": []
-    },
-    "judgments": []
-  },
-  {
-    "name": "supported novel outcome still requires verification",
-    "profile": {
-      "resume": {
-        "experience_entries": [
-          {
-            "id": "exp-1",
-            "title": "Synthetic Engineer",
-            "company": "Synthetic Co",
-            "bullets": [
-              "Built synthetic service."
-            ],
-            "achievement_evidence": [
-              {
-                "id": "achievement-1",
-                "source_text": "Built synthetic service.",
-                "metrics": [],
-                "outcome": "Improved reliability across the platform.",
-                "evidence_strength": "supported",
-                "user_confirmed": true
-              }
-            ]
-          }
-        ],
-        "tailoring_rules": {
-          "required_bullets_by_experience_id": {
-            "exp-1": [
-              "Built synthetic service."
-            ]
-          }
-        }
-      }
-    },
-    "profileVersion": 5,
-    "maximumSuggestions": 24,
-    "expected": {
-      "truncated": false,
-      "suggestions": []
-    },
-    "judgments": []
-  },
-  {
-    "name": "draft novel outcome still requires confirmation",
-    "profile": {
-      "resume": {
-        "experience_entries": [
-          {
-            "id": "exp-1",
-            "title": "Synthetic Engineer",
-            "company": "Synthetic Co",
-            "bullets": [
-              "Built synthetic service."
-            ],
-            "achievement_evidence": [
-              {
-                "id": "achievement-1",
-                "source_text": "Built synthetic service.",
-                "metrics": [],
-                "outcome": "Improved reliability across the platform.",
-                "evidence_strength": "draft",
-                "user_confirmed": false
-              }
-            ]
-          }
-        ],
-        "tailoring_rules": {
-          "required_bullets_by_experience_id": {
-            "exp-1": [
-              "Built synthetic service."
-            ]
-          }
-        }
-      }
-    },
-    "profileVersion": 5,
-    "maximumSuggestions": 24,
-    "expected": {
-      "truncated": false,
-      "suggestions": []
-    },
-    "judgments": []
-  },
-  {
-    "name": "inferred novel outcome still requires confirmation",
-    "profile": {
-      "resume": {
-        "experience_entries": [
-          {
-            "id": "exp-1",
-            "title": "Synthetic Engineer",
-            "company": "Synthetic Co",
-            "bullets": [
-              "Built synthetic service."
-            ],
-            "achievement_evidence": [
-              {
-                "id": "achievement-1",
-                "source_text": "Built synthetic service.",
-                "metrics": [],
-                "outcome": "Improved reliability across the platform.",
-                "evidence_strength": "inferred",
-                "user_confirmed": false
-              }
-            ]
-          }
-        ],
-        "tailoring_rules": {
-          "required_bullets_by_experience_id": {
-            "exp-1": [
-              "Built synthetic service."
-            ]
-          }
-        }
-      }
-    },
-    "profileVersion": 5,
-    "maximumSuggestions": 24,
-    "expected": {
-      "truncated": false,
-      "suggestions": []
-    },
-    "judgments": []
-  },
-  {
-    "name": "verified unconfirmed outcome still needs user confirmation",
-    "profile": {
-      "resume": {
-        "experience_entries": [
-          {
-            "id": "exp-1",
-            "title": "Synthetic Engineer",
-            "company": "Synthetic Co",
-            "bullets": [
-              "Built synthetic service."
-            ],
-            "achievement_evidence": [
-              {
-                "id": "achievement-1",
-                "source_text": "Built synthetic service.",
-                "metrics": [],
-                "outcome": "Improved reliability across the platform.",
-                "evidence_strength": "verified",
-                "user_confirmed": false
-              }
-            ]
-          }
-        ],
-        "tailoring_rules": {
-          "required_bullets_by_experience_id": {
-            "exp-1": [
-              "Built synthetic service."
-            ]
-          }
-        }
-      }
-    },
-    "profileVersion": 5,
-    "maximumSuggestions": 24,
-    "expected": {
-      "truncated": false,
-      "suggestions": []
-    },
-    "judgments": []
   },
   {
     "name": "duplicate experience identities are skipped",
@@ -927,7 +431,8 @@
     "maximumSuggestions": 24,
     "expected": {
       "truncated": false,
-      "suggestions": []
+      "suggestions": [],
+      "sourceCount": 0
     },
     "judgments": []
   },
@@ -960,7 +465,8 @@
     "maximumSuggestions": 24,
     "expected": {
       "truncated": false,
-      "suggestions": []
+      "suggestions": [],
+      "sourceCount": 0
     },
     "judgments": []
   },
@@ -993,7 +499,8 @@
     "maximumSuggestions": 24,
     "expected": {
       "truncated": false,
-      "suggestions": []
+      "suggestions": [],
+      "sourceCount": 0
     },
     "judgments": []
   },
@@ -1061,7 +568,8 @@
             "requiredBulletIndex": 0
           }
         }
-      ]
+      ],
+      "sourceCount": 1
     },
     "judgments": [
       {
@@ -1136,7 +644,8 @@
             "requiredBulletIndex": 0
           }
         }
-      ]
+      ],
+      "sourceCount": 1
     },
     "judgments": [
       {
@@ -1203,7 +712,8 @@
             "requiredBulletIndex": 0
           }
         }
-      ]
+      ],
+      "sourceCount": 1
     },
     "judgments": [
       {
@@ -1270,7 +780,8 @@
             "requiredBulletIndex": 0
           }
         }
-      ]
+      ],
+      "sourceCount": 1
     },
     "judgments": [
       {
@@ -1355,7 +866,8 @@
             "requiredBulletIndex": 0
           }
         }
-      ]
+      ],
+      "sourceCount": 1
     },
     "judgments": [
       {
@@ -1414,7 +926,8 @@
             "requiredBulletIndex": 0
           }
         }
-      ]
+      ],
+      "sourceCount": 1
     },
     "judgments": [
       {
@@ -1473,7 +986,8 @@
             "requiredBulletIndex": 0
           }
         }
-      ]
+      ],
+      "sourceCount": 1
     },
     "judgments": [
       {
@@ -1591,7 +1105,8 @@
             "requiredBulletIndex": 0
           }
         }
-      ]
+      ],
+      "sourceCount": 3
     },
     "judgments": [
       {
@@ -1688,7 +1203,8 @@
             "requiredBulletIndex": 0
           }
         }
-      ]
+      ],
+      "sourceCount": 1
     },
     "judgments": [
       {
@@ -1749,7 +1265,8 @@
             "requiredBulletIndex": 0
           }
         }
-      ]
+      ],
+      "sourceCount": 1
     },
     "judgments": [
       {
@@ -1786,7 +1303,8 @@
     "maximumSuggestions": 24,
     "expected": {
       "truncated": false,
-      "suggestions": []
+      "suggestions": [],
+      "sourceCount": 0
     },
     "judgments": []
   },
@@ -1818,7 +1336,8 @@
     "maximumSuggestions": 24,
     "expected": {
       "truncated": true,
-      "suggestions": []
+      "suggestions": [],
+      "sourceCount": 0
     },
     "judgments": []
   },
@@ -1850,7 +1369,8 @@
     "maximumSuggestions": 24,
     "expected": {
       "truncated": true,
-      "suggestions": []
+      "suggestions": [],
+      "sourceCount": 0
     },
     "judgments": []
   },
@@ -1901,7 +1421,8 @@
             "requiredBulletIndex": 0
           }
         }
-      ]
+      ],
+      "sourceCount": 1
     },
     "judgments": [
       {
@@ -1911,293 +1432,5 @@
         "proposedText": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
       }
     ]
-  },
-  {
-    "name": "review regression: concrete payments result without linked evidence",
-    "profile": {
-      "resume": {
-        "experience_entries": [
-          {
-            "id": "exp-1",
-            "title": "Synthetic Engineer",
-            "company": "Synthetic Co",
-            "bullets": [
-              "Worked on the payments API, cutting p99 latency 40%"
-            ],
-            "achievement_evidence": []
-          }
-        ],
-        "tailoring_rules": {
-          "required_bullets_by_experience_id": {
-            "exp-1": [
-              "Worked on the payments API, cutting p99 latency 40%"
-            ]
-          }
-        }
-      }
-    },
-    "profileVersion": 7,
-    "maximumSuggestions": 24,
-    "expected": {
-      "truncated": false,
-      "suggestions": []
-    },
-    "judgments": []
-  },
-  {
-    "name": "same result with a different opening",
-    "profile": {
-      "resume": {
-        "experience_entries": [
-          {
-            "id": "exp-1",
-            "title": "Synthetic Engineer",
-            "company": "Synthetic Co",
-            "bullets": [
-              "Helped with the payments API, cutting p99 latency 40%"
-            ],
-            "achievement_evidence": []
-          }
-        ],
-        "tailoring_rules": {
-          "required_bullets_by_experience_id": {
-            "exp-1": [
-              "Helped with the payments API, cutting p99 latency 40%"
-            ]
-          }
-        }
-      }
-    },
-    "profileVersion": 7,
-    "maximumSuggestions": 24,
-    "expected": {
-      "truncated": false,
-      "suggestions": []
-    },
-    "judgments": []
-  },
-  {
-    "name": "unlisted result domain is still an outcome",
-    "profile": {
-      "resume": {
-        "experience_entries": [
-          {
-            "id": "exp-1",
-            "title": "Synthetic Engineer",
-            "company": "Synthetic Co",
-            "bullets": [
-              "Worked on warehouse routing, reducing pick distance by 28%"
-            ],
-            "achievement_evidence": []
-          }
-        ],
-        "tailoring_rules": {
-          "required_bullets_by_experience_id": {
-            "exp-1": [
-              "Worked on warehouse routing, reducing pick distance by 28%"
-            ]
-          }
-        }
-      }
-    },
-    "profileVersion": 7,
-    "maximumSuggestions": 24,
-    "expected": {
-      "truncated": false,
-      "suggestions": []
-    },
-    "judgments": []
-  },
-  {
-    "name": "qualitative consequence is a result",
-    "profile": {
-      "resume": {
-        "experience_entries": [
-          {
-            "id": "exp-1",
-            "title": "Synthetic Engineer",
-            "company": "Synthetic Co",
-            "bullets": [
-              "Built a self-service portal enabling customers to reset credentials"
-            ],
-            "achievement_evidence": []
-          }
-        ],
-        "tailoring_rules": {
-          "required_bullets_by_experience_id": {
-            "exp-1": [
-              "Built a self-service portal enabling customers to reset credentials"
-            ]
-          }
-        }
-      }
-    },
-    "profileVersion": 7,
-    "maximumSuggestions": 24,
-    "expected": {
-      "truncated": false,
-      "suggestions": []
-    },
-    "judgments": []
-  },
-  {
-    "name": "an unlisted vague opening still needs context",
-    "profile": {
-      "resume": {
-        "experience_entries": [
-          {
-            "id": "exp-1",
-            "title": "Synthetic Engineer",
-            "company": "Synthetic Co",
-            "bullets": [
-              "Owned various tasks"
-            ],
-            "achievement_evidence": []
-          }
-        ],
-        "tailoring_rules": {
-          "required_bullets_by_experience_id": {
-            "exp-1": [
-              "Owned various tasks"
-            ]
-          }
-        }
-      }
-    },
-    "profileVersion": 7,
-    "maximumSuggestions": 24,
-    "expected": {
-      "truncated": false,
-      "suggestions": []
-    },
-    "judgments": []
-  },
-  {
-    "name": "a specific responsibility needs framing but not relevance advice",
-    "profile": {
-      "resume": {
-        "experience_entries": [
-          {
-            "id": "exp-1",
-            "title": "Synthetic Engineer",
-            "company": "Synthetic Co",
-            "bullets": [
-              "Owned database migrations"
-            ],
-            "achievement_evidence": []
-          }
-        ],
-        "tailoring_rules": {
-          "required_bullets_by_experience_id": {
-            "exp-1": [
-              "Owned database migrations"
-            ]
-          }
-        }
-      }
-    },
-    "profileVersion": 7,
-    "maximumSuggestions": 24,
-    "expected": {
-      "truncated": false,
-      "suggestions": []
-    },
-    "judgments": []
-  },
-  {
-    "name": "an activity count does not prove an outcome",
-    "profile": {
-      "resume": {
-        "experience_entries": [
-          {
-            "id": "exp-1",
-            "title": "Synthetic Engineer",
-            "company": "Synthetic Co",
-            "bullets": [
-              "Managed 10 projects"
-            ],
-            "achievement_evidence": []
-          }
-        ],
-        "tailoring_rules": {
-          "required_bullets_by_experience_id": {
-            "exp-1": [
-              "Managed 10 projects"
-            ]
-          }
-        }
-      }
-    },
-    "profileVersion": 7,
-    "maximumSuggestions": 24,
-    "expected": {
-      "truncated": false,
-      "suggestions": []
-    },
-    "judgments": []
-  },
-  {
-    "name": "a planned improvement is not an achieved result",
-    "profile": {
-      "resume": {
-        "experience_entries": [
-          {
-            "id": "exp-1",
-            "title": "Synthetic Engineer",
-            "company": "Synthetic Co",
-            "bullets": [
-              "Planned to reduce pick distance by 28%"
-            ],
-            "achievement_evidence": []
-          }
-        ],
-        "tailoring_rules": {
-          "required_bullets_by_experience_id": {
-            "exp-1": [
-              "Planned to reduce pick distance by 28%"
-            ]
-          }
-        }
-      }
-    },
-    "profileVersion": 7,
-    "maximumSuggestions": 24,
-    "expected": {
-      "truncated": false,
-      "suggestions": []
-    },
-    "judgments": []
-  },
-  {
-    "name": "a negated improvement is not an achieved result",
-    "profile": {
-      "resume": {
-        "experience_entries": [
-          {
-            "id": "exp-1",
-            "title": "Synthetic Engineer",
-            "company": "Synthetic Co",
-            "bullets": [
-              "Did not reduce pick distance by 28%"
-            ],
-            "achievement_evidence": []
-          }
-        ],
-        "tailoring_rules": {
-          "required_bullets_by_experience_id": {
-            "exp-1": [
-              "Did not reduce pick distance by 28%"
-            ]
-          }
-        }
-      }
-    },
-    "profileVersion": 7,
-    "maximumSuggestions": 24,
-    "expected": {
-      "truncated": false,
-      "suggestions": []
-    },
-    "judgments": []
   }
 ]

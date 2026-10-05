@@ -12,8 +12,11 @@ describe("Required source binding and acceptance", () => {
   it.each(fixtures)("$name", (fixture) => {
     const profile = structuredClone(fixture.profile);
     const before = JSON.stringify(profile);
+    expect(prepareRequiredBulletCoaching(profile as RequiredBulletCoachingInput, fixture.profileVersion).sources)
+      .toHaveLength(fixture.expected.sourceCount);
     const result = bindRequiredBulletSuggestions(profile as RequiredBulletCoachingInput, fixture.profileVersion, fixture.maximumSuggestions,
       fixture.judgments as RequiredBulletModelJudgment[], true);
+    expect(result.truncated).toBe(fixture.expected.truncated);
     expect(result.suggestions).toMatchObject(fixture.expected.suggestions);
     expect(result.suggestions).toHaveLength(fixture.expected.suggestions.length);
     for (const suggestion of result.suggestions) {
@@ -34,6 +37,16 @@ describe("Required source binding and acceptance", () => {
         guidance: "The model’s specific finding.", proposedText: null };
       expect(bindRequiredBulletJudgments(preparation, [finding], 24, true).suggestions[0]!.guidance).toBe(finding.guidance);
     });
+  it("truncates only model-provided findings at the requested response capacity", () => {
+    const preparation = prepareRequiredBulletCoaching(candidate(), 7);
+    const judgments = (["relevance", "achievement_framing", "missing_evidence"] as const).map((kind) => ({
+      reference: preparation.sources[0]!.reference, kind, guidance: `Model-provided ${kind} finding.`, proposedText: null,
+    }));
+    const result = bindRequiredBulletJudgments(preparation, judgments, 2, true);
+    expect(result.suggestions.map((finding) => finding.kind)).toEqual(["relevance", "achievement_framing"]);
+    expect(result.truncated).toBe(true);
+  });
+
   it("rejects unknown references and repeated model findings", () => {
     const preparation = prepareRequiredBulletCoaching(candidate(), 7);
     const finding = { reference: preparation.sources[0]!.reference, kind: "grammar" as const, guidance: "Spacing.", proposedText: "Worked on synthetic queues" };

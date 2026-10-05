@@ -40,6 +40,17 @@ def test_model_decides_findings_from_exact_claim_and_evidence():
     assert coach_required_bullets([SOURCE], llm=model, maximum=12) == {"suggestions": []}
 
 
+@pytest.mark.parametrize("text", ["Planned to reduce synthetic latency", "Did not reduce synthetic latency",
+                                  "Halved synthetic deployment time", "Réduit le temps de déploiement"])
+def test_actual_claim_reaches_model_without_language_or_result_cue_checks(text):
+    source = {**SOURCE, "originalText": text}
+    finding = {"reference": REFERENCE, "kind": "achievement_framing", "guidance": "The model's claim-specific advice.",
+               "proposedText": None}
+    model = Model({"suggestions": [finding]})
+    assert coach_required_bullets([source], llm=model, maximum=12)["suggestions"] == [finding]
+    assert json.loads(model.calls[0][0][1].content)["sources"][0]["originalText"] == text
+
+
 @pytest.mark.parametrize("response", [
     OSError("Provider unavailable"),
     {"suggestions": [{"reference": "invented", "kind": "grammar", "guidance": "Spacing.", "proposedText": None}]},
