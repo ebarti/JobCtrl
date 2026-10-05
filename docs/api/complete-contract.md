@@ -76,8 +76,14 @@ configured LLM call through `profile_required_bullet_suggestions`. The provider
 receives only the selected bullet text, role/company context and matching saved
 achievement evidence; personal, compensation and unrelated profile fields are
 excluded. The worker checks these inputs against canonical saved rows before
-calling the provider in the `profile` accounting lane, subject to existing spend
-admission. Neither inspection nor rejection writes the profile.
+calling the provider in the `profile` accounting lane, subject to daily-spend and
+profile-lane token admission. Input/response sizes are bounded, but the current
+agent SDKs cannot enforce a hard per-call output-token or maximum-cost ceiling.
+Response validation happens after generation and cannot bound provider spend;
+an in-flight call may cross the remaining daily/lane budget. This route explicitly
+uses observed-usage admission; target-role suggestions retain their separate
+hard-ceiling requirement and make no production provider call. Neither inspection
+nor rejection writes the profile.
 
 A successful response contains `ok: true`, `profileVersion`,
 `strategy: "model_v1"`, `modelUsed`, `truncated`, and up to 24 suggestions.
@@ -85,8 +91,11 @@ A successful response contains `ok: true`, `profileVersion`,
 when it returns no findings. With no inspectable sources, no model is called and
 `modelUsed` is false. All grammar, relevance, achievement-framing and evidence
 findings are model determinations; there are no phrase lists or semantic fallback
-rules. The model distinguishes a stated outcome from evidence supporting it and
-reads the actual linked evidence rather than treating a strength flag as proof.
+rules. The prompt asks the model to distinguish a stated outcome from supporting
+evidence and read the actual linked evidence rather than treating a strength flag
+as proof. These are coaching goals, not verified guarantees of the free-text
+advice. Code verifies structure, canonical source binding and automatic cleanup;
+it does not establish that the model's guidance is factually correct.
 
 Each suggestion contains `id`, `kind` (`grammar`, `relevance`,
 `achievement_framing`, `missing_evidence`), `originalText` (at most 2,000
@@ -98,8 +107,13 @@ The model supplies references, kinds, guidance and nullable whitespace proposals
 and original text. Unknown references, duplicate findings, extra fields and
 invalid model output fail closed with `502 required_bullet_suggestions_failed`.
 An unavailable dispatcher returns `503 required_bullet_suggestions_unavailable`.
-There is no heuristic fallback. Runtime/provider errors return 502 without model
-findings. A stale version before or after generation returns
+There is no heuristic fallback. A typed budget denial returns
+`429 required_bullet_suggestions_budget_exceeded` with `budgetScope` (`daily`,
+`profile_lane`, or `both`) and reset/Settings guidance. Missing or unauthenticated
+providers return `503 required_bullet_suggestions_provider_unready` with connection
+guidance. Invalid model output and other provider failures return
+`502 required_bullet_suggestions_failed` with distinct safe retry guidance;
+raw exception/provider text is excluded. A stale version before or after generation returns
 `409 stale_profile_version`; the SQLite read transaction ends before the call.
 Malformed saved profile/evidence rows return `422 invalid_saved_profile`.
 

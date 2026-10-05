@@ -73,7 +73,8 @@ def runtime(monkeypatch, model):
         "company": SOURCE["experienceCompany"], "bullets": [TEXT], "achievement_evidence": []}],
         "tailoring_rules": {"required_bullets_by_experience_id": {"exp-1": [TEXT]}}}}
     snapshot = SimpleNamespace(version=7, as_dict=lambda: profile)
-    repository = SimpleNamespace(load_snapshot=lambda _: snapshot)
+    repository = SimpleNamespace(load_snapshot=lambda _: snapshot,
+        load_saved_resume=lambda _: (snapshot.version, profile["resume"]))
     monkeypatch.setattr(handlers, "assert_expected_runtime", lambda **_: None)
     monkeypatch.setattr(factory, "get_profile_repository", lambda: repository)
     monkeypatch.setattr(llm_client, "get_llm_adapter", lambda: model)
@@ -169,3 +170,56 @@ def test_registered_rpc_reads_real_canonical_repository_without_profile_writes(m
     after = repository.load_snapshot(LOCAL_TENANT)
     assert after.version == saved.version
     assert after.as_dict() == profile
+
+
+@pytest.mark.parametrize("scope", ["daily", "profile_lane", "both"])
+def test_rpc_exposes_budget_scope_without_calling_the_model(monkeypatch, scope):
+    from temporalio.exceptions import ApplicationError
+    from jobctrl import llm
+    model = Model({"suggestions": []})
+    runtime(monkeypatch, model)
+    def exhausted(**kwargs):
+        raise ApplicationError("Private budget detail", type="budget_exceeded", non_retryable=True)
+    monkeypatch.setattr(llm, "enforce_spend_budget", exhausted)
+    monkeypatch.setattr(llm, "read_spend_budget_status", lambda **_: SimpleNamespace(
+        global_exceeded=scope in ("daily", "both"), lane_exceeded=scope in ("profile_lane", "both")))
+    assert handlers.profile_required_bullet_suggestions(params()) == {
+        "profileVersion": 7, "failure": {"code": "budget_exceeded", "scope": scope}}
+    assert model.calls == []
+
+
+def test_rpc_exposes_provider_setup_failure_without_private_exception_text(monkeypatch):
+    from jobctrl.infrastructure.llm import llm_client
+    model = Model({"suggestions": []})
+    runtime(monkeypatch, model)
+    def unready():
+        raise RuntimeError("Private provider configuration")
+    monkeypatch.setattr(llm_client, "get_llm_adapter", unready)
+    assert handlers.profile_required_bullet_suggestions(params()) == {
+        "profileVersion": 7, "failure": {"code": "provider_unready"}}
+    assert model.calls == []
+
+
+@pytest.mark.parametrize("error,code", [
+    ({"suggestions": [{"private": "Private rejected model prose"}]}, "invalid_model_response"),
+    (OSError("Private transport detail"), "provider_failed"),
+])
+def test_rpc_returns_safe_distinct_failure_codes(monkeypatch, error, code):
+    model = Model(error)
+    runtime(monkeypatch, model)
+    assert handlers.profile_required_bullet_suggestions(params()) == {
+        "profileVersion": 7, "failure": {"code": code}}
+    assert len(model.calls) == 1
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_rpc_exposes_typed_provider_authentication_failure(monkeypatch, status):
+    from jobctrl.infrastructure.llm.provider_errors import ProviderCallError, ProviderFailureEnvelope
+    error = ProviderCallError(ProviderFailureEnvelope(provider="openai", model="test", operation="chat_json",
+        category="provider_turn", error_type="codex_turn_error", code="unauthorized", retryable=False,
+        http_status=status))
+    model = Model(error)
+    runtime(monkeypatch, model)
+    assert handlers.profile_required_bullet_suggestions(params()) == {
+        "profileVersion": 7, "failure": {"code": "provider_unready"}}
+    assert len(model.calls) == 1

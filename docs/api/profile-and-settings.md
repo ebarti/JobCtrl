@@ -87,7 +87,11 @@ evidence. All coaching determinations come from the model; there is no heuristic
 fallback. Source binding and acceptance remain version-checked, and only an exact
 model-proposed whitespace cleanup can be applied automatically. Provider/invalid
 response failures preserve saved facts and the previous reviewed suggestions.
-The offline demo reports this capability unavailable. See the
+Budget denial identifies daily spend or profile-lane token scope (429); provider
+setup/authentication failure asks for connection in Settings (503). Other provider
+failures and invalid responses return safe retry guidance (502). Admission checks
+observed daily/lane usage; current SDKs do not enforce per-call token/cost ceilings.
+The offline demo disables inspection and links to local installation. See the
 [complete Required-bullet contract](complete-contract.md#candidate-profile) for
 source fields, input/output limits, model-use flags and error codes.
 

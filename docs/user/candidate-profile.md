@@ -201,12 +201,25 @@ A stated result and proof supporting it are separate questions.
 
 Guidance links to the exact saved source and version. Only safe whitespace
 cleanup can be accepted automatically; substantive edits and evidence additions
-remain yours to make. No facts or metrics are invented. If your provider is
-unavailable or its response is invalid, inspection fails without substitute
-heuristics. A failed refresh keeps the previous reviewed suggestions and saved
-profile. Oversized or unresolvable sources report an incomplete inspection;
+remain yours to make. The model is instructed not to invent facts or metrics,
+but its guidance can be inaccurate or unsupported; review it against your saved
+evidence. Code verifies source references and permits only exact whitespace
+cleanup through Accept. It does not verify the truth of the model's free-text
+advice. If your provider is unavailable or its response is invalid, inspection
+fails without substitute heuristics. A failed refresh keeps the previous reviewed
+suggestions and saved profile. Oversized or unresolvable sources report an incomplete inspection;
 manual editing remains available. The offline public demo has no configured
-provider, so this coaching capability is unavailable there.
+provider, so this coaching capability is unavailable there. The demo disables
+inspection and links to local installation; you can still edit its sample profile.
+
+Inspection checks the daily spend budget and the profile token budget before
+calling your provider. If either is reached, the message identifies the budget;
+wait for the daily reset or adjust it in Settings. Provider setup failures ask
+you to connect or authenticate in Settings. These budgets account for observed
+usage and do not cap the tokens or cost of an individual in-flight call. One
+inspection can exceed the remaining budget; only inspect when you accept that
+provider cost. Coaching sends bounded source input and validates the response
+size after generation.
 
 Review each proposed wording change separately. Accepting a change preserves
 the bullet's order, achievement identity, and Required selection through the

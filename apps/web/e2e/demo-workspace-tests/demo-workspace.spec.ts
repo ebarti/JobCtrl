@@ -294,6 +294,20 @@ scenarioTest("pipeline demo capability actions stay contained at 320 CSS pixels"
   ).toBeLessThanOrEqual(layout.viewportWidth + 1);
 });
 
+scenarioTest("Required coaching demo shows the supported local path without provider calls", async ({ page }) => {
+  await page.goto("/profile");
+  await initializeWorkspace(page);
+  const before = await snapshot(page);
+  const card = page.locator('[data-slot="card"]').filter({ hasText: "Required bullet coaching" });
+  await expect(card.getByRole("button", { name: "Inspect Required bullets" })).toBeDisabled();
+  await expect(card.getByText(/local JobCtrl app with a configured LLM provider/)).toBeVisible();
+  await expect(card.getByText(/edit the synthetic profile manually/)).toBeVisible();
+  await expect(card.getByRole("link", { name: "Install JobCtrl" })).toHaveAttribute("href", "https://jobctrl.dev/user/getting-started");
+  await expect(card.getByText(/Your configured provider receives/)).toHaveCount(0);
+  await expect(page.getByRole("textbox", { name: "Full name" })).toBeEditable();
+  expect((await snapshot(page)).state).toEqual(before.state);
+});
+
 test("consent grant precedes Google Analytics, IndexedDB, health, telemetry, and populated demo entry", async ({
   page,
   context,

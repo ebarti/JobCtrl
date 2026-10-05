@@ -148,6 +148,28 @@ class SqliteProfileRepository:
         version = int(row["version"]) if row is not None else 1
         return ProfileSnapshot.from_profile(profile, version=version)
 
+    def load_saved_resume(self, tenant_id: TenantId) -> tuple[int, dict[str, Any]]:
+        """Read exact saved coaching sources without aggregate string cleanup.
+
+        Positional references and whitespace proposals refer to stored rows, not
+        the normalized Profile projection. Keep all reads in one snapshot and
+        release it before the provider call; do not include personal sections.
+        """
+        self._conn.execute("SAVEPOINT required_coaching_snapshot")
+        try:
+            row = self._profile_row(tenant_id)
+            if row is None:
+                raise FileNotFoundError("Saved profile not found")
+            tenant = str(tenant_id)
+            return int(row["version"]), {
+                "experience_entries": self._experience_entries(tenant, self._profile_id),
+                "tailoring_rules": {"required_bullets_by_experience_id": self._grouped_required(
+                    "candidate_profile_required_bullets", "entry_id", "bullet_text", "bullet_index",
+                    tenant, self._profile_id)},
+            }
+        finally:
+            self._conn.execute("RELEASE SAVEPOINT required_coaching_snapshot")
+
     # ------------------------------------------------------------------
     # Rendering settings
     # ------------------------------------------------------------------

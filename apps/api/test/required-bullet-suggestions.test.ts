@@ -6,7 +6,9 @@ import fixtures from "../../../packages/domain-types/test/fixtures/required-bull
 describe("model findings bound to saved sources", () => {
   it.each(fixtures)("$name", (fixture) => {
     const profile = ProfileSchema.parse(fixture.profile);
-    const judgments = RequiredBulletModelResultSchema.parse({ profileVersion: fixture.profileVersion, suggestions: fixture.judgments }).suggestions;
+    const result = RequiredBulletModelResultSchema.parse({ profileVersion: fixture.profileVersion, suggestions: fixture.judgments });
+    if (!("suggestions" in result)) throw new Error("Expected model findings fixture");
+    const judgments = result.suggestions;
     const response = bindRequiredBulletSuggestions(profile, fixture.profileVersion, fixture.maximumSuggestions, judgments, true);
     expect(RequiredBulletSuggestionResponseSchema.parse(response)).toEqual(response);
     expect(response.suggestions).toMatchObject(fixture.expected.suggestions);

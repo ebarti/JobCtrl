@@ -9957,6 +9957,79 @@ describe("local TypeScript API", () => {
       await app.close();
     });
 
+  it.each([
+    { failure: { code: "budget_exceeded", scope: "daily" }, status: 429, error: "required_bullet_suggestions_budget_exceeded", message: /daily LLM spend budget/ },
+    { failure: { code: "budget_exceeded", scope: "profile_lane" }, status: 429, error: "required_bullet_suggestions_budget_exceeded", message: /profile LLM token budget/ },
+    { failure: { code: "budget_exceeded", scope: "both" }, status: 429, error: "required_bullet_suggestions_budget_exceeded", message: /daily LLM spend and profile token budgets/ },
+    { failure: { code: "provider_unready" }, status: 503, error: "required_bullet_suggestions_provider_unready", message: /Connect or authenticate/ },
+    { failure: { code: "invalid_model_response" }, status: 502, error: "required_bullet_suggestions_failed", message: /invalid response/ },
+    { failure: { code: "provider_failed" }, status: 502, error: "required_bullet_suggestions_failed", message: /Verify its connection/ },
+    { failure: { code: "budget_exceeded", scope: "invented", detail: "Private provider prose" }, status: 502, error: "required_bullet_suggestions_failed", message: /invalid response/ },
+  ])("surfaces actionable safe coaching failures: $failure", async ({ failure, status, error, message }) => {
+    const call = vi.fn(async (_method: string, params: Record<string, unknown>) => ({
+      jsonrpc: "2.0" as const, id: 1, result: { profileVersion: params.expectedProfileVersion, failure },
+    }));
+    const app = buildApp({ ...options, providerDispatcher: { call, close: vi.fn(async () => undefined) } });
+    const saved = (await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile: requiredModelProfile() } })).json();
+    const response = await app.inject({ method: "POST", url: "/v1/profile/required-bullet-suggestions",
+      payload: { expectedProfileVersion: saved.profileVersion } });
+    expect(response.statusCode, response.body).toBe(status);
+    expect(response.json()).toMatchObject({ ok: false, error, message: expect.stringMatching(message) });
+    expect(response.body).not.toContain("Private provider prose");
+    expect((await app.inject({ method: "GET", url: "/v1/profile" })).json()).toEqual(saved);
+    await app.close();
+  });
+
+  it.skipIf(!SOURCE_PYTHON_RPC_AVAILABLE)("matches real TS-prepared Unicode sources in the registered Python handler", async () => {
+    fs.writeFileSync(path.join(tempDir, ".required-coaching-test"), "owned synthetic API fixture");
+    // ECMAScript whitespace plus Python-only NEL/information separators.
+    const characters = [..."\t\n\v\f\r \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff\u0085\u001c\u001d\u001e\u001f"];
+    const profile = requiredModelProfile();
+    const resume = profile.resume as Record<string, unknown>;
+    const entry = (resume.experience_entries as Array<Record<string, unknown>>)[0]!;
+    const bullets = characters.map((space, index) => `${space}Synthetic ${index}${space}claim${space}`);
+    entry.bullets = bullets;
+    entry.achievement_evidence = characters.map((_, index) => ({
+      id: `qa-unicode-${index}`, source_text: `Synthetic ${index} claim`, action: "Synthetic action",
+      metrics: [], outcome: "Synthetic outcome", evidence_strength: "supported", user_confirmed: true,
+    }));
+    resume.tailoring_rules = { required_bullets_by_experience_id: { role_1: bullets } };
+    let observed: Array<Array<{ originalText: string; evidence: unknown[] }>> = [];
+    let rpcError: unknown = null;
+    let probeDiagnostics = "";
+    const call: JsonRpcDispatcher["call"] = async (method, params) => {
+      const probe = spawnSync("uv", ["--project", AUTOMATION_PROJECT_DIR, "run", "--no-sync", "python",
+        path.join(AUTOMATION_PROJECT_DIR, "tests/fixtures/required_bullet_rpc_probe.py")], {
+        cwd: tempDir, env: { ...process.env, JOBCTRL_DIR: tempDir, JOBCTRL_DB_PATH: options.dbPath,
+          JOBCTRL_CONFIG_PATH: options.configPath, UV_FROZEN: "1" },
+        input: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }), encoding: "utf8",
+      });
+      expect(probe.status, probe.stderr).toBe(0);
+      const observation = JSON.parse(probe.stdout);
+      observed = observation.modelSources;
+      rpcError = observation.response.error;
+      probeDiagnostics = probe.stderr;
+      return observation.response;
+    };
+    const app = buildApp({ ...options, providerDispatcher: { call, close: vi.fn(async () => undefined) } });
+    const seed = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile } });
+    expect(seed.statusCode, seed.body).toBe(200);
+    const saved = seed.json();
+    const inspected = await app.inject({ method: "POST", url: "/v1/profile/required-bullet-suggestions",
+      payload: { expectedProfileVersion: saved.profileVersion } });
+    expect(rpcError, probeDiagnostics).toBeNull();
+    expect(inspected.statusCode, inspected.body).toBe(200);
+    expect(inspected.json()).toMatchObject({ modelUsed: true, suggestions: [], truncated: false });
+    expect(observed).toHaveLength(1);
+    expect(observed[0]).toHaveLength(characters.length);
+    observed[0]!.forEach((source, index) => {
+      expect(source.originalText).toBe(bullets[index]);
+      expect(source.evidence).toHaveLength(index < 25 ? 1 : 0);
+    });
+    expect((await app.inject({ method: "GET", url: "/v1/profile" })).json()).toEqual(saved);
+    await app.close();
+  });
+
   it("discards model output if a concurrent save replaces the inspected version", async () => {
     let app: ReturnType<typeof buildApp>;
     const call = vi.fn(async (_method: string, params: Record<string, unknown>) => {

@@ -143,7 +143,7 @@ export const ProfileRequiredBulletSuggestionsParamsSchema = z.object({
 }).strict().refine((params) => JSON.stringify(params.sources).length <= 32_000, "Coaching sources exceed payload limit");
 export type ProfileRequiredBulletSuggestionsParams = z.infer<typeof ProfileRequiredBulletSuggestionsParamsSchema>;
 
-export const RequiredBulletModelResultSchema = z.object({
+export const RequiredBulletModelResultSchema = z.union([z.object({
   profileVersion: z.number().int().positive(),
   suggestions: z.array(z.object({
     reference: z.string().min(1).max(240),
@@ -151,7 +151,13 @@ export const RequiredBulletModelResultSchema = z.object({
     guidance: z.string().trim().min(1).max(500),
     proposedText: z.string().min(1).max(2_000).nullable(),
   }).strict()).max(24),
-}).strict();
+}).strict(), z.object({
+  profileVersion: z.number().int().positive(),
+  failure: z.union([
+    z.object({ code: z.literal("budget_exceeded"), scope: z.enum(["daily", "profile_lane", "both"]) }).strict(),
+    z.object({ code: z.enum(["provider_unready", "invalid_model_response", "provider_failed"]) }).strict(),
+  ]),
+}).strict()]);
 
 /* --- complex commands (delegated to Python JSON-RPC / Temporal) ---------- */
 

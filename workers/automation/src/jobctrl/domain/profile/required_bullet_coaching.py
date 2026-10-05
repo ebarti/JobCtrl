@@ -2,12 +2,27 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, StrictStr, ValidationError
 from typing import Literal
 
 from jobctrl.domain.ports.llm import LlmMessage, LlmPort
+
+
+# ECMAScript WhiteSpace + LineTerminator, matching TS trim() and /\s+/g.
+# Python str.split() differs for BOM, NEL and the information separators.
+_SOURCE_WHITESPACE = re.compile(r"[\u0009-\u000d\u0020\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+")
+
+
+def normalize_source_text(value: str) -> str:
+    """Mechanical wire normalization only; never used to determine findings."""
+    return _SOURCE_WHITESPACE.sub(" ", value).strip(" ")
+
+
+class InvalidCoachingResponse(ValueError):
+    """A model response failed structural/source validation, with no private text."""
 
 
 class Finding(BaseModel):
@@ -59,12 +74,12 @@ def coach_required_bullets(
     except ValidationError:
         # Pydantic errors include rejected values; do not put model/profile prose
         # in the RPC error or metadata-only telemetry.
-        raise ValueError("Invalid Required coaching model response") from None
+        raise InvalidCoachingResponse("Invalid Required coaching model response") from None
     references = {source["reference"] for source in sources}
     seen: set[tuple[str, str]] = set()
     for finding in result.suggestions:
         key = (finding.reference, finding.kind)
         if finding.reference not in references or key in seen or not finding.guidance.strip():
-            raise ValueError("Invalid Required coaching finding")
+            raise InvalidCoachingResponse("Invalid Required coaching finding")
         seen.add(key)
     return result.model_dump()

@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
+import { usePorts } from "../../../shared/providers/PortsProvider.js";
+import { getApiCapabilityAvailability, LOCAL_INSTALL_GUIDE_URL } from "../../../shared/lib/apiCapabilityAvailability.js";
 import type { RequiredBulletSuggestion } from "../../operations/types.js";
 import { Alert, AlertDescription } from "../../../shared/ui/alert.js";
 import { Badge } from "../../../shared/ui/badge.js";
@@ -28,6 +30,8 @@ export function RequiredBulletSuggestions({
   resetToken,
   onAccept,
 }: RequiredBulletSuggestionsProps) {
+  const { featureFlags } = usePorts();
+  const availability = getApiCapabilityAvailability(featureFlags, "requiredBulletSuggestions");
   const generation = useRequiredBulletSuggestionsMutation();
   const requestSequence = useRef(0);
   const currentAuthority = useRef({ isDraftClean, profileVersion, resetToken });
@@ -59,7 +63,7 @@ export function RequiredBulletSuggestions({
   }, []);
 
   const generate = async () => {
-    if (profileVersion === null || !isDraftClean) return;
+    if (!availability.available || profileVersion === null || !isDraftClean) return;
     preserveReviewedAfterFailure.current = false;
     const sequence = requestSequence.current + 1;
     requestSequence.current = sequence;
@@ -77,6 +81,7 @@ export function RequiredBulletSuggestions({
       ) return;
       setGeneratedVersion(result.profileVersion);
       setSuggestions(result.suggestions);
+      setEmptyMessage("");
       if (result.truncated && result.suggestions.length === 0) {
         setEmptyMessage("Inspection is incomplete: saved Required sources exceed a safe inspection or response limit. Edit them manually; repeating this request on the same saved version may omit the same sources.");
       } else if (result.suggestions.length === 0) {
@@ -122,19 +127,31 @@ export function RequiredBulletSuggestions({
       <CardHeader>
         <CardTitle>Required bullet coaching</CardTitle>
         <CardDescription>
-          Opt in to LLM coaching of saved Required experience bullets. Your configured provider receives these bullets and their linked evidence.
+          {availability.available
+            ? "Opt in to LLM coaching of saved Required experience bullets. Your configured provider receives these bullets and their linked evidence."
+            : "Required bullet coaching is available in the local JobCtrl app with a configured LLM provider."}
         </CardDescription>
         <CardAction>
           <Button
             type="button"
             variant="secondary"
-            disabled={profileVersion === null || !isDraftClean || generation.isPending || acceptingId !== null}
+            disabled={!availability.available || profileVersion === null || !isDraftClean || generation.isPending || acceptingId !== null}
             onClick={() => void generate()}
           >
             {generation.isPending ? "Inspecting…" : "Inspect Required bullets"}
           </Button>
         </CardAction>
       </CardHeader>
+      {!availability.available ? (
+        <CardContent>
+          <Alert variant="info">
+            <AlertDescription>
+              {availability.reason} You can edit the synthetic profile manually in this demo.{" "}
+              <a href={LOCAL_INSTALL_GUIDE_URL}>Install JobCtrl</a> to connect your provider and inspect your saved Required bullets.
+            </AlertDescription>
+          </Alert>
+        </CardContent>
+      ) : null}
       {!isDraftClean ? (
         <CardContent>
           <p data-typography="metadata">

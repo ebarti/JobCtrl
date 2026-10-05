@@ -97,9 +97,15 @@ for changes to Required-bullet coaching. Require model-call tests that demonstra
 all findings come from the configured adapter, with no lexical fallback. Source
 fixtures and form tests separately prove canonical binding, exact whitespace
 acceptance, read-only inspection/rejection and individually fenced persistence.
-Exercise malformed/provider failures and concurrent profile saves. A failed
-refresh preserves the reviewed suggestions. The offline demo must report the
-capability unavailable and leave local state untouched. Isolated browser fixtures
+Exercise malformed/provider failures and concurrent profile saves. Send real
+TypeScript-prepared sources through the registered Python handler and saved
+repository, including ECMAScript whitespace and Python-only whitespace; preserve
+exact stored text and positional references. Daily/profile-lane budget denial,
+provider setup/authentication and invalid-output failures must produce distinct
+safe actionable messages. A failed refresh preserves the reviewed suggestions
+and status; a successful complete refresh replaces the previous empty/incomplete
+status. The offline demo must disable inspection, explain local installation and
+provider configuration, and leave local state untouched. Isolated browser fixtures
 use explicit model test doubles; additionally verify one configured provider call
 with synthetic facts in an owned QA workspace before claiming live model proof.
 Require observed review/QA results and final checks before publication.

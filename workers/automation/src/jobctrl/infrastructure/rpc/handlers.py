@@ -395,10 +395,14 @@ def profile_target_role_suggestions(params: dict[str, Any]) -> dict[str, Any]:
 def profile_required_bullet_suggestions(params: dict[str, Any]) -> dict[str, Any]:
     """Call the configured provider for a version-fenced, read-only inspection."""
     import re
-    from jobctrl.domain.profile.required_bullet_coaching import coach_required_bullets
+    from temporalio.exceptions import ApplicationError
+    from jobctrl.domain.profile.required_bullet_coaching import (
+        InvalidCoachingResponse, coach_required_bullets, normalize_source_text,
+    )
+    from jobctrl.infrastructure.llm.provider_errors import ProviderCallError
     from jobctrl.infrastructure.profile.factory import get_profile_repository
     from jobctrl.infrastructure.llm.llm_client import get_llm_adapter
-    from jobctrl.llm import enforce_spend_budget
+    from jobctrl.llm import enforce_spend_budget, read_spend_budget_status
     from jobctrl.llm_lanes import bind_llm_lane
 
     assert_expected_runtime(expected_app_dir=str(_require(params, "expectedAppDir")),
@@ -413,10 +417,9 @@ def profile_required_bullet_suggestions(params: dict[str, Any]) -> dict[str, Any
     if not isinstance(sources, list) or not 1 <= len(sources) <= 512:
         raise invalid_params("Invalid Required coaching sources")
     repository = get_profile_repository()
-    snapshot = repository.load_snapshot(TenantId(_tenant_id(params)))
-    if snapshot.version != version:
+    saved_version, profile = repository.load_saved_resume(TenantId(_tenant_id(params)))
+    if saved_version != version:
         raise invalid_params("stale_profile_version")
-    profile = snapshot.as_dict()["resume"]
     entries = profile["experience_entries"]
     pins = profile.get("tailoring_rules", {}).get("required_bullets_by_experience_id", {})
     references: set[str] = set()
@@ -434,10 +437,8 @@ def profile_required_bullet_suggestions(params: dict[str, Any]) -> dict[str, Any
             entry = entries[int(match[2])]
             text = entry["bullets"][int(match[3])]
             required = pins[entry["id"]][int(match[4])]
-            def normalize(value: str) -> str:
-                return " ".join(value.split())
             evidence = [item for item in entry["achievement_evidence"]
-                        if normalize(item["source_text"]) == normalize(text)]
+                        if normalize_source_text(item["source_text"]) == normalize_source_text(text)]
             expected = {"reference": reference, "originalText": text,
                         "experienceTitle": entry["title"], "experienceCompany": entry["company"],
                         "evidence": [{key: item[key] for key in (
@@ -447,10 +448,38 @@ def profile_required_bullet_suggestions(params: dict[str, Any]) -> dict[str, Any
                 raise invalid_params("Required coaching source does not match saved profile")
         except (KeyError, IndexError, TypeError) as exc:
             raise invalid_params("Invalid Required coaching source") from exc
+    # Failure codes are application-owned. Never send raw provider/model errors
+    # through the RPC error data (which may contain prompts or profile prose).
+    def failure(code: str, **details: str) -> dict[str, Any]:
+        return {"profileVersion": version, "failure": {"code": code, **details}}
+
     with bind_llm_lane("profile"):
-        enforce_spend_budget(lane="profile")
-        result = coach_required_bullets(sources, llm=get_llm_adapter(), maximum=maximum)
-    if repository.load_snapshot(TenantId(_tenant_id(params))).version != version:
+        try:
+            enforce_spend_budget(lane="profile")
+            try:
+                adapter = get_llm_adapter()
+            except Exception:
+                return failure("provider_unready")
+            result = coach_required_bullets(sources, llm=adapter, maximum=maximum)
+        except ApplicationError as exc:
+            if exc.type != "budget_exceeded":
+                return failure("provider_failed")
+            status = read_spend_budget_status(lane="profile")
+            scope = "both" if status.global_exceeded and status.lane_exceeded else (
+                "profile_lane" if status.lane_exceeded else "daily"
+            )
+            return failure("budget_exceeded", scope=scope)
+        except InvalidCoachingResponse:
+            return failure("invalid_model_response")
+        except ProviderCallError as exc:
+            if exc.envelope.http_status in (401, 403) or exc.envelope.code == "unauthorized":
+                return failure("provider_unready")
+            return failure("provider_failed")
+        except Exception as exc:
+            if getattr(exc, "status_code", None) in (401, 403):
+                return failure("provider_unready")
+            return failure("provider_failed")
+    if repository.load_saved_resume(TenantId(_tenant_id(params)))[0] != version:
         raise invalid_params("stale_profile_version")
     return {"profileVersion": version, **result}
 
