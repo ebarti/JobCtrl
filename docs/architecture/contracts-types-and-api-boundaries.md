@@ -45,7 +45,7 @@ flowchart TD
 | Layer | Source owner | Contains | Must not contain |
 | --- | --- | --- | --- |
 | Python domain model | `workers/automation/src/jobctrl/domain/` | Aggregate behavior, invariants, value objects, use cases, and Python domain events | HTTP status codes, fetch behavior, or database/provider mechanics |
-| Shared TypeScript domain vocabulary | `packages/domain-types/` | Branded identities, shared stage/state values, the TypeScript domain-event union, and projection shapes consumed across packages | Claiming authority over Python aggregate behavior, HTTP status codes, database access, or browser globals |
+| Shared TypeScript domain vocabulary | `packages/domain-types/` | Branded identities, shared stage/state values, the TypeScript domain-event union, projection shapes consumed across packages, and browser-safe pure product policies such as Required-bullet coaching | Claiming authority over Python aggregate behavior, HTTP status codes, database access, or browser globals |
 | REST and JSON-RPC wire contract | `packages/contracts/` | Zod request/response schemas, DTOs, wire enums, API query shapes, JSON-RPC envelopes, params, and result schemas | Route registration, persistence, fetch calls, or ownership of the domain-event union |
 | Typed HTTP transport | `packages/api-client/` | URL/query encoding, HTTP methods, request timeout, typed return values, and transport errors | Business rules, server validation, or canonical state |
 | HTTP implementation | `apps/api/` | Fastify routing, security gates, status codes, schema application, DTO mapping, projection reads, simple commands, JSON-RPC dispatch, and SSE framing | Provider/browser workflow execution or a second copy of shared DTOs |
@@ -58,6 +58,18 @@ projection types. That is a dependency, not duplicate ownership: shared
 TypeScript vocabulary stays in `domain-types`, while Python aggregates remain
 authoritative for their behavior and invariants. The contract package exposes
 only the wire-safe shapes API consumers need.
+
+Required-bullet source preparation, result binding and cleanup applicability
+live in `packages/domain-types/src/profile/required-bullet-suggestions.ts`.
+They share readonly structural inputs/results without runtime I/O or upward
+contract dependencies. `packages/contracts` owns the wire schemas and inferred
+DTOs, including strict model references/kinds/guidance/nullable proposals. The API validates a saved
+snapshot, dispatches the worker and fences the returned version. Python's
+`domain/profile/required_bullet_coaching.py` calls `LlmPort` for all semantic
+findings. Only mechanical source identity, bounds and exact whitespace acceptance
+remain in TypeScript; no adapter determines findings from text heuristics.
+The Profile form consumes the shared acceptance guard. The offline demo marks
+coaching unavailable. Shape changes update structural and wire owners together.
 
 `ApplicationSubmitted` models the existing launcher payload in the shared event
 union: `run_id`, `result: "applied"`, `finished_at`, nullable `duration_ms`,

@@ -55,7 +55,7 @@ flowchart TB
 | `apps/extension/` | The Manifest V3 capture and assisted-autofill client, its loopback API client, local queue, and extension-specific privacy tests | Arbitrary remote API access or application submission authority |
 | `apps/demo-edge/` | The deployment-gated demo edge API, consented measurement contract, and retention worker | Local product data, production automation, or the local API contract |
 | `workers/automation/` | The `jobctrl` Python package: CLI, JSON-RPC server, domain model, SQLite adapters, Temporal workflows/activities, provider calls, discovery, materials, and apply execution | Browser-facing HTTP routes or web state |
-| `packages/domain-types/` | Selected TypeScript domain vocabulary: identifiers, shared states, the TypeScript domain-event union, and projection shapes consumed across packages | Python aggregate behavior and invariants, I/O, REST transport, or SQLite rows |
+| `packages/domain-types/` | Selected TypeScript domain vocabulary: identifiers, shared states, the TypeScript domain-event union, projection shapes consumed across packages, and pure shared TypeScript product policies | Python aggregate behavior and invariants, I/O, REST transport, or SQLite rows |
 | `packages/contracts/` | Shared REST request/response schemas and DTOs, enums used on the wire, and TypeScript JSON-RPC envelopes/method schemas | Fetch behavior, route registration, or domain-event ownership |
 | `packages/api-client/` | Typed HTTP calls, URL/query encoding, request timeouts, and API error behavior | Business validation or server-side routing |
 | `packages/tsconfig/` | Shared TypeScript compiler presets | Product behavior |
@@ -64,6 +64,16 @@ flowchart TB
 | `scripts/` | Source-stack supervision and repository-level build, release, documentation, privacy, and contract checks | A second home for domain logic |
 | `.github/workflows/` | CI, publication, deployment, and protected release orchestration | Locally reproducible product behavior |
 | `docs/` | Canonical user, contributor, architecture, API, requirement, decision, QA, and delivery records | Implementation authority when documentation and current code diverge |
+
+Required-bullet semantic findings are owned by
+`workers/automation/src/jobctrl/domain/profile/required_bullet_coaching.py` through
+`LlmPort`. The RPC handler verifies runtime, canonical sources and profile version,
+admits spend and selects the configured adapter. Shared TypeScript source binding
+and cleanup applicability live in
+`packages/domain-types/src/profile/required-bullet-suggestions.ts`, imported by
+the API and Profile form. Wire schemas/DTOs remain in `packages/contracts`.
+The offline demo marks coaching unavailable. See
+[contract boundaries](../architecture/contracts-types-and-api-boundaries.md#contract-owners).
 
 ## Inside The Runnable Boundaries
 
@@ -121,7 +131,7 @@ external capabilities.
 | Change | Start here | Then check |
 | --- | --- | --- |
 | Python aggregate state or invariant | Owning module under `workers/automation/src/jobctrl/domain/` | TypeScript mirror when the concept crosses runtimes, persistence adapters, and every consumer |
-| Shared TypeScript identity, state, projection, or event vocabulary | `packages/domain-types/` | Matching Python mirror where applicable, parity coverage, and every consumer |
+| Shared TypeScript identity, state, projection, event vocabulary, or pure policy | `packages/domain-types/` | Matching Python mirror where applicable, parity coverage, and every consumer |
 | REST request/response shape | `packages/contracts/src/schemas.ts` | API route, API client, web consumer, focused API docs |
 | JSON-RPC method or envelope | `packages/contracts/src/rpc.ts` | Python `domain/rpc/messages.py`, dispatcher, adapter, tests |
 | HTTP status, auth/origin rule, or route behavior | `apps/api/` | Contract schema and API reference |

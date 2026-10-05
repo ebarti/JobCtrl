@@ -865,3 +865,12 @@ worker/task-queue telemetry at request time. Because heartbeat state is
 ephemeral and no point-in-time lineage reconstruction is implemented,
 `GET /v1/pipeline/operations` is explicitly a current snapshot rather than a
 historical execution API.
+
+## Required-Bullet Coaching RPC
+
+`profile_required_bullet_suggestions` is a synchronous, read-only worker RPC
+behind the opt-in profile HTTP route. It verifies expected runtime/database,
+canonical selected sources and saved version, admits profile-lane spend, calls
+the configured `LlmPort` once, validates findings and rechecks the saved version.
+It has no semantic fallback. The API also checks the current version after the
+call. See [the complete API contract](../api/complete-contract.md).

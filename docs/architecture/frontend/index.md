@@ -124,6 +124,67 @@ it is the target deployment model.
 
 ---
 
+## Shared Production And Demo Coaching
+
+Required-bullet coaching findings come from the configured LLM through Python's
+`domain/profile/required_bullet_coaching.py`. The API validates saved sources,
+calls the worker once and verifies the profile version after generation. Shared
+`packages/domain-types/src/profile/required-bullet-suggestions.ts` owns bounded
+source preparation, canonical binding and safe whitespace acceptance. The
+Profile form rechecks its `isApplicableRequiredBulletCleanup` guard before saving.
+The shared code makes no grammar, relevance, result or evidence determinations.
+
+Synthetic fixtures cover source identities, collisions and applicability with
+explicit model test doubles. Form tests feed the bound output into Accept and
+check the saved bullet, Required pin, evidence preservation and version fence.
+Model/worker tests independently prove calls and failure propagation. See
+[contract boundaries](../contracts-types-and-api-boundaries.md#contract-owners),
+[source ownership](../../developer/repository-and-ownership-map.md#top-level-owners)
+and [local verification](../../local-development.md#required-bullet-coaching-verification).
+
+### Supported Demo Scenarios
+
+`apps/web/src/demo/capabilities.ts` is the public demo capability manifest.
+Required-bullet coaching is `unavailable` in the offline public demo: it requires
+a configured LLM provider and the local worker. It never substitutes static or
+heuristic semantic judgments. Existing browser-local profile edits still use
+the ordinary save/version/event contract.
+
+| Capability | Supported synthetic behavior |
+| --- | --- |
+| `rescoreJob` | Queued, running and terminal score projections with synthetic version/event updates. |
+| `retailorJob`, `retryStage`, `runJobStage` | Seeded stage execution and retry branches, including source/failed-stage guards and preservation of accepted artifacts during a failed refresh. |
+| `openArtifact` | Safe bundled same-origin browser previews with a rehearsal receipt. |
+| `applyJob`, `markApplied` | Synthetic approval/dry-run and manual-marking rehearsals recorded only in the demo workspace. |
+| `discoverySourcePreview` | Bundled lead previews without fetching a source site. |
+
+The internal `DemoScenarioEngine` also has fixture implementations for draft
+rendering, material freshness, bulk preparation/scoring/tailoring, Discover,
+outreach generation/revision and interview preparation. Their existence does
+not enable the corresponding public adapter methods: those capabilities remain
+`unavailable`. `capabilities.test.ts` checks the explicit public allowlists and
+proves those deferred operations cannot schedule work, write state or fetch.
+
+New production capabilities must first be classified as `unavailable`, with an
+explanation. A new non-registry port member requires an explicit manifest entry
+to type-check; registry endpoints carry their own demo classification. Enable a
+capability only when its synthetic scenario, adapter behavior, tests and this
+support inventory are intentionally supplied. Demo scenarios make no provider
+calls or external submissions and do not establish production worker behavior.
+
+The remaining production/demo policy duplication is descriptive inventory:
+
+| Policy | Current owners and shared parts |
+| --- | --- |
+| Job lifecycle filtering | API projections resolve hidden/deleted/closed facets in SQL; `demo/job-filter.ts` resolves them in memory. Both use the contracts query vocabulary. The non-lifecycle filter core, sorting, timestamps and pagination already live in `packages/contracts/src/jobs-query.ts`. |
+| Apply approval binding | API `application-feedback.ts` resolves current material/profile/URL and dry-run evidence from canonical storage; `DemoLocalCommandExecutor` checks synthetic review gates. Contracts and domain types already share decisions and gate-reason vocabulary. The demo checks are a rehearsal of approval, with no external submission. |
+| Required-bullet acceptance | The Profile form uses the shared cleanup applicability guard, including normalized matching, 240-character achievement identities, snapshot IDs, field paths, 500-character excerpts and collision checks. The form owns write coordination; its former duplicate identity checks have been removed. |
+| Profile version fencing | API `profile-store.ts` checks the expected version inside the SQLite save; `DemoLocalCommandExecutor` checks it inside a workspace transaction. The shared Profile form owns acceptance, manual-save and autosave coordination in both compositions. Persistence and conflict reporting remain adapter responsibilities. |
+| Score and template behavior | Production scoring and `resume-templates.ts` use canonical policies, versions and artifacts. Demo scenario/executor code updates synthetic score projections and bundled template metadata with synthetic identities. Those updates intentionally simulate lifecycle results; they do not establish production score or artifact equivalence. |
+
+Only source binding and cleanup acceptance are shared. Semantic findings require
+the configured model; the other capabilities/scenarios retain their owners.
+
 ## 2. Modeling Principles
 
 ### 2.1 The Three Layers of State

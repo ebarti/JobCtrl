@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
+import { usePorts } from "../../../shared/providers/PortsProvider.js";
+import { getApiCapabilityAvailability, LOCAL_INSTALL_GUIDE_URL } from "../../../shared/lib/apiCapabilityAvailability.js";
 import type { RequiredBulletSuggestion } from "../../operations/types.js";
 import { Alert, AlertDescription } from "../../../shared/ui/alert.js";
 import { Badge } from "../../../shared/ui/badge.js";
@@ -28,6 +30,8 @@ export function RequiredBulletSuggestions({
   resetToken,
   onAccept,
 }: RequiredBulletSuggestionsProps) {
+  const { featureFlags } = usePorts();
+  const availability = getApiCapabilityAvailability(featureFlags, "requiredBulletSuggestions");
   const generation = useRequiredBulletSuggestionsMutation();
   const requestSequence = useRef(0);
   const currentAuthority = useRef({ isDraftClean, profileVersion, resetToken });
@@ -59,13 +63,10 @@ export function RequiredBulletSuggestions({
   }, []);
 
   const generate = async () => {
-    if (profileVersion === null || !isDraftClean) return;
+    if (!availability.available || profileVersion === null || !isDraftClean) return;
     preserveReviewedAfterFailure.current = false;
     const sequence = requestSequence.current + 1;
     requestSequence.current = sequence;
-    setSuggestions([]);
-    setGeneratedVersion(null);
-    setEmptyMessage("");
     generation.reset();
     try {
       const result = await generation.mutateAsync({
@@ -80,10 +81,11 @@ export function RequiredBulletSuggestions({
       ) return;
       setGeneratedVersion(result.profileVersion);
       setSuggestions(result.suggestions);
+      setEmptyMessage("");
       if (result.truncated && result.suggestions.length === 0) {
         setEmptyMessage("Inspection is incomplete: saved Required sources exceed a safe inspection or response limit. Edit them manually; repeating this request on the same saved version may omit the same sources.");
       } else if (result.suggestions.length === 0) {
-        setEmptyMessage("No deterministic coaching suggestions were found for saved Required bullets.");
+        setEmptyMessage(result.modelUsed ? "No coaching findings were returned." : "There are no inspectable saved Required bullets. Review your Required selections in the editor.");
       } else if (result.truncated) {
         setEmptyMessage("Inspection is incomplete. These suggestions cover only part of the saved Required bullets; other sources may exceed a safe limit or the response cap. Review these items and edit omitted bullets manually.");
       }
@@ -125,19 +127,31 @@ export function RequiredBulletSuggestions({
       <CardHeader>
         <CardTitle>Required bullet coaching</CardTitle>
         <CardDescription>
-          Opt in to deterministic checks of saved Required experience bullets. No model or provider is used.
+          {availability.available
+            ? "Opt in to LLM coaching of saved Required experience bullets. Your configured provider receives these bullets and their linked evidence."
+            : "Required bullet coaching is available in the local JobCtrl app with a configured LLM provider."}
         </CardDescription>
         <CardAction>
           <Button
             type="button"
             variant="secondary"
-            disabled={profileVersion === null || !isDraftClean || generation.isPending || acceptingId !== null}
+            disabled={!availability.available || profileVersion === null || !isDraftClean || generation.isPending || acceptingId !== null}
             onClick={() => void generate()}
           >
             {generation.isPending ? "Inspecting…" : "Inspect Required bullets"}
           </Button>
         </CardAction>
       </CardHeader>
+      {!availability.available ? (
+        <CardContent>
+          <Alert variant="info">
+            <AlertDescription>
+              {availability.reason} You can edit the synthetic profile manually in this demo.{" "}
+              <a href={LOCAL_INSTALL_GUIDE_URL}>Install JobCtrl</a> to connect your provider and inspect your saved Required bullets.
+            </AlertDescription>
+          </Alert>
+        </CardContent>
+      ) : null}
       {!isDraftClean ? (
         <CardContent>
           <p data-typography="metadata">
@@ -171,7 +185,7 @@ export function RequiredBulletSuggestions({
           <div className="flex flex-col gap-3">
             <div className="flex flex-wrap gap-2">
               <Badge variant="category">{suggestion.kind.replace("_", " ")}</Badge>
-              <Badge variant="outline">deterministic · no model</Badge>
+              <Badge variant="outline">LLM coaching</Badge>
               <Badge variant="outline">
                 {suggestion.source.identityKind === "canonical_achievement"
                   ? `Achievement ${suggestion.source.sourceId}`

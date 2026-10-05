@@ -53,6 +53,10 @@
       "mode": "workflow"
     },
     {
+      "method": "profile_required_bullet_suggestions",
+      "mode": "sync"
+    },
+    {
       "method": "profile_target_role_suggestions",
       "mode": "sync"
     },

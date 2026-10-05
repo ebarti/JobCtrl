@@ -2,6 +2,7 @@ import { act, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
+import { DemoFeatureFlagAdapter } from "../../../demo/ports.js";
 import { renderWithProviders } from "../../../test/render.js";
 import { buildTestPorts } from "../../../test/testPorts.js";
 import { RequiredBulletSuggestions } from "./RequiredBulletSuggestions.js";
@@ -28,8 +29,8 @@ const response = {
       requiredBulletIndex: 0,
     },
   }],
-  strategy: "deterministic_rules_v1" as const,
-  modelUsed: false as const,
+  strategy: "model_v1" as const,
+  modelUsed: true as const,
   truncated: false,
 };
 
@@ -66,6 +67,45 @@ describe("RequiredBulletSuggestions", () => {
     expect(screen.getByText(/Inspection is incomplete\. These suggestions cover only part/i))
       .toHaveTextContent(/edit omitted bullets manually/);
     expect(screen.queryByText(/Showing the first 12/i)).not.toBeInTheDocument();
+  });
+
+  it.each([
+    { suggestions: [], truncated: false, status: "No coaching findings were returned." },
+    { suggestions: [], truncated: true, status: /Inspection is incomplete: saved Required/ },
+    { suggestions: response.suggestions, truncated: true, status: /Inspection is incomplete\. These suggestions/ },
+  ])("replaces the previous review status after a complete refresh ($truncated)", async (previous) => {
+    const user = userEvent.setup();
+    const requiredBulletSuggestions = vi.fn()
+      .mockResolvedValueOnce({ ...response, suggestions: previous.suggestions, truncated: previous.truncated })
+      .mockResolvedValueOnce(response);
+    renderWithProviders(
+      <RequiredBulletSuggestions isDraftClean profileVersion={3} resetToken={0} onAccept={vi.fn()} />,
+      { ports: buildTestPorts({ api: { requiredBulletSuggestions } }) },
+    );
+    await user.click(screen.getByRole("button", { name: "Inspect Required bullets" }));
+    expect(await screen.findByText(previous.status)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Inspect Required bullets" }));
+    await waitFor(() => expect(screen.queryByText(previous.status)).not.toBeInTheDocument());
+    expect(screen.getByText("Collapse whitespace only.")).toBeInTheDocument();
+  });
+
+  it("disables coaching in the demo and provides the supported local installation path", async () => {
+    const user = userEvent.setup();
+    const requiredBulletSuggestions = vi.fn();
+    const ports = buildTestPorts({ api: { requiredBulletSuggestions } });
+    ports.featureFlags = new DemoFeatureFlagAdapter();
+    renderWithProviders(
+      <RequiredBulletSuggestions isDraftClean profileVersion={3} resetToken={0} onAccept={vi.fn()} />,
+      { ports },
+    );
+    const inspect = screen.getByRole("button", { name: "Inspect Required bullets" });
+    expect(inspect).toBeDisabled();
+    await user.click(inspect);
+    expect(requiredBulletSuggestions).not.toHaveBeenCalled();
+    expect(screen.getByText(/available in the local JobCtrl app with a configured LLM provider/)).toBeInTheDocument();
+    expect(screen.getByText(/edit the synthetic profile manually/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Install JobCtrl" })).toHaveAttribute("href", "https://jobctrl.dev/user/getting-started");
+    expect(screen.queryByText(/Your configured provider receives/)).not.toBeInTheDocument();
   });
 
   it("rejects an individual replacement without mutating the saved profile", async () => {
@@ -142,6 +182,24 @@ describe("RequiredBulletSuggestions", () => {
 
     expect(screen.queryByText("Proposed text: “Saved bullet”")).not.toBeInTheDocument();
     expect(onAccept).not.toHaveBeenCalled();
+  });
+
+  it("preserves the last reviewed findings when a model refresh fails", async () => {
+    const user = userEvent.setup();
+    const requiredBulletSuggestions = vi.fn()
+      .mockResolvedValueOnce({ ...response, truncated: true })
+      .mockRejectedValueOnce(new Error("The coaching provider is unavailable"));
+    renderWithProviders(
+      <RequiredBulletSuggestions isDraftClean profileVersion={3} resetToken={0} onAccept={vi.fn()} />,
+      { ports: buildTestPorts({ api: { requiredBulletSuggestions } }) },
+    );
+    await user.click(screen.getByRole("button", { name: "Inspect Required bullets" }));
+    expect(await screen.findByText("Collapse whitespace only.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Inspect Required bullets" }));
+    expect(await screen.findByText("The coaching provider is unavailable")).toBeInTheDocument();
+    expect(screen.getByText("Collapse whitespace only.")).toBeInTheDocument();
+    expect(screen.getByText(/Inspection is incomplete\. These suggestions/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Accept" })).toBeEnabled();
   });
 
   it("keeps the manual path open after a failed inspection and allows retry", async () => {

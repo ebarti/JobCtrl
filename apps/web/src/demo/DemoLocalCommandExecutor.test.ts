@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
+import { ProfileSchema } from "@jobctrl/contracts";
 import type { DomainEventType } from "@jobctrl/domain-types";
 
+import coachingFixtures from "../../../../packages/domain-types/test/fixtures/required-bullet-suggestions.json" with { type: "json" };
 import type { ApiClientPort } from "../shared/ports/ApiClientPort.js";
 import { DEMO_CAPABILITY_MANIFEST } from "./capabilities.js";
 import { DemoApiClientAdapter } from "./DemoApiClientAdapter.js";
@@ -19,6 +21,19 @@ import {
 } from "./workspace/index.js";
 
 const NOW = "2026-07-11T12:00:00.000Z";
+
+function coachingSaveFixture() {
+  const fixture = coachingFixtures.find((item) =>
+    item.name === "conservative canonical cleanup preserves factual tokens",
+  )!;
+  const original = ProfileSchema.parse(fixture.profile);
+  const accepted = structuredClone(original);
+  const replacement = fixture.expected.suggestions[0]!.proposedText!;
+  accepted.resume.experience_entries[0]!.bullets[1] = replacement;
+  accepted.resume.experience_entries[0]!.achievement_evidence[0]!.source_text = replacement;
+  accepted.resume.tailoring_rules.required_bullets_by_experience_id!["exp-1"]![0] = replacement;
+  return { fixture, original, accepted };
+}
 
 async function harness(store: DemoWorkspaceStore = new InMemoryDemoWorkspaceStore()) {
   let id = 0;
@@ -229,6 +244,92 @@ const LOCAL_CASES = [
 ] as const satisfies readonly LocalCase[];
 
 describe("DemoLocalCommandExecutor", () => {
+  it("persists one explicitly accepted coaching cleanup with one ProfileUpdated event and reloads it", async () => {
+    const store = new InMemoryDemoWorkspaceStore();
+    const { adapter, repository } = await harness(store);
+    const { original, accepted } = coachingSaveFixture();
+    const saved = await adapter.updateProfile({
+      expectedProfileVersion: 1, profileText: JSON.stringify(original),
+    });
+    const before = repository.snapshotNow();
+    // Only an explicit acceptance sends the individually edited profile through
+    // the existing fenced writer.
+    const result = await adapter.updateProfile({
+      expectedProfileVersion: saved.profileVersion!, profileText: JSON.stringify(accepted),
+    });
+    const after = repository.snapshotNow();
+    expect(result.profile).toEqual(accepted);
+    expect(result.profileVersion).toBe(saved.profileVersion! + 1);
+    expect(after.revision).toBe(before.revision + 1);
+    expect(after.eventLog.slice(before.eventLog.length).map((record) => ({
+      eventType: record.event.eventType, payload: record.event.payload,
+    }))).toEqual([{
+      eventType: "ProfileUpdated", payload: { changedSections: ["profileText"], updatedAt: NOW },
+    }]);
+    expect(after.pendingScenarios).toEqual(before.pendingScenarios);
+    expect(after.blobIds).toEqual(before.blobIds);
+    expect((await store.readSnapshot())!.state.readModel.profile.config).toEqual(result);
+    repository.dispose();
+    const reloaded = await harness(store);
+    expect(await reloaded.adapter.profile()).toEqual(result);
+    reloaded.repository.dispose();
+  });
+
+  it("preserves the reviewed profile, Required pin and event history when accepting cleanup cannot persist", async () => {
+    const store = new QuotaOnNextTransactionStore();
+    const { adapter, repository } = await harness(store);
+    const { original, accepted } = coachingSaveFixture();
+    const saved = await adapter.updateProfile({
+      expectedProfileVersion: 1, profileText: JSON.stringify(original),
+    });
+    const before = repository.snapshotNow();
+    store.failNext = true;
+    await expect(adapter.updateProfile({
+      expectedProfileVersion: saved.profileVersion!, profileText: JSON.stringify(accepted),
+    })).rejects.toBeInstanceOf(DemoCommandPersistenceError);
+    expect(repository.snapshotNow()).toEqual(before);
+    expect(await store.readSnapshot()).toEqual(before);
+    expect(await adapter.profile()).toEqual(saved);
+    expect(repository.snapshotNow()).toEqual(before);
+    repository.dispose();
+  });
+
+  it.each(["accept", "manual"] as const)(
+    "fences concurrent acceptance, manual and autosave payloads when %s commits first",
+    async (first) => {
+      const { adapter, repository } = await harness();
+      const { original, accepted } = coachingSaveFixture();
+      const saved = await adapter.updateProfile({
+        expectedProfileVersion: 1, profileText: JSON.stringify(original),
+      });
+      const manual = structuredClone(original);
+      manual.resume.experience_entries[0]!.bullets[0] = "Manually edited synthetic optional fact.";
+      const autosave = structuredClone(manual);
+      autosave.resume.experience_entries[0]!.bullets[2] = "Autosaved synthetic optional fact.";
+      const ordered = first === "accept" ? [accepted, manual, autosave] : [manual, accepted, autosave];
+      const before = repository.snapshotNow();
+      const results = await Promise.allSettled(ordered.map((profile) => adapter.updateProfile({
+        expectedProfileVersion: saved.profileVersion!, profileText: JSON.stringify(profile),
+      })));
+      expect(results[0]!.status).toBe("fulfilled");
+      for (const result of results.slice(1)) {
+        expect(result.status).toBe("rejected");
+        if (result.status === "rejected") {
+          expect(result.reason).toMatchObject({ message: expect.stringContaining("stale_profile_version") });
+        }
+      }
+      const current = await adapter.profile();
+      expect(current.profile).toEqual(ordered[0]);
+      expect(current.profileVersion).toBe(saved.profileVersion! + 1);
+      const after = repository.snapshotNow();
+      expect(after.revision).toBe(before.revision + 1);
+      expect(after.eventLog.slice(before.eventLog.length).map((record) => record.event.eventType))
+        .toEqual(["ProfileUpdated"]);
+      expect(repository.snapshotNow()).toEqual(after);
+      repository.dispose();
+    },
+  );
+
   it("keeps the 143-member capability manifest exhaustive with exact class counts", () => {
     const counts = Object.values(DEMO_CAPABILITY_MANIFEST).reduce<Record<string, number>>(
       (result, capability) => {
@@ -239,13 +340,13 @@ describe("DemoLocalCommandExecutor", () => {
     );
     expect(Object.keys(DEMO_CAPABILITY_MANIFEST)).toHaveLength(143);
     expect(counts).toEqual({
-      browser_local: 99,
+      browser_local: 98,
       simulated_async: 4,
       rehearsed_external: 4,
-      unavailable: 36,
+      unavailable: 37,
     });
     expect(DEMO_CAPABILITY_MANIFEST.requiredBulletSuggestions).toMatchObject({
-      class: "browser_local",
+      class: "unavailable",
     });
   });
 
