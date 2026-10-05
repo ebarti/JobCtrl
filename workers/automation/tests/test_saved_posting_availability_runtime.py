@@ -511,3 +511,112 @@ def test_unknown_availability_reaches_real_preparation_provider_boundary(runtime
             cover_letter.cover_letter_by_id(JobId(job_id), tenant_id=LOCAL_TENANT, snapshot=profile_snapshot)
     assert availability.read_availability(runtime.conn, job_id)['verdict'] == 'unknown'
     assert not runtime.conn.execute("SELECT 1 FROM job_events WHERE entity_kind='posting_availability_request'").fetchone()
+
+
+@pytest.mark.parametrize('resource, status', [('fetch', 403), ('fetch', 429), ('fetch', 503),
+                                             ('script', 302), ('style', 302), ('iframe', 302)])
+def test_real_renderer_failed_status_dependency_cannot_manufacture_closure(runtime, resource, status):
+    public_url = 'https://93.184.216.34/jobs/status-dependency'
+    endpoint = 'https://93.184.216.35/dependency'
+    runtime.conn.execute('UPDATE jobs SET url=? WHERE job_id=?', (public_url, JOB))
+    runtime.conn.commit()
+    if resource == 'fetch':
+        control = f'<script>fetch("{endpoint}").then(r => document.querySelector("aside").hidden=false).catch(() => document.querySelector("aside").hidden=false)</script>'
+        banner = '<aside hidden>Applications are closed</aside>'
+    elif resource == 'script':
+        control = f'<script src="{endpoint}" onerror="document.querySelector(\'aside\').hidden=false"></script>'
+        banner = '<aside>Applications are closed</aside>'
+    elif resource == 'style':
+        control = f'<link rel="stylesheet" href="{endpoint}">'
+        banner = '<aside>Applications are closed</aside>'
+    else:
+        control = f'<iframe src="{endpoint}"></iframe>'
+        banner = '<aside>Applications are closed</aside>'
+    html = f'<html><head><style>body {{color:black}}</style></head><body>{banner}{control}</body></html>'.encode()
+    def fetch(url):
+        if url == public_url:
+            return availability.Response(url, url, 200, html)
+        return availability.Response(url, url, status, b'Applications are closed',
+                                     redirect_url=(endpoint + ('?utm_source=redirect' if resource == 'style' else '/redirected'))
+                                     if status == 302 else None)
+    value = availability.check_availability(JOB, conn=runtime.conn, transport=fetch)
+    assert value['verdict'] == 'unknown', value
+    assert value['reason'] == f'browser_guard: browser_resource_http_{status}'
+    assert any(step['sourceUrl'] == endpoint and step['status'] == status and step['rawHash'] for step in value['lineage'])
+    assert value.get('lastSuccessfulState') != 'closed'
+
+
+@pytest.mark.parametrize('passive', [False, True])
+def test_real_renderer_local_cdn_refusal_is_not_employer_failure(runtime, passive):
+    public_url = 'https://93.184.216.34/jobs/cdn-contention'
+    endpoint = 'https://93.184.216.35/' + ('optional.png' if passive else 'status.js')
+    runtime.conn.execute('UPDATE jobs SET url=? WHERE job_id=?', (public_url, JOB))
+    availability._event(runtime.conn, 'local', 'availability_lease', 'host:93.184.216.35',
+        {'owner': 'concurrent-owned-check', 'expiresAt': (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()})
+    runtime.conn.commit()
+    resource = f'<img src="{endpoint}">' if passive else f'<script src="{endpoint}"></script>'
+    html = f'<html><head><style>body {{color:black}}</style></head><body><aside>Applications are closed</aside>{resource}</body></html>'.encode()
+    value = availability.check_availability(JOB, conn=runtime.conn,
+        transport=lambda url: availability.Response(url, url, 200, html))
+    if passive:
+        assert value['verdict'] == 'closed', value
+        assert value['consecutiveFailures'] == 0
+    else:
+        assert value['requestStatus'] == 'deferred', value
+        assert not availability._latest(runtime.conn, 'local', 'posting_availability', JOB)
+    assert not value['checkInProgress']
+
+
+def test_activity_cancel_signal_reaps_real_hanging_renderer_without_employer_observation(runtime, monkeypatch):
+    public_url = 'https://93.184.216.34/jobs/canceled-renderer'
+    runtime.conn.execute('UPDATE jobs SET url=? WHERE job_id=?', (public_url, JOB))
+    runtime.conn.commit()
+    html = b"<html><head><script>document.addEventListener('DOMContentLoaded', () => setTimeout(() => {while(true) {}}, 0));</script></head><body><main>Synthetic unresolved posting</main></body></html>"
+    canceled = threading.Event()
+    calls = []
+    timers = []
+    groups = set()
+    real_stop = availability._stop_browser_process
+    def stop(process, known_groups=None):
+        groups.update(availability._owned_browser_groups(process.pid))
+        real_stop(process, known_groups)
+    monkeypatch.setattr(availability, '_stop_browser_process', stop)
+    def fetch(url):
+        calls.append(url)
+        if len(calls) == 2:
+            timer = threading.Timer(1, canceled.set)
+            timer.start()
+            timers.append(timer)
+        return availability.Response(url, url, 200, html)
+    started = time.monotonic()
+    try:
+        value = availability.check_availability(JOB, conn=runtime.conn, transport=fetch, cancel_event=canceled)
+    finally:
+        for timer in timers:
+            timer.cancel()
+            timer.join()
+    assert len(calls) == 2 and canceled.is_set()
+    assert value['requestStatus'] == 'deferred' and value['requestReason'] == 'check_canceled'
+    assert time.monotonic() - started < 10
+    assert not availability._latest(runtime.conn, 'local', 'posting_availability', JOB)
+    assert not value['checkInProgress']
+    assert len(groups) >= 2
+    inventory = subprocess.run(['ps', '-axo', 'pgid=,stat='], capture_output=True, text=True, check=True, timeout=1)
+    assert not [row for row in inventory.stdout.splitlines() if row.strip() and int(row.split()[0]) in groups
+                and not row.split()[1].startswith('Z')]
+
+
+def test_local_resource_refusal_survives_renderer_deadline_without_evidence_backoff(runtime, monkeypatch):
+    public_url = 'https://93.184.216.34/jobs/refused-renderer'
+    runtime.conn.execute('UPDATE jobs SET url=? WHERE job_id=?', (public_url, JOB))
+    availability._event(runtime.conn, 'local', 'availability_lease', 'host:93.184.216.35',
+        {'owner': 'concurrent-owned-check', 'expiresAt': (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()})
+    runtime.conn.commit()
+    html = b"<html><head><script src='https://93.184.216.35/status.js'></script><script>document.addEventListener('DOMContentLoaded', () => setTimeout(() => {while(true) {}}, 0));</script></head><body><main>Synthetic unresolved posting</main></body></html>"
+    monkeypatch.setattr(availability, 'ACQUISITION_TIMEOUT_SECONDS', 8)
+    value = availability.check_availability(JOB, conn=runtime.conn,
+        transport=lambda url: availability.Response(url, url, 200, html))
+    assert value['requestStatus'] == 'deferred', value
+    assert value['requestReason'] == 'host_pacing_or_cooldown'
+    assert not availability._latest(runtime.conn, 'local', 'posting_availability', JOB)
+    assert not value['checkInProgress']

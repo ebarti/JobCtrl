@@ -684,14 +684,19 @@ backoff capped at 24 hours; bounded Retry-After contributes a shared host cooldo
 An explicit request can bypass evidence backoff after the one-minute job limit,
 but cannot bypass quotas, cooldowns or safety checks. Local refusals preserve
 evidence clocks and backoff; only explicit commands own coalesced deferral feedback. Preparation/
-review jobs are preferred, then oldest due with stable JobId ordering. Stopped
+review jobs are preferred, then oldest due with stable JobId ordering. Sweeps
+read quota capacity before each claim and stop when saturated; they stop starting
+new checks within a 20-minute budget below the 30-minute activity timeout. Activity
+cancellation propagates to the acquisition and supervised browser cleanup. Stopped
 workers leave clocks intact and the UI honestly reports overdue evidence.
 
-Failures preserve accepted content/materials, approvals, application attempts
-and outcomes. Reopening updates availability without another Discover run.
+Standalone check failures preserve accepted content/materials, approvals,
+application attempts and outcomes. Reopening updates availability without another Discover run.
 Confirmed unavailable evidence blocks preparation/Apply. Unknown evidence permits
 preparation and independently authorized rehearsals or bound human-reviewed Apply,
-while unattended Apply retains the positive active-evidence gate. Reads never acquire.
+with an exact approval from the preceding 15 minutes, while unattended Apply
+retains the positive active-evidence gate. Claim, run and owned intent share that
+supervision rule; a refused candidate cannot starve the remaining queue. Reads never acquire.
 Candidate posting URL and the applicable availability policy are rechecked under the short
 queued/manual-to-running writer claim for Score, Tailor and Cover, then released
 before provider work. Reviewed email intent carries the original posting URL

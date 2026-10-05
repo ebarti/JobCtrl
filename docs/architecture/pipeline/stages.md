@@ -580,8 +580,14 @@ still stops preparation. Apply performs cheap local eligibility/approval checks
 before acquiring only its chosen candidate's evidence. Dry-run and bound
 human-reviewed Apply may proceed with unknown availability; unattended Apply
 requires active success within 15 minutes. Owned email intent rechecks the
-original posting and, for unknown evidence, the current exact review binding.
+original posting and, for unknown evidence, the same exact review binding with a
+15-minute approval recency limit at claim, run and intent. This supervision rule
+is independent of the automation approval setting; refused candidates are skipped
+within the poll.
 Checks release short claim/reservation transactions before network I/O and fence
 the canonical posting again under the stage writer. Local refusals do not create
-evidence failures or consume stage attempts. Accepted content and artifacts
+evidence failures. Preclaim availability refusals consume no stage attempt. A
+submit-time availability refusal after an Apply run has started remains a
+retryable terminal failure and consumes that already-claimed attempt, without
+persisting submit intent or sending. Accepted content and artifacts
 survive failed refreshes. These gates grant no submission authority.

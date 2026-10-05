@@ -663,6 +663,9 @@ def test_unverified_availability_stops_email_before_intent_or_send(repo):
     event_types = [event.event_type for event in outcome.apply_run.events]
     assert "ApplySubmissionBlocked" in event_types
     assert "ApplySubmitIntended" not in event_types and "EmailApplicationSent" not in event_types
+    assert isinstance(outcome.apply_run.submission_result, Failed)
+    assert outcome.apply_run.submission_result.retryable is True
+    assert outcome.apply_run.attempts == 1  # The already-started run is retained.
 
 
 def test_email_sender_exception_is_ambiguous_after_submit_intent(repo):

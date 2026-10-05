@@ -17,7 +17,11 @@ saved_job = _saved_job
     {'@type': 'JobPosting', 'description': 'Build reliable synthetic systems. ' * 30, 'url': URL, 'validThrough': '2099-01-01'},
     {'@type': 'JobPosting', 'description': 'Build reliable synthetic systems. ' * 30, 'url': URL + '-canonical'},
 ])
-def test_unknown_enrichment_retains_extracted_description_and_retryability(posting):
+def test_unknown_enrichment_retains_extracted_description_and_retryability(posting, monkeypatch):
+    # The existing cascade constructs its fallback adapter eagerly. Own that
+    # port without requiring credentials; deterministic extraction must not use it.
+    monkeypatch.setattr(detail, 'get_llm_adapter', lambda: SimpleNamespace(
+        chat=lambda *_a, **_kw: pytest.fail('deterministic content used the LLM fallback')))
     page = DetailPage(url=URL, final_url=URL, status=200, json_ld=(posting,))
     result = detail._extract_detail_page(page, {}, 0, status_code=200)
     assert result['active_state'] == 'unknown'
@@ -155,6 +159,7 @@ def test_approval_poll_and_manual_ats_do_not_acquire_employer_evidence(saved_job
 def test_only_chosen_candidate_is_checked_and_unknown_needs_bound_review(saved_job, monkeypatch, reviewed):
     from jobctrl.apply import launcher
     from .test_apply_regressions import _insert_ready_job, _seed_current_apply_binding, _insert_review_decision
+    monkeypatch.setattr(launcher, '_utc_now', lambda: NOW.isoformat())
     jobs = [_insert_ready_job(saved_job, url=f'https://example.com/job-{i}') for i in range(25)]
     selected = jobs[0]
     if reviewed:
@@ -175,7 +180,9 @@ def test_only_chosen_candidate_is_checked_and_unknown_needs_bound_review(saved_j
     monkeypatch.setattr(availability, 'require_fresh_active', guard)
     before = saved_job.execute("SELECT COUNT(*) FROM job_events WHERE event_type='ApplyRunStarted'").fetchone()[0]
     result = launcher.acquire_job(approval_required=reviewed)
-    assert checks == [selected]
+    # Backoff-bound unknown candidates are skipped locally; an approved
+    # candidate alone reaches the preflight/claim boundary.
+    assert checks == ([selected] if reviewed else [])
     assert bool(result) is reviewed
     if reviewed:
         with launcher._authorize_posting_before_submit('local', selected, 'https://example.com/job-0', result['apply_run_id']):

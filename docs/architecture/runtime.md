@@ -907,5 +907,12 @@ page, so first popup requests and frame resources pass through the same actual
 host reservations and URL checks. Service workers, WebSockets, WebTransport,
 WebRTC and dedicated/shared workers are blocked. Service-worker registration is
 blocked on both the instance and native prototype; an attempted unsupported
-channel or a failed resource keeps the result unknown. Guards remain installed
+channel or a failed/redirected required document, data, script, style or frame
+request keeps the result unknown. Passive assets may fail without invalidating
+status; their local admission refusals do not become employer evidence. Guards remain installed
 until the browser has closed. Ordinary enrichment transport selection is unchanged.
+
+Automatic sweeps read remaining quota before claiming jobs and stop at exhaustion.
+Their 20-minute work budget leaves margin below the 30-minute activity limit.
+Activity cancellation signals the current acquisition, cancels/reaps its browser
+process and prevents admission of later jobs.

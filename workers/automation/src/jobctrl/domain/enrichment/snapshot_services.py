@@ -528,7 +528,7 @@ def _quarantine_for_capture(
 
     The default rules match the RFC's "Quarantine" table:
 
-      * UNKNOWN active state → quarantine for review.
+      * Availability uncertainty alone does not change description trust.
       * LOW confidence WITHOUT a filter override → quarantine.
       * LOW confidence WITH an explicit filter override → admit; the
         override audit will be persisted on the snapshot, and the
@@ -537,8 +537,6 @@ def _quarantine_for_capture(
         application-target readiness is tracked separately.
       * Otherwise NONE.
     """
-    if active_state is ActiveState.UNKNOWN:
-        return QuarantineReason.UNKNOWN_ACTIVE_STATE
     if confidence is SnapshotConfidence.LOW and filter_override is None:
         return QuarantineReason.LOW_CONFIDENCE_EXTRACTION
     if not has_apply_url:

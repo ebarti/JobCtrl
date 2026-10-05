@@ -74,10 +74,16 @@ wrap below their binding explanation; no decision or audit section is removed.
 Apply checks only the locally eligible candidate after repeat-application,
 attempt and approval gates. When availability stays unknown, dry-run rehearsals
 and the existing human-reviewed/manual Apply path remain available; approval must
-still match the current materials, profile, application URL and rehearsal.
+still match the current materials, profile, application URL and rehearsal, and
+be recorded within the preceding 15 minutes. This rule also applies when the
+automation approval setting is disabled. A refused top candidate does not prevent
+an eligible later candidate from being claimed.
 Unattended Apply requires positive active evidence within 15 minutes. The owned
 email sender rechecks the original posting and current bound review before
 submit intent. Confirmed unavailability or a changed posting stops the attempt.
+An availability refusal before claim consumes no Apply attempt. If a fresh check
+blocks owned email intent after the run was claimed, that completed run remains a
+retryable failure and consumes its Apply attempt; no submit intent or send occurs.
 Use Job Detail's **Check availability** or **Inspect employer posting** to review
 uncertainty. Checks preserve approved materials and grant no submission authority.
 See [saved posting availability](enrichment-and-extraction.md#saved-posting-availability)

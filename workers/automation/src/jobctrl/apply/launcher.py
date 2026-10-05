@@ -192,7 +192,7 @@ def _latest_apply_review_decision(conn, *, tenant_id: str, job_id: str) -> dict[
     row = conn.execute(
         """
         SELECT decision, materials_generation, profile_version, application_url,
-               partial_override_run_id, email_recipient, email_attachment_artifact_id
+               partial_override_run_id, email_recipient, email_attachment_artifact_id, decided_at
         FROM application_review_decisions
         WHERE tenant_id = ? AND job_id = ?
         ORDER BY decided_at DESC, decision_id DESC
@@ -213,6 +213,7 @@ def _latest_apply_review_decision(conn, *, tenant_id: str, job_id: str) -> dict[
             "partial_override_run_id": row[4],
             "email_recipient": row[5],
             "email_attachment_artifact_id": row[6],
+            "decided_at": row[7],
         }
     )
 
@@ -764,6 +765,30 @@ def acquire_job(
     approval_required: bool = True,
     tenant_id: str | None = None,
 ) -> dict | None:
+    """Claim the first locally eligible candidate that passes availability.
+
+    A refused candidate is visited once per poll; another candidate can still
+    proceed. Each network check follows that candidate's cheap local gates.
+    """
+    excluded: set[str] = set()
+    while True:
+        result = _acquire_job_candidate(target_job_id, min_score, worker_id, run_ctx,
+                                        approval_required, tenant_id, excluded)
+        if isinstance(result, str):
+            excluded.add(result)
+            continue
+        return result
+
+
+def _acquire_job_candidate(
+    target_job_id: JobId | None = None,
+    min_score: int = 7,
+    worker_id: int = 0,
+    run_ctx: dict | None = None,
+    approval_required: bool = True,
+    tenant_id: str | None = None,
+    excluded: set[str] | None = None,
+) -> dict | str | None:
     """Atomically acquire the next job to apply to.
 
     The lock is taken on ``job_stage_states.apply.state == 'running'`` —
@@ -775,13 +800,14 @@ def acquire_job(
     """
     conn = get_connection()
     from datetime import timedelta
-    from jobctrl.enrichment.availability import require_fresh_active, assert_fresh_candidate
+    from jobctrl.enrichment.availability import require_fresh_active, assert_fresh_candidate, read_availability
     tenant_id = str(tenant_id or (run_ctx.get("tenant_id") if run_ctx else None) or LOCAL_TENANT)
     if target_job_id is not None:
         target_job_id = canonical_job_id(str(target_job_id))
     try:
         conn.execute("BEGIN IMMEDIATE")
-        candidate_rows = _select_apply_candidates(conn, tenant_id, target_job_id, min_score)
+        candidate_rows = [row for row in _select_apply_candidates(conn, tenant_id, target_job_id, min_score)
+                          if str(row["job_id"]) not in (excluded or set())]
         if not candidate_rows:
             conn.rollback()
             return None
@@ -856,22 +882,22 @@ def acquire_job(
             )
             conn.commit()
             logger.info("Skipping manual ATS: %s", url[:80])
-            return None
+            return job_id
 
         # Targeted-mode also enforces the no-active + max-attempts invariants.
         if _has_active_apply(conn, tenant_id=tenant_id, job_id=job_id):
             conn.rollback()
-            return None
+            return job_id
         if _has_succeeded_apply(conn, tenant_id=tenant_id, job_id=job_id):
             conn.rollback()
-            return None
+            return job_id
         if _has_needs_verification_apply(conn, tenant_id=tenant_id, job_id=job_id):
             conn.rollback()
-            return None
+            return job_id
         attempts = _attempt_count_for(conn, tenant_id=tenant_id, job_id=job_id)
         if attempts >= int(config.DEFAULTS["max_apply_attempts"]):
             conn.rollback()
-            return None
+            return job_id
         if approval_required and not dry_run:
             refusal_reason = _approval_refusal_reason(
                 conn,
@@ -893,17 +919,23 @@ def acquire_job(
                     url,
                     refusal_reason,
                 )
-                return None
+                return job_id
 
         # Release the local-selection writer before any employer request. Only
         # this eligible candidate is checked; an approval poll never acquires.
+        allow_unknown = dry_run or _has_current_apply_review(conn, tenant_id, job_id)
+        cached = read_availability(conn, job_id, tenant_id=tenant_id)
+        if (not allow_unknown and cached.get("verdict") == "unknown" and cached.get("postingUrl") == url
+                and not cached["overdue"]):
+            conn.commit()
+            return job_id
         conn.commit()
         try:
             require_fresh_active(job_id, tenant_id=tenant_id, conn=conn, max_age=timedelta(minutes=15),
-                                 expected_posting_url=url, allow_unknown=approval_required or dry_run)
+                                 expected_posting_url=url, allow_unknown=allow_unknown)
         except Exception:
             logger.info("Apply deferred for %s: check availability or use supervised Apply", job_id)
-            return None
+            return job_id
         conn.execute("BEGIN IMMEDIATE")
         current_rows = _select_apply_candidates(conn, tenant_id, canonical_job_id(job_id), min_score)
         current = current_rows[0] if current_rows else None
@@ -914,20 +946,20 @@ def acquire_job(
                 or _has_needs_verification_apply(conn, tenant_id=tenant_id, job_id=job_id)
                 or _attempt_count_for(conn, tenant_id=tenant_id, job_id=job_id) >= int(config.DEFAULTS["max_apply_attempts"])):
             conn.rollback()
-            return None
+            return job_id
         if not dry_run:
             repeat_assessment = evaluate_repeat_application(conn, tenant_id=tenant_id, target_job_id=job_id)
             if repeat_assessment["status"] not in {"clear", "override_ready"}:
                 conn.commit()
-                return None
+                return job_id
             if approval_required and _approval_refusal_reason(
                 conn, tenant_id=tenant_id, job_id=job_id, materials_generation=current["materials_generation"],
                 profile_version=_current_profile_version(conn, tenant_id=tenant_id), application_url=apply_url
             ):
                 conn.commit()
-                return None
+                return job_id
         assert_fresh_candidate(conn, job_id, url, tenant_id=tenant_id, max_age=timedelta(minutes=15),
-                               allow_unknown=approval_required or dry_run)
+                               allow_unknown=dry_run or _has_current_apply_review(conn, tenant_id, job_id))
         row = current
         attempts = _attempt_count_for(conn, tenant_id=tenant_id, job_id=job_id)
 
@@ -1956,6 +1988,15 @@ def gen_prompt(
 
 
 def _has_current_apply_review(conn, tenant_id: str, job_id: str) -> bool:
+    from datetime import datetime, timedelta
+    decision = _latest_apply_review_decision(conn, tenant_id=tenant_id, job_id=job_id)
+    try:
+        reviewed_at = datetime.fromisoformat(str((decision or {}).get("decided_at", "")).replace("Z", "+00:00"))
+        now = datetime.fromisoformat(_utc_now())
+        if reviewed_at.tzinfo is None or not timedelta(0) <= now - reviewed_at <= timedelta(minutes=15):
+            return False
+    except (ValueError, TypeError):
+        return False
     rows = _select_apply_candidates(conn, tenant_id, canonical_job_id(job_id), 0)
     if not rows:
         return False

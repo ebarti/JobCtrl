@@ -778,11 +778,22 @@ refresh, uncertainty, overdue/offline state and closed-to-active reversal withou
 Discover. Restore the original body-only, unbound JSON-LD, unzoned-deadline and
 guest-LinkedIn fixtures: unknown availability must preserve usable content and
 allow preparation and independently bound human-reviewed/rehearsal paths.
+Medium/high-confidence unknown content must not create a pending content-review
+row or an audit claim that tailoring was quarantined. A confirmed active recheck
+resolves a legacy availability-only review row while retaining quality gates.
+Unknown Apply needs an exact review from the preceding 15 minutes at claim, run
+and owned intent, including when automation approval is disabled. A refused top
+candidate must not starve an active peer. Repeat quota-saturated sweeps with zero
+per-job ledger writes, and stop deadline/canceled sweeps before later jobs start.
 Unattended Apply must remain blocked without positive evidence. Confirmed closure
 and canonical URL races stop provider work and submit intent. Approval polls and
 manual-ATS refusals must perform zero acquisition; an eligible claim checks only
 one candidate. Exercise a real CSS-dependent closed page with more than 12
 resources, one hourly acquisition charge and harmless optional asset errors;
-failed required status scripts must remain uncertain. Use 300,000 unrelated
+failed/redirected document, data, script, style and frame dependencies must remain
+uncertain. Required-resource local refusals retain evidence/backoff; optional
+image refusals do not invalidate an otherwise sound capture. A submit-time block
+before owned intent remains a retryable failure of the already-started Apply run.
+Use 300,000 unrelated
 events and 500 unchecked jobs, without ANALYZE, to bound read and sweep work. No application is submitted during QA. External transports may be
 deterministic; production claims/classifier/dispatch/persistence remain real.

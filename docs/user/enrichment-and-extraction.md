@@ -40,11 +40,11 @@ posting detail to use it.” The current decision path is:
    | LLM-assisted | — | At least 400 characters, with or without an application URL | Fewer than 400 characters |
    | Other configured tier | — | At least 200 characters | Fewer than 200 characters |
 
-4. **Quarantine instead of guessing.** Unknown active state or low content
-   confidence without an override is held for review. An explicit operator
+4. **Quarantine low-confidence content.** Low content confidence without an
+   override is held for review. An explicit operator
    override can admit a low-confidence snapshot and is persisted with the audit
-   trail; unknown active state remains labeled for review while readable, trusted
-   content can feed preparation. Application-target readiness
+   trail. Availability-only uncertainty does not create a content-review entry
+   or claim a tailoring quarantine; readable, trusted content can feed preparation. Application-target readiness
    is a separate fact, so a missing external application URL cannot quarantine
    readable posting content or block Tailor. A posting verified as closed,
    expired, or removed is recorded separately as `posting_inactive` rather than
@@ -117,7 +117,10 @@ applications and terminal application outcomes are excluded from automatic
 checks. Manual checks remain available for saved, inspectable jobs.
 
 A sweep checks its selected postings sequentially and is admitted at most once
-per minute. Independent jobs can be checked concurrently. All checks share a
+per minute. It stops claiming jobs when its automatic quota is exhausted and
+has a 20-minute work budget within the 30-minute activity limit. Cancellation
+stops the current acquisition and prevents later jobs from starting. Independent
+jobs can be checked concurrently. All checks share a
 limit of 100 posting acquisitions per hour per workspace; automatic sweeps may
 use at most 80, reserving 20 for foreground checks and preparation. Each check
 is charged once, including its bounded browser resources. Requests retain at
@@ -146,8 +149,10 @@ has a 120-second acquisition budget, below crash-lease expiry.
 
 The anonymous fallback checks popup and frame requests through the same host
 limits and URL checks. It blocks service workers and unsupported socket or
-worker connections; an attempted unsupported connection or failed required script/stylesheet
-keeps availability unknown. Optional asset HTTP errors are handled by the browser.
+worker connections; an attempted unsupported connection or a failed or unfollowed
+redirect on a document, job-data fetch, script, stylesheet or frame keeps availability
+unknown. Only passive assets such as images tolerate HTTP errors or local admission
+refusals without invalidating the status capture.
 Each check permits 12 posting/API requests and 64 browser resources, at most one
 million bytes per response and 12 million bytes in total.
 
@@ -156,11 +161,13 @@ is older than six hours, and can proceed with usable content while availability
 stays unknown. Unknown is shown honestly and remains retryable; confirmed
 unavailable postings stop preparation. Dry-run rehearsals and human-reviewed
 Apply can also proceed when availability stays unknown, using the existing exact
-approval, material, profile, application-URL and rehearsal bindings. Inspect the
+approval, material, profile, application-URL and rehearsal bindings, with the
+approval recorded within the preceding 15 minutes. Older approvals cannot accept
+a newly uncertain posting. Inspect the
 employer posting when evidence is uncertain; manual browser submission remains
 user-controlled. Unattended Apply requires active evidence within 15 minutes.
 Owned email submit intent rechecks the original posting and, for unknown
-availability, the current bound human approval. Checking availability grants no
+availability, a bound human approval from the preceding 15 minutes. Checking availability grants no
 submission authority. A changed posting or confirmed closure stops every path.
 Failed checks preserve accepted content, scores, material
 generations, approvals and outcomes. Availability never hides/deletes a job or

@@ -1707,14 +1707,23 @@ function jobEventToAuditEntry(
       const quarantineReason = payloadText(payload, "quarantineReason", "quarantine_reason");
       const quarantineLabel =
         quarantineReason && quarantineReason !== "none" ? humanizeToken(quarantineReason) : "";
+      const confidence = payloadText(payload, "confidence").toLowerCase();
+      const availabilityOnly = quarantineReason === "unknown_active_state" && ["medium", "high"].includes(confidence);
+      const tailoringBlocked = snapshotQuarantined && confidence === "low";
       return makeAuditEntry({
         ...base,
         category: "enrichment",
         tone: snapshotQuarantined ? "warning" : "success",
         title: "Content snapshot captured",
-        description: snapshotQuarantined
-          ? "A low-confidence posting snapshot was stored and quarantined from tailoring; the job stays scoreable and visible."
-          : "A posting content snapshot was stored for future comparisons.",
+        description: availabilityOnly
+          ? "Posting availability was unverified; the captured content remains usable for preparation."
+          : quarantineReason === "posting_inactive"
+            ? "The posting was confirmed unavailable; its content snapshot remains stored."
+            : tailoringBlocked
+              ? "A low-confidence posting snapshot was stored and quarantined from tailoring; the job stays scoreable and visible."
+              : snapshotQuarantined
+                ? "A posting content snapshot was stored with a review flag."
+                : "A posting content snapshot was stored for future comparisons.",
         actor: "system",
         details: auditDetails(
           ["Source", payloadText(payload, "sourceId", "source_id")],

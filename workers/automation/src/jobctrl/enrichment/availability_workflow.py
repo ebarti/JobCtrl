@@ -4,6 +4,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
+import threading
+import time
 
 from temporalio import activity, workflow
 from temporalio.common import RetryPolicy, WorkflowIDConflictPolicy, WorkflowIDReusePolicy
@@ -26,27 +28,55 @@ class AvailabilityWorkflowInput:
             object.__setattr__(self, "job_id", str(canonical_job_id(self.job_id)))
 
 
+SWEEP_BUDGET_SECONDS = 20 * 60
+
+
+def run_availability_sweep(conn, tenant_id: str, *, cancel_event: threading.Event | None = None,
+                           budget_seconds: float = SWEEP_BUDGET_SECONDS) -> dict[str, Any]:
+    from jobctrl.enrichment.availability import acquisition_capacity, check_availability, due_jobs, ACQUISITION_TIMEOUT_SECONDS
+    deadline = time.monotonic() + budget_seconds
+    results = []
+    reason = None
+    for job_id in due_jobs(conn, tenant_id=tenant_id):
+        if cancel_event is not None and cancel_event.is_set():
+            reason = "sweep_canceled"
+            break
+        if deadline - time.monotonic() < ACQUISITION_TIMEOUT_SECONDS:
+            reason = "sweep_deadline"
+            break
+        if not acquisition_capacity(conn, tenant_id, automatic=True):
+            reason = "workspace_hourly_quota"
+            break
+        value = check_availability(job_id, tenant_id=tenant_id, conn=conn, automatic=True,
+                                   cancel_event=cancel_event)
+        results.append(value)
+        # A competing acquisition may use the last slot after the read above.
+        if value.get("requestReason") == "workspace_hourly_quota":
+            reason = "workspace_hourly_quota"
+            break
+    return {"checked": len(results), "results": results, **({"deferredReason": reason} if reason else {})}
+
+
 @activity.defn(name="check_saved_posting_availability")
 async def check_saved_posting_availability_activity(payload: AvailabilityWorkflowInput) -> dict[str, Any]:
     from jobctrl.database import get_connection
-    from jobctrl.enrichment.availability import check_availability, due_jobs
+    from jobctrl.enrichment.availability import check_availability
     from jobctrl.infrastructure.temporal.runtime_guard import assert_activity_runtime
     from jobctrl.infrastructure.temporal.run_in_activity import run_blocking_with_heartbeat
 
     assert_activity_runtime(expected_app_dir=payload.expected_app_dir, expected_db_path=payload.expected_db_path)
 
+    cancel_event = threading.Event()
     def run() -> dict[str, Any]:
         conn = get_connection()
         if payload.job_id:
-            return check_availability(payload.job_id, tenant_id=payload.tenant_id, conn=conn)
-        jobs = due_jobs(conn, tenant_id=payload.tenant_id)
-        results = [check_availability(job_id, tenant_id=payload.tenant_id, conn=conn, automatic=True)
-                   for job_id in jobs]
-        return {"checked": len(results), "results": results}
+            return check_availability(payload.job_id, tenant_id=payload.tenant_id, conn=conn, cancel_event=cancel_event)
+        return run_availability_sweep(conn, payload.tenant_id, cancel_event=cancel_event)
 
     return await run_blocking_with_heartbeat(run, starting_message="availability starting",
                                             progress_message="availability checking",
-                                            activity_name="check_saved_posting_availability")
+                                            activity_name="check_saved_posting_availability",
+                                            on_cancel=cancel_event.set)
 
 
 @workflow.defn(name="SavedPostingAvailabilityWorkflow")

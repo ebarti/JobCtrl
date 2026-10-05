@@ -176,6 +176,7 @@ def test_acquire_job_does_not_apply_unaccepted_feedback_to_candidate_order(
     # This partial-row fixture tests feedback ordering; availability is a separate port.
     monkeypatch.setattr("jobctrl.enrichment.availability.require_fresh_active", lambda *_a, **_kw: None)
     monkeypatch.setattr("jobctrl.enrichment.availability.assert_fresh_candidate", lambda *_a, **_kw: None)
+    monkeypatch.setattr("jobctrl.enrichment.availability.read_availability", lambda *_a, **_kw: {"verdict": "active"})
     selected = launcher_module.acquire_job(
         worker_id=1,
         run_ctx={"dry_run": True},

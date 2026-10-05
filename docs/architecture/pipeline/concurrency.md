@@ -220,6 +220,10 @@ is fenced against crash recovery, supersession and canonical URL changes. A
 workspace admits at most one sweep per minute, 25 jobs per sweep and 100 posting
 acquisitions per hour; sweeps may use 80, preserving 20 for foreground work.
 Each acquisition is charged once, independently of its request/resource count.
+Sweeps read capacity before claiming each job and stop when their share is
+exhausted. A 20-minute work budget stops admission below the 30-minute activity
+limit; cancellation stops acquisition and supervised browser work before another
+job can be checked.
 Every redirect and anonymous browser resource reserves its actual host, with at
 least two seconds between starts and one in flight, retaining stricter shared
 policy/cooldown. Each check permits 12 posting/API requests plus 64 browser

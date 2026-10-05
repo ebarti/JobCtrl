@@ -2302,7 +2302,8 @@ records reservations and deferred command results. Records with a canonical
 `jobId` invalidate that detail and tenant lists; workspace/host records do not.
 
 Preparation refreshes active evidence older than six hours and permits usable
-content with unknown availability. Dry-run or bound human-reviewed Apply may
+content with unknown availability. The automated unknown path requires an exact
+review binding approved within the preceding 15 minutes. Dry-run or bound human-reviewed Apply may
 proceed while unknown; unattended Apply requires active evidence within 15
 minutes. Owned email intent rechecks the original posting and current bound
 review for unknown evidence. Confirmed closure or a changed posting stops work.

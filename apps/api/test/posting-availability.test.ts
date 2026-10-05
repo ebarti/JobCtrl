@@ -31,6 +31,25 @@ function fixture() {
 }
 
 describe("saved posting availability", () => {
+  it.each([
+    ["unknown_active_state", "medium", "remains usable for preparation"],
+    ["low_confidence_extraction", "low", "quarantined from tailoring"],
+    ["posting_inactive", "high", "confirmed unavailable"],
+    ["posting_inactive", "low", "confirmed unavailable"],
+    ["unknown_active_state", "", "review flag"],
+  ])("derives snapshot audit from canonical reason %s and confidence %s", async (reason, confidence, text) => {
+    const { db, appDir, dbPath } = fixture();
+    db.prepare("INSERT INTO job_events (tenant_id, job_id, identity_version, stage, event_type, occurred_at, payload_json) " +
+      "VALUES ('local', ?, 1, 'enrich', 'PostingContentSnapshotCaptured', '2026-10-05T00:00:00Z', ?)")
+      .run(JOB, JSON.stringify({ confidence, quarantineReason: reason, quarantined: true }));
+    const app = buildApp({ dbPath, configPath: path.join(appDir, "config.json") });
+    cleanups.push(() => app.close());
+    const response = await app.inject({ method: "GET", url: `/v1/jobs/${JOB}` });
+    expect(response.statusCode, response.body).toBe(200);
+    const entry = response.json().auditHistory.find((item: { title: string }) => item.title === "Content snapshot captured");
+    expect(entry.description).toContain(text);
+    if (confidence !== "low") expect(entry.description).not.toContain("low-confidence");
+  });
   it("dispatches strict runtime-bound RPC without holding a database writer", async () => {
     const { db, appDir, dbPath } = fixture();
     const call = vi.fn(async (method, params) => {

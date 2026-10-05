@@ -417,6 +417,8 @@ def test_anonymous_browser_guard_failure_retains_hash_and_cannot_authorize(saved
             self.handler = handler
         def unroute(self, *args):
             pass
+        def wait_for_load_state(self, *_args, **_kwargs):
+            pass
         def goto(self, url, **kwargs):
             self.handler(SimpleNamespace(abort=lambda *_: None),
                          SimpleNamespace(url="https://careers.example.org/status-module.js", method="GET", headers={}))

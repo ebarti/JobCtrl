@@ -17,6 +17,7 @@ import signal
 import subprocess
 import sqlite3
 import time
+import threading
 from typing import Any, Callable
 from urllib.error import HTTPError
 from urllib.parse import urljoin, urlsplit
@@ -42,7 +43,7 @@ MAX_REQUESTS = 12
 MAX_BROWSER_REQUESTS = 64
 MAX_ACQUISITION_BYTES = 12_000_000
 FOREGROUND_RESERVE = 20
-LOCAL_DEFERRALS = frozenset({"workspace_hourly_quota", "host_pacing_or_cooldown", "shared_host_cooldown", "stale_lease", "candidate_changed"})
+LOCAL_DEFERRALS = frozenset({"workspace_hourly_quota", "host_pacing_or_cooldown", "shared_host_cooldown", "stale_lease", "candidate_changed", "check_canceled"})
 REQUEST_TIMEOUT_SECONDS = 20
 ACQUISITION_TIMEOUT_SECONDS = 120
 BROWSER_CLEANUP_GRACE_SECONDS = 3
@@ -233,6 +234,16 @@ def reserve_request(conn: sqlite3.Connection, claim: Claim, url: str, *, now: da
         raise
 
 
+def acquisition_capacity(conn: sqlite3.Connection, tenant_id: str, *, automatic: bool,
+                         now: datetime | None = None) -> int:
+    """Read admission capacity before a sweep writes any per-job claim."""
+    now = now or _now()
+    count = conn.execute("SELECT COUNT(*) FROM job_events INDEXED BY idx_job_events_entity WHERE tenant_id=? "
+                         "AND entity_kind='availability_acquisition' AND occurred_at > ?",
+                         (tenant_id, (now - timedelta(hours=1)).isoformat())).fetchone()[0]
+    return max(0, HOURLY_LIMIT - (FOREGROUND_RESERVE if automatic else 0) - count)
+
+
 def release_host(conn: sqlite3.Connection, claim: Claim, host: str, *, retry_after: float = 0,
                  now: datetime | None = None) -> None:
     now = now or _now()
@@ -406,19 +417,27 @@ def _anonymous_browser_in_process(url: str, *, fetcher: Callable[[str, str], Res
                 }
             })();""")
             def fetch_route(request_url: str, method: str, headers: Any) -> RouteFulfillment:
-                response = fetcher(request_url, "browser_resource")
-                # Optional assets may fail normally. Failed executable/status
-                # dependencies cannot prove a complete current status capture.
                 destination = str(headers.get("sec-fetch-dest", ""))
-                if response.status >= 400 and (destination in {"script", "style", "iframe"}
-                        or urlsplit(request_url).path.lower().endswith((".js", ".mjs", ".css"))):
+                passive = destination in {"image", "font", "audio", "video"}
+                try:
+                    response = fetcher(request_url, "browser_resource")
+                except DeferredCheck as error:
+                    if passive and str(error) in LOCAL_DEFERRALS:
+                        return RouteFulfillment(503, {"content-type": "application/octet-stream"}, b"")
+                    raise
+                # Documents, executable/style/frame and XHR/fetch dependencies
+                # must complete. Only passive assets may fail without changing
+                # the captured status. Unfollowed redirects have no body proof.
+                if not passive and not 200 <= response.status < 300:
                     raise DeferredCheck(f"browser_resource_http_{response.status}")
                 return RouteFulfillment(response.status, {"content-type": response.content_type}, response.body)
             # Context routing covers the first popup request and every frame.
             # Install all guards before the first page can run employer code.
-            guard = PublicHttpUrlRouteGuard(context, fetch_public_requests=True, request_fetcher=fetch_route).install()
+            guard = PublicHttpUrlRouteGuard(context, fetch_public_requests=True, request_fetcher=fetch_route,
+                                           include_resource_destination=True).install()
             page = context.new_page()
             response = page.goto(url, wait_until="domcontentloaded", timeout=max(1, min(20, deadline - time.monotonic()) * 1000))
+            page.wait_for_load_state("networkidle", timeout=max(1, min(20, deadline - time.monotonic()) * 1000))
             if progress:
                 progress("capture")
             rendered = _page_to_detail_page(page, url, response.status if response else None)
@@ -522,7 +541,8 @@ def _stop_browser_process(process: Any, known_groups: set[int] | None = None) ->
     process.close()
 
 
-def anonymous_browser(url: str, *, fetcher: Callable[[str, str], Response], deadline: float | None = None) -> DetailPage:
+def anonymous_browser(url: str, *, fetcher: Callable[[str, str], Response], deadline: float | None = None,
+                      cancel_event: threading.Event | None = None) -> DetailPage:
     """Supervise every browser RPC/resource/cleanup under the acquisition deadline.
 
     Outbound resource reads are requested over IPC and performed by the parent's
@@ -538,21 +558,30 @@ def anonymous_browser(url: str, *, fetcher: Callable[[str, str], Response], dead
     process.start()
     child.close()
     known_groups: set[int] = set()
+    local_refusal: str | None = None
     try:
         while True:
+            if cancel_event is not None and cancel_event.is_set():
+                raise DeferredCheck("check_canceled", browser_phase=phase)
             remaining = operation_deadline - time.monotonic()
-            if remaining <= 0 or not parent.poll(remaining):
-                raise DeferredCheck("acquisition_deadline", browser_phase=phase)
+            if remaining <= 0:
+                raise DeferredCheck(local_refusal or "acquisition_deadline", browser_phase=phase)
+            if not parent.poll(min(remaining, 0.1) if cancel_event is not None else remaining):
+                if cancel_event is not None:
+                    continue
+                raise DeferredCheck(local_refusal or "acquisition_deadline", browser_phase=phase)
             kind, value = parent.recv()
             if kind == "phase":
                 phase = str(value)
                 continue
             if kind == "rendered":
                 if time.monotonic() >= deadline:
-                    raise DeferredCheck("acquisition_deadline")
+                    raise DeferredCheck(local_refusal or "acquisition_deadline")
+                if local_refusal and not value.status_evidence_complete:
+                    return replace(value, status_evidence_reason="browser_guard: " + local_refusal)
                 return value
             if kind != "fetch":
-                raise DeferredCheck(value)
+                raise DeferredCheck(local_refusal or value)
             if os.name != "nt":
                 known_groups.update(_owned_browser_groups(process.pid))
             try:
@@ -561,6 +590,11 @@ def anonymous_browser(url: str, *, fetcher: Callable[[str, str], Response], dead
                     raise DeferredCheck("acquisition_deadline")
                 parent.send(("response", response))
             except Exception as error:
+                # Preserve the parent's typed admission refusal through child
+                # rendering/cleanup failures. A generic timeout cannot turn
+                # local contention into employer evidence.
+                if isinstance(error, DeferredCheck) and str(error) in LOCAL_DEFERRALS:
+                    local_refusal = str(error)
                 parent.send(("error", str(error) if isinstance(error, DeferredCheck) else "transport_failure"))
     finally:
         parent.close()
@@ -571,17 +605,23 @@ class Acquisition:
     """API first, bounded page fallback, preserving every raw response hash."""
     def __init__(self, conn: sqlite3.Connection, claim: Claim, *,
                  transport: Callable[[str], Response] | None = None,
-                 browser: Callable[[str], DetailPage] | None = None) -> None:
+                 browser: Callable[[str], DetailPage] | None = None,
+                 cancel_event: threading.Event | None = None) -> None:
         self.conn, self.claim, self.transport, self.browser = conn, claim, transport or public_get, browser
         self.lineage: list[dict[str, Any]] = []
         self.bytes_received = 0
         self.deadline = time.monotonic() + ACQUISITION_TIMEOUT_SECONDS
+        self.cancel_event = cancel_event
 
     def _get(self, url: str, method: str, *, deadline: float | None = None) -> Response:
         deadline = min(self.deadline, deadline if deadline is not None else self.deadline)
         original = url
         for _ in range(4):
             response = self._single_get(url, method, deadline=deadline)
+            if method == "browser_resource":
+                # The route fulfillment cannot reproduce a redirect response
+                # faithfully. Required dependencies therefore remain incomplete.
+                return response
             if not response.redirect_url:
                 return response
             if not same_posting_url(original, response.redirect_url):
@@ -598,6 +638,8 @@ class Acquisition:
                 time.sleep(min(delay, max(0, deadline - time.monotonic())) if deadline is not None else delay)
 
     def _single_get(self, url: str, method: str, *, deadline: float | None = None) -> Response:
+        if self.cancel_event is not None and self.cancel_event.is_set():
+            raise DeferredCheck("check_canceled")
         deadline = min(self.deadline, deadline if deadline is not None else self.deadline)
         if time.monotonic() >= deadline:
             raise DeferredCheck("acquisition_deadline")
@@ -609,6 +651,8 @@ class Acquisition:
         # A fallback may reuse a host immediately after its prior request.
         # Wait only for the fixed pacing interval, outside any write transaction.
         self._pace(url, deadline=deadline)
+        if self.cancel_event is not None and self.cancel_event.is_set():
+            raise DeferredCheck("check_canceled")
         if time.monotonic() >= deadline:
             raise DeferredCheck("acquisition_deadline")
         host = reserve_request(self.conn, self.claim, url)
@@ -630,6 +674,8 @@ class Acquisition:
                 transport_started = True
                 response = (self.transport(url, timeout=remaining) if self.transport is _PRODUCTION_PUBLIC_GET
                             else self.transport(url))
+            if self.cancel_event is not None and self.cancel_event.is_set():
+                raise DeferredCheck("check_canceled")
             self.bytes_received += len(response.body)
             if len(response.body) > MAX_BODY_BYTES or self.bytes_received > MAX_ACQUISITION_BYTES:
                 raise DeferredCheck("response_body_budget")
@@ -709,7 +755,8 @@ class Acquisition:
         try:
             if self.browser is None:
                 rendered = anonymous_browser(url, fetcher=lambda request_url, method: self._get(
-                    request_url, method, deadline=self.deadline - BROWSER_CLEANUP_GRACE_SECONDS), deadline=self.deadline)
+                    request_url, method, deadline=self.deadline - BROWSER_CLEANUP_GRACE_SECONDS), deadline=self.deadline,
+                    **({"cancel_event": self.cancel_event} if self.cancel_event is not None else {}))
             else:
                 # Transport-only fixtures retain the real browser-page reservation.
                 self._pace(url)
@@ -738,13 +785,14 @@ def complete_check(conn: sqlite3.Connection, claim: Claim, *, verdict: str, reas
     _begin(conn)
     try:
         _fence(conn, claim, now)
-        if reason in LOCAL_DEFERRALS:
+        local_reason = reason.removeprefix("browser_guard: ")
+        if local_reason in LOCAL_DEFERRALS:
             lease = _latest(conn, claim.tenant_id, "availability_lease", f"job:{claim.job_id}")
             _event(conn, claim.tenant_id, "availability_lease", f"job:{claim.job_id}",
                    {**lease, "owner": None, "startedAt": None, "expiresAt": now.isoformat()}, now=now)
             conn.commit()
             return {**read_availability(conn, claim.job_id, tenant_id=claim.tenant_id, now=now),
-                    "requestStatus": "deferred", "requestReason": reason}
+                    "requestStatus": "deferred", "requestReason": local_reason}
         old = _latest(conn, claim.tenant_id, "posting_availability", claim.job_id)
         failures = min(10, int(old.get("consecutiveFailures", 0)) + 1) if verdict == "unknown" else 0
         interval = timedelta(seconds=min(86400, 300 * 2 ** (failures - 1))) if failures else (
@@ -766,6 +814,13 @@ def complete_check(conn: sqlite3.Connection, claim: Claim, *, verdict: str, reas
             if snapshot and snapshot.latest_active_state is not ActiveState.LOCATION_INCOMPATIBLE:
                 updated, previous = snapshot.mark_active_state(active_state=ActiveState(verdict), verified_at=now.isoformat())
                 repo.save(updated, commit=False)
+                if verdict == "active" and updated.latest_snapshot and updated.latest_snapshot.quarantine_reason.value == "none":
+                    # Repair legacy availability-only review rows alongside the
+                    # canonical reversal; content/policy review rows stay owned.
+                    conn.execute("UPDATE discovery_quarantine_entries SET status='resolved', decided_at=?, "
+                                 "decision_reason='availability_verified' WHERE tenant_id=? AND job_id=? "
+                                 "AND status='pending' AND reason='unknown_active_state'",
+                                 (now.isoformat(), claim.tenant_id, claim.job_id))
                 if previous is not None:
                     record_job_event(conn, canonical_job_id(claim.job_id), "enrich", "JobActiveStateChanged",
                                      tenant_id=TenantId(claim.tenant_id), payload={"activeState": verdict,
@@ -800,7 +855,8 @@ def _record_deferred_request(conn: sqlite3.Connection, tenant_id: str, job_id: s
 
 def check_availability(job_id: str, *, tenant_id: str = str(LOCAL_TENANT), conn: sqlite3.Connection | None = None,
                        automatic: bool = False, explicit: bool = True, transport: Callable[[str], Response] | None = None,
-                       browser: Callable[[str], DetailPage] | None = None) -> dict[str, Any]:
+                       browser: Callable[[str], DetailPage] | None = None,
+                       cancel_event: threading.Event | None = None) -> dict[str, Any]:
     from jobctrl.database import get_connection
     conn = conn if conn is not None else get_connection()
     claim, reason = claim_job(conn, job_id, tenant_id=tenant_id, automatic=automatic, explicit=explicit)
@@ -816,7 +872,7 @@ def check_availability(job_id: str, *, tenant_id: str = str(LOCAL_TENANT), conn:
         if explicit and not automatic:
             _record_deferred_request(conn, tenant_id, job_id, request)
         return {**read_availability(conn, job_id, tenant_id=tenant_id), "requestStatus": "deferred", "requestReason": reason}
-    acquisition = Acquisition(conn, claim, transport=transport, browser=browser)
+    acquisition = Acquisition(conn, claim, transport=transport, browser=browser, cancel_event=cancel_event)
     try:
         verdict, reason, method = acquisition.acquire()
     except Exception as error:
@@ -824,9 +880,10 @@ def check_availability(job_id: str, *, tenant_id: str = str(LOCAL_TENANT), conn:
     value = complete_check(conn, claim, verdict=verdict, reason=reason, method=method, lineage=acquisition.lineage)
     if explicit and not automatic and value.get("requestStatus") == "deferred":
         now = _now()
-        _record_deferred_request(conn, tenant_id, job_id, {"jobId": job_id, "status": "deferred", "reason": reason,
+        deferred_reason = str(value.get("requestReason") or reason)
+        _record_deferred_request(conn, tenant_id, job_id, {"jobId": job_id, "status": "deferred", "reason": deferred_reason,
                                  "requestedAt": now.isoformat(), "retryAt": None})
-        value = {**read_availability(conn, job_id, tenant_id=tenant_id), "requestStatus": "deferred", "requestReason": reason}
+        value = {**read_availability(conn, job_id, tenant_id=tenant_id), "requestStatus": "deferred", "requestReason": deferred_reason}
     return value
 
 
