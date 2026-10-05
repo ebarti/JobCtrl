@@ -2009,8 +2009,8 @@ export const RequiredBulletSuggestionResponseSchema = z
     ok: z.literal(true),
     profileVersion: z.number().int().positive(),
     suggestions: z.array(RequiredBulletSuggestionSchema).max(24),
-    strategy: z.literal("deterministic_rules_v1"),
-    modelUsed: z.literal(false),
+    strategy: z.literal("model_v1"),
+    modelUsed: z.boolean(),
     truncated: z.boolean(),
   })
   .strict();

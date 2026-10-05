@@ -62,6 +62,7 @@ guidance.
 | Web | `corepack pnpm web:lint`, `corepack pnpm web:check`, focused `web:test`, `web:build`; types/stories/browser when affected |
 | Extension | `extension:check`, `extension:test`, `extension:build`, `extension:e2e` through Corepack |
 | Worker | Locked focused Ruff/pytest; full worker suite for worker-wide changes |
+| Dense resume pagination (#907) | Locked Ruff for `workers/automation/tests/test_pdf_renderer_ports.py`; explicit `JOBCTRL_RUN_DENSE_HTML_PAGINATION_TESTS=1` locked pytest for that module (focused selector `-k dense_resume_pagination_trial`); eight required real-browser cases, 48 measured PDFs, JUnit and every-page visual QA per the [owning protocol](developer/qa/regression-catalog.md#dense-html-resume-pagination-907) |
 | Scripts | `node --test scripts/<name>.test.mjs` |
 | Docs | `corepack pnpm docs:build`, diff check |
 | Cross-stack | `corepack pnpm check`, `corepack pnpm test`, affected separate web suites |
@@ -69,6 +70,18 @@ guidance.
 Focused commands live in `scripts/checks.toml`. Run the selected `argv` directly,
 substituting an owned artifact path for `{report_path}`. Required tests must
 execute; zero tests, skipped required cases or a build alone are not product QA.
+
+For dense HTML resume pagination, use the explicit locked commands and owned
+temporary-directory recipe in the [regression catalog](developer/qa/regression-catalog.md#run-and-evidence).
+That trial measures repeatability, page breaks, clipping, reading order and
+layout-box correspondence with synthetic resumes through both current product
+entry points on A4 and Letter. Missing Chromium/Poppler or any skipped required
+case is nonpassing. Automated results require independent inspection of every
+measured PDF page; pending measurements and DOM/PDF mismatches must remain
+explicit. The [results protocol](developer/qa/regression-catalog.md#results-and-independent-completion)
+defines severity, scope limits and the controller's completion gates. Run
+`corepack pnpm docs:build` and the existing `checks.diff` recipe as well;
+the implementation checkpoint does not replace these mandatory broker gates.
 
 <a id="pick-the-right-checklist"></a>
 <a id="high-risk-regression-areas"></a>
@@ -88,6 +101,27 @@ root aggregates do not cover separate web unit/type/E2E/Storybook suites.
 
 Temporal fault injection, recovery and cumulative Rhea/Base UI scenarios now live
 in the [detailed matrix](developer/qa/complete-checklist.md).
+
+## Required-Bullet Coaching
+
+Use the [focused verification commands](local-development.md#required-bullet-coaching-verification)
+and [auditability invariants](developer/qa/regression-catalog.md#auditability-checks)
+for changes to Required-bullet coaching. Require model-call tests that demonstrate
+all findings come from the configured adapter, with no lexical fallback. Source
+fixtures and form tests separately prove canonical binding, exact whitespace
+acceptance, read-only inspection/rejection and individually fenced persistence.
+Exercise malformed/provider failures and concurrent profile saves. Send real
+TypeScript-prepared sources through the registered Python handler and saved
+repository, including ECMAScript whitespace and Python-only whitespace; preserve
+exact stored text and positional references. Daily/profile-lane budget denial,
+provider setup/authentication and invalid-output failures must produce distinct
+safe actionable messages. A failed refresh preserves the reviewed suggestions
+and status; a successful complete refresh replaces the previous empty/incomplete
+status. The offline demo must disable inspection, explain local installation and
+provider configuration, and leave local state untouched. Isolated browser fixtures
+use explicit model test doubles; additionally verify one configured provider call
+with synthetic facts in an owned QA workspace before claiming live model proof.
+Require observed review/QA results and final checks before publication.
 
 ## Discovery Transaction Recovery
 

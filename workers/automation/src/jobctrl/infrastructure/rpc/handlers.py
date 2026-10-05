@@ -392,6 +392,98 @@ def profile_target_role_suggestions(params: dict[str, Any]) -> dict[str, Any]:
     return result.as_dict()
 
 
+def profile_required_bullet_suggestions(params: dict[str, Any]) -> dict[str, Any]:
+    """Call the configured provider for a version-fenced, read-only inspection."""
+    import re
+    from temporalio.exceptions import ApplicationError
+    from jobctrl.domain.profile.required_bullet_coaching import (
+        InvalidCoachingResponse, coach_required_bullets, normalize_source_text,
+    )
+    from jobctrl.infrastructure.llm.provider_errors import ProviderCallError
+    from jobctrl.infrastructure.profile.factory import get_profile_repository
+    from jobctrl.infrastructure.llm.llm_client import get_llm_adapter
+    from jobctrl.llm import enforce_spend_budget, read_spend_budget_status
+    from jobctrl.llm_lanes import bind_llm_lane
+
+    assert_expected_runtime(expected_app_dir=str(_require(params, "expectedAppDir")),
+                            expected_db_path=str(_require(params, "expectedDbPath")))
+    if set(params) - {"tenantId", "expectedAppDir", "expectedDbPath", "expectedProfileVersion", "maximumSuggestions", "sources"}:
+        raise invalid_params("Unknown Required coaching parameter")
+    version = _require(params, "expectedProfileVersion")
+    maximum = _require(params, "maximumSuggestions")
+    sources = _require(params, "sources")
+    if type(version) is not int or version < 1 or type(maximum) is not int or not 1 <= maximum <= 24:
+        raise invalid_params("Invalid Required coaching version or maximum")
+    if not isinstance(sources, list) or not 1 <= len(sources) <= 512:
+        raise invalid_params("Invalid Required coaching sources")
+    repository = get_profile_repository()
+    saved_version, profile = repository.load_saved_resume(TenantId(_tenant_id(params)))
+    if saved_version != version:
+        raise invalid_params("stale_profile_version")
+    entries = profile["experience_entries"]
+    pins = profile.get("tailoring_rules", {}).get("required_bullets_by_experience_id", {})
+    references: set[str] = set()
+    for source in sources:
+        if not isinstance(source, dict) or set(source) != {
+            "reference", "originalText", "experienceTitle", "experienceCompany", "evidence"
+        }:
+            raise invalid_params("Invalid Required coaching source shape")
+        reference = source["reference"]
+        match = re.fullmatch(r"profile:v(\d+):experience\[(\d+)\]:bullet\[(\d+)\]:required\[(\d+)\]", reference) if isinstance(reference, str) else None
+        if not match or reference in references or int(match[1]) != version:
+            raise invalid_params("Invalid Required coaching reference")
+        references.add(reference)
+        try:
+            entry = entries[int(match[2])]
+            text = entry["bullets"][int(match[3])]
+            required = pins[entry["id"]][int(match[4])]
+            evidence = [item for item in entry["achievement_evidence"]
+                        if normalize_source_text(item["source_text"]) == normalize_source_text(text)]
+            expected = {"reference": reference, "originalText": text,
+                        "experienceTitle": entry["title"], "experienceCompany": entry["company"],
+                        "evidence": [{key: item[key] for key in (
+                            "id", "source_text", "metrics", "outcome", "evidence_strength", "user_confirmed"
+                        )} for item in evidence]}
+            if text != required or source != expected:
+                raise invalid_params("Required coaching source does not match saved profile")
+        except (KeyError, IndexError, TypeError) as exc:
+            raise invalid_params("Invalid Required coaching source") from exc
+    # Failure codes are application-owned. Never send raw provider/model errors
+    # through the RPC error data (which may contain prompts or profile prose).
+    def failure(code: str, **details: str) -> dict[str, Any]:
+        return {"profileVersion": version, "failure": {"code": code, **details}}
+
+    with bind_llm_lane("profile"):
+        try:
+            enforce_spend_budget(lane="profile")
+            try:
+                adapter = get_llm_adapter()
+            except Exception:
+                return failure("provider_unready")
+            result = coach_required_bullets(sources, llm=adapter, maximum=maximum)
+        except ApplicationError as exc:
+            if exc.type != "budget_exceeded":
+                return failure("provider_failed")
+            status = read_spend_budget_status(lane="profile")
+            scope = "both" if status.global_exceeded and status.lane_exceeded else (
+                "profile_lane" if status.lane_exceeded else "daily"
+            )
+            return failure("budget_exceeded", scope=scope)
+        except InvalidCoachingResponse:
+            return failure("invalid_model_response")
+        except ProviderCallError as exc:
+            if exc.envelope.http_status in (401, 403) or exc.envelope.code == "unauthorized":
+                return failure("provider_unready")
+            return failure("provider_failed")
+        except Exception as exc:
+            if getattr(exc, "status_code", None) in (401, 403):
+                return failure("provider_unready")
+            return failure("provider_failed")
+    if repository.load_saved_resume(TenantId(_tenant_id(params)))[0] != version:
+        raise invalid_params("stale_profile_version")
+    return {"profileVersion": version, **result}
+
+
 def provider_verify(params: dict[str, Any]) -> dict[str, Any]:
     """Reuse and verify Codex CLI auth without making a model-generation call."""
 
@@ -1039,6 +1131,7 @@ def rollback_tailoring_policy(params: dict[str, Any]) -> dict[str, Any]:
 
 def register_default_handlers(server: JsonRpcServer, *, canceler: WorkflowCanceler) -> None:
     """Wire the default JobCtrl method set onto *server*."""
+    server.register("profile_required_bullet_suggestions", profile_required_bullet_suggestions, mode="sync")
     server.register("profile_import", profile_import, mode="workflow")
     server.register("job_url_import", job_url_import, mode="workflow")
     server.register("manual_capture_import", manual_capture_import, mode="workflow")

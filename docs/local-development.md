@@ -618,6 +618,58 @@ imports cannot silently widen them. See the
 [frontend boundary checks](architecture/frontend/state-and-ports.md#automated-boundary-checks)
 for the enforced rules, legitimate infrastructure access, and review limits.
 
+### Required-bullet coaching verification
+
+Required-bullet semantic findings live in
+`workers/automation/src/jobctrl/domain/profile/required_bullet_coaching.py` and
+must originate in `LlmPort.chat_json`. Shared TypeScript fixtures cover mechanical
+source binding and safe acceptance using explicit model test doubles. They never
+encode phrase-trigger expectations. Test an identical saved claim with different
+model findings, provider failure without fallback, forged sources, malformed
+output, spend/lane binding and saves during a pending call. Pure tests and stubbed
+browser runs do not prove a real configured provider response; verify that
+separately using only synthetic source facts in an owned QA workspace.
+
+Run these focused checks with prepared workspace dependencies:
+
+```bash
+UV_EXCLUDE_NEWER=false uv --project workers/automation run --locked --all-extras pytest -q workers/automation/tests/test_required_bullet_coaching.py
+corepack pnpm --filter @jobctrl/domain-types check
+corepack pnpm --filter @jobctrl/domain-types test
+corepack pnpm --filter @jobctrl/contracts check
+corepack pnpm --filter @jobctrl/api-client check
+corepack pnpm api:check
+corepack pnpm --filter @jobctrl/api exec vitest run \
+  test/required-bullet-suggestions.test.ts test/server.test.ts
+corepack pnpm web:lint
+corepack pnpm web:check
+corepack pnpm --filter @jobctrl/web exec vitest run \
+  src/demo/capabilities.test.ts \
+  src/demo/DemoApiClientAdapter.test.ts \
+  src/demo/DemoLocalCommandExecutor.test.ts \
+  src/demo/DemoScenarioEngine.test.ts \
+  src/contexts/profile/components/RequiredBulletSuggestions.test.tsx \
+  src/contexts/profile/forms/profile-form.test.tsx \
+  src/contexts/profile/hooks/useUpdateProfileMutation.test.ts
+JOBCTRL_E2E_ISOLATED=1 corepack pnpm --filter @jobctrl/web exec playwright test \
+  --config=e2e/playwright.config.ts e2e/tests/required-bullet-coaching.spec.ts
+corepack pnpm web:build
+corepack pnpm demo:build
+corepack pnpm docs:build
+git diff --check origin/main...HEAD
+```
+
+The Playwright configuration creates an owned disposable synthetic workspace
+and starts its own API/web servers; choose available isolated
+`JOBCTRL_E2E_API_PORT` and `JOBCTRL_E2E_WEB_PORT` values when the defaults are
+occupied. Generation, rejection, acceptance, persistence/reload, delayed
+responses, conflicts and lost-response recovery must execute. Skips or failed
+browser startup do not pass this gate. The [auditability checks](developer/qa/regression-catalog.md#auditability-checks)
+define the preservation invariants; the [frontend inventory](architecture/frontend/index.md#shared-production-and-demo-coaching)
+describes other shared helpers and remaining adapter/simulation duplication.
+
+### Frontend test pyramid
+
 Run the test pyramid (Vitest unit / hook / component, type-level tests, and
 Playwright end-to-end) through the root aliases:
 

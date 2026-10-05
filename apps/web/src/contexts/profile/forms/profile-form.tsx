@@ -1,3 +1,4 @@
+import { isApplicableRequiredBulletCleanup } from "@jobctrl/domain-types";
 import {
   ProfileSchema,
   type ProfileShape,
@@ -1203,58 +1204,16 @@ export function ProfileForm({
     ) return false;
     const parsed = ProfileSchema.safeParse(form.state.values.profile);
     if (!parsed.success) return false;
-    const normalizedOriginal = suggestion.originalText.trim().replace(/\s+/g, " ");
-    const matchingEntries = parsed.data.resume.experience_entries.filter(
-      (entry) => entry.id === suggestion.source.experienceId,
-    );
-    const entry = matchingEntries.length === 1 ? matchingEntries[0] : undefined;
     const entryIndex = parsed.data.resume.experience_entries.findIndex(
       (candidate) => candidate.id === suggestion.source.experienceId,
     );
-    const requiredBullets = ownRequiredBullets(parsed.data, suggestion.source.experienceId);
-    const matchingAchievements = entry?.achievement_evidence.filter(
-      (candidate) => candidate.source_text.trim().replace(/\s+/g, " ") === normalizedOriginal,
-    ) ?? [];
-    const matchingAchievementIdCount = parsed.data.resume.experience_entries.reduce(
-      (count, candidate) => count + candidate.achievement_evidence.filter(
-        (evidence) => evidence.id === suggestion.source.sourceId,
-      ).length,
-      0,
-    );
-    const sourceMatches = suggestion.source.identityKind === "canonical_achievement"
-      ? matchingAchievements.length === 1
-        && matchingAchievements[0]!.id.trim().length > 0
-        && matchingAchievements[0]!.id.length <= 240
-        && matchingAchievements[0]?.id === suggestion.source.sourceId
-        && matchingAchievementIdCount === 1
-      : matchingAchievements.length === 0
-        && suggestion.source.sourceId === `profile:v${expectedProfileVersion}:experience[${entryIndex}]:bullet[${suggestion.source.bulletIndex}]`;
-    if (
-      !entry
-      || entry.title !== suggestion.source.experienceTitle
-      || entry.company !== suggestion.source.experienceCompany
-      || suggestion.source.excerpt !== (
-        suggestion.originalText.length <= 500
-          ? suggestion.originalText
-          : `${suggestion.originalText.slice(0, 497)}...`
-      )
-      || suggestion.source.fieldPath !== `profile.resume.experience_entries[${entryIndex}].bullets[${suggestion.source.bulletIndex}]`
-      || !sourceMatches
-      || entry.bullets[suggestion.source.bulletIndex] !== suggestion.originalText
-      || requiredBullets?.[suggestion.source.requiredBulletIndex] !== suggestion.originalText
-      || entry.bullets.filter((bullet) => bullet === suggestion.originalText).length !== 1
-      || requiredBullets?.filter((bullet) => bullet === suggestion.originalText).length !== 1
-      || normalizedOriginal !== suggestion.proposedText
-      || entry.bullets.some((bullet, index) => index !== suggestion.source.bulletIndex
-        && bullet === suggestion.proposedText)
-      || requiredBullets?.some((bullet, index) => index !== suggestion.source.requiredBulletIndex
-        && bullet === suggestion.proposedText)
-    ) {
+    if (!isApplicableRequiredBulletCleanup(parsed.data, expectedProfileVersion, suggestion)) {
       setStatusTone("warning");
       setStatusMessage("The saved Required bullet no longer matches this suggestion. Inspect it again.");
       return false;
     }
 
+    const entry = parsed.data.resume.experience_entries[entryIndex]!;
     const submittedBase = structuredClone(form.state.values);
     const nextValues = structuredClone(submittedBase);
     if (!nextValues.profile) return false;

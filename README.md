@@ -93,7 +93,8 @@ Outside requests run when you start a step that needs them, and while the local
 worker rechecks due saved postings:
 
 - **LLM providers:** posting text, relevant profile evidence, and generated
-  text. During a dry run, Claude also sees the application page, but never your
+  text. Opt-in Required-bullet coaching sends the selected saved bullets and
+  linked evidence to your configured provider. During a dry run, Claude also sees the application page, but never your
   profile or documents.
 - **Job boards and other sites:** Discover, Enrich, and dry-run requests, plus
   opt-in contact research and bounded saved-posting availability checks. The

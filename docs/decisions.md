@@ -2604,3 +2604,13 @@ quota exhaustion and within a 20-minute budget below the activity timeout, with
 cooperative acquisition cancellation. Explicit commands alone own coalesced deferral
 feedback. Runtime-offline time leaves freshness honest. Live external
 ATS reliability is not inferred from deterministic transport QA.
+
+## Required-Bullet Coaching Uses LLM Determinations (2026-10-05)
+
+Grammar, relevance, achieved-result framing and evidence support require a
+configured model call. Code owns canonical source binding, payload/identity
+validation, version fencing and safe whitespace acceptance. Provider failures
+remain failures and preserve reviewed output; no lexical or canned-question
+fallback is allowed. The offline demo therefore reports this capability
+unavailable. See [the API contract](api/complete-contract.md) and
+[source ownership](developer/repository-and-ownership-map.md).

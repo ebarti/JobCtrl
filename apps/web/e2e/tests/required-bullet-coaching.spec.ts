@@ -96,8 +96,8 @@ test("Required coaching inspects saved sources, rejects without writes, and acce
   const generated = await generatedResponse.json();
   expect(generated).toMatchObject({
     profileVersion: saved.profileVersion,
-    strategy: "deterministic_rules_v1",
-    modelUsed: false,
+    strategy: "model_v1",
+    modelUsed: true,
     truncated: false,
   });
   expect(generated.suggestions.some((item: { originalText: string }) => item.originalText === optionalBullet)).toBe(false);
@@ -181,7 +181,8 @@ test("cleanup is not applicable when its text already belongs to another saved b
   expect(generated.profileVersion).toBe(version);
   expect(generated.suggestions.find((item: { kind: string }) => item.kind === "grammar"))
     .toMatchObject({ originalText: originalBullet, proposedText: null, canApply: false });
-  await expect(page.getByText(/Whitespace cleanup would duplicate another saved bullet/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Accept", exact: true })).toHaveCount(0);
+  await expect(page.getByText("Review the repeated spacing in the incident response bullet.")).toBeVisible();
   expect(profileEventCount()).toBe(eventsBeforeInspection);
   expect((await (await page.request.get(`${apiOrigin}/v1/profile`)).json()).profileVersion).toBe(version);
 });
@@ -373,4 +374,45 @@ test("a committed cleanup with a lost response rebases a different bullet edit",
     .toEqual([cleanedBullet, metricBullet, manualOptional]);
   expect(persisted.profile.resume.tailoring_rules.required_bullets_by_experience_id[entryId])
     .toEqual([cleanedBullet, metricBullet]);
+});
+
+
+test("complete refresh replaces empty status and actionable failures preserve the review", async ({ page, baseURL }) => {
+  const { apiOrigin, saved } = await seedRequiredBullets(page, baseURL!);
+  await page.goto("/profile");
+  const inspect = page.getByRole("button", { name: "Inspect Required bullets" });
+  const eventsBefore = profileEventCount();
+  await page.route("**/v1/profile/required-bullet-suggestions", async (route) => {
+    const response = await route.fetch();
+    const result = await response.json();
+    await route.fulfill({ json: { ...result, suggestions: [], truncated: false } });
+  });
+  await inspect.click();
+  await expect(page.getByText("No coaching findings were returned.")).toBeVisible();
+  await page.unrouteAll({ behavior: "wait" });
+  await inspect.click();
+  await expect(page.getByText(`Proposed text: “${cleanedBullet}”`)).toBeVisible();
+  await expect(page.getByText("No coaching findings were returned.")).toHaveCount(0);
+  for (const failure of [
+    { status: 429, error: "required_bullet_suggestions_budget_exceeded", budgetScope: "profile_lane",
+      message: "The profile LLM token budget has been reached. Wait for the daily reset or adjust the budget in Settings, then retry. You can still edit bullets manually." },
+    { status: 429, error: "required_bullet_suggestions_budget_exceeded", budgetScope: "daily",
+      message: "The daily LLM spend budget has been reached. Wait for the daily reset or adjust the budget in Settings, then retry. You can still edit bullets manually." },
+    { status: 503, error: "required_bullet_suggestions_provider_unready",
+      message: "No authenticated coaching provider is ready. Connect or authenticate your LLM provider in Settings, then retry. You can still edit bullets manually." },
+    { status: 502, error: "required_bullet_suggestions_failed",
+      message: "The coaching model returned an invalid response. Retry the inspection or edit bullets manually." },
+  ]) {
+    await page.route("**/v1/profile/required-bullet-suggestions", (route) => route.fulfill({
+      status: failure.status, json: { ok: false, ...failure },
+    }));
+    await inspect.click();
+    await expect(page.getByRole("alert").filter({ hasText: failure.message })).toBeVisible();
+    await expect(page.getByText(`Proposed text: “${cleanedBullet}”`)).toBeVisible();
+    await expect(page.getByRole("textbox", { name: "Full name" })).toBeEditable();
+    await expect(page.locator('[data-slot="toast"]')).toHaveCount(0);
+    await page.unrouteAll({ behavior: "wait" });
+  }
+  expect(profileEventCount()).toBe(eventsBefore);
+  expect((await (await page.request.get(`${apiOrigin}/v1/profile`)).json()).profile).toEqual(saved.profile);
 });

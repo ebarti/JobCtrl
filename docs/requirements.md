@@ -98,6 +98,7 @@ documentation, not the historical plan that first proposed it.
 
 | ID | Added | Requirement | For whom | Why | Related docs |
 | --- | --- | --- | --- | --- | --- |
+| BR-071 | 2026-10-05 | Required-bullet coaching determinations must use the configured LLM over saved source claims and linked evidence, with no lexical fallback. Code must bind findings to canonical sources/version, limit automatic acceptance to safe whitespace cleanup, and preserve reviewed output and saved facts on failure. | Job seekers. | Make coaching interpret actual claims while preserving factual and save authority. | [profile guide](user/candidate-profile.md), [API contract](api/complete-contract.md) |
 | BR-029 | 2026-05-22 | Profile data, resume style, templates, generated materials, and artifacts must remain local by default. | Job seekers. | Preserve privacy for sensitive career material. | [pipeline architecture](architecture/pipeline/index.md), [architecture](architecture/index.md) |
 | BR-030 | 2026-05-22 | Profile editing must preserve existing profile, resume style, resume template, and import behavior until stable replacements are implemented. | Job seekers. | Avoid losing user configuration during architecture changes. | [local TypeScript API](local-ts-api.md) |
 | BR-031 | 2026-05-22 | Cover letters must require tailored-resume prerequisites before generation. | Job seekers. | Prevent inconsistent or unsupported application material. | [local reliability QA](local-reliability-qa.md), [pipeline architecture](architecture/pipeline/index.md) |

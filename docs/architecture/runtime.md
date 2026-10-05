@@ -918,3 +918,12 @@ Automatic sweeps read remaining quota before claiming jobs and stop at exhaustio
 Their 20-minute work budget leaves margin below the 30-minute activity limit.
 Activity cancellation signals the current acquisition, cancels/reaps its browser
 process and prevents admission of later jobs.
+
+## Required-Bullet Coaching RPC
+
+`profile_required_bullet_suggestions` is a synchronous, read-only worker RPC
+behind the opt-in profile HTTP route. It verifies expected runtime/database,
+canonical selected sources and saved version, admits profile-lane spend, calls
+the configured `LlmPort` once, validates findings and rechecks the saved version.
+It has no semantic fallback. The API also checks the current version after the
+call. See [the complete API contract](../api/complete-contract.md).
