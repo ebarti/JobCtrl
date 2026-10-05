@@ -24,6 +24,10 @@ posting detail to use it.” The current decision path is:
 2. **Verify active state independently.** Extraction quality and whether the job
    still appears active are separate findings, so a well-extracted but
    unverifiable posting is not silently treated as active.
+   Availability requires current evidence bound to the exact posting. Historical
+   description text cannot prove closure. Login/challenge pages, HTTP access
+   failures, lost posting identity, invalid deadlines and conflicting current
+   signals remain unknown. A nonempty body alone cannot prove availability.
 3. **Assign confidence from the posting-content evidence.** Description length
    and extraction tier determine whether the posting text is trustworthy. An
    application URL can strengthen structured extraction, but its absence never
@@ -36,10 +40,11 @@ posting detail to use it.” The current decision path is:
    | LLM-assisted | — | At least 400 characters, with or without an application URL | Fewer than 400 characters |
    | Other configured tier | — | At least 200 characters | Fewer than 200 characters |
 
-4. **Quarantine instead of guessing.** Unknown active state or low content
-   confidence without an override is held for review. An explicit operator
+4. **Quarantine low-confidence content.** Low content confidence without an
+   override is held for review. An explicit operator
    override can admit a low-confidence snapshot and is persisted with the audit
-   trail; unknown active state remains quarantined. Application-target readiness
+   trail. Availability-only uncertainty does not create a content-review entry
+   or claim a tailoring quarantine; readable, trusted content can feed preparation. Application-target readiness
    is a separate fact, so a missing external application URL cannot quarantine
    readable posting content or block Tailor. A posting verified as closed,
    expired, or removed is recorded separately as `posting_inactive` rather than
@@ -95,6 +100,85 @@ URL, the next Enrich maintenance pass appends a corrected snapshot for any
 source and resumes Tailor without requiring browser access. Resolver exception
 details remain local diagnostics; the product surfaces only the stable outcome
 code, message, method, and retry policy.
+
+## Saved Posting Availability
+
+Job Detail shows **Posting availability**, with **Check availability** and
+**Inspect employer posting** actions. The latest attempt, last successful
+verification, next due time, reason, acquisition method and evidence remain
+separate. A recent successful check does not hide a later unknown result.
+Reading Jobs does not contact employers.
+
+While the local worker runs, visible saved postings are checked every 24
+hours when active and every seven days when unavailable. Unavailable jobs stay
+saved and can become active again. The first check is due immediately; startup
+and reconnect catch up in groups of at most 25. Hidden/deleted jobs, running
+applications and terminal application outcomes are excluded from automatic
+checks. Manual checks remain available for saved, inspectable jobs.
+
+A sweep checks its selected postings sequentially and is admitted at most once
+per minute. It stops claiming jobs when its automatic quota is exhausted and
+has a 20-minute work budget within the 30-minute activity limit. Cancellation
+stops the current acquisition and prevents later jobs from starting. Independent
+jobs can be checked concurrently. All checks share a
+limit of 100 posting acquisitions per hour per workspace; automatic sweeps may
+use at most 80, reserving 20 for foreground checks and preparation. Each check
+is charged once, including its bounded browser resources. Requests retain at
+least two seconds between starts and one in flight per actual host. Repeated
+clicks coalesce, and a job starts at most once a minute. Unknown employer
+observations retry automatically after five minutes, with increasing delays
+capped at 24 hours. An explicit check can retry after the one-minute job limit,
+but cannot bypass quotas, safety checks or host cooldowns. Local quota, pacing
+and contention refusals do not create unknown observations or increase evidence
+backoff. Only explicit commands record deferred request feedback, with unchanged
+refusals coalesced. Refusals preserve attempt and successful-verification clocks.
+Sleep, an offline machine or a stopped worker leaves the recorded times intact
+and can make a check overdue.
+
+Greenhouse and Lever (including Lever EU) are checked through exact posting
+APIs. Ashby contributes only a matching positive posting, including unlisted
+direct links; absence from a board cannot prove closure. Other supported pages
+use guarded public HTTP and a bounded anonymous browser fallback. Pairing the
+extension does not enable authenticated availability capture. Login,
+challenge, access-limited, malformed or identity-lost pages remain unknown;
+ordinary Discovery/Enrich extension selection keeps its own behavior.
+CSS-dependent status must be verified by the guarded renderer; hidden templates
+cannot close a posting. Blocked subresources and incomplete rendering remain
+unknown. Each outbound request has a 20-second total deadline and a full check
+has a 120-second acquisition budget, below crash-lease expiry.
+
+The anonymous fallback checks popup and frame requests through the same host
+limits and URL checks. It blocks service workers and unsupported socket or
+worker connections; an attempted unsupported connection or a failed or unfollowed
+redirect on a document, job-data fetch, script, stylesheet or frame keeps availability
+unknown. Only passive assets such as images tolerate HTTP errors or local admission
+refusals without invalidating the status capture.
+Each check permits 12 posting/API requests and 64 browser resources, at most one
+million bytes per response and 12 million bytes in total.
+
+Scoring, tailoring and cover generation attempt a check when active evidence
+is older than six hours, and can proceed with usable content while availability
+stays unknown. Unknown is shown honestly and remains retryable; confirmed
+unavailable postings stop preparation. Dry-run rehearsals and human-reviewed
+Apply can also proceed when availability stays unknown, using the existing exact
+approval, material, profile, application-URL and rehearsal bindings, with the
+approval recorded within the preceding 15 minutes. Older approvals cannot accept
+a newly uncertain posting. Inspect the
+employer posting when evidence is uncertain; manual browser submission remains
+user-controlled. Unattended Apply requires active evidence within 15 minutes.
+Owned email submit intent rechecks the original posting and, for unknown
+availability, a bound human approval from the preceding 15 minutes. Checking availability grants no
+submission authority. A changed posting or confirmed closure stops every path.
+Failed checks preserve accepted content, scores, material
+generations, approvals and outcomes. Availability never hides/deletes a job or
+starts an application.
+
+```bash
+jobctrl check-availability 10000000-0000-4000-8000-000000000123
+```
+
+This checks one saved canonical job through the local worker and prints its
+recorded availability result. Replace the example ID with the selected JobId.
 
 ## What You Can See And Control
 

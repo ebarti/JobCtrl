@@ -24,6 +24,7 @@ The public surface (``run_enrichment``, ``scrape_detail_page``,
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
 import re
 import sqlite3
@@ -93,6 +94,7 @@ from jobctrl.infrastructure.enrichment.playwright_fetcher import (
     _clean_content_html,
     _collect_json_ld,
     _collect_main_content,
+    _collect_status_html,
 )
 from jobctrl.infrastructure.enrichment.linkedin_apply_resolver import (
     LinkedInApplyResolution,
@@ -415,11 +417,15 @@ def _page_to_detail_page(page, url: str, status: int | None = None) -> DetailPag
         pass
     json_ld = _collect_json_ld(page)
     html = _collect_main_content(page)
+    visibility = []
+    status_html, status_complete, raw_hash = _collect_status_html(page, visibility_out=visibility)
     return DetailPage(
         url=url,
         final_url=final_url,
         page_title=page_title,
         html=html,
+        status_html=status_html, status_evidence_complete=status_complete, raw_html_hash=raw_hash,
+        status_visibility_verified=bool(visibility),
         json_ld=tuple(json_ld),
         status=status,
         fetched_at=fetched_at,
@@ -451,6 +457,8 @@ def _live_result_to_detail_page(result: LiveBrowserResult, url: str) -> DetailPa
         final_url=result.final_url,
         page_title=result.title,
         html=_clean_content_html(str(main)),
+        status_html=html[:1_000_000], status_evidence_complete=len(html) <= 1_000_000,
+        raw_html_hash=hashlib.sha256(html.encode()).hexdigest(),
         json_ld=tuple(json_ld),
         status=result.status_code,
         fetched_at=datetime.now(timezone.utc).isoformat(),
@@ -463,7 +471,6 @@ def _live_result_to_detail_page(result: LiveBrowserResult, url: str) -> DetailPa
 
 
 _RETRYABLE_STATUSES = {408, 429, 500, 502, 503, 504}
-_PERMANENT_FAILURES = {404, 410, 451}
 
 
 def scrape_detail_page(page, url: str, *, session: PolitenessSession | None = None) -> dict:
@@ -568,14 +575,6 @@ def _scrape_detail_page_body(page, url: str, result: dict, t0: float) -> dict:
             resp = page.goto(url, timeout=45000)
             if resp is not None:
                 status_code = resp.status
-                if status_code in _PERMANENT_FAILURES:
-                    active_state = ActiveState.REMOVED
-                    result["error"] = f"HTTP {status_code}"
-                    result["active_state"] = active_state.value
-                    result["verification_method"] = "http_status"
-                    result["http_status"] = status_code
-                    result["elapsed"] = time.time() - t0
-                    return result
             page.wait_for_load_state("domcontentloaded", timeout=15000)
             try:
                 page.wait_for_load_state("networkidle", timeout=10000)
@@ -662,7 +661,7 @@ def _extract_detail_page(
             result["full_description"] = extracted.full_description.text
             result["application_url"] = apply_final.value if apply_final else None
             result["tier_used"] = tier_num
-            if active_state is ActiveState.ACTIVE:
+            if active_state in {ActiveState.ACTIVE, ActiveState.UNKNOWN}:
                 result["status"] = "ok" if result["application_url"] else "partial"
             else:
                 result["status"] = "inactive"
@@ -695,6 +694,10 @@ def _detail_failure_retryable(cascade_result: dict) -> bool:
             return PublicFetchFailureKind(cascade_result["fetch_failure_kind"]).retryable
         except ValueError:
             return False
+    # Missing current evidence is not confirmed closure, including access
+    # challenges. URL-safety/fetch-policy failures above retain their own rules.
+    if ActiveState.from_optional(cascade_result.get("active_state")) is ActiveState.UNKNOWN:
+        return True
     status = cascade_result.get("http_status")
     if isinstance(status, int):
         if status in _RETRYABLE_STATUSES:
@@ -705,7 +708,7 @@ def _detail_failure_retryable(cascade_result: dict) -> bool:
     verification_method = str(cascade_result.get("verification_method") or "")
     if (
         active_state is not None
-        and active_state is not ActiveState.ACTIVE
+        and active_state not in {ActiveState.ACTIVE, ActiveState.UNKNOWN}
         and verification_method
         and verification_method != "unknown"
     ):

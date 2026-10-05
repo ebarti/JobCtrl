@@ -195,6 +195,8 @@ def _seed_pending_job(conn: sqlite3.Connection, url: str) -> None:
         "VALUES (?, ?, 'posting_url', ?, 1, ?, ?)",
         (LOCAL_TENANT, job_id, url, "2024-01-01T00:00:00+00:00", "2024-01-01T00:00:00+00:00"),
     )
+    from .availability_fixture import seed_fresh_availability
+    seed_fresh_availability(conn, str(job_id), str(LOCAL_TENANT))
     conn.commit()
 
 
@@ -269,6 +271,8 @@ def _seed_pending_job_with_description(
         "VALUES (?, ?, 'posting_url', ?, 1, ?, ?)",
         (LOCAL_TENANT, job_id, url, discovered_at, discovered_at),
     )
+    from .availability_fixture import seed_fresh_availability
+    seed_fresh_availability(conn, str(job_id), str(LOCAL_TENANT))
     conn.commit()
 
 

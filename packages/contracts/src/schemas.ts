@@ -3121,6 +3121,25 @@ export interface JobCompensationAudit {
   market: JobCompensationAuditMarketResponse;
 }
 
+export interface PostingAvailability {
+  jobId: string;
+  postingUrl: string | null;
+  verdict: ActiveState;
+  reason: string;
+  method: string;
+  lastAttemptedAt: string | null;
+  lastSuccessfullyVerifiedAt: string | null;
+  lastSuccessfulState: ActiveState | null;
+  lastSuccessfulEvidenceRef: string | null;
+  nextDueAt: string | null;
+  evidenceRef: string | null;
+  overdue: boolean;
+  checkInProgress: boolean;
+  request?: { status: "deferred"; reason: string; requestedAt: string; retryAt: string | null };
+  lineage: { sourceUrl: string; finalUrl: string | null; status: number | null; method: string; rawHash: string | null;
+    signals?: { kind: string; value: string | boolean; past?: boolean }[] }[];
+}
+
 export interface JobSummary {
   jobKey: string;
   url: string;
@@ -3158,6 +3177,7 @@ export interface JobSummary {
   applyStatus: string | null;
   appliedAt: string | null;
   activeState: ActiveState;
+  availability?: PostingAvailability;
   deletedAt: string | null;
   hiddenAt: string | null;
   resumeTemplate?: ResumeTemplateState | null;

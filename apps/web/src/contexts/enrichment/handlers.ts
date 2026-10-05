@@ -3,6 +3,7 @@ import type {
   ContentDuplicateCandidateDetected,
   EnrichmentFailed,
   JobActiveStateChanged,
+  JobAvailabilityObserved,
   JobEnriched,
   PostingContentSnapshotCaptured,
   PostingContentSnapshotFailed,
@@ -103,3 +104,12 @@ export const compensationFactsUpdatedHandler = (
   invalidate(jobsKeys.lists(event.tenantId)),
   invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
 ];
+
+export const jobAvailabilityObservedHandler = (event: JobAvailabilityObserved): readonly InvalidationItem[] => [
+  invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
+  invalidate(jobsKeys.lists(event.tenantId)),
+];
+
+export const availabilityRequestChangedHandler = (event: import("@jobctrl/domain-types").AvailabilityLeaseChanged): readonly InvalidationItem[] =>
+  typeof event.payload.jobId === "string" ? [invalidate(jobsKeys.detail(event.tenantId, event.payload.jobId)),
+    invalidate(jobsKeys.lists(event.tenantId))] : [];

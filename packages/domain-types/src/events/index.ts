@@ -68,6 +68,10 @@ export {
 } from "./discovery.js";
 
 export {
+  type JobAvailabilityObserved,
+  createJobAvailabilityObserved,
+  type AvailabilityLeaseChanged,
+  createAvailabilityLeaseChanged,
   type ActiveStateValue,
   type ContentDuplicateCandidateDetected,
   type ContentDuplicateCandidateDetectedPayload,
@@ -407,6 +411,8 @@ import type {
   ContentDuplicateCandidateDetected,
   EnrichmentFailed,
   JobActiveStateChanged,
+  JobAvailabilityObserved,
+  AvailabilityLeaseChanged,
   JobEnriched,
   PostingContentSnapshotCaptured,
   PostingContentSnapshotFailed,
@@ -523,6 +529,8 @@ export type DomainEventUnion =
   | PostingContentSnapshotCaptured
   | PostingContentSnapshotFailed
   | JobActiveStateChanged
+  | JobAvailabilityObserved
+  | AvailabilityLeaseChanged
   | ContentDuplicateCandidateDetected
   | JobScored
   | ScoreCorrected
@@ -630,6 +638,8 @@ export const DOMAIN_EVENT_TYPES = [
   "PostingContentSnapshotCaptured",
   "PostingContentSnapshotFailed",
   "JobActiveStateChanged",
+  "JobAvailabilityObserved",
+  "AvailabilityLeaseChanged",
   "ContentDuplicateCandidateDetected",
   "JobScored",
   "ScoreCorrected",

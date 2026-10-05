@@ -138,6 +138,8 @@ def _insert_ready_job(
             finished_at=now,
             validate_transition=False,
         )
+    from .availability_fixture import seed_fresh_availability
+    seed_fresh_availability(conn, str(job_id), str(LOCAL_TENANT))
     conn.commit()
     return job_id
 

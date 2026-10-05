@@ -866,6 +866,59 @@ ephemeral and no point-in-time lineage reconstruction is implemented,
 `GET /v1/pipeline/operations` is explicitly a current snapshot rather than a
 historical execution API.
 
+## Saved Posting Availability Runtime
+
+The local worker admits `SavedPostingAvailabilityWorkflow` at startup and on
+heartbeat/reconnect, at most once a minute per workspace. This is independent
+of Discover and includes saved jobs before, during, or after enrichment. Each
+sweep selects at most 25 due, visible saved jobs, preferring preparation/review
+and then oldest due. Hidden/deleted jobs, running Apply and terminal application
+outcomes are excluded. Sleeping or offline runtimes append no observations;
+Jobs reads calculate overdue from retained timestamps.
+
+`enrichment/availability.py` owns acquisition and observation without invoking
+Discovery hygiene or policy deletion. Its durable event-ledger leases serialize
+checks per job and reserve each actual request host; independent jobs can overlap,
+with foreground capacity reserved in the hourly acquisition quota; acquisition
+runs after short writer transactions commit. Each check
+caps a full acquisition at 120 seconds, including rendered capture and browser
+cleanup. Browser supervision reserves the final three seconds for cancellation
+and reaping. Its admission and pacing waits in the shared politeness gateway
+also receive the remaining deadline; other fetch surfaces retain their existing
+wait policy. Public requests run in an owned spawned
+transport process with a 20-second total DNS/header/body deadline; timeout kills
+and reaps it before releasing the host reservation. The aggregate page/fallback
+budget remains below the five-minute lease lifetime.
+The explicit API/RPC/CLI command uses the same activity and runtime identity
+guard. Availability uses exact
+public ATS APIs, guarded HTTP, and guarded anonymous Playwright. It does not
+select paired-extension capture: the extension's Discovery ownership and
+resource authorization remain separate. Authenticated/challenge/access-limited
+pages stay unknown. Ordinary Discovery/Enrich transport selection is unchanged.
+Anonymous availability renders run in an owned supervised process. Browser
+resource reads return over IPC to the acquisition owner, which retains durable
+actual-host reservations, pacing and response lineage. The total acquisition
+deadline covers launch, page navigation, every capture RPC and cleanup. If the
+renderer or close stalls, the supervisor terminates the owned driver and
+detached Chromium process groups and reaps its child before releasing the lease.
+
+Anonymous availability guards the complete browser context before creating a
+page, so first popup requests and frame resources pass through the same actual
+host reservations and URL checks. Service workers, WebSockets, WebTransport,
+WebRTC and dedicated/shared workers are blocked. Service-worker registration is
+blocked on both the instance and native prototype; an attempted unsupported
+channel or a failed/redirected required document, data, script, style or frame
+request keeps the result unknown. Non-read data requests are aborted without
+sending their writes and keep availability unknown; their error views cannot prove
+closure. Passive assets may fail without invalidating
+status; their local admission refusals do not become employer evidence. Guards remain installed
+until the browser has closed. Ordinary enrichment transport selection is unchanged.
+
+Automatic sweeps read remaining quota before claiming jobs and stop at exhaustion.
+Their 20-minute work budget leaves margin below the 30-minute activity limit.
+Activity cancellation signals the current acquisition, cancels/reaps its browser
+process and prevents admission of later jobs.
+
 ## Required-Bullet Coaching RPC
 
 `profile_required_bullet_suggestions` is a synchronous, read-only worker RPC

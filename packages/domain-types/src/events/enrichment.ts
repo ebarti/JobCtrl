@@ -166,3 +166,18 @@ export function createContentDuplicateCandidateDetected(
 ): ContentDuplicateCandidateDetected {
   return createDomainEvent("ContentDuplicateCandidateDetected", tenantId, payload);
 }
+
+/** An observation clock is independent of accepted posting content. */
+export type JobAvailabilityObserved = DomainEvent<"JobAvailabilityObserved", {
+  readonly jobId: string;
+  readonly verdict: ActiveStateValue;
+  readonly lastAttemptedAt: string;
+  readonly nextDueAt: string;
+}>;
+export const createJobAvailabilityObserved = (tenantId: TenantId, payload: JobAvailabilityObserved["payload"]): JobAvailabilityObserved =>
+  createDomainEvent("JobAvailabilityObserved", tenantId, payload);
+
+/** Internal fenced acquisition reservation; no job state transition. */
+export type AvailabilityLeaseChanged = DomainEvent<"AvailabilityLeaseChanged", Record<string, unknown>>;
+export const createAvailabilityLeaseChanged = (tenantId: TenantId, payload: Record<string, unknown>): AvailabilityLeaseChanged =>
+  createDomainEvent("AvailabilityLeaseChanged", tenantId, payload);

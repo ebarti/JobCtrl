@@ -2277,3 +2277,44 @@ On reconnect after a "closed" status of more than 30 s, the frontend's
 `EventStreamProvider` fires a one-shot `queryClient.invalidateQueries()`
 to recover from any events lost during the gap. `Last-Event-ID` covers the
 common case; the full invalidation is a backstop.
+
+## Saved posting availability
+
+`POST /v1/jobs/:jobId/actions/check-availability` requires a canonical UUID and
+an empty strict JSON body. It resolves the saved local job, releases its
+read-only connection, and dispatches JSON-RPC `check_posting_availability` with
+`tenantId`, `jobId`, `expectedAppDir`, and `expectedDbPath`. It returns
+`202 { ok: true, status: "queued", runId, workflowId }`; invalid input, missing
+jobs, unavailable dispatch and malformed acknowledgements return errors.
+A repeated start uses the existing `availability-{tenantId}-{jobId}` workflow.
+
+`JobSummary.availability` is additive on Jobs list/detail. It contains:
+
+| Field | Authority |
+| --- | --- |
+| `jobId`, `postingUrl` | Canonical job and the URL bound to this observation. |
+| `verdict`, `reason`, `method`, `lastAttemptedAt`, `evidenceRef` | Latest completed attempt; `unknown` is never replaced by an earlier success. |
+| `lastSuccessfullyVerifiedAt`, `lastSuccessfulState`, `lastSuccessfulEvidenceRef` | Last successful verification, preserved across unknown attempts. |
+| `nextDueAt` | Persisted active/unavailable cadence or failure backoff. |
+| `overdue`, `checkInProgress` | Read-time wall-clock calculation from due time and the fenced job lease. |
+| Optional `request` | An explicit deferred command's `status`, `reason`, `requestedAt`, and nullable `retryAt`, independent of actual attempt/success clocks. Unchanged refusals coalesce; automatic/preflight refusals create no user request. A later observation clears older feedback. |
+| `lineage` | At most 24 entries containing `sourceUrl`, nullable `finalUrl`/`status`/`rawHash`, acquisition `method`, and optional bounded `signals` (`kind`, `value`, optional `past`). Response-less failures have no fabricated hash. |
+
+The raw observation also retains source and exact provider identity in the
+Enrichment ledger. No raw page or accepted material text is exposed by this
+field. GET computes freshness without employer requests, dispatch or writes.
+`JobAvailabilityObserved` carries `jobId`, `verdict`, `lastAttemptedAt` and
+`nextDueAt` as an additive SSE event. Internal `AvailabilityLeaseChanged`
+records reservations and deferred command results. Records with a canonical
+`jobId` invalidate that detail and tenant lists; workspace/host records do not.
+
+Preparation refreshes active evidence older than six hours and permits usable
+content with unknown availability. The automated unknown path requires an exact
+review binding approved within the preceding 15 minutes. Dry-run or bound human-reviewed Apply may
+proceed while unknown; unattended Apply requires active evidence within 15
+minutes. Owned email intent rechecks the original posting and current bound
+review for unknown evidence. Confirmed closure or a changed posting stops work.
+Local admission refusals do not change observation clocks or evidence backoff;
+accepted content, materials, decisions and outcomes remain intact.
+The [Enrichment guide](../user/enrichment-and-extraction.md#saved-posting-availability)
+owns the complete acquisition, cohort and retry policy.

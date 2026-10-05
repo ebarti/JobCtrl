@@ -70,6 +70,27 @@ precedence over the legacy `deleted` filter; when absent, legacy links keep the
 existing `active`, `closed`, `deleted`, `hidden`, and `all` behavior. The same
 optional filter is accepted by all-matching bulk job mutations.
 
+## Saved Posting Availability
+
+`POST /v1/jobs/:jobId/actions/check-availability` accepts `{}` with no additional
+fields and a canonical JobId. It dispatches `check_posting_availability` with
+trusted tenant, application-directory and database identity; a successful start
+returns `202 { ok: true, status: "queued", runId, workflowId }`. Missing jobs,
+invalid input, unavailable dispatch and malformed worker acknowledgements stay
+explicit errors; the command never launches Apply.
+
+Jobs list/detail read the latest `availability` observation directly from the
+Enrichment event ledger, independently of projection lag. The response exposes
+separate attempt/success clocks, latest uncertainty, bounded hashed acquisition
+lineage, next due, calculated overdue/in-progress state, and optional deferred
+explicit command reason/request time/retry time. Unchanged refusals coalesce;
+automatic/preflight checks do not create user request feedback. Local refusal does
+not invent an attempt or raise evidence backoff. It performs no
+employer network calls and appends no events. The
+[complete contract](complete-contract.md#saved-posting-availability) owns fields;
+the [enrichment guide](../user/enrichment-and-extraction.md#saved-posting-availability)
+owns cadence, bounds, anonymous access and costly-work freshness gates.
+
 ## Feedback Learning And Materials Policy
 
 | Route | Purpose |

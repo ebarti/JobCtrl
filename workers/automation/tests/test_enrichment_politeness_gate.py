@@ -165,6 +165,7 @@ class _SpyPage:
         self.url = "https://example.test/final"
 
     def goto(self, url: str, **_kwargs: object) -> _Resp:
+        self.url = url
         with self._lock:
             self._sink.append(url)
         return _Resp()
@@ -174,6 +175,9 @@ class _SpyPage:
 
     def title(self) -> str:
         return "Role"
+
+    def content(self) -> str:
+        return ""
 
     def on(self, *_args: object, **_kwargs: object) -> None:
         return None

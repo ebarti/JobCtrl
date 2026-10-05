@@ -322,6 +322,7 @@ class SubmitApplicationUseCase:
             material_version=str(job.get("materials_generation") or ""),
             materials_generation=job.get("materials_generation"),
             application_url=str(job.get("application_url") or job.get("url") or ""),
+            posting_url=str(job.get("url") or ""),
             profile_version=getattr(snapshot, "version", None),
             email_application_context=_email_application_context(job, snapshot),
         )

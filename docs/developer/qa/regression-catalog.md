@@ -1030,3 +1030,61 @@ name, or host path.
 <a id="saved-views-smoke"></a>
 <a id="daily-digest-smoke"></a>
 <a id="resume-tailoring-quality-eval-gate"></a>
+
+### Saved posting availability
+
+Use owned synthetic data to verify current closure status outside historical
+description, malformed/missing identity and metadata, HTTP 403/429/5xx/login/
+timeout uncertainty, timezone-aware deadlines, canonical retained/lost redirects,
+conflicting retained signals and exact ATS identity. Greenhouse/Lever EU must use
+exact endpoints; missing/partial Ashby rows cannot prove closure and an unlisted
+matching direct link can be active. API/page/browser fallbacks retain hashes and
+method lineage; extension pairing alone cannot fabricate authenticated evidence.
+
+Exercise saved-job startup/reconnect/heartbeat catch-up before, during and after
+enrichment, 25-job selection,
+100 posting acquisitions/hour with 20 reserved for foreground work, once/minute
+coalescing, two-second actual-host pacing,
+backoff/Retry-After, independent process leases, crash recovery and stale fences.
+Hidden/inactive status templates cannot close a visible posting. Computed browser
+visibility and blocked subresources must survive conversion; incomplete renders
+remain unknown with reason/hash lineage. Only explicit refused commands surface coalesced durable request
+deferral/retry feedback. Local contention, quota and pacing refusals preserve
+observation clocks and failure backoff. Independent job claims can overlap.
+Real Chromium fixtures must cover the first popup request and iframe resources
+through actual-host reservations, blocked service-worker/native connections with
+owned HTTP/UDP sinks, and failed status-resource hashes. A hung renderer or
+capture/close RPC must terminate and reap the owned browser processes within the
+acquisition budget, before five-minute leases admit a successor.
+Prove a second writer can acquire during transport. GET must make zero employer
+requests. Failed observations retain success clocks and byte-identical accepted
+content/material/generation/approval/outcome fingerprints. Closure must never
+call `retire_invalid_source_jobs`, emit `JobDeleted` or write tombstones.
+
+Real Temporal worker, API/RPC/CLI and rendered browser QA must show explicit
+refresh, uncertainty, overdue/offline state and closed-to-active reversal without
+Discover. Restore the original body-only, unbound JSON-LD, unzoned-deadline and
+guest-LinkedIn fixtures: unknown availability must preserve usable content and
+allow preparation and independently bound human-reviewed/rehearsal paths.
+Medium/high-confidence unknown content must not create a pending content-review
+row or an audit claim that tailoring was quarantined. A confirmed active recheck
+resolves a legacy availability-only review row while retaining quality gates.
+Unknown Apply needs an exact review from the preceding 15 minutes at claim, run
+and owned intent, including when automation approval is disabled. A refused top
+candidate must not starve an active peer. Repeat quota-saturated sweeps with zero
+per-job ledger writes, and stop deadline/canceled sweeps before later jobs start.
+Unattended Apply must remain blocked without positive evidence. Confirmed closure
+and canonical URL races stop provider work and submit intent. Approval polls and
+manual-ATS refusals must perform zero acquisition; an eligible claim checks only
+one candidate. Mix multiple postings needing refresh with a fresh active peer:
+one poll refreshes only one posting and can still claim the peer. Exercise a real CSS-dependent closed page with more than 12
+resources, one hourly acquisition charge and harmless optional asset errors;
+failed/redirected document, data, script, style and frame dependencies must remain
+uncertain. A blocked non-read data request must also remain unknown, without
+sending the write or trusting its error view as closure. Required-resource local
+refusals retain evidence/backoff; optional
+image refusals do not invalidate an otherwise sound capture. A submit-time block
+before owned intent remains a retryable failure of the already-started Apply run.
+Use 300,000 unrelated
+events and 500 unchecked jobs, without ANALYZE, to bound read and sweep work. No application is submitted during QA. External transports may be
+deterministic; production claims/classifier/dispatch/persistence remain real.

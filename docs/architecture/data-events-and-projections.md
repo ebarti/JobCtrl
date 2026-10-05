@@ -259,3 +259,20 @@ projection materializers, and a polling SSE endpoint. See the explicitly
 future material in [Cross-Context Integration](domain-model/integration.md) and
 [Cloud Evolution](domain-model/cloud.md); those components are not current
 runtime dependencies.
+
+## Saved Posting Observations
+
+Enrichment's `JobAvailabilityObserved` ledger entry is the current availability
+authority. Its latest attempt/verdict and prior successful evidence are distinct;
+unknown refreshes retain accepted snapshots and artifacts. Successful state
+changes also emit `JobActiveStateChanged` for existing queue projections.
+Read-time Jobs availability is read directly from the latest indexed event,
+with overdue/in-progress derived from time and the current job lease, so no
+employer fetch or projection replay is hidden inside GET.
+
+The cross-language registry includes `JobAvailabilityObserved` and internal
+`AvailabilityLeaseChanged`. SSE treats the former as tenant/job list/detail
+invalidation; the latter invalidates detail/lists only for job-scoped command
+feedback and ignores workspace/host reservation churn. Internal lease,
+request and sweep facts do not become user application outcomes. Source closure
+never calls Discovery's policy-deletion routine and cannot emit `JobDeleted`.

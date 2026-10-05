@@ -18,6 +18,7 @@ use case is responsible for persistence via ``EnrichmentRepository``.
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
 import re
 from datetime import datetime, timezone
@@ -283,6 +284,8 @@ class PlaywrightDetailPageFetcher:
                             fetched_at=fetched_at,
                         )
 
+                    visibility = []
+                    status_html, status_complete, raw_hash = _collect_status_html(page, visibility_out=visibility)
                     return DetailPage(
                         url=url,
                         final_url=final_url,
@@ -291,6 +294,8 @@ class PlaywrightDetailPageFetcher:
                         json_ld=tuple(json_ld_payloads),
                         status=status,
                         fetched_at=fetched_at,
+                        status_html=status_html, status_evidence_complete=status_complete, raw_html_hash=raw_hash,
+                        status_visibility_verified=bool(visibility),
                     )
                 finally:
                     route_guard.close()
@@ -315,6 +320,40 @@ def _collect_json_ld(page: Any) -> list[Any]:
     except Exception:
         pass
     return payloads
+
+
+def _collect_status_html(page: Any, *, visibility_out: list[bool] | None = None) -> tuple[str, bool, str]:
+    """Keep current controls outside main and raw evidence within a fixed budget."""
+    try:
+        raw = page.content()
+        if not isinstance(raw, str):
+            return "", False, ""
+        status = raw
+        try:
+            computed = page.evaluate("""() => {
+                const clone = document.documentElement.cloneNode(true);
+                const originals = [document.documentElement, ...document.documentElement.querySelectorAll('*')];
+                const copies = [clone, ...clone.querySelectorAll('*')];
+                originals.forEach((element, index) => {
+                    const style = getComputedStyle(element);
+                    if (style.display === 'none' || ['hidden', 'collapse'].includes(style.visibility) || style.opacity === '0') {
+                        copies[index].setAttribute('hidden', '');
+                    }
+                    if (element.matches(':disabled')) copies[index].setAttribute('disabled', '');
+                });
+                return {statusHtml: clone.outerHTML};
+            }""")
+            if isinstance(computed, dict) and isinstance(computed.get("statusHtml"), str):
+                status = computed["statusHtml"]
+                if visibility_out is not None:
+                    visibility_out.append(True)
+        except Exception:
+            # Static visibility attributes remain usable for non-browser ports.
+            pass
+        return status[:1_000_000], max(len(raw), len(status)) <= 1_000_000, hashlib.sha256(raw.encode()).hexdigest()
+    except Exception:
+        # Missing status capture cannot be replaced with an active body default.
+        return "", False, ""
 
 
 def _collect_main_content(page: Any) -> str:
@@ -365,6 +404,9 @@ def _clean_content_html(html: str) -> str:
                 "name",
                 "for",
                 "type",
+                "disabled",
+                "action",
+                "value",
             ):
                 if attr == "class":
                     classes = val if isinstance(val, list) else val.split()

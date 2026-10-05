@@ -32,6 +32,9 @@ class _FakeResponse:
 class _FakePage:
     url = "https://example.com/jobs/closed"
 
+    def content(self):
+        return detail._collect_main_content(self)
+
     def goto(self, *_args, **_kwargs):
         return _FakeResponse()
 

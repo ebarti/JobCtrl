@@ -197,7 +197,7 @@ def _snapshot_use_case(
 @pytest.mark.parametrize(
     ("page", "expected_state", "expected_method"),
     (
-        (DetailPage(url="https://x", status=404), ActiveState.REMOVED, "http_status"),
+        (DetailPage(url="https://x/jobs/1", status=404), ActiveState.REMOVED, "http_status"),
         (
             _json_ld_page(valid_through="2000-01-01T00:00:00+00:00"),
             ActiveState.EXPIRED,
@@ -209,14 +209,14 @@ def _snapshot_use_case(
             "json_ld_valid_through",
         ),
         (
-            DetailPage(url="https://x", html="This position is no longer accepting applications."),
+            DetailPage(url="https://x/jobs/1", html="This position is no longer accepting applications."),
             ActiveState.CLOSED,
             "closed_marker",
         ),
         (
-            DetailPage(url="https://x", html="<main>Visible role content</main>"),
-            ActiveState.ACTIVE,
-            "default_body_present",
+            DetailPage(url="https://x/jobs/1", html="<main>Visible role content</main>"),
+            ActiveState.UNKNOWN,
+            "missing_current_evidence",
         ),
     ),
 )
@@ -401,7 +401,7 @@ def test_snapshot_failure_records_failure_event_without_bumping_version() -> Non
 
 def test_failed_capture_still_records_verified_active_state_change() -> None:
     acquisition = ContentAcquisitionService(
-        fetcher=_CannedFetcher(DetailPage(url="https://x", status=404)),
+        fetcher=_CannedFetcher(DetailPage(url="https://x/jobs/1", status=404)),
         extractors=(
             TierExtractor(
                 tier=ExtractionTier.JSON_LD,
@@ -440,7 +440,7 @@ def test_failed_capture_still_records_verified_active_state_change() -> None:
 
 def test_low_confidence_capture_is_quarantined_without_override() -> None:
     acquisition = ContentAcquisitionService(
-        fetcher=_CannedFetcher(DetailPage(url="https://x", html="<main>Visible role content</main>", status=200)),
+        fetcher=_CannedFetcher(DetailPage(url="https://x/jobs/1", html="<main>Visible role content</main>", status=200, json_ld=({"@type": "JobPosting", "url": "https://x/jobs/1", "description": "Role"},))),
         extractors=(
             TierExtractor(
                 tier=ExtractionTier.LLM_ASSISTED,
@@ -451,7 +451,7 @@ def test_low_confidence_capture_is_quarantined_without_override() -> None:
         ),
     )
 
-    result = acquisition.acquire(url="https://x", source_id=SOURCE_ID, tenant_id="local", job_id="job-1")
+    result = acquisition.acquire(url="https://x/jobs/1", source_id=SOURCE_ID, tenant_id="local", job_id="job-1")
 
     assert result.ok
     assert result.confidence.value == "low"
@@ -477,7 +477,7 @@ def test_filter_override_audit_admits_low_confidence_snapshot(caplog) -> None:
     assert "filter_override.applied" in caplog.text
 
     acquisition = ContentAcquisitionService(
-        fetcher=_CannedFetcher(DetailPage(url="https://x", html="<main>Visible role content</main>", status=200)),
+        fetcher=_CannedFetcher(DetailPage(url="https://x/jobs/1", html="<main>Visible role content</main>", status=200, json_ld=({"@type": "JobPosting", "url": "https://x/jobs/1", "description": "Role"},))),
         extractors=(
             TierExtractor(
                 tier=ExtractionTier.LLM_ASSISTED,
@@ -488,7 +488,7 @@ def test_filter_override_audit_admits_low_confidence_snapshot(caplog) -> None:
         ),
     )
     result = acquisition.acquire(
-        url="https://x",
+        url="https://x/jobs/1",
         source_id=SOURCE_ID,
         tenant_id="local",
         job_id="job-1",
@@ -546,7 +546,7 @@ def test_filter_override_rejects_disallowed_policy() -> None:
 
 def test_quarantined_snapshot_does_not_promote_to_job_enrichment() -> None:
     acquisition = ContentAcquisitionService(
-        fetcher=_CannedFetcher(DetailPage(url="https://x", html="<main>Visible role content</main>", status=200)),
+        fetcher=_CannedFetcher(DetailPage(url="https://x/jobs/1", html="<main>Visible role content</main>", status=200, json_ld=({"@type": "JobPosting", "url": "https://x/jobs/1", "description": "Role"},))),
         extractors=(
             TierExtractor(
                 tier=ExtractionTier.LLM_ASSISTED,
@@ -615,6 +615,7 @@ def test_active_snapshot_without_application_url_promotes_to_job_enrichment() ->
                 url="https://boards.greenhouse.io/acme/jobs/1",
                 html="<main>Visible role content</main>",
                 status=200,
+                json_ld=({"@type": "JobPosting", "url": "https://boards.greenhouse.io/acme/jobs/1", "description": "Role"},),
             )
         ),
         extractors=(

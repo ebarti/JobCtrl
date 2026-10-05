@@ -96,6 +96,7 @@ method as either `mode="workflow"` (start a workflow, return its ids) or
 | `apply` | workflow | `ApplyWorkflow` (per-job, `apply-{tenant}-{jobKey}`) |
 | `rescore_job`, `rescore_jobs_not_on_current_scoring_policy` | workflow | `JobPreparationWorkflow` / `JobPipelineWorkflow` (score) |
 | `tailor_job`, `retailor_job`, `retailor_current_policy` | workflow | `JobPreparationWorkflow` (`tailor`,`cover`,`pdf`) |
+| `check_posting_availability` | workflow | `SavedPostingAvailabilityWorkflow` (explicit saved JobId or bounded due sweep) |
 | `refresh_compensation` | workflow | `CompensationRefreshWorkflow` |
 | `profile_import` | workflow | `ProfileImportWorkflow` |
 | `manual_capture_import` | workflow | `ManualCaptureImportWorkflow` (awaited by the API route) |
@@ -181,6 +182,7 @@ activity call sites.
 | `ApplyWorkflow` | `apply_activity` | 2 h batch / 1 h continuous batch; heartbeat 60 s | live: 1 attempt; dry-run: 2 attempts |
 | `ManualCaptureImportWorkflow` | `manual_capture_import_activity` | 10 min | 2 s→10 s ×2; identity/input/replay mismatches are non-retryable |
 | `ProfileImportWorkflow` | `profile_import_activity` | 10 min | 2 attempts |
+| `SavedPostingAvailabilityWorkflow` | `check_saved_posting_availability` (exact API/page/anonymous evidence, ledger claims) | 30 min; heartbeat 2 min | one attempt; observation backoff owns later retry |
 | `CompensationRefreshWorkflow` | `refresh_compensation_activity` | 20 min | 2 attempts |
 | `InterviewPrepWorkflow` | `generate_interview_prep_activity` | 20 min | 2 attempts |
 | `ContactResearchWorkflow` | `check_spend_budget` preflight, then `run_contact_research` (one source-family activity: gateway-guarded fetch + LLM candidate extraction, proposing candidates in `needs_review`) | activity 30 min; heartbeat 2 min | 10 s→120 s ×3 |
@@ -245,7 +247,7 @@ Primary implementation files (repo-relative):
 - `workers/automation/src/jobctrl/workflow_specs.py` — `run_stage` / `apply`
   workflow selection and deterministic IDs.
 - `workers/automation/src/jobctrl/infrastructure/temporal/registry.py` — the
-  six workflows and nineteen activities.
+  registered workflows and activities.
 - `workers/automation/src/jobctrl/infrastructure/temporal/finalize.py` — the
   workflow envelope (`record_workflow_started` / `record_workflow_outcome`).
 - `workers/automation/src/jobctrl/infrastructure/temporal/run_in_activity.py`
@@ -274,3 +276,5 @@ Primary implementation files (repo-relative):
   heartbeat/reconciler loop, and `_reconcile_discovery_schedule`.
 - `workers/automation/src/jobctrl/infrastructure/projections/` — Python
   projection builders.
+
+Saved-posting availability is independent of Discover: explicit Job Detail/API/RPC/CLI commands and bounded worker startup/heartbeat sweeps use the same registered workflow. [Operations](operations.md#recurring-saved-posting-checks) owns cadence and failure policy; [Concurrency](concurrency.md#saved-posting-check-bounds) owns durable bounds.

@@ -101,6 +101,8 @@ jobs:
             mkdir -p "$tmpdir"
             echo "TMPDIR=$tmpdir" >> "$GITHUB_ENV"
           fi
+      - name: Install Chromium for guarded availability regression
+        run: uv --project workers/automation run --locked --all-extras playwright install --with-deps chromium
       - name: Test
         run: uv --project workers/automation run --locked --all-extras pytest workers/automation/tests -q --durations=25
       - name: Build package

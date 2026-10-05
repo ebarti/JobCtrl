@@ -211,3 +211,23 @@ count/age, and add/dispatch rates. The capacity response preserves
 `unsupported`, `unavailable`, and `stale` states. The ETA estimator therefore
 refuses to divide domain work by nominal slots when runtime telemetry is stale
 or shared queue contention cannot be bounded.
+
+## Saved Posting Check Bounds
+
+Availability owns per-job five-minute leases and actual-host reservations;
+independent jobs do not contend for a workspace-wide execution lease. Completion
+is fenced against crash recovery, supersession and canonical URL changes. A
+workspace admits at most one sweep per minute, 25 jobs per sweep and 100 posting
+acquisitions per hour; sweeps may use 80, preserving 20 for foreground work.
+Each acquisition is charged once, independently of its request/resource count.
+Sweeps read capacity before claiming each job and stop when their share is
+exhausted. A 20-minute work budget stops admission below the 30-minute activity
+limit; cancellation stops acquisition and supervised browser work before another
+job can be checked.
+Every redirect and anonymous browser resource reserves its actual host, with at
+least two seconds between starts and one in flight, retaining stricter shared
+policy/cooldown. Each check permits 12 posting/API requests plus 64 browser
+resources, four canonical redirect hops, 20-second HTTP/browser operations,
+one million bytes per response and 12 million bytes per check. All waits and
+network work happen outside SQLite writer transactions. Local refusals release
+job ownership without recording employer evidence or increasing evidence backoff.

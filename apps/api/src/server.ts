@@ -9,6 +9,8 @@ import {
   type ActionCommandPayload,
   type ActionRunResponse,
   ActivityListQuerySchema,
+  CheckPostingAvailabilityParamsSchema,
+  AvailabilityWorkflowStartSchema,
   ApplyReviewDecisionRequestSchema,
   ApplyJobRequestSchema,
   RepeatApplicationOverrideRequestSchema,
@@ -947,6 +949,29 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       dbPath: options.dbPath,
     },
     handlers: {
+      checkPostingAvailability: async ({ pathParam: jobId }, reply) => {
+        const exists = withReadOnlyDb(reply, options.dbPath, (db) => resolveExistingJobId(reply, db, jobId));
+        if (!exists) return { ok: false, error: "job_not_found" };
+        try {
+          const params = CheckPostingAvailabilityParamsSchema.parse({ tenantId: "local", jobId,
+            expectedAppDir: appDir, expectedDbPath: options.dbPath });
+          const result = await providerDispatcher.call(RpcMethods.CheckPostingAvailability, params);
+          if (result.error) {
+            void reply.code(result.error.code === JsonRpcErrorCodes.InvalidParams ? 400 : 503);
+            return { ok: false, error: "availability_check_failed", message: result.error.message };
+          }
+          const start = AvailabilityWorkflowStartSchema.safeParse(result.result);
+          if (!start.success) {
+            void reply.code(502);
+            return { ok: false, error: "invalid_availability_dispatch_result" };
+          }
+          void reply.code(202);
+          return { ok: true, status: "queued", runId: start.data.runId, workflowId: start.data.workflowId };
+        } catch {
+          void reply.code(503);
+          return { ok: false, error: "availability_worker_unavailable" };
+        }
+      },
       interviewCatalog: ({ request }, reply) => {
         try {
           return listInterviewCatalog(readInterviewCatalog(), request);

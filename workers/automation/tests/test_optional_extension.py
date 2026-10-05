@@ -174,7 +174,9 @@ def test_disconnected_guest_linkedin_persists_clean_description_without_llm(
         snapshots = SqlitePostingSnapshotSetRepository(conn).load(LOCAL_TENANT, job_id)
         assert snapshots is not None and snapshots.latest_snapshot is not None
         assert snapshots.latest_snapshot.extraction_tier == "css_selectors"
-        assert not snapshots.latest_snapshot.is_quarantined
+        assert snapshots.latest_active_state.value == "unknown"
+        assert snapshots.latest_snapshot.quarantine_reason.value == "none"
+        assert conn.execute("SELECT COUNT(*) FROM discovery_quarantine_entries WHERE status='pending'").fetchone()[0] == 0
         event = conn.execute(
             "SELECT payload_json FROM job_events WHERE job_id = ? AND stage = 'enrich' AND event_type = 'StageCompleted'",
             (str(job_id),),

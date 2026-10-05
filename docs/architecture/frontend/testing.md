@@ -211,3 +211,14 @@ analogue of the backend's `scripts/check-domain-type-parity.py`; both the
 typecheck and the web Vitest runtime backstop run in CI.
 
 ---
+
+### Saved posting availability coverage
+
+The availability component/mutation tests cover latest uncertainty alongside
+prior successful evidence, overdue/offline explanation, port dispatch, queued
+feedback, tenant-scoped invalidation, optimistic rollback and accessibility.
+Registry-derived event fixtures cover observation and intentional internal lease
+no-op handling. Product QA additionally drives the real worker/API/CLI and
+rendered Job Detail through active, unknown and closed-to-active synthetic
+transport responses; builds or component tests alone do not establish that
+workflow path.

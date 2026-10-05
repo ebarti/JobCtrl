@@ -202,6 +202,11 @@ class DetailPage:
     json_ld: tuple[Any, ...] = field(default_factory=tuple)
     status: int | None = None
     fetched_at: str = ""
+    status_html: str = ""
+    status_evidence_complete: bool = True
+    status_evidence_reason: str = ""
+    status_visibility_verified: bool = False
+    raw_html_hash: str = ""
 
     def __post_init__(self) -> None:
         if not isinstance(self.url, str) or not self.url.strip():

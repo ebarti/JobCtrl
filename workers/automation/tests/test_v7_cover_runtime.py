@@ -165,6 +165,8 @@ def _seed_target(
         """,
         (str(tenant_id), str(job_id), _NOW, _NOW),
     )
+    from .availability_fixture import seed_fresh_availability
+    seed_fresh_availability(conn, str(job_id), str(tenant_id))
     conn.commit()
 
 

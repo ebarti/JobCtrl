@@ -58,6 +58,11 @@ Playwright browser binaries. Do not set `UV_EXCLUDE_NEWER` (or a global uv
 so every `--locked` command in this repository fails or, worse, rewrites the
 lockfile. System Chrome/Chromium is optional; contributor
 testing of apply behavior must explicitly enable a browser capability first.
+The full worker suite also exercises guarded anonymous availability in real
+Chromium. Install the locked worker browser revision with
+`uv --project workers/automation run --locked --all-extras playwright install chromium`
+before that suite; Python CI installs its browser and Linux prerequisites.
+This fixture uses a disposable anonymous context and synthetic employer transport.
 
 The source installer downloads separate web/E2E and Python-worker Playwright
 Chromium revisions. The bundled release instead contains exactly one

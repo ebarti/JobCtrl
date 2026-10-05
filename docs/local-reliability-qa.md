@@ -165,3 +165,27 @@ Use uniquely owned synthetic workspaces. Never point QA at real profiles,
 application artifacts or databases. Confirm worker health for worker-backed
 paths. Browser launch failure and inaccessible required runtime are nonpassing.
 No application submission is implied by a QA request.
+
+## Saved Posting Availability Product QA
+
+This is risk 3 work: evidence freshness, durable claims and reviewed submission
+boundaries need independent exact-candidate review and verification. Run the
+full worker suite excluding the two explicitly environment-owned
+`system_browser` cases in `test_apply_chrome_dry_run_guard.py`, cross-stack check,
+API/RPC/readonly/event parity, availability web/a11y tests and web/docs builds.
+The [regression catalog](developer/qa/regression-catalog.md#saved-posting-availability)
+contains the complete trigger and preservation matrix.
+
+Use an owned synthetic workspace, isolated ports, a real local Temporal worker,
+real API/RPC/CLI dispatch and rendered Job Detail. External transport is the only
+deterministic seam: `enrichment.availability.public_get(url)` returns a bounded
+`Response(url, final_url, status, body: bytes, retry_after, content_type,
+redirect_url)`; `anonymous_browser(url, fetcher=...)` is the optional browser
+transport. Inject these in the private worker bootstrap, retaining production
+registry, scheduling, classifier, reservations, events and persistence. Drive
+active → unknown → closed → active and inspect attempt/success clocks, no-network
+GET, explicit refresh, overdue/offline explanation and unchanged artifact/
+approval fingerprints. Capture evidence privately; never commit workspaces,
+logs, databases, materials or screenshots. Missing real runtime/browser QA is
+incomplete, not a pass; deterministic external fixtures do not certify live ATS
+reliability.

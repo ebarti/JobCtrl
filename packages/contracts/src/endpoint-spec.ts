@@ -30,6 +30,8 @@ import {
 } from "./schemas.js";
 import {
   JsonRpcErrorCodes,
+  CheckPostingAvailabilityParamsSchema,
+  AvailabilityWorkflowStartSchema,
   ReviewLearningRecommendationParamsSchema,
   ReviewLearningRecommendationResultSchema,
   RollbackTailoringPolicyParamsSchema,
@@ -562,6 +564,20 @@ function interviewJobPath(suffix: string) {
 }
 
 export const ENDPOINTS = {
+  checkPostingAvailability: defineEndpoint({
+    name: "checkPostingAvailability",
+    method: "POST",
+    path: defineEndpointPath({
+      route: "/v1/jobs/:jobId/actions/check-availability", paramName: "jobId",
+      paramSchema: z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/),
+      invalid: { status: 400, error: "invalid_job_id" },
+      build: (jobId: string) => `/v1/jobs/${encodeURIComponent(jobId)}/actions/check-availability`,
+    }),
+    request: z.object({}).strict().optional().transform((value) => value ?? {}),
+    response: z.object({ ok: z.literal(true), status: z.literal("queued"), runId: z.string(), workflowId: z.string() }).strict(),
+    rpcDependencies: [RpcMethods.CheckPostingAvailability],
+    demo: { class: "unavailable", reason: "Availability acquisition needs the local worker and employer evidence." },
+  }),
   interviewCatalog: defineEndpoint({
     name: "interviewCatalog",
     method: "GET",

@@ -9,6 +9,7 @@ import {
   InterviewReflectionPanel,
   JobOutcomePanel,
 } from "../../contexts/apply/components/ApplicationOutcomes.js";
+import { PostingAvailability } from "../../contexts/enrichment/index.js";
 import { CompensationAuditSection } from "../../contexts/enrichment/components/CompensationEvidence.js";
 import { JobContactsPanel } from "../../contexts/outreach/components/JobContactsPanel.js";
 import { ArtifactStatusBadge } from "../../contexts/materials/components/ArtifactStatusBadge.js";
@@ -246,6 +247,7 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
       title: "Preparation diagnostics",
       description: "Saved workflow stages and application target",
       content: <>
+        <PostingAvailability jobId={detail.job.jobKey} postingUrl={detail.job.url} availability={detail.job.availability} />
         <Section title="Preparation diagnostics" help="Saved preparation stage states and diagnostic messages. A failed, blocked, or exhausted stage calls for review; these stages do not by themselves submit an application.">
           <StageTimeline jobId={detail.job.jobKey} postingUrl={detail.job.url} stages={preparationStages(detail.stages)} />
         </Section>

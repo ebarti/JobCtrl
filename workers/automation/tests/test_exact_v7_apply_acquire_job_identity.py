@@ -112,6 +112,9 @@ def _insert_ready_job(
                 TIMESTAMP,
             ),
         )
+    from .availability_fixture import seed_fresh_availability
+    seed_fresh_availability(conn, str(job_id), str(tenant_id))
+
 
 
 def _insert_profile(conn: sqlite3.Connection, tenant_id: str, version: int) -> None:

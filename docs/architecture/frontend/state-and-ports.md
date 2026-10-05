@@ -353,3 +353,15 @@ formalize a `UseCase` interface for them — the React conventions
 (hook + mutation function) are the de facto driving-port representation.
 
 ---
+
+## Posting Availability State
+
+The Enrichment context owns `PostingAvailability` and `useCheckAvailabilityMutation`;
+Job Detail composes its public component. Persisted attempt/success evidence,
+next due and read-time freshness remain server state. The mutation calls the API
+port, snapshots the tenant-first job detail, marks a check optimistically and
+rolls back on failure, then invalidates that detail and tenant job lists. It
+exposes worker-offline failure and retry without erasing older successful
+evidence or accepted artifacts. A queued acknowledgement is not a verified
+active posting. Persisted request deferral/retry feedback replaces the queued
+acknowledgement separately from acquisition attempt/success clocks.

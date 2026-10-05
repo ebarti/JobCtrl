@@ -140,11 +140,13 @@ class PublicHttpUrlRouteGuard:
         resolver: Resolver | None = None,
         fetch_public_requests: bool = False,
         request_fetcher: RouteRequestFetcher | None = None,
+        include_resource_destination: bool = False,
     ) -> None:
         self._page = page
         self._resolver = resolver
         self._fetch_public_requests = fetch_public_requests
         self._request_fetcher = request_fetcher or _fetch_public_route_request
+        self._include_resource_destination = include_resource_destination
         self._handler: Callable[[Any, Any], None] | None = None
         self.blocked_url: str | None = None
         self.blocked_reason: str | None = None
@@ -197,13 +199,28 @@ class PublicHttpUrlRouteGuard:
                 # writes while loading. We deliberately do not replay those
                 # side-effecting requests through the pinned fetcher, but
                 # aborting one must not poison an otherwise safe top-level
-                # read. Non-public destinations above remain fatal and keep
-                # the page-wide blocked marker.
+                # read. Availability captures require complete data evidence:
+                # a blocked API write can instead render a false closed view.
+                # Mark that capture incomplete without sending the write.
+                if self._include_resource_destination and str(getattr(request, "resource_type", "")) not in {
+                    "image", "font", "media",
+                }:
+                    self._record_failure(
+                        request_url, f"browser_resource_method_{method}", PublicFetchFailureKind.FETCH_ERROR,
+                    )
                 playwright_route.abort("blockedbyclient")
                 return
             headers = getattr(request, "headers", {}) or {}
+            headers = dict(headers)
+            if self._include_resource_destination:
+                # Playwright routing may omit Sec-Fetch-Dest. Its native
+                # resource type still distinguishes passive assets from data.
+                resource_type = str(getattr(request, "resource_type", ""))
+                headers["sec-fetch-dest"] = {
+                    "stylesheet": "style", "media": "video", "xhr": "empty", "fetch": "empty",
+                }.get(resource_type, resource_type)
             try:
-                fulfillment = self._request_fetcher(request_url, method, dict(headers))
+                fulfillment = self._request_fetcher(request_url, method, headers)
             except Exception as exc:
                 self._record_failure(
                     getattr(exc, "destination_url", None) or request_url,

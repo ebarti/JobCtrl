@@ -1199,8 +1199,8 @@ def _imported_snapshot_is_preparation_eligible(
     latest = snapshot_set.latest_snapshot if snapshot_set is not None else None
     return bool(
         latest is not None
-        and latest.active_state is ActiveState.ACTIVE
-        and latest.quarantine_reason is QuarantineReason.NONE
+        and latest.active_state in {ActiveState.ACTIVE, ActiveState.UNKNOWN}
+        and latest.quarantine_reason in {QuarantineReason.NONE, QuarantineReason.UNKNOWN_ACTIVE_STATE}
     )
 
 

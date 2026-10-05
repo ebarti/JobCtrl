@@ -108,6 +108,8 @@ class _AcquireConnection:
                 and "jobs.job_id AS job_id" in sql
             )
             return _RowsCursor(self._candidates)
+        if sql.startswith("SELECT url FROM jobs"):
+            return self._conn.execute("SELECT ? AS url", (self._candidates[0]["url"],))
         if "FROM job_stage_states" in sql:
             return _RowsCursor([])
         return self._conn.execute(sql, parameters)
@@ -171,6 +173,10 @@ def test_acquire_job_does_not_apply_unaccepted_feedback_to_candidate_order(
         lambda *_args, **_kwargs: None,
     )
 
+    # This partial-row fixture tests feedback ordering; availability is a separate port.
+    monkeypatch.setattr("jobctrl.enrichment.availability.require_fresh_active", lambda *_a, **_kw: None)
+    monkeypatch.setattr("jobctrl.enrichment.availability.assert_fresh_candidate", lambda *_a, **_kw: None)
+    monkeypatch.setattr("jobctrl.enrichment.availability.read_availability", lambda *_a, **_kw: {"verdict": "active"})
     selected = launcher_module.acquire_job(
         worker_id=1,
         run_ctx={"dry_run": True},

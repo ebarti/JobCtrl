@@ -338,55 +338,79 @@ def run_scoring(
     worker_count = max(1, workers)
     log.info("Scoring %d jobs with %d worker(s)...", len(jobs), worker_count)
 
+    conn.commit()
+    from jobctrl.enrichment.availability import require_fresh_active
+    available_jobs = []
+    availability_deferred = 0
+    for job in jobs:
+        try:
+            require_fresh_active(str(job["job_id"]), tenant_id=str(tenant_id), conn=conn, expected_posting_url=job["url"], allow_unknown=True)
+        except Exception as exc:
+            log.info("Scoring deferred for %s: %s", job["job_id"], exc)
+            availability_deferred += 1
+        else:
+            available_jobs.append(job)
+    jobs = available_jobs
     started_ats: dict[str, str] = {}
     activity_metadata: dict[str, dict[str, object]] = {}
+    from jobctrl.infrastructure.preparation_recovery import claim_preparation_reservation
+    from jobctrl.domain.errors import MissingInputError
+    claimed_jobs = []
     for job in jobs:
-        job_id = canonical_job_id(str(job["job_id"]))
-        ensure_job_stage_rows(
-            conn,
-            job_id,
-            tenant_id=tenant_id,
-            discovered_at=job.get("discovered_at"),
-        )
-        started_at = utc_now()
-        started_ats[job["url"]] = started_at
-        # Runner owns the restart policy: a job that previously failed
-        # scoring is re-selected here, so allow Failed -> Running even
-        # though the canonical state machine table only permits Failed ->
-        # Pending (via Reset). Skip validation; the writer is the runner.
-        metadata = _score_activity_metadata(
-            conn,
-            tenant_id=tenant_id,
-            job_id=job_id,
-            workflow_id=workflow_id,
-            rescore=rescore,
-        )
-        activity_metadata[str(job_id)] = metadata or {}
-        set_stage_state(
-            conn,
-            job_id,
-            "score",
-            "running",
-            tenant_id=tenant_id,
-            # Preserve the attempt counter across re-selection — see
-            # _score_attempt_count; a bare running write would reset it to 0.
-            attempt_count=_score_attempt_count(
-                conn,
-                tenant_id=tenant_id,
-                job_id=job_id,
-            ),
-            started_at=started_at,
-            metadata=metadata,
-            validate_transition=False,
-        )
-        record_job_event(
-            conn,
-            job_id,
-            "score",
-            "StageStarted",
-            tenant_id=tenant_id,
-            message="Scoring started",
-        )
+        try:
+            with claim_preparation_reservation(conn, tenant_id=tenant_id, job_id=job["job_id"],
+                    stage="score", workflow_id=None, cancel_event=None, expected_posting_url=job["url"]):
+                job_id = canonical_job_id(str(job["job_id"]))
+                ensure_job_stage_rows(
+                    conn,
+                    job_id,
+                    tenant_id=tenant_id,
+                    discovered_at=job.get("discovered_at"),
+                )
+                started_at = utc_now()
+                started_ats[job["url"]] = started_at
+                # Runner owns the restart policy: a job that previously failed
+                # scoring is re-selected here, so allow Failed -> Running even
+                # though the canonical state machine table only permits Failed ->
+                # Pending (via Reset). Skip validation; the writer is the runner.
+                metadata = _score_activity_metadata(
+                    conn,
+                    tenant_id=tenant_id,
+                    job_id=job_id,
+                    workflow_id=workflow_id,
+                    rescore=rescore,
+                )
+                activity_metadata[str(job_id)] = metadata or {}
+                set_stage_state(
+                    conn,
+                    job_id,
+                    "score",
+                    "running",
+                    tenant_id=tenant_id,
+                    # Preserve the attempt counter across re-selection — see
+                    # _score_attempt_count; a bare running write would reset it to 0.
+                    attempt_count=_score_attempt_count(
+                        conn,
+                        tenant_id=tenant_id,
+                        job_id=job_id,
+                    ),
+                    started_at=started_at,
+                    metadata=metadata,
+                    validate_transition=False,
+                )
+                record_job_event(
+                    conn,
+                    job_id,
+                    "score",
+                    "StageStarted",
+                    tenant_id=tenant_id,
+                    message="Scoring started",
+                )
+        except MissingInputError:
+            availability_deferred += 1
+            continue
+        claimed_jobs.append(job)
+    jobs = claimed_jobs
 
     reusable_scores = (
         {}
@@ -462,6 +486,7 @@ def run_scoring(
     t0 = time.time()
     results: list[tuple[dict[str, Any], ScoreJobOutcome]] = list(reused_results)
     errors = 0
+    conn.commit()
     analyses_by_job: dict[str, EmployerAnalysis] = {}
     analysis_ready_jobs: list[dict[str, Any]] = []
     for job in jobs_to_compute:
@@ -568,6 +593,7 @@ def run_scoring(
 
     errors = sum(1 for _, outcome in results if not outcome.ok)
     scored_count = len(results) - errors
+    errors += availability_deferred
 
     finished_at = utc_now()
     for job, outcome in results:
@@ -759,11 +785,28 @@ def score_job_by_id(
     if not job.get("full_description"):
         return ScoreJobOutcome(ok=False, score=None, error=f"Job is not enriched: {stable_job_id}")
 
+    from jobctrl.enrichment.availability import require_fresh_active, assert_fresh_candidate
+    from jobctrl.infrastructure.preparation_recovery import claim_preparation_reservation
+    expected_posting_url = job["url"]
+    conn.commit()
+    require_fresh_active(str(stable_job_id), tenant_id=str(tenant_id), conn=conn, expected_posting_url=expected_posting_url, allow_unknown=True)
+    # Acquisition released its writer and fenced URL; reload the preparation target.
+    with claim_preparation_reservation(conn, tenant_id=tenant_id, job_id=stable_job_id,
+            stage="score", workflow_id=None, cancel_event=cancel_event, expected_posting_url=expected_posting_url):
+        job = SqlitePreparationTargetReader(conn).load(tenant_id, stable_job_id)
+    if job is None:
+        return ScoreJobOutcome(ok=False, score=None, error="Availability candidate changed")
+
     owned_metadata = None
     if enforce_workflow_ownership:
         if not workflow_id or not recovery_workflow_id:
             raise ValueError("Owned scoring requires the reserved workflow and activity owner")
         conn.execute("BEGIN IMMEDIATE")
+        try:
+            assert_fresh_candidate(conn, str(stable_job_id), expected_posting_url, tenant_id=str(tenant_id), allow_unknown=True)
+        except BaseException:
+            conn.rollback()
+            raise
         row = conn.execute(
             "SELECT state, json_extract(metadata_json, '$.automaticPreparation.workflowId') "
             "FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'score'",
@@ -864,13 +907,6 @@ def score_job_by_id(
                 tenant_id=tenant_id,
             )
         return ScoreJobOutcome(ok=True, score=existing)
-    if not enforce_workflow_ownership:
-        ensure_job_stage_rows(
-            conn,
-            stable_job_id,
-            tenant_id=tenant_id,
-            discovered_at=job.get("discovered_at"),
-        )
     started_at = utc_now()
     metadata = owned_metadata or _score_activity_metadata(
         conn,
@@ -880,33 +916,40 @@ def score_job_by_id(
         rescore=rescore,
     )
     if not enforce_workflow_ownership:
-        set_stage_state(
-            conn,
-            stable_job_id,
-            "score",
-            "running",
-            tenant_id=tenant_id,
-            # Preserve the attempt counter across re-selection — see
-            # _score_attempt_count; a bare running write would reset it to 0.
-            attempt_count=_score_attempt_count(
+        with claim_preparation_reservation(conn, tenant_id=tenant_id, job_id=stable_job_id,
+                stage="score", workflow_id=None, cancel_event=cancel_event, expected_posting_url=expected_posting_url):
+            ensure_job_stage_rows(
                 conn,
+                stable_job_id,
                 tenant_id=tenant_id,
-                job_id=stable_job_id,
-            ),
-            started_at=started_at,
-            metadata=metadata,
-            validate_transition=False,
-        )
-        record_job_event(
-            conn,
-            stable_job_id,
-            "score",
-            "StageStarted",
-            tenant_id=tenant_id,
-            message="Scoring started",
-        )
-        conn.commit()
-
+                discovered_at=job.get("discovered_at"),
+            )
+            set_stage_state(
+                conn,
+                stable_job_id,
+                "score",
+                "running",
+                tenant_id=tenant_id,
+                # Preserve the attempt counter across re-selection — see
+                # _score_attempt_count; a bare running write would reset it to 0.
+                attempt_count=_score_attempt_count(
+                    conn,
+                    tenant_id=tenant_id,
+                    job_id=stable_job_id,
+                ),
+                started_at=started_at,
+                metadata=metadata,
+                validate_transition=False,
+            )
+            record_job_event(
+                conn,
+                stable_job_id,
+                "score",
+                "StageStarted",
+                tenant_id=tenant_id,
+                message="Scoring started",
+            )
+            conn.commit()
     if employer_analysis is None:
         try:
             if employer_analysis_repository is None:

@@ -1,6 +1,41 @@
 {
   "schemaVersion": 1,
   "endpoints": {
+    "checkPostingAvailability": {
+      "request": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "response": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "status": {
+            "type": "string",
+            "const": "queued"
+          },
+          "runId": {
+            "type": "string"
+          },
+          "workflowId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ok",
+          "status",
+          "runId",
+          "workflowId"
+        ],
+        "additionalProperties": false
+      }
+    },
     "interviewCatalog": {
       "request": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",

@@ -288,6 +288,16 @@ postings become normalized, provenance-bearing job records before scoring.
 
 ## 4. Review Jobs
 
+Open Job Detail's **Posting availability** to compare the latest attempt with
+the last successful verification. **Check availability** requests a bounded
+worker check; **Inspect employer posting** opens the source for your own
+inspection. Stopped/offline workers leave evidence overdue. Preparation refreshes
+evidence after six hours and can proceed with unknown availability. Rehearsals and
+bound human-reviewed/manual Apply also remain available while unknown; unattended
+Apply needs active evidence from the last 15 minutes. Confirmed closure stops work. Failed checks preserve saved descriptions, materials and approvals.
+The [enrichment guide](enrichment-and-extraction.md#saved-posting-availability)
+owns the complete background-check policy.
+
 <WorkflowSurfacePanel surface="web">
 
 The Jobs view supports filters, sorting, pagination, deep links, job-state and
@@ -766,6 +776,13 @@ it does not send messages or replace the review surfaces.
 </WorkflowSurfacePanel>
 
 ## Command Reference
+
+```bash
+jobctrl check-availability JOB_ID
+```
+
+This asks the local worker to check one saved canonical JobId and prints its
+availability observation; it does not run Discover or Apply.
 
 Run each command as `jobctrl <command>` from any directory. The installed
 launcher handles the lifecycle commands and passes the rest to the Python CLI.

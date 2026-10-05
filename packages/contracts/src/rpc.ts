@@ -78,6 +78,7 @@ export const RpcMethods = {
   RetailorCurrentPolicy: "retailor_current_policy",
   AnalyzeJob: "analyze_job",
   RefreshCompensation: "refresh_compensation",
+  CheckPostingAvailability: "check_posting_availability",
   GenerateInterviewPrep: "generate_interview_prep",
   RunContactResearch: "run_contact_research",
   GenerateOutreachDraft: "generate_outreach_draft",
@@ -379,6 +380,19 @@ export const AnalyzeJobResultSchema = z
   })
   .strict();
 export type AnalyzeJobResult = z.infer<typeof AnalyzeJobResultSchema>;
+
+export const CheckPostingAvailabilityParamsSchema = z.object({
+  tenantId: TenantParam,
+  jobId: CanonicalJobIdParam,
+  expectedAppDir: z.string().trim().min(1),
+  expectedDbPath: z.string().trim().min(1),
+}).strict();
+
+export const AvailabilityWorkflowStartSchema = z.object({
+  runId: z.string().min(1),
+  workflowId: z.string().min(1),
+  firstExecutionRunId: z.string().min(1).optional(),
+}).strict();
 
 export const RefreshCompensationParamsSchema = z
   .object({
