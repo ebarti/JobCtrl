@@ -43,7 +43,11 @@ from jobctrl.domain.discovery.value_objects import (
 )
 from jobctrl.domain.ports.discovery import ScrapedJobPosting
 from jobctrl.domain.tenant import TenantId
-from jobctrl.infrastructure.discovery.location_filter import location_matches_target
+from jobctrl.infrastructure.discovery.location_filter import (
+    _matches_reject,
+    _normalize,
+    location_matches_target,
+)
 from jobctrl.discovery.title_filter import title_matches_query
 from jobctrl.infrastructure.observability.adapter_spans import adapter_fetch_span
 
@@ -535,6 +539,8 @@ class AshbyBoardAdapter:
         query: str,
         location: str,
     ) -> ScrapedJobPosting | None:
+        if raw.get("isListed") is False:
+            return None
         title = str(raw.get("title") or "").strip()
         job_url = str(raw.get("jobUrl") or raw.get("applyUrl") or "").strip()
         posting_id = str(raw.get("id") or "").strip()
@@ -542,14 +548,25 @@ class AshbyBoardAdapter:
             return None
         if not title_matches_query(title, query):
             return None
-        loc = str(raw.get("location") or raw.get("locationName") or "").strip()
-        if not location_matches_target(
-            loc,
-            accept=self._location_accept,
-            reject=self._location_reject,
-            search_location=location,
+        locations = _ashby_locations(raw)
+        # Reuse the shared reject aliases within each name's geography context.
+        # A matching secondary must not mask a rejected primary (or vice versa).
+        if any(
+            _matches_reject(_normalize(name), self._location_reject, accept=self._location_accept)
+            for name in locations
         ):
             return None
+        if not any(
+            location_matches_target(
+                name,
+                accept=self._location_accept,
+                reject=self._location_reject,
+                search_location=location,
+            )
+            for name in locations or [""]
+        ):
+            return None
+        loc = "; ".join(locations)
         description = _ashby_description(raw)
         if not description:
             return None
@@ -569,6 +586,23 @@ class AshbyBoardAdapter:
             canonical_url=job_url,
             ats_kind=AtsKind.ASHBY,
         )
+
+
+def _ashby_locations(raw: dict[str, Any]) -> list[str]:
+    """Keep primary provenance first, followed by distinct secondary names."""
+    names = [str(raw.get("location") or raw.get("locationName") or "").strip()]
+    secondary = raw.get("secondaryLocations")
+    if isinstance(secondary, list):
+        for entry in secondary:
+            if isinstance(entry, dict) and isinstance(entry.get("location"), str):
+                names.append(entry["location"].strip())
+    seen: set[str] = set()
+    distinct: list[str] = []
+    for name in names:
+        if name and name.casefold() not in seen:
+            seen.add(name.casefold())
+            distinct.append(name)
+    return distinct
 
 
 def _lever_description(raw: dict[str, Any]) -> str:

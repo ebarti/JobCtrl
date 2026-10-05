@@ -160,3 +160,34 @@ def test_normalize_location_display_expands_source_country_codes() -> None:
     assert normalize_location_display("En remoto, ES (Remote)") == "Spain (Remote)"
     assert normalize_location_display("Barcelona, CT, ES", is_remote=True) == "Barcelona, Catalonia, Spain (Remote)"
     assert normalize_location_display("Madrid, MD, ES") == "Madrid, Community of Madrid, Spain"
+
+
+def test_multiple_ashby_locations_match_secondary_target_with_reject_precedence() -> None:
+    assert location_matches_target(
+        "Austin; Madrid", accept=["Madrid"], reject=[], search_location="Madrid",
+    )
+    assert location_matches_target(
+        "Austin; Madrid", accept=[], reject=[], search_location="Madrid",
+    )
+    for location in ("Austin; Madrid", "Madrid; Austin"):
+        assert not location_matches_target(
+            location, accept=["Madrid"], reject=["Austin"], search_location="Madrid",
+        )
+
+
+def test_each_location_retains_its_own_country_context_for_rejects() -> None:
+    assert not location_matches_target(
+        "Toronto, ON, CA", accept=["Madrid, Spain"], reject=["Canada"],
+    )
+    assert location_matches_target(
+        "Madrid, Spain", accept=["Madrid, Spain"], reject=["Canada"],
+    )
+    assert location_matches_target(
+        "Barcelona, CT, ES", accept=["Barcelona, Spain"], reject=["USA"],
+    )
+
+
+def test_composite_target_must_match_one_complete_location() -> None:
+    for location in ("Barcelona, Venezuela", "Madrid, Spain"):
+        assert not location_matches_target(location, accept=["Barcelona, Spain"], reject=[])
+    assert location_matches_target("Barcelona, CT, ES", accept=["Barcelona, Spain"], reject=[])

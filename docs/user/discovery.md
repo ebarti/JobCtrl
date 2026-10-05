@@ -135,6 +135,26 @@ auto-apply, and approval controls affect Apply eligibility and submission, so
 their behavior is documented in
 [Apply → Approval And Automation Modes](apply.md#approval-and-automation-modes).
 
+### Ashby listing and locations
+
+The Ashby adapter consumes the [official public job posting
+API](https://developers.ashbyhq.com/docs/public-job-posting-api). It excludes
+postings explicitly marked `isListed: false`; `true` and an omitted flag retain
+normal admission. Title, description, and location checks still apply.
+
+Ashby location metadata retains the primary `location` (or the existing
+`locationName` fallback) first, then valid `secondaryLocations[].location`
+names in source order. Names are trimmed, deduplicated without regard to case
+while retaining the first spelling, and separated by `; `. Empty or malformed
+secondary values are ignored. An Austin-primary/Madrid-secondary posting can
+therefore match a Madrid target while preserving `Austin; Madrid`. Each name
+retains its own geography context for filtering: a configured reject in any
+name excludes the posting, and a complete target must match within one name.
+For example, secondary `Madrid, Spain` cannot mask a Canada reject on primary
+`Toronto, ON, CA`. Primary `Barcelona, Venezuela` and secondary `Madrid, Spain`
+cannot together satisfy a `Barcelona, Spain` target. Empty-location behavior
+is unchanged.
+
 ### Canonical identity and repeat applications
 
 Discovery preserves canonical posting identity, source-native identity, source

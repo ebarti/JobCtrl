@@ -20,6 +20,39 @@ individual regression to exact test files.
 | Provider/browser setup | Environment ownership and passive detection cannot silently become credential or browser adoption. Extension pairing-token presence remains distinct from one explicitly selected installation's fresh live heartbeat; another Chrome profile with the token cannot lease. Integrated Discovery and Enrich prefer the selected connected extension or choose guarded public HTTP/anonymous Playwright before acquisition. Offline status must not block eligible dispatch. Neither mode reads a copied profile; acquisition errors and cancellation never trigger a second transport. Anonymous provider initial/redirect/recreated/detail requests retain public URL/DNS/socket checks and reject proxy routing. Connected worker tasks must not carry browser-owned cookie/user-agent headers. Hanging/canceled tasks close their tabs, active leases remain live past 45 seconds, four-way admission uses backpressure, cross-origin redirects are blocked before dispatch, and UTF-8 byte bounds stop streaming early. | Worker/API bridge tests, two-installation contention and lease-liveness tests, extension persistent-context timeout/redirect E2E, Settings/Pipelines components, and a bounded live Discovery smoke. |
 | Retry preflight | Starting a retry cannot erase failure evidence before worker readiness is known. | API state-before/state-after regression plus route smoke. |
 
+## Ashby Listing And Location Admission
+
+The Ashby public posting adapter excludes only explicit boolean
+`isListed: false`. Listed and legacy postings with no flag still pass through
+the existing title, description, and location rules. The primary location or
+existing `locationName` fallback leads the retained metadata; trimmed valid
+`secondaryLocations[].location` strings follow, deduplicated case-insensitively
+with first spelling preserved and joined by `; `. Malformed secondary
+containers/entries and empty names add no fabricated location. Ashby uses the
+unchanged shared reject aliases within each name's geography context, rejecting
+the posting if any name is rejected. At least one name must independently pass
+the unchanged target matcher; joined metadata is not the admission input.
+
+`workers/automation/tests/test_ats_adapters.py` covers listing flags, malformed
+secondary data, duplicates, primary fallback, empty-location policy, title and
+description admission, and native-ID/canonical-URL preservation. Its synthetic
+`run_scheduled_ats_sources` fixture injects HTTP data and uses an owned temporary
+SQLite database: Austin-primary/Madrid-secondary postings must match Madrid,
+retain both names in `jobs`, exclude the unlisted peer, and preserve canonical
+identity and source observations over two runs without creating another job.
+The same production-path fixture rejects primary `Toronto, ON, CA` plus
+secondary `Madrid, Spain` for a Madrid target with a Canada reject, and rejects
+primary `Barcelona, Venezuela` plus secondary `Madrid, Spain` for a
+`Barcelona, Spain` target. Both location orders are covered, alongside accepted
+controls for the actual secondary target and Spain's region abbreviations.
+`test_discovery_location_filter.py` guards secondary-target matching and reject
+precedence and individual country/composite-target semantics. The original
+mapper fails the explicit-false, secondary-location retention/admission, and
+secondary-reject regressions; the joined-string mapper fails both geography
+context regressions in both location orders.
+These fixtures contact no live board and use no real user data. Local fixture
+proof does not replace the independent review, QA, or CI gates.
+
 ## Temporal Fault Injection
 
 For the affected workflow, prove four outcomes:
