@@ -37,6 +37,7 @@ boundary, or you need to know which page answers a given question.
 - [Scoring Policy](scoring.md) — How does a discovered job become a defensible fit score?
 - [Employer Analysis & Materials Audit](materials.md) — How are generated artifacts and their claims audited?
 - [Leadership Practice — future architecture (not implemented)](leadership-practice.md) — Bounded management reflection and experiments.
+- [Material Variant Comparison](material-variant-comparison.md) — Future proposal (not implemented).
 - [Tailoring Contract](tailoring.md) — What is the model asked, and which gates approve a resume?
 - [Contracts, Types & API Boundaries](contracts-types-and-api-boundaries.md) — Where is each cross-process schema defined and enforced?
 - [Observability](observability.md) — How are LLM, workflow, and JSON-RPC spans traced to Langfuse?

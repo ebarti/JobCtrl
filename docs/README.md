@@ -145,6 +145,7 @@ has one defining page; other pages summarize it briefly and link to that owner.
   and cross-artifact auditability.
 - [Leadership Practice — future architecture (not implemented)](architecture/leadership-practice.md):
   bounded management reflection and experiments.
+- [Material Variant Comparison](architecture/material-variant-comparison.md): future proposal (not implemented).
 - [`architecture/tailoring.md`](architecture/tailoring.md): resume-tailoring
   prompt and validation contract.
 - [`architecture/contracts-types-and-api-boundaries.md`](architecture/contracts-types-and-api-boundaries.md):
