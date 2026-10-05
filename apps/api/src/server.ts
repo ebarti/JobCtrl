@@ -63,6 +63,8 @@ import {
   ProfileSchema,
   type ProfileConfigResponse,
   RequiredBulletSuggestionRequestSchema,
+  RequiredBulletModelResultSchema,
+  ProfileRequiredBulletSuggestionsParamsSchema,
   RpcMethods,
   TargetRoleSuggestionRequestSchema,
   TargetRoleSuggestionResultSchema,
@@ -349,10 +351,11 @@ import {
   readProfileVersion,
 } from "./profile-store.js";
 import {
-  generateRequiredBulletSuggestions,
+  prepareRequiredBulletCoaching,
+  bindRequiredBulletJudgments,
   MAX_REQUIRED_COACHING_ENTRIES,
   MAX_REQUIRED_COACHING_SOURCE_ROWS,
-} from "./required-bullet-suggestions.js";
+} from "@jobctrl/domain-types";
 import { validateProfileTargetPlaces, type PlaceValidator } from "./place-validation.js";
 import {
   claimNextProfileContinuationEvent,
@@ -2952,7 +2955,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
           ok: true,
           profileVersion: body.expectedProfileVersion,
           suggestions: [],
-          strategy: "deterministic_rules_v1",
+          strategy: "model_v1",
           modelUsed: false,
           truncated: true,
         };
@@ -2974,11 +2977,68 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
           message: "The saved profile cannot be inspected until its validation errors are corrected.",
         };
       }
-      return generateRequiredBulletSuggestions(
-        parsedProfile.data,
-        body.expectedProfileVersion,
-        body.maximumSuggestions,
-      );
+      const preparation = prepareRequiredBulletCoaching(parsedProfile.data, body.expectedProfileVersion);
+      if (preparation.sources.length === 0) return bindRequiredBulletJudgments(preparation, [], body.maximumSuggestions, false);
+      // The SQLite snapshot transaction has ended before the provider call.
+      const sources = preparation.sources.map(({ reference, originalText, source, evidence }) => ({
+        reference, originalText, experienceTitle: source.experienceTitle,
+        experienceCompany: source.experienceCompany, evidence,
+      }));
+      let response;
+      try {
+        response = await providerDispatcher.call(RpcMethods.ProfileRequiredBulletSuggestions, ProfileRequiredBulletSuggestionsParamsSchema.parse({
+          tenantId: "local", expectedAppDir: actionContext.appDir, expectedDbPath: actionContext.dbPath,
+          expectedProfileVersion: body.expectedProfileVersion,
+          maximumSuggestions: body.maximumSuggestions, sources,
+        }));
+      } catch {
+        void reply.code(503);
+        return { ok: false, error: "required_bullet_suggestions_unavailable",
+          message: "The coaching model is unavailable. Try again when your provider is ready." };
+      }
+      if (response.error) {
+        const stale = response.error.code === JsonRpcErrorCodes.InvalidParams
+          && response.error.message.includes("stale_profile_version");
+        void reply.code(stale ? 409 : 502);
+        return { ok: false, error: stale ? "stale_profile_version" : "required_bullet_suggestions_failed",
+          message: "Required bullet coaching could not complete." };
+      }
+      const model = RequiredBulletModelResultSchema.safeParse(response.result);
+      if (!model.success) {
+        void reply.code(502);
+        return { ok: false, error: "required_bullet_suggestions_failed", message: "The coaching model returned an invalid response." };
+      }
+      const actualProfileVersion = readProfileVersion(db);
+      if (model.data.profileVersion !== body.expectedProfileVersion || actualProfileVersion !== body.expectedProfileVersion) {
+        void reply.code(409);
+        return { ok: false, error: "stale_profile_version", expectedProfileVersion: body.expectedProfileVersion, actualProfileVersion };
+      }
+      if ("failure" in model.data) {
+        const failure = model.data.failure;
+        if (failure.code === "budget_exceeded") {
+          void reply.code(429);
+          const budget = failure.scope === "daily" ? "daily LLM spend budget"
+            : failure.scope === "profile_lane" ? "profile LLM token budget" : "daily LLM spend and profile token budgets";
+          return { ok: false, error: "required_bullet_suggestions_budget_exceeded", budgetScope: failure.scope,
+            message: `The ${budget} ${failure.scope === "both" ? "have" : "has"} been reached. Wait for the daily reset or adjust the budget in Settings, then retry. You can still edit bullets manually.` };
+        }
+        if (failure.code === "provider_unready") {
+          void reply.code(503);
+          return { ok: false, error: "required_bullet_suggestions_provider_unready",
+            message: "No authenticated coaching provider is ready. Connect or authenticate your LLM provider in Settings, then retry. You can still edit bullets manually." };
+        }
+        void reply.code(502);
+        return { ok: false, error: "required_bullet_suggestions_failed",
+          message: failure.code === "invalid_model_response"
+            ? "The coaching model returned an invalid response. Retry the inspection or edit bullets manually."
+            : "The coaching provider could not complete the request. Verify its connection in Settings, then retry or edit bullets manually." };
+      }
+      try {
+        return bindRequiredBulletJudgments(preparation, model.data.suggestions, body.maximumSuggestions, true);
+      } catch {
+        void reply.code(502);
+        return { ok: false, error: "required_bullet_suggestions_failed", message: "The coaching model returned an invalid source reference." };
+      }
     } finally {
       db.close();
     }

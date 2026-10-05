@@ -14,6 +14,9 @@ export function useRequiredBulletSuggestionsMutation(): UseMutationResult<
   const { api } = usePorts();
   return useMutation({
     mutationKey: ["profile", "required-bullet-suggestions"],
+    // The card owns a persistent, actionable error beside the retained review.
+    // Duplicate global toasts can cover its retry controls after repeated errors.
+    meta: { suppressGlobalErrorToast: true },
     mutationFn: (body) => api.requiredBulletSuggestions(body),
   });
 }

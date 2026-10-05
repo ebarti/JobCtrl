@@ -192,31 +192,34 @@ JobCtrl chooses which achievements to show for the target job. The configured
 maximum bullets per role is only an upper bound; it does not ask Tailoring to
 fill every available slot.
 
-Required-bullet coaching is opt-in and uses the saved profile, with inspectable
-source text and references. It covers conservative grammar cleanup, relevance,
-achievement framing, and missing evidence. The current coaching is deterministic;
-it does not call a model or infer new facts, metrics, achievements, or job
-requirements. Questions about missing evidence are prompts for your own truthful
-manual edits, not proposed facts that can be accepted automatically.
-Identical bullets or Required pins cannot identify one occurrence, so coaching
-skips them. Cleanup also stays manual when its resulting text would duplicate
-another bullet or Required pin. A claim's own text, including a number
-extracted from it, does not independently verify the claim. Punctuation changes
-to a restated outcome also add no evidence. An action count such as the number
-of projects managed is not automatically a result. Rearranging the same claim
-or changing only its result verb, plural, or possessive in an outcome does not
-independently verify it. “Improved 10 dashboards” with “10 dashboards” saved as
-a metric still needs a distinct outcome or verified result measure. New words
-alone do not verify a claim: the matching
-achievement must be user-confirmed and marked verified to avoid a missing-
-evidence question. If a saved profile exceeds the bounded inspection limit, or
-a Required bullet or its entry fields cannot fit the response, coaching reports
-that it could not fully inspect it; manual editing remains available. An
-unmatched overlong Required pin is incomplete too. A Required pin left under a
-deleted experience is likewise uninspected. Some suggestions may still appear
-in an incomplete inspection; it does not cover every Required bullet, and
-repeating it on the same saved version may
-omit the same source.
+Required-bullet coaching is opt-in and uses your saved Required bullets and
+linked achievement evidence. Your configured LLM provider receives those bullets,
+role/company context and matching evidence, and decides whether to offer grammar,
+clarity, achievement-framing or evidence guidance. The model reads the actual
+claim and support; opening phrases and lists of words do not decide findings.
+A stated result and proof supporting it are separate questions.
+
+Guidance links to the exact saved source and version. Only safe whitespace
+cleanup can be accepted automatically; substantive edits and evidence additions
+remain yours to make. The model is instructed not to invent facts or metrics,
+but its guidance can be inaccurate or unsupported; review it against your saved
+evidence. Code verifies source references and permits only exact whitespace
+cleanup through Accept. It does not verify the truth of the model's free-text
+advice. If your provider is unavailable or its response is invalid, inspection
+fails without substitute heuristics. A failed refresh keeps the previous reviewed
+suggestions and saved profile. Oversized or unresolvable sources report an incomplete inspection;
+manual editing remains available. The offline public demo has no configured
+provider, so this coaching capability is unavailable there. The demo disables
+inspection and links to local installation; you can still edit its sample profile.
+
+Inspection checks the daily spend budget and the profile token budget before
+calling your provider. If either is reached, the message identifies the budget;
+wait for the daily reset or adjust it in Settings. Provider setup failures ask
+you to connect or authenticate in Settings. These budgets account for observed
+usage and do not cap the tokens or cost of an individual in-flight call. One
+inspection can exceed the remaining budget; only inspect when you accept that
+provider cost. Coaching sends bounded source input and validates the response
+size after generation.
 
 Review each proposed wording change separately. Accepting a change preserves
 the bullet's order, achievement identity, and Required selection through the
@@ -255,3 +258,4 @@ promotion, or selection-policy migrations in the proposed
 | Web implementation | `apps/web/src/contexts/profile/`, the `/profile`, `/preferences`, and `/profile/import/*` route files, and `apps/web/src/views/evidence-map/`. |
 | Domain and persistence | `workers/automation/src/jobctrl/domain/profile/` and `workers/automation/src/jobctrl/infrastructure/profile/`; normalized table ownership is summarized in [Storage](../architecture/storage.md#schema-at-a-glance). |
 | Cross-context contract | `ProfileSnapshot` in the Profile domain; the aggregate and published-language boundary are documented in [Tactical Design](../architecture/domain-model/tactical.md). |
+| Required-bullet coaching | LLM decisions live in `workers/automation/src/jobctrl/domain/profile/required_bullet_coaching.py`; shared source binding and safe acceptance live in `packages/domain-types/src/profile/required-bullet-suggestions.ts`. Ownership and verification are described in [Frontend Architecture](../architecture/frontend/index.md#shared-production-and-demo-coaching). |

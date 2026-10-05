@@ -13,7 +13,18 @@ contract is honourable.
 
 from __future__ import annotations
 
+from collections import Counter
+import hashlib
+from html.parser import HTMLParser
+from importlib.metadata import version
+import json
+import os
 from pathlib import Path
+import platform
+import re
+import shutil
+import subprocess
+import xml.etree.ElementTree as ET
 
 import pytest
 
@@ -631,3 +642,428 @@ def test_html_pdf_renderer_respects_max_experience_bullets_without_mappings() ->
     assert txt_bullets == _OVERFLOW_BULLETS[:4]  # capped at max_experience_bullets
 
     assert _html_experience_bullets(payload, profile) == txt_bullets
+
+
+# ---------------------------------------------------------------------------
+# #907: bounded, opt-in measurement of the real HTML/CSS/Chromium product path.
+# Ordinary port tests need no browser. The explicit trial invocation MUST set
+# JOBCTRL_RUN_DENSE_HTML_PAGINATION_TESTS=1; missing prerequisites fail, never skip.
+# ---------------------------------------------------------------------------
+
+
+_PAGINATION_MARKER = re.compile(r"R907M\d{5}")
+_PAGINATION_CASES = ("dense", "boundary-below", "boundary-above", "oversized")
+_PAGINATION_GEOMETRY_TOLERANCE_PT = 0.25
+_PAGINATION_BOX_TOLERANCE_PT = 2.0
+
+
+def _pagination_normalize(text: str) -> str:
+    # Ignore line wrapping/whitespace and CSS heading capitalization, not words.
+    return re.sub(r"\s+", "", text).casefold()
+
+
+def _pagination_profile(case: str, *, boundary_bullets: int = 1) -> tuple[dict, list[str]]:
+    """Only invented facts; mark every field and every oversized-bullet segment."""
+    markers: list[str] = []
+
+    def marked(text: str) -> str:
+        marker = f"R907M{len(markers) + 1:05d}"
+        markers.append(marker)
+        return f"{marker} {text}"
+
+    profile = {
+        "personal": {"full_name": marked("Synthetic Pagination Candidate")},
+        "resume": {
+            "executive_profile": {"baseline_text": marked("Measured invented systems in a synthetic QA workspace.")},
+            "experience_entries": [],
+            "education_entries": [],
+            "skill_categories": [],
+            "tailoring_rules": {"max_experience_bullets": 96,
+                                "tailoring_policy": {"allow_summary_rewrite": False}},
+        },
+    }
+    resume = profile["resume"]
+    for role_index in range(6 if case == "dense" else 1):
+        role = {
+            "id": f"trial-role-{role_index}",
+            "company": marked(f"Invented Laboratory {role_index}"),
+            "title": marked("Synthetic Systems Engineer"),
+            "location": "QA City",
+            "date_range": "2020 -- 2024",
+            "summary": marked("Owned only invented experiments and deterministic test records."),
+            "bullets": [],
+        }
+        if case == "oversized":
+            # One li is taller than a page; break-inside: avoid cannot keep it whole.
+            role["bullets"] = [" ".join(
+                marked("Recorded an invented experiment with synthetic inputs, explicit checkpoints and repeatable outcomes.")
+                for _ in range(96)
+            )]
+        elif case == "dense":
+            role["bullets"] = [
+                marked("Measured invented queues with wrapped explanatory text, synthetic evidence, repeatable checkpoints "
+                       "and a deliberately verbose description of an imaginary outcome.")
+                for _ in range(8)
+            ]
+        else:
+            role["bullets"] = [marked("Recorded synthetic boundary evidence.") for _ in range(boundary_bullets)]
+        resume["experience_entries"].append(role)
+    resume["education_entries"] = [{
+        "id": "trial-education",
+        "institution": marked("Invented QA Institute"),
+        "degree": marked("Synthetic Computing Degree"),
+        "details": marked("Studied deterministic examples and imaginary systems."),
+        "location": "QA City",
+        "date": "2019",
+    }]
+    resume["skill_categories"] = [{
+        "id": "trial-skills",
+        "label": marked("Synthetic Tools"),
+        "items": [marked("Invented Queue"), marked("X" * 144)],
+    }]
+    return profile, markers
+
+
+def _pagination_theme(page_size: str) -> dict:
+    return {
+        "pageSize": page_size,
+        "fontFamily": "sans",  # bundled Geist, no host-font/network dependency
+        "fontScale": 1.0,
+        "density": "balanced",
+        "bulletSpacing": "normal",
+        "alignment": "left",
+        "headerLayout": "centered",
+        "sectionHeadingStyle": "rule",
+        "sectionOrder": ["summary", "experience", "education", "skills"],
+        "hiddenSections": [],
+        "marginMm": {"top": 16.5, "right": 17.5, "bottom": 18, "left": 17.5},
+        "accentColor": "#111111",
+    }
+
+
+class _PaginationTargets(HTMLParser):
+    """Read target text from saved HTML, independently of the DOM box calculation."""
+
+    def __init__(self, source: str) -> None:
+        super().__init__()
+        self.targets: list[dict] = []
+        self.active: dict | None = None
+        self.depth = 0
+        self.feed(source)
+        self.close()
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attributes = dict(attrs)
+        if "data-resume-layout-target" in attributes:
+            assert self.active is None, "nested layout targets need explicit measurement support"
+            self.active = {"semantic_id": attributes["data-resume-layout-target"], "parts": []}
+            self.depth = 1
+        elif self.active is not None and tag not in {"br", "hr", "img", "input", "meta", "link"}:
+            self.depth += 1
+
+    def handle_endtag(self, tag: str) -> None:
+        if self.active is None:
+            return
+        self.depth -= 1
+        if self.depth == 0:
+            self.targets.append({
+                "semantic_id": self.active["semantic_id"],
+                "text": " ".join(self.active["parts"]),
+            })
+            self.active = None
+
+    def handle_data(self, data: str) -> None:
+        if self.active is not None:
+            self.active["parts"].append(data)
+
+
+@pytest.fixture(scope="module")
+def pagination_environment() -> dict:
+    if not any(os.environ.get(flag) == "1" for flag in (
+        "JOBCTRL_RUN_DENSE_HTML_PAGINATION_TESTS", "JOBCTRL_RUN_PAGINATION_TRIAL",
+    )):
+        pytest.skip("explicit real-render trial: set JOBCTRL_RUN_DENSE_HTML_PAGINATION_TESTS=1 (see catalog #907)")
+    from playwright.sync_api import sync_playwright
+    tools = {name: shutil.which(name) for name in ("pdftotext", "pdftoppm")}
+    assert all(tools.values()), "pagination trial requires Poppler pdftotext and pdftoppm; no skipped cases"
+    tool_versions = {}
+    for name, executable in tools.items():
+        result = subprocess.run([executable, "-v"], capture_output=True, text=True, check=True, timeout=10)
+        tool_versions[name] = (result.stdout + result.stderr).splitlines()[0]
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()  # same bundled browser selection as the product
+        try:
+            page = browser.new_page(viewport=html_resume_pdf.RESUME_PAGE_VIEWPORT)
+            page.set_content(html_resume_pdf.build_resume_html_document("<main>Geist QA</main>", {"fontFamily": "sans"}))
+            page.evaluate("() => document.fonts.ready")
+            font_faces = page.evaluate("() => Array.from(document.fonts, f => ({family: f.family, status: f.status}))")
+            assert any("Geist" in face["family"] and face["status"] == "loaded" for face in font_faces)
+            browser_version = browser.version
+        finally:
+            browser.close()
+    automation_root = Path(__file__).resolve().parents[1]
+    font_root = automation_root / "src/jobctrl/assets/fonts"
+    return {
+        "tools": tools,
+        "python": platform.python_version(),
+        "platform": platform.platform(),
+        "dependencies": {name: version(name) for name in ("playwright", "pypdf", "pytest")},
+        "chromium": browser_version,
+        "chromium_launch": "product defaults: bundled headless Chromium, no channel or executable override",
+        "poppler": tool_versions,
+        "font_faces": font_faces,
+        "font_sha256": {name: hashlib.sha256((font_root / name).read_bytes()).hexdigest()
+                        for name, _ in html_resume_pdf.GEIST_FONT_RESOURCES},
+        "uv_lock_sha256": hashlib.sha256((automation_root / "uv.lock").read_bytes()).hexdigest(),
+        "viewport": html_resume_pdf.RESUME_PAGE_VIEWPORT,
+    }
+
+
+def _pagination_pdf_observation(pdf: Path, environment: dict) -> dict:
+    from pypdf import PdfReader
+
+    reader = PdfReader(pdf)
+    dimensions = [[float(page.mediabox.width), float(page.mediabox.height)] for page in reader.pages]
+    crop_boxes = [[float(value) for value in page.cropbox] for page in reader.pages]
+    normalized_pages = [_pagination_normalize(page.extract_text()) for page in reader.pages]
+    bbox_file = pdf.with_suffix(".bbox.html")
+    subprocess.run([environment["tools"]["pdftotext"], "-bbox", str(pdf), str(bbox_file)],
+                   check=True, capture_output=True, timeout=30)
+    words: list[dict] = []
+    # Poppler bbox uses top-left points, already the origin needed by layout_pct.
+    for page_number, node in enumerate(ET.parse(bbox_file).getroot().iter("{http://www.w3.org/1999/xhtml}page"), 1):
+        for word in node.iter("{http://www.w3.org/1999/xhtml}word"):
+            words.append({
+                "page": page_number,
+                "text": word.text or "",
+                "rect_pt": [float(word.attrib[key]) for key in ("xMin", "yMin", "xMax", "yMax")],
+            })
+    assert words, "independent PDF geometry extraction produced no words"
+    image_prefix = pdf.with_suffix("")
+    subprocess.run([environment["tools"]["pdftoppm"], "-png", "-r", "110", str(pdf), str(image_prefix)],
+                   check=True, capture_output=True, timeout=60)
+    images = sorted(pdf.parent.glob(f"{pdf.stem}-*.png"))
+    assert len(images) == len(reader.pages), "every physical PDF page needs a visual inspection image"
+    clipped = []
+    overlaps = []
+    for index, word in enumerate(words):
+        x0, y0, x1, y1 = word["rect_pt"]
+        width, height = dimensions[word["page"] - 1]
+        if x0 < -1 or y0 < -1 or x1 > width + 1 or y1 > height + 1:
+            clipped.append(word)
+        # Bounding boxes can overlap without painted glyphs overlapping: candidates
+        # need visual confirmation, and are not encoded as a renderer invariant.
+        for other in reversed(words[:index]):
+            if other["page"] != word["page"]:
+                break
+            a0, b0, a1, b1 = other["rect_pt"]
+            if min(x1, a1) - max(x0, a0) > 1 and min(y1, b1) - max(y0, b0) > 1:
+                overlaps.append({"first": other, "second": word})
+    markers_by_page = []
+    for page in reader.pages:
+        markers_by_page.append(_PAGINATION_MARKER.findall(re.sub(r"\s+", "", page.extract_text())))
+    return {
+        "page_count": len(reader.pages),
+        "dimensions_pt": dimensions,
+        "crop_boxes_pt": crop_boxes,
+        "rotations": [page.rotation for page in reader.pages],
+        "normalized_pages": normalized_pages,
+        "words": words,
+        "markers_by_page": markers_by_page,
+        "page_breaks": [{"page": index + 1, "first": markers[0] if markers else None,
+                         "last": markers[-1] if markers else None, "marker_count": len(markers)}
+                        for index, markers in enumerate(markers_by_page)],
+        "blank_pages": [index + 1 for index, text in enumerate(normalized_pages) if not text],
+        "outside_page_candidates": clipped,
+        "overlap_candidates": overlaps,
+        "page_images": [path.name for path in images],
+        "visual_inspection": "pending independent inspection of every page image",
+    }
+
+
+def _pagination_correspondence(targets: list[dict], boxes: list[dict], observation: dict) -> dict:
+    words = observation["words"]
+    word_ranges = []
+    cursor = 0
+    for word in words:
+        end = cursor + len(_pagination_normalize(word["text"]))
+        word_ranges.append((cursor, end, word))
+        cursor = end
+    pdf_text = "".join(_pagination_normalize(word["text"]) for word in words)
+    by_id = {box["semantic_id"]: box for box in boxes}
+    results = []
+    for target in targets:
+        text = _pagination_normalize(target["text"])
+        start = pdf_text.find(text)
+        selected = [word for left, right, word in word_ranges if start >= 0 and left < start + len(text) and right > start]
+        fragments = []
+        for page_number in sorted({word["page"] for word in selected}):
+            rects = [word["rect_pt"] for word in selected if word["page"] == page_number]
+            fragments.append({"page": page_number, "rect_pt": [min(r[0] for r in rects), min(r[1] for r in rects),
+                                                                   max(r[2] for r in rects), max(r[3] for r in rects)]})
+        box = by_id.get(target["semantic_id"])
+        errors = []
+        predicted = None
+        escape = None
+        if not selected:
+            errors.append("pdf_target_not_located")
+        if box is None:
+            errors.append("missing_layout_target")
+        elif not 1 <= box["page_number"] <= observation["page_count"]:
+            errors.append("layout_page_out_of_range")
+        else:
+            width, height = observation["dimensions_pt"][box["page_number"] - 1]
+            predicted = [box["left_pct"] * width / 100, box["top_pct"] * height / 100,
+                         (box["left_pct"] + box["width_pct"]) * width / 100,
+                         (box["top_pct"] + box["height_pct"]) * height / 100]
+            if fragments and [fragment["page"] for fragment in fragments] != [box["page_number"]]:
+                errors.append("physical_page_or_fragment_mismatch")
+            elif fragments:
+                x0, y0, x1, y1 = fragments[0]["rect_pt"]
+                escape = max(0, predicted[0] - x0, predicted[1] - y0, x1 - predicted[2], y1 - predicted[3])
+                if escape > _PAGINATION_BOX_TOLERANCE_PT:
+                    errors.append("pdf_text_outside_layout_box")
+        results.append({"semantic_id": target["semantic_id"], "pdf_fragments": fragments,
+                        "layout_box": box, "layout_rect_pt": predicted, "escape_pt": escape, "errors": errors})
+    orphan_headings = []
+    for current, following in zip(results, results[1:]):
+        if (current["semantic_id"].startswith("section:") or current["semantic_id"].endswith(":heading")):
+            pages = [fragment["page"] for fragment in current["pdf_fragments"]]
+            next_pages = [fragment["page"] for fragment in following["pdf_fragments"]]
+            if pages and next_pages and max(pages) < min(next_pages):
+                orphan_headings.append({"heading": current["semantic_id"], "pages": pages, "following_pages": next_pages})
+    return {"targets": results,
+            "extra_layout_targets": sorted(set(by_id) - {target["semantic_id"] for target in targets}),
+            "duplicate_layout_targets": [key for key, count in Counter(box["semantic_id"] for box in boxes).items()
+                                         if count > 1],
+            # An extraction gap has no independently observed rectangle/page.
+            # Keep it visible without declaring a physical mismatch from [] != [1].
+            "unlocated_pdf_targets": [result["semantic_id"] for result in results if not result["pdf_fragments"]],
+            "mismatch_count": sum(any(error != "pdf_target_not_located" for error in result["errors"])
+                                  for result in results),
+            "orphan_heading_candidates": orphan_headings}
+
+
+def _pagination_repeat_comparison(baseline: dict, current: dict) -> dict:
+    first = baseline["words"]
+    second = current["words"]
+    same_words = [(word["page"], word["text"]) for word in first] == [(word["page"], word["text"]) for word in second]
+    delta = max((abs(a - b) for left, right in zip(first, second)
+                 for a, b in zip(left["rect_pt"], right["rect_pt"])), default=0.0) if same_words else None
+    return {
+        "same_page_count": baseline["page_count"] == current["page_count"],
+        "same_normalized_pages": baseline["normalized_pages"] == current["normalized_pages"],
+        "same_marker_pages": baseline["markers_by_page"] == current["markers_by_page"],
+        "same_word_sequence": same_words,
+        "max_geometry_delta_pt": delta,
+        "geometry_within_tolerance": delta is not None and delta <= _PAGINATION_GEOMETRY_TOLERANCE_PT,
+    }
+
+
+@pytest.fixture(scope="module")
+def pagination_boundaries(pagination_environment: dict, tmp_path_factory: pytest.TempPathFactory) -> dict:
+    from pypdf import PdfReader
+
+    root = tmp_path_factory.mktemp("pagination-boundaries")
+    boundaries = {}
+    for page_size in ("a4", "letter"):
+        probes = []
+
+        def page_count(count: int) -> int:
+            profile, _ = _pagination_profile("boundary-below", boundary_bullets=count)
+            source = build_resume_html(build_resume_document({}, profile), _pagination_theme(page_size))
+            pdf = root / f"{page_size}-{count}.pdf"
+            html_resume_pdf.render_resume_html_to_pdf(source, str(pdf))
+            pages = len(PdfReader(pdf).pages)
+            probes.append({"bullets": count, "pages": pages, "pdf": pdf.name})
+            return pages
+
+        low, high = 1, 96
+        assert page_count(low) == 1 and page_count(high) > 1, "synthetic boundary search must bracket a physical break"
+        while high - low > 1:
+            middle = (low + high) // 2
+            if page_count(middle) == 1:
+                low = middle
+            else:
+                high = middle
+        boundaries[page_size] = {"below": low, "above": high, "probes": probes}
+        (root / "boundaries.json").write_text(json.dumps(boundaries, indent=2), encoding="utf-8")
+    return boundaries
+
+
+@pytest.mark.parametrize("page_size", ("a4", "letter"))
+@pytest.mark.parametrize("case", _PAGINATION_CASES)
+def test_dense_resume_pagination_trial(
+    case: str,
+    page_size: str,
+    pagination_environment: dict,
+    pagination_boundaries: dict,
+    tmp_path: Path,
+) -> None:
+    """Measure three independent renders per entry point, saving evidence before assertions."""
+    boundary = pagination_boundaries[page_size]
+    count = boundary["above"] if case == "boundary-above" else boundary["below"]
+    profile, expected_markers = _pagination_profile(case, boundary_bullets=count)
+    theme = _pagination_theme(page_size)
+    source = build_resume_html(build_resume_document({}, profile), theme)
+    targets = _PaginationTargets(source).targets
+    report = {
+        "issue": 907, "case": case, "theme": theme, "environment": pagination_environment,
+        "boundary": boundary, "expected_markers": expected_markers,
+        "geometry_tolerance_pt": _PAGINATION_GEOMETRY_TOLERANCE_PT,
+        "layout_containment_tolerance_pt": _PAGINATION_BOX_TOLERANCE_PT,
+        "renders": [], "repeatability": [],
+    }
+    for repeat in range(1, 4):
+        repeat_dir = tmp_path / f"repeat-{repeat}"
+        repeat_dir.mkdir()
+        for entry_point in ("adapter", "shared"):
+            pdf = repeat_dir / f"{entry_point}.pdf"
+            if entry_point == "adapter":
+                artifact = HtmlResumePdfAdapter().render_resume_to_pdf(
+                    tailored_payload={}, profile_dict=profile, output_path=str(pdf),
+                    created_at="2026-10-03T00:00:00Z", resume_theme=theme,
+                )
+                boxes = artifact.metadata["layout_boxes"]
+                assert pdf.with_suffix(".html").read_text(encoding="utf-8") == source
+            else:
+                pdf.with_suffix(".html").write_text(source, encoding="utf-8")
+                boxes = html_resume_pdf.render_resume_html_to_pdf(source, str(pdf))
+            observation = _pagination_pdf_observation(pdf, pagination_environment)
+            observation["layout_correspondence"] = _pagination_correspondence(targets, boxes, observation)
+            observation["repeat"] = repeat
+            observation["entry_point"] = entry_point
+            observation["pdf"] = str(pdf.relative_to(tmp_path))
+            actual_markers = [marker for page in observation["markers_by_page"] for marker in page]
+            observation["reading_order_matches"] = actual_markers == expected_markers
+            observation["missing_markers"] = sorted(set(expected_markers) - set(actual_markers))
+            observation["duplicate_markers"] = [marker for marker, n in Counter(actual_markers).items() if n > 1]
+            all_text = "".join(observation["normalized_pages"])
+            observation["missing_content_targets"] = [target["semantic_id"] for target in targets
+                                                      if _pagination_normalize(target["text"]) not in all_text]
+            report["renders"].append(observation)
+            (tmp_path / "measurements.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+    baseline = report["renders"][0]
+    report["repeatability"] = [_pagination_repeat_comparison(baseline, render) for render in report["renders"][1:]]
+    (tmp_path / "measurements.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+
+    # These protect actual content/order and the trial's coverage, not the known
+    # pre-pagination DOM approximation. Its mismatches stay explicit evidence.
+    assert len(report["renders"]) == 6
+    expected_dimensions = (612, 792) if page_size == "letter" else (210 / 25.4 * 72, 297 / 25.4 * 72)
+    for render in report["renders"]:
+        assert not render["missing_content_targets"], render["missing_content_targets"]
+        assert render["reading_order_matches"], {key: render[key] for key in ("missing_markers", "duplicate_markers")}
+        assert not render["blank_pages"], render["blank_pages"]
+        assert all(abs(actual - expected) <= 1 for dims in render["dimensions_pt"]
+                   for actual, expected in zip(dims, expected_dimensions))
+        if case.startswith("boundary-"):
+            assert render["page_count"] == (1 if case == "boundary-below" else 2)
+        else:
+            assert render["page_count"] >= 2, "dense and oversized fixtures must actually paginate"
+        if case == "oversized":
+            bullet = next(target for target in render["layout_correspondence"]["targets"]
+                          if target["semantic_id"] == "experience:trial-role-0:bullet:1")
+            assert len(bullet["pdf_fragments"]) >= 2, "one oversized bullet must fragment across physical pages"
+    assert all(all(value is True for key, value in result.items() if key != "max_geometry_delta_pt")
+               for result in report["repeatability"]), report["repeatability"]
