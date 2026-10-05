@@ -141,6 +141,8 @@ has one defining page; other pages summarize it briefly and link to that owner.
   evidence, policy, and calibration.
 - [`architecture/materials.md`](architecture/materials.md): employer analysis
   and cross-artifact auditability.
+- [Leadership Practice — future architecture (not implemented)](architecture/leadership-practice.md):
+  bounded management reflection and experiments.
 - [`architecture/tailoring.md`](architecture/tailoring.md): resume-tailoring
   prompt and validation contract.
 - [`architecture/contracts-types-and-api-boundaries.md`](architecture/contracts-types-and-api-boundaries.md):
