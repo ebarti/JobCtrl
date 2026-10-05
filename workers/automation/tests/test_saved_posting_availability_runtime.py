@@ -620,3 +620,19 @@ def test_local_resource_refusal_survives_renderer_deadline_without_evidence_back
     assert value['requestReason'] == 'host_pacing_or_cooldown'
     assert not availability._latest(runtime.conn, 'local', 'posting_availability', JOB)
     assert not value['checkInProgress']
+
+
+def test_real_renderer_refused_data_write_cannot_manufacture_closure(runtime):
+    public_url = 'https://93.184.216.34/jobs/refused-data-method'
+    endpoint = 'https://93.184.216.35/job-data'
+    runtime.conn.execute('UPDATE jobs SET url=? WHERE job_id=?', (public_url, JOB))
+    runtime.conn.commit()
+    html = f'<html><head><style>body {{color:black}}</style></head><body><aside hidden>Applications are closed</aside><script>fetch("{endpoint}", {{method:"POST", body:"synthetic"}}).catch(() => document.querySelector("aside").hidden=false)</script></body></html>'.encode()
+    calls = []
+    def fetch(url):
+        calls.append(url)
+        return availability.Response(url, url, 200, html)
+    value = availability.check_availability(JOB, conn=runtime.conn, transport=fetch)
+    assert value['verdict'] == 'unknown', value
+    assert value['reason'] == 'browser_guard: browser_resource_method_POST'
+    assert endpoint not in calls

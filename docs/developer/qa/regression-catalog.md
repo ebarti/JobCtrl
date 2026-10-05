@@ -791,7 +791,9 @@ manual-ATS refusals must perform zero acquisition; an eligible claim checks only
 one candidate. Exercise a real CSS-dependent closed page with more than 12
 resources, one hourly acquisition charge and harmless optional asset errors;
 failed/redirected document, data, script, style and frame dependencies must remain
-uncertain. Required-resource local refusals retain evidence/backoff; optional
+uncertain. A blocked non-read data request must also remain unknown, without
+sending the write or trusting its error view as closure. Required-resource local
+refusals retain evidence/backoff; optional
 image refusals do not invalidate an otherwise sound capture. A submit-time block
 before owned intent remains a retryable failure of the already-started Apply run.
 Use 300,000 unrelated

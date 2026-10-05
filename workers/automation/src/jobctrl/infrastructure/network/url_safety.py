@@ -199,8 +199,15 @@ class PublicHttpUrlRouteGuard:
                 # writes while loading. We deliberately do not replay those
                 # side-effecting requests through the pinned fetcher, but
                 # aborting one must not poison an otherwise safe top-level
-                # read. Non-public destinations above remain fatal and keep
-                # the page-wide blocked marker.
+                # read. Availability captures require complete data evidence:
+                # a blocked API write can instead render a false closed view.
+                # Mark that capture incomplete without sending the write.
+                if self._include_resource_destination and str(getattr(request, "resource_type", "")) not in {
+                    "image", "font", "media",
+                }:
+                    self._record_failure(
+                        request_url, f"browser_resource_method_{method}", PublicFetchFailureKind.FETCH_ERROR,
+                    )
                 playwright_route.abort("blockedbyclient")
                 return
             headers = getattr(request, "headers", {}) or {}

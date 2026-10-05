@@ -908,7 +908,9 @@ host reservations and URL checks. Service workers, WebSockets, WebTransport,
 WebRTC and dedicated/shared workers are blocked. Service-worker registration is
 blocked on both the instance and native prototype; an attempted unsupported
 channel or a failed/redirected required document, data, script, style or frame
-request keeps the result unknown. Passive assets may fail without invalidating
+request keeps the result unknown. Non-read data requests are aborted without
+sending their writes and keep availability unknown; their error views cannot prove
+closure. Passive assets may fail without invalidating
 status; their local admission refusals do not become employer evidence. Guards remain installed
 until the browser has closed. Ordinary enrichment transport selection is unchanged.
 
