@@ -440,6 +440,41 @@ def test_ashby_secondary_location_matches_target_without_losing_primary() -> Non
     assert postings[0].metadata.location == "Austin; Madrid"
 
 
+_ASHBY_LOCATION_CONTEXT_CASES = [
+    ("Austin", "Madrid", "Madrid", (), True),
+    ("Toronto, ON, CA", "Madrid, Spain", "Madrid, Spain", ("Canada",), False),
+    ("Madrid, Spain", "Toronto, ON, CA", "Madrid, Spain", ("Canada",), False),
+    ("Barcelona, Venezuela", "Madrid, Spain", "Barcelona, Spain", (), False),
+    ("Madrid, Spain", "Barcelona, Venezuela", "Barcelona, Spain", (), False),
+    ("Toronto, ON, CA", "Madrid, Spain", "Madrid, Spain", (), True),
+    ("Barcelona, Venezuela", "Madrid, Spain", "Madrid, Spain", (), True),
+    ("Barcelona, CT, ES", "Madrid, Spain", "Barcelona, Spain", ("Canada",), True),
+    ("Barcelona, CT, ES", "Madrid, Spain", "Barcelona, Spain", ("USA",), True),
+]
+
+
+@pytest.mark.parametrize(
+    ("primary", "secondary", "target", "reject", "admitted"),
+    _ASHBY_LOCATION_CONTEXT_CASES,
+)
+def test_ashby_location_admission_preserves_each_names_geography_context(
+    primary: str,
+    secondary: str,
+    target: str,
+    reject: tuple[str, ...],
+    admitted: bool,
+) -> None:
+    postings = _scrape_ashby_fixture(
+        _ashby_posting(location=primary, secondaryLocations=[{"location": secondary}]),
+        location=target,
+        accept=(target,),
+        reject=reject,
+    )
+    assert bool(postings) is admitted
+    if admitted:
+        assert postings[0].metadata.location == f"{primary}; {secondary}"
+
+
 @pytest.mark.parametrize(
     ("fields", "accept", "reject"),
     [
@@ -474,9 +509,18 @@ def test_ashby_preserves_native_id_and_canonical_url_fallback(use_apply_url: boo
     assert posting.metadata.description == "Operate synthetic infrastructure systems."
 
 
+@pytest.mark.parametrize(
+    ("primary", "secondary", "target", "reject", "admitted"),
+    _ASHBY_LOCATION_CONTEXT_CASES,
+)
 def test_ashby_scheduled_discovery_persists_secondary_target_and_repeat_identity(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    primary: str,
+    secondary: str,
+    target: str,
+    reject: tuple[str, ...],
+    admitted: bool,
 ) -> None:
     from jobctrl import config
     from jobctrl.database import close_connection, init_db
@@ -504,7 +548,8 @@ def test_ashby_scheduled_discovery_persists_secondary_target_and_repeat_identity
             title=f"{role} Engineer",
             jobUrl=f"https://jobs.ashbyhq.com/synthetic/{native_id}",
             descriptionPlain=" ".join(f"{native_id}-system-{i}" for i in range(50)),
-            secondaryLocations=[{"location": "Madrid"}, {"location": " madrid "}],
+            location=primary,
+            secondaryLocations=[{"location": secondary}, {"location": f" {secondary.lower()} "}],
             **listing,
         )
         for native_id, role, listing in [
@@ -522,7 +567,8 @@ def test_ashby_scheduled_discovery_persists_secondary_target_and_repeat_identity
 
     search_cfg = {
         "queries": [{"query": "Engineer", "tier": 1}],
-        "locations": [{"location": "Madrid"}], "location_accept": ["Madrid"],
+        "locations": [{"location": target}], "location_accept": [target],
+        "location_reject_non_remote": list(reject),
     }
     try:
         job_ids: dict[str, str] = {}
@@ -532,25 +578,28 @@ def test_ashby_scheduled_discovery_persists_secondary_target_and_repeat_identity
                 run_id=f"synthetic:ashby:{run_number}", http=http,
             )
             assert result["failed_sources"] == []
-            assert result["new_jobs"] == (2 if run_number == 0 else 0)
-            assert result["observed_jobs"] == (0 if run_number == 0 else 2)
+            expected_count = 2 if admitted else 0
+            assert result["total"] == expected_count
+            assert result["new_jobs"] == (expected_count if run_number == 0 else 0)
+            assert result["observed_jobs"] == (0 if run_number == 0 else expected_count)
             rows = conn.execute("SELECT job_id, url, location, description FROM jobs").fetchall()
-            assert len(rows) == 2
+            assert len(rows) == expected_count
             current_ids = {row["url"]: row["job_id"] for row in rows}
-            assert set(current_ids) == {
+            expected_urls = {
                 f"https://jobs.ashbyhq.com/synthetic/{native_id}" for native_id in ("listed", "legacy")
-            }
+            } if admitted else set()
+            assert set(current_ids) == expected_urls
             if run_number:
                 assert current_ids == job_ids
             job_ids = current_ids
-            assert all(row["location"] == "Austin; Madrid" for row in rows)
+            assert all(row["location"] == f"{primary}; {secondary}" for row in rows)
             for row in rows:
                 native_id = row["url"].rsplit("/", 1)[1]
                 assert row["description"] == " ".join(f"{native_id}-system-{i}" for i in range(50))
             identities = conn.execute(
                 "SELECT job_id, ats_kind, source_native_id, canonical_url FROM job_canonical_identities"
             ).fetchall()
-            assert len(identities) == 2
+            assert len(identities) == expected_count
             for row in identities:
                 assert row["ats_kind"] == "ashby"
                 assert row["source_native_id"] in {"listed", "legacy"}
@@ -560,7 +609,7 @@ def test_ashby_scheduled_discovery_persists_secondary_target_and_repeat_identity
             observations = conn.execute(
                 "SELECT job_id, source_id, source_native_id, observed_url, run_id FROM job_source_observations"
             ).fetchall()
-            assert len(observations) == 2
+            assert len(observations) == expected_count
             for row in observations:
                 assert row["source_id"] == "ashby:synthetic"
                 assert row["source_native_id"] in {"listed", "legacy"}

@@ -147,9 +147,13 @@ Ashby location metadata retains the primary `location` (or the existing
 names in source order. Names are trimmed, deduplicated without regard to case
 while retaining the first spelling, and separated by `; `. Empty or malformed
 secondary values are ignored. An Austin-primary/Madrid-secondary posting can
-therefore match a Madrid target while preserving `Austin; Madrid`. Configured
-location rejects still take precedence across the combined names; rejecting
-Austin excludes that same posting. Empty-location behavior is unchanged.
+therefore match a Madrid target while preserving `Austin; Madrid`. Each name
+retains its own geography context for filtering: a configured reject in any
+name excludes the posting, and a complete target must match within one name.
+For example, secondary `Madrid, Spain` cannot mask a Canada reject on primary
+`Toronto, ON, CA`. Primary `Barcelona, Venezuela` and secondary `Madrid, Spain`
+cannot together satisfy a `Barcelona, Spain` target. Empty-location behavior
+is unchanged.
 
 ### Canonical identity and repeat applications
 

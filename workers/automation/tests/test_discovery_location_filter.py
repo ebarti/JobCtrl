@@ -173,3 +173,21 @@ def test_multiple_ashby_locations_match_secondary_target_with_reject_precedence(
         assert not location_matches_target(
             location, accept=["Madrid"], reject=["Austin"], search_location="Madrid",
         )
+
+
+def test_each_location_retains_its_own_country_context_for_rejects() -> None:
+    assert not location_matches_target(
+        "Toronto, ON, CA", accept=["Madrid, Spain"], reject=["Canada"],
+    )
+    assert location_matches_target(
+        "Madrid, Spain", accept=["Madrid, Spain"], reject=["Canada"],
+    )
+    assert location_matches_target(
+        "Barcelona, CT, ES", accept=["Barcelona, Spain"], reject=["USA"],
+    )
+
+
+def test_composite_target_must_match_one_complete_location() -> None:
+    for location in ("Barcelona, Venezuela", "Madrid, Spain"):
+        assert not location_matches_target(location, accept=["Barcelona, Spain"], reject=[])
+    assert location_matches_target("Barcelona, CT, ES", accept=["Barcelona, Spain"], reject=[])
