@@ -771,9 +771,10 @@ def acquire_job(
     proceed. Each network check follows that candidate's cheap local gates.
     """
     excluded: set[str] = set()
+    refreshed: set[str] = set()
     while True:
         result = _acquire_job_candidate(target_job_id, min_score, worker_id, run_ctx,
-                                        approval_required, tenant_id, excluded)
+                                        approval_required, tenant_id, excluded, refreshed=refreshed)
         if isinstance(result, str):
             excluded.add(result)
             continue
@@ -788,6 +789,8 @@ def _acquire_job_candidate(
     approval_required: bool = True,
     tenant_id: str | None = None,
     excluded: set[str] | None = None,
+    *,
+    refreshed: set[str],
 ) -> dict | str | None:
     """Atomically acquire the next job to apply to.
 
@@ -800,7 +803,7 @@ def _acquire_job_candidate(
     """
     conn = get_connection()
     from datetime import timedelta
-    from jobctrl.enrichment.availability import require_fresh_active, assert_fresh_candidate, read_availability
+    from jobctrl.enrichment.availability import require_fresh_active, assert_fresh_candidate, read_availability, fresh_active
     tenant_id = str(tenant_id or (run_ctx.get("tenant_id") if run_ctx else None) or LOCAL_TENANT)
     if target_job_id is not None:
         target_job_id = canonical_job_id(str(target_job_id))
@@ -929,13 +932,21 @@ def _acquire_job_candidate(
                 and not cached["overdue"]):
             conn.commit()
             return job_id
-        conn.commit()
-        try:
-            require_fresh_active(job_id, tenant_id=tenant_id, conn=conn, max_age=timedelta(minutes=15),
-                                 expected_posting_url=url, allow_unknown=allow_unknown)
-        except Exception:
-            logger.info("Apply deferred for %s: check availability or use supervised Apply", job_id)
+        needs_refresh = not fresh_active(conn, job_id, tenant_id=tenant_id, max_age=timedelta(minutes=15))
+        if needs_refresh and refreshed:
+            conn.commit()
             return job_id
+        conn.commit()
+        if needs_refresh:
+            # One poll may refresh one posting. Later peers can still claim
+            # fresh evidence; its final writer fence handles concurrent changes.
+            refreshed.add(job_id)
+            try:
+                require_fresh_active(job_id, tenant_id=tenant_id, conn=conn, max_age=timedelta(minutes=15),
+                                     expected_posting_url=url, allow_unknown=allow_unknown)
+            except Exception:
+                logger.info("Apply deferred for %s: check availability or use supervised Apply", job_id)
+                return job_id
         conn.execute("BEGIN IMMEDIATE")
         current_rows = _select_apply_candidates(conn, tenant_id, canonical_job_id(job_id), min_score)
         current = current_rows[0] if current_rows else None

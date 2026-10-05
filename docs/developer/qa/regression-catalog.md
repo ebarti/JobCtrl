@@ -788,7 +788,8 @@ per-job ledger writes, and stop deadline/canceled sweeps before later jobs start
 Unattended Apply must remain blocked without positive evidence. Confirmed closure
 and canonical URL races stop provider work and submit intent. Approval polls and
 manual-ATS refusals must perform zero acquisition; an eligible claim checks only
-one candidate. Exercise a real CSS-dependent closed page with more than 12
+one candidate. Mix multiple postings needing refresh with a fresh active peer:
+one poll refreshes only one posting and can still claim the peer. Exercise a real CSS-dependent closed page with more than 12
 resources, one hourly acquisition charge and harmless optional asset errors;
 failed/redirected document, data, script, style and frame dependencies must remain
 uncertain. A blocked non-read data request must also remain unknown, without

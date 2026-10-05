@@ -101,6 +101,26 @@ def test_unknown_top_candidate_does_not_starve_fresh_active_peer(saved_job, monk
     assert launcher.acquire_job(approval_required=False)['job_id'] == second
 
 
+def test_one_apply_poll_refreshes_once_and_can_claim_an_active_peer(saved_job, monkeypatch):
+    from jobctrl.apply import launcher
+    from .test_apply_regressions import _insert_ready_job
+    urls = [f'https://93.184.216.{ip}/jobs/owned-synthetic' for ip in (34, 35, 36)]
+    jobs = [_insert_ready_job(saved_job, url=url) for url in urls]
+    unchanged = availability._latest(saved_job, 'local', 'posting_availability', jobs[1])
+    claim, _ = availability.claim_job(saved_job, jobs[2], now=NOW)
+    availability.complete_check(saved_job, claim, verdict='active', reason='fixture', method='fixture', lineage=[], now=NOW)
+    monkeypatch.setattr(availability, '_now', lambda: NOW)
+    monkeypatch.setattr(launcher, 'get_connection', lambda: saved_job)
+    calls = []
+    def transport(url):
+        calls.append(url)
+        return availability.Response(url, url, 429, b'Synthetic unavailable data')
+    monkeypatch.setattr(availability, 'public_get', transport)
+    assert launcher.acquire_job(approval_required=False)['job_id'] == jobs[2]
+    assert calls == [urls[0]]
+    assert availability._latest(saved_job, 'local', 'posting_availability', jobs[1]) == unchanged
+
+
 def test_submit_time_unknown_retains_the_already_claimed_attempt_without_intent(saved_job, monkeypatch):
     from jobctrl.apply import launcher
     from jobctrl.domain.errors import SourceUnavailableError
