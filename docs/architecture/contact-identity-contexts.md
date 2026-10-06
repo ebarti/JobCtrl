@@ -181,9 +181,17 @@ submission introduced by this proposal.
 
 ## Synthetic evidence
 
-The measured results below were produced by this implementation role against
-Git revision `1ecb877dbb5275afeabfa6ca1ae872f88dbaaacb`, using the
-controller-prepared `workers/automation/.venv/bin/python` (Python 3.12.13).
+The original Python results below were produced by this implementation role
+against Git revision `1ecb877dbb5275afeabfa6ca1ae872f88dbaaacb`. The storage
+probe and all nine worker files were executed again at revision
+`d974ecd4e7b525b490f3d0bef9255f0d94f41833`, using the controller-prepared
+`workers/automation/.venv/bin/python` (Python 3.12.13). Comparison of all 241
+previously recorded source/lock hashes found zero changes. The current native
+TypeScript measurements below were executed at the latter revision with
+the controller-recorded Node v22.21.1 interpreter (modules ABI 127),
+`better-sqlite3` 12.9.0 (SQLite 3.53.0) and the installed `tsx` import loader.
+The earlier driver-adapter measurements used Node v26.9.0 and SQLite 3.53.4.
+
 They use normally imported current modules and isolated invented profiles,
 contacts and canonical JobIds. No provider, real account, send or submission
 was used. They establish bounded repository/domain behavior, not a live-stack
@@ -201,7 +209,7 @@ or external-standard compliance claim.
 | Same storage probe: outreach persistence | A clean draft passed and was approved. A revision inventing `250%` and `Initech Inc` failed deterministic gates despite the model double's PASS; approval raised the recorded rejection. After rejection and another revision with an unavailable judge, reloading showed three generations and the original approved ID/body intact. | Real repositories and public use cases, with four recorded model-double requests. No approval-version fence, model quality or send transport is established. |
 | Same storage probe: rendered-text provenance | The approved greeting referenced `gamma-name` and was not profile-grounded; its experience paragraph was profile-grounded; the sign-off was not. The judge received top-level experience metadata with blank values, rather than the structured resume experience entries. | Actual prompts and gate/provenance records are retained. Neither lexical overlap nor a double's PASS validates every natural-language claim. |
 | Same storage probe: value exclusion | Across 20 event rows, 3 contact projection rows and 1 research-task projection row, the 9 tested sentinel strings had zero matches. Sentinels included recipient names, addresses, a phone and both draft bodies. The database reported `user_version = 12`. | Checks these specific event/projection families and fixture values. It is not a universal privacy proof for metadata, logs, telemetry or every future writer. |
-| Focused worker suite, `runs/worker-focused/` and `worker-focused.junit.xml` | 73 cases executed across all nine accepted worker test files: 73 passed, 0 failures, 0 errors, 0 skipped. | The exact locked command and full output are retained. `UV_NO_SYNC=1` used the broker-prepared environment without performing dependency preparation in this role. |
+| Focused worker suite, original `runs/worker-focused/` and current `runs/worker-focused-current/` | Each run executed 73 cases across all nine accepted worker test files: 73 passed, 0 failures, 0 errors, 0 skipped. | Both owned JUnit reports and exact locked commands are retained. `UV_NO_SYNC=1` used the broker-prepared environment without performing dependency preparation in this role. The current storage rerun, `runs/storage-current/`, reproduced the storage observations above. |
 
 The original SQLite executable also completed in the prepared environment
 (`runs/sqlite-original-prepared/`): its one-contact reassociation returned
@@ -213,14 +221,73 @@ null`; the normalized Profile-backed storage probe instead produced the
 top-level metadata object. The inputs and exact prompts make that distinction
 inspectable.
 
-TypeScript import semantics in the ownership map are source/test inspection,
-not results measured by these Python probes. Do not transfer Python results to
-the TypeScript write path, infer vCard/email/phone standards conformance, or
+### TypeScript imported-module measurements
+
+`contact-import-probe-native-v3.mts` normally imports the current `contacts.ts`,
+`contact-vcard.ts`, projection and database modules through Node's `tsx`
+import loader. It uses the real `better-sqlite3` driver, the repository's
+`initializeExactV7Database` test helper and the current `openDatabase` admission
+path. The helper applies original v7–v12 DDL; exact-v12 admission succeeded
+and `user_version` was 12. No contact, matching, projection or driver logic
+is replaced in this native probe.
+
+The interpreter, Corepack and binding SHA-256 hashes were checked against
+the controller's preparation receipt before and after each current execution.
+The process used the exact recorded PATH, COREPACK_HOME and npm_config_nodedir,
+plus explicitly recorded synthetic-workspace settings. Preparation is broker
+evidence; the following probe and suite results are implementation-role
+measurements. They do not prove native-driver contention behavior, a deployed
+stack, live provider accuracy or external-standard compliance.
+
+| Observation in current `runs/ts-native-v3/` | Actual measured outcome |
+| --- | --- |
+| CSV preview | One ready record; contact/attribute/event/projection counts stayed 0/0/0/0 and SQLite `total_changes()` stayed 2: zero writes. |
+| Commit and replay | First commit imported 1. Replay imported 0 and reported 1 existing duplicate. Counts stayed 1 contact, 3 attributes, 4 events, 1 projection; `total_changes()` increased 11→12 from projection refresh. Replay is not universally write-free. |
+| Different employer/job, same email | Uppercase `RECIPIENT@example.test` matched the previously imported email. Commit imported 0, reported 1 duplicate and left the second job with 0 associated contacts. No second association was added. |
+| Conflicting email/phone | An email matching one existing contact and phone matching another produced `ambiguous_identity`, 1 invalid record and 0 imports. A three-row preview with separate email/phone records and a bridging record produced 2 ready and 1 invalid `ambiguous_batch_identity`. |
+| Identity revalidation | Preview reported 1 ready. Creating another contact with the same email before commit changed the commit result to 1 duplicate and 0 imports. |
+| Job revalidation | Preview reported 1 ready for an otherwise unreferenced synthetic job. Removing that job before commit produced `invalid_job_link`, 1 invalid record and 0 imports. |
+| Bounded vCard preview | A single VERSION:4.0 name/organization/email input was ready; counts stayed 3/6/10/2 and `total_changes()` stayed 42. |
+| Value exclusion | Four sentinel values had zero matches in 10 event payloads and 2 contact projection rows. This checks those specific fixtures/families, not universal metadata privacy. |
+
+The earlier native-driver attempt, `runs/ts-import-loader-v1/`, exited 1
+before database creation because its prepared packages lacked the native
+SQLite binding. The earlier accepted focused API command executed all three files
+in `runs/api-focused-current/`: its owned JUnit records 39 cases, 39 failures,
+0 errors and 0 skipped, all failing at database setup for that same missing
+binding. These historical failures remain intact alongside the later successful
+native rerun; they are not product-defect measurements. The earlier
+missing-`tsx`/`vitest` attempts remain retained as well.
+
+The current accepted focused API command, `runs/api-focused-native/`, executed
+18 contact cases, 3 contact-projection parity cases and 18 outreach cases:
+39 passed, 0 failures, 0 errors and 0 skipped. Its owned
+`api-focused-native.junit.xml` preserves every case and the original output.
+These tests use synthetic databases, Fastify injection and explicit worker
+doubles; they do not perform real sending or live browser/API QA. The current
+locked worker command also executed all nine accepted files in
+`runs/worker-focused/`: 73 passed, 0 failures, 0 errors and 0 skipped, with an
+owned `worker-focused.junit.xml`.
+
+The previous `contact-import-probe-adapter-v3.mts` run produced the same bounded
+import outcomes through a retained test-only Node `DatabaseSync` adapter. It
+did not exercise the production driver or API admission path. Its original
+inputs and outputs remain separately inspectable rather than being relabeled
+as native-driver evidence.
+
+The adapter v2 attempt completed preview, replay, duplicate, ambiguity and
+identity-revalidation assertions, then failed its fixture setup when deleting
+a job still referenced by a soft-deleted contact. Foreign keys remained enabled.
+The corrected v3 fixture uses a separate unreferenced job; its complete run
+passed. Both executable revisions and full failed/successful outputs remain
+available. This corrects the probe, not production behavior.
+
+Do not infer vCard/email/phone standards conformance from these fixtures, or
 equate a fixed model verdict with a live provider evaluation.
 
 ### Retained evidence and reproducibility
 
-The durable controller allocation is
+The original durable controller allocation is
 `run-22a5df595879/role-artifacts/authoring/implement/56c8b49350cdcd3fac36aa057876d0add91cd5dadfee98b1af5e9ecca9c9cb34/`.
 It is outside tracked source; the controller seals its hashed snapshot for
 independent inspection. Within it:
@@ -256,6 +323,88 @@ independent inspection. Within it:
   Baseline broker docs/runtime results are historical, not verification of this
   edited document. The Python preparation receipt establishes environment
   preparation, not feature behavior.
+
+The previous retained allocation is
+`run-22a5df595879/role-artifacts/authoring/implement/db9cd28945d09e1a20baf179894dec058c703f12cb432f3f2e323b4514fbb908/`,
+under the same controller run root. Its exact retained host location is:
+
+```text
+/Users/eloibarti/.local/state/devflow/parallel-baseline-verified-20261006/service/runs/run-22a5df595879/role-artifacts/authoring/implement/db9cd28945d09e1a20baf179894dec058c703f12cb432f3f2e323b4514fbb908
+```
+
+It contains:
+
+- `previous-implementation/`: byte-preserved original Python/TypeScript probes,
+  historical originals, previous full run outputs and source/hash ledgers.
+- `run.py` and `runs/`: current original commands, UTC start/end receipts,
+  full separate stdout/stderr, deadlines, exit statuses and runtime/isolation
+  settings; failures are never replaced by reruns.
+- `contact-import-probe-adapter-v2.mts`,
+  `contact-import-probe-adapter-v3.mts` and `sqlite-probe-adapter.mts`: executable
+  driver-substitution probes and all embedded synthetic inputs.
+  `contact-import-probe-native-v2.mts` retains the corrected native fixture.
+  That allocation contains no execution of it; the subsequent v3 native
+  execution is recorded in the current allocation below.
+- `worker-focused-current.junit.xml` and `api-focused-current.junit.xml`:
+  the complete current worker success and API setup-failure reports.
+- `source-lock-hashes.json`, `artifact-hashes.json` and
+  `evidence-index.json`: exact source/schema/lock and probe/output/JUnit hashes,
+  actual outcomes, runtime versions and explicit limitations.
+- `broker-handoff/` and `handoff-inspection.json`: the complete copied
+  read-only handoff and 30 original referenced files, all verified against
+  their supplied hashes. Its SHA-256 is
+  `ff2ec0e63e7dfdcf272c54913b0e5aaeade29ae7f4f9ab277f63be4199b1a253`.
+  Its current input candidate is
+  `2f252906f196103dc53b62113983b330185a41e667e92c8f5722dafe4a7c7691`;
+  broker local results refer to that input, and prepublication results refer
+  to candidate
+  `e37872de5884f4cd5adebdb8ccfe780efc8a91344dd83584149cd28e48c06731`.
+  Neither proves this subsequently edited document passes its gates.
+
+The role's retained `runs/role-diff-range/` command
+`git diff --check origin/main...HEAD` exited 0 on the committed input.
+It does not check later uncommitted edits or establish controller execution
+of `checks.diff`. Broker handoff inspection found only bare diff-check
+receipts; those clean-checkout commands are not substitutes for the required
+committed-range gate.
+
+The current controller-authorized allocation is:
+
+```text
+/Users/eloibarti/.local/state/devflow/parallel-baseline-verified-20261006/service/runs/run-22a5df595879/role-artifacts/authoring/implement/b7e972c375834c363a25b1b50610b46c98615e54fbb0b54c9e763e25f32eb23f
+```
+
+It retains the current executable `contact-import-probe-native-v3.mts`, the
+preceding native v2 source, `contact-storage-probe-v2.py`, `run.py`, full
+`runs/<label>/stdout.log` and `stderr.log`, UTC/deadline/exit receipts, both
+successful JUnit reports, and `toolchain.json`. The storage rerun in
+`runs/storage-current/` reproduced the Profile, provenance, filtering, research,
+outreach-preservation and value-exclusion observations above.
+`source-lock-hashes.json`, `artifact-hashes.json` and `evidence-index.json`
+bind the current document, exact inspected/exercised source and schema inputs,
+locks, executable revisions, inputs, full outputs, reports and limitations.
+
+`previous-implementation/` contains the byte-preserved previous allocation,
+including all failed attempts, historical inputs and successful adapter/Python
+results. All 343 hashes in its previous artifact ledger were verified before
+copying. The copied originals retain their original candidate identities,
+commands and timestamps.
+
+`broker-handoff/` retains the full current read-only handoff and all 16 copied
+referenced files, checked against their SHA-256 hashes. Its handoff hash is
+`4ec6bc6dd9839edb90083f1820f84167787529145d87721d5066c6d7ec657557`,
+bound to input candidate
+`58c899b45f4a66ebf6038b2f331560c2bcd312cc8f9cdeb17711c8d605246f8e`.
+The broker prepared and smoke-tested the native binding; it did not execute
+the role's import probe or focused suites. Its older baseline check results
+refer to their original candidate and do not verify this edited document.
+
+The recorded native binding SHA-256 is
+`1124b3e737ad70f0543f351f47a16df23e2058b0b21957dbfbc71dbbf8442d63`.
+Reproduction must use the absolute interpreter/Corepack paths and recorded
+environment in `toolchain.json`; a host login-shell Node selection can target
+a different native ABI. No package or native binary is stored in the artifact
+allocation.
 
 The exact dependency-lock hashes at this checkpoint are:
 
