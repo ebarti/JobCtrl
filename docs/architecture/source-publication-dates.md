@@ -28,7 +28,7 @@ renames nor hides the existing Discovered column.
 | Boundary | Canonical source and symbols | Inspected behavior |
 | --- | --- | --- |
 | Application tracking system (ATS) listing adapters | [ats_adapters.py][ats]: `WorkdayBoardAdapter._to_scraped`, `GreenhouseBoardAdapter._to_scraped`, `LeverBoardAdapter._to_scraped`, `AshbyBoardAdapter._to_scraped` | Each constructs `ScrapedJobPosting` with identity, employer and four metadata strings. None transfers a publication field. Workday's constructor reads title/path/location; the other three also require usable description text. An extra date-bearing payload key does not create date evidence. |
-| Broad-board provider acquisition | [jobstreaming_gateway.py][gateway]: `JobStreamingGateway.frame_for_job_event`, `collect`, `build_request` | Delegates provider formatting to `jobs_to_dataframe`; the event path adds `jobstreaming_job_key`. `hours_old` is an acquisition filter passed to the provider, not a persisted publication claim. Provider formatting and live date coverage were not executed here. |
+| Broad-board provider acquisition | [jobstreaming_gateway.py][gateway]: `JobStreamingGateway.frame_for_job_event`, `collect`, `build_request` | Delegates provider formatting to `jobs_to_dataframe`; the event path adds `jobstreaming_job_key`. `hours_old` is an acquisition filter passed to the provider, not a persisted publication claim. The synthetic formatter retained `date_posted`; live date coverage and publication semantics remain unmeasured. |
 | Provider row to domain intake | [discovery/jobspy.py][jobspy]: `store_jobspy_results`, `_jobspy_posting_from_row`, `_record_jobspy_source_observation` | Maps selected row facts into date-free intake, and separately records an observation. `store_jobspy_results` obtains a UTC `now`; `_record_jobspy_source_observation` uses its caller's `observed_at`. There is no date argument in `_jobspy_posting_from_row`. |
 | SmartExtract intelligence and extraction | [smartextract.py][smart]: `collect_live_page_intelligence`, `execute_json_ld`, `execute_api_response` | Intelligence can retain parsed JSON-LD and intercepted data. The two executors enumerate only `title`, `company`, `salary`, `description`, `location`, `url`, even if the plan contains another key. `execute_json_ld` accepts only top-level `@type == "JobPosting"`; it does not walk `@graph`. This is distinct from the enrichment extractor below. |
 | Intake and metadata | [ports/discovery.py][port]: `ScrapedJobPosting`; [discovery/value_objects.py][metadata]: `JobMetadata` | The intake has no publication-date slot. Metadata contains title, salary, discovery description and location. An unknown constructor keyword is rejected, rather than stored as evidence. |
@@ -38,8 +38,8 @@ renames nor hides the existing Discovered column.
 Dates such as synthetic `postedOn`, `date_posted`, `createdAt`, `updated_at`
 or `publishedAt` must not be treated as interchangeable. Their names alone
 do not certify their semantics or their availability on any live source.
-Only Workday's synthetic `postedOn` mapping was executed here; inspection of
-the other adapter mappings does not establish vendor payload reliability.
+All four adapters were executed with synthetic date-bearing payloads. Those
+injected fields do not establish vendor payload reliability or semantics.
 
 ### Enrichment, persistence and presentation owners
 
@@ -47,8 +47,8 @@ the other adapter mappings does not establish vendor payload reliability.
 | --- | --- | --- |
 | Detail-page payload and fetch clock | [enrichment/value_objects.py][detail-page]: `DetailPage`; [playwright_fetcher.py][fetcher]: `PlaywrightDetailPageFetcher.fetch` | `DetailPage` carries parsed `json_ld` and `fetched_at`. The fetcher obtains UTC time locally before acquisition. Carrying a `datePosted` key inside JSON-LD is not equivalent to extracting or accepting it. |
 | Description extraction | [enrichment/services.py][extractors]: `JsonLdExtractor.extract`, `_find_job_posting`, `ExtractionResult` | JSON-LD enrichment walks lists and `@graph`, extracts a sufficiently long description and best-effort application URL. `ExtractionResult` has only `ok`, description and application URL. No normalized publication result is produced. |
-| Availability and content acquisition | [snapshot_services.py][acquisition]: `ActiveStateVerifier.verify`, `ContentAcquisitionService.acquire` | `validThrough` is deadline evidence for availability: invalid deadlines produce unknown, contradictory availability signals can produce unknown, and elapsed deadlines can produce expired. It is not a publication date. Acquisition returns description/hash, apply URL, availability, confidence and capture evidence, or structured failure. |
-| Snapshot clock and failure history | [snapshot_value_objects.py][snapshot-values]: `PostingContentSnapshot`; [snapshot_set.py][snapshot-set]: `PostingSnapshotSet.record_snapshot`, `record_capture_failure`; [snapshot_use_case.py][snapshot-use-case]: `CapturePostingSnapshotUseCase.execute` | Snapshot stores `captured_at`. The use case passes local `_utc_now()` after acquisition. Capture failure appends failure history without appending a replacement snapshot. No publication evidence value object is present. Preservation is inspected, not executed through this use case here. |
+| Availability and content acquisition | [snapshot_services.py][acquisition]: `ActiveStateVerifier.verify`, `_parse_deadline`, `ContentAcquisitionService.acquire` | `validThrough` is deadline evidence for availability: invalid deadlines produce unknown, contradictory availability signals can produce unknown, and elapsed deadlines can produce expired. The parser requires a timezone, so date-only deadlines also produce unknown. Expiry is not a publication date. Acquisition returns description/hash, apply URL, availability, confidence and capture evidence, or structured failure. |
+| Snapshot clock and failure history | [snapshot_value_objects.py][snapshot-values]: `PostingContentSnapshot`; [snapshot_set.py][snapshot-set]: `PostingSnapshotSet.record_snapshot`, `record_capture_failure`; [snapshot_use_case.py][snapshot-use-case]: `CapturePostingSnapshotUseCase.execute` | Snapshot stores `captured_at`. The use case passes local `_utc_now()` after acquisition. Capture failure appends failure history without appending a replacement snapshot. No publication evidence value object is present. An imported use-case/repository probe preserved the accepted snapshot after an injected fetch failure. This proves content preservation, not a publication implementation. |
 | Discovery persistence | [discovery/sqlite_repository.py][job-repository]: `SqliteJobRepository._update_existing_job`, `_attach_source_observation`, `_find_observation_owner` | Existing nonempty `discovered_at` is preserved when metadata changes. Source observations replace their current `observed_at` for the matching source/native identity or normalized URL; a different owner is returned instead of re-homing the observation. This current-row replacement is not immutable publication-evidence history. |
 | Enrichment persistence | [enrichment/sqlite_repository.py][enrichment-repository]: `SqlitePostingSnapshotSetRepository.save`, `load`, `_snapshot_from_dict` | Stores the snapshot-set JSON and summary columns; rehydrates `captured_at` from each snapshot. There is no dedicated normalized publication contract. |
 | Python projection | [projection_builder.py][python-projection]: `ProjectionBuilder._rebuild_job` | Copies canonical Job `discovered_at` into `JobListProjection.discovered_at`. A projection rebuild's own `last_updated_at` is another local clock. |
@@ -71,100 +71,105 @@ contracts. A new projection field alone would not establish canonical evidence.
 
 ## Synthetic evidence
 
-These measurements ran on 2026-10-06 in the dedicated owned checkout, against
-the baseline above. Inputs used `example.com`, a synthetic employer and a
-synthetic UUID. No external transport, personal workspace, account, profile or
-application was used. SQLite probes used only disposable in-memory tables.
+These measurements use frozen runtime source at
+`315aa323848bbd8da2ed95bccbb47f0fe685d27f`. Fresh imported probes ran on
+2026-10-06 at checkout head `5462433b6ce7040cb4d098bc917f07224450dc31`;
+the harness compared each of its 14 owning source files byte-for-byte against
+the baseline before execution. Inputs use `example.com`, Synthetic Co and
+owned disposable databases. No personal workspace, account or application
+was involved. Socket connections were forbidden in the native harness;
+transport doubles supplied ATS/provider responses and detail pages.
 
-### Method and retained records
+### Reproducible retained evidence
 
-The host's default `python3` was Python 3.9.6: an initial import stopped at a
-union-type expression in `domain/pipeline_types.py`, before intake construction.
-The subsequent probe used the installed CPython 3.14.7 interpreter. That native
-import succeeded for Discovery domain objects but not the ATS or enrichment
-modules. It was **not** the locked worker environment.
+The controller-authorized retained investigation bundle
+`1d0a039e557e293f8dd4d7f58d846e3e6fdf438cf31d0198ad435106696956d8`
+contains complete probe source, inputs, outputs and failed attempts. Its
+location is the supplied `role-artifacts/authoring/implement/` allocation,
+not a temporary directory. `evidence-manifest.json` inventories retained
+files with SHA-256 hashes.
 
-To obtain bounded additional measurements without preparing dependencies,
-`probe.py` compiled unchanged selected function/class definitions from the
-frozen files using Python's abstract syntax tree. It recorded source SHA-256
-hashes and used the real domain value objects and unchanged location/title
-filters. Workday's HTTP callable returned a synthetic payload; its tracing
-context alone was replaced by a no-op context. No HTML cleaner, date parser,
-provider formatter or evidence result was substituted. This bypasses module
-imports and proves only the selected bodies under the specified inputs.
+| Retained file | Contents |
+| --- | --- |
+| `native-probe.py`, `run.py` | Reproducible imported-function harness and command runner. The runner uses the controller-named interpreter, repository `PYTHONPATH` and a synthetic `JOBCTRL_DIR`; it records exact argv and UTC start/end times. No abstract-syntax-tree extraction or source substitution is used in fresh probes. |
+| `native-probe.inputs.json` | Base ATS/provider/JSON-LD fixtures, extraction plan and synthetic clocks. Variant construction is explicit in the harness; full variant inputs also appear beside their outputs. |
+| `native-probe.stdout.log`, `native-probe.stderr.log`, `native-probe.outputs.json` | Full actual output and stderr, plus 41 structured outcome records. The final run ended `ALL_NATIVE_PROBE_ASSERTIONS_PASSED 41`. That number counts outcome records, not tests or live sources. |
+| `native-probe.provenance.json`, `native-probe.receipt.json` | Source-file paths/hashes, source baseline, checkout head, interpreter/package versions, lock hashes, environment and timestamps. |
+| `native-probe-attempt-1.*`, `native-probe-attempt-2.*`, `native-probe-attempt-3.*` | Earlier native harness revisions and actual outputs/receipts. Attempt 1 stopped at an incorrect harness expectation for an unzoned deadline; subsequent runs measured unknown and then asserted zoned and unzoned cases. No production function changed to make the probe pass. |
+| `historical/probe.py`, `historical/probe.log`, `historical/probe-attempt-1.log`, `historical/probe-attempt-2.log`, `historical/initial-python.log`, `historical-copy.json` | Original pre-preparation source and historical results, including both import failures and source-isolated measurements. The copy inventory records hashes. These are historical environment/function-body evidence, not fresh imported execution. |
 
-The first two source-isolated harness attempts stopped with `NameError` for
-missing harness bindings `dataclass` and `Employer`. Both failed transcripts
-were retained as `probe-attempt-1.log` and `probe-attempt-2.log`. After correcting
-the temporary harness, the final transcript `probe.log` ended with
-`ALL_EXECUTED_ASSERTIONS_PASSED_INCLUDING_SQLITE`. Those harness failures are
-neither product extraction failures nor locked-environment failures.
+Fresh imported probes used the explicitly supplied, controller-prepared
+CPython **3.12.13** interpreter. The preparation receipt identifies
+`uv sync --locked --no-install-project --extra dev`; the probe did not prepare
+or change dependencies. The worker lock SHA-256 is
+`c7a3609dab6c93fdaa9f247ef88a943d74629457042ce64d7a92320092ba40d6`.
+Recorded versions include JobStreaming 0.0.5, BeautifulSoup 4.14.3,
+Temporal SDK 1.26.0 and pandas 2.3.3. The final native command ran from
+`13:32:14.735667Z` to `13:32:18.256152Z` on 2026-10-06.
 
-The harness, transcripts, `initial-python.log`, `scripts.junit.xml`,
-`scripts-junit-summary.json`, `scripts-failure-diagnostic.log`,
-`focused-python.log`, `docs-build.log`, `docs-build-candidate.log` and
-`docs-runtime.log` are retained outside source control in this role's owned
-evidence staging directory. The controller
-report destination was not supplied to this role; transfer to controller-owned
-artifact paths is pending. No controller-owned report or rendered-page evidence
-is claimed here. The implementation handoff identifies the staging location.
+Replay uses the preparation receipt's interpreter, with the repository's
+`workers/automation/src` on `PYTHONPATH` and an owned synthetic `JOBCTRL_DIR`,
+by running `run.py probe` from the checkout. Full argv is retained in
+`native-probe.receipt.json`. The harness creates and removes its own synthetic
+database. Generated Job IDs and actual capture clocks can differ on replay:
+compare the asserted behavior, not byte equality of newly generated IDs or
+wall-clock output. Full stdout and stderr are retained even on failure.
 
-### Actual outcomes
+### Historical intake and environment failures
+
+These earlier results preceded the prepared environment above:
+
+| Historical probe | Actual result | Limit |
+| --- | --- | --- |
+| Default Python 3.9.6 import | Failed at a union-type expression in `domain/pipeline_types.py`, before intake construction. | Unsupported host interpreter; not an extraction result. |
+| CPython 3.14.7 intake constructor | Constructed `ScrapedJobPosting` with its nine fields. Additional `published_at="2026-10-01"` raised expected `TypeError`, unexpected keyword argument. | Native domain constructor outside the locked environment. Fresh locked execution below reproduced both results. |
+| ATS module import on that host interpreter | `ModuleNotFoundError: No module named 'bs4'`. | Failed before adapter execution; prepared imports succeeded. |
+| Enrichment services import on that host interpreter | `ModuleNotFoundError: No module named 'temporalio'`. | Failed before `JsonLdExtractor.extract`; prepared imports succeeded. |
+| First two source-isolated attempts | `NameError` for missing harness bindings `dataclass`, then `Employer`. | Harness defects, distinct from dependency or production failures. |
+| Corrected source-isolated harness | Workday dropped `postedOn`; selected provider handoff and SmartExtract dropped dates; private SQL bodies preserved first discovery and replaced source clocks. | Unchanged definitions compiled from source with imports bypassed and tracing replaced by a no-op. This did not prove imported integration, exact-schema admission, public repository APIs or live reliability. Native probes supersede those limits only where explicitly measured. |
+
+### Fresh imported outcomes
+
+All rows below describe actual execution through imported production functions.
+Retained JSON/logs identify each case, input, output and source hash.
 
 | Probe | Observed result | Limit or interpretation |
 | --- | --- | --- |
-| Native intake constructor | `ScrapedJobPosting` constructed successfully with its nine declared fields. | Constructor proof only; no acquisition or persistence. |
-| Additional intake `published_at="2026-10-01"` | Expected `TypeError`: unexpected keyword argument `published_at`. | Demonstrates the present boundary lacks the field; does not test a future contract. |
-| Native ATS module import | `ModuleNotFoundError: No module named 'bs4'`. | Environment failure before adapter execution; no conclusion about live ATS reliability. |
-| Native enrichment services import | `ModuleNotFoundError: No module named 'temporalio'`. | Failure through package imports before `JsonLdExtractor.extract`; no description-extractor measurement. |
-| Isolated `WorkdayBoardAdapter.scrape`, `postedOn="Posted 3 Days Ago"` | One injected HTTP call; one posting; no `postedOn` or publication field in output. | Measures listing acquisition and handoff through unchanged Workday bodies, with import/tracing integration bypassed. No relative-date parsing occurred. |
-| Same Workday payload with date missing or `postedOn="not-a-date"` | Each made one HTTP call and returned the same date-free posting shape. | An ignored malformed date is not a successful validation or normalization. |
-| Workday payload with missing title | One HTTP call; zero postings. | Actual rejection by the current title/path admission check, independent of date content. |
-| Isolated `_jobspy_posting_from_row` with selected facts from a row also carrying `date_posted="2026-10-01"` | Intake constructed; output has no `date_posted`. | Demonstrates the selected-fact handoff only. Provider stream, formatter, DataFrame filtering and full `store_jobspy_results` were not run. |
-| Isolated `execute_json_ld`, top-level JobPosting containing `datePosted="2026-10-01"` and `validThrough="2099-01-01"` | One six-key job dictionary; both dates absent, even with plan mapping `date_posted` to `datePosted`. | Measures SmartExtract's executor, not intelligence collection, enrichment, provider acquisition or availability. |
-| Same executor with missing date or malformed object-valued `datePosted` | Each returned one six-key job dictionary without dates. | No date validation occurs on this ignored field. |
-| Same executor with `@graph` wrapper, or entries `[null, "bad", {}]` | Zero jobs in each case. | Current SmartExtract executor limitation; does not contradict enrichment's separate recursive `_find_job_posting`. |
-| Same executor with missing `extraction` plan key | Expected `KeyError: 'extraction'`. | Malformed-plan failure, not a transport error or live-source measurement. |
-| Native `Job.with_metadata` | Changed title while preserving `discovered_at="2026-10-06T10:00:00+00:00"`. | Pure aggregate behavior; the following SQL probe measures a separate write boundary. |
-| Isolated `SqliteJobRepository._update_existing_job` | A supplied newer discovery time, `2026-10-07T10:00:00+00:00`, did not replace the stored October 6 time. | Executed unchanged SQL against minimal in-memory `jobs` columns, not exact-v12 database admission or full `save`/`load`. |
-| Isolated `_attach_source_observation` and `_find_observation_owner` | October 6 then October 7 observations left one row with October 7 `observed_at`; a third `not-a-date` value also replaced it. | Executed unchanged SQL on minimal in-memory observation columns; no public commit wrapper, events, concurrency, fences, uniqueness constraints or migration proof. |
-| Native `JobSourceObservation` validation | Nonempty `observed_at="not-a-date"` accepted; empty string rejected with `ValueError`. | Current nonempty-string invariant, not ISO validity. Malformed synthetic clocks were never written to production state. |
+| Intake success and rejected field | Constructed the nine-field intake. Additional `published_at="2026-10-01"` raised `TypeError`: unexpected keyword argument. ATS and enrichment modules imported successfully. | Constructor and module-load proof; the date contract remains absent. |
+| Four ATS adapters, date-bearing payloads | Workday `postedOn="Posted 3 Days Ago"`, Greenhouse `updated_at="2026-10-01"`, Lever `createdAt="2026-10-01"`, Ashby `publishedAt="2026-10-01"`: each made one injected HTTP call and returned one date-free posting. | Real adapter bodies and HTML cleaners ran. Synthetic key names do not certify provider publication semantics. |
+| Four ATS adapters, missing or malformed date | Each variant returned one date-free posting; malformed values were `{"bad": true}`. | Ignoring malformed input is not date validation or normalization. |
+| Four ATS adapters, missing title | Each made one injected HTTP call and returned zero postings. | Actual admission rejection, independent of date content. |
+| `JobStreamingGateway.collect` with injected adapter | One event carrying typed `date_posted=2026-10-01` produced one DataFrame row retaining `date_posted`; completed was true and failures empty. `_jobspy_posting_from_row` produced date-free intake. | Provider streaming/formatting and handoff against a transport double, not a live board. |
+| Malformed provider date | `JobPost(date_posted="not-a-date", ...)` raised Pydantic `ValidationError`. | Provider-model rejection before acquisition; distinct from ignored ATS dates. |
+| Full `store_jobspy_results` | Date-bearing provider frame returned `(1, 0)`. Canonical Job and observation used `2026-10-06T13:32:18.067461+00:00`, not provider date October 1. Repeat returned `(0, 1)`, kept that discovery time and replaced the single observation clock with `2026-10-06T13:32:18.126529+00:00`. | Full synthetic storage path with public repository reload and observation readback. No live source, concurrency or downstream workflow proof. |
+| SmartExtract and enrichment, direct JSON-LD | `execute_json_ld` returned one six-key dictionary without dates despite plan mapping `date_posted` to `datePosted`. `JsonLdExtractor.extract` returned `ok=True`, description and application URL, without publication evidence. | Input contained `datePosted="2026-10-01"` and `validThrough="2099-01-01"`; neither result creates a publication claim. |
+| Same JSON-LD with missing or object-valued `datePosted` | SmartExtract returned one date-free dictionary; enrichment returned `ok=True` for usable description. | No date validation occurs on the ignored publication field. |
+| `@graph` JobPosting and invalid entries | SmartExtract returned zero jobs for `@graph`; enrichment returned `ok=True`. Entries `[null, "bad", {}]` produced zero jobs and enrichment `ok=False`. | Distinguishes traversal owners. No page collection or arbitrary JSON-LD conformance proof. |
+| Missing plan and short description | SmartExtract raised `KeyError: 'extraction'`. Enrichment with description `tiny` returned `ok=False`. | Actual malformed-plan and extraction failures, not transport or environment failures. |
+| Availability, date-only expiry | `2099-01-01` and `2000-01-01` returned unknown, `invalid_deadline`. | `_parse_deadline` rejects unzoned dates. The first native harness incorrectly expected active for the future date and stopped; corrected cases retained and asserted this measured limit. |
+| Availability, zoned and malformed expiry | `2099-01-01T00:00:00Z` returned active; `2000-01-01T00:00:00Z` returned expired, both `json_ld_valid_through`. `not-a-date` returned unknown, `invalid_deadline`. | Bound synthetic JobPosting only. Availability outcomes, not publication evidence. |
+| Public `SqliteJobRepository.save`/`load` | Metadata refresh with a supplied newer clock preserved stored `2026-10-06T10:00:00+00:00` discovery time. | `init_db` exact-v12 synthetic database and public APIs, not isolated SQL. No migration or concurrent-writer proof. |
+| Public observation write/read | October 6, October 7 and `not-a-date` successively replaced one row's `observed_at`. Empty string construction raised `ValueError`. | Nonempty-string invariant, not ISO validation. Malformed clocks were never written to real data. |
+| Content snapshot followed by failed refresh | Imported `CapturePostingSnapshotUseCase` and SQLite snapshot repository captured version 1 at `2026-10-06T13:32:18.129200+00:00`. Injected fetch failure returned `ok=False`, `FETCH_ERROR`; reload retained exactly the prior snapshot dictionary and added one failure. | Supplied `fetched_at="2026-10-06T10:00:00+00:00"` differs from local capture time. Content preservation is implemented; no publication field was introduced. Availability was unknown because expiry was date-only. No generated materials or approval path ran. |
 
-Measured gaps are loss of date-bearing input at selected handoffs, narrow
-SmartExtract JSON-LD traversal and permissive nonempty observation-clock
-validation. The proposal below addresses publication evidence; hardening the
-existing observation validators would require separately scoped compatibility
-work. This document does not repair any production gap.
+The retained snapshot description hash was
+`7257dc7c6e3948465dea633bae0e8240edf660ef23ac214fcde4f188219446bb`.
+Its accepted hash, apply URL, capture clock, confidence and version remained
+unchanged after failed fetch. The comparison used the complete accepted
+snapshot dictionary, not a cosmetic UI assertion.
 
-### Verification results and remaining gates
+Measured gaps are date loss after acquisition, narrow SmartExtract JSON-LD
+traversal and permissive nonempty observation-clock validation. The proposal
+addresses publication evidence. Changing observation validators or date-only
+expiry policy requires separately scoped compatibility work; these probes
+implement neither change.
 
-Checks followed [local reliability QA](../local-reliability-qa.md) and the
-tracked recipes in [scripts/checks.toml][checks]. A failed command is recorded
-as a failed attempt; it is not described as a passed gate or replaced by an
-unexecuted command.
-
-| Check actually attempted | Actual evidence | Pending completion |
-| --- | --- | --- |
-| `checks.scripts`, exact tracked shell argv, staging path substituted for `{report_path}` | Exit 1; retained XML parses and contains 86 testcase records: 81 passing, 5 failing, 0 error elements, 0 skips. Four failing records are test-file load failures, not executed test bodies. | Frozen dependencies and controller-owned JUnit rerun. The brace-expansion test could not load the installed module; a diagnostic rerun of the four distribution files confirmed missing `ajv` before their tests loaded. No scripts source repair is authorized. |
-| Focused locked worker invocation for the six accepted tracked test paths | `uv --project workers/automation run --locked --all-extras pytest -q -m 'not system_browser'` with those explicit paths, JUnit target and owned `--basetemp`; `UV_NO_SYNC=1` and `UV_PYTHON_DOWNLOADS=never` prevented role-owned dependency/interpreter preparation. Exit 2: could not spawn `pytest`. Zero tests executed, no JUnit emitted. | Controller preparation, then all six files with real retained JUnit: `test_ats_adapters.py`, `test_jobstreaming_gateway.py`, `test_enrichment_extractors.py`, `test_job_repository.py`, `test_job_list_projection.py`, `test_enrichment_snapshot_pr3.py`, under `workers/automation/tests/`. |
-| `checks.docs`: `corepack pnpm docs:build` | Exit 1. Install-asset comparison passed; build stopped at `vitepress: command not found`, with missing `node_modules`. | Complete build, emitted link/redirect checks and `architecture/source-publication-dates.html`. No emitted new-page artifact was observed. |
-| `corepack pnpm docs:check:runtime` after attempted build | Exit 1: missing `@playwright/test`, before preview/browser startup. | Run after a successful build. Its fixed page list excludes this page; separately inspect the new route on a fresh owned preview and retain browser/rendered headings, evidence tables and source links. |
-| `checks.diff`: `git diff --check origin/main...HEAD`; pending-change whitespace and scope checks | Committed diff and `git diff --check` exited 0. `git diff --no-index --check /dev/null docs/architecture/source-publication-dates.md` emitted no whitespace diagnostics and exited 1 because the new page differs from the empty input. Direct trailing-whitespace inspection also passed. `git status --short --untracked-files=all` showed only the allowed page; tracked source diff was empty. Required headings, issue link, 25 pinned source files and local file links passed direct inspection. | Committed exact-head diff and final controller checks. The baseline committed diff does not include this uncommitted new page. Static link inspection does not establish rendered site links or browser behavior. |
-
-Missing dependencies do not prove a network restriction or an implementation
-defect. They leave required verification incomplete. The controller owns frozen
-dependency preparation and the mandatory prepublication/final checks; this
-checkpoint cannot satisfy those gates.
-
-Unmeasured boundaries include Greenhouse/Lever/Ashby execution, JobStreaming
-event/date formatting, native enrichment JSON-LD/CSS/LLM extraction, real
-detail fetching, availability deadline handling, full canonical database
-round trips, refresh use cases, both projection runtimes, API and browser
-behavior, timezones, live source field semantics and reliability. Independent
-review and QA, browser/API QA, exact-head required CI, tracker/assignee readback,
-claim release, publication and owned cleanup remain controller gates. The
-controller's one PR must remain open and unmerged; this design must not close
-#1022 as an implemented feature.
+Unmeasured boundaries include live ATS/provider semantics and reliability,
+browser detail acquisition, arbitrary HTML/JSON-LD, timezone and relative-date
+normalization, migrations and concurrent refreshes, Python–TypeScript
+publication projection parity, and publication API/browser behavior. Existing
+content preservation does not prove a future publication implementation.
+Source inspection and synthetic transport cannot establish live reliability.
 
 ## Future architecture, not implemented
 
@@ -328,11 +333,9 @@ These are follow-up proof requirements, not tests executed in this investigation
 | Presentation | Jobs `columns.tsx` and Job detail/evidence consumers, following the frontend and web agent instructions when implemented. Add distinct labels and precision-aware rendering without changing Discovered semantics. |
 | Documentation and verification | Update every affected owning user/API/architecture reference when production behavior ships. Add canonical synthetic fixtures, migration preservation tests, Python–TypeScript parity, API and browser proof under local reliability QA. This page remains investigation history until a separately scoped implementation is verified. |
 
-This checkout changes only this page. Shared navigation, requirements/decisions,
-production code, schemas, migrations, check definitions and another task's work
-are outside this investigation. Dependency repair and publication remain with
-the controller; no commit, push, PR, merge, tracker action or external account
-operation is performed by this role.
+Production code, schemas, migrations and shared navigation remain outside this
+investigation. The compatible contract and scenarios above require separately
+scoped implementation; #1022 is not an implemented-feature completion claim.
 
 [ats]: https://github.com/ebarti/JobCtrl/blob/315aa323848bbd8da2ed95bccbb47f0fe685d27f/workers/automation/src/jobctrl/infrastructure/discovery/ats_adapters.py
 [gateway]: https://github.com/ebarti/JobCtrl/blob/315aa323848bbd8da2ed95bccbb47f0fe685d27f/workers/automation/src/jobctrl/infrastructure/discovery/jobstreaming_gateway.py
