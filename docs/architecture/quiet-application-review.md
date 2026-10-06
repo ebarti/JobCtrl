@@ -217,14 +217,17 @@ Vitest 4.1.11, tsx 4.22.4 and better-sqlite3 12.9.0. The wrapper verifies the
 recorded Node, Corepack and native-binding hashes before execution. No real
 account, send, submission or external-reference compliance was exercised.
 
-The explicitly allocated, retained evidence root is:
+The retained evidence allocation identifier, relative to the controller's
+`role-artifacts` root, is:
 
 ```text
-/Users/eloibarti/.local/state/devflow/parallel-baseline-verified-20261006/service/runs/run-f7cc77016309/role-artifacts/authoring/implement/d0467f571d91ff8189b51b3226df062f84b20ffb3d5f8f525bc7a0443fd50149
+authoring/implement/d0467f571d91ff8189b51b3226df062f84b20ffb3d5f8f525bc7a0443fd50149
 ```
 
-Artifact names below are relative to that root except explicitly historical
-attempts. `run_attempt_v3.py` is the original deadline wrapper. Every attempt
+Artifact names below are relative to that allocation except explicitly
+historical attempts. Absolute host locators remain in retained local metadata,
+alongside unchanged original probes, inputs and outputs. `run_attempt_v3.py` is
+the original deadline wrapper. Every attempt
 directory retains complete original `stdout.txt`, `stderr.txt` and `receipt.json`, including
 failed attempts; receipts contain exact argument arrays, working directory,
 safe environment overrides, UTC start/end times, deadline, exit status, timeout
@@ -251,6 +254,7 @@ document. The author measurements below are separate.
 
 | Retained item | SHA-256 |
 | --- | --- |
+| `artifact-manifest-v2.json` | `03294362e916d53419f753b4f2d5f57ea9bcd86eb92220079202cd1c5b049f77` |
 | `quiet_probe_v3.py` | `b5e50fc1b2cb09a4b9045fb5f9ad8ff737a56121eb5b5f3f7f97af44b581da34` |
 | `fixtures_v2.json` | `7badd2e13148c086b40e0ab6e65e47fb7853551b072797c077cbae505197e37e` |
 | `quiet-probe-03/stdout.txt` | `d27fa6b6533809af7c03808850ed3a47daa9bf17ca509b968fd006646ce91f16` |
@@ -428,12 +432,14 @@ mocked worker scanner/dispatcher/runtime seams; they do not establish live Gmail
 or deployed-runtime compliance.
 
 Earlier originals, wrappers and complete outputs remain in the previous
-controller-allocated evidence root:
+evidence allocation, relative to the same controller `role-artifacts` root:
 
 ```text
-/Users/eloibarti/.local/state/devflow/parallel-baseline-verified-20261006/service/runs/run-f7cc77016309/role-artifacts/authoring/implement/726c3ec6b8a55f7ad7ad6b48e5a367c0428f9a64941ae13a3292eab78128cef4
+authoring/implement/726c3ec6b8a55f7ad7ad6b48e5a367c0428f9a64941ae13a3292eab78128cef4
 ```
 
+Its original `artifact-manifest-v1.json` has SHA-256
+`d913fa5acdeea08a06af778a40580241adbb677ab1dd968992cb6201d0131289`.
 These are historical author attempts associated with input candidate
 `9b8c1e6082f16def3ce3faf9dc5db2c465cfae2565745f56a3517540aac76224`,
 not executions of the edited document:
