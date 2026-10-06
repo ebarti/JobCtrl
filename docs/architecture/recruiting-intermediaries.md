@@ -10,8 +10,13 @@ scope a future implementation.
 
 Owning investigation: [JobCtrl issue #953](https://github.com/ebarti/JobCtrl/issues/953).
 This is a design deliverable, not an implemented capability or an issue closeout.
-Source inspection and measurements use baseline
+Source inspection and intake measurements use baseline
 `67b4175aa2d9e8f96e62da545886b1e8712bf691` on 2026-10-05.
+The author repeated the retained probe on 2026-10-06 using the controller-prepared
+Python 3.12.13 environment at `b47b3a1b2792dc4ceb252fce6573bc0f715b3a0b`.
+The linked production/test files are unchanged from the inspected baseline.
+Historical broker evidence below is bound to its original candidate, not to this
+subsequently edited document.
 No external posting, provider, research fetch, outreach send or application was
 exercised. Source links below pin that baseline.
 
@@ -33,7 +38,7 @@ are measured results; source inspection alone does not establish runtime QA.
 | [build_jd_snapshot / AnalyzeJobUseCase](https://github.com/ebarti/JobCtrl/blob/67b4175aa2d9e8f96e62da545886b1e8712bf691/workers/automation/src/jobctrl/domain/materials/analyze_use_case.py) and [EmployerAnalysis](https://github.com/ebarti/JobCtrl/blob/67b4175aa2d9e8f96e62da545886b1e8712bf691/workers/automation/src/jobctrl/domain/materials/analysis.py) | Analysis consumes title plus full description (listing fallback), verbatim and uncapped, hashes that snapshot and validates evidence spans before saving a generation. It describes posting requirements for scoring/tailoring; its name does not establish an agency–client relationship. A failed refresh does not become a new accepted analysis. |
 | [Contact aggregate](https://github.com/ebarti/JobCtrl/blob/67b4175aa2d9e8f96e62da545886b1e8712bf691/workers/automation/src/jobctrl/domain/contact/aggregate.py) and [contact value objects](https://github.com/ebarti/JobCtrl/blob/67b4175aa2d9e8f96e62da545886b1e8712bf691/workers/automation/src/jobctrl/domain/contact/value_objects.py) | Tenant-owned Contact links to an employer and/or JobId, with roles including recruiter. Each attribute requires provenance: source kind/reference, capture method/time, confidence and user confirmation. Attribute values are sensitive canonical contact data. Employer string/recruiter role does not establish a client relationship. |
 | [ContactResearchSourcePolicy](https://github.com/ebarti/JobCtrl/blob/67b4175aa2d9e8f96e62da545886b1e8712bf691/workers/automation/src/jobctrl/domain/contact/source_policy.py) | Allows user entry/import and opted-in unauthenticated public pages. Default public access is denied; protected URLs route to manual capture; local/private literal targets and unmodeled categories are rejected. Bypass, authentication and autonomous broad discovery are constrained. Policy authorization does not prove an actual fetch. |
-| [Python contact projections](https://github.com/ebarti/JobCtrl/blob/67b4175aa2d9e8f96e62da545886b1e8712bf691/workers/automation/src/jobctrl/infrastructure/projections/projection_builder.py) and [TypeScript projections](https://github.com/ebarti/JobCtrl/blob/67b4175aa2d9e8f96e62da545886b1e8712bf691/apps/api/src/projections.ts) | Both contact rebuild functions scope queries to a tenant and carry employer/JobId, role, counts and provenance without attribute values. Cross-runtime parity execution remains pending below. |
+| [Python contact projections](https://github.com/ebarti/JobCtrl/blob/67b4175aa2d9e8f96e62da545886b1e8712bf691/workers/automation/src/jobctrl/infrastructure/projections/projection_builder.py) and [TypeScript projections](https://github.com/ebarti/JobCtrl/blob/67b4175aa2d9e8f96e62da545886b1e8712bf691/apps/api/src/projections.ts) | Both contact rebuild functions scope queries to a tenant and carry employer/JobId, role, counts and provenance without attribute values. Shared-fixture execution provenance and historical-schema limits are separated below. |
 | [API contacts](https://github.com/ebarti/JobCtrl/blob/67b4175aa2d9e8f96e62da545886b1e8712bf691/apps/api/src/contacts.ts) and [routes](https://github.com/ebarti/JobCtrl/blob/67b4175aa2d9e8f96e62da545886b1e8712bf691/apps/api/src/server.ts) | List/detail reads use projections and tenant-filtered canonical attribute reads. `getContactDetail` returns attribute values with provenance; summary display names read canonical attributes. Value-free projections/events do not mean value-free API responses. API uses the local tenant constant; future relationships must not introduce cross-tenant joins. |
 | [API outreach](https://github.com/ebarti/JobCtrl/blob/67b4175aa2d9e8f96e62da545886b1e8712bf691/apps/api/src/outreach.ts) and [draft gates](https://github.com/ebarti/JobCtrl/blob/67b4175aa2d9e8f96e62da545886b1e8712bf691/workers/automation/src/jobctrl/domain/contact/outreach_gates.py) | Approval requires a candidate draft and persisted passing gates. Rejection preserves an approved draft. `logOutreachSend` records a user-asserted send only over an approved draft; it opens no transport. Accepting a relationship must not approve a draft or create a send log. |
 | [Application feedback/review](https://github.com/ebarti/JobCtrl/blob/67b4175aa2d9e8f96e62da545886b1e8712bf691/apps/api/src/application-feedback.ts) | Approval checks bind materials generation, profile version and current target URL. Target reads join canonical enrichment by tenant/JobId with existing posting-URL fallback. Preserve [application URL authority](application-url-authority.md); relationship evidence is not a target authority. |
@@ -58,8 +63,9 @@ score whose criteria/profile versions agree. Company and rewritten description
 are not checked. Two different clients with the same role and city both pass the
 isolated predicate. This is an ambiguity in heuristic score consistency, not
 proof of equivalence, client identity, representation rights or a dedup link.
-The complete selector, score persistence and ambiguous multi-candidate execution
-were not run at this checkpoint.
+The isolated intake predicate does not execute the selector or score persistence.
+The locked one-direct/one-repost fixtures exercise those paths; they do not
+reproduce ambiguous multi-candidate selection or prove a client relationship.
 
 Neither the inspected posting DTO nor extraction result contains a relationship
 observation, confidential-client status or conflict-resolution record. Contact
@@ -71,12 +77,13 @@ from a score, title, location, source domain or contact employer.
 All labels and URLs below are synthetic. The probe writes only an in-memory
 SQLite fixture, reads repository source and prints safe results. It makes no
 network requests. Run from the repository root with Python 3.11 or newer.
-Measured interpreter: CPython 3.14.7; Node checks used 26.9.0.
+Initial probe interpreter: CPython 3.14.7; prepared-environment reproduction:
+CPython 3.12.13. Initial Node checks used 26.9.0.
 
 ### Reproducible intake, SQL and contact probe
 
 ```bash
-uv --project workers/automation run --locked --all-extras --no-sync python - <<'PY'
+workers/automation/.venv/bin/python - <<'PY'
 import ast
 import sqlite3
 import sys
@@ -214,11 +221,11 @@ Policy results are decisions only: entry/import do not fetch, and an allowed
 public URL was not fetched. The provenance probe checks the mandatory object and
 serialized fields; it does not prove every producer scrubs source references.
 
-### Locked fixtures: inspected, execution pending
+### Locked fixture inputs and asserted invariants
 
-These are existing synthetic test assertions, **not observed passing results**.
-They define broader reproduction after controller dependency preparation. No
-fixture was redirected at personal state.
+This inventory describes inputs and assertions from inspected source. The
+execution provenance below distinguishes direct author measurements, inspected
+broker receipts and independent-QA reports. No fixture targets personal state.
 
 | Inspected owner | Required cases and assertions |
 | --- | --- |
@@ -228,7 +235,7 @@ fixture was redirected at personal state.
 | [test_contact_research_source_policy.py](https://github.com/ebarti/JobCtrl/blob/67b4175aa2d9e8f96e62da545886b1e8712bf691/workers/automation/tests/test_contact_research_source_policy.py) | Default denial, opt-in public source, protected/manual capture, private/local target rejection, authentication/bypass constraints, entry/import without fetch and availability. |
 | [test_contact_projection_parity.py](https://github.com/ebarti/JobCtrl/blob/67b4175aa2d9e8f96e62da545886b1e8712bf691/workers/automation/tests/test_contact_projection_parity.py) | Loads [contact_projection_parity.json](https://github.com/ebarti/JobCtrl/blob/67b4175aa2d9e8f96e62da545886b1e8712bf691/packages/domain-types/test/fixtures/contact_projection_parity.json) into an in-memory exact-v7 compatibility schema, rebuilds two tenants and excludes sensitive attribute values. This historical fixture is not proof of current-runtime schema admission. |
 
-Attempted from the repository root:
+Initial author attempt on 2026-10-05, from the repository root:
 
 ```bash
 qa_dir=$(mktemp -d /tmp/jobctrl-953-qa.XXXXXX)
@@ -241,10 +248,197 @@ uv --project workers/automation run --locked --all-extras --no-sync pytest -q \
   --junitxml="$qa_dir/focused.xml"
 ```
 
-`--no-sync` respects this role's dependency-preparation boundary. Exit 2:
-`Failed to spawn: pytest` / `No such file or directory`. Zero pytest cases
-executed; no focused JUnit report was produced. Controller-owned locked preparation
-and rerun remain pending; the smaller probe is supplemental evidence.
+`--no-sync` respected the author role's dependency-preparation boundary. This
+initial attempt exited 2: `Failed to spawn: pytest` / `No such file or directory`.
+Zero cases executed and no focused JUnit report was produced in that attempt.
+This is preparation history, followed by the measured prepared executions
+below; it is not a finding about current job/contact behavior.
+
+### Final measured results and execution provenance
+
+Evidence retention is allocated outside source under bundle
+`dbb39a6fa46e87622644a56420d77bb65423a01bde6e4bc7226cd46558023eb3`.
+The read-only handoff is `role-evidence/<bundle>/receipts.json`; author probe
+source, inputs, complete stdout/stderr, UTC command receipts, JUnit and source/lock
+hashes are in `role-artifacts/authoring/implement/<bundle>/`. These are retained
+locations, not scratch paths. They contain only synthetic investigation evidence.
+The controller seals the final authoring snapshot after this checkpoint.
+
+#### Original candidate identity
+
+The verified handoff SHA-256 is
+`2a6dbd27b81cbe75db320c757bac58f5d8cc1816300b491fd389814055fec1c6`.
+All 39 referenced copied logs/manifests/JUnit/HTML files matched their receipt
+hashes. The original identities matter because shared Git HEAD does not imply
+identical uncommitted document content:
+
+| Evidence identity | Candidate ID and content digest |
+| --- | --- |
+| Historical broker local suite / independent reports | Candidate `154e3c2dc5ed2b13b169d498263190ebb83083878a314f4145e2ccc3e663a59a`; content digest `94b43968d709ca8f7e09dd701ed25992a0f955f9885ddaae40dc454f20a6f17d`; HEAD `b47b3a1b2792dc4ceb252fce6573bc0f715b3a0b`; base `67b4175aa2d9e8f96e62da545886b1e8712bf691`. |
+| Input to this repair | Candidate `b92f7c18a77c76c29c0e978f44cedfd83ed8e48f5497863e63e670602ea6c180`; content digest `97c4443869ffa0f19b53948c684fb99d7eb4a8bec3271744ef72db8f066e5c1e`; same HEAD/base. Its handoff records Python dependency preparation passing, with no current check results. |
+
+These are input/receipt identities. Neither is a validation identity for the
+final edited document. Earlier baseline receipts bound to candidate
+`57ad75615d013b7cea08a56bd5466547f45b0fd3ab8fea62c01f422c3951b786`
+are history, not checks of this repair.
+
+#### Direct author measurements
+
+At `2026-10-06T11:28:08Z`, the author ran the embedded probe using
+`workers/automation/.venv/bin/python` from repository root. It exited 0, emitted
+no stderr and exactly reproduced the stdout retained above (1,015 bytes).
+`intake-probe.py` retains the same Python body and all synthetic inputs;
+`intake.receipt.json` retains the actual argv, cwd and start/end UTC times.
+
+The prepared environment came from the controller's locked `uv sync --locked
+--no-install-project --extra dev --python <prepared-cpython-3.12.13>` execution;
+its receipt `planned-python-dependencies-e21f8ce11b5bd63f` exited 0. The author
+performed no dependency installation or provider/source calls.
+
+From `workers/automation`, the author executed this command at the same UTC start
+(paths normalized here; exact paths are in `focused.receipt.json`):
+
+```bash
+.venv/bin/python -m pytest \
+  tests/test_contact_projection_parity.py \
+  tests/test_contact_provenance.py \
+  tests/test_contact_research_source_policy.py \
+  tests/test_discovery_identity.py tests/test_scorer.py \
+  -q -o pythonpath=src --junitxml="$evidence_dir/focused.xml"
+```
+
+Actual stdout, exit 0 with empty stderr:
+
+```text
+........................................................................ [ 94%]
+....                                                                     [100%]
+76 passed in 3.96s
+```
+
+JUnit contains 76 executed cases, zero failures/errors/skips:
+
+| Executed file | Cases | Measured assertion scope |
+| --- | --- | --- |
+| `test_discovery_identity.py` | 33 | The inventory's cross-source fingerprint/shingle matches, enriched-owner listing match, distinct employers behind manual/Workday boards, native identity precedence and divergent descriptions all executed. |
+| `test_scorer.py` | 28 | Rewritten/reference-repost reuse executed through `test_score_job_by_url_reuses_direct_score_for_reference_repost[True]`, `[False]` and `test_run_scoring_reuses_direct_score_for_reference_repost_without_llm`; each asserts score 9 and zero scripted LLM calls. Same-content reuse and failed-analysis refresh cases also executed. |
+| `test_contact_provenance.py` | 4 | Source reference, allowed source/capture kinds and complete serialized provenance executed. |
+| `test_contact_research_source_policy.py` | 10 | Default denial, opted-in public source, protected/manual path, local/private targets, authentication/bypass and entry/import restrictions executed. No fetch occurred. |
+| `test_contact_projection_parity.py` | 1 | Both tenants' shared-fixture projection comparisons and sensitive-value exclusion executed in the historical exact-v7 compatibility schema. |
+
+The working-tree `git diff --check` and configured
+`git diff --check origin/main...HEAD` also exited 0 with empty stdout/stderr;
+`diff-check.receipt.json` and `head-diff-check.receipt.json` retain their UTC times.
+Only `docs/architecture/recruiting-intermediaries.md` is changed. The committed
+comparison covers existing HEAD; it is not a check of a future signed commit.
+
+These are author executions, distinct from independent QA. The AST/three-table
+probe remains limited evidence. The full scorer fixtures exercise one direct
+score and one repost, not ambiguous multi-candidate selection; passing score
+reuse does not prove a client relationship. Historical projection-fixture success
+does not prove current-runtime schema admission or migration of a real workspace.
+
+#### Inspected historical broker executions
+
+For the historical candidate above, the local receipt's actual commands and
+outputs were inspected from the copied files (not their original controller cwd):
+
+| Broker command | Observed output/result | Retained SHA-256 |
+| --- | --- | --- |
+| `corepack pnpm scripts:test` | Exit 0: `# tests 163`, `# pass 163`, `# fail 0`, `# skipped 0`. This uses the ordinary scripts command, not the author's JUnit-reporter recipe. | Log `8705116fe0058073f4cfdcf7e95495494a2e97b56e60081d8285cba67491def8`. |
+| `corepack pnpm docs:build` | Exit 0: install-asset equality, VitePress build and emitted-link/redirect gates passed. `13647 references resolve across 444 emitted files`; legacy Product Tour permanently redirects to `/user/product-tour`. | Log `69d845abaf45b49212f33b7b4045d6018981971a55af5b6cc9e4f13674d868ac`. |
+| Prepared `.venv/bin/python -m pytest` with the five files above, `-q -o pythonpath=src --junitxml=<retained-junit>` | Exit 0: `76 passed in 4.10s`; JUnit has 33 Discovery, 28 scorer, 4 provenance, 10 policy and 1 projection case, zero failures/errors/skips. | Log `0ff22f3f0b3d31c81e230ceb1a17a1b679f36864d86397d7851923cea55f888b`; JUnit `8a66f5d10929d6312e0f29b3a524f8a27e830b0163917ef7add41bb4c2933428`. |
+| `corepack pnpm exec node --input-type=module -e <HTML probe>` | Exit 0: `4 rendered documentation checks passed`. Inspected code reads emitted HTML and asserts the three heading IDs and owning issue href. It launches no browser. | Log `bdae804c6427f389ae95d0dae863bf748afed961e5f2694b9c0c4b2b2584c267`; copied HTML `c9855e9c5239d5fc59d0c09fd9e34744742fdcc9f4b7c8a1d3cbe1d097931065` (117,760 bytes). |
+| `git diff --check` | Exit 0, empty log. | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`. |
+
+The handoff retains each exact argv, including the full HTML probe source;
+`broker-command-ledger.json` preserves the selected original identities and
+receipts, and `historical-html-probe.mjs` retains that source separately as data.
+The broker label “rendered-doc-evidence” describes four emitted-HTML checks. It
+is not evidence of desktop/mobile rendering, asset requests or hydration.
+
+#### Independent reports and their limits
+
+The historical review receipt has state `passed`. Its detail independently
+reproduces the intake probe and supports source attribution, compatibility and
+privacy. It inspected the broker logs/JUnit/build but explicitly did not execute
+those suites or inspect browser images.
+
+The separate historical QA receipt has overall state `failed`. Its detail reports
+independent execution of 163 scripts, 76 Python cases, runtime docs checks, diff
+checks and desktop/mobile QA with nine inspected captures and owned-process
+cleanup. The supplied handoff retains that report, but does not include those
+browser images, probe transcript, viewport dimensions or image hashes. Preserve
+both the reported scenario results and the failed overall disposition; do not
+turn narrative scenario passes into QA approval or invent capture measurements.
+No previous report approves the subsequently edited candidate.
+
+An earlier baseline script receipt recorded 163 tests, 157 passes and six failures
+(log `96b93c8029aa09de48bdd003d8b9da7ef5d64ed4ba10c4bdc1b4c00570582557`).
+Later candidate-bound scripts receipts above passed all 163. Keep this resolved
+historical failure separate from author dependency-preparation failures below;
+neither proves a defect in intermediary behavior or validates the final revision.
+
+#### Retained hashes
+
+SHA-256 uses file bytes. For the embedded probe, hash only the Python body between
+the shell heredoc line and its closing `PY`, encoded as UTF-8 with LF line endings
+and one terminating LF. Stdout is the text block above with one terminating LF.
+These conventions make code, inputs and measured output independently checkable.
+The repository paths below have the same bytes at the inspected baseline and
+repair HEAD. Copied receipt files use the supplied handoff hashes; author outputs
+have separate hashes and execution ownership.
+
+| Evidence | SHA-256 |
+| --- | --- |
+| Embedded Python body (includes synthetic inputs) | `c4cc9d0141114215e2a7936b63ce0ce280033ddf2ecb6640fe1b667cc0609a1f` |
+| Retained stdout | `c72a905ed28a83b792b29fa6ee973e620f9212527e9410f147a491c5874e7157` |
+| `workers/automation/src/jobctrl/domain/job_content_identity.py` | `ae6492482d151c23bf37973d53cdb9d0f2c836420a029796f073eb3da7971455` |
+| `workers/automation/src/jobctrl/scoring/scorer.py` | `3dbf5dc704308fff7c549b21c1b8fd68f6dac81fac6108a8b097187922a969c8` |
+| `workers/automation/src/jobctrl/infrastructure/discovery/sqlite_repository.py` | `e3e51c05827e8aac8f208ffe7702c1ff73ed28882b50ab9b19fcd2fd1f04a233` |
+| `workers/automation/src/jobctrl/domain/contact/value_objects.py` | `a1cc9910e7f021bb2ac2aef76ff77957d29759306f3d23e8b1f4535e90bd3ec1` |
+| `workers/automation/src/jobctrl/domain/contact/source_policy.py` | `6ea472f28e2ee0bc39e6258f7505288d6395deb575b9fa2aa2c1e4c1cf90a0a5` |
+| `workers/automation/tests/test_discovery_identity.py` | `7304710c719d043ede00ebfc8afc2297450bd576c4fb4d620cb00be29a519b51` |
+| `workers/automation/tests/test_scorer.py` | `bee407a7e1c5cf315cdc9344194ac515f46f677cd3953ce797d23b65368aff8a` |
+| `workers/automation/tests/test_contact_provenance.py` | `ebdf1725a31df7f1f9e0e459279a7489dd1a880395a6d773b4d5da691ab9a9af` |
+| `workers/automation/tests/test_contact_research_source_policy.py` | `31d212fc84e51818bd21d71ff84679b910da2aa83fcdc2932024937d351afd50` |
+| `workers/automation/tests/test_contact_projection_parity.py` | `78dda7027613bde74360e43af341e2e90d246c3c792d4930601efaa31a0ba942` |
+| `packages/domain-types/test/fixtures/contact_projection_parity.json` | `4a178dc907af8250d889827e68b91b48bc8243de13c4d41d1d640dd06f957120` |
+| `workers/automation/src/jobctrl/infrastructure/migrations/schema_v7.sql` | `a90f3a0e21c5d4126aa9796e3ad68db9299e1dba175a45c824af6b7d339bedcd` |
+| `workers/automation/uv.lock` | `c7a3609dab6c93fdaa9f247ef88a943d74629457042ce64d7a92320092ba40d6` |
+| `pnpm-lock.yaml` | `f58933349adc295cad3ff96ba14d5cae6a62b37fcb83d12fe94a72063aaa0b75` |
+| `scripts/checks.toml` | `cbe4620f5a1c92ee723b8edaae74af3b2a0f07c97d8698d9cf514352548915fa` |
+| `scripts/check-docs-site-runtime.mjs` | `cb751b315e82d6f94091af0410257ce4234193ba2def9d78a63b7d9dc3050b28` |
+| `initial-author-scripts.xml` (initial preparation-failure history) | `752c5f45710ed4a4b162bc03b971c7cfaf7ccd105548cd0db01fd7a75401921e` |
+
+Authoring bundle files measured this turn:
+
+| Retained author file | SHA-256 |
+| --- | --- |
+| `intake-probe.py` | `c4cc9d0141114215e2a7936b63ce0ce280033ddf2ecb6640fe1b667cc0609a1f` |
+| `intake.stdout.txt` | `c72a905ed28a83b792b29fa6ee973e620f9212527e9410f147a491c5874e7157` |
+| `intake.stderr.txt` | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
+| `intake.receipt.json` | `2e014b4e143cf3a393563a6a8043f1364db094b774463383d857f3f514065822` |
+| `focused.xml` | `cbb1ac365b9319bfe0c81862447b8733bcead88233b66a7bbad1e98370b4c8cf` |
+| `focused.stdout.txt` | `0e1ad0addeba0d44b61016ed0f2aefa2b66481712aa10da89f81de1681c8154d` |
+| `focused.stderr.txt` | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
+| `focused.receipt.json` | `0661b12c02193d97d3d942ddd7f9f3dd22885407b6b06ee9002baf3357985142` |
+| `source-lock-hashes.json` | `4063d260fb5bb6089f0019577083a4c2e1669695d86030845b99a16bb69af752` |
+| `handoff-verification.json` | `350f52f8740a1085924879a6663a77edd26bba03b747e6802da7db9ddf01f630` |
+| `broker-command-ledger.json` | `8be56b52086c74f7742caa541a41520620f391d01b1a372faa8482bf95b5c498` |
+| `historical-html-probe.mjs` | `c2b7635d69bb3cb7ee745a236d1ee4ca10910daa7144eb9229d902e069ff46bd` |
+
+#### Initial preparation history
+
+These are the 2026-10-05 unprepared author-environment outcomes, not current
+product failures or the later broker results. The candidate-bound historical receipts above record subsequent prepared
+executions passing. They do not validate this later document revision.
+
+| Initial command | Actual initial outcome |
+| --- | --- |
+| Configured scripts recipe in `scripts/checks.toml` | Exit 1; JUnit recorded 86 entries: 81 passing, five failing, zero skipped. One lacked pinned `brace-expansion`; four distribution files could not import `ajv`, so their internal cases did not execute. |
+| Locked focused pytest recipe above | Exit 2, missing pytest executable; zero cases and no focused JUnit. |
+| `corepack pnpm docs:build` | Exit 1; install-asset equality passed, then `vitepress: command not found`. Emitted-link/redirect gates did not execute in this attempt. |
+| `corepack pnpm docs:check:runtime` | Exit 1, missing `@playwright/test`; no browser launched in this attempt. |
 
 ## Future architecture, not implemented
 
@@ -366,20 +560,12 @@ feature. The inspected source owners above define these seams:
 Only this document changes. Shared navigation, production contracts, migration
 versions, source policy and feature behavior are unchanged.
 
-## Verification checkpoint and remaining gates
+## Verification method
 
-| Check | Observed result |
-| --- | --- |
-| Probe above | Exit 0 with recorded synthetic stdout. AST-isolated SQL/predicate limits apply. |
-| Configured scripts recipe | Exit 1. JUnit records 86 entries: 81 passing, five failing, zero skipped. One failure lacked pinned `brace-expansion`; four distribution files failed import because `ajv` was missing, so their internal cases did not execute. Scripts gate remains pending. |
-| Locked focused pytest | Exit 2, missing executable; zero required cases executed. Pending preparation and rerun. |
-| `corepack pnpm docs:build` | Exit 1: install-asset equality passed, then `vitepress: command not found`. Dead-link/emitted-href/redirect gates did not execute; build of final document remains pending. |
-| `corepack pnpm docs:check:runtime` | Exit 1: missing `@playwright/test`; no browser launched. No rendered evidence at this checkpoint. |
-| Diff and scope checks | Working-tree and configured `origin/main...HEAD` checks exited 0. The explicit new-file no-index check emitted no whitespace diagnostics (exit 1 denotes the file difference). Only this document is changed/untracked; HEAD remains the inspected baseline. |
-
-Reproduce the configured scripts recipe using the owned directory above:
+From an owned synthetic QA directory, the configured recipes are:
 
 ```bash
+qa_dir=$(mktemp -d /tmp/jobctrl-953-qa.XXXXXX)
 sh -c 'exec node --test --test-reporter=junit --test-reporter-destination="$1" scripts/*.test.mjs' \
   jobctrl-scripts "$qa_dir/scripts.xml"
 corepack pnpm docs:build
@@ -388,26 +574,27 @@ git diff --check
 git diff --check origin/main...HEAD
 ```
 
-The configured comparison checks committed HEAD; rerun at the signed publication
-head. For the new untracked document, also run
-`git diff --no-index --check /dev/null docs/architecture/recruiting-intermediaries.md`.
-Confirm the complete changed-file list contains only this document.
+Run the locked fixture command above against the prepared environment. Preserve
+its actual node IDs/counts/results and report hash with the execution owner;
+inspected assertions alone are not execution proof. The committed comparison
+must be rerun at the signed publication head, and the changed-file list must
+contain only this document.
 
-After build, independent QA must visit `/architecture/recruiting-intermediaries`
-in a **fresh**, owned local preview. The configured runtime page list in
-`scripts/check-docs-site-runtime.mjs` does not include it. An ephemeral browser
-probe must block outbound requests, capture desktop/mobile screenshots outside
-source paths, and verify the three exact headings, issue href, table/code
-readability and scroll containment, hydration, loaded assets and absence of
-browser/request errors. Restart after rebuild. Rendered proof remains pending;
-Markdown inspection is not browser evidence.
+The configured runtime page list in `scripts/check-docs-site-runtime.mjs` does
+not include `/architecture/recruiting-intermediaries`. Direct-page QA therefore
+uses a fresh owned local preview and an ephemeral browser with outbound requests
+blocked. Preserve the actual desktop/mobile dimensions, screenshots and hashes,
+heading/issue-href readback, table/code scroll containment, hydration/asset results
+and errors with the execution owner. Restart preview after rebuilding. An emitted
+HTML/link check alone is not that rendered proof.
 
-Independent source/privacy/compatibility review and independent QA reproduction
-remain controller gates, with no unresolved Blocker/High allowed. The controller
-owns frozen dependency preparation, mandatory prepublication/final checks,
-browser/API QA, the signed Conventional Commit and exactly one investigation PR
-referencing #953 without an implementation-closing keyword. Require exact-head
-CI (including applicable Docs Site, Repo Scripts, Release Privacy Gate and DCO
-disposition), tracker/assignee and open-issue readback, and owned cleanup. Leave
-the PR unmerged and #953 open. Retain only synthetic local QA evidence outside
-source; commit no credentials, real profiles, databases or generated materials.
+Independent review covers source attribution, current/proposed separation,
+compatibility and privacy; independent QA reproduces synthetic and rendered
+results. No unresolved Blocker/High is acceptable. The controller owns dependency
+preparation, mandatory prepublication/final checks, browser/API QA, the signed
+Conventional Commit and one investigation PR referencing #953 without an
+implementation-closing keyword. Require exact-head applicable CI (Docs Site,
+Repo Scripts, Release Privacy Gate and DCO disposition), tracker/assignee and
+open-issue readback, and owned cleanup. Leave the PR unmerged and #953 open.
+This method defines publication gates; the local investigation measurements do
+not establish CI, publication or feature implementation.
