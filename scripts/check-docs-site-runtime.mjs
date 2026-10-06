@@ -201,7 +201,7 @@ const LIFECYCLE_EXPLANATION_CONTRACTS = [
       "Fetch once, then walk the configured extraction cascade.",
       "Verify active state independently.",
       "Assign confidence from the posting-content evidence.",
-      "Quarantine instead of guessing.",
+      "Quarantine low-confidence content.",
       "Surface duplicate candidates from content evidence.",
     ],
     tokens: [
@@ -211,7 +211,8 @@ const LIFECYCLE_EXPLANATION_CONTRACTS = [
       "1.0",
       "0.95",
       "0.85",
-      "unknown active state",
+      "signals remain unknown",
+      "Availability-only uncertainty does not create a content-review entry",
       "operator override",
     ],
   },
