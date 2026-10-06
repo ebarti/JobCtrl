@@ -87,14 +87,19 @@ the decision at the layer that actually made it, including early omissions.
 
 ### Executed classifier probes
 
-On 2026-10-06, Python imported the two frozen classifier files directly with
+On 2026-10-06, the original role probe imported the two frozen classifier files
+directly with
 `importlib.util.spec_from_file_location`, without importing application bootstrap.
 Title feedback was bound to a synthetic, empty in-memory SQLite table named
 `role_match_feedback_suggestions`, with columns `tenant_id`, `status`,
 `rule_kind`, `title_pattern`. The lookup returned approved local exact-title
 exclusions only; there were no rows. `role_matcher=None` disabled model
 adjudication. No personal configuration, network, provider or user database was
-used. The module imports generated only ignored Python bytecode.
+used. The original imports generated only ignored Python bytecode. A retained
+reproduction at `2026-10-06T11:29:29.022262+00:00` used the controller-prepared
+`workers/automation/.venv/bin/python` (Python 3.12.13), disabled bytecode writes,
+and produced byte-for-byte identical stdout, empty stderr and exit 0. The
+reproduction is a new measurement, not a retroactive original-run receipt.
 
 For every row, title matching used `match_mode="strict"`, with no track/seniority
 override. Location matching used `accept=["Spain", "Europe"]`,
@@ -146,67 +151,141 @@ were seeded and the legacy helper's accepted-job foreign key was not exercised.
 The full probe exited 0 because it explicitly caught and reported the expected
 failed review query; that does not make the query successful.
 
-The exact executed probe script and output are retained outside tracked source
-as `synthetic-probes.py` and `synthetic-probes.txt` in the role's owned temporary
-evidence directory. The implementation handoff supplies its location for
-independent inspection; temporary host paths are not public product contracts.
+### Retained probe provenance
 
-### Existing fixtures and execution status
+The controller allocated durable evidence directory
+`role-artifacts/authoring/implement/ae82e991e93d67d061e92fb6e66f35a7466de21b2d6cdfbe15cf1a14ab3d3a29`
+for this run. The following are retained-run file identifiers, not published
+documentation assets. `manifest.json` inventories their paths/hashes;
+`probe-run.json` records the executed argv, UTC start/end, interpreter hash,
+source/lock hashes and input-candidate identity. Reproduce with the prepared
+project interpreter on `synthetic-probes.py`, supplying `--root CHECKOUT` and
+`--inputs RETAINED_DIRECTORY/synthetic-inputs.json`. Substitute the checkout and
+retained directory paths; all eight inputs, fixture SQL and schema queries are
+in the input file. This reproducer has actually executed.
 
-The accepted selection contains only these existing tracked modules, each under
-`workers/automation/tests/`:
-
-| Selected module | Source evidence relevant to this investigation | Execution at this checkpoint |
+| Retained file | SHA-256 | Provenance |
 | --- | --- | --- |
-| [`test_title_filter.py`][title-tests] | Strict/recall, adjudicator, feedback, track and seniority behavior | Pending locked pytest/JUnit |
-| [`test_discovery_title_filter.py`][discovery-title-tests] | Leadership aliases and loose Workday rejection | Pending locked pytest/JUnit |
-| [`test_discovery_location_filter.py`][location-tests] | Remote country rejects, local exceptions, missing target matches and multiple Ashby locations | Pending locked pytest/JUnit |
-| [`test_discovery_search_units.py`][unit-tests] | Immutable search plan, competing/stale ownership, `test_jobspy_storage_records_new_receipt_once_across_replay` | Pending locked pytest/JUnit |
-| [`test_jobstreaming_resumable_discovery.py`][stream-tests] | `test_store_before_ack_replay_resumes_without_duplicate_counts_or_events`, `test_filtered_count_survives_loss_after_acknowledgement` | Pending locked pytest/JUnit |
-| [`test_discovery_identity.py`][identity-tests] | New policy rejection, accepted-job retirement and duplicate-owner preservation described above | Pending locked pytest/JUnit |
-| [`test_discovery_production_wiring.py`][wiring-tests] | Source-family acceptance, missing descriptions and stored-Job hygiene | Pending locked pytest/JUnit |
-| [`test_workday_discovery.py`][workday-tests] | Query expansion, loose title rejection and missing-description storage gates | Pending locked pytest/JUnit |
-| [`test_smartextract_discovery.py`][smart-tests] | Title/location/content filtering, canonical deduplication and restoration | Pending locked pytest/JUnit |
+| `original-synthetic-probes.py` | `55aaa7eecc46b0446b6235a9c9f0f72a139b8fe7898f0c846daf0832bd046d38` | Original scratch script recovered unchanged |
+| `original-synthetic-probes.txt` | `af973a0edfaa1add5be6738c0c4f9648a8c48bca83bd19429a27423ceed1d4b2` | Original full stdout recovered unchanged |
+| `synthetic-probes.py` | `b06d234ededea31611d7434cf6be84227cc8568e30b4e924d070007d9329fe12` | Newly executed reproducer, independent output capture |
+| `synthetic-inputs.json` | `9e618fa2048de01fa774e0ab2544ce573b80d980b3b30843e0759547544e70e8` | Complete synthetic inputs and expected results |
+| `synthetic-stdout.txt` | `af973a0edfaa1add5be6738c0c4f9648a8c48bca83bd19429a27423ceed1d4b2` | New full stdout, identical to original |
+| `synthetic-stderr.txt` | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` | New full stderr, empty |
+
+The recovered original files came from the first role invocation's scratch
+directory, whose input candidate was
+`c817d98c9fe1a484720b60f9c13ca3384a1066688d8e67b0c6e3cbb0250dae80`
+at the frozen baseline. Recovery hashes are measured now; the original exact
+UTC, interpreter hash and sealed execution receipt were not retained and are
+not invented. `broker-inspection.json` preserves that limit, the recovery UTC
+and the recovered historical failed-build/static-check logs. The fresh probe
+ran with input candidate
+`38ee5fa3f7c915ff6907aa4370f67b26afec8c8aba069a53f752575883b52c68`
+at head `d1ee640be349ef6488ce2b94b5695226954cd27b`, before this prose revision.
+Its input page hash was
+`f186e3997d0de4fd9fc5078b53b600434adfdbffa30d67446b2ff813df519189`.
+
+Before reproduction, each imported source was compared byte-for-byte with
+baseline `315aa323848bbd8da2ed95bccbb47f0fe685d27f`:
+
+| Input source/lock | SHA-256 |
+| --- | --- |
+| `discovery/title_filter.py` | `596c648231a983ae5a9b6633322f40ef02914208985109189ab1ab88b5a58294` |
+| `infrastructure/discovery/location_filter.py` | `f2b59841dec5235b6104c3287711e6b632bf80156015430ea31c48b76f640598` |
+| `database.py` | `97b0b49cb2c3feac2e722c70d4e608dd47628adb999220408112b8657faf669b` |
+| `workers/automation/uv.lock` | `c7a3609dab6c93fdaa9f247ef88a943d74629457042ce64d7a92320092ba40d6` |
+| `workers/automation/pyproject.toml` | `a8671f5ae58e48007f89e36e56d110d3e915a8d0caaf41738f8c5b05ee4af13d` |
+
+### Broker checkpoint: executed fixtures
+
+The supplied read-only `receipts.json` handoff has SHA-256
+`c04e3456cdd8e6caaf99b0e333e473ddd7554391bba4640eb8b7edbfd38ec8d5`.
+Its `checks.local` measurements belong to candidate
+`38ee5fa3f7c915ff6907aa4370f67b26afec8c8aba069a53f752575883b52c68`,
+head `d1ee640be349ef6488ce2b94b5695226954cd27b`, content digest
+`bc763ff43629b3ccee6e85132bd17e70260df5f744cbf928ac97237a61d3bb7d`.
+They are broker measurements inspected by this role, not role-executed tests
+or proof that the subsequently edited document passes. The handoff's earlier
+prepublication candidate `18de317ccf96f2bb64def2da4485f8988801500575521867ea0595c3119ae661`
+is historical and is not combined with these results.
+
+The broker used locked Python dependency preparation, then its prepared
+`.venv/bin/python -m pytest` with all nine selected paths, `-q`,
+`-o pythonpath=src` and its allocated `--junitxml` output. This is the actual
+recorded invocation, not a claim that this role executed the literal
+`checks.python` uv argv. The retained JUnit and full log show **146 passed in
+14.94 seconds, zero failures, errors or skips**, with these per-module counts.
+Each filename is under `workers/automation/tests/`.
+
+| Selected module | Source evidence relevant to this investigation | Broker passed cases |
+| --- | --- | --- |
+| [`test_title_filter.py`][title-tests] | Strict/recall, adjudicator, feedback, track and seniority behavior | 14 |
+| [`test_discovery_title_filter.py`][discovery-title-tests] | Leadership aliases and loose Workday rejection | 2 |
+| [`test_discovery_location_filter.py`][location-tests] | Remote country rejects, local exceptions, missing target matches and multiple Ashby locations | 12 |
+| [`test_discovery_search_units.py`][unit-tests] | Immutable search plan, competing/stale ownership, `test_jobspy_storage_records_new_receipt_once_across_replay` | 15 |
+| [`test_jobstreaming_resumable_discovery.py`][stream-tests] | `test_store_before_ack_replay_resumes_without_duplicate_counts_or_events`, `test_filtered_count_survives_loss_after_acknowledgement` | 18 |
+| [`test_discovery_identity.py`][identity-tests] | New policy rejection, accepted-job retirement and duplicate-owner preservation described above | 33 |
+| [`test_discovery_production_wiring.py`][wiring-tests] | Source-family acceptance, missing descriptions and stored-Job hygiene | 25 |
+| [`test_workday_discovery.py`][workday-tests] | Query expansion, loose title rejection and missing-description storage gates | 10 |
+| [`test_smartextract_discovery.py`][smart-tests] | Title/location/content filtering, canonical deduplication and restoration | 17 |
 
 The inspected broad-board recovery fixture injects worker loss while saving
 checkpoint revision 2 after filtered acknowledgement. Its assertions require
 revision 1 and one durable filtered receipt after interruption; recovery must
-report `new=0`, `filtered=1`, `raw_total=1`, one recovery and zero Jobs. This is
-the test's specified invariant, **not an observed result from running it here**.
+report `new=0`, `filtered=1`, `raw_total=1`, one recovery and zero Jobs.
+The broker JUnit records this case passed. It also records these baseline
+invariants passed; their assertions were traced to the frozen fixture sources.
 
-Availability probe `python3 -m pytest --version` actually failed with
-`No module named pytest`; no tests executed. This checkout had no prepared
-`workers/automation/.venv` or `node_modules`. Controller-owned frozen dependency
-preparation is pending. Controller-supplied scripts/Python JUnit report paths
-were also absent at intake and requested; no substitute report path was invented.
-The locked selected-test recipe has not run and no JUnit report exists yet.
-No source repair is included in this investigation.
-
-### Documentation verification and remaining gates
-
-The implementation checkpoint records actual check outcomes here before
-assessment. Mandatory broker gates remain separate from document readiness.
-
-| Check | Checkpoint result |
+| Verified baseline invariant | Executed fixture and observed scope |
 | --- | --- |
-| `checks.scripts` in [`scripts/checks.toml`][checks] | Pending controller-supplied JUnit path and prepared dependencies; recipe not executed, zero claimed tests |
-| `checks.python`, narrowed to the nine modules above, with owned JUnit | Pending controller-supplied report path and frozen preparation; recipe not executed |
-| `checks.docs`: `corepack pnpm docs:build` | Executed: exit 1. Install-asset parity passed; `sh: vitepress: command not found`, with `node_modules missing`. VitePress build, emitted-link and redirect checks did not execute. Successful build remains pending controller preparation. |
-| `corepack pnpm docs:check:runtime` | Not run: prerequisite build failed; prepared browser dependencies remain pending |
-| Independent rendered `/architecture/filtered-candidate-review` inspection | Not run: no emitted page; the tracked runtime script's fixed page list does not include it. Required rendered proof remains pending. |
-| `checks.diff`: `git diff --check origin/main...HEAD` | Executed after page creation: exit 0; checks the unchanged committed baseline, not the new untracked page |
-| `git diff --check` | Executed after page creation: exit 0. The page is untracked, so this command alone does not inspect it. |
-| New-page whitespace and source boundary | Executed `git diff --no-index --check /dev/null docs/architecture/filtered-candidate-review.md`: exit 1 for the new-file difference, with zero whitespace diagnostics. An explicit trailing-whitespace/conflict-marker/final-newline scan passed. `git status --short --untracked-files=all` showed only this new page; all 25 frozen source-link targets exist and the three required headings/issue link passed source inspection. This is source evidence, not rendered-site proof. |
+| New policy rejection without a Job | `test_discover_jobs_use_case_rejects_new_policy_mismatches_without_creating_job`: no stored URL owner or discovery events; new/observed/duplicate-rejected counts remain zero |
+| Existing accepted-Job retirement | `test_discover_jobs_use_case_soft_deletes_active_job_rejected_by_current_policy`: deleted Job retains original title; rejection reason, source observation and `JobDeleted`/`JobSourceObserved` events are present |
+| Rejection does not restore a deleted Job | `test_discover_jobs_use_case_keeps_policy_rejected_deleted_job_hidden`: the rejected owner remains deleted |
+| Distinct duplicate preserves owner | `test_discover_jobs_use_case_keeps_accepted_owner_when_content_duplicate_rejected`: active owner and accepted location/source observation survive replay; rejected duplicate is audited without attaching it as an owner observation |
+| Store/ack replay accounting | `test_store_before_ack_replay_resumes_without_duplicate_counts_or_events` and `test_filtered_count_survives_loss_after_acknowledgement`: injected interruption/replay preserves durable receipts and counts |
+| Ownership fencing | `test_same_owner_claim_reentry_returns_the_active_lease_and_rejects_a_competing_owner` and `test_late_cancel_from_stale_attempt_cannot_cancel_new_owner`: competing/stale attempts do not take the current owner's authority |
 
-No build, browser or selected-suite success is inferred from the classifier
-measurements. The controller must retain parseable reports with actual executed
-test counts, inspect headings/issue link/tables/source links/future labeling on
-the rendered page and independently review the claim-to-source chain. Missing
-required proof prevents feature verification; unresolved Blocker/High findings
-prevent publication. Controller-owned prepublication/final checks, browser/API
-QA, exact-final-head required CI, tracker/assignee readback, claim release and
-owned-resource cleanup remain mandatory. Publication must leave one PR open and
-unmerged; issue #1021 must not close as an implemented production feature.
+These are existing synthetic baseline fixtures. They do not exercise a new
+rejection-review endpoint, full historical policy/evidence capture, an artifact
+fingerprint preservation scenario, or live ATS/account reliability.
+
+### Broker checkpoint: documentation and report provenance
+
+The original role's availability probe failed with `No module named pytest`;
+zero tests ran in that attempt. Its first docs build exited 1 after install-asset
+parity passed, because `vitepress`/`node_modules` were absent. Those are retained
+historical environment failures, superseded by the supplied broker results;
+they are not current product facts. No production source repair occurred.
+
+| Broker measurement for candidate `38ee5fa…` | Actual result |
+| --- | --- |
+| Exact `checks.scripts` JUnit argv from [`scripts/checks.toml`][checks] | Exit 0; 163 tests passed, zero failures/errors/skips; report parsed and hash-verified. The separate `scripts:test` log also shows 163 passed, not an additional set of tests. |
+| Selected worker fixtures | Exit 0; 146 tests passed, zero failures/errors/skips, as detailed above |
+| `corepack pnpm docs:build` | Exit 0; install-asset parity, VitePress build/render, emitted-link check (14,089 references across 453 emitted files) and permanent Product Tour redirect check passed |
+| Emitted `/architecture/filtered-candidate-review.html` | Broker's four assertions passed: three required heading anchors and issue link. This role independently parsed the copied full HTML and found the exact headings, issue link, eight tables, 25 frozen source-link targets and visible future-status heading. |
+| `git diff --check` | Broker exit 0; historical candidate whitespace measurement |
+
+The handoff stores the following hash-addressed files under
+`role-evidence/ae82e991e93d67d061e92fb6e66f35a7466de21b2d6cdfbe15cf1a14ab3d3a29/files/`.
+The role verified all 25 referenced copied artifacts against their declared
+hashes and parsed the full JUnit/HTML, recording that inspection in the durable
+`broker-inspection.json` file.
+
+| Evidence file (filename is its SHA-256 plus extension) | Kind |
+| --- | --- |
+| `bf159e2bfd12ada64b6a21a83539f761fd9c4f25447ca0676a98acb1aca001a5.xml` | Scripts JUnit, 163 cases |
+| `70a8b8c19afcbc5686a2aef7d1da8fdc550e240f5bd4244d0b60fc1ce49f5184.xml` | Selected worker JUnit, 146 cases |
+| `7d6f656c13388a97864d4f7ffdb7c05dd98040bf7225ca99bf11659580f060e6.log` | Full selected pytest stdout/stderr log |
+| `194639f39f721f2687654fb9b31a909e3976ce0201830017a5f6db9812fabded.log` | Successful configured docs build log |
+| `72e2698eab168368acbd926fb9a8a37bc73fc1192b1446ac023d020a6dc05079.html` | Full emitted page, 104,214 bytes |
+
+Emitted-HTML inspection is not browser runtime QA: it does not prove hydration,
+visual layout, images loading or interactions. The supplied handoff contains no
+`docs:check:runtime` result or screenshots. The tracked runtime script also has
+a fixed page list that excludes this new page. All broker results above precede
+this prose revision; they remain attributable baseline investigation evidence,
+not proof of final-head verification or an implemented future feature.
 
 ## Future architecture, not implemented
 
