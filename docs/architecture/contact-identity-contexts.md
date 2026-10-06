@@ -326,10 +326,13 @@ independent inspection. Within it:
 
 The previous retained allocation is
 `run-22a5df595879/role-artifacts/authoring/implement/db9cd28945d09e1a20baf179894dec058c703f12cb432f3f2e323b4514fbb908/`,
-under the same controller run root. Its exact retained host location is:
+relative to the controller's retained runs root. Absolute host locators remain
+in the local receipts; public references use portable allocation IDs. Its
+original ledger SHA-256 hashes are:
 
 ```text
-/Users/eloibarti/.local/state/devflow/parallel-baseline-verified-20261006/service/runs/run-22a5df595879/role-artifacts/authoring/implement/db9cd28945d09e1a20baf179894dec058c703f12cb432f3f2e323b4514fbb908
+f92d4c8136a73a93a4eac0883d659fbef077e8c9e8a572b0fc544f9756427a8b  artifact-hashes.json
+9e7d428d4ad7c690882f26201b4fadd8918f39c6c419239c61e7824d738a204a  source-lock-hashes.json
 ```
 
 It contains:
@@ -368,10 +371,13 @@ of `checks.diff`. Broker handoff inspection found only bare diff-check
 receipts; those clean-checkout commands are not substitutes for the required
 committed-range gate.
 
-The current controller-authorized allocation is:
+The native measurement allocation, relative to the same retained runs root, is
+`run-22a5df595879/role-artifacts/authoring/implement/b7e972c375834c363a25b1b50610b46c98615e54fbb0b54c9e763e25f32eb23f/`.
+Its original ledger SHA-256 hashes are:
 
 ```text
-/Users/eloibarti/.local/state/devflow/parallel-baseline-verified-20261006/service/runs/run-22a5df595879/role-artifacts/authoring/implement/b7e972c375834c363a25b1b50610b46c98615e54fbb0b54c9e763e25f32eb23f
+59fda30f51769f5e57ef528e40ea151c561e1c1e046cbc17b02d252e98339983  artifact-hashes.json
+d1d719f6d844173d56e4b388d9d7dfb22b6cb82e6e781ff077fdc89b15b33a7a  source-lock-hashes.json
 ```
 
 It retains the current executable `contact-import-probe-native-v3.mts`, the
@@ -381,7 +387,7 @@ successful JUnit reports, and `toolchain.json`. The storage rerun in
 `runs/storage-current/` reproduced the Profile, provenance, filtering, research,
 outreach-preservation and value-exclusion observations above.
 `source-lock-hashes.json`, `artifact-hashes.json` and `evidence-index.json`
-bind the current document, exact inspected/exercised source and schema inputs,
+bind the recorded investigation checkpoint, exact inspected/exercised source and schema inputs,
 locks, executable revisions, inputs, full outputs, reports and limitations.
 
 `previous-implementation/` contains the byte-preserved previous allocation,
