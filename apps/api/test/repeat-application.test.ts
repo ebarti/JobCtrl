@@ -24,8 +24,8 @@ let db: Database.Database;
 
 beforeEach(() => {
   db = new Database(":memory:");
-  for (let version=7;version<=13;version++) db.exec(readFileSync(new URL(`../../../workers/automation/src/jobctrl/infrastructure/migrations/schema_v${version}.sql`,import.meta.url),"utf8"));
-  db.pragma("user_version = 13");
+  for (let version=7;version<=14;version++) db.exec(readFileSync(new URL(`../../../workers/automation/src/jobctrl/infrastructure/migrations/schema_v${version}.sql`,import.meta.url),"utf8"));
+  db.pragma("user_version = 14");
   ensureRepeatApplicationTables(db);
 });
 

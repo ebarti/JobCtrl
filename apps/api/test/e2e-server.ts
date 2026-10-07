@@ -23,9 +23,7 @@ const unavailable = async () => {
 };
 const providerDispatcher: JsonRpcDispatcher = {
   call: async (method, params) =>
-    method === RpcMethods.SearchPreferences
-      ? {jsonrpc:"2.0",id:1,result:{ok:true,profileVersion:params.expectedProfileVersion,inputVersion:String(params.expectedProfileVersion).padStart(64,"0"),status:"missing",determination:null}}
-      : method === RpcMethods.ProfileRequiredBulletSuggestions
+    method === RpcMethods.ProfileRequiredBulletSuggestions
       ? (() => {
           // Chosen model findings exercise the same persisted authority contract
           // as the worker, without judging the fixture's language.

@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from jobctrl.domain.determinations import DeterminationFailure
-from jobctrl.infrastructure.migrations.schema_v13 import create_exact_v13_schema
+from jobctrl.infrastructure.migrations.schema_v14 import create_exact_v14_schema
 from jobctrl.infrastructure.determinations import SqliteDeterminationRepository
 
 
@@ -36,7 +36,7 @@ def dependencies(conn, model, lane):
 
 def storage():
     conn = sqlite3.connect(":memory:")
-    create_exact_v13_schema(conn)
+    create_exact_v14_schema(conn)
     return conn
 
 
@@ -248,10 +248,10 @@ def test_message_link_foreign_application_and_ambiguous_result_fail_without_a_gu
     conn.close()
 
 
-def test_native_v12_to_v13_candidate_and_locked_activation_preserve_the_source(tmp_path: Path):
-    from jobctrl.database import create_exact_v12_database, close_connection, open_exact_v13_database
-    from jobctrl.infrastructure.migrations.v12_to_v13_execute import execute_v12_to_v13_candidate
-    from jobctrl.infrastructure.migrations.v13_activation import bind_source, activate
+def test_native_v12_to_v14_candidate_and_locked_activation_preserve_the_source(tmp_path: Path):
+    from jobctrl.database import create_exact_v12_database, close_connection, open_exact_v14_database
+    from jobctrl.infrastructure.migrations.legacy_to_v14_execute import execute_legacy_to_v14_candidate
+    from jobctrl.infrastructure.migrations.v14_activation import bind_source, activate
 
     source = tmp_path / "source.sqlite"
     live = tmp_path / "live.sqlite"
@@ -261,12 +261,12 @@ def test_native_v12_to_v13_candidate_and_locked_activation_preserve_the_source(t
     close_connection(source)
     live.write_bytes(source.read_bytes())
     before = source.read_bytes()
-    result = execute_v12_to_v13_candidate(source, candidate)
-    assert result.user_version == 13 and source.read_bytes() == before
+    result = execute_legacy_to_v14_candidate(source, candidate, source_version=12)
+    assert result.user_version == 14 and source.read_bytes() == before
     assert candidate.stat().st_mode & 0o077 == 0
     bind_source(source, live, candidate, receipt)
     activate(live, candidate, receipt)
-    conn = open_exact_v13_database(live)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 13
+    conn = open_exact_v14_database(live)
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 14
     close_connection(live)
     assert source.read_bytes() == before

@@ -1,6 +1,5 @@
 """Cited model admission, durable intake, distinct failures and cached batches."""
 
-from tests.determination_fakes import confirm_test_preferences
 import json
 import sqlite3
 from types import SimpleNamespace
@@ -11,10 +10,9 @@ from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
 from jobctrl.domain.discovery.search_units import DiscoverySearchSpec
 from jobctrl.domain.discovery.triage import Listing
 from jobctrl.infrastructure.determinations import SqliteDeterminationRepository
-from jobctrl.infrastructure.discovery.query_plan import prepare_query_plan
 from jobctrl.infrastructure.discovery.sqlite_search_unit_repository import SqliteDiscoverySearchUnitRepository
 from jobctrl.infrastructure.discovery.triage import triage_listings
-from jobctrl.infrastructure.migrations.schema_v13 import create_exact_v13_schema
+from jobctrl.infrastructure.migrations.schema_v14 import create_exact_v14_schema
 from jobctrl.llm_lanes import current_llm_lane
 
 
@@ -32,32 +30,7 @@ class Model:
         if self.failure:
             raise self.failure
         listings = data["context"].get("listings")
-        if listings is None:
-            return {
-                "queries": [
-                    {
-                        "query": "Model chosen query",
-                        "tier": 1,
-                        "source_scope": ["jobspy"],
-                        "rationale": "Model supplied plan",
-                        "citations": [
-                            {"source_id": data["sources"][0]["source_id"], "quote": data["sources"][0]["text"]}
-                        ],
-                    }
-                ],
-                "locations": [
-                    {
-                        "label": "Model supplied location",
-                        "location": "Model supplied location",
-                        "remote": True,
-                        "country_indeed": None,
-                        "rationale": "Model supplied plan",
-                        "citations": [
-                            {"source_id": data["sources"][0]["source_id"], "quote": data["sources"][0]["text"]}
-                        ],
-                    }
-                ],
-            }
+        assert listings is not None
         return {
             "listings": [
                 {
@@ -75,7 +48,7 @@ class Model:
 def setup(model, preflight=lambda: None):
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
-    create_exact_v13_schema(conn)
+    create_exact_v14_schema(conn)
     deps = dict(
         llm=model,
         repository=SqliteDeterminationRepository(conn),
@@ -85,7 +58,6 @@ def setup(model, preflight=lambda: None):
         lane="discovery",
         preflight=preflight,
     )
-    confirm_test_preferences(conn, CFG)
     return conn, deps
 
 
@@ -124,7 +96,6 @@ def test_default_batches_and_unchanged_rerun_make_zero_calls():
     triage_listings(conn, listings(41), search_cfg=CFG, dependencies={**deps, "llm": None})
     assert len(model.calls) == 3
     changed = {**CFG, "confirmed_targets": {**CFG["confirmed_targets"], "profile_version": 2}}
-    confirm_test_preferences(conn, changed)
     triage_listings(conn, listings(1), search_cfg=changed, dependencies=deps)
     assert len(model.calls) == 4
 
@@ -201,10 +172,14 @@ def postings(count, *, source_id="jobspy:test", start=0, strategy=None):
     return [
         ScrapedJobPosting(
             posting_url=PostingUrl(f"https://example.test/pending/{index}"),
-            source=Source("Synthetic board"), employer=Employer("Synthetic employer"),
+            source=Source("Synthetic board"),
+            employer=Employer("Synthetic employer"),
             metadata=JobMetadata(title=f"Synthetic title {index}", description=f"Synthetic description {index}"),
-            strategy=strategy or SearchStrategy.JOBSPY, source_id=source_id,
-            source_native_id=str(index), canonical_url=f"https://example.test/pending/{index}", ats_kind=AtsKind.OTHER,
+            strategy=strategy or SearchStrategy.JOBSPY,
+            source_id=source_id,
+            source_native_id=str(index),
+            canonical_url=f"https://example.test/pending/{index}",
+            ats_kind=AtsKind.OTHER,
         )
         for index in range(start, start + count)
     ]
@@ -257,7 +232,9 @@ def test_cancellation_preserves_pending_intake_and_a_completed_verdict_can_resum
     assert conn.execute("SELECT COUNT(*) FROM posting_triage WHERE consumed_at IS NULL").fetchone()[0] == 2
     if cancel_after_call:
         canceled.clear()
-        assert retry_pending_postings(conn, search_cfg=CFG, dependencies={**deps, "llm": None}, cancel_event=canceled) == 2
+        assert (
+            retry_pending_postings(conn, search_cfg=CFG, dependencies={**deps, "llm": None}, cancel_event=canceled) == 2
+        )
         assert len(model.calls) == 1
 
 
@@ -273,12 +250,20 @@ def test_recovered_ats_posting_uses_its_original_execution_family(source_id, fam
             tenant_id=LOCAL_TENANT, postings=postings(1, source_id=source_id, strategy=SearchStrategy.WORKDAY_API)
         )
     execution = DiscoveryExecutionRef("local", "synthetic-workflow", "synthetic-run")
-    assert retry_pending_postings(
-        conn, search_cfg=CFG, dependencies=deps, source_ids=(source_id,),
-        source_family=family, discovery_execution=execution,
-    ) == 1
+    assert (
+        retry_pending_postings(
+            conn,
+            search_cfg=CFG,
+            dependencies=deps,
+            source_ids=(source_id,),
+            source_family=family,
+            discovery_execution=execution,
+        )
+        == 1
+    )
     assert tuple(conn.execute("SELECT source_family,cohort_kind FROM discovery_execution_jobs").fetchone()) == (
-        family, "observed_this_run",
+        family,
+        "observed_this_run",
     )
 
 
@@ -288,17 +273,26 @@ def test_workday_intake_survives_failure_and_recovers_without_another_board_sear
 
     model = Model()
     conn, deps = setup(model)
-    job = {"title": "Synthetic title", "location": "Synthetic location", "employer_key": "synthetic",
-           "employer_name": "Synthetic employer", "job_req_id": "synthetic-id",
-           "apply_url": "https://synthetic.wd1.myworkdayjobs.com/External/job/synthetic"}
+    job = {
+        "title": "Synthetic title",
+        "location": "Synthetic location",
+        "employer_key": "synthetic",
+        "employer_name": "Synthetic employer",
+        "job_req_id": "synthetic-id",
+        "apply_url": "https://synthetic.wd1.myworkdayjobs.com/External/job/synthetic",
+    }
     employers = {"synthetic": {"name": "Synthetic employer", "_source_id": "workday:synthetic"}}
     searches = []
     monkeypatch.setattr(workday, "search_employer", lambda *args, **kwargs: searches.append(args) or [job])
     monkeypatch.setattr(workday, "get_connection", lambda: conn)
-    monkeypatch.setattr(workday, "triage_listings", lambda *args, **kwargs: triage_listings(
-        *args, **kwargs, dependencies={**deps, "llm": None}
-    ))
-    monkeypatch.setattr(workday, "fetch_details", lambda *args, **kwargs: pytest.fail("No detail fetch before admission"))
+    monkeypatch.setattr(
+        workday,
+        "triage_listings",
+        lambda *args, **kwargs: triage_listings(*args, **kwargs, dependencies={**deps, "llm": None}),
+    )
+    monkeypatch.setattr(
+        workday, "fetch_details", lambda *args, **kwargs: pytest.fail("No detail fetch before admission")
+    )
     with pytest.raises(DeterminationFailure, match="provider_unavailable"):
         workday._search_and_fetch_one("synthetic", employers, "Synthetic query", search_cfg=CFG)
     assert conn.execute("SELECT posting_json FROM posting_triage").fetchone()[0] is not None
@@ -319,7 +313,9 @@ def test_failed_backlog_retry_in_source_activity_does_not_block_new_intake(monke
     with pytest.raises(DeterminationFailure, match="provider_unavailable"):
         triage.admit(tenant_id=LOCAL_TENANT, postings=postings(1))
     source = SimpleNamespace(source_id="jobspy:test", should_run=True)
-    schedule = SimpleNamespace(for_prefix=lambda prefix: (source,) if prefix == "jobspy" else (), for_kinds=lambda *args: ())
+    schedule = SimpleNamespace(
+        for_prefix=lambda prefix: (source,) if prefix == "jobspy" else (), for_kinds=lambda *args: ()
+    )
     monkeypatch.setattr(runner, "get_connection", lambda: conn)
     monkeypatch.setattr(runner.config, "load_search_config", lambda: CFG)
     monkeypatch.setattr(runner, "_plan_discovery_schedule", lambda *args, **kwargs: schedule)
@@ -327,7 +323,9 @@ def test_failed_backlog_retry_in_source_activity_does_not_block_new_intake(monke
     monkeypatch.setattr(runner, "_jobspy_config_for_sources", lambda *args: {**CFG, "boards": ["test"]})
     monkeypatch.setattr(runner, "_scheduled_limit", lambda *args: 0)
     monkeypatch.setattr(wiring, "determination_dependencies", lambda *args, **kwargs: deps)
-    monkeypatch.setattr(runner, "_run_discovery_source", lambda _family, _label, _sources, run, **kwargs: run("synthetic") and "ok")
+    monkeypatch.setattr(
+        runner, "_run_discovery_source", lambda _family, _label, _sources, run, **kwargs: run("synthetic") and "ok"
+    )
     fetched = []
 
     def fresh_intake(**kwargs):
@@ -389,23 +387,6 @@ def test_failure_keeps_every_intake_row_pending_and_visible(mode, code):
     ] * 2
     assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 0
     assert conn.execute("SELECT COUNT(*) FROM semantic_determinations WHERE kind='posting_triage'").fetchone()[0] == 0
-
-
-def test_query_plan_uses_model_sources_and_persisted_binding():
-    model = Model()
-    conn, deps = setup(model)
-    cfg = prepare_query_plan(conn, CFG, dependencies=deps)
-    assert cfg["queries"][0]["query"] == "Model chosen query"
-    assert cfg["locations"][0]["remote"] is True
-    assert [row["source_id"] for row in model.calls[0]["sources"]] == ["confirmed_search_preferences"]
-    assert (
-        conn.execute(
-            "SELECT determination_id FROM semantic_entity_bindings WHERE determination_kind='discovery_query_plan'"
-        ).fetchone()[0]
-        == cfg["query_plan_determination_id"]
-    )
-    assert prepare_query_plan(conn, CFG, dependencies=deps) == cfg
-    assert len(model.calls) == 1
 
 
 def test_acknowledged_intake_survives_provider_failure_then_drains_as_one_batch(monkeypatch):

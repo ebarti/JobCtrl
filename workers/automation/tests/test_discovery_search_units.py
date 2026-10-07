@@ -6,7 +6,7 @@ import pandas as pd
 import pytest
 from jobstreaming import CheckpointConflictError, SearchCheckpoint, build_search_request
 
-from jobctrl.database import SchemaMigrationRequiredError, close_connection, init_db
+from jobctrl.database import SCHEMA_VERSION, SchemaMigrationRequiredError, close_connection, init_db
 from jobctrl.domain.discovery import (
     AtsKind,
     CanonicalJobIdentity,
@@ -286,7 +286,7 @@ def test_v4_search_unit_tables_require_an_explicit_v7_upgrade(
     conn.commit()
     close_connection(db_path)
 
-    with pytest.raises(SchemaMigrationRequiredError, match="exact schema v13"):
+    with pytest.raises(SchemaMigrationRequiredError, match=f"exact schema v{SCHEMA_VERSION}"):
         init_db(db_path)
 
 

@@ -33,12 +33,11 @@ export function recordModelDecision(
             "apply_terminal_report",
           ].includes(kind)
         ? "apply"
-        : ["posting_triage", "discovery_query_plan"].includes(kind)
+        : kind === "posting_triage"
           ? "discovery"
           : [
                 "required_bullet_coaching",
                 "candidate_interpretation",
-                "search_preferences",
                 "resume_extraction",
               ].includes(kind)
             ? "profile"
@@ -168,13 +167,11 @@ export function recordCoachingDecision(
     reference: string;
     originalText: string;
   }>;
-  const citations = sources
-    .slice(0, 1)
-    .map((source) => ({
-      source_id: source.reference,
-      quote: source.originalText,
-      exact_values: [],
-    }));
+  const citations = sources.slice(0, 1).map((source) => ({
+    source_id: source.reference,
+    quote: source.originalText,
+    exact_values: [],
+  }));
   const result = {
     suggestions: judgments.map((finding) => ({
       ...finding,
@@ -521,14 +518,21 @@ export function recordCandidateProposal(
     citations: [citation],
     rationale: "Explicit model proposal",
   }));
-  const id = recordModelDecision(db, "candidate_interpretation", "default", {
-    track: field("ic", citation),
-    seniority: field("senior", citation),
-    functions: [],
-    target_roles,
-    target_preferences: [],
-    experience_places: [],
-  }, "local", String(params.expectedProfileVersion));
+  const id = recordModelDecision(
+    db,
+    "candidate_interpretation",
+    "default",
+    {
+      track: field("ic", citation),
+      seniority: field("senior", citation),
+      functions: [],
+      target_roles,
+      target_preferences: [],
+      experience_places: [],
+    },
+    "local",
+    String(params.expectedProfileVersion),
+  );
   bindDecision(
     db,
     "profile",
@@ -754,6 +758,7 @@ export function seedSyntheticCompensation(
     "none",
   );
   recordCompensationAuthority(db, jobId, tenantId);
-  db.prepare("INSERT INTO job_events (tenant_id,job_id,identity_version,stage,event_type,level,message,occurred_at,payload_json) VALUES (?,?,1,'enrich','CompensationFactsUpdated','info','Synthetic compensation updated',?,'{}')")
-    .run(tenantId, jobId, new Date().toISOString());
+  db.prepare(
+    "INSERT INTO job_events (tenant_id,job_id,identity_version,stage,event_type,level,message,occurred_at,payload_json) VALUES (?,?,1,'enrich','CompensationFactsUpdated','info','Synthetic compensation updated',?,'{}')",
+  ).run(tenantId, jobId, new Date().toISOString());
 }

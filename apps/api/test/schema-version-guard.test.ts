@@ -20,7 +20,7 @@ import {
   EXACT_V9_SCHEMA_MANIFEST,
   EXACT_V10_SCHEMA_MANIFEST,
   EXACT_V11_SCHEMA_MANIFEST,
-  EXACT_V13_SCHEMA_MANIFEST,
+  EXACT_V14_SCHEMA_MANIFEST,
   hasExactV8SchemaManifest,
   hasExactV9SchemaManifest,
   schemaManifest,
@@ -35,7 +35,7 @@ function makeDbWithUserVersion(userVersion: number): { dbPath: string; cleanup: 
   return { dbPath, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
 }
 
-function makeExactV13Database(): { dbPath: string; cleanup: () => void } {
+function makeExactV14Database(): { dbPath: string; cleanup: () => void } {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-api-exact-v9-"));
   const dbPath = path.join(dir, "jobs.db");
   const migrations = path.resolve(
@@ -50,6 +50,7 @@ function makeExactV13Database(): { dbPath: string; cleanup: () => void } {
   db.exec(fs.readFileSync(path.join(migrations, "schema_v11.sql"), "utf8"));
   db.exec(fs.readFileSync(path.join(migrations, "schema_v12.sql"), "utf8"));
   db.exec(fs.readFileSync(path.join(migrations, "schema_v13.sql"), "utf8"));
+  db.exec(fs.readFileSync(path.join(migrations, "schema_v14.sql"), "utf8"));
   db.pragma(`user_version = ${SUPPORTED_SCHEMA_VERSION}`);
   db.close();
   return { dbPath, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
@@ -65,7 +66,7 @@ function tableColumns(db: Database.Database, tableName: string): string[] {
 }
 
 describe("schema version guard at DB open", () => {
-  it.each([0, 6, 7, 8, 9, 10, 11, 12, 14])("refuses schema version %i before runtime writes", (userVersion) => {
+  it.each([0, 6, 7, 8, 9, 10, 11, 12, 13, 15])("refuses schema version %i before runtime writes", (userVersion) => {
     const { dbPath, cleanup } = makeDbWithUserVersion(userVersion);
     try {
       const token = "job" + "ctl";
@@ -94,8 +95,8 @@ describe("schema version guard at DB open", () => {
     }
   });
 
-  it("opens the exact v13 schema", () => {
-    const { dbPath, cleanup } = makeExactV13Database();
+  it("opens the exact v14 schema", () => {
+    const { dbPath, cleanup } = makeExactV14Database();
     try {
       openDatabase(dbPath).close();
       openReadOnlyDatabase(dbPath).close();
@@ -201,10 +202,10 @@ describe("schema version guard at DB open", () => {
     });
   });
 
-  it("seals the same v13 manifest in both runtimes", () => {
-    const {dbPath, cleanup} = makeExactV13Database();
+  it("seals the same v14 manifest in both runtimes", () => {
+    const {dbPath, cleanup} = makeExactV14Database();
     const db = new Database(dbPath);
-    try { expect(schemaManifest(db, SUPPORTED_SCHEMA_VERSION)).toEqual(EXACT_V13_SCHEMA_MANIFEST); }
+    try { expect(schemaManifest(db, SUPPORTED_SCHEMA_VERSION)).toEqual(EXACT_V14_SCHEMA_MANIFEST); }
     finally { db.close(); cleanup(); }
   });
 

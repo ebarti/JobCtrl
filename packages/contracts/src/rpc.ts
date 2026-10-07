@@ -101,7 +101,6 @@ export const RpcMethods = {
   RenderResumePdf: "render_resume_pdf",
   GmailFeedbackScan: "gmail_feedback_scan",
   ProfileRequiredBulletSuggestions: "profile_required_bullet_suggestions",
-  SearchPreferences: "search_preferences",
   MapExtensionForm: "map_extension_form",
   ReviewResumeEdit: "review_resume_edit",
   PrepareRepeatApplicationDeterminations: "prepare_repeat_application_determinations",

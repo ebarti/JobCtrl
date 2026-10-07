@@ -7,7 +7,7 @@ import pytest
 from jobctrl.domain.determinations import DeterminationFailure
 from jobctrl.domain.profile.required_bullet_coaching import coach_required_bullets
 from jobctrl.infrastructure.determinations import SqliteDeterminationRepository
-from jobctrl.infrastructure.migrations.schema_v13 import create_exact_v13_schema
+from jobctrl.infrastructure.migrations.schema_v14 import create_exact_v14_schema
 from jobctrl.infrastructure.rpc import handlers
 from jobctrl.llm_lanes import current_llm_lane
 
@@ -64,7 +64,7 @@ class Model:
 def storage():
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
-    create_exact_v13_schema(conn)
+    create_exact_v14_schema(conn)
     return conn
 
 

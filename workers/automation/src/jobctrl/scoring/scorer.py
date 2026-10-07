@@ -173,7 +173,7 @@ def _build_use_case(
             job_interpretation_reader = read_interpretation
     if confirmed_preferences_reader is None:
         from jobctrl import config
-        from jobctrl.infrastructure.profile.search_preferences import require_confirmed_search_preferences
+        from jobctrl.domain.profile.search_targets import search_target_sources
         from jobctrl.domain.determinations import DeterminationFailure
 
         def read_preferences(snapshot, criteria):
@@ -186,16 +186,7 @@ def _build_use_case(
                 "criteria": [value for value in (criteria.criteria_text, criteria.target_criteria) if value],
             }
             cfg = {**cfg, "confirmed_targets": target}
-            from jobctrl.infrastructure.determinations import ThreadLocalDeterminationRepository
-
-            durable = determination_dependencies["repository"]
-            conn = (
-                durable.connection
-                if isinstance(durable, ThreadLocalDeterminationRepository)
-                else (repository.connection if isinstance(repository, SqliteScoreRepository) else get_connection())
-            )
-            sources, _ = require_confirmed_search_preferences(conn, cfg, tenant_id=str(snapshot.tenant_id))
-            return sources
+            return search_target_sources(cfg)
 
         confirmed_preferences_reader = read_preferences
     llm_port = determination_dependencies["llm"]

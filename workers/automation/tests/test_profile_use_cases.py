@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from jobctrl.infrastructure.migrations.schema_v13 import create_exact_v13_schema
+from jobctrl.infrastructure.migrations.schema_v14 import create_exact_v14_schema
 from jobctrl.domain.profile.aggregate import Profile
 from jobctrl.domain.profile.ports import ProfileImportResult
 from jobctrl.domain.profile.snapshot import ProfileSnapshot
@@ -45,7 +45,7 @@ def _valid_profile() -> dict:
 def _repo(tmp_path: Path) -> SqliteProfileRepository:
     conn = sqlite3.connect(tmp_path / "jobctrl.db")
     conn.row_factory = sqlite3.Row
-    create_exact_v13_schema(conn)
+    create_exact_v14_schema(conn)
     return SqliteProfileRepository(
         conn,
         publisher=InProcessEventBus(),

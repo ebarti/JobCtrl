@@ -723,7 +723,6 @@ def test_source_planning_does_not_run_hygiene_before_sources(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(runner, "init_db", lambda: object())
-    monkeypatch.setattr("jobctrl.infrastructure.discovery.query_plan.prepare_query_plan", lambda _conn, cfg: cfg)
     monkeypatch.setattr("jobctrl.infrastructure.discovery.triage.retry_pending_postings", lambda *_args, **_kwargs: 0)
     monkeypatch.setattr(runner.config, "load_search_config", lambda: {})
     monkeypatch.setattr(runner.config, "load_source_registry", lambda **_kwargs: [])

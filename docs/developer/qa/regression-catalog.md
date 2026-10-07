@@ -443,6 +443,8 @@ and accepted artifact bytes. Citation format checks must reject fragments of
 numbers and dotted identifiers while accepting complete values followed by
 sentence punctuation or separated by commas.
 
+For Discovery, save literal target settings and plan a run without any interpretation receipt or second approval. Inspect the actual board query/location parameters. Prove provider failure leaves intake pending, opposite valid model verdicts still control admission, and each API/UI citation joins the saved target snapshot captured for that attempt. Profile changes must not rewrite earlier sources. Native cutover preserves authored cells, canonical jobs, accepted files and recoverable raw posting captures while withdrawing obsolete intake decisions.
+
 For interview preparation, inspect each actual drafting prompt with a supported
 question and explicitly empty selections. Only that question's selected evidence
 may appear. Drive unsupported/accepted outcomes with verifier verdicts; the

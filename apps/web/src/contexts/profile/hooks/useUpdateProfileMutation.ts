@@ -8,7 +8,6 @@ import { dashboardKeys } from "../../operations/dashboardKeys.js";
 import { jobsKeys } from "../../operations/jobsKeys.js";
 import type { ProfileConfigResponse } from "../../operations/types.js";
 import { patchProfileResponse } from "../lib/profile-patches.js";
-import { discoveryKeys } from "../../operations/queryKeys.js";
 import { profileKeys } from "../queryKeys.js";
 
 export function useUpdateProfileMutation(): UseMutationResult<
@@ -32,7 +31,6 @@ export function useUpdateProfileMutation(): UseMutationResult<
       // Profile changes affect downstream scoring (job lists) and dashboard counts.
       settle: () => [
         profileKeys.profile(tenantId),
-        discoveryKeys.preferences(tenantId),
         jobsKeys.lists(tenantId),
         dashboardKeys.summary(tenantId),
       ],

@@ -13,8 +13,8 @@ from jobctrl.database import (
     close_connection,
     init_db,
 )
-from jobctrl.infrastructure.migrations import schema_v13
-from jobctrl.infrastructure.migrations.schema_v13 import EXACT_V13_MANIFEST
+from jobctrl.infrastructure.migrations import schema_v14
+from jobctrl.infrastructure.migrations.schema_v14 import EXACT_V14_MANIFEST
 from jobctrl.infrastructure.migrations.schema_manifest import (
     EXACT_V7_MANIFEST,
     SchemaManifestError,
@@ -98,8 +98,8 @@ def test_fresh_runtime_creation_matches_the_exact_v9_manifest(tmp_path: Path) ->
 
     conn = init_db(db_path)
 
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == EXACT_V13_MANIFEST.version
-    assert_exact_manifest(conn, EXACT_V13_MANIFEST)
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == EXACT_V14_MANIFEST.version
+    assert_exact_manifest(conn, EXACT_V14_MANIFEST)
     assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
     assert conn.execute("SELECT name FROM sqlite_master WHERE name = 'job_identity_aliases'").fetchone() is None
     tables = {str(row[0]) for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()}
@@ -231,7 +231,7 @@ def test_worker_heartbeat_does_not_drift_the_exact_v9_schema(
 
     reopened = init_db(db_path)
     assert schema_dump(reopened) == before_schema
-    assert_exact_manifest(reopened, EXACT_V13_MANIFEST)
+    assert_exact_manifest(reopened, EXACT_V14_MANIFEST)
     close_connection(db_path)
 
 
@@ -1494,7 +1494,7 @@ def test_failed_fresh_init_removes_its_file_and_can_retry(
     tmp_path: Path,
 ) -> None:
     db_path = tmp_path / "jobctrl.db"
-    create_schema = schema_v13.create_exact_v13_schema
+    create_schema = schema_v14.create_exact_v14_schema
 
     def fail_after_partial_creation(conn: sqlite3.Connection) -> None:
         executed = 0
@@ -1509,7 +1509,7 @@ def test_failed_fresh_init_removes_its_file_and_can_retry(
         conn.execute("CREATE TABLE partial_creation (id INTEGER)")
         raise RuntimeError("fixture creation failure")
 
-    monkeypatch.setattr(schema_v13, "create_exact_v13_schema", fail_after_partial_creation)
+    monkeypatch.setattr(schema_v14, "create_exact_v14_schema", fail_after_partial_creation)
     with pytest.raises(RuntimeError, match="fixture creation failure"):
         init_db(db_path)
 
@@ -1517,7 +1517,7 @@ def test_failed_fresh_init_removes_its_file_and_can_retry(
     assert not Path(f"{db_path}-wal").exists()
     assert not Path(f"{db_path}-shm").exists()
 
-    monkeypatch.setattr(schema_v13, "create_exact_v13_schema", create_schema)
+    monkeypatch.setattr(schema_v14, "create_exact_v14_schema", create_schema)
     conn = init_db(db_path)
-    assert_exact_manifest(conn, EXACT_V13_MANIFEST)
+    assert_exact_manifest(conn, EXACT_V14_MANIFEST)
     close_connection(db_path)

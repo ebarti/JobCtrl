@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from jobctrl.database import SchemaMigrationRequiredError, close_connection, init_db
+from jobctrl.database import SCHEMA_VERSION, SchemaMigrationRequiredError, close_connection, init_db
 
 
 def _table_exists(conn, name: str) -> bool:
@@ -70,7 +70,7 @@ def test_init_db_rejects_legacy_apply_tables_without_mutating_them(
     pre.commit()
     pre.close()
 
-    with pytest.raises(SchemaMigrationRequiredError, match="exact schema v13"):
+    with pytest.raises(SchemaMigrationRequiredError, match=f"exact schema v{SCHEMA_VERSION}"):
         init_db(fresh_db)
 
     verified = sqlite3.connect(str(fresh_db))

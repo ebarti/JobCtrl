@@ -3,7 +3,7 @@
 from collections.abc import Callable
 from typing import Literal
 
-from pydantic import Field, StrictBool, StrictStr
+from pydantic import Field, StrictBool, StrictInt, StrictStr
 
 from jobctrl.domain.determinations import (
     Citation,
@@ -16,7 +16,7 @@ from jobctrl.domain.determinations import (
 from jobctrl.domain.ports.llm import LlmPort
 
 TRIAGE_SCHEMA_VERSION = "2"
-TRIAGE_PROMPT_VERSION = "posting-triage-v2"
+TRIAGE_PROMPT_VERSION = "posting-triage-v3-saved-targets"
 DEFAULT_TRIAGE_BATCH_SIZE = 20
 MAX_TRIAGE_BATCH_SIZE = 100
 
@@ -29,6 +29,12 @@ class Listing(DeterminationModel):
     company: StrictStr = Field(max_length=2000)
     location: StrictStr = Field(max_length=4000)
     remote: StrictBool | None
+
+
+class IntakeSnapshot(DeterminationModel):
+    listing: Listing
+    target_sources: list[Source]
+    profile_version: StrictInt | None = Field(ge=1)
 
 
 class ListingDecision(DeterminationModel):
@@ -95,7 +101,7 @@ class ModelPostingTriage:
             schema=PostingTriage,
             schema_version=TRIAGE_SCHEMA_VERSION,
             prompt_version=TRIAGE_PROMPT_VERSION,
-            instruction="Determine admission for each supplied listing against the user's confirmed targets and preferences. Understand role, seniority, location and work model; do not treat a token as proof of a restriction. Use listing title, company, location and structured remote flag only, without pretending a description was fetched. Return admit, reject or uncertain for every listing ID. Uncertainty is visible and waits for a decision. Cite exact spans from that listing and/or the confirmed targets. The user's literal exact exclusions retain their literal meaning. Never invent listing facts.",
+            instruction="Determine admission for each supplied listing against the user's saved targets and preferences. Those selected settings are authoritative: do not change them, propose replacements or demand another confirmation. Understand the listing's role, seniority, location and work model against those settings; do not treat a token as proof of a restriction or invent a hard constraint from a preference. Use listing title, company, location and structured remote flag only, without pretending a description was fetched. Return admit, reject or uncertain for every listing ID. Uncertainty is visible and waits for a decision. Cite exact spans from that listing and/or the saved targets. The user's literal exact exclusions retain their literal meaning. Never invent listing facts.",
             sources=sources,
             context={"listings": [listing.model_dump() for listing in listings], "preferences": preferences},
             tenant_id=self._tenant_id,

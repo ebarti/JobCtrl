@@ -277,25 +277,6 @@ class _SyntheticSemanticModel:
 
     def chat_json(self, messages, *, response_schema, **kwargs):
         data = json.loads(messages[1].content)
-        source = data["sources"][0]
-        cite = {"source_id": source["source_id"], "quote": source["text"]}
-        if response_schema["title"] == "SearchPreferences":
-            return {
-                "roles": [
-                    {
-                        "title": "Owned target",
-                        "track": "management",
-                        "seniority_floor": "manager",
-                        "occupation_family": "software_engineering",
-                        "citations": [cite],
-                        "rationale": "Explicit QA choice",
-                    }
-                ],
-                "places": [],
-                "work_models": [],
-                "conditions": [],
-                "rationale": "Explicit QA choice",
-            }
         return {
             "listings": [
                 {
@@ -314,7 +295,6 @@ class _SyntheticSemanticModel:
 def _owned_semantic_ports():
     from jobctrl.infrastructure.discovery.triage import triage_listings
     from jobctrl.infrastructure.determinations import SqliteDeterminationRepository
-    from jobctrl.infrastructure.profile.search_preferences import prepare_search_preferences, confirm_search_preferences
 
     model = _SyntheticSemanticModel()
 
@@ -331,8 +311,6 @@ def _owned_semantic_ports():
 
     def decided(conn, listings, *, search_cfg, tenant_id="local", **kwargs):
         cfg = {**search_cfg, "confirmed_targets": {"profile_version": 1, "roles": ["Owned target"]}}
-        _, receipt = prepare_search_preferences(conn, cfg, dependencies=dependencies(conn, "profile"))
-        confirm_search_preferences(conn, cfg, receipt.determination_id)
         return triage_listings(conn, listings, search_cfg=cfg, dependencies=dependencies(conn, "discovery"))
 
     with (

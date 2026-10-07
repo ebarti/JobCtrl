@@ -11,6 +11,7 @@ from jobctrl.domain.discovery.triage import (
     MAX_TRIAGE_BATCH_SIZE,
     TRIAGE_PROMPT_VERSION,
     TRIAGE_SCHEMA_VERSION,
+    IntakeSnapshot,
     Listing,
     ModelPostingTriage,
     PostingTriage,
@@ -28,24 +29,13 @@ def listing_id(source_id: str, url: str, **snapshot) -> str:
     return fingerprint({"source_id": source_id, "url": url, **snapshot})
 
 
-def confirmed_targets(search_cfg: dict) -> tuple[list[Source], dict]:
+def saved_targets(search_cfg: dict) -> tuple[list[Source], dict]:
     # Config exposes literal saved profile fields. No title expansion, geography
     # aliasing or source selection is performed while loading those fields.
     target = dict(search_cfg.get("confirmed_targets") or {})
-    sources = []
-    for key in (
-        "roles",
-        "tracks",
-        "seniority",
-        "functions",
-        "specializations",
-        "locations",
-        "work_models",
-        "exclusions",
-        "criteria",
-    ):
-        for index, value in enumerate(target.get(key) or []):
-            sources.append(Source(source_id=f"target:{key}:{index}", text=str(value)))
+    from jobctrl.domain.profile.search_targets import search_target_sources
+
+    sources = search_target_sources(search_cfg)
     return sources, {
         "profile_version": target.get("profile_version"),
         "exact_title_exclusions": list(search_cfg.get("exact_title_exclusions") or []),
@@ -61,15 +51,9 @@ def triage_listings(
     dependencies = dependencies or determination_dependencies(
         conn, tenant_id=tenant_id, lane="discovery", model_spec=search_cfg.get("triage_model")
     )
-    targets, preferences = confirmed_targets(search_cfg)
-    from jobctrl.infrastructure.profile.search_preferences import read_search_preferences, preferences_version
-
-    confirmed = read_search_preferences(conn, search_cfg, tenant_id=tenant_id, confirmed=True)
-    preferences_id = confirmed[1].determination_id if confirmed else None
+    targets, preferences = saved_targets(search_cfg)
     target_key = fingerprint(
         {
-            "preferences_version": preferences_version(search_cfg),
-            "preferences_id": preferences_id,
             "targets": [source.model_dump() for source in targets],
             "preferences": preferences,
             "schema": TRIAGE_SCHEMA_VERSION,
@@ -86,10 +70,14 @@ def triage_listings(
             raise DeterminationFailure("conflicting_listing_snapshot")
         unique[listing.listing_id] = listing
     for listing in unique.values():
+        snapshot_payload = IntakeSnapshot(
+            listing=listing, target_sources=targets, profile_version=preferences["profile_version"]
+        )
+        captured_json = snapshot_payload.model_dump_json()
         snapshot = fingerprint(listing.model_dump())
         posting_json = json.dumps(asdict(postings[listing.listing_id]), ensure_ascii=False) if postings else None
         row = conn.execute(
-            "SELECT status,determination_id FROM posting_triage WHERE tenant_id=? AND listing_id=? AND snapshot_fingerprint=? AND target_fingerprint=?",
+            "SELECT status,determination_id,listing_json FROM posting_triage WHERE tenant_id=? AND listing_id=? AND snapshot_fingerprint=? AND target_fingerprint=?",
             (tenant_id, listing.listing_id, snapshot, target_key),
         ).fetchone()
         if row and posting_json is not None:
@@ -108,13 +96,19 @@ def triage_listings(
                     snapshot,
                     target_key,
                     listing.source_id,
-                    json.dumps(listing.model_dump(), ensure_ascii=False),
+                    captured_json,
                     now,
                 ),
             )
             decisions[listing.listing_id] = "literal_excluded"
             continue
         if row and row[0] != "pending_triage":
+            try:
+                captured = IntakeSnapshot.model_validate_json(row[2])
+            except ValueError:
+                raise DeterminationFailure("cache_binding_invalid") from None
+            if captured != snapshot_payload:
+                raise DeterminationFailure("cache_binding_invalid")
             envelope = dependencies["repository"].find(tenant_id, row[1])
             if (
                 envelope is None
@@ -137,15 +131,12 @@ def triage_listings(
             decision = next((item for item in result.listings if item.listing_id == listing.listing_id), None)
             if decision is None or decision.verdict != row[0]:
                 raise DeterminationFailure("cache_binding_invalid")
-            from jobctrl.infrastructure.profile.search_preferences import require_confirmed_search_preferences
-
-            confirmed_sources, _ = require_confirmed_search_preferences(conn, search_cfg, tenant_id=tenant_id)
             allowed = [
                 *(
                     Source(source_id=f"listing:{listing.listing_id}:{field}", text=str(getattr(listing, field)))
                     for field in ("url", "title", "company", "location", "remote")
                 ),
-                *confirmed_sources,
+                *targets,
             ]
             validate_citations(decision, allowed)
             decisions[listing.listing_id] = decision.verdict
@@ -158,7 +149,7 @@ def triage_listings(
                 snapshot,
                 target_key,
                 listing.source_id,
-                json.dumps(listing.model_dump(), ensure_ascii=False),
+                captured_json,
                 posting_json,
                 now,
             ),
@@ -170,14 +161,7 @@ def triage_listings(
     for start in range(0, len(pending), batch_size):
         batch = pending[start : start + batch_size]
         try:
-            from jobctrl.infrastructure.profile.search_preferences import require_confirmed_search_preferences
-
-            confirmed_sources, confirmed_preferences = require_confirmed_search_preferences(
-                conn, search_cfg, tenant_id=tenant_id
-            )
-            result, envelope = service.triage(
-                listings=batch, targets=confirmed_sources, preferences=confirmed_preferences
-            )
+            result, envelope = service.triage(listings=batch, targets=targets, preferences=preferences)
         except DeterminationFailure as exc:
             for listing in batch:
                 conn.execute(
@@ -198,12 +182,11 @@ def triage_listings(
         try:
             for decision in result.listings:
                 conn.execute(
-                    "UPDATE posting_triage SET status=?,reason_code=?,determination_id=?,preferences_determination_id=?,failure_code=NULL,last_attempt_at=NULL WHERE tenant_id=? AND listing_id=? AND snapshot_fingerprint=? AND target_fingerprint=?",
+                    "UPDATE posting_triage SET status=?,reason_code=?,determination_id=?,failure_code=NULL,last_attempt_at=NULL WHERE tenant_id=? AND listing_id=? AND snapshot_fingerprint=? AND target_fingerprint=?",
                     (
                         decision.verdict,
                         decision.reason_code,
                         envelope.determination_id,
-                        confirmed_preferences["determination_id"],
                         tenant_id,
                         decision.listing_id,
                         snapshots[decision.listing_id],
@@ -282,8 +265,17 @@ class PersistedPostingTriage:
 
 
 def retry_pending_postings(
-    conn, *, search_cfg, tenant_id="local", discovery_execution=None, source_ids=(), dependencies=None,
-    source_family=None, limit=0, max_batches=1, cancel_event=None,
+    conn,
+    *,
+    search_cfg,
+    tenant_id="local",
+    discovery_execution=None,
+    source_ids=(),
+    dependencies=None,
+    source_family=None,
+    limit=0,
+    max_batches=1,
+    cancel_event=None,
 ):
     """Recover a bounded batch inside the heartbeating source-family activity."""
     from pydantic import TypeAdapter
@@ -313,7 +305,7 @@ def retry_pending_postings(
         if row_limit <= 0:
             return resumed
         rows = conn.execute(
-            "SELECT posting_json FROM posting_triage WHERE tenant_id=? AND consumed_at IS NULL AND posting_json IS NOT NULL AND status IN ('pending_triage','admit')"
+            "SELECT posting_json FROM posting_triage WHERE tenant_id=? AND consumed_at IS NULL AND posting_json IS NOT NULL AND status IN ('pending_triage','admit','superseded')"
             + source_clause
             + " ORDER BY created_at,listing_id LIMIT ?",
             (str(tenant_id), *source_ids, row_limit),
@@ -322,6 +314,7 @@ def retry_pending_postings(
             return resumed
         postings = list(dict.fromkeys(row[0] for row in rows))
         postings = [TypeAdapter(ScrapedJobPosting).validate_json(value) for value in postings]
+
         def family_for(posting):
             if posting.strategy == SearchStrategy.WORKDAY_API:
                 return "workday" if posting.source_id.startswith("workday:") else "ats_api"

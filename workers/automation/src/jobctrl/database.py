@@ -21,7 +21,7 @@ from jobctrl.config import DB_PATH, DEFAULTS
 from jobctrl.infrastructure.migrations.schema_manifest import (
     EXACT_V11_MANIFEST,
     EXACT_V12_MANIFEST,
-    EXACT_V13_MANIFEST,
+    EXACT_V14_MANIFEST,
     SchemaManifestError,
     assert_exact_manifest,
     schema_dump,
@@ -54,7 +54,7 @@ from jobctrl.scoring.eligibility_sql import (
 # without changing any v7 table. v9 adds the optional per-position summary to
 # Candidate Profile experience rows. Posting URLs remain unique locators,
 # never aggregate identity.
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 
 
 class IncompatibleSchemaVersionError(RuntimeError):
@@ -297,24 +297,24 @@ def open_exact_v12_database(
     return conn
 
 
-def create_exact_v13_database(
+def create_exact_v14_database(
     db_path: Path | str | None = None,
 ) -> sqlite3.Connection:
-    """Create a brand-new database directly from the exact v13 schema."""
+    """Create a brand-new database directly from the exact v14 schema."""
     path = Path(db_path or DB_PATH)
     if path.exists():
-        raise FileExistsError(f"exact v13 creation requires a missing database path, found {path}")
+        raise FileExistsError(f"exact v14 creation requires a missing database path, found {path}")
     path.parent.mkdir(parents=True, exist_ok=True)
     # A deleted predecessor can still have a live connection cached by path.
     close_connection(path)
     conn = get_connection(path)
     try:
         if schema_dump(conn):
-            raise SchemaManifestError("fresh v13 creation found pre-existing schema")
+            raise SchemaManifestError("fresh v14 creation found pre-existing schema")
 
-        from jobctrl.infrastructure.migrations.schema_v13 import create_exact_v13_schema
+        from jobctrl.infrastructure.migrations.schema_v14 import create_exact_v14_schema
 
-        create_exact_v13_schema(conn)
+        create_exact_v14_schema(conn)
         conn.commit()
         return conn
     except BaseException:
@@ -329,33 +329,33 @@ def create_exact_v13_database(
         raise
 
 
-def open_exact_v13_database(
+def open_exact_v14_database(
     db_path: Path | str | None = None,
 ) -> sqlite3.Connection:
-    """Open an existing exact-v13 database without performing any writes."""
+    """Open an existing exact-v14 database without performing any writes."""
     path = Path(db_path or DB_PATH)
     if not path.exists():
         raise FileNotFoundError(f"No database to open at {path}")
     conn = get_connection(path, enable_wal=False)
-    current_version = _assert_schema_version_supported(conn, supported_version=13)
+    current_version = _assert_schema_version_supported(conn, supported_version=14)
     if current_version in (6, 7, 8, 9, 10, 11, 12):
         raise SchemaMigrationRequiredError(
             f"JobCtrl database is schema v{current_version}. Run `jobctrl update` so "
             "the native lifecycle can stop JobCtrl, create the paired backup, "
-            "and activate schema v13 before starting the runtime."
+            "and activate schema v14 before starting the runtime."
         )
-    if current_version != 13:
+    if current_version != 14:
         raise SchemaMigrationRequiredError(
-            f"JobCtrl can only open the exact schema v13 at runtime; found schema version {current_version}."
+            f"JobCtrl can only open the exact schema v14 at runtime; found schema version {current_version}."
         )
-    assert_exact_manifest(conn, EXACT_V13_MANIFEST)
+    assert_exact_manifest(conn, EXACT_V14_MANIFEST)
     return conn
 
 
 def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
-    """Create missing exact-v13 storage or validate an existing sealed database."""
+    """Create missing exact-v14 storage or validate an existing sealed database."""
     path = Path(db_path or DB_PATH)
-    return create_exact_v13_database(path) if not path.exists() else open_exact_v13_database(path)
+    return create_exact_v14_database(path) if not path.exists() else open_exact_v14_database(path)
 
 
 def ensure_projection_tables_in_db(conn: sqlite3.Connection | None = None) -> list[str]:

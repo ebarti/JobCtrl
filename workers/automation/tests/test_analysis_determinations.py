@@ -12,7 +12,7 @@ from jobctrl.domain.materials.claim_verification import ModelClaimVerifier
 from jobctrl.infrastructure.determinations import SqliteDeterminationRepository
 from jobctrl.infrastructure.enrichment.interpretation import PersistedJobInterpreter
 from jobctrl.infrastructure.materials.employer_analysis_repository import SqliteEmployerAnalysisRepository
-from jobctrl.infrastructure.migrations.schema_v13 import create_exact_v13_schema
+from jobctrl.infrastructure.migrations.schema_v14 import create_exact_v14_schema
 
 JOB_ID = "90000000-0000-4000-8000-000000000066"
 JOB = {"job_id": JOB_ID, "title": "Synthetic title", "full_description": "Canonical posting"}
@@ -130,7 +130,7 @@ class Synth:
 def connection():
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
-    create_exact_v13_schema(conn)
+    create_exact_v14_schema(conn)
     conn.execute(
         "INSERT INTO jobs (tenant_id, job_id, url, title, company, discovered_at) VALUES ('local',?,'https://example.test/analysis','Synthetic title','Synthetic employer','2026-10-06')",
         (JOB_ID,),
@@ -209,7 +209,8 @@ def test_protected_class_flag_comes_from_interpretation_and_keeps_original_evide
 
 def test_agreement_score_is_model_authored_for_the_same_drafts():
     scores = [
-        use_case(connection(), Model(agreement=score), multiple=True).execute(job=JOB).analysis.agreement.score for score in (0.1, 0.9)
+        use_case(connection(), Model(agreement=score), multiple=True).execute(job=JOB).analysis.agreement.score
+        for score in (0.1, 0.9)
     ]
     assert scores == [0.1, 0.9]
 

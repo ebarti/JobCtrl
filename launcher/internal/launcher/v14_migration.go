@@ -1,6 +1,6 @@
 package launcher
 
-// Native binding for exact-v13 candidates. The Python payload owns the frozen
+// Native binding for exact-v14 candidates. The Python payload owns the frozen
 // schema migration; this layer binds it to the stopped-runtime paired backup.
 
 import (
@@ -15,11 +15,11 @@ import (
 	"time"
 )
 
-var errV13SourceChanged = errors.New("v13 live source changed or has an unmanaged writer")
+var errV14SourceChanged = errors.New("v14 live source changed or has an unmanaged writer")
 
-var v13SourceBinder = bindV13Source
+var v14SourceBinder = bindV14Source
 
-type sealedV13CandidateReceipt struct {
+type sealedV14CandidateReceipt struct {
 	CandidateDataDigest string `json:"candidate_data_digest"`
 	CandidateSHA256     string `json:"candidate_sha256"`
 	JobCount            int    `json:"job_count"`
@@ -30,8 +30,8 @@ type sealedV13CandidateReceipt struct {
 	UserVersion         int64  `json:"user_version"`
 }
 
-func buildSealedV13Candidate(candidate launchContext, pair databasePair, journalID string) (string, error) {
-	sourceVersion, err := pairedV13SourceSchemaVersion(pair)
+func buildSealedV14Candidate(candidate launchContext, pair databasePair, journalID string) (string, error) {
+	sourceVersion, err := pairedV14SourceSchemaVersion(pair)
 	if err != nil {
 		return "", err
 	}
@@ -39,13 +39,13 @@ func buildSealedV13Candidate(candidate launchContext, pair databasePair, journal
 	if err != nil {
 		return "", err
 	}
-	path := v13CandidatePath(candidate.Instance.StateDir, journalID)
+	path := v14CandidatePath(candidate.Instance.StateDir, journalID)
 	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
-		return "", errors.New("v13 migration candidate path already exists")
+		return "", errors.New("v14 migration candidate path already exists")
 	}
 	python := filepath.Join(candidate.PayloadRoot, "python", "bin", "python3")
 	arguments := []string{
-		"-I", "-B", "-m", "jobctrl.infrastructure.migrations.legacy_to_v13_execute",
+		"-I", "-B", "-m", "jobctrl.infrastructure.migrations.legacy_to_v14_execute",
 		"--source", source,
 		"--candidate", path,
 		"--source-version", strconv.FormatInt(sourceVersion, 10),
@@ -58,41 +58,41 @@ func buildSealedV13Candidate(candidate launchContext, pair databasePair, journal
 	command.Dir = candidate.Instance.StateDir
 	output, err := command.Output()
 	if err != nil || len(output) > 4096 {
-		cleanupV13Candidate(candidate.Instance.StateDir, journalID)
-		return "", errors.New("sealed exact-v13 candidate execution failed")
+		cleanupV14Candidate(candidate.Instance.StateDir, journalID)
+		return "", errors.New("sealed exact-v14 candidate execution failed")
 	}
-	var receipt sealedV13CandidateReceipt
+	var receipt sealedV14CandidateReceipt
 	if err := decodeSingleJSON(output, &receipt); err != nil ||
 		receipt.SchemaVersion != 1 || receipt.Status != "ready" ||
 		receipt.UserVersion != currentJobCtrlSchemaVersion || receipt.JobCount < 0 || receipt.TableCount != 128 ||
 		!validSHA256(receipt.SourceDataDigest) || !validSHA256(receipt.CandidateDataDigest) ||
 		receipt.SourceDataDigest != receipt.CandidateDataDigest || !validSHA256(receipt.CandidateSHA256) {
-		cleanupV13Candidate(candidate.Instance.StateDir, journalID)
-		return "", errors.New("sealed exact-v13 candidate receipt is invalid")
+		cleanupV14Candidate(candidate.Instance.StateDir, journalID)
+		return "", errors.New("sealed exact-v14 candidate receipt is invalid")
 	}
 	info, statErr := os.Lstat(path)
 	if statErr != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0o077 != 0 {
-		cleanupV13Candidate(candidate.Instance.StateDir, journalID)
-		return "", errors.New("sealed v13 candidate is not an owner-private regular file")
+		cleanupV14Candidate(candidate.Instance.StateDir, journalID)
+		return "", errors.New("sealed v14 candidate is not an owner-private regular file")
 	}
 	digest, digestErr := sha256Path(path)
 	if digestErr != nil || digest != receipt.CandidateSHA256 {
-		cleanupV13Candidate(candidate.Instance.StateDir, journalID)
-		return "", errors.New("sealed v13 candidate digest verification failed")
+		cleanupV14Candidate(candidate.Instance.StateDir, journalID)
+		return "", errors.New("sealed v14 candidate digest verification failed")
 	}
 	version, versionErr := sqliteUserVersion(python, path)
 	if versionErr != nil || version != currentJobCtrlSchemaVersion {
-		cleanupV13Candidate(candidate.Instance.StateDir, journalID)
-		return "", errors.New("sealed v13 candidate schema verification failed")
+		cleanupV14Candidate(candidate.Instance.StateDir, journalID)
+		return "", errors.New("sealed v14 candidate schema verification failed")
 	}
-	if err := v13SourceBinder(candidate, source, path); err != nil {
-		cleanupV13Candidate(candidate.Instance.StateDir, journalID)
+	if err := v14SourceBinder(candidate, source, path); err != nil {
+		cleanupV14Candidate(candidate.Instance.StateDir, journalID)
 		return "", err
 	}
 	return path, nil
 }
 
-func pairedV13SourceSchemaVersion(pair databasePair) (int64, error) {
+func pairedV14SourceSchemaVersion(pair databasePair) (int64, error) {
 	if pair.SchemaVersion != 1 || pair.ID == "" || len(pair.Files) != 2 {
 		return 0, errors.New("migration requires a complete paired backup")
 	}
@@ -102,7 +102,7 @@ func pairedV13SourceSchemaVersion(pair databasePair) (int64, error) {
 		}
 		switch file.SQLiteUserVer {
 		case legacyJobCtrlSchemaVersion, exactJobCtrlSchemaVersion, previousJobCtrlSchemaVersion,
-			v9JobCtrlSchemaVersion, v10JobCtrlSchemaVersion, v11JobCtrlSchemaVersion, v12JobCtrlSchemaVersion:
+			v9JobCtrlSchemaVersion, v10JobCtrlSchemaVersion, v11JobCtrlSchemaVersion, v12JobCtrlSchemaVersion, v13JobCtrlSchemaVersion:
 			return file.SQLiteUserVer, nil
 		default:
 			return 0, errors.New("paired backup has an unsupported JobCtrl schema version")
@@ -111,10 +111,10 @@ func pairedV13SourceSchemaVersion(pair databasePair) (int64, error) {
 	return 0, errors.New("paired backup does not contain jobctrl.db")
 }
 
-func installSealedV13Candidate(candidate launchContext, candidatePath string) error {
+func installSealedV14Candidate(candidate launchContext, candidatePath string) error {
 	info, err := os.Lstat(candidatePath)
 	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0o077 != 0 {
-		return errors.New("v13 activation candidate is not an owner-private regular file")
+		return errors.New("v14 activation candidate is not an owner-private regular file")
 	}
 	live := filepath.Join(candidate.Instance.StateDir, "jobctrl.db")
 	liveInfo, err := os.Lstat(live)
@@ -122,29 +122,29 @@ func installSealedV13Candidate(candidate launchContext, candidatePath string) er
 		return errors.New("live database is not a regular file")
 	}
 	python := filepath.Join(candidate.PayloadRoot, "python", "bin", "python3")
-	command := exec.Command(python, "-I", "-B", "-m", "jobctrl.infrastructure.migrations.v13_activation",
+	command := exec.Command(python, "-I", "-B", "-m", "jobctrl.infrastructure.migrations.v14_activation",
 		"--mode", "activate", "--live", live, "--candidate", candidatePath, "--receipt", candidatePath+".source-binding.json")
 	command.Env = candidate.Environment
 	output, activationErr := command.CombinedOutput()
 	if activationErr != nil {
-		if strings.TrimSpace(string(output)) == "v13_source_changed" {
-			return errV13SourceChanged
+		if strings.TrimSpace(string(output)) == "v14_source_changed" {
+			return errV14SourceChanged
 		}
-		return errors.New("locked exact-v13 activation failed")
+		return errors.New("locked exact-v14 activation failed")
 	}
 	if version, err := sqliteUserVersion(python, live); err != nil || version != currentJobCtrlSchemaVersion {
-		return errors.New("installed v13 database did not reopen at the exact schema version")
+		return errors.New("installed v14 database did not reopen at the exact schema version")
 	}
 	return nil
 }
 
-func v13CandidatePath(stateDir, journalID string) string {
+func v14CandidatePath(stateDir, journalID string) string {
 	digest := sha256.Sum256([]byte(journalID))
-	return filepath.Join(stateDir, ".jobctrl-v13-candidate-"+hex.EncodeToString(digest[:])[:24]+".db")
+	return filepath.Join(stateDir, ".jobctrl-v14-candidate-"+hex.EncodeToString(digest[:])[:24]+".db")
 }
 
-func cleanupV13Candidate(stateDir, journalID string) {
-	candidate := v13CandidatePath(stateDir, journalID)
+func cleanupV14Candidate(stateDir, journalID string) {
+	candidate := v14CandidatePath(stateDir, journalID)
 	v12Intermediate := candidate + ".exact-v12-intermediate"
 	v11Intermediate := v12Intermediate + ".exact-v11-intermediate"
 	v10Intermediate := v11Intermediate + ".exact-v10-intermediate"
@@ -166,71 +166,71 @@ func cleanupV13Candidate(stateDir, journalID string) {
 	}
 }
 
-func bindV13Source(candidate launchContext, source, path string) error {
+func bindV14Source(candidate launchContext, source, path string) error {
 	python := filepath.Join(candidate.PayloadRoot, "python", "bin", "python3")
-	command := exec.Command(python, "-I", "-B", "-m", "jobctrl.infrastructure.migrations.v13_activation",
+	command := exec.Command(python, "-I", "-B", "-m", "jobctrl.infrastructure.migrations.v14_activation",
 		"--mode", "bind", "--source", source, "--live", filepath.Join(candidate.Instance.StateDir, "jobctrl.db"),
 		"--candidate", path, "--receipt", path+".source-binding.json")
 	command.Env = candidate.Environment
 	output, err := command.CombinedOutput()
 	if err != nil {
-		if strings.TrimSpace(string(output)) == "v13_source_changed" {
-			return errV13SourceChanged
+		if strings.TrimSpace(string(output)) == "v14_source_changed" {
+			return errV14SourceChanged
 		}
-		return errors.New("exact-v13 live source binding failed")
+		return errors.New("exact-v14 live source binding failed")
 	}
 	return nil
 }
 
 // A separate private intent keeps the historical journal wire shape compatible
 // with the previous launcher while distinguishing refusal from a partial restore.
-type v13SourcePreservationIntent struct {
+type v14SourcePreservationIntent struct {
 	SchemaVersion int    `json:"schemaVersion"`
 	JournalID     string `json:"journalId"`
 	BackupID      string `json:"backupId"`
 	SourceVersion int64  `json:"sourceVersion"`
 }
 
-func v13SourcePreservationPath(stateDir, journalID string) string {
-	return v13CandidatePath(stateDir, journalID) + ".preserve-source.json"
+func v14SourcePreservationPath(stateDir, journalID string) string {
+	return v14CandidatePath(stateDir, journalID) + ".preserve-source.json"
 }
 
-func readV13SourcePreservation(stateDir, journalID string) (*v13SourcePreservationIntent, error) {
-	path := v13SourcePreservationPath(stateDir, journalID)
+func readV14SourcePreservation(stateDir, journalID string) (*v14SourcePreservationIntent, error) {
+	path := v14SourcePreservationPath(stateDir, journalID)
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
 	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 {
-		return nil, errors.New("v13 source preservation intent is not owner-private")
+		return nil, errors.New("v14 source preservation intent is not owner-private")
 	}
-	var intent v13SourcePreservationIntent
-	if err := decodeStrictRegular(path, &intent); err != nil || intent.SchemaVersion != 1 || intent.JournalID != journalID || intent.BackupID == "" || intent.SourceVersion < 6 || intent.SourceVersion > 12 {
-		return nil, errors.New("v13 source preservation intent is invalid")
+	var intent v14SourcePreservationIntent
+	if err := decodeStrictRegular(path, &intent); err != nil || intent.SchemaVersion != 1 || intent.JournalID != journalID || intent.BackupID == "" || intent.SourceVersion < 6 || intent.SourceVersion > v13JobCtrlSchemaVersion {
+		return nil, errors.New("v14 source preservation intent is invalid")
 	}
 	return &intent, nil
 }
 
-func writeV13SourcePreservation(stateDir, journalID, backupID string, version int64) error {
-	if journalID == "" || backupID == "" || version < 6 || version > 12 {
-		return errors.New("v13 source preservation intent binding is invalid")
+func writeV14SourcePreservation(stateDir, journalID, backupID string, version int64) error {
+	if journalID == "" || backupID == "" || version < 6 || version > v13JobCtrlSchemaVersion {
+		return errors.New("v14 source preservation intent binding is invalid")
 	}
-	existing, err := readV13SourcePreservation(stateDir, journalID)
+	existing, err := readV14SourcePreservation(stateDir, journalID)
 	if err != nil {
 		return err
 	}
-	intent := v13SourcePreservationIntent{1, journalID, backupID, version}
+	intent := v14SourcePreservationIntent{1, journalID, backupID, version}
 	if existing != nil {
 		if *existing != intent {
-			return errors.New("v13 source preservation intent binding mismatch")
+			return errors.New("v14 source preservation intent binding mismatch")
 		}
 		return nil
 	}
-	return writeJSONAtomic(v13SourcePreservationPath(stateDir, journalID), intent)
+	return writeJSONAtomic(v14SourcePreservationPath(stateDir, journalID), intent)
 }
 
-func clearV13SourcePreservation(stateDir, journalID string) error {
-	if err := os.Remove(v13SourcePreservationPath(stateDir, journalID)); err != nil && !errors.Is(err, os.ErrNotExist) {
+func clearV14SourcePreservation(stateDir, journalID string) error {
+	if err := os.Remove(v14SourcePreservationPath(stateDir, journalID)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	return syncDirectory(stateDir)

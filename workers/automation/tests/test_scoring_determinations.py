@@ -10,7 +10,7 @@ from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.infrastructure.determinations import SqliteDeterminationRepository
 from jobctrl.infrastructure.scoring.sqlite_repository import SqliteScoreRepository
 from jobctrl.domain.enrichment.interpretation import JobInterpretation
-from jobctrl.infrastructure.migrations.schema_v13 import create_exact_v13_schema
+from jobctrl.infrastructure.migrations.schema_v14 import create_exact_v14_schema
 from jobctrl.domain.identifiers import canonical_job_id
 
 JOB_ID = canonical_job_id("90000000-0000-4000-8000-000000000088")
@@ -26,7 +26,7 @@ PROFILE = {
 def connection():
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
-    create_exact_v13_schema(conn)
+    create_exact_v14_schema(conn)
     conn.execute(
         "INSERT INTO jobs (tenant_id,job_id,url,title,company,discovered_at) VALUES ('local',?,'https://example.test/owned','Owned role','Owned employer','2026-10-06')",
         (str(JOB_ID),),
@@ -117,7 +117,7 @@ def case(conn, model):
         determination_dependencies=deps,
         job_interpretation_reader=lambda job: interpretation(),
         confirmed_preferences_reader=lambda snapshot, criteria: [
-            Source(source_id="confirmed_search_preferences", text="Explicitly confirmed model interpretation")
+            Source(source_id="target:roles:0", text="Synthetic saved target")
         ],
     )
 

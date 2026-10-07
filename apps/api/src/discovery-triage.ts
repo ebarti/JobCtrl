@@ -1,7 +1,7 @@
 import {
   DiscoveryTriageResponseSchema,
+  DiscoveryIntakeSnapshotSchema,
   PostingTriageResultSchema,
-  SearchPreferencesResultSchema,
   type DiscoveryTriageResponse,
 } from "@jobctrl/contracts";
 import type { SqliteDatabase } from "./db.js";
@@ -25,13 +25,13 @@ export function readDiscoveryTriage(
     status:
       | "pending_triage"
       | "literal_excluded"
+      | "superseded"
       | "admit"
       | "reject"
       | "uncertain";
     reason_code: string | null;
     failure_code: string | null;
     determination_id: string | null;
-    preferences_determination_id: string | null;
     created_at: string;
   }>;
   const total = (
@@ -42,38 +42,20 @@ export function readDiscoveryTriage(
       .get() as { total: number }
   ).total;
   const rows = records.map((row) => {
-    const listing = JSON.parse(row.listing_json) as {
-      url: string;
-      title: string;
-      company: string;
-      location: string;
-      remote: boolean | null;
-      listing_id: string;
-      source_id: string;
-    };
+    const snapshot = DiscoveryIntakeSnapshotSchema.parse(
+      JSON.parse(row.listing_json),
+    );
+    const listing = snapshot.listing;
     const envelope = row.determination_id
       ? readDetermination(db, "local", row.determination_id)
-      : null;
-    const preferencesEnvelope = row.preferences_determination_id
-      ? readDetermination(db, "local", row.preferences_determination_id)
       : null;
     if (
       envelope &&
       (envelope.kind !== "posting_triage" ||
         envelope.schema_version !== "2" ||
-        envelope.prompt_version !== "posting-triage-v2" ||
+        envelope.prompt_version !== "posting-triage-v3-saved-targets" ||
         envelope.entity_id !== "discovery:intake" ||
         envelope.lane !== "discovery")
-    )
-      throw new Error("triage_binding_invalid");
-    if (
-      preferencesEnvelope &&
-      (preferencesEnvelope.kind !== "search_preferences" ||
-        preferencesEnvelope.schema_version !== "1" ||
-        preferencesEnvelope.prompt_version !== "search-preferences-v1" ||
-        preferencesEnvelope.entity_id !== "discovery:preferences" ||
-        !SearchPreferencesResultSchema.safeParse(preferencesEnvelope.result)
-          .success)
     )
       throw new Error("triage_binding_invalid");
     const result =
@@ -86,10 +68,10 @@ export function readDiscoveryTriage(
     if (
       row.status !== "pending_triage" &&
       row.status !== "literal_excluded" &&
+      row.status !== "superseded" &&
       (!decision ||
         decision.verdict !== row.status ||
-        decision.reason_code !== row.reason_code ||
-        !preferencesEnvelope)
+        decision.reason_code !== row.reason_code)
     )
       throw new Error("triage_binding_invalid");
     if (
@@ -116,10 +98,8 @@ export function readDiscoveryTriage(
                 : "False"
             : listing[field],
         );
-      sources.set(
-        "confirmed_search_preferences",
-        JSON.stringify(preferencesEnvelope!.result),
-      );
+      for (const source of snapshot.target_sources)
+        sources.set(source.source_id, source.text);
       if (
         decision.citations.some(
           (citation) =>
@@ -129,7 +109,8 @@ export function readDiscoveryTriage(
         throw new Error("triage_binding_invalid");
     }
     return {
-      preferencesDetermination: preferencesEnvelope,
+      targetSources: snapshot.target_sources,
+      targetProfileVersion: snapshot.profile_version,
       rowId:
         row.listing_id +
         ":" +

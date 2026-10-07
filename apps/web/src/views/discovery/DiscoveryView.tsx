@@ -1,5 +1,3 @@
-import {useProfileQuery} from "../../contexts/profile/hooks/useProfileQuery.js";
-import {SearchPreferencesPanel} from "../../contexts/discovery/components/SearchPreferencesPanel.js";
 import { DiscoveryTriagePanel } from "../../contexts/discovery/components/DiscoveryTriagePanel.js";
 import {
   DiscoveryProductControls,
@@ -15,7 +13,6 @@ export function DiscoveryView({
 }: {
   readonly sourceTable?: DiscoverySourceTableControls;
 } = {}) {
-  const profile=useProfileQuery();
   return (
     <>
       <PageHead eyebrow="Pipeline" title="Discovery" />
@@ -36,7 +33,6 @@ export function DiscoveryView({
         </nav>
         <div className="discovery-task-section" id="discovery-target-search">
           <TargetSearchSettingsPanel />
-          <SearchPreferencesPanel profileVersion={profile.data?.profileVersion ?? undefined} />
         </div>
         <div className="discovery-task-section" id="discovery-automation">
           <DiscoveryAutomationSettingsPanel />
@@ -44,7 +40,12 @@ export function DiscoveryView({
         <div className="discovery-task-section" id="discovery-runtime">
           <DiscoveryRuntimeSettingsPanel />
         </div>
-        <div className="discovery-task-section" id="discovery-listing-decisions"><DiscoveryTriagePanel /></div>
+        <div
+          className="discovery-task-section"
+          id="discovery-listing-decisions"
+        >
+          <DiscoveryTriagePanel />
+        </div>
         <div className="discovery-task-section" id="discovery-source-controls">
           <DiscoveryProductControls
             layout="tabs"

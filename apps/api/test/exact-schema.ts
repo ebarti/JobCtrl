@@ -53,7 +53,14 @@ const v13SchemaPath = fileURLToPath(
   ),
 );
 
-// The frozen v7 schema plus v8/v9/v10/v11/v12/v13 DDL form the exact runtime schema. The
+const v14SchemaPath = fileURLToPath(
+  new URL(
+    "../../../workers/automation/src/jobctrl/infrastructure/migrations/schema_v14.sql",
+    import.meta.url,
+  ),
+);
+
+// The frozen v7 schema plus v8-v14 DDL form the exact runtime schema. The
 // seeding hooks across this suite call this helper once per test, so build it
 // once per worker process and copy the closed single-file database instead.
 let templatePath: string | undefined;
@@ -74,6 +81,7 @@ function schemaTemplate(): string {
   db.exec(fs.readFileSync(path.resolve(v11SchemaPath), "utf8"));
   db.exec(fs.readFileSync(path.resolve(v12SchemaPath), "utf8"));
   db.exec(fs.readFileSync(path.resolve(v13SchemaPath), "utf8"));
+  db.exec(fs.readFileSync(path.resolve(v14SchemaPath), "utf8"));
   db.pragma(`user_version = ${SUPPORTED_SCHEMA_VERSION}`);
   db.close();
   process.on("exit", () => {

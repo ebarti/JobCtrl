@@ -2,8 +2,8 @@ import type { TenantId } from "@jobctrl/domain-types";
 
 export const discoveryKeys = {
   all: (tenantId: TenantId) => ["tenant", tenantId, "discovery"] as const,
-  preferences: (tenantId:TenantId,version?:number) => version===undefined ? ["tenant",tenantId,"discovery","preferences"] as const : ["tenant",tenantId,"discovery","preferences",version] as const,
-  triage: (tenantId:TenantId,offset=0) => ["tenant",tenantId,"discovery","triage",offset] as const,
+  triage: (tenantId: TenantId, offset = 0) =>
+    ["tenant", tenantId, "discovery", "triage", offset] as const,
   settings: (tenantId: TenantId) =>
     ["tenant", tenantId, "discovery", "settings"] as const,
   sourceLocator: (tenantId: TenantId) =>

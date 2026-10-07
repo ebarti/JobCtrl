@@ -18,7 +18,7 @@ export function DiscoveryTriagePanel() {
       <CardContent>
         <p>
           Every listing waits for a model decision before admission. Pending and
-          uncertain listings remain here; adjust confirmed targets and retry
+          uncertain listings remain here; adjust saved targets and retry
           Discovery when more evidence is available.
         </p>
         {query.isPending ? (
@@ -61,16 +61,18 @@ export function DiscoveryTriagePanel() {
                     ))}
                     <p>Input: {row.determination.input_fingerprint}</p>
                     <p>Targets: {row.targetFingerprint}</p>
-                    {row.preferencesDetermination ? (
+                    {row.targetSources.length > 0 ? (
                       <details>
-                        <summary>Confirmed preference sources</summary>
-                        <pre>
-                          {JSON.stringify(
-                            row.preferencesDetermination,
-                            null,
-                            2,
-                          )}
-                        </pre>
+                        <summary>Saved search settings used</summary>
+                        <p>
+                          Profile version:{" "}
+                          {row.targetProfileVersion ?? "not recorded"}
+                        </p>
+                        {row.targetSources.map((source) => (
+                          <p key={source.source_id}>
+                            <strong>{source.source_id}</strong>: {source.text}
+                          </p>
+                        ))}
                       </details>
                     ) : null}
                   </details>

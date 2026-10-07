@@ -1767,24 +1767,12 @@ version. Lowering it can make existing persisted scores eligible for
 
 ## Discovery target search
 
-`POST /v1/discovery/preferences` accepts `operation` (`read`, `prepare` or
-`confirm`) and `expectedProfileVersion`. `confirm` also requires the current
-proposal's `determinationId`; the other operations reject that field. Reads
-return persisted state without a model call. Preparation returns a source-bound
-proposal with `status: pending_confirmation`; confirmation accepts that exact
-proposal only while the profile and authored criteria remain unchanged.
-Responses expose `profileVersion`, `inputVersion`, `status` (`missing`,
-`pending_confirmation`, `confirmed`) and the optional determination envelope.
-Missing authored preferences return `400`, stale versions/proposals `409`,
-spend denial `429`, provider unavailability `503`, and provider/output/citation
-failures `502`. Known failures retain their safe code in `error` and an
-actionable `message`; unknown worker failures never expose private prose.
-
-Confirmed profile target fields are inputs to a persisted query-plan determination.
-The model chooses board queries and locations with source citations; adapters
-fetch and parse. Saved exact title exclusions are literal user-authorized filters.
-No alias table expands titles, geographic token list removes a source, or lexical
-recall floor decides admission.
+The existing saved profile and Discovery settings are authoritative. Literal
+role titles and location/work-model controls become board parameters directly;
+planning needs no model call or additional confirmation endpoint. Saved exact
+title exclusions remain literal user-authorized filters. Saved criteria travel
+verbatim to posting and scoring determinations. No alias table expands titles,
+geographic token list removes a source, or lexical recall floor decides admission.
 
 Intake rows are stored before model spending. `triageBatchSize` defaults to `20`
 and accepts `1–100`; `triageModel` optionally overrides the configured Discovery
@@ -1798,7 +1786,11 @@ Stored jobs are not retroactively soft-deleted by semantic word filters.
 rationales, citations and their determination envelope; `offset` is nonnegative
 and `limit` is bounded to `1–200`. It never computes meaning on reads. The
 Discovery page pages these records, including rejects and pending failures.
-The target profile version and listing snapshot fence every determination.
+`targetSources` and `targetProfileVersion` describe the saved settings captured
+for that attempt; later profile edits do not replace those citation sources.
+The listing snapshot fences every determination. Native v14 withdraws obsolete
+intake decisions as `superseded`, preserves their raw captures and makes
+unconsumed captures recoverable against the current saved settings.
 
 ## Worker runtime and health
 

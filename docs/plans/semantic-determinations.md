@@ -1,3 +1,5 @@
+> Owner correction (2026-10-07): already-saved search controls are authoritative. Execute literal queries and location/work-model settings directly; remove the model query planner and redundant preference-interpretation/confirmation gate. Assess posting meaning against the saved inputs, and retain their exact source snapshots with intake decisions. The original audit below is retained as context; this correction supersedes its separate search-preference approval and query-plan proposals.
+
 # Semantic Heuristics Audit And LLM-Determination Plan
 
 Date: 2026-10-06. Base: `main` @ `315aa3238`. Trigger: PR #1063 and

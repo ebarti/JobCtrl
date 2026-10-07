@@ -206,7 +206,7 @@ def determination_ports(monkeypatch):
 
         kwargs["job_interpretation_reader"] = interpreted
         kwargs["confirmed_preferences_reader"] = lambda snapshot, criteria: [
-            Source(source_id="confirmed_search_preferences", text="Confirmed synthetic preference")
+            Source(source_id="target:roles:0", text="Synthetic saved target")
         ]
         return original(**kwargs)
 

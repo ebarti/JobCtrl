@@ -151,55 +151,6 @@ def draft_anchor_fields(payload):
     return payload
 
 
-class PreferenceModel:
-    def __init__(self, family="software_engineering", seniority="senior"):
-        self.family, self.seniority, self.calls = family, seniority, []
-
-    def chat_json(self, messages, **kwargs):
-        data = json.loads(messages[1].content)
-        self.calls.append(data)
-        source = data["sources"][0]
-        citation = {"source_id": source["source_id"], "quote": source["text"], "exact_values": []}
-        return {
-            "roles": [
-                {
-                    "title": "Synthetic target",
-                    "track": "ic",
-                    "seniority_floor": self.seniority,
-                    "occupation_family": self.family,
-                    "citations": [citation],
-                    "rationale": "Explicit model interpretation",
-                }
-            ],
-            "places": [],
-            "work_models": [],
-            "conditions": [],
-            "rationale": "Explicit model interpretation",
-        }
-
-
-def confirm_test_preferences(conn, cfg, *, tenant_id="local", model=None):
-    from jobctrl.infrastructure.profile.search_preferences import prepare_search_preferences, confirm_search_preferences
-    from jobctrl.infrastructure.determinations import SqliteDeterminationRepository
-
-    _, envelope = prepare_search_preferences(
-        conn,
-        cfg,
-        tenant_id=tenant_id,
-        dependencies=dict(
-            llm=model or PreferenceModel(),
-            repository=SqliteDeterminationRepository(conn),
-            tenant_id=tenant_id,
-            provider="synthetic",
-            model="synthetic",
-            lane="profile",
-            preflight=lambda: None,
-        ),
-    )
-    confirm_search_preferences(conn, cfg, envelope.determination_id, tenant_id=tenant_id)
-    return envelope
-
-
 def tailor_dependencies(llm, *, verdict="pass"):
     verifier, quality = review_ports(quality_source=llm, verdict=verdict)
     return dict(
@@ -226,7 +177,7 @@ def scoring_case(conn, llm):
         ),
         job_interpretation_reader=lambda job: job_interpretation(),
         confirmed_preferences_reader=lambda snapshot, criteria: [
-            Source(source_id="confirmed_search_preferences", text="Explicit confirmed preference decision")
+            Source(source_id="target:roles:0", text="Synthetic saved target")
         ],
     )
 

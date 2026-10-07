@@ -134,9 +134,7 @@ def conn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> sqlite3.Connection:
         kwargs.setdefault("job_interpretation_reader", lambda job: job_interpretation())
         kwargs.setdefault(
             "confirmed_preferences_reader",
-            lambda snapshot, criteria: [
-                Source(source_id="confirmed_search_preferences", text="Explicit confirmed decision")
-            ],
+            lambda snapshot, criteria: [Source(source_id="target:roles:0", text="Synthetic saved target")],
         )
         return original_build(**kwargs)
 

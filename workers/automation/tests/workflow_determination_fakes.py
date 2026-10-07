@@ -6,7 +6,6 @@ The semantic-authority tests own rejection and provider-failure scenarios.
 
 import json
 import importlib
-from tests.determination_fakes import confirm_test_preferences
 from tests.compensation_fakes import dependencies
 from tests.page_fakes import PageModel, interpreter
 from tests.test_discovery_determinations import Model
@@ -48,8 +47,9 @@ def install_discovery_models(monkeypatch, *, verdict="admit"):
         }
         if not cfg["confirmed_targets"].get("roles"):
             cfg["confirmed_targets"]["roles"] = ["Synthetic target"]
-        confirm_test_preferences(conn, cfg, tenant_id=tenant_id)
-        return original(conn, listings, search_cfg=cfg, tenant_id=tenant_id, dependencies=dependencies, postings=postings)
+        return original(
+            conn, listings, search_cfg=cfg, tenant_id=tenant_id, dependencies=dependencies, postings=postings
+        )
 
     monkeypatch.setattr(
         triage,

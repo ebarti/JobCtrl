@@ -480,10 +480,8 @@ def test_ashby_scheduled_discovery_persists_secondary_target_and_repeat_identity
         "queries": [{"query": "Engineer", "tier": 1}],
         "locations": [{"location": target}],
     }
-    from tests.determination_fakes import confirm_test_preferences
 
     search_cfg["confirmed_targets"] = {"roles": ["Synthetic target"], "profile_version": 1}
-    confirm_test_preferences(conn, search_cfg)
     try:
         job_ids: dict[str, str] = {}
         for run_number in range(2):

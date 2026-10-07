@@ -41,7 +41,7 @@ from jobctrl.domain.identifiers import JobId
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 
 
-from jobctrl.infrastructure.migrations.schema_v13 import create_exact_v13_schema
+from jobctrl.infrastructure.migrations.schema_v14 import create_exact_v14_schema
 
 
 from jobctrl.interview import activities as interview_activities
@@ -359,7 +359,7 @@ async def test_workflow_terminal_events_do_not_include_private_failure_text(
 def _init_conn(tmp_path: Path, *, seed_local_job: bool = True):
     db_path = tmp_path / "jobs.db"
     conn = get_connection(db_path)
-    create_exact_v13_schema(conn)
+    create_exact_v14_schema(conn)
     if seed_local_job:
         _insert_job(conn, LOCAL_TENANT, JOB_ID, JOB_URL)
     conn.commit()

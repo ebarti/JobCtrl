@@ -14,7 +14,7 @@ from jobctrl.infrastructure.compensation.sqlite_market_repository import (
 from jobctrl.infrastructure.compensation.sqlite_repository import (
     SqlitePostedCompensationRepository,
 )
-from jobctrl.infrastructure.migrations.schema_v13 import create_exact_v13_schema
+from jobctrl.infrastructure.migrations.schema_v14 import create_exact_v14_schema
 from tests.compensation_fakes import pay_extractor, record_job_interpretation
 
 
@@ -22,7 +22,7 @@ def _connection() -> sqlite3.Connection:
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
-    create_exact_v13_schema(conn)
+    create_exact_v14_schema(conn)
     return conn
 
 

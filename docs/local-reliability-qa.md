@@ -58,7 +58,7 @@ guidance.
 | Surface | Starting command / selected recipe |
 | --- | --- |
 | API | `corepack pnpm api:check`, focused `api:test` / `api` |
-| Destructive job-data purge | `corepack pnpm api:check`; `corepack pnpm --filter @jobctrl/api exec vitest run test/job-data-purge.test.ts test/permanent-delete-v7.test.ts`; then inventory, confirmed purge, and a second inventory against a disposable exact-v13 workspace only |
+| Destructive job-data purge | `corepack pnpm api:check`; `corepack pnpm --filter @jobctrl/api exec vitest run test/job-data-purge.test.ts test/permanent-delete-v7.test.ts`; then inventory, confirmed purge, and a second inventory against a disposable exact-v14 workspace only |
 | Web | `corepack pnpm web:lint`, `corepack pnpm web:check`, focused `web:test`, `web:build`; types/stories/browser when affected |
 | Extension | `extension:check`, `extension:test`, `extension:build`, `extension:e2e` through Corepack |
 | Worker | Locked focused Ruff/pytest; full worker suite for worker-wide changes |
@@ -142,7 +142,7 @@ that its connection-object mutex is independent of `busy_timeout`. Run these pro
 behind subprocess deadlines so a failed concurrency assertion cannot retain a test
 runner thread. Confirm the real activity worker pool reuses a connection only on its
 own thread, and record the production connection budgets (10 seconds for a new WAL
-connection and 30 seconds for a freshly admitted exact-v13 connection). The short
+connection and 30 seconds for a freshly admitted exact-v14 connection). The short
 fixture timeout proves mechanism and recovery; it is not a production latency bound.
 
 Also repeat an already-claimed robots retry with a real enrichment lease, inject
@@ -240,10 +240,21 @@ worker persistence. Opposing-verdict and failure tests exercise the production
 determination services through fake `LlmPort` implementations; these tests prove
 model authority and binding, without grading model decisions.
 
-Use the exact native schema-13 boundary to test migration from every supported
+Use the exact native schema-14 boundary to test migration from every supported
 source schema, stopped-runtime paired backups, source preservation, fenced
 activation, recovery and concurrent-writer refusal. Preserve authored facts and
 accepted artifact bytes while purging heuristic-derived determinations. Temporal
 replay consumes persisted activity results and makes no model calls. Perform the
 removed-symbol and TS read-time similarity searches once at PR acceptance; do not
 turn source-shape searches into permanent tests.
+
+
+## Saved Search Settings
+
+Exercise native exact-v14 creation and the stopped-runtime v13-to-v14 cutover,
+including source drift and candidate corruption. Preserve authored profile cells,
+canonical jobs, historical envelopes, accepted files and raw pending captures.
+Then use the actual Discovery path with saved targets and no interpretation
+receipt: board planning is literal and makes no provider call. Posting triage
+retains model authority and distinct failure handling. Verify the API and web
+join citations to the captured target sources and show no second approval step.

@@ -107,7 +107,7 @@ locking; selector resolution holds a shared selection lock through supervisor
 readiness. Before a candidate is promoted, the old process tree is quiesced
 with the registry's PID/PGID identity checks and both `JOBCTRL_DIR/jobctrl.db`
 and `JOBCTRL_DIR/temporal.db` receive online, hash-verified paired backups.
-The current runtime admits only exact schema v13. A stopped v6 database retains
+The current runtime admits only exact schema v14. A stopped v6 database retains
 the Temporal quiescence proof and private v7/v8/v9 intermediates; exact v7 and v8
 start at their next intermediate. Exact v9 transfers application URL authority
 to enrichment and retains historical lookup aliases before removing the legacy
@@ -115,7 +115,9 @@ job column. Exact v10 then moves historical global `llm_spend` rows into the
 explicit `legacy` lane before v11 activation. The legacy lane contributes to
 global USD totals but is never a runtime write target. Exact v11 adds generation
 bindings through private v12, then v13 withdraws heuristic classifications and
-adds persisted determinations. Historical employer-analysis generations remain
+adds persisted determinations. Exact v14 removes the redundant search-preference
+approval binding and retains raw intake captures for triage against saved settings.
+Historical employer-analysis generations remain
 stored, while current readers select only the v4 determination contract.
 Neither Python nor the
 TypeScript API runs against an intermediate schema. Recovery removes all staged

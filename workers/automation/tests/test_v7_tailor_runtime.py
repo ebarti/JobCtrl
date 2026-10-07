@@ -29,7 +29,7 @@ from jobctrl.domain.materials.use_cases import (
 from jobctrl.domain.profile.aggregate import Profile
 from jobctrl.domain.profile.snapshot import ProfileSnapshot
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
-from jobctrl.infrastructure.migrations.schema_v13 import create_exact_v13_schema
+from jobctrl.infrastructure.migrations.schema_v14 import create_exact_v14_schema
 from jobctrl.materials import activities as activities_module
 from jobctrl.materials.activities import TailorJobActivityInput
 from jobctrl.scoring import tailor as tailor_module
@@ -454,7 +454,7 @@ def conn() -> sqlite3.Connection:
     candidate = sqlite3.connect(":memory:")
     candidate.row_factory = sqlite3.Row
     candidate.execute("PRAGMA foreign_keys = ON")
-    create_exact_v13_schema(candidate)
+    create_exact_v14_schema(candidate)
     return candidate
 
 

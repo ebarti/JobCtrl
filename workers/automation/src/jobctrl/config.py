@@ -632,8 +632,27 @@ def datetime_utc_now() -> str:
 
 
 def _apply_profile_target_search(search_cfg: dict, target: dict | None = None) -> dict:
-    """Expose literal saved targets; query planning belongs to a model activity."""
-    return {**search_cfg, "confirmed_targets": target if target is not None else _load_profile_target_search()}
+    """Execute saved roles and location controls literally, without inference."""
+    target = target if target is not None else _load_profile_target_search()
+    effective = {**search_cfg, "confirmed_targets": target}
+    roles = [str(value) for value in target.get("roles", []) if str(value).strip()]
+    if roles:
+        effective["queries"] = [{"query": role, "tier": 1} for role in dict.fromkeys(roles)]
+    places = target.get("locations") or []
+    work_models = target.get("work_models") or []
+    # Decode the product's saved choice values; never scan location prose.
+    remote_flags = {"": False, "On-site": False, "Hybrid": False, "Remote": True}
+    if places or work_models:
+        if any(value not in remote_flags for value in work_models):
+            raise ValueError("invalid_saved_work_model")
+        selected_places = list(dict.fromkeys(str(value) for value in places if str(value).strip())) or [""]
+        selected_flags = list(dict.fromkeys(remote_flags[value] for value in work_models)) or [False]
+        effective["locations"] = [
+            {"label": place or ("Remote" if remote else ""), "location": place, "remote": remote}
+            for place in selected_places
+            for remote in selected_flags
+        ]
+    return effective
 
 
 def _positive_int(value: object) -> int:

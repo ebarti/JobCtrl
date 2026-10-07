@@ -1,4 +1,3 @@
-import {SearchPreferencesRequestSchema, SearchPreferencesResponseSchema,type SearchPreferencesRequest,type SearchPreferencesResponse} from "@jobctrl/contracts";
 import { DiscoveryTriageResponseSchema,type DiscoveryTriageResponse } from "@jobctrl/contracts";
 import type {
   ActionRunResponse,
@@ -336,10 +335,6 @@ export class JobCtrlApiClient {
 
   discoverySources(): Promise<SourceRegistryListResponse> {
     return this.get("/v1/discovery/sources");
-  }
-
-  async searchPreferences(request:SearchPreferencesRequest):Promise<SearchPreferencesResponse>{
-    return SearchPreferencesResponseSchema.parse(await this.post("/v1/discovery/preferences",SearchPreferencesRequestSchema.parse(request)));
   }
 
   async discoveryTriage(offset=0):Promise<DiscoveryTriageResponse>{

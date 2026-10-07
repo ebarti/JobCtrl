@@ -7,12 +7,19 @@ from pathlib import Path
 import pytest
 
 from jobctrl.infrastructure.migrations import v12_activation as activation
-from jobctrl.infrastructure.migrations import v13_activation
+from jobctrl.infrastructure.migrations import v13_activation, v14_activation
 from jobctrl.infrastructure.migrations.schema_v11 import create_exact_v11_schema
 from jobctrl.infrastructure.migrations.schema_v12 import create_exact_v12_schema
-from jobctrl.infrastructure.migrations.schema_manifest import EXACT_V12_MANIFEST, EXACT_V13_MANIFEST, assert_exact_manifest
+from jobctrl.infrastructure.migrations.schema_v13 import create_exact_v13_schema
+from jobctrl.infrastructure.migrations.schema_manifest import (
+    EXACT_V12_MANIFEST,
+    EXACT_V13_MANIFEST,
+    EXACT_V14_MANIFEST,
+    assert_exact_manifest,
+)
 from jobctrl.infrastructure.migrations.v11_to_v12_execute import execute_v11_to_v12_candidate
 from jobctrl.infrastructure.migrations.v12_to_v13_execute import execute_v12_to_v13_candidate
+from jobctrl.infrastructure.migrations.v13_to_v14_execute import execute_v13_to_v14_candidate
 
 _create_source_schema = create_exact_v11_schema
 _execute_candidate = execute_v11_to_v12_candidate
@@ -20,17 +27,20 @@ _target_manifest = EXACT_V12_MANIFEST
 _source_version = 11
 
 
-@pytest.fixture(params=[12, 13], autouse=True)
+@pytest.fixture(params=[12, 13, 14], autouse=True)
 def migration_case(request, monkeypatch):
-    """Exercise both private activation implementations with their real schemas."""
-    module, source, execute, manifest, version = (
-        (activation, create_exact_v11_schema, execute_v11_to_v12_candidate, EXACT_V12_MANIFEST, 11)
-        if request.param == 12
-        else (v13_activation, create_exact_v12_schema, execute_v12_to_v13_candidate, EXACT_V13_MANIFEST, 12)
-    )
+    """Exercise native activation implementations with their real schemas."""
+    module, source, execute, manifest, version = {
+        12: (activation, create_exact_v11_schema, execute_v11_to_v12_candidate, EXACT_V12_MANIFEST, 11),
+        13: (v13_activation, create_exact_v12_schema, execute_v12_to_v13_candidate, EXACT_V13_MANIFEST, 12),
+        14: (v14_activation, create_exact_v13_schema, execute_v13_to_v14_candidate, EXACT_V14_MANIFEST, 13),
+    }[request.param]
     for name, value in {
-        "activation": module, "_create_source_schema": source, "_execute_candidate": execute,
-        "_target_manifest": manifest, "_source_version": version,
+        "activation": module,
+        "_create_source_schema": source,
+        "_execute_candidate": execute,
+        "_target_manifest": manifest,
+        "_source_version": version,
     }.items():
         monkeypatch.setitem(globals(), name, value)
 

@@ -14,9 +14,9 @@ from email.utils import getaddresses, parsedate_to_datetime
 from pathlib import Path
 from typing import Any, Protocol
 
-from jobctrl.database import close_connection, open_exact_v13_database
+from jobctrl.database import close_connection, open_exact_v14_database
 from jobctrl.infrastructure.migrations.schema_manifest import (
-    EXACT_V13_MANIFEST,
+    EXACT_V14_MANIFEST,
     SchemaManifestError,
     assert_exact_manifest,
 )
@@ -124,7 +124,7 @@ def scan_gmail_feedback(
         default=DEFAULT_WINDOW_DAYS,
     )
 
-    conn = open_exact_v13_database(db_path)
+    conn = open_exact_v14_database(db_path)
     try:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA busy_timeout=10000")
@@ -333,9 +333,9 @@ def scan_gmail_feedback(
 
 def ensure_application_feedback_tables(conn: sqlite3.Connection) -> None:
     """Validate the current feedback owner without creating or altering schema."""
-    if conn.execute("PRAGMA user_version").fetchone()[0] != EXACT_V13_MANIFEST.version:
+    if conn.execute("PRAGMA user_version").fetchone()[0] != EXACT_V14_MANIFEST.version:
         raise SchemaManifestError("Gmail feedback requires the exact current database schema")
-    assert_exact_manifest(conn, EXACT_V13_MANIFEST)
+    assert_exact_manifest(conn, EXACT_V14_MANIFEST)
 
 
 def _store_linked_message(

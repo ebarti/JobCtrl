@@ -73,14 +73,13 @@ Key facts about the four activities:
 
 - **`plan_discovery_sources`** compiles the plan (which source families to run,
   progress totals, and the starting job count) from the source registry, source
-  quality, and the global limit. A query-plan determination maps confirmed search
-  preferences to query strings, tiers and source scope. Intake triage determines
-  whether each returned listing matches that intent; code never reclassifies its
-  title, seniority or geography.
-  The activity preserves classified determination failures as typed
-  `ApplicationError` values with their retry policy. In particular,
-  `preferences_confirmation_required` is non-retryable and fetches no sources;
-  the user must confirm a current proposal before starting another run.
+  quality, and the global limit. Literal saved roles and location/work-model controls
+  become board parameters without a model or a second approval. The captured
+  execution settings remain stable on retries. Intake triage determines whether
+  each returned listing matches the saved inputs; code never reclassifies its
+  title, seniority or geography. Each row records the actual target-source snapshot
+  and profile version used, alongside its model receipt. The activity preserves
+  determination failures as typed `ApplicationError` values with their retry policy.
 - **`discovery_source_family`** runs *one* source family under
   `run_blocking_with_heartbeat` with a cooperative `cancel_event` and a 6-hour
   window (crawls legitimately run long). Each family is isolated: a broad-board, ATS,
@@ -605,7 +604,7 @@ survive failed refreshes. These gates grant no submission authority.
 
 ## Semantic Determination Authority
 
-Intake triage persists every listing before admission; failures remain pending. Query planning and semantic calls run only in activities/sync RPC and pass lane/spend preflight. Scoring preselection uses recency/ID order. Job interpretation and typed blockers supply constraint meaning. Replay reads persisted results and makes no provider call.
+Intake triage persists every listing before admission; failures remain pending. Search planning uses saved controls directly. Semantic calls run only in activities/sync RPC and pass lane/spend preflight. Scoring preselection uses recency/ID order. Job interpretation and typed blockers supply constraint meaning. Replay reads persisted results and makes no provider call.
 
 See [the decision](../../decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.
 

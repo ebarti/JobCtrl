@@ -377,55 +377,6 @@ def map_extension_form(params):
         raise invalid_params(error.code) from None
 
 
-def search_preferences(params):
-    allowed = {"tenantId", "expectedAppDir", "expectedDbPath", "expectedProfileVersion", "operation", "determinationId"}
-    if set(params) - allowed:
-        raise invalid_params("Unknown search preference parameter")
-    assert_expected_runtime(
-        expected_app_dir=str(_require(params, "expectedAppDir")),
-        expected_db_path=str(_require(params, "expectedDbPath")),
-    )
-    from jobctrl import config
-    from jobctrl.database import init_db, close_connection
-    from jobctrl.domain.determinations import DeterminationFailure
-    from jobctrl.infrastructure.profile.search_preferences import (
-        prepare_search_preferences,
-        confirm_search_preferences,
-        preferences_response,
-    )
-
-    version = _require(params, "expectedProfileVersion")
-    operation = _require(params, "operation")
-    if type(version) is not int or version < 1 or operation not in {"read", "prepare", "confirm"}:
-        raise invalid_params("Invalid search preference operation")
-    search_cfg = config.load_search_config()
-    if (search_cfg.get("confirmed_targets") or {}).get("profile_version") != version:
-        raise invalid_params("stale_profile_version")
-    conn = init_db()
-    try:
-        if operation == "prepare":
-            prepare_search_preferences(conn, search_cfg, tenant_id=_tenant_id(params))
-        elif operation == "confirm":
-            conn.execute("BEGIN IMMEDIATE")
-            confirm_search_preferences(
-                conn, search_cfg, str(_require(params, "determinationId")), tenant_id=_tenant_id(params)
-            )
-        # Recheck the canonical profile after a model call before returning or confirming a proposal.
-        current = config.load_search_config()
-        from jobctrl.infrastructure.profile.search_preferences import preferences_version
-
-        if preferences_version(current) != preferences_version(search_cfg):
-            raise DeterminationFailure("stale_preferences_determination")
-        response = preferences_response(conn, current, tenant_id=_tenant_id(params))
-        conn.commit()
-        return response
-    except DeterminationFailure as error:
-        conn.rollback()
-        raise invalid_params(error.code) from None
-    finally:
-        close_connection()
-
-
 def review_resume_edit(params):
     assert_expected_runtime(
         expected_app_dir=str(_require(params, "expectedAppDir")),
@@ -1254,7 +1205,6 @@ def rollback_tailoring_policy(params: dict[str, Any]) -> dict[str, Any]:
 
 def register_default_handlers(server: JsonRpcServer, *, canceler: WorkflowCanceler) -> None:
     """Wire the default JobCtrl method set onto *server*."""
-    server.register("search_preferences", search_preferences, mode="sync")
     server.register("map_extension_form", map_extension_form, mode="sync")
     server.register("review_resume_edit", review_resume_edit, mode="sync")
     server.register("prepare_repeat_application_determinations", prepare_repeat_application_determinations, mode="sync")

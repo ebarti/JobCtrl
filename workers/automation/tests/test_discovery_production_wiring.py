@@ -37,19 +37,15 @@ from jobctrl.state import record_job_event
 
 
 def run_scheduled_ats_sources(conn, sources, **kwargs):
-    from tests.determination_fakes import confirm_test_preferences
 
     cfg = kwargs["search_cfg"]
     cfg.setdefault("confirmed_targets", {"profile_version": 1, "roles": ["Synthetic target"]})
-    confirm_test_preferences(conn, cfg)
     return production_ats_sources(conn, sources, **kwargs)
 
 
 def import_manual_capture_item(conn, capture, **kwargs):
-    from tests.determination_fakes import confirm_test_preferences
 
     cfg = {"confirmed_targets": {"profile_version": 1, "roles": ["Synthetic target"]}}
-    confirm_test_preferences(conn, cfg)
     from unittest.mock import patch
 
     with patch("jobctrl.config.load_search_config", return_value=cfg):
@@ -1048,10 +1044,8 @@ def test_manual_capture_import_cli_routes_api_bridge_through_worker_pipeline(
         """,
         ("manual:protected-board",),
     ).fetchone()["item_id"]
-    from tests.determination_fakes import confirm_test_preferences
 
     cfg = {"confirmed_targets": {"profile_version": 1, "roles": ["Synthetic target"]}}
-    confirm_test_preferences(conn, cfg)
     monkeypatch.setattr(config, "load_search_config", lambda: cfg)
     close_connection(db_path)
     monkeypatch.setattr(

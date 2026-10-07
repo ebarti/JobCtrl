@@ -17,18 +17,6 @@ test("Discovery exposes every model verdict and unavailable pending listing with
   const db = new Database(loadE2eDbPath());
   const ids: string[] = [];
   try {
-    const preferences = recordModelDecision(
-      db,
-      "search_preferences",
-      "discovery:preferences",
-      {
-        roles: [],
-        places: [],
-        work_models: [],
-        conditions: [],
-        rationale: "Explicit model interpretation",
-      },
-    );
     for (const [index, status] of [
       "admit",
       "reject",
@@ -66,13 +54,19 @@ test("Discovery exposes every model verdict and unavailable pending listing with
             });
       if (receipt) ids.push(receipt);
       db.prepare(
-        "INSERT INTO posting_triage (tenant_id,listing_id,snapshot_fingerprint,target_fingerprint,source_id,listing_json,status,reason_code,failure_code,determination_id,preferences_determination_id,created_at) VALUES ('local',?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO posting_triage (tenant_id,listing_id,snapshot_fingerprint,target_fingerprint,source_id,listing_json,status,reason_code,failure_code,determination_id,created_at) VALUES ('local',?,?,?,?,?,?,?,?,?,?)",
       ).run(
         listing.listing_id,
         String(index).repeat(64),
         "d".repeat(64),
         listing.source_id,
-        JSON.stringify(listing),
+        JSON.stringify({
+          listing,
+          target_sources: [
+            { source_id: "target:roles:0", text: "Synthetic saved target" },
+          ],
+          profile_version: 1,
+        }),
         status,
         status === "admit"
           ? "compatible"
@@ -81,7 +75,6 @@ test("Discovery exposes every model verdict and unavailable pending listing with
             : null,
         status === "pending_triage" ? "provider_unavailable" : null,
         receipt,
-        status === "pending_triage" ? null : preferences,
         new Date().toISOString(),
       );
     }
@@ -102,6 +95,9 @@ test("Discovery exposes every model verdict and unavailable pending listing with
   await page.goto("/discovery");
   await expect(page).toHaveTitle(/JobCtrl.*Discovery/);
   await expect(
+    page.getByRole("button", { name: "Confirm this interpretation" }),
+  ).toHaveCount(0);
+  await expect(
     page.getByText("Listing decisions", { exact: true }),
   ).toBeVisible();
   await expect(
@@ -113,13 +109,11 @@ test("Discovery exposes every model verdict and unavailable pending listing with
   await expect(
     page.getByText(/pending triage.*provider unavailable/),
   ).toBeVisible();
-  const listing = page
-    .locator("li")
-    .filter({
-      has: page.getByRole("link", { name: "Owned listing 0", exact: true }),
-    });
+  const listing = page.locator("li").filter({
+    has: page.getByRole("link", { name: "Owned listing 0", exact: true }),
+  });
   await listing.getByText("Decision sources", { exact: true }).click();
-  await expect(listing.getByText(/posting-triage-v2/)).toBeVisible();
+  await expect(listing.getByText(/posting-triage-v3-saved-targets/)).toBeVisible();
   await expect(
     listing.getByText(/listing:product-listing-0:title/),
   ).toBeVisible();
@@ -190,12 +184,24 @@ test("Compensation displays only rows with persisted matching taxonomy classific
   );
   expect(response.status(), await response.text()).toBe(200);
   const body = await response.json();
-  const classification = body.estimate.determinations.find((receipt: {kind: string}) => receipt.kind === "benchmark_classification");
-  const interpretation = body.estimate.determinations.find((receipt: {kind: string}) => receipt.kind === "job_interpretation");
-  expect(body.estimate.evidence[0].determinationId).toBe(classification.determination_id);
-  expect(classification.result.occupation_family.value).toBe(interpretation.result.occupation_family.value);
-  expect(classification.result.seniority.value).toBe(interpretation.result.seniority.value);
-  expect(classification.result.places[0].country_code).toBe(interpretation.result.places[0].country_code);
+  const classification = body.estimate.determinations.find(
+    (receipt: { kind: string }) => receipt.kind === "benchmark_classification",
+  );
+  const interpretation = body.estimate.determinations.find(
+    (receipt: { kind: string }) => receipt.kind === "job_interpretation",
+  );
+  expect(body.estimate.evidence[0].determinationId).toBe(
+    classification.determination_id,
+  );
+  expect(classification.result.occupation_family.value).toBe(
+    interpretation.result.occupation_family.value,
+  );
+  expect(classification.result.seniority.value).toBe(
+    interpretation.result.seniority.value,
+  );
+  expect(classification.result.places[0].country_code).toBe(
+    interpretation.result.places[0].country_code,
+  );
   await page.goto(`/jobs/${QA_PLATFORM_JOB_ID}`);
   const section = page.getByRole("region", {
     name: "Compensation evidence",
@@ -281,12 +287,9 @@ test("Gmail shows the model's quoted outcome and an actionable unavailable refre
   }
   await page.reload();
   await expect(
-    page
-      .getByRole("status")
-      .filter({
-        hasText:
-          /Email outcome interpretation unavailable: provider_unavailable/,
-      }),
+    page.getByRole("status").filter({
+      hasText: /Email outcome interpretation unavailable: provider_unavailable/,
+    }),
   ).toBeVisible();
   await expect(
     page.locator("blockquote").filter({ hasText: quote }),

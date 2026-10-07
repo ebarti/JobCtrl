@@ -9,7 +9,7 @@ from jobctrl.domain.profile.resume_extraction import ModelResumeExtractor
 from jobctrl.domain.profile.aggregate import Profile
 from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.infrastructure.determinations import SqliteDeterminationRepository
-from jobctrl.infrastructure.migrations.schema_v13 import create_exact_v13_schema
+from jobctrl.infrastructure.migrations.schema_v14 import create_exact_v14_schema
 from jobctrl.infrastructure.profile.interpretation import PersistedCandidateInterpreter
 from jobctrl.infrastructure.profile.sqlite_repository import SqliteProfileRepository
 from jobctrl.profile_import import profile_from_extraction
@@ -74,7 +74,7 @@ class Model:
 def setup(model):
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
-    create_exact_v13_schema(conn)
+    create_exact_v14_schema(conn)
     deps = dict(
         llm=model,
         repository=SqliteDeterminationRepository(conn),

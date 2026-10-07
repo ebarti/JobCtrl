@@ -1343,9 +1343,7 @@ def plan_discovery_source_families(
 ) -> dict[str, Any]:
     """Plan the runnable discovery source families in legacy order."""
     conn = init_db()
-    from jobctrl.infrastructure.discovery.query_plan import prepare_query_plan
     search_cfg = config.load_search_config()
-    search_cfg = prepare_query_plan(conn, search_cfg)
     try:
         seed_discovery_control_queues(conn, config.load_source_registry(search_cfg=search_cfg))
     except Exception:
@@ -1462,9 +1460,14 @@ def run_discovery_source_family(
             if not limit or remaining > 0:
                 try:
                     resumed = retry_pending_postings(
-                        conn, search_cfg=search_cfg, discovery_execution=discovery_execution,
-                        source_ids=runnable_ids, source_family=family, limit=remaining,
-                        max_batches=1, cancel_event=cancel_event,
+                        conn,
+                        search_cfg=search_cfg,
+                        discovery_execution=discovery_execution,
+                        source_ids=runnable_ids,
+                        source_family=family,
+                        limit=remaining,
+                        max_batches=1,
+                        cancel_event=cancel_event,
                     )
                 except DeterminationFailure as exc:
                     failure_code = exc.code
@@ -1701,7 +1704,6 @@ def _snapshot_discovery_next_run_settings(search_cfg: dict[str, Any]) -> dict[st
                 "queries",
                 "locations",
                 "confirmed_targets",
-                "query_plan_determination_id",
                 "triage_batch_size",
                 "triage_model",
                 "exact_title_exclusions",
@@ -1728,7 +1730,6 @@ def _apply_discovery_next_run_settings(
         "queries",
         "locations",
         "confirmed_targets",
-        "query_plan_determination_id",
         "triage_batch_size",
         "triage_model",
         "exact_title_exclusions",

@@ -31,7 +31,6 @@ export function useUpdateDiscoverySettingsMutation(): UseMutationResult<
       }],
       settle: () => [
         discoveryKeys.settings(tenantId),
-        discoveryKeys.preferences(tenantId),
         discoveryKeys.sourceRegistry(tenantId),
         dashboardKeys.summary(tenantId),
       ],

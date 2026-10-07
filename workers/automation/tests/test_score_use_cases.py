@@ -63,7 +63,7 @@ def _score_case(*, llm, **kwargs):
         ),
         job_interpretation_reader=lambda job: job_interpretation(),
         confirmed_preferences_reader=lambda snapshot, criteria: [
-            Source(source_id="confirmed_search_preferences", text="Confirmed model preference codes")
+            Source(source_id="target:roles:0", text="Synthetic saved target")
         ],
         **kwargs,
     )
@@ -802,7 +802,8 @@ def test_score_job_includes_criteria_in_prompt_and_persists_snapshot(profile_sna
 
     assert outcome.ok is True
     prompt_payload = llm.calls[0][1].content
-    assert "Confirmed model preference codes" in prompt_payload
+    prompt_sources = {row["source_id"]: row["text"] for row in json.loads(prompt_payload)["sources"]}
+    assert prompt_sources["target:roles:0"] == "Synthetic saved target"
     assert "Prioritize platform security leadership." not in prompt_payload
     assert "Remote infrastructure roles." not in prompt_payload
     persisted = repo.load(LOCAL_TENANT, JobId(_job()["job_id"]))

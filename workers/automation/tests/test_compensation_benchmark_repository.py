@@ -19,7 +19,7 @@ from jobctrl.domain.compensation import (
 from jobctrl.infrastructure.compensation import (
     SqliteCompensationBenchmarkRepository,
 )
-from jobctrl.infrastructure.migrations.schema_v13 import create_exact_v13_schema
+from jobctrl.infrastructure.migrations.schema_v14 import create_exact_v14_schema
 
 
 class _InterruptingConnection(sqlite3.Connection):
@@ -42,7 +42,7 @@ class _InterruptingConnection(sqlite3.Connection):
 
 def test_repository_supports_plain_sqlite_tuple_rows() -> None:
     conn = sqlite3.connect(":memory:")
-    create_exact_v13_schema(conn)
+    create_exact_v14_schema(conn)
     conn.execute("PRAGMA foreign_keys = ON")
     repository = SqliteCompensationBenchmarkRepository(conn)
     try:
@@ -54,7 +54,7 @@ def test_repository_supports_plain_sqlite_tuple_rows() -> None:
 
 def test_repository_rejects_posted_compensation_authority_tampering() -> None:
     conn = sqlite3.connect(":memory:")
-    create_exact_v13_schema(conn)
+    create_exact_v14_schema(conn)
     conn.execute("PRAGMA foreign_keys = ON")
     repository = SqliteCompensationBenchmarkRepository(conn)
     try:
@@ -145,7 +145,7 @@ def test_repository_rejects_tampered_extrapolation_before_writing(
 
 def test_extrapolation_write_rolls_back_on_keyboard_interrupt() -> None:
     conn = sqlite3.connect(":memory:", factory=_InterruptingConnection)
-    create_exact_v13_schema(conn)
+    create_exact_v14_schema(conn)
     conn.execute("PRAGMA foreign_keys = ON")
     repository = SqliteCompensationBenchmarkRepository(conn)
     try:

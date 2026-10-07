@@ -4,7 +4,8 @@ import taxonomy from "./semantic-taxonomy.v1.json" with { type: "json" };
 export const SEMANTIC_TAXONOMY = taxonomy;
 export const SEMANTIC_TAXONOMY_VERSION = taxonomy.schemaVersion;
 // The active analysis format must match domain/materials/analysis.py.
-export const EMPLOYER_ANALYSIS_PROMPT_VERSION = "employer-analysis-v4-determinations";
+export const EMPLOYER_ANALYSIS_PROMPT_VERSION =
+  "employer-analysis-v4-determinations";
 
 export const DeterminationCitationSchema = z
   .object({
@@ -191,9 +192,33 @@ export const PostingTriageDecisionSchema = z
 export const PostingTriageResultSchema = z
   .object({ listings: z.array(PostingTriageDecisionSchema).min(1).max(100) })
   .strict();
+export const SearchTargetSourceSchema = z
+  .object({
+    source_id: z.string().min(1).max(240),
+    text: z.string().max(64000),
+  })
+  .strict();
+export const DiscoveryIntakeSnapshotSchema = z
+  .object({
+    listing: z
+      .object({
+        listing_id: z.string().min(1),
+        source_id: z.string().min(1),
+        url: z.string().min(1),
+        title: z.string(),
+        company: z.string(),
+        location: z.string(),
+        remote: z.boolean().nullable(),
+      })
+      .strict(),
+    target_sources: z.array(SearchTargetSourceSchema),
+    profile_version: z.number().int().positive().nullable(),
+  })
+  .strict();
 export const DiscoveryTriageRowSchema = z
   .object({
-    preferencesDetermination: DeterminationEnvelopeSchema.nullable(),
+    targetSources: z.array(SearchTargetSourceSchema),
+    targetProfileVersion: z.number().int().positive().nullable(),
     rowId: z.string(),
     targetFingerprint: z.string(),
     listingId: z.string(),
@@ -205,6 +230,7 @@ export const DiscoveryTriageRowSchema = z
     status: z.enum([
       "pending_triage",
       "literal_excluded",
+      "superseded",
       "admit",
       "reject",
       "uncertain",
@@ -345,119 +371,3 @@ export const ArtifactQualityDeterminationSchema = z
       .max(100),
   })
   .strict();
-
-export const SearchPreferencesRequestSchema = z
-  .object({
-    operation: z.enum(["read", "prepare", "confirm"]),
-    expectedProfileVersion: z.number().int().positive(),
-    determinationId: z
-      .string()
-      .regex(/^[a-f0-9]{64}$/)
-      .optional(),
-  })
-  .strict()
-  .refine(
-    (value) =>
-      value.operation === "confirm"
-        ? Boolean(value.determinationId)
-        : value.determinationId === undefined,
-    "Confirmation needs the current proposal ID.",
-  );
-const PreferenceFieldSchema = <T extends z.ZodType>(value: T) =>
-  z
-    .object({
-      value,
-      citations: z.array(DeterminationCitationSchema).min(1),
-      rationale: z.string().min(1),
-    })
-    .strict();
-const PlaceSchema = z
-  .object({
-    country_code: z
-      .string()
-      .regex(/^[A-Z]{2}$/)
-      .nullable(),
-    region: RegionCodeSchema,
-    locality: z.string().nullable(),
-    citations: z.array(DeterminationCitationSchema).min(1),
-    rationale: z.string().min(1),
-  })
-  .strict();
-export const SearchPreferencesResultSchema = z
-  .object({
-    roles: z
-      .array(
-        z
-          .object({
-            title: z.string().min(1),
-            track: TrackCodeSchema,
-            seniority_floor: SeniorityCodeSchema,
-            occupation_family: OccupationFamilyCodeSchema,
-            citations: z.array(DeterminationCitationSchema).min(1),
-            rationale: z.string().min(1),
-          })
-          .strict(),
-      )
-      .max(40),
-    places: z.array(PlaceSchema).max(40),
-    work_models: z.array(PreferenceFieldSchema(WorkModelCodeSchema)).max(8),
-    conditions: z
-      .array(
-        z
-          .object({
-            category: z.enum([
-              "role",
-              "seniority",
-              "location",
-              "work_model",
-              "work_authorization",
-              "language",
-              "qualification",
-              "employer_condition",
-              "other",
-            ]),
-            force: z.enum(["required", "excluded", "preferred", "uncertain"]),
-            description: z.string().min(1),
-            citations: z.array(DeterminationCitationSchema).min(1),
-            rationale: z.string().min(1),
-          })
-          .strict(),
-      )
-      .max(40),
-    rationale: z.string().min(1),
-  })
-  .strict();
-export const SearchPreferencesResponseSchema = z
-  .object({
-    ok: z.literal(true),
-    profileVersion: z.number().int().positive(),
-    inputVersion: z.string().regex(/^[a-f0-9]{64}$/),
-    status: z.enum(["missing", "pending_confirmation", "confirmed"]),
-    determination: DeterminationEnvelopeSchema.nullable(),
-  })
-  .strict()
-  .superRefine((value, ctx) => {
-    if ((value.status === "missing") !== (value.determination === null))
-      ctx.addIssue({
-        code: "custom",
-        message: "Preference status requires a recorded determination.",
-      });
-    if (
-      value.determination &&
-      (value.determination.kind !== "search_preferences" ||
-        value.determination.schema_version !== "1" ||
-        value.determination.prompt_version !== "search-preferences-v1" ||
-        !SearchPreferencesResultSchema.safeParse(value.determination.result)
-          .success)
-    )
-      ctx.addIssue({
-        code: "custom",
-        message: "Invalid preference determination.",
-      });
-  });
-export type SearchPreferencesRequest = z.infer<
-  typeof SearchPreferencesRequestSchema
->;
-export type SearchPreferencesResponse = z.infer<
-  typeof SearchPreferencesResponseSchema
->;
