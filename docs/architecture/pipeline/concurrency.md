@@ -61,6 +61,9 @@ A function that returns successfully with an unfinished transaction fails with
 `activity_transaction_unfinished` instead of claiming its result was saved.
 Posting snapshot determinations run before acquiring the write fence; the
 current lease and stage version are checked again before atomic persistence.
+Snapshot recorders also compare the accepted snapshot set under the writer
+reservation. A concurrent availability or content change rejects the stale
+result, preserves the newer state, and leaves downstream preparation blocked.
 Workflow lifecycle activities also offload SQLite writes and close their
 connection on every exit. A failed projection refresh retains its committed
 canonical event for the next refresh.

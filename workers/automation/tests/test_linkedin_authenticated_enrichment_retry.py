@@ -45,6 +45,76 @@ from jobctrl.state import ensure_job_stage_rows, set_stage_state
 from .politeness_helpers import offline_session
 
 
+@pytest.mark.parametrize("recorder", ["cascade", "authenticated_url", "content_trust"])
+def test_snapshot_recorders_preserve_availability_committed_during_model(conn, monkeypatch, recorder):
+    from jobctrl.domain.errors import TransientNetworkError
+    from jobctrl.enrichment import availability
+
+    url = "https://www.linkedin.com/jobs/view/12345678"
+    description = "A complete synthetic posting description"
+    _seed_discovered(conn, url, "linkedin")
+    _save_enriched(conn, url, application_url=None, description=description)
+    job_id = _job_id(conn, url)
+    initial = PostingSnapshotSet.empty(tenant_id=LOCAL_TENANT, job_id=job_id, updated_at="2026-01-01T00:00:00+00:00")
+    initial, _ = initial.record_snapshot(
+        source_id="jobspy:linkedin", extraction_tier=ExtractionTier.LLM_ASSISTED.value,
+        description_hash=SnapshotDescriptionHash.from_text(description), apply_url=None,
+        active_state=ActiveState.ACTIVE, confidence=SnapshotConfidence.LOW,
+        quarantine_reason=QuarantineReason.LOW_CONFIDENCE_EXTRACTION, captured_at="2026-01-01T00:00:00+00:00",
+    )
+    SqlitePostingSnapshotSetRepository(conn).save(initial)
+    enrichment = SqliteEnrichmentRepository(conn).load(LOCAL_TENANT, job_id)
+    ensure_job_stage_rows(conn, job_id, tenant_id=LOCAL_TENANT)
+    set_stage_state(conn, job_id, "tailor", "blocked", tenant_id=LOCAL_TENANT,
+                    error_code="ENRICHMENT_QUARANTINED", retryable=True, blocked_by=["enrich"], validate_transition=False)
+    conn.commit()
+    peer = sqlite3.connect(conn.execute("PRAGMA database_list").fetchone()[2], timeout=0.1)
+    peer.row_factory = sqlite3.Row
+    quality = detail.judge_description_quality
+    accepted = []
+    released = []
+
+    def quality_with_new_availability(**kwargs):
+        assert not conn.in_transaction
+        claim, _ = availability.claim_job(peer, str(job_id))
+        assert claim is not None
+        availability.complete_check(peer, claim, verdict="closed", reason="synthetic_closed",
+                                    method="public_http", lineage=[])
+        accepted.append(peer.execute("SELECT snapshot_set_json FROM posting_snapshot_sets WHERE job_id=?",
+                                     (str(job_id),)).fetchone()[0])
+        return quality(**kwargs)
+
+    monkeypatch.setattr(detail, "judge_description_quality", quality_with_new_availability)
+    monkeypatch.setattr(detail, "_resume_tailoring_after_trustworthy_snapshot", lambda *args, **kwargs: released.append(True))
+    try:
+        with pytest.raises(TransientNetworkError, match="posting snapshot changed"):
+            if recorder == "cascade":
+                detail._record_posting_snapshot_from_cascade(
+                    conn, job_id=job_id, url=url, source_id="jobspy:linkedin", title="Engineer",
+                    cascade_result={"full_description": description, "active_state": "active",
+                                    "verification_method": "enrichment_success", "tier_used": 1},
+                    captured_at="2026-01-02T00:00:00+00:00",
+                )
+            elif recorder == "authenticated_url":
+                detail._record_authenticated_apply_url_snapshot_recovery(
+                    conn, tenant_id=LOCAL_TENANT, job_id=job_id, enrichment=enrichment,
+                    recovered=ApplicationUrl(value="https://example.com/apply/12345678"), captured_at="2026-01-02T00:00:00+00:00",
+                )
+            else:
+                detail._record_missing_apply_url_content_trust_recovery(
+                    conn, tenant_id=LOCAL_TENANT, job_id=job_id, enrichment=enrichment, captured_at="2026-01-02T00:00:00+00:00",
+                )
+        conn.rollback()
+        assert len(accepted) == 1
+        assert conn.execute("SELECT snapshot_set_json FROM posting_snapshot_sets WHERE job_id=?", (str(job_id),)).fetchone()[0] == accepted[0]
+        assert SqlitePostingSnapshotSetRepository(conn).load(LOCAL_TENANT, job_id).latest_active_state is ActiveState.CLOSED
+        assert conn.execute("SELECT state FROM job_stage_states WHERE job_id=? AND stage='tailor'", (str(job_id),)).fetchone()[0] == "blocked"
+        assert released == []
+    finally:
+        conn.rollback()
+        peer.close()
+
+
 @pytest.mark.parametrize("superseded_during_model", [False, True])
 def test_selected_apply_target_judges_before_fencing_and_rejects_superseded_owner(
     conn, monkeypatch, superseded_during_model,

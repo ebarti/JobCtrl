@@ -2250,6 +2250,29 @@ def _cascade_page_verdict(conn, *, url, cascade_result, tenant_id):
     return ActiveState(result.availability.value), envelope.determination_id
 
 
+def _fence_posting_snapshot_before_write(
+    conn: sqlite3.Connection,
+    *,
+    repo: SqlitePostingSnapshotSetRepository,
+    tenant_id: TenantId,
+    job_id: JobId,
+    expected: PostingSnapshotSet | None,
+    before_write: Callable[[], None] | None,
+) -> None:
+    """Reject a model result if accepted snapshot state changed during inference."""
+    if before_write is not None:
+        before_write()
+    # Reserve the writer even without an execution lease, and before reloading
+    # the accepted set. A no-op UPDATE also upgrades a caller-owned transaction;
+    # the caller still owns its commit or rollback.
+    conn.execute(
+        "UPDATE posting_snapshot_sets SET updated_at = updated_at WHERE tenant_id = ? AND job_id = ?",
+        (str(tenant_id), str(job_id)),
+    )
+    if repo.load(tenant_id, job_id) != expected:
+        raise TransientNetworkError("posting snapshot changed during description determination")
+
+
 def _record_posting_snapshot_from_cascade(
     conn: sqlite3.Connection,
     *,
@@ -2278,7 +2301,8 @@ def _record_posting_snapshot_from_cascade(
         if commit:
             ensure_discovery_control_tables(conn)
         repo = SqlitePostingSnapshotSetRepository(conn)
-        snapshot_set = repo.load(tenant_id, stable_job_id) or PostingSnapshotSet.empty(
+        accepted_snapshot_set = repo.load(tenant_id, stable_job_id)
+        snapshot_set = accepted_snapshot_set or PostingSnapshotSet.empty(
             tenant_id=tenant_id,
             job_id=stable_job_id,
             updated_at=captured_at,
@@ -2344,8 +2368,10 @@ def _record_posting_snapshot_from_cascade(
         # Snapshot trust, quarantine resolution, downstream release, and their
         # audit events are one durable fact. Never expose the snapshot before
         # Tailor has been released from the blocker it resolves.
-        if before_write is not None:
-            before_write()
+        _fence_posting_snapshot_before_write(
+            conn, repo=repo, tenant_id=tenant_id, job_id=stable_job_id,
+            expected=accepted_snapshot_set, before_write=before_write,
+        )
         repo.save(snapshot_set, commit=False)
 
         if quarantine_reason is QuarantineReason.NONE:
@@ -3026,6 +3052,7 @@ def _record_authenticated_apply_url_snapshot_recovery(
     snapshot_set = repo.load(tenant_id, job_id)
     if snapshot_set is None or snapshot_set.latest_snapshot is None:
         return False
+    accepted_snapshot_set = snapshot_set
     latest = snapshot_set.latest_snapshot
     try:
         tier = ExtractionTier(latest.extraction_tier)
@@ -3062,8 +3089,10 @@ def _record_authenticated_apply_url_snapshot_recovery(
             "apply_url_recovered:authenticated_browser",
         ),
     )
-    if before_write is not None:
-        before_write()
+    _fence_posting_snapshot_before_write(
+        conn, repo=repo, tenant_id=tenant_id, job_id=job_id,
+        expected=accepted_snapshot_set, before_write=before_write,
+    )
     repo.save(snapshot_set, commit=False)
 
     if quarantine_reason is QuarantineReason.NONE:
@@ -3140,8 +3169,10 @@ def _record_missing_apply_url_content_trust_recovery(
     )
     if confidence is SnapshotConfidence.LOW or quarantine_reason is not QuarantineReason.NONE:
         return False
-    if before_write is not None:
-        before_write()
+    _fence_posting_snapshot_before_write(
+        conn, repo=repo, tenant_id=tenant_id, job_id=job_id,
+        expected=snapshot_set, before_write=before_write,
+    )
     if latest.confidence is confidence and latest.quarantine_reason is quarantine_reason:
         return _resume_tailoring_after_trustworthy_snapshot(
             conn,
