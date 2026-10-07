@@ -45,6 +45,27 @@ _RETIRED_ACTIVITY_EXECUTORS: list[tuple[ThreadPoolExecutor, asyncio.Future]] = [
 _ACTIVITY_EXECUTOR_LOCK = threading.Lock()
 
 
+class ActivityThreadPoolExecutor(ThreadPoolExecutor):
+    """An activity's SQLite lifetime ends before its pool thread is reused."""
+
+    def submit(self, fn, /, *args, **kwargs):
+        return super().submit(_run_activity_with_connection_cleanup, fn, args, kwargs)
+
+
+def _run_activity_with_connection_cleanup(fn, args, kwargs):
+    from jobctrl.database import close_thread_connections
+
+    completed = False
+    try:
+        result = fn(*args, **kwargs)
+        completed = True
+        return result
+    finally:
+        unfinished = close_thread_connections()
+        if completed and unfinished:
+            raise RuntimeError("activity_transaction_unfinished")
+
+
 def set_activity_executor(executor: ThreadPoolExecutor | None) -> None:
     """Set the bounded executor owned by the Temporal worker."""
     global _ACTIVITY_EXECUTOR
@@ -124,7 +145,7 @@ def _rotate_abandoned_activity_executor(
         _prune_retired_activity_executors_locked()
         if _ACTIVITY_EXECUTOR is not abandoned_executor:
             return False
-        replacement = ThreadPoolExecutor(
+        replacement = ActivityThreadPoolExecutor(
             max_workers=_replacement_max_workers(abandoned_executor),
             thread_name_prefix="jobctrl-blocking-activity-recovery",
         )

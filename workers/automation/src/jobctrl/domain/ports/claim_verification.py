@@ -36,7 +36,10 @@ class ServedRequirement(DeterminationModel):
 class LineVerification(DeterminationModel):
     line_id: StrictStr = Field(min_length=1, max_length=240)
     verdict: Literal["pass", "fail"]
-    served_requirements: list[ServedRequirement] = Field(max_length=400)
+    served_requirements: list[ServedRequirement] = Field(
+        max_length=400,
+        description="At most one entry per requirement_id on this line. Combine its support into one citation and rationale; do not repeat an ID for each claim. Use an empty list when no requirement is demonstrated.",
+    )
 
     @property
     def served_requirement_ids(self) -> list[str]:

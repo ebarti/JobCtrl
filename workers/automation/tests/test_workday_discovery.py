@@ -64,6 +64,23 @@ def test_workday_store_results_publishes_discovery_events(
     assert json.loads(observed["payload_json"])["source_id"] == "workday:acme"
 
 
+def test_workday_entry_uses_real_gateway_initializer_and_frozen_settings(monkeypatch):
+    frozen = {"exact_title_exclusions": ["Accountant"]}
+    monkeypatch.setattr(workday, "_politeness", workday._politeness)
+    monkeypatch.setattr(config, "load_search_config", lambda: pytest.fail("must use frozen run settings"))
+
+    def crawl(**kwargs):
+        assert kwargs["search_cfg"] is frozen
+        assert workday._politeness is not None
+        return {"new": 0, "existing": 0, "found": 0, "queries": 0}
+
+    monkeypatch.setattr(workday, "scrape_employers", crawl)
+    assert workday.run_workday_discovery(
+        employers={"example": {"name": "Example", "base_url": "https://example.wd1.myworkdayjobs.com"}},
+        search_cfg=frozen,
+    )["new"] == 0
+
+
 def test_workday_store_results_retains_blank_descriptions_before_limit(
     conn: sqlite3.Connection,
 ) -> None:

@@ -52,7 +52,8 @@ def test_archived_payload_ingests_without_a_model_or_old_preferences(conn, statu
     capture(conn, "2", source="greenhouse:another")
     capture(conn, "3", tenant="another")
     result = recover(conn)
-    assert result == {"new": 1, "existing": 0, "recovered_captures": 1, "recovered_exclusions": 0}
+    assert result == {"new": 1, "existing": 0, "recovered_captures": 1, "recovered_exclusions": 0,
+                      "recovered_capture_failures": 0}
     assert conn.execute("SELECT count(*) FROM jobs").fetchone()[0] == 1
     assert conn.execute("SELECT count(*) FROM semantic_determinations").fetchone()[0] == 0
     assert conn.execute("SELECT count(*) FROM posting_triage WHERE consumed_at IS NULL").fetchone()[0] == 2
@@ -64,7 +65,8 @@ def test_recovery_preserves_new_job_limit_and_literal_exclusions(conn):
     capture(conn, "2", title="Senior Accountant")
     capture(conn, "3")
     result = recover(conn, limit=1, search_cfg={"exact_title_exclusions": ["Accountant"]})
-    assert result == {"new": 1, "existing": 0, "recovered_captures": 2, "recovered_exclusions": 1}
+    assert result == {"new": 1, "existing": 0, "recovered_captures": 2, "recovered_exclusions": 1,
+                      "recovered_capture_failures": 0}
     assert [row["title"] for row in conn.execute("SELECT title FROM jobs")] == ["Senior Accountant"]
     assert conn.execute("SELECT consumed_at FROM posting_triage WHERE listing_id='3'").fetchone()[0] is None
 
@@ -92,7 +94,7 @@ def test_interruption_after_ingestion_keeps_capture_and_retries_idempotently(con
 
 
 @pytest.mark.parametrize("invalid", ["payload", "source"])
-def test_invalid_capture_fails_safely_without_consumption(conn, invalid):
+def test_invalid_capture_is_quarantined_without_blocking_valid_rows_or_retrying(conn, invalid):
     capture(conn, "1")
     if invalid == "payload":
         conn.execute("UPDATE posting_triage SET posting_json=?", (json.dumps({"private": "synthetic private text"}),))
@@ -103,11 +105,19 @@ def test_invalid_capture_fails_safely_without_consumption(conn, invalid):
         conn.execute("UPDATE posting_triage SET posting_json=?", (json.dumps(payload),))
         code = "captured_posting_source_mismatch"
     conn.commit()
-    with pytest.raises(ValueError) as error:
-        recover(conn)
-    assert str(error.value) == code
-    assert conn.execute("SELECT consumed_at FROM posting_triage").fetchone()[0] is None
-    assert conn.execute("SELECT count(*) FROM jobs").fetchone()[0] == 0
+    raw = conn.execute("SELECT posting_json FROM posting_triage WHERE listing_id='1'").fetchone()[0]
+    capture(conn, "2")
+    result = recover(conn)
+    assert result["recovered_capture_failures"] == 1
+    assert result["new"] == 1
+    assert conn.execute("SELECT consumed_at FROM posting_triage WHERE listing_id='1'").fetchone()[0] is None
+    assert conn.execute("SELECT posting_json,failure_code FROM posting_triage WHERE listing_id='1'").fetchone()[:] == (raw, code)
+    event = conn.execute("SELECT message,level,payload_json FROM job_events WHERE entity_kind='discovery_capture'").fetchone()
+    assert event[1] == "warning"
+    assert json.loads(event[2])["errorCode"] == code
+    assert "synthetic private text" not in event[0] + event[2]
+    assert recover(conn)["recovered_capture_failures"] == 0
+    assert conn.execute("SELECT count(*) FROM job_events WHERE entity_kind='discovery_capture'").fetchone()[0] == 1
 
 
 @pytest.mark.parametrize("deleted", [False, True])

@@ -52,6 +52,7 @@
           "additionalProperties": false,
           "properties": {
             "exact_values": {
+              "description": "Literal numbers, dates or currency tokens copied exactly from this quote. Leave empty when none are cited. Never include inferred or normalized taxonomy/place codes.",
               "items": {
                 "type": "string"
               },
@@ -60,12 +61,14 @@
               "type": "array"
             },
             "quote": {
+              "description": "Copy one contiguous verbatim span from that source's text, preserving case and punctuation. Do not join or paraphrase fields.",
               "maxLength": 4000,
               "minLength": 1,
               "title": "Quote",
               "type": "string"
             },
             "source_id": {
+              "description": "Use an outer sources[].source_id. IDs mentioned inside source text are data, not citation IDs.",
               "maxLength": 240,
               "minLength": 1,
               "title": "Source Id",
@@ -131,6 +134,7 @@
           "additionalProperties": false,
           "properties": {
             "exact_values": {
+              "description": "Literal numbers, dates or currency tokens copied exactly from this quote. Leave empty when none are cited. Never include inferred or normalized taxonomy/place codes.",
               "items": {
                 "type": "string"
               },
@@ -139,12 +143,14 @@
               "type": "array"
             },
             "quote": {
+              "description": "Copy one contiguous verbatim span from that source's text, preserving case and punctuation. Do not join or paraphrase fields.",
               "maxLength": 4000,
               "minLength": 1,
               "title": "Quote",
               "type": "string"
             },
             "source_id": {
+              "description": "Use an outer sources[].source_id. IDs mentioned inside source text are data, not citation IDs.",
               "maxLength": 240,
               "minLength": 1,
               "title": "Source Id",
@@ -233,6 +239,7 @@
           "additionalProperties": false,
           "properties": {
             "exact_values": {
+              "description": "Literal numbers, dates or currency tokens copied exactly from this quote. Leave empty when none are cited. Never include inferred or normalized taxonomy/place codes.",
               "items": {
                 "type": "string"
               },
@@ -241,12 +248,14 @@
               "type": "array"
             },
             "quote": {
+              "description": "Copy one contiguous verbatim span from that source's text, preserving case and punctuation. Do not join or paraphrase fields.",
               "maxLength": 4000,
               "minLength": 1,
               "title": "Quote",
               "type": "string"
             },
             "source_id": {
+              "description": "Use an outer sources[].source_id. IDs mentioned inside source text are data, not citation IDs.",
               "maxLength": 240,
               "minLength": 1,
               "title": "Source Id",
@@ -367,6 +376,7 @@
           "additionalProperties": false,
           "properties": {
             "exact_values": {
+              "description": "Literal numbers, dates or currency tokens copied exactly from this quote. Leave empty when none are cited. Never include inferred or normalized taxonomy/place codes.",
               "items": {
                 "type": "string"
               },
@@ -375,12 +385,14 @@
               "type": "array"
             },
             "quote": {
+              "description": "Copy one contiguous verbatim span from that source's text, preserving case and punctuation. Do not join or paraphrase fields.",
               "maxLength": 4000,
               "minLength": 1,
               "title": "Quote",
               "type": "string"
             },
             "source_id": {
+              "description": "Use an outer sources[].source_id. IDs mentioned inside source text are data, not citation IDs.",
               "maxLength": 240,
               "minLength": 1,
               "title": "Source Id",
@@ -671,6 +683,7 @@
           "additionalProperties": false,
           "properties": {
             "exact_values": {
+              "description": "Literal numbers, dates or currency tokens copied exactly from this quote. Leave empty when none are cited. Never include inferred or normalized taxonomy/place codes.",
               "items": {
                 "type": "string"
               },
@@ -679,12 +692,14 @@
               "type": "array"
             },
             "quote": {
+              "description": "Copy one contiguous verbatim span from that source's text, preserving case and punctuation. Do not join or paraphrase fields.",
               "maxLength": 4000,
               "minLength": 1,
               "title": "Quote",
               "type": "string"
             },
             "source_id": {
+              "description": "Use an outer sources[].source_id. IDs mentioned inside source text are data, not citation IDs.",
               "maxLength": 240,
               "minLength": 1,
               "title": "Source Id",
@@ -1074,6 +1089,7 @@
           "additionalProperties": false,
           "properties": {
             "exact_values": {
+              "description": "Literal numbers, dates or currency tokens copied exactly from this quote. Leave empty when none are cited. Never include inferred or normalized taxonomy/place codes.",
               "items": {
                 "type": "string"
               },
@@ -1082,12 +1098,14 @@
               "type": "array"
             },
             "quote": {
+              "description": "Copy one contiguous verbatim span from that source's text, preserving case and punctuation. Do not join or paraphrase fields.",
               "maxLength": 4000,
               "minLength": 1,
               "title": "Quote",
               "type": "string"
             },
             "source_id": {
+              "description": "Use an outer sources[].source_id. IDs mentioned inside source text are data, not citation IDs.",
               "maxLength": 240,
               "minLength": 1,
               "title": "Source Id",
@@ -1127,6 +1145,7 @@
               "type": "string"
             },
             "served_requirements": {
+              "description": "At most one entry per requirement_id on this line. Combine its support into one citation and rationale; do not repeat an ID for each claim. Use an empty list when no requirement is demonstrated.",
               "items": {
                 "$ref": "#/$defs/ServedRequirement"
               },
@@ -1319,6 +1338,7 @@
           "additionalProperties": false,
           "properties": {
             "exact_values": {
+              "description": "Literal numbers, dates or currency tokens copied exactly from this quote. Leave empty when none are cited. Never include inferred or normalized taxonomy/place codes.",
               "items": {
                 "type": "string"
               },
@@ -1327,12 +1347,14 @@
               "type": "array"
             },
             "quote": {
+              "description": "Copy one contiguous verbatim span from that source's text, preserving case and punctuation. Do not join or paraphrase fields.",
               "maxLength": 4000,
               "minLength": 1,
               "title": "Quote",
               "type": "string"
             },
             "source_id": {
+              "description": "Use an outer sources[].source_id. IDs mentioned inside source text are data, not citation IDs.",
               "maxLength": 240,
               "minLength": 1,
               "title": "Source Id",
@@ -1392,6 +1414,7 @@
           "additionalProperties": false,
           "properties": {
             "exact_values": {
+              "description": "Literal numbers, dates or currency tokens copied exactly from this quote. Leave empty when none are cited. Never include inferred or normalized taxonomy/place codes.",
               "items": {
                 "type": "string"
               },
@@ -1400,12 +1423,14 @@
               "type": "array"
             },
             "quote": {
+              "description": "Copy one contiguous verbatim span from that source's text, preserving case and punctuation. Do not join or paraphrase fields.",
               "maxLength": 4000,
               "minLength": 1,
               "title": "Quote",
               "type": "string"
             },
             "source_id": {
+              "description": "Use an outer sources[].source_id. IDs mentioned inside source text are data, not citation IDs.",
               "maxLength": 240,
               "minLength": 1,
               "title": "Source Id",
@@ -1490,6 +1515,7 @@
           "additionalProperties": false,
           "properties": {
             "exact_values": {
+              "description": "Literal numbers, dates or currency tokens copied exactly from this quote. Leave empty when none are cited. Never include inferred or normalized taxonomy/place codes.",
               "items": {
                 "type": "string"
               },
@@ -1498,12 +1524,14 @@
               "type": "array"
             },
             "quote": {
+              "description": "Copy one contiguous verbatim span from that source's text, preserving case and punctuation. Do not join or paraphrase fields.",
               "maxLength": 4000,
               "minLength": 1,
               "title": "Quote",
               "type": "string"
             },
             "source_id": {
+              "description": "Use an outer sources[].source_id. IDs mentioned inside source text are data, not citation IDs.",
               "maxLength": 240,
               "minLength": 1,
               "title": "Source Id",
@@ -1617,6 +1645,7 @@
           "additionalProperties": false,
           "properties": {
             "exact_values": {
+              "description": "Literal numbers, dates or currency tokens copied exactly from this quote. Leave empty when none are cited. Never include inferred or normalized taxonomy/place codes.",
               "items": {
                 "type": "string"
               },
@@ -1625,12 +1654,14 @@
               "type": "array"
             },
             "quote": {
+              "description": "Copy one contiguous verbatim span from that source's text, preserving case and punctuation. Do not join or paraphrase fields.",
               "maxLength": 4000,
               "minLength": 1,
               "title": "Quote",
               "type": "string"
             },
             "source_id": {
+              "description": "Use an outer sources[].source_id. IDs mentioned inside source text are data, not citation IDs.",
               "maxLength": 240,
               "minLength": 1,
               "title": "Source Id",
@@ -1760,6 +1791,7 @@
           "additionalProperties": false,
           "properties": {
             "exact_values": {
+              "description": "Literal numbers, dates or currency tokens copied exactly from this quote. Leave empty when none are cited. Never include inferred or normalized taxonomy/place codes.",
               "items": {
                 "type": "string"
               },
@@ -1768,12 +1800,14 @@
               "type": "array"
             },
             "quote": {
+              "description": "Copy one contiguous verbatim span from that source's text, preserving case and punctuation. Do not join or paraphrase fields.",
               "maxLength": 4000,
               "minLength": 1,
               "title": "Quote",
               "type": "string"
             },
             "source_id": {
+              "description": "Use an outer sources[].source_id. IDs mentioned inside source text are data, not citation IDs.",
               "maxLength": 240,
               "minLength": 1,
               "title": "Source Id",
@@ -2293,6 +2327,7 @@
           "additionalProperties": false,
           "properties": {
             "exact_values": {
+              "description": "Literal numbers, dates or currency tokens copied exactly from this quote. Leave empty when none are cited. Never include inferred or normalized taxonomy/place codes.",
               "items": {
                 "type": "string"
               },
@@ -2301,12 +2336,14 @@
               "type": "array"
             },
             "quote": {
+              "description": "Copy one contiguous verbatim span from that source's text, preserving case and punctuation. Do not join or paraphrase fields.",
               "maxLength": 4000,
               "minLength": 1,
               "title": "Quote",
               "type": "string"
             },
             "source_id": {
+              "description": "Use an outer sources[].source_id. IDs mentioned inside source text are data, not citation IDs.",
               "maxLength": 240,
               "minLength": 1,
               "title": "Source Id",
@@ -2385,6 +2422,7 @@
           "additionalProperties": false,
           "properties": {
             "exact_values": {
+              "description": "Literal numbers, dates or currency tokens copied exactly from this quote. Leave empty when none are cited. Never include inferred or normalized taxonomy/place codes.",
               "items": {
                 "type": "string"
               },
@@ -2393,12 +2431,14 @@
               "type": "array"
             },
             "quote": {
+              "description": "Copy one contiguous verbatim span from that source's text, preserving case and punctuation. Do not join or paraphrase fields.",
               "maxLength": 4000,
               "minLength": 1,
               "title": "Quote",
               "type": "string"
             },
             "source_id": {
+              "description": "Use an outer sources[].source_id. IDs mentioned inside source text are data, not citation IDs.",
               "maxLength": 240,
               "minLength": 1,
               "title": "Source Id",
@@ -2470,6 +2510,7 @@
           "additionalProperties": false,
           "properties": {
             "exact_values": {
+              "description": "Literal numbers, dates or currency tokens copied exactly from this quote. Leave empty when none are cited. Never include inferred or normalized taxonomy/place codes.",
               "items": {
                 "type": "string"
               },
@@ -2478,12 +2519,14 @@
               "type": "array"
             },
             "quote": {
+              "description": "Copy one contiguous verbatim span from that source's text, preserving case and punctuation. Do not join or paraphrase fields.",
               "maxLength": 4000,
               "minLength": 1,
               "title": "Quote",
               "type": "string"
             },
             "source_id": {
+              "description": "Use an outer sources[].source_id. IDs mentioned inside source text are data, not citation IDs.",
               "maxLength": 240,
               "minLength": 1,
               "title": "Source Id",
@@ -2680,6 +2723,7 @@
           "additionalProperties": false,
           "properties": {
             "exact_values": {
+              "description": "Literal numbers, dates or currency tokens copied exactly from this quote. Leave empty when none are cited. Never include inferred or normalized taxonomy/place codes.",
               "items": {
                 "type": "string"
               },
@@ -2688,12 +2732,14 @@
               "type": "array"
             },
             "quote": {
+              "description": "Copy one contiguous verbatim span from that source's text, preserving case and punctuation. Do not join or paraphrase fields.",
               "maxLength": 4000,
               "minLength": 1,
               "title": "Quote",
               "type": "string"
             },
             "source_id": {
+              "description": "Use an outer sources[].source_id. IDs mentioned inside source text are data, not citation IDs.",
               "maxLength": 240,
               "minLength": 1,
               "title": "Source Id",
@@ -2852,6 +2898,7 @@
           "additionalProperties": false,
           "properties": {
             "exact_values": {
+              "description": "Literal numbers, dates or currency tokens copied exactly from this quote. Leave empty when none are cited. Never include inferred or normalized taxonomy/place codes.",
               "items": {
                 "type": "string"
               },
@@ -2860,12 +2907,14 @@
               "type": "array"
             },
             "quote": {
+              "description": "Copy one contiguous verbatim span from that source's text, preserving case and punctuation. Do not join or paraphrase fields.",
               "maxLength": 4000,
               "minLength": 1,
               "title": "Quote",
               "type": "string"
             },
             "source_id": {
+              "description": "Use an outer sources[].source_id. IDs mentioned inside source text are data, not citation IDs.",
               "maxLength": 240,
               "minLength": 1,
               "title": "Source Id",
@@ -2953,6 +3002,7 @@
           "additionalProperties": false,
           "properties": {
             "exact_values": {
+              "description": "Literal numbers, dates or currency tokens copied exactly from this quote. Leave empty when none are cited. Never include inferred or normalized taxonomy/place codes.",
               "items": {
                 "type": "string"
               },
@@ -2961,12 +3011,14 @@
               "type": "array"
             },
             "quote": {
+              "description": "Copy one contiguous verbatim span from that source's text, preserving case and punctuation. Do not join or paraphrase fields.",
               "maxLength": 4000,
               "minLength": 1,
               "title": "Quote",
               "type": "string"
             },
             "source_id": {
+              "description": "Use an outer sources[].source_id. IDs mentioned inside source text are data, not citation IDs.",
               "maxLength": 240,
               "minLength": 1,
               "title": "Source Id",
@@ -3026,6 +3078,7 @@
           "additionalProperties": false,
           "properties": {
             "exact_values": {
+              "description": "Literal numbers, dates or currency tokens copied exactly from this quote. Leave empty when none are cited. Never include inferred or normalized taxonomy/place codes.",
               "items": {
                 "type": "string"
               },
@@ -3034,12 +3087,14 @@
               "type": "array"
             },
             "quote": {
+              "description": "Copy one contiguous verbatim span from that source's text, preserving case and punctuation. Do not join or paraphrase fields.",
               "maxLength": 4000,
               "minLength": 1,
               "title": "Quote",
               "type": "string"
             },
             "source_id": {
+              "description": "Use an outer sources[].source_id. IDs mentioned inside source text are data, not citation IDs.",
               "maxLength": 240,
               "minLength": 1,
               "title": "Source Id",
@@ -3156,6 +3211,7 @@
           "additionalProperties": false,
           "properties": {
             "exact_values": {
+              "description": "Literal numbers, dates or currency tokens copied exactly from this quote. Leave empty when none are cited. Never include inferred or normalized taxonomy/place codes.",
               "items": {
                 "type": "string"
               },
@@ -3164,12 +3220,14 @@
               "type": "array"
             },
             "quote": {
+              "description": "Copy one contiguous verbatim span from that source's text, preserving case and punctuation. Do not join or paraphrase fields.",
               "maxLength": 4000,
               "minLength": 1,
               "title": "Quote",
               "type": "string"
             },
             "source_id": {
+              "description": "Use an outer sources[].source_id. IDs mentioned inside source text are data, not citation IDs.",
               "maxLength": 240,
               "minLength": 1,
               "title": "Source Id",
@@ -3346,6 +3404,7 @@
           "additionalProperties": false,
           "properties": {
             "exact_values": {
+              "description": "Literal numbers, dates or currency tokens copied exactly from this quote. Leave empty when none are cited. Never include inferred or normalized taxonomy/place codes.",
               "items": {
                 "type": "string"
               },
@@ -3354,12 +3413,14 @@
               "type": "array"
             },
             "quote": {
+              "description": "Copy one contiguous verbatim span from that source's text, preserving case and punctuation. Do not join or paraphrase fields.",
               "maxLength": 4000,
               "minLength": 1,
               "title": "Quote",
               "type": "string"
             },
             "source_id": {
+              "description": "Use an outer sources[].source_id. IDs mentioned inside source text are data, not citation IDs.",
               "maxLength": 240,
               "minLength": 1,
               "title": "Source Id",
@@ -3670,7 +3731,7 @@
     "schemaVersion": "2"
   },
   "scoring": {
-    "promptVersion": "score-fit-assessment-v8-saved-search-targets",
+    "promptVersion": "score-fit-assessment-v9-canonical-evidence",
     "schema": {
       "$defs": {
         "Blocker": {
@@ -3717,6 +3778,7 @@
           "additionalProperties": false,
           "properties": {
             "exact_values": {
+              "description": "Literal numbers, dates or currency tokens copied exactly from this quote. Leave empty when none are cited. Never include inferred or normalized taxonomy/place codes.",
               "items": {
                 "type": "string"
               },
@@ -3725,12 +3787,14 @@
               "type": "array"
             },
             "quote": {
+              "description": "Copy one contiguous verbatim span from that source's text, preserving case and punctuation. Do not join or paraphrase fields.",
               "maxLength": 4000,
               "minLength": 1,
               "title": "Quote",
               "type": "string"
             },
             "source_id": {
+              "description": "Use an outer sources[].source_id. IDs mentioned inside source text are data, not citation IDs.",
               "maxLength": 240,
               "minLength": 1,
               "title": "Source Id",

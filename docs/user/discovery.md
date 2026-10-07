@@ -342,6 +342,12 @@ JobStreaming executes the saved title, location, remote and lookback parameters 
 
 Broad-board captures are durable before checkpoint acknowledgement and canonical ingestion is idempotent across retry. Limits, leases, source listing flags and literal exact-title exclusions remain mechanical. Historical intake captures and model receipts remain preserved. Each runnable source family recovers up to 100 unconsumed raw posting captures before fetching, using canonical ingestion, current literal exclusions and the remaining new-job limit. Successful ingestion marks a capture consumed; interruption retains it for an idempotent retry. The retired model status, preferences and envelope are never read.
 
+A structurally invalid archived capture stays stored with its safe failure code
+and a warning in Activity. It is excluded from automatic recovery so valid
+captures and fresh searches continue. Captures for sources that are no longer
+runnable remain archived. Recovery never overwrites newer job data or restores
+an owner's deleted job.
+
 Literal user-approved exact-title exclusions remain literal. Saved free-text criteria are supplied verbatim to posting and scoring determinations; they do not create another search-approval step. Historical experience locations do not imply relocation or remote consent. Profile import/save creates pending candidate interpretations. **Target search suggestions** calls the configured model in production; selected suggestions change targets only through a version-fenced user save.
 
 ## Employer Analysis Perspectives

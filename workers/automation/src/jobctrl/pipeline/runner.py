@@ -1469,7 +1469,7 @@ def run_discovery_source_family(
             result.update(fetch(run_id) or {})
         for key in ("new", "existing"):
             result[key] = int(result.get(key) or 0) + recovered[key]
-        if recovered["recovered_captures"]:
+        if recovered["recovered_captures"] or recovered["recovered_capture_failures"]:
             result.update({key: value for key, value in recovered.items() if key.startswith("recovered_")})
         return result
 

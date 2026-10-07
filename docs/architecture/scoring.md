@@ -61,6 +61,11 @@ prompt. `trace_json` records non-sensitive audit metadata: prompt/schema
 versions, model name, criteria version, profile snapshot version, parser
 warnings, and correction history.
 
+The prompt's evidence inventory is the same canonical source inventory used
+for citation validation. Only confirmed achievements enter it. Education and
+other structured facts retain their exact source serialization; a second text
+adapter cannot advertise foreign IDs or reconstruct different citation text.
+
 ### Deterministic Score Resolution
 
 When the accepted employer analysis provides explicit requirement IDs and the
@@ -69,13 +74,12 @@ score. The scorer response supplies each assessment's requirement identity,
 text, tier, weight, posting-evidence span, fit classification, and profile
 evidence IDs. The parser validates field shape and ranges and requires at least
 one non-empty evidence ID for matched and transferable rows. It does not
-currently reconcile those returned IDs or requirement fields against the
-canonical employer analysis and profile evidence before resolution. The
-formula is therefore deterministic over the accepted parsed response, while
-its grounding still depends on the scorer returning the supplied source fields
-faithfully. Evidence resolution in the read model can later mark an unknown ID
-unavailable, but that display-time result does not retroactively change the
-score.
+accept foreign evidence IDs, duplicated or missing requirement IDs, or posting
+spans absent from the canonical requirement. Citations bind to the supplied
+source IDs and contiguous verbatim quotes, including literal value checks.
+The model owns the fit assessment; code applies arithmetic to the accepted
+typed verdicts. Invalid determinations block the refresh while preserving the
+last accepted score.
 
 For each parsed requirement assessment:
 

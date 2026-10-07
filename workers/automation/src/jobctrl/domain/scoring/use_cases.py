@@ -68,7 +68,6 @@ from jobctrl.domain.scoring.value_objects import (
     ScoringCriteria,
 )
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
-from jobctrl.resume_profile import get_achievement_evidence, get_education_entries
 
 log = logging.getLogger(__name__)
 
@@ -78,7 +77,7 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-SCORE_PROMPT_VERSION = "score-fit-assessment-v8-saved-search-targets"
+SCORE_PROMPT_VERSION = "score-fit-assessment-v9-canonical-evidence"
 SCORE_SCHEMA_VERSION = "score-fit-assessment-v5-determinations"
 SCORE_THINKING_BUDGET = 0
 
@@ -190,61 +189,12 @@ def _build_requirement_fit_inputs_blob(
 
 
 def _profile_evidence_prompt_items(profile_snapshot: ProfileSnapshot) -> list[dict[str, Any]]:
-    items: list[dict[str, Any]] = []
-    for raw in get_education_entries(profile_snapshot.as_dict()):
-        if not isinstance(raw, dict):
-            continue
-        entry_id = str(raw.get("id") or "").strip()
-        parts = [
-            str(raw.get("degree") or "").strip(),
-            str(raw.get("institution") or "").strip(),
-            str(raw.get("location") or "").strip(),
-            str(raw.get("date") or "").strip(),
-        ]
-        source_text = " | ".join(part for part in parts if part)
-        if not entry_id or not source_text:
-            continue
-        items.append(
-            {
-                "id": f"education:{entry_id}",
-                "source_text": source_text,
-                "evidence_type": "education",
-            }
-        )
-    for raw in get_achievement_evidence(profile_snapshot.as_dict()):
-        if not isinstance(raw, dict):
-            continue
-        evidence_id = str(raw.get("id") or "").strip()
-        source_text = str(raw.get("source_text") or "").strip()
-        if not evidence_id or not source_text:
-            continue
-        item = {
-            "id": evidence_id,
-            "source_text": source_text,
-            "experience_entry_id": str(raw.get("experience_entry_id") or "").strip(),
-            "tools": _text_list(raw.get("tools")),
-            "metrics": _text_list(raw.get("metrics")),
-            "tags": _text_list(raw.get("tags")),
-        }
-        items.append({key: value for key, value in item.items() if value})
-        if len(items) >= 32:
-            break
-    return items
-
-
-def _text_list(value: Any) -> list[str]:
-    if not isinstance(value, (list, tuple)):
-        return []
-    seen: set[str] = set()
-    out: list[str] = []
-    for raw in value:
-        text = str(raw or "").strip()
-        key = text.lower()
-        if not text or key in seen:
-            continue
-        seen.add(key)
-        out.append(text)
-    return out
+    # Advertised evidence is the same inventory and verbatim text validated
+    # after the model call. Unconfirmed suggestions never become evidence.
+    return [
+        {"id": source.source_id, "source_text": source.text}
+        for source in profile_sources(profile_snapshot.as_dict())
+    ]
 
 
 def _optional_prompt_section(text: str) -> str:
@@ -544,12 +494,13 @@ class ScoreJobUseCase:
                     schema_version=SCORE_SCHEMA_VERSION,
                     prompt_version=SCORE_PROMPT_VERSION,
                     instruction=self._prompt
-                    + " Each eligibility blocker must carry a closed category, rationale and verbatim citations. Compensation, work-model and location preferences belong in warnings, never blockers. Use the supplied job interpretation and saved search preferences; selected settings are authoritative. Compare shared codes directly and assess the posting against authored criteria through cited verdicts. Never replace saved preferences or invent a constraint. Every requirement ID must have one cited assessment. Decide discovery_feedback independently: propose_exact_title_exclusion only when the role itself is unsuitable for the confirmed target and avoiding that literal title would help. Otherwise use none. Give verbatim citations and a reason; do not use a score threshold to decide this. Cite supplied evidence IDs only.",
+                    + " Each eligibility blocker must carry a closed category, rationale and verbatim citations. Compensation, work-model and location preferences belong in warnings, never blockers. Use the supplied job interpretation and saved search preferences; selected settings are authoritative. Compare shared codes directly and assess the posting against authored criteria through cited verdicts. Never replace saved preferences or invent a constraint. Every requirement ID must have one cited assessment. RequirementFit.evidence_ids must use only candidate_evidence_ids; copy quotes from the corresponding canonical sources, without reconstructing or joining fields. Decide discovery_feedback independently: propose_exact_title_exclusion only when the role itself is unsuitable for the confirmed target and avoiding that literal title would help. Otherwise use none. Give verbatim citations and a reason; do not use a score threshold to decide this. Cite supplied evidence IDs only.",
                     sources=sources,
                     context={
                         "profile_version": profile_snapshot.version,
                         "criteria_version": criteria.criteria_version,
                         "requirement_ids": sorted(requirements),
+                        "candidate_evidence_ids": [item.source_id for item in authored],
                         "requirement_fit_inputs": requirement_fit_inputs,
                     },
                     entity_id=str(job["job_id"]),

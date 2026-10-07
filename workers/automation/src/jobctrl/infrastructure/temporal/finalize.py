@@ -27,6 +27,8 @@ from temporalio import activity, workflow
 from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError, ApplicationError, CancelledError
 
+from jobctrl.infrastructure.temporal.run_in_activity import run_blocking_with_heartbeat
+
 # The finalize activities are tiny local SQLite writes; a run's terminal state
 # is only durable once recorded, so they retry a handful of times but stay
 # fast.
@@ -88,13 +90,19 @@ async def record_workflow_started(payload: WorkflowStartedInput) -> None:
             temporal_run_id=payload.temporal_run_id,
         ),
     )
-    _emit(payload.expected_app_dir, payload.expected_db_path, event)
+    await run_blocking_with_heartbeat(
+        lambda: _emit(payload.expected_app_dir, payload.expected_db_path, event),
+        starting_message="recording workflow start",
+    )
 
 
 @activity.defn(name="record_workflow_outcome")
 async def record_workflow_outcome(payload: WorkflowOutcomeInput) -> None:
     event = build_workflow_outcome_event(payload)
-    _emit(payload.expected_app_dir, payload.expected_db_path, event)
+    await run_blocking_with_heartbeat(
+        lambda: _emit(payload.expected_app_dir, payload.expected_db_path, event),
+        starting_message="recording workflow outcome",
+    )
 
 
 def build_workflow_outcome_event(payload: WorkflowOutcomeInput):
@@ -179,7 +187,7 @@ def build_workflow_outcome_event(payload: WorkflowOutcomeInput):
 
 
 def _emit(expected_app_dir: str | None, expected_db_path: str | None, event) -> None:
-    from jobctrl.database import get_connection
+    from jobctrl.database import close_connection, get_connection
     from jobctrl.infrastructure.projections.projection_builder import ProjectionBuilder
     from jobctrl.infrastructure.temporal.runtime_guard import assert_activity_runtime
     from jobctrl.state import record_job_event
@@ -189,19 +197,24 @@ def _emit(expected_app_dir: str | None, expected_db_path: str | None, event) -> 
         expected_db_path=expected_db_path,
     )
     conn = get_connection()
-    # Workflow lifecycle events are not tied to a single job (a pipeline run is
-    # a batch), so ``job_url`` is NULL; the run identity lives in the payload.
-    record_job_event(
-        conn,
-        None,
-        "workflow",
-        event.event_type,
-        payload=dict(event.payload),
-    )
-    conn.commit()
-    # Refresh explicitly so ``workflow_run_projections`` updates even when the
-    # process has no bus-subscribed ProjectionBuilder (idempotent otherwise).
-    ProjectionBuilder(conn_factory=get_connection).refresh()
+    try:
+        # Workflow lifecycle events are not tied to a single job (a pipeline
+        # run is a batch); the run identity lives in the payload.
+        record_job_event(
+            conn,
+            None,
+            "workflow",
+            event.event_type,
+            payload=dict(event.payload),
+        )
+        conn.commit()
+        # Refresh explicitly even without a bus-subscribed builder. A failed
+        # refresh can retry from the already committed canonical event.
+        ProjectionBuilder(conn_factory=get_connection).refresh()
+    finally:
+        # Also covers direct activity runners without the production pool.
+        # Closing rolls back unfinished writes and retains committed events.
+        close_connection()
 
 
 # ------------------------------------------------------- workflow-side helpers

@@ -1847,15 +1847,13 @@ def scrape_site_batch(
                     )
 
                     finished_at = utc_now()
-                    if activity_lease is not None:
-                        assert claim_version is not None
-                        _fence_enrich_job_write(
-                            conn,
-                            job_id,
-                            tenant_id=tenant_id,
-                            activity_lease=activity_lease,
-                            claim_version=claim_version,
-                        )
+                    def fence_result() -> None:
+                        if activity_lease is not None:
+                            assert claim_version is not None
+                            _fence_enrich_job_write(
+                                conn, job_id, tenant_id=tenant_id,
+                                activity_lease=activity_lease, claim_version=claim_version,
+                            )
                     if status in ("ok", "partial"):
                         fallback_source = cascade_result.get("fallback_source")
                         stage_metadata: dict[str, object] = {}
@@ -1909,7 +1907,9 @@ def scrape_site_batch(
                             captured_at=finished_at,
                             tenant_id=tenant_id,
                             commit=False,
+                            before_write=fence_result,
                         )
+                        fence_result()
                         repo.save(succeeded, commit=False)
                         set_stage_state(
                             conn,
@@ -1963,7 +1963,9 @@ def scrape_site_batch(
                             captured_at=finished_at,
                             tenant_id=tenant_id,
                             commit=False,
+                            before_write=fence_result,
                         )
+                        fence_result()
                         err = EnrichmentError(
                             code="POSTING_INACTIVE",
                             message=str(cascade_result.get("error") or "posting inactive")[:500],
@@ -2013,6 +2015,7 @@ def scrape_site_batch(
                             tenant_id=tenant_id,
                         )
                     else:
+                        fence_result()
                         stats["error"] += 1
                         retryable = _detail_failure_retryable(cascade_result)
                         error_code = (
@@ -2258,6 +2261,7 @@ def _record_posting_snapshot_from_cascade(
     captured_at: str,
     tenant_id: TenantId = LOCAL_TENANT,
     commit: bool = True,
+    before_write: Callable[[], None] | None = None,
 ) -> None:
     """Persist ``PostingSnapshotSet`` history from the existing enrich path."""
     description = str(cascade_result.get("full_description") or "")
@@ -2340,6 +2344,8 @@ def _record_posting_snapshot_from_cascade(
         # Snapshot trust, quarantine resolution, downstream release, and their
         # audit events are one durable fact. Never expose the snapshot before
         # Tailor has been released from the blocker it resolves.
+        if before_write is not None:
+            before_write()
         repo.save(snapshot_set, commit=False)
 
         if quarantine_reason is QuarantineReason.NONE:
@@ -2950,6 +2956,16 @@ def _refresh_selected_apply_targets(
             finished_at=utc_now(),
         )
         try:
+            if target is not None:
+                assert recovered_url is not None
+                _record_authenticated_apply_url_snapshot_recovery(
+                    conn,
+                    tenant_id=tenant_id,
+                    job_id=job_id,
+                    enrichment=updated,
+                    recovered=recovered_url,
+                    captured_at=updated.updated_at,
+                )
             repo.save(updated, commit=False)
             outcome = _authenticated_apply_url_outcome_metadata(
                 {
@@ -2964,16 +2980,6 @@ def _refresh_selected_apply_targets(
                 outcome_metadata=outcome,
                 updated_at=updated.updated_at,
             )
-            if target is not None:
-                assert recovered_url is not None
-                _record_authenticated_apply_url_snapshot_recovery(
-                    conn,
-                    tenant_id=tenant_id,
-                    job_id=job_id,
-                    enrichment=updated,
-                    recovered=recovered_url,
-                    captured_at=updated.updated_at,
-                )
             record_job_event(
                 conn,
                 job_id,
@@ -3003,6 +3009,7 @@ def _record_authenticated_apply_url_snapshot_recovery(
     enrichment: JobEnrichment,
     recovered: ApplicationUrl,
     captured_at: str,
+    before_write: Callable[[], None] | None = None,
 ) -> bool:
     """Append a truthful snapshot version after authenticated URL recovery."""
 
@@ -3050,6 +3057,8 @@ def _record_authenticated_apply_url_snapshot_recovery(
             "apply_url_recovered:authenticated_browser",
         ),
     )
+    if before_write is not None:
+        before_write()
     repo.save(snapshot_set, commit=False)
 
     if quarantine_reason is QuarantineReason.NONE:
@@ -3086,6 +3095,7 @@ def _record_missing_apply_url_content_trust_recovery(
     job_id: JobId,
     enrichment: JobEnrichment,
     captured_at: str,
+    before_write: Callable[[], None] | None = None,
 ) -> bool:
     """Repair legacy snapshots that coupled content trust to apply-URL readiness.
 
@@ -3125,6 +3135,8 @@ def _record_missing_apply_url_content_trust_recovery(
     )
     if confidence is SnapshotConfidence.LOW or quarantine_reason is not QuarantineReason.NONE:
         return False
+    if before_write is not None:
+        before_write()
     if latest.confidence is confidence and latest.quarantine_reason is quarantine_reason:
         return _resume_tailoring_after_trustworthy_snapshot(
             conn,
@@ -3228,14 +3240,14 @@ def _repair_legacy_missing_apply_url_content_trust_candidates(
             aggregate = repo.load(tenant_id, job_id)
             if aggregate is None or not aggregate.is_enriched:
                 continue
-            if activity_lease is not None:
-                _fence_execution_enrichment_lease(conn, activity_lease)
             if _record_missing_apply_url_content_trust_recovery(
                 conn,
                 tenant_id=tenant_id,
                 job_id=job_id,
                 enrichment=aggregate,
                 captured_at=utc_now(),
+                before_write=(lambda: _fence_execution_enrichment_lease(conn, activity_lease))
+                if activity_lease is not None else None,
             ):
                 repaired_count += 1
             conn.commit()
@@ -3435,8 +3447,6 @@ def _reset_authenticated_linkedin_retry_candidates(
                     # never-resolving row is bounded by attempt count exactly
                     # like the extraction cascade; the description is never
                     # touched.
-                    if activity_lease is not None:
-                        _fence_execution_enrichment_lease(conn, activity_lease)
                     recovery_error = (
                         None
                         if recovered is not None
@@ -3451,6 +3461,19 @@ def _reset_authenticated_linkedin_retry_candidates(
                         started_at=now,
                         finished_at=utc_now(),
                     )
+                    if recovered is not None:
+                        _record_authenticated_apply_url_snapshot_recovery(
+                            conn,
+                            tenant_id=tenant_id,
+                            job_id=job_id,
+                            enrichment=updated_aggregate,
+                            recovered=recovered,
+                            captured_at=updated_aggregate.updated_at,
+                            before_write=(lambda: _fence_execution_enrichment_lease(conn, activity_lease))
+                            if activity_lease is not None else None,
+                        )
+                    if activity_lease is not None:
+                        _fence_execution_enrichment_lease(conn, activity_lease)
                     repo.save(updated_aggregate, commit=False)
                     outcome_metadata = _authenticated_apply_url_outcome_metadata(resolved)
                     _merge_enrich_apply_url_outcome_metadata(
@@ -3460,15 +3483,6 @@ def _reset_authenticated_linkedin_retry_candidates(
                         outcome_metadata=outcome_metadata,
                         updated_at=updated_aggregate.updated_at,
                     )
-                    if recovered is not None:
-                        _record_authenticated_apply_url_snapshot_recovery(
-                            conn,
-                            tenant_id=tenant_id,
-                            job_id=job_id,
-                            enrichment=updated_aggregate,
-                            recovered=recovered,
-                            captured_at=updated_aggregate.updated_at,
-                        )
                     record_job_event(
                         conn,
                         job_id,

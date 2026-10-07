@@ -2444,7 +2444,8 @@ async def _worker_heartbeat_loop(
             queue_observation = (
                 await _safe_task_queue_observation(temporal_client, task_queue) if temporal_client is not None else None
             )
-            _worker_heartbeat_iteration(
+            await asyncio.to_thread(
+                _worker_heartbeat_iteration,
                 task_queue,
                 worker_id,
                 worker_started_at=worker_started_at,

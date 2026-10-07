@@ -90,6 +90,13 @@ def call(adapter, repository, preflight=lambda: None, **overrides):
     return determine(**arguments)
 
 
+def test_response_schema_binds_citation_ids_to_the_supplied_sources():
+    model = Model(response())
+    call(model, Repository())
+    _, kwargs = model.calls[0]
+    assert kwargs["response_schema"]["$defs"]["Citation"]["properties"]["source_id"]["enum"] == ["canonical:1"]
+
+
 def test_same_sources_bind_opposite_valid_model_decisions() -> None:
     for verdict in ("accept", "reject"):
         model = Model(response(verdict))

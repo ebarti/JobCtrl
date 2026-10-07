@@ -1579,6 +1579,25 @@ def _persist_intake_event(conn, repository, lease, event, frame):
     conn.commit()
 
 
+def _restore_provider_job(payload):
+    """Decode the SDK's tuple-valued Country enum from its exact JSON format."""
+    from jobstreaming import JobPost
+    from jobstreaming.model import Country
+
+    data = dict(payload)
+    location = data.get("location")
+    if isinstance(location, dict) and isinstance(location.get("country"), list):
+        try:
+            country = Country(tuple(location["country"]))
+        except (TypeError, ValueError):
+            raise ValueError("provider_job_invalid_country") from None
+        data["location"] = {**location, "country": country}
+    try:
+        return JobPost.model_validate(data)
+    except ValueError:
+        raise ValueError("provider_job_invalid") from None
+
+
 def _drain_intake_events(conn, repository, lease, *, query, run_id, search_cfg, limit, detail_fetcher=None, cancel_event=None):
     import pandas as pd
     import json
@@ -1782,13 +1801,13 @@ def _durable_full_crawl(
         def fill_identity_detail(frame, payload, provider_key):
             if not _needs_linkedin_detail_for_content_identity(conn, frame):
                 return frame
-            from jobstreaming import JobPost, JobStreamingError, Site
+            from jobstreaming import JobStreamingError, Site
 
             event = JobEvent(
                 sequence=0,
                 emitted_at=datetime.now(timezone.utc),
                 site=Site(payload["site"]),
-                job=JobPost.model_validate(payload["provider_job"]),
+                job=_restore_provider_job(payload["provider_job"]),
                 job_key=provider_key,
                 resume_state={},
             )

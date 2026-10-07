@@ -55,6 +55,16 @@ worker startup in
   generation before its grace wait, so a fresh bounded generation accepts an
   immediate retry even when the old provider call ignores cancellation.
 
+Both activity pools close their thread-local SQLite connections before reusing
+a thread. Committed artifacts remain durable; unfinished writes are rolled back.
+A function that returns successfully with an unfinished transaction fails with
+`activity_transaction_unfinished` instead of claiming its result was saved.
+Posting snapshot determinations run before acquiring the write fence; the
+current lease and stage version are checked again before atomic persistence.
+Workflow lifecycle activities also offload SQLite writes and close their
+connection on every exit. A failed projection refresh retains its committed
+canonical event for the next refresh.
+
 The worker heartbeat records the activity slots and configured executor width.
 `GET /v1/health` exposes the health
 boundary, while `GET /v1/pipeline/operations` derives the app directory from
@@ -63,6 +73,9 @@ database/app-dir identity, selects the task queue named by the newest matching
 heartbeat, and aggregates fresh schema-valid rows from that queue into
 configured, active, and available slots. Changing `worker_activity_slots` in
 Settings writes `config.json`; restart the worker to apply the new capacity.
+Heartbeat persistence runs off the Temporal event loop so a database busy wait
+cannot prevent activity heartbeats. A failed write still produces a stale
+health status; a live PID alone does not establish worker readiness.
 
 Two knobs that look like Temporal concurrency but are not:
 

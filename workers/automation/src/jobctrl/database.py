@@ -120,6 +120,25 @@ def close_connection(db_path: Path | str | None = None) -> None:
             conn.close()
 
 
+def close_thread_connections() -> bool:
+    """Release activity-owned connections; never commit unfinished work.
+
+    Pool threads are reused, so a failed activity cannot leave a cached writer
+    alive for the next activity. Return whether unfinished writes were present.
+    """
+    connections = getattr(_local, "connections", {})
+    unfinished = False
+    for path in tuple(connections):
+        conn = connections.pop(path)
+        try:
+            unfinished |= conn.in_transaction
+        except sqlite3.ProgrammingError:
+            pass  # A caller already closed this cached connection.
+        finally:
+            conn.close()  # SQLite rolls back, rather than commits, on close.
+    return unfinished
+
+
 def backup_database(
     output: Path | str | None = None,
     *,

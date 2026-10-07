@@ -26,6 +26,7 @@ from jobctrl.domain.materials.analysis import (
 from jobctrl.domain.ports.events import Subscription
 from jobctrl.domain.ports.llm import LlmMessage
 from jobctrl.domain.profile.aggregate import Profile
+from jobctrl.domain.profile.snapshot import ProfileSnapshot
 from jobctrl.domain.scoring import (
     FitScore,
     JobScore,
@@ -697,6 +698,13 @@ def test_requirement_fit_prompt_includes_education_evidence(tmp_path) -> None:
         "full_description": "Bachelor's degree in Information Security or equivalent experience required.",
     }
     snapshot = _profile_snapshot_with_education(tmp_path)
+    profile = snapshot.as_dict()
+    profile["resume"]["achievement_evidence"] = [{
+        "id": "unconfirmed-suggestion",
+        "source_text": "Unconfirmed proposal must stay outside the model's evidence",
+        "user_confirmed": False,
+    }]
+    snapshot = ProfileSnapshot(snapshot.tenant_id, snapshot.profile_id, snapshot.version, profile)
     canonical = JobAnalysis(
         role_framing="Security leadership.",
         inferred_seniority="senior",
@@ -756,9 +764,17 @@ def test_requirement_fit_prompt_includes_education_evidence(tmp_path) -> None:
     ).score(job=job, profile_snapshot=snapshot, employer_analysis=analysis)
 
     assert outcome.ok is True
-    prompt_payload = json.loads(llm.calls[0][1].content)["context"]["requirement_fit_inputs"]
+    captured = json.loads(llm.calls[0][1].content)
+    prompt_payload = captured["context"]["requirement_fit_inputs"]
     assert '"id": "education:security_degree"' in prompt_payload
-    assert "Bachelor of Science in Information Security | State University | 2016" in prompt_payload
+    canonical_sources = {row["source_id"]: row["text"] for row in captured["sources"]}
+    fit_inputs = json.loads(prompt_payload.split("\n", 1)[1])
+    for row in fit_inputs["profile_evidence"]:
+        assert row["source_text"] == canonical_sources[row["id"]]
+    assert set(captured["context"]["candidate_evidence_ids"]) == {row["id"] for row in fit_inputs["profile_evidence"]}
+    assert "unconfirmed-suggestion" not in llm.calls[0][1].content
+    assert "Unconfirmed proposal" not in llm.calls[0][1].content
+    assert "Bachelor of Science in Information Security" in canonical_sources["education:security_degree"]
     assert outcome.score is not None
     assert "requirement_fit_matched_without_evidence:req-degree" not in outcome.score.trace.parser_warnings
     assert report_repo.saved[0][1].assessments[0].fit.kind == "matched"

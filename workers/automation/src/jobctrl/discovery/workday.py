@@ -814,7 +814,6 @@ def run_workday_discovery(
         proxy=proxy,
         discovery_execution=discovery_execution,
         cancel_event=cancel_event,
-        search_cfg=search_cfg,
     )
     max_pages_per_employer = _workday_max_pages_per_employer(search_cfg, limit=limit)
     log.info("Workday crawl across %d employers (workers=%d)", len(employers), workers)

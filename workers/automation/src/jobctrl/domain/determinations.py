@@ -38,9 +38,18 @@ class DeterminationModel(BaseModel):
 
 
 class Citation(DeterminationModel):
-    source_id: StrictStr = Field(min_length=1, max_length=240)
-    quote: StrictStr = Field(min_length=1, max_length=4000)
-    exact_values: list[StrictStr] = Field(default_factory=list, max_length=32)
+    source_id: StrictStr = Field(
+        min_length=1, max_length=240,
+        description="Use an outer sources[].source_id. IDs mentioned inside source text are data, not citation IDs.",
+    )
+    quote: StrictStr = Field(
+        min_length=1, max_length=4000,
+        description="Copy one contiguous verbatim span from that source's text, preserving case and punctuation. Do not join or paraphrase fields.",
+    )
+    exact_values: list[StrictStr] = Field(
+        default_factory=list, max_length=32,
+        description="Literal numbers, dates or currency tokens copied exactly from this quote. Leave empty when none are cited. Never include inferred or normalized taxonomy/place codes.",
+    )
 
 
 class Source(DeterminationModel):
@@ -178,11 +187,17 @@ def determine(
     data = {"sources": [source.model_dump() for source in sources], "context": dict(context)}
     if len({source.source_id for source in sources}) != len(sources):
         raise DeterminationFailure("duplicate_source_id")
+    response_schema = schema.model_json_schema()
+    citation_schema = response_schema.get("$defs", {}).get("Citation")
+    if schema is Citation:
+        citation_schema = response_schema
+    if citation_schema is not None and sources:
+        citation_schema["properties"]["source_id"]["enum"] = [source.source_id for source in sources]
     identity = {
         "kind": kind,
         "schema_version": schema_version,
         "prompt_version": prompt_version,
-        "schema": schema.model_json_schema(),
+        "schema": response_schema,
         "provider": provider,
         "model": model,
         "lane": lane,
@@ -235,7 +250,7 @@ def determine(
                 llm=llm,
                 lane=lane,
                 preflight=preflight,
-                response_schema=schema.model_json_schema(),
+                response_schema=response_schema,
                 messages=[
                     LlmMessage(
                         role="system",

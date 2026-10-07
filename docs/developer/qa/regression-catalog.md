@@ -44,6 +44,15 @@ proof does not replace the independent review, QA, or CI gates.
 
 ## Temporal Fault Injection
 
+Use an owned file-backed database and a reused activity thread to prove that
+failed and unfinished activity writes release SQLite's writer. Independent
+heartbeat writes must succeed afterward, with committed artifacts unchanged.
+Hold heartbeat persistence blocked and prove activity coroutines still progress.
+During posting interpretation, allow an independent writer and supersede the
+lease; the stale producer must not persist a snapshot or terminal success.
+`test_activity_connection_lifetime.py`, `test_worker_heartbeat_loop.py` and
+`test_discover_reliability.py` cover these boundaries.
+
 For the affected workflow, prove four outcomes:
 
 1. Kill the worker mid-activity: the same workflow resumes from durable history

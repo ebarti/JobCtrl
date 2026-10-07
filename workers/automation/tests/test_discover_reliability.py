@@ -1867,11 +1867,17 @@ def test_scrape_site_batch_requeues_transiently_interrupted_job(
         close_connection(db_path)
 
 
+@pytest.mark.parametrize("superseded_during_model", [False, True])
 def test_scrape_site_batch_commits_terminal_state_under_activity_lease(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, superseded_during_model: bool,
 ) -> None:
+    import sqlite3
+    from jobctrl.infrastructure.enrichment.execution_lease import claim_enrichment_execution_lease
+    from jobctrl.state import record_job_event
+
     db_path = tmp_path / "jobs.db"
     conn = init_db(db_path)
+    peer = sqlite3.connect(db_path, timeout=0.1)
     try:
         job_id = _seed_pending(conn, "https://remoteok.com/leased", "RemoteOK")
         monkeypatch.setattr(detail, "sync_playwright", lambda: _FakePlaywright())
@@ -1903,6 +1909,31 @@ def test_scrape_site_batch_commits_terminal_state_under_activity_lease(
             activity_attempt=1,
         )
 
+        quality = detail.judge_description_quality
+        calls = []
+
+        def model_with_independent_writer(**kwargs):
+            assert not conn.in_transaction
+            record_job_event(peer, None, "operations", "StageProgress", message="synthetic heartbeat")
+            peer.commit()
+            calls.append(True)
+            if superseded_during_model:
+                claim_enrichment_execution_lease(
+                    peer, execution, owner_token="newer-owner", activity_phase=1, activity_attempt=2,
+                )
+            return quality(**kwargs)
+
+        monkeypatch.setattr(detail, "judge_description_quality", model_with_independent_writer)
+
+        if superseded_during_model:
+            with pytest.raises(TransientNetworkError):
+                detail.scrape_site_batch(conn, "RemoteOK", [(job_id, "Leased")],
+                                         gateway=offline_gateway(), activity_lease=lease)
+            assert calls == [True]
+            assert conn.execute("SELECT count(*) FROM posting_snapshot_sets").fetchone()[0] == 0
+            assert not conn.in_transaction
+            return
+
         stats = detail.scrape_site_batch(
             conn,
             "RemoteOK",
@@ -1912,6 +1943,7 @@ def test_scrape_site_batch_commits_terminal_state_under_activity_lease(
         )
 
         assert stats["ok"] == 1
+        assert calls == [True]
         stage = conn.execute(
             "SELECT state, version, metadata_json FROM job_stage_states "
             "WHERE tenant_id = 'local' AND job_id = ? AND stage = 'enrich'",
@@ -1931,6 +1963,7 @@ def test_scrape_site_batch_commits_terminal_state_under_activity_lease(
         ).fetchone()
         assert snapshot["latest_snapshot_version"] == 1
     finally:
+        peer.close()
         close_connection(db_path)
 
 
