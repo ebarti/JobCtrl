@@ -1,3 +1,4 @@
+import { recordCompensationAuthority } from "./semantic-fixtures.js";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -6,13 +7,13 @@ import Database from "better-sqlite3";
 
 import { buildCompensationProjection } from "../src/projections.js";
 import { parseCompensationAudit } from "../src/read-model.js";
-import { initializeExactV7Database } from "./v7-schema.js";
+import { initializeExactDatabase } from "./exact-schema.js";
 
 describe("compensation audit identity contract", () => {
   it("emits the supplied jobId and rejects legacy jobKey audit payloads", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-compensation-audit-v7-"));
     const dbPath = path.join(dir, "jobs.db");
-    initializeExactV7Database(dbPath);
+    initializeExactDatabase(dbPath);
     const db = new Database(dbPath);
     const locator = "https://example.com/jobs/legacy-locator";
     const jobId = "123e4567-e89b-12d3-a456-426614174000";
@@ -149,4 +150,5 @@ function insertRecordedCompensation(
     "unknown",
     "none",
   );
+  recordCompensationAuthority(db, jobId, tenantId);
 }

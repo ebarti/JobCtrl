@@ -259,3 +259,10 @@ promotion, or selection-policy migrations in the proposed
 | Domain and persistence | `workers/automation/src/jobctrl/domain/profile/` and `workers/automation/src/jobctrl/infrastructure/profile/`; normalized table ownership is summarized in [Storage](../architecture/storage.md#schema-at-a-glance). |
 | Cross-context contract | `ProfileSnapshot` in the Profile domain; the aggregate and published-language boundary are documented in [Tactical Design](../architecture/domain-model/tactical.md). |
 | Required-bullet coaching | LLM decisions live in `workers/automation/src/jobctrl/domain/profile/required_bullet_coaching.py`; shared source binding and safe acceptance live in `packages/domain-types/src/profile/required-bullet-suggestions.ts`. Ownership and verification are described in [Frontend Architecture](../architecture/frontend/index.md#shared-production-and-demo-coaching). |
+
+
+## Semantic Determination Authority
+
+Import is a model extraction with verbatim field spans. Track, seniority, functions and historical target preferences are model interpretations of the saved version. They remain pending suggestions until you select values and save with their version fence. Inferred seniority and canned evidence strength are not written into authored achievement rows. Provider/spend/validation failure preserves saved facts and records an actionable interpretation status.
+
+See [the decision](../decisions.md#2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.

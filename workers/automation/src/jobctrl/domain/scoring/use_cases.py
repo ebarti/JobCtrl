@@ -37,7 +37,6 @@ from jobctrl.domain.events import (
 from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.materials.analysis import EmployerAnalysis
 from jobctrl.domain.ports.events import EventPublisher
-from jobctrl.domain.ports.llm import LlmMessage
 from jobctrl.llm_lanes import lane_bound
 from jobctrl.domain.ports.scoring import (
     LlmPort,
@@ -54,7 +53,11 @@ from jobctrl.domain.scoring.requirement_fit import (
     derive_requirement_fit_signals,
     resolve_requirement_fit_report,
 )
-from jobctrl.domain.scoring.services import ConstraintChecker, ScoreParseResult, ScoreParser
+from jobctrl.domain.scoring.services import ScoreParseResult, ScoreParser
+from jobctrl.domain.scoring.determination import ScoringDecision
+from jobctrl.domain.determinations import Source, DeterminationFailure, determine
+from jobctrl.domain.profile.canonical_sources import profile_sources
+from jobctrl.domain.job_snapshot import build_jd_snapshot
 from jobctrl.domain.scoring.value_objects import (
     FitScore,
     MatchedKeywords,
@@ -75,8 +78,8 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-SCORE_PROMPT_VERSION = "score-fit-assessment-v4"
-SCORE_SCHEMA_VERSION = "score-fit-assessment-v3"
+SCORE_PROMPT_VERSION = "score-fit-assessment-v7-confirmed-preferences"
+SCORE_SCHEMA_VERSION = "score-fit-assessment-v5-determinations"
 SCORE_THINKING_BUDGET = 0
 
 
@@ -94,7 +97,7 @@ DIMENSION SCORES (0..10 each — be strict, do not anchor on the overall score):
 - `experience_fit`: alignment of years / seniority level / domain depth.
 - `role_fit`: alignment of role responsibilities and the candidate's recent role focus.
 
-ELIGIBILITY: keep hard constraints separate from the numeric score. Use `blocked` when work authorization, application language, seniority floor, or an explicit exclusion is a non-negotiable mismatch. For every `hard_blockers` entry, provide the corresponding typed `hard_blocker_categories` entry in the same order. Compensation range and location/work-model preferences are always `warning` signals and must never appear in `hard_blockers`; if compensation is nevertheless returned there, classify it as `compensation_preference` so the deterministic boundary can demote it. Use `warning` for likely mismatches that need review. Use `eligible` only when no hard blocker or warning is visible.
+ELIGIBILITY: keep hard constraints separate from the numeric score. Use `blocked` when work authorization, application language, seniority floor, or an explicit exclusion is a non-negotiable mismatch. For every blocker return a typed category, reason and citations. Compensation range and location/work-model preferences are always `warning` signals and must never appear in `hard_blockers`; Return preference mismatches as typed warnings. Use `warning` for likely mismatches that need review. Use `eligible` only when no hard blocker or warning is visible.
 
 EVIDENCE: name matched signals, missing signals, and transferable signals. Do not invent candidate experience to close a gap.
 
@@ -109,192 +112,7 @@ REASONING: 2-3 sentence justification.
 Respond as a JSON object conforming to the provided schema. Do not wrap the JSON in markdown fences and do not include any prose outside the JSON object."""
 
 
-SCORE_SCHEMA: dict = {
-    "title": "JobFitScore",
-    "type": "object",
-    "properties": {
-        "score": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 10,
-            "description": "Overall fit score 1..10",
-        },
-        "technical_fit": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 10,
-            "description": "Technical skill / tooling alignment 0..10",
-        },
-        "experience_fit": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 10,
-            "description": "Years / seniority / domain depth alignment 0..10",
-        },
-        "role_fit": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 10,
-            "description": "Role responsibility alignment 0..10",
-        },
-        "fit_band": {
-            "type": "string",
-            "enum": ["excellent", "strong", "plausible", "stretch", "poor"],
-            "description": "Band derived from the overall assessment",
-        },
-        "confidence": {
-            "type": "string",
-            "enum": ["high", "medium", "low"],
-            "description": "Confidence in the assessment",
-        },
-        "eligibility": {
-            "type": "object",
-            "properties": {
-                "status": {
-                    "type": "string",
-                    "enum": ["eligible", "warning", "blocked", "unknown"],
-                },
-                "hard_blockers": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                },
-                "hard_blocker_categories": {
-                    "type": "array",
-                    "items": {
-                        "type": "string",
-                        "enum": [
-                            "work_authorization",
-                            "application_language",
-                            "seniority",
-                            "explicit_exclusion",
-                            "compensation_preference",
-                        ],
-                    },
-                    "description": "One category per hard_blockers entry, in the same order.",
-                },
-                "warnings": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                },
-            },
-            "required": ["status", "hard_blockers", "hard_blocker_categories", "warnings"],
-        },
-        "matched_signals": {
-            "type": "array",
-            "items": {"type": "string"},
-            "description": "Concrete profile/job signals that support the score",
-        },
-        "missing_signals": {
-            "type": "array",
-            "items": {"type": "string"},
-            "description": "Required or preferred job signals missing from the profile",
-        },
-        "transferable_signals": {
-            "type": "array",
-            "items": {"type": "string"},
-            "description": "Adjacent experience that could bridge a gap",
-        },
-        "requirement_assessments": {
-            "type": "array",
-            "description": (
-                "Optional pre-tailoring fit rows keyed by explicit employer "
-                "requirement IDs. Omit unless requirement and profile evidence "
-                "IDs were provided in the prompt input."
-            ),
-            "items": {
-                "type": "object",
-                "properties": {
-                    "requirement_id": {
-                        "type": "string",
-                        "description": "Stable employer requirement ID from the prompt input",
-                    },
-                    "requirement_text": {
-                        "type": "string",
-                        "description": "Requirement text from the job post",
-                    },
-                    "tier": {
-                        "type": "string",
-                        "enum": ["must_have", "nice_to_have"],
-                    },
-                    "weight": {
-                        "type": "number",
-                        "minimum": 0,
-                        "maximum": 1,
-                    },
-                    "job_evidence_span": {
-                        "type": "string",
-                        "description": "Verbatim job-post span supporting this requirement",
-                    },
-                    "fit": {
-                        "type": "object",
-                        "properties": {
-                            "kind": {
-                                "type": "string",
-                                "enum": [
-                                    "matched",
-                                    "transferable",
-                                    "missing",
-                                    "blocked",
-                                    "not_assessed",
-                                ],
-                            },
-                            "evidence_ids": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                                "description": "Provided profile evidence IDs; required for matched/transferable",
-                            },
-                            "strength": {
-                                "type": "string",
-                                "enum": ["direct", "strong"],
-                            },
-                            "gap": {"type": "string"},
-                            "bridge": {"type": "string"},
-                            "reason": {"type": "string"},
-                            "blocker": {"type": "string"},
-                        },
-                        "required": ["kind"],
-                    },
-                    "target_keywords": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                    },
-                },
-                "required": [
-                    "requirement_id",
-                    "requirement_text",
-                    "tier",
-                    "weight",
-                    "job_evidence_span",
-                    "fit",
-                ],
-            },
-        },
-        "keywords": {
-            "type": "array",
-            "items": {"type": "string"},
-            "minItems": 1,
-            "description": "ATS keywords from the job that overlap with the candidate",
-        },
-        "reasoning": {
-            "type": "string",
-            "description": "2-3 sentence justification",
-        },
-    },
-    "required": [
-        "score",
-        "technical_fit",
-        "experience_fit",
-        "role_fit",
-        "fit_band",
-        "confidence",
-        "eligibility",
-        "matched_signals",
-        "missing_signals",
-        "transferable_signals",
-        "keywords",
-        "reasoning",
-    ],
-}
+SCORE_SCHEMA = ScoringDecision.model_json_schema()
 
 
 def _utc_now() -> str:
@@ -338,10 +156,6 @@ def _build_job_blob(job: dict[str, Any]) -> str:
         f"LOCATION: {job.get('location') or 'N/A'}\n\n"
         f"DESCRIPTION:\n{(job.get('full_description') or '')[:6000]}"
     )
-
-
-def _build_profile_preferences_blob(criteria: ScoringCriteria) -> str:
-    return json_dumps(criteria.to_dict())
 
 
 def _build_requirement_fit_inputs_blob(
@@ -410,7 +224,6 @@ def _profile_evidence_prompt_items(profile_snapshot: ProfileSnapshot) -> list[di
             "experience_entry_id": str(raw.get("experience_entry_id") or "").strip(),
             "tools": _text_list(raw.get("tools")),
             "metrics": _text_list(raw.get("metrics")),
-            "seniority_signal": str(raw.get("seniority_signal") or "").strip(),
             "tags": _text_list(raw.get("tags")),
         }
         items.append({key: value for key, value in item.items() if value})
@@ -486,7 +299,9 @@ class ScoreJobUseCase:
         llm: LlmPort,
         publisher: EventPublisher | None = None,
         parser: ScoreParser | None = None,
-        constraints: ConstraintChecker | None = None,
+        determination_dependencies,
+        job_interpretation_reader,
+        confirmed_preferences_reader,
         policy_repository: ScoringPolicyRepository | None = None,
         requirement_fit_repository: RequirementFitReportRepository | None = None,
         policy: ScoringPolicy | None = None,
@@ -496,7 +311,9 @@ class ScoreJobUseCase:
         self._llm = llm
         self._publisher = publisher
         self._parser = parser or ScoreParser()
-        self._constraints = constraints or ConstraintChecker()
+        self._determination_dependencies = determination_dependencies
+        self._job_interpretation_reader = job_interpretation_reader
+        self._confirmed_preferences_reader = confirmed_preferences_reader
         self._policy_repository = policy_repository
         self._requirement_fit_repository = requirement_fit_repository
         self._policy = policy
@@ -566,9 +383,9 @@ class ScoreJobUseCase:
         _job_id(job)
         if _job_tenant_id(job) != tenant_id:
             raise ValueError("Scoring input tenant_id does not match the requested tenant")
-        text = resume_text or profile_snapshot.as_dict().get("resume", {}).get(
-            "executive_profile", {}
-        ).get("baseline_text", "")
+        text = resume_text or profile_snapshot.as_dict().get("resume", {}).get("executive_profile", {}).get(
+            "baseline_text", ""
+        )
         scoring_criteria = criteria or ScoringCriteria.from_profile_snapshot(profile_snapshot)
         return self._call_llm(
             job=job,
@@ -623,6 +440,14 @@ class ScoreJobUseCase:
             scored_at=scored_at,
         )
         self._repository.save(new_score)
+        self._determination_dependencies["repository"].bind(
+            tenant_id=str(tenant_id),
+            entity_kind="score",
+            entity_id=str(job_id),
+            entity_version=str(new_score.version),
+            determination_kind="scoring",
+            determination_id=resolved_parse.trace.determination_id,
+        )
         self._persist_requirement_fit_report(
             tenant_id=tenant_id,
             score=new_score,
@@ -679,23 +504,6 @@ class ScoreJobUseCase:
             profile_snapshot=profile_snapshot,
             employer_analysis=matched_employer_analysis,
         )
-        messages = [
-            LlmMessage(role="system", content=self._prompt),
-            LlmMessage(
-                role="user",
-                content=(
-                    f"RESUME BASELINE:\n{resume_text}\n\n"
-                    f"---\n\nSCORING CRITERIA AND PROFILE PREFERENCES:\n"
-                    f"{_build_profile_preferences_blob(criteria)}\n\n"
-                    f"{_optional_prompt_section(requirement_fit_inputs)}"
-                    f"---\n\nJOB POSTING:\n{_build_job_blob(job)}"
-                ),
-            ),
-        ]
-        # Structured outputs: the LLM gateway returns a JSON object that
-        # already conforms to SCORE_SCHEMA. Do not pass max_tokens here:
-        # long postings plus requirement assessments need room to emit the
-        # full schema fill.
         with otel_trace.get_tracer("jobctrl.scoring").start_as_current_span("scoring.score_job") as span:
             span.set_attribute("langfuse.observation.type", "span")
             span.set_attribute("jobctrl.scoring.prompt_version", SCORE_PROMPT_VERSION)
@@ -704,33 +512,67 @@ class ScoreJobUseCase:
             span.set_attribute("jobctrl.scoring.profile_snapshot_version", profile_snapshot.version)
             span.set_attribute("jobctrl.scoring.min_fit_score", criteria.min_fit_score)
             try:
-                payload = self._llm.chat_json(
-                    messages,
-                    response_schema=SCORE_SCHEMA,
-                    temperature=0.0,
-                    thinking_budget=SCORE_THINKING_BUDGET,
+                authored = profile_sources(profile_snapshot.as_dict())
+                interpretation = self._job_interpretation_reader(job)
+                if interpretation is None:
+                    raise DeterminationFailure("job_interpretation_unavailable")
+                requirements = (
+                    {row.id: row.evidence_span for row in matched_employer_analysis.canonical.requirements}
+                    if matched_employer_analysis
+                    else {}
                 )
-            except Exception as exc:  # noqa: BLE001 — surface as a parse failure to the caller
-                log.error("LLM error scoring job %r: %s", job.get("title", "?"), exc)
-                span.set_attribute("jobctrl.scoring.parse.ok", False)
-                span.set_status(Status(StatusCode.ERROR, str(exc)))
-                span.record_exception(exc)
-                # Sentinel keyword keeps the ``MatchedKeywords`` non-empty
-                # invariant intact for the failure-path ``ScoreParseResult``;
-                # ``ok=False`` means nothing is persisted anyway.
+                confirmed_preferences = self._confirmed_preferences_reader(profile_snapshot, criteria)
+                sources = [
+                    Source(source_id="posting", text=build_jd_snapshot(job)),
+                    *authored,
+                    *confirmed_preferences,
+                    Source(
+                        source_id="authored_conditions",
+                        text=json_dumps(
+                            {
+                                key: criteria.profile_preferences.get(key)
+                                for key in ("work_authorization", "compensation", "availability")
+                            }
+                        ),
+                    ),
+                    Source(source_id="job-interpretation", text=interpretation.model_dump_json()),
+                    *[Source(source_id=ident, text=text) for ident, text in requirements.items()],
+                ]
+                result, envelope = determine(
+                    kind="scoring",
+                    schema=ScoringDecision,
+                    schema_version=SCORE_SCHEMA_VERSION,
+                    prompt_version=SCORE_PROMPT_VERSION,
+                    instruction=self._prompt
+                    + " Each eligibility blocker must carry a closed category, rationale and verbatim citations. Compensation, work-model and location preferences belong in warnings, never blockers. Use the supplied job interpretation and confirmed search preferences; compare shared codes directly and assess contextual conditions through cited verdicts. Never reinterpret raw preference prose or invent a constraint. Every requirement ID must have one cited assessment. Decide discovery_feedback independently: propose_exact_title_exclusion only when the role itself is unsuitable for the confirmed target and avoiding that literal title would help. Otherwise use none. Give verbatim citations and a reason; do not use a score threshold to decide this. Cite supplied evidence IDs only.",
+                    sources=sources,
+                    context={
+                        "profile_version": profile_snapshot.version,
+                        "criteria_version": criteria.criteria_version,
+                        "requirement_ids": sorted(requirements),
+                        "requirement_fit_inputs": requirement_fit_inputs,
+                    },
+                    entity_id=str(job["job_id"]),
+                    validate=lambda row: row.validate_inventory(
+                        requirements=requirements, evidence_ids={item.source_id for item in authored}
+                    ),
+                    **{**self._determination_dependencies, "tenant_id": str(profile_snapshot.tenant_id)},
+                )
+                payload = result.score_payload()
+            except DeterminationFailure as failure:
                 return ScoreParseResult(
                     ok=False,
                     fit_score=None,
-                    breakdown=ScoreBreakdown(reasoning=f"LLM error: {exc}"),
+                    breakdown=ScoreBreakdown(),
                     keywords=MatchedKeywords(),
                     criteria=criteria,
                     trace=trace,
-                    error=f"LLM error: {exc}",
+                    error=str(failure),
                 )
 
+            trace = replace(trace, determination_id=envelope.determination_id)
             parsed = self._parser.parse_json(payload, criteria=criteria, trace=trace)
             if parsed.ok:
-                parsed = self._constraints.apply(parse=parsed, job=job)
                 if matched_employer_analysis is not None:
                     parsed = replace(
                         parsed,

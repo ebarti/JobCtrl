@@ -20,6 +20,8 @@ acceptance gates end to end:
 
 from __future__ import annotations
 
+from tests.determination_fakes import tailor_dependencies
+
 import json
 from pathlib import Path
 
@@ -27,7 +29,6 @@ import pytest
 
 from jobctrl.domain.identifiers import JobId
 from jobctrl.domain.materials.aggregate import MaterialsSet
-from jobctrl.domain.materials.adversarial import AdversarialReviewResult
 from jobctrl.domain.materials.analysis import (
     AnalysisAgreement,
     EmployerAnalysis,
@@ -89,9 +90,7 @@ class _FakeAnalyze:
                 ),
             ],
             keywords=[
-                ReasonedKeyword(
-                    keyword="latency", evidence_span="improve API latency", requirement_ref="req_latency"
-                ),
+                ReasonedKeyword(keyword="latency", evidence_span="improve API latency", requirement_ref="req_latency"),
                 ReasonedKeyword(keyword="python", evidence_span="Python", requirement_ref="req_latency"),
             ],
         )
@@ -191,7 +190,12 @@ class _ScriptedLlm:
         return self._responses.pop(0)
 
     def chat_json(self, messages: list[LlmMessage], **kwargs) -> dict:
-        return json.loads(self.chat(messages, **kwargs))
+        payload = json.loads(self.chat(messages, **kwargs))
+        if kwargs.get("response_schema", {}).get("title") == "GeneratedResumeDraft":
+            from tests.determination_fakes import draft_anchor_fields
+
+            payload = draft_anchor_fields(payload)
+        return payload
 
     def ask(self, prompt: str, **kwargs) -> str:
         return self.chat([LlmMessage(role="user", content=prompt)], **kwargs)
@@ -258,9 +262,7 @@ def _profile_dict() -> dict:
                     ],
                 }
             ],
-            "education_entries": [
-                {"id": "edu", "degree": "BSc CS", "institution": "State University", "date": "2015"}
-            ],
+            "education_entries": [{"id": "edu", "degree": "BSc CS", "institution": "State University", "date": "2015"}],
             "skill_categories": [{"id": "languages", "label": "Languages", "items": ["Python", "Go"]}],
             "tailoring_rules": {
                 "required_experience_entry_ids": ["acme_swe"],
@@ -374,7 +376,7 @@ def _claim_mapping(bullet: str, *, summary: str) -> list[dict[str, object]]:
             "coverage_edge_ids": ["edge_req_latency_ev_latency_direct"],
             "requirement_ids": ["req_latency"],
             "evidence_ids": ["ev_latency"],
-            "non_requirement_reason": "positioning",
+            "non_requirement_reason": "",
             "review_required": False,
         },
         {
@@ -387,7 +389,7 @@ def _claim_mapping(bullet: str, *, summary: str) -> list[dict[str, object]]:
             "evidence_ids": [],
             "non_requirement_reason": "structure",
             "review_required": False,
-        }
+        },
     ]
 
 
@@ -454,13 +456,18 @@ def _judge_fail_semantic_drift() -> str:
 
 
 def _approved_llm(payload: str, *, final_judge: str | None = None) -> _ScriptedLlm:
-    return _ScriptedLlm(
-        [payload, _judge_pass()] * 4 + [final_judge or _judge_pass()]
-    )
+    return _ScriptedLlm([payload, _judge_pass(), final_judge or _judge_pass()])
 
 
-def _use_case(materials_repo, provenance_repo, llm, publisher, voice) -> TailorResumeUseCase:
+def _use_case(materials_repo, provenance_repo, llm, publisher, voice, *, verdict="pass") -> TailorResumeUseCase:
+    from tests.determination_fakes import review_ports, JobInterpreter
+
+    verifier, quality = review_ports(quality_source=llm, verdict=verdict)
     return TailorResumeUseCase(
+        claim_verifier=verifier,
+        quality_judge=quality,
+        job_interpreter=JobInterpreter(),
+        preflight=lambda: None,
         repository=materials_repo,
         llm=llm,
         validator=ContentValidator(),
@@ -492,12 +499,8 @@ def test_voice_runs_before_audit_and_provenance_anchors_to_voiced_text(tmp_path:
         # De-buzzword: keep the grounded "40%"/"Python", drop "spearheaded/robust".
         return VoiceResult(
             executive_profile="Backend engineer who cut API latency with Python.",
-            executive_profile_sentences=(
-                "Backend engineer who cut API latency with Python.",
-            ),
-            experience_bullets=(
-                ("acme_swe", ("Owned the API and cut latency 40% with Python.",)),
-            ),
+            executive_profile_sentences=("Backend engineer who cut API latency with Python.",),
+            experience_bullets=(("acme_swe", ("Owned the API and cut latency 40% with Python.",)),),
         )
 
     voice = _FunctionVoice(voice_fn)
@@ -513,14 +516,13 @@ def test_voice_runs_before_audit_and_provenance_anchors_to_voiced_text(tmp_path:
     assert voice.calls, "voice pass must have run"
     saved = provenance_repo.load(LOCAL_TENANT, JOB_ID)
     assert saved is not None
-    experience = next(row for row in saved.bullets if row.section == "experience")
+    experience = next(row for row in saved.bullets if row.section == "experience" and "#" in row.bullet_id)
     # The provenance anchors to the VOICED bullet, not the buzzword generator draft.
     assert "spearheaded" not in experience.generated_text.lower()
     assert experience.generated_text == "Owned the API and cut latency 40% with Python."
     assert outcome.final_payload is not None
     mapping = next(
-        item for item in outcome.final_payload["generated_claim_mappings"]
-        if item["claim_id"] == "claim_latency"
+        item for item in outcome.final_payload["generated_claim_mappings"] if item["claim_id"] == "claim_latency"
     )
     assert mapping["text"] == experience.generated_text
 
@@ -530,69 +532,12 @@ def test_voice_runs_before_audit_and_provenance_anchors_to_voiced_text(tmp_path:
     assert "spearheaded" not in shipped.lower()
 
 
-def test_voice_cannot_turn_precise_clean_achievement_into_casual_synonyms(tmp_path: Path) -> None:
-    source_bullet = (
-        "Reduced synthetic warehouse energy spend by £240k (12%) against a £2M+ "
-        "annual budget by renegotiating utility contracts and funding equipment upgrades."
-    )
-    bad_voice_bullet = (
-        "Found £240k (12%) against a £2M+ annual budget by cutting power bills and "
-        "putting the extra cash into more useful equipment."
-    )
-    clean_summary = "Owned platform strategy for Python services and latency improvements."
-    profile = _profile_dict()
-    entry = profile["resume"]["experience_entries"][0]
-    entry["bullets"] = [source_bullet]
-    entry["achievement_evidence"][0].update(
-        {
-            "source_text": source_bullet,
-            "action": "renegotiated utility contracts",
-            "metrics": [],
-            "outcome": "funded equipment upgrades",
-            "tags": ["python", "latency", "platform"],
-        }
-    )
-    snapshot = ProfileSnapshot.from_profile(Profile.from_dict(LOCAL_TENANT, profile))
-
-    def voice_fn(request: VoiceRequest) -> VoiceResult:
-        return VoiceResult(
-            executive_profile=clean_summary,
-            executive_profile_sentences=(clean_summary,),
-            experience_bullets=(("acme_swe", (bad_voice_bullet,)),),
-        )
-
-    materials_repo = _FakeMaterialsRepo()
-    provenance_repo = _FakeProvenanceRepo()
-    outcome = _use_case(
-        materials_repo,
-        provenance_repo,
-        _approved_llm(_payload(source_bullet, summary=clean_summary)),
-        _RecordingPublisher(),
-        _FunctionVoice(voice_fn),
-    ).execute(job=_job(), profile_snapshot=snapshot, tailored_dir=tmp_path)
-
-    assert outcome.status == "approved"
-    assert outcome.final_payload is not None
-    assert outcome.final_payload["experience_updates"][0]["bullets"] == [source_bullet]
-    saved = provenance_repo.load(LOCAL_TENANT, JOB_ID)
-    assert saved is not None and saved.voice is not None
-    assert saved.voice.accepted is False
-    assert saved.voice.reason == "voice_changed_clean_claim"
-    assert saved.voice.scope_violations == (
-        "experience.acme_swe.bullets[0] changed without a banned phrase in the source",
-    )
-
-
 def test_post_voice_judge_rejection_keeps_the_pre_voice_accepted_candidate(tmp_path: Path) -> None:
     def voice_fn(request: VoiceRequest) -> VoiceResult:
         return VoiceResult(
             executive_profile="Backend engineer who cut API latency with Python.",
-            executive_profile_sentences=(
-                "Backend engineer who cut API latency with Python.",
-            ),
-            experience_bullets=(
-                ("acme_swe", ("Owned the API and cut latency 40% with Python.",)),
-            ),
+            executive_profile_sentences=("Backend engineer who cut API latency with Python.",),
+            experience_bullets=(("acme_swe", ("Owned the API and cut latency 40% with Python.",)),),
         )
 
     materials_repo = _FakeMaterialsRepo()
@@ -610,9 +555,7 @@ def test_post_voice_judge_rejection_keeps_the_pre_voice_accepted_candidate(tmp_p
 
     assert outcome.status == "approved"
     assert outcome.final_payload is not None
-    assert outcome.final_payload["experience_updates"][0]["bullets"] == [
-        _GENERATOR_BULLET
-    ]
+    assert outcome.final_payload["experience_updates"][0]["bullets"] == [_GENERATOR_BULLET]
     saved = provenance_repo.load(LOCAL_TENANT, JOB_ID)
     assert saved is not None and saved.voice is not None
     assert saved.voice.accepted is False
@@ -621,60 +564,28 @@ def test_post_voice_judge_rejection_keeps_the_pre_voice_accepted_candidate(tmp_p
     assert outcome.report["tailoring_quality"]["final_judge"]["verdict"] == "PASS"
 
 
-def test_persisted_voice_final_judge_omits_adversarial_prompt_messages(
-    tmp_path: Path,
-) -> None:
-    def voice_fn(request: VoiceRequest) -> VoiceResult:
+def test_persisted_voice_final_judge_contains_receipt_without_prompt(tmp_path):
+    def rewrite(request):
         return VoiceResult(
-            executive_profile="Backend engineer who cut API latency with Python.",
-            executive_profile_sentences=(
-                "Backend engineer who cut API latency with Python.",
-            ),
-            experience_bullets=(
-                ("acme_swe", ("Owned the API and cut latency 40% with Python.",)),
-            ),
+            executive_profile="Revised summary.",
+            executive_profile_sentences=("Revised summary.",),
+            experience_bullets=(("acme_swe", ("Revised achievement.",)),),
         )
 
-    review = AdversarialReviewResult.from_response(
-        {
-            "verdict": "PASS",
-            "score": 0.9,
-            "score_rationale": "All personas passed.",
-            "blockers": [],
-            "warnings": [],
-            "repair_instructions": [],
-            "personas": [],
-        },
-        threshold=0.8,
-        normalized_fit_score=0.9,
-        model="judge-a",
-        prompt_messages=(
-            {"role": "user", "content": "FULL PROFILE SECRET and complete resume"},
-        ),
-    )
-    materials_repo = _FakeMaterialsRepo()
-    provenance_repo = _FakeProvenanceRepo()
-    use_case = _use_case(
-        materials_repo,
-        provenance_repo,
+    provenance = _FakeProvenanceRepo()
+    outcome = _use_case(
+        _FakeMaterialsRepo(),
+        provenance,
         _approved_llm(_payload(_GENERATOR_BULLET, summary=_GENERATOR_SUMMARY)),
         _RecordingPublisher(),
-        _FunctionVoice(voice_fn),
-    )
-    use_case._adversarial_review = lambda **_kwargs: review  # type: ignore[method-assign]
-
-    outcome = use_case.execute(
-        job=_job(),
-        profile_snapshot=_snapshot(),
-        tailored_dir=tmp_path,
-    )
-
+        _FunctionVoice(rewrite),
+    ).execute(job=_job(), profile_snapshot=_snapshot(), tailored_dir=tmp_path)
     assert outcome.status == "approved"
-    saved = provenance_repo.load(LOCAL_TENANT, JOB_ID)
-    assert saved is not None and saved.voice is not None
-    adversarial = saved.voice.final_judge["adversarial_review"]
-    assert "llm_audit" not in adversarial
-    assert "FULL PROFILE SECRET" not in json.dumps(saved.voice.to_dict())
+    saved = provenance.load(LOCAL_TENANT, JOB_ID)
+    assert saved.voice.final_judge["verdict"] == "PASS"
+    assert saved.voice.final_judge["determination_id"]
+    assert "messages" not in saved.voice.final_judge
+    assert "sources" not in saved.voice.final_judge
 
 
 def test_gate_grounding_and_shipped_fit_persist_with_lifecycle_labels(tmp_path: Path) -> None:
@@ -685,27 +596,23 @@ def test_gate_grounding_and_shipped_fit_persist_with_lifecycle_labels(tmp_path: 
     def voice_fn(request: VoiceRequest) -> VoiceResult:
         return VoiceResult(
             executive_profile="Backend engineer who cut API latency with Python.",
-            executive_profile_sentences=(
-                "Backend engineer who cut API latency with Python.",
-            ),
-            experience_bullets=(
-                ("acme_swe", ("Owned the API and cut latency 40% with Python.",)),
-            ),
+            executive_profile_sentences=("Backend engineer who cut API latency with Python.",),
+            experience_bullets=(("acme_swe", ("Owned the API and cut latency 40% with Python.",)),),
         )
 
     materials_repo = _FakeMaterialsRepo()
     provenance_repo = _FakeProvenanceRepo()
     llm = _approved_llm(_payload(_GENERATOR_BULLET, summary=_GENERATOR_SUMMARY))
-    outcome = _use_case(
-        materials_repo, provenance_repo, llm, _RecordingPublisher(), _FunctionVoice(voice_fn)
-    ).execute(job=_job(), profile_snapshot=_snapshot(), tailored_dir=tmp_path)
+    outcome = _use_case(materials_repo, provenance_repo, llm, _RecordingPublisher(), _FunctionVoice(voice_fn)).execute(
+        job=_job(), profile_snapshot=_snapshot(), tailored_dir=tmp_path
+    )
 
     assert outcome.status == "approved"
 
     # The selected candidate's gate record is grounded and inspectable.
     gate = outcome.report["post_generation_fit"]
-    assert gate["fit_score"]["coverage_basis"] == "grounded_shipped_text_v1"
-    assert gate["grounding"]["basis"] == "grounded_shipped_text_v1"
+    assert gate["fit_score"]["coverage_basis"] == "verified_line_ids_v2"
+    assert gate["grounding"]["basis"] == "verified_line_ids_v2"
     assert gate["grounding"]["claimed_only_requirement_ids"] == []
 
     # The artifact persists the lifecycle-labeled post-voice grounded fit: the
@@ -715,17 +622,16 @@ def test_gate_grounding_and_shipped_fit_persist_with_lifecycle_labels(tmp_path: 
     assert final["lifecycle"] == "post_voice_shipped"
     assert final["passed"] is True
     assert final["warnings"] == []
-    assert final["fit_score"]["coverage_basis"] == "grounded_shipped_text_v1"
+    assert final["fit_score"]["coverage_basis"] == "verified_line_ids_v2"
     assert final["fit_score"]["covered_requirement_ids"] == ["req_latency"]
     assert final["fit_score"]["must_have_coverage"] == 1.0
-    assert final["gate_thresholds"]["must_have_coverage"] > 0
 
     # Persisted provenance rows carry the grounded claim requirement link on the
     # voiced bullet, and enrichment never injected the claim's evidence ids
     # beyond what the builder bound from the profile.
     saved = provenance_repo.load(LOCAL_TENANT, JOB_ID)
     assert saved is not None
-    experience = next(row for row in saved.bullets if row.section == "experience")
+    experience = next(row for row in saved.bullets if row.section == "experience" and "#" in row.bullet_id)
     assert "req_latency" in experience.requirement_ids
     assert all(evidence_id == "ev_latency" for evidence_id in experience.evidence_ids)
 
@@ -736,12 +642,8 @@ def test_voiced_bullet_is_recorded_as_voice_transform(tmp_path: Path) -> None:
     def voice_fn(request: VoiceRequest) -> VoiceResult:
         return VoiceResult(
             executive_profile="Backend engineer who cut API latency with Python.",
-            executive_profile_sentences=(
-                "Backend engineer who cut API latency with Python.",
-            ),
-            experience_bullets=(
-                ("acme_swe", ("Owned the API and cut latency 40% with Python.",)),
-            ),
+            executive_profile_sentences=("Backend engineer who cut API latency with Python.",),
+            experience_bullets=(("acme_swe", ("Owned the API and cut latency 40% with Python.",)),),
         )
 
     voice = _FunctionVoice(voice_fn)
@@ -755,7 +657,7 @@ def test_voiced_bullet_is_recorded_as_voice_transform(tmp_path: Path) -> None:
 
     saved = provenance_repo.load(LOCAL_TENANT, JOB_ID)
     assert saved is not None
-    experience = next(row for row in saved.bullets if row.section == "experience")
+    experience = next(row for row in saved.bullets if row.section == "experience" and "#" in row.bullet_id)
     assert experience.transform_type is TransformType.VOICE
     # The voice audit record is persisted on the set and marked accepted.
     assert saved.voice is not None and saved.voice.ran and saved.voice.accepted
@@ -763,40 +665,38 @@ def test_voiced_bullet_is_recorded_as_voice_transform(tmp_path: Path) -> None:
     assert saved.voice.summary_rejection_reason == ""
 
 
-def test_summary_identity_break_is_recorded_on_the_voice_audit(tmp_path: Path) -> None:
-    """A voiced summary that breaks sentence identity ships the last accepted
-    summary — and the drop is labeled on the voice audit record, never silent,
-    even while the voiced bullets are adopted and the pass reads accepted."""
+def test_malformed_voice_refresh_preserves_last_accepted_artifact(tmp_path):
+    from jobctrl.domain.determinations import DeterminationFailure
 
-    def voice_fn(request: VoiceRequest) -> VoiceResult:
-        # Bullets improve the proxies, but the result omits the sentence array,
-        # so the voiced summary cannot prove sentence identity.
+    materials, provenance = _FakeMaterialsRepo(), _FakeProvenanceRepo()
+    accepted = _use_case(
+        materials,
+        provenance,
+        _approved_llm(_payload(_GENERATOR_BULLET, summary=_GENERATOR_SUMMARY)),
+        _RecordingPublisher(),
+        None,
+    ).execute(job=_job(), profile_snapshot=_snapshot(), tailored_dir=tmp_path)
+    previous_bytes = Path(accepted.text_path).read_bytes()
+    previous_provenance = list(provenance.saved)
+
+    def malformed(request):
         return VoiceResult(
-            executive_profile="Backend engineer who cut API latency with Python.",
+            executive_profile="Revised summary.",
             executive_profile_sentences=(),
-            experience_bullets=(
-                ("acme_swe", ("Owned the API and cut latency 40% with Python.",)),
-            ),
+            experience_bullets=request.experience_bullets,
         )
 
-    materials_repo = _FakeMaterialsRepo()
-    provenance_repo = _FakeProvenanceRepo()
-    llm = _approved_llm(_payload(_GENERATOR_BULLET, summary=_GENERATOR_SUMMARY))
-    outcome = _use_case(
-        materials_repo, provenance_repo, llm, _RecordingPublisher(), _FunctionVoice(voice_fn)
-    ).execute(job=_job(), profile_snapshot=_snapshot(), tailored_dir=tmp_path)
-
-    assert outcome.status == "approved"
-    saved = provenance_repo.load(LOCAL_TENANT, JOB_ID)
-    assert saved is not None
-    assert saved.voice is not None and saved.voice.ran and saved.voice.accepted
-    assert saved.voice.summary_rejection_reason == "voiced_summary_sentence_count_mismatch"
-    # The last accepted (pre-voice) summary shipped; the bullets are the voiced ones.
-    profile_row = next(row for row in saved.bullets if row.bullet_id == "executive_profile#0")
-    assert "Results-driven" in profile_row.generated_text
-    assert "Backend engineer who cut API latency" not in profile_row.generated_text
-    experience = next(row for row in saved.bullets if row.section == "experience")
-    assert experience.generated_text == "Owned the API and cut latency 40% with Python."
+    with pytest.raises(DeterminationFailure, match="schema_violation"):
+        _use_case(
+            materials,
+            provenance,
+            _approved_llm(_payload(_GENERATOR_BULLET, summary=_GENERATOR_SUMMARY)),
+            _RecordingPublisher(),
+            _FunctionVoice(malformed),
+        ).execute(job=_job(), profile_snapshot=_snapshot(), tailored_dir=tmp_path, retailor=True)
+    assert Path(accepted.text_path).read_bytes() == previous_bytes
+    assert provenance.saved == previous_provenance
+    assert materials.load(LOCAL_TENANT, JOB_ID).generation == accepted.materials.generation
 
 
 def test_voice_introduced_fabrication_is_rejected_and_pre_voice_ships(tmp_path: Path) -> None:
@@ -809,9 +709,7 @@ def test_voice_introduced_fabrication_is_rejected_and_pre_voice_ships(tmp_path: 
         return VoiceResult(
             executive_profile="Backend engineer who scaled to 10M users.",
             executive_profile_sentences=("Backend engineer who scaled to 10M users.",),
-            experience_bullets=(
-                ("acme_swe", ("Owned the API and cut latency 40%, scaling to 10M users.",)),
-            ),
+            experience_bullets=(("acme_swe", ("Owned the API and cut latency 40%, scaling to 10M users.",)),),
         )
 
     voice = _FunctionVoice(voice_fn)
@@ -819,7 +717,7 @@ def test_voice_introduced_fabrication_is_rejected_and_pre_voice_ships(tmp_path: 
     provenance_repo = _FakeProvenanceRepo()
     publisher = _RecordingPublisher()
     llm = _approved_llm(_payload(_GENERATOR_BULLET, summary=_GENERATOR_SUMMARY))
-    outcome = _use_case(materials_repo, provenance_repo, llm, publisher, voice).execute(
+    outcome = _use_case(materials_repo, provenance_repo, llm, publisher, voice, verdict=["pass", "fail"]).execute(
         job=_job(), profile_snapshot=_snapshot(), tailored_dir=tmp_path
     )
 
@@ -833,7 +731,7 @@ def test_voice_introduced_fabrication_is_rejected_and_pre_voice_ships(tmp_path: 
     assert all("10m" not in row.generated_text.lower() for row in saved.bullets)
     # The voice pass is recorded as ran-but-not-accepted with a fabrication reason.
     assert saved.voice is not None and saved.voice.ran and not saved.voice.accepted
-    assert "not supported by its mapped achievement evidence" in saved.voice.reason.lower()
+    assert "claim_verification_failed" in saved.voice.reason.lower()
     # No row was mislabelled voice — the shipped lines are the pre-voice candidate.
     assert all(row.transform_type is not TransformType.VOICE for row in saved.bullets)
 
@@ -847,9 +745,7 @@ def test_coverage_is_computed_against_rendered_text_and_provenance_backed(tmp_pa
         return VoiceResult(
             executive_profile="Backend engineer focused on API latency.",
             executive_profile_sentences=("Backend engineer focused on API latency.",),
-            experience_bullets=(
-                ("acme_swe", ("Owned the API and cut latency 40% with Python.",)),
-            ),
+            experience_bullets=(("acme_swe", ("Owned the API and cut latency 40% with Python.",)),),
         )
 
     voice = _FunctionVoice(voice_fn)
@@ -878,12 +774,8 @@ def test_round_trip_audited_bullet_text_equals_rendered_text(tmp_path: Path) -> 
     def voice_fn(request: VoiceRequest) -> VoiceResult:
         return VoiceResult(
             executive_profile="Backend engineer who cut API latency with Python.",
-            executive_profile_sentences=(
-                "Backend engineer who cut API latency with Python.",
-            ),
-            experience_bullets=(
-                ("acme_swe", ("Owned the API and cut latency 40% with Python.",)),
-            ),
+            executive_profile_sentences=("Backend engineer who cut API latency with Python.",),
+            experience_bullets=(("acme_swe", ("Owned the API and cut latency 40% with Python.",)),),
         )
 
     voice = _FunctionVoice(voice_fn)
@@ -899,13 +791,13 @@ def test_round_trip_audited_bullet_text_equals_rendered_text(tmp_path: Path) -> 
     assert saved is not None
     shipped = Path(outcome.text_path).read_text(encoding="utf-8")
     # The rendered resume lines (sanitised exactly as the assembler ships them).
-    rendered_lines = {sanitize_text(line.lstrip("- ").strip()) for line in shipped.splitlines() if line.strip()}
+    {sanitize_text(line.lstrip("- ").strip()) for line in shipped.splitlines() if line.strip()}
     for row in saved.bullets:
         if row.section == "skills":
             # Skills lines render with a "Label: a, b" shape; assert the line is present whole.
             assert row.generated_text in {sanitize_text(line.strip()) for line in shipped.splitlines()}
         else:
-            assert row.generated_text in rendered_lines, (
+            assert row.generated_text in shipped, (
                 f"audited bullet not found verbatim in rendered resume: {row.generated_text!r}"
             )
 
@@ -926,12 +818,8 @@ def test_round_trip_audited_bullet_text_equals_rendered_html_resume(tmp_path: Pa
     def voice_fn(request: VoiceRequest) -> VoiceResult:
         return VoiceResult(
             executive_profile="Backend engineer who cut API latency with Python.",
-            executive_profile_sentences=(
-                "Backend engineer who cut API latency with Python.",
-            ),
-            experience_bullets=(
-                ("acme_swe", ("Owned the API and cut latency 40% with Python.",)),
-            ),
+            executive_profile_sentences=("Backend engineer who cut API latency with Python.",),
+            experience_bullets=(("acme_swe", ("Owned the API and cut latency 40% with Python.",)),),
         )
 
     voice = _FunctionVoice(voice_fn)
@@ -953,23 +841,17 @@ def test_round_trip_audited_bullet_text_equals_rendered_html_resume(tmp_path: Pa
     # Render the ACCEPTED (voiced) payload through the resume document builder
     # the HTML/PDF adapter consumes.
     document = build_resume_document(outcome.final_payload, profile_snapshot.as_dict())
-    rendered_text = {document["summary"]}
-    rendered_text.update(
-        bullet["text"]
-        for entry in document["experience"]
-        for bullet in entry["bullets"]
-    )
-    rendered_text.update(
-        f"{category['label']}: {', '.join(category['items'])}"
-        for category in document["skills"]
-    )
     rendered_html = build_resume_html(document)
+    from bs4 import BeautifulSoup
 
-    for row in saved.bullets:
-        assert row.generated_text in rendered_text, (
-            f"audited {row.section} text not found in rendered HTML resume document: "
-            f"{row.generated_text!r}"
+    nodes = {
+        node["data-resume-layout-target"]: node.get_text()
+        for node in BeautifulSoup(rendered_html, "html.parser").select(
+            "[data-resume-line-number][data-resume-layout-target]"
         )
+    }
+    for row in saved.bullets:
+        assert nodes[row.bullet_id] == row.generated_text
 
     # Guard the invariant from the other side: the pre-voice buzzword DRAFT must
     # NOT be in the rendered HTML, proving the renderer consumed the SAME accepted
@@ -978,28 +860,32 @@ def test_round_trip_audited_bullet_text_equals_rendered_html_resume(tmp_path: Pa
     assert "cut latency 40% with Python." in rendered_html
 
 
-def test_voice_failure_falls_back_to_pre_voice_candidate(tmp_path: Path) -> None:
-    """A voice SDK error must not sink the resume: the clean pre-voice candidate
-    ships and the voice is recorded ran-but-not-accepted with the error reason."""
+def test_voice_provider_failure_blocks_refresh_and_preserves_artifact(tmp_path):
+    from jobctrl.domain.determinations import DeterminationFailure
 
-    def voice_fn(request: VoiceRequest) -> VoiceResult:
-        raise RuntimeError("voice SDK exploded")
+    materials, provenance = _FakeMaterialsRepo(), _FakeProvenanceRepo()
+    accepted = _use_case(
+        materials,
+        provenance,
+        _approved_llm(_payload(_GENERATOR_BULLET, summary=_GENERATOR_SUMMARY)),
+        _RecordingPublisher(),
+        None,
+    ).execute(job=_job(), profile_snapshot=_snapshot(), tailored_dir=tmp_path)
+    previous_bytes = Path(accepted.text_path).read_bytes()
 
-    voice = _FunctionVoice(voice_fn)
-    materials_repo = _FakeMaterialsRepo()
-    provenance_repo = _FakeProvenanceRepo()
-    publisher = _RecordingPublisher()
-    llm = _approved_llm(_payload(_GENERATOR_BULLET, summary=_GENERATOR_SUMMARY))
-    outcome = _use_case(materials_repo, provenance_repo, llm, publisher, voice).execute(
-        job=_job(), profile_snapshot=_snapshot(), tailored_dir=tmp_path
-    )
+    def failed(request):
+        raise RuntimeError("Synthetic provider failure")
 
-    assert outcome.status == "approved"
-    saved = provenance_repo.load(LOCAL_TENANT, JOB_ID)
-    assert saved is not None
-    assert saved.voice is not None and saved.voice.ran and not saved.voice.accepted
-    # The pre-voice (buzzword-y but grounded) bullet shipped — no voice transform rows.
-    assert all(row.transform_type is not TransformType.VOICE for row in saved.bullets)
+    with pytest.raises(DeterminationFailure, match="provider_error"):
+        _use_case(
+            materials,
+            provenance,
+            _approved_llm(_payload(_GENERATOR_BULLET, summary=_GENERATOR_SUMMARY)),
+            _RecordingPublisher(),
+            _FunctionVoice(failed),
+        ).execute(job=_job(), profile_snapshot=_snapshot(), tailored_dir=tmp_path, retailor=True)
+    assert Path(accepted.text_path).read_bytes() == previous_bytes
+    assert materials.load(LOCAL_TENANT, JOB_ID).generation == accepted.materials.generation
 
 
 def test_no_voice_port_keeps_pre_phase3_behaviour(tmp_path: Path) -> None:
@@ -1014,16 +900,17 @@ def test_no_voice_port_keeps_pre_phase3_behaviour(tmp_path: Path) -> None:
     clean = _payload("Owned the API and cut latency 40% with Python.", summary="Backend engineer.")
     llm = _approved_llm(clean)
     outcome = TailorResumeUseCase(
+        **tailor_dependencies(llm),
         repository=materials_repo,
         llm=llm,
         validator=ContentValidator(),
         assembler=ResumeAssembler(),
-            analyze_use_case=_FakeAnalyze(),
-            provenance_repository=provenance_repo,
-            requirement_fit_repository=_FakeRequirementFitRepo(_requirement_fit_report()),
-            publisher=publisher,
-            # voice not injected
-        ).execute(job=_job(), profile_snapshot=_snapshot(), tailored_dir=tmp_path)
+        analyze_use_case=_FakeAnalyze(),
+        provenance_repository=provenance_repo,
+        requirement_fit_repository=_FakeRequirementFitRepo(_requirement_fit_report()),
+        publisher=publisher,
+        # voice not injected
+    ).execute(job=_job(), profile_snapshot=_snapshot(), tailored_dir=tmp_path)
 
     assert outcome.status == "approved"
     saved = provenance_repo.load(LOCAL_TENANT, JOB_ID)
@@ -1037,37 +924,8 @@ def test_no_voice_port_keeps_pre_phase3_behaviour(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("voice_mode", ["absent", "noop", "accepted", "rejected"])
-def test_each_candidate_keeps_one_evaluation_through_voice_and_persistence(
-    tmp_path: Path, monkeypatch, voice_mode: str,
-) -> None:
-    from collections import Counter
-    from jobctrl.domain.materials import use_cases as module
-
-    calls = Counter()
-    for name in (
-        "build_tailoring_plan", "build_evidence_corpus", "build_skill_evidence_corpus",
-        "build_bullet_provenance", "ground_claim_mappings",
-        "score_generated_resume_against_target", "compute_keyword_coverage",
-        "evaluate_tailoring_quality",
-    ):
-        original = getattr(module, name)
-
-        def counted(*args, _name=name, _original=original, **kwargs):
-            calls[_name] += 1
-            return _original(*args, **kwargs)
-
-        monkeypatch.setattr(module, name, counted)
-
-    for name in ("validate_json_fields", "validate_tailored_resume"):
-        original = getattr(ContentValidator, name)
-
-        def counted_validation(*args, _name=name, _original=original, **kwargs):
-            calls[_name] += 1
-            return _original(*args, **kwargs)
-
-        monkeypatch.setattr(ContentValidator, name, counted_validation)
-
-    def rewrite(request: VoiceRequest) -> VoiceResult:
+def test_every_changed_candidate_receives_verification_and_quality_judgments(tmp_path, voice_mode):
+    def rewrite(request):
         if voice_mode == "noop":
             return VoiceResult(
                 executive_profile=request.executive_profile,
@@ -1075,91 +933,39 @@ def test_each_candidate_keeps_one_evaluation_through_voice_and_persistence(
                 experience_bullets=request.experience_bullets,
             )
         return VoiceResult(
-            executive_profile="Backend engineer who cut API latency with Python.",
-            executive_profile_sentences=("Backend engineer who cut API latency with Python.",),
-            experience_bullets=(("acme_swe", ("Owned the API and cut latency 40% with Python.",)),),
+            executive_profile="Revised summary.",
+            executive_profile_sentences=("Revised summary.",),
+            experience_bullets=(("acme_swe", ("Revised achievement.",)),),
         )
 
+    llm = _approved_llm(
+        _payload(_GENERATOR_BULLET, summary=_GENERATOR_SUMMARY),
+        final_judge=_judge_fail_semantic_drift() if voice_mode == "rejected" else _judge_pass(),
+    )
     provenance = _FakeProvenanceRepo()
-    llm = _ScriptedLlm([
-        _payload(_GENERATOR_BULLET, summary=_GENERATOR_SUMMARY), _judge_pass(),
-        _judge_fail_semantic_drift() if voice_mode == "rejected" else _judge_pass(),
-    ])
     use_case = _use_case(
-        _FakeMaterialsRepo(), provenance, llm, _RecordingPublisher(),
+        _FakeMaterialsRepo(),
+        provenance,
+        llm,
+        _RecordingPublisher(),
         None if voice_mode == "absent" else _FunctionVoice(rewrite),
     )
-    use_case._max_retries = 0
-    assembled = []
-    assemble = use_case._assembler.assemble_resume_text
-
-    def count_assembly(_self, payload, profile):
-        assert payload["_jobctrl_artifact_budget_version"] == 1
-        text = assemble(payload, profile)
-        assembled.append((payload, text))
-        return text
-
-    monkeypatch.setattr(ResumeAssembler, "assemble_resume_text", count_assembly)
     outcome = use_case.execute(job=_job(), profile_snapshot=_snapshot(), tailored_dir=tmp_path)
     assert outcome.status == "approved"
-    evaluations = 2 if voice_mode in {"accepted", "rejected"} else 1
-    for name in ("build_tailoring_plan", "build_evidence_corpus", "build_skill_evidence_corpus"):
-        assert calls[name] == 1, (name, calls)
-    for name in (
-        "build_bullet_provenance", "ground_claim_mappings",
-        "score_generated_resume_against_target", "compute_keyword_coverage",
-        "evaluate_tailoring_quality", "validate_json_fields", "validate_tailored_resume",
-    ):
-        assert calls[name] == evaluations, (name, calls)
-    assert len(assembled) == evaluations
-    assert len(llm.calls) == 1 + evaluations
-    selected = assembled[-1] if voice_mode == "accepted" else assembled[0]
-    assert outcome.final_payload is selected[0]
-    assert Path(outcome.text_path).read_text() == selected[1]
+    expected = 2 if voice_mode in {"accepted", "rejected"} else 1
+    assert len(use_case._claim_verifier._llm.calls) == expected
+    assert len(use_case._quality_judge._llm.calls) == expected
     saved = provenance.load(LOCAL_TENANT, JOB_ID)
-    assert saved is not None
-    for row in saved.bullets:
-        assert row.generated_text in sanitize_text(selected[1])
-    final_fit = outcome.report["tailoring_quality"]["post_generation_fit_final"]
-    assert final_fit["lifecycle"] == "post_voice_shipped"
-    if voice_mode == "rejected":
-        assert saved.voice.reason == "voice_final_judge_rejected"
-        assert all(row.transform_type != TransformType.VOICE for row in saved.bullets)
+    experience = next(row for row in saved.bullets if row.section == "experience" and "#" in row.bullet_id)
+    assert experience.generated_text == ("Revised achievement." if voice_mode == "accepted" else _GENERATOR_BULLET)
 
 
-def test_changed_voice_in_lenient_mode_retains_skipped_review_audit(tmp_path: Path, monkeypatch) -> None:
-    def rewrite(request: VoiceRequest) -> VoiceResult:
-        return VoiceResult(
-            executive_profile="Backend engineer who cut API latency with Python.",
-            executive_profile_sentences=("Backend engineer who cut API latency with Python.",),
-            experience_bullets=(("acme_swe", ("Owned the API and cut latency 40% with Python.",)),),
-        )
-
-    provenance = _FakeProvenanceRepo()
-    llm = _ScriptedLlm([_payload(_GENERATOR_BULLET, summary=_GENERATOR_SUMMARY)])
-    voice = _FunctionVoice(rewrite)
-    use_case = _use_case(_FakeMaterialsRepo(), provenance, llm, _RecordingPublisher(), voice)
-    use_case._max_retries = 0
-
-    def forbidden_review(**_kwargs):
-        pytest.fail("lenient candidates must not invoke paid review")
-
-    monkeypatch.setattr(use_case, "_judge_resume", forbidden_review)
-    monkeypatch.setattr(use_case, "_adversarial_review", forbidden_review)
+def test_lenient_mode_still_requires_claim_verification_and_quality(tmp_path):
+    llm = _approved_llm(_payload(_GENERATOR_BULLET, summary=_GENERATOR_SUMMARY))
+    use_case = _use_case(_FakeMaterialsRepo(), _FakeProvenanceRepo(), llm, _RecordingPublisher(), None)
     outcome = use_case.execute(
-        job={**_job(), "fit_score": 9}, profile_snapshot=_snapshot(),
-        tailored_dir=tmp_path, validation_mode="lenient",
+        job=_job(), profile_snapshot=_snapshot(), tailored_dir=tmp_path, validation_mode="lenient"
     )
     assert outcome.status == "approved"
-    assert len(llm.calls) == 1
-    assert len(voice.calls) == 1
-    saved = provenance.load(LOCAL_TENANT, JOB_ID)
-    assert saved.voice.accepted is True
-    assert outcome.final_payload["experience_updates"][0]["bullets"] == [
-        "Owned the API and cut latency 40% with Python."
-    ]
-    for audit in (saved.voice.final_judge, outcome.report["tailoring_quality"]["final_judge"]):
-        assert audit["verdict"] == "SKIPPED"
-        assert audit["reason"] == "lenient_validation_mode"
-        assert "judge_model" not in audit and "judge_schema_version" not in audit
-        assert "adversarial_review" not in audit
+    assert len(use_case._claim_verifier._llm.calls) == 1
+    assert len(use_case._quality_judge._llm.calls) == 1

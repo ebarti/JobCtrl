@@ -1,3 +1,5 @@
+import { MessageOutcomeDeterminationSchema } from "@jobctrl/contracts";
+import { readArtifactLineAnchors, readDetermination } from "./semantic-determinations.js";
 import crypto from "node:crypto";
 import fs from "node:fs";
 
@@ -435,7 +437,7 @@ export function listApplicationOutcomes(
   return {
     ok: true,
     outcomes: readOutcomes(db),
-    suggestions: readSuggestions(db),
+    ...readSuggestions(db),
   };
 }
 
@@ -452,7 +454,7 @@ export function listJobApplicationOutcomes(
     ok: true,
     jobKey: jobId,
     outcomes: readOutcomes(db, jobId),
-    suggestions: readSuggestions(db, jobId),
+    ...readSuggestions(db, jobId),
   };
 }
 
@@ -494,10 +496,11 @@ export function decideOutcomeSuggestion(
   if (existing.status !== "pending") {
     return {
       ok: true,
-      suggestion: suggestionFromRow(existing),
+      suggestion: suggestionFromRow(db, existing),
       outcome: existing.decided_outcome_id ? readOutcome(db, existing.decided_outcome_id) : null,
     };
   }
+  if (!suggestionFromRow(db, existing).determination) throw new InputError("outcome_determination_unavailable");
   const decidedAt = new Date().toISOString();
   let outcome: ApplicationOutcome | null = null;
 
@@ -563,7 +566,7 @@ export function decideOutcomeSuggestion(
   }
   return {
     ok: true,
-    suggestion: suggestionFromRow(suggestion),
+    suggestion: suggestionFromRow(db, suggestion),
     outcome,
   };
 }
@@ -688,10 +691,10 @@ function resolveInterviewPrepGeneration(
   return generation;
 }
 
-function readSuggestions(db: SqliteDatabase, jobId?: JobId): OutcomeSuggestion[] {
+function readSuggestions(db: SqliteDatabase, jobId?: JobId): Pick<ApplicationOutcomeListResponse,"suggestions"|"interpretationStatus"> {
   const where = jobId ? "WHERE tenant_id = ? AND job_id = ?" : "WHERE tenant_id = ?";
   const params = jobId ? [DEFAULT_TENANT, jobId] : [DEFAULT_TENANT];
-  return allRows<SuggestionRow>(
+  const rows = allRows<SuggestionRow>(
     db,
     `SELECT suggestion_id, job_id, evidence_id, suggested_kind, confidence,
             rationale, status, created_at, decided_at, decision_reason,
@@ -700,7 +703,22 @@ function readSuggestions(db: SqliteDatabase, jobId?: JobId): OutcomeSuggestion[]
      ${where}
      ORDER BY created_at DESC, suggestion_id DESC`,
     params,
-  ).map(suggestionFromRow);
+  );
+  const suggestions:OutcomeSuggestion[]=[];
+  let failureCode:string|null=null;
+  for(const row of rows){
+    try {
+      const suggestion=suggestionFromRow(db,row);
+      if(suggestion.determination) suggestions.push(suggestion);
+      else failureCode="outcome_determination_unavailable";
+    }catch(error){
+      if(error instanceof InputError || error instanceof Error && error.message.startsWith("determination_")) failureCode="outcome_determination_binding_invalid";
+      else throw error;
+    }
+  }
+  const blocked = db.prepare(`SELECT s.failure_code FROM (SELECT *,ROW_NUMBER() OVER (PARTITION BY tenant_id,entity_id,kind ORDER BY updated_at DESC,input_fingerprint DESC) AS revision FROM semantic_stage_states) s WHERE s.revision=1 AND s.kind IN ('message_link','message_outcome') AND s.state='blocked' AND s.tenant_id=? ${jobId?"AND EXISTS (SELECT 1 FROM application_email_evidence e WHERE e.tenant_id=s.tenant_id AND e.provider_message_id=s.entity_id AND e.job_id=?)":""} ORDER BY s.updated_at DESC LIMIT 1`).get(...(jobId?[DEFAULT_TENANT,jobId]:[DEFAULT_TENANT])) as {failure_code:string}|undefined;
+  failureCode ??= blocked?.failure_code??null;
+  return {suggestions,interpretationStatus:{status:failureCode?"unavailable":suggestions.length?"available":"not_requested",failureCode}};
 }
 
 function getSuggestionRow(db: SqliteDatabase, suggestionId: string): SuggestionRow | undefined {
@@ -1928,9 +1946,6 @@ function reconcileRequirementLedAuditWithProvenance(
   }
 
   const rows = provenanceRowsForCandidate(db, jobId, candidate);
-  if (!rows.length) {
-    return audit;
-  }
 
   const coveredIds = new Set<string>();
   for (const row of rows) {
@@ -1985,29 +2000,11 @@ function provenanceRowsForCandidate(
   jobId: JobId,
   candidate: MaterialArtifactCandidate,
 ): Array<{ requirement_ids_json: string }> {
-  const rowsByArtifact = candidate.artifactId
-    ? allRows<{ requirement_ids_json: string }>(
-        db,
-        `SELECT requirement_ids_json
-           FROM job_bullet_provenance
-          WHERE tenant_id = ?
-            AND job_id = ?
-            AND artifact_id = ?`,
-        [DEFAULT_TENANT, jobId, candidate.artifactId],
-      )
-    : [];
-  if (rowsByArtifact.length || candidate.generation === null) {
-    return rowsByArtifact;
-  }
-  return allRows<{ requirement_ids_json: string }>(
-    db,
-    `SELECT requirement_ids_json
-       FROM job_bullet_provenance
-      WHERE tenant_id = ?
-        AND job_id = ?
-        AND generation = ?`,
-    [DEFAULT_TENANT, jobId, candidate.generation],
-  );
+  if(!candidate.artifactId || candidate.generation===null)return [];
+  const artifact=db.prepare("SELECT artifact_type FROM job_materials_artifacts WHERE tenant_id=? AND job_id=? AND artifact_id=? AND generation=?").get(DEFAULT_TENANT,jobId,candidate.artifactId,candidate.generation) as {artifact_type:string}|undefined;
+  if(!artifact)return [];
+  const anchors=readArtifactLineAnchors(db,DEFAULT_TENANT,artifact.artifact_type,candidate.artifactId,candidate.generation,jobId);
+  return Array.from(anchors.values()).map(anchor=>({requirement_ids_json:JSON.stringify(anchor.requirementIds)}));
 }
 
 function parseRequirementLedAuditMetadata(value: string | null): ApplyReviewRequirementLedAudit | null {
@@ -2537,8 +2534,19 @@ function outcomeFromRow(row: OutcomeRow): ApplicationOutcome {
   };
 }
 
-function suggestionFromRow(row: SuggestionRow): OutcomeSuggestion {
+function suggestionFromRow(db: SqliteDatabase, row: SuggestionRow): OutcomeSuggestion {
+  const binding = db.prepare("SELECT determination_id FROM semantic_entity_bindings WHERE tenant_id=? AND entity_kind='outcome_suggestion' AND entity_id=? AND determination_kind='message_outcome'").get(DEFAULT_TENANT, row.suggestion_id) as {determination_id:string} | undefined;
+  const determination = binding ? readDetermination(db, DEFAULT_TENANT, binding.determination_id) : null;
+  if (determination && determination.kind !== "message_outcome") throw new InputError("outcome_determination_binding_invalid");
+  const result = determination ? MessageOutcomeDeterminationSchema.parse(determination.result) : null;
+  if (result) {
+    const source = db.prepare("SELECT job_id,provider_message_id,subject,snippet,body_text FROM application_email_evidence WHERE tenant_id=? AND evidence_id=?").get(DEFAULT_TENANT,row.evidence_id) as {job_id:string;provider_message_id:string;subject:string|null;snippet:string|null;body_text:string|null}|undefined;
+    const text = source ? [source.subject,source.snippet,source.body_text].map(value=>(value??"").trim()).join("\n") : "";
+    if (!source || source.job_id !== row.job_id || determination!.entity_id !== source.provider_message_id || result.kind !== row.suggested_kind || result.confidence !== Number(row.confidence) || result.citations.some(cite => cite.source_id !== "message" || !text.includes(cite.quote))) throw new InputError("outcome_determination_binding_invalid");
+  }
   return {
+    determination,
+    citations: result?.citations ?? [],
     suggestionId: row.suggestion_id,
     jobKey: canonicalJobId(row.job_id),
     evidenceId: row.evidence_id,

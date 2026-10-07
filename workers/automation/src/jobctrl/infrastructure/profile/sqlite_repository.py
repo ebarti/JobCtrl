@@ -61,11 +61,13 @@ class SqliteProfileRepository:
         *,
         publisher: EventPublisher,
         pdf_parser: PdfParserPort | None = None,
+        candidate_interpreter=None,
         profile_id: str = DEFAULT_PROFILE_ID,
     ) -> None:
         self._conn = conn
         self._publisher = publisher
         self._pdf_parser = pdf_parser
+        self._candidate_interpreter = candidate_interpreter
         self._profile_id = profile_id or DEFAULT_PROFILE_ID
 
     # ------------------------------------------------------------------
@@ -83,11 +85,7 @@ class SqliteProfileRepository:
         previous_dict = previous.to_dict() if previous is not None else {}
 
         row = self._profile_row(tenant_id)
-        candidate = _profile_dict_with_reconciled_achievement_evidence(profile)
-        if row is not None:
-            candidate["resume_constraints"] = {
-                "real_metrics": list(self._legacy_unassigned_metrics(tenant_id, row))
-            }
+        candidate = _profile_dict_with_authored_achievement_evidence(profile)
         validated = Profile.from_dict(
             tenant_id,
             candidate,
@@ -114,31 +112,33 @@ class SqliteProfileRepository:
         except Exception:  # noqa: BLE001
             logger.exception("Failed to publish ProfileUpdated event")
 
+        from jobctrl.infrastructure.profile.interpretation import PersistedCandidateInterpreter
+        from jobctrl.domain.determinations import DeterminationFailure
+
+        try:
+            if self._candidate_interpreter is None:
+                from jobctrl.infrastructure.determinations import SqliteDeterminationRepository
+
+                unavailable = dict(
+                    llm=None,
+                    repository=SqliteDeterminationRepository(self._conn),
+                    tenant_id=str(tenant_id),
+                    provider="unconfigured",
+                    model="unconfigured",
+                    lane="profile",
+                    preflight=lambda: None,
+                )
+                interpreter = PersistedCandidateInterpreter(
+                    self._conn, tenant_id=str(tenant_id), dependencies=unavailable
+                )
+            else:
+                interpreter = self._candidate_interpreter
+            interpreter.interpret(snapshot)
+        except DeterminationFailure:
+            # Authored facts remain saved; the safe blocked state is visible and
+            # no semantic suggestion or evidence row is manufactured.
+            pass
         return snapshot
-
-    def _legacy_unassigned_metrics(
-        self,
-        tenant_id: TenantId,
-        row: sqlite3.Row,
-    ) -> tuple[str, ...]:
-        """Return only old flat values that current achievements do not own."""
-
-        stored_profile = self._row_to_profile_dict(tenant_id, row)
-        stored_metrics = tuple(
-            str(value)
-            for value in _record(stored_profile.get("resume_constraints")).get(
-                "real_metrics", ()
-            )
-            if str(value).strip()
-        )
-        stored_profile["resume_constraints"] = {"real_metrics": []}
-        derived_metrics = Profile.from_dict(
-            tenant_id,
-            stored_profile,
-            profile_id=self._profile_id,
-        ).resume_constraints.real_metrics
-        derived_keys = {metric.casefold() for metric in derived_metrics}
-        return tuple(metric for metric in stored_metrics if metric.casefold() not in derived_keys)
 
     def load_snapshot(self, tenant_id: TenantId) -> ProfileSnapshot:
         profile = self.load(tenant_id)
@@ -163,9 +163,16 @@ class SqliteProfileRepository:
             tenant = str(tenant_id)
             return int(row["version"]), {
                 "experience_entries": self._experience_entries(tenant, self._profile_id),
-                "tailoring_rules": {"required_bullets_by_experience_id": self._grouped_required(
-                    "candidate_profile_required_bullets", "entry_id", "bullet_text", "bullet_index",
-                    tenant, self._profile_id)},
+                "tailoring_rules": {
+                    "required_bullets_by_experience_id": self._grouped_required(
+                        "candidate_profile_required_bullets",
+                        "entry_id",
+                        "bullet_text",
+                        "bullet_index",
+                        tenant,
+                        self._profile_id,
+                    )
+                },
             }
         finally:
             self._conn.execute("RELEASE SAVEPOINT required_coaching_snapshot")
@@ -423,9 +430,9 @@ class SqliteProfileRepository:
                     INSERT INTO candidate_profile_achievement_evidence (
                         tenant_id, profile_id, entry_id, evidence_index,
                         evidence_id, source_text, scope, action, tools_json,
-                        metrics_json, outcome, seniority_signal, evidence_strength,
+                        metrics_json, outcome, evidence_strength,
                         claim_confidence, user_confirmed, tags_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         tenant_id,
@@ -439,8 +446,7 @@ class SqliteProfileRepository:
                         _json_array(_json_str_list(evidence.get("tools"))),
                         _json_array(_json_str_list(evidence.get("metrics"))),
                         str(evidence.get("outcome", "")),
-                        str(evidence.get("seniority_signal", "")),
-                        str(evidence.get("evidence_strength", "supported")),
+                        str(evidence.get("evidence_strength", "draft")),
                         _bounded_float(evidence.get("claim_confidence"), 0.0, 0.0, 1.0),
                         1 if bool(evidence.get("user_confirmed", False)) else 0,
                         _json_array(_json_str_list(evidence.get("tags"))),
@@ -755,12 +761,8 @@ class SqliteProfileRepository:
                 "allow_summary_rewrite": _as_bool(row["tailoring_allow_summary_rewrite"]),
                 "allow_minor_inference": _as_bool(row["tailoring_allow_minor_inference"]),
                 "claim_mode": row["tailoring_claim_mode"],
-                "auto_approvable_claim_modes": _json_str_list(
-                    row["tailoring_auto_approvable_claim_modes_json"]
-                ),
-                "allow_adjacent_achievement_drafts": _as_bool(
-                    row["tailoring_allow_adjacent_achievement_drafts"]
-                ),
+                "auto_approvable_claim_modes": _json_str_list(row["tailoring_auto_approvable_claim_modes_json"]),
+                "allow_adjacent_achievement_drafts": _as_bool(row["tailoring_allow_adjacent_achievement_drafts"]),
             },
             "writing_style": {
                 "tone": row["writing_tone"],
@@ -785,7 +787,7 @@ class SqliteProfileRepository:
         rows = self._conn.execute(
             """
             SELECT evidence_id, source_text, scope, action, tools_json, metrics_json,
-                   outcome, seniority_signal, evidence_strength, claim_confidence,
+                   outcome, evidence_strength, claim_confidence,
                    user_confirmed, tags_json
             FROM candidate_profile_achievement_evidence
             WHERE tenant_id = ? AND profile_id = ? AND entry_id = ?
@@ -802,7 +804,6 @@ class SqliteProfileRepository:
                 "tools": _json_str_list(row["tools_json"]),
                 "metrics": _json_str_list(row["metrics_json"]),
                 "outcome": row["outcome"],
-                "seniority_signal": row["seniority_signal"],
                 "evidence_strength": row["evidence_strength"],
                 "claim_confidence": float(row["claim_confidence"] or 0.0),
                 "user_confirmed": _as_bool(row["user_confirmed"]),
@@ -856,6 +857,7 @@ class SqliteProfileRepository:
         for row in rows:
             grouped.setdefault(str(row[key_column]), []).append(str(row[value_column]))
         return grouped
+
 
 def _root_values(
     tenant_id: str,
@@ -997,7 +999,7 @@ def _achievement_evidence_by_entry(profile: Profile) -> dict[str, list[dict[str,
     return by_entry
 
 
-def _profile_dict_with_reconciled_achievement_evidence(profile: Profile) -> dict[str, Any]:
+def _profile_dict_with_authored_achievement_evidence(profile: Profile) -> dict[str, Any]:
     """Materialize bullet-derived evidence before deriving compatibility metrics."""
 
     profile_dict = profile.to_dict()
@@ -1011,11 +1013,7 @@ def _profile_dict_with_reconciled_achievement_evidence(profile: Profile) -> dict
             continue
         entry_id = str(entry.get("id") or "")
         entry["achievement_evidence"] = [
-            {
-                key: value
-                for key, value in evidence.items()
-                if key != "experience_entry_id"
-            }
+            {key: value for key, value in evidence.items() if key != "experience_entry_id"}
             for evidence in by_entry.get(entry_id, ())
         ]
     return profile_dict

@@ -1,4 +1,3 @@
-import { DEMO_CAPABILITY_MANIFEST } from "./capabilities.js";
 import { isDemoArtifactUrl } from "./artifacts.js";
 import { DEMO_ROUTE_NAMES, type DemoRouteName, type DemoSeed } from "./contracts.js";
 import { scanDemoPrivacy } from "./privacy.js";
@@ -393,24 +392,7 @@ export function assertDemoSeedInvariants(seed: DemoSeed): void {
     }
   }
 
-  assertUnique(seed.scenarios.map((scenario) => scenario.scenarioId), "scenario");
   assertUnique(seed.receipts.map((receipt) => receipt.receiptId), "receipt");
-
-  for (const scenario of seed.scenarios) {
-    const [queuedStep, runningStep] = scenario.steps;
-    if (DEMO_CAPABILITY_MANIFEST[scenario.operation].class !== "simulated_async") {
-      throw new TypeError(`Demo scenario ${scenario.scenarioId} must target simulated async capability.`);
-    }
-    if (queuedStep.state !== "queued" || runningStep.state !== "running") {
-      throw new TypeError(`Demo scenario ${scenario.scenarioId} must start queued then running.`);
-    }
-    if (queuedStep.at.offsetMinutes > runningStep.at.offsetMinutes) {
-      throw new TypeError(`Demo scenario ${scenario.scenarioId} has invalid step order.`);
-    }
-    if (runningStep.at.offsetMinutes > scenario.terminal.at.offsetMinutes) {
-      throw new TypeError(`Demo scenario ${scenario.scenarioId} has invalid terminal order.`);
-    }
-  }
 
   for (const receipt of seed.receipts) {
     if (!receipt.simulated || receipt.externalEffectOccurred) {

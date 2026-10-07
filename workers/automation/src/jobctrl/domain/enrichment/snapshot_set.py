@@ -69,21 +69,15 @@ class SnapshotCaptureFailure:
 
     def __post_init__(self) -> None:
         if not isinstance(self.error_class, str) or not self.error_class.strip():
-            raise ValueError(
-                "SnapshotCaptureFailure.error_class must be a non-empty string"
-            )
+            raise ValueError("SnapshotCaptureFailure.error_class must be a non-empty string")
         if not isinstance(self.message, str):
             raise ValueError("SnapshotCaptureFailure.message must be a string")
         if not isinstance(self.retryable, bool):
             raise ValueError("SnapshotCaptureFailure.retryable must be a bool")
         if not isinstance(self.failed_at, str) or not self.failed_at.strip():
-            raise ValueError(
-                "SnapshotCaptureFailure.failed_at must be a non-empty timestamp"
-            )
+            raise ValueError("SnapshotCaptureFailure.failed_at must be a non-empty timestamp")
         if not isinstance(self.source_id, str) or not self.source_id.strip():
-            raise ValueError(
-                "SnapshotCaptureFailure.source_id must be a non-empty string"
-            )
+            raise ValueError("SnapshotCaptureFailure.source_id must be a non-empty string")
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -116,26 +110,16 @@ class ContentDuplicateCandidate:
 
     def __post_init__(self) -> None:
         if not isinstance(self.candidate_job_id, str) or not self.candidate_job_id.strip():
-            raise ValueError(
-                "ContentDuplicateCandidate.candidate_job_id must be a non-empty string"
-            )
+            raise ValueError("ContentDuplicateCandidate.candidate_job_id must be a non-empty string")
         if not isinstance(self.evidence, tuple) or not self.evidence:
-            raise ValueError(
-                "ContentDuplicateCandidate.evidence must be a non-empty tuple"
-            )
+            raise ValueError("ContentDuplicateCandidate.evidence must be a non-empty tuple")
         for item in self.evidence:
             if not isinstance(item, DuplicateEvidence):
-                raise ValueError(
-                    "ContentDuplicateCandidate.evidence items must be DuplicateEvidence"
-                )
+                raise ValueError("ContentDuplicateCandidate.evidence items must be DuplicateEvidence")
         if not 0.0 <= self.confidence <= 1.0:
-            raise ValueError(
-                "ContentDuplicateCandidate.confidence must be between 0 and 1"
-            )
+            raise ValueError("ContentDuplicateCandidate.confidence must be between 0 and 1")
         if not isinstance(self.detected_at, str) or not self.detected_at.strip():
-            raise ValueError(
-                "ContentDuplicateCandidate.detected_at must be a non-empty timestamp"
-            )
+            raise ValueError("ContentDuplicateCandidate.detected_at must be a non-empty timestamp")
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -191,13 +175,9 @@ class PostingSnapshotSet:
         if not isinstance(self.failures, tuple):
             raise ValueError("PostingSnapshotSet.failures must be a tuple")
         if not isinstance(self.duplicate_candidates, tuple):
-            raise ValueError(
-                "PostingSnapshotSet.duplicate_candidates must be a tuple"
-            )
+            raise ValueError("PostingSnapshotSet.duplicate_candidates must be a tuple")
         if not isinstance(self.latest_active_state, ActiveState):
-            raise ValueError(
-                "PostingSnapshotSet.latest_active_state must be an ActiveState"
-            )
+            raise ValueError("PostingSnapshotSet.latest_active_state must be an ActiveState")
         for index, snapshot in enumerate(self.snapshots, start=1):
             if snapshot.snapshot_version != index:
                 raise ValueError(
@@ -325,8 +305,6 @@ class PostingSnapshotSet:
         ("``latest_active_state`` matches the tail snapshot")
         continues to hold.
         """
-        if active_state is self.latest_active_state:
-            return self, None
         previous = self.latest_active_state
         if self.snapshots:
             tail = self.snapshots[-1]
@@ -334,16 +312,22 @@ class PostingSnapshotSet:
             # Content quality and user/policy decisions keep their own gates.
             quarantine = tail.quarantine_reason
             if active_state is ActiveState.ACTIVE and quarantine in {
-                QuarantineReason.POSTING_INACTIVE, QuarantineReason.UNKNOWN_ACTIVE_STATE,
+                QuarantineReason.POSTING_INACTIVE,
+                QuarantineReason.UNKNOWN_ACTIVE_STATE,
             }:
                 from jobctrl.domain.enrichment.snapshot_value_objects import SnapshotConfidence
-                quarantine = (QuarantineReason.LOW_CONFIDENCE_EXTRACTION
-                              if tail.confidence is SnapshotConfidence.LOW and tail.filter_override is None
-                              else QuarantineReason.NONE)
+
+                quarantine = (
+                    QuarantineReason.LOW_CONFIDENCE_EXTRACTION
+                    if tail.confidence is SnapshotConfidence.LOW and tail.filter_override is None
+                    else QuarantineReason.NONE
+                )
             new_tail = replace(tail, active_state=active_state, quarantine_reason=quarantine)
             new_snapshots = self.snapshots[:-1] + (new_tail,)
         else:
             new_snapshots = self.snapshots
+        if active_state is self.latest_active_state and new_snapshots == self.snapshots:
+            return self, None
         new_agg = replace(
             self,
             snapshots=new_snapshots,

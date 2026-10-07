@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 
 import { AUTOMATION_PROJECT_DIR } from "../src/python-runtime.js";
-import { EXACT_V12_SCHEMA_MANIFEST, schemaManifest } from "../src/schema-manifest.js";
+import { EXACT_V13_SCHEMA_MANIFEST, schemaManifest } from "../src/schema-manifest.js";
 
 export const BENCHMARK_SEED = "jobctrl-local-scale-v1";
 export const REPOSITORY_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -75,9 +75,9 @@ export interface VerifiedDirtyExclusionInput {
 
 const EXACT_SCHEMA_INITIALIZER = [
   "import sqlite3, sys",
-  "from jobctrl.infrastructure.migrations.schema_v12 import create_exact_v12_schema",
+  "from jobctrl.infrastructure.migrations.schema_v13 import create_exact_v13_schema",
   "conn = sqlite3.connect(sys.argv[1])",
-  "create_exact_v12_schema(conn)",
+  "create_exact_v13_schema(conn)",
   "conn.commit()",
   "conn.close()",
 ].join("; ");
@@ -168,7 +168,7 @@ export function parseCliArgs(argv: readonly string[]): CliOptions {
 
 export async function withOwnedWorkspace<T>(
   run: (workspace: BenchmarkWorkspace) => Promise<T> | T,
-  initialize: (workspace: BenchmarkWorkspace) => void = initializeExactV12Database,
+  initialize: (workspace: BenchmarkWorkspace) => void = initializeExactV13Database,
 ): Promise<T> {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-local-scale-"));
   const artifactDirectory = path.join(directory, "artifacts");
@@ -188,13 +188,13 @@ export async function withOwnedWorkspace<T>(
   }
 }
 
-export function initializeExactV12Database(workspace: BenchmarkWorkspace): void {
+export function initializeExactV13Database(workspace: BenchmarkWorkspace): void {
   if (fs.existsSync(workspace.dbPath)) {
-    throw new Error("benchmark database path must not exist before exact-v12 initialization");
+    throw new Error("benchmark database path must not exist before exact-v13 initialization");
   }
   const result = spawnSync(
     "uv",
-    ["--project", AUTOMATION_PROJECT_DIR, "run", "--locked", "python", "-c", EXACT_SCHEMA_INITIALIZER, workspace.dbPath],
+    ["--project", AUTOMATION_PROJECT_DIR, "run", "--frozen", "python", "-c", EXACT_SCHEMA_INITIALIZER, workspace.dbPath],
     {
       cwd: workspace.directory,
       encoding: "utf8",
@@ -203,14 +203,14 @@ export function initializeExactV12Database(workspace: BenchmarkWorkspace): void 
   );
   if (result.status !== 0) {
     const detail = result.error?.message ?? (String(result.stderr ?? "").trim() || "no stderr");
-    throw new Error(`exact-v12 initializer failed (${result.status ?? "spawn"}): ${detail}`);
+    throw new Error(`exact-v13 initializer failed (${result.status ?? "spawn"}): ${detail}`);
   }
   const db = new Database(workspace.dbPath, { readonly: true, fileMustExist: true });
   try {
     const userVersion = Number(db.pragma("user_version", { simple: true }));
     const observed = schemaManifest(db, userVersion);
-    if (JSON.stringify(observed) !== JSON.stringify(EXACT_V12_SCHEMA_MANIFEST)) {
-      throw new Error(`exact-v12 manifest mismatch: ${JSON.stringify(observed)}`);
+    if (JSON.stringify(observed) !== JSON.stringify(EXACT_V13_SCHEMA_MANIFEST)) {
+      throw new Error(`exact-v13 manifest mismatch: ${JSON.stringify(observed)}`);
     }
   } finally {
     db.close();

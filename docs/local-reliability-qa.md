@@ -58,7 +58,7 @@ guidance.
 | Surface | Starting command / selected recipe |
 | --- | --- |
 | API | `corepack pnpm api:check`, focused `api:test` / `api` |
-| Destructive job-data purge | `corepack pnpm api:check`; `corepack pnpm --filter @jobctrl/api exec vitest run test/job-data-purge.test.ts test/permanent-delete-v7.test.ts`; then inventory, confirmed purge, and a second inventory against a disposable exact-v12 workspace only |
+| Destructive job-data purge | `corepack pnpm api:check`; `corepack pnpm --filter @jobctrl/api exec vitest run test/job-data-purge.test.ts test/permanent-delete-v7.test.ts`; then inventory, confirmed purge, and a second inventory against a disposable exact-v13 workspace only |
 | Web | `corepack pnpm web:lint`, `corepack pnpm web:check`, focused `web:test`, `web:build`; types/stories/browser when affected |
 | Extension | `extension:check`, `extension:test`, `extension:build`, `extension:e2e` through Corepack |
 | Worker | Locked focused Ruff/pytest; full worker suite for worker-wide changes |
@@ -142,7 +142,7 @@ that its connection-object mutex is independent of `busy_timeout`. Run these pro
 behind subprocess deadlines so a failed concurrency assertion cannot retain a test
 runner thread. Confirm the real activity worker pool reuses a connection only on its
 own thread, and record the production connection budgets (10 seconds for a new WAL
-connection and 30 seconds for a freshly admitted exact-v12 connection). The short
+connection and 30 seconds for a freshly admitted exact-v13 connection). The short
 fixture timeout proves mechanism and recovery; it is not a production latency bound.
 
 Also repeat an already-claimed robots retry with a real enrichment lease, inject
@@ -189,3 +189,38 @@ approval fingerprints. Capture evidence privately; never commit workspaces,
 logs, databases, materials or screenshots. Missing real runtime/browser QA is
 incomplete, not a pass; deterministic external fixtures do not certify live ATS
 reliability.
+
+
+## Semantic Determinations
+
+Use an owned synthetic workspace for these risk-tier 2/3 paths. Do not grade model
+judgments or build eval sets, labeled corpora, baseline comparisons or recorded
+output replay fixtures. Fake `LlmPort` tests provide opposing valid verdicts for
+identical canonical inputs and prove the model controls the resulting behavior.
+
+For every determination, exercise provider unavailability, budget denial,
+malformed JSON, forbidden extra fields, unknown enums, foreign IDs, non-verbatim
+quotes and mismatched values. Each failure has a distinct safe status, makes no
+lexical substitute and leaves accepted artifacts current. Capture the canonical
+prompt, lane and preflight order. Re-running unchanged inputs must make zero
+additional calls, including concurrent requests for one fingerprint.
+
+Run intake triage over N synthetic listings. Record batch count, cost and latency,
+check the configurable default batch size of 20, and read every admit/reject or
+pending decision through `/v1/discovery/triage`. No listing disappears without a
+persisted verdict. Exercise profile import/save and explicit confirmation without
+writing inferred facts into achievement evidence. Exercise actual artifact
+writes, per-question isolation, empty evidence selections, user edits and PDF
+source fences. Apply Review joins pins and findings by line ID and labels missing
+anchors **No recorded source**. Gmail suggestions expose the outcome determination
+and verbatim quote; model unavailability creates no suggestion. Compensation
+shows evidence matched by persisted taxonomy codes. Affected demo capabilities
+report unavailable.
+
+Use the exact native schema-13 boundary to test migration from every supported
+source schema, stopped-runtime paired backups, source preservation, fenced
+activation, recovery and concurrent-writer refusal. Preserve authored facts and
+accepted artifact bytes while purging heuristic-derived determinations. Temporal
+replay consumes persisted activity results and makes no model calls. Perform the
+removed-symbol and TS read-time similarity searches once at PR acceptance; do not
+turn source-shape searches into permanent tests.

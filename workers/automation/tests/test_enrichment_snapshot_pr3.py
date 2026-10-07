@@ -16,7 +16,6 @@ from jobctrl.domain.enrichment import (
     DetailPage,
     ExtractionTier,
     JobEnrichment,
-    SnapshotConfidence,
 )
 from jobctrl.domain.enrichment.filter_override import FilterOverrideError, FilterOverrideLogger
 from jobctrl.domain.enrichment.services import ExtractionResult, JsonLdExtractor
@@ -25,7 +24,6 @@ from jobctrl.domain.enrichment.snapshot_services import (
     ContentAcquisitionService,
     DedupeIndexEntry,
     TierExtractor,
-    judge_snapshot_confidence,
 )
 from jobctrl.domain.enrichment.snapshot_set import PostingSnapshotSet
 from jobctrl.domain.enrichment.snapshot_use_case import CapturePostingSnapshotUseCase
@@ -39,6 +37,7 @@ from jobctrl.domain.enrichment.snapshot_value_objects import (
 from jobctrl.domain.enrichment.value_objects import ApplicationUrl, FullDescription
 from jobctrl.domain.identifiers import JobId
 from jobctrl.domain.tenant import LOCAL_TENANT
+from tests.page_fakes import PageModel, interpreter
 from jobctrl.infrastructure.observability.enrichment_spans import (
     content_render_span,
     llm_fallback_extraction_span,
@@ -134,27 +133,6 @@ def _long_description() -> str:
     return "Build distributed recruiting systems with Python, Postgres, and TypeScript. " * 8
 
 
-def test_llm_description_trust_does_not_depend_on_application_url() -> None:
-    description = FullDescription(text=_long_description())
-
-    assert (
-        judge_snapshot_confidence(
-            tier=ExtractionTier.LLM_ASSISTED,
-            description=description,
-            apply_url_present=False,
-        )
-        is SnapshotConfidence.MEDIUM
-    )
-    assert (
-        judge_snapshot_confidence(
-            tier=ExtractionTier.LLM_ASSISTED,
-            description=FullDescription(text="Short but non-empty description"),
-            apply_url_present=True,
-        )
-        is SnapshotConfidence.LOW
-    )
-
-
 def _json_ld_page(
     description: str | None = None,
     *,
@@ -181,8 +159,10 @@ def _snapshot_use_case(
     publisher: _RecordingPublisher,
     snapshot_repository: _MemorySnapshotRepository,
     enrichment_repository: _MemoryEnrichmentRepository | None = None,
+    model: PageModel | None = None,
 ) -> CapturePostingSnapshotUseCase:
     acquisition = ContentAcquisitionService(
+        active_verifier=ActiveStateVerifier(page_interpreter=interpreter(model)),
         fetcher=_CannedFetcher(page),
         extractors=(TierExtractor(tier=ExtractionTier.JSON_LD, extractor=JsonLdExtractor()),),
     )
@@ -192,40 +172,6 @@ def _snapshot_use_case(
         publisher=publisher,
         enrichment_repository=enrichment_repository,
     )
-
-
-@pytest.mark.parametrize(
-    ("page", "expected_state", "expected_method"),
-    (
-        (DetailPage(url="https://x/jobs/1", status=404), ActiveState.REMOVED, "http_status"),
-        (
-            _json_ld_page(valid_through="2000-01-01T00:00:00+00:00"),
-            ActiveState.EXPIRED,
-            "json_ld_valid_through",
-        ),
-        (
-            _json_ld_page(valid_through="2999-01-01T00:00:00+00:00"),
-            ActiveState.ACTIVE,
-            "json_ld_valid_through",
-        ),
-        (
-            DetailPage(url="https://x/jobs/1", html="This position is no longer accepting applications."),
-            ActiveState.CLOSED,
-            "closed_marker",
-        ),
-        (
-            DetailPage(url="https://x/jobs/1", html="<main>Visible role content</main>"),
-            ActiveState.UNKNOWN,
-            "missing_current_evidence",
-        ),
-    ),
-)
-def test_active_state_verifier_examples(
-    page: DetailPage,
-    expected_state: ActiveState,
-    expected_method: str,
-) -> None:
-    assert ActiveStateVerifier().verify(page) == (expected_state, expected_method)
 
 
 def test_capture_snapshot_publishes_pr3_events_and_spans(in_memory_exporter) -> None:
@@ -276,7 +222,7 @@ def test_capture_snapshot_publishes_pr3_events_and_spans(in_memory_exporter) -> 
     active_event = publisher.published[1]
     assert active_event.payload["active_state"] == "active"
     assert active_event.payload["previous_state"] == "unknown"
-    assert active_event.payload["verification_method"] == "json_ld_valid_through"
+    assert active_event.payload["verification_method"] == "model_determination"
 
     spans = {span.name: dict(span.attributes or {}) for span in in_memory_exporter.get_finished_spans()}
     assert spans["enrichment.content.acquire"]["tenant.id"] == "local"
@@ -286,7 +232,7 @@ def test_capture_snapshot_publishes_pr3_events_and_spans(in_memory_exporter) -> 
     assert spans["enrichment.content.acquire"]["extraction.tier"] == "json_ld"
     assert spans["enrichment.content.acquire"]["snapshot.hash"] == expected_hash.value
     assert spans["enrichment.active.verify"]["active.state"] == "active"
-    assert spans["enrichment.active.verify"]["verification.method"] == "json_ld_valid_through"
+    assert spans["enrichment.active.verify"]["verification.method"] == "model_determination"
     assert "langfuse.observation.input" not in spans["enrichment.content.acquire"]
 
 
@@ -368,6 +314,7 @@ def test_render_and_llm_fallback_spans_record_non_sensitive_metadata(in_memory_e
 
 def test_snapshot_failure_records_failure_event_without_bumping_version() -> None:
     acquisition = ContentAcquisitionService(
+        active_verifier=ActiveStateVerifier(page_interpreter=interpreter()),
         fetcher=_RaisingFetcher(),
         extractors=(
             TierExtractor(
@@ -401,6 +348,7 @@ def test_snapshot_failure_records_failure_event_without_bumping_version() -> Non
 
 def test_failed_capture_still_records_verified_active_state_change() -> None:
     acquisition = ContentAcquisitionService(
+        active_verifier=ActiveStateVerifier(page_interpreter=interpreter()),
         fetcher=_CannedFetcher(DetailPage(url="https://x/jobs/1", status=404)),
         extractors=(
             TierExtractor(
@@ -440,7 +388,15 @@ def test_failed_capture_still_records_verified_active_state_change() -> None:
 
 def test_low_confidence_capture_is_quarantined_without_override() -> None:
     acquisition = ContentAcquisitionService(
-        fetcher=_CannedFetcher(DetailPage(url="https://x/jobs/1", html="<main>Visible role content</main>", status=200, json_ld=({"@type": "JobPosting", "url": "https://x/jobs/1", "description": "Role"},))),
+        active_verifier=ActiveStateVerifier(page_interpreter=interpreter(PageModel(quality="low"))),
+        fetcher=_CannedFetcher(
+            DetailPage(
+                url="https://x/jobs/1",
+                html="<main>Visible role content</main>",
+                status=200,
+                json_ld=({"@type": "JobPosting", "url": "https://x/jobs/1", "description": "Role"},),
+            )
+        ),
         extractors=(
             TierExtractor(
                 tier=ExtractionTier.LLM_ASSISTED,
@@ -477,7 +433,15 @@ def test_filter_override_audit_admits_low_confidence_snapshot(caplog) -> None:
     assert "filter_override.applied" in caplog.text
 
     acquisition = ContentAcquisitionService(
-        fetcher=_CannedFetcher(DetailPage(url="https://x/jobs/1", html="<main>Visible role content</main>", status=200, json_ld=({"@type": "JobPosting", "url": "https://x/jobs/1", "description": "Role"},))),
+        active_verifier=ActiveStateVerifier(page_interpreter=interpreter(PageModel(quality="low"))),
+        fetcher=_CannedFetcher(
+            DetailPage(
+                url="https://x/jobs/1",
+                html="<main>Visible role content</main>",
+                status=200,
+                json_ld=({"@type": "JobPosting", "url": "https://x/jobs/1", "description": "Role"},),
+            )
+        ),
         extractors=(
             TierExtractor(
                 tier=ExtractionTier.LLM_ASSISTED,
@@ -546,7 +510,15 @@ def test_filter_override_rejects_disallowed_policy() -> None:
 
 def test_quarantined_snapshot_does_not_promote_to_job_enrichment() -> None:
     acquisition = ContentAcquisitionService(
-        fetcher=_CannedFetcher(DetailPage(url="https://x/jobs/1", html="<main>Visible role content</main>", status=200, json_ld=({"@type": "JobPosting", "url": "https://x/jobs/1", "description": "Role"},))),
+        active_verifier=ActiveStateVerifier(page_interpreter=interpreter(PageModel(quality="low"))),
+        fetcher=_CannedFetcher(
+            DetailPage(
+                url="https://x/jobs/1",
+                html="<main>Visible role content</main>",
+                status=200,
+                json_ld=({"@type": "JobPosting", "url": "https://x/jobs/1", "description": "Role"},),
+            )
+        ),
         extractors=(
             TierExtractor(
                 tier=ExtractionTier.LLM_ASSISTED,
@@ -587,6 +559,7 @@ def test_inactive_snapshot_does_not_promote_to_job_enrichment() -> None:
     enrichment_repository = _MemoryEnrichmentRepository()
     publisher = _RecordingPublisher()
     use_case = _snapshot_use_case(
+        model=PageModel(availability="expired"),
         page=_json_ld_page(valid_through="2000-01-01T00:00:00+00:00"),
         publisher=publisher,
         snapshot_repository=_MemorySnapshotRepository(),
@@ -610,12 +583,15 @@ def test_inactive_snapshot_does_not_promote_to_job_enrichment() -> None:
 
 def test_active_snapshot_without_application_url_promotes_to_job_enrichment() -> None:
     acquisition = ContentAcquisitionService(
+        active_verifier=ActiveStateVerifier(page_interpreter=interpreter()),
         fetcher=_CannedFetcher(
             DetailPage(
                 url="https://boards.greenhouse.io/acme/jobs/1",
                 html="<main>Visible role content</main>",
                 status=200,
-                json_ld=({"@type": "JobPosting", "url": "https://boards.greenhouse.io/acme/jobs/1", "description": "Role"},),
+                json_ld=(
+                    {"@type": "JobPosting", "url": "https://boards.greenhouse.io/acme/jobs/1", "description": "Role"},
+                ),
             )
         ),
         extractors=(

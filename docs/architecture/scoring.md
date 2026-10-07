@@ -49,20 +49,7 @@ The acquisition and scheduling policy is owned by
 
 ## Retrieval Before Scoring
 
-The Scoring context owns a local hybrid retrieval service under
-`workers/automation/src/jobctrl/domain/scoring/retrieval.py`. It builds an
-in-memory lexical index over normalized posting fields already produced by
-Discovery, including Discovery's internal detail-enrichment queue drain, then
-ranks candidate jobs before the scorer spends LLM calls. When
-`jobctrl run score --limit N` or equivalent pipeline calls cap scoring, the
-runner fetches a broader pending/enriched pool and lets hybrid retrieval choose
-the top N.
-
-Semantic search is optional. The `EmbeddingIndexPort` in
-`workers/automation/src/jobctrl/domain/ports/retrieval.py` is the adapter seam
-for a hosted or local embedding index; local mode defaults to
-`DisabledEmbeddingIndex`, so lexical retrieval and scoring continue to work
-without any external embedding service.
+`PendingJobSelector` orders eligible work mechanically by recency and stable job ID. `--limit` applies a spend/work cap to that order. No vocabulary overlap, BM25 or embedding fallback decides which pending jobs are relevant. Intake admission comes from persisted posting triage, and scoring uses the current canonical job interpretation.
 
 ## Scoring Fit Assessment
 

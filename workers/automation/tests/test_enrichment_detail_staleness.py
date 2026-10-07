@@ -106,6 +106,10 @@ def offline_llm_tier(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.usefixtures("offline_llm_tier")
 def test_scrape_detail_page_reports_expired_json_ld_as_inactive(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tests.workflow_determination_fakes import install_page_models
+    from tests.page_fakes import PageModel
+
+    install_page_models(monkeypatch, model=PageModel(availability="expired"))
     monkeypatch.setattr(
         detail,
         "_collect_json_ld",
@@ -125,12 +129,16 @@ def test_scrape_detail_page_reports_expired_json_ld_as_inactive(monkeypatch: pyt
 
     assert result["status"] == "inactive"
     assert result["active_state"] == "expired"
-    assert result["verification_method"] == "json_ld_valid_through"
+    assert result["verification_method"] == "model_determination"
     assert result["full_description"]
 
 
 @pytest.mark.usefixtures("offline_llm_tier")
 def test_scrape_detail_page_reports_closed_marker_as_inactive(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tests.workflow_determination_fakes import install_page_models
+    from tests.page_fakes import PageModel
+
+    install_page_models(monkeypatch, model=PageModel(availability="closed"))
     monkeypatch.setattr(detail, "_collect_json_ld", lambda _page: [])
     monkeypatch.setattr(
         detail,
@@ -145,7 +153,7 @@ def test_scrape_detail_page_reports_closed_marker_as_inactive(monkeypatch: pytes
 
     assert result["status"] == "inactive"
     assert result["active_state"] == "closed"
-    assert result["verification_method"] == "closed_marker"
+    assert result["verification_method"] == "model_determination"
     assert result["full_description"]
 
 
@@ -321,7 +329,7 @@ def test_scrape_site_batch_resolves_url_once_before_exact_v7_writes(
         monkeypatch.setattr(
             detail,
             "scrape_detail_page",
-            lambda _page, _url, session=None: (
+            lambda _page, _url, session=None, **_determination_ports: (
                 fetched_urls.append(_url)
                 or {
                     "status": "ok",
@@ -442,7 +450,7 @@ def test_scrape_site_batch_uses_discovery_description_when_detail_extracts_no_da
         monkeypatch.setattr(
             detail,
             "scrape_detail_page",
-            lambda _page, _url, session=None: {
+            lambda _page, _url, session=None, **_determination_ports: {
                 "status": "error",
                 "tier_used": 3,
                 "full_description": None,
@@ -568,8 +576,7 @@ def test_selected_enrichment_passes_explicit_apply_url_refresh(monkeypatch: pyte
         detail,
         "_run_detail_scraper",
         lambda *args, **kwargs: (
-            calls.append(kwargs)
-            or {"processed": 1, "ok": 1, "partial": 0, "error": 0, "tiers": {1: 1}}
+            calls.append(kwargs) or {"processed": 1, "ok": 1, "partial": 0, "error": 0, "tiers": {1: 1}}
         ),
     )
     monkeypatch.setattr("jobctrl.database.get_connection", lambda: object())
@@ -622,7 +629,12 @@ def _seed_current_job(conn, *, job_id, url: str, title: str = "Closed engineerin
 
 def test_inactive_cascade_snapshot_uses_current_job_id_and_keeps_url_as_locator(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from tests.workflow_determination_fakes import install_page_models
+    from tests.page_fakes import PageModel
+
+    install_page_models(monkeypatch, model=PageModel(availability="closed"))
     db_path = tmp_path / "jobs.db"
     conn = init_db(db_path)
     job_id = canonical_job_id("43c31e55-7ac4-4e5f-afbe-7612180ef829")
@@ -641,7 +653,7 @@ def test_inactive_cascade_snapshot_uses_current_job_id_and_keeps_url_as_locator(
                 "full_description": _long_description(),
                 "application_url": None,
                 "active_state": "closed",
-                "verification_method": "closed_marker",
+                "verification_method": "model_determination",
             },
             captured_at="2026-05-29T12:00:00+00:00",
         )
@@ -739,3 +751,11 @@ def test_snapshot_failure_uses_current_job_id_for_state_and_events(tmp_path: Pat
         assert json.loads(event["payload_json"])["jobId"] == str(job_id)
     finally:
         close_connection(db_path)
+
+
+@pytest.fixture(autouse=True)
+def semantic_workflow_models(monkeypatch):
+    from tests.workflow_determination_fakes import install_discovery_models, install_page_models
+
+    install_discovery_models(monkeypatch)
+    install_page_models(monkeypatch)

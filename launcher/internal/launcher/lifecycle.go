@@ -937,11 +937,11 @@ func recoverInterruptedTransition(ctx launchContext, store *release.Store) (bool
 			return false, errors.New("interrupted transition backup does not bind the prior release")
 		}
 		recoveryPair = &pair
-		intent, err := readV12SourcePreservation(ctx.Instance.StateDir, journal.ID)
+		intent, err := readV13SourcePreservation(ctx.Instance.StateDir, journal.ID)
 		if err != nil {
 			return false, err
 		}
-		sourceVersion, sourceErr := pairedV12SourceSchemaVersion(pair)
+		sourceVersion, sourceErr := pairedV13SourceSchemaVersion(pair)
 		if intent != nil && (sourceErr != nil || intent.BackupID != pair.ID || intent.SourceVersion != sourceVersion) {
 			return false, errors.New("v12 source preservation intent does not bind the paired backup")
 		}
@@ -952,10 +952,10 @@ func recoverInterruptedTransition(ctx launchContext, store *release.Store) (bool
 			liveVersion, liveErr := sqliteUserVersion(python, filepath.Join(ctx.Instance.StateDir, "jobctrl.db"))
 			preserveUnactivatedSource = liveErr == nil && liveVersion == sourceVersion
 			if intent != nil && !preserveUnactivatedSource {
-				return false, errV12SourceChanged
+				return false, errV13SourceChanged
 			}
 			if preserveUnactivatedSource {
-				if err := writeV12SourcePreservation(ctx.Instance.StateDir, journal.ID, pair.ID, sourceVersion); err != nil {
+				if err := writeV13SourcePreservation(ctx.Instance.StateDir, journal.ID, pair.ID, sourceVersion); err != nil {
 					return false, err
 				}
 			}
@@ -973,7 +973,7 @@ func recoverInterruptedTransition(ctx launchContext, store *release.Store) (bool
 	cleanupV9Candidate(ctx.Instance.StateDir, journal.ID)
 	cleanupV10Candidate(ctx.Instance.StateDir, journal.ID)
 	cleanupV11Candidate(ctx.Instance.StateDir, journal.ID)
-	cleanupV12Candidate(ctx.Instance.StateDir, journal.ID)
+	cleanupV13Candidate(ctx.Instance.StateDir, journal.ID)
 	if recoveryPair != nil && !preserveUnactivatedSource {
 		if err := restorePair(ctx, *recoveryPair); err != nil {
 			return false, err
@@ -1012,7 +1012,7 @@ func recoverInterruptedTransition(ctx launchContext, store *release.Store) (bool
 	if err := store.Advance(&journal, release.RolledBack, nil); err != nil {
 		return false, err
 	}
-	if err := clearV12SourcePreservation(ctx.Instance.StateDir, journal.ID); err != nil {
+	if err := clearV13SourcePreservation(ctx.Instance.StateDir, journal.ID); err != nil {
 		return true, err
 	}
 	return true, nil
@@ -1167,8 +1167,10 @@ func promoteExisting(ctx launchContext, store *release.Store, active release.Act
 		// Exact v10 upgrades move global LLM spend into the legacy lane.
 	case v11JobCtrlSchemaVersion:
 		// Exact v11 upgrades add generation bindings and independently revisioned notes.
+	case v12JobCtrlSchemaVersion:
+		// Exact v12 is migrated to cited semantic determinations.
 	case currentJobCtrlSchemaVersion:
-		// Ordinary exact-v12 release promotion uses the paired lifecycle unchanged.
+		// Ordinary exact-v13 release promotion uses the paired lifecycle unchanged.
 	default:
 		return restartBeforeBackup(fmt.Errorf("unsupported stopped JobCtrl schema version %d", databaseVersion))
 	}
@@ -1195,9 +1197,9 @@ func promoteExisting(ctx launchContext, store *release.Store, active release.Act
 
 	migrationActivationStarted := false
 	rollbackFailure := func(cause error) error {
-		preserveLiveSource := (databaseVersion != currentJobCtrlSchemaVersion && !migrationActivationStarted) || errors.Is(cause, errV12SourceChanged)
+		preserveLiveSource := (databaseVersion != currentJobCtrlSchemaVersion && !migrationActivationStarted) || errors.Is(cause, errV13SourceChanged)
 		if preserveLiveSource {
-			if err := writeV12SourcePreservation(ctx.Instance.StateDir, journal.ID, pair.ID, databaseVersion); err != nil {
+			if err := writeV13SourcePreservation(ctx.Instance.StateDir, journal.ID, pair.ID, databaseVersion); err != nil {
 				return fmt.Errorf("%v; persist source preservation intent: %w", cause, err)
 			}
 		}
@@ -1208,7 +1210,7 @@ func promoteExisting(ctx launchContext, store *release.Store, active release.Act
 		cleanupV9Candidate(ctx.Instance.StateDir, journal.ID)
 		cleanupV10Candidate(ctx.Instance.StateDir, journal.ID)
 		cleanupV11Candidate(ctx.Instance.StateDir, journal.ID)
-		cleanupV12Candidate(ctx.Instance.StateDir, journal.ID)
+		cleanupV13Candidate(ctx.Instance.StateDir, journal.ID)
 		if stopErr := stop(ctx); stopErr != nil { // Candidate records share the canonical state identity.
 			return fmt.Errorf("%v; refusing paired rollback restore while the candidate could not be quiesced: %w", cause, stopErr)
 		}
@@ -1229,7 +1231,7 @@ func promoteExisting(ctx launchContext, store *release.Store, active release.Act
 		if err := store.Advance(&journal, release.RolledBack, cause); err != nil {
 			return fmt.Errorf("%v; finish rollback journal: %w", cause, err)
 		}
-		if err := clearV12SourcePreservation(ctx.Instance.StateDir, journal.ID); err != nil {
+		if err := clearV13SourcePreservation(ctx.Instance.StateDir, journal.ID); err != nil {
 			return fmt.Errorf("%v; remove source preservation intent: %w", cause, err)
 		}
 		return cause
@@ -1237,14 +1239,14 @@ func promoteExisting(ctx launchContext, store *release.Store, active release.Act
 	if databaseVersion != currentJobCtrlSchemaVersion {
 		candidatePath, err := sealedV7CandidateBuilder(candidateRuntime, pair, journal.ID)
 		if err != nil {
-			return rollbackFailure(fmt.Errorf("build exact-v12 migration candidate: %w", err))
+			return rollbackFailure(fmt.Errorf("build exact-v13 migration candidate: %w", err))
 		}
 		if err := advance(store, &journal, release.MigrationCandidateReady); err != nil {
 			return rollbackFailure(err)
 		}
 		migrationActivationStarted = true
 		if err := sealedV7CandidateInstaller(candidateRuntime, candidatePath); err != nil {
-			return rollbackFailure(fmt.Errorf("activate exact-v12 database: %w", err))
+			return rollbackFailure(fmt.Errorf("activate exact-v13 database: %w", err))
 		}
 		if err := advance(store, &journal, release.MigrationActivated); err != nil {
 			return rollbackFailure(err)

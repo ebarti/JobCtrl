@@ -32,57 +32,27 @@ posting nor a model response becomes a new candidate fact.
 JobCtrl does not save the first block of prose returned by one prompt. The
 current workflow:
 
-1. builds one deterministic plan from the accepted posting, profile snapshot,
-   requirement fit, user permissions, pinned evidence, and writing style;
-2. retains the strongest grounded achievement for each target requirement and
-   asks each ready generator for the smallest sufficient bullet set under the
-   same plan;
-3. resolves referenced experience and skill identifiers against known profile
-   data;
-4. assembles and renders each candidate;
-5. checks the actual rendered text for grounding, structure, prohibited claims,
-   metrics, seniority, and requirement coverage;
-6. sends repairable failures through a bounded revision attempt;
-7. requires enabled judge and adversarial gates to approve the candidate;
-8. selects the best clean candidate and, after any optional buzzword-only voice
-   refinement, re-runs claim binding, validation, provenance, fabrication, and
-   the structured judge on the exact final text;
-9. persists the accepted generation, files, provenance, coverage, and audit
-   data together.
+1. binds the accepted posting interpretation, profile version, requirement-fit
+   determinations and confirmed permissions;
+2. generates structured candidates with an evidence and requirement anchor for
+   every line;
+3. validates identifiers and assembles the actual output;
+4. asks a separate claim verifier to determine every claim's support and applies
+   the artifact rubric;
+5. asks the independent quality judge for a pass/fail decision;
+6. repairs cited failures within the attempt budget;
+7. re-verifies and re-judges any voice rewrite on its final text;
+8. persists accepted artifacts, determination versions, model identity, input
+   fingerprints and line anchors together.
 
-This sequence matters because structured JSON can be valid while the assembled
-resume is not. Validation therefore follows the content through rendering
-instead of stopping at the model boundary.
+Code checks IDs, verbatim quotations, exact values, schemas and versions. Models
+own semantic judgments. Requirement coverage follows recorded requirement IDs;
+words in a line never create evidence. Provider unavailability, budget denial or
+invalid output blocks the stage and preserves the last accepted generation.
 
-For the exact modes, thresholds, retry behavior, and failure codes, use the
-canonical [Tailoring Contract](../architecture/tailoring.md).
-
-## What The Fabrication Gates Check
-
-There is no single “truth score.” Different checks protect different failure
-modes:
-
-- **Reference validation** rejects unknown experience or skill-category
-  identifiers.
-- **Grounding checks** compare candidate claims with the canonical profile
-  evidence they cite.
-- **Achievement-scoped metric checks** require a number to occur in the same
-  evidence item cited by that bullet; a flat metric list cannot lend it to a
-  different accomplishment.
-- **Deterministic text checks** inspect preserved employers, education,
-  sections, unsupported metrics, seniority changes, and prohibited claims.
-- **Rendered coverage checks** count a keyword only when it appears in the
-  actual grounded resume text.
-- **A structured judge** must pass the configured quality threshold and report
-  no unsupported claims, fabrications, or missing required evidence.
-- **Adversarial personas** challenge high-fit candidates from several review
-  perspectives and produce blockers, warnings, and repair instructions.
-- **A final fabrication pass** runs after optional style refinement so improved
-  voice cannot quietly weaken grounding.
-
-Models still make mistakes, and deterministic checks have defined limits.
-JobCtrl exposes the evidence and gate outputs because a human reviewer remains
-the final authority.
+The artifact inspector and Apply Review expose those recorded bindings. A line
+without an anchor says **No recorded source**. The human reviewer remains the
+final authority for application approval.
 
 ## Missing Evidence Stays Missing
 
@@ -111,7 +81,7 @@ direct, strong, transferable, missing, and blocked requirement fit.
 
 The Artifacts workspace preserves more than a PDF. Its inspector can expose the
 tailoring plan, policy version, candidate attempts, validation, provenance,
-requirement and keyword coverage, judge result, adversarial review, voice
+verifier-recorded requirement coverage, independent quality findings, claim verification, voice
 measures, template, risk metadata, and same-job generations.
 
 Warnings are tied to their lifecycle. A warning may have caused a repair, been
@@ -150,3 +120,10 @@ Related reading:
 - [Local-first Job Search Automation](local-first-job-search-automation.md)
 - [Open-source Job Application Tracker](open-source-job-application-tracker.md)
 - [JobCtrl Guides](index.md)
+
+
+## Semantic Determination Authority
+
+Support, seniority alignment, voice and requirement demonstration are source-bound model verdicts. Code validates exact evidence IDs, verbatim quotes, values and structural output. Each displayed line joins a recorded source anchor; missing provenance is stated openly. A failed refresh preserves the last accepted artifact.
+
+See [the decision](../decisions.md#2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.

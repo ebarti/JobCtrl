@@ -94,8 +94,7 @@ def _seed_pending(conn: sqlite3.Connection, url: str, site: str) -> JobId:
     job_id = JobId(str(uuid5(NAMESPACE_URL, url)))
     discovered_at = "2026-01-01T00:00:00+00:00"
     conn.execute(
-        "INSERT INTO jobs (tenant_id, job_id, url, title, site, discovered_at) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO jobs (tenant_id, job_id, url, title, site, discovered_at) VALUES (?, ?, ?, ?, ?, ?)",
         (
             str(LOCAL_TENANT),
             str(job_id),
@@ -145,9 +144,7 @@ def test_stage_failure_error_carries_real_class_and_message() -> None:
     assert detail_payload["errorClass"] == "ConfigurationError"
     assert detail_payload["passes"] == 3
     assert detail_payload["pending"] == 5
-    assert detail_payload["siteErrors"] == {
-        "linkedin": {"error_class": "Error", "error_message": "boom"}
-    }
+    assert detail_payload["siteErrors"] == {"linkedin": {"error_class": "Error", "error_message": "boom"}}
     assert detail_payload["traceback"].startswith("Traceback")
 
 
@@ -202,13 +199,11 @@ async def test_discovery_enrichment_activity_raises_real_cause_not_failed_failed
             "retryable": False,
         },
     )
-    monkeypatch.setattr("jobctrl.pipeline.runner.run_discovery_hygiene", lambda _label: 0)
+    pass
     monkeypatch.setattr(activities.activity, "heartbeat", lambda *_a, **_k: None)
 
     with pytest.raises(ApplicationError) as excinfo:
-        await activities.discovery_enrichment_activity(
-            DiscoveryEnrichmentActivityInput(tenant_id="local")
-        )
+        await activities.discovery_enrichment_activity(DiscoveryEnrichmentActivityInput(tenant_id="local"))
 
     err = excinfo.value
     assert "Executable doesn't exist" in str(err)
@@ -242,12 +237,10 @@ async def test_discovery_enrichment_activity_reports_partial_with_site_errors(
             "site_errors": {"linkedin": {"error_class": "Error", "error_message": "boom"}},
         },
     )
-    monkeypatch.setattr("jobctrl.pipeline.runner.run_discovery_hygiene", lambda _label: 0)
+    pass
     monkeypatch.setattr(activities.activity, "heartbeat", lambda *_a, **_k: None)
 
-    result = await activities.discovery_enrichment_activity(
-        DiscoveryEnrichmentActivityInput(tenant_id="local")
-    )
+    result = await activities.discovery_enrichment_activity(DiscoveryEnrichmentActivityInput(tenant_id="local"))
 
     assert result.status == "partial"
     assert result.site_errors == {"linkedin": {"error_class": "Error", "error_message": "boom"}}
@@ -279,7 +272,7 @@ async def test_discovery_enrichment_activity_reuses_execution_key_across_activit
         "jobctrl.pipeline.runner.run_discovery_enrichment_stage",
         fake_run_stage,
     )
-    monkeypatch.setattr("jobctrl.pipeline.runner.run_discovery_hygiene", lambda _label: 0)
+    pass
     monkeypatch.setattr(activities.activity, "heartbeat", lambda *_a, **_k: None)
     monkeypatch.setattr(activities, "begin_pipeline_step_attempt", lambda _scope: None)
     execution = DiscoveryExecutionRef(
@@ -345,7 +338,10 @@ async def test_live_enrichment_cancellation_does_not_persist_a_false_terminal_st
     [(True, True, False), (True, False, False), (False, True, True), (False, False, False)],
 )
 async def test_discovery_activity_preserves_the_stop_cause(
-    monkeypatch: pytest.MonkeyPatch, streaming: bool, cancel_requested: bool, terminal: bool,
+    monkeypatch: pytest.MonkeyPatch,
+    streaming: bool,
+    cancel_requested: bool,
+    terminal: bool,
 ) -> None:
     captured = {}
 
@@ -362,12 +358,17 @@ async def test_discovery_activity_preserves_the_stop_cause(
     monkeypatch.setattr("jobctrl.infrastructure.temporal.run_in_activity.run_blocking_with_heartbeat", cancel_attempt)
     monkeypatch.setattr(runner, "run_discovery_enrichment_stage", capture_event)
     monkeypatch.setattr(activities, "begin_pipeline_step_attempt", lambda _scope: None)
-    monkeypatch.setattr(activities.activity, "cancellation_details", lambda: SimpleNamespace(cancel_requested=cancel_requested))
+    monkeypatch.setattr(
+        activities.activity, "cancellation_details", lambda: SimpleNamespace(cancel_requested=cancel_requested)
+    )
 
     with pytest.raises(asyncio.CancelledError):
-        await activities.discovery_enrichment_activity(DiscoveryEnrichmentActivityInput(
-            tenant_id="local", stream_while_discovering=streaming,
-        ))
+        await activities.discovery_enrichment_activity(
+            DiscoveryEnrichmentActivityInput(
+                tenant_id="local",
+                stream_while_discovering=streaming,
+            )
+        )
 
     assert captured["event"].is_set()
     assert getattr(captured["event"], "terminal_cancellation_requested", True) is terminal
@@ -375,7 +376,8 @@ async def test_discovery_activity_preserves_the_stop_cause(
 
 @pytest.mark.asyncio
 async def test_source_completion_during_live_enrichment_is_reclaimed_by_terminal_pass(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Exercise the real activity stop signal, SQLite stage ownership and drain."""
     from jobctrl.state import ensure_job_stage_rows, utc_now
@@ -394,15 +396,22 @@ async def test_source_completion_during_live_enrichment_is_reclaimed_by_terminal
         )
         conn.commit()
         monkeypatch.setattr(runner, "get_connection", lambda: conn)
-        monkeypatch.setattr(runner, "run_discovery_hygiene", lambda *_args, **_kwargs: 0)
+        pass
         live_lease = runner._claim_execution_enrichment_lease(
-            execution, owner_token="live:1", activity_phase=1, activity_attempt=1,
+            execution,
+            owner_token="live:1",
+            activity_phase=1,
+            activity_attempt=1,
         )
 
         def source_finishes(_conn, _site, _jobs, *, cancel_event, **_kwargs):
             ensure_job_stage_rows(_conn, job_id, tenant_id=LOCAL_TENANT)
             detail._claim_enrich_job_for_activity(
-                _conn, job_id, started_at=utc_now(), tenant_id=LOCAL_TENANT, activity_lease=live_lease,
+                _conn,
+                job_id,
+                started_at=utc_now(),
+                tenant_id=LOCAL_TENANT,
+                activity_lease=live_lease,
             )
             _conn.commit()
             captured["stop"]()
@@ -410,8 +419,13 @@ async def test_source_completion_during_live_enrichment_is_reclaimed_by_terminal
 
         def live_stage(**kwargs):
             return detail._run_detail_scraper(
-                conn, workers=1, job_ids=(job_id,), cancel_event=kwargs["cancel_event"],
-                reset_linkedin_candidates=False, discovery_execution=execution, activity_lease=live_lease,
+                conn,
+                workers=1,
+                job_ids=(job_id,),
+                cancel_event=kwargs["cancel_event"],
+                reset_linkedin_candidates=False,
+                discovery_execution=execution,
+                activity_lease=live_lease,
             )
 
         async def stop_attempt(fn, *, on_cancel, **_kwargs):
@@ -421,37 +435,72 @@ async def test_source_completion_during_live_enrichment_is_reclaimed_by_terminal
             raise asyncio.CancelledError()
 
         with monkeypatch.context() as live_patch:
-            live_patch.setattr("jobctrl.infrastructure.temporal.runtime_guard.assert_activity_runtime", lambda **_kwargs: None)
-            live_patch.setattr("jobctrl.infrastructure.temporal.run_in_activity.run_blocking_with_heartbeat", stop_attempt)
+            live_patch.setattr(
+                "jobctrl.infrastructure.temporal.runtime_guard.assert_activity_runtime", lambda **_kwargs: None
+            )
+            live_patch.setattr(
+                "jobctrl.infrastructure.temporal.run_in_activity.run_blocking_with_heartbeat", stop_attempt
+            )
             live_patch.setattr(runner, "run_discovery_enrichment_stage", live_stage)
             live_patch.setattr(detail, "scrape_site_batch", source_finishes)
             with pytest.raises(asyncio.CancelledError):
-                await activities.discovery_enrichment_activity(DiscoveryEnrichmentActivityInput(
-                    tenant_id="local", stream_while_discovering=True, discovery_execution=execution,
-                ))
+                await activities.discovery_enrichment_activity(
+                    DiscoveryEnrichmentActivityInput(
+                        tenant_id="local",
+                        stream_while_discovering=True,
+                        discovery_execution=execution,
+                    )
+                )
 
-        assert conn.execute("SELECT state FROM job_stage_states WHERE job_id = ? AND stage = 'enrich'", (str(job_id),)).fetchone()[0] != "canceled"
+        assert (
+            conn.execute(
+                "SELECT state FROM job_stage_states WHERE job_id = ? AND stage = 'enrich'", (str(job_id),)
+            ).fetchone()[0]
+            != "canceled"
+        )
 
         # Run the real terminal drain and persistence with only the browser
         # result replaced by a network-free posting fixture.
         monkeypatch.setattr("jobctrl.database.get_connection", lambda *_args, **_kwargs: conn)
         monkeypatch.setattr(detail, "PolitenessGateway", lambda: offline_gateway())
-        monkeypatch.setattr(detail, "LiveChromeDiscoveryClient", lambda *_args, **_kwargs: SimpleNamespace(ensure_available=lambda: None))
-        monkeypatch.setattr(detail, "scrape_detail_page_via_live_chrome", lambda *_args, **_kwargs: {
-            "status": "ok", "tier_used": 1, "full_description": _long_description(),
-            "application_url": None, "error": None, "elapsed": 0.1,
-            "active_state": "active", "verification_method": "fixture", "http_status": 200,
-        })
+        monkeypatch.setattr(
+            detail,
+            "LiveChromeDiscoveryClient",
+            lambda *_args, **_kwargs: SimpleNamespace(ensure_available=lambda: None),
+        )
+        monkeypatch.setattr(
+            detail,
+            "scrape_detail_page_via_live_chrome",
+            lambda *_args, **_kwargs: {
+                "status": "ok",
+                "tier_used": 1,
+                "full_description": _long_description(),
+                "application_url": None,
+                "error": None,
+                "elapsed": 0.1,
+                "active_state": "active",
+                "verification_method": "fixture",
+                "http_status": 200,
+            },
+        )
         handed_off = []
         result = runner.run_discovery_enrichment_stage(
-            workers=1, limit=1, discovery_execution=execution, activity_owner_token="terminal:1",
+            workers=1,
+            limit=1,
+            discovery_execution=execution,
+            activity_owner_token="terminal:1",
             on_job_enriched=handed_off.append,
         )
         assert result["status"] == "ok"
         assert result["passes"] == 1
         assert result["pending"] == 0
         assert handed_off == [job_id]
-        assert conn.execute("SELECT state FROM job_stage_states WHERE job_id = ? AND stage = 'enrich'", (str(job_id),)).fetchone()[0] == "succeeded"
+        assert (
+            conn.execute(
+                "SELECT state FROM job_stage_states WHERE job_id = ? AND stage = 'enrich'", (str(job_id),)
+            ).fetchone()[0]
+            == "succeeded"
+        )
     finally:
         close_connection(db_path)
 
@@ -466,21 +515,40 @@ async def test_real_workflow_cancel_still_finds_rows_released_by_live_consumer(t
     try:
         job_id = _seed_pending(conn, "https://example.test/released-before-cancel", "Example")
         ensure_job_stage_rows(conn, job_id)
-        detail._queue_enrichment_cohort(conn, (job_id,), tenant_id=LOCAL_TENANT, workflow_id="discover-local", workflow_run_id="canceled-run")
-        detail._release_unstarted_enrichment_cohort(conn, (job_id,), tenant_id=LOCAL_TENANT, workflow_id="discover-local", workflow_run_id="canceled-run")
-        assert conn.execute("SELECT state FROM job_stage_states WHERE job_id = ? AND stage = 'enrich'", (str(job_id),)).fetchone()[0] == "pending"
+        detail._queue_enrichment_cohort(
+            conn, (job_id,), tenant_id=LOCAL_TENANT, workflow_id="discover-local", workflow_run_id="canceled-run"
+        )
+        detail._release_unstarted_enrichment_cohort(
+            conn, (job_id,), tenant_id=LOCAL_TENANT, workflow_id="discover-local", workflow_run_id="canceled-run"
+        )
+        assert (
+            conn.execute(
+                "SELECT state FROM job_stage_states WHERE job_id = ? AND stage = 'enrich'", (str(job_id),)
+            ).fetchone()[0]
+            == "pending"
+        )
         monkeypatch.setattr("jobctrl.database.get_connection", lambda: conn)
-        monkeypatch.setattr("jobctrl.infrastructure.temporal.runtime_guard.assert_activity_runtime", lambda **_kwargs: None)
+        monkeypatch.setattr(
+            "jobctrl.infrastructure.temporal.runtime_guard.assert_activity_runtime", lambda **_kwargs: None
+        )
 
-        canceled = await cancel_enrichment_cohort_activity(CancelEnrichmentCohortInput(
-            tenant_id="local", workflow_id="discover-local", workflow_run_id="canceled-run",
-        ))
+        canceled = await cancel_enrichment_cohort_activity(
+            CancelEnrichmentCohortInput(
+                tenant_id="local",
+                workflow_id="discover-local",
+                workflow_run_id="canceled-run",
+            )
+        )
 
         assert canceled == 1
-        assert conn.execute("SELECT state FROM job_stage_states WHERE job_id = ? AND stage = 'enrich'", (str(job_id),)).fetchone()[0] == "canceled"
+        assert (
+            conn.execute(
+                "SELECT state FROM job_stage_states WHERE job_id = ? AND stage = 'enrich'", (str(job_id),)
+            ).fetchone()[0]
+            == "canceled"
+        )
     finally:
         close_connection(db_path)
-
 
 
 @pytest.mark.asyncio
@@ -600,9 +668,7 @@ async def test_discovery_next_run_settings_stay_frozen_after_planning(
             "next_run_settings": planned_settings,
         },
     )
-    plan = activities.plan_discovery_sources(
-        activities.PlanDiscoverySourcesInput(tenant_id="local")
-    )
+    plan = activities.plan_discovery_sources(activities.PlanDiscoverySourcesInput(tenant_id="local"))
 
     persisted = {
         "boards": ["linkedin"],
@@ -657,6 +723,7 @@ def test_source_planning_does_not_run_hygiene_before_sources(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(runner, "init_db", lambda: object())
+    monkeypatch.setattr("jobctrl.infrastructure.discovery.query_plan.prepare_query_plan", lambda _conn, cfg: cfg)
     monkeypatch.setattr(runner.config, "load_search_config", lambda: {})
     monkeypatch.setattr(runner.config, "load_source_registry", lambda **_kwargs: [])
     monkeypatch.setattr(runner, "seed_discovery_control_queues", lambda *_args, **_kwargs: None)
@@ -666,11 +733,7 @@ def test_source_planning_does_not_run_hygiene_before_sources(
         lambda *_args, **_kwargs: runner.DiscoverySchedule(()),
     )
     monkeypatch.setattr(runner, "_pipeline_job_count", lambda: 0)
-    monkeypatch.setattr(
-        runner,
-        "run_discovery_hygiene",
-        lambda _label: pytest.fail("source planning must not block on historical-job hygiene"),
-    )
+    pass
 
     plan = runner.plan_discovery_source_families(limit=500)
 
@@ -687,9 +750,7 @@ def _healthy_stats() -> dict:
 
 
 @pytest.mark.parametrize("workers", [1, 2])
-def test_run_detail_scraper_isolates_failed_site(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, workers: int
-) -> None:
+def test_run_detail_scraper_isolates_failed_site(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, workers: int) -> None:
     db_path = tmp_path / "jobs.db"
     conn = init_db(db_path)
     try:
@@ -839,8 +900,7 @@ def test_run_detail_scraper_propagates_cancellation(
         states = {
             row[0]: row[1]
             for row in conn.execute(
-                "SELECT job_id, state FROM job_stage_states "
-                "WHERE tenant_id = ? AND stage = 'enrich'",
+                "SELECT job_id, state FROM job_stage_states WHERE tenant_id = ? AND stage = 'enrich'",
                 (str(LOCAL_TENANT),),
             ).fetchall()
         }
@@ -851,8 +911,7 @@ def test_run_detail_scraper_propagates_cancellation(
         canceled_payloads = [
             json.loads(row[0] or "{}")
             for row in conn.execute(
-                "SELECT payload_json FROM job_events "
-                "WHERE event_type = 'StageCanceled' ORDER BY event_id"
+                "SELECT payload_json FROM job_events WHERE event_type = 'StageCanceled' ORDER BY event_id"
             ).fetchall()
         ]
         assert {payload["jobId"] for payload in canceled_payloads} == {
@@ -861,8 +920,7 @@ def test_run_detail_scraper_propagates_cancellation(
             str(blocked),
         }
         assert all(
-            payload["workflowId"] == "workflow-cancel-test"
-            and payload["temporalRunId"] == "temporal-run-cancel-test"
+            payload["workflowId"] == "workflow-cancel-test" and payload["temporalRunId"] == "temporal-run-cancel-test"
             for payload in canceled_payloads
         )
     finally:
@@ -954,8 +1012,7 @@ def test_selected_enrich_workflow_does_not_steal_another_queued_owner(
         assert batch is None
         assert result["processed"] == 0
         row = conn.execute(
-            "SELECT state, metadata_json FROM job_stage_states "
-            "WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich'",
+            "SELECT state, metadata_json FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich'",
             (str(LOCAL_TENANT), str(job_id)),
         ).fetchone()
         assert row[0] == "queued"
@@ -1062,16 +1119,12 @@ def test_live_extension_batch_persists_owner_before_navigation_and_restart_cance
     monkeypatch.setattr(
         detail,
         "_reset_authenticated_linkedin_retry_candidates",
-        lambda *_args, **_kwargs: pytest.fail(
-            "Temporal enrichment must not enter the copied-profile pre-pass"
-        ),
+        lambda *_args, **_kwargs: pytest.fail("Temporal enrichment must not enter the copied-profile pre-pass"),
     )
 
     def _blocking_live_batch(*_args: object, **kwargs: object) -> dict[str, object]:
         selected_execution = kwargs.get("discovery_execution")
-        assert selected_execution is None or isinstance(
-            selected_execution, DiscoveryExecutionRef
-        )
+        assert selected_execution is None or isinstance(selected_execution, DiscoveryExecutionRef)
         captured_execution.append(selected_execution)
         batch_started.set()
         assert batch_release.wait(timeout=10)
@@ -1118,8 +1171,7 @@ def test_live_extension_batch_persists_owner_before_navigation_and_restart_cance
     ]
 
     durable = conn.execute(
-        "SELECT state, metadata_json FROM job_stage_states "
-        "WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich'",
+        "SELECT state, metadata_json FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich'",
         (str(LOCAL_TENANT), str(failed_id)),
     ).fetchone()
     assert durable[0] == "queued"
@@ -1150,8 +1202,7 @@ def test_live_extension_batch_persists_owner_before_navigation_and_restart_cance
         (TransientNetworkError, StaleEnrichmentExecutionLease),
     )
     final = conn.execute(
-        "SELECT state, metadata_json FROM job_stage_states "
-        "WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich'",
+        "SELECT state, metadata_json FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich'",
         (str(LOCAL_TENANT), str(failed_id)),
     ).fetchone()
     assert final[0] == "canceled"
@@ -1179,9 +1230,7 @@ def test_reconcile_settled_canceled_cohort_performs_no_further_writes(
     db_path = tmp_path / "jobs.db"
     conn = init_db(db_path)
     try:
-        job_id = _seed_pending(
-            conn, "https://remoteok.com/settled-cohort", "RemoteOK"
-        )
+        job_id = _seed_pending(conn, "https://remoteok.com/settled-cohort", "RemoteOK")
         ensure_job_stage_rows(conn, job_id, tenant_id=LOCAL_TENANT)
         workflow_id = "workflow-settled-cohort"
         run_id = "run-settled-cohort"
@@ -1219,8 +1268,7 @@ def test_reconcile_settled_canceled_cohort_performs_no_further_writes(
 
         assert _reconcile_canceled_enrichment_cohorts(conn, tenant_id="local") == 1
         state = conn.execute(
-            "SELECT state FROM job_stage_states "
-            "WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich'",
+            "SELECT state FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich'",
             (str(LOCAL_TENANT), str(job_id)),
         ).fetchone()[0]
         assert state == "canceled"
@@ -1228,17 +1276,13 @@ def test_reconcile_settled_canceled_cohort_performs_no_further_writes(
         statements: list[str] = []
         conn.set_trace_callback(statements.append)
         try:
-            assert (
-                _reconcile_canceled_enrichment_cohorts(conn, tenant_id="local") == 0
-            )
+            assert _reconcile_canceled_enrichment_cohorts(conn, tenant_id="local") == 0
         finally:
             conn.set_trace_callback(None)
         writes = [
             statement
             for statement in statements
-            if statement.strip().upper().startswith(
-                ("BEGIN", "INSERT", "UPDATE", "DELETE", "REPLACE")
-            )
+            if statement.strip().upper().startswith(("BEGIN", "INSERT", "UPDATE", "DELETE", "REPLACE"))
         ]
         assert writes == []
 
@@ -1256,8 +1300,7 @@ def test_reconcile_settled_canceled_cohort_performs_no_further_writes(
         conn.commit()
         assert _reconcile_canceled_enrichment_cohorts(conn, tenant_id="local") == 1
         state = conn.execute(
-            "SELECT state FROM job_stage_states "
-            "WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich'",
+            "SELECT state FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich'",
             (str(LOCAL_TENANT), str(job_id)),
         ).fetchone()[0]
         assert state == "canceled"
@@ -1273,45 +1316,47 @@ def test_cancel_enrich_cohort_preserves_committed_outcomes(
     db_path = tmp_path / "jobs.db"
     conn = init_db(db_path)
     try:
-        enriched_id = _seed_pending(
-            conn, "https://example.test/cancel-committed", "RemoteOK"
-        )
-        failed_id = _seed_pending(
-            conn, "https://example.test/cancel-failed", "RemoteOK"
-        )
-        unfinished_id = _seed_pending(
-            conn, "https://example.test/cancel-unfinished", "RemoteOK"
-        )
+        enriched_id = _seed_pending(conn, "https://example.test/cancel-committed", "RemoteOK")
+        failed_id = _seed_pending(conn, "https://example.test/cancel-failed", "RemoteOK")
+        unfinished_id = _seed_pending(conn, "https://example.test/cancel-unfinished", "RemoteOK")
         started_at = "2026-08-05T00:00:00+00:00"
         finished_at = "2026-08-05T00:01:00+00:00"
         repo = SqliteEnrichmentRepository(conn)
-        enriched = JobEnrichment.empty(
-            tenant_id=LOCAL_TENANT,
-            job_id=enriched_id,
-            updated_at=started_at,
-        ).start_attempt(
-            extraction_tier=ExtractionTier.JSON_LD,
-            started_at=started_at,
-        ).succeed_attempt(
-            full_description=FullDescription(text=_long_description()),
-            application_url=None,
-            extraction_tier=ExtractionTier.JSON_LD,
-            finished_at=finished_at,
+        enriched = (
+            JobEnrichment.empty(
+                tenant_id=LOCAL_TENANT,
+                job_id=enriched_id,
+                updated_at=started_at,
+            )
+            .start_attempt(
+                extraction_tier=ExtractionTier.JSON_LD,
+                started_at=started_at,
+            )
+            .succeed_attempt(
+                full_description=FullDescription(text=_long_description()),
+                application_url=None,
+                extraction_tier=ExtractionTier.JSON_LD,
+                finished_at=finished_at,
+            )
         )
-        failed = JobEnrichment.empty(
-            tenant_id=LOCAL_TENANT,
-            job_id=failed_id,
-            updated_at=started_at,
-        ).start_attempt(
-            extraction_tier=ExtractionTier.JSON_LD,
-            started_at=started_at,
-        ).fail_attempt(
-            error=EnrichmentError(
-                code="DETAIL_ERROR",
-                message="committed extraction failure",
-                retryable=True,
-            ),
-            finished_at=finished_at,
+        failed = (
+            JobEnrichment.empty(
+                tenant_id=LOCAL_TENANT,
+                job_id=failed_id,
+                updated_at=started_at,
+            )
+            .start_attempt(
+                extraction_tier=ExtractionTier.JSON_LD,
+                started_at=started_at,
+            )
+            .fail_attempt(
+                error=EnrichmentError(
+                    code="DETAIL_ERROR",
+                    message="committed extraction failure",
+                    retryable=True,
+                ),
+                finished_at=finished_at,
+            )
         )
         repo.save(enriched)
         repo.save(failed)
@@ -1392,8 +1437,7 @@ def test_cancellation_does_not_mutate_successor_owned_enrich_row(
         )
 
         row = conn.execute(
-            "SELECT state, metadata_json FROM job_stage_states "
-            "WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich'",
+            "SELECT state, metadata_json FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich'",
             (str(LOCAL_TENANT), str(job_id)),
         ).fetchone()
         assert canceled == 0
@@ -1443,12 +1487,15 @@ def test_cancellation_terminal_lease_rejects_abandoned_activity_failure_write(
             activity_phase=1,
             activity_attempt=1,
         )
-        assert detail.cancel_enrichment_cohort(
-            conn,
-            (job_id,),
-            workflow_id="workflow-abandoned",
-            workflow_run_id="run-abandoned",
-        ) == 1
+        assert (
+            detail.cancel_enrichment_cohort(
+                conn,
+                (job_id,),
+                workflow_id="workflow-abandoned",
+                workflow_run_id="run-abandoned",
+            )
+            == 1
+        )
 
         with pytest.raises(StaleEnrichmentExecutionLease):
             detail._record_enrich_job_failure(
@@ -1460,8 +1507,7 @@ def test_cancellation_terminal_lease_rejects_abandoned_activity_failure_write(
             )
 
         stage = conn.execute(
-            "SELECT state FROM job_stage_states "
-            "WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich'",
+            "SELECT state FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich'",
             (str(LOCAL_TENANT), str(job_id)),
         ).fetchone()
         aggregate = SqliteEnrichmentRepository(conn).load(LOCAL_TENANT, job_id)
@@ -1531,8 +1577,7 @@ def test_stale_cleanup_cannot_release_successor_activity_owner(tmp_path: Path) -
         )
 
         row = conn.execute(
-            "SELECT state, metadata_json FROM job_stage_states "
-            "WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich'",
+            "SELECT state, metadata_json FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich'",
             (str(LOCAL_TENANT), str(job_id)),
         ).fetchone()
         assert row[0] == "queued"
@@ -1599,8 +1644,7 @@ def test_stale_cleanup_cannot_release_after_terminal_lease(tmp_path: Path) -> No
         )
 
         row = conn.execute(
-            "SELECT state, metadata_json FROM job_stage_states "
-            "WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich'",
+            "SELECT state, metadata_json FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich'",
             (str(LOCAL_TENANT), str(job_id)),
         ).fetchone()
         assert row[0] == "queued"
@@ -1657,7 +1701,7 @@ def test_integrated_detail_enrichment_uses_live_extension_without_playwright(
         )
         monkeypatch.setattr(detail, "LiveChromeDiscoveryClient", _FakeLiveChrome)
 
-        def fake_live_scrape(browser, url, *, session):
+        def fake_live_scrape(browser, url, *, session, **_determination_ports):
             captured["browser"] = browser
             captured["url"] = url
             captured["session"] = session
@@ -1701,9 +1745,7 @@ def test_integrated_detail_enrichment_uses_live_extension_without_playwright(
         close_connection(db_path)
 
 
-def test_scrape_site_batch_isolates_single_job_failure(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_scrape_site_batch_isolates_single_job_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     db_path = tmp_path / "jobs.db"
     conn = init_db(db_path)
     bad_url = "https://remoteok.com/bad"
@@ -1714,7 +1756,7 @@ def test_scrape_site_batch_isolates_single_job_failure(
 
         monkeypatch.setattr(detail, "sync_playwright", lambda: _FakePlaywright())
 
-        def fake_scrape(_page, url, session=None):
+        def fake_scrape(_page, url, session=None, **_determination_ports):
             if url == bad_url:
                 raise ValueError("boom parsing page")
             return {
@@ -1742,8 +1784,7 @@ def test_scrape_site_batch_isolates_single_job_failure(
         assert stats["ok"] == 1
 
         bad_state = conn.execute(
-            "SELECT state, error_code FROM job_stage_states "
-            "WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich'",
+            "SELECT state, error_code FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich'",
             (str(LOCAL_TENANT), str(bad_job_id)),
         ).fetchone()
         assert bad_state["state"] == "failed"
@@ -1778,8 +1819,7 @@ def test_scrape_site_batch_isolates_single_job_failure(
         assert payload["retryable"] is True
 
         good = conn.execute(
-            "SELECT current_status FROM job_enrichments "
-            "WHERE tenant_id = ? AND job_id = ?",
+            "SELECT current_status FROM job_enrichments WHERE tenant_id = ? AND job_id = ?",
             (str(LOCAL_TENANT), str(good_job_id)),
         ).fetchone()
         assert good["current_status"] == "enriched"
@@ -1796,7 +1836,7 @@ def test_scrape_site_batch_requeues_transiently_interrupted_job(
         job_id = _seed_pending(conn, "https://remoteok.com/interrupted", "RemoteOK")
         monkeypatch.setattr(detail, "sync_playwright", lambda: _FakePlaywright())
 
-        def interrupted(_page, _url, session=None):
+        def interrupted(_page, _url, session=None, **_determination_ports):
             raise TransientNetworkError("enrichment canceled")
 
         monkeypatch.setattr(detail, "scrape_detail_page", interrupted)
@@ -1816,9 +1856,7 @@ def test_scrape_site_batch_requeues_transiently_interrupted_job(
         ).fetchone()
         assert stage["state"] == "pending"
         assert stage["retryable"] == 1
-        assert json.loads(stage["metadata_json"])["recoveryReason"] == (
-            "transient_interruption"
-        )
+        assert json.loads(stage["metadata_json"])["recoveryReason"] == ("transient_interruption")
         event = conn.execute(
             "SELECT payload_json FROM job_events "
             "WHERE tenant_id = ? AND job_id = ? AND event_type = 'StageReset' "
@@ -1841,7 +1879,7 @@ def test_scrape_site_batch_commits_terminal_state_under_activity_lease(
         monkeypatch.setattr(
             detail,
             "scrape_detail_page",
-            lambda _page, _url, session=None: {
+            lambda _page, _url, session=None, **_determination_ports: {
                 "status": "ok",
                 "tier_used": 1,
                 "full_description": _long_description(),
@@ -1884,14 +1922,12 @@ def test_scrape_site_batch_commits_terminal_state_under_activity_lease(
         assert stage["version"] == 2
         assert json.loads(stage["metadata_json"])["activityOwner"] == lease.owner_token
         aggregate = conn.execute(
-            "SELECT current_status FROM job_enrichments "
-            "WHERE tenant_id = 'local' AND job_id = ?",
+            "SELECT current_status FROM job_enrichments WHERE tenant_id = 'local' AND job_id = ?",
             (str(job_id),),
         ).fetchone()
         assert aggregate["current_status"] == "enriched"
         snapshot = conn.execute(
-            "SELECT latest_snapshot_version FROM posting_snapshot_sets "
-            "WHERE tenant_id = 'local' AND job_id = ?",
+            "SELECT latest_snapshot_version FROM posting_snapshot_sets WHERE tenant_id = 'local' AND job_id = ?",
             (str(job_id),),
         ).fetchone()
         assert snapshot["latest_snapshot_version"] == 1
@@ -1910,7 +1946,7 @@ def test_inactive_snapshot_rolls_back_with_leased_terminal_write(
         monkeypatch.setattr(
             detail,
             "scrape_detail_page",
-            lambda _page, _url, session=None: {
+            lambda _page, _url, session=None, **_determination_ports: {
                 "status": "inactive",
                 "tier_used": 1,
                 "full_description": _long_description(),
@@ -1957,15 +1993,13 @@ def test_inactive_snapshot_rolls_back_with_leased_terminal_write(
         assert stats["error"] == 2
         assert (
             conn.execute(
-                "SELECT 1 FROM posting_snapshot_sets "
-                "WHERE tenant_id = 'local' AND job_id = ?",
+                "SELECT 1 FROM posting_snapshot_sets WHERE tenant_id = 'local' AND job_id = ?",
                 (str(job_id),),
             ).fetchone()
             is None
         )
         aggregate = conn.execute(
-            "SELECT current_status FROM job_enrichments "
-            "WHERE tenant_id = 'local' AND job_id = ?",
+            "SELECT current_status FROM job_enrichments WHERE tenant_id = 'local' AND job_id = ?",
             (str(job_id),),
         ).fetchone()
         assert aggregate["current_status"] == "failed"
@@ -2000,7 +2034,7 @@ def test_scrape_site_batch_hands_off_each_job_as_it_is_enriched(
 
         monkeypatch.setattr(detail, "sync_playwright", lambda: _FakePlaywright())
 
-        def fake_scrape(_page, url, session=None):
+        def fake_scrape(_page, url, session=None, **_determination_ports):
             events.append(("scrape", url))
             if url == bad:
                 return {
@@ -2065,7 +2099,7 @@ def test_scrape_site_batch_handoff_error_does_not_break_enrichment(
         monkeypatch.setattr(
             detail,
             "scrape_detail_page",
-            lambda _page, _url, session=None: {
+            lambda _page, _url, session=None, **_determination_ports: {
                 "status": "ok",
                 "tier_used": 1,
                 "full_description": _long_description(),
@@ -2092,8 +2126,7 @@ def test_scrape_site_batch_handoff_error_does_not_break_enrichment(
         assert stats["ok"] == 1
         assert stats["error"] == 0
         state = conn.execute(
-            "SELECT state FROM job_stage_states "
-            "WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich'",
+            "SELECT state FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'enrich'",
             (str(LOCAL_TENANT), str(job_id)),
         ).fetchone()
         assert state["state"] == "succeeded"
@@ -2153,12 +2186,8 @@ def test_activity_retry_recovers_only_execution_scoped_orphaned_enrichment(
         temporal_run_id="run-current",
     )
     try:
-        current_job_id = _seed_pending(
-            conn, "https://example.test/current-orphan", "Indeed"
-        )
-        other_job_id = _seed_pending(
-            conn, "https://example.test/other-orphan", "Indeed"
-        )
+        current_job_id = _seed_pending(conn, "https://example.test/current-orphan", "Indeed")
+        other_job_id = _seed_pending(conn, "https://example.test/other-orphan", "Indeed")
         for job_id in (current_job_id, other_job_id):
             ensure_job_stage_rows(conn, job_id)
         set_stage_state(conn, other_job_id, "enrich", "running")
@@ -2199,9 +2228,7 @@ def test_activity_retry_recovers_only_execution_scoped_orphaned_enrichment(
             activity_phase=1,
             activity_attempt=2,
         )
-        assert runner._reconcile_execution_enrichment_stages(retry_lease) == (
-            current_job_id,
-        )
+        assert runner._reconcile_execution_enrichment_stages(retry_lease) == (current_job_id,)
         with pytest.raises(StaleEnrichmentExecutionLease):
             detail._fence_enrich_job_write(
                 conn,
@@ -2280,10 +2307,12 @@ def test_delayed_old_enrichment_claim_cannot_supersede_new_workflow_order(
             )
         runner.fence_enrichment_execution_lease(conn, terminal)
         conn.rollback()
-        assert conn.execute(
-            "SELECT COUNT(*) FROM job_events "
-            "WHERE entity_kind = 'discovery_enrichment_lease'"
-        ).fetchone()[0] == 2
+        assert (
+            conn.execute("SELECT COUNT(*) FROM job_events WHERE entity_kind = 'discovery_enrichment_lease'").fetchone()[
+                0
+            ]
+            == 2
+        )
     finally:
         close_connection(db_path)
 
@@ -2306,9 +2335,7 @@ def test_delayed_old_enrichment_attempt_cannot_emit_stale_progress(
     )
     try:
         monkeypatch.setattr(runner, "get_connection", lambda: conn)
-        monkeypatch.setattr(
-            runner, "_record_pipeline_observation_event", lambda *_args: None
-        )
+        monkeypatch.setattr(runner, "_record_pipeline_observation_event", lambda *_args: None)
         runner._claim_execution_enrichment_lease(
             delayed_execution,
             owner_token="current-terminal:attempt-2",
@@ -2322,10 +2349,12 @@ def test_delayed_old_enrichment_attempt_cannot_emit_stale_progress(
                 activity_owner_token="delayed-terminal:attempt-1",
                 activity_attempt=1,
             )
-        assert conn.execute(
-            "SELECT COUNT(*) FROM job_events WHERE stage = 'discover' "
-            "AND event_type = 'StageStarted'"
-        ).fetchone()[0] == 0
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) FROM job_events WHERE stage = 'discover' AND event_type = 'StageStarted'"
+            ).fetchone()[0]
+            == 0
+        )
 
         def supersede_during_drain(_done, result, **_kwargs):
             runner._claim_execution_enrichment_lease(
@@ -2336,9 +2365,7 @@ def test_delayed_old_enrichment_attempt_cannot_emit_stale_progress(
             )
             result.update({"status": "ok", "passes": 1, "pending": 0})
 
-        monkeypatch.setattr(
-            runner, "_run_discovery_enrichment_until_idle", supersede_during_drain
-        )
+        monkeypatch.setattr(runner, "_run_discovery_enrichment_until_idle", supersede_during_drain)
         with pytest.raises(StaleEnrichmentExecutionLease):
             runner.run_discovery_enrichment_stage(
                 progress_total=1,
@@ -2349,87 +2376,12 @@ def test_delayed_old_enrichment_attempt_cannot_emit_stale_progress(
         event_types = [
             row[0]
             for row in conn.execute(
-                "SELECT event_type FROM job_events WHERE stage = 'discover' "
-                "ORDER BY event_id"
+                "SELECT event_type FROM job_events WHERE stage = 'discover' ORDER BY event_id"
             ).fetchall()
         ]
         assert event_types == ["StageStarted"]
     finally:
         close_connection(db_path)
-
-
-def test_superseded_enrichment_attempt_cannot_run_canonical_hygiene(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    db_path = tmp_path / "jobs.db"
-    conn = init_db(db_path)
-    execution = DiscoveryExecutionRef(
-        tenant_id="local",
-        workflow_id="discover-local",
-        temporal_run_id="run-stale-hygiene",
-    )
-    try:
-        monkeypatch.setattr(runner, "get_connection", lambda: conn)
-        stale = runner._claim_execution_enrichment_lease(
-            execution,
-            owner_token="superseded-terminal:attempt-1",
-            activity_phase=2,
-            activity_attempt=1,
-        )
-        runner._claim_execution_enrichment_lease(
-            execution,
-            owner_token="current-terminal:attempt-2",
-            activity_phase=2,
-            activity_attempt=2,
-        )
-        hygiene_called = False
-
-        def forbidden_hygiene(*_args, **_kwargs):
-            nonlocal hygiene_called
-            hygiene_called = True
-            raise AssertionError("stale owner reached canonical hygiene writes")
-
-        monkeypatch.setattr(runner, "retire_invalid_source_jobs", forbidden_hygiene)
-
-        with pytest.raises(StaleEnrichmentExecutionLease):
-            runner.run_discovery_hygiene("after", activity_lease=stale)
-        assert hygiene_called is False
-        assert conn.execute(
-            "SELECT COUNT(*) FROM jobctrl_deleted_jobs"
-        ).fetchone()[0] == 0
-        assert conn.execute(
-            "SELECT COUNT(*) FROM job_events WHERE event_type = 'JobDeleted'"
-        ).fetchone()[0] == 0
-    finally:
-        close_connection(db_path)
-
-
-def test_terminal_hygiene_runs_before_final_leased_progress(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    order: list[str] = []
-
-    def fake_until_idle(_done, result, **_kwargs):
-        result.update({"status": "ok", "passes": 1, "pending": 0})
-
-    monkeypatch.setattr(
-        runner, "_run_discovery_enrichment_until_idle", fake_until_idle
-    )
-    monkeypatch.setattr(
-        runner,
-        "run_discovery_hygiene",
-        lambda _label, **_kwargs: order.append("hygiene") or 0,
-    )
-    monkeypatch.setattr(
-        runner,
-        "_record_pipeline_event",
-        lambda _stage, event_type, *_args, **_kwargs: order.append(event_type),
-    )
-
-    runner.run_discovery_enrichment_stage(progress_total=1)
-
-    assert order == ["StageStarted", "hygiene", "StageCompleted"]
 
 
 def test_terminal_activity_reconciles_committed_enrichment_aggregates(
@@ -2447,40 +2399,44 @@ def test_terminal_activity_reconciles_committed_enrichment_aggregates(
     )
     finished_at = "2026-01-01T00:02:00+00:00"
     try:
-        enriched_id = _seed_pending(
-            conn, "https://example.test/terminal-enriched", "Indeed"
-        )
-        failed_id = _seed_pending(
-            conn, "https://example.test/terminal-failed", "Indeed"
-        )
+        enriched_id = _seed_pending(conn, "https://example.test/terminal-enriched", "Indeed")
+        failed_id = _seed_pending(conn, "https://example.test/terminal-failed", "Indeed")
         repo = SqliteEnrichmentRepository(conn)
-        enriched = JobEnrichment.empty(
-            tenant_id=LOCAL_TENANT,
-            job_id=enriched_id,
-            updated_at="2026-01-01T00:01:00+00:00",
-        ).start_attempt(
-            extraction_tier=ExtractionTier.JSON_LD,
-            started_at="2026-01-01T00:01:00+00:00",
-        ).succeed_attempt(
-            full_description=FullDescription(text=_long_description()),
-            application_url=None,
-            extraction_tier=ExtractionTier.JSON_LD,
-            finished_at=finished_at,
+        enriched = (
+            JobEnrichment.empty(
+                tenant_id=LOCAL_TENANT,
+                job_id=enriched_id,
+                updated_at="2026-01-01T00:01:00+00:00",
+            )
+            .start_attempt(
+                extraction_tier=ExtractionTier.JSON_LD,
+                started_at="2026-01-01T00:01:00+00:00",
+            )
+            .succeed_attempt(
+                full_description=FullDescription(text=_long_description()),
+                application_url=None,
+                extraction_tier=ExtractionTier.JSON_LD,
+                finished_at=finished_at,
+            )
         )
-        failed = JobEnrichment.empty(
-            tenant_id=LOCAL_TENANT,
-            job_id=failed_id,
-            updated_at="2026-01-01T00:01:00+00:00",
-        ).start_attempt(
-            extraction_tier=ExtractionTier.JSON_LD,
-            started_at="2026-01-01T00:01:00+00:00",
-        ).fail_attempt(
-            error=EnrichmentError(
-                code="DETAIL_ERROR",
-                message="temporary browser failure",
-                retryable=True,
-            ),
-            finished_at=finished_at,
+        failed = (
+            JobEnrichment.empty(
+                tenant_id=LOCAL_TENANT,
+                job_id=failed_id,
+                updated_at="2026-01-01T00:01:00+00:00",
+            )
+            .start_attempt(
+                extraction_tier=ExtractionTier.JSON_LD,
+                started_at="2026-01-01T00:01:00+00:00",
+            )
+            .fail_attempt(
+                error=EnrichmentError(
+                    code="DETAIL_ERROR",
+                    message="temporary browser failure",
+                    retryable=True,
+                ),
+                finished_at=finished_at,
+            )
         )
         repo.save(enriched)
         repo.save(failed)
@@ -2577,11 +2533,7 @@ def test_live_recovery_selector_is_scoped_and_retryable(
             (legacy_guard_id, False),
             (other_run_id, True),
         ):
-            error_message = (
-                "Unsupported public route method: POST"
-                if job_id == legacy_guard_id
-                else "browser closed"
-            )
+            error_message = "Unsupported public route method: POST" if job_id == legacy_guard_id else "browser closed"
             detail._record_enrich_job_failure(
                 conn,
                 job_id,
@@ -2594,11 +2546,7 @@ def test_live_recovery_selector_is_scoped_and_retryable(
                 job_id,
                 "enrich",
                 "failed",
-                error_code=(
-                    "DETAIL_UNSAFE_URL"
-                    if job_id == legacy_guard_id
-                    else "DETAIL_ERROR"
-                ),
+                error_code=("DETAIL_UNSAFE_URL" if job_id == legacy_guard_id else "DETAIL_ERROR"),
                 error_message=error_message,
                 retryable=retryable,
                 validate_transition=False,
@@ -2752,9 +2700,7 @@ def test_until_idle_live_pass_enriches_only_the_current_execution(
     captured_calls: list[tuple[tuple[JobId, ...], DiscoveryExecutionRef | None]] = []
 
     def fake_enrich(**kwargs):
-        captured_calls.append(
-            (kwargs["job_ids"], kwargs.get("discovery_execution"))
-        )
+        captured_calls.append((kwargs["job_ids"], kwargs.get("discovery_execution")))
         return {"status": "ok"}
 
     monkeypatch.setattr(runner, "_run_enrich", fake_enrich)
@@ -2847,11 +2793,7 @@ def test_stage_progress_emits_started_and_completed(monkeypatch: pytest.MonkeyPa
         result.update({"status": "ok", "passes": 1, "pending": 0})
 
     monkeypatch.setattr(runner, "_run_discovery_enrichment_until_idle", fake_until_idle)
-    monkeypatch.setattr(
-        runner,
-        "run_discovery_hygiene",
-        lambda _label, **_kwargs: 0,
-    )
+    pass
 
     runner.run_discovery_enrichment_stage(progress_completed=4, progress_total=6)
 
@@ -2900,14 +2842,7 @@ def test_terminal_enrichment_activity_reconciles_and_passes_its_lease(
         result.update({"status": "ok", "passes": 0, "pending": 0})
 
     monkeypatch.setattr(runner, "_run_discovery_enrichment_until_idle", fake_until_idle)
-    monkeypatch.setattr(
-        runner,
-        "run_discovery_hygiene",
-        lambda _label, **kwargs: captured.setdefault(
-            "hygiene_lease", kwargs.get("activity_lease")
-        )
-        and 0,
-    )
+    pass
 
     runner.run_discovery_enrichment_stage(
         discovery_execution=execution,
@@ -2920,7 +2855,6 @@ def test_terminal_enrichment_activity_reconciles_and_passes_its_lease(
         "reconciled": lease,
         "done": True,
         "lease": lease,
-        "hygiene_lease": lease,
     }
 
 
@@ -2933,9 +2867,7 @@ def test_stage_progress_emits_partial_site_errors(monkeypatch: pytest.MonkeyPatc
                 "status": "partial",
                 "passes": 1,
                 "pending": 0,
-                "site_errors": {
-                    "indeed": {"error_class": "RuntimeError", "error_message": "boom"}
-                },
+                "site_errors": {"indeed": {"error_class": "RuntimeError", "error_message": "boom"}},
             }
         )
 
@@ -2947,9 +2879,7 @@ def test_stage_progress_emits_partial_site_errors(monkeypatch: pytest.MonkeyPatc
     completed = events[1]
     assert completed["level"] == "warn"
     assert completed["message"] == "Detail enrichment partially complete"
-    assert completed["payload"]["siteErrors"] == {
-        "indeed": {"error_class": "RuntimeError", "error_message": "boom"}
-    }
+    assert completed["payload"]["siteErrors"] == {"indeed": {"error_class": "RuntimeError", "error_message": "boom"}}
     assert completed["payload"]["progress"]["status"] == "partial"
     assert completed["payload"]["progress"]["completed"] == 5
 
@@ -2999,9 +2929,7 @@ def test_stage_progress_silent_without_total(monkeypatch: pytest.MonkeyPatch) ->
 
 
 def test_stage_failure_error_with_class_only_never_collapses() -> None:
-    err = _stage_failure_error(
-        "discover:enrichment", {"status": "failed", "error_class": "ValueError"}
-    )
+    err = _stage_failure_error("discover:enrichment", {"status": "failed", "error_class": "ValueError"})
     assert "ValueError" in err.message
     assert "failed: failed" not in err.message
 
@@ -3094,9 +3022,7 @@ async def test_fanout_activity_emits_preparation_progress(
     calls = _fanout_activity_env(monkeypatch, fail=False)
 
     await activities.discovery_preparation_fanout_activity(
-        DiscoveryPreparationFanoutInput(
-            tenant_id="local", progress_completed=5, progress_total=6
-        )
+        DiscoveryPreparationFanoutInput(tenant_id="local", progress_completed=5, progress_total=6)
     )
 
     assert calls == [
@@ -3113,12 +3039,18 @@ async def test_fanout_activity_emits_failed_preparation_progress(
 
     with pytest.raises(ApplicationError):
         await activities.discovery_preparation_fanout_activity(
-            DiscoveryPreparationFanoutInput(
-                tenant_id="local", progress_completed=5, progress_total=6
-            )
+            DiscoveryPreparationFanoutInput(tenant_id="local", progress_completed=5, progress_total=6)
         )
 
     assert calls == [
         ("StageStarted", 5, 6, "running"),
         ("StageFailed", 6, 6, "failed"),
     ]
+
+
+@pytest.fixture(autouse=True)
+def explicit_semantic_ports(monkeypatch):
+    from tests.workflow_determination_fakes import install_discovery_models, install_page_models
+
+    install_discovery_models(monkeypatch)
+    install_page_models(monkeypatch)

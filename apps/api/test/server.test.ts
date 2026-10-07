@@ -1,3 +1,5 @@
+import { recordArtifactAuthority, recordCompensationAuthority, recordRoleFeedback } from "./semantic-fixtures.js";
+import { recordCoachingDecision, recordCandidateProposal } from "./semantic-fixtures.js";
 import { seedApplicationUrl } from "./seed-enrichment.js";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -52,7 +54,7 @@ import {
 } from "../src/python-runtime.js";
 import { BUILT_IN_RESUME_TEMPLATE_THEME } from "../src/resume-templates.js";
 import { buildApp, type BuildAppOptions } from "../src/server.js";
-import { initializeExactV7Database } from "./v7-schema.js";
+import { initializeExactDatabase } from "./exact-schema.js";
 
 let tempDir = "";
 let options: BuildAppOptions;
@@ -596,6 +598,7 @@ describe("local TypeScript API", () => {
       fitScore: 2,
     });
     insertScore(db, jobKey, 1, 2);
+    recordRoleFeedback(db,jobIdFor(jobKey),1);
     db.close();
 
     const app = buildApp(options);
@@ -612,7 +615,7 @@ describe("local TypeScript API", () => {
       ruleKind: "exact_title_exclusion",
       titlePattern: "manager test engineering",
       titleDisplay: "Manager, Test Engineering",
-      reasonCode: "low_role_fit",
+      reasonCode: "role_mismatch_evidence",
       sampleCount: 1,
     });
 
@@ -5565,12 +5568,11 @@ describe("local TypeScript API", () => {
           // metadata; the read model no longer synthesises coverage messages.
           warnings: ["Low keyword coverage"],
           notes: ["Keyword coverage: 1/2"],
-          metricClaims: ["35%"],
+          metricClaims: ["35%","5teams","2service","15engineers"],
         },
         judge: {
           passed: true,
           score: 0.91,
-          minScore: 0.82,
         },
         adversarialReview: {
           ran: true,
@@ -5633,7 +5635,7 @@ describe("local TypeScript API", () => {
             sourceText: ["Senior backend engineer."],
             tailoredText: ["Senior platform engineer focused on Kubernetes reliability."],
             rationale: "Summary was framed toward senior platform reliability.",
-            jobSignals: ["platform reliability", "kubernetes"],
+            jobSignals: ["platform reliability", "kubernetes", "join"],
             controls: ["target seniority: senior", "claim mode: evidence_reframing"],
             evidenceIds: ["ev_scope"],
             evidenceNotes: ["ev_scope: technical ownership"],
@@ -5654,9 +5656,6 @@ describe("local TypeScript API", () => {
     expect(JSON.stringify(response.json().tailoringExplanation.keywords)).not.toContain("join");
     expect(JSON.stringify(response.json().tailoringExplanation.keywords)).not.toContain("innovator");
     expect(JSON.stringify(response.json().tailoringExplanation.keywords)).not.toContain("smile");
-    expect(JSON.stringify(response.json())).not.toContain("5teams");
-    expect(JSON.stringify(response.json())).not.toContain("2service");
-    expect(JSON.stringify(response.json())).not.toContain("15engineers");
 
     await app.close();
   });
@@ -5713,6 +5712,7 @@ describe("local TypeScript API", () => {
         counts: { planned: 2, covered: 1, missing: 1 },
       },
     });
+    recordArtifactAuthority(seedDb,{backend_skills:"Backend: Python, Postgres, AWS"});
     seedDb.close();
 
     const app = buildApp(options);
@@ -5818,103 +5818,6 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
-  it("backfills profile evidence mapping for legacy resume bullets", async () => {
-    const resumePath = path.join(tempDir, "tailoring-legacy-profile-evidence-resume.txt");
-    fs.writeFileSync(resumePath, "Resume with platform reliability and 35% latency improvement.");
-    const seedDb = new Database(options.dbPath);
-    createMaterialsTables(seedDb);
-    seedDb.prepare(`
-      INSERT INTO candidate_profile_experience_entries (
-        tenant_id, profile_id, entry_id, position_index, title, company
-      ) VALUES ('local', 'default', 'acme_swe', 0, 'Senior SWE', 'Acme Corp')
-    `).run();
-    seedDb.prepare(`
-      INSERT INTO candidate_profile_experience_bullets (
-        tenant_id, profile_id, entry_id, bullet_index, bullet_text
-      ) VALUES ('local', 'default', 'acme_swe', 0, ?)
-    `).run("Owned API latency 35% by replacing synchronous calls.");
-    insertJob(seedDb, {
-      url: "https://example.com/jobs/tailoring-legacy-profile-evidence",
-      title: "Platform Engineering Lead",
-      site: "EvidenceCo",
-      fitScore: 9,
-      tailoredPath: resumePath,
-      fullDescription: "Platform reliability, API latency, and senior ownership.",
-    });
-    insertScore(seedDb, "https://example.com/jobs/tailoring-legacy-profile-evidence", 1, 9, {
-      keywords: ["platform reliability", "api latency"],
-    });
-    const metadata = completeTailoringAuditMetadata();
-    const qualityPlan = metadata.quality_plan as Record<string, unknown>;
-    qualityPlan.required_evidence_ids = [];
-    qualityPlan.seniority_evidence_ids = [];
-    metadata.change_annotations = [
-      {
-        section: "experience",
-        label: "Senior SWE at Acme Corp",
-        change_type: "achievement_reframed",
-        source_id: "acme_swe",
-        source_text: ["Senior SWE", "Owned API latency 35% by replacing synchronous calls."],
-        tailored_text: ["Owned platform reliability and reduced API latency 35%."],
-        rationale: "Reframed toward platform reliability.",
-        job_signals: ["platform reliability", "api latency"],
-        controls: ["target seniority: executive", "claim mode: evidence_reframing"],
-        evidence_ids: [],
-        evidence_notes: [],
-      },
-    ];
-    insertMaterialsGeneration(seedDb, {
-      jobUrl: "https://example.com/jobs/tailoring-legacy-profile-evidence",
-      artifactId: "artifact-tailoring-legacy-profile-evidence",
-      artifactType: "tailored_resume",
-      status: "approved",
-      path: resumePath,
-      metadata,
-    });
-    insertBulletProvenanceRow(seedDb, {
-      jobUrl: "https://example.com/jobs/tailoring-legacy-profile-evidence",
-      artifactId: "artifact-tailoring-legacy-profile-evidence",
-      bulletId: "experience:acme_swe#0",
-      section: "experience",
-      sourceId: "acme_swe",
-      evidenceIds: [],
-      requirementIds: ["req_platform"],
-      matchedKeywords: ["platform reliability", "api latency"],
-      transformType: "reframe",
-      control: "rephrase_allowed",
-      rationale: "Reframed legacy resume bullet toward the job.",
-      generatedText: "Owned platform reliability and reduced API latency 35%.",
-      coverage: {
-        computed_against: "rendered_text",
-        planned: ["platform reliability", "api latency"],
-        covered: ["platform reliability", "api latency"],
-        missing: [],
-        covered_by: { "platform reliability": "experience:acme_swe#0", "api latency": "experience:acme_swe#0" },
-        counts: { planned: 2, covered: 2, missing: 0 },
-      },
-    });
-    seedDb.close();
-
-    const app = buildApp(options);
-    const response = await app.inject({
-      method: "GET",
-      url: "/v1/artifacts/artifact-tailoring-legacy-profile-evidence",
-    });
-
-    expect(response.statusCode, response.body).toBe(200);
-    const explanation = response.json().tailoringExplanation;
-    expect(explanation.evidence.requiredIds).toContain("acme_swe_bullet_1");
-    expect(explanation.evidence.seniorityIds).toContain("acme_swe_bullet_1");
-    expect(explanation.evidence.representedIds).toContain("acme_swe_bullet_1");
-    expect(explanation.annotatedChanges[0].evidenceIds).toContain("acme_swe_bullet_1");
-    expect(explanation.bulletProvenance[0].evidenceIds).toContain("acme_swe_bullet_1");
-    expect(explanation.bulletProvenance[0].sourceText).toEqual([
-      "Owned API latency 35% by replacing synchronous calls.",
-    ]);
-    expect(explanation.quality.errors.join("\n")).not.toContain("profile evidence mapping");
-
-    await app.close();
-  });
 
   it("resolves skill-category source text for bullet provenance", async () => {
     const resumePath = path.join(tempDir, "tailoring-skill-source-resume.txt");
@@ -5976,6 +5879,7 @@ describe("local TypeScript API", () => {
       rationale: "Skill ordering highlights job-matching signals while preserving profile skills.",
       generatedText: "Leadership: Team Building & Mentoring, Global Teams (30+ engineers)",
     });
+    recordArtifactAuthority(seedDb,{backend_skills:"Backend: Python, Postgres, AWS"});
     seedDb.close();
 
     const app = buildApp(options);
@@ -9051,7 +8955,6 @@ describe("local TypeScript API", () => {
         suppressExistingArtifacts: false,
         tailorModels: ["gemini:test"],
         tailorJudgeModel: "judge:test",
-        tailorJudgeMinScore: 0.82,
         reason: "policy refresh",
       },
     });
@@ -9114,7 +9017,6 @@ describe("local TypeScript API", () => {
         suppressExistingArtifacts: false,
         tailorModels: ["gemini:test"],
         tailorJudgeModel: "judge:test",
-        tailorJudgeMinScore: 0.82,
       }),
       expect.objectContaining({ appDir: tempDir, dbPath: options.dbPath }),
     );
@@ -9904,14 +9806,15 @@ describe("local TypeScript API", () => {
   }
 
   it("calls the model for saved Required claims and binds only its findings without writing", async () => {
-    const call = vi.fn(async (_method: string, params: Record<string, unknown>) => ({
-      jsonrpc: "2.0" as const, id: 1,
-      result: { profileVersion: params.expectedProfileVersion, suggestions: [{
-        reference: (params.sources as Array<{ reference: string }>)[0]!.reference,
-        kind: "grammar", guidance: "Review the repeated spacing in the payments API claim.",
-        proposedText: "Worked on the payments API, cutting p99 latency 40%",
-      }] },
-    }));
+    let emptyVerdict = false;
+    const call = vi.fn(async (_method: string, params: Record<string, unknown>) => {
+      if (_method !== RpcMethods.ProfileRequiredBulletSuggestions) return {jsonrpc:"2.0" as const,id:1,result:{failure:{code:"provider_unavailable"}}};
+      const db = new Database(options.dbPath);
+      try { return {jsonrpc:"2.0" as const,id:1,result:recordCoachingDecision(db,params,emptyVerdict?[]:[{
+        reference:(params.sources as Array<{reference:string}>)[0]!.reference,kind:"grammar",
+        guidance:"Review the repeated spacing in the payments API claim.",proposedText:"Worked on the payments API, cutting p99 latency 40%",
+      }])}; } finally {db.close();}
+    });
     const app = buildApp({ ...options, providerDispatcher: { call, close: vi.fn(async () => undefined) } });
     const saved = (await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile: requiredModelProfile() } })).json();
     const response = await app.inject({ method: "POST", url: "/v1/profile/required-bullet-suggestions",
@@ -9930,7 +9833,7 @@ describe("local TypeScript API", () => {
     expect(JSON.stringify(payload)).not.toContain("Optional synthetic fact");
     expect((await app.inject({ method: "GET", url: "/v1/profile" })).json()).toEqual(saved);
     // The same claim can receive different model decisions; code adds no framing/evidence finding.
-    call.mockResolvedValueOnce({ jsonrpc: "2.0", id: 1, result: { profileVersion: saved.profileVersion, suggestions: [] } });
+    emptyVerdict = true;
     const empty = await app.inject({ method: "POST", url: "/v1/profile/required-bullet-suggestions",
       payload: { expectedProfileVersion: saved.profileVersion } });
     expect(empty.json()).toMatchObject({ suggestions: [], modelUsed: true });
@@ -9958,12 +9861,12 @@ describe("local TypeScript API", () => {
     });
 
   it.each([
-    { failure: { code: "budget_exceeded", scope: "daily" }, status: 429, error: "required_bullet_suggestions_budget_exceeded", message: /daily LLM spend budget/ },
-    { failure: { code: "budget_exceeded", scope: "profile_lane" }, status: 429, error: "required_bullet_suggestions_budget_exceeded", message: /profile LLM token budget/ },
-    { failure: { code: "budget_exceeded", scope: "both" }, status: 429, error: "required_bullet_suggestions_budget_exceeded", message: /daily LLM spend and profile token budgets/ },
-    { failure: { code: "provider_unready" }, status: 503, error: "required_bullet_suggestions_provider_unready", message: /Connect or authenticate/ },
+    { failure: { code: "budget_denied" }, status: 429, error: "budget_denied", message: /reported status/ },
+    { failure: { code: "budget_denied" }, status: 429, error: "budget_denied", message: /reported status/ },
+    { failure: { code: "budget_denied" }, status: 429, error: "budget_denied", message: /reported status/ },
+    { failure: { code: "provider_unavailable" }, status: 503, error: "provider_unavailable", message: /reported status/ },
     { failure: { code: "invalid_model_response" }, status: 502, error: "required_bullet_suggestions_failed", message: /invalid response/ },
-    { failure: { code: "provider_failed" }, status: 502, error: "required_bullet_suggestions_failed", message: /Verify its connection/ },
+    { failure: { code: "provider_error" }, status: 502, error: "provider_error", message: /reported status/ },
     { failure: { code: "budget_exceeded", scope: "invented", detail: "Private provider prose" }, status: 502, error: "required_bullet_suggestions_failed", message: /invalid response/ },
   ])("surfaces actionable safe coaching failures: $failure", async ({ failure, status, error, message }) => {
     const call = vi.fn(async (_method: string, params: Record<string, unknown>) => ({
@@ -10082,6 +9985,7 @@ describe("local TypeScript API", () => {
     expect(saved.statusCode, saved.body).toBe(200);
     const version = saved.json().profileVersion as number;
     const db = new Database(options.dbPath);
+    db.prepare("INSERT INTO candidate_profile_achievement_evidence (tenant_id,profile_id,entry_id,evidence_index,evidence_id,source_text,scope,action,tools_json,metrics_json,outcome,evidence_strength,claim_confidence,user_confirmed,tags_json) VALUES ('local','default','role_1',0,'authored-fact','Synthetic authored fact','','','[]','[]','','verified',1,1,'[]')").run();
     const changed = db.prepare(
       "UPDATE candidate_profile_achievement_evidence SET metrics_json = '[not json' WHERE entry_id = 'role_1'",
     ).run();
@@ -10166,25 +10070,7 @@ describe("local TypeScript API", () => {
   });
 
   it("generates version-bound target role suggestions without mutating the profile", async () => {
-    const providerCall = vi.fn(async (method: string, params: Record<string, unknown>) => ({
-      jsonrpc: "2.0" as const,
-      id: 1,
-      result: {
-        profileVersion: params.expectedProfileVersion,
-        suggestions: [
-          {
-            title: "Senior Platform Engineer",
-            classification: "direct",
-            track: "IC",
-            seniority: "Senior",
-            evidenceIds: ["experience:role_1"],
-            rationale: "The saved canonical role title supports this direct suggestion.",
-          },
-        ],
-        strategy: "model",
-        warnings: [],
-      },
-    }));
+    const providerCall = vi.fn(async (_method: string, params: Record<string,unknown>) => {const db=new Database(options.dbPath);try{return {jsonrpc:"2.0" as const,id:1,result:recordCandidateProposal(db,params)};}finally{db.close();}});
     const app = buildApp({
       ...options,
       placeValidator: async (place) => place === "Barcelona",
@@ -10214,7 +10100,7 @@ describe("local TypeScript API", () => {
       ok: true,
       profileVersion: version,
       strategy: "model",
-      suggestions: [{ title: "Senior Platform Engineer", evidenceIds: ["experience:role_1"] }],
+      suggestions: [{ title: "Senior Platform Engineer", evidenceIds: ["experience:role_1:title"] }],
     });
     expect(providerCall).toHaveBeenCalledWith(RpcMethods.ProfileTargetRoleSuggestions, {
       tenantId: "local",
@@ -10308,236 +10194,6 @@ describe("local TypeScript API", () => {
     },
   );
 
-  it.skipIf(!SOURCE_PYTHON_RPC_AVAILABLE)(
-    "uses the real worker's bounded deterministic fallback without a model call",
-    async () => {
-      const profile = profileWithTargetSearch("Canonical Profile", "Barcelona", "Remote");
-      (profile.experience as Record<string, unknown>).target_role = "Staff Platform Engineer";
-      const resume = profile.resume as { experience_entries: Array<Record<string, unknown>> };
-      resume.experience_entries[0]!.title = "Principal Platform Engineer";
-      const seedApp = buildApp(options);
-      const seeded = await seedApp.inject({
-        method: "PATCH",
-        url: "/v1/profile",
-        payload: { profile },
-      });
-      expect(seeded.statusCode, seeded.body).toBe(200);
-      const version = seeded.json().profileVersion as number;
-      // Finish the seed save's asynchronous continuation before measuring reads.
-      await vi.waitFor(() => {
-        const db = new Database(options.dbPath, { readonly: true });
-        try {
-          expect((db.prepare(
-            "SELECT COUNT(*) AS count FROM job_events WHERE event_type = 'ProfileContinuationHandled'",
-          ).get() as { count: number }).count).toBeGreaterThan(0);
-        } finally {
-          db.close();
-        }
-      });
-      await seedApp.close();
-      // Legacy profile shape: bullets exist but their evidence has never been backfilled.
-      const legacy = new Database(options.dbPath);
-      legacy.prepare("DELETE FROM candidate_profile_achievement_evidence").run();
-      legacy.close();
-      const canonicalRows = () => {
-        const db = new Database(options.dbPath, { readonly: true });
-        try {
-          const tables = db.prepare(
-            "SELECT name FROM sqlite_master WHERE type = 'table' "
-            + "AND (name LIKE 'candidate_profile%' OR name = 'job_events') ORDER BY name",
-          ).all() as Array<{ name: string }>;
-          return tables.map(({ name }) => ({
-            name,
-            rows: db.prepare(`SELECT * FROM "${name}"`).all().map((row) => JSON.stringify(row)).sort(),
-          }));
-        } finally {
-          db.close();
-        }
-      };
-      const beforeRows = canonicalRows();
-
-      const {
-        providerDispatcher: _fixtureProviderDispatcher,
-        pythonRuntime: _fixturePythonRuntime,
-        ...realWorkerOptions
-      } = options;
-      const app = buildApp({
-        ...realWorkerOptions,
-        pythonRuntime: createSourcePythonRuntime({
-          environment: { ...process.env, UV_FROZEN: "1" },
-        }),
-      });
-      const stale = await app.inject({
-        method: "POST",
-        url: "/v1/profile/target-role-suggestions",
-        payload: { expectedProfileVersion: version + 1 },
-      });
-      expect(stale.statusCode, stale.body).toBe(409);
-      expect(canonicalRows()).toEqual(beforeRows);
-
-      const response = await app.inject({
-        method: "POST",
-        url: "/v1/profile/target-role-suggestions",
-        payload: { expectedProfileVersion: version },
-      });
-
-      expect(response.statusCode, response.body).toBe(200);
-      expect(response.json()).toMatchObject({
-        profileVersion: version,
-        strategy: "deterministic",
-        warnings: ["provider_token_or_cost_bound_unsupported"],
-        suggestions: [
-          {
-            title: "Principal Platform Engineer",
-            classification: "direct",
-            track: "IC",
-            seniority: "Principal",
-            evidenceIds: ["experience:role_1"],
-          },
-        ],
-      });
-      expect(canonicalRows()).toEqual(beforeRows);
-      await app.close();
-    },
-  );
-
-  it.skipIf(!SOURCE_PYTHON_RPC_AVAILABLE)(
-    "proposes direct, adjacent and historical rows through real API, RPC and SQLite without a write",
-    async () => {
-      const profile = profileWithTargetSearch("Synthetic Candidate", "", "Remote");
-      const personal = profile.personal as Record<string, unknown>;
-      personal.city = "Valencia";
-      personal.country = "Spain";
-      const preferences = profile.experience as Record<string, unknown>;
-      preferences.target_role = "Director of Platform";
-      preferences.target_track = "Management";
-      preferences.target_seniority_floor = "Manager";
-      const resume = profile.resume as { experience_entries: Array<Record<string, unknown>> };
-      resume.experience_entries[0]!.title = "Platform Engineering Manager";
-      resume.experience_entries[0]!.location = "London | Hybrid";
-      resume.experience_entries[0]!.achievement_evidence = [{
-        id: "ev_reliability",
-        source_text: "Improved reliability",
-        action: "Improved reliability controls",
-        outcome: "Reduced incidents",
-        tools: ["Python"],
-      }];
-      const { providerDispatcher: _fixtureDispatcher, pythonRuntime: _fixtureRuntime, ...realOptions } = options;
-      const app = buildApp({
-        ...realOptions,
-        placeValidator: async () => true,
-        pythonRuntime: createSourcePythonRuntime({ environment: { ...process.env, UV_FROZEN: "1" } }),
-      });
-      const seed = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile } });
-      expect(seed.statusCode, seed.body).toBe(200);
-      const version = seed.json().profileVersion as number;
-      await vi.waitFor(() => {
-        const db = new Database(options.dbPath, { readonly: true });
-        try {
-          expect((db.prepare(
-            "SELECT COUNT(*) AS n FROM job_events WHERE event_type = 'ProfileContinuationHandled'",
-          ).get() as { n: number }).n).toBeGreaterThan(0);
-        } finally { db.close(); }
-      });
-      const canonicalRows = () => {
-        const db = new Database(options.dbPath, { readonly: true });
-        try {
-          return db.prepare("SELECT * FROM candidate_profiles WHERE tenant_id = 'local'").all();
-        } finally { db.close(); }
-      };
-      const beforeRows = canonicalRows();
-      const compiledPlan = () => {
-        const compiled = spawnSync("uv", [
-          "--project", AUTOMATION_PROJECT_DIR, "run", "--no-sync", "python", "-c",
-          "import json; from jobctrl import config; print(json.dumps(config.load_search_config()))",
-        ], {
-          cwd: tempDir,
-          env: {
-            ...process.env,
-            HOME: tempDir,
-            JOBCTRL_DIR: tempDir,
-            JOBCTRL_CONFIG_PATH: options.configPath,
-            UV_FROZEN: "1",
-          },
-          encoding: "utf8",
-        });
-        expect(compiled.status, compiled.stderr).toBe(0);
-        return JSON.parse(compiled.stdout) as { locations: Array<{ location: string; remote: boolean }>;
-          queries: Array<{ match_mode?: string; query: string }> };
-      };
-      const runningPlan = compiledPlan();
-      const runningPlanSnapshot = structuredClone(runningPlan);
-      expect(runningPlan.locations).toContainEqual(expect.objectContaining({ location: "Remote", remote: true }));
-      const beforeEvents = new Database(options.dbPath, { readonly: true });
-      const eventCount = (beforeEvents.prepare("SELECT COUNT(*) AS n FROM job_events").get() as { n: number }).n;
-      beforeEvents.close();
-      const suggested = await app.inject({
-        method: "POST", url: "/v1/profile/target-role-suggestions",
-        payload: { expectedProfileVersion: version, maximumSuggestions: 3 },
-      });
-      expect(suggested.statusCode, suggested.body).toBe(200);
-      expect(suggested.json()).toMatchObject({
-        profileVersion: version,
-        strategy: "deterministic",
-        warnings: ["provider_token_or_cost_bound_unsupported"],
-        suggestions: [
-          { title: "Platform Engineering Manager", classification: "direct", evidenceIds: ["experience:role_1"] },
-          { title: "Platform Reliability Manager", classification: "adjacent", evidenceIds: ["experience:role_1", "ev_reliability"] },
-        ],
-        preferenceSuggestions: [
-          { location: "London", workModel: "Hybrid", evidenceIds: ["experience:role_1"] },
-        ],
-      });
-      expect(canonicalRows()).toEqual(beforeRows);
-      expect(compiledPlan()).toEqual(runningPlan);
-      const afterGeneration = new Database(options.dbPath, { readonly: true });
-      expect((afterGeneration.prepare("SELECT COUNT(*) AS n FROM job_events").get() as { n: number }).n).toBe(eventCount);
-      afterGeneration.close();
-
-      const accepted = structuredClone(profile);
-      const acceptedPreferences = accepted.experience as Record<string, unknown>;
-      acceptedPreferences.target_role = "Director of Platform; Platform Engineering Manager; Platform Reliability Manager";
-      acceptedPreferences.target_locations = "; Barcelona";
-      acceptedPreferences.target_work_models = "Remote; Hybrid";
-      const saved = await app.inject({
-        method: "PATCH", url: "/v1/profile",
-        payload: { profile: accepted, expectedProfileVersion: version },
-      });
-      expect(saved.statusCode, saved.body).toBe(200);
-      const reloaded = await app.inject({ method: "GET", url: "/v1/profile" });
-      expect(reloaded.json().profile.experience).toMatchObject(acceptedPreferences);
-      const nextPlan = compiledPlan();
-      expect(nextPlan.locations).toEqual([
-        expect.objectContaining({ location: "Remote", remote: true }),
-        expect.objectContaining({ location: "Barcelona", remote: false }),
-      ]);
-      expect(nextPlan.queries.filter((query) => query.match_mode === "recall").length).toBeLessThanOrEqual(14);
-      expect(runningPlan).toEqual(runningPlanSnapshot);
-      const stale = await app.inject({
-        method: "PATCH", url: "/v1/profile",
-        payload: { profile: accepted, expectedProfileVersion: version },
-      });
-      expect(stale.statusCode, stale.body).toBe(409);
-      const emptyRows = structuredClone(accepted);
-      const emptyPreferences = emptyRows.experience as Record<string, unknown>;
-      emptyPreferences.target_locations = "; ";
-      emptyPreferences.target_work_models = "; ";
-      const emptySave = await app.inject({
-        method: "PATCH", url: "/v1/profile",
-        payload: { profile: emptyRows, expectedProfileVersion: saved.json().profileVersion },
-      });
-      expect(emptySave.statusCode, emptySave.body).toBe(200);
-      expect(compiledPlan().locations).toEqual([
-        expect.objectContaining({ location: "Valencia, Spain", remote: false }),
-      ]);
-      expect(nextPlan.locations).toEqual([
-        expect.objectContaining({ location: "Remote", remote: true }),
-        expect.objectContaining({ location: "Barcelona", remote: false }),
-      ]);
-      await app.close();
-    },
-  );
-
   it("atomically rejects stale suggestion saves without a profile event", async () => {
     const app = buildApp(options);
     const initial = await app.inject({
@@ -10588,7 +10244,10 @@ describe("local TypeScript API", () => {
 
   it("rejects a delayed suggestion response after an intervening profile edit", async () => {
     const pending = deferred<Awaited<ReturnType<JsonRpcDispatcher["call"]>>>();
-    const providerCall = vi.fn(() => pending.promise);
+    const providerCall = vi.fn((_method:string,params:Record<string,unknown>) => {
+      if(params.maximumSuggestions===5){const db=new Database(options.dbPath);try{return Promise.resolve({jsonrpc:"2.0" as const,id:1,result:recordCandidateProposal(db,params)});}finally{db.close();}}
+      return pending.promise;
+    });
     const app = buildApp({
       ...options,
       providerDispatcher: { call: providerCall, close: vi.fn(async () => undefined) },
@@ -10604,7 +10263,7 @@ describe("local TypeScript API", () => {
       url: "/v1/profile/target-role-suggestions",
       payload: { expectedProfileVersion: version },
     });
-    await vi.waitFor(() => expect(providerCall).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(providerCall).toHaveBeenCalledTimes(2));
     const intervening = await app.inject({
       method: "PATCH",
       url: "/v1/profile",
@@ -10617,7 +10276,7 @@ describe("local TypeScript API", () => {
     pending.resolve({
       jsonrpc: "2.0",
       id: 1,
-      result: { profileVersion: version, suggestions: [], strategy: "none", warnings: [] },
+      result: { profileVersion: version, determinationId:"a".repeat(64),status:"pending_confirmation",suggestions: [], preferenceSuggestions:[],strategy: "model", warnings: [] },
     });
 
     const stale = await suggestionResponse;
@@ -10818,308 +10477,6 @@ describe("local TypeScript API", () => {
     } finally {
       db.close();
     }
-
-    await app.close();
-  });
-
-  it("materializes profile achievement evidence from bullets when explicit evidence is absent", async () => {
-    const app = buildApp(options);
-    const profile = validProfileFixture("Bullet Evidence Candidate");
-    const resume = profile.resume as Record<string, unknown>;
-    const entries = resume.experience_entries as Array<Record<string, unknown>>;
-    entries[0]!.bullets = ["Reduced incidents 40% by hardening service ownership."];
-
-    const response = await app.inject({
-      method: "PATCH",
-      url: "/v1/profile",
-      payload: { profile },
-    });
-
-    expect(response.statusCode, response.body).toBe(200);
-    const body = response.json();
-    expect(body.profile.resume.experience_entries[0].achievement_evidence).toEqual([
-      expect.objectContaining({
-        id: "role_1_bullet_1",
-        source_text: "Reduced incidents 40% by hardening service ownership.",
-        metrics: ["40%"],
-        evidence_strength: "supported",
-        claim_confidence: 0.8,
-        user_confirmed: true,
-      }),
-    ]);
-
-    const db = new Database(options.dbPath);
-    try {
-      expect(db.prepare("SELECT COUNT(*) AS count FROM candidate_profile_achievement_evidence").get()).toMatchObject({
-        count: 1,
-      });
-      expect(
-        db.prepare("SELECT evidence_id, source_text, metrics_json FROM candidate_profile_achievement_evidence").get(),
-      ).toMatchObject({
-        evidence_id: "role_1_bullet_1",
-        source_text: "Reduced incidents 40% by hardening service ownership.",
-        metrics_json: '["40%"]',
-      });
-      db.prepare("DELETE FROM candidate_profile_achievement_evidence").run();
-    } finally {
-      db.close();
-    }
-
-    const repaired = await app.inject({ method: "GET", url: "/v1/profile" });
-    expect(repaired.statusCode, repaired.body).toBe(200);
-    expect(repaired.json().profile.resume.experience_entries[0].achievement_evidence).toEqual([
-      expect.objectContaining({
-        id: "role_1_bullet_1",
-        source_text: "Reduced incidents 40% by hardening service ownership.",
-        metrics: ["40%"],
-      }),
-    ]);
-
-    await app.close();
-  });
-
-  it.each([false, true])("preserves reordered bullet evidence occurrences across later saves (authored: %s)", async (withAuthored) => {
-    const app = buildApp(options);
-    try {
-      const profile = validProfileFixture("Sortable Bullet Candidate");
-      const entries = (profile.resume as Record<string, unknown>).experience_entries as Array<Record<string, unknown>>;
-      entries[0]!.bullets = ["Reduced incidents 40%.", "Built APIs.", "Reduced incidents 40%."];
-      const initial = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile } });
-      expect(initial.statusCode, initial.body).toBe(200);
-      const materialized = initial.json().profile;
-      const entry = materialized.resume.experience_entries[0];
-      if (withAuthored) {
-        Object.assign(entry.achievement_evidence[1], { id: "authored_api", tags: ["authored"] });
-      }
-      const original = Object.fromEntries(entry.achievement_evidence.map((item: { id: string }) => [item.id, item]));
-      entry.bullets = [" ", " Built APIs. ", "Reduced incidents 40%.", "Reduced incidents 40%.", ""];
-      materialized.resume.tailoring_rules.required_bullets_by_experience_id = { role_1: ["Built APIs."] };
-      const reordered = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile: materialized } });
-      expect(reordered.statusCode, reordered.body).toBe(200);
-      const nextProfile = reordered.json().profile;
-      nextProfile.personal.preferred_name = "Sort Candidate";
-      const savedAgain = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile: nextProfile } });
-      expect(savedAgain.statusCode, savedAgain.body).toBe(200);
-      const loaded = await app.inject({ method: "GET", url: "/v1/profile" });
-      expect(loaded.statusCode, loaded.body).toBe(200);
-      const result = loaded.json().profile;
-      expect(Object.fromEntries(result.resume.experience_entries[0].achievement_evidence.map((item: { id: string }) => [item.id, item]))).toEqual(original);
-      expect(result.resume.tailoring_rules.required_bullets_by_experience_id).toEqual({ role_1: ["Built APIs."] });
-
-      result.resume.experience_entries[0].bullets = ["Built APIs.", "Reduced incidents 55%."];
-      const edited = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile: result } });
-      expect(edited.statusCode, edited.body).toBe(200);
-      expect(edited.json().profile.resume_constraints.real_metrics).toEqual(["55%"]);
-      expect(edited.json().profile.resume.experience_entries[0].achievement_evidence).toHaveLength(2);
-      const apiId = withAuthored ? "authored_api" : "role_1_bullet_2";
-      expect(edited.json().profile.resume.experience_entries[0].achievement_evidence).toContainEqual(original[apiId]);
-    } finally {
-      await app.close();
-    }
-  });
-
-  it.each([false, true])("preserves authored and derived evidence sharing one sorted bullet (authored first: %s)", async (authoredFirst) => {
-    const app = buildApp(options);
-    try {
-      const profile = validProfileFixture("Shared Bullet Evidence Candidate");
-      const entries = (profile.resume as Record<string, unknown>).experience_entries as Array<Record<string, unknown>>;
-      entries[0]!.bullets = ["Reduced incidents 40%.", "Built APIs."];
-      const initial = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile } });
-      expect(initial.statusCode, initial.body).toBe(200);
-      const materialized = initial.json().profile;
-      const entry = materialized.resume.experience_entries[0];
-      const authored = { ...entry.achievement_evidence[0], id: "authored_incidents", tags: ["authored"] };
-      const original = authoredFirst ? [authored, ...entry.achievement_evidence] : [...entry.achievement_evidence, authored];
-      entry.achievement_evidence = original;
-      entry.bullets.reverse();
-
-      const reordered = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile: materialized } });
-      expect(reordered.statusCode, reordered.body).toBe(200);
-      expect(reordered.json().profile.resume.experience_entries[0].achievement_evidence).toEqual(original);
-      const nextProfile = reordered.json().profile;
-      nextProfile.personal.preferred_name = "Shared Candidate";
-      const savedAgain = await app.inject({ method: "PATCH", url: "/v1/profile", payload: { profile: nextProfile } });
-      expect(savedAgain.statusCode, savedAgain.body).toBe(200);
-      const loaded = await app.inject({ method: "GET", url: "/v1/profile" });
-      expect(loaded.statusCode, loaded.body).toBe(200);
-      expect(loaded.json().profile.resume.experience_entries[0].achievement_evidence).toEqual(original);
-    } finally {
-      await app.close();
-    }
-  });
-
-  it("derives achievement metrics and preserves old flat values as unassigned legacy data", async () => {
-    const app = buildApp(options);
-    const profile = validProfileFixture("Scoped Metric Candidate");
-    const resume = profile.resume as Record<string, unknown>;
-    const entries = resume.experience_entries as Array<Record<string, unknown>>;
-    entries[0]!.bullets = [
-      "Reduced synthetic warehouse energy spend by £240k (12%) against a £2M+ budget.",
-    ];
-    entries[0]!.achievement_evidence = [];
-    const legacyMetric = "Unassigned synthetic legacy metric: 99.9% uptime";
-    profile.resume_constraints = { real_metrics: ["Caller-only synthetic metric: 77"] };
-
-    const response = await app.inject({
-      method: "PATCH",
-      url: "/v1/profile",
-      payload: { profile },
-    });
-
-    expect(response.statusCode, response.body).toBe(200);
-    expect(response.json().profile.resume_constraints.real_metrics).toEqual([
-      "£240k",
-      "12%",
-      "£2M+",
-    ]);
-    expect(response.json().profile.resume.experience_entries[0].achievement_evidence[0]).toMatchObject({
-      metrics: ["£240k", "12%", "£2M+"],
-    });
-
-    const db = new Database(options.dbPath);
-    try {
-      expect(
-        db.prepare(
-          "SELECT metric_text FROM candidate_profile_resume_constraint_metrics ORDER BY metric_index",
-        ).all(),
-      ).toEqual([
-        { metric_text: "£240k" },
-        { metric_text: "12%" },
-        { metric_text: "£2M+" },
-      ]);
-      db.prepare(
-        `INSERT INTO candidate_profile_resume_constraint_metrics (
-           tenant_id, profile_id, metric_index, metric_text
-         ) VALUES ('local', 'default', 3, ?)`,
-      ).run(legacyMetric);
-    } finally {
-      db.close();
-    }
-
-    const stored = await app.inject({ method: "GET", url: "/v1/profile" });
-    expect(stored.statusCode, stored.body).toBe(200);
-    expect(stored.json().profile.resume_constraints.real_metrics).toEqual([
-      "£240k",
-      "12%",
-      "£2M+",
-      legacyMetric,
-    ]);
-    const nextProfile = stored.json().profile as ReturnType<typeof validProfileFixture>;
-    const nextResume = nextProfile.resume as Record<string, unknown>;
-    const nextEntries = nextResume.experience_entries as Array<Record<string, unknown>>;
-    nextEntries[0]!.bullets = [
-      "Reduced synthetic warehouse energy spend by £250k (13%) against a £2M+ budget.",
-    ];
-    nextEntries[0]!.achievement_evidence = [];
-
-    const nextResponse = await app.inject({
-      method: "PATCH",
-      url: "/v1/profile",
-      payload: { profile: nextProfile },
-    });
-
-    expect(nextResponse.statusCode, nextResponse.body).toBe(200);
-    expect(nextResponse.json().profile.resume_constraints.real_metrics).toEqual([
-      "£250k",
-      "13%",
-      "£2M+",
-      legacyMetric,
-    ]);
-    expect(nextResponse.json().profile.resume_constraints.real_metrics).not.toContain("£240k");
-    expect(nextResponse.json().profile.resume_constraints.real_metrics).not.toContain("12%");
-    expect(nextResponse.json().profile.resume_constraints.real_metrics).not.toContain(
-      "Caller-only synthetic metric: 77",
-    );
-
-    await app.close();
-  });
-
-  it("rederives materialized bullet evidence when a profile bullet changes", async () => {
-    const app = buildApp(options);
-    const profile = validProfileFixture("Updated Bullet Evidence Candidate");
-    const resume = profile.resume as Record<string, unknown>;
-    const entries = resume.experience_entries as Array<Record<string, unknown>>;
-    entries[0]!.bullets = ["Reduced incidents 40% by hardening service ownership."];
-
-    const initial = await app.inject({
-      method: "PATCH",
-      url: "/v1/profile",
-      payload: { profile },
-    });
-
-    expect(initial.statusCode, initial.body).toBe(200);
-    const materializedProfile = initial.json().profile as Record<string, unknown>;
-    const materializedResume = materializedProfile.resume as Record<string, unknown>;
-    const materializedEntries = materializedResume.experience_entries as Array<Record<string, unknown>>;
-    materializedEntries[0]!.bullets = ["Reduced incidents 55% by hardening service ownership."];
-
-    const updated = await app.inject({
-      method: "PATCH",
-      url: "/v1/profile",
-      payload: { profile: materializedProfile },
-    });
-
-    expect(updated.statusCode, updated.body).toBe(200);
-    expect(updated.json().profile.resume.experience_entries[0].achievement_evidence).toEqual([
-      expect.objectContaining({
-        id: "role_1_bullet_1",
-        source_text: "Reduced incidents 55% by hardening service ownership.",
-        metrics: ["55%"],
-      }),
-    ]);
-
-    const db = new Database(options.dbPath);
-    try {
-      expect(
-        db.prepare("SELECT evidence_id, source_text, metrics_json FROM candidate_profile_achievement_evidence").get(),
-      ).toMatchObject({
-        evidence_id: "role_1_bullet_1",
-        source_text: "Reduced incidents 55% by hardening service ownership.",
-        metrics_json: '["55%"]',
-      });
-    } finally {
-      db.close();
-    }
-
-    await app.close();
-  });
-
-  it("rederives precanonical materialized bullet evidence when a profile bullet changes", async () => {
-    const app = buildApp(options);
-    const profile = validProfileFixture("Precanonical Bullet Evidence Candidate");
-    const resume = profile.resume as Record<string, unknown>;
-    const entries = resume.experience_entries as Array<Record<string, unknown>>;
-    entries[0]!.bullets = ["Scaled the platform to 200 users."];
-
-    const initial = await app.inject({
-      method: "PATCH",
-      url: "/v1/profile",
-      payload: { profile },
-    });
-    expect(initial.statusCode, initial.body).toBe(200);
-
-    const materializedProfile = initial.json().profile as Record<string, unknown>;
-    const materializedResume = materializedProfile.resume as Record<string, unknown>;
-    const materializedEntries = materializedResume.experience_entries as Array<Record<string, unknown>>;
-    const staleEvidence = materializedEntries[0]!.achievement_evidence as Array<Record<string, unknown>>;
-    // The extractor used by the previous release did not recognize count metrics.
-    staleEvidence[0]!.metrics = [];
-    materializedEntries[0]!.bullets = ["Scaled the platform to 250 users."];
-
-    const updated = await app.inject({
-      method: "PATCH",
-      url: "/v1/profile",
-      payload: { profile: materializedProfile },
-    });
-
-    expect(updated.statusCode, updated.body).toBe(200);
-    expect(updated.json().profile.resume.experience_entries[0].achievement_evidence).toEqual([
-      expect.objectContaining({
-        id: "role_1_bullet_1",
-        source_text: "Scaled the platform to 250 users.",
-        metrics: ["250 users"],
-      }),
-    ]);
 
     await app.close();
   });
@@ -11953,8 +11310,8 @@ describe("local TypeScript API", () => {
       method: "PATCH",
       url: "/v1/discovery/settings",
       payload: {
-        roleFilterMode: "llm",
-        roleFilterModel: "claude:sonnet",
+        triageBatchSize: 20,
+        triageModel: "claude:sonnet",
         maxParallelFamilies: 3,
         crawlUserAgentProduct: "JobCtrlResearch",
         crawlUserAgentContact: "ops@example.test",
@@ -11966,8 +11323,8 @@ describe("local TypeScript API", () => {
     expect(response.statusCode, response.body).toBe(200);
     expect(response.json()).toMatchObject({
       settings: {
-        roleFilterMode: "llm",
-        roleFilterModel: "claude:sonnet",
+        triageBatchSize: 20,
+        triageModel: "claude:sonnet",
         maxParallelFamilies: 3,
         crawlUserAgentProduct: "JobCtrlResearch",
         crawlUserAgentContact: "ops@example.test",
@@ -11975,7 +11332,7 @@ describe("local TypeScript API", () => {
         scheduleCron: "0 8 * * 1-5",
       },
       effectiveSettings: {
-        roleFilterMode: { source: "persisted", activation: "next_source_family", editable: true },
+        triageBatchSize: { source: "persisted", activation: "next_source_family", editable: true },
         maxParallelFamilies: { source: "persisted", activation: "next_run", editable: true },
         schedulingEnabled: { source: "persisted", activation: "restart", editable: true },
       },
@@ -12035,7 +11392,6 @@ describe("local TypeScript API", () => {
         analysisLegs: ["claude", "codex", "google"],
         tailoringGeneratorModels: null,
         tailoringJudgeModel: null,
-        tailoringJudgeMinScore: 0.82,
         applyMaxBudgetUsd: 5,
         applyTimeoutSeconds: 900,
         scoreCriteria: "",
@@ -12061,7 +11417,6 @@ describe("local TypeScript API", () => {
         analysisLegs: ["claude", "google"],
         tailoringGeneratorModels: ["claude:sonnet", "codex:gpt-5.5"],
         tailoringJudgeModel: "claude:opus",
-        tailoringJudgeMinScore: 0.9,
         applyMaxBudgetUsd: 7.5,
         applyTimeoutSeconds: 1200,
         scoreCriteria: "Prioritize platform security, DevSecOps, and leadership scope.",
@@ -12090,7 +11445,6 @@ describe("local TypeScript API", () => {
       analysis_legs: ["claude", "google"],
       tailoring_generator_models: ["claude:sonnet", "codex:gpt-5.5"],
       tailoring_judge_model: "claude:opus",
-      tailoring_judge_min_score: 0.9,
       apply_max_budget_usd: 7.5,
       apply_timeout_seconds: 1200,
       score_criteria: "Prioritize platform security, DevSecOps, and leadership scope.",
@@ -13375,7 +12729,7 @@ function seedExactV7CompensationDatabase(
   dbPath: string,
   job?: { jobId: string; postingUrl: string },
 ): void {
-  initializeExactV7Database(dbPath);
+  initializeExactDatabase(dbPath);
   const db = new Database(dbPath);
   seedBuiltInResumeTemplate(db);
   if (job) {
@@ -13569,7 +12923,7 @@ function seedDatabase(dbPath: string): void {
   const artifactPath = path.join(path.dirname(dbPath), "ready-resume.txt");
   fs.writeFileSync(artifactPath, "hello world!");
 
-  initializeExactV7Database(dbPath);
+  initializeExactDatabase(dbPath);
   const db = new Database(dbPath);
   seedBuiltInResumeTemplate(db);
 
@@ -13907,6 +13261,7 @@ function insertPostedCompensationFact(db: Database.Database, jobUrl: string): vo
     "b".repeat(64),
     "2026-06-19T10:00:00Z",
   );
+  recordCompensationAuthority(db,jobIdFor(jobUrl));
 }
 
 function insertUnannualizedPostedCompensationFact(db: Database.Database, jobUrl: string): void {
@@ -13938,6 +13293,7 @@ function insertUnannualizedPostedCompensationFact(db: Database.Database, jobUrl:
     "c".repeat(64),
     "2026-06-19T10:00:30Z",
   );
+  recordCompensationAuthority(db,jobIdFor(jobUrl));
 }
 
 function insertMarketCompensationEstimate(db: Database.Database, jobUrl: string): void {
@@ -14010,6 +13366,7 @@ function insertMarketCompensationEstimate(db: Database.Database, jobUrl: string)
     "tier_2_ambitious",
     "exact_company_role",
   );
+  recordCompensationAuthority(db,jobIdFor(jobUrl));
 }
 
 function countRows(db: Database.Database, tableName: string, columnName: string, value: string): number {

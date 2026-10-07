@@ -275,3 +275,10 @@ port, re-exporting availability types through the operations boundary. Jobs GET
 exposes persisted observation DTOs and calculated freshness without transport
 side effects. Python and TypeScript event registries, endpoint JSON Schema
 fixtures and RPC registration observations are updated together.
+
+
+## Semantic Determination Authority
+
+Contracts owns the versioned semantic codes/labels and strict read envelopes. Worker determinations own meaning, with closed enums, extra-field rejection and canonical citations. API/web/extension consumers join IDs and read persisted verdicts; they never construct provenance or categories from text overlap. Interactive calls are sync RPC, activity calls remain outside Temporal replay.
+
+See [the decision](../decisions.md#2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.

@@ -1,40 +1,41 @@
-from __future__ import annotations
+"""Compensation classification, refresh leases, caching and accepted results."""
 
-from dataclasses import replace
 from pathlib import Path
-
 import pytest
-
-from jobctrl.database import close_connection, init_db
-from jobctrl.domain.compensation import (
-    LEVELS_FYI_MARKET_AGGREGATE_COMPANY,
-    ReportedCompensationObservation,
-    build_price_level_fact,
-)
+from jobctrl.database import init_db, close_connection
+from jobctrl.domain.determinations import DeterminationFailure
 from jobctrl.infrastructure.compensation.automatic_refresh import (
     AutomaticCompensationRefreshResult,
     refresh_automatic_compensation_benchmarks,
-    run_automatic_compensation_refresh,
-)
-from jobctrl.infrastructure.compensation.benchmark_materialization import (
-    materialize_automatic_compensation_estimates,
 )
 from jobctrl.infrastructure.compensation.levels_fyi_public import LevelsFyiPublicTarget
 from jobctrl.infrastructure.compensation.refresh_state import (
     SqliteCompensationRefreshStateRepository,
     StaleCompensationRefreshLease,
 )
-from jobctrl.infrastructure.compensation.sqlite_benchmark_repository import (
-    SqliteCompensationBenchmarkRepository,
-)
+from jobctrl.infrastructure.compensation.benchmark_materialization import materialize_automatic_compensation_estimates
 from jobctrl.infrastructure.compensation.sqlite_market_repository import (
-    ReportedCompensationSourceLoad,
     SqliteMarketCompensationRepository,
+    ReportedCompensationSourceLoad,
+)
+from tests.compensation_fakes import (
+    NOW,
+    FRESH,
+    JOB,
+    ClassificationModel,
+    put_job,
+    observation,
+    configure_classifier,
+    refresh,
 )
 
 
-NOW = "2026-08-12T08:00:00Z"
-FRESH_UNTIL = "2026-08-19T08:00:00Z"
+@pytest.fixture
+def database(tmp_path):
+    path = tmp_path / "owned.sqlite"
+    conn = init_db(path)
+    yield conn
+    close_connection(path)
 
 
 def test_production_refresh_keeps_levels_disabled_without_user_opt_in(
@@ -95,508 +96,96 @@ def test_production_refresh_keeps_levels_disabled_without_user_opt_in(
         close_connection(db_path)
 
 
-def test_direct_refresh_is_reused_until_the_seven_day_boundary(tmp_path: Path) -> None:
-    db_path = tmp_path / "jobctrl.db"
-    conn = init_db(db_path)
-    calls = {"observations": 0, "fx": 0, "price": 0}
-    try:
-        _insert_job(conn, title="Senior Software Engineer", location="Madrid, Spain")
-
-        def load_observations(_targets):
-            calls["observations"] += 1
-            assert tuple(target.location for target in _targets) == ("ES",)
-            return ReportedCompensationSourceLoad(
-                observations=(
-                    _observation(
-                        country="Spain",
-                        company=LEVELS_FYI_MARKET_AGGREGATE_COMPANY,
-                        level="all levels",
-                        minimum=55_000,
-                        maximum=85_000,
-                    ),
-                ),
-                levels_fyi_count=1,
-                levels_fyi_public_count=1,
-            )
-
-        def unexpected_fx():
-            calls["fx"] += 1
-            raise AssertionError("EUR-only direct evidence must not fetch FX")
-
-        def unexpected_price():
-            calls["price"] += 1
-            raise AssertionError("a direct target match must not fetch price levels")
-
-        first = run_automatic_compensation_refresh(
-            conn,
-            tenant_id="local",
-            owner="discovery-1",
-            now=NOW,
-            load_observations=load_observations,
-            load_fx_rates=unexpected_fx,
-            load_price_levels=unexpected_price,
-            completion_clock=_clock(NOW),
-        )
-
-        assert first.status == "succeeded"
-        assert first.slices_claimed == 1
-        assert first.direct_results == 1
-        assert first.level_fallback_results == 1
-        assert calls == {"observations": 1, "fx": 0, "price": 0}
-
-        def unexpected_observations(_targets):
-            raise AssertionError("fresh benchmark slices must not access the network")
-
-        skipped = run_automatic_compensation_refresh(
-            conn,
-            tenant_id="local",
-            owner="discovery-2",
-            now="2026-08-19T07:59:59Z",
-            load_observations=unexpected_observations,
-            load_fx_rates=unexpected_fx,
-            load_price_levels=unexpected_price,
-            completion_clock=_clock("2026-08-19T07:59:59Z"),
-        )
-        assert skipped.status == "skipped"
-        assert skipped.slices_claimed == 0
-
-        refreshed = run_automatic_compensation_refresh(
-            conn,
-            tenant_id="local",
-            owner="discovery-3",
-            now=FRESH_UNTIL,
-            load_observations=load_observations,
-            load_fx_rates=unexpected_fx,
-            load_price_levels=unexpected_price,
-            completion_clock=_clock(FRESH_UNTIL),
-        )
-        assert refreshed.direct_results == 1
-        assert calls == {"observations": 2, "fx": 0, "price": 0}
-        assert conn.execute("SELECT COUNT(*) FROM compensation_direct_benchmark_facts").fetchone()[0] == 2
-    finally:
-        close_connection(db_path)
+@pytest.mark.parametrize("family,has_range", [("software_engineering", True), ("sales", False)])
+def test_identical_provider_row_is_matched_only_by_model_codes(database, monkeypatch, family, has_range):
+    put_job(database)
+    model = ClassificationModel(family=family)
+    configure_classifier(monkeypatch, model)
+    result = refresh(database)
+    assert result.direct_results == int(has_range)
+    materialize_automatic_compensation_estimates(database, tenant_id="local", materialized_at=NOW)
+    estimate = SqliteMarketCompensationRepository(database).get_estimate("local", JOB)
+    assert (estimate is not None and estimate.estimate_state == "estimated_range") == has_range
+    classification = database.execute(
+        "SELECT envelope_json FROM semantic_determinations WHERE kind='benchmark_classification'"
+    ).fetchone()[0]
+    assert family in classification
+    if has_range:
+        assert (estimate.minimum_amount, estimate.maximum_amount) == (60000, 90000)
 
 
-def test_missing_geography_is_extrapolated_from_cost_of_living(tmp_path: Path) -> None:
-    db_path = tmp_path / "jobctrl.db"
-    conn = init_db(db_path)
-    try:
-        _insert_job(conn, title="Senior Software Engineer", location="Madrid, Spain")
-        result = run_automatic_compensation_refresh(
-            conn,
-            tenant_id="local",
-            owner="discovery-1",
-            now=NOW,
-            load_observations=lambda _targets: ReportedCompensationSourceLoad(
-                observations=(
-                    _observation(
-                        country="Germany",
-                        company=LEVELS_FYI_MARKET_AGGREGATE_COMPANY,
-                        level="Senior",
-                        minimum=80_000,
-                        maximum=100_000,
-                    ),
-                )
-            ),
-            load_fx_rates=_unexpected_fx,
-            load_price_levels=lambda: _price_levels(de_index=100, es_index=80),
-            completion_clock=_clock(NOW),
-        )
+def test_seven_day_refresh_boundary_and_unchanged_classification_cache(database, monkeypatch):
+    put_job(database)
+    model = ClassificationModel()
+    configure_classifier(monkeypatch, model)
+    calls = []
 
-        assert result.status == "succeeded"
-        assert result.direct_results == 0
-        assert result.extrapolated_results == 1
-        assert result.insufficient_results == 0
-        state_repository = SqliteCompensationRefreshStateRepository(conn)
-        benchmark_slice = state_repository.discover_active_job_slices("local").slices[0]
-        state = state_repository.get(benchmark_slice)
-        assert state is not None
-        assert state.refresh_status == "succeeded"
-        assert state.last_result_kind == "extrapolated"
-        assert state.last_extrapolated_fact_id is not None
-        fact = SqliteCompensationBenchmarkRepository(conn).get_extrapolated(
-            "local",
-            state.last_extrapolated_fact_id,
-        )
-        assert fact is not None
-        assert (fact.minimum_amount, fact.maximum_amount) == (64_000, 80_000)
-        assert fact.confidence_band == "low"
-        assert fact.warnings == ("cost_of_living_only",)
-    finally:
-        close_connection(db_path)
+    def load(targets):
+        calls.append(targets)
+        return ReportedCompensationSourceLoad(observations=(observation(),))
+
+    assert refresh(database, load=load).direct_results == 1
+    assert refresh(database, now="2026-08-19T07:59:59Z", load=load).status == "skipped"
+    assert len(calls) == 1 and len(model.calls) == 1
+    assert refresh(database, now=FRESH, load=load).direct_results == 1
+    assert len(calls) == 2 and len(model.calls) == 1
+    assert database.execute("SELECT COUNT(*) FROM compensation_direct_benchmark_facts").fetchone()[0] == 2
 
 
-def test_same_company_country_evidence_adjusts_the_cost_of_living_factor(
-    tmp_path: Path,
-) -> None:
-    db_path = tmp_path / "jobctrl.db"
-    conn = init_db(db_path)
-    try:
-        _insert_job(conn, title="Senior Software Engineer", location="Madrid, Spain")
-        observations = (
-            _observation(
-                country="Germany",
-                company=LEVELS_FYI_MARKET_AGGREGATE_COMPANY,
-                level="Senior",
-                minimum=80_000,
-                maximum=100_000,
-            ),
-            _observation(
-                country="Germany",
-                company="Acme GmbH",
-                level="Senior",
-                minimum=100_000,
-                maximum=100_000,
-                marker="acme-de",
-            ),
-            _observation(
-                country="Spain",
-                company="Acme SL",
-                level="Senior",
-                minimum=90_000,
-                maximum=90_000,
-                marker="acme-es",
-            ),
-        )
-        result = run_automatic_compensation_refresh(
-            conn,
-            tenant_id="local",
-            owner="discovery-1",
-            now=NOW,
-            load_observations=lambda _targets: ReportedCompensationSourceLoad(observations=observations),
-            load_fx_rates=_unexpected_fx,
-            load_price_levels=lambda: _price_levels(de_index=100, es_index=70),
-            completion_clock=_clock(NOW),
-        )
-
-        assert result.extrapolated_results == 1
-        row = conn.execute("SELECT fact_id FROM compensation_extrapolated_benchmark_facts").fetchone()
-        fact = SqliteCompensationBenchmarkRepository(conn).get_extrapolated(
-            "local",
-            str(row["fact_id"]),
-        )
-        assert fact is not None
-        assert fact.matched_company_count == 1
-        assert 0.7 < fact.raw_factor < 0.9
-        assert 0 < fact.shrinkage_weight < 1
-        assert "limited_matched_company_evidence" in fact.warnings
-    finally:
-        close_connection(db_path)
+@pytest.mark.parametrize(
+    "failure", ["provider_unavailable", "budget_denied", "malformed_json", "schema_violation", "non_verbatim_quote"]
+)
+def test_failed_classification_preserves_range_and_records_its_distinct_failure(database, monkeypatch, failure):
+    put_job(database)
+    configure_classifier(monkeypatch, ClassificationModel())
+    refresh(database)
+    materialize_automatic_compensation_estimates(database, tenant_id="local", materialized_at=NOW)
+    repository = SqliteMarketCompensationRepository(database)
+    before = repository.get_estimate("local", JOB)
+    configure_classifier(monkeypatch, ClassificationModel(fault=DeterminationFailure(failure)))
+    with pytest.raises(DeterminationFailure) as error:
+        refresh(database, now=FRESH, rows=[observation(source_url="https://example.org/new-snapshot")])
+    assert error.value.code == failure
+    assert repository.get_estimate("local", JOB) == before
+    row = database.execute("SELECT refresh_status,last_error_code FROM compensation_market_refresh_state").fetchone()
+    assert tuple(row) == ("failed", failure)
 
 
-def test_failed_refresh_preserves_the_last_good_result_and_retries_next_day(
-    tmp_path: Path,
-) -> None:
-    db_path = tmp_path / "jobctrl.db"
-    conn = init_db(db_path)
-    try:
-        _insert_job(conn, title="Senior Software Engineer", location="Madrid, Spain")
-        first = run_automatic_compensation_refresh(
-            conn,
-            tenant_id="local",
-            owner="discovery-1",
-            now=NOW,
-            load_observations=lambda _targets: ReportedCompensationSourceLoad(
-                observations=(
-                    _observation(
-                        country="Spain",
-                        company=LEVELS_FYI_MARKET_AGGREGATE_COMPANY,
-                        level="Senior",
-                        minimum=60_000,
-                        maximum=90_000,
-                    ),
-                )
-            ),
-            load_fx_rates=_unexpected_fx,
-            load_price_levels=lambda: (),
-            completion_clock=_clock(NOW),
-        )
-        assert first.direct_results == 1
-        state_repository = SqliteCompensationRefreshStateRepository(conn)
-        benchmark_slice = state_repository.discover_active_job_slices("local").slices[0]
-        previous = state_repository.get(benchmark_slice)
-        assert previous is not None
-        previous_fact_id = previous.last_direct_fact_id
+def test_source_failure_preserves_latest_result_and_retries_next_day(database, monkeypatch):
+    put_job(database)
+    configure_classifier(monkeypatch, ClassificationModel())
+    refresh(database)
+    before = database.execute("SELECT last_direct_fact_id FROM compensation_market_refresh_state").fetchone()[0]
 
-        def failed_source(_targets):
-            raise RuntimeError("provider unavailable")
+    def unavailable(targets):
+        raise RuntimeError("Private provider body")
 
-        failed = run_automatic_compensation_refresh(
-            conn,
-            tenant_id="local",
-            owner="discovery-2",
-            now=FRESH_UNTIL,
-            load_observations=failed_source,
-            load_fx_rates=_unexpected_fx,
-            load_price_levels=lambda: (),
-            completion_clock=_clock(FRESH_UNTIL),
-        )
-
-        assert failed.status == "completed_with_warnings"
-        assert failed.failed_results == 1
-        assert "reported_sources_unavailable" in failed.warnings
-        current = state_repository.get(benchmark_slice)
-        assert current is not None
-        assert current.refresh_status == "failed"
-        assert current.last_result_kind == "direct"
-        assert current.last_direct_fact_id == previous_fact_id
-        assert current.next_refresh_at == "2026-08-20T08:00:00.000000Z"
-    finally:
-        close_connection(db_path)
+    result = refresh(database, now=FRESH, load=unavailable)
+    assert result.failed_results == 1
+    row = database.execute(
+        "SELECT last_direct_fact_id,last_error_code,next_refresh_at FROM compensation_market_refresh_state"
+    ).fetchone()
+    assert row[0] == before and row[1] == "reported_sources_unavailable"
+    assert row[2] == "2026-08-20T08:00:00.000000Z"
+    assert refresh(database, now="2026-08-20T07:59:59Z", load=unavailable).status == "skipped"
 
 
-def test_blocked_public_source_uses_one_day_failure_retry(tmp_path: Path) -> None:
-    db_path = tmp_path / "jobctrl.db"
-    conn = init_db(db_path)
-    try:
-        _insert_job(conn, title="Senior Software Engineer", location="Madrid, Spain")
-
-        result = run_automatic_compensation_refresh(
-            conn,
-            tenant_id="local",
-            owner="discovery-1",
-            now=NOW,
-            load_observations=lambda _targets: ReportedCompensationSourceLoad(
-                observations=(),
-                source_errors=("euro_top_tech_unavailable",),
-            ),
-            load_fx_rates=_unexpected_fx,
-            load_price_levels=lambda: (),
-            completion_clock=_clock(NOW),
-        )
-
-        assert result.failed_results == 1
-        assert "euro_top_tech_unavailable" in result.warnings
-        state_repository = SqliteCompensationRefreshStateRepository(conn)
-        benchmark_slice = state_repository.discover_active_job_slices("local").slices[0]
-        state = state_repository.get(benchmark_slice)
-        assert state is not None
-        assert state.refresh_status == "failed"
-        assert state.last_error_code == "euro_top_tech_unavailable"
-        assert state.next_refresh_at == "2026-08-13T08:00:00.000000Z"
-    finally:
-        close_connection(db_path)
+def test_expired_refresh_lease_cannot_publish_slice_result(database, monkeypatch):
+    put_job(database)
+    configure_classifier(monkeypatch, ClassificationModel())
+    with pytest.raises(StaleCompensationRefreshLease):
+        refresh(database, clock=lambda: "2026-08-12T09:00:01Z")
+    row = database.execute(
+        "SELECT refresh_status,last_direct_fact_id FROM compensation_market_refresh_state"
+    ).fetchone()
+    assert tuple(row) == ("refreshing", None)
 
 
-def test_fx_failure_does_not_mark_a_level_fallback_direct_result_as_a_failed_lookup(
-    tmp_path: Path,
-) -> None:
-    db_path = tmp_path / "jobctrl.db"
-    conn = init_db(db_path)
-    try:
-        _insert_job(conn, title="Principal Software Engineer", location="Madrid, Spain")
-        generic = replace(
-            _observation(country="Spain", company=LEVELS_FYI_MARKET_AGGREGATE_COMPANY,
-                         level="all levels", minimum=60_000, maximum=90_000),
-            role_title="Software Engineer",
-        )
-        dollars = replace(generic, currency="USD", snapshot_version="levels-public-usd",
-                          minimum_amount=70_000, maximum_amount=100_000)
-
-        def failing_fx():
-            raise RuntimeError("ECB unavailable")
-
-        result = run_automatic_compensation_refresh(
-            conn,
-            tenant_id="local",
-            owner="discovery-1",
-            now=NOW,
-            load_observations=lambda _targets: ReportedCompensationSourceLoad(observations=(generic, dollars)),
-            load_fx_rates=failing_fx,
-            load_price_levels=lambda: (),
-            completion_clock=_clock(NOW),
-        )
-
-        # The Levels lookup succeeded; only the FX feed failed, so the lower-level
-        # direct fallback is a normal result rather than a failed lookup.
-        assert result.failed_results == 0
-        assert result.direct_results == 1
-        assert result.level_fallback_results == 1
-        assert "ecb_fx_unavailable" in result.warnings
-        state_repository = SqliteCompensationRefreshStateRepository(conn)
-        benchmark_slice = state_repository.discover_active_job_slices("local").slices[0]
-        assert benchmark_slice.seniority_label == "principal"
-        state = state_repository.get(benchmark_slice)
-        assert state is not None
-        assert state.refresh_status == "succeeded"
-        assert state.last_result_kind == "direct"
-        assert state.last_error_code is None
-        assert state.next_refresh_at == "2026-08-19T08:00:00.000000Z"
-        materialize_automatic_compensation_estimates(conn, tenant_id="local", materialized_at=NOW)
-        estimate = SqliteMarketCompensationRepository(conn).get_estimate(
-            "local", "11111111-1111-4111-8111-111111111111",
-        )
-        assert estimate is not None
-        level = next(factor for factor in estimate.factors if factor.name == "level")
-        assert "could not retrieve supporting source pages" not in level.reason
-    finally:
-        close_connection(db_path)
-
-
-def test_slow_refresh_cannot_publish_after_its_lease_expires(tmp_path: Path) -> None:
-    db_path = tmp_path / "jobctrl.db"
-    conn = init_db(db_path)
-    try:
-        _insert_job(conn, title="Senior Software Engineer", location="Madrid, Spain")
-
-        with pytest.raises(StaleCompensationRefreshLease):
-            run_automatic_compensation_refresh(
-                conn,
-                tenant_id="local",
-                owner="discovery-1",
-                now=NOW,
-                load_observations=lambda _targets: ReportedCompensationSourceLoad(
-                    observations=(
-                        _observation(
-                            country="Spain",
-                            company=LEVELS_FYI_MARKET_AGGREGATE_COMPANY,
-                            level="Senior",
-                            minimum=60_000,
-                            maximum=90_000,
-                        ),
-                    )
-                ),
-                load_fx_rates=_unexpected_fx,
-                load_price_levels=lambda: (),
-                completion_clock=_clock("2026-08-12T09:00:00Z"),
-            )
-
-        state_repository = SqliteCompensationRefreshStateRepository(conn)
-        benchmark_slice = state_repository.discover_active_job_slices("local").slices[0]
-        state = state_repository.get(benchmark_slice)
-        assert state is not None
-        assert state.refresh_status == "refreshing"
-        assert state.last_result_kind == "none"
-    finally:
-        close_connection(db_path)
-
-
-def test_forced_refresh_retries_only_selected_current_slice_before_due_time(tmp_path: Path) -> None:
-    db_path = tmp_path / "forced-slice.db"
-    conn = init_db(db_path)
-    try:
-        _insert_job(conn, title="Director of Software Engineering", location="Madrid, Spain")
-        conn.execute(
-            """INSERT INTO jobs (tenant_id, job_id, url, title, company, location, site, discovered_at)
-               VALUES ('local', '22222222-2222-4222-8222-222222222222',
-                       'https://jobs.example.com/two', 'Senior Data Engineer', 'Example',
-                       'Berlin, Germany', 'example', ?)""",
-            (NOW,),
-        )
-        conn.commit()
-        discovered = SqliteCompensationRefreshStateRepository(conn).discover_active_job_slices("local")
-        director = next(item for item in discovered.slices if item.role_family_code == "software_engineering")
-        calls: list[tuple[LevelsFyiPublicTarget, ...]] = []
-
-        def load(targets):
-            calls.append(targets)
-            return ReportedCompensationSourceLoad(observations=())
-
-        first = run_automatic_compensation_refresh(
-            conn, tenant_id="local", owner="first", now=NOW, load_observations=load,
-            load_fx_rates=_unexpected_fx, load_price_levels=lambda: (), completion_clock=_clock(NOW),
-        )
-        assert first.slices_claimed == 2
-        assert len(calls) == 1
-        skipped = run_automatic_compensation_refresh(
-            conn, tenant_id="local", owner="normal", now="2026-08-13T08:00:00Z",
-            load_observations=load, load_fx_rates=_unexpected_fx,
-            load_price_levels=lambda: (), completion_clock=_clock("2026-08-13T08:00:00Z"),
-        )
-        assert skipped.slices_claimed == 0 and len(calls) == 1
-        with pytest.raises(ValueError, match="not active"):
-            run_automatic_compensation_refresh(
-                conn, tenant_id="local", owner="invalid", now="2026-08-13T08:00:00Z",
-                load_observations=load, load_fx_rates=_unexpected_fx,
-                load_price_levels=lambda: (), force_slices=(replace(director, role_family_code="sales_business_development"),),
-            )
-        forced = run_automatic_compensation_refresh(
-            conn, tenant_id="local", owner="forced", now="2026-08-13T08:00:00Z",
-            load_observations=load, load_fx_rates=_unexpected_fx,
-            load_price_levels=lambda: (), completion_clock=_clock("2026-08-13T08:00:00Z"),
-            force_slices=(director,),
-        )
-        assert forced.slices_claimed == 1
-        assert len(calls) == 2 and len(calls[-1]) == 1
-        assert calls[-1][0].role_title == director.title_hint
-        state = SqliteCompensationRefreshStateRepository(conn).get(director)
-        assert state is not None and state.attempt_count == 2
-    finally:
-        close_connection(db_path)
-
-
-def _insert_job(conn, *, title: str, location: str) -> None:
-    conn.execute(
-        """
-        INSERT INTO jobs (
-            tenant_id, job_id, url, title, company, location, site, discovered_at
-        ) VALUES (
-            'local', '11111111-1111-4111-8111-111111111111',
-            'https://jobs.example.com/one', ?, 'Example', ?, 'example', ?
-        )
-        """,
-        (title, location, NOW),
-    )
-    conn.commit()
-
-
-def _observation(
-    *,
-    country: str,
-    company: str,
-    level: str,
-    minimum: int,
-    maximum: int,
-    marker: str = "market",
-) -> ReportedCompensationObservation:
-    return ReportedCompensationObservation(
-        source_id="levels_fyi",
-        source_provenance="public",
-        company_name=company,
-        role_title="Senior Software Engineer",
-        minimum_amount=minimum,
-        maximum_amount=maximum,
-        currency="EUR",
-        period="year",
-        component="total_compensation",
-        location=country,
-        level_label=level,
-        release_year=2026,
-        snapshot_version=f"levels-public-{marker}",
-        sample_count=20,
-        attribution="Data source: Levels.fyi (https://www.levels.fyi)",
-        source_url="https://www.levels.fyi/t/software-engineer",
-    )
-
-
-def _price_levels(*, de_index: float, es_index: float):
-    return (
-        _price(country="DE", index=de_index, marker="de"),
-        _price(country="ES", index=es_index, marker="es"),
-    )
-
-
-def _price(*, country: str, index: float, marker: str):
-    return build_price_level_fact(
-        tenant_id="local",
-        country_code=country,
-        category="actual_individual_consumption",
-        reference_year=2025,
-        base_geography_code="EU27_2020",
-        index_value=index,
-        source_id="eurostat",
-        source_snapshot_id="eurostat-shared-snapshot",
-        source_url="https://ec.europa.eu/eurostat/",
-        attribution="Eurostat purchasing power parities",
-        as_of_date="2025-12-31",
-        fetched_at=NOW,
-        fresh_until=FRESH_UNTIL,
-    )
-
-
-def _unexpected_fx():
-    raise AssertionError("EUR-only evidence must not fetch FX")
-
-
-def _clock(value: str):
-    return lambda: value
+def test_forced_refresh_is_bounded_to_a_current_slice(database, monkeypatch):
+    put_job(database)
+    configure_classifier(monkeypatch, ClassificationModel())
+    refresh(database)
+    slices = SqliteCompensationRefreshStateRepository(database).discover_active_job_slices("local").slices
+    assert refresh(database, now="2026-08-13T08:00:00Z", force=slices).slices_claimed == 1
+    with pytest.raises(ValueError, match="one to five"):
+        refresh(database, force=())

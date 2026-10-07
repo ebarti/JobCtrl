@@ -235,3 +235,7 @@ export type { GenerateInterviewPrepRequest, InterviewNoteBindings, SaveInterview
 
 export type { PostingAvailability } from "@jobctrl/contracts";
 export type CheckAvailabilityResponse = import("@jobctrl/contracts").EndpointResponse<typeof import("@jobctrl/contracts").ENDPOINTS.checkPostingAvailability>;
+
+export {SearchPreferencesResultSchema, SEMANTIC_TAXONOMY} from "@jobctrl/contracts";
+
+export type { DeterminationEnvelope } from "@jobctrl/contracts";

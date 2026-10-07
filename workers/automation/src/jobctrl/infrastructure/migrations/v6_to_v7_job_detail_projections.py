@@ -16,7 +16,7 @@ from jobctrl.domain.materials.analysis import (
     JobAnalysis,
     JobAnalysisDraft,
 )
-from jobctrl.domain.materials.analysis_eeo_screen import EeoScreenHit
+from jobctrl.domain.materials.analysis import EeoScreenHit
 from jobctrl.domain.scoring.value_objects import RequirementFitReport
 from jobctrl.domain.tenant import TenantId
 from jobctrl.infrastructure.migrations.schema_manifest import (
@@ -168,19 +168,13 @@ def rebuild_job_detail_projections(
         candidate.execute("RELEASE SAVEPOINT v6_job_detail_projection_rebuild")
         raise
 
-    return CandidateJobDetailProjectionsResult(
-        rebuilt_job_detail_projections=len(rows)
-    )
+    return CandidateJobDetailProjectionsResult(rebuilt_job_detail_projections=len(rows))
 
 
 def _assert_columns(candidate: sqlite3.Connection) -> None:
-    columns = tuple(
-        str(row[1]) for row in candidate.execute(f"PRAGMA table_info({_quote(_TABLE)})")
-    )
+    columns = tuple(str(row[1]) for row in candidate.execute(f"PRAGMA table_info({_quote(_TABLE)})"))
     if columns != _COLUMNS:
-        raise CandidateJobDetailProjectionsError(
-            "job_detail_projections columns do not match the exact v7 schema"
-        )
+        raise CandidateJobDetailProjectionsError("job_detail_projections columns do not match the exact v7 schema")
 
 
 def _assert_authoritative_roots(
@@ -195,9 +189,7 @@ def _assert_authoritative_roots(
             "job-detail projection rebuild requires hydrated candidate roots"
         ) from error
     if dict(hydrated.by_locator) != dict(job_ids.by_locator):
-        raise CandidateJobDetailProjectionsError(
-            "supplied JobIdMap does not match hydrated candidate roots"
-        )
+        raise CandidateJobDetailProjectionsError("supplied JobIdMap does not match hydrated candidate roots")
 
     locators = {
         (str(tenant_id), str(locator)): str(job_id)
@@ -219,9 +211,7 @@ def _assert_authoritative_roots(
 
 def _assert_empty_target(candidate: sqlite3.Connection) -> None:
     if _row_count(candidate, _TABLE):
-        raise CandidateJobDetailProjectionsError(
-            "candidate job_detail_projections must be empty"
-        )
+        raise CandidateJobDetailProjectionsError("candidate job_detail_projections must be empty")
 
 
 def _projection_rows(
@@ -239,13 +229,9 @@ def _projection_rows(
     ).fetchall():
         tenant = _required_text(tenant_id, "candidate jobs.tenant_id")
         stable_job_id = _required_text(job_id, "candidate jobs.job_id")
-        description_preview = _description_preview(
-            candidate, tenant, stable_job_id, full_description, description
-        )
+        description_preview = _description_preview(candidate, tenant, stable_job_id, full_description, description)
         score = _score_projection(candidate, tenant, stable_job_id)
-        summary, audit = _compensation_projection(
-            candidate, tenant, stable_job_id, salary
-        )
+        summary, audit = _compensation_projection(candidate, tenant, stable_job_id, salary)
         rows.append(
             (
                 tenant,
@@ -326,11 +312,7 @@ def _score_projection(
         "version": row[0],
         "fit_score": row[1],
         "scored_at": row[2],
-        "breakdown_json": (
-            None
-            if legacy
-            else _json(projection_builder._camel_score_breakdown(breakdown))
-        ),
+        "breakdown_json": (None if legacy else _json(projection_builder._camel_score_breakdown(breakdown))),
         "keywords_json": _json([] if legacy and keywords == ["legacy"] else keywords),
         "reasoning": reasoning if isinstance(reasoning, str) else "",
         # Criteria, trace, and correction are opaque generation-time audit data.
@@ -464,9 +446,7 @@ def _employer_analysis(
         agreement=AnalysisAgreement.from_dict(_json_object(row[9])),
         legs_attempted=int(row[11]),
         eeo_screen_hits=tuple(
-            EeoScreenHit.from_dict(value)
-            for value in _json_value(row[10], default=[])
-            if isinstance(value, dict)
+            EeoScreenHit.from_dict(value) for value in _json_value(row[10], default=[]) if isinstance(value, dict)
         ),
         created_at=str(row[12]),
     )
@@ -669,11 +649,8 @@ def _compensation_projection(
     if market_row is not None:
         mapped_market = _mapped_row(_MARKET_COMPENSATION_COLUMNS, market_row)
         if (
-            str(mapped_market["estimator_version"]).startswith(
-                "company-role-reported-compensation-"
-            )
-            and mapped_market["estimate_state"]
-            in projection_builder.MARKET_RECORDED_STATES
+            str(mapped_market["estimator_version"]).startswith("company-role-reported-compensation-")
+            and mapped_market["estimate_state"] in projection_builder.MARKET_RECORDED_STATES
             and not projection_builder._market_uses_employer_posted_authority(
                 str(mapped_market["source_snapshot_json"] or "")
             )
@@ -689,15 +666,9 @@ def _compensation_projection(
             }
     posted_fact = posted.get("fact") if posted["recordStatus"] == "recorded" else None
     market_estimate = market.get("estimate") if market["recordStatus"] == "recorded" else None
-    posted_range = (
-        projection_builder._posted_range_summary(posted_fact)
-        if isinstance(posted_fact, dict)
-        else None
-    )
+    posted_range = projection_builder._posted_range_summary(posted_fact) if isinstance(posted_fact, dict) else None
     market_range = (
-        projection_builder._market_range_summary(market_estimate)
-        if isinstance(market_estimate, dict)
-        else None
+        projection_builder._market_range_summary(market_estimate) if isinstance(market_estimate, dict) else None
     )
     interval = (
         projection_builder._market_confidence_interval_summary(market_estimate)
@@ -706,7 +677,9 @@ def _compensation_projection(
     )
     summary = {
         "projectionVersion": projection_builder.COMPENSATION_PROJECTION_VERSION,
-        "legacyRawSalary": posted_fact.get("legacyRawSalary") if isinstance(posted_fact, dict) else posted.get("legacyRawSalary"),
+        "legacyRawSalary": posted_fact.get("legacyRawSalary")
+        if isinstance(posted_fact, dict)
+        else posted.get("legacyRawSalary"),
         "warningCount": len(posted_fact.get("warnings", [])) if isinstance(posted_fact, dict) else 0,
         "posted": {
             "sourceKind": "posted",
@@ -721,8 +694,12 @@ def _compensation_projection(
             "sourceKind": "reported_company_role_market",
             "recordStatus": market["recordStatus"],
             "benchmarkKind": None,
-            "estimateState": market_estimate.get("estimateState", "not_requested") if isinstance(market_estimate, dict) else "not_requested",
-            "confidenceBand": market_estimate.get("confidenceBand", "none") if isinstance(market_estimate, dict) else "none",
+            "estimateState": market_estimate.get("estimateState", "not_requested")
+            if isinstance(market_estimate, dict)
+            else "not_requested",
+            "confidenceBand": market_estimate.get("confidenceBand", "none")
+            if isinstance(market_estimate, dict)
+            else "none",
             "confidenceScore": market_estimate.get("confidenceScore") if isinstance(market_estimate, dict) else None,
             "sourceCount": market_estimate.get("sourceCount", 0) if isinstance(market_estimate, dict) else 0,
             "sampleCount": market_estimate.get("sampleCount") if isinstance(market_estimate, dict) else None,
@@ -736,9 +713,7 @@ def _compensation_projection(
     summary["warningCount"] += summary["market"]["warningCount"]
     return _json(summary), _json(
         {
-            "projectionVersion": (
-                projection_builder.COMPENSATION_PROJECTION_VERSION
-            ),
+            "projectionVersion": (projection_builder.COMPENSATION_PROJECTION_VERSION),
             "posted": posted,
             "market": market,
         }
@@ -750,9 +725,7 @@ def _mapped_row(
     row: tuple[object, ...],
 ) -> dict[str, object]:
     if len(row) != len(columns):
-        raise CandidateJobDetailProjectionsError(
-            "candidate compensation row does not match its canonical columns"
-        )
+        raise CandidateJobDetailProjectionsError("candidate compensation row does not match its canonical columns")
     return dict(zip(columns, row, strict=True))
 
 
@@ -760,8 +733,7 @@ def _insert_rows(candidate: sqlite3.Connection, rows: tuple[tuple[object, ...], 
     if not rows:
         return
     candidate.executemany(
-        f"INSERT INTO {_quote(_TABLE)} ({_identifiers(_COLUMNS)}) "
-        f"VALUES ({', '.join('?' for _ in _COLUMNS)})",
+        f"INSERT INTO {_quote(_TABLE)} ({_identifiers(_COLUMNS)}) VALUES ({', '.join('?' for _ in _COLUMNS)})",
         rows,
     )
 
@@ -779,17 +751,11 @@ def _verify_candidate(
         ).fetchall()
     )
     if actual != expected_rows or _row_count(candidate, _TABLE) != len(expected_rows):
-        raise CandidateJobDetailProjectionsError(
-            "candidate rebuild changed job-detail projection rows or count"
-        )
+        raise CandidateJobDetailProjectionsError("candidate rebuild changed job-detail projection rows or count")
     if _canonical_snapshot(candidate) != canonical_snapshot:
-        raise CandidateJobDetailProjectionsError(
-            "candidate rebuild mutated canonical job-detail inputs"
-        )
+        raise CandidateJobDetailProjectionsError("candidate rebuild mutated canonical job-detail inputs")
     if candidate.execute("PRAGMA foreign_key_check").fetchall():
-        raise CandidateJobDetailProjectionsError(
-            "candidate rebuild left a foreign-key violation"
-        )
+        raise CandidateJobDetailProjectionsError("candidate rebuild left a foreign-key violation")
     assert_exact_manifest(candidate, EXACT_V7_MANIFEST)
 
 
@@ -797,14 +763,26 @@ def _canonical_snapshot(
     candidate: sqlite3.Connection,
 ) -> tuple[tuple[str, tuple[tuple[object, ...], ...]], ...]:
     tables = (
-        "jobs", "job_locators", "job_enrichments", "job_scores", "job_stage_states",
-        "job_posted_compensation_facts", "job_market_compensation_estimates",
-        "job_employer_analysis", "job_employer_analysis_sub_analyses",
-        "job_employer_analysis_failures", "job_requirement_fit_reports",
-        "job_requirement_fit_items", "job_interview_prep", "job_interview_prep_items",
+        "jobs",
+        "job_locators",
+        "job_enrichments",
+        "job_scores",
+        "job_stage_states",
+        "job_posted_compensation_facts",
+        "job_market_compensation_estimates",
+        "job_employer_analysis",
+        "job_employer_analysis_sub_analyses",
+        "job_employer_analysis_failures",
+        "job_requirement_fit_reports",
+        "job_requirement_fit_items",
+        "job_interview_prep",
+        "job_interview_prep_items",
     )
     return tuple(
-        (table, tuple(tuple(row) for row in candidate.execute(f"SELECT * FROM {_quote(table)} ORDER BY rowid").fetchall()))
+        (
+            table,
+            tuple(tuple(row) for row in candidate.execute(f"SELECT * FROM {_quote(table)} ORDER BY rowid").fetchall()),
+        )
         for table in tables
     )
 

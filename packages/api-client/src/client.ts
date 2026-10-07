@@ -1,3 +1,5 @@
+import {SearchPreferencesRequestSchema, SearchPreferencesResponseSchema,type SearchPreferencesRequest,type SearchPreferencesResponse} from "@jobctrl/contracts";
+import { DiscoveryTriageResponseSchema,type DiscoveryTriageResponse } from "@jobctrl/contracts";
 import type {
   ActionRunResponse,
   ActivityEventResponse,
@@ -336,6 +338,14 @@ export class JobCtrlApiClient {
     return this.get("/v1/discovery/sources");
   }
 
+  async searchPreferences(request:SearchPreferencesRequest):Promise<SearchPreferencesResponse>{
+    return SearchPreferencesResponseSchema.parse(await this.post("/v1/discovery/preferences",SearchPreferencesRequestSchema.parse(request)));
+  }
+
+  async discoveryTriage(offset=0):Promise<DiscoveryTriageResponse>{
+    return DiscoveryTriageResponseSchema.parse(await this.get("/v1/discovery/triage",{offset,limit:50}));
+  }
+
   discoverySettings(): Promise<DiscoverySettingsResponse> {
     return this.get("/v1/discovery/settings");
   }
@@ -504,6 +514,10 @@ export class JobCtrlApiClient {
       `/v1/jobs/${encodeURIComponent(jobKey)}/apply-review/decision`,
       body,
     );
+  }
+
+  checkRepeatApplication(jobKey:string):Promise<RepeatApplicationOverrideResponse>{
+    return this.post(`/v1/jobs/${encodeURIComponent(jobKey)}/repeat-application/check`,{});
   }
 
   confirmRepeatApplication(

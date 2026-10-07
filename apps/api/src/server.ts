@@ -1,9 +1,17 @@
+import { readTargetRoleProposal } from "./candidate-interpretations.js";
+import { ResumeEditIntentReviewSchema } from "@jobctrl/contracts";
+import { readDetermination } from "./semantic-determinations.js";
+import { isDeepStrictEqual } from "node:util";
+import {SearchPreferencesRequestSchema,SearchPreferencesResponseSchema} from "@jobctrl/contracts";
+import { readDiscoveryTriage } from "./discovery-triage.js";
+import { FormSnapshotSchema, FormMappingResponseSchema } from "@jobctrl/contracts";
+import { ResumeEditReviewSchema } from "@jobctrl/contracts";
 import cors from "@fastify/cors";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { type ZodType } from "zod";
+import { z, type ZodType } from "zod";
 
 import {
   type ActionCommandPayload,
@@ -223,6 +231,7 @@ import {
 } from "./interview-notes.js";
 import {
   assertLiveApplicationMayDispatch,
+  evaluateRepeatApplication,
   recordRepeatApplicationOverride,
 } from "./repeat-application.js";
 import {
@@ -318,6 +327,7 @@ import {
   replyToResumeReviewComment,
   renderResumeReviewDraft,
   saveResumeReviewDraftRevision,
+  persistResumeEditIntent,
   seedResumeReviewCommentThreads,
   TailoringFeedbackReviewInputError,
 } from "./resume-review-drafts.js";
@@ -887,6 +897,18 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       withDb(reply, options.dbPath, (db) => readExtensionAutofillProfile(db)),
   );
 
+  app.post("/v1/extension/autofill/mapping", async(request,reply)=>{
+    const snapshot=parseBody(reply,FormSnapshotSchema,request.body);
+    if(!snapshot)return {ok:false,error:"invalid_form_snapshot"};
+    const profile=withDb(reply,options.dbPath,(db)=>readExtensionAutofillProfile(db));
+    if(!profile?.ok || !profile.profileVersion){void reply.code(409);return {ok:false,error:"profile_unavailable"};}
+    try{
+      const response=await providerDispatcher.call(RpcMethods.MapExtensionForm,{tenantId:"local",expectedAppDir:appDir,expectedDbPath:options.dbPath,expectedProfileVersion:profile.profileVersion,...snapshot});
+      if(response.error){void reply.code(503);return {ok:false,error:"form_mapping_unavailable",message:response.error.message};}
+      return FormMappingResponseSchema.parse(response.result);
+    }catch{void reply.code(503);return {ok:false,error:"form_mapping_unavailable"};}
+  });
+
   app.post("/v1/extension/captures", async (request, reply) => {
     const body = parseBody(reply, ExtensionCaptureIngestSchema, request.body ?? {});
     if (!body) {
@@ -1036,6 +1058,13 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
             draftId,
             request,
             resumePdfRenderer,
+            async (reviewDraftId,revisionId)=>{
+              const response=await providerDispatcher.call(RpcMethods.ReviewResumeEdit,{tenantId:"local",expectedAppDir:appDir,expectedDbPath:options.dbPath,draftId:reviewDraftId,revisionId});
+              if(response.error)throw new SemanticStageError(safeDeterminationFailureCode(response.error.message));
+              const parsed=ResumeEditReviewSchema.safeParse(response.result);
+              if(!parsed.success)throw new SemanticStageError("schema_violation");
+              return parsed.data;
+            },
           );
           if (result.ok) {
             refreshProjections(db);
@@ -1152,9 +1181,18 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     withDb(reply, options.dbPath, (db) => readDiscoverySettings(db)),
   );
 
-  app.get("/v1/compensation/sources", async () =>
-    listCompensationSources(readCompensationSourcePreferences(options.configPath)),
-  );
+  app.get("/v1/compensation/sources", async (_request,reply) => {
+    const response=listCompensationSources(readCompensationSourcePreferences(options.configPath));
+    if (!fs.existsSync(options.dbPath)) return response;
+    return withDb(reply,options.dbPath,db => {
+    const rows=db.prepare("SELECT source_id,count(*) AS input_count FROM compensation_unclassified_source_inputs WHERE tenant_id='local' GROUP BY source_id").all() as Array<{source_id:string;input_count:number}>;
+    for (const row of rows) {
+      const source=response.sources.find(item=>item.sourceId===row.source_id);
+      if(source) source.notes.push(`${row.input_count} historical observations retain their original amounts and source locators. Their withdrawn classifications require the original source to be refreshed or reimported before use.`);
+    }
+    return response;
+    });
+  });
 
   app.patch("/v1/compensation/sources", async (request, reply) => {
     const body = parseBody(
@@ -1384,9 +1422,6 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     if (body.tailorJudgeModel) {
       command.tailorJudgeModel = body.tailorJudgeModel;
     }
-    if (body.tailorJudgeMinScore !== undefined) {
-      command.tailorJudgeMinScore = body.tailorJudgeMinScore;
-    }
     const workerReady = requireWorkerReady(reply, options.dbPath, requireHealthyWorkerForActions);
     if (!workerReady) {
       return undefined;
@@ -1456,6 +1491,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         return {
           ok: false,
           error: error.statusCode === 400 ? "invalid_job_url" : "job_url_import_failed",
+          ...(error.failureCode ? {failureCode:error.failureCode} : {}),
           message: error.message,
         };
       }
@@ -1698,9 +1734,20 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       if (!body) {
         return undefined;
       }
-      return withWritableDb(reply, options.dbPath, (db) =>
-        saveResumeReviewDraftRevision(db, decodeRouteParam(request.params.draftId), body),
-      );
+      const draftId=decodeRouteParam(request.params.draftId);
+      const saved=await withWritableDb(reply,options.dbPath,db=>saveResumeReviewDraftRevision(db,draftId,body));
+      if(!saved || !("revision" in saved))return saved;
+      try {
+        const response=await providerDispatcher.call(RpcMethods.ReviewResumeEdit,{tenantId:"local",expectedAppDir:actionContext.appDir,expectedDbPath:options.dbPath,draftId,revisionId:saved.revision.revisionId,operation:"intent"});
+        if(response.error)return {...saved,editIntent:{status:"unavailable",failureCode:safeDeterminationFailureCode(response.error.message)}};
+        const review=ResumeEditIntentReviewSchema.parse(response.result);
+        const intentDb=openDatabase(options.dbPath);
+        try{intentDb.transaction(()=>persistResumeEditIntent(intentDb,draftId,saved.revision.revisionId,review))();}finally{intentDb.close();}
+        const refreshed=withDb(reply,options.dbPath,db=>getResumeReviewDraftForJob(db,saved.draft.jobKey));
+        return {...saved,...refreshed,editIntent:{status:"accepted",determinationId:review.editIntentId}};
+      }catch(error){
+        return {...saved,editIntent:{status:"unavailable",failureCode:error instanceof z.ZodError ? "schema_violation" : "provider_error"}};
+      }
     },
   );
 
@@ -1931,6 +1978,14 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       );
     },
   );
+
+  app.post<{Params:{jobKey:string}}>("/v1/jobs/:jobKey/repeat-application/check",async(request,reply)=>{
+    const jobId=withDb(reply,options.dbPath,db=>resolveJobId(db,"local",decodeRouteParam(request.params.jobKey)));
+    if(typeof jobId!=="string"){void reply.code(404);return {ok:false,error:"job_not_found"};}
+    const response=await providerDispatcher.call(RpcMethods.PrepareRepeatApplicationDeterminations,{tenantId:"local",expectedAppDir:appDir,expectedDbPath:options.dbPath,jobId});
+    if(response.error){void reply.code(503);return {ok:false,error:"repeat_determination_unavailable",message:response.error.message};}
+    return withDb(reply,options.dbPath,db=>({ok:true,assessment:evaluateRepeatApplication(db,jobId)}));
+  });
 
   app.post<{ Params: { jobKey: string } }>(
     "/v1/jobs/:jobKey/repeat-application/override",
@@ -2367,9 +2422,6 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       };
       if (body.reason) command.reason = body.reason;
       if (body.tailorJudgeModel) command.tailorJudgeModel = body.tailorJudgeModel;
-      if (body.tailorJudgeMinScore !== undefined) {
-        command.tailorJudgeMinScore = body.tailorJudgeMinScore;
-      }
       insertJobEvent(db, {
         jobUrl,
         stage: "tailor",
@@ -2417,9 +2469,6 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         };
         if (body.reason) command.reason = body.reason;
         if (body.tailorJudgeModel) command.tailorJudgeModel = body.tailorJudgeModel;
-        if (body.tailorJudgeMinScore !== undefined) {
-          command.tailorJudgeMinScore = body.tailorJudgeMinScore;
-        }
         insertJobEvent(db, {
           jobUrl: jobId,
           stage: "tailor",
@@ -2463,9 +2512,6 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       };
       if (body.reason) command.reason = body.reason;
       if (body.tailorJudgeModel) command.tailorJudgeModel = body.tailorJudgeModel;
-      if (body.tailorJudgeMinScore !== undefined) {
-        command.tailorJudgeMinScore = body.tailorJudgeMinScore;
-      }
       const workerReady = requireWorkerReady(reply, options.dbPath, requireHealthyWorkerForActions);
       if (!workerReady) {
         return undefined;
@@ -2488,6 +2534,10 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         return { ok: false, error: "job_not_found" };
       }
       if (!body.dryRun) {
+        if(evaluateRepeatApplication(db,jobId,{recordAudit:false}).status==="unavailable") {
+          const prepared=await providerDispatcher.call(RpcMethods.PrepareRepeatApplicationDeterminations,{tenantId:"local",expectedAppDir:appDir,expectedDbPath:options.dbPath,jobId});
+          if(prepared.error)throw new InputError("repeat_determination_unavailable");
+        }
         assertLiveApplicationMayDispatch(db, jobId);
       }
       const command: ActionCommandPayload = {
@@ -2935,6 +2985,24 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         request.log.error({ err: error }, "Failed to dispatch profile-update preparation continuation");
       });
     }
+    if (profileUpdatedEvent && profileResponse) {
+      try {
+        await providerDispatcher.call(RpcMethods.ProfileTargetRoleSuggestions, {
+          expectedAppDir: actionContext.appDir, expectedDbPath: options.dbPath,
+          expectedProfileVersion: profileResponse.profileVersion, maximumSuggestions: 5,
+        });
+      } catch {
+        // The worker records a distinct blocked interpretation state. A user's
+        // authored profile save remains successful and can be retried separately.
+      }
+    }
+    if(profileResponse){
+      const current=openReadOnlyDatabase(options.dbPath);
+      try {
+        const reread=readProfileConfigReadOnly(current);
+        if(reread.profileVersion===profileResponse.profileVersion) profileResponse=reread;
+      } finally {current.close();}
+    }
     return profileResponse;
   });
 
@@ -3039,27 +3107,18 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
         return { ok: false, error: "stale_profile_version", expectedProfileVersion: body.expectedProfileVersion, actualProfileVersion };
       }
       if ("failure" in model.data) {
-        const failure = model.data.failure;
-        if (failure.code === "budget_exceeded") {
-          void reply.code(429);
-          const budget = failure.scope === "daily" ? "daily LLM spend budget"
-            : failure.scope === "profile_lane" ? "profile LLM token budget" : "daily LLM spend and profile token budgets";
-          return { ok: false, error: "required_bullet_suggestions_budget_exceeded", budgetScope: failure.scope,
-            message: `The ${budget} ${failure.scope === "both" ? "have" : "has"} been reached. Wait for the daily reset or adjust the budget in Settings, then retry. You can still edit bullets manually.` };
-        }
-        if (failure.code === "provider_unready") {
-          void reply.code(503);
-          return { ok: false, error: "required_bullet_suggestions_provider_unready",
-            message: "No authenticated coaching provider is ready. Connect or authenticate your LLM provider in Settings, then retry. You can still edit bullets manually." };
-        }
+        const code=model.data.failure.code;
+        void reply.code(code === "budget_denied" ? 429 : code === "provider_unavailable" ? 503 : 502);
+        return {ok:false,error:code,message:"Required bullet coaching could not complete. Retry the inspection after resolving the reported status."};
+      }
+      const recorded=readDetermination(db,"local",model.data.determination.determination_id);
+      const binding = db.prepare("SELECT determination_id FROM semantic_entity_bindings WHERE tenant_id='local' AND entity_kind='profile_coaching' AND entity_id='profile:required_bullets' AND entity_version=? AND determination_kind='required_bullet_coaching'").get(String(body.expectedProfileVersion)) as {determination_id:string}|undefined;
+      if (!recorded || binding?.determination_id !== recorded.determination_id || recorded.kind!=="required_bullet_coaching" || recorded.entity_id!=="profile:required_bullets" || !isDeepStrictEqual(recorded.result,{suggestions:model.data.suggestions,citations:model.data.citations,rationale:model.data.rationale})) {
         void reply.code(502);
-        return { ok: false, error: "required_bullet_suggestions_failed",
-          message: failure.code === "invalid_model_response"
-            ? "The coaching model returned an invalid response. Retry the inspection or edit bullets manually."
-            : "The coaching provider could not complete the request. Verify its connection in Settings, then retry or edit bullets manually." };
+        return {ok:false,error:"determination_binding_invalid",message:"The coaching result has no matching saved determination."};
       }
       try {
-        return bindRequiredBulletJudgments(preparation, model.data.suggestions, body.maximumSuggestions, true);
+        return {...bindRequiredBulletJudgments(preparation, model.data.suggestions, body.maximumSuggestions, true),determination:recorded};
       } catch {
         void reply.code(502);
         return { ok: false, error: "required_bullet_suggestions_failed", message: "The coaching model returned an invalid source reference." };
@@ -3067,6 +3126,21 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     } finally {
       db.close();
     }
+  });
+
+  app.post("/v1/discovery/preferences",async(request,reply)=>{
+    const body=parseBody(reply,SearchPreferencesRequestSchema,request.body??{});if(!body)return undefined;
+    const response=await providerDispatcher.call(RpcMethods.SearchPreferences,{...body,tenantId:"local",expectedAppDir:actionContext.appDir,expectedDbPath:actionContext.dbPath});
+    if(response.error){void reply.code(response.error.message.includes("stale")?409:503);return {ok:false,error:"search_preferences_unavailable",message:response.error.message};}
+    const parsed=SearchPreferencesResponseSchema.safeParse(response.result);
+    if(!parsed.success){void reply.code(502);return {ok:false,error:"invalid_search_preferences_response"};}
+    return parsed.data;
+  });
+
+  app.get("/v1/discovery/triage", (request,reply)=>{
+    const parsed=z.object({offset:z.coerce.number().int().min(0).default(0),limit:z.coerce.number().int().min(1).max(200).default(50)}).strict().safeParse(request.query);
+    if(!parsed.success){void reply.code(400);return {ok:false,error:"invalid_triage_query"};}
+    return withDb(reply,options.dbPath,db=>readDiscoveryTriage(db,parsed.data.offset,parsed.data.limit));
   });
 
   app.post("/v1/profile/target-role-suggestions", async (request, reply) => {
@@ -4971,6 +5045,10 @@ function withDb<T>(
         message: error.message,
       };
     }
+    if (error instanceof SemanticStageError) {
+      void reply.code(error.code === "provider_unavailable" ? 503 : error.code === "budget_denied" ? 429 : 502);
+      return {ok:false,error:error.code,message:"Resume verification could not complete. Retry after resolving the reported status."};
+    }
     if (error instanceof ResumeTemplateInputError) {
       void reply.code(400);
       return {
@@ -5038,6 +5116,10 @@ async function withWritableDb<T>(
     db = openDatabase(dbPath);
     return await write(db);
   } catch (error) {
+    if (error instanceof SemanticStageError) {
+      void reply.code(error.code === "provider_unavailable" ? 503 : error.code === "budget_denied" ? 429 : 502);
+      return {ok:false,error:error.code,message:"Resume verification could not complete. Retry after resolving the reported status."};
+    }
     if (error instanceof ResumeTemplateInputError) {
       void reply.code(400);
       return { ok: false, error: "invalid_resume_template", message: error.message };
@@ -5349,3 +5431,10 @@ function decodeBase64Pdf(value: string): Buffer {
   }
   return bytes;
 }
+
+function safeDeterminationFailureCode(message: string): string {
+  const codes = new Set(["provider_unavailable","provider_error","budget_denied","malformed_json","schema_violation","foreign_source_id","non_verbatim_quote","mismatched_value","stale_draft_revision","stale_profile_version","job_interpretation_unavailable","missing_evidence_citation","inconsistent_verdict"]);
+  return codes.has(message) ? message : "provider_error";
+}
+
+class SemanticStageError extends Error {constructor(readonly code:string){super(code);}}

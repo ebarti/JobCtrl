@@ -22,8 +22,10 @@ import {
   recordManualApplicationOutcome,
 } from "../src/application-feedback.js";
 import { InputError } from "../src/write-model.js";
-import { hasExactV12SchemaManifest } from "../src/schema-manifest.js";
-import { initializeExactV7Database } from "./v7-schema.js";
+import { hasExactV13SchemaManifest } from "../src/schema-manifest.js";
+import { initializeExactDatabase } from "./exact-schema.js";
+
+import { recordOutcomeDecision } from "./semantic-fixtures.js";
 
 const JOB_ID = "00000000-0000-4000-8000-000000000071";
 const JOB_URL = "https://jobs.example.test/application-feedback";
@@ -40,7 +42,7 @@ afterEach(() => {
 function seededDatabase(): Database.Database {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-application-feedback-v7-"));
   const dbPath = path.join(dir, "jobs.db");
-  initializeExactV7Database(dbPath);
+  initializeExactDatabase(dbPath);
   const db = new Database(dbPath);
   db.pragma("foreign_keys = ON");
   cleanups.push(() => {
@@ -82,9 +84,10 @@ function seedSuggestion(db: Database.Database, suggestionId: string, suggestedKi
        rationale, status, created_at
      ) VALUES ('local', ?, ?, ?, ?, 0.9, ?, 'pending', '2026-07-31T12:06:00Z')`,
   ).run(suggestionId, JOB_ID, evidenceId, suggestedKind, PRIVATE_RATIONALE);
+  recordOutcomeDecision(db,suggestionId,`message-${suggestionId}`,suggestedKind,0.9,PRIVATE_BODY);
 }
 
-describe("application feedback exact v7 identity", () => {
+describe("application feedback exact current identity", () => {
   it("keeps queue and outcome reads tenant-isolated when tenants share a canonical job id", () => {
     const db = seededDatabase();
     db.prepare(
@@ -111,7 +114,7 @@ describe("application feedback exact v7 identity", () => {
     expect(queue.items[0]?.jobKey).toBe(JOB_ID);
   });
 
-  it("accepts, corrects, and ignores exact-v7 suggestions without exposing private text in events", () => {
+  it("accepts, corrects, and ignores exact-current suggestions without exposing private text in events", () => {
     const db = seededDatabase();
     seedSuggestion(db, "accept", "interview");
     seedSuggestion(db, "correct", "unknown");
@@ -143,13 +146,13 @@ describe("application feedback exact v7 identity", () => {
     expect(events.map((event) => event.payload_json).join("\n")).not.toContain(PRIVATE_RATIONALE);
   });
 
-  it("does not mutate the exact-v7 schema and refuses an invalid job id", () => {
+  it("does not mutate the exact-current schema and refuses an invalid job id", () => {
     const db = seededDatabase();
-    expect(hasExactV12SchemaManifest(db)).toBe(true);
+    expect(hasExactV13SchemaManifest(db)).toBe(true);
 
     expect(() =>
       recordManualApplicationOutcome(db, "not-a-canonical-job-id", { kind: "interview" }),
     ).toThrow(InputError);
-    expect(hasExactV12SchemaManifest(db)).toBe(true);
+    expect(hasExactV13SchemaManifest(db)).toBe(true);
   });
 });

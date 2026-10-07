@@ -20,11 +20,11 @@ export const EnvironmentManaged: Story = {
       handlers: [
         http.get("*/v1/discovery/settings", () => HttpResponse.json({
           ...sampleDiscoverySettingsResponse,
-          settings: { ...sampleDiscoverySettingsResponse.settings, roleFilterMode: "llm" },
+          settings: { ...sampleDiscoverySettingsResponse.settings, triageBatchSize: 20 },
           effectiveSettings: {
             ...sampleDiscoverySettingsResponse.effectiveSettings,
-            roleFilterMode: {
-              value: "llm",
+            triageBatchSize: {
+              value: 20,
               source: "environment",
               activation: "next_source_family",
               editable: false,

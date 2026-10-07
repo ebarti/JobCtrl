@@ -1,735 +1,103 @@
-from __future__ import annotations
+"""Compensation consumes model codes and keeps amount arithmetic mechanical."""
 
+from dataclasses import replace
 import pytest
-
-from jobctrl.domain.compensation import (
-    LEVELS_FYI_MARKET_AGGREGATE_COMPANY,
-    ReportedCompensationObservation,
-    estimate_market_compensation,
-)
-from jobctrl.domain.identifiers import JobId
+from jobctrl.domain.compensation import estimate_market_compensation
+from jobctrl.domain.determinations import DeterminationFailure
+from tests.compensation_fakes import JOB, NOW, observation, classified_row
+from tests.test_remaining_determinations import interpretation
 
 
-TEST_JOB_ID = JobId("11111111-1111-4111-8111-111111111111")
-
-
-@pytest.mark.parametrize(("title", "reason"), [
-    ("Director", "weak_role_match"),
-    ("Head", "weak_role_match"),
-    ("", "missing_role"),
-])
-def test_title_without_occupation_has_truthful_no_range_reason(title: str, reason: str) -> None:
-    estimate = estimate_market_compensation(
-        job_id=TEST_JOB_ID, company="Acme AI", title=title, location="Madrid, Spain",
-        observations=(), estimated_at="2026-09-25T10:00:00Z",
-    )
-    assert estimate.estimate_state == "insufficient_evidence"
-    assert estimate.insufficient_reasons == (reason,)
-    assert estimate.minimum_amount is None and estimate.maximum_amount is None
-
-
-def test_ambiguous_engineering_title_without_observations_records_role_reason() -> None:
-    estimate = estimate_market_compensation(
-        job_id=TEST_JOB_ID, company="Acme AI", title="Head of Engineering",
-        location="Madrid, Spain", observations=(), estimated_at="2026-09-25T10:00:00Z",
-    )
-    assert estimate.estimate_state == "insufficient_evidence"
-    assert estimate.insufficient_reasons == ("weak_role_match",)
-    assert next(factor for factor in estimate.factors if factor.name == "role").score == 0
-
-
-def _levels(
-    *,
-    company: str = "Acme AI",
-    role: str = "Senior Platform Engineer",
-    minimum: int = 118_000,
-    maximum: int = 142_000,
-    level: str = "Senior",
-    tier: str = "tier_2_ambitious",
-    location: str = "Remote Europe",
-    sample_count: int | None = 4,
-    release_year: int = 2026,
-) -> ReportedCompensationObservation:
-    return ReportedCompensationObservation(
-        source_id="levels_fyi",
-        source_provenance="licensed",
-        company_name=company,
-        role_title=role,
-        level_label=level,
-        company_tier=tier,  # type: ignore[arg-type]
-        location=location,
-        minimum_amount=minimum,
-        maximum_amount=maximum,
-        sample_count=sample_count,
-        release_year=release_year,
-        attribution="Levels.fyi reported compensation data",
-        source_url="https://www.levels.fyi/companies/acme-ai/salaries/software-engineer",
+def estimate(rows=(), **kwargs):
+    return estimate_market_compensation(
+        job_id=JOB,
+        title="Synthetic role",
+        company="Synthetic employer",
+        location="Synthetic place",
+        observations=rows,
+        interpretation=interpretation(),
+        estimated_at=NOW,
+        **kwargs,
     )
 
 
-def _glassdoor(
-    *,
-    company: str = "Acme AI",
-    role: str = "Senior Software Engineer",
-    minimum: int = 112_000,
-    maximum: int = 136_000,
-    level: str = "Senior",
-    tier: str = "tier_2_ambitious",
-    location: str = "Madrid, Spain",
-    sample_count: int = 3,
-) -> ReportedCompensationObservation:
-    return ReportedCompensationObservation(
-        source_id="glassdoor",
-        source_provenance="licensed",
-        company_name=company,
-        role_title=role,
-        level_label=level,
-        company_tier=tier,  # type: ignore[arg-type]
-        location=location,
-        minimum_amount=minimum,
-        maximum_amount=maximum,
-        sample_count=sample_count,
-        attribution="Glassdoor reported compensation data",
-        source_url="https://www.glassdoor.com/Salary/Acme-AI-Senior-Software-Engineer-Salaries.htm",
+def test_equal_codes_use_recorded_ranges_and_citations():
+    rows = (
+        classified_row(observation()),
+        classified_row(replace(observation(minimum=70000, maximum=100000), source_id="glassdoor")),
     )
-
-
-def _euro_top_tech(
-    *,
-    company: str = "Euro Top Tech community",
-    role: str = "Chief Product Officer",
-    minimum: int = 315_000,
-    maximum: int = 315_000,
-    level: str = "Executive",
-    location: str = "Amsterdam, Netherlands",
-    sample_count: int = 1,
-) -> ReportedCompensationObservation:
-    return ReportedCompensationObservation(
-        source_id="euro_top_tech",
-        source_provenance="public",
-        company_name=company,
-        role_title=role,
-        level_label=level,
-        company_tier="unknown",
-        location=location,
-        minimum_amount=minimum,
-        maximum_amount=maximum,
-        sample_count=sample_count,
-        attribution="Euro Top Tech public crowdsourced compensation data",
-        source_url="https://www.eurotoptech.com/data",
+    result = estimate(rows)
+    assert result.estimate_state == "estimated_range"
+    assert (result.minimum_amount, result.maximum_amount, result.sample_count, result.source_count) == (
+        60000,
+        100000,
+        40,
+        2,
     )
-
-
-def _posted_salary(
-    *,
-    company: str = "Novartis",
-    role: str = "Director Digital Trust Platforms",
-    minimum: int = 84_400,
-    maximum: int = 156_800,
-    location: str = "Barcelona, Spain",
-) -> ReportedCompensationObservation:
-    return ReportedCompensationObservation(
-        source_id="posted_salary_text",
-        source_provenance="employer_posted",
-        company_name=company,
-        role_title=role,
-        level_label=None,
-        company_tier="unknown",
-        location=location,
-        minimum_amount=minimum,
-        maximum_amount=maximum,
-        currency="EUR",
-        period="year",
-        component="base_salary",
-        sample_count=1,
-        attribution="Employer-posted salary text captured by JobCtrl",
-    )
-
-
-def test_estimates_exact_company_role_from_reported_levels_and_glassdoor_rows() -> None:
-    estimate = estimate_market_compensation(
-        job_id=TEST_JOB_ID,
-        company="Acme AI Ltd.",
-        title="Senior Platform Engineer",
-        location="Remote Europe",
-        observations=(_levels(), _glassdoor(role="Senior Platform Engineer")),
-        posted_annualized_minimum=100_000,
-        posted_annualized_maximum=135_000,
-        estimated_at="2026-06-19T10:00:00Z",
-    )
-
-    assert estimate.estimate_state == "estimated_range"
-    assert estimate.component == "total_compensation"
-    assert estimate.currency == "EUR"
-    assert estimate.minimum_amount == 112_000
-    assert estimate.maximum_amount == 142_000
-    assert estimate.confidence_interval_minimum_amount is not None
-    assert estimate.confidence_interval_minimum_amount < estimate.minimum_amount
-    assert estimate.confidence_interval_maximum_amount is not None
-    assert estimate.confidence_interval_maximum_amount > estimate.maximum_amount
-    assert estimate.company_name == "Acme AI Ltd."
-    assert estimate.normalized_company == "acme ai"
-    assert estimate.normalized_role == "platform engineer"
-    assert estimate.company_tier == "tier_2_ambitious"
-    assert estimate.match_scope == "exact_company_role"
-    assert estimate.source_count == 2
-    assert estimate.sample_count == 7
-    assert {source.source_id for source in estimate.sources} == {"levels_fyi", "glassdoor"}
-    assert len(estimate.evidence) == 2
-    evidence_ranges = {(row.minimum_amount, row.maximum_amount) for row in estimate.evidence}
-    assert evidence_ranges == {(118_000, 142_000), (112_000, 136_000)}
-    assert {row.company_name for row in estimate.evidence} == {"Acme AI"}
-    assert {row.role_title for row in estimate.evidence} == {"Senior Platform Engineer"}
-    assert {row.source_url for row in estimate.evidence} == {
-        "https://www.glassdoor.com/Salary/Acme-AI-Senior-Software-Engineer-Salaries.htm",
-        "https://www.levels.fyi/companies/acme-ai/salaries/software-engineer",
-    }
-    assert all(row.company_score == 1 for row in estimate.evidence)
-    assert all(row.role_score >= 0.95 for row in estimate.evidence)
-    assert "reported_compensation_sample" in estimate.warnings
-    assert "company_role_fallback" not in estimate.warnings
-
-
-def test_executive_title_does_not_borrow_product_or_operations_executive_pay() -> None:
-    estimate = estimate_market_compensation(
-        job_id=TEST_JOB_ID,
-        company="Different Company",
-        title="CTO (Chief Technology Officer)",
-        location="Spain (Remote)",
-        observations=(
-            _euro_top_tech(role="Chief Product Officer", minimum=315_000, maximum=315_000),
-            _euro_top_tech(
-                company="US based startup", role="COO", minimum=175_000, maximum=175_000, location="Prague, Czechia"
-            ),
-            _euro_top_tech(
-                role="Staff Software Engineer", level="Staff / Engineering Manager", minimum=147_000, maximum=147_000
-            ),
-            _euro_top_tech(
-                role="Principal / Director Software Engineer",
-                level="Principal / Director",
-                minimum=350_000,
-                maximum=350_000,
-            ),
-        ),
-        estimated_at="2026-06-19T10:00:00Z",
-    )
-
-    assert estimate.estimate_state == "insufficient_evidence"
-    assert estimate.minimum_amount is None and estimate.maximum_amount is None
-    assert {row.role_title for row in estimate.evidence}.isdisjoint({"Chief Product Officer", "COO"})
-
-
-def test_director_title_and_same_location_fallback_are_described_truthfully() -> None:
-    estimate = estimate_market_compensation(
-        job_id=TEST_JOB_ID,
-        company="DuckDuckGo",
-        title="Privacy Engineering Director",
-        location="Spain",
-        observations=(
-            _euro_top_tech(
-                company="Euro Top Tech community",
-                role="Principal / Director Privacy Engineering",
-                level="Principal / Director",
-                minimum=90_000,
-                maximum=140_000,
-                location="Madrid, Spain",
-            ),
-        ),
-        estimated_at="2026-08-12T10:00:00Z",
-    )
-
-    assert estimate.seniority_label == "director"
-    assert estimate.match_scope == "same_location_role_fallback"
-    company_factor = next(factor for factor in estimate.factors if factor.name == "company")
-    level_factor = next(factor for factor in estimate.factors if factor.name == "level")
-    assert company_factor.score == 0.45
-    assert company_factor.reason == (
-        "No direct DuckDuckGo salary row matched; comparable roles in the same location provide 45% company support."
-    )
-    assert estimate.estimate_state == "insufficient_evidence"
-    assert estimate.minimum_amount is None and estimate.maximum_amount is None
-    assert level_factor.score == 0
-    assert "requested director level has no matching evidence" in level_factor.reason
-
-
-def test_employer_posted_observations_never_enter_market_estimates() -> None:
-    estimate = estimate_market_compensation(
-        job_id=TEST_JOB_ID,
-        company="Different Company",
-        title="Chief Technology Officer (CTO)",
-        location="Spain (Remote)",
-        observations=(
-            _posted_salary(role="Director Digital Trust Platforms", minimum=84_400, maximum=156_800),
-            _posted_salary(role="Principal Engineer", minimum=80_000, maximum=100_000),
-            _posted_salary(role="Staff Software Engineer", minimum=120_000, maximum=120_000),
-        ),
-        component="base_salary",
-        estimated_at="2026-06-19T10:00:00Z",
-    )
-
-    assert estimate.estimate_state == "insufficient_evidence"
-    assert estimate.minimum_amount is None
-    assert estimate.maximum_amount is None
-    assert estimate.sources == ()
-    assert estimate.evidence == ()
-    assert "posted_salary_sample" not in estimate.warnings
-
-
-def test_estimates_company_adjacent_role_with_explicit_fallback_warning() -> None:
-    estimate = estimate_market_compensation(
-        job_id=TEST_JOB_ID,
-        company="Acme AI",
-        title="Senior Backend Engineer",
-        location="Remote Europe",
-        observations=(_levels(role="Senior Platform Engineer"), _glassdoor(role="Senior Software Engineer")),
-        estimated_at="2026-06-19T10:00:00Z",
-    )
-
-    assert estimate.estimate_state == "estimated_range"
-    assert estimate.match_scope == "company_adjacent_role"
-    assert "company_role_fallback" in estimate.warnings
-
-
-def test_enriched_software_leadership_rejects_same_company_sales_population() -> None:
-    estimate = estimate_market_compensation(
-        job_id=TEST_JOB_ID,
-        company="Acme AI",
-        title="Head of Engineering, Sales & Marketing Tools",
-        location="Madrid, Spain",
-        job_context="Software backend services using Java and Kubernetes",
-        observations=(_glassdoor(company="Acme AI", role="Director of Sales", level="Director",
-                                 minimum=60_000, maximum=90_000, sample_count=20),),
-        estimated_at="2026-09-25T10:00:00Z",
-    )
-    assert estimate.estimate_state == "insufficient_evidence"
-    assert estimate.insufficient_reasons == ("weak_role_match",)
-    assert estimate.minimum_amount is None and estimate.maximum_amount is None
-    assert next(factor for factor in estimate.factors if factor.name == "role").score == 0
-
-
-@pytest.mark.parametrize("job_context", [None, ""])
-def test_unresolved_engineering_leadership_rejects_same_company_sales_population(
-    job_context: str | None,
-) -> None:
-    estimate = estimate_market_compensation(
-        job_id=TEST_JOB_ID,
-        company="Acme AI",
-        title="Head of Engineering, Sales & Marketing Tools",
-        location="Madrid, Spain",
-        job_context=job_context,
-        observations=(_glassdoor(company="Acme AI", role="Director of Sales", level="Director",
-                                 minimum=60_000, maximum=90_000, sample_count=20),),
-        estimated_at="2026-09-25T10:00:00Z",
-    )
-    assert estimate.estimate_state == "insufficient_evidence"
-    assert estimate.insufficient_reasons == ("weak_role_match",)
-    assert estimate.minimum_amount is None and estimate.maximum_amount is None
-    assert estimate.evidence == ()
-    assert next(factor for factor in estimate.factors if factor.name == "role").score == 0
-
-
-@pytest.mark.parametrize(("title", "reported_role"), [
-    ("Director of Software Engineering", "Director of Sales"),
-    ("Head of Platform Engineering", "Director of Software Engineering"),
-])
-def test_title_supported_leadership_rejects_other_role_families_without_enrichment(
-    title: str, reported_role: str,
-) -> None:
-    estimate = estimate_market_compensation(
-        job_id=TEST_JOB_ID, company="Acme AI", title=title, location="Madrid, Spain",
-        observations=(_glassdoor(company="Acme AI", role=reported_role, level="Director",
-                                 minimum=60_000, maximum=90_000, sample_count=20),),
-        estimated_at="2026-09-25T10:00:00Z",
-    )
-    assert estimate.estimate_state == "insufficient_evidence"
-    assert estimate.insufficient_reasons == ("weak_role_match",)
-    assert estimate.minimum_amount is None and estimate.maximum_amount is None
-
-
-def test_title_supported_leadership_accepts_same_family_evidence_without_enrichment() -> None:
-    estimate = estimate_market_compensation(
-        job_id=TEST_JOB_ID, company="Acme AI", title="Director of Software Engineering",
-        location="Madrid, Spain",
-        observations=(_glassdoor(company="Acme AI", role="Head of Software Engineering", level="Director",
-                                 minimum=140_000, maximum=180_000, sample_count=20),),
-        estimated_at="2026-09-25T10:00:00Z",
-    )
-    assert estimate.estimate_state == "estimated_range"
-    assert (estimate.minimum_amount, estimate.maximum_amount) == (140_000, 180_000)
-
-
-def test_enriched_software_leadership_keeps_only_compatible_director_evidence() -> None:
-    observations = (
-        _glassdoor(company="Acme AI", role="Director of Sales", level="Director",
-                   minimum=60_000, maximum=90_000, sample_count=20),
-        _glassdoor(company="Acme AI", role="Head of Software Engineering", level="Director",
-                   minimum=140_000, maximum=180_000, sample_count=20),
-    )
-    estimate = estimate_market_compensation(
-        job_id=TEST_JOB_ID, company="Acme AI",
-        title="Head of Engineering, Sales & Marketing Tools", location="Madrid, Spain",
-        job_context="Software backend services using Java and Kubernetes",
-        observations=observations, estimated_at="2026-09-25T10:00:00Z",
-    )
-    assert estimate.estimate_state == "estimated_range"
-    assert (estimate.minimum_amount, estimate.maximum_amount) == (140_000, 180_000)
-    assert [row.role_title for row in estimate.evidence] == ["Head of Software Engineering"]
-
-
-def test_estimates_trimodal_tier_role_fallback_with_explicit_warning() -> None:
-    estimate = estimate_market_compensation(
-        job_id=TEST_JOB_ID,
-        company="Trimodal Labs",
-        title="Senior Platform Engineer",
-        location="Remote Europe",
-        observations=(
-            _levels(
-                company="Trimodal Labs",
-                role="Senior DevOps Lead",
-                minimum=172_000,
-                maximum=196_000,
-                tier="tier_3_top_of_market",
-                sample_count=4,
-            ),
-            _glassdoor(
-                company="Peer TopCo",
-                role="Senior Platform Engineer",
-                minimum=168_000,
-                maximum=190_000,
-                tier="tier_3_top_of_market",
-                sample_count=3,
-            ),
-        ),
-        estimated_at="2026-06-19T10:00:00Z",
-    )
-
-    assert estimate.estimate_state == "estimated_range"
-    assert estimate.match_scope == "tier_role_fallback"
-    assert estimate.aggregate_bucket == "trimodal tier role fallback"
-    assert "company_role_fallback" in estimate.warnings
-
-
-def test_infers_trimodal_tier_from_reported_compensation_midpoint() -> None:
-    estimate = estimate_market_compensation(
-        job_id=TEST_JOB_ID,
-        company="Acme AI",
-        title="Senior Platform Engineer",
-        location="Remote Europe",
-        observations=(
-            _levels(role="Senior Platform Engineer", tier="unknown", minimum=128_000, maximum=152_000),
-            _glassdoor(role="Senior Platform Engineer", tier="unknown", minimum=122_000, maximum=146_000),
-        ),
-        estimated_at="2026-06-19T10:00:00Z",
-    )
-
-    assert estimate.estimate_state == "estimated_range"
-    assert estimate.match_scope == "exact_company_role"
-    assert estimate.company_tier != "unknown"
-    assert "trimodal_tier_inferred" in estimate.warnings
-    assert any(factor.name == "trimodal_tier" for factor in estimate.factors)
-
-
-def test_weak_market_factors_emit_low_confidence_ranges_with_wider_intervals() -> None:
-    low_sample = estimate_market_compensation(
-        job_id=TEST_JOB_ID,
-        company="Acme AI",
-        title="Senior Platform Engineer",
-        location="Remote Europe",
-        observations=(_levels(role="Senior Platform Engineer", sample_count=1),),
-        estimated_at="2026-06-19T10:00:00Z",
-    )
-
-    weak_level = estimate_market_compensation(
-        job_id=TEST_JOB_ID,
-        company="Acme AI",
-        title="Senior Platform Engineer",
-        location="Remote Europe",
-        observations=(
-            _levels(role="Senior Platform Engineer", level="Junior"),
-            _glassdoor(role="Senior Platform Engineer", level="Junior"),
-        ),
-        estimated_at="2026-06-19T10:00:00Z",
-    )
-
-    weak_location = estimate_market_compensation(
-        job_id=TEST_JOB_ID,
-        company="Acme AI",
-        title="Senior Platform Engineer",
-        location="Remote Europe",
-        observations=(
-            _levels(role="Senior Platform Engineer", location="San Francisco, CA"),
-            _glassdoor(role="Senior Platform Engineer", location="Austin, TX"),
-        ),
-        estimated_at="2026-06-19T10:00:00Z",
-    )
-
-    source_dispersion = estimate_market_compensation(
-        job_id=TEST_JOB_ID,
-        company="Acme AI",
-        title="Senior Platform Engineer",
-        location="Remote Europe",
-        observations=(
-            _levels(role="Senior Platform Engineer", minimum=82_000, maximum=94_000),
-            _glassdoor(role="Senior Platform Engineer", minimum=178_000, maximum=214_000),
-        ),
-        estimated_at="2026-06-19T10:00:00Z",
-    )
-
-    for estimate in (low_sample, weak_location, source_dispersion):
-        assert estimate.estimate_state == "estimated_range"
-        assert estimate.confidence_band == "low"
-        assert estimate.minimum_amount is not None
-        assert estimate.maximum_amount is not None
-        assert estimate.confidence_interval_minimum_amount is not None
-        assert estimate.confidence_interval_minimum_amount < estimate.minimum_amount
-        assert estimate.confidence_interval_maximum_amount is not None
-        assert estimate.confidence_interval_maximum_amount > estimate.maximum_amount
-
-    assert "low_sample_count" in low_sample.warnings
-    assert any(factor.name == "sample" for factor in low_sample.factors)
-
-    assert weak_level.estimate_state == "insufficient_evidence"
-    assert weak_level.minimum_amount is None
-    assert "weak_level_match" in weak_level.insufficient_reasons
-    assert next(factor for factor in weak_level.factors if factor.name == "level").score == 0
-
-    assert "location_mismatch" in weak_location.warnings
-    assert any(factor.name == "location" for factor in weak_location.factors)
-
-    assert any(factor.name == "agreement" for factor in source_dispersion.factors)
-
-
-def test_unknown_sample_support_stays_unknown_without_inventing_a_single_sample() -> None:
-    estimate = estimate_market_compensation(
-        job_id=TEST_JOB_ID,
-        company="Acme AI",
-        title="Senior Platform Engineer",
-        location="Remote Europe",
-        observations=(_levels(sample_count=None),),
-        estimated_at="2026-07-13T10:00:00Z",
-    )
-
-    assert estimate.sample_count is None
-    assert estimate.sources[0].sample_count is None
-    assert estimate.evidence[0].sample_count is None
-    assert "low_sample_count" not in estimate.warnings
-    sample_factor = next(factor for factor in estimate.factors if factor.name == "sample")
-    assert sample_factor.reason == "Reported compensation sample support is unknown."
-
-
-def test_same_location_role_fallback_estimates_when_company_role_is_missing() -> None:
-    estimate = estimate_market_compensation(
-        job_id=TEST_JOB_ID,
-        company="Different Company",
-        title="Senior Platform Engineer",
-        location="Remote Europe",
-        observations=(_levels(company="Acme AI"), _glassdoor(company="OtherCo")),
-        estimated_at="2026-06-19T10:00:00Z",
-    )
-
-    assert estimate.estimate_state == "estimated_range"
-    assert estimate.match_scope == "same_location_role_fallback"
-    assert estimate.minimum_amount == 118_000
-    assert estimate.maximum_amount == 142_000
-    assert estimate.confidence_band == "low"
-    assert estimate.confidence_interval_minimum_amount is not None
-    assert estimate.confidence_interval_minimum_amount < estimate.minimum_amount
-    assert "company_role_fallback" in estimate.warnings
-    assert [row.role_title for row in estimate.evidence] == ["Senior Platform Engineer"]
-
-
-def test_levels_public_software_aggregate_cannot_price_platform_role() -> None:
-    aggregate = _levels(
-        company=LEVELS_FYI_MARKET_AGGREGATE_COMPANY,
-        role="Software Engineer",
-        minimum=39_000,
-        maximum=77_000,
-        level="all levels",
-        location="Madrid, Spain",
-        sample_count=599,
-        tier="unknown",
-    )
-    top_payer = _levels(
-        company="Datadog",
-        role="Software Engineer",
-        minimum=111_000,
-        maximum=111_000,
-        level="all levels",
-        location="Madrid, Spain",
-        sample_count=1,
-        tier="unknown",
-    )
-
-    estimate = estimate_market_compensation(
-        job_id=TEST_JOB_ID,
-        company="Different Company",
-        title="Senior Platform Engineer",
-        location="Madrid, Spain",
-        observations=(aggregate, top_payer),
-        estimated_at="2026-07-12T10:00:00Z",
-    )
-
-    assert estimate.estimate_state == "insufficient_evidence"
-    assert estimate.match_scope == "none"
-    assert estimate.minimum_amount is None
-    assert estimate.evidence == ()
-    assert "weak_role_match" in estimate.insufficient_reasons
-    assert estimate.maximum_amount is None
-
-
-def test_missing_company_is_insufficient_instead_of_location_title_estimation() -> None:
-    estimate = estimate_market_compensation(
-        job_id=TEST_JOB_ID,
-        company="",
-        title="Senior Platform Engineer",
-        location="Remote Europe",
-        observations=(_levels(), _glassdoor()),
-        estimated_at="2026-06-19T10:00:00Z",
-    )
-
-    assert estimate.estimate_state == "insufficient_evidence"
-    assert "missing_company" in estimate.insufficient_reasons
-    assert estimate.minimum_amount is None
-
-
-def test_stale_reported_sources_are_source_unavailable() -> None:
-    estimate = estimate_market_compensation(
-        job_id=TEST_JOB_ID,
-        company="Acme AI",
-        title="Senior Platform Engineer",
-        location="Remote Europe",
-        observations=(_levels(release_year=2020),),
-        estimated_at="2026-06-19T10:00:00Z",
-    )
-
-    assert estimate.estimate_state == "source_unavailable"
-    assert "stale_source_snapshot" in estimate.source_unavailable_reasons
-    assert estimate.minimum_amount is None
-
-
-def test_unsupported_components_never_emit_range() -> None:
-    estimate = estimate_market_compensation(
-        job_id=TEST_JOB_ID,
-        company="Acme AI",
-        title="Senior Platform Engineer",
-        location="Remote Europe",
-        component="equity",
-        observations=(_levels(),),
-        estimated_at="2026-06-19T10:00:00Z",
-    )
-
-    assert estimate.estimate_state == "unsupported"
-    assert "unsupported_component" in estimate.unsupported_reasons
-    assert estimate.minimum_amount is None
-    assert estimate.maximum_amount is None
+    assert result.normalized_role == "software_engineering"
+    assert [row.determination_id for row in result.evidence] == [row.determination_id for row in rows]
+    assert (result.confidence_interval_minimum_amount, result.confidence_interval_maximum_amount) == (60000, 100000)
 
 
 @pytest.mark.parametrize(
-    ("posted_min", "posted_max", "expected_warning"),
+    "family,seniority,country",
     [
-        (70_000, 80_000, "source_conflict_with_posted_salary"),
-        (110_000, 140_000, None),
+        ("sales", "senior", "ES"),
+        ("software_engineering", "principal", "ES"),
+        ("software_engineering", "senior", "DE"),
+        ("unknown", "unknown", None),
     ],
 )
-def test_posted_salary_conflict_is_explicit(
-    posted_min: int,
-    posted_max: int,
-    expected_warning: str | None,
-) -> None:
-    estimate = estimate_market_compensation(
-        job_id=TEST_JOB_ID,
-        company="Acme AI",
-        title="Senior Platform Engineer",
-        location="Remote Europe",
-        observations=(_levels(), _glassdoor(role="Senior Platform Engineer")),
-        posted_annualized_minimum=posted_min,
-        posted_annualized_maximum=posted_max,
-        estimated_at="2026-06-19T10:00:00Z",
+def test_unequal_or_unknown_model_codes_cannot_supply_a_range(family, seniority, country):
+    result = estimate((classified_row(observation(), family=family, seniority=seniority, country=country),))
+    assert result.estimate_state == "insufficient_evidence"
+    assert result.evidence == () and result.minimum_amount is None
+
+
+def test_missing_classification_blocks_instead_of_interpreting_provider_text():
+    with pytest.raises(DeterminationFailure, match="benchmark_classification_unavailable"):
+        estimate((observation(),))
+
+
+def test_unknown_sample_counts_remain_unknown():
+    result = estimate((classified_row(replace(observation(), sample_count=None)),))
+    assert result.sample_count is None and result.evidence[0].sample_count is None
+
+
+def test_posted_pay_is_excluded_from_market_authority():
+    result = estimate(
+        (classified_row(replace(observation(), source_id="posted_salary_text", source_provenance="employer_posted")),)
+    )
+    assert result.estimate_state == "insufficient_evidence" and result.evidence == ()
+
+
+@pytest.mark.parametrize("currency,period", [("USD", "year"), ("EUR", "month")])
+def test_different_units_are_never_implicitly_converted(currency, period):
+    result = estimate(
+        (classified_row(observation()), classified_row(replace(observation(), currency=currency, period=period)))
+    )
+    assert result.estimate_state == "insufficient_evidence" and result.minimum_amount is None
+
+
+def test_single_currency_and_period_preserve_the_original_amounts():
+    result = estimate((classified_row(replace(observation(), currency="USD", period="month")),))
+    assert (result.currency, result.period, result.minimum_amount, result.maximum_amount) == (
+        "USD",
+        "month",
+        60000,
+        90000,
     )
 
-    if expected_warning is None:
-        assert "source_conflict_with_posted_salary" not in estimate.warnings
-    else:
-        assert expected_warning in estimate.warnings
+
+def test_company_identity_is_exact_canonical_text():
+    row = classified_row(replace(observation(), company_name="Another employer"))
+    result = estimate((row,))
+    assert result.match_scope == "same_location_role_fallback" and result.evidence[0].company_score == 0
 
 
-def test_principal_peer_cohort_wins_over_all_levels_and_senior_company_rows() -> None:
-    rows = (
-        _levels(company=LEVELS_FYI_MARKET_AGGREGATE_COMPANY, role="Software Engineer", level="all levels", minimum=40_000, maximum=70_000, location="Spain", tier="unknown"),
-        _levels(company="Different Company", role="Software Engineer", level="Senior", minimum=80_000, maximum=100_000, location="Spain", tier="unknown"),
-        _levels(company="Peer Cloud", role="Software Engineer", level="Principal Engineer", minimum=160_000, maximum=180_000, location="Spain", tier="unknown"),
-        _levels(company="Peer Cloud", role="Software Engineer", level="Principal Engineer", minimum=200_000, maximum=240_000, location="Germany", tier="unknown"),
+@pytest.mark.parametrize("minimum,maximum,conflict", [(60000, 90000, False), (1000, 2000, True)])
+def test_posted_range_conflict_uses_amounts_only(minimum, maximum, conflict):
+    result = estimate(
+        (classified_row(observation()),), posted_annualized_minimum=minimum, posted_annualized_maximum=maximum
     )
-    estimate = estimate_market_compensation(job_id=TEST_JOB_ID, company="Different Company",
-        title="Principal Software Engineer", location="Madrid, Spain", observations=rows,
-        estimated_at="2026-06-19T10:00:00Z")
-    assert estimate.estimate_state == "estimated_range"
-    assert (estimate.minimum_amount, estimate.maximum_amount) == (160_000, 180_000)
-    assert estimate.match_scope == "same_location_role_fallback"
-    assert estimate.confidence_band == "low"
-    assert estimate.aggregate_bucket == "reported regional company peer cohort"
-    assert [(row.company_name, row.level_label, row.location) for row in estimate.evidence] == [
-        ("Peer Cloud", "Principal Engineer", "Spain")]
-    assert estimate.evidence[0].company_score == 0
-
-
-@pytest.mark.parametrize(("source_title", "bucket", "target_title", "compatible"), [
-    ("Principal Infrastructure Engineer", "Principal / Director", "Principal Infrastructure Engineer", True),
-    ("Principal Infrastructure Engineer", "Principal / Director", "Director of Software Engineering", False),
-    ("Director of Software Engineering", "Principal / Director", "Director of Software Engineering", True),
-    ("Director of Software Engineering", "Principal / Director", "Principal Software Engineer", False),
-    ("Software Engineer", "Principal / Director", "Director of Software Engineering", False),
-    ("Software Engineer", "Principal / Director", "Principal Software Engineer", False),
-    ("Staff Software Engineer", "Staff / Engineering Manager", "Staff Software Engineer", True),
-    ("Staff Software Engineer", "Staff / Engineering Manager", "Software Engineering Manager", False),
-    ("Software Engineering Manager", "Staff / Engineering Manager", "Software Engineering Manager", True),
-    ("Software Engineer", "Staff / Engineering Manager", "Staff Software Engineer", False),
-])
-def test_mixed_provider_bucket_is_not_exact_level_without_source_title_support(
-    source_title, bucket, target_title, compatible,
-) -> None:
-    observation = _euro_top_tech(role=source_title, level=bucket, location="Madrid, Spain", minimum=156_000, maximum=156_000)
-    estimate = estimate_market_compensation(job_id=TEST_JOB_ID, company="Unrelated Company", title=target_title,
-        location="Spain", observations=(observation,), estimated_at="2026-09-15T10:00:00Z")
-    assert (estimate.estimate_state == "estimated_range") is compatible
-    if compatible:
-        assert estimate.aggregate_bucket == "reported regional source sample"
-    if compatible or estimate.evidence:
-        assert estimate.evidence[0].level_label == bucket
-        assert estimate.evidence[0].role_title == source_title
-        assert next(factor.score for factor in estimate.factors if factor.name == "level") == (0.95 if compatible else 0)
-    if not compatible:
-        assert estimate.minimum_amount is None and estimate.maximum_amount is None
-
-
-def test_exact_company_level_evidence_survives_geography_widening() -> None:
-    rows = (
-        _levels(company="ExampleCo", role="Senior Software Developer", level="Senior",
-                location="Remote Europe", minimum=118_000, maximum=142_000),
-        _levels(company=LEVELS_FYI_MARKET_AGGREGATE_COMPANY, role="Software Developer", level="Senior",
-                location="Spain", minimum=40_000, maximum=70_000, tier="unknown"),
-    )
-    estimate = estimate_market_compensation(job_id=TEST_JOB_ID, company="ExampleCo",
-        title="Senior Software Developer", location="Madrid, Spain", observations=rows,
-        estimated_at="2026-06-19T10:00:00Z")
-    assert estimate.estimate_state == "estimated_range"
-    assert estimate.match_scope == "exact_company_role"
-    assert (estimate.minimum_amount, estimate.maximum_amount) == (118_000, 142_000)
-    assert [row.company_name for row in estimate.evidence] == ["ExampleCo"]
-
-
-def test_level_matches_from_another_region_do_not_displace_same_country_context() -> None:
-    rows = (
-        _levels(company=LEVELS_FYI_MARKET_AGGREGATE_COMPANY, role="Software Engineer", level="all levels",
-                location="Spain", minimum=40_000, maximum=70_000, tier="unknown"),
-        _levels(company="Big US Corp", role="Software Engineer", level="Principal Engineer",
-                location="United States", minimum=300_000, maximum=350_000, tier="unknown"),
-    )
-    estimate = estimate_market_compensation(job_id=TEST_JOB_ID, company="Different Company",
-        title="Principal Software Engineer", location="Madrid, Spain", observations=rows,
-        estimated_at="2026-06-19T10:00:00Z")
-    assert estimate.estimate_state == "insufficient_evidence"
-    assert "weak_level_match" in estimate.insufficient_reasons
-    assert estimate.minimum_amount is None and estimate.maximum_amount is None
-    assert {row.location for row in estimate.evidence} == {"Spain"}
-    assert "location_mismatch" not in estimate.warnings
+    assert ("source_conflict_with_posted_salary" in result.warnings) == conflict

@@ -57,7 +57,7 @@ from jobctrl.domain.contact.outreach_gates import (
     DraftGateResults,
     OutreachClaimProvenance,
 )
-from jobctrl.domain.materials.value_objects import ArtifactStatus
+from jobctrl.domain.ports.artifact_review import ArtifactStatus
 from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.tenant import TenantId
 
@@ -136,9 +136,7 @@ class OutreachDraft:
         if not isinstance(self.thread_id, str) or not self.thread_id.strip():
             raise ValueError("OutreachDraft.thread_id must be a non-empty string")
         if not isinstance(self.generation, int) or self.generation < 1:
-            raise ValueError(
-                f"OutreachDraft.generation must be an int >= 1, got {self.generation!r}"
-            )
+            raise ValueError(f"OutreachDraft.generation must be an int >= 1, got {self.generation!r}")
         if not isinstance(self.kind, OutreachDraftKind):
             raise ValueError("OutreachDraft.kind must be an OutreachDraftKind")
         if self.status not in _DRAFT_STATUSES:
@@ -151,9 +149,7 @@ class OutreachDraft:
             raise ValueError("OutreachDraft.gate_results must be a DraftGateResults")
         for claim in self.provenance:
             if not isinstance(claim, OutreachClaimProvenance):
-                raise ValueError(
-                    "OutreachDraft.provenance entries must be OutreachClaimProvenance (INV-2)"
-                )
+                raise ValueError("OutreachDraft.provenance entries must be OutreachClaimProvenance (INV-2)")
         # INV-5 floor: an approved draft MUST have passed the gates. Constructing
         # an approved draft over failed gates is impossible, so a persisted or
         # rehydrated draft can never lie about being approved-but-ungrounded.
@@ -176,26 +172,19 @@ class OutreachDraft:
         """
         if self.status is not ArtifactStatus.CANDIDATE:
             raise ValueError(
-                f"Only a candidate draft can be approved (draft {self.draft_id!r} "
-                f"is {self.status.value!r})"
+                f"Only a candidate draft can be approved (draft {self.draft_id!r} is {self.status.value!r})"
             )
         if not self.gate_results.passed:
-            raise ValueError(
-                f"Draft {self.draft_id!r} cannot be approved: its truthfulness gates "
-                "did not pass (INV-5)"
-            )
+            raise ValueError(f"Draft {self.draft_id!r} cannot be approved: its truthfulness gates did not pass (INV-5)")
         return replace(self, status=ArtifactStatus.APPROVED, approved_at=approved_at)
 
     def reject(self, *, rejected_at: str, reason: str = "") -> "OutreachDraft":
         """Reject a candidate draft. Never touches an already-approved draft."""
         if self.status is not ArtifactStatus.CANDIDATE:
             raise ValueError(
-                f"Only a candidate draft can be rejected (draft {self.draft_id!r} "
-                f"is {self.status.value!r})"
+                f"Only a candidate draft can be rejected (draft {self.draft_id!r} is {self.status.value!r})"
             )
-        return replace(
-            self, status=ArtifactStatus.REJECTED, rejected_at=rejected_at, reason=reason
-        )
+        return replace(self, status=ArtifactStatus.REJECTED, rejected_at=rejected_at, reason=reason)
 
     def supersede(self) -> "OutreachDraft":
         """Mark this draft superseded by a newer generation (candidate/approved only)."""
@@ -468,10 +457,7 @@ class OutreachThread:
         """
         if draft.thread_id != self.thread_id:
             raise ValueError("Draft belongs to a different thread")
-        superseded = tuple(
-            existing.supersede() if existing.is_candidate else existing
-            for existing in self.drafts
-        )
+        superseded = tuple(existing.supersede() if existing.is_candidate else existing for existing in self.drafts)
         return replace(self, drafts=(*superseded, draft), updated_at=at)
 
     def approve_draft(self, draft_id: str, *, approved_at: str) -> "OutreachThread":
@@ -486,25 +472,18 @@ class OutreachThread:
             raise ValueError(f"Draft {draft_id!r} not found on thread {self.thread_id!r}")
         approved = target.approve(approved_at=approved_at)
         next_drafts = tuple(
-            approved
-            if existing.draft_id == draft_id
-            else (existing.supersede() if existing.is_approved else existing)
+            approved if existing.draft_id == draft_id else (existing.supersede() if existing.is_approved else existing)
             for existing in self.drafts
         )
         return replace(self, drafts=next_drafts, updated_at=approved_at)
 
-    def reject_draft(
-        self, draft_id: str, *, rejected_at: str, reason: str = ""
-    ) -> "OutreachThread":
+    def reject_draft(self, draft_id: str, *, rejected_at: str, reason: str = "") -> "OutreachThread":
         """Reject a candidate draft. The last approved draft is untouched (INV-5)."""
         target = self.draft(draft_id)
         if target is None:
             raise ValueError(f"Draft {draft_id!r} not found on thread {self.thread_id!r}")
         rejected = target.reject(rejected_at=rejected_at, reason=reason)
-        next_drafts = tuple(
-            rejected if existing.draft_id == draft_id else existing
-            for existing in self.drafts
-        )
+        next_drafts = tuple(rejected if existing.draft_id == draft_id else existing for existing in self.drafts)
         return replace(self, drafts=next_drafts, updated_at=rejected_at)
 
     # ------------------------------------------------------------------
@@ -550,9 +529,7 @@ class OutreachThread:
     # Follow-up schedule (surfaced-only; never auto-acted, never sent)
     # ------------------------------------------------------------------
 
-    def schedule_follow_up(
-        self, *, due_at: str, basis: str, at: str
-    ) -> "OutreachThread":
+    def schedule_follow_up(self, *, due_at: str, basis: str, at: str) -> "OutreachThread":
         """Set (or reset) the suggested next follow-up date for this thread.
 
         The date is a suggestion the user can edit; it is surfaced as a due
@@ -560,9 +537,7 @@ class OutreachThread:
         """
         if not (due_at or "").strip():
             raise ValueError("schedule_follow_up requires a non-empty due_at")
-        schedule = FollowUpSchedule(
-            state=FollowUpState.SCHEDULED, due_at=due_at, basis=basis or FollowUpBasis.MANUAL
-        )
+        schedule = FollowUpSchedule(state=FollowUpState.SCHEDULED, due_at=due_at, basis=basis or FollowUpBasis.MANUAL)
         return replace(self, follow_up=schedule, updated_at=at)
 
     def complete_follow_up(self, *, at: str) -> "OutreachThread":

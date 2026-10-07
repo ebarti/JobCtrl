@@ -67,7 +67,6 @@ class JobPreparationInput:
     allow_low_fit_override: bool = False
     tailor_models: tuple[str, ...] = ()
     tailor_judge_model: str | None = None
-    tailor_judge_min_score: float | None = None
     llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
     discovery_execution: DiscoveryExecutionRef | None = None
     discovery_cohort_kind: DiscoveryExecutionCohortKind | None = None
@@ -293,7 +292,6 @@ async def _execute_step(step: str, payload: JobPreparationInput) -> Any:
                 allow_low_fit_override=payload.allow_low_fit_override,
                 tailor_models=payload.tailor_models,
                 tailor_judge_model=payload.tailor_judge_model,
-                tailor_judge_min_score=payload.tailor_judge_min_score,
                 llm_model=payload.llm_model,
             ),
             start_to_close_timeout=_DEFAULT_TIMEOUT,

@@ -1267,7 +1267,6 @@ async def test_pipeline_workflow_preserves_stage_options():
                         validation_mode="strict",
                         tailor_models=("codex:fast", "claude:accurate"),
                         tailor_judge_model="gemini:judge",
-                        tailor_judge_min_score=0.9,
                     ),
                     id=f"pipeline-options-wf-{uuid.uuid4()}",
                     task_queue=queue,
@@ -1280,7 +1279,6 @@ async def test_pipeline_workflow_preserves_stage_options():
     assert by_stage["tailor"]["retailor"] is True
     assert by_stage["tailor"]["tailor_models"] == ("codex:fast", "claude:accurate")
     assert by_stage["tailor"]["tailor_judge_model"] == "gemini:judge"
-    assert by_stage["tailor"]["tailor_judge_min_score"] == pytest.approx(0.9)
 
 
 # ---------------------------------------------------------------------------

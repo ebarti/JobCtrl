@@ -1,3 +1,5 @@
+import { recordArtifactAuthority, recordCompensationAuthority, recordRoleFeedback } from "./semantic-fixtures.js";
+import { recordOutcomeDecision, recordRepeatDecision } from "./semantic-fixtures.js";
 import { seedApplicationUrl } from "./seed-enrichment.js";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -17,7 +19,7 @@ import type { JsonRpcDispatcher } from "../src/json-rpc-adapter.js";
 import { type ActionDispatcher, type ActionDispatchResult } from "../src/local-actions.js";
 import { BUILT_IN_RESUME_TEMPLATE_THEME } from "../src/resume-templates.js";
 import { type BuildAppOptions, buildApp } from "../src/server.js";
-import { initializeExactV7Database } from "./v7-schema.js";
+import { initializeExactDatabase } from "./exact-schema.js";
 
 const READY_JOB = "https://example.com/jobs/apply-ready";
 const DRY_RUN_JOB = "https://example.com/jobs/apply-dry-run";
@@ -76,12 +78,8 @@ describe("application feedback API", () => {
         },
         market: {
           recordStatus: "recorded",
-          estimateState: "estimated_range",
           displayRange: "EUR 112000-142000/year",
-          confidenceBand: "medium",
           confidenceScore: 0.82,
-          sourceCount: 2,
-          sampleCount: 7,
         },
       },
       fitScore: 9,
@@ -2158,6 +2156,7 @@ describe("application feedback API", () => {
       "Principal Platform Engineer",
       APPLIED_JOB,
     );
+    recordRepeatDecision(seed,READY_JOB_ID,APPLIED_JOB_ID,"equivalent");
     seed.close();
     const app = buildApp(options);
 
@@ -2250,7 +2249,7 @@ function seedDatabase(dbPath: string): void {
   fs.writeFileSync(resumePath, "tailored resume");
   fs.writeFileSync(resumePdfPath, "%PDF-1.4\n% test\n");
   fs.writeFileSync(rejectedResumePdfPath, "%PDF-1.4\n% rejected test\n");
-  initializeExactV7Database(dbPath);
+  initializeExactDatabase(dbPath);
   const db = new Database(dbPath);
   db.pragma("foreign_keys = ON");
   seedBuiltInResumeTemplate(db);
@@ -2339,6 +2338,7 @@ function seedDatabase(dbPath: string): void {
     }),
   );
   insertBulletProvenance(db);
+  recordArtifactAuthority(db);
   insertCompensationRows(db, READY_JOB_ID, READY_JOB);
   db.close();
 }
@@ -2532,6 +2532,7 @@ function insertCompensationRows(db: Database.Database, jobId: string, jobUrl: st
     "tier_2_ambitious",
     "exact_company_role",
   );
+  recordCompensationAuthority(db,jobId);
 }
 
 function insertJob(
@@ -3040,6 +3041,7 @@ function seedOutcomeSuggestion(dbPath: string): void {
     "pending",
     "2026-06-01T09:06:00.000Z",
   );
+  recordOutcomeDecision(db,"suggestion-1","gmail-message-1","applied_confirmation",0.91,"raw confidential email body");
   db.close();
 }
 

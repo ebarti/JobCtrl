@@ -27,20 +27,18 @@ from typing import Any, Mapping, Protocol
 
 from jobctrl.config import RESUME_PATH
 from jobctrl.database import effective_tailoring_min_score, get_connection, get_jobs_by_stage
+from jobctrl.domain.determinations import serialized_determination_failure
 from jobctrl.domain.discovery.value_objects import PostingUrl
 from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.job_content_identity import (
     job_content_fingerprint,
-    normalize_location_for_repost_match,
-    role_title_has_reference_suffix,
-    role_titles_match_as_repost,
 )
 from jobctrl.domain.materials.analysis import (
     EmployerAnalysis,
     EnsembleError,
     compute_snapshot_hash,
 )
-from jobctrl.domain.materials.analyze_use_case import build_jd_snapshot
+from jobctrl.domain.job_snapshot import build_jd_snapshot
 from jobctrl.domain.ports.events import EventPublisher
 from jobctrl.domain.ports.materials import EmployerAnalysisRepository
 from jobctrl.domain.ports.scoring import (
@@ -53,7 +51,6 @@ from jobctrl.domain.profile.snapshot import ProfileSnapshot
 from jobctrl.domain.scoring.aggregate import JobScore
 from jobctrl.domain.scoring.eligibility import eligibility_blocks_downstream
 from jobctrl.domain.scoring.retrieval import (
-    HybridSearchIndex,
     preselect_jobs_for_scoring,
 )
 from jobctrl.domain.scoring.use_cases import (
@@ -62,7 +59,6 @@ from jobctrl.domain.scoring.use_cases import (
 )
 from jobctrl.domain.scoring.value_objects import ScoringCriteria
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
-from jobctrl.infrastructure.llm import LlmAdapter, get_llm_adapter
 from jobctrl.infrastructure.materials import SqliteEmployerAnalysisRepository
 from jobctrl.infrastructure.discovery import SqliteJobIdentityResolver
 from jobctrl.model_defaults import DEFAULT_PIPELINE_LLM_MODEL_SPEC
@@ -121,12 +117,16 @@ class AnalyzeJobUseCaseLike(Protocol):
 
 def _build_use_case(
     *,
+    tenant_id: TenantId = LOCAL_TENANT,
     repository: ScoreRepository | None = None,
     policy_repository: ScoringPolicyRepository | None = None,
     requirement_fit_repository: RequirementFitReportRepository | None = None,
     llm_port: LlmPort | None = None,
     llm_model: str | None = None,
     publisher: EventPublisher | None = None,
+    determination_dependencies=None,
+    job_interpretation_reader=None,
+    confirmed_preferences_reader=None,
 ) -> ScoreJobUseCase:
     """Construct a ``ScoreJobUseCase`` using local-mode defaults.
 
@@ -146,11 +146,65 @@ def _build_use_case(
             policy_repository = SqliteScoringPolicyRepository(repository.connection)
         if requirement_fit_repository is None:
             requirement_fit_repository = SqliteRequirementFitReportRepository(repository.connection)
-    if llm_port is None:
-        llm_port = LlmAdapter(default_model=llm_model) if llm_model else get_llm_adapter()
+    if determination_dependencies is None:
+        from jobctrl.infrastructure.determinations import (
+            determination_dependencies as resolve_dependencies,
+            ThreadLocalDeterminationRepository,
+        )
+        from jobctrl.infrastructure.enrichment.interpretation import read_job_interpretation
+        from pathlib import Path
+
+        conn = repository.connection if isinstance(repository, SqliteScoreRepository) else get_connection()
+        dependencies = resolve_dependencies(
+            conn, tenant_id=tenant_id, lane="scoring", model_spec=llm_model, adapter=llm_port
+        )
+        path = conn.execute("PRAGMA database_list").fetchone()[2]
+        durable_repository = ThreadLocalDeterminationRepository(Path(path)) if path else dependencies["repository"]
+        dependencies["repository"] = durable_repository
+        determination_dependencies = dependencies
+
+        def read_interpretation(job):
+            result = read_job_interpretation(
+                durable_repository.connection if path else conn, job, tenant_id=str(job["tenant_id"])
+            )
+            return result[0] if result is not None else None
+
+        if job_interpretation_reader is None:
+            job_interpretation_reader = read_interpretation
+    if confirmed_preferences_reader is None:
+        from jobctrl import config
+        from jobctrl.infrastructure.profile.search_preferences import require_confirmed_search_preferences
+        from jobctrl.domain.determinations import DeterminationFailure
+
+        def read_preferences(snapshot, criteria):
+            cfg = config.load_search_config()
+            target = cfg.get("confirmed_targets") or {}
+            if target.get("profile_version") != snapshot.version:
+                raise DeterminationFailure("stale_profile_version")
+            target = {
+                **target,
+                "criteria": [value for value in (criteria.criteria_text, criteria.target_criteria) if value],
+            }
+            cfg = {**cfg, "confirmed_targets": target}
+            from jobctrl.infrastructure.determinations import ThreadLocalDeterminationRepository
+
+            durable = determination_dependencies["repository"]
+            conn = (
+                durable.connection
+                if isinstance(durable, ThreadLocalDeterminationRepository)
+                else (repository.connection if isinstance(repository, SqliteScoreRepository) else get_connection())
+            )
+            sources, _ = require_confirmed_search_preferences(conn, cfg, tenant_id=str(snapshot.tenant_id))
+            return sources
+
+        confirmed_preferences_reader = read_preferences
+    llm_port = determination_dependencies["llm"]
     return ScoreJobUseCase(
         repository=repository,
         llm=llm_port,
+        determination_dependencies=determination_dependencies,
+        job_interpretation_reader=job_interpretation_reader,
+        confirmed_preferences_reader=confirmed_preferences_reader,
         publisher=publisher,
         policy_repository=policy_repository,
         requirement_fit_repository=requirement_fit_repository,
@@ -190,6 +244,7 @@ def score_job(
     """
     if use_case is None:
         use_case = _build_use_case(
+            tenant_id=tenant_id,
             repository=repository,
             policy_repository=policy_repository,
             requirement_fit_repository=requirement_fit_repository,
@@ -206,6 +261,7 @@ def score_job(
         if analyze_use_case is None and require_employer_analysis:
             analyze_use_case = build_analyze_use_case(
                 conn=conn,
+                tenant_id=tenant_id,
                 publisher=publisher,
                 event_stage="score",
                 # Score resolves the analysis before EVERY fresh score; cache
@@ -243,7 +299,6 @@ def run_scoring(
     tenant_id: TenantId = LOCAL_TENANT,
     profile_snapshot: ProfileSnapshot | None = None,
     resume_text: str | None = None,
-    search_index: HybridSearchIndex | None = None,
     criteria: ScoringCriteria | None = None,
     employer_analyses_by_job: Mapping[str, EmployerAnalysis] | None = None,
     employer_analysis_repository: EmployerAnalysisRepository | None = None,
@@ -279,6 +334,7 @@ def run_scoring(
     if analyze_use_case is None and require_employer_analysis:
         analyze_use_case = build_analyze_use_case(
             conn=conn,
+            tenant_id=tenant_id,
             publisher=publisher,
             event_stage="score",
             # Score resolves the analysis before EVERY fresh score; cache
@@ -287,6 +343,7 @@ def run_scoring(
         )
 
     use_case = _build_use_case(
+        tenant_id=tenant_id,
         repository=repository,
         policy_repository=policy_repository,
         requirement_fit_repository=requirement_fit_repository,
@@ -314,10 +371,7 @@ def run_scoring(
         dict(job)
         for job in preselect_jobs_for_scoring(
             jobs,
-            profile_snapshot=profile_snapshot,
             top_k=limit,
-            resume_text=resume_text,
-            search_index=search_index,
         )
     ]
     if workflow_id:
@@ -340,11 +394,18 @@ def run_scoring(
 
     conn.commit()
     from jobctrl.enrichment.availability import require_fresh_active
+
     available_jobs = []
     availability_deferred = 0
     for job in jobs:
         try:
-            require_fresh_active(str(job["job_id"]), tenant_id=str(tenant_id), conn=conn, expected_posting_url=job["url"], allow_unknown=True)
+            require_fresh_active(
+                str(job["job_id"]),
+                tenant_id=str(tenant_id),
+                conn=conn,
+                expected_posting_url=job["url"],
+                allow_unknown=True,
+            )
         except Exception as exc:
             log.info("Scoring deferred for %s: %s", job["job_id"], exc)
             availability_deferred += 1
@@ -355,11 +416,19 @@ def run_scoring(
     activity_metadata: dict[str, dict[str, object]] = {}
     from jobctrl.infrastructure.preparation_recovery import claim_preparation_reservation
     from jobctrl.domain.errors import MissingInputError
+
     claimed_jobs = []
     for job in jobs:
         try:
-            with claim_preparation_reservation(conn, tenant_id=tenant_id, job_id=job["job_id"],
-                    stage="score", workflow_id=None, cancel_event=None, expected_posting_url=job["url"]):
+            with claim_preparation_reservation(
+                conn,
+                tenant_id=tenant_id,
+                job_id=job["job_id"],
+                stage="score",
+                workflow_id=None,
+                cancel_event=None,
+                expected_posting_url=job["url"],
+            ):
                 job_id = canonical_job_id(str(job["job_id"]))
                 ensure_job_stage_rows(
                     conn,
@@ -429,31 +498,6 @@ def run_scoring(
     jobs_to_compute: list[dict[str, Any]] = []
     reused_results: list[tuple[dict[str, Any], ScoreJobOutcome]] = []
     for job in jobs:
-        reusable_repost_score = _preferred_direct_score_for_repost(
-            conn=conn,
-            job=job,
-            repository=repository,
-            tenant_id=tenant_id,
-            criteria=criteria,
-            profile_snapshot=profile_snapshot,
-        )
-        if reusable_repost_score is not None:
-            try:
-                outcome = _persist_reused_score(
-                    repository=repository,
-                    tenant_id=tenant_id,
-                    job=job,
-                    source_score=reusable_repost_score,
-                )
-            except Exception as exc:  # noqa: BLE001 — surface as a stage failure
-                log.error("Score reuse failed for repost %r: %s", job.get("title", "?"), exc)
-                outcome = ScoreJobOutcome(
-                    ok=False,
-                    score=None,
-                    error=f"Score reuse failed: {exc}",
-                )
-            reused_results.append((job, outcome))
-            continue
         content_key = _score_content_key(job)
         if content_key is None:
             jobs_to_compute.append(job)
@@ -628,11 +672,12 @@ def run_scoring(
                 now=finished_at,
             )
         else:
+            failure = serialized_determination_failure(outcome.error)
             set_stage_state(
                 conn,
                 job_id,
                 "score",
-                "failed",
+                "blocked" if failure and not failure.retryable else "failed",
                 tenant_id=tenant_id,
                 attempt_count=_score_attempt_count(
                     conn,
@@ -642,9 +687,9 @@ def run_scoring(
                 + 1,
                 started_at=started_ats.get(url),
                 finished_at=finished_at,
-                error_code="SCORE_FAILED",
-                error_message=outcome.error or "Scoring failed",
-                retryable=True,
+                error_code=f"SEMANTIC_{failure.code.upper()}" if failure else "SCORE_FAILED",
+                error_message=str(failure) if failure else outcome.error or "Scoring failed",
+                retryable=failure.retryable if failure else True,
                 next_action=f"jobctrl retry score {url}",
             )
             record_job_event(
@@ -740,6 +785,7 @@ def score_job_by_url(
 def score_job_by_id(
     job_id: JobId,
     *,
+    use_case: ScoreJobUseCase | None = None,
     tenant_id: TenantId = LOCAL_TENANT,
     rescore: bool = False,
     llm_model: str | None = DEFAULT_PIPELINE_LLM_MODEL_SPEC,
@@ -787,12 +833,26 @@ def score_job_by_id(
 
     from jobctrl.enrichment.availability import require_fresh_active, assert_fresh_candidate
     from jobctrl.infrastructure.preparation_recovery import claim_preparation_reservation
+
     expected_posting_url = job["url"]
     conn.commit()
-    require_fresh_active(str(stable_job_id), tenant_id=str(tenant_id), conn=conn, expected_posting_url=expected_posting_url, allow_unknown=True)
+    require_fresh_active(
+        str(stable_job_id),
+        tenant_id=str(tenant_id),
+        conn=conn,
+        expected_posting_url=expected_posting_url,
+        allow_unknown=True,
+    )
     # Acquisition released its writer and fenced URL; reload the preparation target.
-    with claim_preparation_reservation(conn, tenant_id=tenant_id, job_id=stable_job_id,
-            stage="score", workflow_id=None, cancel_event=cancel_event, expected_posting_url=expected_posting_url):
+    with claim_preparation_reservation(
+        conn,
+        tenant_id=tenant_id,
+        job_id=stable_job_id,
+        stage="score",
+        workflow_id=None,
+        cancel_event=cancel_event,
+        expected_posting_url=expected_posting_url,
+    ):
         job = SqlitePreparationTargetReader(conn).load(tenant_id, stable_job_id)
     if job is None:
         return ScoreJobOutcome(ok=False, score=None, error="Availability candidate changed")
@@ -803,7 +863,9 @@ def score_job_by_id(
             raise ValueError("Owned scoring requires the reserved workflow and activity owner")
         conn.execute("BEGIN IMMEDIATE")
         try:
-            assert_fresh_candidate(conn, str(stable_job_id), expected_posting_url, tenant_id=str(tenant_id), allow_unknown=True)
+            assert_fresh_candidate(
+                conn, str(stable_job_id), expected_posting_url, tenant_id=str(tenant_id), allow_unknown=True
+            )
         except BaseException:
             conn.rollback()
             raise
@@ -864,40 +926,15 @@ def score_job_by_id(
     if policy_repository is None:
         policy_repository = SqliteScoringPolicyRepository(conn)
     existing = repository.load(tenant_id, stable_job_id)
-    reusable_repost_score = _preferred_direct_score_for_repost(
-        conn=conn,
-        job=job,
-        repository=repository,
-        tenant_id=tenant_id,
-        criteria=criteria,
-        profile_snapshot=profile_snapshot,
-    )
-    if reusable_repost_score is not None and (
-        rescore or existing is None or not _scores_equal_for_display(existing, reusable_repost_score)
-    ):
-        outcome = _persist_reused_score(
-            repository=repository,
-            tenant_id=tenant_id,
-            job=job,
-            source_score=reusable_repost_score,
-        )
-        if outcome.ok and outcome.score is not None:
-            _record_score_stage_succeeded(
-                conn,
-                job=job,
-                score=outcome.score,
-                tenant_id=tenant_id,
-                started_at=utc_now(),
-                validate_transition=False,
-                metadata=owned_metadata,
-                cancel_event=cancel_event,
-            )
-        return outcome
     if existing is not None and not rescore:
         if enforce_workflow_ownership:
             _record_score_stage_succeeded(
-                conn, job=job, score=existing, tenant_id=tenant_id,
-                metadata=owned_metadata, cancel_event=cancel_event,
+                conn,
+                job=job,
+                score=existing,
+                tenant_id=tenant_id,
+                metadata=owned_metadata,
+                cancel_event=cancel_event,
             )
         else:
             _ensure_existing_score_stage_succeeded(
@@ -916,8 +953,15 @@ def score_job_by_id(
         rescore=rescore,
     )
     if not enforce_workflow_ownership:
-        with claim_preparation_reservation(conn, tenant_id=tenant_id, job_id=stable_job_id,
-                stage="score", workflow_id=None, cancel_event=cancel_event, expected_posting_url=expected_posting_url):
+        with claim_preparation_reservation(
+            conn,
+            tenant_id=tenant_id,
+            job_id=stable_job_id,
+            stage="score",
+            workflow_id=None,
+            cancel_event=cancel_event,
+            expected_posting_url=expected_posting_url,
+        ):
             ensure_job_stage_rows(
                 conn,
                 stable_job_id,
@@ -957,6 +1001,7 @@ def score_job_by_id(
             if analyze_use_case is None and require_employer_analysis:
                 analyze_use_case = build_analyze_use_case(
                     conn=conn,
+                    tenant_id=tenant_id,
                     publisher=publisher,
                     event_stage="score",
                     # Score resolves the analysis before EVERY fresh score; cache
@@ -986,7 +1031,9 @@ def score_job_by_id(
     outcome = score_job(
         profile_snapshot,
         job,
-        use_case=_build_use_case(
+        use_case=use_case
+        or _build_use_case(
+            tenant_id=tenant_id,
             repository=repository,
             policy_repository=policy_repository,
             requirement_fit_repository=requirement_fit_repository,
@@ -1002,8 +1049,13 @@ def score_job_by_id(
     )
     if outcome.ok and outcome.score is not None:
         _record_score_stage_succeeded(
-            conn, job=job, score=outcome.score, tenant_id=tenant_id,
-            started_at=started_at, metadata=metadata, cancel_event=cancel_event,
+            conn,
+            job=job,
+            score=outcome.score,
+            tenant_id=tenant_id,
+            started_at=started_at,
+            metadata=metadata,
+            cancel_event=cancel_event,
             validate_transition=True,
         )
     else:
@@ -1204,11 +1256,12 @@ def _record_score_stage_failed(
             conn.rollback()
             return
     finished_at = utc_now()
+    failure = serialized_determination_failure(error)
     set_stage_state(
         conn,
         job_id,
         "score",
-        "failed",
+        "blocked" if failure and not failure.retryable else "failed",
         tenant_id=tenant_id,
         attempt_count=_score_attempt_count(
             conn,
@@ -1218,9 +1271,9 @@ def _record_score_stage_failed(
         + 1,
         started_at=started_at,
         finished_at=finished_at,
-        error_code="SCORE_FAILED",
-        error_message=error,
-        retryable=True,
+        error_code=f"SEMANTIC_{failure.code.upper()}" if failure else "SCORE_FAILED",
+        error_message=str(failure) if failure else error,
+        retryable=failure.retryable if failure else True,
         next_action=f"jobctrl retry score {job.get('url') or job_id}",
         metadata=metadata,
         validate_transition=False,
@@ -1252,6 +1305,8 @@ def _sync_score_eligibility_stage_state(
         job_id=job_id,
         eligibility_status=eligibility.status,
         hard_blockers=list(eligibility.hard_blockers),
+        hard_blocker_categories=eligibility.hard_blocker_categories,
+        hard_blocker_citations=eligibility.hard_blocker_citations,
         now=now,
     )
     if not eligibility_blocks_downstream(eligibility):
@@ -1445,145 +1500,7 @@ def _score_distribution(
 
 
 def _retrieval_source_limit(limit: int) -> int:
-    """Fetch a broader pool when scoring is capped, then let retrieval choose."""
-
-    if limit <= 0:
-        return 0
-    return max(limit * 5, 50)
-
-
-def _preferred_direct_score_for_repost(
-    *,
-    conn: sqlite3.Connection,
-    job: dict[str, Any],
-    repository: ScoreRepository,
-    tenant_id: TenantId,
-    criteria: ScoringCriteria,
-    profile_snapshot: ProfileSnapshot,
-) -> JobScore | None:
-    """Return a direct canonical score for a reference-suffixed repost.
-
-    Duplicate detection can legitimately miss agency/recruiter reposts when
-    their descriptions are rewritten. Scoring still needs one user-facing
-    answer for the same effective opportunity, so a board row with an opaque
-    reference suffix reuses an already-scored direct ATS row when the role
-    title and location line up.
-    """
-
-    if not _is_reference_repost_candidate(conn, job, tenant_id=tenant_id):
-        return None
-    rows = conn.execute(
-        """
-        SELECT j.job_id, j.url, j.title, j.location,
-               je.application_url AS application_url,
-               COALESCE(c.ats_kind, 'other') AS ats_kind,
-               s.scored_at
-        FROM jobs j
-        LEFT JOIN job_enrichments je
-          ON je.tenant_id = j.tenant_id
-         AND je.job_id = j.job_id
-        LEFT JOIN job_canonical_identities c
-          ON c.tenant_id = j.tenant_id
-         AND c.job_id = j.job_id
-        LEFT JOIN jobctrl_deleted_jobs d
-          ON d.tenant_id = j.tenant_id
-         AND d.job_id = j.job_id
-         AND (
-             d.restored_at IS NULL
-             OR julianday(d.restored_at) <= julianday(d.deleted_at)
-         )
-        INNER JOIN (
-            SELECT tenant_id, job_id, MAX(version) AS max_version
-            FROM job_scores
-            WHERE tenant_id = ?
-            GROUP BY tenant_id, job_id
-        ) latest
-          ON latest.tenant_id = j.tenant_id
-         AND latest.job_id = j.job_id
-        INNER JOIN job_scores s
-          ON s.tenant_id = latest.tenant_id
-         AND s.job_id = latest.job_id
-         AND s.version = latest.max_version
-        WHERE j.tenant_id = ?
-          AND j.job_id != ?
-          AND d.job_id IS NULL
-          AND (
-            COALESCE(je.application_url, '') != ''
-            OR COALESCE(c.ats_kind, 'other') != 'other'
-          )
-        ORDER BY
-          CASE WHEN COALESCE(c.ats_kind, 'other') != 'other' THEN 0 ELSE 1 END,
-          s.scored_at DESC
-        """,
-        (
-            str(tenant_id),
-            str(tenant_id),
-            str(canonical_job_id(str(job["job_id"]))),
-        ),
-    ).fetchall()
-    for row in rows:
-        candidate = dict(row)
-        if not _same_reference_repost_opportunity(job, candidate):
-            continue
-        score = repository.load(
-            tenant_id,
-            canonical_job_id(str(candidate["job_id"])),
-        )
-        if score is None:
-            continue
-        if not _score_matches_context(
-            score=score,
-            criteria=criteria,
-            profile_snapshot=profile_snapshot,
-        ):
-            continue
-        return score
-    return None
-
-
-def _is_reference_repost_candidate(
-    conn: sqlite3.Connection,
-    job: dict[str, Any],
-    *,
-    tenant_id: TenantId,
-) -> bool:
-    if (job.get("application_url") or "").strip():
-        return False
-    if not role_title_has_reference_suffix(job.get("title")):
-        return False
-    job_id = canonical_job_id(str(job["job_id"]))
-    row = conn.execute(
-        """
-        SELECT ats_kind
-        FROM job_canonical_identities
-        WHERE tenant_id = ? AND job_id = ?
-        ORDER BY confidence DESC
-        LIMIT 1
-        """,
-        (str(tenant_id), str(job_id)),
-    ).fetchone()
-    if row is None:
-        return True
-    return str(row["ats_kind"] or "other") == "other"
-
-
-def _same_reference_repost_opportunity(
-    repost: dict[str, Any],
-    direct: dict[str, Any],
-) -> bool:
-    if not role_titles_match_as_repost(repost.get("title"), direct.get("title")):
-        return False
-    repost_location = normalize_location_for_repost_match(repost.get("location"))
-    direct_location = normalize_location_for_repost_match(direct.get("location"))
-    return bool(repost_location and repost_location == direct_location)
-
-
-def _scores_equal_for_display(left: JobScore, right: JobScore) -> bool:
-    return (
-        left.fit_score.value == right.fit_score.value
-        and left.trace.criteria_version == right.trace.criteria_version
-        and left.trace.profile_snapshot_version == right.trace.profile_snapshot_version
-    )
+    return max(0, limit)
 
 
 def _score_content_key(job: dict[str, Any]) -> str | None:
@@ -1591,7 +1508,6 @@ def _score_content_key(job: dict[str, Any]) -> str | None:
         title=job.get("title"),
         company=job.get("company"),
         description=job.get("full_description"),
-        description_limit=6000,
     )
 
 

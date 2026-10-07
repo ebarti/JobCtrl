@@ -41,6 +41,7 @@ import { ApplyReviewView } from "./ApplyReviewView.js";
 
 let htmlPreviewResumeText = sampleApplyReviewQueue.items[0]!.materialsPreview.resumeText;
 let htmlPreviewOverride: string | null = null;
+let htmlPreviewLineIds: Record<number,string> = {};
 
 const TEST_RESUME_SECTION_HEADINGS = new Set([
   "core skills",
@@ -73,7 +74,7 @@ function buildPreviewHtmlFromText(text: string): string {
     const clean = lineText.trim().replace(/^[-•○]\s+/, "");
     if (!clean) return "";
     lineNumber += 1;
-    return `<${tag} class="${className}" data-resume-layout-target="${escapeHtml(semanticId)}" data-resume-line-number="${lineNumber}">${escapeHtml(clean)}</${tag}>`;
+    return `<${tag} class="${className}" data-resume-layout-target="${escapeHtml(htmlPreviewLineIds[lineNumber] ?? semanticId)}" data-resume-line-number="${lineNumber}">${escapeHtml(clean)}</${tag}>`;
   };
   const isSection = (line: string) => {
     const trimmed = line.trim();
@@ -135,7 +136,7 @@ function buildPreviewHtmlFromText(text: string): string {
         const label = rawLabel.trim();
         const clean = `${label}: ${values.trim()}`.trim();
         lineNumber += 1;
-        body += `<li class="resume-skill-line" data-resume-layout-target="skills:line:${lineNumber}" data-resume-line-number="${lineNumber}"><b>${escapeHtml(label)}:</b> ${escapeHtml(values.trim())}</li>`;
+        body += `<li class="resume-skill-line" data-resume-layout-target="${escapeHtml(htmlPreviewLineIds[lineNumber] ?? `skills:line:${lineNumber}`)}" data-resume-line-number="${lineNumber}"><b>${escapeHtml(label)}:</b> ${escapeHtml(values.trim())}</li>`;
         continue;
       }
       closeList();
@@ -405,6 +406,7 @@ function jsonResponse(body: unknown) {
 }
 
 beforeEach(() => {
+  htmlPreviewLineIds={};
   htmlPreviewResumeText = sampleApplyReviewQueue.items[0]!.materialsPreview.resumeText;
   htmlPreviewOverride = null;
   const originalFetch = globalThis.fetch.bind(globalThis);
@@ -649,7 +651,6 @@ const sampleTailoringExplanation: ArtifactTailoringExplanation = {
   },
   evidence: {
     requiredIds: ["ev_platform_reliability"],
-    seniorityIds: ["ev_principal_scope"],
     representedIds: ["ev_platform_reliability"],
     missingIds: [],
     verifiedMetricCount: 2,
@@ -666,7 +667,7 @@ const sampleTailoringExplanation: ArtifactTailoringExplanation = {
     passed: true,
     verdict: "PASS",
     score: 0.93,
-    minScore: 0.84,
+
     issues: [],
     unsupportedClaims: [],
     fabrications: [],
@@ -757,7 +758,7 @@ const sampleTailoringExplanation: ArtifactTailoringExplanation = {
       evidenceNotes: ["ev_platform_reliability: platform ownership"],
     },
   ],
-  bulletProvenance: [],
+  bulletProvenance: [{bulletId:"experience:acme#0",section:"experience",sourceId:"ev_platform_reliability",sourceText:["Built platform services."],evidenceIds:["ev_platform_reliability"],requirementIds:["req-platform"],matchedKeywords:["platform reliability"],transformType:"rephrase",control:"evidence_reframing",rationale:"Experience was emphasized because it matches platform reliability.",generatedText:"Owned platform reliability improvements for incident response."}],
   coverageAudit: null,
   voicePass: null,
   models: {
@@ -771,6 +772,7 @@ const sampleTailoringExplanation: ArtifactTailoringExplanation = {
 
 const pinnedTailoringExplanation: ArtifactTailoringExplanation = {
   ...sampleTailoringExplanation,
+  lineFindings:[{lineId:"experience:acme#0",kind:"unsupported_claim",rationale:"Explicit verifier finding",determinationId:"e".repeat(64)}],
   quality: {
     ...sampleTailoringExplanation.quality,
     warnings: [
@@ -800,7 +802,7 @@ const pinnedTailoringExplanation: ArtifactTailoringExplanation = {
   },
   bulletProvenance: [
     {
-      bulletId: "pin-1",
+      bulletId: "experience:acme#0",
       section: "experience",
       sourceId: "ev_platform_reliability",
       evidenceIds: ["ev_platform_reliability"],
@@ -2754,6 +2756,7 @@ describe("<ApplyReviewView>", () => {
   });
 
   it("surfaces resume tailoring rationale in the apply review workspace", async () => {
+    htmlPreviewLineIds={2:"experience:acme#0"};
     const artifact = vi.fn(async (artifactId: string) => ({
       ok: true as const,
       artifact: {
@@ -2763,7 +2766,7 @@ describe("<ApplyReviewView>", () => {
         title: "Principal Platform Engineer Resume",
         company: sampleApplyReviewQueue.items[0]!.company,
       },
-      layoutBoxes: [],
+      layoutBoxes: [], determinations: [],
       tailoringExplanation: sampleTailoringExplanation,
     }));
 
@@ -2859,6 +2862,7 @@ describe("<ApplyReviewView>", () => {
   });
 
   it("uses the resume preview as the selectable line-level claim surface", async () => {
+    htmlPreviewLineIds={2:"experience:acme#0"};
     const artifact = vi.fn(async (artifactId: string) => ({
       ok: true as const,
       artifact: {
@@ -2868,7 +2872,7 @@ describe("<ApplyReviewView>", () => {
         title: "Principal Platform Engineer Resume",
         company: sampleApplyReviewQueue.items[0]!.company,
       },
-      layoutBoxes: [],
+      layoutBoxes: [], determinations: [],
       tailoringExplanation: pinnedTailoringExplanation,
     }));
 
@@ -2940,7 +2944,7 @@ describe("<ApplyReviewView>", () => {
         title: "Principal Platform Engineer Resume",
         company: sampleApplyReviewQueue.items[0]!.company,
       },
-      layoutBoxes: [],
+      layoutBoxes: [], determinations: [],
       tailoringExplanation: sourceBackedExplanation,
     }));
     const queueWithContextualResume = {
@@ -2971,16 +2975,10 @@ describe("<ApplyReviewView>", () => {
     await waitFor(() => expect(artifact).toHaveBeenCalledWith("resume-text-2"));
     const shadow = await findResumeShadowRoot();
     await selectResumeLine(shadow, "Led incident response handovers.");
-    await waitFor(() => expect(shadowText(shadow)).toContain("profile section"));
-    await waitFor(() => expect(shadowText(shadow)).toMatch(/Closest recorded Profile source field/i));
-    expect(screen.queryByText("source-backed")).not.toBeInTheDocument();
-    expect(screen.queryByText("claim risk")).not.toBeInTheDocument();
-    expect(screen.queryByText("No source evidence recorded for this line.")).not.toBeInTheDocument();
-    expect(shadowText(shadow)).not.toContain("Tailored resume line");
-    expect(shadowText(shadow)).toMatch(/Led incident response handovers/);
-    await waitFor(() => expect(shadowText(shadow)).toMatch(/No exact Profile source field was recorded/i));
-    await waitFor(() => expect(shadowText(shadow)).toMatch(/Signals reflected: platform reliability/i));
-    expect(shadowText(shadow)).not.toContain("Evidence basis");
+    await waitFor(() => expect(shadowText(shadow)).toContain("No recorded source"));
+    expect(shadowText(shadow)).not.toContain("Closest recorded Profile source field");
+    expect(shadowText(shadow)).not.toContain("Built platform services.");
+    expect(shadowText(shadow)).not.toContain("Signals reflected:");
     expect(screen.getByText("Artifact-level grounding and claim risk")).toBeInTheDocument();
     expect(shadowText(shadow)).not.toContain("Audit metadata gaps");
     expect(
@@ -2998,7 +2996,7 @@ describe("<ApplyReviewView>", () => {
         title: "Principal Platform Engineer Resume",
         company: sampleApplyReviewQueue.items[0]!.company,
       },
-      layoutBoxes: [],
+      layoutBoxes: [], determinations: [],
       tailoringExplanation: null,
     }));
 
@@ -3023,7 +3021,7 @@ describe("<ApplyReviewView>", () => {
     expect(screen.queryByRole("region", { name: "Line-by-line resume audit" })).not.toBeInTheDocument();
     expect(screen.queryByRole("list", { name: "Resume audit line list" })).not.toBeInTheDocument();
     await selectResumeLine(shadow, "Owned platform reliability improvements for incident response.");
-    expect(shadowText(shadow)).toContain("missing source");
+    expect(shadowText(shadow)).toContain("No recorded source");
     await userEvent.click(lineOne);
     await waitFor(() => expect(shadowElementWithText(shadow, "Principal Platform Engineer").className).toContain("jobctrl-selected-line"));
   });
@@ -3075,9 +3073,10 @@ describe("<ApplyReviewView>", () => {
         title: "Principal Platform Engineer Resume",
         company: sampleApplyReviewQueue.items[0]!.company,
       },
-      layoutBoxes: [],
+      layoutBoxes: [], determinations: [],
       tailoringExplanation: explanationWithSkillProvenance,
     }));
+    htmlPreviewLineIds={4:"skills:platform_and_cloud#0"};
     htmlPreviewResumeText = queueWithSkillsLine.items[0]!.materialsPreview.resumeText;
 
     renderWithProviders(<ApplyReviewView />, {
@@ -3126,10 +3125,11 @@ describe("<ApplyReviewView>", () => {
         title: "Principal Platform Engineer Resume",
         company: sampleApplyReviewQueue.items[0]!.company,
       },
-      layoutBoxes: [],
+      layoutBoxes: [], determinations: [],
       tailoringExplanation: sampleTailoringExplanation,
     }));
     htmlPreviewResumeText = queueWithProfileHeader.items[0]!.materialsPreview.resumeText;
+    htmlPreviewOverride=buildPreviewHtmlFromText(htmlPreviewResumeText!).replace('data-resume-line-number="1"','data-resume-line-number="1" data-resume-profile-field="personal.full_name"');
 
     renderWithProviders(<ApplyReviewView />, {
       ports: buildTestPorts({
@@ -3197,10 +3197,11 @@ describe("<ApplyReviewView>", () => {
         title: "Principal Platform Engineer Resume",
         company: sampleApplyReviewQueue.items[0]!.company,
       },
-      layoutBoxes: [],
+      layoutBoxes: [], determinations: [],
       tailoringExplanation: sampleTailoringExplanation,
     }));
     htmlPreviewResumeText = queueWithPositionSummary.items[0]!.materialsPreview.resumeText;
+    htmlPreviewOverride=buildPreviewHtmlFromText(htmlPreviewResumeText!).replace('data-resume-line-number="5"','data-resume-line-number="5" data-resume-profile-field="resume.experience_entries.0.summary"');
 
     renderWithProviders(<ApplyReviewView />, {
       ports: buildTestPorts({

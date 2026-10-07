@@ -1,3 +1,4 @@
+import { RoleEquivalenceSchema } from "@jobctrl/contracts";
 import { Buffer } from "node:buffer";
 import { createHash, randomUUID } from "node:crypto";
 
@@ -12,6 +13,7 @@ import type {
   RepeatApplicationRelationship,
 } from "./contracts.js";
 import { allRows, getRow, tableExists, type SqliteDatabase } from "./db.js";
+import { readBoundDetermination } from "./semantic-determinations.js";
 import { InputError } from "./write-model.js";
 
 const DEFAULT_TENANT = "local";
@@ -22,6 +24,11 @@ interface JobIdentityRow extends Record<string, unknown> {
   title: string | null;
   company: string | null;
   application_url: string | null;
+  location: string | null;
+  salary: string | null;
+  description: string | null;
+  full_description: string | null;
+  interpretation_id: string;
 }
 
 interface ConfirmedFactRow extends Record<string, unknown> {
@@ -133,10 +140,13 @@ export function evaluateRepeatApplication(
   const evaluatedAt = options.evaluatedAt ?? new Date().toISOString();
   const target = jobIdentity(db, targetJobId);
   if (!target) throw new InputError("Job not found.");
-  const matches = confirmedApplicationFacts(db)
-    .map((fact) => relationshipMatch(db, target, fact))
-    .filter((match): match is RepeatApplicationMatch => match !== null)
-    .sort(compareMatches);
+  let matches:RepeatApplicationMatch[];
+  try{
+    matches=confirmedApplicationFacts(db).map(fact=>relationshipMatch(db,target,fact)).filter((match):match is RepeatApplicationMatch=>match!==null).sort(compareMatches);
+  }catch(error){
+    if(!(error instanceof InputError) || !["repeat_determination_unavailable","repeat_equivalence_uncertain"].includes(error.message))throw error;
+    return {status:error.message==="repeat_equivalence_uncertain"?"uncertain":"unavailable",summary:error.message==="repeat_equivalence_uncertain"?"The model could not establish whether this is an equivalent role. Review the prior application before proceeding.":"Role equivalence has no current determination. Run the repeat-application check before authorizing submission.",evidenceFingerprint:null,evaluatedAt,matches:[],override:null,auditTrail:auditTrail(db,targetJobId)};
+  }
   if (!matches.length) {
     return {
       status: "clear",
@@ -242,6 +252,8 @@ export function assertLiveApplicationMayDispatch(
   targetJobId: string,
 ): RepeatApplicationAssessment {
   const assessment = evaluateRepeatApplication(db, targetJobId);
+  if (assessment.status === "unavailable")throw new InputError("repeat_determination_unavailable");
+  if (assessment.status === "uncertain")throw new InputError("repeat_equivalence_uncertain");
   if (assessment.status === "blocked") throw new InputError("repeat_application_blocked");
   if (assessment.status === "confirmation_required") {
     throw new InputError("repeat_application_confirmation_required");
@@ -297,25 +309,32 @@ function assertCanonicalJobId(value: string, field: string): string {
 }
 
 function jobIdentity(db: SqliteDatabase, jobId: string): JobIdentityRow | null {
-  const company = tableExists(db, "job_list_projections")
-    ? "COALESCE(NULLIF(j.company, ''), (SELECT jlp.employer FROM job_list_projections jlp WHERE jlp.tenant_id = ? AND jlp.job_id = j.job_id LIMIT 1), '')"
-    : "COALESCE(j.company, '')";
+  const company = "COALESCE(j.company, '')";
   const enrichment = tableExists(db, "job_enrichments")
     ? `(SELECT je.application_url FROM job_enrichments je WHERE je.tenant_id = ? AND je.job_id = j.job_id ORDER BY je.updated_at DESC LIMIT 1),`
     : "";
   const params = [
-    ...(tableExists(db, "job_list_projections") ? [DEFAULT_TENANT] : []),
     ...(enrichment ? [DEFAULT_TENANT] : []),
     DEFAULT_TENANT,
     jobId,
   ];
-  return getRow<JobIdentityRow>(
+  const row = getRow<JobIdentityRow>(
     db,
-    `SELECT j.job_id, j.url, j.title, ${company} AS company,
+    `SELECT j.job_id, j.url, j.title, j.location, j.salary, j.description,
+            COALESCE((SELECT je.full_description FROM job_enrichments je
+              WHERE je.tenant_id=j.tenant_id AND je.job_id=j.job_id AND je.current_status='enriched'
+                AND length(trim(je.full_description))>0 ORDER BY je.updated_at DESC LIMIT 1), j.full_description) AS full_description,
+            ${company} AS company,
             ${enrichment ? `COALESCE(${enrichment} j.url)` : "j.url"} AS application_url
        FROM jobs j WHERE j.tenant_id = ? AND j.job_id = ?`,
     params,
   ) ?? null;
+  if (!row) return null;
+  const text = ["title", "company", "location", "salary", "remote"].map(field => `${field}:\n${String(row[field] ?? "").trim()}`);
+  text.push("description:\n" + String(row.full_description || row.description || "").trim());
+  const snapshot = createHash("sha256").update(text.join("\n\n")).digest("hex");
+  const interpretation = readBoundDetermination(db, DEFAULT_TENANT, "job", row.job_id, snapshot, "job_interpretation");
+  return { ...row, description: row.full_description || row.description || "", interpretation_id: interpretation?.determination_id ?? "" };
 }
 
 function confirmedApplicationFacts(db: SqliteDatabase): ConfirmedFactRow[] {
@@ -375,10 +394,20 @@ function relationshipMatch(db: SqliteDatabase, target: JobIdentityRow, fact: Con
       relationship = "accepted_duplicate";
       reason = "An accepted duplicate link connects this representation to the previously applied opening.";
       identityEvidence = duplicate;
-    } else if (equivalentEmployerRole(target, prior)) {
-      relationship = "same_employer_equivalent_role";
-      reason = "The employer identity matches exactly and the normalized role titles are materially equivalent.";
-      identityEvidence = [`employer:${normalizeEmployer(target.company)}`, `role:${normalizeRoleTitle(target.title)}`];
+    } else {
+      const values=[target,prior].flatMap((row)=>[row.job_id,row.title ?? "",row.company ?? "",row.application_url ?? "",row.location ?? "",row.salary ?? "",row.description ?? "",row.interpretation_id]);
+      const version=createHash("sha256").update(JSON.stringify(values)).digest("hex");
+      const envelope=readBoundDetermination(db,DEFAULT_TENANT,"repeat_pair",target.job_id+":"+prior.job_id,version,"repeat_equivalence");
+      if (!envelope || envelope.kind !== "repeat_equivalence" || envelope.entity_id !== target.job_id+":"+prior.job_id || envelope.schema_version !== "2" || envelope.prompt_version !== "repeat-equivalence-v2") throw new InputError("repeat_determination_unavailable");
+      const result=RoleEquivalenceSchema.safeParse(envelope.result);
+      if (!result.success) throw new InputError("repeat_determination_unavailable");
+      if (result.data.verdict === "uncertain") throw new InputError("repeat_equivalence_uncertain");
+      if (result.data.verdict === "equivalent") {
+        relationship="same_employer_equivalent_role";
+        reason=result.data.rationale;
+        identityEvidence=["determination:"+envelope.determination_id];
+      }
+
     }
   }
   if (!relationship) return null;
@@ -433,33 +462,6 @@ function jobAliases(db: SqliteDatabase, jobId: string): Set<string> {
   `, [DEFAULT_TENANT, jobId]);
   for (const row of rows) if (typeof row.source_observation_id === "string") aliases.add(row.source_observation_id);
   return aliases;
-}
-
-function equivalentEmployerRole(target: JobIdentityRow, prior: JobIdentityRow): boolean {
-  const targetEmployer = normalizeEmployer(target.company);
-  const priorEmployer = normalizeEmployer(prior.company);
-  if (!targetEmployer || targetEmployer !== priorEmployer) return false;
-  const targetRole = normalizeRoleTitle(target.title);
-  const priorRole = normalizeRoleTitle(prior.title);
-  if (!targetRole || !priorRole) return false;
-  return targetRole === priorRole || targetRole.split(" ").sort().join(" ") === priorRole.split(" ").sort().join(" ");
-}
-
-export function normalizeEmployer(value: string | null | undefined): string {
-  const tokens = normalizeTokens(value);
-  const suffixes = new Set(["inc", "incorporated", "llc", "ltd", "limited", "corp", "corporation", "plc", "gmbh"]);
-  while (tokens.length > 1 && suffixes.has(tokens[tokens.length - 1] ?? "")) tokens.pop();
-  return tokens.join(" ");
-}
-
-export function normalizeRoleTitle(value: string | null | undefined): string {
-  const aliases: Record<string, string> = { sr: "senior", jr: "junior", eng: "engineer", engr: "engineer", mgr: "manager", dev: "developer", ii: "2", iii: "3", iv: "4" };
-  const presentationOnly = new Set(["remote", "hybrid", "onsite", "fulltime"]);
-  return normalizeTokens(value).map((token) => aliases[token] ?? token).filter((token) => !presentationOnly.has(token)).join(" ");
-}
-
-function normalizeTokens(value: string | null | undefined): string[] {
-  return String(value ?? "").normalize("NFKC").toLocaleLowerCase("en-US").replace(/&/g, " and ").replace(/[^a-z0-9]+/g, " ").trim().split(/\s+/).filter(Boolean);
 }
 
 function matchingOverride(db: SqliteDatabase, targetJobId: string, evidenceFingerprint: string): RepeatApplicationOverride | null {

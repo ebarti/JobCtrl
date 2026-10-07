@@ -1648,10 +1648,9 @@ class ProjectionBuilder:
         entries: dict[str, dict[str, Any]] = {}
         gaps: dict[str, dict[str, Any]] = {}
         self._load_profile_evidence_entries(entries)
-        skill_entries_by_name = self._load_profile_skill_entries(entries)
+        self._load_profile_skill_entries(entries)
         self._attach_resume_usages(entries)
         self._attach_requirement_usages_and_gaps(entries, gaps)
-        self._attach_skill_coverage_usages_and_gaps(skill_entries_by_name, gaps)
 
         rows: list[dict[str, object]] = []
         for entry in sorted(entries.values(), key=lambda item: str(item["title"]).lower()):
@@ -1793,10 +1792,9 @@ class ProjectionBuilder:
                 "gaps": [],
             }
 
-    def _load_profile_skill_entries(self, entries: dict[str, dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
-        by_name: dict[str, list[dict[str, Any]]] = {}
+    def _load_profile_skill_entries(self, entries: dict[str, dict[str, Any]]) -> None:
         if not _table_exists(self._conn, "candidate_profile_skill_items"):
-            return by_name
+            return
         has_categories = _table_exists(self._conn, "candidate_profile_skill_categories")
         query = (
             """
@@ -1847,12 +1845,15 @@ class ProjectionBuilder:
                 "gaps": [],
             }
             entries[skill_id] = entry
-            by_name.setdefault(skill_text.lower(), []).append(entry)
-        return by_name
 
     def _attach_resume_usages(self, entries: dict[str, dict[str, Any]]) -> None:
-        if not _table_exists(self._conn, "job_bullet_provenance"):
+        if not _table_exists(self._conn, "job_bullet_provenance") or not _table_exists(
+            self._conn, "artifact_line_anchors"
+        ):
             return
+        from jobctrl.infrastructure.determinations import read_artifact_anchors
+
+        anchors_by_artifact = {}
         job_metadata = _job_metadata_join_sql(self._conn, "provenance.tenant_id", "provenance.job_id")
         lifecycle = _job_lifecycle_exclusion_sql(self._conn, "provenance.tenant_id", "provenance.job_id")
         rows = self._conn.execute(
@@ -1875,6 +1876,18 @@ class ProjectionBuilder:
             (str(self._tenant_id),),
         ).fetchall()
         for row in rows:
+            key = (_row_str(row, "artifact_id"), _row_int(row, "generation"))
+            if key not in anchors_by_artifact:
+                anchors_by_artifact[key] = read_artifact_anchors(
+                    self._conn,
+                    tenant_id=str(self._tenant_id),
+                    artifact_id=key[0],
+                    generation=key[1],
+                    expected_job_id=_row_str(row, "job_id"),
+                )
+            anchor = anchors_by_artifact[key].get(_row_str(row, "bullet_id"))
+            if anchor is None:
+                continue
             usage = {
                 "kind": "resume_bullet",
                 "jobId": _row_str(row, "job_id"),
@@ -1893,7 +1906,7 @@ class ProjectionBuilder:
                 "coverageState": None,
                 "occurredAt": _row_nullable_str(row, "created_at"),
             }
-            for evidence_id in _json_strings(_row_str(row, "evidence_ids_json")):
+            for evidence_id in anchor["evidence_ids"]:
                 entry = entries.get(evidence_id)
                 if entry is None:
                     continue
@@ -1987,49 +2000,6 @@ class ProjectionBuilder:
                 }
                 gaps[str(gap["gapId"])] = gap
 
-    def _attach_skill_coverage_usages_and_gaps(
-        self,
-        skill_entries_by_name: dict[str, list[dict[str, Any]]],
-        gaps: dict[str, dict[str, Any]],
-    ) -> None:
-        if not _table_exists(self._conn, "artifact_list_projections"):
-            return
-        lifecycle = _job_lifecycle_exclusion_sql(self._conn, "alp.tenant_id", "alp.job_id")
-        rows = self._conn.execute(
-            f"""
-            SELECT alp.job_id, alp.job_title, alp.job_employer, alp.artifact_id, alp.generation,
-                   alp.coverage_audit_json, alp.created_at
-              FROM artifact_list_projections alp{lifecycle["join_sql"]}
-             WHERE alp.tenant_id = ?{lifecycle["where_sql"]}
-               AND alp.coverage_audit_json IS NOT NULL
-               AND TRIM(alp.coverage_audit_json) != ''
-            """,
-            (str(self._tenant_id),),
-        ).fetchall()
-        for row in rows:
-            coverage = _json_loads(_row_nullable_str(row, "coverage_audit_json"), {})
-            for state in ("covered", "declared"):
-                for keyword in _strings_from_unknown(coverage.get(state)):
-                    for entry in skill_entries_by_name.get(keyword.lower(), []):
-                        entry["coverageUsages"].append(_skill_coverage_usage(row, keyword, state))
-            for keyword in _strings_from_unknown(coverage.get("missing")):
-                gap = {
-                    "gapId": f"{_row_str(row, 'job_id')}#skill#{keyword.lower()}",
-                    "kind": "missing_skill",
-                    "requirementId": None,
-                    "requirementText": keyword,
-                    "demandedSkill": keyword,
-                    "tier": None,
-                    "weight": None,
-                    "fitKind": None,
-                    "reason": (
-                        "The generated coverage audit recorded this demanded skill as missing from shipped materials."
-                    ),
-                    "jobRefs": [_skill_coverage_usage(row, keyword, "missing")],
-                }
-                gaps[str(gap["gapId"])] = gap
-                for entry in skill_entries_by_name.get(keyword.lower(), []):
-                    entry["gaps"].append(gap)
 
     def _build_compensation_projection(
         self,
@@ -2078,6 +2048,7 @@ class ProjectionBuilder:
             "posted": {
                 "sourceKind": "posted",
                 "recordStatus": posted["recordStatus"],
+                **({"failureCode": posted["failureCode"]} if posted["recordStatus"] == "unavailable" else {}),
                 "parseState": (
                     posted["fact"]["parseState"]
                     if posted["recordStatus"] == "recorded" and isinstance(posted.get("fact"), dict)
@@ -2095,6 +2066,7 @@ class ProjectionBuilder:
             "market": {
                 "sourceKind": "reported_company_role_market",
                 "recordStatus": market["recordStatus"],
+                **({"failureCode": market["failureCode"]} if market["recordStatus"] == "unavailable" else {}),
                 "benchmarkKind": (
                     market["estimate"]["benchmarkLineage"]["kind"]
                     if market["recordStatus"] == "recorded"
@@ -2171,8 +2143,23 @@ class ProjectionBuilder:
                 "jobId": job_id,
                 "legacyRawSalary": _nullable_text(legacy_raw_salary),
             }
+        from jobctrl.infrastructure.compensation.sqlite_repository import SqlitePostedCompensationRepository
+        from jobctrl.domain.determinations import DeterminationFailure
+
+        repository = SqlitePostedCompensationRepository(self._conn)
+        try:
+            typed = repository.get_fact(str(self._tenant_id), job_id)
+            envelope = repository.require_determination(typed)
+        except (DeterminationFailure, ValueError):
+            return {
+                "ok": True,
+                "recordStatus": "unavailable",
+                "jobId": job_id,
+                "legacyRawSalary": _nullable_text(legacy_raw_salary),
+                "failureCode": "posted_compensation_determination_unavailable",
+            }
         fact = _posted_fact_from_row(row, job_id)
-        return {"ok": True, "recordStatus": "recorded", "fact": fact}
+        return {"ok": True, "recordStatus": "recorded", "fact": fact, "determination": envelope.model_dump()}
 
     def _load_market_compensation(self, job_id: str) -> dict[str, Any]:
         try:
@@ -2217,6 +2204,79 @@ class ProjectionBuilder:
                 estimator_version=_row_str(row, "estimator_version"),
             ),
         )
+        from jobctrl.infrastructure.determinations import SqliteDeterminationRepository
+        from jobctrl.domain.enrichment.interpretation import JobInterpretation
+        from jobctrl.domain.determinations import DeterminationFailure
+        from jobctrl.domain.compensation.classification import BenchmarkClassification
+        from pydantic import ValidationError
+
+        repository = SqliteDeterminationRepository(self._conn)
+        unavailable = {
+            "ok": True,
+            "recordStatus": "unavailable",
+            "jobId": job_id,
+            "failureCode": "compensation_determination_unavailable",
+        }
+        try:
+            bound = self._conn.execute(
+                "SELECT determination_id FROM semantic_entity_bindings WHERE tenant_id=? AND entity_kind='market_compensation' AND entity_id=? AND entity_version=? AND determination_kind='job_interpretation'",
+                (str(self._tenant_id), job_id, estimate["estimatorVersion"]),
+            ).fetchone()
+            job_receipt = repository.find(str(self._tenant_id), bound[0]) if bound else None
+            if (
+                job_receipt is None
+                or job_receipt.kind != "job_interpretation"
+                or job_receipt.entity_id != job_id
+                or job_receipt.lane != "enrichment"
+                or job_receipt.schema_version != "1"
+                or job_receipt.prompt_version != "job-interpretation-v1"
+            ):
+                return unavailable
+            interpretation = JobInterpretation.model_validate(job_receipt.result)
+            countries = {place.country_code for place in interpretation.places if place.country_code}
+            if (
+                estimate["occupationCode"] != interpretation.occupation_family.value
+                or estimate["seniorityLabel"] != interpretation.seniority.value
+            ):
+                return unavailable
+            determinations = [job_receipt]
+            evidence = _json_loads(_row_str(row, "selected_evidence_json"), [])
+            if estimate_state == "estimated_range" and not evidence:
+                return unavailable
+            for source in evidence:
+                receipt = repository.find(str(self._tenant_id), source.get("determination_id", ""))
+                if (
+                    receipt is None
+                    or receipt.kind != "benchmark_classification"
+                    or receipt.entity_id != source.get("classification_entity_id")
+                    or receipt.lane != "compensation"
+                    or receipt.schema_version != "1"
+                    or receipt.prompt_version != "benchmark-classification-v1"
+                    or re.search(
+                        r"(?:/users/|file://|[?&](?:token|api[_-]?key|password|secret)=)",
+                        json.dumps(receipt.result),
+                        re.IGNORECASE,
+                    )
+                ):
+                    return unavailable
+                classification = BenchmarkClassification.model_validate(receipt.result)
+                if (
+                    classification.occupation_family.value != source.get("occupation_family_code")
+                    or classification.seniority.value != source.get("seniority_code")
+                    or classification.occupation_family.value != interpretation.occupation_family.value
+                    or classification.seniority.value != interpretation.seniority.value
+                    or not (
+                        {place.country_code for place in classification.places if place.country_code}
+                        & set(source.get("country_codes", []))
+                        & countries
+                    )
+                ):
+                    return unavailable
+                if receipt.determination_id not in {item.determination_id for item in determinations}:
+                    determinations.append(receipt)
+        except (DeterminationFailure, ValidationError, TypeError, AttributeError):
+            return unavailable
+        estimate["determinations"] = [receipt.model_dump() for receipt in determinations]
         return {"ok": True, "recordStatus": "recorded", "estimate": estimate}
 
     # ------------------------------------------------------------- joiners
@@ -2265,7 +2325,9 @@ class ProjectionBuilder:
                     blocked_by=tuple(str(item) for item in blocked_by) if isinstance(blocked_by, list) else (),
                     next_action=_row_nullable_str(row, "next_action"),
                     apply_url_outcome=_apply_url_outcome_from_stage_metadata(_row_nullable_str(row, "metadata_json")),
-                    fetch_failure=fetch_failure_from_stage_metadata(_row_nullable_str(row, "metadata_json")) if stage == "enrich" else None,
+                    fetch_failure=fetch_failure_from_stage_metadata(_row_nullable_str(row, "metadata_json"))
+                    if stage == "enrich"
+                    else None,
                 )
             )
         return result
@@ -2517,9 +2579,7 @@ class ProjectionBuilder:
         from jobctrl.infrastructure.interview import SqliteInterviewPrepRepository
 
         try:
-            record = SqliteInterviewPrepRepository(self._conn).load_latest_read_model(
-                self._tenant_id, JobId(job_id)
-            )
+            record = SqliteInterviewPrepRepository(self._conn).load_latest_read_model(self._tenant_id, JobId(job_id))
         except sqlite3.OperationalError:
             return None
         if record is None:
@@ -4399,27 +4459,6 @@ def _market_estimate_from_row(
         "estimatorVersion": _row_str(row, "estimator_version"),
         "estimatedAt": _row_str(row, "estimated_at"),
     }
-    # Apply the current population contract to persisted canonical v1 estimates.
-    # Raw benchmark evidence remains inspectable even when target pay is unknown.
-    if (
-        base["estimatorVersion"].startswith("company-role-reported-compensation-canonical-benchmark-")
-        and any(warning["code"] == "benchmark_level_fallback" for warning in base["warnings"])
-    ):
-        return {
-            **base,
-            "estimateState": "insufficient_evidence",
-            "confidenceBand": "none",
-            "confidenceScore": 0,
-            "factors": [
-                {**factor, "score": 0, "band": "none", "reason": MARKET_COMPENSATION_REASON_MESSAGES["weak_level_match"]}
-                if factor["name"] == "level" else factor
-                for factor in base["factors"]
-            ],
-            "evidence": [{**evidence, "levelScore": 0} for evidence in base["evidence"]],
-            "insufficientReasons": [
-                {"code": "weak_level_match", "message": MARKET_COMPENSATION_REASON_MESSAGES["weak_level_match"]}
-            ],
-        }
     if estimate_state == "unsupported":
         return {
             **base,
@@ -4738,6 +4777,7 @@ def _market_evidence(value: str) -> list[dict[str, Any]]:
             continue
         rows.append(
             {
+                "determinationId": _nullable_text(item.get("determination_id")),
                 "sourceId": source_id,
                 "displayName": defaults["displayName"],
                 "sourceUrl": _safe_market_evidence_url(item.get("source_url")),
@@ -4974,26 +5014,6 @@ def _requirement_artifact_coverage_to_read_model(value: dict[str, Any]) -> dict[
         "examples": _strings_from_unknown(value.get("examples")),
     }
 
-
-def _skill_coverage_usage(row: object, keyword: str, state: str) -> dict[str, Any]:
-    return {
-        "kind": "skill_coverage",
-        "jobId": _row_str(row, "job_id"),
-        "jobTitle": _row_nullable_str(row, "job_title"),
-        "employer": _row_nullable_str(row, "job_employer"),
-        "artifactId": _row_nullable_str(row, "artifact_id"),
-        "bulletId": None,
-        "generation": _row_nullable_int(row, "generation"),
-        "generatedTextPreview": None,
-        "scoreVersion": None,
-        "requirementId": None,
-        "requirementText": None,
-        "requirementFitKind": None,
-        "artifactCoverageState": None,
-        "keyword": keyword,
-        "coverageState": state,
-        "occurredAt": _row_nullable_str(row, "created_at"),
-    }
 
 
 def _camel_score_breakdown(value) -> dict:

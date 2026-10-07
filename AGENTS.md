@@ -39,3 +39,8 @@ For evidence, rationale, scoring, tailoring or approval defects, read and enforc
 Trace the claim to its canonical source, fix the owning layer, and reproduce the
 reported invariant. Preserve the last accepted artifact during failed refreshes;
 cosmetic masking never proves a fix.
+
+
+## Semantic Judgments
+
+Regexes, word lists, token overlap and hand-tuned prose thresholds may parse formats or execute literal user-authored filters; they must never decide meaning. Use strict source-bound LLM determinations with persisted provenance, lane/spend preflight and no lexical fallback. Readers join recorded IDs. Failed refreshes preserve accepted artifacts. Validate model authority and structural failures in owned synthetic workspaces; do not add eval sets, labeled corpora, baseline comparisons or recorded-output replay fixtures. See `docs/decisions.md` and `docs/local-reliability-qa.md`.

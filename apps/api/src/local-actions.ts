@@ -705,9 +705,6 @@ function runStageRpcParams(command: ActionCommandPayload, context: ActionDispatc
   if (command.tailorJudgeModel) {
     params.tailorJudgeModel = command.tailorJudgeModel;
   }
-  if (command.tailorJudgeMinScore !== undefined) {
-    params.tailorJudgeMinScore = command.tailorJudgeMinScore;
-  }
   if (command.jobId) {
     params.jobId = command.jobId;
   }
@@ -745,9 +742,6 @@ function tailorRpcParams(
   if (command.tailorJudgeModel) {
     params.tailorJudgeModel = command.tailorJudgeModel;
   }
-  if (command.tailorJudgeMinScore !== undefined) {
-    params.tailorJudgeMinScore = command.tailorJudgeMinScore;
-  }
   return params;
 }
 
@@ -779,9 +773,6 @@ function retailorRpcParams(
   }
   if (command.tailorJudgeModel) {
     params.tailorJudgeModel = command.tailorJudgeModel;
-  }
-  if (command.tailorJudgeMinScore !== undefined) {
-    params.tailorJudgeMinScore = command.tailorJudgeMinScore;
   }
   return params;
 }

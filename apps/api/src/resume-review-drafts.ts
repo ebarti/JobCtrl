@@ -1,4 +1,7 @@
+import { EditIntentResultSchema } from "@jobctrl/contracts";
 import crypto from "node:crypto";
+import { ClaimVerificationDeterminationSchema, type ResumeEditIntentReview, type ResumeEditReview } from "@jobctrl/contracts";
+import { readDetermination } from "./semantic-determinations.js";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -360,18 +363,7 @@ export function saveResumeReviewDraftRevision(
         delta.afterText,
         now,
       );
-      insertFeedbackSignal(db, {
-        jobId: draft.job_id,
-        draftId: draft.draft_id,
-        draftRevisionId: revisionId,
-        sourceKind: "edit_delta",
-        sourceId: delta.deltaId,
-        kind: signalKindForDelta(delta),
-        summary: summaryForDelta(delta),
-        section: delta.section,
-        semanticId: delta.semanticId,
-        createdAt: now,
-      });
+
     }
 
     markCommentThreadsSupersededByDeltas(db, draft.draft_id, deltas, now);
@@ -500,6 +492,7 @@ export async function renderResumeReviewDraft(
   draftId: string,
   request: ResumeReviewDraftRenderRequest = {},
   renderPdf: ResumeHtmlPdfRenderer = defaultResumeHtmlPdfRenderer,
+  reviewEdit?: (draftId: string, revisionId: string) => Promise<ResumeEditReview>,
 ): Promise<ResumeReviewDraftRenderResponse> {
   const draft = getDraftRow(db, draftId);
   if (!draft) {
@@ -516,6 +509,12 @@ export async function renderResumeReviewDraft(
       validation,
     };
   }
+
+  if (!reviewEdit) throw new InputError("claim_verification_unavailable");
+  const semanticReview=await reviewEdit(draftId,revision.revision_id);
+  const textFingerprint=crypto.createHash("sha256").update(revision.edited_text.replace(/\r\n/g,"\n")).digest("hex");
+  if (semanticReview.revisionId!==revision.revision_id || semanticReview.textFingerprint!==textFingerprint) throw new DraftRenderConflictError("Resume edit review binding changed; retry.");
+  if (!semanticReview.passed) return {ok:false,error:"resume_review_draft_invalid",draft:draftFromRow(db,draft),validation:{passed:false,errors:semanticReview.errors,warnings:validation.warnings}};
 
   // Render before the transaction: the awaited render must never sit inside
   // a better-sqlite3 transaction, whose deferred BEGIN pins a read snapshot
@@ -536,11 +535,15 @@ export async function renderResumeReviewDraft(
       if (nextMaterialGeneration(db, draft.job_id) !== rendered.generation) {
         throw new DraftRenderConflictError("Job materials changed while rendering; retry the render.");
       }
+      const profileVersion=getRow<{version:number}>(db,"SELECT version FROM candidate_profiles WHERE tenant_id=? ORDER BY profile_id LIMIT 1",[DEFAULT_TENANT])?.version;
+      const analysisGeneration=getRow<{generation:number}>(db,"SELECT max(generation) as generation FROM job_employer_analysis WHERE tenant_id=? AND job_id=?",[DEFAULT_TENANT,draft.job_id])?.generation;
+      if (profileVersion!==semanticReview.profileVersion || analysisGeneration!==semanticReview.analysisGeneration) throw new DraftRenderConflictError("Canonical review sources changed; retry.");
       promoted = true;
       fs.renameSync(rendered.tmpTextPath, rendered.textPath);
       fs.renameSync(rendered.tmpHtmlPath, rendered.htmlPath);
       fs.renameSync(rendered.tmpPdfPath, rendered.pdfPath);
-      insertRenderedDraftArtifacts(db, draft, revision, validation, rendered);
+      insertRenderedDraftArtifacts(db, draft, revision, validation, rendered, semanticReview);
+      persistEditedAnchors(db,draft,revision,rendered,semanticReview);
       const now = new Date().toISOString();
       markResidualCommentThreadsAfterAcceptance(db, draft.draft_id, now);
       db.prepare(
@@ -1115,24 +1118,13 @@ function validateDraftRevisionForRender(
   if (/\/Users\/|\/private\/|\.sqlite\b|\.db\b|BEGIN\s+(?:RSA\s+)?PRIVATE KEY/i.test(editedText)) {
     errors.push("Edited resume text appears to contain local paths, database names, or private key material.");
   }
-  if (/\b(?:fabricated|unsupported claim|invented metric)\b/i.test(editedText)) {
-    errors.push("Edited resume text still contains explicit unsupported-claim markers.");
-  }
   if (!nonEmptyLines.some((line) => /^[-•*]\s+/.test(line))) {
     warnings.push("No bullet lines were detected in the edited resume.");
-  }
-  if (!nonEmptyLines.some((line) => /experience|education|skills|summary|profile/i.test(line))) {
-    warnings.push("No recognizable resume section heading was detected.");
   }
   for (const line of nonEmptyLines) {
     if (line.length > 220) {
       warnings.push("One or more lines are long enough to risk PDF layout overflow.");
       break;
-    }
-  }
-  for (const word of ["guru", "ninja", "rockstar"]) {
-    if (new RegExp(`\\b${word}\\b`, "i").test(editedText)) {
-      warnings.push(`Banned or discouraged resume wording detected: ${word}.`);
     }
   }
   return { passed: errors.length === 0, errors, warnings };
@@ -1215,6 +1207,7 @@ function insertRenderedDraftArtifacts(
   revision: ResumeReviewDraftRevisionRow,
   validation: ResumeReviewDraftValidation,
   rendered: RenderedDraftArtifactFiles,
+  semanticReview: ResumeEditReview,
 ): void {
   const { generation, resumeTextArtifactId, resumePdfArtifactId, textPath, htmlPath, pdfPath, layoutBoxes } =
     rendered;
@@ -1235,6 +1228,8 @@ function insertRenderedDraftArtifacts(
     JSON.stringify({ approved: true, source: DRAFT_RENDERER_METADATA_SOURCE }),
     JSON.stringify({
       source: DRAFT_RENDERER_METADATA_SOURCE,
+      claim_verification_id: semanticReview.claimVerificationId,
+      quality_determination_id: semanticReview.qualityDeterminationId,
       draft_id: draft.draft_id,
       draft_revision_id: revision.revision_id,
       base_generation: draft.base_generation,
@@ -1257,6 +1252,8 @@ function insertRenderedDraftArtifacts(
     fs.statSync(textPath).size,
     JSON.stringify({
       source: DRAFT_RENDERER_METADATA_SOURCE,
+      claim_verification_id: semanticReview.claimVerificationId,
+      quality_determination_id: semanticReview.qualityDeterminationId,
       draft_id: draft.draft_id,
       draft_revision_id: revision.revision_id,
       base_resume_text_artifact_id: draft.base_resume_text_artifact_id,
@@ -1274,6 +1271,8 @@ function insertRenderedDraftArtifacts(
     fs.statSync(pdfPath).size,
     JSON.stringify({
       source: DRAFT_RENDERER_METADATA_SOURCE,
+      claim_verification_id: semanticReview.claimVerificationId,
+      quality_determination_id: semanticReview.qualityDeterminationId,
       draft_id: draft.draft_id,
       draft_revision_id: revision.revision_id,
       html_path: htmlPath,
@@ -1283,6 +1282,42 @@ function insertRenderedDraftArtifacts(
     now,
   );
   replaceLayoutBoxes(db, draft.job_id, generation, resumePdfArtifactId, layoutBoxes, now);
+}
+
+function persistEditedAnchors(db:SqliteDatabase,draft:ResumeReviewDraftRow,revision:ResumeReviewDraftRevisionRow,rendered:RenderedDraftArtifactFiles,review:ResumeEditReview):void {
+  const claim=readDetermination(db,DEFAULT_TENANT,review.claimVerificationId);
+  const quality=readDetermination(db,DEFAULT_TENANT,review.qualityDeterminationId);
+  if(claim?.kind!=="claim_verification" || quality?.kind!=="artifact_quality" || claim.entity_id!==revision.revision_id || quality.entity_id!==revision.revision_id || claim.result["verdict"]!=="pass" || quality.result["verdict"]!=="pass") throw new InputError("artifact_binding_invalid");
+  const verified=ClaimVerificationDeterminationSchema.parse(claim.result);
+  const lineIds=verified.lines.map(line=>line.line_id);
+  if(new Set(review.anchors.map(anchor=>anchor.lineId)).size!==lineIds.length || review.anchors.length!==lineIds.length || review.anchors.some(anchor=>anchor.determinationId!==claim.determination_id || !lineIds.includes(anchor.lineId)))throw new InputError("artifact_anchor_binding_invalid");
+  for(const anchor of review.anchors){
+    const line=verified.lines.find(line=>line.line_id===anchor.lineId)!;
+    if(anchor.evidenceIds.some(id=>!line.source_evidence.some(cite=>cite.source_id===id)) || anchor.requirementIds.some(id=>!line.served_requirements.some(served=>served.requirement_id===id)))throw new InputError("artifact_anchor_binding_invalid");
+  }
+  for(const [kind,id] of [["tailored_resume",rendered.resumeTextArtifactId],["resume_pdf",rendered.resumePdfArtifactId]] as const){
+    for(const anchor of review.anchors)db.prepare("INSERT INTO artifact_line_anchors VALUES (?,?,?,?,?,?,?,?,?,?)").run(DEFAULT_TENANT,kind,id,rendered.generation,anchor.lineId,JSON.stringify(anchor.evidenceIds),JSON.stringify(anchor.requirementIds),anchor.transformType,anchor.reason,anchor.determinationId);
+    for(const [determinationKind,determinationId] of [["claim_verification",review.claimVerificationId],["artifact_quality",review.qualityDeterminationId]] as const)db.prepare("INSERT INTO semantic_entity_bindings VALUES (?,?,?,?,?,?)").run(DEFAULT_TENANT,"artifact",id,String(rendered.generation),determinationKind,determinationId);
+  }
+  persistResumeEditIntent(db,draft.draft_id,revision.revision_id,review);
+}
+
+export function persistResumeEditIntent(db:SqliteDatabase,draftId:string,revisionId:string,review:ResumeEditIntentReview):void {
+  const draft=getDraftRow(db,draftId);
+  const revision=getRevisionRow(db,revisionId);
+  if(!draft || !revision || revision.draft_id!==draft.draft_id || draft.current_revision_id!==revisionId || review.revisionId!==revisionId || review.textFingerprint!==crypto.createHash("sha256").update(revision.edited_text.replace(/\r\n/g,"\n")).digest("hex"))throw new DraftRenderConflictError("Resume edit intent sources changed; retry.");
+  if(review.editIntentId){
+    const intent=readDetermination(db,DEFAULT_TENANT,review.editIntentId);
+    if(intent?.kind!=="edit_intent" || intent.entity_id!==revision.revision_id)throw new InputError("edit_intent_binding_invalid");
+    const result=EditIntentResultSchema.safeParse(intent.result);
+    if(!result.success)throw new InputError("edit_intent_binding_invalid");
+    for(const row of result.data.edits){
+      const delta=getRow<ResumeReviewEditDeltaRow>(db,"SELECT * FROM resume_review_edit_deltas WHERE tenant_id=? AND revision_id=? AND delta_id=?",[DEFAULT_TENANT,revision.revision_id,row.edit_id]);
+      if(!delta)throw new InputError("foreign_edit_id");
+      if(db.prepare("SELECT 1 FROM tailoring_feedback_signals WHERE tenant_id=? AND draft_revision_id=? AND source_kind='edit_delta' AND source_id=?").get(DEFAULT_TENANT,revision.revision_id,row.edit_id))continue;
+      insertFeedbackSignal(db,{jobId:draft.job_id,draftId:draft.draft_id,draftRevisionId:revision.revision_id,sourceKind:"edit_delta",sourceId:row.edit_id,kind:row.kind,summary:row.rationale,section:delta.section,semanticId:delta.semantic_id,createdAt:new Date().toISOString()});
+    }
+  }
 }
 
 function renderOutputDirectory(db: SqliteDatabase, draft: ResumeReviewDraftRow): string | null {
@@ -1460,7 +1495,21 @@ function htmlForEditedResumePlateDocument(editedText: string, plateDocument: unk
   if (normalizeResumeDocumentText(plateText) !== normalizeResumeDocumentText(editedText)) {
     return null;
   }
-  const html = plateDocument.map((node) => resumePlateNodeHtml(node)).join("");
+  let currentLine = 0;
+  const canonicalizeLines = (node: unknown): unknown => {
+    if (!isJsonRecord(node)) return node;
+    const copy = { ...node };
+    if (positiveInteger(node.lineNumber) && resumeTextFromPlateNode(node).trim()) {
+      currentLine += 1;
+      copy.semanticId = `edited:line:${currentLine}`;
+      copy.lineNumber = currentLine;
+    }
+    if (Array.isArray(node.children)) copy.children = node.children.map(canonicalizeLines);
+    return copy;
+  };
+  const canonicalDocument = plateDocument.map(canonicalizeLines);
+  if (currentLine !== normalizeResumeDocumentText(editedText).split("\n").length) return null;
+  const html = canonicalDocument.map((node) => resumePlateNodeHtml(node)).join("");
   return html.trim() ? html : null;
 }
 
@@ -2029,19 +2078,6 @@ function readBaseResumeText(db: SqliteDatabase, draft: ResumeReviewDraftRow): st
   }
 }
 
-function signalKindForDelta(delta: ResumeReviewEditDelta): TailoringFeedbackSignalKind {
-  if (delta.kind === "structure_change" || !delta.beforeText || !delta.afterText) {
-    return "style_preference";
-  }
-  if (numbersChanged(delta.beforeText, delta.afterText)) {
-    return "factual_correction";
-  }
-  if (/unsupported|incorrect|fabricated|source|provenance/i.test(`${delta.beforeText}\n${delta.afterText}`)) {
-    return "claim_policy_correction";
-  }
-  return "style_preference";
-}
-
 function signalKindForReply(decision: ResumeCommentReplyDecision): TailoringFeedbackSignalKind {
   switch (decision) {
     case "accepted":
@@ -2053,19 +2089,6 @@ function signalKindForReply(decision: ResumeCommentReplyDecision): TailoringFeed
     case "clarified":
       return "factual_correction";
   }
-}
-
-function summaryForDelta(delta: ResumeReviewEditDelta): string {
-  return boundedText(
-    `${delta.section ?? "resume"} edit: ${delta.beforeText || "[empty]"} -> ${delta.afterText || "[empty]"}`,
-    FEEDBACK_SUMMARY_LIMIT,
-  );
-}
-
-function numbersChanged(left: string, right: string): boolean {
-  const leftNumbers = left.match(/\d+(?:[.,]\d+)?%?/g) ?? [];
-  const rightNumbers = right.match(/\d+(?:[.,]\d+)?%?/g) ?? [];
-  return JSON.stringify(leftNumbers) !== JSON.stringify(rightNumbers);
 }
 
 function boundedText(value: string, limit: number): string {

@@ -29,7 +29,6 @@ describe("<AiExecutionPolicyPanel>", () => {
     await screen.findByRole("group", { name: "Employer analysis perspectives" });
 
     expect(screen.getByRole("checkbox", { name: "Claude" })).toHaveAttribute("data-slot", "checkbox");
-    expect(screen.getByLabelText("Minimum judge score")).toHaveAttribute("data-slot", "input");
     expect(screen.getByRole("button", { name: "Save AI policy" })).toHaveAttribute(
       "data-slot",
       "button",

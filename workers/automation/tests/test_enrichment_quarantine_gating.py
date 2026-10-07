@@ -133,9 +133,7 @@ def _record_snapshot(
     active_state: ActiveState = ActiveState.ACTIVE,
 ) -> None:
     repo = SqlitePostingSnapshotSetRepository(conn)
-    snapshot_set = PostingSnapshotSet.empty(
-        tenant_id=LOCAL_TENANT, job_id=_job_id(conn, url), updated_at=NOW
-    )
+    snapshot_set = PostingSnapshotSet.empty(tenant_id=LOCAL_TENANT, job_id=_job_id(conn, url), updated_at=NOW)
     snapshot_set, _ = snapshot_set.record_snapshot(
         source_id="acme",
         extraction_tier="css_selectors",
@@ -291,9 +289,7 @@ def test_stats_exclude_quarantined_low_confidence_from_untailored_eligible(
     for url in (good, bad):
         _seed_enriched_job(conn, url)
         _save_score(conn, url, fit=9)
-    _record_snapshot(
-        conn, good, confidence=SnapshotConfidence.HIGH, quarantine_reason=QuarantineReason.NONE
-    )
+    _record_snapshot(conn, good, confidence=SnapshotConfidence.HIGH, quarantine_reason=QuarantineReason.NONE)
     _record_snapshot(
         conn,
         bad,
@@ -362,8 +358,7 @@ def test_migration_backfills_latest_snapshot_quality(tmp_path: Path) -> None:
     ensure_posting_snapshot_tables(conn)
 
     row = conn.execute(
-        "SELECT latest_confidence, latest_quarantine_reason "
-        "FROM posting_snapshot_sets WHERE job_url = 'u'"
+        "SELECT latest_confidence, latest_quarantine_reason FROM posting_snapshot_sets WHERE job_url = 'u'"
     ).fetchone()
     assert row["latest_confidence"] == "low"
     assert row["latest_quarantine_reason"] == "low_confidence_extraction"
@@ -372,7 +367,12 @@ def test_migration_backfills_latest_snapshot_quality(tmp_path: Path) -> None:
 
 def test_snapshot_captured_event_records_confidence_and_quarantine(
     conn: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from tests.workflow_determination_fakes import install_page_models
+    from tests.page_fakes import PageModel
+
+    install_page_models(monkeypatch, model=PageModel(quality="low"))
     from jobctrl.enrichment.detail import _record_posting_snapshot_from_cascade
 
     url = "https://example.com/job/event"
@@ -408,7 +408,12 @@ def test_snapshot_captured_event_records_confidence_and_quarantine(
 
 def test_trustworthy_snapshot_releases_tailor_and_resolves_quarantine(
     conn: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from tests.workflow_determination_fakes import install_page_models
+    from tests.page_fakes import PageModel
+
+    install_page_models(monkeypatch, model=PageModel(quality="low"))
     from jobctrl.enrichment.detail import _record_posting_snapshot_from_cascade
     from jobctrl.state import ensure_job_stage_rows, set_stage_state
 
@@ -444,6 +449,7 @@ def test_trustworthy_snapshot_releases_tailor_and_resolves_quarantine(
     )
     conn.commit()
 
+    install_page_models(monkeypatch, model=PageModel(quality="high"))
     recovered_at = "2026-05-13T01:00:00+00:00"
     _record_posting_snapshot_from_cascade(
         conn,
@@ -462,8 +468,7 @@ def test_trustworthy_snapshot_releases_tailor_and_resolves_quarantine(
     )
 
     tailor = conn.execute(
-        "SELECT state, error_code FROM job_stage_states "
-        "WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'",
+        "SELECT state, error_code FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'",
         (str(LOCAL_TENANT), str(job_id)),
     ).fetchone()
     assert dict(tailor) == {"state": "pending", "error_code": None}
@@ -483,6 +488,10 @@ def test_trustworthy_snapshot_rolls_back_if_tailor_release_is_interrupted(
     conn: sqlite3.Connection,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from tests.workflow_determination_fakes import install_page_models
+    from tests.page_fakes import PageModel
+
+    install_page_models(monkeypatch, model=PageModel(quality="low"))
     from jobctrl.enrichment import detail
     from jobctrl.state import ensure_job_stage_rows, set_stage_state
 
@@ -522,8 +531,7 @@ def test_trustworthy_snapshot_rolls_back_if_tailor_release_is_interrupted(
 
     event_counts_before = {
         event_type: conn.execute(
-            "SELECT COUNT(*) FROM job_events WHERE tenant_id = ? AND job_id = ? "
-            "AND event_type = ?",
+            "SELECT COUNT(*) FROM job_events WHERE tenant_id = ? AND job_id = ? AND event_type = ?",
             (str(LOCAL_TENANT), str(job_id), event_type),
         ).fetchone()[0]
         for event_type in ("StageReset", "PostingContentSnapshotCaptured")
@@ -536,22 +544,24 @@ def test_trustworthy_snapshot_rolls_back_if_tailor_release_is_interrupted(
             raise RuntimeError("fault after Tailor release and StageReset audit")
         return original_record_job_event(*args, **kwargs)
 
+    install_page_models(monkeypatch, model=PageModel(quality="high"))
     monkeypatch.setattr(state, "record_job_event", fail_after_tailor_release)
-    detail._record_posting_snapshot_from_cascade(
-        conn,
-        job_id=job_id,
-        url=url,
-        source_id="acme",
-        title="Engineer",
-        cascade_result={
-            "full_description": _DESCRIPTION,
-            "application_url": "https://example.com/apply/quarantine-release-crash",
-            "tier_used": 1,
-            "active_state": "active",
-            "verification_method": "json_ld",
-        },
-        captured_at="2026-05-13T01:00:00+00:00",
-    )
+    with pytest.raises(RuntimeError, match="fault after Tailor release"):
+        detail._record_posting_snapshot_from_cascade(
+            conn,
+            job_id=job_id,
+            url=url,
+            source_id="acme",
+            title="Engineer",
+            cascade_result={
+                "full_description": _DESCRIPTION,
+                "application_url": "https://example.com/apply/quarantine-release-crash",
+                "tier_used": 1,
+                "active_state": "active",
+                "verification_method": "json_ld",
+            },
+            captured_at="2026-05-13T01:00:00+00:00",
+        )
 
     snapshot = conn.execute(
         "SELECT latest_snapshot_version, latest_confidence, latest_quarantine_reason "
@@ -564,8 +574,7 @@ def test_trustworthy_snapshot_rolls_back_if_tailor_release_is_interrupted(
         "latest_quarantine_reason": "low_confidence_extraction",
     }
     tailor = conn.execute(
-        "SELECT state, error_code FROM job_stage_states "
-        "WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'",
+        "SELECT state, error_code FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'tailor'",
         (str(LOCAL_TENANT), str(job_id)),
     ).fetchone()
     assert dict(tailor) == {
@@ -573,15 +582,13 @@ def test_trustworthy_snapshot_rolls_back_if_tailor_release_is_interrupted(
         "error_code": "ENRICHMENT_QUARANTINED",
     }
     quarantine = conn.execute(
-        "SELECT status FROM discovery_quarantine_entries "
-        "WHERE tenant_id = ? AND job_id = ?",
+        "SELECT status FROM discovery_quarantine_entries WHERE tenant_id = ? AND job_id = ?",
         (str(LOCAL_TENANT), str(job_id)),
     ).fetchone()
     assert quarantine["status"] == "pending"
     event_counts_after = {
         event_type: conn.execute(
-            "SELECT COUNT(*) FROM job_events WHERE tenant_id = ? AND job_id = ? "
-            "AND event_type = ?",
+            "SELECT COUNT(*) FROM job_events WHERE tenant_id = ? AND job_id = ? AND event_type = ?",
             (str(LOCAL_TENANT), str(job_id), event_type),
         ).fetchone()[0]
         for event_type in ("StageReset", "PostingContentSnapshotCaptured")
@@ -619,9 +626,7 @@ def test_no_snapshot_backlog_job_is_never_gated_from_any_selector(
     _add_approved_resume_with_pdf(conn, tailored)
 
     # No snapshot rows exist for either job.
-    assert (
-        conn.execute("SELECT COUNT(*) FROM posting_snapshot_sets").fetchone()[0] == 0
-    )
+    assert conn.execute("SELECT COUNT(*) FROM posting_snapshot_sets").fetchone()[0] == 0
 
     assert untailored in _urls(get_jobs_by_stage(conn=conn, stage="pending_tailor", min_score=7))
     assert tailored in _urls(get_jobs_by_stage(conn=conn, stage="pending_cover", min_score=7))
@@ -679,3 +684,11 @@ def test_reenrichment_to_high_self_heals_a_quarantined_job_into_tailoring(
     assert detail is not None
     assert detail["enrichment_confidence"] == "high"
     assert detail["enrichment_quarantine_reason"] == "none"
+
+
+@pytest.fixture(autouse=True)
+def semantic_workflow_models(monkeypatch):
+    from tests.workflow_determination_fakes import install_discovery_models, install_page_models
+
+    install_discovery_models(monkeypatch)
+    install_page_models(monkeypatch)

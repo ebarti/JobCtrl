@@ -1,16 +1,18 @@
 """Temporal orchestration for importing one explicit job-posting URL."""
 
 from __future__ import annotations
+from jobctrl.infrastructure.discovery.triage import PersistedPostingTriage
+from jobctrl.domain.enrichment.snapshot_services import ActiveStateVerifier
 
 import hashlib
 import math
-import re
+import json
 import sqlite3
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urljoin, urlsplit, urlunsplit
 
 from bs4 import BeautifulSoup
 from temporalio import activity, workflow
@@ -62,57 +64,6 @@ _IMPORT_RETRY = RetryPolicy(
     non_retryable_error_types=["invalid_url", "RuntimeIdentityMismatch"],
 )
 _DEFAULT_TIMEOUT = timedelta(minutes=10)
-_BLOCKED_TITLE_SIGNALS = (
-    "access denied",
-    "are you a human",
-    "captcha",
-    "log in",
-    "login",
-    "sign in",
-    "verify you are human",
-)
-_CSS_JOB_DESCRIPTION_MARKERS = (
-    "#job-description",
-    "#job_description",
-    "#jobDescriptionText",
-    ".job-description",
-    ".job_description",
-    ".job__description",
-    '[class*="job-description"]',
-    '[class*="jobDescription"]',
-    '[data-testid*="description"]',
-    '[data-testid="job-description"]',
-    ".job-post-container",
-    ".ashby-job-posting-description",
-    '[class*="posting-description"]',
-    '[class*="job-detail"]',
-    '[class*="jobDetail"]',
-    '[class*="job-content"]',
-    '[class*="job-body"]',
-    'article[class*="job"]',
-    ".job-posting-content",
-)
-_JOB_SECTION_SIGNALS = (
-    "about the role",
-    "compensation",
-    "how to apply",
-    "key details",
-    "qualifications",
-    "requirements",
-    "responsibilities",
-    "what we are looking for",
-    "what you'll do",
-    "what you will do",
-)
-_GENERIC_EMPLOYER_SUFFIXES = {
-    "apply",
-    "application",
-    "career",
-    "careers",
-    "job",
-    "jobs",
-    "job openings",
-}
 
 
 class _DeferredEventPublisher:
@@ -120,22 +71,6 @@ class _DeferredEventPublisher:
 
     def publish(self, _event: object) -> None:
         return None
-
-
-class _EmbeddedAtsJobExtractor:
-    """Extract a custom careers page whose application form proves job scope."""
-
-    def extract(self, page: Any) -> Any:
-        from jobctrl.domain.enrichment.services import ExtractionResult
-        from jobctrl.domain.enrichment.value_objects import FullDescription
-
-        description = _embedded_ats_job_description(page)
-        if not description:
-            return ExtractionResult(ok=False)
-        return ExtractionResult(
-            ok=True,
-            full_description=FullDescription(text=description),
-        )
 
 
 @activity.defn(name="job_url_import")
@@ -208,8 +143,9 @@ def execute_job_url_import(
     conn: sqlite3.Connection | None = None,
     fetcher: Any | None = None,
     url_validator: Callable[[str], Any] | None = None,
+    determination_dependencies: dict | None = None,
 ) -> JobUrlImportActivityOutput:
-    """Fetch, deterministically extract, and ingest one public posting URL.
+    """Fetch, determine page meaning, and ingest one public posting URL.
 
     Inaccessible or ambiguous pages never create a placeholder job. They enter
     the existing Manual Capture queue so a user can supply the page content.
@@ -225,7 +161,6 @@ def execute_job_url_import(
         SearchStrategy,
         Source,
     )
-    from jobctrl.domain.enrichment.services import CssSelectorExtractor, JsonLdExtractor
     from jobctrl.domain.enrichment.snapshot_services import ContentAcquisitionService, TierExtractor
     from jobctrl.domain.enrichment.snapshot_use_case import CapturePostingSnapshotUseCase
     from jobctrl.domain.enrichment import ExtractionTier
@@ -273,12 +208,6 @@ def execute_job_url_import(
                 conn=connection,
                 resolved_urls=(url,),
             )
-        _repair_stored_import_identity(
-            connection,
-            tenant_id=tenant_id,
-            job_id=existing.job_id,
-            source_native_id=source_native_id,
-        )
         _ensure_discovery_events(
             connection,
             repository=repository,
@@ -359,13 +288,75 @@ def execute_job_url_import(
             type="job_url_import_fetch_failed",
         )
 
-    extracted = _extract_posting_page(page)
-    if extracted is None:
-        return _manual_capture_output(
-            connection,
-            url=url,
-            reason=_content_block_reason(page) or ManualActionReason.AMBIGUOUS_CAREER_SYSTEM,
+    final_url = str(getattr(page, "final_url", "") or url).strip()
+    if not active_url_validator(final_url).allowed:
+        raise ApplicationError(
+            "Only public HTTP or HTTPS job URLs can be imported.", type="invalid_url", non_retryable=True
         )
+    redirected_existing = repository.resolve_by_posting_url(tenant_id, PostingUrl(value=final_url))
+    if redirected_existing is not None and final_url != url:
+        native_id = _manual_import_source_native_id(
+            connection, tenant_id=str(tenant_id), job_id=str(redirected_existing.job_id)
+        )
+        if native_id is None:
+            return _imported_output(
+                redirected_existing.job_id, already_existed=True, conn=connection, resolved_urls=(url, final_url)
+            )
+        _ensure_discovery_events(
+            connection,
+            repository=repository,
+            tenant_id=tenant_id,
+            job_id=redirected_existing.job_id,
+            source_native_id=native_id,
+        )
+        if _ensure_existing_snapshot_event(
+            connection, tenant_id=tenant_id, job_id=redirected_existing.job_id, source_native_id=native_id
+        ):
+            _ensure_posted_compensation_fact(
+                connection, tenant_id=tenant_id, job_id=redirected_existing.job_id, source_native_id=native_id
+            )
+            _ensure_imported_job_pipeline_state(
+                connection, tenant_id=tenant_id, job_id=redirected_existing.job_id, source_native_id=native_id
+            )
+            return _imported_output(
+                redirected_existing.job_id, already_existed=True, conn=connection, resolved_urls=(url, final_url)
+            )
+
+    from jobctrl.infrastructure.determinations import determination_dependencies as configured_dependencies
+    from jobctrl.domain.enrichment.page_interpretation import ModelPageInterpreter
+    from jobctrl.domain.determinations import DeterminationFailure
+
+    dependencies = determination_dependencies or configured_dependencies(
+        connection, tenant_id=str(tenant_id), lane="enrichment"
+    )
+    rendered = _rendered_page_text(page)
+    try:
+        page_result, _ = ModelPageInterpreter(**dependencies).interpret(
+            entity_id=url,
+            text=rendered,
+            metadata={
+                "url": url,
+                "final_url": str(getattr(page, "final_url", url)),
+                "http_status": getattr(page, "status", None),
+            },
+        )
+        if (
+            page_result.access_state.value != "clear"
+            or page_result.page_kind.value != "posting"
+            or page_result.availability.value in {"closed", "expired", "removed"}
+        ):
+            reasons = {
+                "login_required": ManualActionReason.LOGIN_REQUIRED,
+                "challenge": ManualActionReason.BOT_DETECTION,
+            }
+            return _manual_capture_output(
+                connection,
+                url=url,
+                reason=reasons.get(page_result.access_state.value, ManualActionReason.AMBIGUOUS_CAREER_SYSTEM),
+            )
+        extracted = _extract_posting_page(page, dependencies=dependencies, entity_id=url)
+    except DeterminationFailure as error:
+        raise ApplicationError(error.code, type="semantic_determination_" + error.code, non_retryable=True) from None
 
     final_url = str(getattr(page, "final_url", "") or url).strip()
     final_safety = active_url_validator(final_url)
@@ -393,12 +384,6 @@ def execute_job_url_import(
                 conn=connection,
                 resolved_urls=(url, canonical_url),
             )
-        _repair_stored_import_identity(
-            connection,
-            tenant_id=tenant_id,
-            job_id=canonical_existing.job_id,
-            source_native_id=source_native_id,
-        )
         _ensure_discovery_events(
             connection,
             repository=repository,
@@ -448,6 +433,12 @@ def execute_job_url_import(
         identity = None
         already_existed = False
 
+    application_url = extracted["application_url"]
+    if application_url and not active_url_validator(application_url).allowed:
+        raise ApplicationError(
+            "The extracted application URL is not public HTTP or HTTPS.", type="invalid_url", non_retryable=True
+        )
+
     posting = ScrapedJobPosting(
         posting_url=PostingUrl(value=canonical_url),
         source=Source(board="Direct URL import"),
@@ -467,6 +458,14 @@ def execute_job_url_import(
     if identity is None:
         try:
             DiscoverJobsUseCase(
+                triage=PersistedPostingTriage(
+                    connection,
+                    dependencies=(
+                        {**determination_dependencies, "lane": "discovery"}
+                        if determination_dependencies is not None
+                        else None
+                    ),
+                ),
                 repository=repository,
                 publisher=_DeferredEventPublisher(),
             ).execute(
@@ -482,7 +481,24 @@ def execute_job_url_import(
             PostingUrl(value=canonical_url),
         )
     if identity is None:
-        raise RuntimeError("Job URL import did not persist a canonical JobId")
+        triage_row = connection.execute(
+            "SELECT status,reason_code,failure_code FROM posting_triage WHERE tenant_id=? AND source_id='manual_url_import' AND json_extract(listing_json,'$.url')=? ORDER BY created_at DESC LIMIT 1",
+            (str(tenant_id), canonical_url),
+        ).fetchone()
+        if triage_row is None:
+            from jobctrl.domain.determinations import DeterminationFailure
+
+            raise DeterminationFailure("triage_binding_invalid")
+        status, reason, failure = triage_row
+        return JobUrlImportActivityOutput(
+            outcome={
+                "pending_triage": "pending_triage",
+                "reject": "triage_rejected",
+                "uncertain": "triage_uncertain",
+                "literal_excluded": "triage_rejected",
+            }.get(status, "pending_triage"),
+            reason=failure or reason or "triage_pending",
+        )
     _ensure_discovery_events(
         connection,
         repository=repository,
@@ -502,14 +518,13 @@ def execute_job_url_import(
             return page
 
     acquisition = ContentAcquisitionService(
+        active_verifier=ActiveStateVerifier(page_interpreter=ModelPageInterpreter(**dependencies)),
         fetcher=_FetchedPage(),
         extractors=(
-            TierExtractor(tier=ExtractionTier.JSON_LD, extractor=JsonLdExtractor()),
             TierExtractor(
-                tier=ExtractionTier.CSS_SELECTORS,
-                extractor=_EmbeddedAtsJobExtractor(),
+                tier=ExtractionTier.JSON_LD,
+                extractor=_SelectedPostingExtractor(extracted["description"], application_url),
             ),
-            TierExtractor(tier=ExtractionTier.CSS_SELECTORS, extractor=CssSelectorExtractor()),
         ),
     )
     snapshot_publisher = DurableJobEventPublisher(
@@ -642,82 +657,6 @@ def _manual_import_source_native_id(
     value = row["source_native_id"] if isinstance(row, sqlite3.Row) else row[0]
     text = str(value or "").strip()
     return text or None
-
-
-def _repair_stored_import_identity(
-    conn: sqlite3.Connection,
-    *,
-    tenant_id: object,
-    job_id: object,
-    source_native_id: str,
-) -> bool:
-    """Converge legacy CSS-import wrappers without refetching the posting."""
-    row = conn.execute(
-        """
-        SELECT title, company
-        FROM jobs
-        WHERE tenant_id = ? AND job_id = ?
-        """,
-        (str(tenant_id), str(job_id)),
-    ).fetchone()
-    if row is None:
-        return False
-    if isinstance(row, sqlite3.Row):
-        stored_title = str(row["title"] or "").strip()
-        stored_company = str(row["company"] or "").strip()
-    else:
-        stored_title = str(row[0] or "").strip()
-        stored_company = str(row[1] or "").strip()
-    normalized = _application_heading_identity(stored_title)
-    if normalized is None:
-        return False
-    title, employer = normalized
-    company = stored_company or employer
-    if title == stored_title and company == stored_company:
-        return False
-
-    from jobctrl.state import record_job_event
-
-    savepoint = "job_url_import_identity_repair"
-    released = False
-    conn.execute(f"SAVEPOINT {savepoint}")
-    try:
-        conn.execute(
-            """
-            UPDATE jobs
-            SET title = ?, company = ?
-            WHERE tenant_id = ? AND job_id = ?
-            """,
-            (title, company, str(tenant_id), str(job_id)),
-        )
-        changed_fields = {"title": True}
-        if not stored_company:
-            changed_fields["company"] = True
-        record_job_event(
-            conn,
-            job_id,
-            "discover",
-            "JobMetadataUpdated",
-            tenant_id=tenant_id,
-            message="Imported job identity normalized from its source heading.",
-            payload={
-                "changedFields": changed_fields,
-                "source": "manual_url_import",
-            },
-            publisher=_DeferredEventPublisher(),
-            idempotency_key=f"{_event_prefix(str(tenant_id), source_native_id)}:identity-normalization-v1",
-        )
-        conn.execute(f"RELEASE SAVEPOINT {savepoint}")
-        released = True
-        conn.commit()
-    except BaseException:
-        if released:
-            conn.rollback()
-        else:
-            conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
-            conn.execute(f"RELEASE SAVEPOINT {savepoint}")
-        raise
-    return True
 
 
 def _ensure_discovery_events(
@@ -866,14 +805,21 @@ def _ensure_posted_compensation_fact(
     if row is None:
         raise RuntimeError("Manual URL import is missing its canonical job row")
     source_text, source_field = posted_compensation_source_from_job(row)
-    SqlitePostedCompensationRepository(conn).parse_and_save_job_salary(
-        job_id,
-        source_text,
-        tenant_id=str(tenant_id),
-        source_field=source_field,
-        parsed_at=datetime.now(timezone.utc).isoformat(),
-        event_idempotency_key=f"{_event_prefix(str(tenant_id), source_native_id)}:posted-compensation",
-    )
+    from jobctrl.domain.determinations import DeterminationFailure
+
+    try:
+        SqlitePostedCompensationRepository(conn).parse_and_save_job_salary(
+            job_id,
+            source_text,
+            tenant_id=str(tenant_id),
+            source_field=source_field,
+            parsed_at=datetime.now(timezone.utc).isoformat(),
+            event_idempotency_key=f"{_event_prefix(str(tenant_id), source_native_id)}:posted-compensation",
+        )
+    except DeterminationFailure:
+        # The admitted job survives an unavailable pay extraction. The blocked
+        # determination state is already persisted; there is no inferred fact.
+        return
 
 
 def _ensure_imported_job_pipeline_state(
@@ -1265,83 +1211,6 @@ def _transient_acquisition_failure(page: Any) -> bool:
     )
 
 
-def _content_block_reason(page: Any) -> Any | None:
-    from jobctrl.domain.discovery.source_registry import ManualActionReason
-
-    text = " ".join(
-        (
-            str(getattr(page, "page_title", "") or ""),
-            BeautifulSoup(str(getattr(page, "html", "") or ""), "html.parser").get_text(" ", strip=True)[:5000],
-        )
-    ).casefold()
-    if "captcha" in text or "are you a human" in text or "verify you are human" in text:
-        return ManualActionReason.CAPTCHA
-    if "access denied" in text or "unusual traffic" in text:
-        return ManualActionReason.BOT_DETECTION
-    if "log in" in text or "login" in text or "sign in" in text:
-        return ManualActionReason.LOGIN_REQUIRED
-    if "paywall" in text or "subscribe to continue" in text:
-        return ManualActionReason.PAYWALL
-    return None
-
-
-def _extract_posting_page(page: Any) -> dict[str, str] | None:
-    from jobctrl.domain.enrichment.services import CssSelectorExtractor, JsonLdExtractor
-
-    structured: list[tuple[dict[str, Any], Any]] = []
-    for posting in _find_job_postings(getattr(page, "json_ld", ())):
-        title = _text(posting.get("title"))
-        if not title:
-            continue
-        result = JsonLdExtractor().extract(replace(page, json_ld=(posting,)))
-        if result.ok and result.full_description is not None:
-            structured.append((posting, result))
-
-    selected: tuple[dict[str, Any], Any] | None = None
-    page_urls = {
-        _comparable_url(str(getattr(page, "url", "") or "")),
-        _comparable_url(str(getattr(page, "final_url", "") or "")),
-    }
-    page_urls.discard("")
-    matching = [
-        candidate for candidate in structured if _comparable_url(str(candidate[0].get("url") or "")) in page_urls
-    ]
-    if len(matching) == 1:
-        selected = matching[0]
-    elif len(structured) == 1 and not _comparable_url(str(structured[0][0].get("url") or "")):
-        selected = structured[0]
-    elif len(structured) > 1:
-        return None
-
-    if selected is not None:
-        posting, result = selected
-        title = _text(posting.get("title"))
-        employer = _employer_name(posting)
-        salary = _salary_text(posting)
-        location = _location_text(posting)
-    else:
-        if _has_explicit_css_job_description(page):
-            result = CssSelectorExtractor().extract(page)
-        else:
-            result = _EmbeddedAtsJobExtractor().extract(page)
-        title, employer = _css_page_identity(page)
-        salary = ""
-        location = _css_page_location(page)
-        posting = None
-        if not result.ok or result.full_description is None:
-            return None
-
-    if not title or any(signal in title.casefold() for signal in _BLOCKED_TITLE_SIGNALS):
-        return None
-    return {
-        "title": title[:500],
-        "employer": employer[:500],
-        "salary": salary[:500],
-        "description": result.full_description.text,
-        "location": location[:500],
-    }
-
-
 def _find_job_postings(value: Any) -> tuple[dict[str, Any], ...]:
     found: list[dict[str, Any]] = []
     if isinstance(value, dict):
@@ -1356,117 +1225,6 @@ def _find_job_postings(value: Any) -> tuple[dict[str, Any], ...]:
         for item in value:
             found.extend(_find_job_postings(item))
     return tuple(found)
-
-
-def _has_explicit_css_job_description(page: Any) -> bool:
-    html = str(getattr(page, "html", "") or "")
-    if not html:
-        return False
-    soup = BeautifulSoup(html, "html.parser")
-    for selector in _CSS_JOB_DESCRIPTION_MARKERS:
-        try:
-            element = soup.select_one(selector)
-        except Exception:
-            continue
-        if element is not None and len(element.get_text(" ", strip=True)) >= 100:
-            return True
-    return False
-
-
-def _embedded_ats_job_description(page: Any) -> str:
-    """Return body text only for a strongly identified individual job page.
-
-    Some employers render the posting in a custom ``#content`` block and embed
-    the ATS application form alongside it. The form container, individual-job
-    URL, H1, and multiple job-section headings together provide the proof that
-    a generic content block alone cannot.
-    """
-
-    html = str(getattr(page, "html", "") or "")
-    if not html or not _has_individual_job_path(page):
-        return ""
-    soup = BeautifulSoup(html, "html.parser")
-    heading = soup.select_one("h1")
-    content = soup.select_one("#content")
-    application = soup.select_one("#grnhse_app")
-    if heading is None or content is None or application is None:
-        return ""
-    title = heading.get_text(" ", strip=True)
-    description = content.get_text(" ", strip=True)
-    if not title or len(description) < 500:
-        return ""
-    section_headings = " ".join(element.get_text(" ", strip=True).casefold() for element in content.select("h2, h3"))
-    matched_sections = sum(signal in section_headings for signal in _JOB_SECTION_SIGNALS)
-    return description if matched_sections >= 2 else ""
-
-
-def _has_individual_job_path(page: Any) -> bool:
-    for candidate in (
-        str(getattr(page, "final_url", "") or ""),
-        str(getattr(page, "url", "") or ""),
-    ):
-        try:
-            path = urlsplit(candidate).path
-        except ValueError:
-            continue
-        if re.search(r"/(?:careers|jobs?)/(?:job/)?[^/]+/?$", path, re.IGNORECASE):
-            return True
-    return False
-
-
-def _css_page_identity(page: Any) -> tuple[str, str]:
-    html = str(getattr(page, "html", "") or "")
-    soup = BeautifulSoup(html, "html.parser")
-    heading = soup.select_one("h1")
-    heading_text = heading.get_text(" ", strip=True) if heading is not None else ""
-    page_title = re.sub(r"\s+", " ", str(getattr(page, "page_title", "") or "")).strip()
-    for candidate in (heading_text, page_title):
-        identity = _application_heading_identity(candidate)
-        if identity is not None:
-            return identity
-
-    title = heading_text or _clean_page_title(page_title)
-    return title, _page_title_employer(page_title, title)
-
-
-def _application_heading_identity(value: str) -> tuple[str, str] | None:
-    match = re.fullmatch(
-        r"Job Application for\s+(.+?)\s+at\s+(.+)",
-        re.sub(r"\s+", " ", value).strip(),
-        flags=re.IGNORECASE,
-    )
-    if match is None:
-        return None
-    title = _text(match.group(1))
-    employer = _text(match.group(2))
-    return (title, employer) if title and employer else None
-
-
-def _page_title_employer(page_title: str, title: str) -> str:
-    for separator in (" | ", " — ", " - "):
-        prefix = f"{title}{separator}"
-        if not page_title.casefold().startswith(prefix.casefold()):
-            continue
-        employer = _text(page_title[len(prefix) :])
-        if employer.casefold() not in _GENERIC_EMPLOYER_SUFFIXES:
-            return employer
-    return ""
-
-
-def _css_page_location(page: Any) -> str:
-    soup = BeautifulSoup(str(getattr(page, "html", "") or ""), "html.parser")
-    for selector in (
-        "h1 + .location",
-        ".app-title + .location",
-        '[data-testid="job-location"]',
-    ):
-        element = soup.select_one(selector)
-        if element is None:
-            continue
-        location = element.get_text(" ", strip=True).strip(" •·|-")
-        if location:
-            return location
-    return ""
 
 
 def _comparable_url(value: str) -> str:
@@ -1553,14 +1311,6 @@ def _number_text(value: Any) -> str:
 
 def _text(value: Any) -> str:
     return BeautifulSoup(str(value or ""), "html.parser").get_text(" ", strip=True)
-
-
-def _clean_page_title(value: str) -> str:
-    title = re.sub(r"\s+", " ", value).strip()
-    for separator in (" | ", " — ", " - "):
-        if separator in title:
-            title = title.split(separator, 1)[0].strip()
-    return title
 
 
 @workflow.defn(name="JobUrlImportWorkflow")
@@ -1655,3 +1405,63 @@ __all__ = [
     "job_url_import_activity",
     "job_url_import_workflow_id",
 ]
+
+
+def _rendered_page_text(page):
+    soup = BeautifulSoup(str(getattr(page, "html", "") or ""), "html.parser")
+    for element in soup.select("script,style,template,[hidden],[aria-hidden='true']"):
+        element.decompose()
+    return str(getattr(page, "page_title", "") or "") + "\n" + soup.get_text("\n", strip=True)
+
+
+def _extract_posting_page(page, *, dependencies, entity_id):
+    from jobctrl.domain.enrichment.page_interpretation import ModelPagePostingExtractor
+    from jobctrl.domain.determinations import Source
+
+    sources = [
+        Source(source_id="rendered_page", text=_rendered_page_text(page)),
+        Source(source_id="page_url", text=str(getattr(page, "final_url", None) or entity_id)),
+    ]
+    # These are explicit structured fields. Formatting them is mechanical;
+    # selecting the posting and interpreting each field remains the model's
+    # determination. URL identity fences neighboring structured postings.
+    for index, posting in enumerate(_find_job_postings(getattr(page, "json_ld", ()) or ())):
+        posting_url = _text(posting.get("url"))
+        if posting_url and _comparable_url(posting_url) != _comparable_url(
+            str(getattr(page, "final_url", None) or entity_id)
+        ):
+            continue
+        sources.append(Source(source_id=f"posting:{index}:structured", text=json.dumps(posting, ensure_ascii=False)))
+        fields = {
+            "title": _text(posting.get("title")),
+            "employer": _employer_name(posting),
+            "description": _text(posting.get("description")),
+            "location": _location_text(posting),
+            "salary": _salary_text(posting),
+        }
+        sources.extend(
+            Source(source_id=f"posting:{index}:{name}", text=value) for name, value in fields.items() if value
+        )
+    soup = BeautifulSoup(getattr(page, "html", "") or "", "html.parser")
+    for index, link in enumerate(soup.find_all("a", href=True)[:100]):
+        sources.append(Source(source_id=f"link:{index}:url", text=urljoin(entity_id, str(link["href"]))))
+        label = link.get_text(" ", strip=True)
+        if label:
+            sources.append(Source(source_id=f"link:{index}:label", text=label))
+    result, _ = ModelPagePostingExtractor(**dependencies).extract(entity_id=entity_id, sources=sources)
+    return {name: getattr(result, name).value for name in type(result).model_fields}
+
+
+class _SelectedPostingExtractor:
+    def __init__(self, description, application_url):
+        self._description, self._application_url = description, application_url
+
+    def extract(self, _page):
+        from jobctrl.domain.enrichment.services import ExtractionResult
+        from jobctrl.domain.enrichment.value_objects import FullDescription, ApplicationUrl
+
+        return ExtractionResult(
+            ok=True,
+            full_description=FullDescription(text=self._description),
+            application_url=ApplicationUrl(value=self._application_url) if self._application_url else None,
+        )

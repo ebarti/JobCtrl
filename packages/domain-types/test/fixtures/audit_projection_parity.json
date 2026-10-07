@@ -210,7 +210,7 @@
         "position": 0,
         "created_at": "2026-06-08T12:10:00+00:00",
         "coverage_json": "{\"computed_against\": \"rendered_text\", \"planned\": [\"developer platform\", \"kafka\"], \"covered\": [\"developer platform\"], \"declared\": [], \"missing\": [\"kafka\"], \"covered_by\": {\"developer platform\": \"experience:acme#0\"}, \"declared_by\": {}, \"counts\": {\"planned\": 2, \"covered\": 1, \"declared\": 0, \"missing\": 1}}",
-        "voice_json": "{\"ran\": true, \"accepted\": true, \"model\": \"claude-opus-4-8\", \"prompt_version\": \"voice-pass-v1\", \"proxy_delta\": {\"improved\": true}, \"reason\": \"\", \"summary_rejection_reason\": \"\"}"
+        "voice_json": "{\"ran\": true, \"accepted\": true, \"model\": \"claude-opus-4-8\", \"prompt_version\": \"voice-pass-v1\", \"reason\": \"\", \"summary_rejection_reason\": \"\"}"
       },
       {
         "generation": 2,
@@ -228,7 +228,7 @@
         "position": 1,
         "created_at": "2026-06-08T12:10:00+00:00",
         "coverage_json": "{\"computed_against\": \"rendered_text\", \"planned\": [\"developer platform\", \"kafka\"], \"covered\": [\"developer platform\"], \"declared\": [], \"missing\": [\"kafka\"], \"covered_by\": {\"developer platform\": \"experience:acme#0\"}, \"declared_by\": {}, \"counts\": {\"planned\": 2, \"covered\": 1, \"declared\": 0, \"missing\": 1}}",
-        "voice_json": "{\"ran\": true, \"accepted\": true, \"model\": \"claude-opus-4-8\", \"prompt_version\": \"voice-pass-v1\", \"proxy_delta\": {\"improved\": true}, \"reason\": \"\", \"summary_rejection_reason\": \"\"}"
+        "voice_json": "{\"ran\": true, \"accepted\": true, \"model\": \"claude-opus-4-8\", \"prompt_version\": \"voice-pass-v1\", \"reason\": \"\", \"summary_rejection_reason\": \"\"}"
       }
     ],
     "jobInterviewPrep": [
@@ -536,7 +536,7 @@
       "has_pdf": 1,
       "has_resume": 1,
       "job_id": "https://example.com/jobs/parity-developer-platform",
-      "location": "Berlin, Germany (Remote)",
+      "location": "Remote - Berlin, Germany",
       "resume_template_id": "template-modern",
       "resume_template_name": "Modern compact",
       "salary": "EUR 90000-120000/year",
@@ -1746,87 +1746,10 @@
       "accepted": true,
       "model": "claude-opus-4-8",
       "prompt_version": "voice-pass-v1",
-      "proxy_delta": {
-        "improved": true
-      },
       "reason": "",
       "summary_rejection_reason": "",
       "scope_violations": [],
       "final_judge": {}
     }
-  },
-  "locationCases": [
-    {
-      "input": "ES (Remote)",
-      "expected": "Spain (Remote)"
-    },
-    {
-      "input": "En remoto, ES (Remote)",
-      "expected": "Spain (Remote)"
-    },
-    {
-      "input": "Barcelona, CT, ES (Remote)",
-      "expected": "Barcelona, Catalonia, Spain (Remote)"
-    },
-    {
-      "input": "Madrid, MD, ES",
-      "expected": "Madrid, Community of Madrid, Spain"
-    },
-    {
-      "input": "M\u00e1laga, AN, ESP",
-      "expected": "M\u00e1laga, Andalusia, Spain"
-    },
-    {
-      "input": "Madrid, Espa\u00f1a",
-      "expected": "Madrid, Spain"
-    },
-    {
-      "input": "Seville, AN",
-      "expected": "Seville, AN"
-    },
-    {
-      "input": "Work from Home - Poland",
-      "expected": "Poland (Remote)"
-    },
-    {
-      "input": "Work From Home - US",
-      "expected": "US (Remote)"
-    },
-    {
-      "input": "UK - Remote",
-      "expected": "UK (Remote)"
-    },
-    {
-      "input": "Remote - Berlin, Germany",
-      "expected": "Berlin, Germany (Remote)"
-    },
-    {
-      "input": "Madrid, remoto",
-      "expected": "Madrid (Remote)"
-    },
-    {
-      "input": "Valencia, teletrabajo",
-      "expected": "Valencia (Remote)"
-    },
-    {
-      "input": "Sevilla (remoto)",
-      "expected": "Sevilla (Remote)"
-    },
-    {
-      "input": "WFH",
-      "expected": "Remote"
-    },
-    {
-      "input": "Berlin, Germany",
-      "expected": "Berlin, Germany"
-    },
-    {
-      "input": "",
-      "expected": ""
-    },
-    {
-      "input": null,
-      "expected": ""
-    }
-  ]
+  }
 }

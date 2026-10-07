@@ -107,7 +107,6 @@ def test_tailor_action_passes_tailoring_model_controls(tmp_path, monkeypatch):
                 stage="tailor",
                 tailor_models=("codex:draft-a", "claude:draft-b"),
                 tailor_judge_model="gemini:judge-c",
-                tailor_judge_min_score=0.9,
             )
         )
 
@@ -115,7 +114,6 @@ def test_tailor_action_passes_tailoring_model_controls(tmp_path, monkeypatch):
         payload = specs[0].args[0]
         assert payload.tailor_models == ("codex:draft-a", "claude:draft-b")
         assert payload.tailor_judge_model == "gemini:judge-c"
-        assert payload.tailor_judge_min_score == 0.9
     finally:
         close_connection(db_path)
 

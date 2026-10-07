@@ -780,7 +780,7 @@ export function EmployerAnalysisPanel({
             <dd>{formatToken(analysis.inferred_seniority) || "-"}</dd>
           </div>
           <div>
-            <dt>Model agreement <ContextHelp label="Model agreement" description="For surviving model drafts, average pairwise Jaccard overlap is computed separately for lowercased, trimmed exact requirement-text sets and keyword sets, then those two averages are averaged. Different wording lowers overlap. A single surviving draft scores 100% by convention because there is no pair to compare. This is neither candidate fit nor factual confidence, and agreement does not prove a claim true." /></dt>
+            <dt>Model agreement <ContextHelp label="Model agreement" description="A persisted model determination compares the meaning of surviving drafts and cites divergent requirements or keywords. The agreement score is diagnostic and does not gate acceptance. With one draft, there is no cross-draft comparison. It does not establish factual support." /></dt>
             <dd>{scorePercent(analysis.agreement.score)}</dd>
           </div>
           <div>

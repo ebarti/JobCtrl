@@ -19,7 +19,7 @@ from jobctrl.domain.compensation import (
 from jobctrl.infrastructure.compensation import (
     SqliteCompensationBenchmarkRepository,
 )
-from jobctrl.infrastructure.migrations.schema_v8 import create_exact_v8_schema
+from jobctrl.infrastructure.migrations.schema_v13 import create_exact_v13_schema
 
 
 class _InterruptingConnection(sqlite3.Connection):
@@ -42,11 +42,11 @@ class _InterruptingConnection(sqlite3.Connection):
 
 def test_repository_supports_plain_sqlite_tuple_rows() -> None:
     conn = sqlite3.connect(":memory:")
-    create_exact_v8_schema(conn)
+    create_exact_v13_schema(conn)
     conn.execute("PRAGMA foreign_keys = ON")
     repository = SqliteCompensationBenchmarkRepository(conn)
     try:
-        fact = repository.save_direct(_direct(country="DE", marker="tuple-row"))
+        fact = repository.save_direct(_direct(conn, country="DE", marker="tuple-row"))
         assert repository.get_direct("local", fact.fact_id) == fact
     finally:
         conn.close()
@@ -54,11 +54,11 @@ def test_repository_supports_plain_sqlite_tuple_rows() -> None:
 
 def test_repository_rejects_posted_compensation_authority_tampering() -> None:
     conn = sqlite3.connect(":memory:")
-    create_exact_v8_schema(conn)
+    create_exact_v13_schema(conn)
     conn.execute("PRAGMA foreign_keys = ON")
     repository = SqliteCompensationBenchmarkRepository(conn)
     try:
-        fact = _direct(country="DE", marker="posted-tamper")
+        fact = _direct(conn, country="DE", marker="posted-tamper")
         object.__setattr__(fact, "source_provenance", "employer_posted")
 
         with pytest.raises(ValueError, match="posted compensation authority"):
@@ -74,7 +74,7 @@ def test_repository_idempotently_persists_facts_and_lineage(tmp_path: Path) -> N
     conn = init_db(db_path)
     repository = SqliteCompensationBenchmarkRepository(conn)
     try:
-        anchor = repository.save_direct(_direct(country="DE", marker="anchor"))
+        anchor = repository.save_direct(_direct(conn, country="DE", marker="anchor"))
         source_price = repository.save_price_level(_price(country="DE", index=100, marker="de"))
         target_price = repository.save_price_level(_price(country="ES", index=80, marker="es"))
         extrapolated = extrapolate_benchmark(
@@ -110,7 +110,7 @@ def test_repository_rejects_tampered_extrapolation_before_writing(
     conn = init_db(db_path)
     repository = SqliteCompensationBenchmarkRepository(conn)
     try:
-        anchor = repository.save_direct(_direct(country="DE", marker="anchor"))
+        anchor = repository.save_direct(_direct(conn, country="DE", marker="anchor"))
         source_price = repository.save_price_level(_price(country="DE", index=100, marker="de"))
         target_price = repository.save_price_level(_price(country="ES", index=80, marker="es"))
         valid = extrapolate_benchmark(
@@ -145,11 +145,11 @@ def test_repository_rejects_tampered_extrapolation_before_writing(
 
 def test_extrapolation_write_rolls_back_on_keyboard_interrupt() -> None:
     conn = sqlite3.connect(":memory:", factory=_InterruptingConnection)
-    create_exact_v8_schema(conn)
+    create_exact_v13_schema(conn)
     conn.execute("PRAGMA foreign_keys = ON")
     repository = SqliteCompensationBenchmarkRepository(conn)
     try:
-        anchor = repository.save_direct(_direct(country="DE", marker="anchor"))
+        anchor = repository.save_direct(_direct(conn, country="DE", marker="anchor"))
         source_price = repository.save_price_level(_price(country="DE", index=100, marker="de"))
         target_price = repository.save_price_level(_price(country="ES", index=80, marker="es"))
         fact = extrapolate_benchmark(
@@ -178,11 +178,12 @@ def test_latest_queries_apply_freshness_and_company_pair_scope(tmp_path: Path) -
     conn = init_db(db_path)
     repository = SqliteCompensationBenchmarkRepository(conn)
     try:
-        anchor = repository.save_direct(_direct(country="DE", marker="anchor"))
-        company_source = repository.save_direct(_direct(country="DE", company="Acme", marker="acme-de"))
-        company_target = repository.save_direct(_direct(country="ES", company="Acme", marker="acme-es"))
+        anchor = repository.save_direct(_direct(conn, country="DE", marker="anchor"))
+        company_source = repository.save_direct(_direct(conn, country="DE", company="Acme", marker="acme-de"))
+        company_target = repository.save_direct(_direct(conn, country="ES", company="Acme", marker="acme-es"))
         repository.save_direct(
             _direct(
+                conn,
                 country="DE",
                 company="Acme",
                 marker="acme-berlin",
@@ -193,6 +194,7 @@ def test_latest_queries_apply_freshness_and_company_pair_scope(tmp_path: Path) -
         )
         repository.save_direct(
             _direct(
+                conn,
                 country="ES",
                 company="Acme",
                 marker="acme-madrid",
@@ -201,9 +203,12 @@ def test_latest_queries_apply_freshness_and_company_pair_scope(tmp_path: Path) -
                 fresh_until="2026-08-20T08:00:00Z",
             )
         )
-        unknown_anchor = repository.save_direct(_direct(country="GB", marker="unknown-gb", seniority_label="unknown"))
+        unknown_anchor = repository.save_direct(
+            _direct(conn, country="GB", marker="unknown-gb", seniority_label="unknown")
+        )
         repository.save_direct(
             _direct(
+                conn,
                 country="DE",
                 marker="berlin-market",
                 geography=BenchmarkGeography("DE", scope="locality", locality="Berlin"),
@@ -293,6 +298,7 @@ def test_latest_queries_apply_freshness_and_company_pair_scope(tmp_path: Path) -
 
 
 def _direct(
+    conn,
     *,
     country: str,
     marker: str,
@@ -302,6 +308,23 @@ def _direct(
     fetched_at: str = "2026-08-12T08:00:00Z",
     fresh_until: str = "2026-08-19T08:00:00Z",
 ):
+    from tests.compensation_fakes import ClassificationModel, dependencies, observation
+    from jobctrl.domain.compensation.classification import ModelBenchmarkClassifier
+
+    result, envelope = ModelBenchmarkClassifier(
+        **dependencies(
+            conn,
+            ClassificationModel(country=country, seniority=seniority_label, scope="company" if company else "market"),
+            "compensation",
+        )
+    ).classify(
+        replace(
+            observation(snapshot=marker),
+            company_name=company or "Market aggregate",
+            location=country,
+            level_label=seniority_label,
+        )
+    )
     return build_direct_benchmark_fact(
         tenant_id="local",
         role_family_code="software_engineering",
@@ -325,7 +348,12 @@ def _direct(
         source_snapshot_id=f"snapshot-{marker}",
         source_url="https://example.com/source",
         attribution="Test compensation evidence",
-        fx_reference={"rate_to_eur": 1, "reference_id": "eur-identity"},
+        fx_reference={
+            "rate_to_eur": 1,
+            "reference_id": "eur-identity",
+            "classification_id": envelope.determination_id,
+            "classification_entity_id": envelope.entity_id,
+        },
         as_of_date="2026-08-01",
         fetched_at=fetched_at,
         fresh_until=fresh_until,

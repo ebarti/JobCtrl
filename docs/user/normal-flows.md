@@ -95,9 +95,7 @@ the active page as a user-mediated manual capture, then the normal discovery
 import path dedupes, snapshots, and surfaces the job in Jobs.
 
 To add one posting without running Discover, open **Jobs**, choose **Import
-job**, and paste its public HTTP(S) URL. JobCtrl fetches and deterministically
-extracts that page through the local worker, deduplicates it against existing
-jobs, and opens the canonical Job Detail workspace. If the page is blocked,
+job**, and paste its public HTTP(S) URL. JobCtrl fetches that page through the local worker. Model determinations identify and extract the posting, then triage its title, location and employer against confirmed preferences. Accepted listings deduplicate by exact canonical identity and open Job Detail; pending, rejected and uncertain triage decisions are visible in Discovery. If the page is blocked,
 login-walled, rate-limited, or cannot be identified safely as a posting, no
 placeholder job is created; the URL is placed in **Discovery → Manual Capture**
 for user-provided content instead. Different URLs can be imported concurrently
@@ -381,9 +379,9 @@ Use them when reading:
 | Preparation | stage states and diagnostics, artifacts, description, application target and interview prep |
 | Follow-up | apply history, outcomes, contacts and audit history |
 
-Model agreement compares the exact normalized requirement text and keyword sets
-from surviving analysis drafts. It measures overlap between drafts, not candidate
-fit or factual confidence; one surviving draft displays 100% by convention.
+A cited model agreement determination compares surviving employer-analysis
+drafts. It reports agreement and divergence with source spans; text equality and
+keyword overlap do not establish agreement or candidate fit.
 When a fit score was manually corrected, its help identifies the correction and
 reason. The displayed band, confidence, and eligibility remain from the saved
 scoring breakdown; correcting the score does not recalculate them.
@@ -409,7 +407,7 @@ salary evidence shown alongside it.
 Open Evidence from the main navigation, the Profile page, or a Job Detail
 workspace. The Evidence map shows the canonical profile achievements and declared
 skills currently reused by generated resume bullets, requirement-fit decisions,
-keyword coverage, and recorded gaps. Links in the usage lists return to the
+verifier-recorded requirement coverage, and recorded gaps. Links in the usage lists return to the
 owning artifact or job detail so you can audit the source before editing profile
 evidence or re-running materials. Its entry list, selected evidence, and gaps
 inspector stack in reading order when the three-pane desktop workspace no
@@ -732,7 +730,7 @@ truthful, reviewable message that you send yourself:
 - In the Contact Detail workspace's **Outreach** thread, click **generate draft**.
   JobCtrl writes a short message grounded only in your profile and the confirmed
   contact facts, then runs it through the **same anti-fabrication gates as your
-  resumes and cover letters**: a deterministic never-fabricate check, a content
+  resumes and cover letters**: a model claim-verification determination, a content
   validator, an LLM judge, and a claim-to-fact provenance record.
 - Review the **gate results** and the **claim → fact** bindings shown beside the
   draft. A draft that invents a metric, an employer, or a relationship it cannot
@@ -820,3 +818,10 @@ exist only in the installed launcher.
 | `backup` | Source checkout only: write a `VACUUM INTO` copy of `jobctrl.db` (`--output`). |
 | `worker` | Run the long-lived Temporal worker. |
 | `rpc` | JSON-RPC server started by the TypeScript API (internal). |
+
+
+## Semantic Determination Authority
+
+Discovery listing decisions expose model admission and blocked/uncertain rows. Role-analysis agreement is a persisted model determination. Resume/outreach/interview truthfulness and quality use separate model verdicts and source-bound anchors. Form answers and repeat-role equivalence come from determinations; confirmation and submission authorization remain distinct user actions.
+
+See [the decision](../decisions.md#2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.

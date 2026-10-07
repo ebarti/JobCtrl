@@ -228,8 +228,8 @@ not for an employer ranking people.
 
 1. **Start with an enriched posting.** Scoring only consumes the usable job
    record and its captured content.
-2. **Preselect work.** Local hybrid retrieval narrows a bounded scoring pool;
-   lexical retrieval continues to work when no embedding adapter is enabled.
+2. **Order work.** A bounded scoring pool uses recency and stable IDs. Vocabulary
+   overlap does not decide which jobs are scored.
 3. **Consume the accepted employer analysis.** Discovery preparation supplies
    the evidence-linked requirement reading; scoring does not create a parallel
    interpretation of the posting.
@@ -253,3 +253,10 @@ not for an employer ranking people.
 | Worker implementation | `workers/automation/src/jobctrl/scoring/` (`employer_analysis.py`, `scorer.py`) and `workers/automation/src/jobctrl/domain/scoring/`; canonical analysis gates and persistence live under `workers/automation/src/jobctrl/domain/materials/analysis*` and `workers/automation/src/jobctrl/infrastructure/materials/employer_analysis_repository.py`. |
 | Product components | `apps/web/src/contexts/scoring/`, `apps/web/src/contexts/materials/components/EmployerAnalysisPanel.tsx`, and the Jobs detail/triage views. |
 | Deep architecture | [Scoring](../architecture/scoring.md), [Materials → Canonical Employer Analysis](../architecture/materials.md#canonical-employer-analysis), and [Stage Walkthrough → Score](../architecture/pipeline/stages.md#score). |
+
+
+## Semantic Determination Authority
+
+Scoring work limits use recency and stable IDs. The model supplies typed blockers with spans and requirement verdicts bound to canonical IDs; code resolves only weights, caps and bands. Posting constraints, seniority, geography and requirement scope come from the accepted job interpretation. No prose reclassification or lexical retrieval decides eligibility.
+
+See [the decision](../decisions.md#2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.

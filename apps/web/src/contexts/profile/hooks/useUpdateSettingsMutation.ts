@@ -6,6 +6,7 @@ import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { createOptimisticMutation } from "../../../shared/lib/createOptimisticMutation.js";
 import type { SettingsResponse } from "../../operations/types.js";
 import { patchSettingsResponse } from "../lib/profile-patches.js";
+import { discoveryKeys } from "../../operations/queryKeys.js";
 import { profileKeys } from "../queryKeys.js";
 
 export function useUpdateSettingsMutation(): UseMutationResult<
@@ -26,7 +27,7 @@ export function useUpdateSettingsMutation(): UseMutationResult<
           patch: (current) => patchSettingsResponse(current, body),
         },
       ],
-      settle: () => [profileKeys.settings(tenantId)],
+      settle: () => [profileKeys.settings(tenantId),discoveryKeys.preferences(tenantId)],
     }),
   );
 }

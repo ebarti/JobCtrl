@@ -16,7 +16,7 @@ describe("useUpdateAiExecutionPolicyMutation", () => {
     const { result, queryClient } = renderHookWithProviders(() => useUpdateAiExecutionPolicyMutation());
     queryClient.setQueryData(settingsKeys.settings(LOCAL_TENANT), sampleSettingsResponse);
 
-    await act(async () => result.current.mutate({ tailoringJudgeMinScore: 0.9 }));
+    act(() => result.current.mutate({ tailoringJudgeModel: "claude:opus" }));
 
     await waitFor(() => expect(result.current.isError).toBe(true));
     expect(queryClient.getQueryData(settingsKeys.settings(LOCAL_TENANT))).toEqual(sampleSettingsResponse);

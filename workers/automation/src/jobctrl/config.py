@@ -34,7 +34,6 @@ from jobctrl.domain.discovery.source_registry import (
     SourceRegistryEntry,
     SourceState,
 )
-from jobctrl.discovery.target_queries import build_target_role_queries
 from jobctrl.infrastructure.observability import source_validation_span
 
 log = logging.getLogger(__name__)
@@ -296,12 +295,8 @@ def _assert_no_lifecycle_migration_conflicts(
     for source in sources:
         columns = _table_columns(conn, source)
         if "job_url" not in columns:
-            raise WorkspaceMigrationError(
-                f"cannot migrate lifecycle table {source}: missing job_url column"
-            )
-        for row in conn.execute(
-            f"SELECT job_url FROM {_quote_identifier(source)} WHERE job_url IS NOT NULL"
-        ):
+            raise WorkspaceMigrationError(f"cannot migrate lifecycle table {source}: missing job_url column")
+        for row in conn.execute(f"SELECT job_url FROM {_quote_identifier(source)} WHERE job_url IS NOT NULL"):
             job_url = str(row[0])
             previous_source = seen.get(job_url)
             if previous_source is not None:
@@ -350,7 +345,6 @@ PACKAGE_DIR = Path(__file__).parent
 CONFIG_DIR = PACKAGE_DIR / "config"
 
 DEFAULT_JOBSPY_BOARDS = ("indeed", "linkedin", "zip_recruiter")
-TARGET_SEARCH_MIN_HOURS_OLD = 24 * 30
 DISCOVERY_SETTINGS_TABLE = "discovery_settings"
 
 DEFAULT_DISCOVERY_SEARCH_CONFIG: dict = {
@@ -381,21 +375,6 @@ DEFAULT_OUTREACH_FOLLOW_UP_CONFIG: dict = {
     "reminders_enabled": False,
 }
 
-_EUROPE_TARGET_MARKERS = (
-    "spain",
-    "españa",
-    "europe",
-    "european union",
-    " eu",
-    "eu ",
-)
-
-_REMOTE_EUROPE_LOCATION_ACCEPTS = (
-    "Europe",
-    "European Union",
-    "EU",
-    "EMEA",
-)
 
 _WORKDAY_HOST_ALIAS_SOURCE_RE = re.compile(r"^workday:(?P<employer>.+)-wd\d+-myworkdayjobs-com$")
 
@@ -403,92 +382,6 @@ _SPAIN_LOCATION_ACCEPTS = (
     "Spain",
     "España",
     "ES",
-)
-
-_AMERICA_LOCATION_REJECTS = (
-    "United States",
-    "USA",
-    "US only",
-    "U.S.",
-    "Canada",
-    "Canada only",
-    "Mexico",
-    "North America",
-    "South America",
-    "Latin America",
-    "LATAM",
-    "Americas",
-)
-
-_EUROPEAN_COUNTRY_ALIASES = {
-    "albania": ("albania",),
-    "andorra": ("andorra",),
-    "austria": ("austria",),
-    "belarus": ("belarus",),
-    "belgium": ("belgium",),
-    "bosnia and herzegovina": ("bosnia and herzegovina", "bosnia"),
-    "bulgaria": ("bulgaria",),
-    "croatia": ("croatia",),
-    "cyprus": ("cyprus",),
-    "czech republic": ("czech republic", "czechia"),
-    "denmark": ("denmark",),
-    "estonia": ("estonia",),
-    "finland": ("finland",),
-    "france": ("france",),
-    "germany": ("germany",),
-    "greece": ("greece",),
-    "hungary": ("hungary",),
-    "iceland": ("iceland",),
-    "ireland": ("ireland",),
-    "italy": ("italy",),
-    "kosovo": ("kosovo",),
-    "latvia": ("latvia",),
-    "liechtenstein": ("liechtenstein",),
-    "lithuania": ("lithuania",),
-    "luxembourg": ("luxembourg",),
-    "malta": ("malta",),
-    "moldova": ("moldova",),
-    "monaco": ("monaco",),
-    "montenegro": ("montenegro",),
-    "netherlands": ("netherlands", "the netherlands"),
-    "north macedonia": ("north macedonia", "macedonia"),
-    "norway": ("norway",),
-    "poland": ("poland",),
-    "portugal": ("portugal",),
-    "romania": ("romania",),
-    "san marino": ("san marino",),
-    "serbia": ("serbia",),
-    "slovakia": ("slovakia",),
-    "slovenia": ("slovenia",),
-    "spain": ("spain", "españa", "es"),
-    "sweden": ("sweden",),
-    "switzerland": ("switzerland",),
-    "ukraine": ("ukraine",),
-    "united kingdom": ("united kingdom", "uk", "great britain", "england", "scotland", "wales"),
-    "vatican city": ("vatican city", "vatican"),
-}
-
-_INDEED_COUNTRY_BY_TARGET_COUNTRY = {
-    "spain": "spain",
-}
-
-_AMERICA_ONLY_SOURCE_MARKERS = (
-    "canada",
-    "canadian",
-    "job bank",
-    "job-bank",
-    "careerjet canada",
-    "careerjet-canada",
-    "randstad canada",
-    "randstad-canada",
-    "eluta",
-    "jobbank.gc.ca",
-    "careerjet.ca",
-    "randstad.ca",
-    "eluta.ca",
-    "smart_extract:dice",
-    "dice.com",
-    "wellfound.com/role/l/software-engineer/canada",
 )
 
 
@@ -566,10 +459,10 @@ def effective_discovery_search_config(
     """Normalize the SQLite-owned discovery settings for execution."""
     effective = json.loads(json.dumps(dict(search_cfg or _default_discovery_search_config())))
 
-    role_filter = dict(effective.get("role_filter") or {})
-    role_filter["mode"] = _role_filter_mode(role_filter.get("mode"))
-    role_filter["model"] = str(role_filter.get("model") or "").strip() or None
-    effective["role_filter"] = role_filter
+    size = effective.get("triage_batch_size", 20)
+    if type(size) is not int or not 1 <= size <= 100:
+        raise ValueError("triage_batch_size must be an integer between 1 and 100")
+    effective["triage_batch_size"] = size
 
     effective["max_parallel_families"] = min(
         4,
@@ -581,15 +474,6 @@ def effective_discovery_search_config(
     crawl_user_agent["contact"] = str(crawl_user_agent.get("contact") or "").strip()
     effective["crawl_user_agent"] = crawl_user_agent
     return effective
-
-
-def _role_filter_mode(value: object) -> str:
-    normalized = str(value or "auto").strip().lower()
-    if normalized in {"deterministic", "0", "false", "no", "off", "disabled"}:
-        return "deterministic"
-    if normalized in {"llm", "1", "true", "yes", "on", "enabled"}:
-        return "llm"
-    return "auto"
 
 
 def load_discovery_schedule_settings() -> tuple[bool, str]:
@@ -748,167 +632,8 @@ def datetime_utc_now() -> str:
 
 
 def _apply_profile_target_search(search_cfg: dict, target: dict | None = None) -> dict:
-    """Overlay profile target roles and locations onto the discovery search config."""
-    target_search = target if target is not None else _load_profile_target_search()
-    roles = target_search.get("roles", [])
-    tracks = target_search.get("tracks", [])
-    seniority = target_search.get("seniority", [])
-    functions = target_search.get("functions", [])
-    specializations = target_search.get("specializations", [])
-    locations = target_search.get("locations", [])
-    work_models = target_search.get("work_models", [])
-
-    if not roles and not tracks and not seniority and not functions and not locations and not work_models:
-        return search_cfg
-
-    next_cfg = dict(search_cfg)
-    if roles or tracks or seniority or functions:
-        target_queries = build_target_role_queries(
-            roles,
-            tracks=tracks,
-            seniority=seniority,
-            functions=functions,
-            specializations=specializations,
-        )
-        if target_queries:
-            next_cfg["queries"] = target_queries
-            next_cfg["workday_max_tier"] = 1
-            next_cfg["ats_max_tier"] = 1
-
-    if locations or work_models:
-        target_locations = _build_target_location_config(locations, work_models)
-        next_cfg["locations"] = target_locations["locations"]
-        next_cfg["location_labels"] = [item["label"] for item in target_locations["locations"]]
-        next_cfg["location_accept"] = target_locations["accept"]
-        next_cfg["location_accept_local"] = target_locations["local_accept"]
-        location_cfg = dict(next_cfg.get("location") or {})
-        location_cfg["accept_patterns"] = target_locations["accept"]
-        location_cfg["local_accept_patterns"] = target_locations["local_accept"]
-        next_cfg["location"] = location_cfg
-
-        if target_locations["europe"]:
-            defaults = dict(next_cfg.get("defaults") or {})
-            defaults["hours_old"] = max(_positive_int(defaults.get("hours_old")), TARGET_SEARCH_MIN_HOURS_OLD)
-            if target_locations["country_indeed"]:
-                defaults.setdefault("country_indeed", target_locations["country_indeed"])
-            next_cfg["defaults"] = defaults
-            if target_locations["country"]:
-                next_cfg["country"] = target_locations["country"]
-            next_cfg["target_region"] = "europe"
-            next_cfg["location_reject_non_remote"] = _dedupe_strings(
-                [*_string_list(next_cfg.get("location_reject_non_remote")), *_AMERICA_LOCATION_REJECTS]
-            )
-
-    return next_cfg
-
-
-def _build_target_location_config(locations: list[str], work_models: list[str]) -> dict:
-    search_locations: list[dict] = []
-    accept: list[str] = []
-    local_accept: list[str] = []
-    first_country = ""
-    first_indeed_country = ""
-    europe = False
-
-    for index in range(max(len(locations), len(work_models))):
-        raw_location = locations[index] if index < len(locations) else ""
-        location = str(raw_location or "").strip()
-        work_model = work_models[index] if index < len(work_models) else ""
-        if not location:
-            wants_remote, _ = _target_work_model_flags(work_model)
-            if wants_remote:
-                _append_search_location(search_locations, location="Remote", remote=True)
-                accept.append("Remote")
-            continue
-        wants_remote, wants_local = _target_work_model_flags(work_model)
-        country = _target_location_country(location)
-        country_key = _country_key(country)
-        is_european_country = _is_european_country(country_key)
-
-        if wants_local:
-            _append_search_location(search_locations, location=location, remote=False)
-            accept.append(location)
-            local_accept.append(location)
-
-        if wants_remote:
-            remote_country = _display_country(country) or location
-            _append_search_location(search_locations, location=remote_country, remote=True)
-            accept.extend(_country_location_accepts(country_key, remote_country))
-            if is_european_country:
-                _append_search_location(
-                    search_locations,
-                    location="European Union",
-                    remote=True,
-                    label="europe-remote",
-                )
-                accept.extend(_REMOTE_EUROPE_LOCATION_ACCEPTS)
-
-        if is_european_country:
-            europe = True
-            first_country = first_country or (_display_country(country) or location)
-            first_indeed_country = first_indeed_country or _INDEED_COUNTRY_BY_TARGET_COUNTRY.get(country_key, "")
-
-    return {
-        "locations": search_locations,
-        "accept": _dedupe_strings(accept),
-        "local_accept": _dedupe_strings(local_accept),
-        "country": first_country,
-        "country_indeed": first_indeed_country,
-        "europe": europe,
-    }
-
-
-def _append_search_location(
-    search_locations: list[dict],
-    *,
-    location: str,
-    remote: bool,
-    label: str | None = None,
-) -> None:
-    entry = {
-        "label": label or _source_slug(location),
-        "location": location,
-        "remote": remote,
-    }
-    key = (entry["label"], entry["location"], entry["remote"])
-    if key not in {(item["label"], item["location"], item["remote"]) for item in search_locations}:
-        search_locations.append(entry)
-
-
-def _target_work_model_flags(work_model: str) -> tuple[bool, bool]:
-    target = str(work_model or "").lower()
-    wants_remote = any(marker in target for marker in ("remote", "anywhere", "distributed"))
-    wants_local = any(marker in target for marker in ("hybrid", "on-site", "onsite", "on site", "office"))
-    if not wants_remote and not wants_local:
-        wants_local = True
-    return wants_remote, wants_local
-
-
-def _target_location_country(location: str) -> str:
-    parts = [part.strip() for part in str(location or "").split(",") if part.strip()]
-    if not parts:
-        return ""
-    if len(parts) == 1:
-        return parts[0]
-    return parts[-1]
-
-
-def _display_country(country: str) -> str:
-    country_key = _country_key(country)
-    if country_key == "spain":
-        return "Spain"
-    for canonical, aliases in _EUROPEAN_COUNTRY_ALIASES.items():
-        if country_key == canonical or country_key in aliases:
-            return canonical.title()
-    return country.strip()
-
-
-def _country_key(country: str) -> str:
-    normalized = str(country or "").strip().lower()
-    for canonical, aliases in _EUROPEAN_COUNTRY_ALIASES.items():
-        if normalized == canonical or normalized in aliases:
-            return canonical
-    return normalized
+    """Expose literal saved targets; query planning belongs to a model activity."""
+    return {**search_cfg, "confirmed_targets": target if target is not None else _load_profile_target_search()}
 
 
 def _positive_int(value: object) -> int:
@@ -917,19 +642,6 @@ def _positive_int(value: object) -> int:
     except (TypeError, ValueError):
         return 0
     return result if result > 0 else 0
-
-
-def _is_european_country(country_key: str) -> bool:
-    return country_key in _EUROPEAN_COUNTRY_ALIASES
-
-
-def _country_location_accepts(country_key: str, fallback: str) -> list[str]:
-    if country_key == "spain":
-        return list(_SPAIN_LOCATION_ACCEPTS)
-    aliases = _EUROPEAN_COUNTRY_ALIASES.get(country_key)
-    if aliases:
-        return [alias.title() if len(alias) > 3 else alias.upper() for alias in aliases]
-    return [fallback]
 
 
 def _load_profile_target_search() -> dict[str, list[str]]:
@@ -954,7 +666,7 @@ def _load_profile_target_search() -> dict[str, list[str]]:
                    {_profile_target_column(columns, "experience_target_specializations")},
                    {_profile_target_column(columns, "experience_target_locations")},
                    {_profile_target_column(columns, "experience_target_work_models")},
-                   personal_city, personal_country
+                   version
             FROM candidate_profiles
             WHERE tenant_id = ? AND profile_id = ?
             """,
@@ -979,8 +691,14 @@ def _load_profile_target_search() -> dict[str, list[str]]:
             "seniority": _split_target_text(row["experience_target_seniority_floor"]),
             "functions": _split_target_text(row["experience_target_functions"]),
             "specializations": _split_target_text(row["experience_target_specializations"]),
-            "locations": locations or _profile_home_location(row),
+            "locations": locations,
             "work_models": work_models,
+            "profile_version": row["version"],
+            "criteria": [
+                str(value)
+                for key in ("score_criteria", "target_criteria")
+                if (value := load_config_file(get_config_path()).get(key))
+            ],
         }
     except Exception:
         log.debug("Failed to load profile target-search preferences", exc_info=True)
@@ -1021,45 +739,6 @@ def _split_target_rows(value: object) -> list[str]:
         return []
     cleaned = re.sub(r"^\s*Target (?:roles?|locations?):\s*", "", str(value), flags=re.IGNORECASE)
     return [item.strip() for item in re.split(r"[;\n]", cleaned)]
-
-
-def _profile_home_location(row: sqlite3.Row) -> list[str]:
-    city = str(row["personal_city"] or "").strip()
-    country = str(row["personal_country"] or "").strip()
-    if city and country:
-        return [f"{city}, {country}"]
-    if country:
-        return [country]
-    if city:
-        return [city]
-    return []
-
-
-def _target_location_is_remote(location: str, work_model: str) -> bool:
-    target = f"{location} {work_model}".lower()
-    return any(marker in target for marker in ("remote", "anywhere", "distributed"))
-
-
-def _target_prefers_europe_from_values(locations: list[str]) -> bool:
-    target = f" {' '.join(locations)} ".lower()
-    return any(marker in target for marker in _EUROPE_TARGET_MARKERS)
-
-
-def _target_prefers_europe(search_cfg: dict | None) -> bool:
-    if not isinstance(search_cfg, dict):
-        return False
-    if str(search_cfg.get("target_region") or "").strip().lower() == "europe":
-        return True
-    defaults = search_cfg.get("defaults") if isinstance(search_cfg.get("defaults"), dict) else {}
-    country = f"{search_cfg.get('country') or ''} {defaults.get('country_indeed') or ''}".lower()
-    if any(marker.strip() in country for marker in ("spain", "españa", "europe")):
-        return True
-    locations = [
-        str(item.get("location") or item.get("label") or "")
-        for item in search_cfg.get("locations", [])
-        if isinstance(item, dict)
-    ]
-    return _target_prefers_europe_from_values(locations)
 
 
 def _dedupe_strings(values: list[str]) -> list[str]:
@@ -1439,30 +1118,6 @@ def _canonical_workday_source_id_for_alias(source_id: str) -> str | None:
     return f"workday:{match.group('employer')}"
 
 
-def _filter_sources_for_target_region(
-    registry: list[SourceRegistryEntry],
-    search_cfg: dict | None,
-) -> list[SourceRegistryEntry]:
-    if not _target_prefers_europe(search_cfg):
-        return registry
-    return [entry for entry in registry if not _is_america_only_source(entry)]
-
-
-def _is_america_only_source(entry: SourceRegistryEntry) -> bool:
-    source_text = " ".join(
-        str(value)
-        for value in (
-            entry.source_id,
-            entry.display_name,
-            entry.adapter_config.get("url"),
-            entry.adapter_config.get("seed_url"),
-            entry.adapter_config.get("base_url"),
-        )
-        if value
-    ).lower()
-    return any(marker in source_text for marker in _AMERICA_ONLY_SOURCE_MARKERS)
-
-
 def load_source_registry(
     *,
     search_cfg: dict | None = None,
@@ -1479,10 +1134,7 @@ def load_source_registry(
         *_workday_sources(active_employers_cfg),
         *_jobspy_sources(active_search_cfg),
     ]
-    return _filter_sources_for_target_region(
-        _merge_local_source_registry(registry),
-        active_search_cfg,
-    )
+    return _merge_local_source_registry(registry)
 
 
 def is_manual_ats(url: str | None) -> bool:
@@ -1665,14 +1317,6 @@ def get_tailoring_judge_model() -> str | None:
     return str(saved).strip() or None if saved is not None else None
 
 
-def get_tailoring_judge_min_score() -> float:
-    value = _config_setting("tailoring_judge_min_score")
-    try:
-        return min(1.0, max(0.0, float(value)))
-    except (TypeError, ValueError):
-        return 0.82
-
-
 def get_config_path(*, app_dir: Path | None = None) -> Path:
     """Return the one file that owns persisted, non-secret Settings values."""
     if app_dir is not None:
@@ -1743,9 +1387,7 @@ def config_file_lock(
                 else:
                     continue
             if time.monotonic() >= deadline:
-                raise ConfigFileError(
-                    f"{resolved_path.name} is busy; retry after the current settings update finishes"
-                )
+                raise ConfigFileError(f"{resolved_path.name} is busy; retry after the current settings update finishes")
             time.sleep(CONFIG_LOCK_RETRY_SECONDS)
 
     try:
@@ -2016,16 +1658,12 @@ def validate_live_worker_smoke_bootstrap(
     if env.get(LIVE_WORKER_SMOKE_BOOTSTRAP_ENV) != "1":
         raise RuntimeError("Live-worker smoke bootstrap capability is missing")
     runtime_app_dir = (app_dir or APP_DIR).resolve(strict=True)
-    configured_app_dir = Path(env.get("JOBCTRL_LIVE_WORKER_SMOKE_APP_DIR", "")).resolve(
-        strict=True
-    )
+    configured_app_dir = Path(env.get("JOBCTRL_LIVE_WORKER_SMOKE_APP_DIR", "")).resolve(strict=True)
     if configured_app_dir != runtime_app_dir:
         raise RuntimeError("Live-worker smoke bootstrap does not own JOBCTRL_DIR")
     token = env.get("JOBCTRL_LIVE_WORKER_SMOKE_TOKEN", "")
     try:
-        marker = json.loads(
-            (runtime_app_dir / ".jobctrl-e2e-owned.json").read_text(encoding="utf-8")
-        )
+        marker = json.loads((runtime_app_dir / ".jobctrl-e2e-owned.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise RuntimeError("Live-worker smoke bootstrap marker is unavailable") from exc
     metadata = runtime_app_dir.stat()
@@ -2054,8 +1692,7 @@ def validate_live_worker_smoke_bootstrap(
     present = [key for key in LIVE_WORKER_SMOKE_CREDENTIAL_KEYS if env.get(key, "").strip()]
     if present:
         raise RuntimeError(
-            "Live-worker smoke bootstrap found provider credentials or credential homes: "
-            + ", ".join(present)
+            "Live-worker smoke bootstrap found provider credentials or credential homes: " + ", ".join(present)
         )
     provider_config = provider_configuration_environment(load_config_file(strict=True))
     if provider_config:

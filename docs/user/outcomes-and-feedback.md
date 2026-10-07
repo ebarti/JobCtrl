@@ -10,45 +10,9 @@ rule, or accepted learning recommendation.
 
 ## How Email Becomes An Outcome Suggestion
 
-The Gmail feedback path uses a bounded deterministic link-and-classify process;
-it does not ask a model to read the inbox and decide what happened.
+A user-started scan bounds application anchors, message count and date windows. Exact recipient, date, thread and domain checks remain code. A model reads bounded headers and determines which known application a message belongs to before its body is read. A second determination classifies the linked body, citing a verbatim span and returning confidence and rationale.
 
-1. **Start from known applications.** A user-started scan builds anchors from
-   applied job rows, reviewed outcomes, and successful live Apply runs, then
-   keeps the earliest qualifying anchor for each job. A job row uses
-   `applied_at` when present; a legacy row marked applied without that timestamp
-   falls back to `discovered_at`. By default the scan checks at most 25 anchors
-   and five search results per anchor inside a 45-day window that starts at the
-   selected anchor.
-2. **Score metadata before reading a body.** The current link signals are
-   additive and capped at `1.0`:
-
-   | Matching signal | Credit |
-   | --- | ---: |
-   | Expected recipient | `0.20` |
-   | Inside the application time window | `0.20` |
-   | Employer name | `0.20` |
-   | Job title | `0.15` |
-   | Application domain | `0.15` |
-   | Known ATS hint | `0.10` |
-   | Outcome wording | `0.10` |
-
-   JobCtrl links a message only at `0.70` or above. It fetches and stores the
-   bounded body only after that metadata gate passes.
-3. **Classify with fixed phrase rules.** The linked subject, snippet, and body
-   are checked in priority order for bounce, offer, rejection, interview,
-   assessment, application confirmation, and recruiter-reply language. If no
-   rule matches, the suggestion is `unknown`; the confidence shown is the
-   rule's fixed confidence, not a learned probability.
-4. **Wait for a human decision.** Accept and correct create a canonical reviewed
-   outcome; ignore closes only the suggestion. Provider/message identity keeps
-   the same email from creating duplicate evidence.
-5. **Gate analytics by sample size.** Raw counts remain visible. Conversion
-   rates require at least five applied records in the cohort, and median
-   response time requires five response-time samples.
-
-This keeps private mail access narrow and preserves the difference between a
-machine suggestion, a reviewed lifecycle fact, and descriptive analytics.
+Both decisions are persisted with prompt/model versions and an input fingerprint. The dashboard suggestion traces to this recorded evidence; phrase order and fixed confidence tables cannot set an outcome. If the provider is unavailable, spend is denied or binding is invalid, the scan reports its blocked reason and creates no suggestion. Existing reviewed outcomes remain unchanged. Accept or correct creates an outcome; ignore records only the suggestion decision. Raw bodies remain local and stay out of broad projections, events and logs.
 
 ## Explicit Feedback Learning
 
@@ -118,8 +82,7 @@ Both may appear in the same job audit timeline without sharing ownership.
   decide them. A pending Gmail suggestion is never treated as a confirmed
   application; suggestion accuracy is derived from later decisions.
 - **Linked Gmail evidence** stays local. A bounded scan starts from known
-  application anchors and reads body content only after metadata reaches the
-  link-confidence gate. Raw mail bodies never enter broad projections, events,
+  application anchors and reads body content only after a valid linking determination accepts the bounded metadata. Raw mail bodies never enter broad projections, events,
   logs, telemetry, or scan responses.
 - **Local notes** stay in the canonical outcome table. Events carry safe IDs,
   kinds, timestamps, confidence/link markers, and presence flags rather than

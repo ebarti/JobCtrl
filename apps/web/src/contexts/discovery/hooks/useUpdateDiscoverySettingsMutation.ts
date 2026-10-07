@@ -31,6 +31,7 @@ export function useUpdateDiscoverySettingsMutation(): UseMutationResult<
       }],
       settle: () => [
         discoveryKeys.settings(tenantId),
+        discoveryKeys.preferences(tenantId),
         discoveryKeys.sourceRegistry(tenantId),
         dashboardKeys.summary(tenantId),
       ],
@@ -64,13 +65,13 @@ function patchDiscoverySettings(
       body.schedulingEnabled,
     ),
     scheduleCron: persistedValue(current.effectiveSettings.scheduleCron, body.scheduleCron),
-    roleFilterMode: persistedValue(
-      current.effectiveSettings.roleFilterMode,
-      body.roleFilterMode,
+    triageBatchSize: persistedValue(
+      current.effectiveSettings.triageBatchSize,
+      body.triageBatchSize,
     ),
-    roleFilterModel: persistedValue(
-      current.effectiveSettings.roleFilterModel,
-      body.roleFilterModel,
+    triageModel: persistedValue(
+      current.effectiveSettings.triageModel,
+      body.triageModel,
     ),
     maxParallelFamilies: persistedValue(
       current.effectiveSettings.maxParallelFamilies,
@@ -101,8 +102,8 @@ function patchDiscoverySettings(
         ? { schedulingEnabled: body.schedulingEnabled }
         : {}),
       ...(body.scheduleCron !== undefined ? { scheduleCron: body.scheduleCron } : {}),
-      ...(body.roleFilterMode !== undefined ? { roleFilterMode: body.roleFilterMode } : {}),
-      ...(body.roleFilterModel !== undefined ? { roleFilterModel: body.roleFilterModel } : {}),
+      ...(body.triageBatchSize !== undefined ? { triageBatchSize: body.triageBatchSize } : {}),
+      ...(body.triageModel !== undefined ? { triageModel: body.triageModel } : {}),
       ...(body.maxParallelFamilies !== undefined
         ? { maxParallelFamilies: body.maxParallelFamilies }
         : {}),

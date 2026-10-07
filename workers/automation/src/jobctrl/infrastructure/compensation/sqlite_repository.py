@@ -9,56 +9,10 @@ from dataclasses import replace
 from typing import Any, Callable
 
 from jobctrl.domain.compensation import (
-    PARSER_VERSION,
     PostedCompensationFact,
-    parse_posted_compensation,
 )
 from jobctrl.domain.events.base import DomainEvent
 from jobctrl.domain.identifiers import JobId, canonical_job_id
-
-COMPENSATION_SOURCE_RE = re.compile(
-    r"\b(?:salary|compensation|pay range|base pay|base salary|wage|remuneration|ote)\b|on[- ]target earnings",
-    re.IGNORECASE,
-)
-BASE_COMPENSATION_SOURCE_RE = re.compile(
-    r"\b(?:salary|pay range|base pay|base salary|wage|remuneration|ote)\b|on[- ]target earnings",
-    re.IGNORECASE,
-)
-COMPENSATION_AMOUNT_RE = re.compile(
-    r"(?<![A-Za-z0-9])(?:(?:[€$£]|(?:EUR|USD|GBP|CHF|SEK|NOK|DKK|PLN|CZK)\b)\s*)"
-    r"\d{1,3}(?:[,.]\d{3})*(?:[,.]\d+)?\s*(?:k|K)?(?![A-Za-z0-9])"
-)
-NON_COMPENSATION_SCALE_RE = re.compile(
-    r"^(?:million|millions|billion|billions|trillion|trillions|mm|bn|b)\b",
-    re.IGNORECASE,
-)
-NON_BASE_COMPENSATION_CONTEXT_RE = re.compile(
-    r"\b(?:bonus|commission|equity|stock|stipend|allowance|learning budget|"
-    r"training budget|wellness|home office|equipment|relocation)\b",
-    re.IGNORECASE,
-)
-PAY_PERIOD_RE = re.compile(
-    r"(?:/(?:h|hr|hrs|hour|mo|mos|month)|\b(?:hour|hourly|hr|hrs|month|monthly|year|yearly|annual|annually|annum|yr|yrs)\b)",
-    re.IGNORECASE,
-)
-GENERIC_COMPENSATION_AMOUNT_CUE_RE = re.compile(
-    r"\bcompensation(?:\s+range)?\s*(?::|-|\bis\b)?\s*$",
-    re.IGNORECASE,
-)
-EXPLICIT_COMPONENT_AMOUNT_CUE_RE = re.compile(
-    r"\b(?:(?:equity|stock)\s+compensation|bonus(?:\s+compensation)?|"
-    r"commission(?:\s+compensation)?)\s*(?::|-|\bis\b)?\s*$",
-    re.IGNORECASE,
-)
-ADDITIVE_EQUITY_AFTER_AMOUNT_RE = re.compile(
-    r"^.{0,40}(?:\+|\bplus\b|\band\b).{0,24}\b(?:equity|rsu|stock options?)\b",
-    re.IGNORECASE,
-)
-OUTDATED_POSTED_PARSER_VERSIONS = (
-    "posted-compensation-v1",
-    "posted-compensation-v2",
-    "posted-compensation-v3",
-)
 
 
 def _parser_version_tag(parser_version: str) -> str:
@@ -68,8 +22,9 @@ def _parser_version_tag(parser_version: str) -> str:
 class SqlitePostedCompensationRepository:
     """SQLite-backed repository for canonical posted compensation facts."""
 
-    def __init__(self, conn: sqlite3.Connection) -> None:
+    def __init__(self, conn: sqlite3.Connection, *, extractor=None) -> None:
         self._conn = conn
+        self._extractor = extractor
 
     def save_fact(
         self,
@@ -81,113 +36,16 @@ class SqlitePostedCompensationRepository:
         if fact.job_id is None:
             raise ValueError("JobId is required to persist a posted compensation fact")
         fact = replace(fact, job_id=canonical_job_id(str(fact.job_id)))
-        self._save_fact_row(fact)
-        self._conn.commit()
-        if event_write_fence is not None:
-            event_write_fence()
-        self._record_updated_event(
-            fact,
-            idempotency_key=event_idempotency_key,
-        )
-
-    def reparse_outdated_facts(
-        self,
-        *,
-        tenant_id: str = "local",
-        parsed_at: str,
-        batch_size: int = 100,
-    ) -> int:
-        """Upgrade known older parser generations with atomic dirty events.
-
-        This is a worker-start convergence path, not a read-side repair. Each
-        bounded batch commits canonical facts and their durable events
-        together, so a crash either leaves a row eligible for retry or leaves
-        a projection-dirty event that the normal builder can fold.
-        """
-
-        if batch_size < 1:
-            raise ValueError("batch_size must be positive")
-        total = 0
-        while True:
-            rows = self._conn.execute(
-                """
-                SELECT facts.job_id, jobs.salary,
-                       enrichments.full_description AS enrichment_description,
-                       jobs.full_description, jobs.description,
-                       facts.parser_version
-                FROM job_posted_compensation_facts AS facts
-                JOIN jobs
-                  ON jobs.tenant_id = facts.tenant_id
-                 AND jobs.job_id = facts.job_id
-                LEFT JOIN job_enrichments AS enrichments
-                  ON enrichments.tenant_id = jobs.tenant_id
-                 AND enrichments.job_id = jobs.job_id
-                 AND enrichments.current_status = 'enriched'
-                WHERE facts.tenant_id = ?
-                  AND facts.parser_version IN (?, ?, ?)
-                ORDER BY jobs.url
-                LIMIT ?
-                """,
-                (tenant_id, *OUTDATED_POSTED_PARSER_VERSIONS, batch_size),
-            ).fetchall()
-            if not rows:
-                return total
-
-            publisher = _BufferedEventPublisher()
-            savepoint = "posted_compensation_parser_upgrade"
-            self._conn.execute(f"SAVEPOINT {savepoint}")
-            try:
-                for row in rows:
-                    job_id = canonical_job_id(str(_maintenance_row_value(row, "job_id")))
-                    source_parser_version = str(
-                        _maintenance_row_value(row, "parser_version"),
-                    )
-                    source_text, source_field = _posted_source_from_values(
-                        salary=_maintenance_row_value(row, "salary"),
-                        enrichment_description=_maintenance_row_value(
-                            row,
-                            "enrichment_description",
-                        ),
-                        full_description=_maintenance_row_value(
-                            row,
-                            "full_description",
-                        ),
-                        description=_maintenance_row_value(row, "description"),
-                    )
-                    fact = parse_posted_compensation(
-                        source_text,
-                        tenant_id=tenant_id,
-                        job_id=job_id,
-                        source_field=source_field,
-                        parsed_at=parsed_at,
-                    )
-                    if fact.parser_version != PARSER_VERSION:
-                        raise RuntimeError("posted parser did not emit current version")
-                    self._save_fact_row(fact)
-                    self._record_updated_event(
-                        fact,
-                        idempotency_key=(
-                            f"posted-parser-upgrade:{tenant_id}:{job_id}:"
-                            f"{_parser_version_tag(source_parser_version)}:"
-                            f"{_parser_version_tag(PARSER_VERSION)}"
-                        ),
-                        publisher=publisher,
-                        commit=False,
-                        suppress_missing_table=False,
-                    )
-            except BaseException:
-                self._conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
-                self._conn.execute(f"RELEASE SAVEPOINT {savepoint}")
-                raise
-            else:
-                self._conn.execute(f"RELEASE SAVEPOINT {savepoint}")
-                self._conn.commit()
-                from jobctrl.infrastructure.events import get_default_publisher
-
-                destination = get_default_publisher()
-                for event in publisher.events:
-                    destination.publish(event)
-                total += len(rows)
+        with self._conn:
+            if event_write_fence is not None:
+                event_write_fence()
+            self.require_determination(fact)
+            self._save_fact_row(fact)
+            self._record_updated_event(
+                fact,
+                idempotency_key=event_idempotency_key,
+                commit=False,
+            )
 
     def _save_fact_row(self, fact: PostedCompensationFact) -> None:
         """Persist a fact without committing; callers own transaction scope."""
@@ -237,7 +95,49 @@ class SqlitePostedCompensationRepository:
             """,
             (tenant_id, job_id),
         ).fetchone()
-        return _row_to_fact(row) if row is not None else None
+        if row is None:
+            return None
+        fact = _row_to_fact(row)
+        self.require_determination(fact)
+        return fact
+
+    def require_determination(self, fact):
+        from jobctrl.domain.determinations import DeterminationFailure, parse_model_result
+        from jobctrl.domain.compensation.posted import PostedPayExtraction
+        from jobctrl.infrastructure.determinations import SqliteDeterminationRepository
+
+        repository = SqliteDeterminationRepository(self._conn)
+        envelope = repository.bound(
+            tenant_id=fact.tenant_id,
+            entity_kind="posted_compensation",
+            entity_id=str(fact.job_id),
+            entity_version=fact.source_hash,
+            determination_kind="posted_compensation",
+        )
+        if (
+            envelope is None
+            or envelope.entity_id != str(fact.job_id)
+            or envelope.kind != "posted_compensation"
+            or envelope.schema_version != "1"
+            or envelope.prompt_version != "posted-compensation-v1"
+            or envelope.lane != "compensation"
+        ):
+            raise DeterminationFailure("posted_compensation_determination_unavailable")
+        result = parse_model_result(PostedPayExtraction, envelope.result)
+        if any(
+            getattr(fact, key) != getattr(result, key)
+            for key in (
+                "parse_state",
+                "currency",
+                "period",
+                "component",
+                "minimum_amount",
+                "maximum_amount",
+                "confidence",
+            )
+        ):
+            raise DeterminationFailure("posted_compensation_binding_invalid")
+        return envelope
 
     def parse_and_save_job_salary(
         self,
@@ -251,18 +151,37 @@ class SqlitePostedCompensationRepository:
         event_write_fence: Callable[[], None] | None = None,
     ) -> PostedCompensationFact:
         job_id = canonical_job_id(str(job_id))
-        fact = parse_posted_compensation(
-            salary,
+        from jobctrl.domain.compensation.posted import ModelPostedPayExtractor, posted_fact_from_extraction
+        from jobctrl.infrastructure.determinations import determination_dependencies
+
+        extractor = self._extractor or ModelPostedPayExtractor(
+            **determination_dependencies(self._conn, tenant_id=tenant_id, lane="compensation")
+        )
+        result, envelope = extractor.extract(salary, entity_id=str(job_id))
+        fact = posted_fact_from_extraction(
+            result,
+            envelope,
+            source_text=salary,
             tenant_id=tenant_id,
             job_id=job_id,
             source_field=source_field,
             parsed_at=parsed_at,
         )
-        self.save_fact(
-            fact,
-            event_idempotency_key=event_idempotency_key,
-            event_write_fence=event_write_fence,
-        )
+        from jobctrl.infrastructure.determinations import SqliteDeterminationRepository
+
+        with self._conn:
+            if event_write_fence is not None:
+                event_write_fence()
+            self._save_fact_row(fact)
+            SqliteDeterminationRepository(self._conn).bind(
+                tenant_id=tenant_id,
+                entity_kind="posted_compensation",
+                entity_id=str(job_id),
+                entity_version=fact.source_hash,
+                determination_kind="posted_compensation",
+                determination_id=envelope.determination_id,
+            )
+            self._record_updated_event(fact, idempotency_key=event_idempotency_key, commit=False)
         return fact
 
     def backfill_from_jobs(self, *, tenant_id: str = "local", parsed_at: str | None = None) -> int:
@@ -373,12 +292,7 @@ def _posted_source_from_values(
         text = _nonempty_text(value)
         if text is None:
             continue
-        match = _compensation_source_match(text)
-        if match is None:
-            continue
-        start = max(0, match.start() - 80)
-        end = min(len(text), match.end() + 220)
-        return text[start:end].strip(), field
+        return text, field
 
     return None, "jobs.salary"
 
@@ -388,79 +302,6 @@ def _nonempty_text(value: Any) -> str | None:
         return None
     text = re.sub(r"\s+", " ", str(value).strip())
     return text or None
-
-
-def _compensation_source_match(text: str) -> re.Match[str] | None:
-    keyword_match = COMPENSATION_SOURCE_RE.search(text)
-    generic_candidate: re.Match[str] | None = None
-    for amount_match in COMPENSATION_AMOUNT_RE.finditer(text):
-        if NON_COMPENSATION_SCALE_RE.match(text[amount_match.end() :].lstrip()):
-            continue
-        window_start = max(0, amount_match.start() - 40)
-        window_end = min(len(text), amount_match.end() + 40)
-        window = text[window_start:window_end]
-        if not PAY_PERIOD_RE.search(window):
-            continue
-        amount_start = amount_match.start() - window_start
-        amount_end = amount_match.end() - window_start
-        base_distance = _nearest_match_distance(
-            BASE_COMPENSATION_SOURCE_RE,
-            window,
-            amount_start,
-            amount_end,
-        )
-        non_base_distance = _nearest_match_distance(
-            NON_BASE_COMPENSATION_CONTEXT_RE,
-            window,
-            amount_start,
-            amount_end,
-        )
-        if EXPLICIT_COMPONENT_AMOUNT_CUE_RE.search(window[:amount_start]):
-            return amount_match
-        if base_distance is not None and (non_base_distance is None or base_distance < non_base_distance):
-            return amount_match
-        if _is_generic_compensation_with_additive_equity(
-            window,
-            amount_start,
-            amount_end,
-        ):
-            return amount_match
-        if generic_candidate is None and COMPENSATION_SOURCE_RE.search(window) and non_base_distance is None:
-            generic_candidate = amount_match
-
-    return generic_candidate or keyword_match
-
-
-def _is_generic_compensation_with_additive_equity(
-    window: str,
-    amount_start: int,
-    amount_end: int,
-) -> bool:
-    prefix = window[:amount_start]
-    cue = GENERIC_COMPENSATION_AMOUNT_CUE_RE.search(prefix)
-    if cue is None:
-        return False
-    cue_context = prefix[max(0, cue.start() - 32) : cue.start()]
-    if NON_BASE_COMPENSATION_CONTEXT_RE.search(cue_context):
-        return False
-    return bool(ADDITIVE_EQUITY_AFTER_AMOUNT_RE.search(window[amount_end:]))
-
-
-def _nearest_match_distance(
-    pattern: re.Pattern[str],
-    text: str,
-    anchor_start: int,
-    anchor_end: int,
-) -> int | None:
-    distances: list[int] = []
-    for match in pattern.finditer(text):
-        if match.end() <= anchor_start:
-            distances.append(anchor_start - match.end())
-        elif match.start() >= anchor_end:
-            distances.append(match.start() - anchor_end)
-        else:
-            distances.append(0)
-    return min(distances) if distances else None
 
 
 def _job_source_row_value(

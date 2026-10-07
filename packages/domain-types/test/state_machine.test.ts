@@ -11,8 +11,8 @@ import {
 import { canTransitionTo, transitionStage } from "../src/pipeline/use_cases.js";
 
 describe("StageStateMachine — §8.5 valid transitions", () => {
-  it("exposes exactly 16 valid (from, to) kind pairs", () => {
-    expect(VALID_KIND_TRANSITIONS).toHaveLength(16);
+  it("exposes exactly 17 valid (from, to) kind pairs", () => {
+    expect(VALID_KIND_TRANSITIONS).toHaveLength(17);
   });
 
   it("exposes the canonical 11 trigger names", () => {

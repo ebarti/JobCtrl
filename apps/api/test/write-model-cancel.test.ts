@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { Stage } from "../src/contracts.js";
 import { cancelJobAction, markJobApplied, markJobSkipped, resetJobStage } from "../src/write-model.js";
-import { initializeExactV7Database } from "./v7-schema.js";
+import { initializeExactDatabase } from "./exact-schema.js";
 
 const JOB_URL = "https://example.com/jobs/ready";
 const JOB_ID = "10000000-0000-4000-8000-000000000001";
@@ -21,7 +21,7 @@ describe("cancelJobAction", () => {
   beforeEach(() => {
     directory = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-cancel-action-"));
     const dbPath = path.join(directory, "jobctrl.db");
-    initializeExactV7Database(dbPath);
+    initializeExactDatabase(dbPath);
     db = new Database(dbPath);
     db.prepare(
       `INSERT INTO jobs (

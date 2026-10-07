@@ -12,10 +12,10 @@ Sites are loaded from config/sites.yaml, with {query_encoded} and {location_enco
 placeholders replaced from the user's search configuration.
 """
 
+from jobctrl.infrastructure.discovery.triage import PersistedPostingTriage
 import json
 import logging
 import re
-import sqlite3
 import sys
 import threading
 import time
@@ -47,10 +47,6 @@ from jobctrl.infrastructure.network import (
     RunBudgetCounter,
     validate_public_http_url,
 )
-from jobctrl.infrastructure.discovery.location_filter import (
-    configured_location_filters,
-    location_matches_target,
-)
 from jobctrl.infrastructure.discovery.live_browser import (
     LiveBrowserResult,
     LiveChromeDiscoveryClient,
@@ -61,9 +57,7 @@ from jobctrl.infrastructure.discovery.production_wiring import DurableJobEventPu
 from jobctrl.infrastructure.discovery.sqlite_repository import SqliteJobRepository
 from jobctrl.discovery.target_queries import (
     query_specs_for_source,
-    title_matches_any_query,
 )
-from jobctrl.discovery.title_filter import title_matches_query
 from jobctrl.infrastructure.llm import get_llm_adapter
 from jobctrl.llm_lanes import lane_bound
 from jobctrl.runtime import is_bundled_runtime
@@ -108,18 +102,6 @@ def _smart_extract_session(
 # -- Location filtering -------------------------------------------------------
 
 
-def _load_location_filter(search_cfg: dict | None = None):
-    """Load location accept/reject lists from search config."""
-    if search_cfg is None:
-        search_cfg = config.load_search_config()
-    return configured_location_filters(search_cfg)
-
-
-def _location_ok(location: str | None, accept: list[str], reject: list[str]) -> bool:
-    """Check if a job location passes the user's location filter."""
-    return location_matches_target(location, accept=accept, reject=reject)
-
-
 # -- Site configuration from YAML --------------------------------------------
 
 _NULL_DESCRIPTION_SENTINELS = {"<na>", "nan", "nat", "none", "null"}
@@ -139,102 +121,54 @@ def load_sites() -> list[dict]:
     return data.get("sites", [])
 
 
-def _store_jobs_filtered(
-    conn: sqlite3.Connection,
-    jobs: list[dict],
-    site: str,
-    strategy: str,
-    accept_locs: list[str],
-    reject_locs: list[str],
-    query: object | None = None,
-    limit: int = 0,
-    source_url: str | None = None,
-    run_id: str = "smartextract",
-    discovery_execution: DiscoveryExecutionRef | None = None,
-) -> tuple[int, int]:
-    """Store usable jobs with title, location, and description filtering."""
-    new = 0
-    existing = 0
-    filtered = 0
-    missing_description = 0
+def _store_jobs(
+    conn, jobs, site, strategy, *, search_cfg, limit=0, source_url=None, run_id="smartextract", discovery_execution=None
+):
+    from jobctrl.infrastructure.discovery.triage import triage_postings
+
     repository = SqliteJobRepository(
         conn,
         discovery_execution=discovery_execution,
         source_family="smartextract" if discovery_execution is not None else None,
     )
     use_case = DiscoverJobsUseCase(
+        triage=PersistedPostingTriage(conn, search_cfg=search_cfg),
         repository=repository,
         publisher=DurableJobEventPublisher(conn, stage="discover"),
     )
-
+    postings = []
     for job in jobs:
-        if limit > 0 and new >= limit:
-            break
         url = _normalize_job_url(job.get("url"), source_url)
         if not url:
             continue
-        if not _location_ok(job.get("location"), accept_locs, reject_locs):
-            filtered += 1
-            continue
-        if not _title_matches_target_query(job.get("title"), query):
-            filtered += 1
-            continue
-        description = _job_description_text(job)
-        if not description:
-            missing_description += 1
-            continue
         company = str(job.get("company") or "").strip()
-        source_board = str(site or "").strip() or "smart-extract"
-        posting = ScrapedJobPosting(
-            posting_url=PostingUrl(value=url),
-            source=Source(board=source_board),
-            employer=Employer(name=company) if company else Employer.unknown(),
-            metadata=JobMetadata(
-                title=str(job.get("title") or ""),
-                salary=str(job.get("salary") or ""),
-                description=description,
-                location=str(job.get("location") or ""),
-            ),
-            strategy=SearchStrategy.SMART_EXTRACT,
-            source_id=f"smartextract:{site}",
-            source_native_id=url,
-            canonical_url=url,
-        )
-        summary = use_case.execute(
-            tenant_id=LOCAL_TENANT,
-            postings=(posting,),
-            run_id=run_id,
-        )
-        new += summary.new_jobs
-        if summary.new_jobs == 0 and (summary.observed > 0 or summary.duplicates_linked > 0):
-            existing += 1
-
-        identity = repository.resolve_by_posting_url(LOCAL_TENANT, posting.posting_url)
-        if identity is not None and company:
-            conn.execute(
-                "UPDATE jobs SET company = COALESCE(NULLIF(company, ''), ?) "
-                "WHERE tenant_id = ? AND job_id = ?",
-                (company, str(LOCAL_TENANT), str(identity.job_id)),
+        postings.append(
+            ScrapedJobPosting(
+                posting_url=PostingUrl(value=url),
+                source=Source(board=site or "smart-extract"),
+                employer=Employer(name=company) if company else Employer.unknown(),
+                metadata=JobMetadata(
+                    title=str(job.get("title") or ""),
+                    salary=str(job.get("salary") or ""),
+                    description=_job_description_text(job) or "",
+                    location=str(job.get("location") or ""),
+                ),
+                strategy=SearchStrategy.SMART_EXTRACT,
+                source_id=f"smartextract:{site}",
+                source_native_id=url,
+                canonical_url=url,
             )
-
-    if filtered:
-        log.info("Filtered %d jobs (wrong title/location)", filtered)
-    if missing_description:
-        log.info("Filtered %d jobs (missing description)", missing_description)
+        )
+    accepted = triage_postings(conn, postings, search_cfg=search_cfg)
+    new, existing = 0, 0
+    for posting in accepted:
+        if limit > 0 and new >= limit:
+            break
+        summary = use_case.execute(tenant_id=LOCAL_TENANT, postings=(posting,), run_id=run_id)
+        new += summary.new_jobs
+        existing += int(summary.new_jobs == 0 and (summary.observed > 0 or summary.duplicates_linked > 0))
     conn.commit()
     return new, existing
-
-
-def _title_matches_target_query(title: str | None, query: object | None) -> bool:
-    if isinstance(query, Mapping):
-        return title_matches_any_query(title, [query])
-    if isinstance(query, list):
-        if not query:
-            return True
-        return any(_title_matches_target_query(title, item) for item in query)
-    if query is None:
-        return title_matches_query(title, None)
-    return title_matches_query(title, str(query))
 
 
 def _job_description_text(job: dict) -> str | None:
@@ -279,9 +213,7 @@ def _empty_page_intelligence(url: str) -> dict:
     }
 
 
-def collect_page_intelligence(
-    url: str, headless: bool = True, *, session: PolitenessSession | None = None
-) -> dict:
+def collect_page_intelligence(url: str, headless: bool = True, *, session: PolitenessSession | None = None) -> dict:
     """Load a page with Playwright and collect every signal a scraping engineer
     would look at in DevTools. Returns a structured intelligence report.
 
@@ -1290,7 +1222,9 @@ def _run_one_site(
     salaries = sum(1 for j in jobs if j.get("salary"))
     descs = sum(1 for j in jobs if _job_description_text(j))
     usable = sum(1 for j in jobs if j.get("title") and j.get("url") and _job_description_text(j))
-    status = "PASS" if total > 0 and usable / max(total, 1) >= 0.8 else "FAIL" if total == 0 or usable == 0 else "PARTIAL"
+    status = (
+        "PASS" if total > 0 and usable / max(total, 1) >= 0.8 else "FAIL" if total == 0 or usable == 0 else "PARTIAL"
+    )
     log.info(
         "RESULT: %s -- %d jobs, %d usable, %d titles, %d urls, %d salaries, %d descriptions",
         status,
@@ -1376,7 +1310,7 @@ def build_scrape_targets(
     if sites is None:
         sites = load_sites()
     if search_cfg is None:
-        search_cfg = config.load_search_config()
+        search_cfg = search_cfg if search_cfg is not None else config.load_search_config()
 
     query_specs = query_specs_for_source(search_cfg.get("queries", []), "smartextract")
     locs = search_cfg.get("locations", [])
@@ -1424,8 +1358,7 @@ def build_scrape_targets(
 
 def _run_all(
     targets: list[dict],
-    accept_locs: list[str],
-    reject_locs: list[str],
+    search_cfg: dict,
     workers: int = 1,
     limit: int = 0,
     cancel_event: threading.Event | None = None,
@@ -1442,7 +1375,6 @@ def _run_all(
     log.info(
         "Database: %d jobs already stored, %d pending detail scrape", pre_stats["total"], pre_stats["pending_detail"]
     )
-
     results: list[dict] = []
     total_new = 0
     total_existing = 0
@@ -1450,13 +1382,10 @@ def _run_all(
     def _browser_client_for_target(target: dict) -> PoliteLiveChromeHttpClient | None:
         if discovery_execution is None:
             return None
-        slug = re.sub(r"[^a-z0-9]+", "-", str(target.get("name") or "site").casefold()).strip("-")
+        slug = re.sub("[^a-z0-9]+", "-", str(target.get("name") or "site").casefold()).strip("-")
         source_id = f"smart_extract:{slug or 'site'}"
         client = LiveChromeDiscoveryClient(
-            discovery_execution,
-            source_family="smartextract",
-            source_id=source_id,
-            cancel_event=cancel_event,
+            discovery_execution, source_family="smartextract", source_id=source_id, cancel_event=cancel_event
         )
         if prefer_live_browser(client, cancel_event=cancel_event) is None:
             return None
@@ -1470,14 +1399,12 @@ def _run_all(
             return
         jobs = r.get("jobs", [])
         if jobs:
-            new, existing = _store_jobs_filtered(
+            (new, existing) = _store_jobs(
                 conn,
                 jobs,
                 target["name"],
                 r.get("strategy", "?"),
-                accept_locs,
-                reject_locs,
-                query=target.get("query_spec") or target.get("queries") or target.get("query"),
+                search_cfg=search_cfg,
                 limit=remaining if limit > 0 else 0,
                 source_url=target.get("url"),
                 run_id=run_id,
@@ -1501,24 +1428,15 @@ def _run_all(
         }
 
     if workers > 1 and len(targets) > 1:
-        # Parallel mode
         with ThreadPoolExecutor(max_workers=min(workers, len(targets))) as pool:
             future_to_target = {
-                (
-                    pool.submit(
-                        _run_one_site,
-                        target["name"],
-                        target["url"],
-                        cancel_event,
-                        _browser_client_for_target(target),
-                    )
-                    if discovery_execution is not None
-                    else (
-                        pool.submit(_run_one_site, target["name"], target["url"], cancel_event)
-                        if cancel_event is not None
-                        else pool.submit(_run_one_site, target["name"], target["url"])
-                    )
-                ): target
+                pool.submit(
+                    _run_one_site, target["name"], target["url"], cancel_event, _browser_client_for_target(target)
+                )
+                if discovery_execution is not None
+                else pool.submit(_run_one_site, target["name"], target["url"], cancel_event)
+                if cancel_event is not None
+                else pool.submit(_run_one_site, target["name"], target["url"]): target
                 for target in targets
             }
             for future in as_completed(future_to_target):
@@ -1536,7 +1454,6 @@ def _run_all(
                 results.append(r)
                 _process_result(r, target)
     else:
-        # Sequential mode (default)
         for i, target in enumerate(targets):
             if cancel_event is not None and cancel_event.is_set():
                 raise TransientNetworkError("smart-extract discovery canceled")
@@ -1546,15 +1463,9 @@ def _run_all(
             if target.get("query"):
                 label = f"{target['name']} [{target['query']}]"
             log.info("[%d/%d] %s", i + 1, len(targets), label)
-
             try:
                 if discovery_execution is not None:
-                    r = _run_one_site(
-                        target["name"],
-                        target["url"],
-                        cancel_event,
-                        _browser_client_for_target(target),
-                    )
+                    r = _run_one_site(target["name"], target["url"], cancel_event, _browser_client_for_target(target))
                 elif cancel_event is None:
                     r = _run_one_site(target["name"], target["url"])
                 else:
@@ -1565,8 +1476,6 @@ def _run_all(
                 r = _site_error_result(target, exc)
             results.append(r)
             _process_result(r, target)
-
-    # Summary
     for r in results:
         strategy = r.get("strategy", "?")
         if r["status"] in ("PASS", "PARTIAL", "FAIL"):
@@ -1574,11 +1483,9 @@ def _run_all(
         else:
             detail = r.get("error", "")[:60]
         log.info("%-10s | %-25s | %s", r["status"], r["name"], detail)
-
-    passed = sum(1 for r in results if r["status"] == "PASS")
-    errors = sum(1 for r in results if r["status"] == "ERROR")
+    passed = sum((1 for r in results if r["status"] == "PASS"))
+    errors = sum((1 for r in results if r["status"] == "ERROR"))
     log.info("%d/%d PASS", passed, len(results))
-
     return {
         "total_new": total_new,
         "total_existing": total_existing,
@@ -1598,6 +1505,7 @@ def run_smart_extract(
     cancel_event: threading.Event | None = None,
     run_id: str | None = None,
     discovery_execution: DiscoveryExecutionRef | None = None,
+    search_cfg: dict | None = None,
 ) -> dict:
     """Main entry point for AI-powered smart extraction.
 
@@ -1611,17 +1519,13 @@ def run_smart_extract(
     Returns:
         Dict with stats: total_new, total_existing, passed, total.
     """
-    search_cfg = config.load_search_config()
-    accept_locs, reject_locs = _load_location_filter(search_cfg)
-
+    search_cfg = search_cfg if search_cfg is not None else config.load_search_config()
     targets = build_scrape_targets(sites=sites, search_cfg=search_cfg)
-
     if not targets:
         log.warning("No scrape targets configured. Configure sources and Discovery settings in the local UI.")
         return {"total_new": 0, "total_existing": 0, "passed": 0, "total": 0}
-
-    search_sites = sum(1 for s in (sites or load_sites()) if s.get("type") == "search")
-    static_sites = sum(1 for s in (sites or load_sites()) if s.get("type") != "search")
+    search_sites = sum((1 for s in sites or load_sites() if s.get("type") == "search"))
+    static_sites = sum((1 for s in sites or load_sites() if s.get("type") != "search"))
     log.info(
         "Sites: %d searchable, %d static | Total targets: %d (workers=%d)",
         search_sites,
@@ -1629,11 +1533,9 @@ def run_smart_extract(
         len(targets),
         workers,
     )
-
     return _run_all(
         targets,
-        accept_locs,
-        reject_locs,
+        search_cfg,
         workers=workers,
         limit=limit,
         cancel_event=cancel_event,

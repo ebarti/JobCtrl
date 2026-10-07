@@ -10,7 +10,6 @@ import {
   ArtifactListQuerySchema,
   ContactListQuerySchema,
   ContactResearchListQuerySchema,
-  ENDPOINTS,
   JobListQuerySchema,
   WorkflowRunsListQuerySchema,
   compareJobs,
@@ -26,8 +25,6 @@ import {
   type PaginatedResponse,
   type RequiredBulletSuggestionRequest,
   type RequiredBulletSuggestionResponse,
-  type TargetRoleSuggestionRequest,
-  type TargetRoleSuggestionResponse,
   type WorkflowRunSummary,
 } from "@jobctrl/contracts";
 
@@ -37,6 +34,7 @@ import type { ApiClientPort } from "../shared/ports/ApiClientPort.js";
 import type { TelemetryPort } from "../shared/ports/TelemetryPort.js";
 import { isDemoArtifactUrl } from "./artifacts.js";
 import type { ApiClientResponse, DemoReadModel } from "./contracts.js";
+import { DEMO_CAPABILITY_MANIFEST } from "./capabilities.js";
 import { filterDemoJob } from "./job-filter.js";
 import {
   DemoLocalCommandExecutor,
@@ -49,10 +47,6 @@ import {
   type DemoInitialExternalRehearsalOperation,
 } from "./DemoExternalRehearsalExecutor.js";
 import { DemoCapabilityError } from "./ports.js";
-import {
-  DemoScenarioEngine,
-  type DemoScenarioEngineOptions,
-} from "./DemoScenarioEngine.js";
 import type { DemoWorkspaceRepository } from "./workspace/DemoWorkspaceRepository.js";
 
 type CacheKey = number | string | undefined;
@@ -81,15 +75,13 @@ export class DemoResourceNotFoundError extends JobCtrlApiError {
 }
 
 export interface DemoApiClientAdapterOptions extends DemoLocalCommandExecutorOptions {
-  readonly scenario?: DemoScenarioEngineOptions;
   readonly external?: DemoExternalRehearsalExecutorOptions;
   readonly telemetry?: TelemetryPort;
 }
 
-/** Browser-local adapter for reads, local commands, and deterministic scenarios. */
+/** Browser-local adapter for saved examples and authored local commands. */
 export class DemoApiClientAdapter implements ApiClientPort {
   private readonly localCommands: DemoLocalCommandExecutor;
-  private readonly scenarios: DemoScenarioEngine;
   private readonly externalRehearsals: DemoExternalRehearsalExecutor;
   private readonly telemetry: TelemetryPort | undefined;
 
@@ -99,13 +91,6 @@ export class DemoApiClientAdapter implements ApiClientPort {
   ) {
     this.localCommands = new DemoLocalCommandExecutor(workspace, options);
     this.telemetry = options.telemetry;
-    this.scenarios = new DemoScenarioEngine(
-      workspace,
-      options.scenario ?? {
-        ...(options.clock ? { clock: options.clock } : {}),
-        ...(options.createId ? { createId: options.createId } : {}),
-      },
-    );
     this.externalRehearsals = new DemoExternalRehearsalExecutor(
       workspace,
       options.external ?? {
@@ -117,19 +102,19 @@ export class DemoApiClientAdapter implements ApiClientPort {
     Object.assign(
       this,
       Object.fromEntries(
-        Object.values(ENDPOINTS)
-          .filter((endpoint) => endpoint.demo.class === "unavailable")
-          .map((endpoint) => [endpoint.name, this.unsupported(endpoint.name)]),
+        Object.entries(DEMO_CAPABILITY_MANIFEST)
+          .filter(([, capability]) => capability.class === "unavailable")
+          .map(([method]) => [method, this.unsupported(method as keyof ApiClientPort)]),
       ),
     );
   }
 
   initialize(): Promise<void> {
-    return this.scenarios.initialize();
+    return Promise.resolve();
   }
 
   dispose(): void {
-    this.scenarios.dispose();
+
   }
 
   health() {
@@ -517,41 +502,7 @@ export class DemoApiClientAdapter implements ApiClientPort {
     return this.read((model) => model.profile.config);
   }
 
-  async targetRoleSuggestions(
-    body: TargetRoleSuggestionRequest,
-  ): Promise<TargetRoleSuggestionResponse> {
-    const profile = await this.read((model) => model.profile.config);
-    if (profile.profileVersion !== body.expectedProfileVersion) {
-      throw new JobCtrlApiError(
-        409,
-        "stale_profile_version",
-        `stale_profile_version: expected ${body.expectedProfileVersion}, current ${profile.profileVersion ?? "none"}`,
-      );
-    }
-    return {
-      ok: true,
-      profileVersion: body.expectedProfileVersion,
-      suggestions: [
-        {
-          title: "Director of Platform Delivery",
-          classification: "direct" as const,
-          track: "Management",
-          seniority: "Director",
-          evidenceIds: ["experience:experience-platform-delivery"],
-          rationale: "The saved synthetic profile contains a matching recent platform delivery role.",
-        },
-      ].slice(0, body.maximumSuggestions),
-      preferenceSuggestions: [
-        {
-          location: "Madrid, Spain",
-          workModel: "Hybrid" as const,
-          evidenceIds: ["experience:experience-platform-delivery"],
-        },
-      ],
-      strategy: "model_stub",
-      warnings: ["stubbed_model_evidence"],
-    };
-  }
+  targetRoleSuggestions = this.unsupported("targetRoleSuggestions");
 
   async requiredBulletSuggestions(
     body: RequiredBulletSuggestionRequest,
@@ -756,7 +707,7 @@ export class DemoApiClientAdapter implements ApiClientPort {
   promoteSourceLocatorCandidate = this.local("promoteSourceLocatorCandidate");
   rejectSourceLocatorCandidate = this.local("rejectSourceLocatorCandidate");
   decideDiscoveryQuarantine = this.local("decideDiscoveryQuarantine");
-  importManualCapture = this.local("importManualCapture");
+  importManualCapture = this.unsupported("importManualCapture");
   importJobUrl = this.unsupported("importJobUrl");
   dismissManualCapture = this.local("dismissManualCapture");
   recordDiscoveryFeedback = this.local("recordDiscoveryFeedback");
@@ -764,6 +715,9 @@ export class DemoApiClientAdapter implements ApiClientPort {
     "decideRoleMatchFeedbackSuggestion",
   );
   decideApplyReview = this.local("decideApplyReview");
+  searchPreferences = this.unsupported("searchPreferences");
+  discoveryTriage = this.unsupported("discoveryTriage");
+  checkRepeatApplication = this.unsupported("checkRepeatApplication");
   confirmRepeatApplication = this.unsupported("confirmRepeatApplication");
   createResumeReviewDraft = this.local("createResumeReviewDraft");
   saveResumeReviewDraftRevision = this.local("saveResumeReviewDraftRevision");
@@ -791,19 +745,19 @@ export class DemoApiClientAdapter implements ApiClientPort {
   runPendingPreparation = this.unsupported("runPendingPreparation");
   correctScore = this.local("correctScore");
   resetStaleScoresForRescore = this.local("resetStaleScoresForRescore");
-  rescoreJob = this.simulated("rescoreJob");
+  rescoreJob = this.unsupported("rescoreJob");
   refreshCompensation = this.unsupported("refreshCompensation");
   refreshAllCompensation = this.unsupported("refreshAllCompensation");
   rescoreJobsNotOnCurrentScoringPolicy = this.unsupported(
     "rescoreJobsNotOnCurrentScoringPolicy",
   );
-  retailorJob = this.simulated("retailorJob");
+  retailorJob = this.unsupported("retailorJob");
   tailorJob = this.unsupported("tailorJob");
   retailorCurrentPolicy = this.unsupported("retailorCurrentPolicy");
   cancelWorkflowRun = this.local("cancelWorkflowRun");
   openArtifact = this.rehearsed("openArtifact");
   updateProfile = this.local("updateProfile");
-  importResume = this.local("importResume");
+  importResume = this.unsupported("importResume");
   updateSettings = this.local("updateSettings");
   extensionCapabilityToken = this.unsupported("extensionCapabilityToken");
   discoveryBrowserBridgeStatus = this.unsupported(
@@ -834,11 +788,11 @@ export class DemoApiClientAdapter implements ApiClientPort {
   scheduleOutreachFollowUp = this.local("scheduleOutreachFollowUp");
   completeOutreachFollowUp = this.local("completeOutreachFollowUp");
   dismissOutreachFollowUp = this.local("dismissOutreachFollowUp");
-  retryStage = this.simulated("retryStage");
-  runJobStage = this.simulated("runJobStage");
+  retryStage = this.unsupported("retryStage");
+  runJobStage = this.unsupported("runJobStage");
   generateMaterials = this.unsupported("generateMaterials");
   generateInterviewPrep = this.unsupported("generateInterviewPrep");
-  applyJob = this.rehearsed("applyJob");
+  applyJob = this.unsupported("applyJob");
   cancelJobAction = this.local("cancelJobAction");
   markApplied = this.rehearsed("markApplied");
   markSkipped = this.local("markSkipped");
@@ -877,15 +831,6 @@ export class DemoApiClientAdapter implements ApiClientPort {
   ): ApiClientPort[TMethod] {
     return ((...args: Parameters<ApiClientPort[TMethod]>) =>
       this.localCommands.execute(method, args)) as ApiClientPort[TMethod];
-  }
-
-  private simulated<
-    TMethod extends import("./contracts.js").DemoSimulatedAsyncOperation,
-  >(method: TMethod): ApiClientPort[TMethod] {
-    return ((...args: Parameters<ApiClientPort[TMethod]>) =>
-      this.trackDemoAction(method, () =>
-        this.scenarios.execute(method, args),
-      )) as unknown as ApiClientPort[TMethod];
   }
 
   private rehearsed<TMethod extends DemoInitialExternalRehearsalOperation>(

@@ -285,10 +285,26 @@ test("real cover workflow reaches worker running and terminal state in the brows
   expect(finalState).toMatchObject({
     workerPaused: false,
     workerResumed: true,
-    providerCalls: 1,
+    providerCalls: 3,
     providerReleased: true,
     unexpectedProviderCalls: 0,
   });
+
+  const artifactResponse = await page.request.get("/v1/artifacts?type=cover_letter");
+  expect(artifactResponse.status(), await artifactResponse.text()).toBe(200);
+  const artifacts = await artifactResponse.json();
+  const cover = (Array.isArray(artifacts) ? artifacts : artifacts.artifacts ?? artifacts.items).find(
+    (artifact: { jobKey: string }) => artifact.jobKey === JOB_ID,
+  );
+  expect(cover).toBeTruthy();
+  const detailResponse = await page.request.get(`/v1/artifacts/${cover.artifactId}`);
+  expect(detailResponse.status(), await detailResponse.text()).toBe(200);
+  const detail = await detailResponse.json();
+  expect(detail.determinations.map((receipt: { kind: string }) => receipt.kind).sort())
+    .toEqual(["artifact_quality", "claim_verification"]);
+  await page.goto(`/artifacts/${cover.artifactId}`);
+  await page.getByText("Verification sources", { exact: true }).click();
+  await expect(page.getByText("claim verification · live-worker-smoke · live-worker-smoke-fixture", { exact: true })).toBeVisible();
 
   const events = await recordedEvents(page);
   const evidenceDir = process.env["JOBCTRL_LIVE_WORKER_EVIDENCE_DIR"]!;

@@ -24,7 +24,6 @@ from jobctrl.domain.pipeline.state_machine import is_valid_transition
 from jobctrl.domain.ports.events import EventPublisher
 from jobctrl.domain.scoring.eligibility import (
     eligibility_blocks_downstream,
-    normalize_eligibility_for_downstream,
 )
 from jobctrl.domain.scoring.value_objects import EligibilityAssessment
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
@@ -666,16 +665,18 @@ def reconcile_score_eligibility_blockers(
     job_id: JobId,
     eligibility_status: str | None,
     hard_blockers: list[str] | tuple[str, ...] | None = None,
+    hard_blocker_categories: tuple[str, ...] = (),
+    hard_blocker_citations: tuple[tuple[dict, ...], ...] = (),
     now: str | None = None,
 ) -> int:
     """Keep downstream stage rows aligned with score hard-blocker eligibility."""
     stable_job_id = canonical_job_id(str(job_id))
     raw_blockers = _clean_blocker_reasons(hard_blockers)
-    eligibility = normalize_eligibility_for_downstream(
-        EligibilityAssessment(
-            status=str(eligibility_status or "unknown"),
-            hard_blockers=tuple(raw_blockers),
-        )
+    eligibility = EligibilityAssessment(
+        status=str(eligibility_status or "unknown"),
+        hard_blockers=tuple(raw_blockers),
+        hard_blocker_categories=hard_blocker_categories,
+        hard_blocker_citations=hard_blocker_citations,
     )
     blockers = list(eligibility.hard_blockers)
     blocked = eligibility_blocks_downstream(eligibility)

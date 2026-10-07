@@ -15,27 +15,17 @@ const { e2eStubActionDispatcher, e2eStubProfileImporter } =
   await import("../src/e2e-dispatch.js");
 const { e2eProfilePreviewRenderer } = await import("./fixtures/e2e-profile-preview.js");
 const config = resolveApiConfig();
-const realProfileSuggestions = process.env["JOBCTRL_E2E_PROFILE_SUGGESTIONS"] === "1";
-const suggestionRpc = realProfileSuggestions
-  ? new (await import("../src/json-rpc-adapter.js")).SubprocessJsonRpcAdapter({
-    appDir: config.appDir,
-    configPath: config.configPath,
-    pythonRuntime: (await import("../src/python-runtime.js")).createSourcePythonRuntime({
-      environment: {
-        ...process.env,
-        HOME: process.env["JOBCTRL_E2E_SERVICE_HOME"],
-        XDG_CONFIG_HOME: `${process.env["JOBCTRL_E2E_SERVICE_HOME"]}/.config`,
-        UV_FROZEN: "1",
-      },
-    }),
-  })
-  : null;
+const modelProfileSuggestions = process.env["JOBCTRL_E2E_PROFILE_SUGGESTIONS"] === "1";
+const { default: Database } = await import("better-sqlite3");
+const { recordCandidateProposal } = await import("./semantic-fixtures.js");
 const unavailable = async () => {
   throw new Error("Operation is outside the isolated E2E fixture");
 };
 const providerDispatcher: JsonRpcDispatcher = {
   call: async (method, params) =>
-    method === RpcMethods.ProfileRequiredBulletSuggestions
+    method === RpcMethods.SearchPreferences
+      ? {jsonrpc:"2.0",id:1,result:{ok:true,profileVersion:params.expectedProfileVersion,inputVersion:String(params.expectedProfileVersion).padStart(64,"0"),status:"missing",determination:null}}
+      : method === RpcMethods.ProfileRequiredBulletSuggestions
       ? {
           jsonrpc: "2.0", id: 1,
           // Explicit model test double: this entry point never makes semantic judgments.
@@ -46,8 +36,17 @@ const providerDispatcher: JsonRpcDispatcher = {
               kind: "missing_evidence", guidance: "Which saved incident report supports the incident response claim?", proposedText: null },
           ] },
         }
-      : method === RpcMethods.ProfileTargetRoleSuggestions && suggestionRpc
-      ? suggestionRpc.call(method, params)
+      : method === RpcMethods.ProfileTargetRoleSuggestions && modelProfileSuggestions
+      ? (() => {
+          const db = new Database(config.dbPath);
+          try {
+            return {jsonrpc:"2.0",id:1,result:recordCandidateProposal(db,params,[
+              {title:"Model proposal A",classification:"direct",track:"management",seniority:"manager"},
+              {title:"Model proposal B",classification:"adjacent",track:"ic",seniority:"staff"},
+              {title:"Model proposal C",classification:"adjacent",track:"executive",seniority:"c_level"},
+            ])};
+          } finally { db.close(); }
+        })()
       : method === "browser_capabilities_list"
       ? {
           jsonrpc: "2.0",
@@ -72,7 +71,7 @@ const providerDispatcher: JsonRpcDispatcher = {
             message: "Method is outside the isolated E2E fixture",
           },
         },
-  close: async () => { await suggestionRpc?.close(); },
+  close: async () => {},
 };
 const credentialStore: CredentialStore = {
   list: async () => ({
@@ -110,7 +109,7 @@ const app = buildApp({
   },
   artifactOpener: unavailable,
   jobUrlValidator: unavailable,
-  placeValidator: realProfileSuggestions
+  placeValidator: modelProfileSuggestions
     ? async (place) => ["Barcelona", "London"].includes(place)
     : unavailable,
   requireHealthyWorkerForActions: true,

@@ -1,3 +1,5 @@
+import type {SearchPreferencesRequest,SearchPreferencesResponse} from "@jobctrl/contracts";
+import type { DiscoveryTriageResponse } from "@jobctrl/contracts";
 import type {
   ActionRunResponse,
   ActivityEventResponse,
@@ -232,6 +234,8 @@ export interface ApiClientPort extends EndpointClientMethods {
   acknowledgeDigest(body?: DigestAcknowledgeRequest): Promise<DigestAcknowledgeResponse>;
   activity(query?: Partial<ActivityListQuery>): Promise<PaginatedResponse<ActivityEventSummary>>;
   activityEvent(eventId: string): Promise<ActivityEventResponse>;
+  searchPreferences(request:SearchPreferencesRequest):Promise<SearchPreferencesResponse>;
+  discoveryTriage(offset?:number):Promise<DiscoveryTriageResponse>;
   discoverySettings(): Promise<DiscoverySettingsResponse>;
   updateDiscoverySettings(body: DiscoverySettingsUpdateRequest): Promise<DiscoverySettingsResponse>;
   discoverySources(): Promise<SourceRegistryListResponse>;
@@ -280,6 +284,7 @@ export interface ApiClientPort extends EndpointClientMethods {
     jobKey: string,
     body: ApplyReviewDecisionRequest,
   ): Promise<ApplyReviewDecisionResponse>;
+  checkRepeatApplication(jobKey:string):Promise<RepeatApplicationOverrideResponse>;
   confirmRepeatApplication(
     jobKey: string,
     body: RepeatApplicationOverrideRequest,

@@ -15,7 +15,7 @@ import {
   JobDataPurgeCommittedError,
 } from "../src/job-data-purge.js";
 import { WORKER_RUNTIME_STALE_AFTER_MS } from "../src/worker-runtime-telemetry.js";
-import { initializeExactV7Database } from "./v7-schema.js";
+import { initializeExactDatabase } from "./exact-schema.js";
 
 const NOW = "2026-09-01T12:00:00Z";
 const JOB_ID = "00000000-0000-4000-8000-000000000901";
@@ -54,7 +54,7 @@ function createFixture(options: {
     fs.rmSync(outsideFile, { force: true });
   });
 
-  initializeExactV7Database(dbPath);
+  initializeExactDatabase(dbPath);
   for (const directory of ["backups", "cover_letters", "logs", "tailored_resumes"]) {
     fs.mkdirSync(path.join(appDir, directory), { recursive: true });
   }

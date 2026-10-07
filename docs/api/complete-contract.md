@@ -142,37 +142,22 @@ configured model runtime.
 { "expectedProfileVersion": 7, "maximumSuggestions": 3 }
 ```
 
-`maximumSuggestions` defaults to `3` and is bounded to `1–5`. A successful
-response has `ok: true`, the same positive `profileVersion`, `strategy`
-(`model`, `deterministic`, legacy `recent_title_fallback`, or `none`), bounded
-warning codes, up to five role suggestions, and up to five
-`preferenceSuggestions` rows. Each role suggestion contains a trimmed title, `direct` or
-`adjacent` classification, saved track and seniority values, one to eight
-evidence IDs, and a rationale of at most 240 characters. Each historical
-preference row contains `location` (at most 100 characters, possibly empty),
-`workModel` (`Remote`, `Hybrid`, `On-site`, or empty), and one to eight canonical
-experience evidence IDs; at least one of location and model is nonempty. Rows
-preserve their location/model pair and are not search consent. Invalid provider
-output, unknown evidence, unsupported track/seniority, provider failure, and a
-profile version that changes before the response all fail closed. The route is
-read-only and does not emit a profile event. The browser-local product demo
-uses the additional honest `model_stub` strategy and
-`stubbed_model_evidence` warning for its synthetic response.
+`maximumSuggestions` defaults to `3`, bounded to `1–5`. The response includes
+`profileVersion`, `determinationId`, `status: pending_confirmation`,
+`strategy: model`, warnings, role suggestions and preference suggestions. Every
+suggestion carries shared taxonomy codes, canonical evidence IDs, verbatim
+citations and a rationale. The worker uses the configured Profile provider,
+checks the spend preflight, persists the candidate interpretation and fences the
+profile version again after the call. Provider, budget, schema and citation
+failures are distinct safe errors; there is no saved-title fallback.
 
-The API supplies trusted app-directory and database identity to the worker,
-which checks both before reading the saved snapshot. Browser input cannot
-override either value. Current managed Claude, Codex, and Google SDK adapters
-cannot enforce the hard output-token and maximum-call-cost bounds required by
-this route, so production makes no model call. It returns bounded direct
-saved-title and conservative adjacent-title proposals under `deterministic`,
-or `none`, with the `provider_token_or_cost_bound_unsupported` warning.
-Adjacent titles require a cited experience title, independently relevant
-achievement evidence from that experience, complete substantive modifier
-support, and compatible saved track/seniority. Historical preference rows use
-only explicit experience location text and exact unambiguous work-model markers;
-the response never infers relocation or remote-work willingness. `strategy:
-"model"` remains reserved for synthetic domain testing and is not emitted by
-production RPC.
+Suggestions do not change the profile. The owner accepts selected fields through
+the normal version-fenced profile save, supplying
+`acceptedCandidateInterpretationId`. The API confirms that exact pending
+suggestion against the saved profile version in the same transaction. Historical
+locations and work models remain suggestions until accepted. The offline demo
+reports this capability unavailable.
+
 Profile-data writes also record `ProfileUpdated` in `job_events`. When existing
 tailored resumes are present, the API handles that event by dispatching a
 background `tailor -> cover` pipeline run with `retailor=true`, `dryRun=false`,
@@ -211,6 +196,11 @@ Read-model endpoints (`/v1/dashboard/summary`, `/v1/jobs`, `/v1/jobs/:key`,
 `/v1/artifacts`, `/v1/workflow-runs`) read from the local `*_projections` tables
 maintained by `apps/api/src/projections.ts` (TS-side mirror) and the Python
 `ProjectionBuilder` (`workers/automation/src/jobctrl/infrastructure/projections/`).
+Every artifact detail includes `determinations`: the recorded claim-verification
+and independent quality envelopes, or an empty array when no verification was
+recorded. Each envelope is checked against the artifact owner and generation;
+cover letters expose these receipts as well as resumes.
+
 Both processes refresh projections idempotently via the shared
 `event_watermarks.operations_projections` watermark.
 Artifact detail routes include `GET /v1/artifacts/:artifactId` for metadata and
@@ -260,7 +250,7 @@ truncated fallback. The endpoint preserves the existing accepted artifacts and
 records refresh status (including a `failed` attempt when the render fails)
 instead of modifying profile data or replacing reviewable output in place.
 Tailored resume artifact detail responses include safe tailoring evidence only:
-keyword coverage counts and lists, evidence and quality summaries,
+verifier-recorded requirement coverage counts and lists, evidence and quality summaries,
 judge/adversarial-review results,
 warning-repair status, annotated source-vs-tailored resume changes, high-fit
 persona prompt/response audit, and model selection metadata. Persona warning
@@ -280,17 +270,14 @@ the non-coverage audit fields and attaches the per-bullet provenance, coverage,
 and voice from their canonical projection columns. There is no sibling-file
 fallback (an artifact whose own audit metadata is a shell is honestly flagged
 incomplete rather than synthesised from a neighbouring artifact or a sibling
-`.txt` file) and no TypeScript-side keyword recompute. The two canonical
-generation-time audit fields are: `coverageAudit`, the honest keyword coverage
-(covered + missing) computed against the actual rendered (voiced) resume text —
-a keyword counts as covered only when it appears in a provenance-backed grounded
-bullet, and `coveredBy` records which bullet demonstrates each covered keyword;
-and `voicePass`, the voice-pass audit (whether the de-buzzword/vary-structure
-pass ran and was accepted, the model, the prompt version, and the deterministic
-buzzword-density / structural-variety proxy delta that justified it). Both are
-`null` for a generation that recorded none, and a PDF artifact resolves them
-(and the derived `keywords` block) from the sibling tailored-resume projection
-row of the same generation.
+`.txt` file) and no TypeScript-side keyword recompute. Generation-time `coverageAudit` counts verifier-declared served requirement IDs
+for the accepted final lines. `coveredBy` joins those line anchors; keyword
+appearance is not proof. `voicePass` records a model voice determination and its
+separate final claim-verification and quality determinations. Buzzword-density
+and structural-variety proxies are removed. Unrecorded audit metadata is absent
+and labeled incomplete. PDFs bind to their accepted parent generation. Each line
+anchor records its line ID, evidence IDs, requirement IDs, transform and reason;
+verifier findings join by line ID. No read-side overlap reconstructs a source.
 
 ## Jobs read model and lifecycle
 
@@ -717,7 +704,7 @@ type and policy metadata are visible as columns instead of compact badges:
 
 - `GET /v1/discovery/settings` returns the SQLite-backed runtime discovery
   settings used by board discovery: boards, per-site and age limits, schedule,
-  role-filter mode/model, bounded source-family parallelism, and crawl
+  triage batch size/model, bounded source-family parallelism, and crawl
   user-agent product/contact. Managed fields include effective source,
   editability, and activation metadata.
 - `PATCH /v1/discovery/settings` updates those runtime settings without
@@ -1051,15 +1038,13 @@ The generate body remains optional for older callers. Its strict schema accepts:
 Supported answer formats are `historical`, `situational`, `principle`,
 `negotiation`, `narrative`, and `preference`. Explicit responsibility metadata
 guides applicability; job titles/prefixes cannot invent applicability or known
-employer criteria. Legacy requests without selected IDs use deterministic
-bounded selection. Unknown/retired/duplicate/over-budget IDs and catalog
+employer criteria. Requests without selected IDs use a cached model selection determination. Unknown/retired/duplicate/over-budget IDs and catalog
 mismatch are rejected before provider spending. Semantic errors use
 `404 unknown_question`, `410 retired_question`, or `409 catalog_mismatch`;
 malformed bodies, duplicate IDs, and array-budget violations fail validation
 with `400`. Worker-backed dispatch retains its readiness and spend preflight.
 
-An omitted question evidence entry uses deterministic accepted-evidence
-selection. An explicit entry with `evidenceIds: []` requests gaps without
+An omitted question evidence entry uses a cached model evidence-selection determination. An explicit entry with `evidenceIds: []` requests gaps without
 automatic replacement. The owning path validates tenant/profile ownership,
 accepted factual status, current profile version, question membership, unique
 IDs, and bounds before provider spending. Evidence IDs retain their exact
@@ -1067,8 +1052,8 @@ canonical identity: the schema does not trim, normalize, or change case, and
 rejects blank-only IDs. The same 1–200 raw-character bound applies to returned
 evidence links, outline evidence IDs, and retained selected evidence IDs.
 Eligible IDs identify current-profile
-achievement evidence with `user_confirmed = 1`, strength `supported | verified`,
-and nonempty source/scope/action/outcome support. Stale or invalid choices return
+achievement evidence with explicit `user_confirmed = 1`. The system does not
+manufacture evidence strength or seniority flags. Stale or invalid choices return
 `409 evidence_profile_changed` or `400 invalid_evidence_selection`; the client keeps
 the draft for reselection. Notes and new recollections are not accepted facts.
 The same conditional version fence applies to HTTP and worker RPC schemas.
@@ -1112,9 +1097,9 @@ Optional nullable `generationContext` retains these generation-time fields:
 
 | Field | Stored shape / meaning |
 | --- | --- |
-| `schemaVersion`, `catalogBinding`, `contextDigest` | Schema `"1"`, catalog revision/digest, and immutable context SHA-256. |
-| `selectedQuestionIds`, `selectedQuestions` | Ordered IDs and 1–16 selected snapshots; each has question ID, card/rubric revision/digest, answer format, rationale, full `snapshot` card, `evidenceSelectionMode: user_selected \| deterministic`, and ordered `selectedEvidenceIds` (at most eight). |
-| `selectionMode` | `user_selected \| deterministic`. |
+| `schemaVersion`, `catalogBinding`, `contextDigest` | Schema `"2"`, catalog revision/digest, and immutable context SHA-256. |
+| `selectedQuestionIds`, `selectedQuestions` | Ordered IDs and 1–16 selected snapshots; each has question ID, card/rubric revision/digest, answer format, rationale, full `snapshot` card, `evidenceSelectionMode: user_selected \| model`, and ordered `selectedEvidenceIds` (at most eight). |
+| `selectionMode` | `user_selected \| model`. |
 | `interviewStage`, `interviewFormat`, `roleLens`, `roleResponsibilities`, `knownCriteria` | Recorded interview context; inferred guidance cannot become known employer criteria. |
 | `profile` | `{ profileId, version, evidence }` with canonical evidence ID/source/excerpt and direct/transferable scope. |
 | `jobContext` | `{ jobId, title, company, descriptionExcerpt, snapshotHash }`; title/company are at most 500 characters each, excerpt at most 12,000. The hash covers the full uncapped canonical job description. |
@@ -1502,10 +1487,10 @@ The `run_contact_research` JSON-RPC method (params `taskId`, optional `employer`
 Outreach drafting (Phase 3) generates truthful, reviewable messages. Draft
 **generation** and **revision** are not direct SQLite writes — the API dispatches
 the synchronous `generate_outreach_draft` JSON-RPC method to the Python worker,
-which runs the LLM synthesis plus the full truthfulness gate stack inline (the
-reused materials gates: deterministic never-fabricate detector, content validator,
-LLM-as-judge, and claim → fact provenance) and persists the gated draft as a new
-generation. Draft **approval** and **rejection** are simple lifecycle transitions
+which runs structured synthesis, a separate claim-verification determination
+and the existing quality judge, then persists the accepted draft and source
+anchors as one generation. Mechanical checks validate IDs, verbatim citations
+and exact values; semantic failures use the existing repair/fail path. Draft **approval** and **rejection** are simple lifecycle transitions
 hosted in the TypeScript API (`apps/api/src/outreach.ts`); approval is HARD-gated on
 the persisted `gate_results_json.passed` (INV-5). There is no send route anywhere —
 an approved draft is copied out by the browser clipboard, never sent (INV-1).
@@ -1782,55 +1767,25 @@ version. Lowering it can make existing persisted scores eligible for
 
 ## Discovery target search
 
-Discover honors the canonical Profile Target Search saved through the profile mutation path.
-Target roles replace the active discovery query list with exact role queries;
-target tracks, seniority floors, role areas, and specializations add structured
-intent for deterministic recall expansion. The Profile Target Search UI constrains target
-tracks to IC, management, and executive, and constrains seniority floors to the
-role-area-independent Junior IC, Mid IC, Senior IC, Staff IC, Principal IC,
-Manager, Senior Manager, Director, VP, SVP, and C-Level ladder. Legacy
-`engineer` and `cto` profile values remain accepted as aliases for `mid` and
-`c_level`. VP, SVP, and C-Level have distinct ranks, so an SVP floor excludes VP
-titles while accepting EVP as the same floor, and a C-Level floor accepts only
-chief-level titles. Recall queries keep
-the same search tier as exact queries because relevance is determined after
-discovery by scoring, not by query generation. Recall matching enforces both
-track and seniority: IC targets stay IC, management targets stay management,
-executive targets stay executive, and a candidate who configures multiple
-tracks gets per-track recall. Board discovery settings live in SQLite
-`discovery_settings`; source adapters normalize scraped postings into the
-shared discovery intake and apply query/location acceptance before a job row or
-delete tombstone can be persisted. JobStreaming broad-board discovery uses
-exact-plus-recall queries as broad-board retrieval probes. Direct ATS and
-Workday, and source-first Smart Extract sources enumerate
-their known board/source and apply that same title intent internally, avoiding
-repeated board fetches for each role variant. Smart Extract search-only sources
-still fan out by query when the source has no useful browse/all-jobs page.
-Canonical ATS rows must also include a usable description before they are
-inserted; Greenhouse reads the public board content payload for that text. Each
-discover run also performs posting staleness checks that move verified
-unavailable, expired, removed, or location-incompatible postings to the closed
-lifecycle state, and applies the current title, location, and description
-contract to active broad-board, direct ATS, Workday, and Smart Extract rows so rows
-that no longer pass those source-family filters are soft-deleted.
-Approved role-match feedback adds a user-reviewed title-exclusion layer on top
-of that matcher. The rule scope is exact normalized title text, so approving a
-bad low-score pattern suppresses repeat false positives without weakening the
-broader exact-plus-recall role family.
-Target locations replace the active location list, and the
-worker falls back to profile city/country when target locations are blank. The
-API validates target locations as real places before saving profile preferences.
-Hybrid and on-site target work models search and filter only the target
-location. Remote target work models search and filter the target country, and
-European countries also add an Europe-remote search and accept pattern.
-Profile-driven discovery searches at least the last 30 days unless local config
-sets a larger window. Spain or Europe targets pass Spain as JobStreaming's
-Indeed country, reject America-only non-remote locations, and filter API-visible
-America-only source rows from `GET /v1/discovery/sources`. Discover limits are
-new-job budgets: duplicate/rediscovered observations do not consume the cap.
-The Pipelines tab uses the same source registry response to offer an optional
-source selector for manual Discover runs; leaving it blank keeps the existing
-all-runnable-source behavior.
+Confirmed profile target fields are inputs to a persisted query-plan determination.
+The model chooses board queries and locations with source citations; adapters
+fetch and parse. Saved exact title exclusions are literal user-authorized filters.
+No alias table expands titles, geographic token list removes a source, or lexical
+recall floor decides admission.
+
+Intake rows are stored before model spending. `triageBatchSize` defaults to `20`
+and accepts `1–100`; `triageModel` optionally overrides the configured Discovery
+model. A cited posting-triage determination returns `admit`, `reject` or
+`uncertain` per listing ID. Only admits create or update jobs. Rejected and
+uncertain rows remain visible; provider failures stay `pending_triage` with a
+safe failure code. Unchanged inputs, model and versions reuse accepted results.
+Stored jobs are not retroactively soft-deleted by semantic word filters.
+
+`GET /v1/discovery/triage?offset=0&limit=50` exposes recorded intake decisions,
+rationales, citations and their determination envelope; `offset` is nonnegative
+and `limit` is bounded to `1–200`. It never computes meaning on reads. The
+Discovery page pages these records, including rejects and pending failures.
+The target profile version and listing snapshot fence every determination.
 
 ## Worker runtime and health
 
@@ -2088,11 +2043,18 @@ run link to its exact activity stream.
   imported row return the original `ManualCaptureImportResponse`; replays of a
   dismissed row return a terminal 2xx no-op so the extension can clear local
   retry state without reopening the dismissed capture.
-- `GET /v1/extension/autofill/profile` returns the deterministic autofill
-  field list for the extension. The response includes `profileVersion` and
+- `GET /v1/extension/autofill/profile` returns the explicitly saved, whitelisted
+  profile facts available to the extension. The response includes `profileVersion` and
   whitelisted `fields[]` with `path`, `label`, `value`, and profile source
   metadata. It intentionally excludes profile password, resume content,
   generated materials, and free-text answer drafts.
+
+- `POST /v1/extension/autofill/mapping` submits the captured form snapshot ID,
+  profile version, question IDs/text and native option IDs. The worker returns
+  model mappings to supplied fact IDs, with citations and a determination ID.
+  Filling requires the user's confirmation against the same DOM snapshot;
+  JobCtrl does not submit the form. Unavailable or invalid determinations do not
+  produce lexical autofill proposals.
 
 ## Related Packages
 

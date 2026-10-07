@@ -17,7 +17,7 @@ import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { refreshOutreachProjections } from "../src/projections.js";
-import { initializeExactV7Database } from "./v7-schema.js";
+import { initializeExactDatabase } from "./exact-schema.js";
 
 const FIXTURE_PATH = fileURLToPath(
   new URL(
@@ -46,7 +46,7 @@ afterEach(() => {
 function seededDb(): Database.Database {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-outreach-parity-"));
   const dbPath = path.join(dir, "jobs.db");
-  initializeExactV7Database(dbPath);
+  initializeExactDatabase(dbPath);
   const db = new Database(dbPath);
   cleanups.push(() => {
     db.close();

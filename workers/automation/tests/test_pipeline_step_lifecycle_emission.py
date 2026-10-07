@@ -283,10 +283,6 @@ async def test_discovery_activities_use_stable_scopes_and_terminal_counts(
         lambda **_kwargs: {"status": "ok", "passes": 2, "pending": 0},
     )
     monkeypatch.setattr(
-        "jobctrl.pipeline.runner.run_discovery_hygiene",
-        lambda *_args: None,
-    )
-    monkeypatch.setattr(
         "jobctrl.pipeline.preparation.start_discovery_preparation_workflows",
         lambda **_kwargs: {
             "started": {"job_preparation": 2},

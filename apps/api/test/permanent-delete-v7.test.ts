@@ -8,9 +8,9 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { openDatabase } from "../src/db.js";
 import { rebuildTenantDeleteProjections } from "../src/projections.js";
-import { schemaManifest, EXACT_V12_SCHEMA_MANIFEST } from "../src/schema-manifest.js";
+import { schemaManifest, EXACT_V13_SCHEMA_MANIFEST } from "../src/schema-manifest.js";
 import { permanentlyDeleteJob } from "../src/write-model.js";
-import { initializeExactV7Database } from "./v7-schema.js";
+import { initializeExactDatabase } from "./exact-schema.js";
 
 const JOB_ID = "00000000-0000-4000-8000-0000000000d1";
 const ANCHOR_JOB_ID = "00000000-0000-4000-8000-0000000000d2";
@@ -28,7 +28,7 @@ afterEach(() => {
 function exactDatabase(): Database.Database {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-permanent-delete-v7-"));
   const dbPath = path.join(dir, "jobs.db");
-  initializeExactV7Database(dbPath);
+  initializeExactDatabase(dbPath);
   const db = openDatabase(dbPath);
   cleanups.push(() => {
     db.close();
@@ -273,7 +273,7 @@ describe("exact-v7 permanent job deletion", () => {
     db.prepare(`INSERT INTO job_rejected_duplicate_links (
       tenant_id, owner_job_id, candidate_url, reason, rejected_at
     ) VALUES ('local', ?, ?, 'shared form belongs to surviving job', ?)`).run(ANCHOR_JOB_ID, sharedApplication, NOW);
-    const manifestBefore = schemaManifest(db, EXACT_V12_SCHEMA_MANIFEST.version);
+    const manifestBefore = schemaManifest(db, EXACT_V13_SCHEMA_MANIFEST.version);
     const otherJobsBefore = rowSnapshot(db, "jobs", "tenant_id = ? AND job_id = ?", [OTHER_TENANT, JOB_ID]);
     const otherLocatorsBefore = rowSnapshot(db, "job_locators", "tenant_id = ? AND job_id = ?", [OTHER_TENANT, JOB_ID]);
     const otherEvidenceBefore = rowSnapshot(db, "evidence_usage_projections", "tenant_id = ?", [OTHER_TENANT]);
@@ -379,7 +379,7 @@ describe("exact-v7 permanent job deletion", () => {
       ]);
     }
     expect(db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
-    expect(schemaManifest(db, EXACT_V12_SCHEMA_MANIFEST.version)).toEqual(manifestBefore);
+    expect(schemaManifest(db, EXACT_V13_SCHEMA_MANIFEST.version)).toEqual(manifestBefore);
 
     expect(rowSnapshot(db, "jobs", "tenant_id = ? AND job_id = ?", [OTHER_TENANT, JOB_ID])).toEqual(otherJobsBefore);
     expect(rowSnapshot(db, "job_locators", "tenant_id = ? AND job_id = ?", [OTHER_TENANT, JOB_ID])).toEqual(otherLocatorsBefore);

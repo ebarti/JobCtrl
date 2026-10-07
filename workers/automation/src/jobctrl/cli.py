@@ -133,7 +133,7 @@ def _bootstrap(*, reconcile_posted_compensation: bool = False) -> None:
     """
     global _projection_subscription
     from jobctrl.config import load_env, ensure_dirs
-    from jobctrl.database import close_connection, get_connection, init_db
+    from jobctrl.database import get_connection, init_db
     from jobctrl.infrastructure.projections.projection_builder import (
         ProjectionBuilder,
     )
@@ -148,26 +148,6 @@ def _bootstrap(*, reconcile_posted_compensation: bool = False) -> None:
     from jobctrl.infrastructure.observability import init_otel
 
     init_otel()
-    if reconcile_posted_compensation:
-        try:
-            from jobctrl.infrastructure.compensation import (
-                SqlitePostedCompensationRepository,
-            )
-
-            maintenance_conn = get_connection()
-            try:
-                SqlitePostedCompensationRepository(maintenance_conn).reparse_outdated_facts(
-                    tenant_id="local",
-                    parsed_at=datetime.now(timezone.utc).isoformat(),
-                )
-            finally:
-                # The worker does not need this maintenance handle again
-                # before projection bootstrap. Close it deterministically so
-                # neither a failed write nor future connection configuration
-                # can leak a lock into the long-lived worker process.
-                close_connection()
-        except Exception:  # noqa: BLE001 - retry on the next worker start
-            log.exception("Posted compensation parser reconciliation failed")
     try:
         # Pass a thread-local connection factory so the wildcard
         # subscriber (which fires on whichever thread published the
@@ -747,7 +727,6 @@ def _run_stage_command(
     retailor: bool = False,
     tailor_models: tuple[str, ...] = (),
     tailor_judge_model: str | None = None,
-    tailor_judge_min_score: float | None = None,
 ) -> None:
     """Run a single pipeline stage through the shared orchestrator."""
     _bootstrap()
@@ -770,7 +749,6 @@ def _run_stage_command(
                 "retailor": retailor,
                 "tailorModels": tailor_models,
                 "tailorJudgeModel": tailor_judge_model,
-                "tailorJudgeMinScore": tailor_judge_min_score,
             }
         ),
         label=stage,
@@ -963,13 +941,6 @@ def action(
     tailor_judge_model: str = typer.Option(
         "", "--tailor-judge-model", help="Optional LLM spec for the structured tailoring judge."
     ),
-    tailor_judge_min_score: float | None = typer.Option(
-        None,
-        "--tailor-judge-min-score",
-        min=0.0,
-        max=1.0,
-        help="Minimum structured judge score required for tailor approval.",
-    ),
     headless: bool = typer.Option(False, "--headless", help="Run apply browser action headless."),
 ) -> None:
     """Run a structured local action and print its JSON result."""
@@ -990,7 +961,6 @@ def action(
                 model=model,
                 tailor_models=_parse_tailor_models(tailor_models),
                 tailor_judge_model=tailor_judge_model.strip() or None,
-                tailor_judge_min_score=tailor_judge_min_score,
                 headless=headless,
             )
         )
@@ -1368,13 +1338,6 @@ def run(
         "--tailor-judge-model",
         help="Optional LLM spec for the structured tailoring judge.",
     ),
-    tailor_judge_min_score: float | None = typer.Option(
-        None,
-        "--tailor-judge-min-score",
-        min=0.0,
-        max=1.0,
-        help="Minimum structured judge score required to approve a tailored resume.",
-    ),
 ) -> None:
     """Run one or more pipeline stages in order."""
     _bootstrap()
@@ -1417,7 +1380,6 @@ def run(
                 "retailor": retailor,
                 "tailorModels": _parse_tailor_models(tailor_models),
                 "tailorJudgeModel": tailor_judge_model.strip() or None,
-                "tailorJudgeMinScore": tailor_judge_min_score,
             }
         ),
         label=" -> ".join(stage_list),
@@ -1482,13 +1444,6 @@ def tailor(
         "--tailor-judge-model",
         help="Optional LLM spec for the structured tailoring judge.",
     ),
-    tailor_judge_min_score: float | None = typer.Option(
-        None,
-        "--tailor-judge-min-score",
-        min=0.0,
-        max=1.0,
-        help="Minimum structured judge score required to approve a tailored resume.",
-    ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview the stage without executing."),
 ) -> None:
     """Run only the resume tailoring stage."""
@@ -1502,7 +1457,6 @@ def tailor(
         retailor=retailor,
         tailor_models=_parse_tailor_models(tailor_models),
         tailor_judge_model=tailor_judge_model.strip() or None,
-        tailor_judge_min_score=tailor_judge_min_score,
     )
 
 
@@ -1537,10 +1491,19 @@ def check_posting_availability(job_id: str = typer.Argument(..., help="Canonical
     _bootstrap()
     from jobctrl.enrichment.availability_workflow import availability_workflow_spec
     from jobctrl.infrastructure.runtime_identity import current_runtime_identity
+
     identity = current_runtime_identity()
-    result = _run_workflow_spec_from_cli(availability_workflow_spec({"tenantId": "local", "jobId": job_id,
-                                         "expectedAppDir": str(identity.app_dir), "expectedDbPath": str(identity.db_path)}),
-                                         label="posting availability")
+    result = _run_workflow_spec_from_cli(
+        availability_workflow_spec(
+            {
+                "tenantId": "local",
+                "jobId": job_id,
+                "expectedAppDir": str(identity.app_dir),
+                "expectedDbPath": str(identity.db_path),
+            }
+        ),
+        label="posting availability",
+    )
     console.print_json(data=result)
 
 
@@ -2502,9 +2465,7 @@ async def _worker_heartbeat_loop(
                 log.warning("Workflow-run reconciler iteration failed; will retry", exc_info=True)
             else:
                 if reconciled:
-                    console.print(
-                        f"[yellow]Workflow reconciler applied {reconciled} durable change(s).[/yellow]"
-                    )
+                    console.print(f"[yellow]Workflow reconciler applied {reconciled} durable change(s).[/yellow]")
             try:
                 from jobctrl.infrastructure.temporal.cancellation_audit import (
                     reconcile_cancellation_audit,
@@ -2555,6 +2516,7 @@ async def _worker_heartbeat_loop(
 
 async def _reconcile_saved_postings(client: Any, task_queue: str, identity: Any) -> None:
     from jobctrl.enrichment.availability_workflow import reconcile_saved_posting_availability
+
     try:
         await reconcile_saved_posting_availability(client, task_queue, identity)
     except Exception:
@@ -2828,9 +2790,7 @@ async def _reconcile_workflow_runs(temporal_client: Any, *, tenant_id: str | Non
     try:
         store = SqliteProjectionStore(conn)
         open_runs = store.open_workflow_runs(str(tenant))
-        cancellation_audit_runs = store.workflow_runs_missing_cancellation_audit(
-            str(tenant)
-        )
+        cancellation_audit_runs = store.workflow_runs_missing_cancellation_audit(str(tenant))
     except sqlite3.OperationalError:
         return 0
 
@@ -3060,9 +3020,7 @@ async def _reconcile_one_workflow_run(temporal_client: Any, conn, run: dict) -> 
         observed_run_id = str(description.run_id or temporal_run_id or "") or None
         try:
             audit_handle = (
-                temporal_client.get_workflow_handle(workflow_id, run_id=observed_run_id)
-                if observed_run_id
-                else handle
+                temporal_client.get_workflow_handle(workflow_id, run_id=observed_run_id) if observed_run_id else handle
             )
             await observe_and_record_cancellation_request(
                 conn,
@@ -3583,7 +3541,9 @@ def doctor() -> None:
         if npx_bin:
             results.append(("Node.js (npx)", ok_mark, npx_bin))
         else:
-            results.append(("Node.js (npx)", fail_mark, "Install Node.js 22.13+ from nodejs.org (needed for auto-apply)"))
+            results.append(
+                ("Node.js (npx)", fail_mark, "Install Node.js 22.13+ from nodejs.org (needed for auto-apply)")
+            )
 
     # Gmail connector is optional, but apply runs that hit email verification need it
     # to stay browser-independent and finish automatically.

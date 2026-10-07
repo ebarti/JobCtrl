@@ -35,9 +35,8 @@ def test_smart_extract_counts_site_timeouts_without_aborting_run(
             {"name": "Slow Board", "url": "https://slow.example/jobs"},
             {"name": "Empty Board", "url": "https://empty.example/jobs"},
         ],
-        accept_locs=[],
-        reject_locs=[],
         workers=1,
+        search_cfg={},
     )
 
     assert result == {
@@ -97,10 +96,9 @@ def test_limited_smart_extract_uses_requested_workers(
             {"name": "Board B", "url": "https://b.example/jobs", "queries": ["Director of Engineering"]},
             {"name": "Board C", "url": "https://c.example/jobs", "queries": ["VP of Engineering"]},
         ],
-        accept_locs=["Barcelona, Spain"],
-        reject_locs=[],
         workers=4,
         limit=2,
+        search_cfg={},
     )
 
     conn = init_db(db_path)
@@ -113,3 +111,11 @@ def test_limited_smart_extract_uses_requested_workers(
     assert result["total_new"] == 2
     assert result["total"] == 3
     assert stored_count == 2
+
+
+@pytest.fixture(autouse=True)
+def explicit_semantic_ports(monkeypatch):
+    from tests.workflow_determination_fakes import install_discovery_models, install_page_models
+
+    install_discovery_models(monkeypatch)
+    install_page_models(monkeypatch)

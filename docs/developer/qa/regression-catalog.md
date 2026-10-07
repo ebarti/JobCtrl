@@ -13,7 +13,7 @@ individual regression to exact test files.
 | Durable workflows | Accepted work resumes or terminalizes correctly across restart, cancellation, and history loss. | Workflow tests plus targeted fault injection. |
 | Storage and projections | Schema versions are guarded; canonical writes and read projections agree; accepted artifacts survive retries, including failed cover-letter refreshes whose rejected bytes remain on separate audit paths; the explicit job-data purge backs up first, clears the Job/generated-material and job/Discovery execution boundary (including stale retry manifests, source-quality summaries, job-stage operational attempts, and projection-rebuilding events), and proves profile/search/template/settings plus unrelated-history preservation. | Repository/projection tests, guarded purge fixtures, and API readback. |
 | Credentials and privacy | Secrets, profile content, raw mail, contact values, paths, and artifacts do not leak into settings, events, logs, or projections. | Boundary tests plus response/event inspection. |
-| Scoring and materials | Evidence, policy version, provenance, judge output, and fabrication gates remain inspectable and honest; free-form review/prior-output text remains audit-only while retries use bounded code-owned guidance. Cover generation never treats job-post numbers/dates as candidate evidence and retries them with qualitative, code-owned guidance. | Deterministic fixtures, quality evals, retry prompt-boundary regressions, and inspector smoke. |
+| Scoring and materials | Evidence, policy version, provenance, judge output, and fabrication gates remain inspectable and honest; all semantic findings come from cited, persisted model determinations. Retries use the model findings bound to their line and source IDs. Cover generation never treats job-post facts as candidate evidence. | Opposite model-verdict tests, distinct failure/preservation checks, canonical prompt boundaries, and product-path inspector QA. No eval sets, baselines or recorded model-output replay. |
 | Frontend state | URL/server/client state stay in their owning layers; every event and stage state has a handler/rendering path. | Hook/component/type tests plus parity tests. |
 | Rhea/Base UI system | Tokens, cards, statuses, accessible primitive behavior, and route parity remain coherent across theme, density, and viewport. | Token/boundary tests, focused wrapper tests, route visual QA, and the browser matrix. |
 | Pipeline operations | Execution topology, privacy, refresh behavior, ETA, freshness, queue, and capacity remain truthful and separately inspectable. | API/read-model tests, deterministic fixtures, invalidation/polling tests, and browser observation. |
@@ -430,15 +430,26 @@ trial artifacts and processes; retain no generated candidate material in Git.
 
 ## Auditability Checks
 
-For interview preparation, replay a request with a supported question, an
-automatic empty question, and an explicitly empty question. Inspect each actual
-model-call prompt: it must contain only that question's selected personal
-evidence, with no shared profile-evidence pool or other question's excerpts.
-Replay ordinary prospective revision guidance and an open target-role
-responsibility question alongside inverses that supply prior authority,
-employers, tools or metrics. Unsupported inverses must fail before the judge;
-accepted preparation and independently revisioned notes must survive the failure.
-Completed-run retries must reuse stored outcomes without new provider calls.
+Every displayed semantic judgment must trace to a persisted determination:
+kind, schema/prompt versions, provider/model, input fingerprint, canonical source
+IDs and verbatim citations. Inspect the canonical writer, the accepted artifact
+binding, projection/API reads and actual UI joins. Unanchored lines must say
+"no recorded source". Read-side similarity cannot repair missing provenance.
+
+Use explicit fake `LlmPort` verdicts to prove authority: the same canonical input
+with two different valid model decisions must produce different outcomes. Test
+provider unavailable, spend denied, malformed JSON, schema/enum violation,
+foreign IDs, non-verbatim quotes and exact-value mismatch distinctly, without a
+lexical fallback. Check the lane and spend preflight run before each new call;
+unchanged inputs reuse accepted determinations with zero calls. Failed refreshes
+preserve the last accepted artifact. Do not create eval sets, labeled corpora,
+baseline comparisons, English sentence corpora or recorded-output replay fixtures.
+
+For interview preparation, inspect each actual drafting prompt with a supported
+question and explicitly empty selections. Only that question's selected evidence
+may appear. Drive unsupported/accepted outcomes with verifier verdicts; the
+empty selection produces gaps and never borrows another question's evidence.
+Accepted preparation and independent notes survive a failed replacement.
 
 When the human flags a visible defect, especially in review, rationale, audit, evidence, scoring, tailoring, or apply-approval surfaces, treat the screenshot as a symptom, not the bug. Do not start by hiding, filtering, renaming, or moving the displayed value. First state the product invariant the surface is supposed to prove, then trace the value end to end: source input, extraction, profile evidence, selected controls, prompt or deterministic transform, generated artifact, validator/judge output, persistence, projection/API read model, and UI rendering.
 
@@ -491,10 +502,9 @@ cleanup that would equal another saved bullet or Required pin must not be
 applicable. Rebase a different
 bullet in the same experience entry after a committed write with a lost
 response; keep overlapping or reordered bullet identities blocked.
-Model evaluation cases should distinguish stated results from verification,
-action counts from changed outcomes, and real results from planned or negated
-claims. These are prompt/model evaluation cases, never lexical assertions in
-runtime code. Hold an accept
+Do not grade model judgments with a sentence table or evaluation corpus. Test
+opposite valid model verdicts and source-binding failures on minimal owned
+synthetic inputs. Hold an accept
 pending, advance
 the five-second autosave timer, and prove no second write occurs on either
 success or failure while unrelated draft fields remain. Fence ordinary manual
@@ -517,9 +527,10 @@ retain every factual token, the achievement
 identity, bullet order, and Required pin. Missing evidence must remain a question
 without an applicable fabricated replacement. Verify persistence and reload
 through `/profile` and the real API with temporary SQLite storage; label
-synthetic preview or provider dependencies separately. The deterministic path
-must make zero provider calls and does not establish model quality or spend
-enforcement.
+synthetic provider dependencies separately. An unchanged accepted determination
+must make zero new provider calls; a first determination must prove the lane and
+spend preflight before its call. These checks prove wiring and model authority,
+not model judgment quality.
 
 ## Cumulative Redesign Boundaries
 

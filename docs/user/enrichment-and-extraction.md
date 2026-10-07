@@ -49,10 +49,10 @@ posting detail to use it.” The current decision path is:
    readable posting content or block Tailor. A posting verified as closed,
    expired, or removed is recorded separately as `posting_inactive` rather than
    mislabeled as a low-confidence extraction.
-5. **Surface duplicate candidates from content evidence.** An exact description
-   hash is a `1.0` signal, the same normalized application URL is `0.95`, and
-   token-Jaccard content similarity must reach `0.85`. These signals propose a
-   duplicate for Discovery to resolve; Enrichment does not silently merge jobs.
+5. **Resolve duplicate identity.** Exact canonical fields or an identical full
+   content fingerprint can link duplicate representations. Semantic equivalence
+   requires a cited duplicate determination; token overlap does not merge jobs
+   or authorize reusing another posting's score.
 
 A failed fetch or exhausted cascade records a retryable attempt without
 manufacturing a snapshot. Failure remains isolated to that job, so useful
@@ -351,3 +351,10 @@ user. The exact selector rules are owned by the
 | Workflow entry | Discover starts through the pipeline action routes documented in [Operations & Events API](../api/operations-and-events.md#starting-work). |
 | Live worker path | `workers/automation/src/jobctrl/pipeline/runner.py` and `workers/automation/src/jobctrl/enrichment/detail.py`, with fetch adapters under `workers/automation/src/jobctrl/infrastructure/enrichment/`. |
 | Deep architecture | [Stage Walkthrough → Detail Enrichment](../architecture/pipeline/stages.md#detail-enrichment), [Crawl Politeness](discovery.md#crawl-politeness), and [Storage](../architecture/storage.md). |
+
+
+## Semantic Determination Authority
+
+Page availability, individual-posting state and description quality use cited model determinations over the bound rendered page. HTTP status, exact ATS identity, URL safety and DOM visibility remain code. Automatic duplicate identity uses exact keys/full-content fingerprints; no token-Jaccard threshold merges jobs. Failed semantic checks preserve accepted snapshots and materials.
+
+See [the decision](../decisions.md#2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.

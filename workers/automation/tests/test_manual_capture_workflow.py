@@ -174,17 +174,13 @@ def test_activity_imports_and_replays_against_exact_v7_schema(tmp_path: Path) ->
     payload = _pending_payload()
     try:
         first = execute_manual_capture_import(payload, conn=conn)
-        events_before_replay = conn.execute(
-            "SELECT COUNT(*) FROM job_events"
-        ).fetchone()[0]
+        events_before_replay = conn.execute("SELECT COUNT(*) FROM job_events").fetchone()[0]
         snapshot_version_before_replay = conn.execute(
             "SELECT latest_snapshot_version FROM posting_snapshot_sets WHERE tenant_id = ? AND job_id = ?",
             ("local", first.job_id),
         ).fetchone()[0]
         replay = execute_manual_capture_import(payload, conn=conn)
-        events_after_replay = conn.execute(
-            "SELECT COUNT(*) FROM job_events"
-        ).fetchone()[0]
+        events_after_replay = conn.execute("SELECT COUNT(*) FROM job_events").fetchone()[0]
         snapshot_version_after_replay = conn.execute(
             "SELECT latest_snapshot_version FROM posting_snapshot_sets WHERE tenant_id = ? AND job_id = ?",
             ("local", first.job_id),
@@ -193,9 +189,7 @@ def test_activity_imports_and_replays_against_exact_v7_schema(tmp_path: Path) ->
             "SELECT status, job_id, captured_url, content_sha256, imported_at FROM manual_capture_queue "
             "WHERE tenant_id = 'local' AND item_id = 'manual-1'"
         ).fetchone()
-        columns = {
-            column["name"] for column in conn.execute("PRAGMA table_info(manual_capture_queue)")
-        }
+        columns = {column["name"] for column in conn.execute("PRAGMA table_info(manual_capture_queue)")}
     finally:
         close_connection(db_path)
 
@@ -208,9 +202,7 @@ def test_activity_imports_and_replays_against_exact_v7_schema(tmp_path: Path) ->
     assert row["job_id"] == first.job_id
     assert row["captured_url"] == _CAPTURE_URL
     assert "job_key" not in columns
-    assert row["content_sha256"] == hashlib.sha256(
-        _CAPTURE_HTML.encode("utf-8")
-    ).hexdigest()
+    assert row["content_sha256"] == hashlib.sha256(_CAPTURE_HTML.encode("utf-8")).hexdigest()
     assert events_after_replay == events_before_replay
     assert snapshot_version_after_replay == snapshot_version_before_replay
 
@@ -331,8 +323,7 @@ def test_activity_rejects_changed_capture_source_identity(
     try:
         execute_manual_capture_import(payload, conn=conn)
         conn.execute(
-            f"UPDATE manual_capture_queue SET {column} = ? "
-            "WHERE tenant_id = 'local' AND item_id = 'manual-1'",
+            f"UPDATE manual_capture_queue SET {column} = ? WHERE tenant_id = 'local' AND item_id = 'manual-1'",
             ("changed-source-identity",),
         )
         conn.commit()
@@ -518,11 +509,14 @@ async def test_manual_capture_workflow_projects_terminal_result(
                 task_queue=queue,
             )
 
-    row = get_connection().execute(
-        "SELECT status, workflow_type, error_code FROM workflow_run_projections "
-        "WHERE workflow_id = ?",
-        (workflow_id,),
-    ).fetchone()
+    row = (
+        get_connection()
+        .execute(
+            "SELECT status, workflow_type, error_code FROM workflow_run_projections WHERE workflow_id = ?",
+            (workflow_id,),
+        )
+        .fetchone()
+    )
     assert result.status == expected_status
     assert result.error_code == expected_error_code
     assert row["status"] == expected_status
@@ -559,3 +553,11 @@ async def test_manual_capture_activity_enforces_expected_runtime_guard() -> None
     assert isinstance(exc_info.value.cause.cause, ApplicationError)
     assert exc_info.value.cause.cause.type == "RuntimeIdentityMismatch"
     assert exc_info.value.cause.cause.non_retryable is True
+
+
+@pytest.fixture(autouse=True)
+def semantic_workflow_models(monkeypatch):
+    from tests.workflow_determination_fakes import install_discovery_models, install_page_models
+
+    install_discovery_models(monkeypatch)
+    install_page_models(monkeypatch)

@@ -37,16 +37,6 @@ const BOARD_OPTIONS: Array<{ value: DiscoverySettings["boards"][number]; label: 
   { value: "glassdoor", label: "Glassdoor" },
 ];
 
-const ROLE_FILTER_MODES: Array<{
-  value: DiscoverySettings["roleFilterMode"];
-  label: string;
-  description: string;
-}> = [
-  { value: "auto", label: "Auto", description: "Use LLM filtering when a provider is ready." },
-  { value: "deterministic", label: "Deterministic", description: "Use only local title rules." },
-  { value: "llm", label: "LLM", description: "Require model-backed title matching." },
-];
-
 const DISCOVERY_GUIDE_URL = "https://jobctrl.dev/user/discovery";
 
 const RUNTIME_SETTING_HELP = {
@@ -68,14 +58,14 @@ const RUNTIME_SETTING_HELP = {
       "Limit broad-board discovery to postings no older than this many hours when the provider supports age filtering. The next Discover run uses the new window.",
     href: `${DISCOVERY_GUIDE_URL}#runtime-setting-posting-lookback-hours`,
   },
-  roleFilterMode: {
-    title: "Role title filtering",
+  triageBatchSize: {
+    title: "Listings per triage call",
     description:
-      "Choose how returned titles are checked against target search. Auto uses a ready model when available, Deterministic uses local rules, and LLM requires model-backed matching. The next source family uses the choice.",
-    href: `${DISCOVERY_GUIDE_URL}#runtime-setting-role-title-filtering`,
+      "A model decides intake admission in batches. Default 20; provider failure keeps listings pending with a visible reason.",
+    href: `${DISCOVERY_GUIDE_URL}#runtime-setting-triage-batch-size`,
   },
-  roleFilterModel: {
-    title: "Role filter model",
+  triageModel: {
+    title: "Discovery triage model",
     description:
       "Optionally pin the model used for model-backed title matching. Leave this blank to use configured provider routing. The next source family uses changes.",
     href: `${DISCOVERY_GUIDE_URL}#runtime-setting-role-filter-model`,
@@ -122,8 +112,8 @@ function toFormValues(response: DiscoverySettingsResponse): DiscoverySettingsUpd
     scheduleCron: settings.scheduleCron,
   };
   for (const field of [
-    "roleFilterMode",
-    "roleFilterModel",
+    "triageBatchSize",
+    "triageModel",
     "maxParallelFamilies",
     "crawlUserAgentProduct",
     "crawlUserAgentContact",
@@ -256,11 +246,11 @@ export function DiscoveryRuntimeSettingsForm({ initial }: { initial: DiscoverySe
         <form.Field name="hoursOld">
           {(field) => <NumberControl help={RUNTIME_SETTING_HELP.hoursOld} id="discovery-lookback" name="hoursOld" label="Posting lookback hours" min={1} max={8760} value={field.state.value ?? 72} metadata={effective.hoursOld} onChange={field.handleChange} />}
         </form.Field>
-        <form.Field name="roleFilterMode">
-          {(field) => <RoleFilterModeControl help={RUNTIME_SETTING_HELP.roleFilterMode} value={field.state.value ?? initial.settings.roleFilterMode} metadata={effective.roleFilterMode} onChange={field.handleChange} />}
+        <form.Field name="triageBatchSize">
+          {(field) => <NumberControl help={RUNTIME_SETTING_HELP.triageBatchSize} id="discovery-triage-batch" name="triageBatchSize" label="Listings per triage call" min={1} max={100} value={field.state.value ?? 20} metadata={effective.triageBatchSize} onChange={field.handleChange} />}
         </form.Field>
-        <form.Field name="roleFilterModel">
-          {(field) => <TextControl help={RUNTIME_SETTING_HELP.roleFilterModel} id="discovery-role-model" name="roleFilterModel" label="Role filter model" value={String(field.state.value ?? "")} metadata={effective.roleFilterModel} optional onChange={(value) => field.handleChange(value || null)} />}
+        <form.Field name="triageModel">
+          {(field) => <TextControl help={RUNTIME_SETTING_HELP.triageModel} id="discovery-role-model" name="triageModel" label="Discovery triage model" value={String(field.state.value ?? "")} metadata={effective.triageModel} optional onChange={(value) => field.handleChange(value || null)} />}
         </form.Field>
         <form.Field name="maxParallelFamilies">
           {(field) => <NumberControl help={RUNTIME_SETTING_HELP.maxParallelFamilies} id="discovery-max-parallel" name="maxParallelFamilies" label="Parallel source families" min={1} max={4} value={field.state.value ?? initial.settings.maxParallelFamilies} metadata={effective.maxParallelFamilies} onChange={field.handleChange} />}
@@ -387,7 +377,7 @@ function DiscoverySettingLegend({
 
 function NumberControl({ help, name, id, label, min, max, metadata, value, onChange }: {
   help: DiscoverySettingHelpContent;
-  name: "resultsPerSite" | "hoursOld" | "maxParallelFamilies";
+  name: "resultsPerSite" | "hoursOld" | "maxParallelFamilies" | "triageBatchSize";
   id: string;
   label: string;
   min: number;
@@ -410,7 +400,7 @@ function NumberControl({ help, name, id, label, min, max, metadata, value, onCha
 function TextControl({ help, id, name, label, value, metadata, onChange, optional = false }: {
   help: DiscoverySettingHelpContent;
   id: string;
-  name: "roleFilterModel" | "crawlUserAgentProduct" | "crawlUserAgentContact";
+  name: "triageModel" | "crawlUserAgentProduct" | "crawlUserAgentContact";
   label: string;
   value: string;
   metadata: EffectiveSetting<string | null> | EffectiveSetting<string>;
@@ -425,39 +415,6 @@ function TextControl({ help, id, name, label, value, metadata, onChange, optiona
       <DiscoverySettingLabel help={help} htmlFor={id} optional={optional}>{label}</DiscoverySettingLabel>
       <Input id={id} name={name} type="text" value={value} onChange={(event) => onChange(event.target.value)} />
     </Field>
-  );
-}
-
-function RoleFilterModeControl({ help, value, metadata, onChange }: {
-  help: DiscoverySettingHelpContent;
-  value: DiscoverySettings["roleFilterMode"];
-  metadata: EffectiveSetting<DiscoverySettings["roleFilterMode"]>;
-  onChange: (value: DiscoverySettings["roleFilterMode"]) => void;
-}) {
-  return (
-    <FieldSet aria-label="Role title filtering" className="field wide checkbox-group-field">
-      <FieldLegend>
-        <DiscoverySettingLegend help={help}>Role title filtering</DiscoverySettingLegend>
-      </FieldLegend>
-      <FieldGroup className="checkbox-options">
-        {ROLE_FILTER_MODES.map((option) => (
-          <Field className="choice target-choice" key={option.value} orientation="horizontal">
-            <Input
-              checked={value === option.value}
-              disabled={!metadata.editable}
-              id={`discovery-role-filter-${option.value}`}
-              name="roleFilterMode"
-              onChange={() => onChange(option.value)}
-              type="radio"
-              value={option.value}
-            />
-            <FieldLabel htmlFor={`discovery-role-filter-${option.value}`}>
-              {option.label} — {option.description}
-            </FieldLabel>
-          </Field>
-        ))}
-      </FieldGroup>
-    </FieldSet>
   );
 }
 

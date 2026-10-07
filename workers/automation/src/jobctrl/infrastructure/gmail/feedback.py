@@ -13,10 +13,13 @@ from datetime import datetime, timedelta, timezone
 from email.utils import getaddresses, parsedate_to_datetime
 from pathlib import Path
 from typing import Any, Protocol
-from urllib.parse import urlparse
 
-from jobctrl.database import close_connection, open_exact_v12_database
-from jobctrl.infrastructure.migrations.schema_manifest import EXACT_V12_MANIFEST, SchemaManifestError, assert_exact_manifest
+from jobctrl.database import close_connection, open_exact_v13_database
+from jobctrl.infrastructure.migrations.schema_manifest import (
+    EXACT_V13_MANIFEST,
+    SchemaManifestError,
+    assert_exact_manifest,
+)
 from jobctrl.domain.events.base import DomainEvent
 from jobctrl.domain.ports.events import EventHandler, EventPublisher, Subscription
 from jobctrl.infrastructure.gmail.client import GmailClient
@@ -24,7 +27,6 @@ from jobctrl.state import record_job_event
 
 TENANT_ID = "local"
 PROVIDER = "gmail"
-LINK_THRESHOLD = 0.7
 DEFAULT_LIMIT = 25
 DEFAULT_MAX_RESULTS_PER_ANCHOR = 5
 DEFAULT_WINDOW_DAYS = 45
@@ -33,31 +35,6 @@ MAX_RESULTS_PER_ANCHOR = 20
 MAX_WINDOW_DAYS = 180
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-_TOKEN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]{1,64}")
-_ATS_HINTS = {
-    "ashby",
-    "greenhouse",
-    "icims",
-    "lever",
-    "smartrecruiters",
-    "workable",
-    "workday",
-}
-_OUTCOME_TERMS = (
-    "application",
-    "applied",
-    "applying",
-    "assessment",
-    "bounced",
-    "challenge",
-    "interview",
-    "offer",
-    "received",
-    "recruiter",
-    "rejection",
-    "submitted",
-    "undeliverable",
-)
 
 
 class GmailFeedbackError(RuntimeError):
@@ -129,6 +106,7 @@ def scan_gmail_feedback(
     limit: int = DEFAULT_LIMIT,
     max_results_per_anchor: int = DEFAULT_MAX_RESULTS_PER_ANCHOR,
     window_days: int = DEFAULT_WINDOW_DAYS,
+    determination_dependencies_override=None,
 ) -> dict[str, Any]:
     """Scan Gmail metadata for known application anchors and store linked evidence."""
 
@@ -146,24 +124,30 @@ def scan_gmail_feedback(
         default=DEFAULT_WINDOW_DAYS,
     )
 
-    conn = open_exact_v12_database(db_path)
+    conn = open_exact_v13_database(db_path)
     try:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA busy_timeout=10000")
         conn.execute("PRAGMA foreign_keys=ON")
         if conn.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
-            raise GmailFeedbackError(
-                "Gmail feedback scan requires SQLite foreign-key enforcement."
-            )
+            raise GmailFeedbackError("Gmail feedback scan requires SQLite foreign-key enforcement.")
 
         gmail = client or GmailClient()
         ensure_application_feedback_tables(conn)
         recipient = (recipient_email or _profile_email(conn)).strip().lower()
         if not recipient or not _EMAIL_RE.match(recipient):
-            raise GmailFeedbackError(
-                "Gmail feedback scan requires a recipient email or candidate profile email."
-            )
+            raise GmailFeedbackError("Gmail feedback scan requires a recipient email or candidate profile email.")
 
+        from jobctrl.infrastructure.determinations import determination_dependencies, SqliteDeterminationRepository
+        from jobctrl.domain.feedback.message_interpretation import ModelMessageInterpreter
+        from jobctrl.domain.determinations import DeterminationFailure
+
+        interpreter = ModelMessageInterpreter(
+            **(
+                determination_dependencies_override
+                or determination_dependencies(conn, tenant_id=TENANT_ID, lane="enrichment")
+            )
+        )
         anchors = _load_application_anchors(conn, limit=bounded_limit)
         summary = {
             "ok": True,
@@ -181,9 +165,7 @@ def scan_gmail_feedback(
         for anchor in anchors:
             after = anchor.anchor_at
             before = anchor.anchor_at + timedelta(days=bounded_window_days)
-            query = _anchor_query(anchor)
-            if not query:
-                continue
+            query = ""
             metadata_items = gmail.search_feedback_emails(
                 query=query,
                 to_email=recipient,
@@ -194,14 +176,9 @@ def scan_gmail_feedback(
             summary["searchedMessageCount"] += len(metadata_items)
 
             for metadata in metadata_items:
-                decision = _link_metadata(
-                    anchor=anchor,
-                    metadata=metadata,
-                    recipient_email=recipient,
-                    after=after,
-                    before=before,
-                )
-                if not decision.linked:
+                recipients = {address.lower() for address in _email_addresses(_text(metadata.get("to")))}
+                received_at = _message_datetime(metadata)
+                if recipient not in recipients or received_at is None or not after <= received_at <= before:
                     summary["unlinkedCandidateCount"] += 1
                     continue
 
@@ -213,16 +190,61 @@ def scan_gmail_feedback(
                     summary["duplicateMessageCount"] += 1
                     continue
 
-                full_message = gmail.read_email(message_id=message_id)
-                classification = classify_outcome(
-                    subject=_text(full_message.get("subject") or metadata.get("subject")),
-                    snippet=_text(full_message.get("snippet") or metadata.get("snippet")),
-                    body_text=_text(full_message.get("body_text")),
+                eligible = {
+                    item.job_id: item
+                    for item in anchors
+                    if item.anchor_at <= received_at <= item.anchor_at + timedelta(days=bounded_window_days)
+                }
+                applications = {
+                    ident: {
+                        "job_id": item.job_id,
+                        "job_url": item.job_url,
+                        "title": item.title,
+                        "company": item.company,
+                        "application_url": item.application_url,
+                        "applied_at": _iso(item.anchor_at),
+                    }
+                    for ident, item in eligible.items()
+                }
+                try:
+                    link, link_envelope = interpreter.link(
+                        message_id=message_id, headers=metadata, applications=applications
+                    )
+                    if link.decision != "linked":
+                        summary["unlinkedCandidateCount"] += 1
+                        continue
+                    linked_anchor = eligible[link.application_id]
+                    full_message = gmail.read_email(message_id=message_id)
+                    # Provider identity, recipient and date are mechanical fences.
+                    if _text(full_message.get("id") or message_id) != message_id:
+                        raise DeterminationFailure("message_identity_changed")
+                    full_recipients = {
+                        address.lower()
+                        for address in _email_addresses(_text(full_message.get("to") or metadata.get("to")))
+                    }
+                    if recipient not in full_recipients:
+                        raise DeterminationFailure("message_recipient_changed")
+                    text = "\n".join(
+                        _text(full_message.get(key) or metadata.get(key)) for key in ("subject", "snippet", "body_text")
+                    )
+                    outcome, outcome_envelope = interpreter.outcome(message_id=message_id, text=text)
+                except DeterminationFailure as error:
+                    summary["ok"] = False
+                    summary["status"] = "unavailable" if error.code == "provider_unavailable" else "blocked"
+                    summary["failureCode"] = error.code
+                    continue
+                decision = LinkDecision(
+                    linked=True,
+                    confidence=link.confidence,
+                    signals=("recipient", "time_window", "determination:" + link_envelope.determination_id),
+                )
+                classification = Classification(
+                    kind=outcome.kind, confidence=outcome.confidence, rationale=outcome.rationale
                 )
                 publisher = _BufferedEventPublisher()
                 try:
                     conn.execute("BEGIN IMMEDIATE")
-                    if not _job_exists(conn, anchor.job_id):
+                    if not _job_exists(conn, linked_anchor.job_id):
                         conn.rollback()
                         summary["unlinkedCandidateCount"] += 1
                         continue
@@ -233,7 +255,7 @@ def scan_gmail_feedback(
 
                     evidence = _store_linked_message(
                         conn=conn,
-                        anchor=anchor,
+                        anchor=linked_anchor,
                         metadata=metadata,
                         full_message=full_message,
                         decision=decision,
@@ -241,7 +263,7 @@ def scan_gmail_feedback(
                     )
                     suggestion = _store_suggestion(
                         conn=conn,
-                        anchor=anchor,
+                        anchor=linked_anchor,
                         evidence_id=evidence["evidenceId"],
                         provider_message_id=message_id,
                         classification=classification,
@@ -249,7 +271,7 @@ def scan_gmail_feedback(
                     )
                     _record_safe_event(
                         conn,
-                        job_id=anchor.job_id,
+                        job_id=linked_anchor.job_id,
                         evidence_id=evidence["evidenceId"],
                         suggestion_id=suggestion["suggestionId"],
                         classification=classification,
@@ -257,6 +279,22 @@ def scan_gmail_feedback(
                         signals=decision.signals,
                         occurred_at=now,
                         publisher=publisher,
+                    )
+                    SqliteDeterminationRepository(conn).bind(
+                        tenant_id=TENANT_ID,
+                        entity_kind="message",
+                        entity_id=message_id,
+                        entity_version=link_envelope.input_fingerprint,
+                        determination_kind="message_link",
+                        determination_id=link_envelope.determination_id,
+                    )
+                    SqliteDeterminationRepository(conn).bind(
+                        tenant_id=TENANT_ID,
+                        entity_kind="outcome_suggestion",
+                        entity_id=suggestion["suggestionId"],
+                        entity_version=outcome_envelope.input_fingerprint,
+                        determination_kind="message_outcome",
+                        determination_id=outcome_envelope.determination_id,
                     )
                     conn.commit()
                 except BaseException:
@@ -271,7 +309,7 @@ def scan_gmail_feedback(
                 summary["evidence"].append(
                     {
                         "evidenceId": evidence["evidenceId"],
-                        "jobId": anchor.job_id,
+                        "jobId": linked_anchor.job_id,
                         "providerMessageId": message_id,
                         "linkConfidence": evidence["linkConfidence"],
                     }
@@ -280,9 +318,11 @@ def scan_gmail_feedback(
                     {
                         "suggestionId": suggestion["suggestionId"],
                         "evidenceId": evidence["evidenceId"],
-                        "jobId": anchor.job_id,
+                        "jobId": linked_anchor.job_id,
                         "kind": classification.kind,
                         "confidence": classification.confidence,
+                        "determinationId": outcome_envelope.determination_id,
+                        "citations": [citation.model_dump() for citation in outcome.citations],
                     }
                 )
 
@@ -293,79 +333,9 @@ def scan_gmail_feedback(
 
 def ensure_application_feedback_tables(conn: sqlite3.Connection) -> None:
     """Validate the current feedback owner without creating or altering schema."""
-    if conn.execute("PRAGMA user_version").fetchone()[0] != EXACT_V12_MANIFEST.version:
+    if conn.execute("PRAGMA user_version").fetchone()[0] != EXACT_V13_MANIFEST.version:
         raise SchemaManifestError("Gmail feedback requires the exact current database schema")
-    assert_exact_manifest(conn, EXACT_V12_MANIFEST)
-
-
-def classify_outcome(*, subject: str, snippet: str, body_text: str) -> Classification:
-    """Classify linked application email evidence with deterministic v1 rules."""
-
-    haystack = " ".join([subject, snippet, body_text]).lower()
-    rules: tuple[tuple[str, float, str, tuple[str, ...]], ...] = (
-        (
-            "bounced",
-            0.95,
-            "Delivery failure language indicates the application email bounced.",
-            ("undeliverable", "delivery status notification", "address not found", "bounced"),
-        ),
-        (
-            "offer",
-            0.95,
-            "Offer language indicates a positive application outcome.",
-            ("pleased to offer", "offer letter", "employment offer", "congratulations"),
-        ),
-        (
-            "rejection",
-            0.9,
-            "Rejection language indicates the employer is not moving forward.",
-            (
-                "not moving forward",
-                "not selected",
-                "unfortunately",
-                "pursue other candidates",
-                "after careful consideration",
-            ),
-        ),
-        (
-            "interview",
-            0.9,
-            "Interview scheduling language indicates an interview outcome.",
-            ("interview", "schedule a call", "availability", "meet with", "technical screen"),
-        ),
-        (
-            "assessment",
-            0.88,
-            "Assessment language indicates a test or take-home step.",
-            ("assessment", "coding challenge", "take-home", "take home", "online test"),
-        ),
-        (
-            "applied_confirmation",
-            0.9,
-            "Application confirmation language indicates the submission was received.",
-            (
-                "application received",
-                "thank you for applying",
-                "thanks for applying",
-                "we received your application",
-                "application has been submitted",
-            ),
-        ),
-        (
-            "recruiter_reply",
-            0.82,
-            "Recruiter reply language indicates direct follow-up from recruiting.",
-            ("recruiter", "talent acquisition", "thanks for reaching out", "next steps"),
-        ),
-    )
-    for kind, confidence, rationale, terms in rules:
-        if any(term in haystack for term in terms):
-            return Classification(kind=kind, confidence=confidence, rationale=rationale)
-    return Classification(
-        kind="unknown",
-        confidence=0.25,
-        rationale="No deterministic outcome language matched this linked email.",
-    )
+    assert_exact_manifest(conn, EXACT_V13_MANIFEST)
 
 
 def _store_linked_message(
@@ -505,62 +475,6 @@ def _publish_committed_events(publisher: _BufferedEventPublisher) -> None:
         destination.publish(event)
 
 
-def _link_metadata(
-    *,
-    anchor: ApplicationAnchor,
-    metadata: dict[str, Any],
-    recipient_email: str,
-    after: datetime,
-    before: datetime,
-) -> LinkDecision:
-    text = " ".join(
-        [
-            _text(metadata.get("subject")),
-            _text(metadata.get("from")),
-            _text(metadata.get("to")),
-        ]
-    ).lower()
-    signals: list[str] = []
-    score = 0.0
-
-    recipients = {address.lower() for address in _email_addresses(_text(metadata.get("to")))}
-    if recipient_email.lower() in recipients:
-        signals.append("recipient")
-        score += 0.2
-
-    message_at = _message_datetime(metadata)
-    if message_at and after <= message_at <= before:
-        signals.append("time_window")
-        score += 0.2
-
-    if _any_hint_match(_name_tokens(anchor.company), text):
-        signals.append("company")
-        score += 0.2
-
-    if _any_hint_match(_title_tokens(anchor.title), text):
-        signals.append("job_title")
-        score += 0.15
-
-    if _any_hint_match(_application_url_tokens(anchor.application_url), text):
-        signals.append("application_domain")
-        score += 0.15
-
-    if _any_hint_match(_ATS_HINTS, text):
-        signals.append("ats_hint")
-        score += 0.1
-
-    if any(term in text for term in _OUTCOME_TERMS):
-        signals.append("outcome_term")
-        score += 0.1
-
-    confidence = round(min(score, 1.0), 2)
-    return LinkDecision(
-        linked=confidence >= LINK_THRESHOLD,
-        confidence=confidence,
-        signals=tuple(signals),
-    )
-
-
 def _load_application_anchors(conn: sqlite3.Connection, *, limit: int) -> list[ApplicationAnchor]:
     anchors: dict[str, ApplicationAnchor] = {}
     for anchor in [*_job_anchors(conn), *_outcome_anchors(conn), *_apply_run_anchors(conn)]:
@@ -644,16 +558,6 @@ def _anchor_from_row(row: sqlite3.Row) -> ApplicationAnchor | None:
         application_url=_text(row["application_url"]),
         anchor_at=anchor_at,
     )
-
-
-def _anchor_query(anchor: ApplicationAnchor) -> str:
-    hints: list[str] = []
-    hints.extend(_name_tokens(anchor.company))
-    hints.extend(_title_tokens(anchor.title))
-    hints.extend(_application_url_tokens(anchor.application_url))
-    hints.extend(hint for hint in _ATS_HINTS if hint in anchor.application_url.lower())
-    hints.extend(_application_url_tokens(anchor.job_url))
-    return " ".join(_dedupe(hints))
 
 
 def _profile_email(conn: sqlite3.Connection) -> str:
@@ -750,61 +654,6 @@ def _email_addresses(value: str) -> list[str]:
     return [address for _name, address in getaddresses([value]) if address]
 
 
-def _name_tokens(value: str) -> list[str]:
-    return [
-        token
-        for token in _safe_tokens(value)
-        if len(token) >= 3 and token.lower() not in {"inc", "llc", "ltd", "the"}
-    ][:4]
-
-
-def _title_tokens(value: str) -> list[str]:
-    stop = {"and", "for", "the", "with", "engineer", "developer", "manager"}
-    return [
-        token
-        for token in _safe_tokens(value)
-        if len(token) >= 4 and token.lower() not in stop
-    ][:6]
-
-
-def _application_url_tokens(value: str) -> list[str]:
-    if not value:
-        return []
-    parsed = urlparse(value)
-    tokens = _safe_tokens(" ".join([parsed.netloc, parsed.path]))
-    return [
-        token
-        for token in tokens
-        if len(token) >= 3 and token.lower() not in {"www", "com", "jobs", "apply"}
-    ][:8]
-
-
-def _safe_tokens(value: str) -> list[str]:
-    return _dedupe(
-        token
-        for token in _TOKEN_RE.findall(value or "")
-        if token.lower() not in {"from", "to", "after", "before", "older_than", "newer_than"}
-    )
-
-
-def _dedupe(values: Any) -> list[str]:
-    result: list[str] = []
-    seen: set[str] = set()
-    for value in values:
-        text = str(value).strip()
-        key = text.lower()
-        if not text or key in seen:
-            continue
-        seen.add(key)
-        result.append(text)
-    return result
-
-
-def _any_hint_match(hints: Any, text: str) -> bool:
-    lowered = text.lower()
-    return any(str(hint).lower() in lowered for hint in hints if str(hint).strip())
-
-
 def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
     row = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
@@ -818,9 +667,6 @@ def _columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
         row["name"] if isinstance(row, sqlite3.Row) else row[1]
         for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()
     }
-
-
-
 
 
 def _text(value: Any) -> str:
@@ -858,9 +704,7 @@ def main(argv: list[str] | None = None) -> int:
             db_path=args.db_path,
             recipient_email=payload.get("recipientEmail") or args.recipient_email,
             limit=int(payload.get("limit") or args.limit),
-            max_results_per_anchor=int(
-                payload.get("maxResultsPerAnchor") or args.max_results_per_anchor
-            ),
+            max_results_per_anchor=int(payload.get("maxResultsPerAnchor") or args.max_results_per_anchor),
             window_days=int(payload.get("windowDays") or args.window_days),
         )
     except Exception as exc:

@@ -55,24 +55,16 @@ def test_workday_store_results_publishes_discovery_events(
 
     assert (new, existing) == (1, 0)
     assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 1
-    assert (
-        conn.execute("SELECT COUNT(*) FROM job_source_observations").fetchone()[0]
-        == 1
-    )
+    assert conn.execute("SELECT COUNT(*) FROM job_source_observations").fetchone()[0] == 1
     event_types = [
-        row["event_type"]
-        for row in conn.execute(
-            "SELECT event_type FROM job_events ORDER BY event_id"
-        ).fetchall()
+        row["event_type"] for row in conn.execute("SELECT event_type FROM job_events ORDER BY event_id").fetchall()
     ]
     assert "JobDiscovered" in event_types
-    observed = conn.execute(
-        "SELECT payload_json FROM job_events WHERE event_type = 'JobSourceObserved'"
-    ).fetchone()
+    observed = conn.execute("SELECT payload_json FROM job_events WHERE event_type = 'JobSourceObserved'").fetchone()
     assert json.loads(observed["payload_json"])["source_id"] == "workday:acme"
 
 
-def test_workday_store_results_rejects_blank_descriptions_before_limit(
+def test_workday_store_results_retains_model_admitted_blank_descriptions_before_limit(
     conn: sqlite3.Connection,
 ) -> None:
     jobs = [
@@ -118,14 +110,14 @@ def test_workday_store_results_rejects_blank_descriptions_before_limit(
     rows = conn.execute("SELECT url, description FROM jobs").fetchall()
     assert [(row["url"], row["description"]) for row in rows] == [
         (
-            "https://acme.wd1.myworkdayjobs.com/External/job/Barcelona/Director-of-Engineering_JR-valid",
-            "Lead engineering teams building local-first products."[:500],
+            "https://acme.wd1.myworkdayjobs.com/External/job/Barcelona/Director-of-Engineering_JR-blank",
+            "",
         )
     ]
 
 
 @pytest.mark.parametrize("description", ["None", "nan", "<NA>"])
-def test_workday_store_results_rejects_serialized_null_descriptions_before_limit(
+def test_workday_store_results_retains_model_admitted_empty_descriptions_before_limit(
     conn: sqlite3.Connection,
     description: str,
 ) -> None:
@@ -172,103 +164,10 @@ def test_workday_store_results_rejects_serialized_null_descriptions_before_limit
     rows = conn.execute("SELECT url, description FROM jobs").fetchall()
     assert [(row["url"], row["description"]) for row in rows] == [
         (
-            "https://acme.wd1.myworkdayjobs.com/External/job/Barcelona/Director-of-Engineering_JR-valid",
-            "Lead engineering teams building local-first products."[:500],
+            "https://acme.wd1.myworkdayjobs.com/External/job/Barcelona/Director-of-Engineering_JR-sentinel",
+            "",
         )
     ]
-
-
-def test_workday_search_rejects_loose_title_matches(monkeypatch: pytest.MonkeyPatch) -> None:
-    def fake_search(_employer: dict, _search_text: str, *, limit: int, offset: int) -> dict:
-        assert limit == 20
-        assert offset == 0
-        return {
-            "total": 3,
-            "jobPostings": [
-                {
-                    "title": "Independent Trauma Counsellor",
-                    "locationsText": "EMEA - United Kingdom - Remote",
-                    "externalPath": "/job/EMEA/Independent-Trauma-Counsellor_R-1",
-                },
-                {
-                    "title": "Director, Investment Consulting",
-                    "locationsText": "CAN, Quebec - Full Time Remote",
-                    "externalPath": "/job/Canada/Director-Investment-Consulting_R-2",
-                },
-                {
-                    "title": "Director of Engineering",
-                    "locationsText": "Remote EMEA",
-                    "externalPath": "/job/EMEA/Director-of-Engineering_R-3",
-                },
-            ],
-        }
-
-    monkeypatch.setattr(workday, "workday_search", fake_search)
-
-    jobs = workday.search_employer(
-        "acme",
-        {
-            "name": "Acme",
-            "base_url": "https://acme.wd1.myworkdayjobs.com",
-            "tenant": "acme",
-            "site_id": "External",
-        },
-        "Director of Engineering",
-        accept_locs=["Spain", "Europe", "EMEA"],
-        reject_locs=["United States", "Canada"],
-    )
-
-    assert [job["title"] for job in jobs] == ["Director of Engineering"]
-
-
-def test_workday_source_first_search_filters_against_expanded_query_specs(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def fake_search(_employer: dict, search_text: str, *, limit: int, offset: int) -> dict:
-        assert search_text == ""
-        assert limit == 20
-        assert offset == 0
-        return {
-            "total": 3,
-            "jobPostings": [
-                {
-                    "title": "Software Engineer",
-                    "locationsText": "Remote EMEA",
-                    "externalPath": "/job/EMEA/Software-Engineer_R-1",
-                },
-                {
-                    "title": "Platform Engineering Manager",
-                    "locationsText": "Remote EMEA",
-                    "externalPath": "/job/EMEA/Platform-Engineering-Manager_R-2",
-                },
-                {
-                    "title": "Account Executive",
-                    "locationsText": "Barcelona, Spain",
-                    "externalPath": "/job/Spain/Account-Executive_R-3",
-                },
-            ],
-        }
-
-    monkeypatch.setattr(workday, "workday_search", fake_search)
-
-    jobs = workday.search_employer(
-        "acme",
-        {
-            "name": "Acme",
-            "base_url": "https://acme.wd1.myworkdayjobs.com",
-            "tenant": "acme",
-            "site_id": "External",
-        },
-        "",
-        accept_locs=["Spain", "Europe", "EMEA"],
-        reject_locs=["United States", "Canada"],
-        query_specs=[
-            {"query": "Head of Platform", "match_mode": "strict"},
-            {"query": "platform manager", "match_mode": "recall"},
-        ],
-    )
-
-    assert [job["title"] for job in jobs] == ["Platform Engineering Manager"]
 
 
 def test_limited_workday_search_respects_page_cap(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -299,11 +198,9 @@ def test_limited_workday_search_respects_page_cap(monkeypatch: pytest.MonkeyPatc
         },
         "Director of Engineering",
         max_pages=1,
-        accept_locs=["Europe", "EMEA"],
-        reject_locs=[],
     )
 
-    assert jobs == []
+    assert len(jobs) == 1 and jobs[0]["title"] == "Independent Trauma Counsellor"
     assert offsets == [0]
 
 
@@ -329,11 +226,10 @@ def test_parallel_limited_workday_scrape_enforces_global_limit(monkeypatch: pyte
         employer_key: str,
         _employers: dict,
         _search_text: str,
-        _location_filter: bool,
-        _accept_locs: list[str],
-        _reject_locs: list[str],
         limit: int = 0,
         max_pages_per_employer: int = 25,
+        cancel_event=None,
+        search_cfg=None,
     ) -> dict:
         assert limit == 2
         assert max_pages_per_employer == 1
@@ -341,7 +237,14 @@ def test_parallel_limited_workday_scrape_enforces_global_limit(monkeypatch: pyte
             {"title": f"Director of Engineering {employer_key} {index}", "employer_key": employer_key}
             for index in range(2)
         ]
-        return {"employer": employer_key, "query": "Director of Engineering", "found": len(jobs), "new": 0, "existing": 0, "jobs": jobs}
+        return {
+            "employer": employer_key,
+            "query": "Director of Engineering",
+            "found": len(jobs),
+            "new": 0,
+            "existing": 0,
+            "jobs": jobs,
+        }
 
     def fake_store_results(
         _conn: object,
@@ -374,3 +277,11 @@ def test_parallel_limited_workday_scrape_enforces_global_limit(monkeypatch: pyte
 
     assert result == {"found": 2, "new": 2, "existing": 0}
     assert len(stored_jobs) == 2
+
+
+@pytest.fixture(autouse=True)
+def semantic_workflow_models(monkeypatch):
+    from tests.workflow_determination_fakes import install_discovery_models, install_page_models
+
+    install_discovery_models(monkeypatch)
+    install_page_models(monkeypatch)

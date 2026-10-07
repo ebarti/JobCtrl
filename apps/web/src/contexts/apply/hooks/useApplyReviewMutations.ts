@@ -120,6 +120,11 @@ export function useApplyReviewDecisionMutation(): UseMutationResult<
   });
 }
 
+export function useRepeatApplicationCheckMutation():UseMutationResult<RepeatApplicationOverrideResponse,Error,{jobId:string}>{
+  const tenantId=useTenantId();const {api}=usePorts();const queryClient=useQueryClient();
+  return useMutation({mutationFn:({jobId})=>api.checkRepeatApplication(jobId),onSettled:(_data,_error,{jobId})=>invalidateApplyReviewSurfaces(queryClient,tenantId,jobId as JobId)});
+}
+
 export function useRepeatApplicationOverrideMutation(): UseMutationResult<
   RepeatApplicationOverrideResponse,
   Error,

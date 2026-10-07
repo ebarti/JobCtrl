@@ -1,3 +1,4 @@
+import { DeterminationCitationSchema, DeterminationEnvelopeSchema } from "./semantic-determinations.js";
 /**
  * JSON-RPC 2.0 wire envelope + JobCtrl method schemas.
  *
@@ -100,6 +101,10 @@ export const RpcMethods = {
   RenderResumePdf: "render_resume_pdf",
   GmailFeedbackScan: "gmail_feedback_scan",
   ProfileRequiredBulletSuggestions: "profile_required_bullet_suggestions",
+  SearchPreferences: "search_preferences",
+  MapExtensionForm: "map_extension_form",
+  ReviewResumeEdit: "review_resume_edit",
+  PrepareRepeatApplicationDeterminations: "prepare_repeat_application_determinations",
   ProfileTargetRoleSuggestions: "profile_target_role_suggestions",
 } as const;
 export type RpcMethod = (typeof RpcMethods)[keyof typeof RpcMethods];
@@ -145,20 +150,11 @@ export const ProfileRequiredBulletSuggestionsParamsSchema = z.object({
 export type ProfileRequiredBulletSuggestionsParams = z.infer<typeof ProfileRequiredBulletSuggestionsParamsSchema>;
 
 export const RequiredBulletModelResultSchema = z.union([z.object({
-  profileVersion: z.number().int().positive(),
-  suggestions: z.array(z.object({
-    reference: z.string().min(1).max(240),
-    kind: z.enum(["grammar", "relevance", "achievement_framing", "missing_evidence"]),
-    guidance: z.string().trim().min(1).max(500),
-    proposedText: z.string().min(1).max(2_000).nullable(),
-  }).strict()).max(24),
-}).strict(), z.object({
-  profileVersion: z.number().int().positive(),
-  failure: z.union([
-    z.object({ code: z.literal("budget_exceeded"), scope: z.enum(["daily", "profile_lane", "both"]) }).strict(),
-    z.object({ code: z.enum(["provider_unready", "invalid_model_response", "provider_failed"]) }).strict(),
-  ]),
-}).strict()]);
+  profileVersion:z.number().int().positive(),
+  determination:DeterminationEnvelopeSchema,
+  citations:z.array(DeterminationCitationSchema).min(1),rationale:z.string().min(1),
+  suggestions:z.array(z.object({reference:z.string().min(1).max(240),kind:z.enum(["grammar","relevance","achievement_framing","missing_evidence"]),guidance:z.string().trim().min(1).max(500),proposedText:z.string().min(1).max(2000).nullable(),citations:z.array(DeterminationCitationSchema).min(1)}).strict()).max(24),
+}).strict(),z.object({profileVersion:z.number().int().positive(),failure:z.object({code:z.enum(["provider_unavailable","provider_error","budget_denied","malformed_json","schema_violation","foreign_source_id","non_verbatim_quote","mismatched_value","duplicate_finding","suggestion_limit_exceeded","source_payload_exceeded","cache_binding_invalid","cache_lock_unavailable","persistence_error"])}).strict()}).strict()]);
 
 /* --- complex commands (delegated to Python JSON-RPC / Temporal) ---------- */
 
@@ -183,7 +179,6 @@ export const RunStageParamsSchema = z
     llmModel: z.string().trim().min(1).max(120).default(DEFAULT_PIPELINE_LLM_MODEL),
     tailorModels: z.array(z.string().trim().min(1).max(120)).max(5).default([]),
     tailorJudgeModel: z.string().trim().min(1).max(120).optional(),
-    tailorJudgeMinScore: z.number().min(0).max(1).optional(),
     continuous: z.boolean().default(false),
   })
   .strict()
@@ -238,6 +233,7 @@ export const JobUrlImportParamsSchema = z
 export type JobUrlImportParams = z.infer<typeof JobUrlImportParamsSchema>;
 
 export const JobUrlImportWorkflowResultSchema = z.union([
+  z.object({status:z.literal("succeeded"),outcome:z.enum(["pending_triage","triage_rejected","triage_uncertain"]),job_id:z.null(),item_id:z.null(),reason:z.string().min(1),imported_at:z.null(),already_existed:z.literal(false),error:z.null(),error_code:z.null()}).strict(),
   z
     .object({
       status: z.literal("succeeded"),
@@ -345,7 +341,6 @@ export const TailorJobParamsSchema = z
     reason: z.string().trim().max(400).optional(),
     tailorModels: z.array(z.string().trim().min(1).max(120)).max(5).default([]),
     tailorJudgeModel: z.string().trim().min(1).max(120).optional(),
-    tailorJudgeMinScore: z.number().min(0).max(1).optional(),
   })
   .strict();
 export type TailorJobParams = z.infer<typeof TailorJobParamsSchema>;
@@ -526,7 +521,6 @@ export const RetailorJobParamsSchema = z
     reason: z.string().trim().max(400).optional(),
     tailorModels: z.array(z.string().trim().min(1).max(120)).max(5).default([]),
     tailorJudgeModel: z.string().trim().min(1).max(120).optional(),
-    tailorJudgeMinScore: z.number().min(0).max(1).optional(),
   })
   .strict();
 export type RetailorJobParams = z.infer<typeof RetailorJobParamsSchema>;
@@ -543,7 +537,6 @@ export const RetailorCurrentPolicyParamsSchema = z
     reason: z.string().trim().max(400).optional(),
     tailorModels: z.array(z.string().trim().min(1).max(120)).max(5).default([]),
     tailorJudgeModel: z.string().trim().min(1).max(120).optional(),
-    tailorJudgeMinScore: z.number().min(0).max(1).optional(),
   })
   .strict();
 export type RetailorCurrentPolicyParams = z.infer<typeof RetailorCurrentPolicyParamsSchema>;

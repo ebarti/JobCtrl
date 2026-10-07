@@ -17,11 +17,22 @@ from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.interview import GenerateInterviewPrepUseCase
 from jobctrl.domain.interview.evidence import InterviewEvidenceSnapshot
 from jobctrl.domain.profile.snapshot import ProfileSnapshot
-from jobctrl.domain.interview.catalog import InterviewSelectionError, load_interview_catalog, validate_interview_selection
-from jobctrl.domain.interview.preparation import choose_questions, job_context_snapshot, normalize_selection, plan_evidence
+from jobctrl.domain.interview.catalog import (
+    InterviewSelectionError,
+    load_interview_catalog,
+    validate_interview_selection,
+)
+from jobctrl.domain.interview.preparation import (
+    ModelInterviewPlanner,
+    fence_evidence_selection,
+    job_context_snapshot,
+    normalize_selection,
+)
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 from jobctrl.infrastructure.interview import SqliteInterviewPrepRepository
-from jobctrl.infrastructure.llm import LlmAdapter, get_llm_adapter
+from jobctrl.infrastructure.determinations import determination_dependencies
+from jobctrl.domain.materials.claim_verification import ModelClaimVerifier
+from jobctrl.domain.materials.artifact_quality import ModelArtifactQualityJudge
 from jobctrl.infrastructure.materials.sqlite_repository import SqliteMaterialsRepository
 from jobctrl.infrastructure.preparation import SqlitePreparationTargetReader
 from jobctrl.infrastructure.profile import get_profile_repository
@@ -69,7 +80,7 @@ async def generate_interview_prep_activity(
 ) -> GenerateInterviewPrepActivityOutput:
     from jobctrl.infrastructure.temporal.run_in_activity import run_blocking_with_heartbeat
 
-    # Generation is a blocking DB + projection-refresh + two-LLM-call runner.
+    # Generation is a blocking DB + projection-refresh + model-call runner.
     # Offloading it to the worker thread pool keeps heartbeats flowing (so a
     # long generation never trips the heartbeat timeout) and stops it from
     # starving the shared event loop. ``workflow_run_id`` makes a retried
@@ -110,28 +121,40 @@ def generate_interview_prep_by_job_id(
     if origin_run_id:
         existing = repository.find_completed_for_run(tenant_id, stable_job_id, origin_run_id)
         if existing is not None:
-            return GenerateInterviewPrepActivityOutput(status="failed" if existing.status == "failed" else "accepted",
-                                                       job_id=stable_job_id, generation=existing.generation,
-                                                       item_count=len(existing.items))
+            return GenerateInterviewPrepActivityOutput(
+                status="failed" if existing.status == "failed" else "accepted",
+                job_id=stable_job_id,
+                generation=existing.generation,
+                item_count=len(existing.items),
+            )
     catalog = load_interview_catalog()
     selection = normalize_selection(selection)
     if "selectedQuestionIds" in selection:
-        validate_interview_selection(selection["selectedQuestionIds"], catalog_binding=selection.get("catalogBinding"), catalog=catalog)
+        validate_interview_selection(
+            selection["selectedQuestionIds"], catalog_binding=selection.get("catalogBinding"), catalog=catalog
+        )
     ProjectionBuilder(conn_factory=lambda: conn, tenant_id=tenant_id).refresh()
     profile_snapshot = get_profile_repository().load_snapshot(tenant_id)
     employer_context, fit_context, requirements = _load_employer_and_fit_context(
-        conn, tenant_id, stable_job_id, profile_snapshot.version,
+        conn,
+        tenant_id,
+        stable_job_id,
+        profile_snapshot.version,
         current_job_hash=job_context_snapshot(job)["snapshotHash"],
     )
-    cards, checked_selection = choose_questions(catalog, selection, requirements)
     if profile_snapshot.tenant_id != tenant_id:
         raise ValueError("profile snapshot belongs to another tenant")
     canonical_evidence = _load_canonical_evidence(conn, tenant_id, profile_snapshot)
-    plan_evidence(cards, profile_snapshot, checked_selection, requirements, canonical_evidence=canonical_evidence)
-    llm = LlmAdapter(default_model=llm_model) if llm_model else get_llm_adapter()
+    fence_evidence_selection(selection, profile_snapshot, canonical_evidence)
+    dependencies = determination_dependencies(conn, tenant_id=tenant_id, lane="interview", model_spec=llm_model)
+    planner = ModelInterviewPlanner(**{key: value for key, value in dependencies.items() if key != "lane"})
     use_case = GenerateInterviewPrepUseCase(
         repository=repository,
-        llm=llm,
+        llm=dependencies["llm"],
+        planner=planner,
+        claim_verifier=ModelClaimVerifier(**dependencies),
+        quality_judge=ModelArtifactQualityJudge(**dependencies),
+        preflight=dependencies["preflight"],
         publisher=InterviewPrepEventRecorder(conn),
         catalog=catalog,
     )
@@ -140,8 +163,6 @@ def generate_interview_prep_by_job_id(
         job=job,
         profile_snapshot=profile_snapshot,
         canonical_evidence=canonical_evidence,
-        evidence_entries=_load_evidence_entries(conn, tenant_id, stable_job_id),
-        evidence_gaps=_load_evidence_gaps(conn, tenant_id, stable_job_id),
         requirements=requirements,
         employer_context=employer_context,
         fit_context=fit_context,
@@ -160,7 +181,9 @@ def generate_interview_prep_by_job_id(
 
 
 def _load_canonical_evidence(
-    conn: sqlite3.Connection, tenant_id: TenantId, profile: ProfileSnapshot,
+    conn: sqlite3.Connection,
+    tenant_id: TenantId,
+    profile: ProfileSnapshot,
 ) -> InterviewEvidenceSnapshot:
     """Fence the exact tenant/default-profile canonical rows, never display fallback."""
     if profile.tenant_id != tenant_id or profile.profile_id != "default":
@@ -178,10 +201,13 @@ def _load_canonical_evidence(
                       user_confirmed,evidence_strength
                FROM candidate_profile_achievement_evidence
                WHERE tenant_id=? AND profile_id='default'
-               ORDER BY entry_id,evidence_index""", (str(tenant_id),),
+               ORDER BY entry_id,evidence_index""",
+            (str(tenant_id),),
         ).fetchall()
         result = InterviewEvidenceSnapshot.from_canonical_rows(
-            tenant_id=tenant_id, profile_id="default", profile_version=profile.version,
+            tenant_id=tenant_id,
+            profile_id="default",
+            profile_version=profile.version,
             rows=[dict(row) for row in rows],
         )
     finally:
@@ -260,10 +286,7 @@ def _load_evidence_gaps(
     job_gaps = [
         gap
         for gap in gaps
-        if any(
-            isinstance(ref, dict) and ref.get("jobId") == job_id
-            for ref in gap.get("jobRefs", [])
-        )
+        if any(isinstance(ref, dict) and ref.get("jobId") == job_id for ref in gap.get("jobRefs", []))
     ]
     return tuple(job_gaps[:12])
 
@@ -307,13 +330,13 @@ def _entry_rank(entry: dict[str, Any], job_id: JobId) -> tuple[int, int, int]:
     return (matching, len(usages), confirmed)
 
 
-
 def _load_employer_and_fit_context(
     conn: sqlite3.Connection,
     tenant_id: TenantId,
     job_id: JobId,
     profile_version: int,
-    *, current_job_hash: str | None = None,
+    *,
+    current_job_hash: str | None = None,
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None, tuple[dict[str, Any], ...]]:
     """Read current target requirements; stale fit never supplies personal facts."""
     analysis = conn.execute(
@@ -338,8 +361,10 @@ def _load_employer_and_fit_context(
     requirements: list[dict[str, Any]] = []
     if analysis is not None and (current_job_hash is None or analysis["snapshot_hash"] == current_job_hash):
         employer_context = {
-            "generation": analysis["generation"], "snapshotHash": analysis["snapshot_hash"],
-            "promptVersion": analysis["prompt_version"], "roleFraming": analysis["role_framing"],
+            "generation": analysis["generation"],
+            "snapshotHash": analysis["snapshot_hash"],
+            "promptVersion": analysis["prompt_version"],
+            "roleFraming": analysis["role_framing"],
             "inferredSeniority": analysis["inferred_seniority"],
         }
         raw_requirements = json.loads(analysis["requirements_json"] or "[]")
@@ -350,26 +375,34 @@ def _load_employer_and_fit_context(
                 raise ValueError("invalid saved employer requirement")
             if any(len(str(raw.get(key) or "")) > 3000 for key in ("id", "text", "evidence_span")):
                 raise ValueError("employer requirement exceeds preparation budget")
-            requirements.append({
-                "requirementId": raw.get("id"), "requirementText": raw.get("text"),
-                "tier": raw.get("tier"), "weight": raw.get("weight"),
-                "sourceExcerpt": raw.get("evidence_span"), "evidenceIds": [],
-            })
+            requirements.append(
+                {
+                    "requirementId": raw.get("id"),
+                    "requirementText": raw.get("text"),
+                    "tier": raw.get("tier"),
+                    "weight": raw.get("weight"),
+                    "sourceExcerpt": raw.get("evidence_span"),
+                    "evidenceIds": [],
+                }
+            )
         if len(str(analysis["role_framing"])) > 4000 or len(str(analysis["inferred_seniority"])) > 500:
             raise ValueError("employer framing exceeds preparation budget")
         employer_context["requirements"] = requirements
         employer_context["unusedRequirementCount"] = max(0, len(raw_requirements) - len(requirements))
     fit_context = None
     if report is not None:
-        current = (employer_context is not None
-                   and report["employer_analysis_generation"] == analysis["generation"]
-                   and report["profile_snapshot_version"] == profile_version)
+        current = (
+            employer_context is not None
+            and report["employer_analysis_generation"] == analysis["generation"]
+            and report["profile_snapshot_version"] == profile_version
+        )
         fit_context = {
             "scoreVersion": report["score_version"],
             "employerAnalysisGeneration": report["employer_analysis_generation"],
             "profileSnapshotVersion": report["profile_snapshot_version"],
             "scoringPolicyVersion": report["scoring_policy_version"],
-            "formulaVersion": report["formula_version"], "createdAt": report["created_at"],
+            "formulaVersion": report["formula_version"],
+            "createdAt": report["created_at"],
             "status": "current" if current else "stale_excluded",
         }
         if current:
@@ -383,10 +416,13 @@ def _load_employer_and_fit_context(
                 (str(tenant_id), str(job_id), report["score_version"]),
             ).fetchall()
             for requirement in requirements:
-                matching = [row for row in fit_items
-                            if row["requirement_id"] == requirement["requirementId"]
-                            and " ".join(row["requirement_text"].split())
-                            == " ".join(str(requirement["requirementText"] or "").split())]
+                matching = [
+                    row
+                    for row in fit_items
+                    if row["requirement_id"] == requirement["requirementId"]
+                    and " ".join(row["requirement_text"].split())
+                    == " ".join(str(requirement["requirementText"] or "").split())
+                ]
                 if len(matching) == 1:
                     fit = _load_json(matching[0]["fit_json"])
                     requirement["fitKind"] = fit.get("kind")
@@ -394,6 +430,7 @@ def _load_employer_and_fit_context(
                 else:
                     requirement["fitStatus"] = "source_identity_mismatch"
     return employer_context, fit_context, tuple(requirements)
+
 
 def _load_accepted_materials(
     conn: sqlite3.Connection,
@@ -426,8 +463,7 @@ def _load_accepted_materials(
         ORDER BY position, bullet_id
         LIMIT 20
         """,
-        (str(tenant_id), str(job_id), materials.generation,
-         materials.tailored_resume.artifact_id),
+        (str(tenant_id), str(job_id), materials.generation, materials.tailored_resume.artifact_id),
     ).fetchall()
     result = tuple(
         {
@@ -442,8 +478,13 @@ def _load_accepted_materials(
         for row in rows
     )
 
-    return result or ({"artifactId": materials.tailored_resume.artifact_id, "generation": materials.generation,
-                       "materialSha256": material_sha256},)
+    return result or (
+        {
+            "artifactId": materials.tailored_resume.artifact_id,
+            "generation": materials.generation,
+            "materialSha256": material_sha256,
+        },
+    )
 
 
 def _load_json(value: str | None) -> dict[str, Any]:

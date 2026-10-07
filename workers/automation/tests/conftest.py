@@ -53,11 +53,7 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
         if source is None:
             source = item_path.read_text(encoding="utf-8")
             source_by_path[item_path] = source
-        if (
-            "WorkflowEnvironment." in source
-            or "time_skipping_env(" in source
-            or "local_env(" in source
-        ):
+        if "WorkflowEnvironment." in source or "time_skipping_env(" in source or "local_env(" in source:
             item.add_marker(pytest.mark.temporal)
         else:
             item.add_marker(pytest.mark.core)
@@ -119,3 +115,21 @@ def in_memory_exporter(monkeypatch):
     set_tracer_provider(provider)
     yield exporter
     exporter.clear()
+
+
+@pytest.fixture(autouse=True)
+def require_explicit_model_ports(monkeypatch, request):
+    """A workflow test must inject its model; never use a developer's provider.
+
+    Adapter contract tests mock their own backend and exercise the adapter itself.
+    All other tests fail distinctly when wiring accidentally reaches that boundary.
+    """
+    if Path(str(request.fspath)).name == "test_llm_port.py":
+        return
+    from jobctrl.infrastructure.llm.llm_client import LlmAdapter
+    from jobctrl.domain.determinations import DeterminationFailure
+
+    def unavailable(*args, **kwargs):
+        raise DeterminationFailure("provider_unavailable")
+
+    monkeypatch.setattr(LlmAdapter, "chat_json", unavailable)

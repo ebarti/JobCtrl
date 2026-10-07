@@ -32,6 +32,7 @@ export function ImportJobUrlDialog({ onImported }: ImportJobUrlDialogProps): JSX
   const inputId = useId();
   const availabilityId = useId();
   const [open, setOpen] = useState(false);
+  const [triageNotice,setTriageNotice] = useState<string|null>(null);
   const [manualCapture, setManualCapture] = useState<{
     itemId: string;
     reason: string;
@@ -51,6 +52,7 @@ export function ImportJobUrlDialog({ onImported }: ImportJobUrlDialogProps): JSX
       const parsed = JobUrlImportRequestSchema.safeParse(value);
       if (!parsed.success) return;
       setManualCapture(null);
+      setTriageNotice(null);
       try {
         const result = await mutation.mutateAsync(parsed.data);
         if (result.status === "imported") {
@@ -59,7 +61,11 @@ export function ImportJobUrlDialog({ onImported }: ImportJobUrlDialogProps): JSX
           onImported(result.jobKey);
           return;
         }
-        setManualCapture({ itemId: result.itemId, reason: result.reason });
+        if (result.status === "manual_capture_required") {
+          setManualCapture({ itemId: result.itemId, reason: result.reason });
+        } else {
+          setTriageNotice(result.status === "pending_triage" ? `This listing is waiting for model triage (${result.reason}). Retry when the provider and budget are available.` : result.status === "triage_rejected" ? `The model rejected this listing: ${result.reason}.` : `The model needs clarification before admitting this listing: ${result.reason}.`);
+        }
       } catch {
         // The mutation error is rendered inside the dialog.
       }
@@ -72,7 +78,7 @@ export function ImportJobUrlDialog({ onImported }: ImportJobUrlDialogProps): JSX
       open={open}
       onOpenChange={(nextOpen) => {
         setOpen(nextOpen);
-        if (!nextOpen) setManualCapture(null);
+        if (!nextOpen) {setManualCapture(null);setTriageNotice(null);}
       }}
     >
       <DialogTrigger render={<Button title={availability.reason ?? undefined} />}>
@@ -120,6 +126,7 @@ export function ImportJobUrlDialog({ onImported }: ImportJobUrlDialogProps): JSX
             }}
           </form.Subscribe>
           {mutationError ? <div className="banner inline">{mutationError}</div> : null}
+          {triageNotice ? <div className="banner inline" role="status">{triageNotice} <a href="/discovery">View triage decisions</a></div> : null}
           {manualCapture ? (
             <div className="banner inline" role="status">
               JobCtrl could not read that page automatically. It is waiting in Manual Capture so

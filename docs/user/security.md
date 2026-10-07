@@ -442,19 +442,18 @@ legal/screening attestation is missing, the agent stops instead of guessing.
 
 ## Content Integrity And Auditability
 
-Job postings, imported documents, page text, and all model responses are
-untrusted inputs. JobCtrl uses structured schemas and deterministic validation
-before model output becomes a score, employer analysis, resume, cover letter,
-or application answer. Employer-analysis evidence spans must exist literally in
-the captured posting. Resume and cover-letter gates reject unsupported numbers,
-dates, titles, employers, skills, and tools; rendered-text coverage and
-provenance are computed from the actual selected artifact rather than inferred
-from the prompt.
+Job postings, imported documents, page text and model responses are untrusted
+inputs. Semantic claim support comes from a strict model determination. Code
+checks canonical IDs, exact verbatim citations, numeric/date/currency equality,
+schemas and versions before an artifact is accepted. An independent quality
+judge remains separate. Generated lines record source and requirement anchors;
+read-side code cannot infer provenance from text overlap. Model failure has a
+distinct safe status and never selects a lexical fallback.
 
-Judge and adversarial review add another integrity layer, but deterministic
-grounding remains authoritative. Retry prompts use only fixed, code-owned reason
-guidance; free-form validator, judge, adversarial-review, and prior-model text
-stays in the audit trail and is never promoted into a later generator message.
+Bounded verifier findings can request repair while remaining untrusted source
+data. They cannot add a profile fact, change the allowlisted source inventory,
+override a user pin or bypass the structural gates.
+
 When regeneration or review fails, JobCtrl keeps the last accepted artifact
 visible and records the failed attempt at a separate audit path instead of
 overwriting, replacing, or hiding known-good material. Approval decisions,
@@ -478,3 +477,10 @@ validation, notice, and human-review controls.
 Prefer GitHub private vulnerability reporting. Otherwise request a private
 contact path in a minimal public issue; omit exploit details, secrets, logs,
 profiles, artifacts, and local paths. See [SECURITY.md](../../SECURITY.md).
+
+
+## Semantic Determination Authority
+
+Semantic decisions come from strict model determinations with source citations. Code owns ID membership, verbatim spans, exact values, version fences, URL/security controls and privacy minimization. No provider failure selects a lexical substitute. Form mapping uses captured questions, saved fact IDs and native option IDs; the user confirms filling and JobCtrl never submits.
+
+See [the decision](../decisions.md#2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.

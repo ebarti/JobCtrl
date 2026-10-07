@@ -309,10 +309,9 @@ subwork; explicit rescore actions are maintenance controls.
 The scoring path has three distinct parts, and it is worth being precise about
 which model machinery each uses:
 
-1. **Retrieval preselection is BM25-only.** `domain/scoring/retrieval.py`
-   implements BM25 lexical ranking with *optional* semantic reciprocal-rank
-   fusion, but the local build's default semantic adapter is a no-op (no hosted
-   embedding service), so ranking is lexical. `limit` applies after preselection.
+1. **Work ordering is mechanical.** `domain/scoring/retrieval.py` uses recency
+   and stable IDs. `limit` applies to that ordering; token overlap and BM25 do
+   not suppress jobs before model scoring.
 2. **Employer analysis is the mandatory front-half.** Before the fit score,
    scoring ensures a canonical employer analysis via
    `scoring/employer_analysis.py` / `scoring/scorer.py`. This is produced by the
@@ -591,3 +590,12 @@ submit-time availability refusal after an Apply run has started remains a
 retryable terminal failure and consumes that already-claimed attempt, without
 persisting submit intent or sending. Accepted content and artifacts
 survive failed refreshes. These gates grant no submission authority.
+
+
+## Semantic Determination Authority
+
+Intake triage persists every listing before admission; failures remain pending. Query planning and semantic calls run only in activities/sync RPC and pass lane/spend preflight. Scoring preselection uses recency/ID order. Job interpretation and typed blockers supply constraint meaning. Replay reads persisted results and makes no provider call.
+
+See [the decision](../../decisions.md#2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.
+
+A running activity can become blocked when a semantic determination reports a provider-unavailable, spend-denied, or invalid-output status. It retains its distinct failure code and the last accepted artifact. A provider transport error follows the bounded retry path; no semantic fallback runs.

@@ -1,3 +1,4 @@
+import { recordArtifactAuthority, recordModelDecision } from "./semantic-fixtures.js";
 import { seedApplicationUrl } from "./seed-enrichment.js";
 import fs from "node:fs";
 import { createHash } from "node:crypto";
@@ -8,7 +9,7 @@ import Database from "better-sqlite3";
 
 import { writeProfileConfig } from "../src/profile-store.js";
 import { BUILT_IN_RESUME_TEMPLATE_THEME } from "../src/resume-templates.js";
-import { initializeExactV7Database } from "./v7-schema.js";
+import { initializeExactDatabase } from "./exact-schema.js";
 
 export interface QaWorkspace {
   appDir: string;
@@ -294,7 +295,7 @@ export function seedQaDatabase(dbPath: string, options: QaSeedOptions = {}): voi
   fs.writeFileSync(coverTxt, "QA cover letter");
   fs.writeFileSync(coverPdf, createQaPdfBytes("QA cover letter"));
 
-  initializeExactV7Database(dbPath);
+  initializeExactDatabase(dbPath);
   const db = new Database(dbPath);
   db.pragma("foreign_keys = ON");
   writeProfileConfig(db, {
@@ -385,6 +386,10 @@ export function seedQaDatabase(dbPath: string, options: QaSeedOptions = {}): voi
     resumePdf,
     resumeTxt,
   });
+  recordArtifactAuthority(db,{"ev-platform":QA_SHIPPED_SUMMARY});
+  const qualityId=recordModelDecision(db,"artifact_quality",QA_PLATFORM_JOB_ID,{verdict:"pass",score:0.9,findings:[],evidence_corrections:[],rationale:"Explicit synthetic model quality review"});
+  const accepted=db.prepare("SELECT artifact_id,metadata_json FROM job_materials_artifacts WHERE tenant_id='local' AND job_id=? AND artifact_type IN ('tailored_resume','resume_pdf')").all(QA_PLATFORM_JOB_ID) as Array<{artifact_id:string;metadata_json:string}>;
+  for(const artifact of accepted)db.prepare("UPDATE job_materials_artifacts SET metadata_json=? WHERE tenant_id='local' AND artifact_id=?").run(JSON.stringify({...JSON.parse(artifact.metadata_json),quality_determination_id:qualityId}),artifact.artifact_id);
   seedResumeReviewDraft(db);
   seedLearningPolicyFixture(db);
 
@@ -738,7 +743,7 @@ function insertEmployerAnalysis(db: Database.Database): void {
     "qa-sdk-set",
     "qa-cache-key",
     "Platform engineering leader",
-    "Director / senior engineering leadership",
+    "director",
     "A senior platform leader who improves developer experience, reliability, and incident response across teams.",
     JSON.stringify([
       {
@@ -759,13 +764,11 @@ function insertEmployerAnalysis(db: Database.Database): void {
     JSON.stringify([
       {
         keyword: "platform reliability",
-        requirement_id: "r1",
         evidence_span: "Lead platform security, reliability",
         rationale: "Critical operating domain for the role.",
       },
       {
         keyword: "developer experience",
-        requirement_id: "r2",
         evidence_span: "developer experience programs",
         rationale: "The posting asks for developer-experience improvements.",
       },
@@ -896,7 +899,7 @@ function insertBulletProvenance(db: Database.Database): void {
   ).run(
     QA_PLATFORM_JOB_ID,
     1,
-    "summary-1",
+    "summary",
     "qa-platform-resume-text",
     "summary",
     "qa_platform",

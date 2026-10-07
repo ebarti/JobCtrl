@@ -1,5 +1,6 @@
 import type { InterviewPrep, InterviewSelectionInput } from "@jobctrl/domain-types";
 import { z } from "zod";
+import { type DeterminationEnvelope, type DeterminationCitation, DeterminationCitationSchema, DeterminationEnvelopeSchema, TrackCodeSchema, SeniorityCodeSchema, WorkModelCodeSchema } from "./semantic-determinations.js";
 import { CONTACT_ROLES, CONTACT_SOURCE_KINDS } from "@jobctrl/domain-types";
 
 export const STAGES = ["discover", "enrich", "score", "tailor", "cover", "apply"] as const;
@@ -322,7 +323,6 @@ export const RetailorJobRequestSchema = z
     reason: z.string().trim().max(400).optional(),
     tailorModels: z.array(z.string().trim().min(1).max(120)).max(5).default([]),
     tailorJudgeModel: z.string().trim().min(1).max(120).optional(),
-    tailorJudgeMinScore: z.coerce.number().min(0).max(1).optional(),
   })
   .strict();
 export type RetailorJobRequest = z.infer<typeof RetailorJobRequestSchema>;
@@ -333,7 +333,6 @@ export const TailorJobRequestSchema = z
     reason: z.string().trim().max(400).optional(),
     tailorModels: z.array(z.string().trim().min(1).max(120)).max(5).default([]),
     tailorJudgeModel: z.string().trim().min(1).max(120).optional(),
-    tailorJudgeMinScore: z.coerce.number().min(0).max(1).optional(),
   })
   .strict();
 export type TailorJobRequest = z.infer<typeof TailorJobRequestSchema>;
@@ -347,7 +346,6 @@ export const BulkRetailorCurrentPolicyRequestSchema = z
     reason: z.string().trim().max(400).optional(),
     tailorModels: z.array(z.string().trim().min(1).max(120)).max(5).default([]),
     tailorJudgeModel: z.string().trim().min(1).max(120).optional(),
-    tailorJudgeMinScore: z.coerce.number().min(0).max(1).optional(),
   })
   .strict();
 export type BulkRetailorCurrentPolicyRequest = z.infer<typeof BulkRetailorCurrentPolicyRequestSchema>;
@@ -846,6 +844,8 @@ export type RepeatApplicationFactKind =
   | "legacy_applied_status";
 
 export type RepeatApplicationStatus =
+  | "unavailable"
+  | "uncertain"
   | "clear"
   | "blocked"
   | "confirmation_required"
@@ -1295,6 +1295,7 @@ export interface ResumeReviewDraftResponse {
 }
 
 export interface ResumeReviewDraftRevisionResponse {
+  editIntent?: {status:"accepted";determinationId:string|null}|{status:"unavailable";failureCode:string};
   ok: true;
   draft: ResumeReviewDraft;
   revision: ResumeReviewDraftRevision;
@@ -1426,6 +1427,8 @@ export interface ApplicationEmailEvidence {
 }
 
 export interface OutcomeSuggestion {
+  determination: DeterminationEnvelope | null;
+  citations: readonly DeterminationCitation[];
   suggestionId: string;
   jobKey: string;
   evidenceId: string | null;
@@ -1464,6 +1467,7 @@ export interface OutcomeSuggestionDecisionResponse {
 
 export interface ApplicationOutcomeListResponse {
   ok: true;
+  interpretationStatus?: {status:"available"|"unavailable"|"not_requested";failureCode:string|null};
   outcomes: ApplicationOutcome[];
   suggestions: OutcomeSuggestion[];
 }
@@ -1487,7 +1491,6 @@ export const RunPipelineStagesRequestSchema = z
     llmModel: z.string().trim().min(1).max(120).default(DEFAULT_PIPELINE_LLM_MODEL),
     tailorModels: z.array(z.string().trim().min(1).max(120)).max(5).default([]),
     tailorJudgeModel: z.string().trim().min(1).max(120).optional(),
-    tailorJudgeMinScore: z.coerce.number().min(0).max(1).optional(),
     continuous: z.boolean().default(false),
     sourceIds: z.array(z.string().trim().min(1).max(160)).max(50).optional(),
   })
@@ -1684,8 +1687,7 @@ const ProfileAchievementEvidenceSchema = z.object({
   tools: z.array(z.string()).default([]),
   metrics: z.array(z.string()).default([]),
   outcome: z.string().default(""),
-  seniority_signal: z.string().default(""),
-  evidence_strength: z.enum(EVIDENCE_STRENGTHS).default("supported"),
+  evidence_strength: z.enum(EVIDENCE_STRENGTHS).default("draft"),
   claim_confidence: z.number().min(0).max(1).default(0),
   user_confirmed: z.boolean().default(false),
   tags: z.array(z.string()).default([]),
@@ -1895,6 +1897,7 @@ export const ProfileUpdateRequestSchema = z
     styleText: z.string().optional(),
     templateText: z.string().optional(),
     expectedProfileVersion: z.number().int().positive().optional(),
+    acceptedCandidateInterpretationId: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   })
   .strict();
 export type ProfileUpdateRequest = z.infer<typeof ProfileUpdateRequestSchema>;
@@ -1918,9 +1921,10 @@ export const TargetRoleSuggestionSchema = z
   .object({
     title: z.string().trim().min(1).max(100),
     classification: z.enum(["direct", "adjacent"]),
-    track: z.string().trim().min(1).max(60),
-    seniority: z.string().trim().min(1).max(60),
+    track: TrackCodeSchema,
+    seniority: SeniorityCodeSchema,
     evidenceIds: z.array(ProfileEvidenceIdSchema).min(1).max(8),
+    citations: z.array(DeterminationCitationSchema).min(1).max(8),
     rationale: z.string().trim().min(1).max(240),
   })
   .strict();
@@ -1929,8 +1933,10 @@ export type TargetRoleSuggestion = z.infer<typeof TargetRoleSuggestionSchema>;
 export const TargetPreferenceSuggestionSchema = z
   .object({
     location: z.string().max(100),
-    workModel: z.enum(["", "Remote", "Hybrid", "On-site"]),
+    workModel: WorkModelCodeSchema,
     evidenceIds: z.array(ProfileEvidenceIdSchema).min(1).max(8),
+    citations: z.array(DeterminationCitationSchema).min(1).max(8),
+    rationale: z.string().min(1).max(240),
   })
   .strict()
   .refine((value) => value.location.length > 0 || value.workModel.length > 0);
@@ -1939,9 +1945,11 @@ export type TargetPreferenceSuggestion = z.infer<typeof TargetPreferenceSuggesti
 export const TargetRoleSuggestionResultSchema = z
   .object({
     profileVersion: z.number().int().positive(),
+    determinationId: z.string().regex(/^[a-f0-9]{64}$/),
+    status: z.enum(["pending_confirmation", "confirmed"]),
     suggestions: z.array(TargetRoleSuggestionSchema).max(5),
     preferenceSuggestions: z.array(TargetPreferenceSuggestionSchema).max(5).default([]),
-    strategy: z.enum(["model", "deterministic", "recent_title_fallback", "none"]),
+    strategy: z.literal("model"),
     warnings: z.array(z.string().trim().min(1).max(120)).max(8).default([]),
   })
   .strict();
@@ -1951,9 +1959,11 @@ export const TargetRoleSuggestionResponseSchema = z
   .object({
     ok: z.literal(true),
     profileVersion: z.number().int().positive(),
+    determinationId: z.string().regex(/^[a-f0-9]{64}$/),
+    status: z.enum(["pending_confirmation", "confirmed"]),
     suggestions: z.array(TargetRoleSuggestionSchema).max(5),
     preferenceSuggestions: z.array(TargetPreferenceSuggestionSchema).max(5).optional(),
-    strategy: z.enum(["model", "deterministic", "recent_title_fallback", "none", "model_stub"]),
+    strategy: z.literal("model"),
     warnings: z.array(z.string().trim().min(1).max(120)).max(8).default([]),
   })
   .strict();
@@ -2012,8 +2022,9 @@ export const RequiredBulletSuggestionResponseSchema = z
     strategy: z.literal("model_v1"),
     modelUsed: z.boolean(),
     truncated: z.boolean(),
+    determination: DeterminationEnvelopeSchema.optional(),
   })
-  .strict();
+  .strict().refine(value=>!value.modelUsed || Boolean(value.determination), "A model judgment requires its persisted determination");
 export type RequiredBulletSuggestionResponse = z.infer<typeof RequiredBulletSuggestionResponseSchema>;
 
 export const ProfileImportRequestSchema = z
@@ -2063,7 +2074,6 @@ export const SettingsUpdateRequestSchema = z
     analysisLegs: z.array(z.enum(["codex", "claude", "google"])).min(1).optional(),
     tailoringGeneratorModels: z.array(z.string().trim().min(1).max(160)).min(1).nullable().optional(),
     tailoringJudgeModel: z.string().trim().min(1).max(160).nullable().optional(),
-    tailoringJudgeMinScore: z.coerce.number().min(0).max(1).optional(),
     applyMaxBudgetUsd: z.coerce.number().min(0).optional(),
     applyTimeoutSeconds: z.coerce.number().int().min(60).max(3600).optional(),
     scoreCriteria: z.string().max(8000).optional(),
@@ -3083,7 +3093,8 @@ export interface JobCompensationRangeSummary {
 
 export interface JobPostedCompensationSummary {
   sourceKind: "posted";
-  recordStatus: "recorded" | "not_recorded";
+  recordStatus: "recorded" | "not_recorded" | "unavailable";
+  failureCode?: string;
   parseState: PostedCompensationParseState | null;
   confidence: PostedCompensationConfidence;
   warningCount: number;
@@ -3094,7 +3105,8 @@ export interface JobPostedCompensationSummary {
 export interface JobMarketCompensationSummary {
   sourceKind: "reported_company_role_market";
   benchmarkKind: "direct" | "extrapolated" | null;
-  recordStatus: "recorded" | "not_requested";
+  recordStatus: "recorded" | "not_requested" | "unavailable";
+  failureCode?: string;
   estimateState: MarketCompensationEstimateState;
   confidenceBand: MarketCompensationConfidenceBand;
   confidenceScore: number | null;
@@ -3122,6 +3134,8 @@ export interface JobCompensationAudit {
 }
 
 export interface PostingAvailability {
+  failureCode: string | null;
+  determinations: DeterminationEnvelope[];
   jobId: string;
   postingUrl: string | null;
   verdict: ActiveState;
@@ -4116,6 +4130,8 @@ export interface EmployerAnalysis {
   keywords: EmployerAnalysisKeyword[];
   sub_analyses: EmployerAnalysisSubAnalysis[];
   failures: EmployerAnalysisFailure[];
+  /** Persisted model provenance, joined through the accepted analysis generation. */
+  determinations?: DeterminationEnvelope[];
 }
 
 export interface JobDetail {
@@ -4161,6 +4177,7 @@ export interface ArtifactDetail {
   ok: true;
   artifact: ArtifactSummary;
   layoutBoxes: ResumeLayoutBox[];
+  determinations: DeterminationEnvelope[];
   tailoringExplanation: ArtifactTailoringExplanation | null;
 }
 
@@ -4201,7 +4218,6 @@ export interface ArtifactComparisonSide {
     passed: boolean | null;
     verdict: string | null;
     score: number | null;
-    minScore: number | null;
     issueCount: number;
   };
 }
@@ -4282,23 +4298,12 @@ export interface BulletCoverageAudit {
   };
 }
 
-/**
- * Phase 3 — the voice-pass audit (VOICE-02): the de-buzzword/vary-structure pass
- * is inspectable, not a hidden prompt tweak.
- *
- * Mirrors the Python ``VoicePassRecord.to_dict()``: whether the pass ``ran``, was
- * ``accepted`` (kept over the pre-voice candidate because the deterministic proxies
- * improved AND grounding re-validated), the ``model`` that produced it, the prompt
- * version, the deterministic ``proxyDelta`` (buzzword density + structural variety
- * before/after), and a ``reason`` when it was not accepted (e.g. a voice edit that
- * introduced an unsourced metric was rejected — VOICE-03).
- */
+/** The voice pass records its model, prompt version and separately verified acceptance. */
 export interface VoicePassAudit {
   ran: boolean;
   accepted: boolean;
   model: string;
   promptVersion: string;
-  proxyDelta: Record<string, unknown>;
   reason: string;
   summaryRejectionReason?: string;
   scopeViolations?: string[];
@@ -4306,6 +4311,8 @@ export interface VoicePassAudit {
 }
 
 export interface ArtifactTailoringExplanation {
+  determinations?: import("./semantic-determinations.js").DeterminationEnvelope[] | undefined;
+  lineFindings?: Array<{lineId: string; kind: string; rationale: string; determinationId: string}> | undefined;
   targetSeniority: string | null;
   claimMode: string | null;
   validationMode: string | null;
@@ -4341,7 +4348,6 @@ export interface ArtifactTailoringExplanation {
   };
   evidence: {
     requiredIds: string[];
-    seniorityIds: string[];
     representedIds: string[];
     missingIds: string[];
     verifiedMetricCount: number | null;
@@ -4358,7 +4364,6 @@ export interface ArtifactTailoringExplanation {
     passed: boolean | null;
     verdict: string | null;
     score: number | null;
-    minScore: number | null;
     issues: string[];
     unsupportedClaims: string[];
     fabrications: string[];
@@ -4468,6 +4473,7 @@ export interface ArtifactOpenResponse {
 
 export interface ProfileConfigResponse {
   ok: true;
+  candidateInterpretation?: {status:"missing"|"pending_confirmation"|"confirmed"|"unavailable";failureCode:string|null;determination:import("./semantic-determinations.js").DeterminationEnvelope|null};
   /** Monotonic version of the canonical saved profile, or null before setup. */
   profileVersion: number | null;
   /** Profile data. Validated against ``ProfileSchema`` server-side; the wire
@@ -4527,7 +4533,6 @@ export interface ActionCommandPayload extends InterviewSelectionInput {
   llmModel?: string;
   tailorModels?: string[];
   tailorJudgeModel?: string;
-  tailorJudgeMinScore?: number;
   suppressExistingArtifacts?: boolean;
   headless?: boolean;
   continuous?: boolean;
@@ -4624,7 +4629,6 @@ export interface JobCtrlSettings {
   analysisLegs: ProviderId[];
   tailoringGeneratorModels: string[] | null;
   tailoringJudgeModel: string | null;
-  tailoringJudgeMinScore: number;
   applyMaxBudgetUsd: number;
   applyTimeoutSeconds: number;
   scoreCriteria: string;
@@ -4670,7 +4674,6 @@ export interface EffectiveJobCtrlSettings {
   analysisLegs: EffectiveSetting<ProviderId[]>;
   tailoringGeneratorModels: EffectiveSetting<string[] | null>;
   tailoringJudgeModel: EffectiveSetting<string | null>;
-  tailoringJudgeMinScore: EffectiveSetting<number>;
   applyMaxBudgetUsd: EffectiveSetting<number>;
   applyTimeoutSeconds: EffectiveSetting<number>;
   scoreCriteria: EffectiveSetting<string>;
@@ -4690,7 +4693,6 @@ export const SettingsResponseSchema = z
         analysisLegs: z.array(z.enum(ProviderIds)),
         tailoringGeneratorModels: z.array(z.string()).nullable(),
         tailoringJudgeModel: z.string().nullable(),
-        tailoringJudgeMinScore: z.number(),
         applyMaxBudgetUsd: z.number(),
         applyTimeoutSeconds: z.number(),
         scoreCriteria: z.string(),
@@ -4714,7 +4716,6 @@ export const SettingsResponseSchema = z
         analysisLegs: effectiveSettingSchema(z.array(z.enum(ProviderIds))),
         tailoringGeneratorModels: effectiveSettingSchema(z.array(z.string()).nullable()),
         tailoringJudgeModel: effectiveSettingSchema(z.string().nullable()),
-        tailoringJudgeMinScore: effectiveSettingSchema(z.number()),
         applyMaxBudgetUsd: effectiveSettingSchema(z.number()),
         applyTimeoutSeconds: effectiveSettingSchema(z.number()),
         scoreCriteria: effectiveSettingSchema(z.string()),
@@ -5160,8 +5161,8 @@ export const DiscoverySettingsUpdateRequestSchema = z
     hoursOld: z.coerce.number().int().min(1).max(8760).optional(),
     schedulingEnabled: z.boolean().optional(),
     scheduleCron: z.string().min(1).optional(),
-    roleFilterMode: z.enum(["auto", "deterministic", "llm"]).optional(),
-    roleFilterModel: z.string().trim().max(160).nullable().optional(),
+    triageBatchSize: z.number().int().min(1).max(100).optional(),
+    triageModel: z.string().trim().max(160).nullable().optional(),
     maxParallelFamilies: z.coerce.number().int().min(1).max(4).optional(),
     crawlUserAgentProduct: z.string().trim().min(1).max(80).optional(),
     crawlUserAgentContact: z.string().trim().max(240).optional(),
@@ -5178,8 +5179,8 @@ export interface DiscoverySettings {
   hoursOld: number;
   schedulingEnabled: boolean;
   scheduleCron: string;
-  roleFilterMode: "auto" | "deterministic" | "llm";
-  roleFilterModel: string | null;
+  triageBatchSize: number;
+  triageModel: string | null;
   maxParallelFamilies: number;
   crawlUserAgentProduct: string;
   crawlUserAgentContact: string;
@@ -5195,8 +5196,8 @@ export interface EffectiveDiscoverySettings {
   hoursOld: EffectiveSetting<number>;
   schedulingEnabled: EffectiveSetting<boolean>;
   scheduleCron: EffectiveSetting<string>;
-  roleFilterMode: EffectiveSetting<DiscoverySettings["roleFilterMode"]>;
-  roleFilterModel: EffectiveSetting<string | null>;
+  triageBatchSize: EffectiveSetting<DiscoverySettings["triageBatchSize"]>;
+  triageModel: EffectiveSetting<string | null>;
   maxParallelFamilies: EffectiveSetting<number>;
   crawlUserAgentProduct: EffectiveSetting<string>;
   crawlUserAgentContact: EffectiveSetting<string>;
@@ -5215,8 +5216,8 @@ export const DiscoverySettingsResponseSchema = z
         hoursOld: z.number(),
         schedulingEnabled: z.boolean(),
         scheduleCron: z.string(),
-        roleFilterMode: z.enum(["auto", "deterministic", "llm"]),
-        roleFilterModel: z.string().nullable(),
+        triageBatchSize: z.number().int().min(1).max(100),
+        triageModel: z.string().nullable(),
         maxParallelFamilies: z.number(),
         crawlUserAgentProduct: z.string(),
         crawlUserAgentContact: z.string(),
@@ -5235,8 +5236,8 @@ export const DiscoverySettingsResponseSchema = z
         hoursOld: effectiveSettingSchema(z.number()),
         schedulingEnabled: effectiveSettingSchema(z.boolean()),
         scheduleCron: effectiveSettingSchema(z.string()),
-        roleFilterMode: effectiveSettingSchema(z.enum(["auto", "deterministic", "llm"])),
-        roleFilterModel: effectiveSettingSchema(z.string().nullable()),
+        triageBatchSize: effectiveSettingSchema(z.number().int().min(1).max(100)),
+        triageModel: effectiveSettingSchema(z.string().nullable()),
         maxParallelFamilies: effectiveSettingSchema(z.number()),
         crawlUserAgentProduct: effectiveSettingSchema(z.string()),
         crawlUserAgentContact: effectiveSettingSchema(z.string()),
@@ -5828,6 +5829,7 @@ export interface PostedCompensationFactRecordedResponse {
   ok: true;
   recordStatus: "recorded";
   fact: PostedCompensationFact;
+  determination: import("./semantic-determinations.js").DeterminationEnvelope;
 }
 
 export interface PostedCompensationFactNotRecordedResponse {
@@ -5839,7 +5841,8 @@ export interface PostedCompensationFactNotRecordedResponse {
 
 export type PostedCompensationFactResponse =
   | PostedCompensationFactRecordedResponse
-  | PostedCompensationFactNotRecordedResponse;
+  | PostedCompensationFactNotRecordedResponse
+  | {ok:true; recordStatus:"unavailable"; jobKey:string; legacyRawSalary:string|null; failureCode:string};
 
 type CompensationAuditJobIdentity<T> = T extends { jobKey: string }
   ? Omit<T, "jobKey"> & { jobId: string }
@@ -5854,13 +5857,15 @@ export type JobCompensationAuditPostedResponse =
       ok: true;
       recordStatus: "recorded";
       fact: JobCompensationAuditPostedFact;
+      determination: import("./semantic-determinations.js").DeterminationEnvelope;
     }
   | {
       ok: true;
       recordStatus: "not_recorded";
       jobId: string;
       legacyRawSalary: string | null;
-    };
+    }
+  | {ok:true;recordStatus:"unavailable";jobId:string;legacyRawSalary:string|null;failureCode:string};
 
 export const MARKET_COMPENSATION_ESTIMATE_STATES = [
   "not_requested",
@@ -5988,6 +5993,7 @@ export interface MarketCompensationSourceSnapshot {
 }
 
 export interface MarketCompensationEvidenceRow {
+  determinationId: string | null;
   sourceId: MarketCompensationSourceId;
   displayName: string;
   sourceUrl: string | null;
@@ -6096,6 +6102,7 @@ export type MarketCompensationBenchmarkLineage =
   | MarketCompensationExtrapolatedBenchmarkLineage;
 
 interface MarketCompensationEstimateBase {
+  determinations: DeterminationEnvelope[];
   tenantId: string;
   jobKey: string;
   estimateState: MarketCompensationEstimateState;
@@ -6177,13 +6184,15 @@ export interface MarketCompensationEstimateNotRequestedResponse {
 
 export type MarketCompensationEstimateResponse =
   | MarketCompensationEstimateRecordedResponse
-  | MarketCompensationEstimateNotRequestedResponse;
+  | MarketCompensationEstimateNotRequestedResponse
+  | { ok: true; recordStatus: "unavailable"; jobKey: string; failureCode: string };
 
 export type JobCompensationAuditMarketEstimate = CompensationAuditJobIdentity<
   MarketCompensationEstimate
 >;
 
 export type JobCompensationAuditMarketResponse =
+  | { ok: true; recordStatus: "unavailable"; jobId: string; failureCode: string }
   | {
       ok: true;
       recordStatus: "recorded";
@@ -6235,6 +6244,7 @@ export const JobUrlImportRequestSchema = z
 export type JobUrlImportRequest = z.infer<typeof JobUrlImportRequestSchema>;
 
 export type JobUrlImportResponse =
+  | { ok: true; status: "pending_triage" | "triage_rejected" | "triage_uncertain"; reason: string; }
   | {
       ok: true;
       status: "imported";

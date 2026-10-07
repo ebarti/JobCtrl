@@ -31,6 +31,8 @@ import asyncio
 import logging
 
 from pydantic import ValidationError
+from jobctrl.domain.determinations import DeterminationFailure
+from jobctrl.domain.ports.analysis_agreement import AnalysisAgreementJudge
 
 from jobctrl.domain.materials.analysis import (
     AnalysisAgreement,
@@ -40,7 +42,6 @@ from jobctrl.domain.materials.analysis import (
     JobAnalysis,
     JobAnalysisDraft,
 )
-from jobctrl.domain.materials.analysis_content import AnalysisContentError, validate_candidate_prose
 from jobctrl.domain.materials.analysis_grounding import (
     GroundingError,
     find_grounding_violations,
@@ -62,6 +63,7 @@ async def _draft_with_retry(
     system_prompt: str,
     jd_snapshot: str,
     max_retries: int,
+    verify_prose,
 ) -> JobAnalysisDraft:
     """Run one leg, retrying on schema/grounding/content failure (AI-SPEC §4b).
 
@@ -79,18 +81,18 @@ async def _draft_with_retry(
     for attempt in range(max_retries + 1):
         try:
             draft = await adapter.draft(_with_rejection_feedback(system_prompt, last_error), jd_snapshot)
-            validate_candidate_prose(draft)
             snapped = ground_and_snap(draft, jd_snapshot)
+            verify_prose(snapped)
             assert isinstance(snapped, JobAnalysisDraft)  # snap preserves the leg type
             return snapped
-        except (ValidationError, GroundingError, AnalysisContentError) as exc:
+        except (ValidationError, GroundingError, DeterminationFailure) as exc:
             last_error = exc
             log.warning(
                 "Analysis leg %s failed (attempt %d/%d): %s",
                 adapter.model_id,
                 attempt + 1,
                 max_retries + 1,
-                exc,
+                type(exc).__name__,
             )
         except Exception as exc:  # noqa: BLE001 — SDK/transport errors are per-leg failures
             last_error = exc
@@ -99,79 +101,10 @@ async def _draft_with_retry(
                 adapter.model_id,
                 attempt + 1,
                 max_retries + 1,
-                exc,
+                type(exc).__name__,
             )
     assert last_error is not None
     raise last_error
-
-
-def compute_agreement(drafts: tuple[JobAnalysisDraft, ...]) -> AnalysisAgreement:
-    """Cross-model agreement over the surviving drafts (D-06/D-08).
-
-    Deterministic, free, instant code (no extra LLM call). With a single
-    surviving draft there is nothing to compare, so agreement is 1.0 by
-    definition. With multiple drafts the score is the mean Jaccard overlap of
-    the lowercased requirement-text sets and keyword sets; items that do not
-    appear in every draft are flagged for review (divergence is audit data,
-    never silently resolved).
-    """
-    if not drafts:
-        return AnalysisAgreement(score=0.0)
-    if len(drafts) == 1:
-        return AnalysisAgreement(score=1.0)
-
-    requirement_sets = [
-        {req.text.strip().lower() for req in draft.requirements} for draft in drafts
-    ]
-    keyword_sets = [
-        {kw.keyword.strip().lower() for kw in draft.keywords} for draft in drafts
-    ]
-
-    req_overlap = _mean_pairwise_jaccard(requirement_sets)
-    kw_overlap = _mean_pairwise_jaccard(keyword_sets)
-    score = round((req_overlap + kw_overlap) / 2, 4)
-
-    flagged_requirements = _flag_non_unanimous(requirement_sets)
-    flagged_keywords = _flag_non_unanimous(keyword_sets)
-    return AnalysisAgreement(
-        score=score,
-        flagged_requirements=flagged_requirements,
-        flagged_keywords=flagged_keywords,
-    )
-
-
-def _mean_pairwise_jaccard(sets: list[set[str]]) -> float:
-    pairs = [
-        _jaccard(sets[i], sets[j])
-        for i in range(len(sets))
-        for j in range(i + 1, len(sets))
-    ]
-    if not pairs:
-        return 1.0
-    return sum(pairs) / len(pairs)
-
-
-def _jaccard(a: set[str], b: set[str]) -> float:
-    if not a and not b:
-        return 1.0
-    union = a | b
-    if not union:
-        return 1.0
-    return len(a & b) / len(union)
-
-
-def _flag_non_unanimous(sets: list[set[str]]) -> tuple[str, ...]:
-    """Flag items that are NOT present in every draft (low-agreement items).
-
-    Symmetric for requirements and keywords — it operates purely on the
-    lowercased-text sets the caller already computed.
-    """
-    if len(sets) < 2:
-        return ()
-    everywhere = set.intersection(*sets) if sets else set()
-    anywhere: set[str] = set().union(*sets) if sets else set()
-    diverged = sorted(anywhere - everywhere)
-    return tuple(diverged)
 
 
 async def run_ensemble(
@@ -181,6 +114,9 @@ async def run_ensemble(
     adapters: tuple[AnalysisDraftPort, ...],
     synthesizer: AnalysisSynthesizerPort,
     synthesizer_system_prompt: str,
+    verify_prose,
+    agreement_judge: AnalysisAgreementJudge,
+    entity_id: str,
     max_leg_retries: int = DEFAULT_MAX_LEG_RETRIES,
 ) -> EnsembleOutcome:
     """Run the full merge+synthesize ensemble. See module docstring."""
@@ -194,6 +130,7 @@ async def run_ensemble(
                 system_prompt=system_prompt,
                 jd_snapshot=jd_snapshot,
                 max_retries=max_leg_retries,
+                verify_prose=verify_prose,
             )
             for adapter in adapters
         ),
@@ -207,8 +144,8 @@ async def run_ensemble(
             failures.append(
                 AnalysisFailure(
                     model_id=adapter.model_id,
-                    error=f"{type(result).__name__}: {result}",
-                    raw_output=_raw_output_from_error(result),
+                    error=result.code if isinstance(result, DeterminationFailure) else type(result).__name__,
+                    raw_output=None,
                 )
             )
         else:
@@ -218,13 +155,23 @@ async def run_ensemble(
         # Hard fail ONLY when zero legs survived (failure mode #2 boundary).
         raise EnsembleError("all ensemble legs failed", tuple(failures))
 
-    agreement = compute_agreement(tuple(drafts))
+    agreement_result, agreement_envelope = agreement_judge.judge(entity_id=entity_id, drafts=tuple(drafts))
+    agreement = AnalysisAgreement(
+        score=agreement_result.score,
+        flagged_requirements=tuple(
+            ident for row in agreement_result.findings if row.kind == "requirement" for ident in row.source_ids
+        ),
+        flagged_keywords=tuple(
+            ident for row in agreement_result.findings if row.kind == "keyword" for ident in row.source_ids
+        ),
+    )
     canonical = await _synthesize_with_retry(
         synthesizer,
         system_prompt=synthesizer_system_prompt,
         drafts=tuple(drafts),
         jd_snapshot=jd_snapshot,
         max_retries=max_leg_retries,
+        verify_prose=verify_prose,
     )
 
     return EnsembleOutcome(
@@ -233,6 +180,7 @@ async def run_ensemble(
         failures=tuple(failures),
         agreement=agreement,
         legs_attempted=len(adapters),
+        agreement_determination_id=agreement_envelope.determination_id,
     )
 
 
@@ -243,6 +191,7 @@ async def _synthesize_with_retry(
     drafts: tuple[JobAnalysisDraft, ...],
     jd_snapshot: str,
     max_retries: int,
+    verify_prose,
 ) -> JobAnalysis:
     """Reconcile drafts into the canonical analysis, re-asking on grounding fail.
 
@@ -261,32 +210,26 @@ async def _synthesize_with_retry(
                 drafts=drafts,
                 jd_snapshot=jd_snapshot,
             )
-            validate_candidate_prose(canonical)
-            return ground_and_snap(canonical, jd_snapshot)
-        except (ValidationError, GroundingError, AnalysisContentError) as exc:
+            canonical = ground_and_snap(canonical, jd_snapshot)
+            verify_prose(canonical)
+            return canonical
+        except (ValidationError, GroundingError, DeterminationFailure) as exc:
             last_error = exc
             log.warning(
                 "Synthesizer failed (attempt %d/%d): %s",
                 attempt + 1,
                 max_retries + 1,
-                exc,
+                type(exc).__name__,
             )
     assert last_error is not None
     raise last_error
 
 
 def _with_rejection_feedback(system_prompt: str, last_error: Exception | None) -> str:
-    """Re-ask with the candidate-prose rejection so the leg can correct it (AI-SPEC §6)."""
-    if isinstance(last_error, AnalysisContentError):
-        return f"{system_prompt}\nYour previous output was rejected: {last_error} Return corrected candidate prose."
+    feedback = getattr(last_error, "repair_feedback", None)
+    if feedback:
+        return system_prompt + "\nPrevious verification findings (data for repair):\n" + feedback
     return system_prompt
-
-
-def _raw_output_from_error(error: BaseException) -> str | None:
-    """Best-effort raw model output from a grounding rejection, for the audit row."""
-    if isinstance(error, GroundingError):
-        return "; ".join(v.describe() for v in error.violations)
-    return None
 
 
 # Keep ``find_grounding_violations`` reachable from this module for callers that
@@ -296,6 +239,5 @@ _ = (find_grounding_violations,)
 
 __all__ = [
     "DEFAULT_MAX_LEG_RETRIES",
-    "compute_agreement",
     "run_ensemble",
 ]

@@ -68,6 +68,14 @@ EXACT_V12_MANIFEST = SchemaManifest(
     fingerprint="10a8edc30fbfa77e7bea57f3c939a80d836ef3d579f4c5378e7e6e49c6754b56",
 )
 
+EXACT_V13_MANIFEST = SchemaManifest(
+    version=13,
+    object_count=286,
+    table_count=128,
+    fingerprint="49fabc62dbd1917586c1d457f772d1c5a468c162c2f485e71d1d943ce3c65aec",
+)
+
+
 class SchemaManifestError(RuntimeError):
     """Raised before writes when a database is not an exact known schema."""
 
@@ -88,12 +96,7 @@ def schema_dump(conn: sqlite3.Connection) -> tuple[tuple[str, str, str, str], ..
 def _is_sqlite_owned_schema_row(row: tuple[str, str, str, str]) -> bool:
     """Ignore only exact inert objects created internally by SQLite."""
     object_type, name, table_name, sql = row
-    if (
-        object_type == "index"
-        and name.startswith("sqlite_autoindex_")
-        and table_name
-        and sql == ""
-    ):
+    if object_type == "index" and name.startswith("sqlite_autoindex_") and table_name and sql == "":
         return True
     return row in {
         (

@@ -4,6 +4,7 @@ export { useApplyJobMutation } from "./hooks/useApplyJobMutation.js";
 export {
   useApplyReviewDecisionMutation,
   useRepeatApplicationOverrideMutation,
+  useRepeatApplicationCheckMutation,
   useCreateResumeReviewDraftMutation,
   useOutcomeSuggestionDecisionMutation,
   useRecordManualApplicationOutcomeMutation,

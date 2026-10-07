@@ -130,7 +130,7 @@ def fixture() -> dict[str, Any]:
 
 
 def test_valid_kind_transitions_count_matches_table() -> None:
-    assert len(_VALID_KIND_TRANSITIONS) == 16
+    assert len(_VALID_KIND_TRANSITIONS) == 17
 
 
 def test_fixture_covers_every_row_of_valid_transitions(fixture: dict[str, Any]) -> None:

@@ -749,85 +749,11 @@ the TS `apply_runs → apply_run_projections` projector were removed.
 
 ## 2026-06-01: Application-Outcome Feedback Loop With Bounded Gmail Ingestion
 
-Status: accepted
-
-Decision: JobCtrl tracks what happens to a submitted application and closes the
-loop with a bounded, Gmail-only email feedback path. A local review/outcome model
-(review decisions, reviewed outcomes, linked email evidence, outcome suggestions)
-lives in SQLite behind the existing Apply, Pipeline, Operations, and
-Profile/Gmail boundaries — no new CRM context. A dedicated Gmail feedback module
-(`infrastructure/gmail/feedback.py`, separate from the verification-only MCP
-server) searches for messages that match a known application, scores confidence,
-and fetches a full message body only after the message is linked to an
-application; deterministic v1 classification maps bodies to confirmation,
-recruiter reply, interview, assessment, rejection, offer, bounce, or unknown, and
-produces outcome suggestions the user accepts or declines.
-
-Rationale:
-
-- outcome data is the signal that shows whether discovery, scoring, and tailoring
-  are actually working; without it the pipeline is open-loop
-- reusing the existing bounded contexts avoids a premature CRM abstraction for a
-  single-user product
-- a bounded feedback scanner (not a general mailbox reader) plus
-  fetch-body-only-after-link keeps mailbox access proportionate to the feature
-
-Consequences:
-
-- raw Gmail bodies stay out of event payloads, telemetry, logs, and dashboard
-  projections; only safe evidence identifiers are written into `job_events`
-- email evidence is stored locally with body text and a body hash so duplicate
-  Gmail message ids dedupe
-- outcomes are suggestions until a user commits them; manual outcomes remain
-  available without any mailbox scan
-- the Apply Review queue (`views/apply-review/`) and the Jobs detail-workspace outcome
-  timeline read these local models through Operations hooks
-
-Cites: `docs/plans/implemented/2026-06-01-apply-review-outcome-feedback.md`;
-PRs #115, #116, #117.
+Amended 2026-10-07 by [Semantic Judgments Are LLM Determinations](#2026-10-07-semantic-judgments-are-llm-determinations). A bounded scan starts from confirmed application anchors and applies exact recipient/date/thread/domain checks. A model determines linking from bounded metadata before a body is read, then classifies the linked body into the closed outcome enum with verbatim evidence, confidence and rationale. Both determinations persist provenance. Provider or validation failure records an actionable blocked scan and creates no suggestion. Human acceptance/correction alone creates a reviewed outcome. Raw bodies remain in local canonical evidence and never enter broad projections or logs.
 
 ## 2026-06-03: Resume Tailoring Quality Is A Product System, Not Prompt Wording
 
-Status: accepted
-
-Decision: resume quality is controlled by typed evidence, deterministic checks,
-and a tiered review gate rather than by prompt wording alone. Achievement evidence
-becomes a typed profile value object with a claim mode (verified,
-evidence-reframing, adjacent translation, draft-requiring-confirmation); only
-verified and evidence-reframed claims may be auto-approved. Deterministic quality
-checks (`domain/materials/quality.py`) enforce standard sections, required
-evidence IDs, verified-metric sourcing, keyword coverage / anti-stuffing, and
-seniority-appropriate scope before and after generation. High-fit jobs
-(fit >= 8/10) additionally run a six-persona adversarial review
-(`domain/materials/adversarial.py`) after the normal judge; any blocker keeps the
-resume unapproved.
-
-Rationale:
-
-- "creativity" cannot be one boolean — the system needs claim modes so evidence
-  reframing is auto-approvable while adjacent/draft claims require confirmation
-- ATS readability, keyword stuffing, and seniority mismatch are partly
-  deterministic and should be caught without spending an LLM judge call
-- high-fit opportunities justify extra adversarial scrutiny; low-fit jobs should
-  not pay that latency and cost
-- quality needs golden failure fixtures (unsupported metric, AI voice, weak
-  seniority, ATS-unfriendly, keyword stuffing, missing evidence, high-fit blocker)
-  so regressions are caught locally without live LLM credentials
-
-Consequences:
-
-- profiles store typed achievement evidence and per-claim auto-approval policy;
-  profiles without it stay valid
-- deterministic quality failures feed the repair loop; warnings can trigger a
-  retry but never silently approve unsupported claims
-- the adversarial gate is skipped below the threshold and only runs after the
-  judge passes
-- a fixture-driven eval corpus under
-  `workers/automation/tests/fixtures/tailoring_quality/` runs with fake ports; no
-  fixture contains a real resume, profile, or application
-
-Cites: `docs/plans/implemented/2026-06-03-resume-tailoring-quality.md`;
-PRs #124, #125, #126, #127, #128.
+Amended 2026-10-07 by [Semantic Judgments Are LLM Determinations](#2026-10-07-semantic-judgments-are-llm-determinations). Materials retain strict generation schemas, canonical profile/requirement IDs, verbatim source binding, exact values, structural rendering and version fences. A separate claim-verification determination judges support, prohibited claims, voice and self-talk; the existing quality judge remains a separate model call. The model decides seniority alignment and whether required evidence is represented. Unsupported findings drive repair or failure without altering the last accepted generation. Acceptance depends on typed verdicts, never a score threshold or phrase list. Tests prove model authority and failure handling, without evaluation corpora.
 
 ## 2026-06-09: Employer Analysis Via A 3-SDK Agent Ensemble
 
@@ -901,44 +827,7 @@ Consequences:
 
 ## 2026-06-09: Generated-Materials Audit Is Served From Canonical Provenance Rows
 
-Status: accepted
-
-Decision: every audit claim shown for a generated resume is computed against the
-shipped rendered text and served from canonical rows, never inferred from the job
-description or derived on read. Accepted generations record per-bullet provenance
-(`provenance_builder.py`) whose `generated_text` matches the rendered resume;
-keyword coverage is computed by a rendered-text audit (`coverage_audit.py`) so a
-keyword counts as covered only when a provenance-backed bullet demonstrates it;
-coverage-bearing claims are bound to shipped lines by `claim_grounding.py` before
-they count; and a formatting-tolerant grounding pass (normalize + snap-to-source)
-tolerates whitespace and markup drift. The read model serves this audit data from
-canonical rows only.
-
-Rationale:
-
-- the auditability discipline in `CLAUDE.md` requires every displayed claim to
-  have an explicit source of truth; inferring coverage from job keywords or from
-  LEFT-JOIN-derived guesses violates that
-- provenance computed against the same payload that ships to the user keeps the
-  audit faithful to the artifact, not to an intermediate draft
-- serving audit from canonical rows (rip-and-replace of the derived read paths)
-  removes the class of bug where the UI shows a value no source can defend
-
-Consequences:
-
-- failed re-tailor attempts never destroy the last accepted generation's artifact
-  or provenance rows; failures remain audit history
-- post-generation warnings are lifecycle-labeled (used-to-repair,
-  accepted-residual, or produced-after-acceptance) so the audit says whether a
-  warning influenced the shipped artifact
-- Apply Review labels the coverage basis (`grounded_shipped_text_v1` vs
-  `judge_claimed_legacy`) instead of hiding it
-- adding an audit field means persisting it at the owning layer first, then
-  projecting it — not computing it on read
-
-Cites: PRs #142 (per-bullet provenance), #143 (voice pass + final audit against
-rendered text), #144 (serve audit from canonical rows), #148 (formatting-tolerant
-grounding). See `docs/architecture/tailoring.md`.
+Amended 2026-10-07 by [Semantic Judgments Are LLM Determinations](#2026-10-07-semantic-judgments-are-llm-determinations). Generation emits per-line IDs, evidence IDs, requirement IDs, transforms and reasons. Claim verification independently records source contributions, served requirements and findings against those line IDs. Code validates ID membership and verbatim spans, then commits the accepted artifact, envelope references and anchors together. The API and Apply Review join by ID. They never reconstruct sources or findings with substring/token similarity. A historical or edited line without an accepted anchor displays “No recorded source”. Coverage arithmetic uses the verifier's typed requirement bindings.
 
 ## 2026-06-15: Requirement-Fit Ledger — Scores Resolve From Weighted Requirement Fit
 
@@ -984,42 +873,7 @@ PRs #162–#177, #189.
 
 ## 2026-06-20: Compensation Is Warning-Only Evidence From Reported Company-Role Observations
 
-Status: accepted
-
-Decision: JobCtrl surfaces compensation as auditable, warning-only evidence and
-never lets it change ranking, scoring, apply-readiness, or apply dispatch. A
-deterministic source-access policy registry gates which observation sources are
-usable; posted-salary facts are parsed from discovery text and stored canonically
-without mutating `jobs.salary`; market estimates are computed only from reported
-company-role observations (opt-in/licensed provider feeds and permitted public
-community data), keyed by company/role/level with freshness, sample count, source
-agreement, and company tier. Estimates are projected through the canonical read
-model (`compensationSummary` / `compensationAudit` on job list and detail) with
-EUR-normalized ranges, confidence intervals, and safe source attribution.
-
-Rationale:
-
-- compensation is decision-support, not an eligibility gate; letting weak salary
-  data silently move ranking or apply-readiness would be unsafe
-- estimating only from reported company-role observations (never title/location
-  public aggregates) keeps estimates defensible, per the auditability discipline
-- a source-access policy plus safe attribution keeps unlicensed scraping out and
-  keeps provider payloads out of events, projections, and logs
-
-Consequences:
-
-- no automated third-party provider scrape or cache path and no US salary
-  baseline; unavailable sources render as explicit unavailable-licensed seams
-- weak evidence degrades to wider intervals or non-range states instead of
-  overconfident precise ranges; fallback tiers are seniority-aware
-- `CompensationFactsUpdated` events carry safe state markers only and route
-  through Operations invalidation; event payloads never contain source text,
-  credentials, or local paths
-- a maintenance refresh (CLI `compensation-refresh`, plus job-scoped and all-jobs
-  web/API actions) reparses and re-estimates existing jobs without rerunning
-  discovery
-
-Cites: PRs #180, #181, #182, #183, #184, #185, #187.
+Amended 2026-10-07 by [Semantic Judgments Are LLM Determinations](#2026-10-07-semantic-judgments-are-llm-determinations). Pay-in-prose extraction determines period, component, currency and bounds with exact numeric/quote checks. Job and provider-row interpretations use the shared occupation/seniority/place codes. Matching uses code equality and arithmetic; Levels.fyi routes use static code-to-slug maps and fixed-format source parsing. Each displayed row cites its classification determination. Compensation remains warning-only. A provider, spend or schema failure withholds a new estimate and preserves a previously accepted one; it cannot guess from salary cues or title/location words.
 
 ## 2026-06-24: HTML/CSS Resume Rendering Replaces LaTeX
 
@@ -1110,30 +964,7 @@ Cites: PR #206.
 
 ## 2026-07-02: Cross-Source Deduplication By Content Identity
 
-Status: accepted
-
-Decision: discovered postings are deduplicated across all sources by content
-identity, not only within jobspy or by URL. `domain/job_content_identity.py`
-defines the content-match basis; the discovery repository resolves an incoming
-posting to an existing `Job` after native-id and URL misses
-(`infrastructure/discovery/sqlite_repository.py`).
-
-Rationale:
-
-- the same role is frequently posted on multiple boards with different URLs;
-  URL-only dedup created duplicate jobs
-- a genuine-employer-identity check avoids collapsing distinct roles that merely
-  share superficial text
-- dedup at discovery keeps duplicates out of enrichment, scoring, and materials
-
-Consequences:
-
-- a posting can resolve to an existing job by content identity and record how it
-  matched (`ContentMatchBasis`)
-- the discovery port surfaces the match basis for auditability
-- cross-board duplicates are collapsed before downstream stages run
-
-Cites: PR #212 (building on earlier dedup work #108).
+Amended 2026-10-07 by [Semantic Judgments Are LLM Determinations](#2026-10-07-semantic-judgments-are-llm-determinations). Automatic identity uses exact ATS keys, normalized posting/application URLs or an exact fingerprint over full canonical title, employer and description. Every source observation remains attributable. Shingle and token-Jaccard matching are removed. Distinct identities remain distinct unless an accepted determination establishes a relationship. Scores cannot be reused through agency/repost wording. Exact identity and accepted duplicate links retain their canonical ownership and concurrency fences.
 
 ## 2026-07-03: At-Most-Once Apply With Binding Approval Gate
 
@@ -1168,44 +999,7 @@ Consequences:
 
 ## 2026-07-20: Confirmed Facts And Canonical Identity Gate Repeat Applications
 
-Status: accepted
-
-Decision: every live Apply claim evaluates repeat risk from two explicit source
-families: canonical job identity (including accepted duplicate links) and
-confirmed application facts. A match to the same canonical opening blocks by
-default. A conservative exact normalized employer plus materially equivalent
-role match requires an explicit, reasoned confirmation bound to the target,
-selected prior application, and current SHA-256 evidence fingerprint. That
-confirmation authorizes one live claim and is consumed atomically by the worker.
-
-Confirmed facts are `ApplicationSubmitted`, `ApplicationManuallyMarked`, a
-reviewed `applied_confirmation` outcome, or a compatible historical applied
-fact. Pending suggestions, free-text notes, dry runs, submit intent alone,
-failed pre-submit attempts, and inferred assumptions are excluded. Employer
-normalization removes only presentation differences and legal suffixes; role
-normalization uses a bounded alias set and removes presentation-only work-mode
-tokens. It does not fuzzy-merge employers or distinct roles.
-
-Rationale:
-
-- alternate source and apply URLs can rediscover one opening after an
-  application has already been confirmed;
-- title or employer similarity alone cannot safely rewrite application history;
-- an override is meaningful only when the authoritative mutation boundary can
-  prove what evidence the user inspected and consume it once; and
-- repeat protection complements rather than replaces approval binding,
-  submit-intent at-most-once behavior, and ambiguous-crash verification.
-
-Consequences:
-
-- the API and Apply Review expose the same bounded evidence, status, prior job,
-  reason, override, and audit trail that the worker recomputes;
-- additive override, consumption, and audit tables preserve historical facts
-  unchanged while making decisions inspectable;
-- the standing loop, direct API/RPC dispatch, stale UI state, and concurrent
-  claims cannot bypass or reuse the confirmation; and
-- the identity and audit contract can support later policy gates without adding
-  those policies here.
+Amended 2026-10-07 by [Semantic Judgments Are LLM Determinations](#2026-10-07-semantic-judgments-are-llm-determinations). Only reviewed application facts establish prior application history. Exact canonical identity and accepted duplicate links block repeat submissions. A model determines materially equivalent roles at the same employer, citing the two canonical job records; both runtimes read its persisted result. Missing and uncertain determinations are visible and block live submission. Equivalent roles require a reasoned confirmation bound to the exact evidence fingerprint, with one-attempt consumption. No employer suffix list or title aliases infer equivalence. Native write leases and explicit submission authorization remain mandatory.
 
 ## 2026-07-29: Keep Final Browser Submit Below The Page-Reading Model
 
@@ -1614,74 +1408,7 @@ Cites: `docs/plans/implemented/2026-07-05-evidence-map-interview-prep-plan.md` (
 
 ## 2026-07-05: Interview Preparation Is Grounded, Gated, Generation-Versioned Material
 
-Status: accepted
-
-Decision: Interview Preparation is a generated-materials capability for
-before-interview preparation only. Prep items are generated from existing
-grounded data, carry evidence and requirement provenance, pass the existing
-fabrication/claim-grounding/judge gates, and are persisted as
-generation-versioned material. The product has no live, in-session, streaming,
-transcript, microphone, or real-time answer-assistance state or endpoint.
-
-Rationale:
-
-- interview prep is only useful if the candidate can defend every claim from
-  their real profile evidence and accepted materials
-- the Materials context already has the truthfulness gates needed to reject
-  invented metrics, titles, employers, and named technologies
-- a dedicated no-live-assistance invariant prevents boundary drift into
-  unethical in-interview assistance
-
-Consequences:
-
-- prep generation is explicit and user-initiated; it is not part of discovery or
-  per-job preparation auto-spend
-- failed or regenerated prep never destroys the last accepted generation
-- post-interview reflection remains an Apply outcome note, not an interview
-  assistant transcript or live-session artifact
-
-Cites: `docs/plans/implemented/2026-07-05-evidence-map-interview-prep-plan.md` (Phase 0).
-
-### 2026-10-02 extension: Shared catalog, retained context, and separate notes
-
-The first-release integration in [#993](https://github.com/ebarti/JobCtrl/issues/993)
-keeps Materials ownership while adding a native Interviews composing view and
-one packaged, versioned catalog shared by Python and TypeScript. The authored
-research/metadata compiles deterministically; installed readers do not parse
-repository prose or depend on a plugin. Explicit responsibility tags and answer
-formats avoid deriving applicability from a title or forcing every answer into
-STAR.
-
-Question-specific evidence choices are explicit: automatic selection, a bounded
-ordered set of accepted profile evidence, or an empty choice that produces gaps.
-The request binds user choices to the current profile version and rejects stale
-or foreign evidence before provider spending. User notes cannot become accepted
-evidence through this path.
-
-Job preparation retains selected-card snapshots, evidence-selection mode/IDs, relevant generation-time
-profile excerpts, input bindings, rationale, and model/prompt/gate versions.
-Current changes produce read-side stale annotations instead of rewriting old
-prep. Version numbers alone are insufficient when the old source is not
-retained. User notes have independent tenant/job/question revision history and
-expected-revision saves; their user-statement status and edits cannot inherit
-generated-audit support or mutate Profile, fit, or Apply.
-The server binds a note origin to the same retained selected question and
-derives its card/catalog/context provenance; client claims cannot manufacture
-that association. Independent notes carry no generation context.
-
-Exact-schema v12 uses the existing stopped, independent candidate migration and
-native activation/rollback boundary. No runtime ensure-column or hidden event/
-artifact-metadata storage seam is introduced. Public catalog reads remain
-asset-backed without SQLite or a provider. Safe events invalidate private
-prep/note reads without carrying their text.
-
-Draft guidance and synthetic fixtures do not validate automated assessment or
-content efficacy. Reusable no-job preparation and typed rehearsal/calibration
-remain later phases; the existing no-live-assistance decision still applies.
-
-Owners: [Materials](architecture/materials.md#stored-interview-preparation),
-[Storage](architecture/storage.md), and the
-[API contract](api/complete-contract.md#interview-catalog-preparation-and-notes).
+Amended 2026-10-07 by [Semantic Judgments Are LLM Determinations](#2026-10-07-semantic-judgments-are-llm-determinations). The public catalog, explicit selections, immutable generation context/digest, notes and factual confirmation boundaries remain. Automatic question selection and evidence relevance/authority are model determinations with catalog/profile ID fences. Each question is generated separately using only that question's accepted evidence. An explicit empty selection produces gaps and guidance, never borrowed history. A claim verifier extracts propositions and judges support and C07 negotiation guidance. The independent quality judge remains. Unsupported or invalid output enters repair/fail handling and a failed refresh retains accepted prep. The grammar engine and sentence corpus are removed.
 
 ## 2026-07-05: Outcome Analytics Are Read-Only And Sample-Gated
 
@@ -2614,3 +2341,20 @@ remain failures and preserve reviewed output; no lexical or canned-question
 fallback is allowed. The offline demo therefore reports this capability
 unavailable. See [the API contract](api/complete-contract.md) and
 [source ownership](developer/repository-and-ownership-map.md).
+
+
+## 2026-10-07: Semantic Judgments Are LLM Determinations
+
+Every decision that depends on understanding text is a typed LLM determination. This generalizes Required-Bullet Coaching (2026-10-05) to intake admission, query planning, job and candidate interpretation, claim support, voice, requirement scope, evidence relevance, email intent/linking, page state, edit intent, form mapping and role equivalence. Regexes and lists describe formats, identifiers, security rules and literal user filters; they never determine meaning.
+
+The owning context supplies minimized canonical IDs and texts to `LlmPort.chat_json` in a Temporal activity or interactive sync RPC. A strict schema rejects extra fields and unknown enums. Each judgment carries source IDs, verbatim quotes and a rationale. Code checks membership, quote/number/date/currency binding, version fences and arithmetic. One shared versioned codes-and-labels taxonomy lives in Contracts, with no synonyms or aliases.
+
+An accepted envelope persists its kind, schema and prompt versions, provider/model, input fingerprint and typed result. Identical inputs and versions reuse the stored determination without another call. The lane and BR-050 spend preflight run before a new call. Provider unavailability, spend denial, malformed JSON, schema violations, foreign IDs and invalid quotes/numbers have distinct safe failure codes. A failed refresh preserves the last accepted artifact and records the blocked attempt. There is no lexical fallback; affected offline-demo capabilities report unavailable.
+
+Owner choices: intake triage defaults to 20 listings per batch (configurable 1–100) on the configured Discovery provider/model. Every listing, including rejects and uncertain rows, is persisted and visible. Each new determination uses one provider. Employer analysis retains its optional ensemble; BR-058 permits one ready provider. Claim verification is a separate call alongside the existing quality judge. Generators record line IDs, evidence/requirement IDs, transform and reason; the verifier affirms source contributions and findings by line ID. Readers join recorded IDs; unanchored lines say “No recorded source”.
+
+Candidate interpretations are pending suggestions until the owner confirms selected values in a version-fenced profile save. Inferred seniority or strength never becomes an authored evidence fact. Job interpretation owns requirement scope and posting taxonomy; scoring resolves arithmetic over model verdicts and typed blockers. Scoring limits use recency and stable IDs rather than vocabulary overlap. Exact canonical identity and exact full-content fingerprints may deduplicate; non-exact role equivalence requires a determination.
+
+Exact schema 13 follows the stopped-runtime native backup/candidate/activation boundary. It removes inferred seniority fields and withdraws unconfirmed old classification, provenance, pay and benchmark outputs for recomputation. Authored profile text, reviewed outcomes, comments and accepted artifact content remain; the paired backup is recoverable. No startup lexical reparse or silent admission repairs old records.
+
+Validation uses fake-model authority tests, strict failure/binding tests, one-off deletion searches and owned synthetic product-path QA. No eval sets, labeled sentence corpora, baseline comparisons or recorded-output replay fixtures are permitted. Temporal replay consumes persisted results; it does not call a provider. Merge and release remain owner decisions.

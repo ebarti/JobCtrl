@@ -25,7 +25,7 @@ from jobctrl.domain.discovery import (
     SearchStrategy,
     Source,
 )
-from jobctrl.domain.discovery.use_cases import DiscoverJobsUseCase, PostingAcceptance
+from jobctrl.domain.discovery.use_cases import DiscoverJobsUseCase
 from jobctrl.domain.events.base import DomainEvent
 from jobctrl.domain.identifiers import JobId
 from jobctrl.domain.job_content_identity import is_genuine_employer_identity
@@ -84,11 +84,7 @@ def _posting(
     return ScrapedJobPosting(
         posting_url=PostingUrl(value=canonical_url),
         source=Source(board=board),
-        employer=(
-            Employer(name=employer_name)
-            if employer_name is not None
-            else Employer.unknown()
-        ),
+        employer=(Employer(name=employer_name) if employer_name is not None else Employer.unknown()),
         metadata=metadata or JobMetadata(title="Platform Engineer", location="Remote"),
         strategy=SearchStrategy.WORKDAY_API,
         source_id=source_id,
@@ -494,10 +490,7 @@ def _concurrent_discovery_claims(
                 barrier.wait(timeout=5)
             return result
 
-    connections = [
-        sqlite3.connect(db_path, timeout=10, check_same_thread=False)
-        for _ in range(2)
-    ]
+    connections = [sqlite3.connect(db_path, timeout=10, check_same_thread=False) for _ in range(2)]
     for connection in connections:
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
@@ -510,6 +503,7 @@ def _concurrent_discovery_claims(
     )
     use_cases = [
         DiscoverJobsUseCase(
+            triage=_AdmittedTriage(),
             repository=repositories[index],
             publisher=publishers[index],
             clock=lambda: "2026-05-12T00:00:00Z",
@@ -616,6 +610,7 @@ def test_duplicate_audit_uses_the_exact_canonical_owner_basis(
     repo = SqliteJobRepository(conn)
     publisher = RecordingPublisher()
     use_case = DiscoverJobsUseCase(
+        triage=_AdmittedTriage(),
         repository=repo,
         publisher=publisher,
         clock=lambda: "2026-05-12T00:00:00Z",
@@ -733,6 +728,7 @@ def test_discover_jobs_use_case_creates_job_identity_and_first_observation(
     current_time = "2026-05-12T00:00:00Z"
     stable_job_id = JobId("d7c34823-22ac-42ac-b1a0-64fe00eb1014")
     use_case = DiscoverJobsUseCase(
+        triage=_AdmittedTriage(),
         repository=repo,
         publisher=publisher,
         clock=lambda: current_time,
@@ -792,6 +788,7 @@ def test_discovery_canonicalize_span_omits_new_job_id_and_records_owner_id(
 
     job_id = JobId("d7c34823-22ac-42ac-b1a0-64fe00eb1014")
     use_case = DiscoverJobsUseCase(
+        triage=_AdmittedTriage(),
         repository=SqliteJobRepository(conn),
         publisher=RecordingPublisher(),
         clock=lambda: "2026-05-12T00:00:00Z",
@@ -813,6 +810,7 @@ def test_discover_jobs_use_case_rejects_url_shaped_job_id_factory(
     repo = SqliteJobRepository(conn)
     publisher = RecordingPublisher()
     use_case = DiscoverJobsUseCase(
+        triage=_AdmittedTriage(),
         repository=repo,
         publisher=publisher,
         clock=lambda: "2026-05-12T00:00:00Z",
@@ -875,6 +873,7 @@ def test_discover_jobs_use_case_observes_concurrent_insert_winner(
     )
     monkeypatch.setattr(repo, "save", lose_first_insert)
     use_case = DiscoverJobsUseCase(
+        triage=_AdmittedTriage(),
         repository=repo,
         publisher=publisher,
         clock=lambda: "2026-05-12T00:00:01Z",
@@ -905,6 +904,7 @@ def test_discover_jobs_use_case_observes_existing_job_and_links_duplicate(
     publisher = RecordingPublisher()
     current_time = "2026-05-12T00:00:00Z"
     use_case = DiscoverJobsUseCase(
+        triage=_AdmittedTriage(),
         repository=repo,
         publisher=publisher,
         clock=lambda: current_time,
@@ -965,6 +965,7 @@ def test_discover_jobs_use_case_resurfaces_soft_deleted_existing_job(
     publisher = RecordingPublisher()
     current_time = "2026-05-12T00:00:00Z"
     use_case = DiscoverJobsUseCase(
+        triage=_AdmittedTriage(),
         repository=repo,
         publisher=publisher,
         clock=lambda: current_time,
@@ -1025,186 +1026,13 @@ def test_discover_jobs_use_case_resurfaces_soft_deleted_existing_job(
     ]
 
 
-def test_discover_jobs_use_case_rejects_new_policy_mismatches_without_creating_job(
-    conn: sqlite3.Connection,
-) -> None:
-    repo = SqliteJobRepository(conn)
-    publisher = RecordingPublisher()
-    use_case = DiscoverJobsUseCase(
-        repository=repo,
-        publisher=publisher,
-        acceptance_policy=lambda _posting: PostingAcceptance.reject(
-            reason="current_policy_mismatch",
-            rejection_reasons=("location_mismatch",),
-        ),
-        clock=lambda: "2026-05-12T00:00:00Z",
-    )
-
-    summary = use_case.execute(
-        tenant_id=LOCAL_TENANT,
-        postings=[
-            _posting(
-                canonical_url="https://jobs.ashbyhq.com/acai/india",
-                source_native_id="india",
-                source_id="ashby:acai",
-                ats_kind=AtsKind.ASHBY,
-                metadata=JobMetadata(
-                    title="Senior Software Engineer (India)",
-                    description="Build distributed systems.",
-                    location="Remote",
-                ),
-            )
-        ],
-        run_id="run-1",
-    )
-
-    assert summary.total == 1
-    assert summary.new_jobs == 0
-    assert summary.observed == 0
-    assert summary.duplicates_rejected == 0
-    assert repo.resolve_by_posting_url(
-        LOCAL_TENANT,
-        PostingUrl(value="https://jobs.ashbyhq.com/acai/india"),
-    ) is None
-    assert publisher.events == []
-
-
-def test_discover_jobs_use_case_soft_deletes_active_job_rejected_by_current_policy(
-    conn: sqlite3.Connection,
-) -> None:
-    repo = SqliteJobRepository(conn)
-    publisher = RecordingPublisher()
-    use_case = DiscoverJobsUseCase(
-        repository=repo,
-        publisher=publisher,
-        clock=lambda: "2026-05-12T00:00:00Z",
-    )
-    use_case.execute(tenant_id=LOCAL_TENANT, postings=[_posting()], run_id="run-1")
-    owner = repo.resolve_by_posting_url(
-        LOCAL_TENANT,
-        PostingUrl(value="https://boards.greenhouse.io/acme/jobs/123"),
-    )
-    assert owner is not None
-    publisher.events.clear()
-    policy_use_case = DiscoverJobsUseCase(
-        repository=repo,
-        publisher=publisher,
-        acceptance_policy=lambda _posting: PostingAcceptance.reject(
-            reason="current_policy_mismatch",
-            rejection_reasons=("location_mismatch",),
-        ),
-        clock=lambda: "2026-05-15T00:00:00Z",
-    )
-
-    summary = policy_use_case.execute(
-        tenant_id=LOCAL_TENANT,
-        postings=[
-            _posting(
-                metadata=JobMetadata(
-                    title="Senior Software Engineer (India)",
-                    description="Build distributed systems.",
-                    location="Remote",
-                ),
-            )
-        ],
-        run_id="run-2",
-    )
-
-    assert summary.total == 1
-    assert summary.new_jobs == 0
-    assert summary.observed == 0
-    assert summary.duplicates_rejected == 0
-    job = repo.load(LOCAL_TENANT, owner.job_id)
-    assert job is not None
-    assert job.is_deleted is True
-    assert "location_mismatch" in (job.delete_reason or "")
-    assert job.metadata.title == "Platform Engineer"
-    observations = repo.list_observations(
-        LOCAL_TENANT,
-        owner.job_id,
-    )
-    assert [observation.run_id for observation in observations] == ["run-2"]
-    assert [event.event_type for event in publisher.events] == [
-        "JobDeleted",
-        "JobSourceObserved",
-    ]
-
-
-def test_discover_jobs_use_case_keeps_policy_rejected_deleted_job_hidden(
-    conn: sqlite3.Connection,
-) -> None:
-    repo = SqliteJobRepository(conn)
-    publisher = RecordingPublisher()
-    use_case = DiscoverJobsUseCase(
-        repository=repo,
-        publisher=publisher,
-        clock=lambda: "2026-05-12T00:00:00Z",
-    )
-    use_case.execute(tenant_id=LOCAL_TENANT, postings=[_posting()], run_id="run-1")
-    job_id = _job_id_for_url(repo, "https://boards.greenhouse.io/acme/jobs/123")
-    repo.soft_delete(
-        LOCAL_TENANT,
-        job_id,
-        reason="discovery hygiene rejected ashby:acai: location_mismatch",
-        deleted_at="2026-05-13T00:00:00Z",
-    )
-    publisher.events.clear()
-    policy_use_case = DiscoverJobsUseCase(
-        repository=repo,
-        publisher=publisher,
-        acceptance_policy=lambda _posting: PostingAcceptance.reject(
-            reason="current_policy_mismatch",
-            rejection_reasons=("location_mismatch",),
-        ),
-        clock=lambda: "2026-05-15T00:00:00Z",
-    )
-
-    summary = policy_use_case.execute(
-        tenant_id=LOCAL_TENANT,
-        postings=[
-            _posting(
-                metadata=JobMetadata(
-                    title="Senior Software Engineer (India)",
-                    description="Build distributed systems.",
-                    location="Remote",
-                ),
-            )
-        ],
-        run_id="run-2",
-    )
-
-    assert summary.total == 1
-    assert summary.new_jobs == 0
-    assert summary.observed == 0
-    assert summary.duplicates_rejected == 0
-    hidden = repo.load(LOCAL_TENANT, job_id)
-    assert hidden is not None
-    assert hidden.is_deleted is True
-    assert hidden.metadata.title == "Platform Engineer"
-    tombstone = conn.execute(
-        """
-        SELECT deleted.restored_at
-        FROM jobctrl_deleted_jobs AS deleted
-        JOIN jobs
-          ON jobs.tenant_id = deleted.tenant_id
-         AND jobs.job_id = deleted.job_id
-        WHERE jobs.url = ?
-        """,
-        ("https://boards.greenhouse.io/acme/jobs/123",),
-    ).fetchone()
-    assert tombstone is not None
-    assert tombstone["restored_at"] is None
-    observations = repo.list_observations(LOCAL_TENANT, job_id)
-    assert [observation.run_id for observation in observations] == ["run-2"]
-    assert [event.event_type for event in publisher.events] == ["JobSourceObserved"]
-
-
 def test_discover_jobs_use_case_preserves_existing_salary_when_rediscovery_is_blank(
     conn: sqlite3.Connection,
 ) -> None:
     repo = SqliteJobRepository(conn)
     publisher = RecordingPublisher()
     use_case = DiscoverJobsUseCase(
+        triage=_AdmittedTriage(),
         repository=repo,
         publisher=publisher,
         clock=lambda: "2026-05-12T00:00:00Z",
@@ -1248,6 +1076,7 @@ def test_discover_jobs_use_case_preserves_existing_salary_when_rediscovery_is_bl
     assert rediscovered.metadata.salary == "$180,000"
     assert rediscovered.metadata.description == "Lead engineering teams in Spain."
 
+
 def test_discover_jobs_use_case_rejects_low_confidence_duplicate(
     conn: sqlite3.Connection,
 ) -> None:
@@ -1266,6 +1095,7 @@ def test_discover_jobs_use_case_rejects_low_confidence_duplicate(
         )
 
     use_case = DiscoverJobsUseCase(
+        triage=_AdmittedTriage(),
         repository=repo,
         publisher=publisher,
         resolver=resolver,
@@ -1298,10 +1128,7 @@ def test_discover_jobs_use_case_rejects_low_confidence_duplicate(
     assert [event.event_type for event in publisher.events] == ["DuplicateJobLinkRejected"]
     rejected = publisher.events[0]
     assert rejected.payload["job_id"] == str(owner.job_id)
-    assert (
-        rejected.payload["candidate_posting_url"]
-        == "https://boards.greenhouse.io/acme/jobs/low-confidence"
-    )
+    assert rejected.payload["candidate_posting_url"] == "https://boards.greenhouse.io/acme/jobs/low-confidence"
     assert rejected.payload["reason"] == "confidence_below_threshold"
     assert (
         repo.list_observations(
@@ -1327,6 +1154,7 @@ def test_discover_jobs_use_case_collapses_jobspy_job_rediscovered_by_canonical_s
         description=description,
     )
     use_case = DiscoverJobsUseCase(
+        triage=_AdmittedTriage(),
         repository=repo,
         publisher=publisher,
         clock=lambda: "2026-05-12T00:00:00Z",
@@ -1373,100 +1201,21 @@ def test_discover_jobs_use_case_collapses_jobspy_job_rediscovered_by_canonical_s
     ]
 
 
-def test_discover_jobs_use_case_collapses_reworded_cross_source_description(
-    conn: sqlite3.Connection,
-) -> None:
-    repo = SqliteJobRepository(conn)
-    publisher = RecordingPublisher()
-    use_case = DiscoverJobsUseCase(
-        repository=repo,
-        publisher=publisher,
-        clock=lambda: "2026-05-12T00:00:00Z",
-    )
-    base_description = _long_description("resp", tokens=90)
-    reworded_description = base_description + " " + _long_description("extra", tokens=5)
-    survivor = "https://boards.greenhouse.io/acme/jobs/staff-eng"
-
-    use_case.execute(
-        tenant_id=LOCAL_TENANT,
-        postings=[
-            _posting(
-                canonical_url=survivor,
-                source_native_id="gh-1",
-                source_id="greenhouse:acme",
-                ats_kind=AtsKind.GREENHOUSE,
-                board="Acme",
-                metadata=JobMetadata(
-                    title="Staff Platform Engineer",
-                    description=base_description,
-                    location="Remote",
-                ),
-            )
-        ],
-        run_id="run-greenhouse",
-    )
-    publisher.events.clear()
-
-    summary = use_case.execute(
-        tenant_id=LOCAL_TENANT,
-        postings=[
-            _posting(
-                canonical_url="https://jobs.lever.co/acme/staff-platform-engineer",
-                source_native_id="lever-1",
-                source_id="lever:acme",
-                ats_kind=AtsKind.LEVER,
-                board="Acme",
-                metadata=JobMetadata(
-                    title="Staff Platform Engineer",
-                    description=reworded_description,
-                    location="Remote",
-                ),
-            )
-        ],
-        run_id="run-lever",
-    )
-
-    assert summary.new_jobs == 0
-    assert summary.observed == 1
-    assert summary.duplicates_linked == 1
-    assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 1
-    surviving_job = repo.load(LOCAL_TENANT, _job_id_for_url(repo, survivor))
-    duplicate_lookup = repo.load(
-        LOCAL_TENANT,
-        surviving_job.job_id if surviving_job is not None else _job_id(survivor),
-    )
-    assert surviving_job is not None
-    assert duplicate_lookup is not None
-    assert duplicate_lookup.job_id == surviving_job.job_id
-    link = conn.execute("SELECT surviving_job_id, reason, confidence FROM job_duplicate_links").fetchone()
-    assert link["surviving_job_id"] == str(surviving_job.job_id)
-    assert link["reason"] == "content_shingle_match"
-    assert link["confidence"] == 0.85
-
-
 def test_discover_jobs_use_case_matches_fresh_listing_against_enriched_owner(
     conn: sqlite3.Connection,
 ) -> None:
-    """A fresh listing must still collapse onto an already-enriched owner.
-
-    Discovery stores the board LISTING in ``jobs.description``; enrichment writes
-    a much longer full text to ``job_enrichments.full_description``. Comparing an
-    incoming listing only against the enriched text drops below the shingle
-    threshold, so cross-source dedup silently stopped working post-enrichment.
-    The match must compare the incoming listing against the stored LISTING text
-    like-for-like (this test fails on the pre-fix tip, which compared against the
-    enriched text alone: reworded-vs-enriched Jaccard 0.66 < 0.83 threshold).
-    """
+    """Exact listing identity remains stable after enrichment adds separate text."""
     repo = SqliteJobRepository(conn)
     publisher = RecordingPublisher()
     use_case = DiscoverJobsUseCase(
+        triage=_AdmittedTriage(),
         repository=repo,
         publisher=publisher,
         clock=lambda: "2026-05-12T00:00:00Z",
     )
     listing = _long_description("resp", tokens=90)
     enriched = listing + " " + _long_description("bene", tokens=40)
-    second_source_listing = listing + " " + _long_description("extra", tokens=5)
+    second_source_listing = listing
     survivor = "https://boards.greenhouse.io/acme/jobs/staff-eng"
 
     use_case.execute(
@@ -1535,8 +1284,8 @@ def test_discover_jobs_use_case_matches_fresh_listing_against_enriched_owner(
     assert surviving_job is not None
     link = conn.execute("SELECT surviving_job_id, reason, confidence FROM job_duplicate_links").fetchone()
     assert link["surviving_job_id"] == str(surviving_job.job_id)
-    assert link["reason"] == "content_shingle_match"
-    assert link["confidence"] == 0.85
+    assert link["reason"] == "content_fingerprint_match"
+    assert link["confidence"] == 0.95
 
 
 def test_discover_jobs_use_case_keeps_accepted_owner_when_content_duplicate_rejected(
@@ -1554,21 +1303,17 @@ def test_discover_jobs_use_case_keeps_accepted_owner_when_content_duplicate_reje
     delete the owner on a later run.
     """
 
-    def reject_india(posting: ScrapedJobPosting) -> PostingAcceptance:
-        if "india" in (posting.metadata.location or "").casefold():
-            return PostingAcceptance.reject(
-                reason="current_policy_mismatch",
-                rejection_reasons=("location_mismatch",),
-            )
-        return PostingAcceptance.accept()
+    class ModelTriage:
+        def admit(self, *, tenant_id, postings):
+            return list(postings) if self.accept else []
 
+        accept = True
+
+    triage = ModelTriage()
     repo = SqliteJobRepository(conn)
     publisher = RecordingPublisher()
     use_case = DiscoverJobsUseCase(
-        repository=repo,
-        publisher=publisher,
-        acceptance_policy=reject_india,
-        clock=lambda: "2026-05-12T00:00:00Z",
+        triage=triage, repository=repo, publisher=publisher, clock=lambda: "2026-05-12T00:00:00Z"
     )
 
     owner_url = "https://boards.greenhouse.io/acme/jobs/remote-us"
@@ -1605,9 +1350,10 @@ def test_discover_jobs_use_case_keeps_accepted_owner_when_content_duplicate_reje
     assert owner is not None and owner.is_deleted is False
     publisher.events.clear()
 
+    triage.accept = False
     summary = use_case.execute(tenant_id=LOCAL_TENANT, postings=[india_duplicate], run_id="run-duplicate")
 
-    assert summary.total == 1
+    assert summary.total == 0
     assert summary.new_jobs == 0
     assert summary.observed == 0
     assert summary.duplicates_linked == 0
@@ -1620,17 +1366,7 @@ def test_discover_jobs_use_case_keeps_accepted_owner_when_content_duplicate_reje
     assert owner.job_id in [job.job_id for job in repo.list_recent(LOCAL_TENANT)]
     assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 1
 
-    # The rejected distinct posting is recorded as declined-duplicate audit
-    # attributed to the OWNER (so it shows in the owner's audit history), and is
-    # NOT attached as an owner observation (which would re-trigger the delete later).
-    assert [event.event_type for event in publisher.events] == ["DuplicateJobLinkRejected"]
-    rejected = publisher.events[-1]
-    assert rejected.payload["job_id"] == str(owner.job_id)
-    assert (
-        rejected.payload["candidate_posting_url"]
-        == "https://jobs.lever.co/acme/staff-platform-engineer-india"
-    )
-    assert "location_mismatch" in rejected.payload["reason"]
+    assert publisher.events == []
     assert [obs.source_id for obs in repo.list_observations(LOCAL_TENANT, owner_id)] == ["greenhouse:acme"]
 
     # Re-running the rejected duplicate must be stable: the owner stays active and
@@ -1653,6 +1389,7 @@ def test_discover_jobs_use_case_keeps_distinct_roles_at_same_company_separate(
     repo = SqliteJobRepository(conn)
     publisher = RecordingPublisher()
     use_case = DiscoverJobsUseCase(
+        triage=_AdmittedTriage(),
         repository=repo,
         publisher=publisher,
         clock=lambda: "2026-05-12T00:00:00Z",
@@ -1707,6 +1444,7 @@ def test_discover_jobs_use_case_keeps_same_title_company_divergent_descriptions_
     repo = SqliteJobRepository(conn)
     publisher = RecordingPublisher()
     use_case = DiscoverJobsUseCase(
+        triage=_AdmittedTriage(),
         repository=repo,
         publisher=publisher,
         clock=lambda: "2026-05-12T00:00:00Z",
@@ -1765,6 +1503,7 @@ def test_discover_jobs_use_case_prefers_native_identity_over_content_match(
     repo = SqliteJobRepository(conn)
     publisher = RecordingPublisher()
     use_case = DiscoverJobsUseCase(
+        triage=_AdmittedTriage(),
         repository=repo,
         publisher=publisher,
         clock=lambda: "2026-05-12T00:00:00Z",
@@ -1841,6 +1580,7 @@ def test_discover_jobs_use_case_does_not_merge_distinct_employers_behind_manual_
     repo = SqliteJobRepository(conn)
     publisher = RecordingPublisher()
     use_case = DiscoverJobsUseCase(
+        triage=_AdmittedTriage(),
         repository=repo,
         publisher=publisher,
         clock=lambda: "2026-05-12T00:00:00Z",
@@ -1902,6 +1642,7 @@ def test_discover_jobs_use_case_does_not_merge_distinct_employers_behind_workday
     repo = SqliteJobRepository(conn)
     publisher = RecordingPublisher()
     use_case = DiscoverJobsUseCase(
+        triage=_AdmittedTriage(),
         repository=repo,
         publisher=publisher,
         clock=lambda: "2026-05-12T00:00:00Z",
@@ -1962,6 +1703,7 @@ def test_discover_jobs_use_case_keeps_boilerplate_heavy_distinct_roles_separate(
     repo = SqliteJobRepository(conn)
     publisher = RecordingPublisher()
     use_case = DiscoverJobsUseCase(
+        triage=_AdmittedTriage(),
         repository=repo,
         publisher=publisher,
         clock=lambda: "2026-05-12T00:00:00Z",
@@ -2015,3 +1757,10 @@ def test_discover_jobs_use_case_keeps_boilerplate_heavy_distinct_roles_separate(
     assert summary.duplicates_linked == 0
     assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 2
     assert conn.execute("SELECT COUNT(*) FROM job_duplicate_links").fetchone()[0] == 0
+
+
+class _AdmittedTriage:
+    """Supplied admission verdicts keep identity tests independent of text meaning."""
+
+    def admit(self, *, tenant_id, postings):
+        return postings

@@ -482,7 +482,7 @@ def test_enriched_missing_apply_url_backfills_on_successful_recovery(
         (str(LOCAL_TENANT), str(job_id)),
     ).fetchone()
     assert before is not None
-    assert before["latest_confidence"] == SnapshotConfidence.MEDIUM.value
+    assert before["latest_confidence"] == SnapshotConfidence.HIGH.value
     assert before["latest_quarantine_reason"] == QuarantineReason.NONE.value
     ensure_job_stage_rows(conn, job_id, tenant_id=LOCAL_TENANT)
     set_stage_state(
@@ -522,7 +522,7 @@ def test_enriched_missing_apply_url_backfills_on_successful_recovery(
     ).fetchone()
     assert after is not None
     assert after["latest_snapshot_version"] == 2
-    assert after["latest_confidence"] == SnapshotConfidence.MEDIUM.value
+    assert after["latest_confidence"] == SnapshotConfidence.HIGH.value
     assert after["latest_quarantine_reason"] == QuarantineReason.NONE.value
     assert "apply_url_recovered:authenticated_browser" in after["snapshot_set_json"]
     tailor_state = conn.execute(
@@ -613,7 +613,7 @@ def test_legacy_missing_apply_url_snapshot_is_reclassified_for_every_source_with
     assert repaired is not None
     assert repaired.latest_snapshot is not None
     assert repaired.latest_snapshot.snapshot_version == 2
-    assert repaired.latest_snapshot.confidence is SnapshotConfidence.MEDIUM
+    assert repaired.latest_snapshot.confidence is SnapshotConfidence.HIGH
     assert repaired.latest_snapshot.quarantine_reason is QuarantineReason.NONE
     assert "content_trust_reclassified:apply_url_independent" in (repaired.latest_snapshot.evidence)
     tailor_state = conn.execute(
@@ -926,3 +926,19 @@ def test_recovery_pass_defers_when_run_budget_exhausted(
     assert row is not None
     assert row[0] == "budget_exhausted"
     assert row[1] == 0
+
+
+@pytest.fixture(autouse=True)
+def semantic_workflow_models(monkeypatch):
+    from tests.workflow_determination_fakes import install_discovery_models, install_page_models
+
+    install_discovery_models(monkeypatch)
+    install_page_models(monkeypatch)
+
+
+@pytest.fixture(autouse=True)
+def explicit_semantic_ports(monkeypatch):
+    from tests.workflow_determination_fakes import install_discovery_models, install_page_models
+
+    install_discovery_models(monkeypatch)
+    install_page_models(monkeypatch)
