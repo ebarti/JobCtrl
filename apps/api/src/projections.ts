@@ -19,7 +19,7 @@
  * refresher reads the projection table directly and no longer
  * materialises it.
  */
-import { APPLY_URL_OUTCOME_CODES, PROJECTION_WATERMARK_NAME, STAGES } from "./contracts.js";
+import { APPLY_URL_OUTCOME_CODES, EMPLOYER_ANALYSIS_PROMPT_VERSION, PROJECTION_WATERMARK_NAME, STAGES } from "./contracts.js";
 import type {
   ApplyUrlOutcomeCode,
   JobCompensationAuditMarketResponse,
@@ -1273,9 +1273,9 @@ interface EvidenceGapPayload {
 function loadEmployerAnalysisJson(db: SqliteDatabase, tenantId: string, jobId: string): string | null {
   const row = getRow<EmployerAnalysisRow>(
     db,
-    `SELECT * FROM job_employer_analysis WHERE tenant_id = ? AND job_id = ?
+    `SELECT * FROM job_employer_analysis WHERE tenant_id = ? AND job_id = ? AND prompt_version = ?
       ORDER BY generation DESC LIMIT 1`,
-    [tenantId, jobId],
+    [tenantId, jobId, EMPLOYER_ANALYSIS_PROMPT_VERSION],
   );
   if (!row) return null;
   const generation = Number(row.generation);

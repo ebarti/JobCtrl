@@ -1,4 +1,5 @@
 import { resolveJobLocator } from "./job-locators.js";
+import { EMPLOYER_ANALYSIS_PROMPT_VERSION } from "./contracts.js";
 import { readDetermination, readArtifactLineAnchors, determinationOwnsArtifact } from "./semantic-determinations.js";
 /**
  * TS read-model — projection-backed (Phase 9 / S-33).
@@ -4529,7 +4530,8 @@ function jobProjectionSelect(): string {
   const analysisFreshnessSelect = `(SELECT MAX(a.generation)
           FROM job_employer_analysis a
          WHERE a.tenant_id = job_list_projections.tenant_id
-           AND a.job_id = job_list_projections.job_id) AS current_analysis_generation,
+           AND a.job_id = job_list_projections.job_id
+           AND a.prompt_version = '${EMPLOYER_ANALYSIS_PROMPT_VERSION}') AS current_analysis_generation,
        (SELECT r.employer_analysis_generation
           FROM job_requirement_fit_reports r
          WHERE r.tenant_id = job_list_projections.tenant_id

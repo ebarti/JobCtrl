@@ -6,7 +6,7 @@ import path from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { JobListQuery } from "../src/contracts.js";
+import { EMPLOYER_ANALYSIS_PROMPT_VERSION, type JobListQuery } from "../src/contracts.js";
 import {
   buildDashboardSummary,
   getJobDetail,
@@ -200,7 +200,7 @@ describe("exact-v7 read model job ids", () => {
       db.prepare(`INSERT INTO job_employer_analysis (
         tenant_id, job_id, generation, snapshot_hash, prompt_version, sdk_set_version,
         cache_key, legs_attempted, legs_succeeded, created_at
-      ) VALUES ('local', ?, ?, 'snapshot', 'v1', 'v1', ?, 1, 1, ?)`).run(JOB_ID, generation, `cache-${generation}`, NOW);
+      ) VALUES ('local', ?, ?, 'snapshot', '${EMPLOYER_ANALYSIS_PROMPT_VERSION}', 'v1', ?, 1, 1, ?)`).run(JOB_ID, generation, `cache-${generation}`, NOW);
       db.prepare(`INSERT INTO job_events (tenant_id, job_id, identity_version, stage, event_type, occurred_at)
         VALUES ('local', ?, 1, 'score', 'AnalysisSaved', ?)`).run(JOB_ID, NOW);
     };
@@ -242,7 +242,7 @@ describe("exact-v7 read model job ids", () => {
     db.prepare(`INSERT INTO job_employer_analysis (
       tenant_id, job_id, generation, snapshot_hash, prompt_version, sdk_set_version,
       cache_key, legs_attempted, legs_succeeded, created_at
-    ) VALUES ('local', ?, 1, 'snapshot', 'v1', 'v1', 'cache-1', 1, 1, ?)`).run(JOB_ID, NOW);
+    ) VALUES ('local', ?, 1, 'snapshot', '${EMPLOYER_ANALYSIS_PROMPT_VERSION}', 'v1', 'cache-1', 1, 1, ?)`).run(JOB_ID, NOW);
     insertScoreWithKeywords(db, "local", JOB_ID, 1, []);
     db.prepare(`INSERT INTO job_requirement_fit_reports (
       tenant_id, job_id, score_version, employer_analysis_generation,

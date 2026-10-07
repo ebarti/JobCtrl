@@ -67,8 +67,11 @@ Code checks requirement/evidence ID membership and verbatim employer spans. Ever
 Analysis is cached by posting snapshot, prompt version, and SDK-set version.
 Re-tailoring reuses that record; an explicit force recompute writes a superseding
 generation instead of deleting history. `AnalyzeJobUseCase` can run as the first
-tailoring step or through the standalone `analyze_job` method. Prompt v3
-invalidates prior prompt caches; even a same-version cache hit is checked for
+tailoring step or through the standalone `analyze_job` method. Prompt
+`employer-analysis-v4-determinations` fences every active analysis read, including
+projections, interview context, review and cache reuse. Older generations remain
+untouched as history and cannot become current inputs; absent current analysis
+requires a new determination. Even a same-version cache hit is checked for
 invalid candidate prose before reuse. A standalone `analyze_job` request with
 `tenantId`, `jobId`, and `force: true` regenerates one affected analysis. Failed
 validation or provider execution leaves the last accepted generation intact.

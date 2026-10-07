@@ -3,6 +3,8 @@ import taxonomy from "./semantic-taxonomy.v1.json" with { type: "json" };
 
 export const SEMANTIC_TAXONOMY = taxonomy;
 export const SEMANTIC_TAXONOMY_VERSION = taxonomy.schemaVersion;
+// The active analysis format must match domain/materials/analysis.py.
+export const EMPLOYER_ANALYSIS_PROMPT_VERSION = "employer-analysis-v4-determinations";
 
 export const DeterminationCitationSchema = z
   .object({

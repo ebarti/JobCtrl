@@ -12,6 +12,7 @@ import { BUILT_IN_RESUME_TEMPLATE_THEME } from "../src/resume-templates.js";
 import { buildApp, type BuildAppOptions } from "../src/server.js";
 import type { ActionDispatcher, ActionDispatchResult } from "../src/local-actions.js";
 import { initializeExactDatabase } from "./exact-schema.js";
+import { EMPLOYER_ANALYSIS_PROMPT_VERSION } from "../src/contracts.js";
 
 const JOB_KEY = "https://example.com/jobs/live-editor";
 const JOB_ID = "00000000-0000-4000-8000-000000000201";
@@ -1489,7 +1490,7 @@ function seedDatabase(dbPath: string): void {
          last_validation_json, last_verdict_json, metadata_json
        ) VALUES ('local', ?, ?, 'resume_approved', ?, ?, '{}', '{}', '{}')`,
     ).run(JOB_ID, 2, NOW, NOW);
-    db.prepare("INSERT INTO job_employer_analysis (tenant_id,job_id,generation,snapshot_hash,prompt_version,sdk_set_version,cache_key,legs_attempted,legs_succeeded,created_at) VALUES ('local',?,1,'synthetic','synthetic','synthetic','synthetic',1,1,?)").run(JOB_ID,NOW);
+    db.prepare("INSERT INTO job_employer_analysis (tenant_id,job_id,generation,snapshot_hash,prompt_version,sdk_set_version,cache_key,legs_attempted,legs_succeeded,created_at) VALUES ('local',?,1,'synthetic',?,'synthetic','synthetic',1,1,?)").run(JOB_ID,EMPLOYER_ANALYSIS_PROMPT_VERSION,NOW);
     const insert = db.prepare(
       `INSERT INTO job_materials_artifacts (
          tenant_id, job_id, generation, artifact_id, artifact_type, status, path,

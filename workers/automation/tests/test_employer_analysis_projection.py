@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from dataclasses import replace
 from collections.abc import Iterator
 
 import pytest
@@ -282,3 +283,25 @@ def test_projection_requirement_fit_report_is_null_when_no_report_exists(
     ).fetchone()
     assert row is not None
     assert row["requirement_fit_report_json"] is None
+
+
+def test_projection_refresh_preserves_historical_analysis_without_parsing_it(
+    conn: sqlite3.Connection,
+) -> None:
+    repository = SqliteEmployerAnalysisRepository(conn)
+    repository.save(replace(_analysis(1), prompt_version="employer-analysis-v3"))
+    conn.execute(
+        "UPDATE job_employer_analysis SET inferred_seniority = 'Historical free-text value'"
+    )
+    conn.commit()
+    before = tuple(conn.execute("SELECT * FROM job_employer_analysis").fetchone())
+
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
+
+    row = conn.execute(
+        "SELECT employer_analysis_json FROM job_detail_projections WHERE job_id = ?",
+        (str(JOB_ID),),
+    ).fetchone()
+    assert row is not None and row["employer_analysis_json"] is None
+    assert tuple(conn.execute("SELECT * FROM job_employer_analysis").fetchone()) == before
+    assert repository.next_generation(LOCAL_TENANT, JOB_ID) == 2

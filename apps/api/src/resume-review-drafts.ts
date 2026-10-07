@@ -37,6 +37,7 @@ import type {
 } from "./contracts.js";
 import {
   TAILORING_FEEDBACK_RULE_ALLOWLIST,
+  EMPLOYER_ANALYSIS_PROMPT_VERSION,
   TAILORING_FEEDBACK_RULE_ALLOWLIST_VERSION,
 } from "./contracts.js";
 import { allRows, getRow, type SqliteDatabase } from "./db.js";
@@ -536,7 +537,7 @@ export async function renderResumeReviewDraft(
         throw new DraftRenderConflictError("Job materials changed while rendering; retry the render.");
       }
       const profileVersion=getRow<{version:number}>(db,"SELECT version FROM candidate_profiles WHERE tenant_id=? ORDER BY profile_id LIMIT 1",[DEFAULT_TENANT])?.version;
-      const analysisGeneration=getRow<{generation:number}>(db,"SELECT max(generation) as generation FROM job_employer_analysis WHERE tenant_id=? AND job_id=?",[DEFAULT_TENANT,draft.job_id])?.generation;
+      const analysisGeneration=getRow<{generation:number}>(db,"SELECT max(generation) as generation FROM job_employer_analysis WHERE tenant_id=? AND job_id=? AND prompt_version=?",[DEFAULT_TENANT,draft.job_id,EMPLOYER_ANALYSIS_PROMPT_VERSION])?.generation;
       if (profileVersion!==semanticReview.profileVersion || analysisGeneration!==semanticReview.analysisGeneration) throw new DraftRenderConflictError("Canonical review sources changed; retry.");
       promoted = true;
       fs.renameSync(rendered.tmpTextPath, rendered.textPath);

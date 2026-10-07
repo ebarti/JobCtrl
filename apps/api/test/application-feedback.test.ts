@@ -20,6 +20,7 @@ import { type ActionDispatcher, type ActionDispatchResult } from "../src/local-a
 import { BUILT_IN_RESUME_TEMPLATE_THEME } from "../src/resume-templates.js";
 import { type BuildAppOptions, buildApp } from "../src/server.js";
 import { initializeExactDatabase } from "./exact-schema.js";
+import { EMPLOYER_ANALYSIS_PROMPT_VERSION } from "../src/contracts.js";
 
 const READY_JOB = "https://example.com/jobs/apply-ready";
 const DRY_RUN_JOB = "https://example.com/jobs/apply-dry-run";
@@ -2596,7 +2597,7 @@ function insertEmployerAnalysis(db: Database.Database, jobId: string): void {
        tenant_id, job_id, generation, snapshot_hash, prompt_version, sdk_set_version,
        cache_key, ideal_candidate_narrative, requirements_json, legs_attempted,
        legs_succeeded, created_at
-     ) VALUES ('local', ?, 1, 'snapshot', 'prompt-v1', 'sdk-v1', 'cache-v1', ?, ?, 1, 1, ?)`,
+     ) VALUES ('local', ?, 1, 'snapshot', '${EMPLOYER_ANALYSIS_PROMPT_VERSION}', 'sdk-v1', 'cache-v1', ?, ?, 1, 1, ?)`,
   ).run(
     jobId,
     "A senior platform leader who improves developer experience and incident response across teams.",

@@ -14,6 +14,7 @@ from temporalio.exceptions import ApplicationError
 
 from jobctrl.database import get_connection
 from jobctrl.domain.identifiers import JobId, canonical_job_id
+from jobctrl.domain.materials.analysis import PROMPT_VERSION as ANALYSIS_PROMPT_VERSION
 from jobctrl.domain.interview import GenerateInterviewPrepUseCase
 from jobctrl.domain.interview.evidence import InterviewEvidenceSnapshot
 from jobctrl.domain.profile.snapshot import ProfileSnapshot
@@ -344,9 +345,9 @@ def _load_employer_and_fit_context(
         SELECT generation, snapshot_hash, prompt_version, role_framing,
                inferred_seniority, requirements_json
         FROM job_employer_analysis
-        WHERE tenant_id = ? AND job_id = ? ORDER BY generation DESC LIMIT 1
+        WHERE tenant_id = ? AND job_id = ? AND prompt_version = ? ORDER BY generation DESC LIMIT 1
         """,
-        (str(tenant_id), str(job_id)),
+        (str(tenant_id), str(job_id), ANALYSIS_PROMPT_VERSION),
     ).fetchone()
     report = conn.execute(
         """

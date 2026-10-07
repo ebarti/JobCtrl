@@ -128,9 +128,9 @@
       {
         "generation": 1,
         "snapshot_hash": "hash-old",
-        "prompt_version": "employer-analysis-v1",
+        "prompt_version": "employer-analysis-v4-determinations",
         "sdk_set_version": "claude+codex-v1",
-        "cache_key": "hash-old:employer-analysis-v1:claude+codex-v1",
+        "cache_key": "hash-old:employer-analysis-v4-determinations:claude+codex-v1",
         "role_framing": "Old framing.",
         "inferred_seniority": "mid",
         "ideal_candidate_narrative": "Old narrative.",
@@ -144,9 +144,9 @@
       {
         "generation": 2,
         "snapshot_hash": "hash-new",
-        "prompt_version": "employer-analysis-v1",
+        "prompt_version": "employer-analysis-v4-determinations",
         "sdk_set_version": "claude+codex-v1",
-        "cache_key": "hash-new:employer-analysis-v1:claude+codex-v1",
+        "cache_key": "hash-new:employer-analysis-v4-determinations:claude+codex-v1",
         "role_framing": "Own the developer platform.",
         "inferred_seniority": "senior",
         "ideal_candidate_narrative": "A hands-on platform owner.",
@@ -656,7 +656,7 @@
           "flagged_requirements": [],
           "score": 0.8
         },
-        "cache_key": "hash-new:employer-analysis-v1:claude+codex-v1",
+        "cache_key": "hash-new:employer-analysis-v4-determinations:claude+codex-v1",
         "created_at": "2026-06-08T12:00:00+00:00",
         "ensemble_completeness": "1/2",
         "failures": [
@@ -681,7 +681,7 @@
         ],
         "legs_attempted": 2,
         "legs_succeeded": 1,
-        "prompt_version": "employer-analysis-v1",
+        "prompt_version": "employer-analysis-v4-determinations",
         "requirements": [
           {
             "evidence_span": "5+ years building developer platforms",
@@ -1362,9 +1362,9 @@
     "employerAnalysisJson": {
       "generation": 2,
       "snapshot_hash": "hash-new",
-      "prompt_version": "employer-analysis-v1",
+      "prompt_version": "employer-analysis-v4-determinations",
       "sdk_set_version": "claude+codex-v1",
-      "cache_key": "hash-new:employer-analysis-v1:claude+codex-v1",
+      "cache_key": "hash-new:employer-analysis-v4-determinations:claude+codex-v1",
       "created_at": "2026-06-08T12:00:00+00:00",
       "ensemble_completeness": "1/2",
       "legs_attempted": 2,

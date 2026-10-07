@@ -24,6 +24,7 @@ from jobctrl.domain.materials.analysis import (
     EmployerAnalysis,
     JobAnalysis,
     JobAnalysisDraft,
+    PROMPT_VERSION,
 )
 from jobctrl.domain.tenant import TenantId
 
@@ -48,19 +49,19 @@ class SqliteEmployerAnalysisRepository:
             row = self._conn.execute(
                 """
                 SELECT * FROM job_employer_analysis
-                WHERE tenant_id = ? AND job_id = ?
+                WHERE tenant_id = ? AND job_id = ? AND prompt_version = ?
                 ORDER BY generation DESC
                 LIMIT 1
                 """,
-                (str(tenant_id), str(stable_job_id)),
+                (str(tenant_id), str(stable_job_id), PROMPT_VERSION),
             ).fetchone()
         else:
             row = self._conn.execute(
                 """
                 SELECT * FROM job_employer_analysis
-                WHERE tenant_id = ? AND job_id = ? AND generation = ?
+                WHERE tenant_id = ? AND job_id = ? AND generation = ? AND prompt_version = ?
                 """,
-                (str(tenant_id), str(stable_job_id), int(generation)),
+                (str(tenant_id), str(stable_job_id), int(generation), PROMPT_VERSION),
             ).fetchone()
         if row is None:
             return None
@@ -76,11 +77,11 @@ class SqliteEmployerAnalysisRepository:
         row = self._conn.execute(
             """
             SELECT * FROM job_employer_analysis
-            WHERE tenant_id = ? AND job_id = ? AND cache_key = ?
+            WHERE tenant_id = ? AND job_id = ? AND cache_key = ? AND prompt_version = ?
             ORDER BY generation DESC
             LIMIT 1
             """,
-            (str(tenant_id), str(stable_job_id), cache_key),
+            (str(tenant_id), str(stable_job_id), cache_key, PROMPT_VERSION),
         ).fetchone()
         if row is None:
             return None

@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import Database from "better-sqlite3";
+import { EMPLOYER_ANALYSIS_PROMPT_VERSION } from "../src/contracts.js";
 
 import { writeProfileConfig } from "../src/profile-store.js";
 import { BUILT_IN_RESUME_TEMPLATE_THEME } from "../src/resume-templates.js";
@@ -739,7 +740,7 @@ function insertEmployerAnalysis(db: Database.Database): void {
     QA_PLATFORM_JOB_ID,
     1,
     "qa-snapshot",
-    "employer-analysis-v1",
+    EMPLOYER_ANALYSIS_PROMPT_VERSION,
     "qa-sdk-set",
     "qa-cache-key",
     "Platform engineering leader",

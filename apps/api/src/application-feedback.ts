@@ -41,6 +41,7 @@ import type {
 } from "./contracts.js";
 import {
   APPLICATION_OUTCOME_KINDS,
+  EMPLOYER_ANALYSIS_PROMPT_VERSION,
   APPLY_REVIEW_DECISION_VALUES,
   OUTCOME_SUGGESTION_STATUSES,
   STAGES,
@@ -176,7 +177,7 @@ export function listApplyReviewQueue(db: SqliteDatabase): ApplyReviewQueueRespon
                  ORDER BY generation DESC
                ) AS row_num
         FROM job_employer_analysis
-        WHERE tenant_id = ?
+        WHERE tenant_id = ? AND prompt_version = '${EMPLOYER_ANALYSIS_PROMPT_VERSION}'
       )
       WHERE row_num = 1
     )`;

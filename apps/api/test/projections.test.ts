@@ -22,7 +22,7 @@ import {
   refreshContactProjections, refreshContactResearchProjections, refreshOutreachProjections,
 } from "../src/projections.js";
 import { recoveryKeyDigest } from "../src/discovery-execution-recovery.js";
-import { PROJECTION_WATERMARK_NAME } from "../src/contracts.js";
+import { EMPLOYER_ANALYSIS_PROMPT_VERSION, PROJECTION_WATERMARK_NAME } from "../src/contracts.js";
 
 const EVENT_JOB_URL = "https://example.com/jobs/event-driven";
 const EVENT_JOB_ID = "00000000-0000-4000-8000-000000000001";
@@ -2080,6 +2080,37 @@ describe("apply_run_projections without legacy apply_runs table", () => {
     }
   });
 
+  it("retains historical analysis rows without exposing them as current determinations", async () => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      seedSchema(dbPath);
+      const db = new Database(dbPath);
+      db.prepare(`INSERT INTO job_employer_analysis (
+        tenant_id, job_id, generation, snapshot_hash, prompt_version, sdk_set_version,
+        cache_key, inferred_seniority, legs_attempted, legs_succeeded, created_at
+      ) VALUES ('local', ?, 1, 'historical', 'employer-analysis-v3', 'old-sdk',
+        'historical-cache', 'Historical free-text value', 1, 1, '2026-05-04T12:00:00Z')`).run(EVENT_JOB_ID);
+      db.close();
+      const app = buildApp({ dbPath, configPath: path.join(path.dirname(dbPath), "config.json") });
+      try {
+        const response = await app.inject({ method: "GET", url: `/v1/jobs/${EVENT_JOB_ID}` });
+        expect(response.statusCode, response.body).toBe(200);
+        expect(response.json().employerAnalysis).toBeNull();
+      } finally {
+        await app.close();
+      }
+      const retained = new Database(dbPath);
+      try {
+        expect(retained.prepare("SELECT inferred_seniority FROM job_employer_analysis").get())
+          .toEqual({ inferred_seniority: "Historical free-text value" });
+      } finally {
+        retained.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
   it("serves the canonical employer analysis from projection rows (TS↔Python parity)", async () => {
     // AUDIT-02-style cross-runtime parity: seed the canonical
     // ``job_employer_analysis`` rows exactly as the Python repository writes
@@ -2115,7 +2146,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
           tenant_id, job_id, generation, snapshot_hash, prompt_version, sdk_set_version,
           cache_key, role_framing, inferred_seniority, ideal_candidate_narrative,
           requirements_json, keywords_json, agreement_json, legs_attempted, legs_succeeded, created_at
-        ) VALUES ('local', ?, ?, ?, 'employer-analysis-v1', 'claude+codex-v1', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES ('local', ?, ?, ?, '${EMPLOYER_ANALYSIS_PROMPT_VERSION}', 'claude+codex-v1', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       );
       insertAnalysis.run(
         jobId, 1, "hash-old", "hash-old:employer-analysis-v1:claude+codex-v1",
@@ -2206,7 +2237,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
       db.prepare(`INSERT INTO job_employer_analysis (
         tenant_id, job_id, generation, snapshot_hash, prompt_version, sdk_set_version,
         cache_key, ideal_candidate_narrative, requirements_json, legs_attempted, legs_succeeded, created_at
-      ) VALUES ('local', ?, 2, 'fit-snapshot', 'employer-analysis-v3', 'sdk-v1',
+      ) VALUES ('local', ?, 2, 'fit-snapshot', '${EMPLOYER_ANALYSIS_PROMPT_VERSION}', 'sdk-v1',
         'fit-current-analysis', 'Python engineer.', ?, 1, 1, '2026-05-04T12:00:00Z')`)
         .run(jobId, JSON.stringify(requirements));
       const resumePath = path.join(path.dirname(dbPath), "fit-resume.txt");

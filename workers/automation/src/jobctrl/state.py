@@ -19,6 +19,7 @@ from typing import Any
 from jobctrl import config
 from jobctrl.domain.events.base import create_domain_event
 from jobctrl.domain.identifiers import JobId, canonical_job_id
+from jobctrl.domain.materials.analysis import PROMPT_VERSION as ANALYSIS_PROMPT_VERSION
 from jobctrl.domain.pipeline.aggregate import OptimisticLockError
 from jobctrl.domain.pipeline.state_machine import is_valid_transition
 from jobctrl.domain.ports.events import EventPublisher
@@ -491,7 +492,8 @@ def _reconcile_requirement_fit_blockers(
                        WHERE tenant_id = blocked.tenant_id AND job_id = blocked.job_id)
                   AND report.employer_analysis_generation = (SELECT MAX(generation)
                        FROM job_employer_analysis
-                       WHERE tenant_id = blocked.tenant_id AND job_id = blocked.job_id)
+                       WHERE tenant_id = blocked.tenant_id AND job_id = blocked.job_id
+                         AND prompt_version = '{ANALYSIS_PROMPT_VERSION}')
                   AND report.profile_snapshot_version =
                        json_extract(score.trace_json, '$.profile_snapshot_version')
                   AND EXISTS (SELECT 1 FROM job_requirement_fit_items AS item
