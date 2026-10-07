@@ -206,7 +206,7 @@ lexical substitute and leaves accepted artifacts current. Capture the canonical
 prompt, lane and preflight order. Re-running unchanged inputs must make zero
 additional calls, including concurrent requests for one fingerprint.
 
-Run synthetic broad-board and company-ATS source paths with saved controls. Inspect exact provider request parameters and canonical ingestion, including a result that does not resemble the query. No separate intake model call may block or reject it. Exercise literal exclusions, limits, provider capability warnings, capture/checkpoint interruption and retry idempotency. Exercise profile import/save and explicit confirmation without
+Run synthetic broad-board and company-ATS source paths with saved controls. Inspect exact provider request parameters and canonical ingestion, including a result that does not resemble the query. No separate intake model call may block or reject it. Exercise literal exclusions, limits, capture/checkpoint interruption and retry idempotency; verify provider filter support without expecting a product capability-warning view. Exercise profile import/save and explicit confirmation without
 writing inferred facts into achievement evidence. Exercise actual artifact
 writes, per-question isolation, empty evidence selections, user edits and PDF
 source fences. Apply Review joins pins and findings by line ID and labels missing

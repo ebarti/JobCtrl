@@ -1445,10 +1445,33 @@ def run_discovery_source_family(
         )
         return {"family": family, "status": status, "result": {}, "source_ids": [s.source_id for s in sources]}
 
-    def fetch_with_limits(fetch, run_id):
+    def fetch_with_limits(fetch, sources, run_id):
         if cancel_event.is_set() or (limit > 0 and _discover_limit_consumed(start_count, limit)):
             return {"new": 0, "existing": 0}
-        return dict(fetch(run_id) or {})
+        from jobctrl.infrastructure.discovery.capture_recovery import recover_captured_postings
+
+        source_ids = tuple(item.source_id for item in sources if item.should_run)
+        if family == "jobspy" and search_cfg.get("disable_jobspy", False):
+            source_ids = ()
+        recovered = recover_captured_postings(
+            conn,
+            tenant_id=LOCAL_TENANT,
+            source_ids=source_ids,
+            source_family=family,
+            search_cfg=search_cfg,
+            run_id=run_id,
+            discovery_execution=discovery_execution,
+            limit=_discover_remaining_limit(start_count, limit),
+            cancel_event=cancel_event,
+        )
+        result = {"new": 0, "existing": 0}
+        if not cancel_event.is_set() and not (limit > 0 and _discover_limit_consumed(start_count, limit)):
+            result.update(fetch(run_id) or {})
+        for key in ("new", "existing"):
+            result[key] = int(result.get(key) or 0) + recovered[key]
+        if recovered["recovered_captures"]:
+            result.update({key: value for key, value in recovered.items() if key.startswith("recovered_")})
+        return result
 
     if family == "jobspy":
         if source_filter_active and not jobspy_sources:
@@ -1502,7 +1525,7 @@ def run_discovery_source_family(
         result_holder: dict[str, Any] = {}
 
         def capture_jobstreaming(run_id: str | None = None) -> dict:
-            result_holder.update(fetch_with_limits(run_jobspy, run_id))
+            result_holder.update(fetch_with_limits(run_jobspy, jobspy_sources, run_id))
             return result_holder
 
         status = _run_discovery_source(
@@ -1543,7 +1566,7 @@ def run_discovery_source_family(
         result_holder: dict[str, Any] = {}
 
         def capture_ats(run_id: str | None = None) -> dict:
-            result_holder.update(fetch_with_limits(run_ats, run_id))
+            result_holder.update(fetch_with_limits(run_ats, ats_sources, run_id))
             return result_holder
 
         status = _run_discovery_source(
@@ -1589,7 +1612,7 @@ def run_discovery_source_family(
         result_holder: dict[str, Any] = {}
 
         def capture_workday(run_id: str | None = None) -> dict:
-            result_holder.update(fetch_with_limits(run_workday, run_id))
+            result_holder.update(fetch_with_limits(run_workday, workday_sources, run_id))
             return result_holder
 
         status = _run_discovery_source(
@@ -1635,7 +1658,7 @@ def run_discovery_source_family(
         result_holder: dict[str, Any] = {}
 
         def capture_smart_extract(run_id: str | None = None) -> dict:
-            result_holder.update(fetch_with_limits(run_smart_extract_source, run_id))
+            result_holder.update(fetch_with_limits(run_smart_extract_source, smart_extract_sources, run_id))
             return result_holder
 
         status = _run_discovery_source(

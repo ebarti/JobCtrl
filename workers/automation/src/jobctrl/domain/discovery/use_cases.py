@@ -197,6 +197,7 @@ class DiscoverJobsUseCase:
         observation_id_factory: Callable[[], str] | None = None,
         job_id_factory: Callable[[], JobId] | None = None,
         republish_canonical_identity: bool = False,
+        refresh_existing_job: bool = True,
     ) -> None:
         self._repository = repository
         self._publisher = publisher
@@ -207,6 +208,7 @@ class DiscoverJobsUseCase:
         self._observation_id_factory = observation_id_factory or (lambda: f"obs:{uuid.uuid4().hex}")
         self._job_id_factory = job_id_factory or generate_job_id
         self._republish_canonical_identity = republish_canonical_identity
+        self._refresh_existing_job = refresh_existing_job
 
     def execute(
         self,
@@ -488,10 +490,10 @@ class DiscoverJobsUseCase:
                             ),
                         )
                     )
-                refreshed = existing.with_metadata(posting.metadata)
-                if refreshed.employer.is_unknown() and not posting.employer.is_unknown():
+                refreshed = existing.with_metadata(posting.metadata) if self._refresh_existing_job else existing
+                if self._refresh_existing_job and refreshed.employer.is_unknown() and not posting.employer.is_unknown():
                     refreshed = refreshed.with_employer(posting.employer)
-                if refreshed.is_deleted:
+                if self._refresh_existing_job and refreshed.is_deleted:
                     restored = self._repository.restore(
                         tenant_id,
                         owner_id,

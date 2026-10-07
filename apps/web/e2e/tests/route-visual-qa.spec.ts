@@ -1570,7 +1570,7 @@ test("Discovery settings pack related controls and reflow with available width",
       Math.min(...desktopBoards.map(({ left }) => left)),
   ).toBeLessThanOrEqual(700);
   await expect(page.getByText(/Saved in SQLite/i)).toHaveCount(0);
-  await expect(page.getByRole("button", { name: /^Help for / })).toHaveCount(10);
+  await expect(page.getByRole("button", { name: /^Help for / })).toHaveCount(8);
   await page.getByRole("button", { name: "Help for Results per board" }).click();
   const settingHelp = page.getByRole("dialog", { name: "Results per board help" });
   await expect(settingHelp).toBeVisible();

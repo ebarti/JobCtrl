@@ -33,13 +33,12 @@ secondary containers/entries and empty names add no fabricated location.
 `workers/automation/tests/test_ats_adapters.py` covers listing flags, malformed
 secondary data, duplicate labels, primary fallback and native-ID/canonical-URL
 preservation. Its synthetic `run_scheduled_ats_sources` fixture injects HTTP data
-into an owned temporary SQLite database and uses opposing valid `LlmPort`
-verdicts for the same listing payload. Admission follows the model, retains both
-location names and preserves identity and observations across runs; rejection
-persists the model decision without creating a job. An unlisted peer is excluded
-mechanically. `test_discovery_determinations.py` covers durable pending intake,
-bounded recovery and foreign-listing citation rejection. No alias table or
-geography sentence corpus establishes the expected semantic verdict.
+into an owned temporary SQLite database. Listed postings enter canonical
+ingestion without an admission model, retain both location names and preserve
+identity and observations across runs. An unlisted peer is excluded mechanically.
+`test_captured_posting_recovery.py` covers bounded recovery of archived raw
+postings, literal exclusions, limits and interruption before consumption. No
+alias table or geography sentence corpus decides suitability.
 These fixtures contact no live board and use no real user data. Local fixture
 proof does not replace the independent review, QA, or CI gates.
 
@@ -443,7 +442,7 @@ and accepted artifact bytes. Citation format checks must reject fragments of
 numbers and dotted identifiers while accepting complete values followed by
 sentence punctuation or separated by commas.
 
-For Discovery, save literal target settings and plan a run without an interpretation receipt or second approval. Inspect the actual JobStreaming query/location/remote parameters and provider capability warnings. Structurally valid fetched results must ingest without an extra model gate, even when they do not lexically resemble the query. Exact user-authored title exclusions retain durable filtered receipts. Exercise capture/ack interruption, lease fencing, retry idempotency and limits. Full-posting interpretation/scoring retain model authority and source provenance. Historical native cutovers preserve authored cells, canonical jobs, accepted files and raw captures.
+For Discovery, save literal target settings and plan a run without an interpretation receipt or second approval. Inspect the actual JobStreaming query/location/remote parameters and each provider’s supported filters; capability warnings are not currently displayed in JobCtrl. Structurally valid fetched results must ingest without an extra model gate, even when they do not lexically resemble the query. Exact user-authored title exclusions retain durable filtered receipts. Exercise capture/ack interruption, lease fencing, retry idempotency and limits. Full-posting interpretation/scoring retain model authority and source provenance. Historical native cutovers preserve authored cells, canonical jobs, accepted files and raw captures.
 
 For interview preparation, inspect each actual drafting prompt with a supported
 question and explicitly empty selections. Only that question's selected evidence
