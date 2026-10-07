@@ -99,7 +99,7 @@ def test_same_sources_bind_opposite_valid_model_decisions() -> None:
         assert len(model.calls) == 1
 
 
-@pytest.mark.parametrize("quote", ["alpha, beta", "alpha. beta", "alpha,beta"])
+@pytest.mark.parametrize("quote", ["alpha, beta", "alpha. beta", "alpha,beta", "1,alpha,beta,2"])
 def test_literal_values_accept_punctuation_delimiters_without_deciding_the_verdict(quote):
     for verdict in ("accept", "reject"):
         output = {

@@ -83,10 +83,13 @@ def _contains_exact_value(quote: str, value: str) -> bool:
         return False
     # Commas and periods delimit text values; adjacent digits make them part
     # of a number. Keep whole-value binding without rejecting punctuation.
-    prefix = r"(?<!\w)(?<!\d[.,])"
+    prefix = r"(?<!\w)"
+    suffix = r"(?!\w)"
     if value[0].isdecimal():
-        prefix += r"(?<!\.)"
-    return re.search(prefix + re.escape(value) + r"(?!\w|[.,]\d)", quote) is not None
+        prefix += r"(?<!\d[.,])(?<!\.)"
+    if value[-1].isdecimal():
+        suffix += r"(?![.,]\d)"
+    return re.search(prefix + re.escape(value) + suffix, quote) is not None
 
 
 def validate_citations(result: BaseModel, sources: Sequence[Source]) -> None:
