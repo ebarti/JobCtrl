@@ -2019,6 +2019,16 @@ function jobEventToAuditEntry(
     case "PreparationWorkItemCompleted":
     case "PreparationWorkItemFailed":
       return preparationWorkItemAuditEntry(base, row.event_type, payload);
+    case "RepeatApplicationCheckBlocked":
+      return makeAuditEntry({
+        ...base,
+        category: "apply",
+        tone: "warning",
+        title: "Repeat application check blocked",
+        description: "This candidate awaits a valid repeat-application determination. Other candidates can proceed.",
+        actor: "system",
+        details: auditDetails(["Reason", humanizeToken(payloadText(payload, "failureCode"))]),
+      });
     case "ApplyRunStarted":
       return makeAuditEntry({
         ...base,
@@ -3012,8 +3022,9 @@ function safeEvidenceId(value: unknown): string {
 /** Join only the artifact's recorded IDs. Source quotes come from its verifier. */
 function artifactDeterminations(db: SqliteDatabase, row: ArtifactProjectionRow) {
   const metadata = metadataRecord(JSON.parse(row.metadata_json ?? "{}"));
-  return (["claim_verification", "artifact_quality"] as const).flatMap(kind => {
-    const id = metadataText(metadata[`${kind === "claim_verification" ? "claim_verification" : "quality_determination"}_id`], 64);
+  return (["claim_verification", "artifact_quality", "resume_adversarial"] as const).flatMap(kind => {
+    const key = kind === "artifact_quality" ? "quality_determination_id" : `${kind}_id`;
+    const id = metadataText(metadata[key], 64);
     if (!id) return [];
     const envelope = readDetermination(db, row.tenant_id, id);
     if (!envelope || envelope.kind !== kind || row.generation === null || !determinationOwnsArtifact(db,row.tenant_id,row.artifact_id,row.generation,row.job_id,envelope)) {
@@ -3360,8 +3371,12 @@ function missingTailoringAuditFields(explanation: ArtifactTailoringExplanation):
     missing.push("persona review");
   } else if (explanation.adversarialReview.ran) {
     if (!explanation.adversarialReview.personas.length) missing.push("persona judgments");
-    if (!explanation.adversarialReview.audit?.promptMessages.length) missing.push("persona LLM request");
-    if (!explanation.adversarialReview.audit?.response) missing.push("persona LLM response");
+    if (explanation.adversarialReview.determinationId) {
+      if (!explanation.determinations?.some(item => item.kind === "resume_adversarial" && item.determination_id === explanation.adversarialReview?.determinationId)) missing.push("persona determination");
+    } else {
+      if (!explanation.adversarialReview.audit?.promptMessages.length) missing.push("persona LLM request");
+      if (!explanation.adversarialReview.audit?.response) missing.push("persona LLM response");
+    }
   }
   return missing;
 }
@@ -3374,6 +3389,7 @@ function parseAdversarialReview(
   if (ran === null) return null;
   return {
     ran,
+    determinationId: metadataText(review.determination_id, 64),
     passed: metadataBoolean(review.passed),
     score: metadataNumber(review.score),
     scoreRationale: metadataText(review.score_rationale ?? review.scoreRationale, 360),

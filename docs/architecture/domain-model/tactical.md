@@ -684,4 +684,4 @@ timestamps.
 
 A generated artifact becomes approvable only after structural/source binding, claim verification and independent model quality review. Typed findings reference exact line IDs. A failed refresh preserves the last accepted aggregate and its anchors. Models decide support, seniority, voice and scope; code owns membership, quotes, values and version fencing.
 
-See [the decision](../../decisions.md#2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.
+See [the decision](../../decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.

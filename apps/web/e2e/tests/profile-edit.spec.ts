@@ -1,3 +1,4 @@
+import { refreshE2eWorkerHeartbeat } from "../fixtures/e2e-state.js";
 import { readFile } from "node:fs/promises";
 
 import { test, expect, type Locator } from "@playwright/test";
@@ -16,6 +17,10 @@ import {
   removeClaudeProviderBatch,
   removeGoogleProviderBatch,
 } from "../../src/contexts/profile/lib/provider-credential-plans.js";
+
+test.beforeEach(() => {
+  if (process.env["JOBCTRL_E2E_ISOLATED"] === "1") refreshE2eWorkerHeartbeat();
+});
 
 test("Profile edit + Plate baseline editor: edit a field, save, preview HTML refreshes with a new cache key", async ({
   page,

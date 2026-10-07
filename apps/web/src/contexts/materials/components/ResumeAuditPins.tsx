@@ -827,7 +827,9 @@ function resumeSemanticTextsFromPlateNode(node: Descendant): readonly string[] {
 function resumeBulletSemanticId(node: Descendant): string {
   if ("text" in node || typeof node.semanticId !== "string") return "";
   const semanticId = node.semanticId.trim();
-  return /^experience:.+#\d+$/u.test(semanticId)
+  // Baseline previews use canonical field paths; generated artifacts use
+  // recorded anchor IDs. Both are current structural ID contracts.
+  return /^(?:experience:.+:bullet:[1-9]\d*|experience:.+#\d+)$/u.test(semanticId)
     ? semanticId
     : "";
 }

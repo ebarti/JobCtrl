@@ -53,12 +53,17 @@ last accepted resume.
    factual support, prohibited claims, voice and model self-talk. Code checks
    verbatim quotations, IDs and exact values against the supplied sources.
    The independent quality judge returns its own pass/fail verdict.
+   Resumes for jobs in the high-fit band also receive all six persona judgments,
+   with citations and a recorded determination. Their pass/fail verdicts govern
+   acceptance; diagnostic scores do not set a cutoff.
 4. **Repair bounded failures.** Model findings and recorded fit gaps guide
    repairs under the configured attempt budget. A failed or unavailable
    determination blocks acceptance with an actionable failure status.
 5. **Persist accepted output.** Accepted text, PDF lineage, determinations,
    anchors and coverage are recorded together. Any optional voice rewrite
    receives fresh claim verification and quality review on the final text.
+   A failed optional voice rewrite retains the candidate already verified by
+   those checks and records the rejected voice attempt.
    Failed refreshes preserve the last accepted generation.
 
 The artifact inspector exposes the plan, gates, coverage, provenance, judge,
@@ -414,4 +419,4 @@ generations: a failed replacement does not destroy the last accepted record.
 
 Every generated artifact has a claim-verification determination and recorded line anchors. A separate quality judge remains. Open **Verification sources** on any artifact to inspect its model, prompt version, input fingerprint and structured verdict. Models decide claim support, seniority, voice, prohibited claims and requirement demonstration. Code validates IDs, quotes, exact values and versions. Interview generation isolates each question's selected evidence; explicit empty selection produces gaps. Failed refreshes keep accepted material. Apply Review joins line IDs and says “No recorded source” where an anchor is absent.
 
-See [the decision](../decisions.md#2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.
+See [the decision](../decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.

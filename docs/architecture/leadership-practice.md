@@ -124,4 +124,4 @@ UI or validated coaching claims.
 
 Required-bullet coaching is an opt-in model-assisted capability whose findings cite saved sources and versions. The same determination authority applies to semantic judgments across the product; word lists and canned questions cannot replace the model.
 
-See [the decision](../decisions.md#2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.
+See [the decision](../decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.

@@ -1482,7 +1482,7 @@ export function ProfileForm({
           {statusMessage}
         </div>
       ) : null}
-      {isProfileSection && initial.candidateInterpretation ? <div className="status-line" role="status">
+      {isProfileSection && initial.candidateInterpretation ? <div className="status-line candidate-interpretation-status" data-typography="metadata" role="status">
         {initial.candidateInterpretation.determination ? <>Candidate interpretation {initial.candidateInterpretation.status === "confirmed" ? "confirmed" : "awaits your confirmation"}. Model {initial.candidateInterpretation.determination.model}; prompt {initial.candidateInterpretation.determination.prompt_version}; input {initial.candidateInterpretation.determination.input_fingerprint}. Review the target-role suggestions before saving them.</> : <>Candidate interpretation unavailable{initial.candidateInterpretation.failureCode ? `: ${initial.candidateInterpretation.failureCode}` : " until a model determination is recorded"}. Use Suggest target roles to retry.</>}
       </div> : null}
       <form.Subscribe

@@ -19,7 +19,7 @@ function profileEventCount(): number {
   } finally { db.close(); }
 }
 
-test("Discovery Target search reviews persisted model decisions and saves only explicit preferences", async ({ page, baseURL }) => {
+test("Discovery Target search reviews persisted model decisions and saves only explicit preferences", async ({ page, baseURL }, testInfo) => {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   page.on("console", (message) => {
@@ -96,7 +96,7 @@ test("Discovery Target search reviews persisted model decisions and saves only e
   try {
     expect(confirmedDb.prepare("SELECT status FROM candidate_interpretation_suggestions WHERE determination_id=?").get(result.determinationId)).toEqual({status:"confirmed"});
   } finally { confirmedDb.close(); }
-  await page.screenshot({path:"/private/tmp/jobctrl-semantic-profile-mobile.png",fullPage:true});
+  await page.screenshot({path:testInfo.outputPath("semantic-profile-mobile.png"),fullPage:true});
   expect(saved.profile.experience).toMatchObject({
     target_role: "Director of Platform; Platform Delivery Manager",
     target_locations: "Barcelona",

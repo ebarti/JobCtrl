@@ -665,6 +665,7 @@ class SqliteMaterialsRepository:
                 determination_id=verification_id,
                 anchors=metadata["line_anchors"],
                 quality_determination_id=metadata.get("quality_determination_id"),
+                adversarial_determination_id=metadata.get("resume_adversarial_id"),
                 require_pass=artifact.status is ArtifactStatus.APPROVED,
                 expected_entity_id=str(job_id),
             )

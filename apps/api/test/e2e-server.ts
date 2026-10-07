@@ -17,7 +17,7 @@ const { e2eProfilePreviewRenderer } = await import("./fixtures/e2e-profile-previ
 const config = resolveApiConfig();
 const modelProfileSuggestions = process.env["JOBCTRL_E2E_PROFILE_SUGGESTIONS"] === "1";
 const { default: Database } = await import("better-sqlite3");
-const { recordCandidateProposal } = await import("./semantic-fixtures.js");
+const { recordCandidateProposal, recordModelDecision, bindDecision } = await import("./semantic-fixtures.js");
 const unavailable = async () => {
   throw new Error("Operation is outside the isolated E2E fixture");
 };
@@ -26,16 +26,23 @@ const providerDispatcher: JsonRpcDispatcher = {
     method === RpcMethods.SearchPreferences
       ? {jsonrpc:"2.0",id:1,result:{ok:true,profileVersion:params.expectedProfileVersion,inputVersion:String(params.expectedProfileVersion).padStart(64,"0"),status:"missing",determination:null}}
       : method === RpcMethods.ProfileRequiredBulletSuggestions
-      ? {
-          jsonrpc: "2.0", id: 1,
-          // Explicit model test double: this entry point never makes semantic judgments.
-          result: { profileVersion: params.expectedProfileVersion, suggestions: [
-            { reference: (params.sources as Array<{ reference: string }>)[0]!.reference,
-              kind: "grammar", guidance: "Review the repeated spacing in the incident response bullet.", proposedText: "Helped with incident response" },
-            { reference: (params.sources as Array<{ reference: string }>)[0]!.reference,
-              kind: "missing_evidence", guidance: "Which saved incident report supports the incident response claim?", proposedText: null },
-          ] },
-        }
+      ? (() => {
+          // Chosen model findings exercise the same persisted authority contract
+          // as the worker, without judging the fixture's language.
+          const source = (params.sources as Array<{ reference: string; originalText: string }>)[0]!;
+          const citations = [{source_id: source.reference, quote: source.originalText, exact_values: []}];
+          const result = {suggestions: [
+            {reference: source.reference, kind: "grammar", guidance: "Review the repeated spacing in the incident response bullet.", proposedText: "Helped with incident response", citations},
+            {reference: source.reference, kind: "missing_evidence", guidance: "Which saved incident report supports the incident response claim?", proposedText: null, citations},
+          ], citations, rationale: "Chosen model findings"};
+          const db = new Database(config.dbPath);
+          try {
+            const id = recordModelDecision(db, "required_bullet_coaching", "profile:required_bullets", result);
+            bindDecision(db, "profile_coaching", "profile:required_bullets", String(params.expectedProfileVersion), "required_bullet_coaching", id);
+            const row = db.prepare("SELECT envelope_json FROM semantic_determinations WHERE tenant_id='local' AND determination_id=?").get(id) as {envelope_json: string};
+            return {jsonrpc: "2.0", id: 1, result: {...result, profileVersion: params.expectedProfileVersion, determination: JSON.parse(row.envelope_json)}};
+          } finally {db.close();}
+        })()
       : method === RpcMethods.ProfileTargetRoleSuggestions && modelProfileSuggestions
       ? (() => {
           const db = new Database(config.dbPath);

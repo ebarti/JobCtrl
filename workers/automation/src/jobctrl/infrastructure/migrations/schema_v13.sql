@@ -32,6 +32,8 @@ CREATE TABLE posting_triage (
     target_fingerprint TEXT NOT NULL,
     source_id TEXT NOT NULL,
     listing_json TEXT NOT NULL CHECK (json_valid(listing_json) AND json_type(listing_json) = 'object'),
+    posting_json TEXT CHECK (posting_json IS NULL OR (json_valid(posting_json) AND json_type(posting_json) = 'object')),
+    consumed_at TEXT,
     status TEXT NOT NULL CHECK (status IN ('pending_triage','literal_excluded','admit','reject','uncertain')),
     reason_code TEXT,
     failure_code TEXT,
@@ -616,7 +618,7 @@ DELETE FROM application_outcome_suggestions
  WHERE e.tenant_id=application_outcome_suggestions.tenant_id
  AND e.evidence_id=application_outcome_suggestions.evidence_id AND e.provider='gmail');
 UPDATE job_bullet_provenance SET evidence_ids_json='[]', requirement_ids_json='[]',
- matched_keywords_json='[]', rationale='', coverage_json=NULL;
+ matched_keywords_json='[]', rationale='', coverage_json=NULL, voice_json=NULL;
 UPDATE resume_review_comment_threads SET risk_label=NULL;
 UPDATE job_detail_projections SET compensation_summary_json=NULL, compensation_audit_json=NULL;
 UPDATE discovery_search_units SET state='failed',lease_owner=NULL,last_error_code='query_plan_recompute_required',last_error_retryable=0
@@ -624,8 +626,8 @@ UPDATE discovery_search_units SET state='failed',lease_owner=NULL,last_error_cod
 
 -- Accepted bytes stay current; obsolete inferred audit metadata has no authority.
 UPDATE job_materials_artifacts SET metadata_json=json_remove(metadata_json,
- '$.quality_plan.seniority_evidence_ids', '$.quality_checks', '$.annotated_changes', '$.change_annotations',
+ '$.quality_plan.target_seniority', '$.quality_plan.seniority_evidence_ids', '$.quality_checks', '$.annotated_changes', '$.change_annotations',
  '$.adversarial_review', '$.judge_min_score') WHERE json_valid(metadata_json);
 
-UPDATE job_artifacts SET metadata_json=json_remove(metadata_json, '$.quality_plan.seniority_evidence_ids', '$.quality_checks', '$.annotated_changes', '$.change_annotations', '$.adversarial_review', '$.judge_min_score') WHERE json_valid(metadata_json);
-UPDATE job_materials SET metadata_json=json_remove(metadata_json, '$.quality_plan.seniority_evidence_ids', '$.quality_checks', '$.annotated_changes', '$.change_annotations', '$.adversarial_review', '$.judge_min_score') WHERE json_valid(metadata_json);
+UPDATE job_artifacts SET metadata_json=json_remove(metadata_json, '$.quality_plan.target_seniority', '$.quality_plan.seniority_evidence_ids', '$.quality_checks', '$.annotated_changes', '$.change_annotations', '$.adversarial_review', '$.judge_min_score') WHERE json_valid(metadata_json);
+UPDATE job_materials SET metadata_json=json_remove(metadata_json, '$.quality_plan.target_seniority', '$.quality_plan.seniority_evidence_ids', '$.quality_checks', '$.annotated_changes', '$.change_annotations', '$.adversarial_review', '$.judge_min_score') WHERE json_valid(metadata_json);

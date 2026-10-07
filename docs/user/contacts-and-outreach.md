@@ -195,4 +195,4 @@ scoring or Apply decisions.
 
 Outreach generation and user edits receive source-bound claim verification using only confirmed contact facts and canonical profile sources, plus separate model quality review. Findings and source anchors are persisted by line ID. Provider and validation failures block approval and preserve the accepted draft; stock-phrase and technology word lists do not decide support. Sending still requires the user's separate explicit action.
 
-See [the decision](../decisions.md#2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.
+See [the decision](../decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.

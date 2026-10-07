@@ -126,4 +126,4 @@ Related reading:
 
 Support, seniority alignment, voice and requirement demonstration are source-bound model verdicts. Code validates exact evidence IDs, verbatim quotes, values and structural output. Each displayed line joins a recorded source anchor; missing provenance is stated openly. A failed refresh preserves the last accepted artifact.
 
-See [the decision](../decisions.md#2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.
+See [the decision](../decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.

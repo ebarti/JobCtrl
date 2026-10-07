@@ -13,11 +13,29 @@ market evidence or an extrapolated range as a direct observation.
 
 A configured model extracts what the posting states: amounts, currency, period and base/OTE/bonus/equity component, with verbatim citations and a rationale. Code checks exact numbers and quotes, then performs explicit annualization arithmetic. Missing or ambiguous pay remains visible; a nearby salary word or an annual-pay threshold cannot invent a period. The accepted fact cites its extraction determination.
 
+An explicitly stated annual amount stays unchanged; monthly amounts use 12
+months and hourly amounts use 2,080 work hours. An unknown period remains
+unknown. Unpriced bonus and equity remain separate from the cash amount.
+
 ### Direct and extrapolated market benchmarks
 
-Job interpretation and cached provider-row classifications use the same occupation, seniority and place codes. Exact code equality selects comparable rows. Source/sample/freshness and currency arithmetic remain explicit. Provider ranges retain their source currency unless a persisted exchange-rate snapshot supports conversion; missing rates never use a hardcoded conversion. Direct benchmarks use documented EUR/year normalization; the displayed estimate cites row classification IDs. Levels.fyi routing uses code-to-slug tables, while fixed-format Markdown/structured payload parsing stays mechanical.
+Job interpretation and cached provider-row classifications use the same versioned taxonomy of occupation, seniority and place codes. Exact code equality selects comparable rows. Source/sample/freshness and currency arithmetic remain explicit. Provider ranges retain their source currency unless a persisted exchange-rate snapshot supports conversion; missing rates never use a hardcoded conversion. Direct benchmarks use documented EUR/year normalization; the displayed estimate cites row classification IDs. Open **Classification sources** to inspect those determinations. A failed refresh preserves the last accepted estimate. Levels.fyi routing uses code-to-slug tables, while fixed-format Markdown/structured payload parsing stays mechanical.
 
 A failed refresh retains a previously accepted model-backed estimate and reports the blocked reason. It never substitutes a title/location classifier or fixed exchange rate. Compensation remains warning-only and cannot manufacture a hard eligibility blocker. The offline demo reports refresh unavailable. Native schema 13 withdraws old inferred estimates for recomputation from source evidence; the paired pre-upgrade backup remains recoverable.
+
+Ordinary Discovery refreshes missing slices or those whose seven-day freshness
+window has expired. Failed source availability retries after one day. A focused
+retry uses the same lease and source policy. Euro Top Tech is a fixed public
+source; Glassdoor and Levels.fyi require an explicitly permitted access mode in
+Settings. An absent Levels.fyi preference leaves it disabled. Reads are passive:
+opening a compensation panel neither fetches a provider nor refreshes an estimate.
+
+Conversions use source-dated ECB exchange-rate snapshots. When exact-country
+evidence is missing, an auditable geographic bridge can use official Eurostat
+price levels and matched-company pay ratios. Its raw factor remains visible
+outside the supported 0.1x to 10x review bound, with a
+`factor_out_of_bounds` warning. The bound describes arithmetic for review; it
+does not classify the meaning of source text or create an eligibility blocker.
 
 ## What You Can See And Control
 

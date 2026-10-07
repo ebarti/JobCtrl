@@ -4,6 +4,12 @@ import CandidateProfileFlow from "../.vitepress/theme/CandidateProfileFlow.vue";
 
 # Candidate Profile
 
+Native schema 13 removes old system-inferred seniority signals and resets
+system-generated achievement confirmations to draft. Their source text is
+preserved. Review and confirm those evidence cards in Profile before interview
+preparation can cite them again. Independently authored confirmations and the
+last accepted material files are preserved.
+
 A Candidate Profile is JobCtrl's canonical, local record of facts about you:
 your experience, education, skills, evidence, application answers, resume
 baseline, and the preferences that control how those facts may be used. Scoring,
@@ -265,4 +271,4 @@ promotion, or selection-policy migrations in the proposed
 
 Import is a model extraction with verbatim field spans. Track, seniority, functions and historical target preferences are model interpretations of the saved version. They remain pending suggestions until you select values and save with their version fence. Inferred seniority and canned evidence strength are not written into authored achievement rows. Provider/spend/validation failure preserves saved facts and records an actionable interpretation status.
 
-See [the decision](../decisions.md#2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.
+See [the decision](../decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.

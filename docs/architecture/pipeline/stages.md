@@ -596,6 +596,6 @@ survive failed refreshes. These gates grant no submission authority.
 
 Intake triage persists every listing before admission; failures remain pending. Query planning and semantic calls run only in activities/sync RPC and pass lane/spend preflight. Scoring preselection uses recency/ID order. Job interpretation and typed blockers supply constraint meaning. Replay reads persisted results and makes no provider call.
 
-See [the decision](../../decisions.md#2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.
+See [the decision](../../decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.
 
 A running activity can become blocked when a semantic determination reports a provider-unavailable, spend-denied, or invalid-output status. It retains its distinct failure code and the last accepted artifact. A provider transport error follows the bounded retry path; no semantic fallback runs.

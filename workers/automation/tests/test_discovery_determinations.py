@@ -129,6 +129,70 @@ def test_default_batches_and_unchanged_rerun_make_zero_calls():
     assert len(model.calls) == 4
 
 
+def test_triage_cannot_cite_a_different_listings_fields():
+    class CrossListingModel(Model):
+        def chat_json(self, messages, **kwargs):
+            result = super().chat_json(messages, **kwargs)
+            result["listings"][0]["citations"] = result["listings"][1]["citations"]
+            return result
+
+    conn, deps = setup(CrossListingModel())
+    with pytest.raises(DeterminationFailure, match="foreign_source_id"):
+        triage_listings(conn, listings(2), search_cfg=CFG, dependencies=deps)
+    assert [tuple(row) for row in conn.execute("SELECT status,failure_code FROM posting_triage")] == [
+        ("pending_triage", "foreign_source_id"),
+        ("pending_triage", "foreign_source_id"),
+    ]
+
+
+@pytest.mark.parametrize("initial_verdict", [None, "admit"])
+def test_later_discovery_drains_intake_without_the_source_returning_it_again(initial_verdict):
+    from jobctrl.domain.discovery.identity import AtsKind
+    from jobctrl.domain.discovery.value_objects import Employer, JobMetadata, PostingUrl, SearchStrategy, Source
+    from jobctrl.domain.ports.discovery import ScrapedJobPosting
+    from jobctrl.domain.tenant import LOCAL_TENANT
+    from jobctrl.infrastructure.discovery.triage import PersistedPostingTriage, retry_pending_postings
+
+    model = Model("admit")
+    conn, deps = setup(model)
+    posting = ScrapedJobPosting(
+        posting_url=PostingUrl("https://example.test/persisted"),
+        source=Source("Synthetic board"),
+        employer=Employer("Synthetic employer"),
+        metadata=JobMetadata(
+            title="Synthetic title",
+            description="Preserved listing description",
+            salary="EUR100000/yr",
+        ),
+        strategy=SearchStrategy.JOBSPY,
+        source_id="jobspy:test",
+        source_native_id="persisted",
+        canonical_url="https://example.test/persisted",
+        ats_kind=AtsKind.OTHER,
+        structured_remote=True,
+    )
+    initial = PersistedPostingTriage(
+        conn, search_cfg=CFG, dependencies={**deps, "llm": model if initial_verdict else None}
+    )
+    if initial_verdict:
+        assert initial.admit(tenant_id=LOCAL_TENANT, postings=[posting]) == [posting]
+    else:
+        with pytest.raises(DeterminationFailure, match="provider_unavailable"):
+            initial.admit(tenant_id=LOCAL_TENANT, postings=[posting])
+    assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 0
+    # This later activity consumes only persisted intake; there is no scraper.
+    assert retry_pending_postings(conn, search_cfg=CFG, dependencies=deps) == 1
+    assert len(model.calls) == 1
+    assert tuple(conn.execute("SELECT title,description,salary FROM jobs").fetchone()) == (
+        "Synthetic title",
+        "Preserved listing description",
+        "EUR100000/yr",
+    )
+    assert conn.execute("SELECT consumed_at FROM posting_triage").fetchone()[0]
+    assert retry_pending_postings(conn, search_cfg=CFG, dependencies={**deps, "llm": None}) == 0
+    assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 1
+
+
 def test_batch_size_is_configurable_and_preflight_runs_first():
     model = Model()
     checks = []

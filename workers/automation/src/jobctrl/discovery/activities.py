@@ -190,6 +190,7 @@ def plan_discovery_sources(payload: PlanDiscoverySourcesInput) -> PlanDiscoveryS
         plan = plan_discovery_source_families(
             limit=payload.limit,
             source_ids=payload.source_ids,
+            discovery_execution=payload.discovery_execution,
         )
         output = PlanDiscoverySourcesOutput(
             families=list(plan.get("families") or []),

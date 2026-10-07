@@ -25,6 +25,8 @@ class ArtifactQuality(DeterminationModel):
 
 
 class ArtifactQualityJudge(Protocol):
+    def review_adversarial(self, *, entity_id, lines, sources, rubric): ...
+
     def judge(
         self,
         *,

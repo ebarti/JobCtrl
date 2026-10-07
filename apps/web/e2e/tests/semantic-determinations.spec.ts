@@ -11,7 +11,7 @@ import {
 // wiring; the chosen judgments are not a language classification corpus.
 test("Discovery exposes every model verdict and unavailable pending listing with its receipt", async ({
   page,
-}) => {
+}, testInfo) => {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   const db = new Database(loadE2eDbPath());
@@ -124,7 +124,7 @@ test("Discovery exposes every model verdict and unavailable pending listing with
     listing.getByText(/listing:product-listing-0:title/),
   ).toBeVisible();
   await page.screenshot({
-    path: "/private/tmp/jobctrl-semantic-discovery-desktop.png",
+    path: testInfo.outputPath("discovery-desktop.png"),
     fullPage: true,
   });
   await page.setViewportSize({ width: 390, height: 844 });
@@ -132,7 +132,7 @@ test("Discovery exposes every model verdict and unavailable pending listing with
     page.getByText(/pending triage.*provider unavailable/),
   ).toBeVisible();
   await page.screenshot({
-    path: "/private/tmp/jobctrl-semantic-discovery-mobile.png",
+    path: testInfo.outputPath("discovery-mobile.png"),
     fullPage: true,
   });
   expect(errors).toEqual([]);
@@ -140,7 +140,7 @@ test("Discovery exposes every model verdict and unavailable pending listing with
 
 test("Apply Review reads recorded line anchors and verification receipts", async ({
   page,
-}) => {
+}, testInfo) => {
   const response = await page.request.get(`/v1/jobs/${QA_PLATFORM_JOB_ID}`);
   expect(response.status(), await response.text()).toBe(200);
   const job = await response.json();
@@ -171,14 +171,14 @@ test("Apply Review reads recorded line anchors and verification receipts", async
     page.locator("[data-resume-layout-target='summary']").first(),
   ).toBeVisible();
   await page.screenshot({
-    path: "/private/tmp/jobctrl-semantic-apply-review.png",
+    path: testInfo.outputPath("apply-review.png"),
     fullPage: true,
   });
 });
 
 test("Compensation displays only rows with persisted matching taxonomy classifications", async ({
   page,
-}) => {
+}, testInfo) => {
   const db = new Database(loadE2eDbPath());
   try {
     seedSyntheticCompensation(db, QA_PLATFORM_JOB_ID);
@@ -214,14 +214,14 @@ test("Compensation displays only rows with persisted matching taxonomy classific
   await receipt.locator("summary").first().click();
   await expect(section.getByText(/job-interpretation-v1.*input/)).toBeVisible();
   await page.screenshot({
-    path: "/private/tmp/jobctrl-semantic-compensation.png",
+    path: testInfo.outputPath("compensation.png"),
     fullPage: true,
   });
 });
 
 test("Gmail shows the model's quoted outcome and an actionable unavailable refresh", async ({
   page,
-}) => {
+}, testInfo) => {
   const quote = "Please choose a time for the interview.";
   const db = new Database(loadE2eDbPath());
   try {
@@ -292,7 +292,7 @@ test("Gmail shows the model's quoted outcome and an actionable unavailable refre
     page.locator("blockquote").filter({ hasText: quote }),
   ).toBeVisible();
   await page.screenshot({
-    path: "/private/tmp/jobctrl-semantic-gmail.png",
+    path: testInfo.outputPath("gmail.png"),
     fullPage: true,
   });
 });

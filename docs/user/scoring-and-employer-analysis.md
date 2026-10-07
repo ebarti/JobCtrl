@@ -259,4 +259,4 @@ not for an employer ranking people.
 
 Scoring work limits use recency and stable IDs. The model supplies typed blockers with spans and requirement verdicts bound to canonical IDs; code resolves only weights, caps and bands. Posting constraints, seniority, geography and requirement scope come from the accepted job interpretation. No prose reclassification or lexical retrieval decides eligibility.
 
-See [the decision](../decisions.md#2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.
+See [the decision](../decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.

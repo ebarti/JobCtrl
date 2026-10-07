@@ -12,7 +12,17 @@ rule, or accepted learning recommendation.
 
 A user-started scan bounds application anchors, message count and date windows. Exact recipient, date, thread and domain checks remain code. A model reads bounded headers and determines which known application a message belongs to before its body is read. A second determination classifies the linked body, citing a verbatim span and returning confidence and rationale.
 
+Anchors come from applied job rows, reviewed outcomes and successful live Apply
+runs. The earliest qualifying anchor is kept for each job. A job row uses
+`applied_at`, falling back to `discovered_at` when a legacy applied row has no
+application timestamp. By default, the scan checks at most 25 anchors and five
+search results per anchor within a 45-day window starting at that anchor.
+
 Both decisions are persisted with prompt/model versions and an input fingerprint. The dashboard suggestion traces to this recorded evidence; phrase order and fixed confidence tables cannot set an outcome. If the provider is unavailable, spend is denied or binding is invalid, the scan reports its blocked reason and creates no suggestion. Existing reviewed outcomes remain unchanged. Accept or correct creates an outcome; ignore records only the suggestion decision. Raw bodies remain local and stay out of broad projections, events and logs.
+
+Analytics always show raw counts. Conversion rates require at least five applied
+records in a cohort; median response time requires five response-time samples.
+These mechanical sample gates make no judgment about what an email means.
 
 ## Explicit Feedback Learning
 

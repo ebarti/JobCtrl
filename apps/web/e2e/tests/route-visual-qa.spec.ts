@@ -2,6 +2,7 @@ import { expect, type Locator, type Page, test } from "@playwright/test";
 import type { ApplyReviewQueueResponse } from "@jobctrl/contracts";
 
 import { QA_PLATFORM_JOB_ID } from "../fixtures/e2e-state.js";
+import { QA_PROFILE } from "../../../api/test/qa-seed.js";
 import {
   makeApplyAudit,
   makeJobsPage,
@@ -2468,7 +2469,24 @@ test("Apply Review decision card keeps facts readable and decisions on one row",
 
 test("Job Detail requirement-fit card has visual regression coverage", async ({
   page,
+  baseURL,
 }) => {
+  // Earlier profile-edit tests change these owned facts. This positive source
+  // binding case requires the canonical evidence ID that the score cites.
+  const apiOrigin = `http://127.0.0.1:${process.env["JOBCTRL_E2E_API_PORT"] ?? "8767"}`;
+  const initialResponse = await page.request.get(`${apiOrigin}/v1/profile`);
+  expect(initialResponse.status()).toBe(200);
+  const initial = await initialResponse.json();
+  const profile = structuredClone(initial.profile);
+  const source = structuredClone(QA_PROFILE.resume.experience_entries[0]!);
+  const entry = profile.resume.experience_entries.find((item: { id: string }) => item.id === source.id);
+  if (entry) entry.achievement_evidence = source.achievement_evidence;
+  else profile.resume.experience_entries.push(source);
+  const saved = await page.request.patch(`${apiOrigin}/v1/profile`, {
+    headers: { origin: new URL(baseURL!).origin, "sec-fetch-site": "same-origin" },
+    data: { profile, expectedProfileVersion: initial.profileVersion },
+  });
+  expect(saved.status(), await saved.text()).toBe(200);
   await installDeterministicRequirementFitScrollbars(page);
   await page.goto(
     `/jobs/${encodeURIComponent(REQUIREMENT_FIT_JOB_URL)}?${JOB_FILTER_PARAMS}`,

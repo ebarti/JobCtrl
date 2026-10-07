@@ -356,6 +356,8 @@ Saved target roles, tracks, seniority floors, functions, specializations, locati
 
 Every fetched listing enters intake triage using title, company, location and the structured remote flag. The default batch is 20, configurable from 1–100; an optional Discovery model setting overrides the configured lane model. The model returns admit, reject or uncertain with cited sources and a reason code. **Listing decisions** shows all statuses and their determination provenance. A provider/spend/validation failure keeps rows `pending_triage` with its reason. Nothing silently disappears or is soft-deleted because of posting words.
 
+After the provider or budget recovers, retry Discovery. Its planning activity drains persisted intake before fetching new listings, including accepted batches interrupted before ingestion. The captured source fields and identity travel with the listing, so a source's time window cannot strand it. Intake is acknowledged only after admission and canonical ingestion finish.
+
 Literal user-approved exact-title exclusions remain literal. Free-text preferences are interpreted once into suggestions the user confirms. Historical experience locations do not imply relocation or remote consent. Profile import/save creates pending candidate interpretations. **Target search suggestions** calls the configured model in production; selected suggestions change targets only through a version-fenced user save.
 
 ## Employer Analysis Perspectives

@@ -1307,6 +1307,9 @@ def test_discover_jobs_use_case_keeps_accepted_owner_when_content_duplicate_reje
         def admit(self, *, tenant_id, postings):
             return list(postings) if self.accept else []
 
+        def complete(self, *, tenant_id, postings):
+            pass
+
         accept = True
 
     triage = ModelTriage()
@@ -1764,3 +1767,6 @@ class _AdmittedTriage:
 
     def admit(self, *, tenant_id, postings):
         return postings
+
+    def complete(self, *, tenant_id, postings):
+        pass

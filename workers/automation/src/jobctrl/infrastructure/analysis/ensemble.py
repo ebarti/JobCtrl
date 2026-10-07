@@ -155,16 +155,22 @@ async def run_ensemble(
         # Hard fail ONLY when zero legs survived (failure mode #2 boundary).
         raise EnsembleError("all ensemble legs failed", tuple(failures))
 
-    agreement_result, agreement_envelope = agreement_judge.judge(entity_id=entity_id, drafts=tuple(drafts))
-    agreement = AnalysisAgreement(
-        score=agreement_result.score,
-        flagged_requirements=tuple(
-            ident for row in agreement_result.findings if row.kind == "requirement" for ident in row.source_ids
-        ),
-        flagged_keywords=tuple(
-            ident for row in agreement_result.findings if row.kind == "keyword" for ident in row.source_ids
-        ),
-    )
+    agreement_envelope = None
+    agreement = AnalysisAgreement()
+    if len(drafts) > 1:
+        try:
+            agreement_result, agreement_envelope = agreement_judge.judge(entity_id=entity_id, drafts=tuple(drafts))
+            agreement = AnalysisAgreement(
+                score=agreement_result.score,
+                flagged_requirements=tuple(
+                    ident for row in agreement_result.findings if row.kind == "requirement" for ident in row.source_ids
+                ),
+                flagged_keywords=tuple(
+                    ident for row in agreement_result.findings if row.kind == "keyword" for ident in row.source_ids
+                ),
+            )
+        except DeterminationFailure as exc:
+            failures.append(AnalysisFailure(model_id="analysis_agreement", error=exc.code, raw_output=None))
     canonical = await _synthesize_with_retry(
         synthesizer,
         system_prompt=synthesizer_system_prompt,
@@ -180,7 +186,7 @@ async def run_ensemble(
         failures=tuple(failures),
         agreement=agreement,
         legs_attempted=len(adapters),
-        agreement_determination_id=agreement_envelope.determination_id,
+        agreement_determination_id=agreement_envelope.determination_id if agreement_envelope else None,
     )
 
 

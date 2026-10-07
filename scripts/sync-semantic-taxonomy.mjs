@@ -10,7 +10,14 @@ const destination = new URL(
   import.meta.url,
 );
 const bytes = await readFile(source);
-await writeFile(destination, bytes);
+const check = process.argv.includes("--check");
+async function publish(path, expected) {
+  if (check) {
+    const actual = await readFile(path);
+    if (!actual.equals(Buffer.from(expected))) throw new Error(`Semantic taxonomy drift: ${path.pathname}`);
+  } else await writeFile(path, expected);
+}
+await publish(destination, bytes);
 const taxonomy = JSON.parse(bytes);
 const typeNames = {
   track: "TrackCode",
@@ -21,17 +28,16 @@ const typeNames = {
 };
 const lines = [
   '"""Generated code types. Edit the Contracts taxonomy and run its sync script."""',
+  "",
   "from typing import Literal",
   "",
 ];
 for (const [key, typeName] of Object.entries(typeNames)) {
-  lines.push(
-    `${typeName} = Literal[${Object.keys(taxonomy[key])
-      .map((code) => JSON.stringify(code))
-      .join(", ")}]`,
-  );
+  const codes = Object.keys(taxonomy[key]).map((code) => JSON.stringify(code));
+  const declaration = `${typeName} = Literal[${codes.join(", ")}]`;
+  lines.push(declaration.length <= 120 ? declaration : `${typeName} = Literal[\n${codes.map(code => `    ${code},`).join("\n")}\n]`);
 }
-await writeFile(
+await publish(
   new URL(
     "../workers/automation/src/jobctrl/domain/taxonomy_codes.py",
     import.meta.url,
@@ -68,4 +74,5 @@ const updated = sql.includes("-- BEGIN GENERATED OCCUPATION CODES")
       "CREATE TABLE compensation_market_refresh_state (",
       seed + "\nCREATE TABLE compensation_market_refresh_state (",
     );
-await writeFile(sqlPath, updated);
+await publish(sqlPath, updated);
+if (check) console.log("Semantic taxonomy resources, code types and SQL seeds match Contracts.");

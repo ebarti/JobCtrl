@@ -105,8 +105,21 @@ def _scrape_with_retry(kwargs: dict, max_retries: int = 2, backoff: float = 5.0)
 # -- DB storage (legacy broad-board DataFrame -> SQLite) ----------------------
 
 
+def _jobspy_salary_from_row(row):
+    """Render structured provider amounts identically for intake and ingestion."""
+    min_amt, max_amt = row.get("min_amount"), row.get("max_amount")
+    interval = _nullable_str(row.get("interval")) or ""
+    currency = _nullable_str(row.get("currency")) or ""
+    if min_amt and str(min_amt) != "nan":
+        salary = f"{currency}{int(float(min_amt)):,}"
+        if max_amt and str(max_amt) != "nan":
+            salary += f"-{currency}{int(float(max_amt)):,}"
+        return salary + (f"/{interval}" if interval else "")
+    return _nullable_str(row.get("salary"))
+
+
 def _triaged_frame(conn, frame, search_cfg):
-    listings, ordinals = [], []
+    listings, ordinals, postings = [], [], {}
     for ordinal, (_, row) in enumerate(frame.iterrows()):
         url = _nullable_str(row.get("job_url"))
         if not url:
@@ -118,9 +131,22 @@ def _triaged_frame(conn, frame, search_cfg):
             location=_nullable_str(row.get("location")) or "",
             remote=_truthy_remote(row.get("is_remote")) if row.get("is_remote") is not None else None,
         )
-        listings.append(Listing(listing_id=listing_id(source, url, **fields), source_id=source, url=url, **fields))
+        listing = Listing(listing_id=listing_id(source, url, **fields), source_id=source, url=url, **fields)
+        listings.append(listing)
+        postings[listing.listing_id] = _jobspy_posting_from_row(
+            url=url,
+            source_id=source,
+            source_native_id=_jobspy_source_native_id(row, url),
+            site_label=str(row.get("site") or "jobspy"),
+            company=fields["company"],
+            title=fields["title"],
+            salary=_jobspy_salary_from_row(row),
+            description=_nullable_str(row.get("description")),
+            location=fields["location"],
+            structured_remote=fields["remote"],
+        )
         ordinals.append(ordinal)
-    decisions = triage_listings(conn, listings, search_cfg=search_cfg)
+    decisions = triage_listings(conn, listings, search_cfg=search_cfg, postings=postings)
     return frame.iloc[
         [
             ordinal
@@ -174,19 +200,7 @@ def store_jobspy_results(
         company = _nullable_str(row.get("company"))
         location_str = _nullable_str(row.get("location"))
 
-        # Build salary string from min/max
-        salary = None
-        min_amt = row.get("min_amount")
-        max_amt = row.get("max_amount")
-        interval = str(row.get("interval", "")) if str(row.get("interval", "")) != "nan" else ""
-        currency = str(row.get("currency", "")) if str(row.get("currency", "")) != "nan" else ""
-        if min_amt and str(min_amt) != "nan":
-            if max_amt and str(max_amt) != "nan":
-                salary = f"{currency}{int(float(min_amt)):,}-{currency}{int(float(max_amt)):,}"
-            else:
-                salary = f"{currency}{int(float(min_amt)):,}"
-            if interval:
-                salary += f"/{interval}"
+        salary = _jobspy_salary_from_row(row)
 
         description = _nullable_str(row.get("description"))
         # Discovery metadata explicitly permits an empty listing snippet.

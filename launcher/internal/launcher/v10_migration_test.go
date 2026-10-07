@@ -440,7 +440,7 @@ func TestV13NativeExactSourcesRestorePairedState(t *testing.T) {
 			if err := os.Remove(database); err != nil {
 				t.Fatal(err)
 			}
-			code := `import importlib,sqlite3,sys
+			code := `import importlib,json,sqlite3,sys
 v=int(sys.argv[2]); c=sqlite3.connect(sys.argv[1])
 m=importlib.import_module('jobctrl.infrastructure.migrations.schema_v'+str(v))
 getattr(m,'create_exact_v'+str(v)+'_schema')(c)
@@ -450,6 +450,13 @@ else:
  c.execute("INSERT INTO jobs(tenant_id,job_id,url,title) VALUES('local','019ed290-3340-7000-8000-000000000891','https://jobs.example/shipped-v6','Preserved title')")
  c.executemany("INSERT INTO job_application_locators(tenant_id,job_id,application_url) VALUES('local','019ed290-3340-7000-8000-000000000891',?)", [('https://apply.example/legacy',),('https://apply.example/canonical',)])
 c.execute("INSERT INTO job_enrichments(tenant_id,job_id,current_status,application_url,attempts_json,updated_at) VALUES('local','019ed290-3340-7000-8000-000000000891','completed','https://apply.example/canonical','[]','preserved-time')")
+if v == 12:
+ job='019ed290-3340-7000-8000-000000000891'
+ metadata=json.dumps({'owner_note':'authored note','quality_plan':{'target_seniority':'old inference'},'quality_checks':{'passed':True}})
+ c.execute("INSERT INTO job_materials(tenant_id,job_id,generation,status,created_at,updated_at,metadata_json) VALUES('local',?,1,'resume_approved','preserved-time','preserved-time',?)",(job,metadata))
+ c.execute("INSERT INTO job_materials_artifacts(tenant_id,job_id,generation,artifact_type,artifact_id,status,path,render_format,size_bytes,metadata_json,created_at) VALUES('local',?,1,'tailored_resume','owned-artifact','approved','/synthetic/accepted.txt','text',31,?,'preserved-time')",(job,metadata))
+ c.execute("INSERT INTO job_artifacts(tenant_id,job_id,stage,artifact_type,status,path,created_at,metadata_json) VALUES('local',?,'tailor','tailored_resume','approved','/synthetic/accepted.txt','preserved-time',?)",(job,metadata))
+ c.execute("INSERT INTO job_bullet_provenance(tenant_id,job_id,generation,bullet_id,artifact_id,section,transform_type,control,generated_text,created_at,voice_json) VALUES('local',?,1,'line','owned-artifact','experience','rephrase','optional','Preserved accepted content','preserved-time',?)",(job,json.dumps({'accepted':True,'reason':'old lexical rule'})))
 c.commit(); c.close()`
 			if output, err := exec.Command(python, "-I", "-B", "-c", code, database, strconv.FormatInt(scenario.version, 10)).CombinedOutput(); err != nil {
 				t.Fatalf("seed exact source: %v %s", err, output)
@@ -496,7 +503,7 @@ c.close()`
 					t.Fatalf("unexpected startup %#v", receipt)
 				}
 				candidateStarts++
-				code := `import sys
+				code := `import json,sys
 from jobctrl.database import open_exact_v13_database,close_connection
 c=open_exact_v13_database(sys.argv[1])
 assert c.execute('PRAGMA user_version').fetchone()[0] == 13
@@ -504,9 +511,14 @@ assert 'application_url' not in {r[1] for r in c.execute('PRAGMA table_info(jobs
 assert tuple(c.execute('SELECT title FROM jobs').fetchone()) == ('Preserved title',)
 assert tuple(c.execute('SELECT application_url,updated_at FROM job_enrichments').fetchone()) == ('https://apply.example/canonical','preserved-time')
 assert {r[0] for r in c.execute('SELECT application_url FROM job_application_locators')} == {'https://apply.example/legacy','https://apply.example/canonical'}
+if int(sys.argv[2]) == 12:
+ for table in ('job_materials','job_materials_artifacts','job_artifacts'):
+  assert json.loads(c.execute('SELECT metadata_json FROM '+table).fetchone()[0]) == {'owner_note':'authored note','quality_plan':{}}
+ assert tuple(c.execute('SELECT generated_text,voice_json FROM job_bullet_provenance').fetchone()) == ('Preserved accepted content',None)
+ assert tuple(c.execute('SELECT artifact_id,status,path,size_bytes FROM job_materials_artifacts').fetchone()) == ('owned-artifact','approved','/synthetic/accepted.txt',31)
 assert not c.execute('PRAGMA foreign_key_check').fetchall()
 close_connection(sys.argv[1])`
-				if output, err := exec.Command(python, "-I", "-B", "-c", code, database).CombinedOutput(); err != nil {
+				if output, err := exec.Command(python, "-I", "-B", "-c", code, database, strconv.FormatInt(scenario.version, 10)).CombinedOutput(); err != nil {
 					t.Fatalf("native v13 admission/transfer: %v %s", err, output)
 				}
 				if err := reopenMigratedV13WithTypeScriptAPI(database); err != nil {

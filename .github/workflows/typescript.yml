@@ -52,6 +52,7 @@ jobs:
         run: corepack pnpm install --frozen-lockfile
       - name: Check shared contracts and API
         run: |
+          node scripts/sync-semantic-taxonomy.mjs --check
           corepack pnpm --filter @jobctrl/contracts check
           corepack pnpm --filter @jobctrl/api-client check
           corepack pnpm --filter @jobctrl/domain-types check
@@ -152,6 +153,9 @@ jobs:
           corepack pnpm --filter @jobctrl/web exec playwright install --with-deps chromium
           uv --project workers/automation run --locked --all-extras playwright install chromium
       - name: Test web end-to-end
+        env:
+          JOBCTRL_E2E_ISOLATED: "1"
+          JOBCTRL_E2E_PROFILE_SUGGESTIONS: "1"
         run: corepack pnpm web:e2e
 
   extension:

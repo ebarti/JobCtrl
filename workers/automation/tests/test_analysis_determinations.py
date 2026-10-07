@@ -5,7 +5,6 @@ import sqlite3
 
 import pytest
 
-from jobctrl.domain.determinations import DeterminationFailure
 from jobctrl.domain.materials.analysis import JobAnalysis, JobAnalysisDraft, EnsembleError
 from jobctrl.domain.materials.analyze_use_case import AnalyzeJobUseCase
 from jobctrl.domain.materials.analysis_agreement import ModelAnalysisAgreementJudge
@@ -119,6 +118,10 @@ class Draft:
         )
 
 
+class OtherDraft(Draft):
+    model_id = "fake:other-leg"
+
+
 class Synth:
     async def reconcile(self, prompt, *, drafts, jd_snapshot):
         return JobAnalysis.model_validate(drafts[0].model_dump(exclude={"model_id"}))
@@ -136,7 +139,7 @@ def connection():
     return conn
 
 
-def use_case(conn, model, draft=None):
+def use_case(conn, model, draft=None, *, multiple=False):
     deps = dict(
         llm=model,
         repository=SqliteDeterminationRepository(conn),
@@ -148,7 +151,7 @@ def use_case(conn, model, draft=None):
     )
     return AnalyzeJobUseCase(
         repository=SqliteEmployerAnalysisRepository(conn),
-        adapters=(draft or Draft(),),
+        adapters=(draft or Draft(), OtherDraft()) if multiple else (draft or Draft(),),
         synthesizer=Synth(),
         claim_verifier=ModelClaimVerifier(**deps),
         agreement_judge=ModelAnalysisAgreementJudge(**deps),
@@ -163,8 +166,8 @@ def test_analysis_acceptance_and_rejection_follow_model_for_identical_prose():
     accepted = use_case(conn, model).execute(job=JOB)
     record = accepted.analysis
     assert record.canonical.inferred_seniority == "senior"
-    assert record.agreement.score == 0.9
-    assert set(record.determination_ids) == {"fake:leg", "canonical", "analysis_agreement", "job_interpretation"}
+    assert record.agreement.score is None
+    assert set(record.determination_ids) == {"fake:leg", "canonical", "job_interpretation"}
     loaded = SqliteEmployerAnalysisRepository(conn).load(record.tenant_id, record.job_id)
     assert loaded.determination_ids == record.determination_ids
     assert len(loaded.line_anchors) == 3
@@ -206,13 +209,23 @@ def test_protected_class_flag_comes_from_interpretation_and_keeps_original_evide
 
 def test_agreement_score_is_model_authored_for_the_same_drafts():
     scores = [
-        use_case(connection(), Model(agreement=score)).execute(job=JOB).analysis.agreement.score for score in (0.1, 0.9)
+        use_case(connection(), Model(agreement=score), multiple=True).execute(job=JOB).analysis.agreement.score for score in (0.1, 0.9)
     ]
     assert scores == [0.1, 0.9]
 
 
 def test_agreement_provider_failure_cannot_fall_back_to_text_overlap():
     conn = connection()
-    with pytest.raises(DeterminationFailure, match="provider_error"):
-        use_case(conn, Model(fault="DraftAgreement")).execute(job=JOB)
-    assert conn.execute("SELECT COUNT(*) FROM job_employer_analysis").fetchone()[0] == 0
+    model = Model(fault="DraftAgreement")
+    result = use_case(conn, model, multiple=True).execute(job=JOB).analysis
+    assert result.agreement.score is None
+    assert "analysis_agreement" not in result.determination_ids
+    assert any(row.model_id == "analysis_agreement" and row.error == "provider_error" for row in result.failures)
+    assert conn.execute("SELECT COUNT(*) FROM job_employer_analysis").fetchone()[0] == 1
+
+
+def test_single_draft_never_spends_on_an_agreement_diagnostic():
+    model = Model(fault="DraftAgreement")
+    result = use_case(connection(), model).execute(job=JOB).analysis
+    assert result.agreement.score is None
+    assert "DraftAgreement" not in model.calls

@@ -314,7 +314,12 @@ def test_exact_canonical_and_accepted_duplicate_identities_block(tmp_path: Path)
         )
     conn.commit()
 
-    exact = _evaluate(conn)
+    unknown_prior_id = _insert_job(
+        conn, url="https://jobs.example.test/uninterpreted-prior",
+        title="Uninterpreted prior role", company="Other employer",
+    )
+    _confirm_application(conn, job_id=unknown_prior_id)
+    exact = evaluate_repeat_application(conn, target_job_id=TARGET_JOB_ID)
     assert exact["status"] == "blocked"
     assert exact["matches"][0]["relationship"] == "canonical_identity"
 
@@ -333,6 +338,63 @@ def test_exact_canonical_and_accepted_duplicate_identities_block(tmp_path: Path)
     linked = _evaluate(conn)
     assert linked["status"] == "blocked"
     assert linked["matches"][0]["relationship"] == "accepted_duplicate"
+
+
+def test_prepare_reuses_an_accepted_pair_without_a_provider_or_spend(tmp_path: Path) -> None:
+    from jobctrl.domain.apply.repeat_application import prepare_repeat_application
+    from jobctrl.infrastructure.determinations import SqliteDeterminationRepository
+
+    conn = init_db(tmp_path / "jobs.db")
+    _insert_job(conn, url=PRIOR, title="Synthetic prior", company="Synthetic")
+    _insert_job(conn, url=TARGET, title="Synthetic target", company="Synthetic")
+    _confirm_application(conn)
+    accepted = _evaluate(conn)
+
+    def deny_new_spend():
+        pytest.fail("An accepted current pair must not request another call")
+
+    reused = prepare_repeat_application(
+        conn, target_job_id=TARGET_JOB_ID,
+        dependencies=dict(
+            llm=None, repository=SqliteDeterminationRepository(conn), tenant_id="local",
+            provider="unavailable", model="unavailable", lane="apply", preflight=deny_new_spend,
+        ),
+    )
+    assert reused["status"] == accepted["status"] == "confirmation_required"
+    assert reused["evidenceFingerprint"] == accepted["evidenceFingerprint"]
+    assert conn.execute("SELECT COUNT(*) FROM semantic_determinations").fetchone()[0] == 1
+
+
+@pytest.mark.parametrize("failure", ["provider_unavailable", "repeat_equivalence_uncertain"])
+def test_prepare_fails_distinctly_when_equivalence_cannot_be_decided(tmp_path: Path, failure: str) -> None:
+    from jobctrl.domain.apply.repeat_application import prepare_repeat_application
+    from jobctrl.domain.determinations import DeterminationFailure
+    from jobctrl.infrastructure.determinations import SqliteDeterminationRepository
+
+    conn = init_db(tmp_path / "jobs.db")
+    _insert_job(conn, url=PRIOR, title="Synthetic prior", company="Synthetic")
+    _insert_job(conn, url=TARGET, title="Synthetic target", company="Synthetic")
+    _confirm_application(conn)
+
+    class UncertainModel:
+        def chat_json(self, messages, **kwargs):
+            sources = json.loads(messages[1].content)["sources"]
+            return {
+                "verdict": "uncertain",
+                "citations": [{"source_id": row["source_id"], "quote": row["text"]} for row in sources],
+                "rationale": "The model cannot determine equivalence from these sources.",
+            }
+
+    with pytest.raises(DeterminationFailure, match=failure):
+        prepare_repeat_application(
+            conn, target_job_id=TARGET_JOB_ID,
+            dependencies=dict(
+                llm=None if failure == "provider_unavailable" else UncertainModel(),
+                repository=SqliteDeterminationRepository(conn), tenant_id="local",
+                provider="synthetic", model="synthetic", lane="apply", preflight=lambda: None,
+            ),
+        )
+    assert conn.execute("SELECT COUNT(*) FROM application_repeat_overrides").fetchone()[0] == 0
 
 
 def test_projected_employer_preserves_repeat_evidence_when_job_company_is_missing(tmp_path: Path) -> None:

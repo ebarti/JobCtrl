@@ -122,6 +122,11 @@ def review_saved_resume_edit(connection, *, tenant_id, draft_id, revision_id, de
         != profile.version
     ):
         raise DeterminationFailure("stale_profile_version")
+    current_analysis = SqliteEmployerAnalysisRepository(connection).load(
+        TenantId(tenant_id), canonical_job_id(draft["job_id"])
+    )
+    if current_analysis is None or current_analysis.generation != analysis.generation:
+        raise DeterminationFailure("stale_analysis_generation")
     current = connection.execute(
         "SELECT current_revision_id FROM resume_review_drafts WHERE tenant_id=? AND draft_id=?", (tenant_id, draft_id)
     ).fetchone()

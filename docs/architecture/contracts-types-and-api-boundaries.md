@@ -281,4 +281,4 @@ fixtures and RPC registration observations are updated together.
 
 Contracts owns the versioned semantic codes/labels and strict read envelopes. Worker determinations own meaning, with closed enums, extra-field rejection and canonical citations. API/web/extension consumers join IDs and read persisted verdicts; they never construct provenance or categories from text overlap. Interactive calls are sync RPC, activity calls remain outside Temporal replay.
 
-See [the decision](../decisions.md#2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.
+See [the decision](../decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.

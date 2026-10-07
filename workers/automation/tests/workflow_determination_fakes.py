@@ -39,7 +39,7 @@ def install_discovery_models(monkeypatch, *, verdict="admit"):
     original = triage.triage_listings
     model = Model(verdict)
 
-    def decided(conn, listings, *, search_cfg, tenant_id="local", dependencies=None):
+    def decided(conn, listings, *, search_cfg, tenant_id="local", dependencies=None, postings=None):
         cfg = dict(search_cfg)
         cfg["confirmed_targets"] = {
             "profile_version": 1,
@@ -49,7 +49,7 @@ def install_discovery_models(monkeypatch, *, verdict="admit"):
         if not cfg["confirmed_targets"].get("roles"):
             cfg["confirmed_targets"]["roles"] = ["Synthetic target"]
         confirm_test_preferences(conn, cfg, tenant_id=tenant_id)
-        return original(conn, listings, search_cfg=cfg, tenant_id=tenant_id, dependencies=dependencies)
+        return original(conn, listings, search_cfg=cfg, tenant_id=tenant_id, dependencies=dependencies, postings=postings)
 
     monkeypatch.setattr(
         triage,

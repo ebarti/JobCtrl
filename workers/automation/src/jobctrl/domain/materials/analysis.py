@@ -253,7 +253,7 @@ class AnalysisAgreement:
     first-class audit data, surfaced for review, never silently resolved.
     """
 
-    score: float = 0.0
+    score: float | None = None
     flagged_requirements: tuple[str, ...] = ()
     flagged_keywords: tuple[str, ...] = ()
 
@@ -268,7 +268,7 @@ class AnalysisAgreement:
     def from_dict(cls, data: dict[str, Any] | None) -> AnalysisAgreement:
         data = data or {}
         return cls(
-            score=float(data.get("score") or 0.0),
+            score=float(data["score"]) if data.get("score") is not None else None,
             flagged_requirements=tuple(str(item) for item in (data.get("flagged_requirements") or ())),
             flagged_keywords=tuple(str(item) for item in (data.get("flagged_keywords") or ())),
         )

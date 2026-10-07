@@ -665,38 +665,23 @@ def test_voiced_bullet_is_recorded_as_voice_transform(tmp_path: Path) -> None:
     assert saved.voice.summary_rejection_reason == ""
 
 
-def test_malformed_voice_refresh_preserves_last_accepted_artifact(tmp_path):
-    from jobctrl.domain.determinations import DeterminationFailure
-
-    materials, provenance = _FakeMaterialsRepo(), _FakeProvenanceRepo()
-    accepted = _use_case(
-        materials,
-        provenance,
-        _approved_llm(_payload(_GENERATOR_BULLET, summary=_GENERATOR_SUMMARY)),
-        _RecordingPublisher(),
-        None,
-    ).execute(job=_job(), profile_snapshot=_snapshot(), tailored_dir=tmp_path)
-    previous_bytes = Path(accepted.text_path).read_bytes()
-    previous_provenance = list(provenance.saved)
-
+def test_malformed_optional_voice_ships_the_verified_input_on_first_tailor(tmp_path):
     def malformed(request):
         return VoiceResult(
-            executive_profile="Revised summary.",
-            executive_profile_sentences=(),
+            executive_profile="Revised summary.", executive_profile_sentences=(),
             experience_bullets=request.experience_bullets,
         )
 
-    with pytest.raises(DeterminationFailure, match="schema_violation"):
-        _use_case(
-            materials,
-            provenance,
-            _approved_llm(_payload(_GENERATOR_BULLET, summary=_GENERATOR_SUMMARY)),
-            _RecordingPublisher(),
-            _FunctionVoice(malformed),
-        ).execute(job=_job(), profile_snapshot=_snapshot(), tailored_dir=tmp_path, retailor=True)
-    assert Path(accepted.text_path).read_bytes() == previous_bytes
-    assert provenance.saved == previous_provenance
-    assert materials.load(LOCAL_TENANT, JOB_ID).generation == accepted.materials.generation
+    materials, provenance = _FakeMaterialsRepo(), _FakeProvenanceRepo()
+    result = _use_case(
+        materials, provenance,
+        _approved_llm(_payload(_GENERATOR_BULLET, summary=_GENERATOR_SUMMARY)),
+        _RecordingPublisher(), _FunctionVoice(malformed),
+    ).execute(job=_job(), profile_snapshot=_snapshot(), tailored_dir=tmp_path)
+    assert result.status == "approved"
+    assert _GENERATOR_BULLET in Path(result.text_path).read_text()
+    audit = provenance.load(LOCAL_TENANT, JOB_ID).voice
+    assert audit.ran and not audit.accepted and audit.reason == "voice_schema_violation"
 
 
 def test_voice_introduced_fabrication_is_rejected_and_pre_voice_ships(tmp_path: Path) -> None:
@@ -860,32 +845,20 @@ def test_round_trip_audited_bullet_text_equals_rendered_html_resume(tmp_path: Pa
     assert "cut latency 40% with Python." in rendered_html
 
 
-def test_voice_provider_failure_blocks_refresh_and_preserves_artifact(tmp_path):
-    from jobctrl.domain.determinations import DeterminationFailure
-
-    materials, provenance = _FakeMaterialsRepo(), _FakeProvenanceRepo()
-    accepted = _use_case(
-        materials,
-        provenance,
-        _approved_llm(_payload(_GENERATOR_BULLET, summary=_GENERATOR_SUMMARY)),
-        _RecordingPublisher(),
-        None,
-    ).execute(job=_job(), profile_snapshot=_snapshot(), tailored_dir=tmp_path)
-    previous_bytes = Path(accepted.text_path).read_bytes()
-
+def test_optional_voice_provider_failure_ships_the_verified_input_on_first_tailor(tmp_path):
     def failed(request):
         raise RuntimeError("Synthetic provider failure")
 
-    with pytest.raises(DeterminationFailure, match="provider_error"):
-        _use_case(
-            materials,
-            provenance,
-            _approved_llm(_payload(_GENERATOR_BULLET, summary=_GENERATOR_SUMMARY)),
-            _RecordingPublisher(),
-            _FunctionVoice(failed),
-        ).execute(job=_job(), profile_snapshot=_snapshot(), tailored_dir=tmp_path, retailor=True)
-    assert Path(accepted.text_path).read_bytes() == previous_bytes
-    assert materials.load(LOCAL_TENANT, JOB_ID).generation == accepted.materials.generation
+    materials, provenance = _FakeMaterialsRepo(), _FakeProvenanceRepo()
+    result = _use_case(
+        materials, provenance,
+        _approved_llm(_payload(_GENERATOR_BULLET, summary=_GENERATOR_SUMMARY)),
+        _RecordingPublisher(), _FunctionVoice(failed),
+    ).execute(job=_job(), profile_snapshot=_snapshot(), tailored_dir=tmp_path)
+    assert result.status == "approved"
+    assert _GENERATOR_BULLET in Path(result.text_path).read_text()
+    audit = provenance.load(LOCAL_TENANT, JOB_ID).voice
+    assert audit.ran and not audit.accepted and audit.reason == "voice_provider_error"
 
 
 def test_no_voice_port_keeps_pre_phase3_behaviour(tmp_path: Path) -> None:

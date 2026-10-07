@@ -217,6 +217,14 @@ and verbatim quote; model unavailability creates no suggestion. Compensation
 shows evidence matched by persisted taxonomy codes. Affected demo capabilities
 report unavailable.
 
+For high-fit resumes, exercise all six typed persona verdicts and read actual
+worker-produced metadata through the API; a persisted receipt must accompany the
+persona audit. Optional voice provider or shape failures retain the already
+verified candidate and record the rejected rewrite. An unresolved repeat check
+parks its own candidate while another eligible candidate can be claimed. A new
+Discovery run retries unconsumed listings from durable intake even when the board
+does not return them again.
+
 Use the exact native schema-13 boundary to test migration from every supported
 source schema, stopped-runtime paired backups, source preservation, fenced
 activation, recovery and concurrent-writer refusal. Preserve authored facts and

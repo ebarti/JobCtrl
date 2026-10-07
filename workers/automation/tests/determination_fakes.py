@@ -45,6 +45,26 @@ class JobInterpreter:
         return job_interpretation(employer_analysis.canonical.requirements)
 
 
+def persona_decision(data, verdict="pass"):
+    source = data["sources"][0]
+    return {
+        "verdict": verdict,
+        "score": 0.1,
+        "rationale": "Explicit synthetic persona verdict",
+        "personas": [
+            {
+                "persona": code,
+                "verdict": verdict,
+                "score": 0.1,
+                "rationale": "Explicit synthetic persona verdict",
+                "citations": [{"source_id": source["source_id"], "quote": source["text"][:1000], "exact_values": []}],
+                "findings": [],
+            }
+            for code in data["context"]["personas"]
+        ],
+    }
+
+
 class VerificationModel:
     def __init__(self, verdict="pass", quality_source=None):
         self.verdict, self.quality_source, self.calls = verdict, quality_source, []
@@ -58,6 +78,8 @@ class VerificationModel:
             else self.verdict
         )
         sources = {source["source_id"]: source["text"] for source in data["sources"]}
+        if response_schema["title"] == "ResumeAdversarialReview":
+            return persona_decision(data)
         if response_schema["title"] == "ArtifactQuality":
             raw = {"verdict": "PASS", "score": 0.9}
             if self.quality_source is not None and (

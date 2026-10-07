@@ -248,4 +248,4 @@ release: data added since that snapshot is not carried backward.
 
 Capabilities that interpret text require a ready provider and spend allowance. Discovery keeps failed intake rows pending; generation preserves accepted artifacts on failed refreshes. The extension proposes model-mapped, saved-profile-backed answers for review before filling. Affected offline-demo capabilities report unavailable.
 
-See [the decision](../decisions.md#2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.
+See [the decision](../decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.

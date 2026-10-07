@@ -483,4 +483,4 @@ profiles, artifacts, and local paths. See [SECURITY.md](../../SECURITY.md).
 
 Semantic decisions come from strict model determinations with source citations. Code owns ID membership, verbatim spans, exact values, version fences, URL/security controls and privacy minimization. No provider failure selects a lexical substitute. Form mapping uses captured questions, saved fact IDs and native option IDs; the user confirms filling and JobCtrl never submits.
 
-See [the decision](../decisions.md#2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.
+See [the decision](../decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.

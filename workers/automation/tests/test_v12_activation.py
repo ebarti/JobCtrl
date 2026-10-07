@@ -7,9 +7,32 @@ from pathlib import Path
 import pytest
 
 from jobctrl.infrastructure.migrations import v12_activation as activation
+from jobctrl.infrastructure.migrations import v13_activation
 from jobctrl.infrastructure.migrations.schema_v11 import create_exact_v11_schema
-from jobctrl.infrastructure.migrations.schema_manifest import EXACT_V12_MANIFEST, assert_exact_manifest
+from jobctrl.infrastructure.migrations.schema_v12 import create_exact_v12_schema
+from jobctrl.infrastructure.migrations.schema_manifest import EXACT_V12_MANIFEST, EXACT_V13_MANIFEST, assert_exact_manifest
 from jobctrl.infrastructure.migrations.v11_to_v12_execute import execute_v11_to_v12_candidate
+from jobctrl.infrastructure.migrations.v12_to_v13_execute import execute_v12_to_v13_candidate
+
+_create_source_schema = create_exact_v11_schema
+_execute_candidate = execute_v11_to_v12_candidate
+_target_manifest = EXACT_V12_MANIFEST
+_source_version = 11
+
+
+@pytest.fixture(params=[12, 13], autouse=True)
+def migration_case(request, monkeypatch):
+    """Exercise both private activation implementations with their real schemas."""
+    module, source, execute, manifest, version = (
+        (activation, create_exact_v11_schema, execute_v11_to_v12_candidate, EXACT_V12_MANIFEST, 11)
+        if request.param == 12
+        else (v13_activation, create_exact_v12_schema, execute_v12_to_v13_candidate, EXACT_V13_MANIFEST, 12)
+    )
+    for name, value in {
+        "activation": module, "_create_source_schema": source, "_execute_candidate": execute,
+        "_target_manifest": manifest, "_source_version": version,
+    }.items():
+        monkeypatch.setitem(globals(), name, value)
 
 
 def _bound(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
@@ -17,12 +40,12 @@ def _bound(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
         tmp_path / name for name in ["paired.db", "live.db", "candidate.db", "binding.json"]
     )
     with sqlite3.connect(source) as conn:
-        create_exact_v11_schema(conn)
+        _create_source_schema(conn)
         conn.execute(
             "INSERT INTO jobs(tenant_id,job_id,url,title) VALUES('local','j','https://synthetic/post','paired title')"
         )
     shutil.copyfile(source, live)
-    execute_v11_to_v12_candidate(source, candidate)
+    _execute_candidate(source, candidate)
     activation.bind_source(source, live, candidate, receipt)
     return source, live, candidate, receipt
 
@@ -44,7 +67,7 @@ def test_atomic_activation_holds_writer_lock_through_rename(tmp_path: Path, monk
     assert checked == [True]
     assert not candidate.exists() and not receipt.exists()
     with sqlite3.connect(live) as conn:
-        assert_exact_manifest(conn, EXACT_V12_MANIFEST)
+        assert_exact_manifest(conn, _target_manifest)
         assert conn.execute("SELECT title FROM jobs").fetchone() == ("paired title",)
 
 
@@ -114,7 +137,7 @@ def test_schema_drift_during_candidate_verification_is_refused(tmp_path: Path, m
     assert candidate.exists()
     with sqlite3.connect(live) as conn:
         assert conn.execute("SELECT title FROM independent_view").fetchone() == ("paired title",)
-        assert conn.execute("PRAGMA user_version").fetchone() == (11,)
+        assert conn.execute("PRAGMA user_version").fetchone() == (_source_version,)
 
 
 @pytest.mark.parametrize("wal_at_bind", [True, False])
@@ -184,7 +207,7 @@ def test_wal_connection_opened_after_initial_check_cannot_acknowledge_lost_write
     assert outcomes == ["committed"]
     with sqlite3.connect(live) as conn:
         assert conn.execute("SELECT title FROM jobs").fetchone() == ("acknowledged WAL write",)
-        assert conn.execute("PRAGMA user_version").fetchone() == (11,)
+        assert conn.execute("PRAGMA user_version").fetchone() == (_source_version,)
     assert candidate.exists()
 
 
@@ -200,7 +223,7 @@ def test_quiescent_wal_source_activates_in_delete_mode(tmp_path: Path) -> None:
     activation.activate(live, candidate, receipt)
     with sqlite3.connect(live) as conn:
         assert conn.execute("PRAGMA journal_mode").fetchone() == ("delete",)
-        assert_exact_manifest(conn, EXACT_V12_MANIFEST)
+        assert_exact_manifest(conn, _target_manifest)
         assert conn.execute("SELECT title FROM jobs").fetchone() == ("paired title",)
 
 

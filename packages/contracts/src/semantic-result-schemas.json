@@ -3441,6 +3441,196 @@
     },
     "schemaVersion": "1"
   },
+  "resume_adversarial": {
+    "promptVersion": "resume-adversarial-v1",
+    "schema": {
+      "$defs": {
+        "Citation": {
+          "additionalProperties": false,
+          "properties": {
+            "exact_values": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 32,
+              "title": "Exact Values",
+              "type": "array"
+            },
+            "quote": {
+              "maxLength": 4000,
+              "minLength": 1,
+              "title": "Quote",
+              "type": "string"
+            },
+            "source_id": {
+              "maxLength": 240,
+              "minLength": 1,
+              "title": "Source Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "source_id",
+            "quote"
+          ],
+          "title": "Citation",
+          "type": "object"
+        },
+        "PersonaJudgment": {
+          "additionalProperties": false,
+          "properties": {
+            "citations": {
+              "items": {
+                "$ref": "#/$defs/Citation"
+              },
+              "maxItems": 20,
+              "minItems": 1,
+              "title": "Citations",
+              "type": "array"
+            },
+            "findings": {
+              "items": {
+                "$ref": "#/$defs/QualityFinding"
+              },
+              "maxItems": 100,
+              "title": "Findings",
+              "type": "array"
+            },
+            "persona": {
+              "enum": [
+                "ats_parser",
+                "skeptical_recruiter",
+                "hiring_manager_domain_expert",
+                "evidence_auditor",
+                "anti_ai_voice_critic",
+                "interview_defensibility_critic"
+              ],
+              "title": "Persona",
+              "type": "string"
+            },
+            "rationale": {
+              "maxLength": 1500,
+              "minLength": 1,
+              "title": "Rationale",
+              "type": "string"
+            },
+            "score": {
+              "maximum": 1,
+              "minimum": 0,
+              "title": "Score",
+              "type": "number"
+            },
+            "verdict": {
+              "enum": [
+                "pass",
+                "fail"
+              ],
+              "title": "Verdict",
+              "type": "string"
+            }
+          },
+          "required": [
+            "persona",
+            "verdict",
+            "score",
+            "rationale",
+            "citations",
+            "findings"
+          ],
+          "title": "PersonaJudgment",
+          "type": "object"
+        },
+        "QualityFinding": {
+          "additionalProperties": false,
+          "properties": {
+            "category": {
+              "enum": [
+                "relevance",
+                "clarity",
+                "completeness",
+                "structure",
+                "voice",
+                "interview_defensibility"
+              ],
+              "title": "Category",
+              "type": "string"
+            },
+            "citation": {
+              "$ref": "#/$defs/Citation"
+            },
+            "line_id": {
+              "maxLength": 240,
+              "minLength": 1,
+              "title": "Line Id",
+              "type": "string"
+            },
+            "rationale": {
+              "maxLength": 1500,
+              "minLength": 1,
+              "title": "Rationale",
+              "type": "string"
+            },
+            "repair_instruction": {
+              "maxLength": 1500,
+              "minLength": 1,
+              "title": "Repair Instruction",
+              "type": "string"
+            }
+          },
+          "required": [
+            "line_id",
+            "category",
+            "citation",
+            "rationale",
+            "repair_instruction"
+          ],
+          "title": "QualityFinding",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "personas": {
+          "items": {
+            "$ref": "#/$defs/PersonaJudgment"
+          },
+          "maxItems": 6,
+          "minItems": 6,
+          "title": "Personas",
+          "type": "array"
+        },
+        "rationale": {
+          "maxLength": 1500,
+          "minLength": 1,
+          "title": "Rationale",
+          "type": "string"
+        },
+        "score": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Score",
+          "type": "number"
+        },
+        "verdict": {
+          "enum": [
+            "pass",
+            "fail"
+          ],
+          "title": "Verdict",
+          "type": "string"
+        }
+      },
+      "required": [
+        "verdict",
+        "score",
+        "rationale",
+        "personas"
+      ],
+      "title": "ResumeAdversarialReview",
+      "type": "object"
+    },
+    "schemaVersion": "1"
+  },
   "resume_extraction": {
     "promptVersion": "resume-extraction-v2",
     "schema": {

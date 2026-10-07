@@ -135,7 +135,7 @@ export function createQaPdfBytes(title: string): Buffer {
   return Buffer.from(pdf, "ascii");
 }
 
-const QA_PROFILE = {
+export const QA_PROFILE = {
   schema_version: 2,
   personal: {
     full_name: "John Doe",

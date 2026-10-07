@@ -140,12 +140,24 @@ export function evaluateRepeatApplication(
   const evaluatedAt = options.evaluatedAt ?? new Date().toISOString();
   const target = jobIdentity(db, targetJobId);
   if (!target) throw new InputError("Job not found.");
-  let matches:RepeatApplicationMatch[];
-  try{
-    matches=confirmedApplicationFacts(db).map(fact=>relationshipMatch(db,target,fact)).filter((match):match is RepeatApplicationMatch=>match!==null).sort(compareMatches);
-  }catch(error){
-    if(!(error instanceof InputError) || !["repeat_determination_unavailable","repeat_equivalence_uncertain"].includes(error.message))throw error;
-    return {status:error.message==="repeat_equivalence_uncertain"?"uncertain":"unavailable",summary:error.message==="repeat_equivalence_uncertain"?"The model could not establish whether this is an equivalent role. Review the prior application before proceeding.":"Role equivalence has no current determination. Run the repeat-application check before authorizing submission.",evidenceFingerprint:null,evaluatedAt,matches:[],override:null,auditTrail:auditTrail(db,targetJobId)};
+  const matches: RepeatApplicationMatch[] = [];
+  let determinationFailure: InputError | null = null;
+  for (const fact of confirmedApplicationFacts(db)) {
+    try {
+      const match = relationshipMatch(db, target, fact);
+      if (match) matches.push(match);
+    } catch (error) {
+      if (!(error instanceof InputError) || !["repeat_determination_unavailable", "repeat_equivalence_uncertain"].includes(error.message)) throw error;
+      determinationFailure ??= error;
+    }
+  }
+  matches.sort(compareMatches);
+  // A proven canonical collision remains authoritative even if another prior
+  // application has no semantic determination. Missing decisions still block
+  // every assessment without that exact identity evidence.
+  if (determinationFailure && !matches.some(match => match.relationship !== "same_employer_equivalent_role")) {
+    const uncertain = determinationFailure.message === "repeat_equivalence_uncertain";
+    return {status: uncertain ? "uncertain" : "unavailable", summary: uncertain ? "The model could not establish whether this is an equivalent role. Review the prior application before proceeding." : "Role equivalence has no current determination. Run the repeat-application check before authorizing submission.", evidenceFingerprint: null, evaluatedAt, matches: [], override: null, auditTrail: auditTrail(db, targetJobId)};
   }
   if (!matches.length) {
     return {

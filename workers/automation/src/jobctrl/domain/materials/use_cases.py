@@ -58,6 +58,10 @@ from jobctrl.domain.materials.aggregate import (
 from jobctrl.domain.materials.analysis import EmployerAnalysis
 from jobctrl.domain.materials.adversarial import (
     AdversarialReviewResult,
+    AdversarialPersonaFinding,
+    ADVERSARIAL_REVIEW_THRESHOLD,
+    normalized_job_fit_score,
+    should_run_adversarial_review,
 )
 from jobctrl.domain.materials.coverage_audit import (
     KeywordCoverage,
@@ -169,7 +173,7 @@ log = logging.getLogger(__name__)
 
 TAILORING_PROMPT_VERSION = "tailor.v13.model-claim-anchors"
 TAILORING_SCHEMA_VERSION = "tailored-resume.v5"
-TAILORING_JUDGE_SCHEMA_VERSION = "artifact-quality.v1"
+TAILORING_JUDGE_SCHEMA_VERSION = "artifact-quality.v2"
 TAILORING_JUDGE_CRITERIA: tuple[str, ...] = (
     "relevance_to_job",
     "evidence_support",
@@ -1997,6 +2001,9 @@ class TailorResumeUseCase:
             "final_judge": judge_record,
             "claim_verification_id": final_candidate.record.get("claim_verification_id"),
             "quality_determination_id": (judge_record or {}).get("determination_id"),
+            "resume_adversarial_id": final_candidate.adversarial_review.determination_id
+            if final_candidate.adversarial_review
+            else None,
             "line_anchors": [
                 {
                     "line_id": row.bullet_id,
@@ -2938,13 +2945,69 @@ class TailorResumeUseCase:
             employer_analysis=employer_analysis,
         )
         record["judge"] = self._judge_record(verdict)
+        adversarial_review = AdversarialReviewResult.skipped(
+            threshold=ADVERSARIAL_REVIEW_THRESHOLD,
+            normalized_fit_score=normalized_job_fit_score(job),
+            reason="below_high_fit_band" if verdict.approved else "quality_judge_rejected",
+        )
+        if verdict.approved and should_run_adversarial_review(job):
+            rows = candidate.provenance
+            evidence = profile_sources(profile_snapshot.as_dict())
+            requirements = [
+                Source(source_id=row.id, text=row.evidence_span) for row in employer_analysis.canonical.requirements
+            ]
+            review, envelope = self._quality_judge.review_adversarial(
+                entity_id=str(job["job_id"]),
+                lines=[
+                    ArtifactLine(
+                        line_id=row.bullet_id,
+                        text=row.generated_text,
+                        allowed_evidence_ids=[source.source_id for source in evidence],
+                        allowed_requirement_ids=[source.source_id for source in requirements],
+                    )
+                    for row in rows
+                ],
+                sources=[*evidence, *requirements],
+                rubric={"target_seniority": tailoring_plan.target_seniority},
+            )
+            adversarial_review = AdversarialReviewResult(
+                ran=True,
+                threshold=ADVERSARIAL_REVIEW_THRESHOLD,
+                normalized_fit_score=normalized_job_fit_score(job),
+                passed=review.verdict == "pass",
+                verdict=review.verdict.upper(),
+                score=review.score,
+                score_rationale=review.rationale,
+                model=envelope.model,
+                determination_id=envelope.determination_id,
+                blockers=tuple(finding.rationale for persona in review.personas for finding in persona.findings),
+                repair_instructions=tuple(
+                    finding.repair_instruction for persona in review.personas for finding in persona.findings
+                ),
+                personas=tuple(
+                    AdversarialPersonaFinding(
+                        persona=row.persona,
+                        verdict=row.verdict.upper(),
+                        score=row.score,
+                        score_rationale=row.rationale,
+                        blockers=tuple(finding.rationale for finding in row.findings),
+                        repair_instructions=tuple(finding.repair_instruction for finding in row.findings),
+                    )
+                    for row in review.personas
+                ),
+            )
+            if not adversarial_review.passed:
+                verdict = JudgeVerdict.failed(
+                    score=review.score, notes=review.rationale, issues=adversarial_review.blockers
+                )
+        record["adversarial_review"] = adversarial_review.to_dict()
         if verdict.approved:
             record["status"] = "approved"
         elif record.get("adversarial_review", {}).get("ran"):
             record["status"] = "adversarial_rejected"
         else:
             record["status"] = "judge_rejected"
-        return replace(candidate, verdict=verdict)
+        return replace(candidate, verdict=verdict, adversarial_review=adversarial_review)
 
     def _chat_json_payload(self, messages, *, schema, **kwargs):
         return call_model(
@@ -3219,7 +3282,17 @@ class TailorResumeUseCase:
             return candidate, VoicePassRecord.skipped("pre_voice_candidate_rejected")
         if self._voice is None:
             return candidate, VoicePassRecord.skipped("no_voice_port")
-        payload, voice_record = self._run_voice(tailored_payload=candidate.payload)
+        try:
+            payload, voice_record = self._run_voice(tailored_payload=candidate.payload)
+        except DeterminationFailure as exc:
+            # The optional rewrite failed before factual or quality verification.
+            # This already verified candidate is the accepted voice-stage input.
+            return candidate, VoicePassRecord(
+                ran=True,
+                accepted=False,
+                model=self._voice.model_id,
+                reason="voice_" + exc.code,
+            )
         if payload is None or payload == candidate.payload:
             return candidate, voice_record
         voiced = self._evaluate_candidate(

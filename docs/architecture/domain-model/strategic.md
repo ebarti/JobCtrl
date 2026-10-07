@@ -511,4 +511,4 @@ projections, logs, and telemetry carry only safe references.
 
 Each bounded context owns its determinations: Discovery triage/query planning, Enrichment job/page interpretation, Profile extraction/interpretation, Materials claim verification. Interview and Outreach call shared ports. TS read models join accepted determination/anchor IDs and perform no semantic inference. Strict schemas, source binding and arithmetic remain code.
 
-See [the decision](../../decisions.md#2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.
+See [the decision](../../decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.

@@ -58,9 +58,10 @@ PROFILE = {
 class Model:
     provider_id, model = "fake", "synthetic"
 
-    def __init__(self, verdict="pass", quality="pass", fault=None, draft_text="Synthetic draft"):
+    def __init__(self, verdict="pass", quality="pass", fault=None, draft_text="Synthetic draft", adversarial="pass"):
         self.verdict, self.quality, self.fault, self.calls = verdict, quality, fault, []
         self.draft_text = draft_text
+        self.adversarial = adversarial
 
     def chat_json(self, messages, *, response_schema, **kwargs):
         self.calls.append((response_schema["title"], current_llm_lane(), messages))
@@ -82,6 +83,10 @@ class Model:
             }
         data = json.loads(messages[1].content)
         sources = {row["source_id"]: row["text"] for row in data["sources"]}
+        if title == "ResumeAdversarialReview":
+            from tests.determination_fakes import persona_decision
+
+            return persona_decision(data, self.adversarial)
         if title == "ClaimVerification":
             return {
                 "verdict": self.verdict,

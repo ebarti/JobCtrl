@@ -72,7 +72,7 @@ EXACT_V13_MANIFEST = SchemaManifest(
     version=13,
     object_count=286,
     table_count=128,
-    fingerprint="49fabc62dbd1917586c1d457f772d1c5a468c162c2f485e71d1d943ce3c65aec",
+    fingerprint="24f551f62457dd2190db390df3d72db50620fc0ae60de3706a6dfc4f38934138",
 )
 
 

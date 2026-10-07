@@ -192,6 +192,7 @@ def save_artifact_anchors(
     determination_id,
     anchors,
     quality_determination_id=None,
+    adversarial_determination_id=None,
     require_pass=True,
     expected_entity_id=None,
 ):
@@ -273,6 +274,22 @@ def save_artifact_anchors(
             entity_version=str(generation),
             determination_kind="artifact_quality",
             determination_id=quality_determination_id,
+        )
+
+
+    if adversarial_determination_id is not None:
+        from jobctrl.domain.ports.resume_adversarial import ResumeAdversarialReview
+
+        review = repository.find(str(tenant_id), adversarial_determination_id)
+        if review is None or review.kind != "resume_adversarial" or review.entity_id != expected_entity_id:
+            raise DeterminationFailure("artifact_binding_invalid")
+        result = ResumeAdversarialReview.model_validate(review.result)
+        if require_pass and result.verdict != "pass":
+            raise DeterminationFailure("artifact_binding_invalid")
+        repository.bind(
+            tenant_id=str(tenant_id), entity_kind="artifact", entity_id=artifact_id,
+            entity_version=str(generation), determination_kind="resume_adversarial",
+            determination_id=adversarial_determination_id,
         )
 
 

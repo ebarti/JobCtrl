@@ -188,6 +188,12 @@ All screenshots use synthetic sample data. Open the [Product Tour](user/product-
 for the complete Profile → Discovery → Pipeline → Jobs → Apply Review → Runs
 workflow, including job-detail evidence and resume editing.
 
+## Semantic Determination Authority
+
+JobCtrl uses source-bound model determinations for semantic support and quality. Code verifies canonical IDs, verbatim spans and exact values; generation-time anchors make explanations inspectable by line ID. There is no deterministic lexical fabrication gate or read-time similarity reconstruction.
+
+See [the decision](decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.
+
 ## Appendix: evidence-backed capability matrix
 
 | Capability | JobCtrl | Career-Ops | JobOps | AI Job Search |
@@ -225,10 +231,3 @@ command, product surface, runtime path, or documented generated artifact. Open
 issues qualify limitations; they do not count as shipped roadmap features.
 Commercial tools remain outside the snapshot matrix because they do not expose
 equivalent immutable source evidence.
-
-
-## Semantic Determination Authority
-
-JobCtrl uses source-bound model determinations for semantic support and quality. Code verifies canonical IDs, verbatim spans and exact values; generation-time anchors make explanations inspectable by line ID. There is no deterministic lexical fabrication gate or read-time similarity reconstruction.
-
-See [the decision](decisions.md#2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.

@@ -416,4 +416,4 @@ See [Profile & Settings](api/profile-and-settings.md) and the
 
 Semantic read envelopes and citations are shared in Contracts. `/v1/discovery/triage` pages persisted listing decisions; `/v1/extension/autofill/mapping` uses paired sync RPC; saved resume rendering requires model review of that exact revision. Target-role suggestions are model-backed pending determinations. Version-fenced profile saves may carry `acceptedCandidateInterpretationId` to record confirmation. Repeat checks persist equivalence before live Apply eligibility is read.
 
-See [the decision](decisions.md#2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.
+See [the decision](decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.

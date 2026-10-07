@@ -115,19 +115,21 @@ def evaluate_repeat_application(
     if target is None:
         raise ValueError(f"job not found: {stable_job_id}")
 
-    matches = [
-        match
-        for fact in _confirmed_application_facts(conn, tenant_id=tenant_id)
-        if (
-            match := _relationship_match(
-                conn,
-                tenant_id=tenant_id,
-                target=target,
-                fact=fact,
-            )
-        )
-        is not None
-    ]
+    from jobctrl.domain.determinations import DeterminationFailure
+
+    matches = []
+    determination_failure = None
+    for fact in _confirmed_application_facts(conn, tenant_id=tenant_id):
+        try:
+            match = _relationship_match(conn, tenant_id=tenant_id, target=target, fact=fact)
+            if match is not None:
+                matches.append(match)
+        except DeterminationFailure as error:
+            determination_failure = determination_failure or error
+    if determination_failure is not None and not any(
+        match["relationship"] != "same_employer_equivalent_role" for match in matches
+    ):
+        raise determination_failure
     matches.sort(key=_match_sort_key)
     if not matches:
         return {
@@ -319,6 +321,15 @@ def prepare_repeat_application(
     target = _job_identity(conn, tenant_id=tenant_id, job_id=canonical_job_id(str(target_job_id)))
     if target is None:
         raise DeterminationFailure("foreign_source_id")
+    try:
+        existing = evaluate_repeat_application(
+            conn, target_job_id=target_job_id, tenant_id=tenant_id,
+            record_audit=record_audit, evaluated_at=evaluated_at,
+        )
+    except DeterminationFailure:
+        existing = None
+    if existing is not None:
+        return existing
     service = ModelRoleEquivalence(
         **(dependencies or determination_dependencies(conn, tenant_id=str(tenant_id), lane="apply"))
     )

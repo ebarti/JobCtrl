@@ -238,6 +238,37 @@ def test_independent_quality_verdict_controls_approval_without_score_threshold(t
     assert conn.execute("SELECT COUNT(*) FROM semantic_determinations WHERE kind='artifact_quality'").fetchone()[0] == 1
 
 
+@pytest.mark.parametrize("verdict", ["pass", "fail"])
+def test_high_fit_resume_keeps_all_six_personas_and_their_model_verdict(tmp_path, verdict):
+    conn, model = connection(), ResumeModel(score=0.01)
+    model.adversarial = verdict
+    kwargs = request(tmp_path)
+    kwargs["job"] = {**kwargs["job"], "fit_score": 9}
+    outcome = resume_case(conn, model).execute(**kwargs)
+    assert outcome.materials.is_resume_approved is (verdict == "pass")
+    envelope = conn.execute(
+        "SELECT determination_id,envelope_json FROM semantic_determinations WHERE kind='resume_adversarial'"
+    ).fetchone()
+    result = json.loads(envelope["envelope_json"])["result"]
+    assert len(result["personas"]) == 6
+    assert result["verdict"] == verdict
+    assert result["score"] == 0.1
+    if verdict == "pass":
+        metadata = conn.execute(
+            "SELECT metadata_json FROM job_materials_artifacts WHERE artifact_type='tailored_resume'"
+        ).fetchone()[0]
+        metadata = json.loads(metadata)
+        assert metadata["adversarial_review"]["passed"] is True
+        assert len(metadata["adversarial_review"]["personas"]) == 6
+        assert metadata["resume_adversarial_id"] == envelope["determination_id"]
+        assert (
+            conn.execute(
+                "SELECT determination_id FROM semantic_entity_bindings WHERE entity_kind='artifact' AND determination_kind='resume_adversarial' LIMIT 1"
+            ).fetchone()[0]
+            == envelope["determination_id"]
+        )
+
+
 @pytest.mark.parametrize("mode", ["lenient", "normal", "strict"])
 def test_every_mode_runs_both_model_checks(tmp_path, mode):
     conn, model = connection(), ResumeModel()
@@ -257,14 +288,17 @@ def test_repaired_claim_uses_cited_model_reason_and_new_generation_text(tmp_path
     assert "revision 2" in Path(outcome.materials.tailored_resume.path).read_text()
 
 
-@pytest.mark.parametrize("stage", ["GeneratedResumeDraft", "ClaimVerification", "ArtifactQuality"])
+@pytest.mark.parametrize("stage", ["GeneratedResumeDraft", "ClaimVerification", "ArtifactQuality", "ResumeAdversarialReview"])
 def test_provider_failure_preserves_last_accepted_resume(tmp_path, stage):
     conn = connection()
     accepted = resume_case(conn, ResumeModel()).execute(**request(tmp_path))
     before = Path(accepted.materials.tailored_resume.path).read_bytes()
     model = ResumeModel(text="Changed synthetic draft", fault_at=stage, fault=RuntimeError("PRIVATE PAYLOAD"))
+    kwargs = request(tmp_path, retailor=True)
+    if stage == "ResumeAdversarialReview":
+        kwargs["job"] = {**kwargs["job"], "fit_score": 9}
     with pytest.raises(DeterminationFailure, match="provider_error") as error:
-        resume_case(conn, model).execute(**request(tmp_path, retailor=True))
+        resume_case(conn, model).execute(**kwargs)
     assert "PRIVATE" not in str(error.value)
     current = SqliteMaterialsRepository(conn).load_current_approved(LOCAL_TENANT, JOB_ID)
     assert current.tailored_resume.artifact_id == accepted.materials.tailored_resume.artifact_id

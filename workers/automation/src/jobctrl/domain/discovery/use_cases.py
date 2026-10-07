@@ -216,11 +216,13 @@ class DiscoverJobsUseCase:
         once so the same adapter can be replayed in tests.
         """
 
-        materialised = list(self._triage.admit(tenant_id=tenant_id, postings=list(postings)))
+        supplied = list(postings)
+        materialised = list(self._triage.admit(tenant_id=tenant_id, postings=supplied))
         run_id = run_id or self._run_id_factory()
         decisions: list[DiscoveryDecision] = [
             self._ingest_one(tenant_id=tenant_id, posting=p, run_id=run_id) for p in materialised
         ]
+        self._triage.complete(tenant_id=tenant_id, postings=supplied)
         return DiscoveryRunSummary(
             total=len(decisions),
             new_jobs=sum(1 for d in decisions if d.is_new_job),

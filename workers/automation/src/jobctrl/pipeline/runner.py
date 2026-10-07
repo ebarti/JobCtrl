@@ -1339,12 +1339,16 @@ def plan_discovery_source_families(
     *,
     limit: int = 0,
     source_ids: tuple[str, ...] = (),
+    discovery_execution: DiscoveryExecutionRef | None = None,
 ) -> dict[str, Any]:
     """Plan the runnable discovery source families in legacy order."""
     conn = init_db()
     from jobctrl.infrastructure.discovery.query_plan import prepare_query_plan
+    from jobctrl.infrastructure.discovery.triage import retry_pending_postings
 
-    search_cfg = prepare_query_plan(conn, config.load_search_config())
+    search_cfg = config.load_search_config()
+    retry_pending_postings(conn, search_cfg=search_cfg, discovery_execution=discovery_execution, source_ids=source_ids)
+    search_cfg = prepare_query_plan(conn, search_cfg)
     try:
         seed_discovery_control_queues(conn, config.load_source_registry(search_cfg=search_cfg))
     except Exception:

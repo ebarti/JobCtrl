@@ -816,18 +816,31 @@ def _acquire_job_candidate(
     if target_job_id is not None:
         target_job_id = canonical_job_id(str(target_job_id))
     from jobctrl.domain.apply.repeat_application import prepare_repeat_application
+    from jobctrl.domain.determinations import DeterminationFailure
 
+    repeat_blocked_ids: set[str] = set()
     if not (run_ctx or {}).get("dry_run"):
         for candidate in _select_apply_candidates(conn, tenant_id, target_job_id, min_score):
             if str(candidate["job_id"]) not in (excluded or set()):
-                prepare_repeat_application(conn, target_job_id=candidate["job_id"], tenant_id=TenantId(tenant_id))
+                try:
+                    prepare_repeat_application(conn, target_job_id=candidate["job_id"], tenant_id=TenantId(tenant_id))
+                except DeterminationFailure as exc:
+                    repeat_blocked_ids.add(str(candidate["job_id"]))
+                    record_job_event(
+                        conn,
+                        candidate["job_id"],
+                        "apply",
+                        "RepeatApplicationCheckBlocked",
+                        tenant_id=TenantId(tenant_id),
+                        payload={"failureCode": exc.code},
+                    )
         conn.commit()
     try:
         conn.execute("BEGIN IMMEDIATE")
         candidate_rows = [
             row
             for row in _select_apply_candidates(conn, tenant_id, target_job_id, min_score)
-            if str(row["job_id"]) not in (excluded or set())
+            if str(row["job_id"]) not in (excluded or set()) | repeat_blocked_ids
         ]
         if not candidate_rows:
             conn.rollback()
@@ -839,11 +852,22 @@ def _acquire_job_candidate(
         if not dry_run:
             row = None
             for candidate in candidate_rows:
-                candidate_assessment = evaluate_repeat_application(
-                    conn,
-                    tenant_id=tenant_id,
-                    target_job_id=candidate["job_id"],
-                )
+                try:
+                    candidate_assessment = evaluate_repeat_application(
+                        conn,
+                        tenant_id=tenant_id,
+                        target_job_id=candidate["job_id"],
+                    )
+                except DeterminationFailure as exc:
+                    record_job_event(
+                        conn,
+                        candidate["job_id"],
+                        "apply",
+                        "RepeatApplicationCheckBlocked",
+                        tenant_id=TenantId(tenant_id),
+                        payload={"failureCode": exc.code},
+                    )
+                    continue
                 if candidate_assessment["status"] in {"clear", "override_ready"}:
                     row = candidate
                     repeat_assessment = candidate_assessment

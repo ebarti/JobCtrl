@@ -4091,7 +4091,7 @@ export interface EmployerAnalysisKeyword {
 }
 
 export interface EmployerAnalysisAgreement {
-  score: number;
+  score: number | null;
   flagged_requirements: string[];
   flagged_keywords: string[];
 }
@@ -4371,6 +4371,7 @@ export interface ArtifactTailoringExplanation {
     repairInstructions: string[];
   };
   adversarialReview: {
+    determinationId?: string | null;
     ran: boolean;
     passed: boolean | null;
     score: number | null;

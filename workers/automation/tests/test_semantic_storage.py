@@ -37,7 +37,13 @@ def test_cutover_preserves_accepted_artifact_bytes_and_authored_metadata(tmp_pat
         "owner_note": "Keep this accepted version",
         "quality_checks": {"passed": True},
         "annotated_changes": ["legacy heuristic"],
+        "quality_plan": {"target_seniority": "legacy inferred level", "owner_control": "retain"},
     }
+    connection.execute("UPDATE job_materials SET metadata_json=?", (json.dumps(metadata),))
+    connection.execute(
+        "INSERT INTO job_artifacts (tenant_id,job_id,stage,artifact_type,status,path,created_at,metadata_json) VALUES ('local',?,'tailor','tailored_resume','approved',?,'2026-10-07',?)",
+        (job_id, str(source), json.dumps(metadata)),
+    )
     connection.execute(
         "INSERT INTO job_materials_artifacts (tenant_id,job_id,generation,artifact_type,artifact_id,status,path,render_format,size_bytes,metadata_json,created_at) VALUES ('local',?,1,'tailored_resume','owned-artifact','approved',?,'text',?,?,'2026-10-07')",
         (job_id, str(source), len(contents), json.dumps(metadata)),
@@ -45,6 +51,10 @@ def test_cutover_preserves_accepted_artifact_bytes_and_authored_metadata(tmp_pat
     before = connection.execute(
         "SELECT job_id,generation,artifact_type,artifact_id,status,path,size_bytes,created_at FROM job_materials_artifacts"
     ).fetchone()
+    connection.execute(
+        "INSERT INTO job_bullet_provenance (tenant_id,job_id,generation,bullet_id,artifact_id,section,transform_type,control,generated_text,created_at,voice_json) VALUES ('local',?,1,'line:1','owned-artifact','experience','rephrase','optional','Owned synthetic accepted artifact','2026-10-07',?)",
+        (job_id, json.dumps({"accepted": True, "reason": "legacy lexical delta"})),
+    )
     connection.commit()
     upgrade_exact_v12_schema_to_v13(connection)
     assert source.read_bytes() == contents
@@ -54,9 +64,13 @@ def test_cutover_preserves_accepted_artifact_bytes_and_authored_metadata(tmp_pat
         ).fetchone()
         == before
     )
-    assert json.loads(connection.execute("SELECT metadata_json FROM job_materials_artifacts").fetchone()[0]) == {
-        "owner_note": "Keep this accepted version"
-    }
+    for table in ("job_materials_artifacts", "job_artifacts", "job_materials"):
+        assert json.loads(connection.execute(f"SELECT metadata_json FROM {table}").fetchone()[0]) == {
+            "owner_note": "Keep this accepted version",
+            "quality_plan": {"owner_control": "retain"},
+        }
+    line = connection.execute("SELECT generated_text,voice_json FROM job_bullet_provenance").fetchone()
+    assert line == ("Owned synthetic accepted artifact", None)
     connection.close()
 
 

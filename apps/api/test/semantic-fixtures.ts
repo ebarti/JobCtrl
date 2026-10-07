@@ -677,7 +677,7 @@ export function seedSyntheticCompensation(
   marketMinimum = 100_000,
 ): void {
   db.prepare(
-    `INSERT INTO job_posted_compensation_facts (
+    `INSERT OR REPLACE INTO job_posted_compensation_facts (
       tenant_id, job_id, source_field, source_text, legacy_raw_salary, parse_state,
       currency, period, component, minimum_amount, maximum_amount,
       annualized_minimum_amount, annualized_maximum_amount, annualization_assumption,
@@ -705,7 +705,7 @@ export function seedSyntheticCompensation(
     new Date().toISOString(),
   );
   db.prepare(
-    `INSERT INTO job_market_compensation_estimates (
+    `INSERT OR REPLACE INTO job_market_compensation_estimates (
       tenant_id, job_id, estimate_state, currency, period, component,
       minimum_amount, maximum_amount, confidence_interval_minimum_amount,
       confidence_interval_maximum_amount, confidence_band, confidence_score,

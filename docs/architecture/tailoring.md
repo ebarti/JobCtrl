@@ -1,6 +1,6 @@
 # Tailoring Contract
 
-Tailoring generates a selective resume from saved profile sources and the current employer analysis/requirement-fit ledger. [Semantic Judgments Are LLM Determinations](../decisions.md#2026-10-07-semantic-judgments-are-llm-determinations) defines model authority. [Materials Audit](materials.md) owns shared truthfulness and line provenance.
+Tailoring generates a selective resume from saved profile sources and the current employer analysis/requirement-fit ledger. [Semantic Judgments Are LLM Determinations](../decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) defines model authority. [Materials Audit](materials.md) owns shared truthfulness and line provenance.
 
 ## The Contract At A Glance
 
@@ -26,9 +26,9 @@ Canonical facts enter bounded prompts by ID. The generator returns strict JSON w
 2. Build the artifact budget, required selections and allowed evidence inventory. Structural infeasibility is actionable; code cannot silently drop pinned evidence.
 3. Generate strict line/claim mappings tied to known source and requirement IDs.
 4. Assemble and check format, IDs, immutable fields and exact values.
-5. Verify final claims and provenance with the model, then judge artifact quality separately.
+5. Verify final claims and provenance with the model, then judge artifact quality separately. High-fit resumes (normalized fit at least 0.8) retain a separate, cited six-persona review. Its typed verdict decides acceptance; the persona score is diagnostic.
 6. Repair from model findings within the attempt budget. No lexical gate or score cutoff replaces the verdict.
-7. If voice is requested, the model chooses wording changes; changed text receives fresh claim verification and quality review.
+7. If voice is requested, the model chooses wording changes; changed text receives fresh claim verification, quality and applicable persona review. An optional rewrite provider or shape failure records a rejected voice attempt and retains the already-verified candidate. A failure of verification for changed text blocks that refresh.
 8. Commit the accepted generation and audit together. A failed attempt cannot replace the accepted resume/PDF or its approval.
 
 ## Inputs To Tailoring

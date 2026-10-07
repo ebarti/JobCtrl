@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+from dataclasses import asdict
 from datetime import datetime, timezone
 
 from jobctrl.domain.determinations import DeterminationFailure, Source, validate_citations, parse_model_result
@@ -51,7 +52,9 @@ def confirmed_targets(search_cfg: dict) -> tuple[list[Source], dict]:
     }
 
 
-def triage_listings(conn, listings: list[Listing], *, search_cfg: dict, tenant_id="local", dependencies=None):
+def triage_listings(
+    conn, listings: list[Listing], *, search_cfg: dict, tenant_id="local", dependencies=None, postings=None
+):
     batch_size = search_cfg.get("triage_batch_size", DEFAULT_TRIAGE_BATCH_SIZE)
     if type(batch_size) is not int or not 1 <= batch_size <= MAX_TRIAGE_BATCH_SIZE:
         raise ValueError("triage_batch_size must be an integer between 1 and 100")
@@ -84,10 +87,16 @@ def triage_listings(conn, listings: list[Listing], *, search_cfg: dict, tenant_i
         unique[listing.listing_id] = listing
     for listing in unique.values():
         snapshot = fingerprint(listing.model_dump())
+        posting_json = json.dumps(asdict(postings[listing.listing_id]), ensure_ascii=False) if postings else None
         row = conn.execute(
             "SELECT status,determination_id FROM posting_triage WHERE tenant_id=? AND listing_id=? AND snapshot_fingerprint=? AND target_fingerprint=?",
             (tenant_id, listing.listing_id, snapshot, target_key),
         ).fetchone()
+        if row and posting_json is not None:
+            conn.execute(
+                "UPDATE posting_triage SET posting_json=? WHERE tenant_id=? AND listing_id=? AND snapshot_fingerprint=? AND target_fingerprint=?",
+                (posting_json, tenant_id, listing.listing_id, snapshot, target_key),
+            )
         if listing.title.strip().casefold() in {
             str(value).strip().casefold() for value in preferences["exact_title_exclusions"]
         }:
@@ -142,7 +151,7 @@ def triage_listings(conn, listings: list[Listing], *, search_cfg: dict, tenant_i
             decisions[listing.listing_id] = decision.verdict
             continue
         conn.execute(
-            "INSERT INTO posting_triage (tenant_id,listing_id,snapshot_fingerprint,target_fingerprint,source_id,listing_json,status,created_at) VALUES (?,?,?,?,?,?,'pending_triage',?) ON CONFLICT DO NOTHING",
+            "INSERT INTO posting_triage (tenant_id,listing_id,snapshot_fingerprint,target_fingerprint,source_id,listing_json,posting_json,status,created_at) VALUES (?,?,?,?,?,?,?,'pending_triage',?) ON CONFLICT DO NOTHING",
             (
                 tenant_id,
                 listing.listing_id,
@@ -150,6 +159,7 @@ def triage_listings(conn, listings: list[Listing], *, search_cfg: dict, tenant_i
                 target_key,
                 listing.source_id,
                 json.dumps(listing.model_dump(), ensure_ascii=False),
+                posting_json,
                 now,
             ),
         )
@@ -209,28 +219,32 @@ def triage_listings(conn, listings: list[Listing], *, search_cfg: dict, tenant_i
     return decisions
 
 
+def posting_listing(posting):
+    fields = dict(
+        title=posting.metadata.title,
+        company=posting.employer.name,
+        location=posting.metadata.location or "",
+        remote=posting.structured_remote,
+    )
+    return Listing(
+        listing_id=listing_id(posting.source_id, posting.posting_url.value, **fields),
+        source_id=posting.source_id,
+        url=posting.posting_url.value,
+        **fields,
+    )
+
+
 def triage_postings(conn, postings, *, search_cfg, tenant_id="local", dependencies=None):
     postings = list(postings)
-    listings = [
-        Listing(
-            listing_id=listing_id(
-                posting.source_id,
-                posting.posting_url.value,
-                title=posting.metadata.title,
-                company=posting.employer.name,
-                location=posting.metadata.location or "",
-                remote=posting.structured_remote,
-            ),
-            source_id=posting.source_id,
-            url=posting.posting_url.value,
-            title=posting.metadata.title,
-            company=posting.employer.name,
-            location=posting.metadata.location or "",
-            remote=posting.structured_remote,
-        )
-        for posting in postings
-    ]
-    decisions = triage_listings(conn, listings, search_cfg=search_cfg, tenant_id=tenant_id, dependencies=dependencies)
+    listings = [posting_listing(posting) for posting in postings]
+    decisions = triage_listings(
+        conn,
+        listings,
+        search_cfg=search_cfg,
+        tenant_id=tenant_id,
+        dependencies=dependencies,
+        postings={listing.listing_id: posting for listing, posting in zip(listings, postings, strict=True)},
+    )
     return [
         posting for posting, listing in zip(postings, listings, strict=True) if decisions[listing.listing_id] == "admit"
     ]
@@ -254,3 +268,66 @@ class PersistedPostingTriage:
             tenant_id=str(tenant_id),
             dependencies=self._dependencies,
         )
+
+    def complete(self, *, tenant_id, postings):
+        """Acknowledge intake only after every admitted posting was ingested."""
+        now = datetime.now(timezone.utc).isoformat()
+        for posting in postings:
+            listing = posting_listing(posting)
+            self._connection.execute(
+                "UPDATE posting_triage SET consumed_at=? WHERE tenant_id=? AND listing_id=? AND snapshot_fingerprint=? AND consumed_at IS NULL",
+                (now, str(tenant_id), listing.listing_id, fingerprint(listing.model_dump())),
+            )
+        self._connection.commit()
+
+
+def retry_pending_postings(
+    conn, *, search_cfg, tenant_id="local", discovery_execution=None, source_ids=(), dependencies=None
+):
+    """Drain durable intake on a later discovery activity without fetching again."""
+    from pydantic import TypeAdapter
+    from jobctrl.domain.ports.discovery import ScrapedJobPosting
+    from jobctrl.domain.discovery.use_cases import DiscoverJobsUseCase
+    from jobctrl.domain.discovery.value_objects import SearchStrategy
+    from jobctrl.domain.tenant import TenantId
+    from jobctrl.infrastructure.discovery.sqlite_repository import SqliteJobRepository
+    from jobctrl.infrastructure.discovery.production_wiring import DurableJobEventPublisher
+
+    batch_size = search_cfg.get("triage_batch_size", DEFAULT_TRIAGE_BATCH_SIZE)
+    if type(batch_size) is not int or not 1 <= batch_size <= MAX_TRIAGE_BATCH_SIZE:
+        raise ValueError("triage_batch_size must be an integer between 1 and 100")
+    source_clause = " AND source_id IN (" + ",".join("?" for _ in source_ids) + ")" if source_ids else ""
+    source_families = {
+        SearchStrategy.JOBSPY: "jobspy",
+        SearchStrategy.WORKDAY_API: "workday",
+        SearchStrategy.SMART_EXTRACT: "smartextract",
+        SearchStrategy.MANUAL: "ats_api",
+    }
+    resumed = 0
+    while True:
+        rows = conn.execute(
+            "SELECT posting_json FROM posting_triage WHERE tenant_id=? AND consumed_at IS NULL AND posting_json IS NOT NULL AND status IN ('pending_triage','admit')"
+            + source_clause
+            + " ORDER BY created_at,listing_id LIMIT ?",
+            (str(tenant_id), *source_ids, batch_size),
+        ).fetchall()
+        if not rows:
+            return resumed
+        postings = list(dict.fromkeys(row[0] for row in rows))
+        postings = [TypeAdapter(ScrapedJobPosting).validate_json(value) for value in postings]
+        triage = PersistedPostingTriage(conn, search_cfg=search_cfg, dependencies=dependencies)
+        # Spend on a single batch before dispatching each admitted row through
+        # its original source family and the current execution's write fences.
+        triage.admit(tenant_id=TenantId(str(tenant_id)), postings=postings)
+        for posting in postings:
+            repository = SqliteJobRepository(
+                conn,
+                discovery_execution=discovery_execution,
+                source_family=source_families[posting.strategy] if discovery_execution else None,
+            )
+            summary = DiscoverJobsUseCase(
+                repository=repository,
+                publisher=DurableJobEventPublisher(conn, stage="discover"),
+                triage=triage,
+            ).execute(tenant_id=TenantId(str(tenant_id)), postings=[posting])
+            resumed += summary.total

@@ -196,7 +196,7 @@ class AnalyzeJobUseCase:
             failures=outcome.failures,
             agreement=outcome.agreement,
             legs_attempted=outcome.legs_attempted,
-            determination_ids={**verification_ids, "analysis_agreement": outcome.agreement_determination_id},
+            determination_ids={**verification_ids, **({"analysis_agreement": outcome.agreement_determination_id} if outcome.agreement_determination_id else {})},
             line_anchors=tuple(
                 {
                     "line_id": row.line_id,

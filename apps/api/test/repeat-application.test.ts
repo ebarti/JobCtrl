@@ -151,6 +151,12 @@ describe("repeat application evidence", () => {
     identity.run(PRIOR_JOB_ID, "https://boards.example.test/jobs/123", NOW);
     identity.run(TARGET_JOB_ID, "https://boards.example.test/jobs/123", NOW);
 
+    const unknownPrior = "https://jobs.example.test/uninterpreted-prior";
+    insertJob(unknownPrior, "Uninterpreted prior role", "Other employer");
+    db.prepare(
+      "INSERT INTO job_events (tenant_id, job_id, identity_version, event_type, occurred_at) VALUES ('local', ?, 1, 'ApplicationSubmitted', ?)",
+    ).run(jobIdFor(unknownPrior), NOW);
+
     const assessment = evaluateRepeatApplication(db, TARGET_JOB_ID);
 
     expect(assessment.status).toBe("blocked");
@@ -212,6 +218,22 @@ describe("repeat application evidence", () => {
 
   });
 
+
+  it.each(["unavailable", "uncertain"] as const)(
+    "blocks dispatch when the persisted equivalence is %s",
+    (status) => {
+      insertJob(PRIOR, "Synthetic prior", "Synthetic");
+      insertJob(TARGET, "Synthetic target", "Synthetic");
+      db.prepare(
+        "INSERT INTO job_events (tenant_id, job_id, identity_version, event_type, occurred_at) VALUES ('local', ?, 1, 'ApplicationSubmitted', ?)",
+      ).run(PRIOR_JOB_ID, NOW);
+      if (status === "uncertain") recordRepeatDecision(db, TARGET_JOB_ID, PRIOR_JOB_ID, "uncertain");
+      expect(evaluateRepeatApplication(db, TARGET_JOB_ID).status).toBe(status);
+      expect(() => assertLiveApplicationMayDispatch(db, TARGET_JOB_ID)).toThrow();
+      expect(db.prepare("SELECT COUNT(*) AS count FROM application_repeat_overrides").get())
+        .toMatchObject({ count: 0 });
+    },
+  );
 
   it("excludes dry runs, failed attempts, and pending outcome suggestions", () => {
     insertJob(PRIOR, "Senior Backend Engineer", "Acme Inc");

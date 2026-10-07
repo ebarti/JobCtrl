@@ -53,6 +53,11 @@ The canonical, generation-versioned analysis stores:
 - quoted posting evidence for every claim, plus per-leg output/failure and
   agreement metadata.
 
+Agreement is diagnostic. A single surviving draft records no comparison and
+makes no agreement call. With multiple drafts, a model compares their meaning;
+an unavailable agreement call records its safe failure without blocking an
+otherwise verified canonical analysis.
+
 ### Grounding Gate
 
 Code checks requirement/evidence ID membership and verbatim employer spans. Every draft and synthesis receives source-bound claim verification, including candidate facts and process narration. The separate model quality judge remains where used. There is no process-subject grammar, protected-class phrase screen or fabrication lexicon. Job interpretation records requirement scope and protected-class flags before consumers use the analysis. Invalid or unsupported output enters repair/failure without replacing accepted analysis.
@@ -190,7 +195,7 @@ transcript, microphone, streaming, or in-session state in this release.
 
 ## Voice Pass And Final Audit
 
-A model chooses voice changes using stable line IDs. Any changed artifact receives fresh claim verification and separate quality review. Typed verdicts decide adoption; buzzword and structural-variety proxies are removed. Accepted final text, source anchors and determination IDs commit together. Requirement coverage is arithmetic over verifier-declared served requirement IDs, never keyword appearance.
+A model chooses voice changes using stable line IDs. Any changed artifact receives fresh claim verification and separate quality review, plus the six-persona determination for a high-fit resume. Typed verdicts decide adoption; buzzword and structural-variety proxies are removed. An optional rewrite provider or shape failure records a rejected attempt and retains the already-verified candidate. Verification failures for changed text block the refresh. Accepted final text, source anchors and determination IDs commit together. Requirement coverage is arithmetic over verifier-declared served requirement IDs, never keyword appearance.
 
 ## Tailoring Explanation Read Model
 
