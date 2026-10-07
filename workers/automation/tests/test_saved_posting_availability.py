@@ -357,6 +357,42 @@ def test_host_spacing_workspace_quota_and_failed_writer_release(saved_job):
     assert not saved_job.in_transaction
 
 
+def test_acquisition_rechecks_host_pacing_after_an_early_wakeup(saved_job, monkeypatch):
+    claim, _ = availability.claim_job(saved_job, JOB_ID, now=NOW)
+    host = availability.reserve_request(saved_job, claim, URL, now=NOW)
+    availability.release_host(saved_job, claim, host, now=NOW)
+    instant = [NOW]
+    sleeps = []
+
+    def sleep(delay):
+        sleeps.append(delay)
+        instant[0] += timedelta(seconds=delay / 2 if len(sleeps) == 1 else delay)
+
+    monkeypatch.setattr(availability, "_now", lambda: instant[0])
+    monkeypatch.setattr(availability.time, "sleep", sleep)
+    acquisition = availability.Acquisition(saved_job, claim)
+    acquisition._pace(URL, deadline=time.monotonic() + 10)
+
+    assert instant[0] >= NOW + timedelta(seconds=2)
+    assert availability.reserve_request(saved_job, claim, URL, now=instant[0]) == host
+    assert not saved_job.in_transaction
+
+
+def test_host_pacing_recheck_remains_bounded_by_acquisition_deadline(saved_job, monkeypatch):
+    claim, _ = availability.claim_job(saved_job, JOB_ID, now=NOW)
+    host = availability.reserve_request(saved_job, claim, URL, now=NOW)
+    availability.release_host(saved_job, claim, host, now=NOW)
+    elapsed = [0.0]
+    monkeypatch.setattr(availability, "_now", lambda: NOW)
+    monkeypatch.setattr(availability.time, "monotonic", lambda: elapsed[0])
+    monkeypatch.setattr(availability.time, "sleep", lambda delay: elapsed.__setitem__(0, elapsed[0] + delay))
+
+    with pytest.raises(availability.DeferredCheck, match="acquisition_deadline"):
+        availability.Acquisition(saved_job, claim)._pace(URL, deadline=1)
+    assert elapsed[0] == 1
+    assert not saved_job.in_transaction
+
+
 def test_completed_enrichment_is_due_without_discovery(saved_job):
     saved_job.execute(
         "INSERT INTO job_enrichments (tenant_id, job_id, current_status, full_description, attempts_json, updated_at) "

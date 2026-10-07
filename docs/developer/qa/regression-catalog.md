@@ -1057,6 +1057,8 @@ enrichment, 25-job selection,
 100 posting acquisitions/hour with 20 reserved for foreground work, once/minute
 coalescing, two-second actual-host pacing,
 backoff/Retry-After, independent process leases, crash recovery and stale fences.
+Pacing waits recheck the stored next-start time after wakeup and remain bounded
+by the acquisition deadline; an early wakeup never admits a premature request.
 Hidden/inactive status templates cannot close a visible posting. Computed browser
 visibility and blocked subresources must survive conversion; incomplete renders
 remain unknown with reason/hash lineage. Only explicit refused commands surface coalesced durable request

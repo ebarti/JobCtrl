@@ -794,12 +794,20 @@ class Acquisition:
         raise DeferredCheck("redirect_budget")
 
     def _pace(self, url: str, *, deadline: float | None = None) -> None:
-        host_state = _latest(self.conn, self.claim.tenant_id, "availability_lease", f"host:{urlsplit(url).hostname}")
-        next_start = _instant(host_state.get("nextStartAt"))
-        if next_start:
+        deadline = min(self.deadline, deadline if deadline is not None else self.deadline)
+        while True:
+            if self.cancel_event is not None and self.cancel_event.is_set():
+                raise DeferredCheck("check_canceled")
+            if time.monotonic() >= deadline:
+                raise DeferredCheck("acquisition_deadline")
+            host_state = _latest(self.conn, self.claim.tenant_id, "availability_lease", f"host:{urlsplit(url).hostname}")
+            next_start = _instant(host_state.get("nextStartAt"))
+            if next_start is None:
+                return
             delay = (next_start - _now()).total_seconds()
-            if 0 < delay <= 2:
-                time.sleep(min(delay, max(0, deadline - time.monotonic())) if deadline is not None else delay)
+            if not 0 < delay <= 2:
+                return
+            time.sleep(min(delay, max(0, deadline - time.monotonic())))
 
     def _single_get(self, url: str, method: str, *, deadline: float | None = None) -> Response:
         if self.cancel_event is not None and self.cancel_event.is_set():
