@@ -81,14 +81,15 @@ class DeterminationRepository(Protocol):
 def _contains_exact_value(quote: str, value: str) -> bool:
     if not value.strip():
         return False
-    # Commas and periods delimit text values; adjacent digits make them part
-    # of a number. Keep whole-value binding without rejecting punctuation.
-    prefix = r"(?<!\w)"
-    suffix = r"(?!\w)"
+    # Sentence punctuation and comma lists delimit complete values. A period
+    # joining word characters belongs to a dotted token, and a comma joining
+    # digits belongs to a number. These are format boundaries, not meaning.
+    prefix = r"(?<!\w)(?<!\w\.)"
+    suffix = r"(?!\w|\.\w)"
     if value[0].isdecimal():
-        prefix += r"(?<!\d[.,])(?<!\.)"
+        prefix += r"(?<!\d,)(?<!\.)"
     if value[-1].isdecimal():
-        suffix += r"(?![.,]\d)"
+        suffix += r"(?!,\d)"
     return re.search(prefix + re.escape(value) + suffix, quote) is not None
 
 

@@ -127,6 +127,18 @@ def test_numeric_fragments_are_not_exact_values(quote, exact):
     assert repository.rows == {}
 
 
+@pytest.mark.parametrize("quote,exact", [("alpha.beta", "alpha"), ("alpha.beta", "beta"), ("3.x", "3")])
+def test_dotted_token_fragments_are_not_exact_values(quote, exact):
+    output = {
+        "verdict": "accept",
+        "citations": [{"source_id": "canonical:1", "quote": quote, "exact_values": [exact]}],
+    }
+    repository = Repository()
+    with pytest.raises(DeterminationFailure, match="mismatched_value"):
+        call(Model(output), repository, sources=[Source(source_id="canonical:1", text=quote)])
+    assert repository.rows == {}
+
+
 @pytest.mark.parametrize("exact", ["1,000", "1.50", "2026-10-07"])
 def test_complete_numeric_values_accept_following_sentence_punctuation(exact):
     quote = exact + "."
