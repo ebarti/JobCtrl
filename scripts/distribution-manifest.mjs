@@ -44,7 +44,7 @@ const EXPECTED_CAPABILITY_POLICY = new Map([
   ["authenticated-linkedin-browser", { defaultEnabled: false, componentIds: ["jobctrl-worker"] }],
 ]);
 const EXPECTED_PYTHON_LICENSE_EVIDENCE = new Map([
-  ["opentelemetry-util-http@0.62b1", { license: "Apache-2.0" }],
+  ["opentelemetry-util-http@0.65b0", { license: "Apache-2.0" }],
   ["publicsuffix2@2.20191221", { license: "MIT AND MPL-2.0" }],
 ]);
 const EXPECTED_NODE_LICENSE_EVIDENCE = new Map([
