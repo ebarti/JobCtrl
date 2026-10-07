@@ -1767,6 +1767,19 @@ version. Lowering it can make existing persisted scores eligible for
 
 ## Discovery target search
 
+`POST /v1/discovery/preferences` accepts `operation` (`read`, `prepare` or
+`confirm`) and `expectedProfileVersion`. `confirm` also requires the current
+proposal's `determinationId`; the other operations reject that field. Reads
+return persisted state without a model call. Preparation returns a source-bound
+proposal with `status: pending_confirmation`; confirmation accepts that exact
+proposal only while the profile and authored criteria remain unchanged.
+Responses expose `profileVersion`, `inputVersion`, `status` (`missing`,
+`pending_confirmation`, `confirmed`) and the optional determination envelope.
+Missing authored preferences return `400`, stale versions/proposals `409`,
+spend denial `429`, provider unavailability `503`, and provider/output/citation
+failures `502`. Known failures retain their safe code in `error` and an
+actionable `message`; unknown worker failures never expose private prose.
+
 Confirmed profile target fields are inputs to a persisted query-plan determination.
 The model chooses board queries and locations with source citations; adapters
 fetch and parse. Saved exact title exclusions are literal user-authorized filters.

@@ -13,6 +13,7 @@ from temporalio.exceptions import ApplicationError
 
 from jobctrl.discovery import activities as discovery_activities
 from jobctrl.discovery import workflow as discovery_workflow
+from jobctrl.domain.determinations import DeterminationFailure
 from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
 from jobctrl.domain.identifiers import JobId
 from jobctrl.infrastructure.temporal.pipeline_step_lifecycle import (
@@ -100,6 +101,44 @@ def test_source_plan_activity_uses_plan_scope_and_family_count(
         captured["scope"].detail_code,
     ) == ("source_planning", "plan", "source_plan")
     assert recorder.completed_counts == [2]
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "preferences_confirmation_required",
+        "provider_unavailable",
+        "provider_error",
+        "budget_denied",
+        "malformed_json",
+        "schema_violation",
+        "foreign_source_id",
+        "non_verbatim_quote",
+        "mismatched_value",
+    ],
+)
+def test_source_plan_preserves_determination_failure_code_and_retryability(monkeypatch, code) -> None:
+    recorder = _LifecycleRecorder()
+    failure = DeterminationFailure(code)
+    calls = []
+
+    def fail_plan(**kwargs):
+        calls.append(kwargs)
+        raise failure
+
+    monkeypatch.setattr(discovery_activities, "begin_pipeline_step_attempt", lambda _scope: recorder)
+    monkeypatch.setattr("jobctrl.pipeline.runner.plan_discovery_source_families", fail_plan)
+    with pytest.raises(ApplicationError) as raised:
+        discovery_activities.plan_discovery_sources(
+            discovery_activities.PlanDiscoverySourcesInput(tenant_id="local", discovery_execution=_execution())
+        )
+
+    assert raised.value.type == code
+    assert raised.value.non_retryable is not failure.retryable
+    assert str(raised.value).endswith(f"semantic_determination:{code}")
+    assert len(calls) == 1
+    assert recorder.completed_counts == []
+    assert [item["exception"] for item in recorder.failures] == [failure]
 
 
 def test_attempt_emits_honest_queued_started_and_completed_facts() -> None:

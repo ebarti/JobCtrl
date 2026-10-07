@@ -3131,7 +3131,29 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   app.post("/v1/discovery/preferences",async(request,reply)=>{
     const body=parseBody(reply,SearchPreferencesRequestSchema,request.body??{});if(!body)return undefined;
     const response=await providerDispatcher.call(RpcMethods.SearchPreferences,{...body,tenantId:"local",expectedAppDir:actionContext.appDir,expectedDbPath:actionContext.dbPath});
-    if(response.error){void reply.code(response.error.message.includes("stale")?409:503);return {ok:false,error:"search_preferences_unavailable",message:response.error.message};}
+    if (response.error) {
+      const failures: Record<string, {status: number; message: string}> = {
+        budget_denied: {status: 429, message: "The profile spending limit denied interpretation. Review your limits and retry."},
+        provider_unavailable: {status: 503, message: "The configured profile model is unavailable. Check model settings and retry."},
+        provider_error: {status: 502, message: "The profile model call failed. Retry interpretation when the provider is available."},
+        malformed_json: {status: 502, message: "The model returned malformed output. Retry interpretation."},
+        schema_violation: {status: 502, message: "The model returned an invalid preference structure. Retry interpretation."},
+        foreign_source_id: {status: 502, message: "The model cited a source outside your saved preferences. Retry interpretation."},
+        non_verbatim_quote: {status: 502, message: "The model's citations did not match your saved preferences. Retry interpretation."},
+        mismatched_value: {status: 502, message: "Returned values did not match their cited sources. Retry interpretation."},
+        authored_preferences_missing: {status: 400, message: "Add search targets and criteria to your profile before interpreting preferences."},
+        stale_profile_version: {status: 409, message: "Your profile changed. Interpret the current saved preferences again."},
+        stale_preferences_determination: {status: 409, message: "Your search criteria changed. Interpret them again before confirming."},
+      };
+      const code = response.error.message;
+      if (Object.hasOwn(failures, code)) {
+        const failure = failures[code]!;
+        void reply.code(failure.status);
+        return {ok: false, error: code, message: failure.message};
+      }
+      void reply.code(503);
+      return {ok: false, error: "search_preferences_unavailable", message: "Search preferences could not be processed. Check the worker and retry."};
+    }
     const parsed=SearchPreferencesResponseSchema.safeParse(response.result);
     if(!parsed.success){void reply.code(502);return {ok:false,error:"invalid_search_preferences_response"};}
     return parsed.data;

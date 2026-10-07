@@ -205,6 +205,8 @@ def plan_discovery_sources(payload: PlanDiscoverySourcesInput) -> PlanDiscoveryS
                 exc,
                 fallback_error_code="source_plan_failed",
             )
+        if isinstance(exc, JobCtrlError):
+            raise to_application_error(exc) from exc
         raise
     if lifecycle is not None:
         lifecycle.completed(item_count=len(output.families))

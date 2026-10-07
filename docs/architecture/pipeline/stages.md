@@ -77,6 +77,10 @@ Key facts about the four activities:
   preferences to query strings, tiers and source scope. Intake triage determines
   whether each returned listing matches that intent; code never reclassifies its
   title, seniority or geography.
+  The activity preserves classified determination failures as typed
+  `ApplicationError` values with their retry policy. In particular,
+  `preferences_confirmation_required` is non-retryable and fetches no sources;
+  the user must confirm a current proposal before starting another run.
 - **`discovery_source_family`** runs *one* source family under
   `run_blocking_with_heartbeat` with a cooperative `cancel_event` and a 6-hour
   window (crawls legitimately run long). Each family is isolated: a broad-board, ATS,

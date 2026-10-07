@@ -360,6 +360,14 @@ API selections; it no longer names the provider library.
 
 Saved target roles, tracks, seniority floors, functions, specializations, locations and work models are confirmed inputs to a model query plan. Adjacent-title/query expansion and source scope come from that persisted plan, not keyword tables or substring geography. A shared taxonomy supplies codes and display labels.
 
+Before the first run after an update, open **Confirm interpreted search
+preferences**, choose **Interpret saved preferences**, review the proposal and
+choose **Confirm this interpretation**. A profile or criteria change requires a
+fresh confirmation. Without a current confirmation, source planning stops before
+fetching listings with `preferences_confirmation_required`; retrying alone
+cannot provide that confirmation. Interpretation failures show the specific
+provider, spending or validation issue and keep your accepted preferences.
+
 Every fetched listing enters intake triage using title, company, location and the structured remote flag. The default batch is 20, configurable from 1–100; an optional Discovery model setting overrides the configured lane model. The model returns admit, reject or uncertain with cited sources and a reason code. **Listing decisions** shows all statuses and their determination provenance. A provider/spend/validation failure keeps rows `pending_triage` with its reason. Nothing silently disappears or is soft-deleted because of posting words.
 
 After the provider or budget recovers, retry Discovery. Its planning activity drains persisted intake before fetching new listings, including accepted batches interrupted before ingestion. The captured source fields and identity travel with the listing, so a source's time window cannot strand it. Intake is acknowledged only after admission and canonical ingestion finish.
