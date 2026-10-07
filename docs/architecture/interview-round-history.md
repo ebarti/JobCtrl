@@ -225,9 +225,11 @@ passed. Its negative non-interview test initially used the invalid enum value
 interview-only-link rule. Attempt 3 corrected the fixture to valid `rejection`,
 passed, and observed the specific schema refinement error. Earlier evidence is
 retained with its actual interpretation. Provider, judge, item and archive
-exceptions in the completed probes were deliberately injected; their complete
-original tracebacks remain in private stderr. No unexpected domain failure
-remained in the final probes.
+exceptions in the completed probes were deliberately injected. Python provider,
+judge and item-failure tracebacks remain in private stderr. Both probes catch
+archive exceptions and record their type and message in stdout; completed
+TypeScript stderr is empty. The complete original streams remain retained.
+No unexpected domain failure remained in the final probes.
 
 The first evidence-table insertion also failed because the initial source
 manifest omitted the packaged catalog asset. The manifest was corrected against
