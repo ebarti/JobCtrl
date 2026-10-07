@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from types import SimpleNamespace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -42,6 +43,68 @@ from jobctrl.infrastructure.enrichment.linkedin_apply_resolver import (
 from jobctrl.state import ensure_job_stage_rows, set_stage_state
 
 from .politeness_helpers import offline_session
+
+
+@pytest.mark.parametrize("superseded_during_model", [False, True])
+def test_selected_apply_target_judges_before_fencing_and_rejects_superseded_owner(
+    conn, monkeypatch, superseded_during_model,
+):
+    from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
+    from jobctrl.domain.errors import TransientNetworkError
+    from jobctrl.infrastructure.enrichment.execution_lease import claim_enrichment_execution_lease
+    from jobctrl.infrastructure.network import RunBudgetCounter
+    from jobctrl.state import record_job_event
+
+    url = "https://www.linkedin.com/jobs/view/12345678"
+    target = "https://example.com/apply/12345678"
+    _seed_discovered(conn, url, "linkedin")
+    _save_enriched(conn, url, application_url=None)
+    job_id = _job_id(conn, url)
+    detail._record_posting_snapshot_from_cascade(
+        conn, job_id=job_id, url=url, source_id="jobspy:linkedin", title="Engineer",
+        cascade_result={"full_description": "A complete LinkedIn description", "application_url": None,
+                        "active_state": "active", "verification_method": "enrichment_success", "tier_used": 1},
+        captured_at="2026-01-01T00:00:00+00:00",
+    )
+    before = conn.execute("SELECT snapshot_set_json FROM posting_snapshot_sets WHERE job_id=?", (str(job_id),)).fetchone()[0]
+    execution = DiscoveryExecutionRef(tenant_id="local", workflow_id="synthetic-refresh", temporal_run_id="synthetic-run")
+    lease = claim_enrichment_execution_lease(conn, execution, owner_token="first", activity_phase=1, activity_attempt=1)
+    peer = sqlite3.connect(conn.execute("PRAGMA database_list").fetchone()[2], timeout=0.1)
+    browser = SimpleNamespace(rendered_page=lambda *_args, **_kwargs: SimpleNamespace(
+        final_url=url, body_html='<section id="JobDetails_AboutTheJob_12345678">Synthetic posting</section>',
+        visible_apply_controls=[(target, "12345678")],
+    ))
+    monkeypatch.setattr(detail, "prefer_live_browser", lambda *_args, **_kwargs: browser)
+    monkeypatch.setattr(detail, "_enrichment_session", lambda *_args, **_kwargs: offline_session(conn, site="linkedin"))
+    quality = detail.judge_description_quality
+    calls = []
+
+    def quality_with_independent_writer(**kwargs):
+        assert not conn.in_transaction
+        record_job_event(peer, None, "operations", "StageProgress", message="synthetic heartbeat")
+        peer.commit()
+        calls.append(True)
+        if superseded_during_model:
+            claim_enrichment_execution_lease(peer, execution, owner_token="second", activity_phase=1, activity_attempt=2)
+        return quality(**kwargs)
+
+    monkeypatch.setattr(detail, "judge_description_quality", quality_with_independent_writer)
+    arguments = dict(job_ids=(job_id,), tenant_id=LOCAL_TENANT, browser_execution=execution,
+                     cancel_event=None, run_budget=RunBudgetCounter(5), activity_lease=lease)
+    try:
+        if superseded_during_model:
+            with pytest.raises(TransientNetworkError):
+                detail._refresh_selected_apply_targets(conn, **arguments)
+            assert conn.execute("SELECT snapshot_set_json FROM posting_snapshot_sets WHERE job_id=?", (str(job_id),)).fetchone()[0] == before
+            assert SqliteEnrichmentRepository(conn).load(LOCAL_TENANT, job_id).application_url is None
+        else:
+            assert detail._refresh_selected_apply_targets(conn, **arguments) == (1, 1)
+            assert SqliteEnrichmentRepository(conn).load(LOCAL_TENANT, job_id).application_url.value == target
+        assert calls == [True]
+        assert not conn.in_transaction
+    finally:
+        conn.rollback()
+        peer.close()
 
 
 @pytest.fixture(autouse=True)

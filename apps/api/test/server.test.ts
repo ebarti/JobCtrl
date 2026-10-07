@@ -588,6 +588,39 @@ describe("local TypeScript API", () => {
     await app.close();
   });
 
+  it("omits obsolete scoring feedback while preserving current feedback and history", async () => {
+    const db = new Database(options.dbPath);
+    const oldJob = "https://example.com/jobs/obsolete-feedback";
+    const currentJob = "https://example.com/jobs/current-feedback";
+    for (const url of [oldJob, currentJob]) {
+      insertJob(db, { url, title: url === oldJob ? "Old role" : "Current role", site: "Synthetic", fitScore: 2 });
+      insertScore(db, url, 1, 2);
+      recordRoleFeedback(db, jobIdFor(url), 1);
+    }
+    const oldId = jobIdFor(oldJob);
+    const row = db.prepare("SELECT determination_id, envelope_json FROM semantic_determinations WHERE entity_id=?").get(oldId) as { determination_id: string; envelope_json: string };
+    const envelope = JSON.parse(row.envelope_json);
+    envelope.prompt_version = "score-fit-assessment-v8-saved-search-targets";
+    const historical = JSON.stringify(envelope);
+    db.prepare("UPDATE semantic_determinations SET prompt_version=?,envelope_json=? WHERE determination_id=?").run(envelope.prompt_version, historical, row.determination_id);
+    const app = buildApp(options);
+    const response = await app.inject({ method: "GET", url: "/v1/discovery/role-match-feedback" });
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json().suggestions).toHaveLength(1);
+    expect(response.json().suggestions[0].titleDisplay).toBe("Current role");
+    expect(db.prepare("SELECT envelope_json FROM semantic_determinations WHERE determination_id=?").get(row.determination_id)).toEqual({ envelope_json: historical });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM job_scores WHERE job_id=?").get(oldId)).toEqual({ count: 1 });
+    const current = db.prepare("SELECT determination_id,envelope_json FROM semantic_determinations WHERE entity_id=?").get(jobIdFor(currentJob)) as { determination_id: string; envelope_json: string };
+    const invalid = JSON.parse(current.envelope_json);
+    invalid.result.fit_band = "unknown-band";
+    db.prepare("UPDATE semantic_determinations SET envelope_json=? WHERE determination_id=?").run(JSON.stringify(invalid), current.determination_id);
+    const rejected = await app.inject({ method: "GET", url: "/v1/discovery/role-match-feedback" });
+    expect(rejected.statusCode).toBe(500);
+    expect(rejected.json().message).toBe("determination_schema_violation");
+    await app.close();
+    db.close();
+  });
+
   it("surfaces low-score role-match suggestions and records approval decisions", async () => {
     const db = new Database(options.dbPath);
     const jobKey = "https://example.com/jobs/test-engineering";

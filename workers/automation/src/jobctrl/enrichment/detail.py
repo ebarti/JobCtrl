@@ -2941,8 +2941,6 @@ def _refresh_selected_apply_targets(
             method = "navigation_error"
         if cancel_event is not None and cancel_event.is_set():
             raise TransientNetworkError("enrichment canceled")
-        if activity_lease is not None:
-            _fence_execution_enrichment_lease(conn, activity_lease)
         recovered_url = ApplicationUrl(value=target) if target is not None else None
         result = (
             recovered_url
@@ -2955,6 +2953,11 @@ def _refresh_selected_apply_targets(
             started_at=started_at,
             finished_at=utc_now(),
         )
+
+        def fence_result() -> None:
+            if activity_lease is not None:
+                _fence_execution_enrichment_lease(conn, activity_lease)
+
         try:
             if target is not None:
                 assert recovered_url is not None
@@ -2965,7 +2968,9 @@ def _refresh_selected_apply_targets(
                     enrichment=updated,
                     recovered=recovered_url,
                     captured_at=updated.updated_at,
+                    before_write=fence_result,
                 )
+            fence_result()
             repo.save(updated, commit=False)
             outcome = _authenticated_apply_url_outcome_metadata(
                 {

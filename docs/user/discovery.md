@@ -348,6 +348,10 @@ captures and fresh searches continue. Captures for sources that are no longer
 runnable remain archived. Recovery never overwrites newer job data or restores
 an owner's deleted job.
 
+Role-match suggestions use current scoring determinations. A score from an older
+prompt or schema remains in history but contributes no new title-exclusion
+suggestion until a current score is accepted.
+
 Literal user-approved exact-title exclusions remain literal. Saved free-text criteria are supplied verbatim to posting and scoring determinations; they do not create another search-approval step. Historical experience locations do not imply relocation or remote consent. Profile import/save creates pending candidate interpretations. **Target search suggestions** calls the configured model in production; selected suggestions change targets only through a version-fenced user save.
 
 ## Employer Analysis Perspectives

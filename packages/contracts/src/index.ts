@@ -30,4 +30,4 @@ export {
 export * from "./interview.js";
 
 export * from "./semantic-determinations.js";
-export { validDeterminationResult } from "./semantic-result-schemas.js";
+export { isCurrentDeterminationVersion, validDeterminationResult } from "./semantic-result-schemas.js";

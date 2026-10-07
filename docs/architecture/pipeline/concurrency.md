@@ -55,8 +55,8 @@ worker startup in
   generation before its grace wait, so a fresh bounded generation accepts an
   immediate retry even when the old provider call ignores cancellation.
 
-Both activity pools close their thread-local SQLite connections before reusing
-a thread. Committed artifacts remain durable; unfinished writes are rolled back.
+Both activity pools and direct blocking activity runners using the default
+asyncio pool close their thread-local SQLite connections before reusing a thread. Committed artifacts remain durable; unfinished writes are rolled back.
 A function that returns successfully with an unfinished transaction fails with
 `activity_transaction_unfinished` instead of claiming its result was saved.
 Posting snapshot determinations run before acquiring the write fence; the

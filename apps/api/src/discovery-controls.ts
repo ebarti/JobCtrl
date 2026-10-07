@@ -1369,7 +1369,7 @@ function roleMatchFeedbackEvidence(db:SqliteDatabase,row:LowScoreJobRow,observed
   if(!title)return null;
   const trace=parseObject(row.trace_json);
   const id=typeof trace.determination_id==="string"?trace.determination_id:null;
-  const envelope=id?readDetermination(db,DEFAULT_TENANT,id):null;
+  const envelope=id?readDetermination(db,DEFAULT_TENANT,id,{currentOnly:true}):null;
   if(envelope?.kind!=="scoring" || envelope.entity_id!==row.job_id || envelope.lane!=="scoring")return null;
   const feedback=envelope.result["discovery_feedback"];
   if(!feedback || typeof feedback!=="object")return null;

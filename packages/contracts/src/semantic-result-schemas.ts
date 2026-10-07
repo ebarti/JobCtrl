@@ -16,19 +16,27 @@ const validators = new Map(
   ]),
 );
 
+export function isCurrentDeterminationVersion(envelope: {
+  kind: string;
+  schema_version: string;
+  prompt_version: string;
+}): boolean {
+  const contract = validators.get(envelope.kind);
+  return Boolean(
+    contract &&
+    contract.schemaVersion === envelope.schema_version &&
+    contract.promptVersion === envelope.prompt_version,
+  );
+}
+
 export function validDeterminationResult(envelope: {
   kind: string;
   schema_version: string;
   prompt_version: string;
   result: unknown;
 }): boolean {
-  const contract = validators.get(envelope.kind);
-  if (
-    !contract ||
-    contract.schemaVersion !== envelope.schema_version ||
-    contract.promptVersion !== envelope.prompt_version
-  )
-    return false;
+  if (!isCurrentDeterminationVersion(envelope)) return false;
+  const contract = validators.get(envelope.kind)!;
   const parsed = contract.schema.safeParse(envelope.result);
   if (!parsed.success) return false;
   if (envelope.kind === "page_interpretation") {

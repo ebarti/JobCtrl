@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   validDeterminationResult,
+  isCurrentDeterminationVersion,
   ClaimVerificationDeterminationSchema,
   DeterminationEnvelopeSchema,
   type DeterminationEnvelope,
@@ -19,6 +20,7 @@ export function readDetermination(
   db: SqliteDatabase,
   tenantId: string,
   determinationId: string,
+  options: { currentOnly?: boolean } = {},
 ): DeterminationEnvelope | null {
   const row = db
     .prepare(
@@ -37,6 +39,7 @@ export function readDetermination(
   )
     throw new Error("determination_binding_invalid");
   const envelope = parsed.data;
+  if (options.currentOnly && !isCurrentDeterminationVersion(envelope)) return null;
   if (!validDeterminationResult(envelope))
     throw new Error("determination_schema_violation");
   return envelope;

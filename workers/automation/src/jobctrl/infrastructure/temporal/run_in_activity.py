@@ -179,7 +179,13 @@ async def run_blocking_with_heartbeat(
     # ``run_in_executor`` does not carry this coroutine's context into the
     # worker thread, so bind the owning workflow id explicitly. Durable events
     # recorded by the blocking stage runner then keep canonical run ownership.
-    task = loop.run_in_executor(blocking_executor, carry_workflow_run_context(fn))
+    # Direct activity runners may use asyncio's default pool rather than the
+    # production ActivityThreadPoolExecutor. Enforce the same connection
+    # boundary there, before an idle thread can retain a failed writer.
+    task = loop.run_in_executor(
+        blocking_executor,
+        carry_workflow_run_context(lambda: _run_activity_with_connection_cleanup(fn, (), {})),
+    )
     activity_label = activity_name or activity.info().activity_type
     try:
         while True:

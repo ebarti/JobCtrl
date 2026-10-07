@@ -12,6 +12,41 @@ from jobctrl.infrastructure.temporal import finalize
 from jobctrl.infrastructure.temporal.run_in_activity import ActivityThreadPoolExecutor
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["failure", "unfinished_success", "committed_success"])
+async def test_default_blocking_executor_releases_activity_writer(tmp_path, monkeypatch, outcome):
+    from jobctrl.infrastructure.temporal import run_in_activity
+
+    path = tmp_path / "default-executor.db"
+    with sqlite3.connect(path) as setup:
+        setup.execute("CREATE TABLE proof (value TEXT)")
+        setup.execute("INSERT INTO proof VALUES ('accepted artifact')")
+    monkeypatch.setattr(run_in_activity, "_ACTIVITY_EXECUTOR", None)
+    monkeypatch.setattr("temporalio.activity.heartbeat", lambda *_args: None)
+    monkeypatch.setattr("temporalio.activity.info", lambda: SimpleNamespace(activity_type="synthetic"))
+
+    def run():
+        conn = get_connection(path)
+        conn.execute("INSERT INTO proof VALUES ('attempt')")
+        if outcome == "failure":
+            raise RuntimeError("synthetic provider failure")
+        if outcome == "committed_success":
+            conn.commit()
+        return "complete"
+
+    if outcome == "committed_success":
+        assert await run_in_activity.run_blocking_with_heartbeat(run, starting_message="synthetic") == "complete"
+    else:
+        message = "synthetic provider failure" if outcome == "failure" else "activity_transaction_unfinished"
+        with pytest.raises(RuntimeError, match=message):
+            await run_in_activity.run_blocking_with_heartbeat(run, starting_message="synthetic")
+    with sqlite3.connect(path, timeout=0.1) as peer:
+        peer.execute("INSERT INTO proof VALUES ('independent heartbeat')")
+        peer.commit()
+        rows = [row[0] for row in peer.execute("SELECT value FROM proof")]
+        assert rows == ["accepted artifact", *(["attempt"] if outcome == "committed_success" else []), "independent heartbeat"]
+
+
 @pytest.mark.parametrize("outcome", ["failure", "unfinished_success", "committed_success"])
 def test_reused_activity_thread_releases_writer_and_preserves_committed_data(tmp_path, outcome):
     path = tmp_path / "activity.db"
