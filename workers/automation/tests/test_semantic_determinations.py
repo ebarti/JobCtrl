@@ -99,6 +99,45 @@ def test_same_sources_bind_opposite_valid_model_decisions() -> None:
         assert len(model.calls) == 1
 
 
+@pytest.mark.parametrize("quote", ["alpha, beta", "alpha. beta", "alpha,beta"])
+def test_literal_values_accept_punctuation_delimiters_without_deciding_the_verdict(quote):
+    for verdict in ("accept", "reject"):
+        output = {
+            "verdict": verdict,
+            "citations": [{"source_id": "canonical:1", "quote": quote, "exact_values": ["alpha", "beta"]}],
+        }
+        model = Model(output)
+        result, _envelope = call(model, Repository(), sources=[Source(source_id="canonical:1", text=quote)])
+        assert result.verdict == verdict
+        assert len(model.calls) == 1
+
+
+@pytest.mark.parametrize(
+    "quote,exact",
+    [("1,000", "1"), ("1.50", "1"), ("1.50", "50"), (".50", "50"), ("1500", "500")],
+)
+def test_numeric_fragments_are_not_exact_values(quote, exact):
+    output = {
+        "verdict": "accept",
+        "citations": [{"source_id": "canonical:1", "quote": quote, "exact_values": [exact]}],
+    }
+    repository = Repository()
+    with pytest.raises(DeterminationFailure, match="mismatched_value"):
+        call(Model(output), repository, sources=[Source(source_id="canonical:1", text=quote)])
+    assert repository.rows == {}
+
+
+@pytest.mark.parametrize("exact", ["1,000", "1.50", "2026-10-07"])
+def test_complete_numeric_values_accept_following_sentence_punctuation(exact):
+    quote = exact + "."
+    output = {
+        "verdict": "accept",
+        "citations": [{"source_id": "canonical:1", "quote": quote, "exact_values": [exact]}],
+    }
+    result, _envelope = call(Model(output), Repository(), sources=[Source(source_id="canonical:1", text=quote)])
+    assert result.verdict == "accept"
+
+
 def test_canonical_prompt_lane_preflight_and_persisted_cache() -> None:
     repository = Repository()
     model = Model(response())

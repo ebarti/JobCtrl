@@ -78,6 +78,17 @@ class DeterminationRepository(Protocol):
     ) -> None: ...
 
 
+def _contains_exact_value(quote: str, value: str) -> bool:
+    if not value.strip():
+        return False
+    # Commas and periods delimit text values; adjacent digits make them part
+    # of a number. Keep whole-value binding without rejecting punctuation.
+    prefix = r"(?<!\w)(?<!\d[.,])"
+    if value[0].isdecimal():
+        prefix += r"(?<!\.)"
+    return re.search(prefix + re.escape(value) + r"(?!\w|[.,]\d)", quote) is not None
+
+
 def validate_citations(result: BaseModel, sources: Sequence[Source]) -> None:
     by_id = {source.source_id: source.text for source in sources}
     if len(by_id) != len(sources):
@@ -90,7 +101,7 @@ def validate_citations(result: BaseModel, sources: Sequence[Source]) -> None:
             if not value.quote.strip() or value.quote not in by_id[value.source_id]:
                 raise DeterminationFailure("non_verbatim_quote")
             for exact in value.exact_values:
-                if not exact.strip() or not re.search(r"(?<![\w.,])" + re.escape(exact) + r"(?![\w.,])", value.quote):
+                if not _contains_exact_value(value.quote, exact):
                     raise DeterminationFailure("mismatched_value")
         elif isinstance(value, BaseModel):
             for name in type(value).model_fields:
