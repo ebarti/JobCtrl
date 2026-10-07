@@ -145,7 +145,7 @@ func reopenMigratedV14WithTypeScriptAPI(database string) error {
 			return fmt.Errorf("locate Node.js for TypeScript API reopen probe: %w", err)
 		}
 	}
-	probe := filepath.Join(apiRoot, "test", "support", "reopen-exact-v11.ts")
+	probe := filepath.Join(apiRoot, "test", "support", "reopen-exact-current.ts")
 	command := exec.Command(runner, "--import", "tsx", probe, database)
 	command.Dir = apiRoot
 	if output, err := command.CombinedOutput(); err != nil {

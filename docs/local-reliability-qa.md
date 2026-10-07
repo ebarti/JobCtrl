@@ -62,6 +62,7 @@ guidance.
 | Web | `corepack pnpm web:lint`, `corepack pnpm web:check`, focused `web:test`, `web:build`; types/stories/browser when affected |
 | Extension | `extension:check`, `extension:test`, `extension:build`, `extension:e2e` through Corepack |
 | Worker | Locked focused Ruff/pytest; full worker suite for worker-wide changes |
+| Native launcher / migrations | `JOBCTRL_MIGRATION_TEST_PYTHON="$PWD/workers/automation/.venv/bin/python" JOBCTRL_MIGRATION_TEST_NODE="$(command -v node)" corepack pnpm launcher:test`; bind the locked Python and installed Node runtimes so the cross-runtime migration checks run |
 | Dense resume pagination (#907) | Locked Ruff for `workers/automation/tests/test_pdf_renderer_ports.py`; explicit `JOBCTRL_RUN_DENSE_HTML_PAGINATION_TESTS=1` locked pytest for that module (focused selector `-k dense_resume_pagination_trial`); eight required real-browser cases, 48 measured PDFs, JUnit and every-page visual QA per the [owning protocol](developer/qa/regression-catalog.md#dense-html-resume-pagination-907) |
 | Scripts | `node --test scripts/<name>.test.mjs` |
 | Docs | `corepack pnpm docs:build`, diff check |
@@ -250,6 +251,13 @@ turn source-shape searches into permanent tests.
 
 
 ## Saved Search Settings
+
+Bind `JOBCTRL_MIGRATION_TEST_PYTHON` to the locked automation virtualenv's
+`bin/python` and `JOBCTRL_MIGRATION_TEST_NODE` to the installed Node executable
+when running `corepack pnpm launcher:test`. This exercises the Python candidate
+and TypeScript reopen checks; an unavailable global Python must not silently
+skip that migration evidence. Check every supported source through native
+activation, API reopen, readiness failure and rollback.
 
 Exercise native exact-v14 creation and the stopped-runtime v13-to-v14 cutover,
 including source drift and candidate corruption. Preserve authored profile cells,
