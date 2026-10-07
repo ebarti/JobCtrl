@@ -1,4 +1,6 @@
 import { resolveJobLocator } from "./job-locators.js";
+import { EMPLOYER_ANALYSIS_PROMPT_VERSION } from "./contracts.js";
+import { readDetermination, readArtifactLineAnchors, determinationOwnsArtifact } from "./semantic-determinations.js";
 /**
  * TS read-model — projection-backed (Phase 9 / S-33).
  *
@@ -221,14 +223,6 @@ interface ArtifactProjectionRow extends Record<string, unknown> {
   bullet_provenance_json: string | null;
   coverage_audit_json: string | null;
   voice_pass_json: string | null;
-}
-
-interface ProfileEvidencePointer {
-  entryId: string;
-  evidenceId: string;
-  sourceText: string;
-  normalizedSourceText: string;
-  senioritySignal: boolean;
 }
 
 interface DashboardProjectionRow extends Record<string, unknown> {
@@ -1155,6 +1149,13 @@ export function getJobDetail(db: SqliteDatabase, jobKey: string): JobDetail | nu
   const latestApplyRun = latestApplyRunForJob(db, jobId);
   const activeApplyRun = activeApplyRunForJob(db, jobId);
   const employerAnalysis = parseEmployerAnalysis(detailRow?.employer_analysis_json ?? null);
+  if (employerAnalysis) {
+    const refs = allRows<{determination_id: string}>(db,
+      "SELECT determination_id FROM semantic_entity_bindings WHERE tenant_id=? AND entity_kind='employer_analysis' AND entity_id=? AND entity_version=? ORDER BY determination_kind",
+      [DEFAULT_TENANT, jobId, String(employerAnalysis.generation)]);
+    employerAnalysis.determinations = refs.map(ref => readDetermination(db, DEFAULT_TENANT, ref.determination_id)).filter(value => value !== null);
+    if (employerAnalysis.determinations.some(value => value.entity_id !== jobId)) throw new Error("analysis_determination_binding_invalid");
+  }
   return {
     ok: true,
     job: {
@@ -1255,7 +1256,9 @@ function applyAuditApplicationUrl(row: JobListProjectionRow): string | null {
 function parseEmployerAnalysis(value: string | null): EmployerAnalysis | null {
   if (!value) return null;
   try {
-    return JSON.parse(value) as EmployerAnalysis;
+    const analysis: unknown = JSON.parse(value);
+    if (!isRecord(analysis) || analysis.prompt_version !== EMPLOYER_ANALYSIS_PROMPT_VERSION) return null;
+    return analysis as unknown as EmployerAnalysis;
   } catch {
     return null;
   }
@@ -1321,7 +1324,7 @@ function isCompensationAuditMarket(value: unknown): boolean {
   if (value.recordStatus === "recorded") {
     return isRecord(value.estimate) && typeof value.estimate.jobId === "string";
   }
-  return value.recordStatus === "not_requested" && typeof value.jobId === "string";
+  return (value.recordStatus === "not_requested" || (value.recordStatus === "unavailable" && typeof value.failureCode === "string")) && typeof value.jobId === "string";
 }
 
 function containsLegacyJobKey(value: unknown): boolean {
@@ -2019,6 +2022,16 @@ function jobEventToAuditEntry(
     case "PreparationWorkItemCompleted":
     case "PreparationWorkItemFailed":
       return preparationWorkItemAuditEntry(base, row.event_type, payload);
+    case "RepeatApplicationCheckBlocked":
+      return makeAuditEntry({
+        ...base,
+        category: "apply",
+        tone: "warning",
+        title: "Repeat application check blocked",
+        description: "This candidate awaits a valid repeat-application determination. Other candidates can proceed.",
+        actor: "system",
+        details: auditDetails(["Reason", humanizeToken(payloadText(payload, "failureCode"))]),
+      });
     case "ApplyRunStarted":
       return makeAuditEntry({
         ...base,
@@ -2486,6 +2499,7 @@ export function getArtifactDetail(db: SqliteDatabase, artifactId: string): Artif
     ok: true,
     artifact: rowToArtifactSummary(row, db),
     layoutBoxes: parseResumeLayoutBoxes(row.layout_boxes_json),
+    determinations: artifactDeterminations(db, row),
     tailoringExplanation: tailoringExplanationForArtifact(db, row),
   };
 }
@@ -2576,6 +2590,11 @@ export function postingAvailability(db: SqliteDatabase, jobId: string, now = Dat
     verdict: isActiveState(value.verdict) ? value.verdict : "unknown",
     reason: nullableString(value.reason) ?? "not_yet_checked", method: nullableString(value.method) ?? "unknown",
     lastAttemptedAt: nullableString(value.lastAttemptedAt),
+    failureCode: nullableString(value.failureCode),
+    determinations: Array.from(new Set((Array.isArray(value.lineage) ? value.lineage : []).flatMap((entry: unknown) => {
+      if (!isRecord(entry) || !Array.isArray(entry.signals)) return [];
+      return entry.signals.flatMap((signal: unknown) => isRecord(signal) && signal.kind === "page_determination" && typeof signal.determination_id === "string" ? [signal.determination_id] : []);
+    }))).map(id => readDetermination(db,"local",id)).filter((row): row is NonNullable<typeof row> => row !== null),
     lastSuccessfullyVerifiedAt: nullableString(value.lastSuccessfullyVerifiedAt),
     lastSuccessfulState: isActiveState(value.lastSuccessfulState) ? value.lastSuccessfulState : null,
     lastSuccessfulEvidenceRef: nullableString(value.lastSuccessfulEvidenceRef),
@@ -2821,96 +2840,6 @@ const TAILORING_ARTIFACT_TYPES = new Set([
   "tailored_resume_pdf",
 ]);
 const TAILORING_PDF_ARTIFACT_TYPES = new Set(["resume_pdf", "tailored_resume_pdf"]);
-const KEYWORD_TOKEN_RE = /[a-z0-9][a-z0-9+#./-]*/gi;
-const DISPLAY_METRIC_CLAIM_RE =
-  /^(?:\$\s?\d+(?:[,.]\d+)*(?:\.\d+)?\s?(?:k|m|b|million|billion)?|\d+(?:\.\d+)?%|\d+(?:\.\d+)?x|\d+(?:\.\d+)?\s?(?:ms|milliseconds?|seconds?|minutes?|hours?|days?|weeks?|months?|years?|qps|req\/s))$/i;
-const LOW_SIGNAL_KEYWORDS = new Set([
-  "about",
-  "across",
-  "barcelona",
-  "believe",
-  "care",
-  "chain",
-  "clinic",
-  "clinics",
-  "combine",
-  "company",
-  "cool",
-  "cutting",
-  "deserves",
-  "edge",
-  "europe",
-  "everyone",
-  "expert",
-  "fast",
-  "growth",
-  "head",
-  "health",
-  "impress",
-  "innovator",
-  "invisible",
-  "join",
-  "largest",
-  "leading",
-  "love",
-  "office",
-  "ortho",
-  "orthodontics",
-  "rapid",
-  "revolutionizing",
-  "since",
-  "smile",
-  "team",
-  "teams",
-  "tech",
-  "they",
-  "worldwide",
-]);
-const HIGH_SIGNAL_SINGLE_KEYWORDS = new Set([
-  "ai",
-  "ai-first",
-  "ai-native",
-  "architecture",
-  "automation",
-  "aws",
-  "azure",
-  "backend",
-  "cloud",
-  "ci/cd",
-  "cicd",
-  "cost",
-  "developer",
-  "devops",
-  "docker",
-  "gcp",
-  "incident",
-  "infrastructure",
-  "java",
-  "javascript",
-  "kafka",
-  "kubernetes",
-  "leadership",
-  "management",
-  "node",
-  "node.js",
-  "observability",
-  "optimization",
-  "platform",
-  "postgres",
-  "postgresql",
-  "productivity",
-  "python",
-  "react",
-  "redis",
-  "reliability",
-  "resiliency",
-  "saas",
-  "scalability",
-  "security",
-  "sre",
-  "terraform",
-  "typescript",
-]);
 function tailoringExplanationForArtifact(
   db: SqliteDatabase,
   row: ArtifactProjectionRow,
@@ -2941,8 +2870,7 @@ function tailoringExplanationForArtifact(
   // time. Honest empty when no canonical coverage exists for this generation.
   explanation.keywords = keywordsBlockFromCoverageAudit(explanation.coverageAudit);
   attachCoverageKeywordsToBulletProvenance(explanation);
-  backfillLegacyProfileEvidenceMapping(db, row, explanation);
-  attachProfileSourceTextToBulletProvenance(db, row.tenant_id, explanation);
+  attachRecordedLineAudit(db, row, explanation);
   const missingAuditFields = missingTailoringAuditFields(explanation);
   if (missingAuditFields.length) {
     explanation.quality.errors = [
@@ -3043,10 +2971,10 @@ function bulletProvenanceForArtifact(
           AND artifact_type IN ('tailored_resume', 'tailored_resume_txt')
           AND bullet_provenance_json IS NOT NULL
           AND TRIM(bullet_provenance_json) != ''
-          AND (? IS NULL OR generation = ? OR generation IS NULL)
-        ORDER BY CASE WHEN generation = ? THEN 0 ELSE 1 END, created_at DESC
+          AND generation = ?
+        ORDER BY created_at DESC
         LIMIT 1`,
-      [row.tenant_id, row.job_id, row.generation, row.generation, row.generation],
+      [row.tenant_id, row.job_id, row.generation],
     );
     provenanceJson = sibling?.bullet_provenance_json ?? null;
   }
@@ -3090,413 +3018,76 @@ function parseBulletProvenance(value: string | null): BulletProvenanceEntry[] {
   return entries;
 }
 
-function attachProfileSourceTextToBulletProvenance(
-  db: SqliteDatabase,
-  tenantId: string,
-  explanation: ArtifactTailoringExplanation,
-): void {
-  const pointers = profileEvidencePointers(db, tenantId);
-  if (!pointers.length) return;
-
-  const byEvidenceId = new Map<string, ProfileEvidencePointer>();
-  const byEntryId = new Map<string, ProfileEvidencePointer[]>();
-  for (const pointer of pointers) {
-    byEvidenceId.set(pointer.evidenceId, pointer);
-    const entryPointers = byEntryId.get(pointer.entryId) ?? [];
-    entryPointers.push(pointer);
-    byEntryId.set(pointer.entryId, entryPointers);
-  }
-
-  explanation.bulletProvenance = explanation.bulletProvenance.map((entry) => {
-    const sourceText: string[] = [];
-    const sourceId = safeAuditText(entry.sourceId, 160);
-    const sourceIdPointers = sourceId ? (byEntryId.get(sourceId) ?? []) : [];
-    if (entry.section === "skills" && sourceIdPointers.length) {
-      for (const pointer of sourceIdPointers) {
-        sourceText.push(pointer.sourceText);
-      }
-    }
-    if (!sourceText.length) {
-      for (const evidenceId of entry.evidenceIds) {
-        const pointer = byEvidenceId.get(evidenceId);
-        if (pointer) sourceText.push(pointer.sourceText);
-      }
-    }
-    if (sourceId) {
-      const exactPointer = byEvidenceId.get(sourceId);
-      if (exactPointer) sourceText.push(exactPointer.sourceText);
-      if (!sourceText.length) {
-        for (const pointer of sourceIdPointers) {
-          sourceText.push(pointer.sourceText);
-        }
-      }
-    }
-
-    const resolvedSourceText = uniqueSourceTexts(sourceText.length ? sourceText : entry.sourceText).slice(0, 8);
-    return { ...entry, sourceText: resolvedSourceText };
-  });
-}
-
-function backfillLegacyProfileEvidenceMapping(
-  db: SqliteDatabase,
-  row: ArtifactProjectionRow,
-  explanation: ArtifactTailoringExplanation,
-): void {
-  const pointers = profileEvidencePointers(db, row.tenant_id);
-  if (!pointers.length) return;
-
-  const discoveredIds: string[] = [];
-  explanation.annotatedChanges = explanation.annotatedChanges.map((change) => {
-    if (change.evidenceIds.length) {
-      discoveredIds.push(...change.evidenceIds);
-      return change;
-    }
-    const evidenceIds = matchProfileEvidencePointers(
-      pointers,
-      change.sourceId,
-      [change.label, ...change.sourceText, ...change.tailoredText, change.rationale ?? ""],
-    );
-    if (!evidenceIds.length) return change;
-    discoveredIds.push(...evidenceIds);
-    return { ...change, evidenceIds };
-  });
-
-  explanation.bulletProvenance = explanation.bulletProvenance.map((entry) => {
-    if (entry.evidenceIds.length) {
-      discoveredIds.push(...entry.evidenceIds);
-      return entry;
-    }
-    const evidenceIds = matchProfileEvidencePointers(
-      pointers,
-      entry.sourceId,
-      [entry.generatedText, entry.rationale, ...entry.matchedKeywords],
-    );
-    if (!evidenceIds.length) return entry;
-    discoveredIds.push(...evidenceIds);
-    return { ...entry, evidenceIds };
-  });
-
-  const backfilledIds = uniqueEvidenceIds(discoveredIds).slice(0, 32);
-  if (!backfilledIds.length) return;
-
-  if (!explanation.evidence.requiredIds.length) {
-    explanation.evidence.requiredIds = backfilledIds;
-  }
-  if (!explanation.evidence.seniorityIds.length) {
-    const seniorityIds = backfilledIds.filter((id) => pointers.some((pointer) => pointer.evidenceId === id && pointer.senioritySignal));
-    explanation.evidence.seniorityIds = seniorityIds.slice(0, 32);
-  }
-  if (!explanation.evidence.representedIds.length) {
-    explanation.evidence.representedIds = backfilledIds;
-  }
-}
-
-function profileEvidencePointers(db: SqliteDatabase, tenantId: string): ProfileEvidencePointer[] {
-  const pointers: ProfileEvidencePointer[] = [];
-  if (tableExists(db, "candidate_profile_achievement_evidence")) {
-    const rows = allRows<{
-      entry_id: string;
-      evidence_id: string;
-      source_text: string;
-      scope: string;
-      action: string;
-      outcome: string;
-      seniority_signal: string;
-    }>(
-      db,
-      `SELECT evidence.entry_id,
-              evidence.evidence_id,
-              evidence.source_text,
-              evidence.scope,
-              evidence.action,
-              evidence.outcome,
-              evidence.seniority_signal
-         FROM candidate_profile_achievement_evidence AS evidence
-        WHERE evidence.tenant_id = ?
-          AND evidence.profile_id = ?
-          AND TRIM(evidence.evidence_id) != ''
-          AND TRIM(evidence.source_text) != ''
-        ORDER BY evidence.entry_id, evidence.evidence_index`,
-      [tenantId, DEFAULT_PROFILE_ID],
-    );
-    for (const evidence of rows) {
-      const sourceText = safeAuditText(evidence.source_text, 1200);
-      const evidenceId = safeEvidenceId(evidence.evidence_id);
-      const entryId = safeAuditText(evidence.entry_id, 160);
-      if (!sourceText || !evidenceId || !entryId) continue;
-      pointers.push({
-        entryId,
-        evidenceId,
-        sourceText,
-        normalizedSourceText: normalizeEvidenceText(sourceText),
-        senioritySignal: hasSenioritySignal([
-          evidence.scope,
-          evidence.action,
-          evidence.outcome,
-          evidence.seniority_signal,
-          sourceText,
-        ]),
-      });
-    }
-  }
-  const canonicalEvidenceIds = new Set(pointers.map((pointer) => pointer.evidenceId));
-  if (tableExists(db, "candidate_profile_experience_entries") && tableExists(db, "candidate_profile_experience_bullets")) {
-    const rows = allRows<{
-      entry_id: string;
-      title: string;
-      company: string;
-      bullet_index: number;
-      bullet_text: string;
-    }>(
-      db,
-      `SELECT entries.entry_id,
-              entries.title,
-              entries.company,
-              bullets.bullet_index,
-              bullets.bullet_text
-         FROM candidate_profile_experience_entries AS entries
-         JOIN candidate_profile_experience_bullets AS bullets
-           ON bullets.tenant_id = entries.tenant_id
-          AND bullets.profile_id = entries.profile_id
-          AND bullets.entry_id = entries.entry_id
-        WHERE entries.tenant_id = ?
-          AND entries.profile_id = ?
-          AND TRIM(bullets.bullet_text) != ''
-        ORDER BY entries.position_index, bullets.bullet_index`,
-      [tenantId, DEFAULT_PROFILE_ID],
-    );
-    for (const bullet of rows) {
-      const entryId = safeAuditText(bullet.entry_id, 160);
-      const sourceText = safeAuditText(bullet.bullet_text, 1200);
-      if (!entryId || !sourceText) continue;
-      const evidenceId = legacyBulletEvidenceId(entryId, Number(bullet.bullet_index ?? 0) + 1);
-      if (canonicalEvidenceIds.has(evidenceId)) continue;
-      pointers.push({
-        entryId,
-        evidenceId,
-        sourceText,
-        normalizedSourceText: normalizeEvidenceText(sourceText),
-        senioritySignal: hasSenioritySignal([bullet.title, bullet.company, sourceText]),
-      });
-    }
-  }
-  addSkillSourcePointers(db, tenantId, pointers);
-  return pointers;
-}
-
-function addSkillSourcePointers(db: SqliteDatabase, tenantId: string, pointers: ProfileEvidencePointer[]): void {
-  const hasSkillCategoryLabels = tableExists(db, "candidate_profile_skill_categories");
-  const grouped = new Map<string, { label: string; skills: string[] }>();
-  if (tableExists(db, "candidate_profile_skill_items")) {
-    const rows = allRows<{
-      category_id: string;
-      label: string;
-      skill_index: number;
-      skill_text: string;
-    }>(
-      db,
-      hasSkillCategoryLabels
-        ? `SELECT skills.category_id,
-                  COALESCE(NULLIF(categories.label, ''), skills.category_id) AS label,
-                  skills.item_index AS skill_index,
-                  skills.item_text AS skill_text
-             FROM candidate_profile_skill_items AS skills
-             LEFT JOIN candidate_profile_skill_categories AS categories
-               ON categories.tenant_id = skills.tenant_id
-              AND categories.profile_id = skills.profile_id
-              AND categories.category_id = skills.category_id
-            WHERE skills.tenant_id = ?
-              AND skills.profile_id = ?
-              AND TRIM(skills.category_id) != ''
-              AND TRIM(skills.item_text) != ''
-            ORDER BY categories.position_index, skills.item_index`
-        : `SELECT category_id,
-                  category_id AS label,
-                  item_index AS skill_index,
-                  item_text AS skill_text
-             FROM candidate_profile_skill_items
-            WHERE tenant_id = ?
-              AND profile_id = ?
-              AND TRIM(category_id) != ''
-              AND TRIM(item_text) != ''
-            ORDER BY category_id, item_index`,
-      [tenantId, DEFAULT_PROFILE_ID],
-    );
-    appendSkillSourceGroups(grouped, rows);
-  }
-  if (tableExists(db, "candidate_profile_required_skills")) {
-    const rows = allRows<{
-      category_id: string;
-      label: string;
-      skill_index: number;
-      skill_text: string;
-    }>(
-      db,
-      hasSkillCategoryLabels
-        ? `SELECT skills.category_id,
-                  COALESCE(NULLIF(categories.label, ''), skills.category_id) AS label,
-                  skills.skill_index,
-                  skills.skill_text
-             FROM candidate_profile_required_skills AS skills
-             LEFT JOIN candidate_profile_skill_categories AS categories
-               ON categories.tenant_id = skills.tenant_id
-              AND categories.profile_id = skills.profile_id
-              AND categories.category_id = skills.category_id
-            WHERE skills.tenant_id = ?
-              AND skills.profile_id = ?
-              AND TRIM(skills.category_id) != ''
-              AND TRIM(skills.skill_text) != ''
-            ORDER BY skills.category_id, skills.skill_index`
-        : `SELECT category_id,
-                  category_id AS label,
-                  skill_index,
-                  skill_text
-             FROM candidate_profile_required_skills
-            WHERE tenant_id = ?
-              AND profile_id = ?
-              AND TRIM(category_id) != ''
-              AND TRIM(skill_text) != ''
-            ORDER BY category_id, skill_index`,
-      [tenantId, DEFAULT_PROFILE_ID],
-    );
-    appendSkillSourceGroups(grouped, rows, { onlyMissingCategories: true });
-  }
-  for (const [categoryId, group] of grouped) {
-    const sourceText = `${group.label}: ${uniqueSourceTexts(group.skills).join(", ")}`;
-    pointers.push({
-      entryId: categoryId,
-      evidenceId: skillCategoryEvidenceId(categoryId),
-      sourceText,
-      normalizedSourceText: normalizeEvidenceText(sourceText),
-      senioritySignal: hasSenioritySignal([categoryId, sourceText]),
-    });
-  }
-}
-
-function appendSkillSourceGroups(
-  grouped: Map<string, { label: string; skills: string[] }>,
-  rows: readonly { category_id: string; label: string; skill_index: number; skill_text: string }[],
-  options: { onlyMissingCategories?: boolean } = {},
-): void {
-  for (const row of rows) {
-    const categoryId = safeAuditText(row.category_id, 160);
-    if (!categoryId || (options.onlyMissingCategories && grouped.has(categoryId))) continue;
-    const label = safeAuditText(row.label, 160) || profileSkillCategoryLabel(categoryId);
-    const skillText = safeAuditText(row.skill_text, 220);
-    if (!skillText) continue;
-    const group = grouped.get(categoryId) ?? { label, skills: [] };
-    group.skills.push(skillText);
-    grouped.set(categoryId, group);
-  }
-}
-
-function uniqueSourceTexts(texts: readonly string[]): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const raw of texts) {
-    const text = safeAuditText(raw, 1200);
-    const key = text.toLowerCase();
-    if (!text || seen.has(key)) continue;
-    seen.add(key);
-    out.push(text);
-  }
-  return out;
-}
-
-function skillCategoryEvidenceId(categoryId: string): string {
-  return `skills_${safeEvidenceId(categoryId) || "category"}`;
-}
-
-function profileSkillCategoryLabel(categoryId: string): string {
-  const words = categoryId.replace(/[_-]+/g, " ").trim();
-  if (!words) return "Skills";
-  return words.replace(/\b[a-z]/g, (char) => char.toUpperCase());
-}
-
-function matchProfileEvidencePointers(
-  pointers: readonly ProfileEvidencePointer[],
-  sourceId: string | null,
-  rawTexts: readonly string[],
-): string[] {
-  const normalizedSourceId = safeAuditText(sourceId, 160);
-  const texts = rawTexts.map((text) => normalizeEvidenceText(text)).filter(Boolean);
-  const textTokenSets = texts.map((text) => new Set(evidenceTokens(text)));
-  const scored: Array<{ id: string; score: number }> = [];
-  for (const pointer of pointers) {
-    let score = 0;
-    if (normalizedSourceId && pointer.entryId === normalizedSourceId) score += 6;
-    if (normalizedSourceId && pointer.evidenceId === normalizedSourceId) score += 8;
-    for (const text of texts) {
-      if (text && pointer.normalizedSourceText && text.includes(pointer.normalizedSourceText)) score += 6;
-      if (text && pointer.normalizedSourceText && pointer.normalizedSourceText.includes(text) && text.length >= 24) score += 4;
-    }
-    const pointerTokens = evidenceTokens(pointer.normalizedSourceText);
-    const overlap = Math.max(
-      0,
-      ...textTokenSets.map((tokens) => pointerTokens.filter((token) => tokens.has(token)).length),
-    );
-    if (overlap >= 2) score += overlap;
-    if (score >= 6 || overlap >= 4) {
-      scored.push({ id: pointer.evidenceId, score });
-    }
-  }
-  scored.sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
-  return uniqueEvidenceIds(scored.map((item) => item.id)).slice(0, 6);
-}
-
-function uniqueEvidenceIds(ids: readonly string[]): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const id of ids) {
-    const safe = safeEvidenceId(id);
-    if (!safe || seen.has(safe)) continue;
-    seen.add(safe);
-    out.push(safe);
-  }
-  return out;
-}
-
 function safeEvidenceId(value: unknown): string {
-  return safeAuditText(value, 160).replace(/[^a-zA-Z0-9_.-]+/g, "_").replace(/^_+|_+$/g, "");
+  return safeAuditText(value, 240);
 }
 
-function legacyBulletEvidenceId(entryId: string, oneBasedBulletIndex: number): string {
-  return `${safeEvidenceId(entryId) || "experience"}_bullet_${Math.max(1, Math.trunc(oneBasedBulletIndex || 1))}`;
+/** Join only the artifact's recorded IDs. Source quotes come from its verifier. */
+function artifactDeterminations(db: SqliteDatabase, row: ArtifactProjectionRow) {
+  const metadata = metadataRecord(JSON.parse(row.metadata_json ?? "{}"));
+  return (["claim_verification", "artifact_quality", "resume_adversarial"] as const).flatMap(kind => {
+    const key = kind === "artifact_quality" ? "quality_determination_id" : `${kind}_id`;
+    const id = metadataText(metadata[key], 64);
+    if (!id) return [];
+    const envelope = readDetermination(db, row.tenant_id, id);
+    if (!envelope || envelope.kind !== kind || row.generation === null || !determinationOwnsArtifact(db,row.tenant_id,row.artifact_id,row.generation,row.job_id,envelope)) {
+      throw new Error("artifact_binding_invalid");
+    }
+    return [envelope];
+  });
 }
 
-const PROFILE_EVIDENCE_SENIORITY_TERMS = [
-  "own",
-  "owned",
-  "ownership",
-  "scope",
-  "influence",
-  "influenced",
-  "cross-team",
-  "stakeholder",
-  "stakeholders",
-  "led",
-  "lead",
-  "mentor",
-  "mentored",
-  "architect",
-  "architected",
-  "strategy",
-  "technical leadership",
-];
-
-function hasSenioritySignal(values: readonly unknown[]): boolean {
-  const text = values.map((value) => safeAuditText(value, 300)).join(" ").toLowerCase();
-  return PROFILE_EVIDENCE_SENIORITY_TERMS.some((term) => text.includes(term));
-}
-
-function normalizeEvidenceText(value: unknown): string {
-  return (safeAuditText(value, 1200).toLowerCase().match(KEYWORD_TOKEN_RE) ?? []).join(" ");
-}
-
-function evidenceTokens(value: string): string[] {
-  return (value.match(KEYWORD_TOKEN_RE) ?? [])
-    .map((token) => token.toLowerCase())
-    .filter((token) => token.length >= 3 && !LOW_SIGNAL_KEYWORDS.has(token) && !/^\d+$/.test(token));
+function attachRecordedLineAudit(db: SqliteDatabase, row: ArtifactProjectionRow, explanation: ArtifactTailoringExplanation): void {
+  const metadata = metadataRecord(JSON.parse(row.metadata_json ?? "{}"));
+  const verificationId = metadataText(metadata.claim_verification_id, 64);
+  const qualityId = metadataText(metadata.quality_determination_id, 64);
+  explanation.determinations = artifactDeterminations(db, row);
+  const verification = explanation.determinations.find(item => item.kind === "claim_verification");
+  const quality = explanation.determinations.find(item => item.kind === "artifact_quality");
+  explanation.lineFindings = [];
+  const lines = new Map<string, Record<string, unknown>>();
+  for (const raw of Array.isArray(verification?.result.lines) ? verification.result.lines : []) {
+    const line = metadataRecord(raw);
+    const lineId = metadataText(line.line_id, 240);
+    if (!lineId) continue;
+    lines.set(lineId, line);
+    for (const rawFinding of Array.isArray(line.findings) ? line.findings : []) {
+      const finding = metadataRecord(rawFinding);
+      explanation.lineFindings.push({lineId, kind: metadataText(finding.kind) ?? "unknown", rationale: metadataText(finding.rationale, 1500) ?? "", determinationId: verificationId!});
+    }
+  }
+  for (const raw of Array.isArray(quality?.result.findings) ? quality.result.findings : []) {
+    const finding = metadataRecord(raw);
+    const lineId = metadataText(finding.line_id, 240);
+    if (lineId) explanation.lineFindings.push({lineId, kind: metadataText(finding.category) ?? "quality", rationale: metadataText(finding.rationale, 1500) ?? "", determinationId: qualityId!});
+  }
+  const revisionId = metadataText(metadata.draft_revision_id,240);
+  const revision = revisionId ? db.prepare("SELECT edited_text FROM resume_review_draft_revisions WHERE tenant_id=? AND job_id=? AND revision_id=?").get(row.tenant_id,row.job_id,revisionId) as {edited_text:string}|undefined : undefined;
+  const editedLines = new Map(revision ? revision.edited_text.replace(/\r\n/g,"\n").split("\n").map(line=>line.trim()).filter(Boolean).map((text,index)=>[`edited:line:${index+1}`,text]) : []);
+  const anchors = row.generation === null ? new Map() : readArtifactLineAnchors(db, row.tenant_id, row.artifact_type, row.artifact_id, row.generation, row.job_id);
+  const existing = new Map(explanation.bulletProvenance.map(entry=>[entry.bulletId,entry]));
+  explanation.bulletProvenance = Array.from(anchors.values()).map((anchor) => {
+    const entry = existing.get(anchor.lineId) ?? {bulletId:anchor.lineId,section:"document",sourceId:null,evidenceIds:[],requirementIds:[],sourceText:[],matchedKeywords:[],transformType:anchor.transformType,control:"recorded_verification",rationale:anchor.reason,generatedText:editedLines.get(anchor.lineId) ?? ""};
+    const line = lines.get(entry.bulletId);
+    const sourceText: string[] = [];
+    for (const rawCitation of Array.isArray(line?.source_evidence) ? line.source_evidence : []) {
+      const citation=metadataRecord(rawCitation);
+      if (anchor.evidenceIds.includes(citation.source_id)) {
+        const quote=metadataText(citation.quote,4000);
+        if(quote && !sourceText.includes(quote))sourceText.push(quote);
+      }
+    }
+    for (const rawClaim of Array.isArray(line?.claims) ? line.claims : []) {
+      const claim = metadataRecord(rawClaim);
+      for (const rawCitation of Array.isArray(claim.evidence) ? claim.evidence : []) {
+        const citation = metadataRecord(rawCitation);
+        if (!anchor.evidenceIds.includes(citation.source_id)) continue;
+        const quote = metadataText(citation.quote, 4000);
+        if (quote && !sourceText.includes(quote)) sourceText.push(quote);
+      }
+    }
+    return {...entry, evidenceIds: anchor.evidenceIds, requirementIds: anchor.requirementIds, transformType: anchor.transformType, rationale: anchor.reason, sourceText};
+  });
 }
 
 /**
@@ -3522,10 +3113,10 @@ function provenanceSetColumnForArtifact(
         AND artifact_type IN ('tailored_resume', 'tailored_resume_txt')
         AND ${column} IS NOT NULL
         AND TRIM(${column}) != ''
-        AND (? IS NULL OR generation = ? OR generation IS NULL)
-      ORDER BY CASE WHEN generation = ? THEN 0 ELSE 1 END, created_at DESC
+        AND generation = ?
+      ORDER BY created_at DESC
       LIMIT 1`,
-    [row.tenant_id, row.job_id, row.generation, row.generation, row.generation],
+    [row.tenant_id, row.job_id, row.generation],
   );
   return sibling?.[column] ?? null;
 }
@@ -3603,13 +3194,11 @@ function parseVoicePass(value: string | null): VoicePassAudit | null {
     return null;
   }
   const record = metadataRecord(parsed);
-  const proxyDelta = metadataRecord(record.proxy_delta);
   return {
     ran: record.ran === true,
     accepted: record.accepted === true,
     model: metadataText(record.model, 120) ?? "",
     promptVersion: metadataText(record.prompt_version, 64) ?? "",
-    proxyDelta,
     reason: metadataText(record.reason, 600) ?? "",
     summaryRejectionReason: metadataText(record.summary_rejection_reason, 600) ?? "",
     scopeViolations: metadataTextList(record.scope_violations).slice(0, 20),
@@ -3682,7 +3271,6 @@ function parseTailoringExplanation(value: string | null): ArtifactTailoringExpla
   const judge = metadataRecord(metadata.judge);
   const adversarialReview = parseAdversarialReview(metadata.adversarial_review);
   const reviewFeedback = metadataRecord(metadata.review_feedback);
-  const judgeMinScore = metadataNumber(metadata.judge_min_score);
   const qualityMessages = {
     errors: metadataTextList(qualityChecks.errors, 8, 220),
     warnings: metadataTextList(qualityChecks.warnings, 8, 220),
@@ -3713,7 +3301,6 @@ function parseTailoringExplanation(value: string | null): ArtifactTailoringExpla
     keywords: emptyKeywordsBlock(),
     evidence: {
       requiredIds: metadataTextList(qualityPlan.required_evidence_ids, 32),
-      seniorityIds: metadataTextList(qualityPlan.seniority_evidence_ids, 32),
       representedIds: metadataTextList(evidenceSupport.represented_ids, 32),
       missingIds: metadataTextList(evidenceSupport.missing_ids, 32),
       verifiedMetricCount: metadataNumber(qualityPlan.verified_metric_count),
@@ -3730,7 +3317,6 @@ function parseTailoringExplanation(value: string | null): ArtifactTailoringExpla
       passed: metadataBoolean(judge.passed),
       verdict: metadataText(judge.verdict),
       score: metadataNumber(judge.score),
-      minScore: judgeMinScore,
       issues: metadataTextList(judge.issues, 8, 220),
       unsupportedClaims: metadataTextList(judge.unsupported_claims, 8, 220),
       fabrications: metadataTextList(judge.fabrications, 8, 220),
@@ -3772,14 +3358,13 @@ function missingTailoringAuditFields(explanation: ArtifactTailoringExplanation):
     missing.push("quality gate");
   }
   if (explanation.evidence.verifiedMetricCount === null) missing.push("verified metric count");
-  if (!explanation.evidence.requiredIds.length && !explanation.evidence.seniorityIds.length) {
+  if (!explanation.evidence.requiredIds.length) {
     missing.push("profile evidence mapping");
   }
   if (!explanation.annotatedChanges.length) missing.push("resume change annotations");
   if (explanation.judge.passed === null && !explanation.judge.verdict && explanation.judge.score === null) {
     missing.push("judge result");
   }
-  if (explanation.judge.minScore === null) missing.push("judge threshold");
   if (!explanation.models.selectedModel) missing.push("selected model");
   if (!explanation.models.judgeModel) missing.push("judge model");
   if (!explanation.models.candidateModels.length) missing.push("candidate models");
@@ -3789,8 +3374,12 @@ function missingTailoringAuditFields(explanation: ArtifactTailoringExplanation):
     missing.push("persona review");
   } else if (explanation.adversarialReview.ran) {
     if (!explanation.adversarialReview.personas.length) missing.push("persona judgments");
-    if (!explanation.adversarialReview.audit?.promptMessages.length) missing.push("persona LLM request");
-    if (!explanation.adversarialReview.audit?.response) missing.push("persona LLM response");
+    if (explanation.adversarialReview.determinationId) {
+      if (!explanation.determinations?.some(item => item.kind === "resume_adversarial" && item.determination_id === explanation.adversarialReview?.determinationId)) missing.push("persona determination");
+    } else {
+      if (!explanation.adversarialReview.audit?.promptMessages.length) missing.push("persona LLM request");
+      if (!explanation.adversarialReview.audit?.response) missing.push("persona LLM response");
+    }
   }
   return missing;
 }
@@ -3803,6 +3392,7 @@ function parseAdversarialReview(
   if (ran === null) return null;
   return {
     ran,
+    determinationId: metadataText(review.determination_id, 64),
     passed: metadataBoolean(review.passed),
     score: metadataNumber(review.score),
     scoreRationale: metadataText(review.score_rationale ?? review.scoreRationale, 360),
@@ -3991,54 +3581,11 @@ function metadataTextList(value: unknown, limit = 12, maxLength = 120): string[]
 }
 
 function metadataKeywordList(value: unknown, limit = 12, maxLength = 120): string[] {
-  if (!Array.isArray(value)) return [];
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const raw of value) {
-    const text = metadataText(raw, maxLength);
-    const key = normalizedKeywordKey(text);
-    if (!text || !key || !isMeaningfulDisplayKeyword(text, key) || seen.has(key)) continue;
-    seen.add(key);
-    out.push(text);
-    if (out.length >= limit) break;
-  }
-  return out;
-}
-
-function normalizedKeywordKey(value: string | null): string | null {
-  if (!value) return null;
-  const tokens = value.toLowerCase().match(KEYWORD_TOKEN_RE) ?? [];
-  return tokens.length ? tokens.join(" ") : null;
-}
-
-function isMeaningfulDisplayKeyword(text: string, normalized: string): boolean {
-  const tokens = normalized.split(" ").filter(Boolean);
-  if (!tokens.length || tokens.length > 4) return false;
-  if (tokens.every((token) => LOW_SIGNAL_KEYWORDS.has(token) || /^\d+$/.test(token))) {
-    return false;
-  }
-  if (tokens.length > 1) {
-    return tokens.some((token) => !LOW_SIGNAL_KEYWORDS.has(token) && !/^\d+$/.test(token));
-  }
-  const token = tokens[0]!;
-  if (LOW_SIGNAL_KEYWORDS.has(token) || /^\d+$/.test(token)) return false;
-  return HIGH_SIGNAL_SINGLE_KEYWORDS.has(token) || /[+#./-]/.test(text);
+  return metadataTextList(value, limit, maxLength);
 }
 
 function metadataMetricClaims(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const raw of value) {
-    const text = metadataText(raw, 80);
-    if (!text || !DISPLAY_METRIC_CLAIM_RE.test(text)) continue;
-    const key = text.toLowerCase().replace(/\s+/g, "");
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(text);
-    if (out.length >= 8) break;
-  }
-  return out;
+  return metadataTextList(value, 8, 80);
 }
 
 function metadataRepeatedKeywords(value: unknown): string[] {
@@ -4985,7 +4532,8 @@ function jobProjectionSelect(): string {
   const analysisFreshnessSelect = `(SELECT MAX(a.generation)
           FROM job_employer_analysis a
          WHERE a.tenant_id = job_list_projections.tenant_id
-           AND a.job_id = job_list_projections.job_id) AS current_analysis_generation,
+           AND a.job_id = job_list_projections.job_id
+           AND a.prompt_version = '${EMPLOYER_ANALYSIS_PROMPT_VERSION}') AS current_analysis_generation,
        (SELECT r.employer_analysis_generation
           FROM job_requirement_fit_reports r
          WHERE r.tenant_id = job_list_projections.tenant_id

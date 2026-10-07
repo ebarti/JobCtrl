@@ -6,9 +6,11 @@ data, so callers must never persist or export them directly.
 """
 
 from __future__ import annotations
-
 import re
 from dataclasses import dataclass
+from jobctrl.domain.ports.llm import LlmFailure
+
+
 _MESSAGE_CODES = {
     "builder error": "builder_error",
     "invalid json": "invalid_json",
@@ -123,17 +125,11 @@ class ProviderFailureEnvelope:
         self.category = _safe_token(self.category)
         self.error_type = _safe_token(self.error_type)
         self.code = _safe_token(self.code)
-        self.message_code = (
-            _safe_token(self.message_code) if self.message_code is not None else None
-        )
+        self.message_code = _safe_token(self.message_code) if self.message_code is not None else None
         self.additional_detail_code = (
-            _safe_token(self.additional_detail_code)
-            if self.additional_detail_code is not None
-            else None
+            _safe_token(self.additional_detail_code) if self.additional_detail_code is not None else None
         )
-        self.codex_error_code = (
-            _safe_token(self.codex_error_code) if self.codex_error_code is not None else None
-        )
+        self.codex_error_code = _safe_token(self.codex_error_code) if self.codex_error_code is not None else None
         self.http_status = _safe_http_status(self.http_status)
 
     def attach_trace(self, *, trace_id: str | None, span_id: str | None) -> None:
@@ -187,14 +183,14 @@ class ProviderFailureEnvelope:
         return attributes
 
 
-class ProviderCallError(RuntimeError):
+class ProviderCallError(LlmFailure):
     """Application-owned error that never embeds a provider message in ``str``."""
 
     def __init__(self, envelope: ProviderFailureEnvelope) -> None:
         self.envelope = envelope
-        super().__init__(
-            f"LLM provider call failed: {envelope.provider}/{envelope.operation} "
-            f"{envelope.category}:{envelope.code}"
+        super().__init__(envelope.code)
+        self.args = (
+            f"LLM provider call failed: {envelope.provider}/{envelope.operation} {envelope.category}:{envelope.code}",
         )
 
     def attach_trace(self, *, trace_id: str | None, span_id: str | None) -> None:
@@ -210,9 +206,7 @@ def codex_turn_error(*, model: str, operation: str, error: object | None) -> Pro
     codex_code, http_status = _codex_error_info(getattr(error, "codex_error_info", None))
     code = message_code or additional_detail_code or codex_code or "turn_failed"
     retryable = bool(
-        http_status == 429
-        or (http_status is not None and http_status >= 500)
-        or codex_code in _CODEX_RETRYABLE_CODES
+        http_status == 429 or (http_status is not None and http_status >= 500) or codex_code in _CODEX_RETRYABLE_CODES
     )
     return ProviderCallError(
         ProviderFailureEnvelope(

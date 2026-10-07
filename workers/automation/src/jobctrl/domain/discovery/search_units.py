@@ -38,7 +38,7 @@ class DiscoverySearchSpec:
     """Immutable JobCtrl plan for one provider stream.
 
     ``provider_location`` is what JobStreaming receives. ``target_location``
-    remains the user's original search location and owns post-fetch filtering;
+    records the model's planned search location;
     they differ for Glassdoor's simplified location syntax.
     """
 
@@ -51,12 +51,6 @@ class DiscoverySearchSpec:
     remote_only: bool
     country_indeed: str
     linkedin_fetch_description: bool = False
-    match_mode: str = "strict"
-    target_track: str = ""
-    seniority_floor: str = ""
-    accept_locations: tuple[str, ...] = ()
-    reject_locations: tuple[str, ...] = ()
-    local_accept_locations: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         for field_name, value in (
@@ -78,14 +72,12 @@ class DiscoverySearchSpec:
             raise ValueError("results_per_site must be positive")
         if self.hours_old is not None and self.hours_old < 1:
             raise ValueError("hours_old must be positive when supplied")
-        if self.match_mode not in {"strict", "recall"}:
-            raise ValueError("match_mode must be strict or recall")
 
     def to_payload(self) -> dict[str, Any]:
         """Return the canonical JSON-compatible plan payload."""
 
         return {
-            "schema_version": 1,
+            "schema_version": 2,
             "query": self.query,
             "provider_location": self.provider_location,
             "target_location": self.target_location,
@@ -95,12 +87,6 @@ class DiscoverySearchSpec:
             "remote_only": self.remote_only,
             "country_indeed": self.country_indeed,
             "linkedin_fetch_description": self.linkedin_fetch_description,
-            "match_mode": self.match_mode,
-            "target_track": self.target_track,
-            "seniority_floor": self.seniority_floor,
-            "accept_locations": list(self.accept_locations),
-            "reject_locations": list(self.reject_locations),
-            "local_accept_locations": list(self.local_accept_locations),
         }
 
     def to_json(self) -> str:
@@ -112,7 +98,7 @@ class DiscoverySearchSpec:
     @classmethod
     def from_json(cls, payload: str) -> DiscoverySearchSpec:
         decoded = json.loads(payload)
-        if not isinstance(decoded, dict) or decoded.get("schema_version") != 1:
+        if not isinstance(decoded, dict) or decoded.get("schema_version") != 2:
             raise ValueError("unsupported discovery search spec schema")
         return cls(
             query=str(decoded.get("query") or ""),
@@ -124,12 +110,6 @@ class DiscoverySearchSpec:
             remote_only=bool(decoded.get("remote_only", False)),
             country_indeed=str(decoded.get("country_indeed") or ""),
             linkedin_fetch_description=bool(decoded.get("linkedin_fetch_description", False)),
-            match_mode=str(decoded.get("match_mode") or "strict"),
-            target_track=str(decoded.get("target_track") or ""),
-            seniority_floor=str(decoded.get("seniority_floor") or ""),
-            accept_locations=tuple(str(value) for value in decoded.get("accept_locations") or ()),
-            reject_locations=tuple(str(value) for value in decoded.get("reject_locations") or ()),
-            local_accept_locations=tuple(str(value) for value in decoded.get("local_accept_locations") or ()),
         )
 
 

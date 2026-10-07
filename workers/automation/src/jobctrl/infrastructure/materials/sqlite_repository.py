@@ -39,13 +39,8 @@ from jobctrl.domain.operations.learning import (
     LearningRecommendationReview,
     TailoringRuleEffect,
 )
-from jobctrl.domain.materials.value_objects import (
-    ArtifactStatus,
-    ArtifactType,
-    JudgeVerdict,
-    RenderFormat,
-    ValidationResult,
-)
+from jobctrl.domain.ports.artifact_review import ArtifactStatus, JudgeVerdict, ValidationResult
+from jobctrl.domain.materials.value_objects import ArtifactType, RenderFormat
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 from jobctrl.domain.profile.snapshot import ProfileSnapshot
 from jobctrl.infrastructure.materials.unit_of_work import SqliteUnitOfWork
@@ -273,11 +268,7 @@ class SqliteMaterialsRepository:
         will mint a new generation when it picks them up.
         """
         min_score = effective_tailoring_min_score(min_score)
-        where = (
-            "AND approved_resumes.job_id IS NULL "
-            if not retailor
-            else ""
-        )
+        where = "AND approved_resumes.job_id IS NULL " if not retailor else ""
         sql = (
             "WITH latest_scores AS ("
             "SELECT tenant_id, job_id, MAX(version) AS version "
@@ -661,6 +652,23 @@ class SqliteMaterialsRepository:
                 artifact.superseded_at,
             ),
         )
+        verification_id = metadata.get("claim_verification_id")
+        if verification_id:
+            from jobctrl.infrastructure.determinations import save_artifact_anchors
+
+            save_artifact_anchors(
+                self._conn,
+                tenant_id=materials.tenant_id,
+                artifact_kind=artifact.type.value,
+                artifact_id=artifact.artifact_id,
+                generation=materials.generation,
+                determination_id=verification_id,
+                anchors=metadata["line_anchors"],
+                quality_determination_id=metadata.get("quality_determination_id"),
+                adversarial_determination_id=metadata.get("resume_adversarial_id"),
+                require_pass=artifact.status is ArtifactStatus.APPROVED,
+                expected_entity_id=str(job_id),
+            )
         self._replace_layout_boxes(
             materials,
             job_id,
@@ -960,21 +968,13 @@ class SqliteLearningRecommendationReviewRepository:
         recommendation_id = str(recommendation_id or "").strip()
         reviewed_at = str(reviewed_at or "").strip()
         if not recommendation_id:
-            raise LearningRecommendationReviewError(
-                "recommendation_id must not be empty"
-            )
+            raise LearningRecommendationReviewError("recommendation_id must not be empty")
         if decision not in {"accepted", "rejected"}:
-            raise LearningRecommendationReviewError(
-                "decision must be accepted or rejected"
-            )
+            raise LearningRecommendationReviewError("decision must be accepted or rejected")
         if not reviewed_at:
             raise LearningRecommendationReviewError("reviewed_at must not be empty")
 
-        policy_repository = (
-            SqliteTailoringPolicyRepository(self._conn)
-            if decision == "accepted"
-            else None
-        )
+        policy_repository = SqliteTailoringPolicyRepository(self._conn) if decision == "accepted" else None
         self._conn.execute("BEGIN IMMEDIATE")
         try:
             recommendation = self._conn.execute(
@@ -986,9 +986,7 @@ class SqliteLearningRecommendationReviewRepository:
                 (str(tenant_id), recommendation_id),
             ).fetchone()
             if recommendation is None:
-                raise LearningRecommendationReviewError(
-                    "learning recommendation does not exist for tenant"
-                )
+                raise LearningRecommendationReviewError("learning recommendation does not exist for tenant")
 
             prior_reviews = tuple(
                 self._review_from_row(row)
@@ -1008,9 +1006,7 @@ class SqliteLearningRecommendationReviewRepository:
                 if decision == terminal.decision:
                     self._conn.commit()
                     return terminal
-                raise LearningRecommendationReviewError(
-                    "learning recommendation decision is terminal"
-                )
+                raise LearningRecommendationReviewError("learning recommendation decision is terminal")
 
             tombstoned = self._conn.execute(
                 """
@@ -1022,9 +1018,7 @@ class SqliteLearningRecommendationReviewRepository:
                 (str(tenant_id), recommendation_id),
             ).fetchone()
             if tombstoned is not None:
-                raise LearningRecommendationReviewError(
-                    "tombstoned learning recommendation cannot be reviewed"
-                )
+                raise LearningRecommendationReviewError("tombstoned learning recommendation cannot be reviewed")
 
             revision = len(prior_reviews) + 1
             policy_version: int | None = None
@@ -1033,16 +1027,12 @@ class SqliteLearningRecommendationReviewRepository:
                     signal_kind=str(_row_value(recommendation, "signal_kind", 0)),
                     rule_key=str(_row_value(recommendation, "rule_key", 1)),
                     rule_value=str(_row_value(recommendation, "rule_value", 2)),
-                    allowlist_version=int(
-                        _row_value(recommendation, "allowlist_version", 3)
-                    ),
+                    allowlist_version=int(_row_value(recommendation, "allowlist_version", 3)),
                 )
                 assert policy_repository is not None
                 current = policy_repository.get_current(tenant_id)
                 if current is None:
-                    raise LearningRecommendationReviewError(
-                        "acceptance requires an initialized tailoring policy"
-                    )
+                    raise LearningRecommendationReviewError("acceptance requires an initialized tailoring policy")
                 policy = current.with_learned_tailoring_rule(
                     rule_key=effect.rule_key,
                     rule_value=effect.rule_value,
@@ -1099,9 +1089,7 @@ class SqliteLearningRecommendationReviewRepository:
             recommendation_id=str(_row_value(row, "recommendation_id", 2)),
             revision=int(_row_value(row, "revision", 3)),
             decision=str(_row_value(row, "decision", 4)),
-            policy_version=(
-                None if raw_policy_version is None else int(raw_policy_version)
-            ),
+            policy_version=(None if raw_policy_version is None else int(raw_policy_version)),
             reviewed_at=str(_row_value(row, "reviewed_at", 6)),
         )
 
@@ -1223,9 +1211,7 @@ class SqliteTailoringPolicyRepository:
         *,
         expected_current_version: int | None = None,
     ) -> TailoringPolicy:
-        owns_transaction = not (
-            self._unit_of_work is not None and self._unit_of_work.active
-        )
+        owns_transaction = not (self._unit_of_work is not None and self._unit_of_work.active)
         if owns_transaction:
             self._conn.execute("BEGIN IMMEDIATE")
         try:
@@ -1234,14 +1220,9 @@ class SqliteTailoringPolicyRepository:
             if (
                 expected_current_version is not None
                 and actual_current_version != expected_current_version
-                and (
-                    current is None
-                    or not current.same_config_as(candidate)
-                )
+                and (current is None or not current.same_config_as(candidate))
             ):
-                raise TailoringPolicyChangedError(
-                    "tailoring policy advanced before artifact persistence"
-                )
+                raise TailoringPolicyChangedError("tailoring policy advanced before artifact persistence")
             if current is not None and current.learned_tailoring_rules.rules:
                 candidate = candidate.with_learned_tailoring_rules(
                     current.learned_tailoring_rules,
@@ -1288,15 +1269,11 @@ class SqliteTailoringPolicyRepository:
         """Assert tailoring-relevant profile and policy identity atomically."""
 
         if self._unit_of_work is None or not self._unit_of_work.active:
-            raise RuntimeError(
-                "tailoring generation fence requires an active unit of work"
-            )
-        if policy.runtime_settings.get(
-            "profile_snapshot_fingerprint"
-        ) != fingerprint_profile_snapshot(profile_snapshot):
-            raise TailoringPolicyChangedError(
-                "tailoring profile snapshot changed before artifact persistence"
-            )
+            raise RuntimeError("tailoring generation fence requires an active unit of work")
+        if policy.runtime_settings.get("profile_snapshot_fingerprint") != fingerprint_profile_snapshot(
+            profile_snapshot
+        ):
+            raise TailoringPolicyChangedError("tailoring profile snapshot changed before artifact persistence")
         from jobctrl.infrastructure.events.in_process_bus import InProcessEventBus
         from jobctrl.infrastructure.profile.sqlite_repository import (
             SqliteProfileRepository,
@@ -1309,24 +1286,12 @@ class SqliteTailoringPolicyRepository:
                 profile_id=str(profile_snapshot.profile_id),
             ).load_snapshot(profile_snapshot.tenant_id)
         except FileNotFoundError as exc:
-            raise TailoringPolicyChangedError(
-                "tailoring profile disappeared before artifact persistence"
-            ) from exc
-        if fingerprint_profile_snapshot(
-            current_profile_snapshot
-        ) != fingerprint_profile_snapshot(profile_snapshot):
-            raise TailoringPolicyChangedError(
-                "tailoring-relevant profile data changed before artifact persistence"
-            )
+            raise TailoringPolicyChangedError("tailoring profile disappeared before artifact persistence") from exc
+        if fingerprint_profile_snapshot(current_profile_snapshot) != fingerprint_profile_snapshot(profile_snapshot):
+            raise TailoringPolicyChangedError("tailoring-relevant profile data changed before artifact persistence")
         current = self.get_current(policy.tenant_id)
-        if (
-            current is None
-            or current.version != policy.version
-            or not current.same_config_as(policy)
-        ):
-            raise TailoringPolicyChangedError(
-                "tailoring policy advanced before artifact persistence"
-            )
+        if current is None or current.version != policy.version or not current.same_config_as(policy):
+            raise TailoringPolicyChangedError("tailoring policy advanced before artifact persistence")
 
     def rollback_to(
         self,
@@ -1348,9 +1313,7 @@ class SqliteTailoringPolicyRepository:
                 raise TailoringPolicyRevisionError("tailoring policy is not initialized")
             target = self.get_version(tenant_id, target_version)
             if target is None:
-                raise TailoringPolicyRevisionError(
-                    "target tailoring policy version does not exist for tenant"
-                )
+                raise TailoringPolicyRevisionError("target tailoring policy version does not exist for tenant")
             if (
                 current.rollback_of_version == target.version
                 and current.rollback_reason == reason
@@ -1359,9 +1322,7 @@ class SqliteTailoringPolicyRepository:
                 self._conn.commit()
                 return current
             if target.version >= current.version:
-                raise TailoringPolicyRevisionError(
-                    "rollback target must precede the current tailoring policy"
-                )
+                raise TailoringPolicyRevisionError("rollback target must precede the current tailoring policy")
 
             rollback = TailoringPolicy(
                 tenant_id=tenant_id,

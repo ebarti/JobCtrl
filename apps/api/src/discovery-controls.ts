@@ -1,3 +1,4 @@
+import { readDetermination } from "./semantic-determinations.js";
 import crypto from "node:crypto";
 
 import type {
@@ -68,8 +69,6 @@ const DEFAULT_DISCOVERY_SETTINGS: DiscoverySettings = {
   hoursOld: 72,
   schedulingEnabled: false,
   scheduleCron: "0 7 * * *",
-  roleFilterMode: "auto",
-  roleFilterModel: null,
   maxParallelFamilies: 1,
   crawlUserAgentProduct: "JobCtrl",
   crawlUserAgentContact: "https://github.com/ebarti/JobCtrl",
@@ -201,6 +200,7 @@ interface LowScoreJobRow extends Record<string, unknown> {
   strategy: string | null;
   fit_score: number;
   breakdown_json: string | null;
+  trace_json: string | null;
   scored_at: string | null;
 }
 
@@ -252,8 +252,6 @@ export function writeDiscoverySettings(
     hoursOld: request.hoursOld ?? current.hoursOld,
     schedulingEnabled: request.schedulingEnabled ?? current.schedulingEnabled,
     scheduleCron: request.scheduleCron ?? current.scheduleCron,
-    roleFilterMode: request.roleFilterMode ?? current.roleFilterMode,
-    roleFilterModel: request.roleFilterModel === undefined ? current.roleFilterModel : request.roleFilterModel,
     maxParallelFamilies: request.maxParallelFamilies ?? current.maxParallelFamilies,
     crawlUserAgentProduct: request.crawlUserAgentProduct ?? current.crawlUserAgentProduct,
     crawlUserAgentContact: request.crawlUserAgentContact ?? current.crawlUserAgentContact,
@@ -313,8 +311,6 @@ function discoverySettingsFromConfig(config: Record<string, unknown>): Discovery
     hoursOld: positiveInt(defaults.hours_old, DEFAULT_DISCOVERY_SETTINGS.hoursOld),
     schedulingEnabled: boolValue(config.scheduling_enabled, DEFAULT_DISCOVERY_SETTINGS.schedulingEnabled),
     scheduleCron: nonEmptyString(config.schedule_cron, DEFAULT_DISCOVERY_SETTINGS.scheduleCron),
-    roleFilterMode: roleFilterMode(recordValue(config.role_filter).mode),
-    roleFilterModel: nullableString(recordValue(config.role_filter).model),
     maxParallelFamilies: boundedInt(config.max_parallel_families, DEFAULT_DISCOVERY_SETTINGS.maxParallelFamilies, 1, 4),
     crawlUserAgentProduct: nonEmptyString(
       recordValue(config.crawl_user_agent).product,
@@ -344,11 +340,6 @@ function configFromDiscoverySettings(
     boards: settings.boards,
     scheduling_enabled: settings.schedulingEnabled,
     schedule_cron: settings.scheduleCron,
-    role_filter: {
-      ...recordValue(base.role_filter),
-      mode: settings.roleFilterMode,
-      model: settings.roleFilterModel,
-    },
     max_parallel_families: settings.maxParallelFamilies,
     crawl_user_agent: {
       ...recordValue(base.crawl_user_agent),
@@ -415,16 +406,6 @@ function resolvedDiscoverySettings(
       "restart",
       persisted && Object.hasOwn(config, "schedule_cron"),
     ),
-    roleFilterMode: setting(
-      stored.roleFilterMode,
-      "next_source_family",
-      persisted && Object.hasOwn(recordValue(config.role_filter), "mode"),
-    ),
-    roleFilterModel: setting(
-      stored.roleFilterModel,
-      "next_source_family",
-      persisted && Object.hasOwn(recordValue(config.role_filter), "model"),
-    ),
     maxParallelFamilies: setting(
       stored.maxParallelFamilies,
       "next_run",
@@ -490,17 +471,6 @@ function stringValue(value: unknown, fallback: string): string {
 function nullableString(value: unknown): string | null {
   const text = stringValue(value, "");
   return text || null;
-}
-
-function roleFilterMode(value: unknown): DiscoverySettings["roleFilterMode"] {
-  const normalized = stringValue(value, "auto").toLowerCase();
-  if (["deterministic", "0", "false", "no", "off", "disabled"].includes(normalized)) {
-    return "deterministic";
-  }
-  if (["llm", "1", "true", "yes", "on", "enabled"].includes(normalized)) {
-    return "llm";
-  }
-  return "auto";
 }
 
 function boundedInt(value: unknown, fallback: number, minimum: number, maximum: number): number {
@@ -1299,7 +1269,7 @@ function lowScoreRoleMatchGroups(db: SqliteDatabase): Map<string, RoleMatchFeedb
   const rows = lowScoreJobRows(db);
   const sourceByJobId = latestSourceIdsByJobId(db);
   for (const row of rows) {
-    const evidence = roleMatchFeedbackEvidence(row, sourceByJobId.get(row.job_id) ?? null);
+    const evidence = roleMatchFeedbackEvidence(db, row, sourceByJobId.get(row.job_id) ?? null);
     if (!evidence) {
       continue;
     }
@@ -1325,7 +1295,7 @@ function lowScoreRoleMatchGroups(db: SqliteDatabase): Map<string, RoleMatchFeedb
       ruleKind: "exact_title_exclusion",
       titlePattern,
       titleDisplay: evidence.title,
-      reasonCode: roleMatchReasonCode(row),
+      reasonCode: "role_mismatch_evidence",
       reason: evidence.reason,
       sampleCount: 1,
       sourceIds,
@@ -1360,6 +1330,7 @@ function lowScoreJobRows(db: SqliteDatabase): LowScoreJobRow[] {
             COALESCE(j.strategy, '') AS strategy,
             s.fit_score,
             s.breakdown_json,
+            s.trace_json,
             s.scored_at
      FROM latest_scores latest
      JOIN job_scores s
@@ -1368,7 +1339,6 @@ function lowScoreJobRows(db: SqliteDatabase): LowScoreJobRow[] {
       AND s.version = latest.version
      JOIN jobs j ON j.tenant_id = s.tenant_id AND j.job_id = s.job_id
      WHERE s.tenant_id = ?
-       AND s.fit_score <= 2
      ORDER BY s.scored_at DESC
      LIMIT 250`,
     [DEFAULT_TENANT, DEFAULT_TENANT],
@@ -1394,68 +1364,19 @@ function latestSourceIdsByJobId(db: SqliteDatabase): Map<string, string> {
   return result;
 }
 
-function roleMatchFeedbackEvidence(
-  row: LowScoreJobRow,
-  observedSourceId: string | null,
-): RoleMatchFeedbackEvidence | null {
-  const title = String(row.title ?? "").trim();
-  if (!title || normalizeTitlePattern(title).split(" ").length < 2) {
-    return null;
-  }
-  const breakdown = parseObject(row.breakdown_json);
-  const roleFit = nullableNumber(breakdown.roleFit ?? breakdown.role_fit);
-  const reasonText = scoreEvidenceText(breakdown);
-  const hasRoleEvidence =
-    (roleFit !== null && roleFit <= 2) ||
-    /\b(role|title|seniority|domain|function|track|manager|management|engineering|technical|technology)\b/i.test(
-      reasonText,
-    );
-  const hasOnlyNonRoleBlocker =
-    !hasRoleEvidence &&
-    /\b(location|remote|visa|sponsor|sponsorship|country|salary|compensation|language)\b/i.test(
-      reasonText,
-    );
-  if (hasOnlyNonRoleBlocker || (!hasRoleEvidence && Number(row.fit_score) > 1)) {
-    return null;
-  }
-  return {
-    jobKey: row.job_id,
-    title,
-    company: String(row.company ?? "").trim(),
-    sourceId: observedSourceId ?? inferredSourceId(row),
-    fitScore: Number(row.fit_score),
-    roleFit,
-    reason:
-      roleFit !== null && roleFit <= 2
-        ? `Role fit is ${roleFit}/10 on a job scored ${row.fit_score}/10.`
-        : `Job scored ${row.fit_score}/10 with role-matching evidence.`,
-    scoredAt: row.scored_at ?? null,
-  };
-}
-
-function roleMatchReasonCode(row: LowScoreJobRow): RoleMatchFeedbackReasonCode {
-  const breakdown = parseObject(row.breakdown_json);
-  const roleFit = nullableNumber(breakdown.roleFit ?? breakdown.role_fit);
-  if (roleFit !== null && roleFit <= 2) {
-    return "low_role_fit";
-  }
-  if (Number(row.fit_score) <= 1) {
-    return "very_low_score";
-  }
-  return "role_mismatch_evidence";
-}
-
-function scoreEvidenceText(breakdown: Record<string, unknown>): string {
-  const eligibility = parseObject(breakdown.eligibility);
-  return [
-    breakdown.reasoning,
-    ...stringArray(breakdown.missingSignals ?? breakdown.missing_signals),
-    ...stringArray(breakdown.matchedSignals ?? breakdown.matched_signals),
-    ...stringArray(eligibility.hardBlockers ?? eligibility.hard_blockers),
-    ...stringArray(eligibility.warnings),
-  ]
-    .map((value) => String(value ?? ""))
-    .join(" ");
+function roleMatchFeedbackEvidence(db:SqliteDatabase,row:LowScoreJobRow,observedSourceId:string|null):RoleMatchFeedbackEvidence|null{
+  const title=String(row.title??"").trim();
+  if(!title)return null;
+  const trace=parseObject(row.trace_json);
+  const id=typeof trace.determination_id==="string"?trace.determination_id:null;
+  const envelope=id?readDetermination(db,DEFAULT_TENANT,id,{currentOnly:true}):null;
+  if(envelope?.kind!=="scoring" || envelope.entity_id!==row.job_id || envelope.lane!=="scoring")return null;
+  const feedback=envelope.result["discovery_feedback"];
+  if(!feedback || typeof feedback!=="object")return null;
+  const recorded=feedback as Record<string,unknown>;
+  if(recorded["verdict"]!=="propose_exact_title_exclusion" || typeof recorded["reason"]!=="string")return null;
+  const breakdown=parseObject(row.breakdown_json);
+  return {jobKey:row.job_id,title,company:String(row.company??""),sourceId:observedSourceId??inferredSourceId(row),fitScore:Number(row.fit_score),roleFit:nullableNumber(breakdown.role_fit),reason:recorded["reason"],scoredAt:row.scored_at??null};
 }
 
 function inferredSourceId(row: LowScoreJobRow): string | null {

@@ -153,12 +153,14 @@ class _OfflineLlm:
 
 
 def _saved_discovery_identity() -> HonestUserAgent:
-    return resolve_honest_user_agent({
-        "crawl_user_agent": {
-            "product": OWNER_PRODUCT,
-            "contact": OWNER_CONTACT,
+    return resolve_honest_user_agent(
+        {
+            "crawl_user_agent": {
+                "product": OWNER_PRODUCT,
+                "contact": OWNER_CONTACT,
+            }
         }
-    })
+    )
 
 
 def _allow_fetcher_url_safety(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -307,9 +309,7 @@ def test_smartextract_uses_owner_ua_without_consulting_denying_robots(
 # ---------------------------------------------------------------------------
 
 
-def test_enrichment_batch_context_uses_owner_overridden_ua(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_enrichment_batch_context_uses_owner_overridden_ua(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _allow_detail_url_safety(monkeypatch)
     monkeypatch.setenv("JOBCTRL_LINKEDIN_APPLY_RESOLVER", "0")
     # Tier-1 (JSON-LD) success so navigation proceeds without touching the LLM.
@@ -376,3 +376,10 @@ def test_enrichment_batch_context_uses_owner_overridden_ua(
         assert robots.seen_user_agents == []
     finally:
         close_connection(db_path)
+
+
+@pytest.fixture(autouse=True)
+def explicit_semantic_ports(monkeypatch):
+    from tests.workflow_determination_fakes import install_page_models
+
+    install_page_models(monkeypatch)

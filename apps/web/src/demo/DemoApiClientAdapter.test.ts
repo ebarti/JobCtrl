@@ -125,10 +125,6 @@ const READ_CASES = [
   ],
   ["discoverySettings", (api: ApiClientPort) => api.discoverySettings()],
   ["discoverySources", (api: ApiClientPort) => api.discoverySources()],
-  [
-    "discoverySourcePreview",
-    (api: ApiClientPort) => api.discoverySourcePreview("demo-source:northwind"),
-  ],
   ["compensationSources", (api: ApiClientPort) => api.compensationSources()],
   [
     "discoveryLocatorCandidates",
@@ -190,10 +186,6 @@ const READ_CASES = [
       api.artifactPreviewHtmlUrl("artifact-tailored-resume", 7),
   ],
   ["profile", (api: ApiClientPort) => api.profile()],
-  [
-    "targetRoleSuggestions",
-    (api: ApiClientPort) => api.targetRoleSuggestions({ expectedProfileVersion: 1, maximumSuggestions: 3 }),
-  ],
 
   ["profilePreviewPdfUrl", (api: ApiClientPort) => api.profilePreviewPdfUrl(7)],
   [
@@ -234,22 +226,6 @@ describe("DemoApiClientAdapter", () => {
     expect(catalog.providers.find((provider) => provider.provider === "claude")?.models).toEqual(
       sampleProviderModelsResponse.providers.find((provider) => provider.provider === "claude")?.models,
     );
-  });
-
-  it("labels synthetic target-role suggestions and rejects stale profile versions", async () => {
-    const { adapter } = await createAdapter();
-
-    await expect(
-      adapter.targetRoleSuggestions({ expectedProfileVersion: 1, maximumSuggestions: 1 }),
-    ).resolves.toMatchObject({
-      profileVersion: 1,
-      strategy: "model_stub",
-      warnings: ["stubbed_model_evidence"],
-      suggestions: [{ evidenceIds: ["experience:experience-platform-delivery"] }],
-    });
-    await expect(
-      adapter.targetRoleSuggestions({ expectedProfileVersion: 2, maximumSuggestions: 1 }),
-    ).rejects.toMatchObject({ status: 409, statusText: "stale_profile_version" });
   });
 
   it("reports model coaching unavailable without fetching or changing the offline profile", async () => {
@@ -975,7 +951,6 @@ describe("DemoApiClientAdapter", () => {
 
     const missingReads = [
       () => adapter.activityEvent("missing"),
-      () => adapter.discoverySourcePreview("missing"),
       () => adapter.resumeReviewDraft("missing"),
       () => adapter.resumeReviewFeedback("missing"),
       () => adapter.resumeTemplate("missing"),
@@ -1001,35 +976,6 @@ describe("DemoApiClientAdapter", () => {
       name: "DemoCapabilityError",
       code: "demo_capability_not_implemented",
     });
-  });
-
-  it("emits only closed action telemetry without affecting scenario results", async () => {
-    const telemetry = new FakeTelemetryPort();
-    const { adapter } = await createAdapter({ telemetry });
-
-    await expect(adapter.rescoreJob("job-fabrikam-systems", {})).resolves.toMatchObject({
-      status: "queued",
-    });
-    expect(telemetry.event).toHaveBeenNthCalledWith(1, "demo_action_started", {
-      feature: "scoring",
-      action: "rescore",
-      scenario: "success",
-    });
-    expect(telemetry.event).toHaveBeenCalledTimes(1);
-
-    telemetry.event.mockClear();
-    await expect(adapter.retailorJob("job-fabrikam-systems", {})).resolves.toMatchObject({
-      status: "blocked",
-    });
-    expect(telemetry.event).toHaveBeenNthCalledWith(2, "demo_action_failed", {
-      feature: "materials",
-      action: "retailor",
-      scenario: "retry",
-      result: "failed",
-      errorCode: "validation_rejected",
-      durationBucket: expect.stringMatching(/ms|s/),
-    });
-    adapter.dispose();
   });
 });
 

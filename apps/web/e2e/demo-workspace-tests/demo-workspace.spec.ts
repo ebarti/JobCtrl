@@ -934,27 +934,23 @@ scenarioTest("same-context tabs share, serialize concurrent writes, and survive 
     page.evaluate(async () => {
       if (!window.__jobctrlDemoWorkspace)
         throw new Error("workspace not initialized");
-      await window.__jobctrlDemoWorkspace.queueScenario({
-        scenarioId: "tab-one",
-        deadlineAt: "2026-07-11T12:01:00.000Z",
-        resetEpoch: 0,
+      await window.__jobctrlDemoWorkspace.mutate((draft) => {
+        (draft.state as {title:string}).title = "Authored concurrent title";
       });
     }),
     second.evaluate(async () => {
       if (!window.__jobctrlDemoWorkspace)
         throw new Error("workspace not initialized");
-      await window.__jobctrlDemoWorkspace.queueScenario({
-        scenarioId: "tab-two",
-        deadlineAt: "2026-07-11T12:02:00.000Z",
-        resetEpoch: 0,
+      await window.__jobctrlDemoWorkspace.mutate((draft) => {
+        (draft.state as {generatedAt:string}).generatedAt = "2026-10-07T12:00:00.000Z";
       });
     }),
   ]);
   const shared = await snapshot(page);
   expect(shared.revision).toBe(2);
-  expect(
-    shared.pendingScenarios.map((scenario) => scenario.scenarioId).toSorted(),
-  ).toEqual(["tab-one", "tab-two"]);
+  expect(shared.state).toMatchObject({
+    title: "Authored concurrent title", generatedAt: "2026-10-07T12:00:00.000Z",
+  });
 
   await page.reload();
   const reloaded = await initializeWorkspace(page);
@@ -1152,11 +1148,7 @@ scenarioTest("reset rotates identity, fences state, and deletes generated blobs"
       "generated-preview",
       new Blob(["synthetic visitor edit"], { type: "text/plain" }),
     );
-    await window.__jobctrlDemoWorkspace.queueScenario({
-      scenarioId: "reset-me",
-      deadlineAt: "2026-07-11T12:03:00.000Z",
-      resetEpoch: 0,
-    });
+
     await window.__jobctrlDemoWorkspace.reset();
   });
   const reset = await snapshot(page);
@@ -1164,7 +1156,6 @@ scenarioTest("reset rotates identity, fences state, and deletes generated blobs"
   expect(reset).toMatchObject({
     resetEpoch: 1,
     resetCount: 1,
-    pendingScenarios: [],
   });
   expect(
     await page.evaluate(async () => {
@@ -1209,11 +1200,10 @@ scenarioTest("an older seed refreshes once and clears generated browser state", 
   expect(refreshed.kind).toBe("ready");
   if (refreshed.kind !== "ready") return;
   expect(refreshed.snapshot).toMatchObject({
-    schemaVersion: 4,
+    schemaVersion: 5,
     seedVersion: CURRENT_DEMO_SEED_VERSION,
     resetCount: stale.resetCount + 1,
     resetEpoch: stale.resetEpoch + 1,
-    pendingScenarios: [],
     blobIds: [],
     state: { title: "JobCtrl product tour" },
   });

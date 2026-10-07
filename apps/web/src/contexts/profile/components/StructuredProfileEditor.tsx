@@ -1,3 +1,4 @@
+import { SEMANTIC_TAXONOMY } from "../../operations/types.js";
 import {
   Fragment,
   useEffect,
@@ -94,7 +95,6 @@ import {
 interface TargetSearchOption {
   value: string;
   label: string;
-  aliases?: readonly string[];
 }
 
 interface TargetSearchOptionGroup {
@@ -102,67 +102,13 @@ interface TargetSearchOptionGroup {
   options: readonly TargetSearchOption[];
 }
 
-const TARGET_TRACK_GROUPS: readonly TargetSearchOptionGroup[] = [
-  {
-    label: "",
-    options: [
-      {
-        value: "ic",
-        label: "Individual Contributor",
-        aliases: ["individual contributor", "individual_contributor", "staff plus", "staff_plus"],
-      },
-      {
-        value: "management",
-        label: "Management",
-        aliases: ["manager", "people manager", "people_manager"],
-      },
-      {
-        value: "executive",
-        label: "Executive",
-        aliases: ["exec", "leadership"],
-      },
-    ],
-  },
-];
+const TARGET_TRACK_GROUPS: readonly TargetSearchOptionGroup[] = [{
+  label: "Track", options: Object.entries(SEMANTIC_TAXONOMY.track).map(([value,label]) => ({value,label})),
+}];
 
-const TARGET_SENIORITY_GROUPS: readonly TargetSearchOptionGroup[] = [
-  {
-    label: "",
-    options: [
-      { value: "junior", label: "Junior IC", aliases: ["junior engineer"] },
-      {
-        value: "mid",
-        label: "Mid IC",
-        aliases: ["engineer", "mid engineer", "mid-level engineer"],
-      },
-      { value: "senior", label: "Senior IC", aliases: ["senior engineer"] },
-      { value: "staff", label: "Staff IC", aliases: ["staff engineer"] },
-      { value: "principal", label: "Principal IC", aliases: ["principal engineer"] },
-      { value: "manager", label: "Manager", aliases: ["engineering manager"] },
-      {
-        value: "senior_manager",
-        label: "Senior Manager",
-        aliases: ["senior manager", "senior engineering manager", "head of engineering"],
-      },
-      { value: "director", label: "Director", aliases: ["director of engineering"] },
-      {
-        value: "vp",
-        label: "VP",
-        aliases: ["vice president", "vice president engineering", "vp engineering"],
-      },
-      {
-        value: "svp",
-        label: "SVP",
-        aliases: ["senior vice president", "senior vice president engineering", "svp engineering"],
-      },
-      {
-        value: "c_level",
-        label: "C-Level",
-        aliases: ["c level", "c suite", "chief", "cto", "chief technology officer"],
-      },
-    ],
-  },
-];
+const TARGET_SENIORITY_GROUPS: readonly TargetSearchOptionGroup[] = [{
+  label: "Seniority", options: Object.entries(SEMANTIC_TAXONOMY.seniority).map(([value,label]) => ({value,label})),
+}];
 
 const BASELINE_NON_INVENTING_CLAIM_MODE = "adjacent_translation";
 const INVENTED_ADJACENT_CLAIM_MODE = "draft_requires_confirmation";
@@ -1086,7 +1032,7 @@ export function StructuredProfileEditor({
       workModel: workModels[index] ?? "",
     }));
     const locationFocusKey = (index: number) => `${locationPath}:location:${index}`;
-    const workModelOptions = ["Remote", "Hybrid", "On-site"];
+    const workModelOptions = Object.entries(SEMANTIC_TAXONOMY.workModel).filter(([code]) => code !== "unknown");
 
     const updateRows = (nextRows: Array<{ location: string; workModel: string }>) => {
       updateProfileDraft((draft) => {
@@ -1107,12 +1053,12 @@ export function StructuredProfileEditor({
       focusAfterDraftUpdate(locationFocusKey(rows.length));
       updateRows([...rows, { location: "", workModel: "" }]);
     };
-    const toggleWorkModel = (index: number, value: string, checked: boolean) => {
+    const toggleWorkModel = (index: number, value: string, label: string, checked: boolean) => {
       const selected = new Set(commaListAt(rows[index]?.workModel ?? ""));
+      selected.delete(value);
+      selected.delete(label);
       if (checked) {
         selected.add(value);
-      } else {
-        selected.delete(value);
       }
       const next = [...rows];
       next[index] = { ...(next[index] ?? emptyRow), workModel: Array.from(selected).join(", ") };
@@ -1146,8 +1092,13 @@ export function StructuredProfileEditor({
               <FieldSet className="target-work-model-group">
                 <FieldLegend className="sr-only">Target work model {index + 1}</FieldLegend>
                 <FieldGroup className="target-work-model-options">
-                  {workModelOptions.map((value) => {
-                    const checkboxId = `target-work-model-${index}-${value.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+                  {[
+                    ...workModelOptions,
+                    ...Array.from(new Set(commaListAt(row.workModel)))
+                      .filter((value) => !workModelOptions.some(([code, label]) => code === value || label === value))
+                      .map((value) => [value, value] as const),
+                  ].map(([value, label], optionIndex) => {
+                    const checkboxId = `target-work-model-${index}-${optionIndex}`;
                     return (
                       <Field
                         className="target-work-model-option"
@@ -1156,10 +1107,10 @@ export function StructuredProfileEditor({
                       >
                         <Checkbox
                           id={checkboxId}
-                          checked={commaListAt(row.workModel).includes(value)}
-                          onCheckedChange={(checked) => toggleWorkModel(index, value, checked)}
+                          checked={commaListAt(row.workModel).some((saved) => saved === value || saved === label)}
+                          onCheckedChange={(checked) => toggleWorkModel(index, value, label, checked)}
                         />
-                        <FieldLabel htmlFor={checkboxId}>{value}</FieldLabel>
+                        <FieldLabel htmlFor={checkboxId}>{label}</FieldLabel>
                       </Field>
                     );
                   })}
@@ -2159,7 +2110,7 @@ export function StructuredProfileEditor({
 }
 
 function delimitedListAt(value: string): string[] {
-  const withoutLegacyLabel = value.replace(/^\s*Target roles?:\s*/i, "");
+  const withoutLegacyLabel = value;
   if (!withoutLegacyLabel) {
     return [""];
   }
@@ -2176,14 +2127,5 @@ function commaListAt(value: string): string[] {
 }
 
 function normalizeTargetSearchOption(value: string, options: readonly TargetSearchOption[]): string | null {
-  const normalized = normalizeTargetSearchToken(value);
-  const match = options.find((option) => {
-    const optionTokens = [option.value, option.label, ...(option.aliases ?? [])];
-    return optionTokens.some((token) => normalizeTargetSearchToken(token) === normalized);
-  });
-  return match?.value ?? null;
-}
-
-function normalizeTargetSearchToken(value: string): string {
-  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  return options.find((option) => option.value === value)?.value ?? null;
 }

@@ -44,6 +44,7 @@ from rich.console import Console
 from rich.live import Live
 
 from jobctrl import config
+from jobctrl.domain.apply.value_objects import Applied, DryRunComplete, Failed, SubmissionResult
 from jobctrl.apply import prompt as prompt_mod  # noqa: F401  -- kept for back-compat imports
 from jobctrl.apply.chrome import (
     BASE_CDP_PORT,
@@ -757,6 +758,30 @@ def _select_apply_candidates(conn, tenant_id, target_job_id, min_score):
     return candidate_rows
 
 
+def _record_repeat_check_blocked(conn, *, tenant_id, job_id, failure_code):
+    """Record a changed block state once, including concurrent acquisition passes."""
+    owns_transaction = not conn.in_transaction
+    if owns_transaction:
+        conn.execute("BEGIN IMMEDIATE")
+    try:
+        row = conn.execute(
+            "SELECT payload_json FROM job_events WHERE tenant_id=? AND job_id=? "
+            "AND stage='apply' AND event_type='RepeatApplicationCheckBlocked' ORDER BY event_id DESC LIMIT 1",
+            (str(tenant_id), str(job_id)),
+        ).fetchone()
+        if row is None or _payload_from_row(row).get("failureCode") != failure_code:
+            record_job_event(
+                conn, job_id, "apply", "RepeatApplicationCheckBlocked",
+                tenant_id=TenantId(str(tenant_id)), payload={"failureCode": failure_code},
+            )
+        if owns_transaction:
+            conn.commit()
+    except BaseException:
+        if owns_transaction:
+            conn.rollback()
+        raise
+
+
 def acquire_job(
     target_job_id: JobId | None = None,
     min_score: int = 7,
@@ -773,8 +798,9 @@ def acquire_job(
     excluded: set[str] = set()
     refreshed: set[str] = set()
     while True:
-        result = _acquire_job_candidate(target_job_id, min_score, worker_id, run_ctx,
-                                        approval_required, tenant_id, excluded, refreshed=refreshed)
+        result = _acquire_job_candidate(
+            target_job_id, min_score, worker_id, run_ctx, approval_required, tenant_id, excluded, refreshed=refreshed
+        )
         if isinstance(result, str):
             excluded.add(result)
             continue
@@ -803,14 +829,38 @@ def _acquire_job_candidate(
     """
     conn = get_connection()
     from datetime import timedelta
-    from jobctrl.enrichment.availability import require_fresh_active, assert_fresh_candidate, read_availability, fresh_active
+    from jobctrl.enrichment.availability import (
+        require_fresh_active,
+        assert_fresh_candidate,
+        read_availability,
+        fresh_active,
+    )
+
     tenant_id = str(tenant_id or (run_ctx.get("tenant_id") if run_ctx else None) or LOCAL_TENANT)
     if target_job_id is not None:
         target_job_id = canonical_job_id(str(target_job_id))
+    from jobctrl.domain.apply.repeat_application import prepare_repeat_application
+    from jobctrl.domain.determinations import DeterminationFailure
+
+    repeat_blocked_ids: set[str] = set()
+    if not (run_ctx or {}).get("dry_run"):
+        for candidate in _select_apply_candidates(conn, tenant_id, target_job_id, min_score):
+            if str(candidate["job_id"]) not in (excluded or set()):
+                try:
+                    prepare_repeat_application(conn, target_job_id=candidate["job_id"], tenant_id=TenantId(tenant_id))
+                except DeterminationFailure as exc:
+                    repeat_blocked_ids.add(str(candidate["job_id"]))
+                    _record_repeat_check_blocked(
+                        conn, job_id=candidate["job_id"], tenant_id=tenant_id, failure_code=exc.code,
+                    )
+        conn.commit()
     try:
         conn.execute("BEGIN IMMEDIATE")
-        candidate_rows = [row for row in _select_apply_candidates(conn, tenant_id, target_job_id, min_score)
-                          if str(row["job_id"]) not in (excluded or set())]
+        candidate_rows = [
+            row
+            for row in _select_apply_candidates(conn, tenant_id, target_job_id, min_score)
+            if str(row["job_id"]) not in (excluded or set()) | repeat_blocked_ids
+        ]
         if not candidate_rows:
             conn.rollback()
             return None
@@ -821,11 +871,17 @@ def _acquire_job_candidate(
         if not dry_run:
             row = None
             for candidate in candidate_rows:
-                candidate_assessment = evaluate_repeat_application(
-                    conn,
-                    tenant_id=tenant_id,
-                    target_job_id=candidate["job_id"],
-                )
+                try:
+                    candidate_assessment = evaluate_repeat_application(
+                        conn,
+                        tenant_id=tenant_id,
+                        target_job_id=candidate["job_id"],
+                    )
+                except DeterminationFailure as exc:
+                    _record_repeat_check_blocked(
+                        conn, job_id=candidate["job_id"], tenant_id=tenant_id, failure_code=exc.code,
+                    )
+                    continue
                 if candidate_assessment["status"] in {"clear", "override_ready"}:
                     row = candidate
                     repeat_assessment = candidate_assessment
@@ -928,8 +984,12 @@ def _acquire_job_candidate(
         # this eligible candidate is checked; an approval poll never acquires.
         allow_unknown = dry_run or _has_current_apply_review(conn, tenant_id, job_id)
         cached = read_availability(conn, job_id, tenant_id=tenant_id)
-        if (not allow_unknown and cached.get("verdict") == "unknown" and cached.get("postingUrl") == url
-                and not cached["overdue"]):
+        if (
+            not allow_unknown
+            and cached.get("verdict") == "unknown"
+            and cached.get("postingUrl") == url
+            and not cached["overdue"]
+        ):
             conn.commit()
             return job_id
         needs_refresh = not fresh_active(conn, job_id, tenant_id=tenant_id, max_age=timedelta(minutes=15))
@@ -942,20 +1002,31 @@ def _acquire_job_candidate(
             # fresh evidence; its final writer fence handles concurrent changes.
             refreshed.add(job_id)
             try:
-                require_fresh_active(job_id, tenant_id=tenant_id, conn=conn, max_age=timedelta(minutes=15),
-                                     expected_posting_url=url, allow_unknown=allow_unknown)
+                require_fresh_active(
+                    job_id,
+                    tenant_id=tenant_id,
+                    conn=conn,
+                    max_age=timedelta(minutes=15),
+                    expected_posting_url=url,
+                    allow_unknown=allow_unknown,
+                )
             except Exception:
                 logger.info("Apply deferred for %s: check availability or use supervised Apply", job_id)
                 return job_id
         conn.execute("BEGIN IMMEDIATE")
         current_rows = _select_apply_candidates(conn, tenant_id, canonical_job_id(job_id), min_score)
         current = current_rows[0] if current_rows else None
-        if (current is None or current["url"] != url or current["materials_generation"] != row["materials_generation"]
-                or (current["application_url"] or current["url"]) != apply_url
-                or _has_active_apply(conn, tenant_id=tenant_id, job_id=job_id)
-                or _has_succeeded_apply(conn, tenant_id=tenant_id, job_id=job_id)
-                or _has_needs_verification_apply(conn, tenant_id=tenant_id, job_id=job_id)
-                or _attempt_count_for(conn, tenant_id=tenant_id, job_id=job_id) >= int(config.DEFAULTS["max_apply_attempts"])):
+        if (
+            current is None
+            or current["url"] != url
+            or current["materials_generation"] != row["materials_generation"]
+            or (current["application_url"] or current["url"]) != apply_url
+            or _has_active_apply(conn, tenant_id=tenant_id, job_id=job_id)
+            or _has_succeeded_apply(conn, tenant_id=tenant_id, job_id=job_id)
+            or _has_needs_verification_apply(conn, tenant_id=tenant_id, job_id=job_id)
+            or _attempt_count_for(conn, tenant_id=tenant_id, job_id=job_id)
+            >= int(config.DEFAULTS["max_apply_attempts"])
+        ):
             conn.rollback()
             return job_id
         if not dry_run:
@@ -964,13 +1035,23 @@ def _acquire_job_candidate(
                 conn.commit()
                 return job_id
             if approval_required and _approval_refusal_reason(
-                conn, tenant_id=tenant_id, job_id=job_id, materials_generation=current["materials_generation"],
-                profile_version=_current_profile_version(conn, tenant_id=tenant_id), application_url=apply_url
+                conn,
+                tenant_id=tenant_id,
+                job_id=job_id,
+                materials_generation=current["materials_generation"],
+                profile_version=_current_profile_version(conn, tenant_id=tenant_id),
+                application_url=apply_url,
             ):
                 conn.commit()
                 return job_id
-        assert_fresh_candidate(conn, job_id, url, tenant_id=tenant_id, max_age=timedelta(minutes=15),
-                               allow_unknown=dry_run or _has_current_apply_review(conn, tenant_id, job_id))
+        assert_fresh_candidate(
+            conn,
+            job_id,
+            url,
+            tenant_id=tenant_id,
+            max_age=timedelta(minutes=15),
+            allow_unknown=dry_run or _has_current_apply_review(conn, tenant_id, job_id),
+        )
         row = current
         attempts = _attempt_count_for(conn, tenant_id=tenant_id, job_id=job_id)
 
@@ -1228,14 +1309,8 @@ def mark_result(
     conn = get_connection()
     now = _utc_now()
     stable_job_id = canonical_job_id(str(job_id))
-    stable_tenant_id = TenantId(
-        str(tenant_id or (run_ctx.get("tenant_id") if run_ctx else None) or LOCAL_TENANT)
-    )
-    run_id = (
-        task_id
-        or (run_ctx.get("run_id") if run_ctx else None)
-        or new_apply_run_id()
-    )
+    stable_tenant_id = TenantId(str(tenant_id or (run_ctx.get("tenant_id") if run_ctx else None) or LOCAL_TENANT))
+    run_id = task_id or (run_ctx.get("run_id") if run_ctx else None) or new_apply_run_id()
     current_state = conn.execute(
         """
         SELECT state
@@ -1283,10 +1358,7 @@ def mark_result(
             event_types={event_type},
         )
     }
-    if state_value in immutable_states or (
-        terminal_event_types
-        and terminal_event_types != {requested_terminal_event}
-    ):
+    if state_value in immutable_states or (terminal_event_types and terminal_event_types != {requested_terminal_event}):
         return
     posting_url = _posting_url_for_job_id(
         conn,
@@ -1302,14 +1374,11 @@ def mark_result(
     worker_id = run_ctx.get("worker_id") if run_ctx else None
     model = run_ctx.get("model") if run_ctx else None
     dry_run = bool(run_ctx.get("dry_run")) if run_ctx else False
-    submit_intent_recorded = (
-        status not in {"applied", "dry_run"}
-        and _has_apply_submit_intent(
-            conn,
-            tenant_id=stable_tenant_id,
-            job_id=stable_job_id,
-            run_id=str(run_id),
-        )
+    submit_intent_recorded = status not in {"applied", "dry_run"} and _has_apply_submit_intent(
+        conn,
+        tenant_id=stable_tenant_id,
+        job_id=stable_job_id,
+        run_id=str(run_id),
     )
 
     if status == "applied":
@@ -1363,9 +1432,7 @@ def mark_result(
             error_code="DRY_RUN",
             error_message="Dry run completed without submitting.",
             retryable=True,
-            next_action=(
-                f"jobctrl apply --url {posting_url}" if posting_url else None
-            ),
+            next_action=(f"jobctrl apply --url {posting_url}" if posting_url else None),
             validate_transition=False,
         )
         _record_apply_terminal_event_once(
@@ -1520,9 +1587,7 @@ def release_lock(
     """Record that launcher cleanup ran without making retry decisions."""
     conn = get_connection()
     stable_job_id = canonical_job_id(str(job_id))
-    stable_tenant_id = TenantId(
-        str(tenant_id or (run_ctx.get("tenant_id") if run_ctx else None) or LOCAL_TENANT)
-    )
+    stable_tenant_id = TenantId(str(tenant_id or (run_ctx.get("tenant_id") if run_ctx else None) or LOCAL_TENANT))
     ctx_run_id = run_ctx.get("run_id") if run_ctx else None
     run_id = (
         ctx_run_id
@@ -1550,17 +1615,12 @@ def recover_ambiguous_running_apply(console: Console | None = None) -> int:
     try:
         conn = get_connection()
         rows = conn.execute(
-            "SELECT tenant_id, job_id FROM job_stage_states "
-            "WHERE stage = 'apply' AND state = 'running'"
+            "SELECT tenant_id, job_id FROM job_stage_states WHERE stage = 'apply' AND state = 'running'"
         ).fetchall()
         recovered = 0
         for row in rows:
-            tenant_id = TenantId(
-                str(row["tenant_id"] if hasattr(row, "keys") else row[0])
-            )
-            job_id = canonical_job_id(
-                str(row["job_id"] if hasattr(row, "keys") else row[1])
-            )
+            tenant_id = TenantId(str(row["tenant_id"] if hasattr(row, "keys") else row[0]))
+            job_id = canonical_job_id(str(row["job_id"] if hasattr(row, "keys") else row[1]))
             posting_url = _posting_url_for_job_id(
                 conn,
                 tenant_id=tenant_id,
@@ -1611,11 +1671,7 @@ def recover_ambiguous_running_apply(console: Console | None = None) -> int:
                         "apply",
                         "pending",
                         tenant_id=tenant_id,
-                        next_action=(
-                            f"jobctrl apply --url {posting_url}"
-                            if posting_url
-                            else None
-                        ),
+                        next_action=(f"jobctrl apply --url {posting_url}" if posting_url else None),
                         validate_transition=False,
                     )
                 recovered += 1
@@ -1673,8 +1729,7 @@ def _workflow_terminal_or_gone(
         return True
     try:
         row = conn.execute(
-            "SELECT status FROM workflow_run_projections "
-            "WHERE tenant_id = ? AND workflow_id = ? LIMIT 1",
+            "SELECT status FROM workflow_run_projections WHERE tenant_id = ? AND workflow_id = ? LIMIT 1",
             (str(tenant_id), workflow_id),
         ).fetchone()
     except Exception:  # noqa: BLE001
@@ -1832,12 +1887,8 @@ def reset_failed() -> int:
     ).fetchall()
     count = 0
     for row in rows:
-        tenant_id = TenantId(
-            str(row["tenant_id"] if hasattr(row, "keys") else row[0])
-        )
-        job_id = canonical_job_id(
-            str(row["job_id"] if hasattr(row, "keys") else row[1])
-        )
+        tenant_id = TenantId(str(row["tenant_id"] if hasattr(row, "keys") else row[0]))
+        job_id = canonical_job_id(str(row["job_id"] if hasattr(row, "keys") else row[1]))
         posting_url = _posting_url_for_job_id(
             conn,
             tenant_id=tenant_id,
@@ -1872,11 +1923,7 @@ def reset_failed() -> int:
                 attempt_count=0,
                 error_code=None,
                 error_message=None,
-                next_action=(
-                    f"jobctrl apply --url {posting_url}"
-                    if posting_url
-                    else None
-                ),
+                next_action=(f"jobctrl apply --url {posting_url}" if posting_url else None),
                 validate_transition=False,
             )
             count += 1
@@ -2000,6 +2047,7 @@ def gen_prompt(
 
 def _has_current_apply_review(conn, tenant_id: str, job_id: str) -> bool:
     from datetime import datetime, timedelta
+
     decision = _latest_apply_review_decision(conn, tenant_id=tenant_id, job_id=job_id)
     try:
         reviewed_at = datetime.fromisoformat(str((decision or {}).get("decided_at", "")).replace("Z", "+00:00"))
@@ -2012,10 +2060,17 @@ def _has_current_apply_review(conn, tenant_id: str, job_id: str) -> bool:
     if not rows:
         return False
     row = rows[0]
-    return _approval_refusal_reason(conn, tenant_id=tenant_id, job_id=job_id,
-                                    materials_generation=row["materials_generation"],
-                                    profile_version=_current_profile_version(conn, tenant_id=tenant_id),
-                                    application_url=row["application_url"] or row["url"]) is None
+    return (
+        _approval_refusal_reason(
+            conn,
+            tenant_id=tenant_id,
+            job_id=job_id,
+            materials_generation=row["materials_generation"],
+            profile_version=_current_profile_version(conn, tenant_id=tenant_id),
+            application_url=row["application_url"] or row["url"],
+        )
+        is None
+    )
 
 
 @contextmanager
@@ -2023,18 +2078,35 @@ def _authorize_posting_before_submit(tenant_id: str, job_id: str, posting_url: s
     from datetime import timedelta
     from jobctrl.domain.errors import MissingInputError
     from jobctrl.enrichment.availability import require_fresh_active, assert_fresh_candidate
+
     conn = get_connection()
-    require_fresh_active(job_id, tenant_id=tenant_id, conn=conn, max_age=timedelta(minutes=15), expected_posting_url=posting_url,
-                         allow_unknown=_has_current_apply_review(conn, tenant_id, job_id))
+    require_fresh_active(
+        job_id,
+        tenant_id=tenant_id,
+        conn=conn,
+        max_age=timedelta(minutes=15),
+        expected_posting_url=posting_url,
+        allow_unknown=_has_current_apply_review(conn, tenant_id, job_id),
+    )
     conn.execute("BEGIN IMMEDIATE")
     try:
-        assert_fresh_candidate(conn, job_id, posting_url, tenant_id=tenant_id, max_age=timedelta(minutes=15),
-                               allow_unknown=_has_current_apply_review(conn, tenant_id, job_id))
-        owner = conn.execute("SELECT json_extract(payload_json, '$.run_id') FROM job_events WHERE tenant_id = ? "
-                             "AND job_id = ? AND event_type = 'ApplyRunStarted' ORDER BY event_id DESC LIMIT 1",
-                             (tenant_id, job_id)).fetchone()
-        running = conn.execute("SELECT state FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'apply'",
-                               (tenant_id, job_id)).fetchone()
+        assert_fresh_candidate(
+            conn,
+            job_id,
+            posting_url,
+            tenant_id=tenant_id,
+            max_age=timedelta(minutes=15),
+            allow_unknown=_has_current_apply_review(conn, tenant_id, job_id),
+        )
+        owner = conn.execute(
+            "SELECT json_extract(payload_json, '$.run_id') FROM job_events WHERE tenant_id = ? "
+            "AND job_id = ? AND event_type = 'ApplyRunStarted' ORDER BY event_id DESC LIMIT 1",
+            (tenant_id, job_id),
+        ).fetchone()
+        running = conn.execute(
+            "SELECT state FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'apply'",
+            (tenant_id, job_id),
+        ).fetchone()
         if not owner or owner[0] != run_id or not running or running[0] != "running":
             raise MissingInputError("Apply intent no longer owns the original posting attempt")
         yield
@@ -2119,6 +2191,29 @@ class SqliteApplyRunRepository:
                 payload.setdefault("run_id", run_id)
                 payload["event_id"] = event_id
                 payload.setdefault("apply_status", str(getattr(run, "status", "") or ""))
+                if event_type == "ApplyTerminalDetermination":
+                    from jobctrl.domain.apply.terminal_report import ApplyTerminalReport, report_envelope
+                    from jobctrl.infrastructure.determinations import SqliteDeterminationRepository
+
+                    report = ApplyTerminalReport.model_validate(payload["result"])
+                    envelope = report_envelope(
+                        report=report,
+                        tenant_id=tenant_id,
+                        run_id=run_id,
+                        model=payload["model"],
+                        input_fingerprint=payload["input_fingerprint"],
+                    )
+                    repository = SqliteDeterminationRepository(conn)
+                    repository.save(envelope)
+                    repository.bind(
+                        tenant_id=str(tenant_id),
+                        entity_kind="apply_run",
+                        entity_id=run_id,
+                        entity_version="1",
+                        determination_kind="apply_terminal_report",
+                        determination_id=envelope.determination_id,
+                    )
+                    payload["determination_id"] = envelope.determination_id
                 record_job_event(
                     conn,
                     job_id,
@@ -2270,38 +2365,6 @@ def _persist_agent_artifacts(
     )
 
 
-def _result_to_status_string(result) -> str:
-    """Map a ``SubmissionResult`` variant back to the legacy status string."""
-    from jobctrl.domain.apply.value_objects import (
-        Applied,
-        Captcha,
-        DryRunComplete,
-        Expired,
-        Failed,
-        LoginIssue,
-        Manual,
-    )
-
-    if isinstance(result, Applied):
-        return "applied"
-    if isinstance(result, DryRunComplete):
-        return "dry_run"
-    if isinstance(result, Expired):
-        return "expired"
-    if isinstance(result, Captcha):
-        return "captcha"
-    if isinstance(result, LoginIssue):
-        return "login_issue"
-    if isinstance(result, Manual):
-        return f"failed:{result.reason or 'manual'}"
-    if isinstance(result, Failed):
-        reason = result.error
-        if reason.startswith("TIMEOUT"):
-            return "failed:timeout"
-        return f"failed:{reason}"
-    return "failed:unknown"
-
-
 def run_job(
     job: dict,
     port: int,
@@ -2312,22 +2375,26 @@ def run_job(
     snapshot: ProfileSnapshot | None = None,
     *,
     tenant_id: TenantId,
-) -> tuple[str, int]:
-    """Spawn a Claude Code session for one job application.
+) -> tuple[SubmissionResult | None, int]:
+    """Run the Apply saga and return its typed result.
 
-    Returns ``(status_string, duration_ms)`` for back-compat with the
-    legacy launcher tests + ``pipeline.apply_jobs`` single-job flow.
-    All persistence happens via ``mark_result`` / events; the
-    ``status_string`` is derived from the saga's terminal
-    ``SubmissionResult``.
+    A skipped run returns None. Retryability is carried by the typed failure;
+    launcher code never reinterprets the agent's reason prose.
     """
     from datetime import timedelta
     from jobctrl.enrichment.availability import require_fresh_active
+
     try:
-        require_fresh_active(str(job["job_id"]), tenant_id=str(tenant_id), conn=get_connection(), max_age=timedelta(minutes=15), expected_posting_url=job["url"],
-                             allow_unknown=dry_run or _has_current_apply_review(get_connection(), str(tenant_id), str(job["job_id"])))
+        require_fresh_active(
+            str(job["job_id"]),
+            tenant_id=str(tenant_id),
+            conn=get_connection(),
+            max_age=timedelta(minutes=15),
+            expected_posting_url=job["url"],
+            allow_unknown=dry_run or _has_current_apply_review(get_connection(), str(tenant_id), str(job["job_id"])),
+        )
     except Exception:
-        return "blocked", 0
+        return Failed(error="posting_availability_blocked", retryable=False), 0
     run_ctx = run_ctx or {}
     run_id = run_ctx.setdefault("run_id", uuid.uuid4().hex)
     run_ctx.setdefault("worker_id", worker_id)
@@ -2371,58 +2438,14 @@ def run_job(
     )
     duration_ms = int((time.time() - start) * 1000)
     if outcome.skipped:
-        return "skipped", duration_ms
+        return None, duration_ms
 
     submission = outcome.submission_result
     if submission is None:
-        return "failed:no_result", duration_ms
+        return Failed(error="no_result", retryable=False), duration_ms
 
-    status = _result_to_status_string(submission)
-    update_state(
-        worker_id,
-        status=status if status in {"applied", "dry_run", "expired", "captcha", "login_issue"} else "failed",
-        last_action=status,
-    )
-    return status, duration_ms
-
-
-# ---------------------------------------------------------------------------
-# Permanent failure classification (kept identical for back-compat)
-# ---------------------------------------------------------------------------
-
-PERMANENT_FAILURES: set[str] = {
-    "expired",
-    "captcha",
-    "login_issue",
-    "not_eligible_location",
-    "not_eligible_salary",
-    "already_applied",
-    "account_required",
-    "not_a_job_application",
-    "unsafe_permissions",
-    "unsafe_verification",
-    "sso_required",
-    "site_blocked",
-    "cloudflare_blocked",
-    "blocked_by_cloudflare",
-    "trusted_final_submit_required",
-}
-
-PERMANENT_PREFIXES: tuple[str, ...] = (
-    "site_blocked",
-    "cloudflare",
-    "blocked_by",
-    "unsafe_url",
-)
-
-
-def _is_permanent_failure(result: str) -> bool:
-    reason = result.split(":", 1)[-1] if ":" in result else result
-    return (
-        result in PERMANENT_FAILURES
-        or reason in PERMANENT_FAILURES
-        or any(reason.startswith(p) for p in PERMANENT_PREFIXES)
-    )
+    update_state(worker_id, status=submission.kind, last_action=submission.kind)
+    return submission, duration_ms
 
 
 # ---------------------------------------------------------------------------
@@ -2528,7 +2551,7 @@ def worker_loop(
                 tenant_id=stable_tenant_id,
             )
 
-            if result == "skipped":
+            if result is None:
                 release_lock(
                     job_id,
                     run_ctx=run_ctx,
@@ -2536,7 +2559,7 @@ def worker_loop(
                 )
                 add_event(f"[W{worker_id} {run_ctx['run_id'][:8]}] Skipped: {(job.get('title') or '')[:30]}")
                 continue
-            if result == "applied":
+            if isinstance(result, Applied):
                 mark_result(
                     job_id,
                     "applied",
@@ -2551,7 +2574,7 @@ def worker_loop(
                     jobs_applied=applied,
                     jobs_done=applied + failed,
                 )
-            elif result == "dry_run":
+            elif isinstance(result, DryRunComplete):
                 mark_result(
                     job_id,
                     "dry_run",
@@ -2562,12 +2585,12 @@ def worker_loop(
                 )
                 update_state(worker_id, jobs_done=applied + failed)
             else:
-                reason = result.split(":", 1)[-1] if ":" in result else result
+                reason = result.error if isinstance(result, Failed) else result.kind
                 mark_result(
                     job_id,
                     "failed",
                     reason,
-                    permanent=_is_permanent_failure(result),
+                    permanent=not result.retryable if isinstance(result, Failed) else True,
                     duration_ms=duration_ms,
                     task_id=run_ctx.get("run_id"),
                     run_ctx=run_ctx,
@@ -2845,9 +2868,6 @@ from jobctrl.domain.tenant import LOCAL_TENANT  # noqa: E402
 
 
 __all__ = [
-    "PERMANENT_FAILURES",
-    "PERMANENT_PREFIXES",
-    "_is_permanent_failure",
     "acquire_job",
     "gen_prompt",
     "main",

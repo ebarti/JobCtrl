@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+
 from pathlib import Path
 
 import pytest
@@ -56,7 +57,13 @@ def test_short_headless_html_never_retries_headful_in_the_bundled_core(
 
     def collect(_url: str, **kwargs: object) -> dict[str, object]:
         calls.append(kwargs)
-        return {"full_html": "<html>short</html>", "json_ld": [], "api_responses": [], "data_testids": [], "card_candidates": []}
+        return {
+            "full_html": "<html>short</html>",
+            "json_ld": [],
+            "api_responses": [],
+            "data_testids": [],
+            "card_candidates": [],
+        }
 
     monkeypatch.setattr(smartextract, "collect_page_intelligence", collect)
     monkeypatch.setattr(smartextract, "is_bundled_runtime", lambda: True)
@@ -158,127 +165,6 @@ def _ats_posting(
     )
 
 
-def test_smart_extract_store_filters_title_and_location(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    db_path = tmp_path / "jobctrl.db"
-    monkeypatch.setattr(config, "DB_PATH", db_path)
-    conn = init_db(db_path)
-    try:
-        jobs = [
-            {
-                "url": "https://example.com/trauma-counsellor",
-                "title": "Independent Trauma Counsellor",
-                "location": "Remote EMEA",
-            },
-            {
-                "url": "https://example.com/director-investment",
-                "title": "Director, Investment Consulting",
-                "location": "CAN, Quebec - Full Time Remote",
-            },
-            {
-                "url": "https://example.com/director-engineering",
-                "title": "Director of Engineering",
-                "company": "ExampleCo",
-                "location": "Remote EMEA",
-                "description": "Lead engineering teams building reliable distributed systems.",
-            },
-        ]
-
-        assert smartextract._store_jobs_filtered(
-            conn,
-            jobs,
-            "Example",
-            "api_response",
-            ["Spain", "Europe", "EMEA"],
-            ["United States", "Canada"],
-            query="Director of Engineering",
-        ) == (1, 0)
-
-        stored = conn.execute("SELECT title, company FROM jobs").fetchall()
-        assert [(row["title"], row["company"]) for row in stored] == [("Director of Engineering", "ExampleCo")]
-    finally:
-        close_connection(db_path)
-
-
-def test_smart_extract_static_site_filters_against_all_target_queries(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    db_path = tmp_path / "jobctrl.db"
-    monkeypatch.setattr(config, "DB_PATH", db_path)
-    conn = init_db(db_path)
-    try:
-        jobs = [
-            {
-                "url": "https://example.com/crm-marketer",
-                "title": "CRM Marketer",
-                "location": "Barcelona, Spain",
-            },
-            {
-                "url": "https://example.com/head-engineering",
-                "title": "Head of Engineering",
-                "location": "Barcelona, Spain",
-                "description": "Lead engineering managers and platform teams in Barcelona.",
-            },
-        ]
-
-        assert smartextract._store_jobs_filtered(
-            conn,
-            jobs,
-            "Techstars Jobs",
-            "static",
-            ["Barcelona, Spain", "Spain", "Europe", "EMEA"],
-            ["United States", "Canada"],
-            query=["Director of Engineering", "Head of Engineering"],
-        ) == (1, 0)
-
-        stored = conn.execute("SELECT title FROM jobs").fetchall()
-        assert [row[0] if isinstance(row, tuple) else row["title"] for row in stored] == ["Head of Engineering"]
-    finally:
-        close_connection(db_path)
-
-
-def test_smart_extract_static_site_uses_recall_match_mode(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    db_path = tmp_path / "jobctrl.db"
-    monkeypatch.setattr(config, "DB_PATH", db_path)
-    conn = init_db(db_path)
-    try:
-        jobs = [
-            {
-                "url": "https://example.com/software-engineer",
-                "title": "Software Engineer",
-                "location": "Spain",
-                "description": "Build product features for a remote team.",
-            },
-            {
-                "url": "https://example.com/head-technology",
-                "title": "Head of Technology",
-                "location": "Spain",
-                "description": "Lead engineering and technology strategy in Spain.",
-            },
-        ]
-
-        assert smartextract._store_jobs_filtered(
-            conn,
-            jobs,
-            "Wellfound",
-            "static",
-            ["Spain", "Europe", "EMEA"],
-            ["United States", "Canada"],
-            query=[{"query": "technology director", "match_mode": "recall", "tier": 1}],
-        ) == (1, 0)
-
-        stored = conn.execute("SELECT title FROM jobs").fetchall()
-        assert [row["title"] for row in stored] == ["Head of Technology"]
-    finally:
-        close_connection(db_path)
-
-
 def test_smart_extract_target_builder_uses_source_capability() -> None:
     search_cfg = {
         "queries": [
@@ -315,17 +201,11 @@ def test_smart_extract_target_builder_uses_source_capability() -> None:
     expected_query_specs = [
         {
             "query": "Director of Engineering",
-            "match_mode": "strict",
             "tier": 1,
-            "target_track": "",
-            "seniority_floor": "",
         },
         {
             "query": "technology director",
-            "match_mode": "recall",
             "tier": 1,
-            "target_track": "",
-            "seniority_floor": "",
         },
     ]
     assert targets[0]["queries"] == expected_query_specs
@@ -335,65 +215,6 @@ def test_smart_extract_target_builder_uses_source_capability() -> None:
     assert targets[2]["query_spec"] == expected_query_specs[1]
     assert targets[3]["url"] == "https://example.com/jobs?q=&l=Spain"
     assert targets[3]["queries"] == targets[0]["queries"]
-
-
-def test_smart_extract_store_filters_jobs_without_descriptions(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    db_path = tmp_path / "jobctrl.db"
-    monkeypatch.setattr(config, "DB_PATH", db_path)
-    conn = init_db(db_path)
-    try:
-        jobs = [
-            {
-                "url": "https://example.com/head-engineering-empty",
-                "title": "Head of Engineering",
-                "location": "Barcelona, Spain",
-                "description": "",
-            },
-            {
-                "url": "https://example.com/head-engineering-none",
-                "title": "Head of Engineering",
-                "location": "Barcelona, Spain",
-                "description": "None",
-            },
-            {
-                "url": "https://example.com/head-engineering-nan",
-                "title": "Head of Engineering",
-                "location": "Barcelona, Spain",
-                "description": "nan",
-            },
-            {
-                "url": "https://example.com/head-engineering-pandas-na",
-                "title": "Head of Engineering",
-                "location": "Barcelona, Spain",
-                "description": "<NA>",
-            },
-            {
-                "url": "https://example.com/head-engineering",
-                "title": "Head of Engineering",
-                "location": "Barcelona, Spain",
-                "description": "Lead engineering teams and own platform delivery.",
-            },
-        ]
-
-        assert smartextract._store_jobs_filtered(
-            conn,
-            jobs,
-            "Startup.jobs",
-            "api_response",
-            ["Barcelona, Spain", "Spain", "Europe", "EMEA"],
-            ["United States", "Canada"],
-            query="Head of Engineering",
-        ) == (1, 0)
-
-        stored = conn.execute("SELECT url, description FROM jobs").fetchall()
-        assert [(row["url"], row["description"]) for row in stored] == [
-            ("https://example.com/head-engineering", "Lead engineering teams and own platform delivery.")
-        ]
-    finally:
-        close_connection(db_path)
 
 
 def test_smart_extract_updates_existing_serialized_null_description(
@@ -448,7 +269,7 @@ def test_smart_extract_updates_existing_serialized_null_description(
         )
         conn.commit()
 
-        assert smartextract._store_jobs_filtered(
+        assert smartextract._store_jobs(
             conn,
             [
                 {
@@ -460,9 +281,7 @@ def test_smart_extract_updates_existing_serialized_null_description(
             ],
             "Startup.jobs",
             "api_response",
-            ["Barcelona, Spain", "Spain", "Europe", "EMEA"],
-            ["United States", "Canada"],
-            query="Head of Engineering",
+            search_cfg={},
         ) == (0, 1)
 
         stored = conn.execute(
@@ -534,7 +353,7 @@ def test_smart_extract_refreshes_existing_title_location_before_restore(
         )
         conn.commit()
 
-        assert smartextract._store_jobs_filtered(
+        assert smartextract._store_jobs(
             conn,
             [
                 {
@@ -547,9 +366,7 @@ def test_smart_extract_refreshes_existing_title_location_before_restore(
             ],
             "Startup.jobs",
             "api_response",
-            ["Barcelona, Spain", "Spain", "Europe", "EMEA"],
-            ["United States", "Canada"],
-            query="Head of Engineering",
+            search_cfg={},
         ) == (0, 1)
 
         stored = conn.execute(
@@ -593,15 +410,13 @@ def test_smart_extract_store_normalizes_relative_urls(
             },
         ]
 
-        assert smartextract._store_jobs_filtered(
+        assert smartextract._store_jobs(
             conn,
             jobs,
             "Startup.jobs",
             "api_response",
-            ["Spain", "Europe", "EMEA"],
-            ["United States", "Canada"],
-            query="Head of Platform Engineering",
             source_url="https://startup.jobs/?q=Head+of+Platform+Engineering&remote=true",
+            search_cfg={},
         ) == (1, 0)
 
         row = conn.execute("SELECT url, company FROM jobs").fetchone()
@@ -641,7 +456,7 @@ def test_smart_extract_dedups_against_ats_first_content_owner(
         )
         assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 1
 
-        result = smartextract._store_jobs_filtered(
+        result = smartextract._store_jobs(
             conn,
             [
                 {
@@ -654,23 +469,17 @@ def test_smart_extract_dedups_against_ats_first_content_owner(
             ],
             "Acme Careers",
             "static",
-            ["Barcelona, Spain", "Spain", "Europe", "EMEA"],
-            ["United States", "Canada"],
-            query="Staff Platform Engineer",
+            search_cfg={},
         )
 
         assert result == (0, 1)
         assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 1
-        link = conn.execute(
-            "SELECT surviving_job_id, reason, confidence FROM job_duplicate_links"
-        ).fetchone()
+        link = conn.execute("SELECT surviving_job_id, reason, confidence FROM job_duplicate_links").fetchone()
         owner_job_id = _job_id_by_url(conn, owner_url)
         assert link["surviving_job_id"] == owner_job_id
         assert link["reason"] == "content_fingerprint_match"
         assert link["confidence"] == 0.95
-        linked_events = conn.execute(
-            "SELECT job_id FROM job_events WHERE event_type = 'DuplicateJobLinked'"
-        ).fetchall()
+        linked_events = conn.execute("SELECT job_id FROM job_events WHERE event_type = 'DuplicateJobLinked'").fetchall()
         assert len(linked_events) == 1
         assert linked_events[0]["job_id"] == owner_job_id
         observations = repository.list_observations(LOCAL_TENANT, owner_job_id)
@@ -690,7 +499,7 @@ def test_ats_dedups_against_smart_extract_first_content_owner(
     try:
         description = "Own the platform engineering roadmap for local-first developer tooling."
         smart_url = "https://careers.acme.com/staff-platform-engineer"
-        result = smartextract._store_jobs_filtered(
+        result = smartextract._store_jobs(
             conn,
             [
                 {
@@ -703,9 +512,7 @@ def test_ats_dedups_against_smart_extract_first_content_owner(
             ],
             "Acme Careers",
             "static",
-            ["Barcelona, Spain", "Spain", "Europe", "EMEA"],
-            ["United States", "Canada"],
-            query="Staff Platform Engineer",
+            search_cfg={},
         )
         assert result == (1, 0)
         assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 1
@@ -730,9 +537,7 @@ def test_ats_dedups_against_smart_extract_first_content_owner(
         assert summary.new_jobs == 0
         assert summary.duplicates_linked == 1
         assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 1
-        link = conn.execute(
-            "SELECT surviving_job_id, reason FROM job_duplicate_links"
-        ).fetchone()
+        link = conn.execute("SELECT surviving_job_id, reason FROM job_duplicate_links").fetchone()
         assert link["surviving_job_id"] == _job_id_by_url(conn, smart_url)
         assert link["reason"] == "content_fingerprint_match"
     finally:
@@ -780,7 +585,7 @@ def test_smart_extract_keeps_distinct_roles_at_same_employer_separate(
         )
         assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 1
 
-        result = smartextract._store_jobs_filtered(
+        result = smartextract._store_jobs(
             conn,
             [
                 {
@@ -793,9 +598,7 @@ def test_smart_extract_keeps_distinct_roles_at_same_employer_separate(
             ],
             "Acme Careers",
             "static",
-            ["Barcelona, Spain", "Spain", "Europe", "EMEA"],
-            ["United States", "Canada"],
-            query="Staff Data Scientist",
+            search_cfg={},
         )
 
         assert result == (1, 0)
@@ -846,3 +649,17 @@ def test_smart_extract_api_response_extracts_company() -> None:
             "url": "/director-engineering-exampleco",
         }
     ]
+
+
+@pytest.fixture(autouse=True)
+def semantic_workflow_models(monkeypatch):
+    from tests.workflow_determination_fakes import install_page_models
+
+    install_page_models(monkeypatch)
+
+
+@pytest.fixture(autouse=True)
+def explicit_semantic_ports(monkeypatch):
+    from tests.workflow_determination_fakes import install_page_models
+
+    install_page_models(monkeypatch)

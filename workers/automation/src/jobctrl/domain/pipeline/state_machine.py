@@ -1,4 +1,4 @@
-"""StageStateMachine — pure function implementing the 16-transition table (ddd-target.md S8.5).
+"""StageStateMachine — pure function implementing the stage transition table (ddd-target.md S8.5).
 
 No I/O, no DB, no event publishing. Given a current StageState and a
 StageTransition trigger, returns the new StageState or a TransitionRejected error.
@@ -134,6 +134,14 @@ def _running_to_failed(current: Running, **kwargs) -> Failed:
     )
 
 
+def _running_to_blocked(current: Running, **kwargs) -> Blocked:
+    return Blocked(
+        blocked_by=kwargs.get("blocked_by", ()),
+        error_code=kwargs.get("error_code", "SEMANTIC_BLOCKED"),
+        error_message=kwargs.get("error_message", ""),
+    )
+
+
 def _running_to_canceled(current: Running, **kwargs) -> Canceled:
     return Canceled(
         canceled_at=kwargs.get("canceled_at", ""),
@@ -219,6 +227,7 @@ _HANDLERS: dict[tuple[str, StageTransition], _Handler] = {
     ("Running", StageTransition.Complete): _running_to_succeeded,
     # Row 8:  Running  -> Failed   (Fail)
     ("Running", StageTransition.Fail): _running_to_failed,
+    ("Running", StageTransition.Block): _running_to_blocked,
     # Row 9:  Running  -> Canceled (Cancel)
     ("Running", StageTransition.Cancel): _running_to_canceled,
     # Row 10: Failed   -> Pending  (Reset)
@@ -253,6 +262,7 @@ _VALID_KIND_TRANSITIONS: frozenset[tuple[str, str]] = frozenset(
         ("Queued", "Canceled"),
         ("Running", "Succeeded"),
         ("Running", "Failed"),
+        ("Running", "Blocked"),
         ("Running", "Canceled"),
         ("Failed", "Pending"),
         ("Failed", "Exhausted"),

@@ -197,6 +197,12 @@ and retains these cursors; it does not replay unrelated history. First-run and
 schema-recovery paths also detect missing/stale projection rows and rebuild from
 canonical state even when old events are already watermarked.
 
+Employer-analysis projections carry the analysis prompt version. Both builders
+rebuild a cached shape with an obsolete or missing version without requiring a
+new job event. The API also checks that version before serving it as current;
+the native semantic-schema cutover clears the derived shape and keeps canonical
+analysis history and accepted artifacts.
+
 SQLite serializes concurrent writers. Idempotent upserts, monotonic watermarks,
 and missing-row backfills make repeated refreshes safe. For the exact current
 projection responsibilities, use [Apply Feedback & Projections](read-model.md);

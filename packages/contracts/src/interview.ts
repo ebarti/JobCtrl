@@ -101,13 +101,13 @@ export type GenerateInterviewPrepRequest = z.infer<typeof GenerateInterviewPrepR
 export const InterviewEvidenceExcerptSchema = z.object({ evidenceId: EvidenceId, sourceRef: Text, excerpt: Text, scope: z.enum(["direct", "transferable"]) }).strict();
 export const InterviewSelectedQuestionSchema = z.object({ questionId: Id, cardRevision: Revision, cardDigest: Digest,
   rubricRevision: Revision, rubricDigest: Digest, answerFormat: z.enum(INTERVIEW_ANSWER_FORMATS),
-  selectionRationale: Text, snapshot: InterviewQuestionCardSchema, evidenceSelectionMode: z.enum(["user_selected", "deterministic"]),
+  selectionRationale: Text, snapshot: InterviewQuestionCardSchema, evidenceSelectionMode: z.enum(["user_selected", "model", "deterministic"]),
   selectedEvidenceIds: z.array(EvidenceId).max(MAX_INTERVIEW_EVIDENCE_IDS_PER_QUESTION), }).strict();
 export const InterviewGenerationContextSchema = z.object({
-  schemaVersion: z.literal("1"), catalogBinding: InterviewCatalogBindingSchema, contextDigest: Digest,
+  schemaVersion: z.enum(["1", "2"]), catalogBinding: InterviewCatalogBindingSchema, contextDigest: Digest,
   selectedQuestionIds: z.array(Id).min(1).max(MAX_INTERVIEW_SELECTED_QUESTIONS),
   selectedQuestions: z.array(InterviewSelectedQuestionSchema).min(1).max(MAX_INTERVIEW_SELECTED_QUESTIONS),
-  selectionMode: z.enum(["user_selected", "deterministic"]), interviewStage: z.enum(INTERVIEW_STAGES),
+  selectionMode: z.enum(["user_selected", "model", "deterministic"]), interviewStage: z.enum(INTERVIEW_STAGES),
   interviewFormat: z.enum(INTERVIEW_FORMATS), roleLens: z.enum(INTERVIEW_ROLE_LENSES),
   roleResponsibilities: z.array(Text), knownCriteria: z.array(Text),
   profile: z.object({ profileId: Text, version: z.number().int().min(1), evidence: z.array(InterviewEvidenceExcerptSchema) }).strict(),
@@ -122,7 +122,12 @@ export const InterviewGenerationContextSchema = z.object({
     profileSnapshotVersion: z.number().int().min(1), status: z.enum(["current", "stale_excluded"]) }).strict().nullable(),
   approvedMaterials: z.array(z.object({ materialId: Text, generation: z.number().int().min(1), sha256: Digest }).strict()),
   model: z.object({ model: Text, promptVersion: Revision, gateVersion: Revision }).strict(),
-}).strict();
+  determinations: z.object({ plan: Digest, claimVerification: z.array(Digest), quality: Digest.optional() }).strict().optional(),
+}).strict().superRefine((value, context) => {
+  if (value.schemaVersion === "2" && (!value.determinations || value.selectionMode === "deterministic" || value.selectedQuestions.some((item) => item.evidenceSelectionMode === "deterministic"))) {
+    context.addIssue({ code: "custom", message: "Version 2 requires model determination bindings" });
+  }
+});
 const FactualSupport = z.enum(["accepted_profile_fact", "hypothetical", "new_user_statement", "needs_clarification"]);
 export const InterviewQuestionMetadataSchema = z.object({
   questionId: Id, cardRevision: Revision, cardDigest: Digest, rubricRevision: Revision, rubricDigest: Digest,
@@ -131,6 +136,8 @@ export const InterviewQuestionMetadataSchema = z.object({
   outline: z.array(z.object({ heading: Text, text: Text, evidenceIds: z.array(EvidenceId), factualSupport: FactualSupport }).strict()),
   gaps: z.array(z.object({ id: Text, prompt: Text, reason: Text }).strict()), probes: z.array(Text), sourceGuidanceRefs: z.array(Text),
   factualSupport: FactualSupport, userEditStatus: z.enum(["generated", "user_edited"]),
+  lineAnchors: z.array(z.object({ lineId: Text, text: Text, evidenceIds: z.array(EvidenceId), requirementIds: z.array(Text),
+    transformType: z.enum(["evidence_reframed", "hypothetical", "clarification", "advice"]), reason: Text }).strict()).optional(),
 }).strict();
 export const InterviewNoteBindingsSchema = z.object({ catalogBinding: InterviewCatalogBindingSchema.nullable().optional(),
   cardRevision: Revision.nullable().optional(), cardDigest: Digest.nullable().optional(), contextDigest: Digest.nullable().optional() }).strict();

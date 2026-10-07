@@ -28,7 +28,7 @@ def test_build_worker_separates_temporal_and_blocking_activity_executors(
     def _worker(client, **kwargs):
         return SimpleNamespace(client=client, **kwargs)
 
-    monkeypatch.setattr(temporal_worker_module, "ThreadPoolExecutor", _Executor)
+    monkeypatch.setattr(temporal_worker_module, "ActivityThreadPoolExecutor", _Executor)
     monkeypatch.setattr(temporal_worker_module, "Worker", _worker)
     monkeypatch.setattr(
         temporal_worker_module,

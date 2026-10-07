@@ -178,6 +178,7 @@ class AdversarialReviewResult:
     score_rationale: str = ""
     model: str = ""
     prompt_messages: tuple[AdversarialPromptMessage, ...] = ()
+    determination_id: str | None = None
 
     @classmethod
     def skipped(
@@ -282,6 +283,7 @@ class AdversarialReviewResult:
         }
         return {
             "ran": self.ran,
+            "determination_id": self.determination_id,
             "threshold": self.threshold,
             "normalized_fit_score": self.normalized_fit_score,
             "passed": self.passed,

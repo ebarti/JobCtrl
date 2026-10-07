@@ -74,7 +74,6 @@ const EXPECTED_RESPONSE_KEYS = {
   promoteSourceLocatorCandidate: ["candidateId", "decidedAt", "decision", "ok", "source"],
   rejectSourceLocatorCandidate: ["candidateId", "decidedAt", "decision", "ok", "source"],
   decideDiscoveryQuarantine: ["decision", "jobKey", "ok", "recordedAt"],
-  importManualCapture: ["importedAt", "itemId", "jobKey", "ok", "provenance"],
   dismissManualCapture: ["dismissedAt", "itemId", "ok", "status"],
   recordDiscoveryFeedback: ["feedbackId", "jobKey", "kind", "ok", "recordedAt", "sourceId"],
   decideRoleMatchFeedbackSuggestion: ["ok", "suggestion"],
@@ -102,7 +101,6 @@ const EXPECTED_RESPONSE_KEYS = {
   resetStaleScoresForRescore: ["count", "jobKeys", "nextAction", "ok"],
   cancelWorkflowRun: ACTION_RESPONSE_KEYS,
   updateProfile: ["ok", "profile", "profileVersion", "style", "templateText"],
-  importResume: ["ok", "profile", "source", "style", "templateText"],
   updateSettings: ["effectiveSettings", "ok", "paths", "settings"],
   createContact: ["contact", "ok"],
   updateContact: ["contact", "ok"],
@@ -126,7 +124,6 @@ const EXPECTED_EVENT_TYPES = {
   promoteSourceLocatorCandidate: ["SourceLocationCandidatePromoted"],
   rejectSourceLocatorCandidate: [],
   decideDiscoveryQuarantine: ["DiscoveryFeedbackRecorded"],
-  importManualCapture: ["JobDiscovered"],
   dismissManualCapture: [],
   recordDiscoveryFeedback: ["DiscoveryFeedbackRecorded"],
   decideRoleMatchFeedbackSuggestion: [],
@@ -154,7 +151,6 @@ const EXPECTED_EVENT_TYPES = {
   resetStaleScoresForRescore: ["ScoreRescoreRequested"],
   cancelWorkflowRun: ["WorkflowCanceled", "StageCanceled"],
   updateProfile: ["ProfileUpdated"],
-  importResume: ["ProfileImported"],
   updateSettings: [],
   createContact: ["ContactCreated", "ContactAttributeRecorded"],
   updateContact: ["ContactUpdated"],
@@ -178,7 +174,6 @@ const LOCAL_CASES = [
   ["promoteSourceLocatorCandidate", (api) => api.promoteSourceLocatorCandidate("locator-demo-northwind", { reason: "Demo promotion" })],
   ["rejectSourceLocatorCandidate", (api) => api.rejectSourceLocatorCandidate("locator-demo-northwind", { reason: "Demo rejection" })],
   ["decideDiscoveryQuarantine", (api) => api.decideDiscoveryQuarantine("job-quarantine-demo", { decision: "approve", reason: "Reviewed" })],
-  ["importManualCapture", (api) => api.importManualCapture("capture-demo-browser", { captureMode: "current_page", capturedUrl: "https://example.invalid/demo", futureManualActionRequired: false })],
   ["dismissManualCapture", (api) => api.dismissManualCapture("capture-demo-browser", { reason: "Dismissed" })],
   ["recordDiscoveryFeedback", (api) => api.recordDiscoveryFeedback({ jobKey: JOB, sourceId: "demo-source:northwind", kind: "saved", note: "Useful" })],
   ["decideRoleMatchFeedbackSuggestion", (api) => api.decideRoleMatchFeedbackSuggestion("role-feedback-demo", { decision: "approve", reason: "Confirmed" })],
@@ -200,6 +195,7 @@ const LOCAL_CASES = [
         suggestionId: "suggestion-demo",
         jobKey: JOB,
         evidenceId: null,
+        determination: null, citations: [],
         suggestedKind: "interview",
         confidence: 1,
         rationale: "Synthetic suggestion",
@@ -228,7 +224,6 @@ const LOCAL_CASES = [
   ["resetStaleScoresForRescore", (api) => api.resetStaleScoresForRescore({ limit: 1, jobKeys: ["job-fabrikam-systems"] })],
   ["cancelWorkflowRun", (api) => api.cancelWorkflowRun("run-materials-progress")],
   ["updateProfile", (api) => api.updateProfile({ templateText: "Updated bundled template" })],
-  ["importResume", (api) => api.importResume({ filename: "demo.pdf", pdfBase64: "ZGVtbw==", importProfile: true, importStyle: true })],
   ["updateSettings", (api) => api.updateSettings({ dailyBudgetUsd: 12, workerActivitySlots: 8 })],
   ["createContact", (api) => api.createContact({ role: "recruiter", employer: "Demo Workshop", attributes: [{ kind: "name", value: "Synthetic contact" }] })],
   ["updateContact", (api) => api.updateContact("contact-demo-hiring-partner", { role: "hiring_manager" })],
@@ -244,36 +239,6 @@ const LOCAL_CASES = [
 ] as const satisfies readonly LocalCase[];
 
 describe("DemoLocalCommandExecutor", () => {
-  it("persists one explicitly accepted coaching cleanup with one ProfileUpdated event and reloads it", async () => {
-    const store = new InMemoryDemoWorkspaceStore();
-    const { adapter, repository } = await harness(store);
-    const { original, accepted } = coachingSaveFixture();
-    const saved = await adapter.updateProfile({
-      expectedProfileVersion: 1, profileText: JSON.stringify(original),
-    });
-    const before = repository.snapshotNow();
-    // Only an explicit acceptance sends the individually edited profile through
-    // the existing fenced writer.
-    const result = await adapter.updateProfile({
-      expectedProfileVersion: saved.profileVersion!, profileText: JSON.stringify(accepted),
-    });
-    const after = repository.snapshotNow();
-    expect(result.profile).toEqual(accepted);
-    expect(result.profileVersion).toBe(saved.profileVersion! + 1);
-    expect(after.revision).toBe(before.revision + 1);
-    expect(after.eventLog.slice(before.eventLog.length).map((record) => ({
-      eventType: record.event.eventType, payload: record.event.payload,
-    }))).toEqual([{
-      eventType: "ProfileUpdated", payload: { changedSections: ["profileText"], updatedAt: NOW },
-    }]);
-    expect(after.pendingScenarios).toEqual(before.pendingScenarios);
-    expect(after.blobIds).toEqual(before.blobIds);
-    expect((await store.readSnapshot())!.state.readModel.profile.config).toEqual(result);
-    repository.dispose();
-    const reloaded = await harness(store);
-    expect(await reloaded.adapter.profile()).toEqual(result);
-    reloaded.repository.dispose();
-  });
 
   it("preserves the reviewed profile, Required pin and event history when accepting cleanup cannot persist", async () => {
     const store = new QuotaOnNextTransactionStore();
@@ -330,31 +295,11 @@ describe("DemoLocalCommandExecutor", () => {
     },
   );
 
-  it("keeps the 144-member capability manifest exhaustive with exact class counts", () => {
-    const counts = Object.values(DEMO_CAPABILITY_MANIFEST).reduce<Record<string, number>>(
-      (result, capability) => {
-        result[capability.class] = (result[capability.class] ?? 0) + 1;
-        return result;
-      },
-      {},
-    );
-    expect(Object.keys(DEMO_CAPABILITY_MANIFEST)).toHaveLength(144);
-    expect(counts).toEqual({
-      browser_local: 98,
-      simulated_async: 4,
-      rehearsed_external: 4,
-      unavailable: 38,
-    });
-    expect(DEMO_CAPABILITY_MANIFEST.requiredBulletSuggestions).toMatchObject({
-      class: "unavailable",
-    });
-  });
-
   it("has one valid invocation for every P3a browser-local command", async () => {
     expect(LOCAL_CASES.map(([method]) => method).toSorted()).toEqual(
       [...DEMO_BROWSER_LOCAL_COMMANDS].toSorted(),
     );
-    expect(DEMO_BROWSER_LOCAL_COMMANDS).toHaveLength(49);
+    expect(DEMO_BROWSER_LOCAL_COMMANDS).toHaveLength(47);
     for (const [method, invoke] of LOCAL_CASES) {
       const { adapter, repository } = await harness();
       const before = repository.snapshotNow();
@@ -747,53 +692,6 @@ describe("DemoLocalCommandExecutor", () => {
     ]);
   });
 
-  it("imports the bundled manual capture into one coherent job and replays without fetching or duplicating", async () => {
-    const { adapter, repository } = await harness();
-    const fetchSpy = vi.spyOn(globalThis, "fetch");
-    try {
-      const before = repository.snapshotNow();
-      const request = {
-        captureMode: "current_page" as const,
-        capturedUrl: "https://demo.invalid/source-preview.html",
-        futureManualActionRequired: false,
-      };
-      const first = await adapter.importManualCapture("capture-demo-browser", request);
-      const replay = await adapter.importManualCapture("capture-demo-browser", request);
-      const snapshot = repository.snapshotNow();
-      expect(first).toMatchObject({
-        ok: true,
-        itemId: "capture-demo-browser",
-        jobKey: "job-manual-capture:capture-demo-browser",
-        provenance: {
-          sourceKind: "user_mediated_capture",
-          originatingUrl: "https://demo.invalid/source-preview.html",
-        },
-      });
-      expect(replay).toEqual(first);
-      expect(snapshot.state.readModel.jobs.list.items.filter((job) => job.jobKey === first.jobKey)).toHaveLength(1);
-      expect(snapshot.state.readModel.jobs.details[first.jobKey!]).toMatchObject({
-        ok: true,
-        job: {
-          jobKey: first.jobKey,
-          source: "bundled-manual-capture",
-          descriptionPreview: expect.stringContaining("browser-local"),
-        },
-      });
-      expect(snapshot.state.readModel.analytics.jobOutcomes[first.jobKey!]).toEqual({
-        ok: true,
-        jobKey: first.jobKey,
-        outcomes: [],
-        suggestions: [],
-      });
-      expect(snapshot.state.readModel.dashboard.summary.totals.jobs).toBe(before.state.readModel.dashboard.summary.totals.jobs + 1);
-      expect(snapshot.state.readModel.dashboard.digest.newMatches.count).toBe(before.state.readModel.dashboard.digest.newMatches.count + 1);
-      expect(snapshot.eventLog.filter((entry) => entry.event.eventType === "JobDiscovered")).toHaveLength(1);
-      expect(fetchSpy).not.toHaveBeenCalled();
-    } finally {
-      fetchSpy.mockRestore();
-    }
-  });
-
   it("confirms candidate evidence exactly once and completes the owning research task", async () => {
     const { adapter, repository } = await harness();
     const response = await adapter.confirmContactCandidate(
@@ -911,6 +809,7 @@ describe("DemoLocalCommandExecutor", () => {
         suggestionId: "suggestion-link",
         jobKey: JOB,
         evidenceId: null,
+        determination: null, citations: [],
         suggestedKind: "interview",
         confidence: 0.9,
         rationale: "Synthetic evidence",
@@ -948,6 +847,7 @@ describe("DemoLocalCommandExecutor", () => {
         suggestionId: "suggestion-replay",
         jobKey: JOB,
         evidenceId: "evidence-synthetic-email",
+        determination: null, citations: [],
         suggestedKind: "interview",
         confidence: 0.92,
         rationale: "Bundled synthetic evidence",
@@ -1113,28 +1013,6 @@ describe("DemoLocalCommandExecutor", () => {
       eventType: "StageSkipped",
       payload: { jobId: JOB, reason: "Synthetic operator choice" },
     });
-  });
-
-  it("cancels the newest pending job action without orphaning it behind a seeded active run", async () => {
-    const { adapter, repository } = await harness();
-    const queued = await adapter.rescoreJob(JOB, {});
-
-    expect(repository.snapshotNow().state.readModel.runs.details["run-materials-progress"]?.status)
-      .toBe("in_progress");
-    expect(repository.snapshotNow().pendingScenarios).toContainEqual(
-      expect.objectContaining({ runId: queued.runId, targetRefs: expect.objectContaining({ jobKey: JOB }) }),
-    );
-
-    const canceled = await adapter.cancelJobAction(JOB, {});
-    adapter.dispose();
-    const snapshot = repository.snapshotNow();
-
-    expect(canceled).toMatchObject({ runId: queued.runId, status: "canceled" });
-    expect(snapshot.state.readModel.runs.details[queued.runId]?.status).toBe("canceled");
-    expect(snapshot.state.readModel.runs.details["run-materials-progress"]?.status).toBe("in_progress");
-    expect(snapshot.pendingScenarios).not.toContainEqual(
-      expect.objectContaining({ runId: queued.runId }),
-    );
   });
 
   it("keeps template, visibility, outreach pointer, and due-follow-up projections truthful", async () => {

@@ -232,7 +232,7 @@ export async function runBenchmark(
     candidate: gitCandidate(options.dirtyExclusion),
     schema: {
       version: 11,
-      initializer: "jobctrl.infrastructure.migrations.schema_v12.create_exact_v12_schema via uv --locked",
+      initializer: "jobctrl.infrastructure.migrations.schema_v14.create_exact_v14_schema via uv --frozen",
     },
     method: {
       datasetSizes: DATASET_SIZES,
@@ -679,7 +679,7 @@ async function measureSustained(baseUrl: string, workspace: BenchmarkWorkspace):
     workflowContext: context,
     providerCalls: 0,
     llmSpend,
-    llmSpendScope: "Current exact-v12 canonical llm_spend aggregate summed across lanes. No provider call is made by this benchmark.",
+    llmSpendScope: "Current exact-v14 canonical llm_spend aggregate summed across lanes. No provider call is made by this benchmark.",
     tokenEvidence: "The production RPC dispatcher entered its instrumented rpc.provider_models path, but LANGFUSE_DISABLE=1 intentionally prevented span export. No LLM method ran, so there are no LLM span token attributes or provider usage observations for this benchmark; llm_spend stayed zero, which does not imply complete usage telemetry for unrelated workflows.",
   };
 }
@@ -998,7 +998,7 @@ function systemProvenance(): Record<string, unknown> {
   try {
     const result = spawnSync(
       "uv",
-      ["--project", AUTOMATION_PROJECT_DIR, "run", "--locked", "python", "--version"],
+      ["--project", AUTOMATION_PROJECT_DIR, "run", "--frozen", "python", "--version"],
       { encoding: "utf8", env: offlineEnvironment(environmentDirectory) },
     );
     pythonVersion = String(result.stdout || result.stderr).trim();

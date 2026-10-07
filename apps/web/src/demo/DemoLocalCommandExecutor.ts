@@ -51,8 +51,6 @@ import {
 } from "./purgeDemoJobProjections.js";
 import {
   DemoWorkspaceRepository,
-  isDemoScenarioInvocation,
-  type DemoPendingScenario,
   type DemoWorkspaceMutationContext,
   type DemoWorkspaceSnapshot,
 } from "./workspace/index.js";
@@ -77,7 +75,6 @@ const BROWSER_LOCAL_COMMANDS = [
   "promoteSourceLocatorCandidate",
   "rejectSourceLocatorCandidate",
   "decideDiscoveryQuarantine",
-  "importManualCapture",
   "dismissManualCapture",
   "recordDiscoveryFeedback",
   "decideRoleMatchFeedbackSuggestion",
@@ -105,7 +102,6 @@ const BROWSER_LOCAL_COMMANDS = [
   "resetStaleScoresForRescore",
   "cancelWorkflowRun",
   "updateProfile",
-  "importResume",
   "updateSettings",
   "createContact",
   "updateContact",
@@ -435,154 +431,6 @@ export class DemoLocalCommandExecutor {
           recordedAt: now,
         }), now));
         return { ok: true, jobKey, decision, recordedAt: now };
-      }
-      case "importManualCapture": {
-        const itemId = requiredString(args[0], "itemId");
-        const body = record(args[1]);
-        const jobKey = manualCaptureJobKey(itemId);
-        const replay = draft.state.readModel.jobs.details[jobKey];
-        if (replay) {
-          return manualCaptureImportResponse(
-            itemId,
-            jobKey,
-            replay.job.discoveredAt ?? now,
-            "https://demo.invalid/source-preview.html",
-            body,
-          );
-        }
-        const item = requireById(
-          draft.state.readModel.discovery.manualCapture.items,
-          "itemId",
-          itemId,
-        );
-        draft.state.readModel.discovery.manualCapture.items =
-          draft.state.readModel.discovery.manualCapture.items.filter((candidate) => candidate.itemId !== itemId);
-        const baseDetail = structuredClone(
-          draft.state.readModel.jobs.details[
-            "6e2f4a10-20be-4d5f-98a4-a4bb9a877a35"
-          ]!,
-        );
-        const importedJob = {
-          ...structuredClone(baseDetail.job),
-          jobKey,
-          url: `demo-job:manual-capture:${itemId}`,
-          title: "Bundled manual-capture opportunity",
-          company: "Synthetic capture workshop",
-          source: "bundled-manual-capture",
-          discoverySource: item.sourceId ?? "demo-source:northwind",
-          postingSource: "user_mediated_capture",
-          postingSourceUrl: "/demo/source-preview.html",
-          strategy: "demo_manual_capture",
-          location: "Distributed",
-          salary: "Not supplied",
-          applicationUrl: "/demo/application-preview.html",
-          fitScore: null,
-          scoreBreakdown: null,
-          scoreKeywords: [],
-          scoreReasoning: "Not scored yet.",
-          scoreVersion: null,
-          scoredAt: null,
-          scoreCriteria: null,
-          scoreTrace: null,
-          scoreCorrection: null,
-          scoreStaleness: {
-            isStale: false,
-            staleReason: null,
-            currentPolicyVersion: null,
-            targetPolicyVersion: null,
-            markedAt: null,
-            pendingExplicitRescore: false,
-          },
-          currentStage: "discover" as const,
-          currentSubstage: "discover" as const,
-          currentState: "succeeded" as const,
-          errorCode: null,
-          errorMessage: null,
-          nextAction: "Review the bundled capture before scoring.",
-          artifactCount: 0,
-          applyStatus: null,
-          appliedAt: null,
-          activeState: "active" as const,
-          deletedAt: null,
-          hiddenAt: null,
-          discoveredAt: now,
-          descriptionPreview: "Bundled synthetic role imported from the browser-local manual-capture queue.",
-        };
-        const listJob = structuredClone(importedJob);
-        delete (listJob as Partial<typeof importedJob>).descriptionPreview;
-        draft.state.readModel.jobs.list.items.push(listJob);
-        mutableMap(draft.state.readModel.jobs.details)[jobKey] = {
-          ...baseDetail,
-          job: importedJob,
-          stages: [],
-          artifacts: [],
-          auditHistory: [{
-            id: `audit:${jobKey}:manual-capture`,
-            category: "discovery",
-            tone: "info",
-            title: "Bundled manual capture imported",
-            description: "The public demo imported only its bundled synthetic fixture and made no network request.",
-            occurredAt: now,
-            actor: "demo-user",
-            details: [{ label: "Capture", value: itemId }],
-          }],
-          applyAudit: {
-            state: "repair",
-            label: "Preparation required",
-            summary: "Score and prepare the bundled capture before application review.",
-            reviewEvidenceAvailable: false,
-            missingPrerequisites: [],
-            hardBlockers: [],
-            eligibilityConcerns: [],
-            sources: [],
-          },
-          employerAnalysis: null,
-          requirementFitReport: null,
-          interviewPrep: null,
-          compensationAudit: null,
-        };
-        mutableMap(draft.state.readModel.analytics.jobOutcomes)[jobKey] = {
-          ok: true,
-          jobKey,
-          outcomes: [],
-          suggestions: [],
-        };
-        draft.state.readModel.jobs.list.pagination.total = draft.state.readModel.jobs.list.items.length;
-        draft.state.readModel.jobs.list.pagination.pages = Math.max(
-          1,
-          Math.ceil(draft.state.readModel.jobs.list.pagination.total / draft.state.readModel.jobs.list.pagination.pageSize),
-        );
-        draft.state.readModel.dashboard.summary.totals.jobs = draft.state.readModel.jobs.list.items.length;
-        draft.state.readModel.dashboard.summary.totals.jobsToday += 1;
-        draft.state.readModel.dashboard.digest.newMatches.count += 1;
-        const discoverFunnel = draft.state.readModel.dashboard.summary.funnel.find((entry) => entry.stage === "discover");
-        if (discoverFunnel) {
-          discoverFunnel.total += 1;
-          discoverFunnel.succeeded += 1;
-        }
-        const source = draft.state.readModel.discovery.sources.sources.find(
-          (candidate) => candidate.sourceId === importedJob.discoverySource,
-        );
-        if (source) {
-          source.observedJobs += 1;
-          source.newJobs += 1;
-        }
-        const health = draft.state.readModel.dashboard.summary.sourceHealth.find(
-          (candidate) => candidate.sourceId === importedJob.discoverySource,
-        );
-        if (health) {
-          health.observedJobs += 1;
-          health.newJobs += 1;
-        }
-        context.appendDomainEvent(atTime(createJobDiscovered(LOCAL_TENANT, {
-          jobId: jobKey,
-          postingUrl: importedJob.postingSourceUrl,
-          source: importedJob.discoverySource,
-          employer: importedJob.company,
-          metadata: { itemId, captureMode: body.captureMode, bundledDemo: true },
-          discoveredAt: now,
-        }), now));
-        return manualCaptureImportResponse(itemId, jobKey, now, item.originatingUrl, body);
       }
       case "dismissManualCapture": {
         const itemId = requiredString(args[0], "itemId");
@@ -1256,10 +1104,6 @@ export class DemoLocalCommandExecutor {
       case "cancelWorkflowRun": {
         const runId = requiredString(args[0], "runId");
         const { detail, changed } = cancelDemoRun(draft, runId, now);
-        removePendingScenarios(
-          draft,
-          (pending) => pending.runId === runId,
-        );
         if (!changed) {
           return actionResponse("cancel", detail.jobKey, runId, detail.finishedAt ?? now, { runId }, "canceled");
         }
@@ -1304,20 +1148,6 @@ export class DemoLocalCommandExecutor {
           updatedAt: now,
         }), now));
         return profile;
-      }
-      case "importResume": {
-        context.appendDomainEvent(atTime(createProfileImported(LOCAL_TENANT, {
-          source: "bundled_demo_resume",
-          importedSections: ["resume", "style"],
-          importedAt: now,
-        }), now));
-        return {
-          ok: true,
-          profile: draft.state.readModel.profile.config.profile,
-          style: draft.state.readModel.profile.config.style,
-          templateText: draft.state.readModel.profile.config.templateText,
-          source: { kind: "bundled_demo", filename: stringValue(record(args[0]).filename) ?? "resume.pdf" },
-        };
       }
       case "updateSettings": {
         const body = record(args[0]);
@@ -1645,23 +1475,10 @@ export class DemoLocalCommandExecutor {
         const action = method === "cancelJobAction" ? "cancel" : "mark_skipped";
         const body = record(args[1]);
         const requestedRunId = stringValue(body.runId);
-        const pendingActiveRun = [...draft.pendingScenarios]
-          .reverse()
-          .map((pending) =>
-            isDemoScenarioInvocation(pending) &&
-            (pending.targetRefs.jobKey === jobKey || pending.targetRefs.jobKeys.includes(jobKey))
-              ? draft.state.readModel.runs.details[pending.runId]
-              : undefined,
-          )
-          .find(
-            (run) =>
-              run?.jobKey === jobKey &&
-              (run.status === "starting" || run.status === "in_progress"),
-          );
         const activeRun = requestedRunId
           ? requireMapValue(draft.state.readModel.runs.details, requestedRunId)
           : method === "cancelJobAction"
-            ? pendingActiveRun ?? Object.values(draft.state.readModel.runs.details).find(
+            ? Object.values(draft.state.readModel.runs.details).find(
                 (run) =>
                   run.jobKey === jobKey &&
                   (run.status === "starting" || run.status === "in_progress"),
@@ -1675,10 +1492,6 @@ export class DemoLocalCommandExecutor {
         }
         if (method === "cancelJobAction" && activeRun) {
           const canceled = cancelDemoRun(draft, activeRun.runId, now);
-          removePendingScenarios(
-            draft,
-            (pending) => pending.runId === activeRun.runId,
-          );
           if (!canceled.changed) {
             return actionResponse("cancel", jobKey, activeRun.runId, activeRun.finishedAt ?? now, {
               runId: activeRun.runId,
@@ -2185,16 +1998,6 @@ function cancelDemoRun(draft: DemoWorkspaceSnapshot, runId: string, now: string)
     stage.nextAction = null;
   }
   return { detail, changed: true } as const;
-}
-
-function removePendingScenarios(
-  draft: DemoWorkspaceSnapshot,
-  predicate: (pending: Extract<DemoPendingScenario, { invocationVersion: 1 }>) => boolean,
-): void {
-  (draft as unknown as { pendingScenarios: DemoPendingScenario[] }).pendingScenarios =
-    draft.pendingScenarios.filter(
-      (pending) => !isDemoScenarioInvocation(pending) || !predicate(pending),
-    );
 }
 
 function contactSummary(

@@ -48,11 +48,12 @@ describe("built extension privacy boundary", () => {
     const requests: string[] = [];
     const storage = createMemoryStorage();
     let listener: RuntimeListener | null = null;
-    const sendMessage = vi.fn(async (_tabId: number, message: unknown) =>
-      isAutofillProbe(message)
-        ? { ok: true, status: "autofill_ready" }
-        : { ok: true, status: "review_opened", suggestions: 1, missing: 0 },
-    );
+    const snapshot = { snapshotId: "synthetic-form", pageUrl: "https://careers.example.com/acme/senior-platform-engineer", questions: [{ question_id: "synthetic-question", descriptor: "Question", control_type: "text", options: [] }] };
+    const sendMessage = vi.fn(async (_tabId: number, message: unknown) => {
+      if (isAutofillProbe(message)) return { ok: true, status: "autofill_ready" };
+      if ((message as {type: string}).type === "jobctrl.autofill.capture") return snapshot;
+      return { ok: true, status: "review_opened", suggestions: 0, missing: 1 };
+    });
     vi.stubGlobal("chrome", {
       alarms: {
         create: vi.fn(),
@@ -100,6 +101,9 @@ describe("built extension privacy boundary", () => {
         if (url.endsWith("/v1/extension/autofill/profile")) {
           return jsonResponse({ ok: true, profileVersion: 1, fields: [] });
         }
+        if (url.endsWith("/v1/extension/autofill/mapping")) {
+          return jsonResponse({ ok: true, snapshotId: snapshot.snapshotId, profileVersion: 1, determinationId: "synthetic-mapping", mappings: [{ question_id: "synthetic-question", decision: "missing", fact_id: null, value: "", option_id: null, citations: [], rationale: "No confirmed fact was supplied." }] });
+        }
         return jsonResponse({ ok: true });
       }),
     );
@@ -115,11 +119,13 @@ describe("built extension privacy boundary", () => {
     expect(autofill).toMatchObject({ ok: true, status: "review_opened" });
     expect(sendMessage.mock.calls).toEqual([
       [42, { type: "jobctrl.autofill.probe" }],
+      [42, { type: "jobctrl.autofill.capture" }],
       [42, expect.objectContaining({ type: "jobctrl.autofill.review" })],
     ]);
     expect(requests).toEqual(expect.arrayContaining([
       "http://127.0.0.1:8766/v1/extension/captures",
       "http://127.0.0.1:8766/v1/extension/autofill/profile",
+      "http://127.0.0.1:8766/v1/extension/autofill/mapping",
       expect.stringContaining("/v1/extension/discovery/tasks/next"),
     ]));
     expect(

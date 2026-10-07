@@ -58,10 +58,11 @@ guidance.
 | Surface | Starting command / selected recipe |
 | --- | --- |
 | API | `corepack pnpm api:check`, focused `api:test` / `api` |
-| Destructive job-data purge | `corepack pnpm api:check`; `corepack pnpm --filter @jobctrl/api exec vitest run test/job-data-purge.test.ts test/permanent-delete-v7.test.ts`; then inventory, confirmed purge, and a second inventory against a disposable exact-v12 workspace only |
+| Destructive job-data purge | `corepack pnpm api:check`; `corepack pnpm --filter @jobctrl/api exec vitest run test/job-data-purge.test.ts test/permanent-delete-v7.test.ts`; then inventory, confirmed purge, and a second inventory against a disposable exact-v14 workspace only |
 | Web | `corepack pnpm web:lint`, `corepack pnpm web:check`, focused `web:test`, `web:build`; types/stories/browser when affected |
 | Extension | `extension:check`, `extension:test`, `extension:build`, `extension:e2e` through Corepack |
 | Worker | Locked focused Ruff/pytest; full worker suite for worker-wide changes |
+| Native launcher / migrations | `JOBCTRL_MIGRATION_TEST_PYTHON="$PWD/workers/automation/.venv/bin/python" JOBCTRL_MIGRATION_TEST_NODE="$(command -v node)" corepack pnpm launcher:test`; bind the locked Python and installed Node runtimes so the cross-runtime migration checks run |
 | Dense resume pagination (#907) | Locked Ruff for `workers/automation/tests/test_pdf_renderer_ports.py`; explicit `JOBCTRL_RUN_DENSE_HTML_PAGINATION_TESTS=1` locked pytest for that module (focused selector `-k dense_resume_pagination_trial`); eight required real-browser cases, 48 measured PDFs, JUnit and every-page visual QA per the [owning protocol](developer/qa/regression-catalog.md#dense-html-resume-pagination-907) |
 | Scripts | `node --test scripts/<name>.test.mjs` |
 | Docs | `corepack pnpm docs:build`, diff check |
@@ -142,7 +143,7 @@ that its connection-object mutex is independent of `busy_timeout`. Run these pro
 behind subprocess deadlines so a failed concurrency assertion cannot retain a test
 runner thread. Confirm the real activity worker pool reuses a connection only on its
 own thread, and record the production connection budgets (10 seconds for a new WAL
-connection and 30 seconds for a freshly admitted exact-v12 connection). The short
+connection and 30 seconds for a freshly admitted exact-v14 connection). The short
 fixture timeout proves mechanism and recovery; it is not a production latency bound.
 
 Also repeat an already-claimed robots retry with a real enrichment lease, inject
@@ -189,3 +190,74 @@ approval fingerprints. Capture evidence privately; never commit workspaces,
 logs, databases, materials or screenshots. Missing real runtime/browser QA is
 incomplete, not a pass; deterministic external fixtures do not certify live ATS
 reliability.
+
+
+## Semantic Determinations
+
+Use an owned synthetic workspace for these risk-tier 2/3 paths. Do not grade model
+judgments or build eval sets, labeled corpora, baseline comparisons or recorded
+output replay fixtures. Fake `LlmPort` tests provide opposing valid verdicts for
+identical canonical inputs and prove the model controls the resulting behavior.
+
+For every determination, exercise provider unavailability, budget denial,
+malformed JSON, forbidden extra fields, unknown enums, foreign IDs, non-verbatim
+quotes and mismatched values. Each failure has a distinct safe status, makes no
+lexical substitute and leaves accepted artifacts current. Capture the canonical
+prompt, lane and preflight order. Re-running unchanged inputs must make zero
+additional calls, including concurrent requests for one fingerprint.
+
+Run synthetic broad-board and company-ATS source paths with saved controls. Inspect exact provider request parameters and canonical ingestion, including a result that does not resemble the query. No separate intake model call may block or reject it. Exercise literal exclusions, limits, capture/checkpoint interruption and retry idempotency; verify provider filter support without expecting a product capability-warning view. Exercise profile import/save and explicit confirmation without
+writing inferred facts into achievement evidence. Exercise actual artifact
+writes, per-question isolation, empty evidence selections, user edits and PDF
+source fences. Apply Review joins pins and findings by line ID and labels missing
+anchors **No recorded source**. Gmail suggestions expose the outcome determination
+and verbatim quote; model unavailability creates no suggestion. Compensation
+shows evidence matched by persisted taxonomy codes. Affected demo capabilities
+report unavailable.
+
+For high-fit resumes, exercise all six typed persona verdicts and read actual
+worker-produced metadata through the API; a persisted receipt must accompany the
+persona audit. Optional voice provider or shape failures retain the already
+verified candidate and record the rejected rewrite. An unresolved repeat check
+parks its own candidate while another eligible candidate can be claimed. Broad-board retry drains durable unprocessed events before fetching more results, retains exact execution/lease ownership and honors cancellation and remaining new-job limits. Company ATS observations retain exact provider identity across retries. Historical captures stay preserved without an active model admission path.
+
+CI runs the full browser interaction suite against the isolated API fixture for
+explicit model results and controlled failure cases. A separate browser step
+uses the production API entry and Python JSON-RPC subprocess in another owned
+workspace, with profile-suggestion stubs disabled. It covers Discovery source
+views and the canonical preference read, repeat-application preparation and
+confirmation, and dry-run dispatch. Material workflow dispatch in this suite is
+synthetic; the local live-worker suite exercises actual Temporal dispatch and
+worker persistence. Opposing-verdict and failure tests exercise the production
+determination services through fake `LlmPort` implementations; these tests prove
+model authority and binding, without grading model decisions.
+
+Use the exact native schema-14 boundary to test migration from every supported
+source schema, stopped-runtime paired backups, source preservation, fenced
+activation, recovery and concurrent-writer refusal. Preserve authored facts and
+accepted artifact bytes while purging heuristic-derived determinations. Temporal
+replay consumes persisted activity results and makes no model calls. Perform the
+removed-symbol and TS read-time similarity searches once at PR acceptance; do not
+turn source-shape searches into permanent tests.
+
+
+## Saved Search Settings
+
+Bind `JOBCTRL_MIGRATION_TEST_PYTHON` to the locked automation virtualenv's
+`bin/python` and `JOBCTRL_MIGRATION_TEST_NODE` to the installed Node executable
+when running `corepack pnpm launcher:test`. This exercises the Python candidate
+and TypeScript reopen checks; an unavailable global Python must not silently
+skip that migration evidence. Check every supported source through native
+activation, API reopen, readiness failure and rollback.
+
+Exercise native exact-v14 creation and the stopped-runtime v13-to-v14 cutover,
+including source drift and candidate corruption. Preserve authored profile cells,
+canonical jobs, historical envelopes, accepted files and raw pending captures.
+Then use the actual Discovery path with saved targets and no interpretation
+receipt: board planning is literal and makes no provider call. Fetched results ingest without an additional model pre-filter. Full-posting interpretation/scoring retain model authority and distinct failure handling. Verify the rendered settings have one checkbox per work model, no intake queue and no second approval step.
+Load the profile editor's actual serialized location rows and comma-separated
+work-model codes, including a location-less Remote row. Inspect their paired
+board parameters. Invalid work-model controls must produce a typed planning
+failure while fetching, scoring and raw source reads remain available. Native
+interruption checks capture stage names from the actual composite executors and
+prove recovery removes every staged candidate and SQLite sidecar.

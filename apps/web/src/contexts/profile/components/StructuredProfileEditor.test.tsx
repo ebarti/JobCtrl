@@ -53,7 +53,7 @@ function StatefulEditor({
   onLatestProfile = () => undefined,
 }: {
   initialProfile?: JsonRecord;
-  mode?: "profile" | "preferences";
+  mode?: "profile" | "preferences" | "target-search";
   onLatestProfile?: (value: string) => void;
 }) {
   const [profile, setProfile] = useState(initialProfile);
@@ -84,6 +84,58 @@ function storedValueAt(profileText: string, path: string) {
 }
 
 describe("<StructuredProfileEditor>", () => {
+  it.each([
+    ["codes", "onsite, hybrid, remote"],
+    ["labels", "On-site, Hybrid, Remote"],
+    ["mixed formats", "onsite, On-site, hybrid, Hybrid, remote, Remote"],
+  ])("unchecks saved work models through one control per choice (%s)", async (_, saved) => {
+    const user = userEvent.setup();
+    const initialProfile = JSON.parse(JSON.stringify(sampleProfileResponse.profile));
+    initialProfile.experience = { target_locations: "Berlin; Amsterdam", target_work_models: `${saved}; remote` };
+    let latestProfile = JSON.stringify(initialProfile);
+    render(<StatefulEditor mode="target-search" initialProfile={initialProfile} onLatestProfile={(value) => { latestProfile = value; }} />);
+
+    const first = within(screen.getByRole("group", { name: "Target work model 1" }));
+    const second = within(screen.getByRole("group", { name: "Target work model 2" }));
+    const onsite = first.getByRole("checkbox", { name: "On-site" });
+    expect(first.getAllByRole("checkbox")).toHaveLength(3);
+    for (const label of ["On-site", "Hybrid", "Remote"]) {
+      expect(first.getByRole("checkbox", { name: label })).toHaveAttribute("aria-checked", "true");
+    }
+    expect(first.queryByRole("button", { name: /Remove saved work model/ })).not.toBeInTheDocument();
+
+    await user.click(onsite);
+    expect(onsite).toHaveAttribute("aria-checked", "false");
+    const rows = String(storedValueAt(latestProfile, "experience.target_work_models")).split("; ");
+    expect(rows[0]!.split(", ")).not.toContain("onsite");
+    expect(rows[0]!.split(", ")).not.toContain("On-site");
+    expect(rows[1]).toBe("remote");
+    expect(storedValueAt(latestProfile, "experience.target_locations")).toBe("Berlin; Amsterdam");
+    expect(first.getByRole("checkbox", { name: "Hybrid" })).toHaveAttribute("aria-checked", "true");
+    expect(first.getByRole("checkbox", { name: "Remote" })).toHaveAttribute("aria-checked", "true");
+    expect(second.getByRole("checkbox", { name: "Remote" })).toHaveAttribute("aria-checked", "true");
+
+    onsite.focus();
+    await user.keyboard(" ");
+    expect(onsite).toHaveAttribute("aria-checked", "true");
+    expect(String(storedValueAt(latestProfile, "experience.target_work_models")).split("; ")[0]!.split(", ")).toContain("onsite");
+  });
+
+  it("keeps an unrecognized saved work model visible until its checkbox is unchecked", async () => {
+    const user = userEvent.setup();
+    const initialProfile = JSON.parse(JSON.stringify(sampleProfileResponse.profile));
+    initialProfile.experience = { target_locations: "Berlin", target_work_models: "Remote, Custom schedule" };
+    let latestProfile = JSON.stringify(initialProfile);
+    render(<StatefulEditor mode="target-search" initialProfile={initialProfile} onLatestProfile={(value) => { latestProfile = value; }} />);
+    const group = within(screen.getByRole("group", { name: "Target work model 1" }));
+    const custom = group.getByRole("checkbox", { name: "Custom schedule" });
+    expect(custom).toHaveAttribute("aria-checked", "true");
+    expect(group.getByRole("checkbox", { name: "Remote" })).toHaveAttribute("aria-checked", "true");
+    await user.click(custom);
+    expect(storedValueAt(latestProfile, "experience.target_work_models")).toBe("Remote");
+    expect(group.getByRole("checkbox", { name: "Remote" })).toHaveAttribute("aria-checked", "true");
+  });
+
   it("marks profile and preferences disclosure subjects as equal card stacks", () => {
     const { container, rerender } = render(<StatefulEditor mode="profile" />);
 

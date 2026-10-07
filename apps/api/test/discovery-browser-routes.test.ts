@@ -7,7 +7,7 @@ import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { buildApp } from "../src/server.js";
-import { initializeExactV7Database } from "./v7-schema.js";
+import { initializeExactDatabase } from "./exact-schema.js";
 
 const EXTENSION_ORIGIN = "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const INSTALLATION_ID = "00000000-0000-4000-8000-000000000099";
@@ -23,7 +23,7 @@ function fixture(overrides: Partial<Parameters<typeof buildApp>[0]> = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-browser-bridge-"));
   dirs.push(dir);
   const dbPath = path.join(dir, "jobctrl.db");
-  initializeExactV7Database(dbPath);
+  initializeExactDatabase(dbPath);
   const app = buildApp({
     appDir: dir,
     dbPath,
@@ -428,7 +428,7 @@ describe("live Discovery browser routes", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-browser-selection-race-"));
     dirs.push(dir);
     const dbPath = path.join(dir, "jobctrl.db");
-    initializeExactV7Database(dbPath);
+    initializeExactDatabase(dbPath);
     let validationCount = 0;
     let releaseLeaseValidation: () => void = () => undefined;
     const leaseValidationGate = new Promise<void>((resolve) => {
@@ -534,7 +534,7 @@ describe("live Discovery browser routes", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-browser-result-selection-race-"));
     dirs.push(dir);
     const dbPath = path.join(dir, "jobctrl.db");
-    initializeExactV7Database(dbPath);
+    initializeExactDatabase(dbPath);
     let validationCount = 0;
     let releaseResultValidation: () => void = () => undefined;
     const resultValidationGate = new Promise<void>((resolve) => {
@@ -689,7 +689,7 @@ describe("live Discovery browser routes", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-browser-rebind-"));
     dirs.push(dir);
     const dbPath = path.join(dir, "jobctrl.db");
-    initializeExactV7Database(dbPath);
+    initializeExactDatabase(dbPath);
     let validationCount = 0;
     const app = buildApp({
       appDir: dir,

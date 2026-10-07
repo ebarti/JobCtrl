@@ -64,14 +64,6 @@ function patchDiscoverySettings(
       body.schedulingEnabled,
     ),
     scheduleCron: persistedValue(current.effectiveSettings.scheduleCron, body.scheduleCron),
-    roleFilterMode: persistedValue(
-      current.effectiveSettings.roleFilterMode,
-      body.roleFilterMode,
-    ),
-    roleFilterModel: persistedValue(
-      current.effectiveSettings.roleFilterModel,
-      body.roleFilterModel,
-    ),
     maxParallelFamilies: persistedValue(
       current.effectiveSettings.maxParallelFamilies,
       body.maxParallelFamilies,
@@ -101,8 +93,6 @@ function patchDiscoverySettings(
         ? { schedulingEnabled: body.schedulingEnabled }
         : {}),
       ...(body.scheduleCron !== undefined ? { scheduleCron: body.scheduleCron } : {}),
-      ...(body.roleFilterMode !== undefined ? { roleFilterMode: body.roleFilterMode } : {}),
-      ...(body.roleFilterModel !== undefined ? { roleFilterModel: body.roleFilterModel } : {}),
       ...(body.maxParallelFamilies !== undefined
         ? { maxParallelFamilies: body.maxParallelFamilies }
         : {}),

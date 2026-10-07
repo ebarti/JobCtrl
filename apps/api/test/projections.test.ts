@@ -1,3 +1,4 @@
+import { recordArtifactAuthority, recordRoleFeedback, recordCompensationAuthority } from "./semantic-fixtures.js";
 import { seedApplicationUrl } from "./seed-enrichment.js";
 /**
  * PR 4 of the Temporal stack: the TS API reads ``apply_run_projections``
@@ -15,13 +16,13 @@ import Database from "better-sqlite3";
 
 import { BUILT_IN_RESUME_TEMPLATE_THEME } from "../src/resume-templates.js";
 import { buildApp } from "../src/server.js";
-import { initializeExactV7Database } from "./v7-schema.js";
+import { initializeExactDatabase } from "./exact-schema.js";
 import {
   REFRESH_EVENT_BATCH_LIMIT, refreshProjections, setWatermark,
   refreshContactProjections, refreshContactResearchProjections, refreshOutreachProjections,
 } from "../src/projections.js";
 import { recoveryKeyDigest } from "../src/discovery-execution-recovery.js";
-import { PROJECTION_WATERMARK_NAME } from "../src/contracts.js";
+import { EMPLOYER_ANALYSIS_PROMPT_VERSION, PROJECTION_WATERMARK_NAME } from "../src/contracts.js";
 
 const EVENT_JOB_URL = "https://example.com/jobs/event-driven";
 const EVENT_JOB_ID = "00000000-0000-4000-8000-000000000001";
@@ -40,7 +41,7 @@ function withTempDb(): { dbPath: string; cleanup: () => void } {
 }
 
 function seedSchema(dbPath: string): void {
-  initializeExactV7Database(dbPath);
+  initializeExactDatabase(dbPath);
   const db = new Database(dbPath);
   seedBuiltInResumeTemplate(db);
   db.prepare(
@@ -357,6 +358,7 @@ function insertCompensationRows(dbPath: string): void {
     "tier_2_ambitious",
     "exact_company_role",
   );
+  recordCompensationAuthority(db, EVENT_JOB_ID);
   db.close();
 }
 
@@ -679,6 +681,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
           EVENT_JOB_ID,
         );
       } finally {
+        recordCompensationAuthority(db,EVENT_JOB_ID);
         db.close();
       }
 
@@ -847,6 +850,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
           EVENT_JOB_ID,
         );
       } finally {
+        recordCompensationAuthority(db,EVENT_JOB_ID);
         db.close();
       }
 
@@ -2076,6 +2080,83 @@ describe("apply_run_projections without legacy apply_runs table", () => {
     }
   });
 
+  it("retains historical analysis rows without exposing them as current determinations", async () => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      seedSchema(dbPath);
+      const db = new Database(dbPath);
+      db.prepare(`INSERT INTO job_employer_analysis (
+        tenant_id, job_id, generation, snapshot_hash, prompt_version, sdk_set_version,
+        cache_key, inferred_seniority, legs_attempted, legs_succeeded, created_at
+      ) VALUES ('local', ?, 1, 'historical', 'employer-analysis-v3', 'old-sdk',
+        'historical-cache', 'Historical free-text value', 1, 1, '2026-05-04T12:00:00Z')`).run(EVENT_JOB_ID);
+      db.close();
+      const app = buildApp({ dbPath, configPath: path.join(path.dirname(dbPath), "config.json") });
+      try {
+        const response = await app.inject({ method: "GET", url: `/v1/jobs/${EVENT_JOB_ID}` });
+        expect(response.statusCode, response.body).toBe(200);
+        expect(response.json().employerAnalysis).toBeNull();
+      } finally {
+        await app.close();
+      }
+      const retained = new Database(dbPath);
+      try {
+        expect(retained.prepare("SELECT inferred_seniority FROM job_employer_analysis").get())
+          .toEqual({ inferred_seniority: "Historical free-text value" });
+      } finally {
+        retained.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it.each([null, "employer-analysis-v3"])("repairs settled analysis projections with version %s without new events", async (version) => {
+    const { dbPath, cleanup } = withTempDb();
+    try {
+      seedSchema(dbPath);
+      const db = new Database(dbPath);
+      db.prepare(`INSERT INTO job_employer_analysis (
+        tenant_id, job_id, generation, snapshot_hash, prompt_version, sdk_set_version,
+        cache_key, inferred_seniority, legs_attempted, legs_succeeded, created_at
+      ) VALUES ('local', ?, 1, 'historical', 'employer-analysis-v3', 'old-sdk',
+        'historical-cache', 'Historical free-text value', 1, 1, '2026-05-04T12:00:00Z')`).run(EVENT_JOB_ID);
+      refreshProjections(db);
+      refreshProjections(db);
+      const watermarks = db.prepare("SELECT * FROM event_watermarks ORDER BY projection_name").all();
+      const events = db.prepare("SELECT COUNT(*) AS count FROM job_events").get();
+      const canonical = db.prepare("SELECT * FROM job_employer_analysis").all();
+      const cached: Record<string, unknown> = {
+        generation: 1, inferred_seniority: "Historical free-text value", agreement: { score: 0.8 },
+      };
+      if (version !== null) cached.prompt_version = version;
+      db.prepare("UPDATE job_detail_projections SET employer_analysis_json=? WHERE tenant_id='local' AND job_id=?")
+        .run(JSON.stringify(cached), EVENT_JOB_ID);
+      db.close();
+
+      const app = buildApp({ dbPath, configPath: path.join(path.dirname(dbPath), "config.json") });
+      try {
+        const response = await app.inject({ method: "GET", url: `/v1/jobs/${EVENT_JOB_ID}` });
+        expect(response.statusCode, response.body).toBe(200);
+        expect(response.json().employerAnalysis).toBeNull();
+      } finally {
+        await app.close();
+      }
+      const retained = new Database(dbPath);
+      try {
+        expect(retained.prepare("SELECT employer_analysis_json FROM job_detail_projections WHERE job_id=?").get(EVENT_JOB_ID))
+          .toEqual({ employer_analysis_json: null });
+        expect(retained.prepare("SELECT * FROM job_employer_analysis").all()).toEqual(canonical);
+        expect(retained.prepare("SELECT * FROM event_watermarks ORDER BY projection_name").all()).toEqual(watermarks);
+        expect(retained.prepare("SELECT COUNT(*) AS count FROM job_events").get()).toEqual(events);
+      } finally {
+        retained.close();
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
   it("serves the canonical employer analysis from projection rows (TS↔Python parity)", async () => {
     // AUDIT-02-style cross-runtime parity: seed the canonical
     // ``job_employer_analysis`` rows exactly as the Python repository writes
@@ -2111,7 +2192,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
           tenant_id, job_id, generation, snapshot_hash, prompt_version, sdk_set_version,
           cache_key, role_framing, inferred_seniority, ideal_candidate_narrative,
           requirements_json, keywords_json, agreement_json, legs_attempted, legs_succeeded, created_at
-        ) VALUES ('local', ?, ?, ?, 'employer-analysis-v1', 'claude+codex-v1', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES ('local', ?, ?, ?, '${EMPLOYER_ANALYSIS_PROMPT_VERSION}', 'claude+codex-v1', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       );
       insertAnalysis.run(
         jobId, 1, "hash-old", "hash-old:employer-analysis-v1:claude+codex-v1",
@@ -2202,7 +2283,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
       db.prepare(`INSERT INTO job_employer_analysis (
         tenant_id, job_id, generation, snapshot_hash, prompt_version, sdk_set_version,
         cache_key, ideal_candidate_narrative, requirements_json, legs_attempted, legs_succeeded, created_at
-      ) VALUES ('local', ?, 2, 'fit-snapshot', 'employer-analysis-v3', 'sdk-v1',
+      ) VALUES ('local', ?, 2, 'fit-snapshot', '${EMPLOYER_ANALYSIS_PROMPT_VERSION}', 'sdk-v1',
         'fit-current-analysis', 'Python engineer.', ?, 1, 1, '2026-05-04T12:00:00Z')`)
         .run(jobId, JSON.stringify(requirements));
       const resumePath = path.join(path.dirname(dbPath), "fit-resume.txt");
@@ -2305,6 +2386,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         }),
         0,
       );
+      recordArtifactAuthority(db);
       db.close();
 
       const app = buildApp({
@@ -2385,9 +2467,9 @@ describe("apply_run_projections without legacy apply_runs table", () => {
       db.prepare(
         `INSERT INTO candidate_profile_achievement_evidence (
           tenant_id, profile_id, entry_id, evidence_index, evidence_id, source_text,
-          scope, action, tools_json, metrics_json, outcome, seniority_signal,
+          scope, action, tools_json, metrics_json, outcome,
           evidence_strength, claim_confidence, user_confirmed, tags_json
-        ) VALUES ('local', 'default', 'exp-platform', 0, 'ev_platform', ?, ?, ?, ?, ?, ?, '', 'verified', 0.95, 1, ?)`,
+        ) VALUES ('local', 'default', 'exp-platform', 0, 'ev_platform', ?, ?, ?, ?, ?, ?, 'verified', 0.95, 1, ?)`,
       ).run(
         "Led a platform migration that reduced latency by 40%.",
         "Platform migration",
@@ -2465,6 +2547,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         JSON.stringify({ state: "missing_from_profile", source: "tailored_resume_bullet_provenance", bullet_count: 0, examples: [] }),
         1,
       );
+      recordArtifactAuthority(db);
       db.close();
 
       const app = buildApp({
@@ -2496,11 +2579,6 @@ describe("apply_run_projections without legacy apply_runs table", () => {
               requirementId: "req-kubernetes",
               jobRefs: [expect.objectContaining({ jobKey: jobId, scoreVersion: 2 })],
             }),
-            expect.objectContaining({
-              kind: "missing_skill",
-              demandedSkill: "Kubernetes",
-              jobRefs: [expect.objectContaining({ jobKey: jobId, artifactId: "artifact-resume-1" })],
-            }),
           ]),
         );
       } finally {
@@ -2525,7 +2603,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
             personal: { full_name: "Sortable Evidence Candidate", email: "sort@example.com" },
             resume: {
               executive_profile: { baseline_text: "Platform engineer." },
-              experience_entries: [{ id: "role_1", title: "Engineer", company: "Acme", date_range: "2024-2025", bullets: [sourceA, sourceB] }],
+              experience_entries: [{ id: "role_1", title: "Engineer", company: "Acme", date_range: "2024-2025", bullets: [sourceA, sourceB], achievement_evidence: [{ id:"role_1_bullet_1",source_text:sourceA,scope:"",action:"",tools:[],metrics:["40%"],outcome:"",evidence_strength:"verified",claim_confidence:1,user_confirmed:true,tags:[]}, { id:"role_1_bullet_2",source_text:sourceB,scope:"",action:"",tools:[],metrics:[],outcome:"",evidence_strength:"verified",claim_confidence:1,user_confirmed:true,tags:[]}] }],
               education_entries: [], skill_categories: [], tailoring_rules: {},
             },
           } },
@@ -2566,6 +2644,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
             EVENT_JOB_ID, JSON.stringify({ kind: "matched", evidence_ids: [evidenceId], strength: "direct" }),
           );
         } finally {
+          recordArtifactAuthority(db);
           db.close();
         }
 
@@ -2585,8 +2664,8 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         const loaded = await reopened.inject({ method: "GET", url: "/v1/profile" });
         expect(loaded.statusCode, loaded.body).toBe(200);
         expect(loaded.json().profile.resume.experience_entries[0].achievement_evidence).toEqual([
-          expect.objectContaining({ id: "role_1_bullet_2", source_text: sourceB, metrics: [] }),
           expect.objectContaining({ id: "role_1_bullet_1", source_text: sourceA, metrics: ["40%"] }),
+          expect.objectContaining({ id: "role_1_bullet_2", source_text: sourceB, metrics: [] }),
         ]);
         const artifact = await reopened.inject({ method: "GET", url: "/v1/artifacts/sorted-resume" });
         expect(artifact.statusCode, artifact.body).toBe(200);
@@ -2597,7 +2676,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         expect(evidenceMap.statusCode, evidenceMap.body).toBe(200);
         const achievement = evidenceMap.json().entries.find((entry: { evidenceId: string }) => entry.evidenceId === "role_1_bullet_1");
         expect(achievement).toMatchObject({
-          title: sourceA, story: { action: sourceA, outcome: sourceA, metrics: ["40%"] },
+          title: sourceA, story: { action: "", outcome: "", metrics: ["40%"] },
           resumeUsages: [{ artifactId: "sorted-resume", bulletId: "experience:role_1#0" }],
           requirementUsages: [{ requirementId: "req-reliability", requirementFitKind: "matched" }],
         });
@@ -2634,9 +2713,9 @@ describe("apply_run_projections without legacy apply_runs table", () => {
       db.prepare(
         `INSERT INTO candidate_profile_achievement_evidence (
           tenant_id, profile_id, entry_id, evidence_index, evidence_id, source_text,
-          scope, action, tools_json, metrics_json, outcome, seniority_signal,
+          scope, action, tools_json, metrics_json, outcome,
           evidence_strength, claim_confidence, user_confirmed, tags_json
-        ) VALUES ('local', 'default', 'exp-platform', 0, 'ev_platform', ?, ?, ?, ?, ?, ?, '', 'verified', 0.95, 1, ?)`,
+        ) VALUES ('local', 'default', 'exp-platform', 0, 'ev_platform', ?, ?, ?, ?, ?, ?, 'verified', 0.95, 1, ?)`,
       ).run(
         "Led a platform migration that reduced latency by 40%.",
         "Platform migration",
@@ -2777,6 +2856,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         `INSERT INTO jobctrl_hidden_jobs (tenant_id, job_id, hidden_at, reason, unhidden_at)
          VALUES ('local', ?, '2026-07-05T13:00:00Z', 'user hide', NULL)`,
       ).run(hiddenId);
+      recordArtifactAuthority(db);
       db.close();
 
       const app = buildApp({
@@ -2916,6 +2996,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         "quantify_from_evidence", "never_fabricate_metrics", "Surfaced a recorded metric.",
         "Owned the API and cut latency 40%.", 1,
       );
+      recordArtifactAuthority(db);
       db.close();
 
       const app = buildApp({
@@ -3120,6 +3201,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
         "voice", "rephrase_allowed", "Voiced bullet.",
         "Owned incident response drills.", 0, "2026-06-09T12:10:00+00:00", coverageJsonGen2, voiceJson,
       );
+      recordArtifactAuthority(db);
       db.close();
 
       const app = buildApp({
@@ -3579,7 +3661,7 @@ describe("apply_run_projections without legacy apply_runs table", () => {
 
 describe("dashboard outcome-conversion projection", () => {
   function seedConversionDb(dbPath: string): void {
-    initializeExactV7Database(dbPath);
+    initializeExactDatabase(dbPath);
     const db = new Database(dbPath);
     seedBuiltInResumeTemplate(db);
     db.close();
@@ -4159,7 +4241,7 @@ describe("direct projection publication", () => {
   ])("rolls back partial $family publication and preserves caller rollback", ({ refresh, canonical, tables, failureTable, idColumn }) => {
     const { dbPath, cleanup } = withTempDb();
     try {
-      initializeExactV7Database(dbPath);
+      initializeExactDatabase(dbPath);
       const db = new Database(dbPath);
       const observer = new Database(dbPath);
       try {

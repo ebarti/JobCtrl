@@ -11,7 +11,7 @@ import {
   resolveJobId,
   retryFailedJobs,
 } from "../src/write-model.js";
-import { initializeExactV7Database } from "./v7-schema.js";
+import { initializeExactDatabase } from "./exact-schema.js";
 
 const JOB_ID = "00000000-0000-4000-8000-000000000041";
 const JOB_URL = "https://jobs.example.test/platform-engineer";
@@ -223,7 +223,7 @@ describe("exact-v7 write-model stage state", () => {
 function createFixture(): { directory: string; db: Database.Database } {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-write-model-state-"));
   const dbPath = path.join(directory, "jobctrl.db");
-  initializeExactV7Database(dbPath);
+  initializeExactDatabase(dbPath);
   const fixture = { directory, db: new Database(dbPath) };
   fixtures.push(fixture);
   return fixture;

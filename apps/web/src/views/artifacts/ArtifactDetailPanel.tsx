@@ -479,6 +479,16 @@ export function ArtifactDetailPanel({ artifactId }: ArtifactDetailPanelProps) {
                     </Collapsible>
                   </CardContent>
                 </Card>
+                <details className="artifact-verification-sources">
+                  <summary>Verification sources</summary>
+                  {detail.determinations.length ? detail.determinations.map(receipt => (
+                    <details key={receipt.determination_id}>
+                      <summary>{receipt.kind.replaceAll("_", " ")} · {receipt.provider} · {receipt.model}</summary>
+                      <p>{receipt.prompt_version} · input {receipt.input_fingerprint}</p>
+                      <pre>{JSON.stringify(receipt.result, null, 2)}</pre>
+                    </details>
+                  )) : <p>No recorded verification sources.</p>}
+                </details>
                 {detail.tailoringExplanation ? (
                   <Collapsible
                     className="artifact-rationale-disclosure"

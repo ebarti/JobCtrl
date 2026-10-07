@@ -21,7 +21,7 @@ describe("Python runtime command resolution", () => {
       runtime.resolve({ kind: "cli", args: ["rpc"] }, { appDir: "/tmp/jobctrl" }),
     ).toEqual({
       executable: "uv-test",
-      argv: ["--project", "/repo/workers/automation", "run", "jobctrl", "rpc"],
+      argv: ["--project", "/repo/workers/automation", "run", "--frozen", "jobctrl", "rpc"],
       cwd: "/tmp/jobctrl",
       env: { PATH: "/source/tools", JOBCTRL_DIR: "/tmp/jobctrl", JOBCTRL_RUNTIME_MODE: "source" },
     });
@@ -34,6 +34,7 @@ describe("Python runtime command resolution", () => {
       "--project",
       "/repo/workers/automation",
       "run",
+      "--frozen",
       "python",
       "-m",
       "jobctrl.discovery.manual_capture_import",
@@ -196,7 +197,7 @@ describe("Python runtime command resolution", () => {
       { kind: "script", script: "print('source')", args: [] },
       { appDir: "/tmp/jobctrl" },
     )).toMatchObject({
-      argv: ["--project", "/repo/workers/automation", "run", "python", "-c", "print('source')"],
+      argv: ["--project", "/repo/workers/automation", "run", "--frozen", "python", "-c", "print('source')"],
       env: {
         JOBCTRL_DIR: "/tmp/jobctrl",
         JOBCTRL_RUNTIME_MODE: "source",

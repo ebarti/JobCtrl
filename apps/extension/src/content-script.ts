@@ -1,3 +1,4 @@
+import { FormMappingResponseSchema, type FormQuestion, type FormSnapshot, type FormMappingResponse } from "@jobctrl/contracts";
 import type {
   DiscoveryBrowserRequest,
   DiscoveryBrowserTaskResult,
@@ -21,62 +22,16 @@ export interface AutofillSuggestion {
   sourceLabel: string;
   value: string;
   status: "missing" | "suggested";
-}
-
-interface FieldRule {
-  path: string;
-  label: string;
-  patterns: RegExp[];
-  excludePatterns?: RegExp[];
-  transform?: "first_name" | "last_name";
+  optionId: string | null;
+  question: FormQuestion;
+  rationale: string;
 }
 
 export type AutofillReviewResponse =
   | { ok: true; status: "review_opened"; suggestions: number; missing: number }
   | { ok: false; error: string; message: string };
 
-const FIELD_RULES: FieldRule[] = [
-  { path: "personal.email", label: "Email", patterns: [/\bemail\b/] },
-  { path: "personal.full_name", label: "First name", patterns: [/\bfirst\s*name\b|\bgiven\s*name\b/], transform: "first_name" },
-  { path: "personal.full_name", label: "Last name", patterns: [/\blast\s*name\b|\bfamily\s*name\b|\bsurname\b/], transform: "last_name" },
-  { path: "personal.full_name", label: "Full name", patterns: [/\bfull\s*name\b|\blegal\s*name\b|\bcandidate\s*name\b|\bapplicant\s*name\b|\byour\s*name\b/] },
-  { path: "personal.phone", label: "Phone", patterns: [/\bphone\b|\bmobile\b|\btelephone\b/] },
-  {
-    path: "personal.address",
-    label: "Street address",
-    patterns: [/\bstreet\s*address\b|\baddress\s*(?:line\s*)?1\b|\baddress\b|\bstreet\b/],
-    excludePatterns: [/\baddress\s*(?:line\s*)?2\b|\baddress\s*2\b|\bapt\b|\bapartment\b|\bunit\b|\bsuite\b/],
-  },
-  { path: "personal.city", label: "City", patterns: [/\bcity\b/] },
-  { path: "personal.province_state", label: "State / province", patterns: [/\bstate\b|\bprovince\b|\bregion\b/] },
-  { path: "personal.country", label: "Country", patterns: [/\bcountry\b/], excludePatterns: [/\bcitizenship\b|\bnationality\b|\bpassport\b/] },
-  { path: "personal.postal_code", label: "Postal code", patterns: [/\bpostal\b|\bzip\b/] },
-  { path: "personal.linkedin_url", label: "LinkedIn URL", patterns: [/\blinkedin\b/] },
-  { path: "personal.github_url", label: "GitHub URL", patterns: [/\bgithub\b/] },
-  { path: "personal.portfolio_url", label: "Portfolio URL", patterns: [/\bportfolio\b/] },
-  { path: "personal.website_url", label: "Website URL", patterns: [/\bwebsite\b|\bpersonal\s*site\b/] },
-  { path: "work_authorization.legally_authorized_to_work", label: "Legally authorized to work", patterns: [/\bauthori[sz]ed\b.*\bwork\b|\blegally\b.*\bwork\b/] },
-  { path: "work_authorization.require_sponsorship", label: "Requires sponsorship", patterns: [/\bsponsorship\b|\bvisa\b.*\bsponsor\b/] },
-  { path: "work_authorization.work_permit_type", label: "Work permit type", patterns: [/\bwork\s*permit\b|\bvisa\s*type\b/] },
-  { path: "compensation.salary_expectation", label: "Salary expectation", patterns: [/\bsalary\b|\bcompensation\b|\bexpected\s*pay\b/] },
-  { path: "availability.earliest_start_date", label: "Earliest start date", patterns: [/\bstart\s*date\b|\bavailable\s*from\b/] },
-  {
-    path: "availability.available_for_full_time",
-    label: "Available for full time",
-    patterns: [/\bavailable\b.*\bfull[\s-]*time\b|\bfull[\s-]*time\b.*\bavailable\b|\bopen\b.*\bfull[\s-]*time\b|\bfull[\s-]*time\b.*\bavailability\b/],
-    excludePatterns: [/\bemployment\s*type\b|\bjob\s*type\b|\bposition\s*type\b/],
-  },
-  {
-    path: "availability.available_for_contract",
-    label: "Available for contract",
-    patterns: [/\bavailable\b.*\bcontract\b|\bcontract\b.*\bavailable\b|\bopen\b.*\bcontract\b|\bcontract\b.*\bavailability\b/],
-    excludePatterns: [/\bcontract\s*type\b|\bcontract\s*terms?\b|\baccept\b.*\bcontract\b|\bagree\b.*\bcontract\b/],
-  },
-  { path: "eeo_voluntary.gender", label: "Gender", patterns: [/\bgender\b/] },
-  { path: "eeo_voluntary.race_ethnicity", label: "Race / ethnicity", patterns: [/\brace\b|\bethnicity\b/] },
-  { path: "eeo_voluntary.veteran_status", label: "Veteran status", patterns: [/\bveteran\b/] },
-  { path: "eeo_voluntary.disability_status", label: "Disability status", patterns: [/\bdisability\b/] },
-];
+let capturedForm:{snapshot:FormSnapshot;targets:FieldTarget[]}|null=null;
 
 declare const chrome: {
   runtime: {
@@ -103,12 +58,15 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     });
     return true;
   }
+  if (message && typeof message==="object" && (message as Record<string,unknown>).type==="jobctrl.autofill.capture"){
+    sendResponse(captureAutofillForm());return true;
+  }
   if (isAutofillProbeMessage(message)) {
     sendResponse({ ok: true, status: "autofill_ready" });
     return true;
   }
   if (isAutofillMessage(message)) {
-    const result = showAutofillReview(message.profile);
+    const result = showAutofillReview(message.profile,message.mapping);
     sendResponse(result);
     return true;
   }
@@ -117,6 +75,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
 export function showAutofillReview(
   profile: ExtensionAutofillProfileResponse,
+  mapping: FormMappingResponse,
   doc: Document = document,
   pageUrl = location.href,
 ): AutofillReviewResponse {
@@ -128,7 +87,8 @@ export function showAutofillReview(
       message: "JobCtrl autofill is available only on http(s) application forms.",
     };
   }
-  const suggestions = buildAutofillSuggestions(profile.fields, collectFieldTargets(doc));
+  if(!capturedForm || capturedForm.snapshot.snapshotId!==mapping.snapshotId || profile.profileVersion!==mapping.profileVersion || capturedForm.snapshot.pageUrl!==pageUrl || JSON.stringify(capturedForm.snapshot.questions)!==JSON.stringify(questionsForTargets(capturedForm.targets)))return {ok:false,error:"stale_form_snapshot",message:"The form changed; reopen autofill review."};
+  const suggestions = buildAutofillSuggestions(profile.fields,capturedForm.targets,mapping);
   const missing = suggestions.filter((suggestion) => suggestion.status === "missing").length;
   renderOverlay(doc, suggestions, suggestions.length ? null : "No supported fields were detected on this form.");
   return { ok: true, status: "review_opened", suggestions: suggestions.length - missing, missing };
@@ -136,42 +96,45 @@ export function showAutofillReview(
 
 export function collectFieldTargets(root: ParentNode = document): FieldTarget[] {
   const controls = Array.from(root.querySelectorAll("input, select, textarea")).filter(isFillableControl);
-  return controls.map((control, index) => ({
+  const seenGroups=new Set<string>();
+  return controls.filter(control=>{
+    if(!(control instanceof HTMLInputElement) || control.type!=="radio" || !control.name)return true;
+    const group=JSON.stringify([control.form?Array.from(control.ownerDocument.forms).indexOf(control.form):-1,control.name]);
+    if(seenGroups.has(group))return false;seenGroups.add(group);return true;
+  }).map((control, index) => ({
     id: `jh-field-${index}`,
     descriptor: fieldDescriptor(control),
     control,
   }));
 }
 
-export function buildAutofillSuggestions(
-  fields: readonly ExtensionAutofillProfileField[],
-  targets: readonly FieldTarget[],
-): AutofillSuggestion[] {
-  const suggestions: AutofillSuggestion[] = [];
-  const seenLogicalTargets = new Set<string>();
-  for (const target of targets) {
-    const rule = FIELD_RULES.find((candidate) => matchesRule(candidate, target.descriptor));
-    if (!rule) {
-      continue;
-    }
-    const suggestionKey = logicalSuggestionKey(target, rule);
-    if (seenLogicalTargets.has(suggestionKey)) {
-      continue;
-    }
-    seenLogicalTargets.add(suggestionKey);
-    const field = fields.find((candidate) => candidate.path === rule.path);
-    const value = field ? transformValue(field.value, rule.transform) : "";
-    suggestions.push({
-      id: `${target.id}:${rule.path}:${rule.transform ?? "value"}`,
-      target,
-      profilePath: rule.path,
-      profileLabel: rule.label,
-      sourceLabel: field?.source.label ?? rule.label,
-      value,
-      status: value ? "suggested" : "missing",
-    });
-  }
-  return suggestions;
+export function captureAutofillForm(doc:Document=document,pageUrl=location.href):FormSnapshot{
+  const targets=collectFieldTargets(doc);
+  const snapshot:FormSnapshot={snapshotId:Array.from(crypto.getRandomValues(new Uint8Array(16)),byte=>byte.toString(16).padStart(2,"0")).join(""),pageUrl,questions:questionsForTargets(targets)};
+  capturedForm={snapshot,targets};return snapshot;
+}
+
+function questionsForTargets(targets:readonly FieldTarget[]):FormQuestion[]{
+  return targets.map(target=>{
+    const control=target.control;
+    let control_type:FormQuestion["control_type"]="text";
+    let options:FormQuestion["options"]=[];
+    if(control instanceof HTMLSelectElement){control_type="select";options=Array.from(control.options).map((option,index)=>({option_id:`${target.id}:option:${index}`,label:`${option.textContent??""} [${option.value}]`}));}
+    else if(control instanceof HTMLInputElement && control.type==="radio") {control_type="radio";options=radioGroupControls(control).filter(isFillableControl).map((option,index)=>({option_id:`${target.id}:option:${index}`,label:inputOptionDescriptor(option)}));}
+    else if(control instanceof HTMLInputElement && control.type==="checkbox"){control_type="checkbox";options=[{option_id:`${target.id}:checked:true`,label:`Checked: ${fieldDescriptor(control)}`},{option_id:`${target.id}:checked:false`,label:`Unchecked: ${fieldDescriptor(control)}`}];}
+    return {question_id:target.id,descriptor:fieldDescriptor(control),control_type,options};
+  });
+}
+
+export function buildAutofillSuggestions(fields:readonly ExtensionAutofillProfileField[],targets:readonly FieldTarget[],mapping:FormMappingResponse):AutofillSuggestion[]{
+  const questions=questionsForTargets(targets);
+  return mapping.mappings.filter(row=>row.decision!=="unmapped").map(row=>{
+    const target=targets.find(target=>target.id===row.question_id);
+    const question=questions.find(question=>question.question_id===row.question_id);
+    const field=fields.find(field=>field.path===row.fact_id);
+    if(!target || !question || (row.decision==="mapped" && !field))throw new Error("Invalid form mapping binding.");
+    return {id:row.question_id,target,question,profilePath:row.fact_id??"",profileLabel:field?.label??target.descriptor,sourceLabel:field?.source.label??"Saved profile",value:row.value,optionId:row.option_id,rationale:row.rationale,status:row.decision==="mapped"?"suggested":"missing"};
+  });
 }
 
 export function applyAcceptedSuggestions(suggestions: readonly AutofillSuggestion[]): number {
@@ -180,7 +143,7 @@ export function applyAcceptedSuggestions(suggestions: readonly AutofillSuggestio
     if (suggestion.status !== "suggested") {
       continue;
     }
-    if (setControlValue(suggestion.target.control, suggestion.value)) {
+    if (setControlValue(suggestion)) {
       filled += 1;
     }
   }
@@ -284,33 +247,26 @@ function renderOverlay(doc: Document, suggestions: AutofillSuggestion[], emptyMe
   doc.body.append(root);
 }
 
-function setControlValue(control: FormControl, value: string): boolean {
-  if (!isFillableControl(control)) {
-    return false;
-  }
-  if (control instanceof HTMLSelectElement) {
-    const option = Array.from(control.options).find((candidate) => optionMatches(candidate, value));
-    if (!option) {
-      return false;
-    }
-    control.value = option.value;
-  } else if (control instanceof HTMLInputElement && (control.type === "checkbox" || control.type === "radio")) {
-    if (control.type === "radio") {
-      return setRadioValue(control, value);
-    }
-    return setCheckboxValue(control, value);
-  } else {
-    control.value = value;
-  }
-  control.dispatchEvent(new Event("input", { bubbles: true }));
-  control.dispatchEvent(new Event("change", { bubbles: true }));
-  return true;
+function setControlValue(suggestion:AutofillSuggestion):boolean{
+  const control=suggestion.target.control;
+  if(!isFillableControl(control) || JSON.stringify(questionsForTargets([suggestion.target])[0])!==JSON.stringify(suggestion.question))return false;
+  const optionIndex=suggestion.question.options.findIndex(option=>option.option_id===suggestion.optionId);
+  if(control instanceof HTMLSelectElement){
+    const option=control.options[optionIndex];if(!option || option.disabled)return false;control.selectedIndex=optionIndex;
+  }else if(control instanceof HTMLInputElement && control.type==="radio"){
+    const group=radioGroupControls(control).filter(isFillableControl);const selected=group[optionIndex];if(!selected)return false;
+    for(const radio of group)radio.checked=radio===selected;dispatchFormEvents(selected);return true;
+  }else if(control instanceof HTMLInputElement && control.type==="checkbox"){
+    if(optionIndex<0)return false;control.checked=optionIndex===0;
+  }else{if(suggestion.optionId!==null)return false;control.value=suggestion.value;}
+  dispatchFormEvents(control);return true;
 }
 
 function isFillableControl(control: Element): control is FormControl {
   if (!(control instanceof HTMLInputElement || control instanceof HTMLSelectElement || control instanceof HTMLTextAreaElement)) {
     return false;
   }
+  if (control.closest("#jobctrl-autofill-root"))return false;
   if (control.disabled) {
     return false;
   }
@@ -416,53 +372,6 @@ function closestLabel(control: FormControl): string {
   return label?.textContent ?? "";
 }
 
-function transformValue(value: string, transform: FieldRule["transform"]): string {
-  if (!transform) return value;
-  const parts = value.trim().split(/\s+/).filter(Boolean);
-  if (transform === "first_name") return parts[0] ?? "";
-  if (transform === "last_name") return parts.slice(1).join(" ");
-  return value;
-}
-
-function optionMatches(option: HTMLOptionElement, value: string): boolean {
-  return answerMatchesOption(value, normalize(`${option.value} ${option.textContent ?? ""}`));
-}
-
-function setRadioValue(control: HTMLInputElement, value: string): boolean {
-  const match = radioGroupControls(control)
-    .filter(isFillableControl)
-    .find((candidate) => answerMatchesOption(value, inputOptionDescriptor(candidate)));
-  if (!match) {
-    return false;
-  }
-  for (const radio of radioGroupControls(control)) {
-    radio.checked = radio === match;
-  }
-  dispatchFormEvents(match);
-  return true;
-}
-
-function setCheckboxValue(control: HTMLInputElement, value: string): boolean {
-  const group = checkboxGroupControls(control).filter(isFillableControl);
-  if (group.length > 1) {
-    const match = group.find((candidate) => answerMatchesOption(value, inputOptionDescriptor(candidate)));
-    if (!match) {
-      return false;
-    }
-    match.checked = true;
-    dispatchFormEvents(match);
-    return true;
-  }
-
-  const booleanValue = parseBooleanAnswer(value);
-  if (booleanValue === null && !answerMatchesOption(value, inputOptionDescriptor(control))) {
-    return false;
-  }
-  control.checked = booleanValue ?? true;
-  dispatchFormEvents(control);
-  return true;
-}
-
 function radioGroupControls(control: HTMLInputElement): HTMLInputElement[] {
   if (!control.name) {
     return [control];
@@ -471,17 +380,6 @@ function radioGroupControls(control: HTMLInputElement): HTMLInputElement[] {
   return Array.from(root.querySelectorAll<HTMLInputElement>("input[type='radio']")).filter(
     (candidate) => candidate.name === control.name,
   );
-}
-
-function checkboxGroupControls(control: HTMLInputElement): HTMLInputElement[] {
-  if (!control.name) {
-    return [control];
-  }
-  const root = control.form ?? control.ownerDocument;
-  const group = Array.from(root.querySelectorAll<HTMLInputElement>("input[type='checkbox']")).filter(
-    (candidate) => candidate.name === control.name,
-  );
-  return group.length > 0 ? group : [control];
 }
 
 function inputOptionDescriptor(control: HTMLInputElement): string {
@@ -496,76 +394,6 @@ function inputOptionDescriptor(control: HTMLInputElement): string {
       .filter(Boolean)
       .join(" "),
   );
-}
-
-function answerMatchesOption(value: string, optionText: string): boolean {
-  const option = tokenizeNormalized(optionText).join(" ");
-  if (!option) {
-    return false;
-  }
-  return answerMatchCandidates(value).some((candidate) => normalizedPhraseIncludes(option, candidate));
-}
-
-function answerMatchCandidates(value: string): string[] {
-  const normalized = normalize(value);
-  const booleanValue = parseBooleanAnswer(value);
-  if (booleanValue === true) {
-    return ["yes", "true", "y", "1"];
-  }
-  if (booleanValue === false) {
-    return ["no", "false", "n", "0"];
-  }
-  return normalized ? [normalized] : [];
-}
-
-function normalizedPhraseIncludes(option: string, candidate: string): boolean {
-  const normalizedCandidate = tokenizeNormalized(candidate).join(" ");
-  if (!normalizedCandidate) {
-    return false;
-  }
-  return option === normalizedCandidate || ` ${option} `.includes(` ${normalizedCandidate} `);
-}
-
-function parseBooleanAnswer(value: string): boolean | null {
-  const normalized = tokenizeNormalized(value).join(" ");
-  if (["yes", "true", "y", "1", "authorized", "legally authorized", "eligible"].includes(normalized)) {
-    return true;
-  }
-  if (
-    ["no", "false", "n", "0", "not authorized", "unauthorized", "not eligible", "ineligible"].includes(normalized)
-  ) {
-    return false;
-  }
-  return null;
-}
-
-function tokenizeNormalized(value: string): string[] {
-  return normalize(value)
-    .split(/\s+/)
-    .map((token) => token.replace(/^[^\w]+|[^\w]+$/g, ""))
-    .filter(Boolean);
-}
-
-function matchesRule(rule: FieldRule, descriptor: string): boolean {
-  return (
-    rule.patterns.some((pattern) => pattern.test(descriptor)) &&
-    !(rule.excludePatterns ?? []).some((pattern) => pattern.test(descriptor))
-  );
-}
-
-function logicalSuggestionKey(target: FieldTarget, rule: FieldRule): string {
-  const control = target.control;
-  if (control instanceof HTMLInputElement && control.type === "radio" && control.name) {
-    return `radio:${formScopeIndex(control)}:${control.name}:${rule.path}:${rule.transform ?? "value"}`;
-  }
-  return `${target.id}:${rule.path}:${rule.transform ?? "value"}`;
-}
-
-function formScopeIndex(control: HTMLInputElement): number {
-  if (!control.form) {
-    return -1;
-  }
-  return Array.from(control.ownerDocument.forms).indexOf(control.form);
 }
 
 function dispatchFormEvents(control: FormControl): void {
@@ -997,12 +825,13 @@ function discoveryFailure(
 function isAutofillMessage(value: unknown): value is {
   type: "jobctrl.autofill.review";
   profile: ExtensionAutofillProfileResponse;
+  mapping: FormMappingResponse;
 } {
   return Boolean(
     value &&
       typeof value === "object" &&
       (value as Record<string, unknown>).type === "jobctrl.autofill.review" &&
-      isProfileResponse((value as Record<string, unknown>).profile),
+      isProfileResponse((value as Record<string, unknown>).profile) && FormMappingResponseSchema.safeParse((value as Record<string,unknown>).mapping).success,
   );
 }
 

@@ -143,11 +143,7 @@ class _P1bRunInActivityTimeoutWorkflow:
         return await workflow.execute_activity(
             _p1b_timeout_capacity_activity,
             block,
-            start_to_close_timeout=(
-                timedelta(milliseconds=200)
-                if block
-                else timedelta(seconds=5)
-            ),
+            start_to_close_timeout=(timedelta(milliseconds=200) if block else timedelta(seconds=5)),
             heartbeat_timeout=timedelta(milliseconds=100),
             retry_policy=RetryPolicy(maximum_attempts=1),
         )
@@ -214,9 +210,15 @@ class _ActivityCase:
 
 
 _ACTIVITY_CASES = (
-    _ActivityCase("score", _P1bScoreHarness, _P1bScoreHarness.run, ScoreActivityInput(tenant_id="local"), score_activity),
-    _ActivityCase("enrich", _P1bEnrichHarness, _P1bEnrichHarness.run, EnrichActivityInput(tenant_id="local"), enrich_activity),
-    _ActivityCase("tailor", _P1bTailorHarness, _P1bTailorHarness.run, TailorActivityInput(tenant_id="local"), tailor_activity),
+    _ActivityCase(
+        "score", _P1bScoreHarness, _P1bScoreHarness.run, ScoreActivityInput(tenant_id="local"), score_activity
+    ),
+    _ActivityCase(
+        "enrich", _P1bEnrichHarness, _P1bEnrichHarness.run, EnrichActivityInput(tenant_id="local"), enrich_activity
+    ),
+    _ActivityCase(
+        "tailor", _P1bTailorHarness, _P1bTailorHarness.run, TailorActivityInput(tenant_id="local"), tailor_activity
+    ),
 )
 
 
@@ -441,10 +443,7 @@ async def test_run_in_activity_records_abandoned_thread_when_cancel_ignored(
     assert cancel_event.is_set()
     assert next_result == "next activity ran"
     assert any(record.message == "abandoned_thread" for record in caplog.records)
-    assert any(
-        getattr(record, "activity_executor_rotated", False)
-        for record in caplog.records
-    )
+    assert any(getattr(record, "activity_executor_rotated", False) for record in caplog.records)
     metric_mock.assert_called_once()
 
 
@@ -514,18 +513,14 @@ async def test_rotation_prunes_retired_executors_whose_tasks_finished() -> None:
     try:
         ria.set_activity_executor(first)
         assert ria._rotate_abandoned_activity_executor(first, finished_task)
-        assert [
-            executor for executor, _task in ria._RETIRED_ACTIVITY_EXECUTORS
-        ] == [first]
+        assert [executor for executor, _task in ria._RETIRED_ACTIVITY_EXECUTORS] == [first]
         replacement = ria._activity_executor()
         assert replacement is not first
         assert replacement._max_workers == 2
 
         finished_task.set_result(None)
         assert ria._rotate_abandoned_activity_executor(replacement, stuck_task)
-        assert [
-            executor for executor, _task in ria._RETIRED_ACTIVITY_EXECUTORS
-        ] == [replacement]
+        assert [executor for executor, _task in ria._RETIRED_ACTIVITY_EXECUTORS] == [replacement]
     finally:
         if not stuck_task.done():
             stuck_task.set_result(None)
@@ -560,10 +555,7 @@ def test_rotation_replacement_sizing_survives_missing_private_attr(
         assert ria._rotate_abandoned_activity_executor(opaque, done_task)
         replacement = ria._activity_executor()
         assert replacement is not opaque
-        assert (
-            replacement._max_workers
-            == concurrency.activity_executor_max_workers(4)
-        )
+        assert replacement._max_workers == concurrency.activity_executor_max_workers(4)
     finally:
         ria.shutdown_activity_executors()
 
@@ -647,8 +639,6 @@ def test_workday_cancel_event_stops_before_employer_request(
         workday.scrape_employers(
             "",
             {"acme": {"name": "Acme"}},
-            accept_locs=[],
-            reject_locs=[],
             cancel_event=cancel_event,
         )
 

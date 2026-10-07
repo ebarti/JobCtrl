@@ -46,6 +46,7 @@ export interface TargetRoleSuggestionsProps {
     titles: readonly string[],
     preferences: readonly TargetPreferenceSuggestion[],
     expectedProfileVersion: number,
+    determinationId: string,
   ) => void;
   onRebase: () => void;
   onResolveWithoutAcceptance: (expectedProfileVersion: number) => void;
@@ -59,6 +60,7 @@ export function TargetRoleSuggestions({
   onResolveWithoutAcceptance,
 }: TargetRoleSuggestionsProps) {
   const generation = useTargetRoleSuggestionsMutation();
+  const [determinationId, setDeterminationId] = useState<string | null>(null);
   const [generatedVersion, setGeneratedVersion] = useState<number | null>(null);
   const [suggestions, setSuggestions] = useState<EditableSuggestion[]>([]);
   const [preferenceSuggestions, setPreferenceSuggestions] = useState<EditablePreferenceSuggestion[]>([]);
@@ -85,6 +87,7 @@ export function TargetRoleSuggestions({
         maximumSuggestions: 3,
       });
       setGeneratedVersion(result.profileVersion);
+      setDeterminationId(result.determinationId);
       setSuggestions(result.suggestions.map((suggestion) => ({
         ...suggestion, originalTitle: suggestion.title, selected: false,
       })));
@@ -103,23 +106,9 @@ export function TargetRoleSuggestions({
       ) {
         onResolveWithoutAcceptance(result.profileVersion);
       }
-      if (result.warnings.includes("stubbed_model_evidence")) {
-        setNoticeMessage("This demo result uses deterministic fixture evidence; no model ran.");
-      } else if (result.warnings.includes("model_unavailable_or_invalid")) {
-        setNoticeMessage("The model was unavailable. Conservative suggestions use saved evidence only.");
-      } else if (result.warnings.includes("spend_budget_exhausted")) {
-        setNoticeMessage("The model spend budget is exhausted. Conservative suggestions use saved evidence only.");
-      } else if (result.warnings.includes("provider_token_or_cost_bound_unsupported")) {
-        setNoticeMessage(
-          "No model ran: the configured provider cannot enforce this feature's token and spend ceiling. Suggestions use saved evidence only.",
-        );
-      }
+      setNoticeMessage("Model suggestions require your confirmation before they change your search.");
       if (result.suggestions.length === 0 && preferences.length === 0) {
-        setEmptyMessage(
-          result.warnings.includes("authoritative_track_or_seniority_missing")
-            ? "Add an explicit target track and seniority before requesting suggestions."
-            : "The saved evidence did not support a conservative role suggestion.",
-        );
+        setEmptyMessage("The model returned no target suggestions for this profile version.");
       }
     } catch {
       // The mutation exposes its sanitized API error below.
@@ -139,7 +128,7 @@ export function TargetRoleSuggestions({
   };
 
   const accept = () => {
-    if (generatedVersion === null || isStale) return;
+    if (generatedVersion === null || determinationId === null || isStale || isFormBaseStale) return;
     const titles = suggestions
       .filter((suggestion) => suggestion.selected)
       .map((suggestion) => suggestion.title.trim())
@@ -148,9 +137,11 @@ export function TargetRoleSuggestions({
       location: item.location.trim(),
       workModel: item.workModel,
       evidenceIds: item.evidenceIds,
+      citations: item.citations,
+      rationale: item.rationale,
     })).filter((item) => item.location || item.workModel);
     if (!titles.length && !preferences.length) return;
-    onAccept(titles, preferences, generatedVersion);
+    onAccept(titles, preferences, generatedVersion, determinationId);
     setSuggestions([]);
     setPreferenceSuggestions([]);
     setGeneratedVersion(null);

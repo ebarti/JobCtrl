@@ -1,3 +1,4 @@
+import { refreshE2eWorkerHeartbeat } from "../fixtures/e2e-state.js";
 import { readFile } from "node:fs/promises";
 
 import { test, expect, type Locator } from "@playwright/test";
@@ -16,6 +17,10 @@ import {
   removeClaudeProviderBatch,
   removeGoogleProviderBatch,
 } from "../../src/contexts/profile/lib/provider-credential-plans.js";
+
+test.beforeEach(() => {
+  if (process.env["JOBCTRL_E2E_ISOLATED"] === "1") refreshE2eWorkerHeartbeat();
+});
 
 test("Profile edit + Plate baseline editor: edit a field, save, preview HTML refreshes with a new cache key", async ({
   page,
@@ -529,7 +534,7 @@ test("Model Selection requires a ready provider and saves one provider preferenc
 
 test.describe("structured profile persistence", () => {
   test.skip(process.env["JOBCTRL_E2E_ISOLATED"] !== "1", "Requires the owned, no-subprocess API fixture");
-  const apiOrigin = `http://127.0.0.1:${process.env["JOBCTRL_E2E_API_PORT"]}`;
+  const apiOrigin = `http://127.0.0.1:${process.env["JOBCTRL_E2E_API_PORT"] ?? "8767"}`;
 
   async function selectPlateFieldContents(field: Locator): Promise<void> {
     // Deliver the native range change to Slate before the next keyboard edit.

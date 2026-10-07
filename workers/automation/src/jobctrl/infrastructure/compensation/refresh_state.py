@@ -1,6 +1,8 @@
 """Lease-fenced scheduling state for automatic compensation benchmarks."""
 
 from __future__ import annotations
+from jobctrl.infrastructure.compensation.interpretation import job_interpretation_for_id
+from jobctrl.domain.determinations import DeterminationFailure
 
 import sqlite3
 import uuid
@@ -11,8 +13,6 @@ from typing import Any, Literal
 from jobctrl.domain.compensation import (
     BenchmarkGeography,
     canonical_benchmark_timestamp,
-    classify_role,
-    resolve_country_code,
 )
 
 
@@ -96,7 +96,7 @@ class SqliteCompensationRefreshStateRepository:
         rows = _fetchall_mappings(
             self._conn.execute(
                 """
-                SELECT jobs.title, jobs.location,
+                SELECT jobs.job_id, jobs.title, jobs.location,
                        enrichments.full_description AS enrichment_description
                 FROM jobs
                 LEFT JOIN job_enrichments AS enrichments
@@ -123,19 +123,24 @@ class SqliteCompensationRefreshStateRepository:
         for row in rows:
             title = str(row["title"] or "").strip()
             location = str(row["location"] or "").strip()
-            classification = classify_role(title, job_context=row["enrichment_description"])
-            if classification.role_family_code is None:
+            try:
+                classification = job_interpretation_for_id(self._conn, tenant_id, str(row["job_id"]))
+            except DeterminationFailure:
                 without_role += 1
                 continue
-            country_code = resolve_country_code(location)
+            if classification.occupation_family.value == "unknown":
+                without_role += 1
+                continue
+            countries = {place.country_code for place in classification.places if place.country_code}
+            country_code = next(iter(countries)) if len(countries) == 1 else None
             if country_code is None:
                 without_country += 1
                 continue
             benchmark_slice = CompensationBenchmarkSlice(
                 tenant_id=tenant_id,
-                taxonomy_version=classification.taxonomy_version,
-                role_family_code=classification.role_family_code,
-                seniority_label=classification.seniority_label,
+                taxonomy_version="1",
+                role_family_code=classification.occupation_family.value,
+                seniority_label=classification.seniority.value,
                 geography=BenchmarkGeography(country_code),
                 title_hint=title,
                 location_hint=location,

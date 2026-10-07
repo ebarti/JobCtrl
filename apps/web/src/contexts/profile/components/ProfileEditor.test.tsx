@@ -30,6 +30,16 @@ function semanticBullet(
 }
 
 describe("<ProfileEditor>", () => {
+  it("retains baseline field IDs across an edited and split rendered bullet list", () => {
+    const baseline = [{type: "resume_block", className: "resume-bullets", children: semanticBullet(["Original user text."])}];
+    const current = [{type: "resume_block", className: "resume-bullets", children: [
+      ...semanticBullet(["Edited user text."]),
+      {type: "resume_block", tagName: "li", children: [{text: "Inserted user text."}]},
+    ]}];
+    expect(resumeSemanticTextChangesFromPlateValues(baseline, current)).toEqual([
+      {semanticId: "experience:exp-1:bullet:1", baselineTexts: ["Original user text."], plateTexts: ["Edited user text.", "Inserted user text."]},
+    ]);
+  });
   it("derives deletion, digit, punctuation, and split deltas from the Plate model", () => {
     expect(
       resumeSemanticTextChangesFromPlateValues(

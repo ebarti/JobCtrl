@@ -19,12 +19,12 @@ from typing import Any
 from jobctrl import config
 from jobctrl.domain.events.base import create_domain_event
 from jobctrl.domain.identifiers import JobId, canonical_job_id
+from jobctrl.domain.materials.analysis import PROMPT_VERSION as ANALYSIS_PROMPT_VERSION
 from jobctrl.domain.pipeline.aggregate import OptimisticLockError
 from jobctrl.domain.pipeline.state_machine import is_valid_transition
 from jobctrl.domain.ports.events import EventPublisher
 from jobctrl.domain.scoring.eligibility import (
     eligibility_blocks_downstream,
-    normalize_eligibility_for_downstream,
 )
 from jobctrl.domain.scoring.value_objects import EligibilityAssessment
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
@@ -492,7 +492,8 @@ def _reconcile_requirement_fit_blockers(
                        WHERE tenant_id = blocked.tenant_id AND job_id = blocked.job_id)
                   AND report.employer_analysis_generation = (SELECT MAX(generation)
                        FROM job_employer_analysis
-                       WHERE tenant_id = blocked.tenant_id AND job_id = blocked.job_id)
+                       WHERE tenant_id = blocked.tenant_id AND job_id = blocked.job_id
+                         AND prompt_version = '{ANALYSIS_PROMPT_VERSION}')
                   AND report.profile_snapshot_version =
                        json_extract(score.trace_json, '$.profile_snapshot_version')
                   AND EXISTS (SELECT 1 FROM job_requirement_fit_items AS item
@@ -666,16 +667,18 @@ def reconcile_score_eligibility_blockers(
     job_id: JobId,
     eligibility_status: str | None,
     hard_blockers: list[str] | tuple[str, ...] | None = None,
+    hard_blocker_categories: tuple[str, ...] = (),
+    hard_blocker_citations: tuple[tuple[dict, ...], ...] = (),
     now: str | None = None,
 ) -> int:
     """Keep downstream stage rows aligned with score hard-blocker eligibility."""
     stable_job_id = canonical_job_id(str(job_id))
     raw_blockers = _clean_blocker_reasons(hard_blockers)
-    eligibility = normalize_eligibility_for_downstream(
-        EligibilityAssessment(
-            status=str(eligibility_status or "unknown"),
-            hard_blockers=tuple(raw_blockers),
-        )
+    eligibility = EligibilityAssessment(
+        status=str(eligibility_status or "unknown"),
+        hard_blockers=tuple(raw_blockers),
+        hard_blocker_categories=hard_blocker_categories,
+        hard_blocker_citations=hard_blocker_citations,
     )
     blockers = list(eligibility.hard_blockers)
     blocked = eligibility_blocks_downstream(eligibility)

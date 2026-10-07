@@ -15,39 +15,43 @@ const { e2eStubActionDispatcher, e2eStubProfileImporter } =
   await import("../src/e2e-dispatch.js");
 const { e2eProfilePreviewRenderer } = await import("./fixtures/e2e-profile-preview.js");
 const config = resolveApiConfig();
-const realProfileSuggestions = process.env["JOBCTRL_E2E_PROFILE_SUGGESTIONS"] === "1";
-const suggestionRpc = realProfileSuggestions
-  ? new (await import("../src/json-rpc-adapter.js")).SubprocessJsonRpcAdapter({
-    appDir: config.appDir,
-    configPath: config.configPath,
-    pythonRuntime: (await import("../src/python-runtime.js")).createSourcePythonRuntime({
-      environment: {
-        ...process.env,
-        HOME: process.env["JOBCTRL_E2E_SERVICE_HOME"],
-        XDG_CONFIG_HOME: `${process.env["JOBCTRL_E2E_SERVICE_HOME"]}/.config`,
-        UV_FROZEN: "1",
-      },
-    }),
-  })
-  : null;
+const modelProfileSuggestions = process.env["JOBCTRL_E2E_PROFILE_SUGGESTIONS"] === "1";
+const { default: Database } = await import("better-sqlite3");
+const { recordCandidateProposal, recordModelDecision, bindDecision } = await import("./semantic-fixtures.js");
 const unavailable = async () => {
   throw new Error("Operation is outside the isolated E2E fixture");
 };
 const providerDispatcher: JsonRpcDispatcher = {
   call: async (method, params) =>
     method === RpcMethods.ProfileRequiredBulletSuggestions
-      ? {
-          jsonrpc: "2.0", id: 1,
-          // Explicit model test double: this entry point never makes semantic judgments.
-          result: { profileVersion: params.expectedProfileVersion, suggestions: [
-            { reference: (params.sources as Array<{ reference: string }>)[0]!.reference,
-              kind: "grammar", guidance: "Review the repeated spacing in the incident response bullet.", proposedText: "Helped with incident response" },
-            { reference: (params.sources as Array<{ reference: string }>)[0]!.reference,
-              kind: "missing_evidence", guidance: "Which saved incident report supports the incident response claim?", proposedText: null },
-          ] },
-        }
-      : method === RpcMethods.ProfileTargetRoleSuggestions && suggestionRpc
-      ? suggestionRpc.call(method, params)
+      ? (() => {
+          // Chosen model findings exercise the same persisted authority contract
+          // as the worker, without judging the fixture's language.
+          const source = (params.sources as Array<{ reference: string; originalText: string }>)[0]!;
+          const citations = [{source_id: source.reference, quote: source.originalText, exact_values: []}];
+          const result = {suggestions: [
+            {reference: source.reference, kind: "grammar", guidance: "Review the repeated spacing in the incident response bullet.", proposedText: "Helped with incident response", citations},
+            {reference: source.reference, kind: "missing_evidence", guidance: "Which saved incident report supports the incident response claim?", proposedText: null, citations},
+          ], citations, rationale: "Chosen model findings"};
+          const db = new Database(config.dbPath);
+          try {
+            const id = recordModelDecision(db, "required_bullet_coaching", "profile:required_bullets", result);
+            bindDecision(db, "profile_coaching", "profile:required_bullets", String(params.expectedProfileVersion), "required_bullet_coaching", id);
+            const row = db.prepare("SELECT envelope_json FROM semantic_determinations WHERE tenant_id='local' AND determination_id=?").get(id) as {envelope_json: string};
+            return {jsonrpc: "2.0", id: 1, result: {...result, profileVersion: params.expectedProfileVersion, determination: JSON.parse(row.envelope_json)}};
+          } finally {db.close();}
+        })()
+      : method === RpcMethods.ProfileTargetRoleSuggestions && modelProfileSuggestions
+      ? (() => {
+          const db = new Database(config.dbPath);
+          try {
+            return {jsonrpc:"2.0",id:1,result:recordCandidateProposal(db,params,[
+              {title:"Model proposal A",classification:"direct",track:"management",seniority:"manager"},
+              {title:"Model proposal B",classification:"adjacent",track:"ic",seniority:"staff"},
+              {title:"Model proposal C",classification:"adjacent",track:"executive",seniority:"c_level"},
+            ])};
+          } finally { db.close(); }
+        })()
       : method === "browser_capabilities_list"
       ? {
           jsonrpc: "2.0",
@@ -72,7 +76,7 @@ const providerDispatcher: JsonRpcDispatcher = {
             message: "Method is outside the isolated E2E fixture",
           },
         },
-  close: async () => { await suggestionRpc?.close(); },
+  close: async () => {},
 };
 const credentialStore: CredentialStore = {
   list: async () => ({
@@ -110,7 +114,7 @@ const app = buildApp({
   },
   artifactOpener: unavailable,
   jobUrlValidator: unavailable,
-  placeValidator: realProfileSuggestions
+  placeValidator: modelProfileSuggestions
     ? async (place) => ["Barcelona", "London"].includes(place)
     : unavailable,
   requireHealthyWorkerForActions: true,

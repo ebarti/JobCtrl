@@ -139,6 +139,7 @@ def _insert_ready_job(
             validate_transition=False,
         )
     from .availability_fixture import seed_fresh_availability
+
     seed_fresh_availability(conn, str(job_id), str(LOCAL_TENANT))
     conn.commit()
     return job_id
@@ -181,10 +182,6 @@ def _insert_blocked_score(conn, url: str, *, fit_score: int = 9) -> None:
         ),
     )
     conn.commit()
-
-
-def test_unsafe_url_failure_is_permanent() -> None:
-    assert launcher_module._is_permanent_failure("failed:unsafe_url: URL host is not a public address: 127.0.0.1")
 
 
 def _mark_closed(conn: sqlite3.Connection, url: str, state: str = "removed") -> None:
@@ -355,8 +352,7 @@ def test_targeted_apply_takes_canonical_stage_lock(tmp_path, monkeypatch):
         assert legacy["apply_status"] is None
         # Canonical lock: stage row in 'running'.
         stage = conn.execute(
-            "SELECT state FROM job_stage_states "
-            "WHERE tenant_id = ? AND job_id = ? AND stage = 'apply'",
+            "SELECT state FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'apply'",
             (LOCAL_TENANT, job_id),
         ).fetchone()
         assert stage is not None
@@ -399,8 +395,7 @@ def test_apply_approval_gate_blocks_live_without_approval(tmp_path, monkeypatch)
         prior_event_count = len(get_recent_events())
         assert acquire_job(target_job_id=_target_job_id(conn), worker_id=1) is None
         row = conn.execute(
-            "SELECT state FROM job_stage_states "
-            "WHERE tenant_id = ? AND job_id = ? AND stage = 'apply'",
+            "SELECT state FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'apply'",
             (LOCAL_TENANT, job_id),
         ).fetchone()
         assert row is None or row["state"] == "pending"
@@ -433,8 +428,7 @@ def test_approval_required_apply_loop_never_runs_browser_for_unapproved_job(
 
         assert (applied, failed) == (0, 0)
         row = conn.execute(
-            "SELECT state FROM job_stage_states "
-            "WHERE tenant_id = ? AND job_id = ? AND stage = 'apply'",
+            "SELECT state FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'apply'",
             (LOCAL_TENANT, job_id),
         ).fetchone()
         assert row is None or row["state"] == "pending"
@@ -911,7 +905,9 @@ def test_worker_loop_delegates_browser_lifecycle_to_apply_saga(monkeypatch):
         raise AssertionError("worker_loop must not launch Chrome directly")
 
     def fake_run_job(*_args, **_kwargs):
-        return "dry_run", 10
+        from jobctrl.domain.apply.value_objects import DryRunComplete
+
+        return DryRunComplete(navigated_to="", coverage="partial"), 10
 
     def fake_mark_result(job_id, status, **kwargs):
         marked["job_id"] = job_id
@@ -1131,9 +1127,7 @@ def test_acquire_job_finds_new_path_enriched_job(tmp_path, monkeypatch):
 
     repo = SqliteEnrichmentRepository(conn)
     repo.save(
-        JobEnrichment.empty(
-            tenant_id=LOCAL_TENANT, job_id=JobId(job_id), updated_at="t0"
-        )
+        JobEnrichment.empty(tenant_id=LOCAL_TENANT, job_id=JobId(job_id), updated_at="t0")
         .start_attempt(extraction_tier=ExtractionTier.JSON_LD, started_at="t0")
         .succeed_attempt(
             full_description=FullDescription(text="Build distributed systems."),
@@ -1176,13 +1170,11 @@ def test_dry_run_result_does_not_mark_job_applied(tmp_path, monkeypatch):
         ProjectionBuilder(conn_factory=lambda: get_connection(db_path)).refresh()
 
         row = conn.execute(
-            "SELECT apply_status, applied_at, apply_task_id FROM jobs "
-            "WHERE tenant_id = ? AND job_id = ?",
+            "SELECT apply_status, applied_at, apply_task_id FROM jobs WHERE tenant_id = ? AND job_id = ?",
             (LOCAL_TENANT, job_id),
         ).fetchone()
         state = conn.execute(
-            "SELECT state, error_code FROM job_stage_states "
-            "WHERE tenant_id = ? AND job_id = ? AND stage = 'apply'",
+            "SELECT state, error_code FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'apply'",
             (LOCAL_TENANT, job_id),
         ).fetchone()
         # Legacy columns stay NULL on the new write path.
@@ -1193,8 +1185,7 @@ def test_dry_run_result_does_not_mark_job_applied(tmp_path, monkeypatch):
         assert state["error_code"] == "DRY_RUN"
         # Canonical: an apply_run_projections row in dry_run_complete.
         ar = conn.execute(
-            "SELECT run_id, status, dry_run FROM apply_run_projections "
-            "WHERE tenant_id = ? AND job_id = ?",
+            "SELECT run_id, status, dry_run FROM apply_run_projections WHERE tenant_id = ? AND job_id = ?",
             (LOCAL_TENANT, job_id),
         ).fetchone()
         assert ar is not None
@@ -1229,8 +1220,7 @@ def test_acquire_job_then_mark_result_dry_run_completes_end_to_end(tmp_path, mon
         assert job is not None
         # Sanity: the lock acquired -> Running.
         before = conn.execute(
-            "SELECT state FROM job_stage_states "
-            "WHERE tenant_id = ? AND job_id = ? AND stage = 'apply'",
+            "SELECT state FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'apply'",
             (LOCAL_TENANT, job["job_id"]),
         ).fetchone()
         assert before["state"] == "running"
@@ -1247,8 +1237,7 @@ def test_acquire_job_then_mark_result_dry_run_completes_end_to_end(tmp_path, mon
         # (a) No exception (we got here).
         # (b) Stage row landed on Skipped.
         after = conn.execute(
-            "SELECT state, error_code FROM job_stage_states "
-            "WHERE tenant_id = ? AND job_id = ? AND stage = 'apply'",
+            "SELECT state, error_code FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'apply'",
             (LOCAL_TENANT, job["job_id"]),
         ).fetchone()
         assert after["state"] == "skipped"
@@ -1258,8 +1247,7 @@ def test_acquire_job_then_mark_result_dry_run_completes_end_to_end(tmp_path, mon
         # and a sensible terminal status, after refresh.
         ProjectionBuilder(conn_factory=lambda: get_connection(db_path)).refresh()
         ar = conn.execute(
-            "SELECT run_id, status, dry_run FROM apply_run_projections "
-            "WHERE tenant_id = ? AND job_id = ?",
+            "SELECT run_id, status, dry_run FROM apply_run_projections WHERE tenant_id = ? AND job_id = ?",
             (LOCAL_TENANT, job["job_id"]),
         ).fetchone()
         assert ar is not None
@@ -1287,8 +1275,7 @@ def test_release_lock_does_not_rewind_running_row(tmp_path, monkeypatch):
         )
         assert job is not None
         before = conn.execute(
-            "SELECT state FROM job_stage_states "
-            "WHERE tenant_id = ? AND job_id = ? AND stage = 'apply'",
+            "SELECT state FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'apply'",
             (LOCAL_TENANT, job["job_id"]),
         ).fetchone()
         assert before["state"] == "running"
@@ -1296,8 +1283,7 @@ def test_release_lock_does_not_rewind_running_row(tmp_path, monkeypatch):
         release_lock(job["job_id"], run_ctx=run_ctx, tenant_id=LOCAL_TENANT)
 
         after = conn.execute(
-            "SELECT state FROM job_stage_states "
-            "WHERE tenant_id = ? AND job_id = ? AND stage = 'apply'",
+            "SELECT state FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'apply'",
             (LOCAL_TENANT, job["job_id"]),
         ).fetchone()
         assert after["state"] == "running"
@@ -1326,8 +1312,7 @@ def test_apply_recovery_rewinds_before_submit_intent(tmp_path, monkeypatch):
         recovered = recover_ambiguous_running_apply()
         assert recovered == 1
         row = conn.execute(
-            "SELECT state FROM job_stage_states "
-            "WHERE tenant_id = ? AND job_id = ? AND stage = 'apply'",
+            "SELECT state FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'apply'",
             (LOCAL_TENANT, job["job_id"]),
         ).fetchone()
         assert row["state"] == "pending"
@@ -1371,8 +1356,7 @@ def test_apply_recovery_after_submit_intent_needs_verification(tmp_path, monkeyp
         recovered = recover_ambiguous_running_apply()
         assert recovered == 1
         row = conn.execute(
-            "SELECT state, error_code FROM job_stage_states "
-            "WHERE tenant_id = ? AND job_id = ? AND stage = 'apply'",
+            "SELECT state, error_code FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'apply'",
             (LOCAL_TENANT, job["job_id"]),
         ).fetchone()
         assert row["state"] == "needs_verification"
@@ -1401,8 +1385,7 @@ def test_apply_recovery_after_submit_intent_needs_verification(tmp_path, monkeyp
             is None
         )
         parked = conn.execute(
-            "SELECT state FROM job_stage_states "
-            "WHERE tenant_id = ? AND job_id = ? AND stage = 'apply'",
+            "SELECT state FROM job_stage_states WHERE tenant_id = ? AND job_id = ? AND stage = 'apply'",
             (LOCAL_TENANT, job["job_id"]),
         ).fetchone()
         assert parked["state"] == "needs_verification"
@@ -1622,8 +1605,7 @@ def test_record_job_event_default_publisher_refreshes_apply_run_projections(tmp_
         ProjectionBuilder(conn_factory=lambda: conn).refresh()
 
         ar = conn.execute(
-            "SELECT run_id, status FROM apply_run_projections "
-            "WHERE tenant_id = ? AND job_id = ?",
+            "SELECT run_id, status FROM apply_run_projections WHERE tenant_id = ? AND job_id = ?",
             (LOCAL_TENANT, job_id),
         ).fetchone()
         assert ar is not None
@@ -1719,8 +1701,7 @@ def test_record_job_event_from_worker_thread_refreshes_projection(
         ar = None
         while _time.monotonic() < deadline:
             ar = bootstrap_conn.execute(
-                "SELECT run_id, status FROM apply_run_projections "
-                "WHERE tenant_id = ? AND job_id = ?",
+                "SELECT run_id, status FROM apply_run_projections WHERE tenant_id = ? AND job_id = ?",
                 (LOCAL_TENANT, job_id),
             ).fetchone()
             if ar is not None:
@@ -1947,8 +1928,7 @@ def test_dashboard_dry_runs_excludes_soft_deleted_jobs(tmp_path):
 
         # Soft-delete the second job.
         conn.execute(
-            "INSERT INTO jobctrl_deleted_jobs (tenant_id, job_id, deleted_at) "
-            "VALUES (?, ?, ?)",
+            "INSERT INTO jobctrl_deleted_jobs (tenant_id, job_id, deleted_at) VALUES (?, ?, ?)",
             (
                 LOCAL_TENANT,
                 job_ids["https://example.com/job-deleted"],

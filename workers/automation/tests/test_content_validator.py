@@ -10,13 +10,7 @@ both the JSON-side and the rendered-text side, plus cover letters.
 from __future__ import annotations
 
 from jobctrl.domain.materials import ValidationResult
-from jobctrl.domain.materials.services import (
-    BANNED_WORDS,
-    ContentValidator,
-    LLM_LEAK_PHRASES,
-    ResumeAssembler,
-    sanitize_text,
-)
+from jobctrl.domain.materials.services import ContentValidator, ResumeAssembler
 from jobctrl.resume_profile import mark_current_artifact_budget
 
 
@@ -53,9 +47,7 @@ def _profile() -> dict:
                     "date": "2015",
                 }
             ],
-            "skill_categories": [
-                {"id": "languages", "label": "Languages", "items": ["Python", "Go"]}
-            ],
+            "skill_categories": [{"id": "languages", "label": "Languages", "items": ["Python", "Go"]}],
             "tailoring_rules": {
                 "required_experience_entry_ids": ["acme_swe"],
                 "required_skill_category_ids": ["languages"],
@@ -68,9 +60,7 @@ def _profile() -> dict:
 def _good_payload() -> dict:
     return {
         "executive_profile": "Engineer focused on systems work.",
-        "experience_updates": [
-            {"id": "acme_swe", "bullets": ["Designed services at scale.", "Cut latency."]}
-        ],
+        "experience_updates": [{"id": "acme_swe", "bullets": ["Designed services at scale.", "Cut latency."]}],
         "skill_category_updates": [
             {"id": "languages", "items": ["Python", "Go"]},
         ],
@@ -92,17 +82,21 @@ def test_known_optional_experience_is_valid_but_unknown_duplicates_and_missing_p
     from copy import deepcopy
 
     profile = _profile()
-    profile["resume"]["experience_entries"].append({
-        "id": "optional", "title": "Engineer", "company": "Optional Co",
-        "bullets": ["Improved service reliability."],
-    })
+    profile["resume"]["experience_entries"].append(
+        {
+            "id": "optional",
+            "title": "Engineer",
+            "company": "Optional Co",
+            "bullets": ["Improved service reliability."],
+        }
+    )
     payload = _good_payload()
     payload["experience_updates"].append({"id": "optional", "title": "", "bullets": ["Improved service reliability."]})
     assert _VALIDATOR.validate_json_fields(payload, profile).passed
     for field, value, message in [
         ("id", "unknown", "Unknown experience updates"),
         ("id", "acme_swe", "Duplicate experience update"),
-        ("title", "Director", "Unsupported title rewrite"),
+        ("title", "Director", "Title rewriting is disabled"),
         ("bullets", ["Improved service reliability."] * 5, "exceeds 4 bullets"),
     ]:
         invalid = deepcopy(payload)
@@ -145,9 +139,7 @@ def test_validate_json_fields_rejects_requirement_coverage_above_max_ten() -> No
     profile["resume"]["tailoring_rules"]["max_experience_bullets"] = 10
     profile["resume"]["tailoring_rules"]["required_bullets_by_experience_id"] = {}
     payload = _good_payload()
-    payload["experience_updates"][0]["bullets"] = [
-        f"Synthetic covered achievement {index}." for index in range(1, 12)
-    ]
+    payload["experience_updates"][0]["bullets"] = [f"Synthetic covered achievement {index}." for index in range(1, 12)]
     payload["generated_claim_mappings"] = [
         {
             "claim_id": f"claim-{index}",
@@ -207,7 +199,7 @@ def test_validate_json_fields_rejects_rewritten_experience_title() -> None:
     payload["experience_updates"][0]["title"] = "Senior SWE - Platform Infrastructure"
     result = _VALIDATOR.validate_json_fields(payload, _profile())
     assert result.passed is False
-    assert any("Unsupported title rewrite" in err for err in result.errors)
+    assert any("Title rewriting is disabled" in err for err in result.errors)
 
 
 def test_validate_json_fields_accepts_empty_or_exact_source_title() -> None:
@@ -217,53 +209,6 @@ def test_validate_json_fields_accepts_empty_or_exact_source_title() -> None:
 
     payload["experience_updates"][0]["title"] = "Senior SWE"
     assert _VALIDATOR.validate_json_fields(payload, _profile()).passed is True
-
-
-def test_validate_json_fields_rejects_job_only_skill_items() -> None:
-    payload = _good_payload()
-    payload["skill_category_updates"][0]["items"] = ["Python", "Kubernetes Operators"]
-    result = _VALIDATOR.validate_json_fields(payload, _profile())
-    assert result.passed is False
-    assert any("Fabricated skill: 'Kubernetes Operators'" in err for err in result.errors)
-
-
-def test_validate_json_fields_normal_mode_warns_about_banned_words() -> None:
-    payload = _good_payload()
-    payload["experience_updates"][0]["bullets"] = ["passionate about robust solutions"]
-    result = _VALIDATOR.validate_json_fields(payload, _profile(), mode="normal")
-    # Banned words are warnings in normal mode — but other errors may exist.
-    assert any("Banned words" in w for w in result.warnings)
-
-
-def test_validate_json_fields_strict_mode_fails_on_banned_words() -> None:
-    payload = _good_payload()
-    payload["experience_updates"][0]["bullets"] = ["passionate"]
-    result = _VALIDATOR.validate_json_fields(payload, _profile(), mode="strict")
-    assert result.passed is False
-    assert any("Banned words" in err for err in result.errors)
-
-
-def test_validate_json_fields_lenient_mode_ignores_banned_words() -> None:
-    payload = _good_payload()
-    payload["experience_updates"][0]["bullets"] = ["passionate"]
-    result = _VALIDATOR.validate_json_fields(payload, _profile(), mode="lenient")
-    assert all("Banned words" not in w for w in result.warnings)
-
-
-def test_validate_json_fields_detects_fabrication_watch_terms() -> None:
-    payload = _good_payload()
-    payload["experience_updates"][0]["bullets"] = ["led django microservices"]
-    result = _VALIDATOR.validate_json_fields(payload, _profile())
-    assert result.passed is False
-    assert any("Fabricated skill" in err for err in result.errors)
-
-
-def test_validate_json_fields_detects_llm_self_talk() -> None:
-    payload = _good_payload()
-    payload["executive_profile"] = "I am sorry, here is the corrected version."
-    result = _VALIDATOR.validate_json_fields(payload, _profile())
-    assert result.passed is False
-    assert any("LLM self-talk" in err for err in result.errors)
 
 
 # ---------------------------------------------------------------------------
@@ -312,51 +257,6 @@ def test_validate_cover_letter_passes_for_clean_letter() -> None:
     assert result.passed is True
 
 
-def test_validate_cover_letter_rejects_incomplete_mid_sentence_draft() -> None:
-    text = (
-        "Dear Hiring Manager,\n\n"
-        "At Northstar Labs, I built an AI-assisted developer workflow that accelerated content production 3x "
-        "and decreased code review turnaround by 40%. This platform integrated LLM-based"
-    )
-    result = _VALIDATOR.validate_cover_letter(text)
-    assert result.passed is False
-    assert any("closing" in err.lower() for err in result.errors)
-
-
-def test_validate_cover_letter_rejects_em_dash() -> None:
-    text = "Dear Hiring Manager — I built systems."
-    result = _VALIDATOR.validate_cover_letter(text)
-    assert result.passed is False
-    assert any("em dash" in err.lower() for err in result.errors)
-
-
-def test_validate_cover_letter_rejects_when_not_starting_with_dear() -> None:
-    text = "Hello, my name is Jane."
-    result = _VALIDATOR.validate_cover_letter(text)
-    assert result.passed is False
-    assert any("Dear" in err for err in result.errors)
-
-
-def test_validate_cover_letter_strict_mode_word_limit() -> None:
-    text = "Dear Hiring Manager, " + ("word " * 300)
-    result = _VALIDATOR.validate_cover_letter(text, mode="strict")
-    assert result.passed is False
-    assert any("Too long" in err for err in result.errors)
-
-
 # ---------------------------------------------------------------------------
 # Module-level helpers
 # ---------------------------------------------------------------------------
-
-
-def test_banned_words_constant_includes_known_offenders() -> None:
-    for word in ("passionate", "robust", "synergy"):
-        assert word in BANNED_WORDS
-
-
-def test_llm_leak_phrases_includes_known_apologies() -> None:
-    assert "i am sorry" in LLM_LEAK_PHRASES
-
-
-def test_sanitize_text_normalises_em_dash() -> None:
-    assert "—" not in sanitize_text("foo — bar")

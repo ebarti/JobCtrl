@@ -5,7 +5,8 @@ from pathlib import Path
 import pytest
 
 from jobctrl.database import close_connection, init_db
-from jobctrl.domain.compensation import BenchmarkGeography, build_direct_benchmark_fact
+from jobctrl.domain.compensation import BenchmarkGeography, build_direct_benchmark_fact as domain_fact
+from tests.compensation_fakes import record_job_interpretation, classified_row, observation
 from jobctrl.infrastructure.compensation.refresh_state import (
     SqliteCompensationRefreshStateRepository,
     StaleCompensationRefreshLease,
@@ -36,12 +37,16 @@ def test_discovers_unique_active_country_role_slices(tmp_path: Path) -> None:
             job_id="33333333-3333-4333-8333-333333333333",
             title="Unmapped Wizard",
             location="Berlin, Germany",
+            family="unknown",
+            country="DE",
         )
         _insert_job(
             conn,
             job_id="44444444-4444-4444-8444-444444444444",
             title="Senior Data Engineer",
             location="Remote",
+            family="data_engineering",
+            country=None,
         )
         _insert_job(
             conn,
@@ -59,7 +64,7 @@ def test_discovers_unique_active_country_role_slices(tmp_path: Path) -> None:
         assert result.jobs_without_country == 1
         assert len(result.slices) == 1
         benchmark_slice = result.slices[0]
-        assert benchmark_slice.role_family_code == "infrastructure_platform"
+        assert benchmark_slice.role_family_code == "software_engineering"
         assert benchmark_slice.seniority_label == "senior"
         assert benchmark_slice.geography.country_code == "ES"
         assert benchmark_slice.geography.scope == "country"
@@ -175,20 +180,46 @@ def test_forced_claim_bypasses_freshness_but_not_active_lease(tmp_path: Path) ->
     conn = init_db(db_path)
     repository = SqliteCompensationRefreshStateRepository(conn)
     try:
-        _insert_job(conn, job_id="11111111-1111-4111-8111-111111111111",
-                    title="Director of Software Engineering", location="Madrid, Spain")
+        _insert_job(
+            conn,
+            job_id="11111111-1111-4111-8111-111111111111",
+            title="Director of Software Engineering",
+            location="Madrid, Spain",
+        )
         benchmark_slice = repository.discover_active_job_slices("local").slices[0]
         repository.ensure_slices((benchmark_slice,), now="2026-08-12T08:00:00Z")
-        first = repository.claim_due((benchmark_slice,), owner="first", now="2026-08-12T08:00:00Z",
-                                     lease_expires_at="2026-08-12T09:00:00Z")[0]
-        assert repository.claim_due((benchmark_slice,), owner="second", now="2026-08-12T08:01:00Z",
-                                    lease_expires_at="2026-08-12T09:01:00Z", force=True) == ()
-        repository.mark_insufficient(first, completed_at="2026-08-12T08:02:00Z",
-                                     next_refresh_at="2026-08-19T08:02:00Z", error_code="no_direct_anchor")
-        assert repository.claim_due((benchmark_slice,), owner="second", now="2026-08-12T08:03:00Z",
-                                    lease_expires_at="2026-08-12T09:03:00Z") == ()
-        forced = repository.claim_due((benchmark_slice,), owner="second", now="2026-08-12T08:03:00Z",
-                                      lease_expires_at="2026-08-12T09:03:00Z", force=True)
+        first = repository.claim_due(
+            (benchmark_slice,), owner="first", now="2026-08-12T08:00:00Z", lease_expires_at="2026-08-12T09:00:00Z"
+        )[0]
+        assert (
+            repository.claim_due(
+                (benchmark_slice,),
+                owner="second",
+                now="2026-08-12T08:01:00Z",
+                lease_expires_at="2026-08-12T09:01:00Z",
+                force=True,
+            )
+            == ()
+        )
+        repository.mark_insufficient(
+            first,
+            completed_at="2026-08-12T08:02:00Z",
+            next_refresh_at="2026-08-19T08:02:00Z",
+            error_code="no_direct_anchor",
+        )
+        assert (
+            repository.claim_due(
+                (benchmark_slice,), owner="second", now="2026-08-12T08:03:00Z", lease_expires_at="2026-08-12T09:03:00Z"
+            )
+            == ()
+        )
+        forced = repository.claim_due(
+            (benchmark_slice,),
+            owner="second",
+            now="2026-08-12T08:03:00Z",
+            lease_expires_at="2026-08-12T09:03:00Z",
+            force=True,
+        )
         assert len(forced) == 1
         assert repository.get(benchmark_slice).attempt_count == 2
     finally:
@@ -271,6 +302,7 @@ def test_refresh_state_rejects_a_result_from_another_geography(tmp_path: Path) -
         )[0]
         wrong_country = SqliteCompensationBenchmarkRepository(conn).save_direct(
             build_direct_benchmark_fact(
+                conn,
                 tenant_id="local",
                 role_family_code=benchmark_slice.role_family_code,
                 seniority_label=benchmark_slice.seniority_label,
@@ -321,6 +353,7 @@ def test_failed_level_lookup_keeps_the_fallback_fact_and_retries_on_the_retry_bo
             conn,
             job_id="11111111-1111-4111-8111-111111111111",
             title="Principal Software Engineer",
+            seniority="principal",
             location="Madrid, Spain",
         )
         conn.commit()
@@ -335,6 +368,7 @@ def test_failed_level_lookup_keeps_the_fallback_fact_and_retries_on_the_retry_bo
         )[0]
         fallback = SqliteCompensationBenchmarkRepository(conn).save_direct(
             build_direct_benchmark_fact(
+                conn,
                 tenant_id="local",
                 role_family_code=benchmark_slice.role_family_code,
                 seniority_label="unknown",
@@ -410,6 +444,9 @@ def _insert_job(
     title: str,
     location: str,
     is_deleted: int = 0,
+    family: str = "software_engineering",
+    country: str | None = "ES",
+    seniority: str = "senior",
 ) -> None:
     conn.execute(
         """
@@ -435,3 +472,22 @@ def _insert_job(
             """,
             (job_id,),
         )
+
+    conn.commit()
+    record_job_interpretation(conn, job_id, family=family, country=country, seniority=seniority)
+
+
+def build_direct_benchmark_fact(conn, **kwargs):
+    row = classified_row(
+        observation(),
+        conn=conn,
+        family=kwargs["role_family_code"],
+        seniority=kwargs["seniority_label"],
+        country=kwargs["geography"].country_code,
+    )
+    kwargs["fx_reference"] = {
+        **kwargs["fx_reference"],
+        "classification_id": row.determination_id,
+        "classification_entity_id": row.classification_entity_id,
+    }
+    return domain_fact(**kwargs)

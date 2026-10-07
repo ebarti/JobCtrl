@@ -25,7 +25,6 @@ export const DEFAULT_JOBCTRL_SETTINGS: JobCtrlSettings = {
   analysisLegs: ["claude", "codex", "google"],
   tailoringGeneratorModels: null,
   tailoringJudgeModel: null,
-  tailoringJudgeMinScore: 0.82,
   applyMaxBudgetUsd: 5,
   applyTimeoutSeconds: 900,
   scoreCriteria: "",
@@ -76,14 +75,6 @@ export function readJobCtrlSettings(configPath: string): ResolvedJobCtrlSettings
   const analysisLegs = persistedAnalysisLegs(raw);
   const tailoringGeneratorModels = persistedModels(raw, "tailoring_generator_models");
   const tailoringJudgeModel = persistedNullableModel(raw, "tailoring_judge_model");
-  const tailoringJudgeMinScore = persistedNumber(
-    raw,
-    "tailoring_judge_min_score",
-    DEFAULT_JOBCTRL_SETTINGS.tailoringJudgeMinScore,
-    0,
-    1,
-    "next_workflow",
-  );
   const applyMaxBudgetUsd = persistedNumber(
     raw,
     "apply_max_budget_usd",
@@ -113,7 +104,6 @@ export function readJobCtrlSettings(configPath: string): ResolvedJobCtrlSettings
       analysisLegs: analysisLegs.value,
       tailoringGeneratorModels: tailoringGeneratorModels.value,
       tailoringJudgeModel: tailoringJudgeModel.value,
-      tailoringJudgeMinScore: tailoringJudgeMinScore.value,
       applyMaxBudgetUsd: applyMaxBudgetUsd.value,
       applyTimeoutSeconds: applyTimeoutSeconds.value,
       scoreCriteria: scoreCriteria.value,
@@ -129,7 +119,6 @@ export function readJobCtrlSettings(configPath: string): ResolvedJobCtrlSettings
       analysisLegs,
       tailoringGeneratorModels,
       tailoringJudgeModel,
-      tailoringJudgeMinScore,
       applyMaxBudgetUsd,
       applyTimeoutSeconds,
       scoreCriteria,

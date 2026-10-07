@@ -506,6 +506,10 @@ export class JobCtrlApiClient {
     );
   }
 
+  checkRepeatApplication(jobKey:string):Promise<RepeatApplicationOverrideResponse>{
+    return this.post(`/v1/jobs/${encodeURIComponent(jobKey)}/repeat-application/check`,{});
+  }
+
   confirmRepeatApplication(
     jobKey: string,
     body: RepeatApplicationOverrideRequest,

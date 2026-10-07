@@ -21,8 +21,9 @@ from unittest.mock import patch
 import pytest
 from temporalio import activity
 from temporalio.client import WorkflowFailureError
+from temporalio.exceptions import ApplicationError
 from .temporal_env import time_skipping_env
-from temporalio.worker import UnsandboxedWorkflowRunner, Worker
+from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
 
 from jobctrl.database import get_connection
 from jobctrl.domain.errors import ConfigurationError, TransientNetworkError
@@ -81,6 +82,70 @@ def _row_value(row, key):
         return row[key]
     except (KeyError, IndexError, TypeError):
         return None
+
+
+@activity.defn(name="record_workflow_started")
+async def _fail_start_marker(_payload) -> None:
+    raise ApplicationError("Synthetic lifecycle-start failure", type="configuration", non_retryable=True)
+
+
+@pytest.mark.asyncio
+async def test_finalize_records_failure_when_start_marker_activity_fails() -> None:
+    queue = f"finalize-start-fail-{uuid.uuid4()}"
+    workflow_id = f"run-{uuid.uuid4().hex}"
+    activities = [a for a in _activities() if a is not record_workflow_started]
+    async with time_skipping_env() as env:
+        async with Worker(
+            env.client,
+            task_queue=queue,
+            workflows=[JobPipelineWorkflow],
+            activities=[*activities, _fail_start_marker],
+            workflow_runner=UnsandboxedWorkflowRunner(),
+        ):
+            with pytest.raises(WorkflowFailureError):
+                await env.client.execute_workflow(
+                    JobPipelineWorkflow.run,
+                    JobPipelineWorkflowInput(tenant_id="local", stages=["score"]),
+                    id=workflow_id,
+                    task_queue=queue,
+                )
+        history = await env.client.get_workflow_handle(workflow_id).fetch_history()
+        await Replayer(
+            workflows=[JobPipelineWorkflow], workflow_runner=UnsandboxedWorkflowRunner()
+        ).replay_workflow(history)
+    row = _workflow_run_row(workflow_id)
+    assert row is not None
+    assert _row_value(row, "status") == "failed"
+    assert _row_value(row, "error_code") == "configuration"
+    assert "WorkflowFailed" in (_row_value(row, "events_json") or "[]")
+
+
+@pytest.mark.asyncio
+async def test_start_failure_history_without_new_patch_remains_replayable() -> None:
+    queue = f"finalize-legacy-start-{uuid.uuid4()}"
+    workflow_id = f"run-{uuid.uuid4().hex}"
+    activities = [a for a in _activities() if a is not record_workflow_started]
+    async with time_skipping_env() as env:
+        with patch("jobctrl.infrastructure.temporal.finalize.workflow.patched", return_value=False):
+            async with Worker(
+                env.client,
+                task_queue=queue,
+                workflows=[JobPipelineWorkflow],
+                activities=[*activities, _fail_start_marker],
+                workflow_runner=UnsandboxedWorkflowRunner(),
+            ):
+                with pytest.raises(WorkflowFailureError):
+                    await env.client.execute_workflow(
+                        JobPipelineWorkflow.run,
+                        JobPipelineWorkflowInput(tenant_id="local", stages=["score"]),
+                        id=workflow_id,
+                        task_queue=queue,
+                    )
+        assert _workflow_run_row(workflow_id) is None
+        history = await env.client.get_workflow_handle(workflow_id).fetch_history()
+        await Replayer(
+            workflows=[JobPipelineWorkflow], workflow_runner=UnsandboxedWorkflowRunner()
+        ).replay_workflow(history)
 
 
 @pytest.mark.asyncio

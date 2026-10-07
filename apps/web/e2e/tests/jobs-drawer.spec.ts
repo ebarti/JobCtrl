@@ -4,6 +4,7 @@ import { test, expect, type Locator, type Page } from "@playwright/test";
 import type { JobDetail } from "../../src/contexts/operations/types.js";
 import { sampleHealthResponse } from "../../src/test/fixtures/projections.js";
 import { loadE2eDbPath, QA_PLATFORM_JOB_ID } from "../fixtures/e2e-state.js";
+import { recordCompensationAuthority } from "../../../api/test/semantic-fixtures.js";
 
 const FILTER_PARAMS =
   "stage=all&state=all&deleted=active&sort=fit_score&dir=desc&page=1&pageSize=50";
@@ -285,6 +286,8 @@ function seedSyntheticCompensationData(): void {
         updatedAt: compensationUpdatedAt,
       }),
     );
+    recordCompensationAuthority(db, QA_PLATFORM_JOB_ID);
+    db.prepare("INSERT INTO job_events (tenant_id,job_id,identity_version,stage,event_type,level,message,occurred_at,payload_json) VALUES ('local',?,1,'enrich','CompensationFactsUpdated','info','Synthetic compensation fixture updated',?,'{}')").run(QA_PLATFORM_JOB_ID, new Date().toISOString());
   } finally {
     db.close();
   }

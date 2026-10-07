@@ -21,6 +21,7 @@ from jobctrl.config import DB_PATH, DEFAULTS
 from jobctrl.infrastructure.migrations.schema_manifest import (
     EXACT_V11_MANIFEST,
     EXACT_V12_MANIFEST,
+    EXACT_V14_MANIFEST,
     SchemaManifestError,
     assert_exact_manifest,
     schema_dump,
@@ -53,7 +54,7 @@ from jobctrl.scoring.eligibility_sql import (
 # without changing any v7 table. v9 adds the optional per-position summary to
 # Candidate Profile experience rows. Posting URLs remain unique locators,
 # never aggregate identity.
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 14
 
 
 class IncompatibleSchemaVersionError(RuntimeError):
@@ -117,6 +118,25 @@ def close_connection(db_path: Path | str | None = None) -> None:
         conn = _local.connections.pop(path, None)
         if conn is not None:
             conn.close()
+
+
+def close_thread_connections() -> bool:
+    """Release activity-owned connections; never commit unfinished work.
+
+    Pool threads are reused, so a failed activity cannot leave a cached writer
+    alive for the next activity. Return whether unfinished writes were present.
+    """
+    connections = getattr(_local, "connections", {})
+    unfinished = False
+    for path in tuple(connections):
+        conn = connections.pop(path)
+        try:
+            unfinished |= conn.in_transaction
+        except sqlite3.ProgrammingError:
+            pass  # A caller already closed this cached connection.
+        finally:
+            conn.close()  # SQLite rolls back, rather than commits, on close.
+    return unfinished
 
 
 def backup_database(
@@ -194,9 +214,7 @@ def create_exact_v11_database(
     """Create a brand-new database directly from the exact v11 schema."""
     path = Path(db_path or DB_PATH)
     if path.exists():
-        raise FileExistsError(
-            f"exact v11 creation requires a missing database path, found {path}"
-        )
+        raise FileExistsError(f"exact v11 creation requires a missing database path, found {path}")
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = get_connection(path)
     try:
@@ -237,8 +255,7 @@ def open_exact_v11_database(
         )
     if current_version != 11:
         raise SchemaMigrationRequiredError(
-            "JobCtrl can only open the exact schema v11 at runtime; "
-            f"found schema version {current_version}."
+            f"JobCtrl can only open the exact schema v11 at runtime; found schema version {current_version}."
         )
     assert_exact_manifest(conn, EXACT_V11_MANIFEST)
     return conn
@@ -250,9 +267,7 @@ def create_exact_v12_database(
     """Create a brand-new database directly from the exact v12 schema."""
     path = Path(db_path or DB_PATH)
     if path.exists():
-        raise FileExistsError(
-            f"exact v12 creation requires a missing database path, found {path}"
-        )
+        raise FileExistsError(f"exact v12 creation requires a missing database path, found {path}")
     path.parent.mkdir(parents=True, exist_ok=True)
     # A deleted predecessor can still have a live connection cached by path.
     close_connection(path)
@@ -286,28 +301,80 @@ def open_exact_v12_database(
     if not path.exists():
         raise FileNotFoundError(f"No database to open at {path}")
     conn = get_connection(path, enable_wal=False)
-    current_version = _assert_schema_version_supported(conn)
+    current_version = _assert_schema_version_supported(conn, supported_version=12)
     if current_version in (6, 7, 8, 9, 10, 11):
         raise SchemaMigrationRequiredError(
             f"JobCtrl database is schema v{current_version}. Run `jobctrl update` so "
             "the native lifecycle can stop JobCtrl, create the paired backup, "
             "and activate schema v12 before starting the runtime."
         )
-    if current_version != SCHEMA_VERSION:
+    if current_version != 12:
         raise SchemaMigrationRequiredError(
-            "JobCtrl can only open the exact schema v12 at runtime; "
-            f"found schema version {current_version}."
+            f"JobCtrl can only open the exact schema v12 at runtime; found schema version {current_version}."
         )
     assert_exact_manifest(conn, EXACT_V12_MANIFEST)
     return conn
 
 
-def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
-    """Create a missing v12 database or read-only validate an existing one."""
+def create_exact_v14_database(
+    db_path: Path | str | None = None,
+) -> sqlite3.Connection:
+    """Create a brand-new database directly from the exact v14 schema."""
+    path = Path(db_path or DB_PATH)
+    if path.exists():
+        raise FileExistsError(f"exact v14 creation requires a missing database path, found {path}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # A deleted predecessor can still have a live connection cached by path.
+    close_connection(path)
+    conn = get_connection(path)
+    try:
+        if schema_dump(conn):
+            raise SchemaManifestError("fresh v14 creation found pre-existing schema")
+
+        from jobctrl.infrastructure.migrations.schema_v14 import create_exact_v14_schema
+
+        create_exact_v14_schema(conn)
+        conn.commit()
+        return conn
+    except BaseException:
+        close_connection(path)
+        for created_path in (
+            path,
+            Path(f"{path}-wal"),
+            Path(f"{path}-shm"),
+            Path(f"{path}-journal"),
+        ):
+            created_path.unlink(missing_ok=True)
+        raise
+
+
+def open_exact_v14_database(
+    db_path: Path | str | None = None,
+) -> sqlite3.Connection:
+    """Open an existing exact-v14 database without performing any writes."""
     path = Path(db_path or DB_PATH)
     if not path.exists():
-        return create_exact_v12_database(path)
-    return open_exact_v12_database(path)
+        raise FileNotFoundError(f"No database to open at {path}")
+    conn = get_connection(path, enable_wal=False)
+    current_version = _assert_schema_version_supported(conn, supported_version=14)
+    if current_version in (6, 7, 8, 9, 10, 11, 12):
+        raise SchemaMigrationRequiredError(
+            f"JobCtrl database is schema v{current_version}. Run `jobctrl update` so "
+            "the native lifecycle can stop JobCtrl, create the paired backup, "
+            "and activate schema v14 before starting the runtime."
+        )
+    if current_version != 14:
+        raise SchemaMigrationRequiredError(
+            f"JobCtrl can only open the exact schema v14 at runtime; found schema version {current_version}."
+        )
+    assert_exact_manifest(conn, EXACT_V14_MANIFEST)
+    return conn
+
+
+def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
+    """Create missing exact-v14 storage or validate an existing sealed database."""
+    path = Path(db_path or DB_PATH)
+    return create_exact_v14_database(path) if not path.exists() else open_exact_v14_database(path)
 
 
 def ensure_projection_tables_in_db(conn: sqlite3.Connection | None = None) -> list[str]:
@@ -473,12 +540,7 @@ def ensure_application_review_decision_columns(
     if conn is None:
         conn = get_connection()
 
-    existing = {
-        row[1]
-        for row in conn.execute(
-            "PRAGMA table_info(application_review_decisions)"
-        ).fetchall()
-    }
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(application_review_decisions)").fetchall()}
     additions = {
         "materials_generation": "INTEGER",
         "profile_version": "INTEGER",
@@ -490,9 +552,7 @@ def ensure_application_review_decision_columns(
     added: list[str] = []
     for column, definition in additions.items():
         if column not in existing:
-            conn.execute(
-                f"ALTER TABLE application_review_decisions ADD COLUMN {column} {definition}"
-            )
+            conn.execute(f"ALTER TABLE application_review_decisions ADD COLUMN {column} {definition}")
             added.append(column)
     conn.commit()
     return added
@@ -1723,14 +1783,9 @@ def ensure_employer_analysis_tables(conn: sqlite3.Connection | None = None) -> l
     )
     # Audit column for the EEO red-flag screen (AI-SPEC §6 Dimension 9). Added
     # idempotently so a DB created before this column gains it without a rebuild.
-    _analysis_cols = {
-        row[1] for row in conn.execute("PRAGMA table_info(job_employer_analysis)").fetchall()
-    }
+    _analysis_cols = {row[1] for row in conn.execute("PRAGMA table_info(job_employer_analysis)").fetchall()}
     if "eeo_screen_json" not in _analysis_cols:
-        conn.execute(
-            "ALTER TABLE job_employer_analysis "
-            "ADD COLUMN eeo_screen_json TEXT NOT NULL DEFAULT '[]'"
-        )
+        conn.execute("ALTER TABLE job_employer_analysis ADD COLUMN eeo_screen_json TEXT NOT NULL DEFAULT '[]'")
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS job_employer_analysis_sub_analyses (
@@ -1840,9 +1895,7 @@ def ensure_bullet_provenance_tables(conn: sqlite3.Connection | None = None) -> l
     # (like ``artifact_id`` / ``created_at``); the read path reads them off any
     # row of the set. Idempotent migration for tables created by Phase 2 before
     # these columns existed (single-user rip-and-replace, no compat shim).
-    existing_cols = {
-        row[1] for row in conn.execute("PRAGMA table_info(job_bullet_provenance)").fetchall()
-    }
+    existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(job_bullet_provenance)").fetchall()}
     if "coverage_json" not in existing_cols:
         conn.execute("ALTER TABLE job_bullet_provenance ADD COLUMN coverage_json TEXT")
     if "voice_json" not in existing_cols:
@@ -1899,9 +1952,7 @@ def ensure_interview_prep_tables(conn: sqlite3.Connection | None = None) -> list
     )
     prep_cols = {row[1] for row in conn.execute("PRAGMA table_info(job_interview_prep)").fetchall()}
     if "origin_run_id" not in prep_cols:
-        conn.execute(
-            "ALTER TABLE job_interview_prep ADD COLUMN origin_run_id TEXT NOT NULL DEFAULT ''"
-        )
+        conn.execute("ALTER TABLE job_interview_prep ADD COLUMN origin_run_id TEXT NOT NULL DEFAULT ''")
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS job_interview_prep_items (
@@ -2060,17 +2111,13 @@ def ensure_posting_snapshot_tables(conn: sqlite3.Connection | None = None) -> li
     # The latest snapshot's confidence + quarantine reason are promoted onto
     # the row so the read model can gate the tailoring queue and surface the
     # enrichment quality signal without parsing snapshot_set_json per read.
-    existing_cols = {
-        row[1] for row in conn.execute("PRAGMA table_info(posting_snapshot_sets)").fetchall()
-    }
+    existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(posting_snapshot_sets)").fetchall()}
     added_quality_columns = False
     if "latest_confidence" not in existing_cols:
         conn.execute("ALTER TABLE posting_snapshot_sets ADD COLUMN latest_confidence TEXT")
         added_quality_columns = True
     if "latest_quarantine_reason" not in existing_cols:
-        conn.execute(
-            "ALTER TABLE posting_snapshot_sets ADD COLUMN latest_quarantine_reason TEXT"
-        )
+        conn.execute("ALTER TABLE posting_snapshot_sets ADD COLUMN latest_quarantine_reason TEXT")
         added_quality_columns = True
     if added_quality_columns:
         _backfill_latest_snapshot_quality(conn)
@@ -2084,9 +2131,7 @@ def _backfill_latest_snapshot_quality(conn: sqlite3.Connection) -> None:
     Runs once when the columns are first added so pre-existing snapshot rows
     carry the same quality signal new writes persist directly.
     """
-    rows = conn.execute(
-        "SELECT tenant_id, job_url, snapshot_set_json FROM posting_snapshot_sets"
-    ).fetchall()
+    rows = conn.execute("SELECT tenant_id, job_url, snapshot_set_json FROM posting_snapshot_sets").fetchall()
     for row in rows:
         raw_json = row["snapshot_set_json"] if isinstance(row, sqlite3.Row) else row[2]
         try:
@@ -2454,10 +2499,7 @@ def ensure_source_observation_tables(conn: sqlite3.Connection | None = None) -> 
     backfilled = conn.execute("SELECT COUNT(*) FROM job_source_observations").fetchone()[0]
     if backfilled == 0:
         observation_columns = {
-            str(row[1])
-            for row in conn.execute(
-                "PRAGMA table_info(job_source_observations)"
-            ).fetchall()
+            str(row[1]) for row in conn.execute("PRAGMA table_info(job_source_observations)").fetchall()
         }
         identity_column = "job_id" if "job_id" in observation_columns else "job_url"
         if identity_column == "job_id":
@@ -2465,9 +2507,7 @@ def ensure_source_observation_tables(conn: sqlite3.Connection | None = None) -> 
                 "SELECT tenant_id, job_id, url, site, strategy, discovered_at FROM jobs"
             ).fetchall()
         else:
-            legacy_jobs = conn.execute(
-                "SELECT url, site, strategy, discovered_at FROM jobs"
-            ).fetchall()
+            legacy_jobs = conn.execute("SELECT url, site, strategy, discovered_at FROM jobs").fetchall()
         if legacy_jobs:
             now = datetime.now(timezone.utc).isoformat()
             for row in legacy_jobs:
@@ -2600,12 +2640,7 @@ def ensure_discovery_search_unit_tables(
         )
         """
     )
-    search_unit_columns = {
-        str(row[1])
-        for row in conn.execute(
-            "PRAGMA table_info(discovery_search_units)"
-        ).fetchall()
-    }
+    search_unit_columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(discovery_search_units)").fetchall()}
     if "reset_checkpoint_after_revision" not in search_unit_columns:
         conn.execute(
             """
@@ -2709,17 +2744,13 @@ def _backfill_one_observation_row(
         job_id = row["job_id"] if isinstance(row, sqlite3.Row) else row[1]
         url = row["url"] if isinstance(row, sqlite3.Row) else row[2]
         site = (row["site"] if isinstance(row, sqlite3.Row) else row[3]) or "unknown"
-        discovered_at = (
-            row["discovered_at"] if isinstance(row, sqlite3.Row) else row[5]
-        ) or now
+        discovered_at = (row["discovered_at"] if isinstance(row, sqlite3.Row) else row[5]) or now
     else:
         tenant_id = "local"
         job_id = None
         url = row["url"] if isinstance(row, sqlite3.Row) else row[0]
         site = (row["site"] if isinstance(row, sqlite3.Row) else row[1]) or "unknown"
-        discovered_at = (
-            row["discovered_at"] if isinstance(row, sqlite3.Row) else row[3]
-        ) or now
+        discovered_at = (row["discovered_at"] if isinstance(row, sqlite3.Row) else row[3]) or now
     if not url:
         return
     source_native_id = url  # fall back to the URL when we have nothing better
@@ -2782,12 +2813,9 @@ _ENRICHMENT_JOIN: str = (
 
 _EFFECTIVE_FULL_DESCRIPTION: str = "je.full_description"
 _EFFECTIVE_APPLICATION_URL: str = "je.application_url"
-_EFFECTIVE_APPLY_TARGET_URL: str = (
-    f"COALESCE(NULLIF({_EFFECTIVE_APPLICATION_URL}, ''), jobs.url)"
-)
+_EFFECTIVE_APPLY_TARGET_URL: str = f"COALESCE(NULLIF({_EFFECTIVE_APPLICATION_URL}, ''), jobs.url)"
 _ENRICHMENT_PENDING: str = (
-    "(je.job_id IS NULL OR je.current_status = 'pending') "
-    "AND COALESCE(jss_enrich.state, 'pending') = 'pending'"
+    "(je.job_id IS NULL OR je.current_status = 'pending') AND COALESCE(jss_enrich.state, 'pending') = 'pending'"
 )
 _ENRICHMENT_SELECTED_PENDING: str = (
     "(je.job_id IS NULL OR je.current_status = 'pending') "
@@ -2799,20 +2827,15 @@ _ENRICHMENT_RETRYABLE_ROBOTS_BLOCKED: str = (
     "AND jss_enrich.error_code = 'ENRICH_ROBOTS_DISALLOWED' "
     "AND COALESCE(jss_enrich.retryable, 1) = 1"
 )
-_ENRICHMENT_RUNNABLE: str = (
-    f"(({_ENRICHMENT_PENDING}) OR ({_ENRICHMENT_RETRYABLE_ROBOTS_BLOCKED}))"
-)
-_ENRICHMENT_SELECTED_RUNNABLE: str = (
-    f"(({_ENRICHMENT_SELECTED_PENDING}) OR ({_ENRICHMENT_RETRYABLE_ROBOTS_BLOCKED}))"
-)
+_ENRICHMENT_RUNNABLE: str = f"(({_ENRICHMENT_PENDING}) OR ({_ENRICHMENT_RETRYABLE_ROBOTS_BLOCKED}))"
+_ENRICHMENT_SELECTED_RUNNABLE: str = f"(({_ENRICHMENT_SELECTED_PENDING}) OR ({_ENRICHMENT_RETRYABLE_ROBOTS_BLOCKED}))"
 
 # Closed/removed posting states are Enrichment-owned facts, not user
 # tombstones. Work queues treat them as non-actionable while leaving the
 # rows available for the Jobs > closed tab and future rediscovery.
 _CLOSED_ACTIVE_STATES_SQL = "'closed', 'expired', 'removed', 'location_incompatible'"
 _ACTIVE_STATE_JOIN: str = (
-    "LEFT JOIN posting_snapshot_sets pss "
-    "ON pss.tenant_id = jobs.tenant_id AND pss.job_id = jobs.job_id"
+    "LEFT JOIN posting_snapshot_sets pss ON pss.tenant_id = jobs.tenant_id AND pss.job_id = jobs.job_id"
 )
 _NOT_CLOSED_ACTIVE_STATE: str = (
     f"(pss.latest_active_state IS NULL OR pss.latest_active_state NOT IN ({_CLOSED_ACTIVE_STATES_SQL}))"
@@ -3059,8 +3082,7 @@ def get_stats(conn: sqlite3.Connection | None = None) -> dict:
     ).fetchone()[0]
 
     stats["detail_errors"] = conn.execute(
-        f"SELECT COUNT(*) FROM jobs {_ENRICHMENT_JOIN} "
-        "WHERE je.current_status = 'failed'"
+        f"SELECT COUNT(*) FROM jobs {_ENRICHMENT_JOIN} WHERE je.current_status = 'failed'"
     ).fetchone()[0]
 
     # Scoring stage — use the same canonical score join as worker queues.

@@ -8,6 +8,7 @@ through the ``ScoreRepository`` adapter — never to the legacy
 from __future__ import annotations
 
 import sqlite3
+import json
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
@@ -36,7 +37,6 @@ from jobctrl.domain.scoring import (
     ScoreBreakdown,
     ScoringCriteria,
     ScoringPolicy,
-    ScoreTrace,
     WeightedScoreDimension,
 )
 from jobctrl.domain.tenant import LOCAL_TENANT
@@ -97,10 +97,14 @@ class _ScriptedLlm:
             return self._DRAIN
         next_payload = self._queue.pop(0)
         if isinstance(next_payload, str):
-            # Scripted-error path: pretend the JSON came back as a non-dict
-            # so the parser can flip ok=False without a network round-trip.
-            return next_payload  # type: ignore[return-value]
-        return dict(next_payload)
+            return next_payload
+        from tests.test_score_use_cases import _cited_decision
+
+        payload = dict(next_payload)
+        eligibility = payload.get("eligibility")
+        if eligibility and eligibility.get("hard_blockers") == []:
+            payload["eligibility"] = {"status": eligibility["status"], "blockers": [], "warnings": []}
+        return _cited_decision(payload, messages)
 
     def ask(self, prompt: str, **kwargs: Any) -> str:  # pragma: no cover
         raise AssertionError("ScoreJobUseCase should not call ask()")
@@ -130,6 +134,7 @@ class _AnalyzeUseCase:
                 title=str(job.get("title") or ""),
                 description=str(job.get("full_description") or job.get("description") or ""),
                 generation=self.generation,
+                job=job,
             )
         )
 
@@ -155,8 +160,57 @@ def _stub_default_analyzer(monkeypatch) -> None:
     monkeypatch.setattr(
         scorer_module,
         "build_analyze_use_case",
-        lambda *, conn, publisher=None, event_stage, record_cached_hits=True: _AnalyzeUseCase(),
+        lambda *, conn, tenant_id, publisher=None, event_stage, record_cached_hits=True: _AnalyzeUseCase(),
     )
+
+
+@pytest.fixture(autouse=True)
+def determination_ports(monkeypatch):
+    from tests.test_semantic_determinations import Repository
+    from tests.compensation_fakes import ClassificationModel
+    from jobctrl.domain.enrichment.interpretation import ModelJobInterpreter
+    from jobctrl.domain.determinations import Source
+    from jobctrl.domain.job_snapshot import build_jd_snapshot
+
+    original = scorer_module._build_use_case
+
+    def build(**kwargs):
+        llm = kwargs.get("llm_port")
+        repo = Repository()
+        kwargs["determination_dependencies"] = dict(
+            llm=llm,
+            repository=repo,
+            tenant_id="local",
+            provider="synthetic",
+            model="synthetic",
+            lane="scoring",
+            preflight=lambda: None,
+        )
+
+        def interpreted(job):
+            interpreter = ModelJobInterpreter(
+                llm=ClassificationModel(),
+                repository=repo,
+                tenant_id="local",
+                provider="synthetic",
+                model="synthetic",
+                lane="enrichment",
+                preflight=lambda: None,
+            )
+            return interpreter.interpret(
+                entity_id=job["job_id"],
+                posting=Source(source_id="posting", text=build_jd_snapshot(job)),
+                fields=[],
+                requirements=[],
+            )[0]
+
+        kwargs["job_interpretation_reader"] = interpreted
+        kwargs["confirmed_preferences_reader"] = lambda snapshot, criteria: [
+            Source(source_id="target:roles:0", text="Synthetic saved target")
+        ]
+        return original(**kwargs)
+
+    monkeypatch.setattr(scorer_module, "_build_use_case", build)
 
 
 def _job_id(url: str) -> JobId:
@@ -196,6 +250,7 @@ def _seed_pending_job(conn: sqlite3.Connection, url: str) -> None:
         (LOCAL_TENANT, job_id, url, "2024-01-01T00:00:00+00:00", "2024-01-01T00:00:00+00:00"),
     )
     from .availability_fixture import seed_fresh_availability
+
     seed_fresh_availability(conn, str(job_id), str(LOCAL_TENANT))
     conn.commit()
 
@@ -207,6 +262,7 @@ def _employer_analysis(
     title: str = "Engineer",
     description: str = "Need Python.",
     generation: int = 1,
+    job: dict | None = None,
 ) -> EmployerAnalysis:
     canonical = JobAnalysis(
         role_framing="Platform ownership.",
@@ -233,7 +289,11 @@ def _employer_analysis(
         tenant_id=LOCAL_TENANT,
         job_id=job_id or _job_id(job_url),
         generation=generation,
-        snapshot_hash=compute_snapshot_hash(f"{title.strip()}\n\n{description.strip()}"),
+        snapshot_hash=compute_snapshot_hash(
+            __import__("jobctrl.domain.job_snapshot", fromlist=["build_jd_snapshot"]).build_jd_snapshot(
+                job or {"title": title, "description": description}
+            )
+        ),
         canonical=canonical,
         sub_analyses=(),
         failures=(),
@@ -272,6 +332,7 @@ def _seed_pending_job_with_description(
         (LOCAL_TENANT, job_id, url, discovered_at, discovered_at),
     )
     from .availability_fixture import seed_fresh_availability
+
     seed_fresh_availability(conn, str(job_id), str(LOCAL_TENANT))
     conn.commit()
 
@@ -285,7 +346,23 @@ def profile_snapshot(tmp_path):
         "personal": {"full_name": "Tester"},
         "resume": {
             "executive_profile": {"baseline_text": "Engineer."},
-            "experience_entries": [{"id": "r1", "title": "Engineer", "company": "Acme"}],
+            "experience_entries": [
+                {
+                    "id": "r1",
+                    "title": "Engineer",
+                    "company": "Acme",
+                    "achievement_evidence": [
+                        {
+                            "id": "platform",
+                            "user_confirmed": True,
+                            "source_text": "Engineer with Python.",
+                            "tools": ["Python"],
+                            "metrics": [],
+                            "tags": [],
+                        }
+                    ],
+                }
+            ],
             "education_entries": [],
             "skill_categories": [],
         },
@@ -517,132 +594,6 @@ def test_score_job_by_url_syncs_existing_blocked_score_to_downstream_stages(
     assert all("candidate requires sponsorship" in row["error_message"] for row in rows)
 
 
-@pytest.mark.parametrize("automatic_recovery", [False, True])
-def test_score_job_by_url_reuses_direct_score_for_reference_repost(
-    conn: sqlite3.Connection,
-    profile_snapshot,
-    monkeypatch,
-    automatic_recovery,
-) -> None:
-    direct_url = "https://es.indeed.com/viewjob?jk=direct-ai-security"
-    repost_url = "https://www.linkedin.com/jobs/view/reference-ai-security"
-    criteria = ScoringCriteria()
-    _seed_pending_job_with_description(
-        conn,
-        url=direct_url,
-        title="AI Security Director",
-        company="Arxada",
-        location="Barcelona, Catalonia, Spain",
-        description="Lead AI security strategy, governance, controls, risk, and senior stakeholder alignment.",
-        discovered_at="2026-06-17T18:51:29+00:00",
-        application_url="https://example.workdayjobs.com/job/AI-Security-Director_R53680",
-    )
-    _seed_pending_job_with_description(
-        conn,
-        url=repost_url,
-        title="AI Security Director - TWE45972",
-        company="twentyAI",
-        location="Barcelona, Catalonia, Spain",
-        description="Establish and lead an AI Security capability across a large enterprise.",
-        discovered_at="2026-06-17T18:51:30+00:00",
-    )
-    conn.execute(
-        """
-        INSERT INTO job_canonical_identities (
-            tenant_id, job_id, canonical_url, ats_kind, source_native_id, confidence, resolved_at
-        ) VALUES (
-            'local',
-            (SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?),
-            ?,
-            'workday',
-            'AI-Security-Director_R53680',
-            0.82,
-            ?
-        )
-        """,
-        (
-            direct_url,
-            "https://example.workdayjobs.com/job/AI-Security-Director_R53680",
-            "2026-06-17T18:51:29+00:00",
-        ),
-    )
-    repo = SqliteScoreRepository(conn)
-    repo.save(
-        JobScore.initial(
-            tenant_id=LOCAL_TENANT,
-            job_id=_job_id(direct_url),
-            fit_score=FitScore.create(9),
-            breakdown=ScoreBreakdown(reasoning="Direct canonical score."),
-            matched_keywords=MatchedKeywords.from_iterable(["AI Security"]),
-            scored_at="2026-06-18T12:52:15+00:00",
-            criteria=criteria,
-            trace=ScoreTrace(
-                criteria_version=criteria.criteria_version,
-                profile_snapshot_version=profile_snapshot.version,
-            ),
-        )
-    )
-    monkeypatch.setattr(scorer_module, "get_connection", lambda: conn)
-    llm = _ScriptedLlm(
-        {
-            "score": 10,
-            "technical_fit": 10,
-            "experience_fit": 10,
-            "role_fit": 10,
-            "keywords": ["AI Security"],
-            "reasoning": "would drift if called",
-        }
-    )
-
-    owned_args = {}
-    if automatic_recovery:
-        set_stage_state(
-            conn, _job_id(repost_url), "score", "queued", attempt_count=2,
-            metadata={"automaticPreparation": {"workflowId": "prepare-auto-local-score-reuse"}},
-            validate_transition=False,
-        )
-        conn.commit()
-        owned_args = {
-            "workflow_id": "reuse-run", "recovery_workflow_id": "prepare-auto-local-score-reuse",
-            "enforce_workflow_ownership": True,
-        }
-    outcome = scorer_module.score_job_by_id(
-        _job_id(repost_url),
-        **owned_args,
-        profile_snapshot=profile_snapshot,
-        resume_text="AI security leader.",
-        criteria=criteria,
-        repository=repo,
-        llm_port=llm,
-    )
-
-    assert outcome.ok is True
-    assert llm.calls == 0
-    repost_score = repo.load(LOCAL_TENANT, _job_id(repost_url))
-    assert repost_score is not None
-    assert repost_score.fit_score.value == 9
-    stage = _stage_row(conn, repost_url, "score")
-    assert stage["state"] == "succeeded"
-    assert stage["attempt_count"] == (3 if automatic_recovery else 1)
-    event = conn.execute(
-        """
-        SELECT event_type, message
-        FROM job_events
-        WHERE tenant_id = 'local'
-          AND job_id = (
-            SELECT job_id FROM jobs
-            WHERE tenant_id = 'local' AND url = ?
-          )
-          AND stage = 'score'
-        ORDER BY event_id DESC
-        LIMIT 1
-        """,
-        (repost_url,),
-    ).fetchone()
-    assert event["event_type"] == "StageCompleted"
-    assert event["message"] == "Fit score 9/10"
-
-
 def test_score_job_prompt_uses_company_not_source(
     conn: sqlite3.Connection,
     profile_snapshot,
@@ -689,7 +640,7 @@ def test_score_job_prompt_uses_company_not_source(
 
     assert outcome.ok is True
     prompt = llm.messages[0][1].content
-    assert "COMPANY: Auctane" in prompt
+    assert json.loads(prompt)["sources"][0]["text"].split("company:\n", 1)[1].split("\n\n", 1)[0] == "Auctane"
     assert "COMPANY: linkedin" not in prompt
 
 
@@ -726,12 +677,12 @@ def test_run_scoring_persists_via_repository_only(conn: sqlite3.Connection, prof
     )
     assert summary["scored"] == 1
     assert summary["errors"] == 0
-    assert summary["distribution"] == [(7, 1)]
+    assert summary["distribution"] == [(1, 1)]
     assert summary["scoredJobIds"] == [str(_job_id(url))]
 
     # New aggregate persisted.
     loaded = repo.load(LOCAL_TENANT, _job_id(url))
-    assert loaded is not None and loaded.fit_score.value == 7
+    assert loaded is not None and loaded.fit_score.value == 1
 
     # Legacy ``jobs`` columns untouched.
     legacy = conn.execute(
@@ -852,8 +803,8 @@ def test_run_scoring_loads_persisted_employer_analysis_into_prompt(
     assert summary["errors"] == 0
     prompt_payload = llm.messages[0][1].content
     assert "REQUIREMENT FIT INPUTS" in prompt_payload
-    assert '"id": "req-python-platform"' in prompt_payload
-    assert '"employer_analysis_generation": 1' in prompt_payload
+    assert '"id": "req-python-platform"' in json.loads(prompt_payload)["context"]["requirement_fit_inputs"]
+    assert '"employer_analysis_generation": 1' in json.loads(prompt_payload)["context"]["requirement_fit_inputs"]
     report = SqliteRequirementFitReportRepository(conn).load(LOCAL_TENANT, _job_id(url))
     assert report is not None
     assert report.score_version == 1
@@ -912,7 +863,7 @@ def test_run_scoring_falls_back_to_persisted_analysis_when_refresh_fails(
     assert summary["errors"] == 0
     assert analyze.calls == 1
     prompt_payload = llm.messages[0][1].content
-    assert '"id": "req-python-platform"' in prompt_payload
+    assert '"id": "req-python-platform"' in json.loads(prompt_payload)["context"]["requirement_fit_inputs"]
     report = SqliteRequirementFitReportRepository(conn).load(LOCAL_TENANT, _job_id(url))
     assert report is not None
     assert report.employer_analysis_generation == 1
@@ -962,7 +913,7 @@ def test_run_scoring_builds_score_stage_analyzer_without_cached_event_rows(
     _seed_pending_job(conn, url)
     captured: dict[str, Any] = {}
 
-    def _capture_build(*, conn, publisher=None, event_stage, record_cached_hits=True):
+    def _capture_build(*, conn, tenant_id, publisher=None, event_stage, record_cached_hits=True):
         captured["event_stage"] = event_stage
         captured["record_cached_hits"] = record_cached_hits
         return _AnalyzeUseCase()
@@ -1172,7 +1123,7 @@ def test_run_scoring_generates_employer_analysis_before_prompt(
     assert len(analyze.calls) == 1
     prompt_payload = llm.messages[0][1].content
     assert "REQUIREMENT FIT INPUTS" in prompt_payload
-    assert '"id": "req-python-platform"' in prompt_payload
+    assert '"id": "req-python-platform"' in json.loads(prompt_payload)["context"]["requirement_fit_inputs"]
     report = SqliteRequirementFitReportRepository(conn).load(LOCAL_TENANT, _job_id(url))
     assert report is not None
     assert report.employer_analysis_generation == 1
@@ -1316,8 +1267,8 @@ def test_run_scoring_reuses_same_content_score_for_duplicate_jobs(
     assert llm.calls == 1
     first_score = repo.load(LOCAL_TENANT, _job_id(first_url))
     duplicate_score = repo.load(LOCAL_TENANT, _job_id(duplicate_url))
-    assert first_score is not None and first_score.fit_score.value == 9
-    assert duplicate_score is not None and duplicate_score.fit_score.value == 9
+    assert first_score is not None and first_score.fit_score.value == 1
+    assert duplicate_score is not None and duplicate_score.fit_score.value == 1
 
 
 def test_run_scoring_reuses_existing_same_content_score_without_llm(
@@ -1383,96 +1334,7 @@ def test_run_scoring_reuses_existing_same_content_score_without_llm(
     assert summary["errors"] == 0
     assert second_llm.calls == 0
     pending_score = repo.load(LOCAL_TENANT, _job_id(pending_url))
-    assert pending_score is not None and pending_score.fit_score.value == 9
-
-
-def test_run_scoring_reuses_direct_score_for_reference_repost_without_llm(
-    conn: sqlite3.Connection, profile_snapshot, monkeypatch
-) -> None:
-    direct_url = "https://es.indeed.com/viewjob?jk=direct-ai-security"
-    repost_url = "https://www.linkedin.com/jobs/view/reference-ai-security"
-    criteria = ScoringCriteria()
-    _seed_pending_job_with_description(
-        conn,
-        url=direct_url,
-        title="AI Security Director",
-        company="Arxada",
-        location="Barcelona, Catalonia, Spain",
-        description="Lead AI security strategy, governance, controls, risk, and senior stakeholder alignment.",
-        discovered_at="2026-06-17T18:51:29+00:00",
-        application_url="https://example.workdayjobs.com/job/AI-Security-Director_R53680",
-    )
-    _seed_pending_job_with_description(
-        conn,
-        url=repost_url,
-        title="AI Security Director - TWE45972",
-        company="twentyAI",
-        location="Barcelona, Catalonia, Spain",
-        description="Establish and lead an AI Security capability across a large enterprise.",
-        discovered_at="2026-06-17T18:51:30+00:00",
-    )
-    conn.execute(
-        """
-        INSERT INTO job_canonical_identities (
-            tenant_id, job_id, canonical_url, ats_kind, source_native_id, confidence, resolved_at
-        ) VALUES (
-            'local',
-            (SELECT job_id FROM jobs WHERE tenant_id = 'local' AND url = ?),
-            ?,
-            'workday',
-            'AI-Security-Director_R53680',
-            0.82,
-            ?
-        )
-        """,
-        (
-            direct_url,
-            "https://example.workdayjobs.com/job/AI-Security-Director_R53680",
-            "2026-06-17T18:51:29+00:00",
-        ),
-    )
-    repo = SqliteScoreRepository(conn)
-    repo.save(
-        JobScore.initial(
-            tenant_id=LOCAL_TENANT,
-            job_id=_job_id(direct_url),
-            fit_score=FitScore.create(9),
-            breakdown=ScoreBreakdown(reasoning="Direct canonical score."),
-            matched_keywords=MatchedKeywords.from_iterable(["AI Security"]),
-            scored_at="2026-06-18T12:52:15+00:00",
-            criteria=criteria,
-            trace=ScoreTrace(
-                criteria_version=criteria.criteria_version,
-                profile_snapshot_version=profile_snapshot.version,
-            ),
-        )
-    )
-    monkeypatch.setattr(scorer_module, "get_connection", lambda: conn)
-    llm = _ScriptedLlm(
-        {
-            "score": 10,
-            "technical_fit": 10,
-            "experience_fit": 10,
-            "role_fit": 10,
-            "keywords": ["AI Security"],
-            "reasoning": "would drift if called",
-        }
-    )
-
-    summary = scorer_module.run_scoring(
-        profile_snapshot=profile_snapshot,
-        repository=repo,
-        llm_port=llm,
-        resume_text="AI security leader.",
-        criteria=criteria,
-    )
-
-    assert summary["scored"] == 1
-    assert summary["errors"] == 0
-    assert llm.calls == 0
-    repost_score = repo.load(LOCAL_TENANT, _job_id(repost_url))
-    assert repost_score is not None
-    assert repost_score.fit_score.value == 9
+    assert pending_score is not None and pending_score.fit_score.value == 1
 
 
 def test_run_scoring_records_failure_state_when_llm_returns_garbage(
@@ -1504,13 +1366,12 @@ def test_run_scoring_records_failure_state_when_llm_returns_garbage(
     assert repo.load(LOCAL_TENANT, _job_id(url)) is None
 
     stage_row = _stage_row(conn, url, "score")
-    assert stage_row["state"] == "failed"
-    assert "outside" in (stage_row["error_message"] or "").lower()
+    assert stage_row["state"] == "blocked"
+    assert stage_row["error_code"] == "SEMANTIC_SCHEMA_VIOLATION"
+    assert stage_row["error_message"] == "semantic_determination:schema_violation"
 
 
-def test_run_scoring_preselects_retrieval_top_k_before_llm(
-    conn: sqlite3.Connection, profile_snapshot, monkeypatch
-) -> None:
+def test_run_scoring_orders_by_recency_before_a_limit(conn: sqlite3.Connection, profile_snapshot, monkeypatch) -> None:
     relevant_url = "https://example.com/job/platform"
     stale_irrelevant_url = "https://example.com/job/retail"
     _seed_pending_job_with_description(
@@ -1550,8 +1411,8 @@ def test_run_scoring_preselects_retrieval_top_k_before_llm(
 
     assert summary["scored"] == 1
     assert summary["errors"] == 0
-    assert repo.load(LOCAL_TENANT, _job_id(relevant_url)) is not None
-    assert repo.load(LOCAL_TENANT, _job_id(stale_irrelevant_url)) is None
+    assert repo.load(LOCAL_TENANT, _job_id(stale_irrelevant_url)) is not None
+    assert repo.load(LOCAL_TENANT, _job_id(relevant_url)) is None
 
 
 # ---------------------------------------------------------------------------
@@ -1567,18 +1428,12 @@ def _score_attempt_count(conn: sqlite3.Connection, url: str) -> int:
 
 
 def _failing_llm() -> _ScriptedLlm:
-    # score=99 is outside [1, 10] → the parser flags ok=False, exercising
-    # the failure path without a network round-trip.
-    return _ScriptedLlm(
-        {
-            "score": 99,
-            "technical_fit": 0,
-            "experience_fit": 0,
-            "role_fit": 0,
-            "keywords": [],
-            "reasoning": "invalid",
-        }
-    )
+    class UnavailableProvider(_ScriptedLlm):
+        def chat_json(self, *args, **kwargs):
+            self.calls += 1
+            raise TimeoutError("Synthetic provider timeout")
+
+    return UnavailableProvider()
 
 
 def test_run_scoring_increments_score_attempts_until_cap(
@@ -1642,34 +1497,54 @@ def test_score_job_by_url_increments_score_attempts_on_failure(
 
 @pytest.mark.parametrize("cancel_before_finish", [False, True])
 def test_owned_existing_score_finishes_with_eligibility_and_owner_fence(
-    conn, profile_snapshot, monkeypatch, cancel_before_finish,
+    conn,
+    profile_snapshot,
+    monkeypatch,
+    cancel_before_finish,
 ):
     url = "https://example.test/existing-owned-score"
     _seed_pending_job(conn, url)
     job_id = _job_id(url)
     repository = SqliteScoreRepository(conn)
-    repository.save(JobScore.initial(
-        tenant_id=LOCAL_TENANT, job_id=job_id, fit_score=FitScore.create(3),
-        breakdown=ScoreBreakdown(reasoning="Below threshold."),
-        matched_keywords=MatchedKeywords.from_iterable([]), scored_at="2026-09-01T00:00:00Z",
-    ))
+    repository.save(
+        JobScore.initial(
+            tenant_id=LOCAL_TENANT,
+            job_id=job_id,
+            fit_score=FitScore.create(3),
+            breakdown=ScoreBreakdown(reasoning="Below threshold."),
+            matched_keywords=MatchedKeywords.from_iterable([]),
+            scored_at="2026-09-01T00:00:00Z",
+        )
+    )
     set_stage_state(
-        conn, job_id, "score", "queued", attempt_count=2,
+        conn,
+        job_id,
+        "score",
+        "queued",
+        attempt_count=2,
         metadata={"automaticPreparation": {"workflowId": "prepare-auto-local-score-existing"}},
         validate_transition=False,
     )
     conn.commit()
     monkeypatch.setattr(scorer_module, "get_connection", lambda: conn)
     if cancel_before_finish:
-        def revoke_before_finish(**kwargs):
+        original_load = repository.load
+
+        def revoke_before_finish(*args, **kwargs):
             set_stage_state(conn, job_id, "score", "canceled", attempt_count=2, validate_transition=False)
             conn.commit()
-            return None
-        monkeypatch.setattr(scorer_module, "_preferred_direct_score_for_repost", revoke_before_finish)
+            return original_load(*args, **kwargs)
+
+        monkeypatch.setattr(repository, "load", revoke_before_finish)
     result = scorer_module.score_job_by_id(
-        job_id, repository=repository, profile_snapshot=profile_snapshot, resume_text="Engineer.",
-        criteria=ScoringCriteria(), workflow_id="owned-run",
-        recovery_workflow_id="prepare-auto-local-score-existing", enforce_workflow_ownership=True,
+        job_id,
+        repository=repository,
+        profile_snapshot=profile_snapshot,
+        resume_text="Engineer.",
+        criteria=ScoringCriteria(),
+        workflow_id="owned-run",
+        recovery_workflow_id="prepare-auto-local-score-existing",
+        enforce_workflow_ownership=True,
     )
     assert result.ok
     row = _stage_row(conn, url, "score")

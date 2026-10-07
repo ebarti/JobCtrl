@@ -210,7 +210,7 @@ it explicitly; JobCtrl resolves it again at enable time and fails closed if it
 is no longer available. **Advanced: enter executable path** remains the manual
 fallback when no supported installation is listed.
 
-The extension also saves the current job page and reviews deterministic
+The extension also saves the current job page and reviews model-mapped
 profile-backed autofill suggestions. It talks only to JobCtrl's loopback API
 and cannot submit an application by itself. Pair it from the same Settings tab
 using the local browser-extension token, then wait for the separate live status
@@ -242,3 +242,10 @@ separate migrated database, and activates it before checking startup health.
 If activation or readiness fails, recovery restores the saved pair. An explicit
 rollback also restores the database snapshot associated with the previous
 release: data added since that snapshot is not carried backward.
+
+
+## Semantic Determination Authority
+
+Capabilities that interpret text require a ready provider and spend allowance. Saved settings drive provider search directly, and fetched jobs proceed to full-posting analysis/scoring without a separate model intake gate. Generation preserves accepted artifacts on failed refreshes. The extension proposes model-mapped, saved-profile-backed answers for review before filling. Affected offline-demo capabilities report unavailable.
+
+See [the decision](../decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.

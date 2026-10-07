@@ -66,10 +66,6 @@ export function patchSettingsResponse(
       current.effectiveSettings.tailoringJudgeModel,
       body.tailoringJudgeModel,
     ),
-    tailoringJudgeMinScore: persistedValue(
-      current.effectiveSettings.tailoringJudgeMinScore,
-      body.tailoringJudgeMinScore,
-    ),
     applyMaxBudgetUsd: persistedValue(
       current.effectiveSettings.applyMaxBudgetUsd,
       body.applyMaxBudgetUsd,
@@ -108,9 +104,6 @@ export function patchSettingsResponse(
         : {}),
       ...(body.tailoringJudgeModel !== undefined
         ? { tailoringJudgeModel: body.tailoringJudgeModel }
-        : {}),
-      ...(body.tailoringJudgeMinScore !== undefined
-        ? { tailoringJudgeMinScore: body.tailoringJudgeMinScore }
         : {}),
       ...(body.applyMaxBudgetUsd !== undefined
         ? { applyMaxBudgetUsd: body.applyMaxBudgetUsd }

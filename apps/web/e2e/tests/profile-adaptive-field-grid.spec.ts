@@ -304,7 +304,7 @@ test("resume template settings and persistence actions share the Plate editor wo
     page.getByRole("heading", { name: "Preferences", level: 1 }),
   ).toBeVisible({ timeout: 30_000 });
 
-  const editor = page.getByLabel("Resume template preview");
+  const editor = page.getByRole("region", { name: "Resume template preview", exact: true });
   const controls = editor.getByLabel("Template settings");
   const actions = controls.locator(".resume-template-actions");
   const toolbar = editor.locator(".resume-plate-toolbar");

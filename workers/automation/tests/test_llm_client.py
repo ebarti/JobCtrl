@@ -1,17 +1,17 @@
 """LLM client regressions."""
 
 from __future__ import annotations
-
 import json
 import math
-
 import httpx
 import pytest
-
 from jobctrl import llm
-from jobctrl.domain.materials.use_cases import TAILORED_RESUME_RESPONSE_SCHEMA
+from jobctrl.domain.materials.generation import GeneratedResumeDraft
 from jobctrl.llm import LLMClient
 from jobctrl.llm_lanes import bind_llm_lane
+
+
+TAILORED_RESUME_RESPONSE_SCHEMA = GeneratedResumeDraft.model_json_schema()
 
 
 @pytest.fixture(autouse=True)
@@ -137,6 +137,8 @@ def test_openai_compat_path_sends_strict_tailoring_schema() -> None:
     assert response_format["json_schema"]["strict"] is True
     schema = response_format["json_schema"]["schema"]
     experience_item = schema["properties"]["experience_updates"]["items"]
+    if "$ref" in experience_item:
+        experience_item = schema["$defs"][experience_item["$ref"].rsplit("/", 1)[-1]]
     assert set(experience_item["required"]) == {"id", "title", "bullets"}
 
 
