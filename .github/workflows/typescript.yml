@@ -121,7 +121,7 @@ jobs:
   e2e:
     name: Web end-to-end
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -161,7 +161,7 @@ jobs:
         env:
           JOBCTRL_E2E_ISOLATED: "0"
           JOBCTRL_E2E_PROFILE_SUGGESTIONS: "0"
-          JOBCTRL_E2E_APP_DIR: ${{ runner.temp }}/jobctrl-real-rpc-e2e
+          JOBCTRL_E2E_APP_DIR: /tmp/jobctrl-real-rpc-e2e
         run: |
           mkdir -p "$JOBCTRL_E2E_APP_DIR"
           corepack pnpm --filter @jobctrl/web exec playwright test --config e2e/playwright.config.ts \

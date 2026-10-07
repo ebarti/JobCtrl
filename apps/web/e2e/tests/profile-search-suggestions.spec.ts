@@ -1,5 +1,5 @@
 import Database from "better-sqlite3";
-import { test, expect } from "@playwright/test";
+import { test, expect, type Route } from "@playwright/test";
 import { checkA11y, injectAxe } from "axe-playwright";
 
 import { loadE2eDbPath } from "../fixtures/e2e-state.js";
@@ -28,6 +28,7 @@ test("Discovery Target search reviews persisted model decisions and saves only e
   const headers = { origin: new URL(baseURL!).origin, "sec-fetch-site": "same-origin" };
   const initial = await (await page.request.get("/v1/profile")).json();
   const profile = structuredClone(initial.profile);
+  profile.personal.full_name = "Synthetic Search Preferences";
   profile.experience.target_role = "Director of Platform";
   profile.experience.target_track = "Management";
   profile.experience.target_seniority_floor = "Manager";
@@ -110,22 +111,44 @@ test("Discovery Target search reviews persisted model decisions and saves only e
   await page.getByRole("checkbox", { name: "Select Model proposal A" }).check();
   await page.getByRole("button", { name: "Reject Model proposal B" }).click();
   await page.getByRole("button", { name: "Reject Model proposal C" }).click();
-  // Listen before editing can start an autosave: on slower runners the stale
-  // response may arrive before the explicit Save click.
+  // Hold the browser's first save until the independent API writer commits.
+  // This proves the 409 path without racing autosave timers or SSE refreshes.
+  let releaseSave!: () => void;
+  const saveGate = new Promise<void>((resolve) => { releaseSave = resolve; });
+  let heldSave = false;
+  const pauseProfileSave = async (route: Route) => {
+    if (route.request().method() === "PATCH" && !heldSave) {
+      heldSave = true;
+      await saveGate;
+    }
+    await route.continue();
+  };
+  await page.route("**/v1/profile", pauseProfileSave);
+  const browserSavePromise = page.waitForRequest((request) =>
+    new URL(request.url()).pathname === "/v1/profile" && request.method() === "PATCH",
+  );
   const staleSavePromise = page.waitForResponse((response) =>
     new URL(response.url()).pathname === "/v1/profile"
       && response.request().method() === "PATCH" && response.status() === 409,
   );
-  await page.getByRole("button", { name: "Add selected roles" }).click();
-  const externallyChanged = structuredClone(saved.profile);
-  externallyChanged.personal.full_name = "External Synthetic Update";
-  const external = await page.request.patch("/v1/profile", {
-    headers,
-    data: { profile: externallyChanged, expectedProfileVersion: saved.profileVersion },
-  });
-  expect(external.status(), await external.text()).toBe(200);
-  await page.getByRole("button", { name: "Save changes" }).click();
-  expect((await staleSavePromise).status()).toBe(409);
+  try {
+    await page.getByRole("button", { name: "Add selected roles" }).click();
+    await page.getByRole("button", { name: "Save changes" }).click();
+    await browserSavePromise;
+    const externallyChanged = structuredClone(saved.profile);
+    externallyChanged.personal.full_name = "External Synthetic Update";
+    const external = await page.request.patch("/v1/profile", {
+      headers,
+      data: { profile: externallyChanged, expectedProfileVersion: saved.profileVersion },
+    });
+    expect(external.status(), await external.text()).toBe(200);
+    expect((await external.json()).profileVersion).toBeGreaterThan(saved.profileVersion);
+    releaseSave();
+    expect((await staleSavePromise).status()).toBe(409);
+  } finally {
+    releaseSave();
+    if (!page.isClosed()) await page.unroute("**/v1/profile", pauseProfileSave);
+  }
   await expect(page.getByText(/saved profile changed/i).first()).toBeVisible();
   await expect(page.getByRole("textbox", { name: "Target roles 3", exact: true })).toHaveValue("Model proposal A");
   await page.getByRole("button", { name: "Rebase edits onto saved profile" }).click();
