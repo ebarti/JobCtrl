@@ -78,17 +78,83 @@ def test_saved_config_loads_literal_queries_and_criteria_without_touching_the_pr
 def test_location_and_work_model_controls_execute_without_geography_inference():
     raw = {"defaults": {"country_indeed": "saved-board-parameter"}}
     target = {
-        "locations": ["Authored location A", "Authored location B"],
-        "work_models": ["On-site", "Hybrid", "Remote"],
+        "locations": ["Authored location A", ""],
+        "work_models": ["hybrid, onsite", "remote"],
     }
     result = config._apply_profile_target_search(raw, target)
     assert result["locations"] == [
-        {"label": place, "location": place, "remote": remote}
-        for place in target["locations"]
-        for remote in (False, True)
+        {"label": "Authored location A", "location": "Authored location A", "remote": False},
+        {"label": "Remote", "location": "", "remote": True},
     ]
     assert result["defaults"] == raw["defaults"]
     assert result["confirmed_targets"] == target
+
+
+def _saved_location_rows(tmp_path, monkeypatch, locations, models):
+    db_path = tmp_path / "jobctrl.db"
+    monkeypatch.setattr(config, "DB_PATH", db_path)
+    conn = sqlite3.connect(db_path)
+    create_exact_v14_schema(conn)
+    conn.execute(
+        "INSERT INTO candidate_profiles(tenant_id,profile_id,version,experience_target_locations,experience_target_work_models,updated_at) VALUES('local','default',7,?,?,'2026-10-07')",
+        (locations, models),
+    )
+    conn.commit()
+    conn.close()
+
+
+def test_profile_editor_serialized_rows_become_their_own_board_parameters(tmp_path, monkeypatch):
+    _saved_location_rows(tmp_path, monkeypatch, "Authored location A; Authored location B; ", "Hybrid; onsite; remote")
+    assert config.load_search_config()["locations"] == [
+        {"label": "Authored location A", "location": "Authored location A", "remote": False},
+        {"label": "Authored location B", "location": "Authored location B", "remote": False},
+        {"label": "Remote", "location": "", "remote": True},
+    ]
+
+
+def test_multiple_editor_choices_in_one_row_decode_exact_codes(tmp_path, monkeypatch):
+    _saved_location_rows(tmp_path, monkeypatch, "Authored location", "remote, hybrid, onsite")
+    assert config.load_search_config()["locations"] == [
+        {"label": "Authored location", "location": "Authored location", "remote": True},
+        {"label": "Authored location", "location": "Authored location", "remote": False},
+    ]
+
+
+def test_invalid_board_control_only_blocks_planning_and_keeps_raw_sources(tmp_path, monkeypatch):
+    from jobctrl.discovery import activities
+    from jobctrl.infrastructure.network.politeness import PolitenessGateway
+    from temporalio.exceptions import ApplicationError
+
+    _saved_location_rows(tmp_path, monkeypatch, "Authored location", "unsupported_saved_value")
+    assert PolitenessGateway().user_agent.startswith("JobCtrl/")
+    assert config.load_source_registry()
+    assert config.load_saved_search_settings()["confirmed_targets"]["work_models"] == ["unsupported_saved_value"]
+    monkeypatch.setattr(activities, "begin_pipeline_step_attempt", lambda _scope: None)
+    with pytest.raises(ApplicationError) as raised:
+        activities.plan_discovery_sources(activities.PlanDiscoverySourcesInput(tenant_id="local"))
+    assert raised.value.type == "invalid_saved_work_model"
+    assert raised.value.non_retryable
+    assert "unsupported_saved_value" not in str(raised.value)
+
+
+def test_scoring_reads_saved_sources_without_materializing_board_controls(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from jobctrl.scoring import scorer
+    from jobctrl.domain.determinations import DeterminationFailure
+
+    _saved_location_rows(tmp_path, monkeypatch, "Authored location", "unsupported_saved_value")
+    monkeypatch.setattr(scorer, "ScoreJobUseCase", lambda **kwargs: SimpleNamespace(**kwargs))
+    use_case = scorer._build_use_case(
+        repository=object(),
+        determination_dependencies={"llm": None},
+        job_interpretation_reader=lambda _job: None,
+    )
+    criteria = SimpleNamespace(criteria_text="Authored criteria", target_criteria=None)
+    sources = use_case.confirmed_preferences_reader(SimpleNamespace(version=7), criteria)
+    assert {source.source_id: source.text for source in sources}["target:work_models:0"] == "unsupported_saved_value"
+    with pytest.raises(DeterminationFailure) as raised:
+        use_case.confirmed_preferences_reader(SimpleNamespace(version=8), criteria)
+    assert raised.value.code == "stale_profile_version"
 
 
 def test_unchanged_literal_settings_preserve_native_board_parameters():

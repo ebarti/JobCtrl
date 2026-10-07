@@ -145,11 +145,13 @@ func v14CandidatePath(stateDir, journalID string) string {
 
 func cleanupV14Candidate(stateDir, journalID string) {
 	candidate := v14CandidatePath(stateDir, journalID)
-	v12Intermediate := candidate + ".exact-v12-intermediate"
+	v13Intermediate := candidate + ".exact-v13-intermediate"
+	v12Intermediate := v13Intermediate + ".exact-v12-intermediate"
 	v11Intermediate := v12Intermediate + ".exact-v11-intermediate"
 	v10Intermediate := v11Intermediate + ".exact-v10-intermediate"
 	paths := []string{
 		candidate,
+		v13Intermediate,
 		v12Intermediate,
 		candidate + ".source-binding.json",
 		v11Intermediate,

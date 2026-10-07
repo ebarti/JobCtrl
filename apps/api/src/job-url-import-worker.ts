@@ -75,7 +75,7 @@ export function createWorkerJobUrlImporter(
         throw new JobUrlImportError("Only public HTTP or HTTPS job URLs can be imported.", 400);
       }
       const code=workflowResult.error_code?.replace(/^semantic_determination_/,"");
-      const safeCodes=["provider_unavailable","provider_error","budget_denied","malformed_json","schema_violation","foreign_source_id","non_verbatim_quote","mismatched_value","preferences_confirmation_required"];
+      const safeCodes=["provider_unavailable","provider_error","budget_denied","malformed_json","schema_violation","foreign_source_id","non_verbatim_quote","mismatched_value"];
       if(code && safeCodes.includes(code)) throw new JobUrlImportError(`Job interpretation unavailable: ${code}. Resolve the model or budget failure and retry import.`,503,code);
       throw new JobUrlImportError("Job import could not be completed.", 500);
     }

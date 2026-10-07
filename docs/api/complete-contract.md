@@ -1774,6 +1774,12 @@ title exclusions remain literal user-authorized filters. Saved criteria travel
 verbatim to posting and scoring determinations. No alias table expands titles,
 geographic token list removes a source, or lexical recall floor decides admission.
 
+Saved location and work-model rows remain paired. Work models are exact taxonomy
+codes or product labels, with comma-separated selections within a row. A
+location-less Remote row keeps an empty board location. Unsupported controls
+produce the non-retryable `invalid_saved_work_model` planning failure; readers,
+scoring and network identity do not materialize board controls.
+
 Intake rows are stored before model spending. `triageBatchSize` defaults to `20`
 and accepts `1–100`; `triageModel` optionally overrides the configured Discovery
 model. A cited posting-triage determination returns `admit`, `reject` or

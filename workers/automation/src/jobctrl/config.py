@@ -446,11 +446,17 @@ def ensure_dirs():
 
 
 def load_search_config() -> dict:
-    """Load discovery search configuration from SQLite, then overlay target search."""
+    """Materialize literal saved controls into executable board parameters."""
+    settings = load_saved_search_settings()
+    return _apply_profile_target_search(settings, settings["confirmed_targets"])
+
+
+def load_saved_search_settings() -> dict:
+    """Read canonical settings and sources without decoding board controls."""
     search_cfg = _load_discovery_search_config_from_db()
     if search_cfg is None:
         search_cfg = _default_discovery_search_config()
-    return effective_discovery_search_config(_apply_profile_target_search(search_cfg))
+    return {**effective_discovery_search_config(search_cfg), "confirmed_targets": _load_profile_target_search()}
 
 
 def effective_discovery_search_config(
@@ -640,18 +646,33 @@ def _apply_profile_target_search(search_cfg: dict, target: dict | None = None) -
         effective["queries"] = [{"query": role, "tier": 1} for role in dict.fromkeys(roles)]
     places = target.get("locations") or []
     work_models = target.get("work_models") or []
-    # Decode the product's saved choice values; never scan location prose.
-    remote_flags = {"": False, "On-site": False, "Hybrid": False, "Remote": True}
     if places or work_models:
-        if any(value not in remote_flags for value in work_models):
-            raise ValueError("invalid_saved_work_model")
-        selected_places = list(dict.fromkeys(str(value) for value in places if str(value).strip())) or [""]
-        selected_flags = list(dict.fromkeys(remote_flags[value] for value in work_models)) or [False]
-        effective["locations"] = [
-            {"label": place or ("Remote" if remote else ""), "location": place, "remote": remote}
-            for place in selected_places
-            for remote in selected_flags
-        ]
+        from jobctrl.domain.errors import SavedSearchSettingsError
+        from jobctrl.domain.taxonomy import SEMANTIC_TAXONOMY
+
+        # Exact codes and their product display labels are serialized choices,
+        # not synonyms inferred from location prose. Keep row counterparts.
+        labels = {label: code for code, label in SEMANTIC_TAXONOMY["workModel"].items() if code != "unknown"}
+        choices = {code: code for code in labels.values()} | labels
+        locations = []
+        seen = set()
+        for index in range(max(len(places), len(work_models))):
+            place = places[index] if index < len(places) else ""
+            saved = work_models[index] if index < len(work_models) else ""
+            if not isinstance(saved, str):
+                raise SavedSearchSettingsError()
+            selected = [value.strip() for value in saved.split(",")] if saved.strip() else []
+            if any(value not in choices for value in selected):
+                raise SavedSearchSettingsError()
+            flags = list(dict.fromkeys(choices[value] == "remote" for value in selected)) or [False]
+            for remote in flags:
+                key = (place, remote)
+                if key not in seen:
+                    seen.add(key)
+                    locations.append(
+                        {"label": place or ("Remote" if remote else ""), "location": place, "remote": remote}
+                    )
+        effective["locations"] = locations
     return effective
 
 
@@ -806,7 +827,7 @@ def resolve_jobspy_boards(search_cfg: dict | None = None, *, warn: bool = True) 
     ``sites`` remains accepted as a compatibility alias and logs a warning
     instead of failing existing local configs.
     """
-    cfg = search_cfg if search_cfg is not None else load_search_config()
+    cfg = search_cfg if search_cfg is not None else load_saved_search_settings()
     boards = _string_list(cfg.get("boards")) if isinstance(cfg, dict) else []
     legacy_sites = _string_list(cfg.get("sites")) if isinstance(cfg, dict) else []
     if boards:
@@ -1144,7 +1165,7 @@ def load_source_registry(
     employers_cfg: dict | None = None,
 ) -> list[SourceRegistryEntry]:
     """Generate registry entries from packaged YAML and broad-board config."""
-    active_search_cfg = search_cfg if search_cfg is not None else load_search_config()
+    active_search_cfg = search_cfg if search_cfg is not None else load_saved_search_settings()
     active_sites_cfg = sites_cfg if sites_cfg is not None else load_sites_config()
     active_employers_cfg = employers_cfg if employers_cfg is not None else load_employers_config()
     registry = [

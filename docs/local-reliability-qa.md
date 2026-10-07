@@ -266,3 +266,9 @@ Then use the actual Discovery path with saved targets and no interpretation
 receipt: board planning is literal and makes no provider call. Posting triage
 retains model authority and distinct failure handling. Verify the API and web
 join citations to the captured target sources and show no second approval step.
+Load the profile editor's actual serialized location rows and comma-separated
+work-model codes, including a location-less Remote row. Inspect their paired
+board parameters. Invalid work-model controls must produce a typed planning
+failure while fetching, scoring and raw source reads remain available. Native
+interruption checks capture stage names from the actual composite executors and
+prove recovery removes every staged candidate and SQLite sidecar.

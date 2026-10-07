@@ -247,7 +247,7 @@ class PersistedPostingTriage:
         return triage_postings(
             self._connection,
             postings,
-            search_cfg=self._search_cfg if self._search_cfg is not None else config.load_search_config(),
+            search_cfg=self._search_cfg if self._search_cfg is not None else config.load_saved_search_settings(),
             tenant_id=str(tenant_id),
             dependencies=self._dependencies,
         )

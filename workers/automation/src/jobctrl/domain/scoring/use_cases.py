@@ -78,7 +78,7 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-SCORE_PROMPT_VERSION = "score-fit-assessment-v7-confirmed-preferences"
+SCORE_PROMPT_VERSION = "score-fit-assessment-v8-saved-search-targets"
 SCORE_SCHEMA_VERSION = "score-fit-assessment-v5-determinations"
 SCORE_THINKING_BUDGET = 0
 

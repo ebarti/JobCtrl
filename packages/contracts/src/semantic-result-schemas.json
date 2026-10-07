@@ -3783,7 +3783,7 @@
     "schemaVersion": "2"
   },
   "scoring": {
-    "promptVersion": "score-fit-assessment-v7-confirmed-preferences",
+    "promptVersion": "score-fit-assessment-v8-saved-search-targets",
     "schema": {
       "$defs": {
         "Blocker": {

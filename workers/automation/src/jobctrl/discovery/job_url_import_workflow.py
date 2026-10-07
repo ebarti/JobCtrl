@@ -482,7 +482,7 @@ def execute_job_url_import(
         )
     if identity is None:
         triage_row = connection.execute(
-            "SELECT status,reason_code,failure_code FROM posting_triage WHERE tenant_id=? AND source_id='manual_url_import' AND json_extract(listing_json,'$.url')=? ORDER BY created_at DESC LIMIT 1",
+            "SELECT status,reason_code,failure_code FROM posting_triage WHERE tenant_id=? AND source_id='manual_url_import' AND json_extract(listing_json,'$.listing.url')=? ORDER BY created_at DESC LIMIT 1",
             (str(tenant_id), canonical_url),
         ).fetchone()
         if triage_row is None:

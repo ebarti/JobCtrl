@@ -3651,11 +3651,11 @@ def doctor() -> None:
 
     # --- Crawl politeness disclosure (R10) ---
     try:
-        from jobctrl.config import load_search_config as _load_search_config
+        from jobctrl.config import load_saved_search_settings
         from jobctrl.database import get_connection as _get_connection
 
         try:
-            politeness_cfg = _load_search_config()
+            politeness_cfg = load_saved_search_settings()
         except Exception:  # noqa: BLE001 - disclosure must not crash doctor.
             politeness_cfg = {}
         try:

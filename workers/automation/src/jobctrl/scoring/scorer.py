@@ -177,7 +177,7 @@ def _build_use_case(
         from jobctrl.domain.determinations import DeterminationFailure
 
         def read_preferences(snapshot, criteria):
-            cfg = config.load_search_config()
+            cfg = config.load_saved_search_settings()
             target = cfg.get("confirmed_targets") or {}
             if target.get("profile_version") != snapshot.version:
                 raise DeterminationFailure("stale_profile_version")

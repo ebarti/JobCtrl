@@ -256,12 +256,16 @@ func v10CandidateArtifactPaths(stateDir, journalID string) []string {
 
 func v14CandidateArtifactPaths(stateDir, journalID string) []string {
 	candidate := v14CandidatePath(stateDir, journalID)
-	v11Intermediate := candidate + ".exact-v11-intermediate"
+	v13Intermediate := candidate + ".exact-v13-intermediate"
+	v12Intermediate := v13Intermediate + ".exact-v12-intermediate"
+	v11Intermediate := v12Intermediate + ".exact-v11-intermediate"
 	v10Intermediate := v11Intermediate + ".exact-v10-intermediate"
 	basePaths := []string{
 		candidate,
 		candidate + ".source-binding.json",
 		v14SourcePreservationPath(stateDir, journalID),
+		v13Intermediate,
+		v12Intermediate,
 		v11Intermediate,
 		v10Intermediate,
 		v10Intermediate + ".exact-v9-intermediate",

@@ -106,7 +106,6 @@ def test_source_plan_activity_uses_plan_scope_and_family_count(
 @pytest.mark.parametrize(
     "code",
     [
-        "preferences_confirmation_required",
         "provider_unavailable",
         "provider_error",
         "budget_denied",
