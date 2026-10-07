@@ -162,6 +162,29 @@ def test_an_unresolved_candidate_does_not_stall_the_next_apply_claim(conn, monke
     assert conn.execute("SELECT COUNT(*) FROM job_events WHERE event_type='ApplicationSubmitted'").fetchone()[0] == 0
 
 
+def test_repeat_block_events_record_only_a_changed_failure_state(conn, monkeypatch):
+    from jobctrl.domain.determinations import DeterminationFailure
+
+    job_id = "90000000-0000-4000-8000-000000000093"
+    _insert_ready_job(conn, LOCAL_TENANT, job_id, url="https://example.test/jobs/blocked")
+    conn.commit()
+    monkeypatch.setattr("jobctrl.apply.launcher.get_connection", lambda: conn)
+    failure = ["repeat_equivalence_uncertain"]
+
+    def prepare(_connection, **kwargs):
+        raise DeterminationFailure(failure[0])
+
+    monkeypatch.setattr("jobctrl.domain.apply.repeat_application.prepare_repeat_application", prepare)
+    for _ in range(4):
+        assert acquire_job(tenant_id=LOCAL_TENANT, approval_required=False) is None
+    assert conn.execute("SELECT COUNT(*) FROM job_events WHERE event_type='RepeatApplicationCheckBlocked'").fetchone()[0] == 1
+    failure[0] = "budget_denied"
+    for _ in range(3):
+        assert acquire_job(tenant_id=LOCAL_TENANT, approval_required=False) is None
+    assert conn.execute("SELECT COUNT(*) FROM job_events WHERE event_type='RepeatApplicationCheckBlocked'").fetchone()[0] == 2
+    assert conn.execute("SELECT COUNT(*) FROM job_events WHERE event_type='ApplicationSubmitted'").fetchone()[0] == 0
+
+
 def _insert_approval_with_dry_run(
     conn: sqlite3.Connection,
     tenant_id: str,

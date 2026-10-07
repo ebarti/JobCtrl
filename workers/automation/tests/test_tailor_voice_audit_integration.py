@@ -1,21 +1,10 @@
-"""Phase 3: voice pass → re-validate → final audit, wired through the use case.
+"""Voice transformation and final determinations through TailorResumeUseCase.
 
-Integration-level tests over the real ``TailorResumeUseCase`` with scripted LLM
-responses, an injected fake ``VoicePort``, and in-memory fakes (mirrors the
-Phase-2 ``test_tailor_provenance_integration`` doubles). They pin the Phase-3
-acceptance gates end to end:
-
-  * the voice pass runs BEFORE the final audit, and the persisted provenance +
-    coverage are computed against the VOICED rendered text (GROUND-06);
-  * a voiced bullet is recorded with ``transform_type == voice`` (VOICE-02), and
-    the voice audit record + canonical coverage ride on the provenance set;
-  * provenance + the never-fabricate detector are RE-RUN after voice (VOICE-03):
-    a voice edit that injects an unsourced metric is rejected and the pre-voice
-    (clean) candidate is shipped instead, with the voice recorded not-accepted;
-  * coverage counts a keyword covered only when it appears in a provenance-backed
-    grounded bullet (success criterion 4) — measured against the rendered text;
-  * round-trip: every persisted provenance row's ``generated_text`` equals the
-    line the assembler renders into the shipped resume (audited == rendered).
+Explicit model verdicts control acceptance of changed text. Generators retain
+line IDs and evidence bindings, and each accepted rewrite receives its own claim,
+quality and high-fit persona determinations. The displayed receipts, persisted
+anchors and rendered artifact all refer to that final candidate. Optional voice
+provider and shape failures retain the already verified input.
 """
 
 from __future__ import annotations
@@ -481,8 +470,8 @@ def _use_case(materials_repo, provenance_repo, llm, publisher, voice, *, verdict
     )
 
 
-# The candidate the generator produces: buzzword-laden but grounded ("40%" is real,
-# "Owned" supplies the seniority signal the senior gate requires).
+# Synthetic wording supplied by the generator; support and voice acceptance are
+# selected explicitly by the model test double.
 _GENERATOR_BULLET = "Spearheaded a robust, scalable platform; owned the API and cut latency 40% with Python."
 _GENERATOR_SUMMARY = "Results-driven engineer leveraging robust scalable solutions to drive value."
 
@@ -509,7 +498,7 @@ def test_voice_runs_before_audit_and_provenance_anchors_to_voiced_text(tmp_path:
     publisher = _RecordingPublisher()
     llm = _approved_llm(_payload(_GENERATOR_BULLET, summary=_GENERATOR_SUMMARY))
     outcome = _use_case(materials_repo, provenance_repo, llm, publisher, voice).execute(
-        job=_job(), profile_snapshot=_snapshot(), tailored_dir=tmp_path
+        job={**_job(), "fit_score": 9}, profile_snapshot=_snapshot(), tailored_dir=tmp_path
     )
 
     assert outcome.status == "approved"
@@ -530,6 +519,15 @@ def test_voice_runs_before_audit_and_provenance_anchors_to_voiced_text(tmp_path:
     shipped = Path(outcome.text_path).read_text(encoding="utf-8")
     assert "Owned the API and cut latency 40% with Python." in shipped
     assert "spearheaded" not in shipped.lower()
+
+    # The displayed persona review must bind to the accepted rewrite, alongside
+    # its final claim and quality receipts, rather than the initial draft.
+    artifact = next(item for item in outcome.materials.artifacts if item.type.value == "tailored_resume")
+    metadata = artifact.metadata
+    final_persona = saved.voice.final_judge["adversarial_review"]["determination_id"]
+    assert metadata["resume_adversarial_id"] == final_persona
+    assert metadata["adversarial_review"]["determination_id"] == final_persona
+    assert outcome.report["adversarial_review"]["determination_id"] == final_persona
 
 
 def test_post_voice_judge_rejection_keeps_the_pre_voice_accepted_candidate(tmp_path: Path) -> None:

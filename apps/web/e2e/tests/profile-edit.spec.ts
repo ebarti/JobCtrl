@@ -534,7 +534,7 @@ test("Model Selection requires a ready provider and saves one provider preferenc
 
 test.describe("structured profile persistence", () => {
   test.skip(process.env["JOBCTRL_E2E_ISOLATED"] !== "1", "Requires the owned, no-subprocess API fixture");
-  const apiOrigin = `http://127.0.0.1:${process.env["JOBCTRL_E2E_API_PORT"]}`;
+  const apiOrigin = `http://127.0.0.1:${process.env["JOBCTRL_E2E_API_PORT"] ?? "8767"}`;
 
   async function selectPlateFieldContents(field: Locator): Promise<void> {
     // Deliver the native range change to Slate before the next keyboard edit.

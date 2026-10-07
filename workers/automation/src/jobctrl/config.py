@@ -697,7 +697,7 @@ def _load_profile_target_search() -> dict[str, list[str]]:
             "criteria": [
                 str(value)
                 for key in ("score_criteria", "target_criteria")
-                if (value := load_config_file(get_config_path()).get(key))
+                if (value := load_config_file(path=get_config_path()).get(key))
             ],
         }
     except Exception:

@@ -94,6 +94,12 @@ Discover run snapshots the window.
 default, configurable from 1 to 100. Every decision and pending failure appears
 in **Intake decisions**; rejected rows remain inspectable.
 
+Pending listings retain their posting payload. A later run can retry them even
+when the board no longer returns the listing, using at most one triage batch per
+source family and respecting the remaining new-job limit. If the provider is
+still unavailable, the saved batch remains pending and new listings can still
+enter intake.
+
 <a id="runtime-setting-triage-model"></a>
 **Triage model.** Optionally pin the configured Discovery model. An unavailable
 provider leaves intake rows pending. There is no local title/location fallback.

@@ -110,6 +110,12 @@ test("Discovery Target search reviews persisted model decisions and saves only e
   await page.getByRole("checkbox", { name: "Select Model proposal A" }).check();
   await page.getByRole("button", { name: "Reject Model proposal B" }).click();
   await page.getByRole("button", { name: "Reject Model proposal C" }).click();
+  // Listen before editing can start an autosave: on slower runners the stale
+  // response may arrive before the explicit Save click.
+  const staleSavePromise = page.waitForResponse((response) =>
+    new URL(response.url()).pathname === "/v1/profile"
+      && response.request().method() === "PATCH" && response.status() === 409,
+  );
   await page.getByRole("button", { name: "Add selected roles" }).click();
   const externallyChanged = structuredClone(saved.profile);
   externallyChanged.personal.full_name = "External Synthetic Update";
@@ -118,9 +124,6 @@ test("Discovery Target search reviews persisted model decisions and saves only e
     data: { profile: externallyChanged, expectedProfileVersion: saved.profileVersion },
   });
   expect(external.status(), await external.text()).toBe(200);
-  const staleSavePromise = page.waitForResponse((response) =>
-    new URL(response.url()).pathname === "/v1/profile" && response.request().method() === "PATCH",
-  );
   await page.getByRole("button", { name: "Save changes" }).click();
   expect((await staleSavePromise).status()).toBe(409);
   await expect(page.getByText(/saved profile changed/i).first()).toBeVisible();

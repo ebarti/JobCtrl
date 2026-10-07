@@ -10,10 +10,11 @@ export function recordModelDecision(
   entityId: string,
   result: object,
   tenantId = "local",
+  inputVersion?: string,
 ): string {
   const contract = schemas[kind];
   const id = createHash("sha256")
-    .update(JSON.stringify({ kind, entityId, result, tenantId }))
+    .update(JSON.stringify({ kind, entityId, result, tenantId, inputVersion }))
     .digest("hex");
   const envelope = {
     determination_id: id,
@@ -527,7 +528,7 @@ export function recordCandidateProposal(
     target_roles,
     target_preferences: [],
     experience_places: [],
-  });
+  }, "local", String(params.expectedProfileVersion));
   bindDecision(
     db,
     "profile",

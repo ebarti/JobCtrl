@@ -29,6 +29,44 @@ def test_config_preserves_authored_target_text_without_planning_queries():
     assert raw == original
 
 
+def test_saved_target_config_keeps_profile_version_and_literal_criteria(tmp_path, monkeypatch):
+    import json
+    import sqlite3
+    from jobctrl.infrastructure.migrations.schema_v13 import create_exact_v13_schema
+    from jobctrl.infrastructure.rpc import handlers
+
+    db_path = tmp_path / "jobctrl.db"
+    settings = tmp_path / "config.json"
+    settings.write_text(json.dumps({"score_criteria": "Authored scoring criteria", "target_criteria": "Authored target criteria"}))
+    monkeypatch.setattr(config, "DB_PATH", db_path)
+    monkeypatch.setenv("JOBCTRL_CONFIG_PATH", str(settings))
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    create_exact_v13_schema(conn)
+    conn.execute(
+        "INSERT INTO candidate_profiles(tenant_id,profile_id,version,experience_target_role,updated_at) VALUES('local','default',7,'Authored role','2026-10-07')"
+    )
+    conn.commit()
+    monkeypatch.setattr(handlers, "assert_expected_runtime", lambda **kwargs: None)
+    from jobctrl import database
+    monkeypatch.setattr(database, "init_db", lambda: conn)
+    monkeypatch.setattr(database, "close_connection", lambda: None)
+    try:
+        target = config.load_search_config()["confirmed_targets"]
+        assert target["profile_version"] == 7
+        assert target["roles"] == ["Authored role"]
+        assert target["criteria"] == ["Authored scoring criteria", "Authored target criteria"]
+        response = handlers.search_preferences({
+            "expectedAppDir": str(tmp_path), "expectedDbPath": str(db_path),
+            "tenantId": "local", "expectedProfileVersion": 7, "operation": "read",
+        })
+        assert response["profileVersion"] == 7
+        assert response["status"] == "missing"
+        assert response["determination"] is None
+    finally:
+        conn.close()
+
+
 @pytest.mark.parametrize("scope", ["jobspy", "ats_api", "workday", "smartextract"])
 def test_query_source_scope_is_a_literal_code(scope):
     assert query_applies_to_source({"query": "Literal query", "source_scope": [scope]}, scope)

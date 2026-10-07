@@ -204,7 +204,7 @@ const LIFECYCLE_EXPLANATION_CONTRACTS = [
       "Quarantine low-confidence content.",
       "Resolve duplicate identity.",
     ],
-    tokens: ["JSON-LD", "verbatim", "determination", "last accepted snapshot", "signals remain unknown", "operator override"],
+    tokens: ["JSON-LD", "verbatim", "determination", "last accepted snapshot", "signals remain unknown", "operator override", "Availability-only uncertainty does not create a content-review entry"],
   },
   {
     path: "/user/materials-and-tailoring",
@@ -216,20 +216,20 @@ const LIFECYCLE_EXPLANATION_CONTRACTS = [
   {
     path: "/user/outcomes-and-feedback",
     heading: "#how-email-becomes-an-outcome-suggestion",
-    labels: [],
+    labels: ["A user-started scan bounds application anchors.", "A model reads bounded headers.", "A second determination classifies the linked body.", "Both decisions are persisted.", "Accept or correct creates an outcome.", "Ignore records only the suggestion decision."],
     tokens: ["application anchors", "bounded headers", "verbatim span", "prompt/model versions", "blocked reason", "Raw bodies remain local", "applied_at", "discovered_at", "45-day", "five applied", "five response-time"],
   },
   {
     path: "/user/contacts-and-outreach",
     heading: "#how-research-and-draft-approval-work",
     labels: ["Check source policy before research.", "Keep findings as proposals.", "Verify the actual draft.", "Run independent quality review.", "Persist the gate result as authority.", "Stop at the clipboard."],
-    tokens: ["source", "claim", "quality", "clipboard"],
+    tokens: ["broad-web discovery", "needs_review", "persisted approved draft", "confirmed profile and contact facts", "recorded line IDs", "Both model verdicts must pass", "Stop at the clipboard"],
   },
   {
     path: "/user/compensation-evidence",
     heading: "#how-compensation-is-calculated",
-    labels: [],
-    tokens: ["source-bound", "taxonomy", "exact", "code equality", "Classification sources", "last accepted estimate", "2,080", "seven-day", "ECB", "0.1x", "10x", "factor_out_of_bounds", "Euro Top Tech", "Glassdoor", "Levels.fyi", "Reads are passive"],
+    labels: ["Employer-posted compensation", "Direct and extrapolated market benchmarks", "Reads are passive:"],
+    tokens: ["source-bound", "taxonomy", "exact", "code equality", "Classification sources", "last accepted estimate", "2,080", "seven-day", "ECB", "0.1x", "10x", "factor_out_of_bounds", "Euro Top Tech", "Glassdoor", "Levels.fyi", "Reads are passive", "opening a compensation panel neither fetches a provider nor refreshes an estimate"],
   },
 ];
 

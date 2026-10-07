@@ -10,15 +10,28 @@ rule, or accepted learning recommendation.
 
 ## How Email Becomes An Outcome Suggestion
 
-A user-started scan bounds application anchors, message count and date windows. Exact recipient, date, thread and domain checks remain code. A model reads bounded headers and determines which known application a message belongs to before its body is read. A second determination classifies the linked body, citing a verbatim span and returning confidence and rationale.
+1. **A user-started scan bounds application anchors.** Message count and date
+   windows are bounded too. Exact recipient, date, thread and domain checks remain
+   code.
+2. **A model reads bounded headers.** It determines which known application a
+   message belongs to before its body is read.
+3. **A second determination classifies the linked body.** It cites a verbatim
+   span and returns confidence and rationale.
+4. **Both decisions are persisted.** Prompt/model versions and an input
+   fingerprint let the dashboard suggestion trace to its recorded evidence. If
+   the provider is unavailable, spend is denied or binding is invalid, the scan
+   reports its blocked reason and creates no suggestion. Existing reviewed
+   outcomes remain unchanged.
+5. **Accept or correct creates an outcome.** The user reviews the suggestion
+   before it becomes an outcome.
+6. **Ignore records only the suggestion decision.** Raw bodies remain local
+   and stay out of broad projections, events and logs.
 
 Anchors come from applied job rows, reviewed outcomes and successful live Apply
 runs. The earliest qualifying anchor is kept for each job. A job row uses
 `applied_at`, falling back to `discovered_at` when a legacy applied row has no
 application timestamp. By default, the scan checks at most 25 anchors and five
 search results per anchor within a 45-day window starting at that anchor.
-
-Both decisions are persisted with prompt/model versions and an input fingerprint. The dashboard suggestion traces to this recorded evidence; phrase order and fixed confidence tables cannot set an outcome. If the provider is unavailable, spend is denied or binding is invalid, the scan reports its blocked reason and creates no suggestion. Existing reviewed outcomes remain unchanged. Accept or correct creates an outcome; ignore records only the suggestion decision. Raw bodies remain local and stay out of broad projections, events and logs.
 
 Analytics always show raw counts. Conversion rates require at least five applied
 records in a cohort; median response time requires five response-time samples.

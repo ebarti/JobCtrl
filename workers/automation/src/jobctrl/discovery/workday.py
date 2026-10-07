@@ -38,8 +38,7 @@ from jobctrl.infrastructure.network import (
     PolitenessSourceContext,
     build_opener,
 )
-from jobctrl.domain.discovery.triage import Listing
-from jobctrl.infrastructure.discovery.triage import listing_id, triage_listings
+from jobctrl.infrastructure.discovery.triage import posting_listing, triage_listings
 from jobctrl.infrastructure.discovery.sqlite_repository import SqliteJobRepository
 from jobctrl.infrastructure.discovery.live_browser import (
     LiveChromeDiscoveryClient,
@@ -617,21 +616,16 @@ def _search_and_fetch_one(
     active_cfg = search_cfg if search_cfg is not None else config.load_search_config()
     listing_rows = []
     valid_jobs = []
+    postings = {}
     for job in jobs:
-        url = _job_url(job, employers)
-        if not url:
+        posting = _posting_from_job(job, employers)
+        if posting is None:
             continue
-        source = _source_id(job, employers)
-        fields = dict(
-            title=str(job.get("title") or ""),
-            company=str(job.get("employer_name") or ""),
-            location=str(job.get("location") or ""),
-        )
-        listing_rows.append(
-            Listing(listing_id=listing_id(source, url, **fields), source_id=source, url=url, remote=None, **fields)
-        )
+        listing = posting_listing(posting)
+        listing_rows.append(listing)
+        postings[listing.listing_id] = posting
         valid_jobs.append(job)
-    decisions = triage_listings(get_connection(), listing_rows, search_cfg=active_cfg)
+    decisions = triage_listings(get_connection(), listing_rows, search_cfg=active_cfg, postings=postings)
     jobs = [
         job for job, listing in zip(valid_jobs, listing_rows, strict=True) if decisions[listing.listing_id] == "admit"
     ]

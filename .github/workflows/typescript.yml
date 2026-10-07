@@ -157,6 +157,16 @@ jobs:
           JOBCTRL_E2E_ISOLATED: "1"
           JOBCTRL_E2E_PROFILE_SUGGESTIONS: "1"
         run: corepack pnpm web:e2e
+      - name: Test real API and worker RPC boundaries
+        env:
+          JOBCTRL_E2E_ISOLATED: "0"
+          JOBCTRL_E2E_PROFILE_SUGGESTIONS: "0"
+          JOBCTRL_E2E_APP_DIR: ${{ runner.temp }}/jobctrl-real-rpc-e2e
+        run: |
+          mkdir -p "$JOBCTRL_E2E_APP_DIR"
+          corepack pnpm --filter @jobctrl/web exec playwright test --config e2e/playwright.config.ts \
+            e2e/tests/discovery-saved-views.spec.ts e2e/tests/repeat-application.spec.ts \
+            e2e/tests/dry-run-completed.spec.ts
 
   extension:
     name: Browser extension

@@ -282,9 +282,10 @@ class PersistedPostingTriage:
 
 
 def retry_pending_postings(
-    conn, *, search_cfg, tenant_id="local", discovery_execution=None, source_ids=(), dependencies=None
+    conn, *, search_cfg, tenant_id="local", discovery_execution=None, source_ids=(), dependencies=None,
+    source_family=None, limit=0, max_batches=1, cancel_event=None,
 ):
-    """Drain durable intake on a later discovery activity without fetching again."""
+    """Recover a bounded batch inside the heartbeating source-family activity."""
     from pydantic import TypeAdapter
     from jobctrl.domain.ports.discovery import ScrapedJobPosting
     from jobctrl.domain.discovery.use_cases import DiscoverJobsUseCase
@@ -296,38 +297,58 @@ def retry_pending_postings(
     batch_size = search_cfg.get("triage_batch_size", DEFAULT_TRIAGE_BATCH_SIZE)
     if type(batch_size) is not int or not 1 <= batch_size <= MAX_TRIAGE_BATCH_SIZE:
         raise ValueError("triage_batch_size must be an integer between 1 and 100")
+    if type(max_batches) is not int or max_batches < 1:
+        raise ValueError("max_batches must be a positive integer")
     source_clause = " AND source_id IN (" + ",".join("?" for _ in source_ids) + ")" if source_ids else ""
     source_families = {
         SearchStrategy.JOBSPY: "jobspy",
-        SearchStrategy.WORKDAY_API: "workday",
         SearchStrategy.SMART_EXTRACT: "smartextract",
         SearchStrategy.MANUAL: "ats_api",
     }
     resumed = 0
-    while True:
+    for _ in range(max_batches):
+        if cancel_event is not None and cancel_event.is_set():
+            return resumed
+        row_limit = min(batch_size, limit - resumed) if limit > 0 else batch_size
+        if row_limit <= 0:
+            return resumed
         rows = conn.execute(
             "SELECT posting_json FROM posting_triage WHERE tenant_id=? AND consumed_at IS NULL AND posting_json IS NOT NULL AND status IN ('pending_triage','admit')"
             + source_clause
             + " ORDER BY created_at,listing_id LIMIT ?",
-            (str(tenant_id), *source_ids, batch_size),
+            (str(tenant_id), *source_ids, row_limit),
         ).fetchall()
         if not rows:
             return resumed
         postings = list(dict.fromkeys(row[0] for row in rows))
         postings = [TypeAdapter(ScrapedJobPosting).validate_json(value) for value in postings]
+        def family_for(posting):
+            if posting.strategy == SearchStrategy.WORKDAY_API:
+                return "workday" if posting.source_id.startswith("workday:") else "ats_api"
+            return source_families[posting.strategy]
+
+        if source_family is not None:
+            postings = [posting for posting in postings if family_for(posting) == source_family]
+        if not postings:
+            return resumed
         triage = PersistedPostingTriage(conn, search_cfg=search_cfg, dependencies=dependencies)
         # Spend on a single batch before dispatching each admitted row through
         # its original source family and the current execution's write fences.
         triage.admit(tenant_id=TenantId(str(tenant_id)), postings=postings)
         for posting in postings:
+            if cancel_event is not None and cancel_event.is_set():
+                return resumed
+            if limit > 0 and resumed >= limit:
+                return resumed
             repository = SqliteJobRepository(
                 conn,
                 discovery_execution=discovery_execution,
-                source_family=source_families[posting.strategy] if discovery_execution else None,
+                source_family=family_for(posting) if discovery_execution else None,
             )
             summary = DiscoverJobsUseCase(
                 repository=repository,
                 publisher=DurableJobEventPublisher(conn, stage="discover"),
                 triage=triage,
             ).execute(tenant_id=TenantId(str(tenant_id)), postings=[posting])
-            resumed += summary.total
+            resumed += summary.new_jobs
+    return resumed

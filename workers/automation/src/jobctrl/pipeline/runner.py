@@ -1344,10 +1344,7 @@ def plan_discovery_source_families(
     """Plan the runnable discovery source families in legacy order."""
     conn = init_db()
     from jobctrl.infrastructure.discovery.query_plan import prepare_query_plan
-    from jobctrl.infrastructure.discovery.triage import retry_pending_postings
-
     search_cfg = config.load_search_config()
-    retry_pending_postings(conn, search_cfg=search_cfg, discovery_execution=discovery_execution, source_ids=source_ids)
     search_cfg = prepare_query_plan(conn, search_cfg)
     try:
         seed_discovery_control_queues(conn, config.load_source_registry(search_cfg=search_cfg))
@@ -1450,6 +1447,38 @@ def run_discovery_source_family(
         )
         return {"family": family, "status": status, "result": {}, "source_ids": [s.source_id for s in sources]}
 
+    def fetch_with_pending_intake(fetch, sources, run_id):
+        # The source-family activity already owns heartbeats and cancellation.
+        # Bound recovery to one configured batch, preserve the run's limit, and
+        # let new intake continue when the old batch is still unavailable.
+        from jobctrl.domain.determinations import DeterminationFailure
+        from jobctrl.infrastructure.discovery.triage import retry_pending_postings
+
+        resumed = 0
+        failure_code = None
+        runnable_ids = tuple(item.source_id for item in sources if item.should_run)
+        remaining = _discover_remaining_limit(start_count, limit)
+        if runnable_ids and not (family == "jobspy" and search_cfg.get("disable_jobspy", False)):
+            if not limit or remaining > 0:
+                try:
+                    resumed = retry_pending_postings(
+                        conn, search_cfg=search_cfg, discovery_execution=discovery_execution,
+                        source_ids=runnable_ids, source_family=family, limit=remaining,
+                        max_batches=1, cancel_event=cancel_event,
+                    )
+                except DeterminationFailure as exc:
+                    failure_code = exc.code
+        if cancel_event.is_set() or (limit > 0 and _discover_limit_consumed(start_count, limit)):
+            result = {"new": 0, "existing": 0}
+        else:
+            result = dict(fetch(run_id) or {})
+        if resumed:
+            result["new"] = int(result.get("new") or 0) + resumed
+            result["triage_resumed"] = resumed
+        if failure_code is not None:
+            result["pending_triage_retry_failure"] = failure_code
+        return result
+
     if family == "jobspy":
         if source_filter_active and not jobspy_sources:
             return {"family": family, "status": "skipped", "result": {}, "source_ids": []}
@@ -1470,7 +1499,7 @@ def run_discovery_source_family(
                 return {"new": 0, "existing": 0, "errors": 0, "db_total": 0, "queries": 0}
             run_kwargs: dict[str, Any] = {
                 "cfg": jobspy_cfg,
-                "limit": _scheduled_limit(schedule, "jobspy", limit),
+                "limit": _scheduled_limit(schedule, "jobspy", _discover_remaining_limit(start_count, limit)),
             }
             if discovery_execution is not None:
                 run_kwargs["discovery_execution"] = discovery_execution
@@ -1502,7 +1531,7 @@ def run_discovery_source_family(
         result_holder: dict[str, Any] = {}
 
         def capture_jobstreaming(run_id: str | None = None) -> dict:
-            result_holder.update(run_jobspy(run_id))
+            result_holder.update(fetch_with_pending_intake(run_jobspy, jobspy_sources, run_id))
             return result_holder
 
         status = _run_discovery_source(
@@ -1543,7 +1572,7 @@ def run_discovery_source_family(
         result_holder: dict[str, Any] = {}
 
         def capture_ats(run_id: str | None = None) -> dict:
-            result_holder.update(run_ats(run_id))
+            result_holder.update(fetch_with_pending_intake(run_ats, ats_sources, run_id))
             return result_holder
 
         status = _run_discovery_source(
@@ -1589,7 +1618,7 @@ def run_discovery_source_family(
         result_holder: dict[str, Any] = {}
 
         def capture_workday(run_id: str | None = None) -> dict:
-            result_holder.update(run_workday(run_id))
+            result_holder.update(fetch_with_pending_intake(run_workday, workday_sources, run_id))
             return result_holder
 
         status = _run_discovery_source(
@@ -1635,7 +1664,7 @@ def run_discovery_source_family(
         result_holder: dict[str, Any] = {}
 
         def capture_smart_extract(run_id: str | None = None) -> dict:
-            result_holder.update(run_smart_extract_source(run_id))
+            result_holder.update(fetch_with_pending_intake(run_smart_extract_source, smart_extract_sources, run_id))
             return result_holder
 
         status = _run_discovery_source(

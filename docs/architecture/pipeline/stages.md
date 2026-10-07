@@ -12,8 +12,8 @@ why a run failed at that stage.
 ## Discover
 
 Discover finds postings from configured sources, creates canonical job records
-and source observations, drains detail enrichment for jobs that pass the initial
-title/location filter, and then fans out per-job preparation. It owns source
+and source observations, drains detail enrichment for jobs admitted by the
+persisted intake determination, and then fans out per-job preparation. It owns source
 scheduling, source-quality feedback, canonical identity, dedupe, protected-source
 manual-capture queue entries, and posting hygiene. Scoring and Materials still
 own their own writes.
@@ -73,9 +73,10 @@ Key facts about the four activities:
 
 - **`plan_discovery_sources`** compiles the plan (which source families to run,
   progress totals, and the starting job count) from the source registry, source
-  quality, and the global limit. Target roles from the profile become two query
-  kinds — exact queries (from saved role text) and recall queries (generated from
-  target-role intent, enforcing track and seniority before scoring).
+  quality, and the global limit. A query-plan determination maps confirmed search
+  preferences to query strings, tiers and source scope. Intake triage determines
+  whether each returned listing matches that intent; code never reclassifies its
+  title, seniority or geography.
 - **`discovery_source_family`** runs *one* source family under
   `run_blocking_with_heartbeat` with a cooperative `cancel_event` and a 6-hour
   window (crawls legitimately run long). Each family is isolated: a broad-board, ATS,
@@ -89,6 +90,14 @@ Key facts about the four activities:
   placeholder like `failed: failed`. With `limit > 0` the cap is a **new-job
   budget** — rediscoveries record observations but do not consume the budget, so
   exact-query duplicates never starve later recall queries or sources.
+
+  Before fetching, the heartbeating activity recovers at most one configured
+  batch of unconsumed intake from its runnable sources, bounded by the remaining
+  new-job budget. A failed determination leaves that batch pending and allows
+  fresh intake to be captured. Cancellation prevents further ingestion. All
+  sources, including Workday, persist the canonical posting payload before triage;
+  recovery therefore needs no board re-fetch and retains the original source
+  family in execution lineage.
 
   The broad-board family further decomposes the immutable search plan into one
   query/location/board unit per JobStreaming stream. Each admitted lead is
@@ -357,19 +366,17 @@ resume generation, validation mode, retry/re-tailor decisions, and artifact
 registration; it never submits applications. In the product flow it is Discover
 subwork, with first-time manual tailoring exposed on the job detail page.
 
-The mechanism, in brief: one or more configured provider/model specs draft
-structured resume candidates; each candidate is validated independently against
-the profile contract, the rendered-text contract, and the tailoring quality
-plan; then `normal`/`strict` modes require a separate structured judge to return
-`PASS` at or above the configured threshold before approval (`lenient` skips the
-judge for low-cost local runs). Approved artifacts carry the selected generator,
-candidate summaries, judge model, judge score/verdict, prompt/schema versions,
-quality checks, and retry feedback as audit metadata; provider URLs and API keys
-are never persisted.
+Configured generators draft structured resume candidates with source anchors.
+Each candidate passes mechanical schema, ID, exact-value and rendering checks,
+then separate claim verification and quality judging. High-fit resumes also
+receive the six-persona determination. Typed model verdicts control acceptance;
+diagnostic scores and validation modes cannot bypass semantic verification.
+Approved artifacts carry the selected generator, candidate summaries,
+prompt/schema versions, model receipts, final line anchors and repair findings.
+Provider URLs and API keys are never persisted.
 
-Tailoring is where the fabrication gate and per-bullet claim grounding live.
-**For gate depth — the fabrication detector, claim-grounding, judge and
-adversarial personas, and repair loop — see [Resume Tailoring Logic](../tailoring.md).**
+For claim binding, the independent judge, adversarial personas and the repair
+loop, see [Resume Tailoring Logic](../tailoring.md).
 The Tailor stage emits `EmployerAnalyzed` (shared with scoring), `ResumeApproved`
 / `ResumeFailed`, and `BulletProvenanceRecorded`; successful tailoring proceeds
 into the Cover step. A terminal Tailor failure instead blocks unstarted Cover

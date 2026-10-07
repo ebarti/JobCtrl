@@ -193,6 +193,156 @@ def test_later_discovery_drains_intake_without_the_source_returning_it_again(ini
     assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 1
 
 
+def postings(count, *, source_id="jobspy:test", start=0, strategy=None):
+    from jobctrl.domain.discovery.identity import AtsKind
+    from jobctrl.domain.discovery.value_objects import Employer, JobMetadata, PostingUrl, SearchStrategy, Source
+    from jobctrl.domain.ports.discovery import ScrapedJobPosting
+
+    return [
+        ScrapedJobPosting(
+            posting_url=PostingUrl(f"https://example.test/pending/{index}"),
+            source=Source("Synthetic board"), employer=Employer("Synthetic employer"),
+            metadata=JobMetadata(title=f"Synthetic title {index}", description=f"Synthetic description {index}"),
+            strategy=strategy or SearchStrategy.JOBSPY, source_id=source_id,
+            source_native_id=str(index), canonical_url=f"https://example.test/pending/{index}", ats_kind=AtsKind.OTHER,
+        )
+        for index in range(start, start + count)
+    ]
+
+
+def test_pending_recovery_uses_one_batch_and_preserves_the_current_run_limit():
+    from jobctrl.domain.tenant import LOCAL_TENANT
+    from jobctrl.infrastructure.discovery.triage import PersistedPostingTriage, retry_pending_postings
+
+    model = Model()
+    conn, deps = setup(model)
+    with pytest.raises(DeterminationFailure, match="provider_unavailable"):
+        PersistedPostingTriage(conn, search_cfg=CFG, dependencies={**deps, "llm": None}).admit(
+            tenant_id=LOCAL_TENANT, postings=postings(41)
+        )
+    assert retry_pending_postings(conn, search_cfg=CFG, dependencies=deps) == 20
+    assert [len(call["context"]["listings"]) for call in model.calls] == [20]
+    assert conn.execute("SELECT COUNT(*) FROM posting_triage WHERE consumed_at IS NULL").fetchone()[0] == 21
+    assert retry_pending_postings(conn, search_cfg=CFG, dependencies=deps, limit=3) == 3
+    assert [len(call["context"]["listings"]) for call in model.calls] == [20, 3]
+    assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 23
+    assert conn.execute("SELECT COUNT(*) FROM posting_triage WHERE consumed_at IS NULL").fetchone()[0] == 18
+
+
+@pytest.mark.parametrize("cancel_after_call", [False, True])
+def test_cancellation_preserves_pending_intake_and_a_completed_verdict_can_resume_without_spend(cancel_after_call):
+    import threading
+    from jobctrl.domain.tenant import LOCAL_TENANT
+    from jobctrl.infrastructure.discovery.triage import PersistedPostingTriage, retry_pending_postings
+
+    canceled = threading.Event()
+
+    class CancelingModel(Model):
+        def chat_json(self, messages, **kwargs):
+            result = super().chat_json(messages, **kwargs)
+            canceled.set()
+            return result
+
+    model = CancelingModel()
+    conn, deps = setup(model)
+    with pytest.raises(DeterminationFailure, match="provider_unavailable"):
+        PersistedPostingTriage(conn, search_cfg=CFG, dependencies={**deps, "llm": None}).admit(
+            tenant_id=LOCAL_TENANT, postings=postings(2)
+        )
+    if not cancel_after_call:
+        canceled.set()
+    assert retry_pending_postings(conn, search_cfg=CFG, dependencies=deps, cancel_event=canceled) == 0
+    assert len(model.calls) == int(cancel_after_call)
+    assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM posting_triage WHERE consumed_at IS NULL").fetchone()[0] == 2
+    if cancel_after_call:
+        canceled.clear()
+        assert retry_pending_postings(conn, search_cfg=CFG, dependencies={**deps, "llm": None}, cancel_event=canceled) == 2
+        assert len(model.calls) == 1
+
+
+@pytest.mark.parametrize("source_id,family", [("workday:synthetic", "workday"), ("ats:synthetic", "ats_api")])
+def test_recovered_ats_posting_uses_its_original_execution_family(source_id, family):
+    from jobctrl.domain.discovery.value_objects import SearchStrategy
+    from jobctrl.domain.tenant import LOCAL_TENANT
+    from jobctrl.infrastructure.discovery.triage import PersistedPostingTriage, retry_pending_postings
+
+    conn, deps = setup(Model())
+    with pytest.raises(DeterminationFailure, match="provider_unavailable"):
+        PersistedPostingTriage(conn, search_cfg=CFG, dependencies={**deps, "llm": None}).admit(
+            tenant_id=LOCAL_TENANT, postings=postings(1, source_id=source_id, strategy=SearchStrategy.WORKDAY_API)
+        )
+    execution = DiscoveryExecutionRef("local", "synthetic-workflow", "synthetic-run")
+    assert retry_pending_postings(
+        conn, search_cfg=CFG, dependencies=deps, source_ids=(source_id,),
+        source_family=family, discovery_execution=execution,
+    ) == 1
+    assert tuple(conn.execute("SELECT source_family,cohort_kind FROM discovery_execution_jobs").fetchone()) == (
+        family, "observed_this_run",
+    )
+
+
+def test_workday_intake_survives_failure_and_recovers_without_another_board_search(monkeypatch):
+    from jobctrl.discovery import workday
+    from jobctrl.infrastructure.discovery.triage import retry_pending_postings
+
+    model = Model()
+    conn, deps = setup(model)
+    job = {"title": "Synthetic title", "location": "Synthetic location", "employer_key": "synthetic",
+           "employer_name": "Synthetic employer", "job_req_id": "synthetic-id",
+           "apply_url": "https://synthetic.wd1.myworkdayjobs.com/External/job/synthetic"}
+    employers = {"synthetic": {"name": "Synthetic employer", "_source_id": "workday:synthetic"}}
+    searches = []
+    monkeypatch.setattr(workday, "search_employer", lambda *args, **kwargs: searches.append(args) or [job])
+    monkeypatch.setattr(workday, "get_connection", lambda: conn)
+    monkeypatch.setattr(workday, "triage_listings", lambda *args, **kwargs: triage_listings(
+        *args, **kwargs, dependencies={**deps, "llm": None}
+    ))
+    monkeypatch.setattr(workday, "fetch_details", lambda *args, **kwargs: pytest.fail("No detail fetch before admission"))
+    with pytest.raises(DeterminationFailure, match="provider_unavailable"):
+        workday._search_and_fetch_one("synthetic", employers, "Synthetic query", search_cfg=CFG)
+    assert conn.execute("SELECT posting_json FROM posting_triage").fetchone()[0] is not None
+    assert retry_pending_postings(conn, search_cfg=CFG, source_ids=("workday:synthetic",), dependencies=deps) == 1
+    assert len(searches) == 1
+    assert tuple(conn.execute("SELECT title,url FROM jobs").fetchone()) == (job["title"], job["apply_url"])
+    assert conn.execute("SELECT consumed_at FROM posting_triage").fetchone()[0]
+
+
+def test_failed_backlog_retry_in_source_activity_does_not_block_new_intake(monkeypatch):
+    import jobctrl.infrastructure.discovery.triage as wiring
+    from jobctrl.discovery import jobspy
+    from jobctrl.domain.tenant import LOCAL_TENANT
+    from jobctrl.pipeline import runner
+
+    conn, deps = setup(None)
+    triage = wiring.PersistedPostingTriage(conn, search_cfg=CFG, dependencies=deps)
+    with pytest.raises(DeterminationFailure, match="provider_unavailable"):
+        triage.admit(tenant_id=LOCAL_TENANT, postings=postings(1))
+    source = SimpleNamespace(source_id="jobspy:test", should_run=True)
+    schedule = SimpleNamespace(for_prefix=lambda prefix: (source,) if prefix == "jobspy" else (), for_kinds=lambda *args: ())
+    monkeypatch.setattr(runner, "get_connection", lambda: conn)
+    monkeypatch.setattr(runner.config, "load_search_config", lambda: CFG)
+    monkeypatch.setattr(runner, "_plan_discovery_schedule", lambda *args, **kwargs: schedule)
+    monkeypatch.setattr(runner, "_smart_extract_sources", lambda *args: ())
+    monkeypatch.setattr(runner, "_jobspy_config_for_sources", lambda *args: {**CFG, "boards": ["test"]})
+    monkeypatch.setattr(runner, "_scheduled_limit", lambda *args: 0)
+    monkeypatch.setattr(wiring, "determination_dependencies", lambda *args, **kwargs: deps)
+    monkeypatch.setattr(runner, "_run_discovery_source", lambda _family, _label, _sources, run, **kwargs: run("synthetic") and "ok")
+    fetched = []
+
+    def fresh_intake(**kwargs):
+        fetched.append(True)
+        with pytest.raises(DeterminationFailure, match="provider_unavailable"):
+            triage.admit(tenant_id=LOCAL_TENANT, postings=postings(1, start=99))
+        return {"new": 0, "existing": 0, "errors": 1}
+
+    monkeypatch.setattr(jobspy, "run_discovery", fresh_intake)
+    result = runner.run_discovery_source_family("jobspy")
+    assert fetched == [True]
+    assert result["result"]["pending_triage_retry_failure"] == "provider_unavailable"
+    assert conn.execute("SELECT COUNT(*) FROM posting_triage WHERE status='pending_triage'").fetchone()[0] == 2
+
+
 def test_batch_size_is_configurable_and_preflight_runs_first():
     model = Model()
     checks = []

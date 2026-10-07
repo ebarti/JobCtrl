@@ -758,6 +758,30 @@ def _select_apply_candidates(conn, tenant_id, target_job_id, min_score):
     return candidate_rows
 
 
+def _record_repeat_check_blocked(conn, *, tenant_id, job_id, failure_code):
+    """Record a changed block state once, including concurrent acquisition passes."""
+    owns_transaction = not conn.in_transaction
+    if owns_transaction:
+        conn.execute("BEGIN IMMEDIATE")
+    try:
+        row = conn.execute(
+            "SELECT payload_json FROM job_events WHERE tenant_id=? AND job_id=? "
+            "AND stage='apply' AND event_type='RepeatApplicationCheckBlocked' ORDER BY event_id DESC LIMIT 1",
+            (str(tenant_id), str(job_id)),
+        ).fetchone()
+        if row is None or _payload_from_row(row).get("failureCode") != failure_code:
+            record_job_event(
+                conn, job_id, "apply", "RepeatApplicationCheckBlocked",
+                tenant_id=TenantId(str(tenant_id)), payload={"failureCode": failure_code},
+            )
+        if owns_transaction:
+            conn.commit()
+    except BaseException:
+        if owns_transaction:
+            conn.rollback()
+        raise
+
+
 def acquire_job(
     target_job_id: JobId | None = None,
     min_score: int = 7,
@@ -826,13 +850,8 @@ def _acquire_job_candidate(
                     prepare_repeat_application(conn, target_job_id=candidate["job_id"], tenant_id=TenantId(tenant_id))
                 except DeterminationFailure as exc:
                     repeat_blocked_ids.add(str(candidate["job_id"]))
-                    record_job_event(
-                        conn,
-                        candidate["job_id"],
-                        "apply",
-                        "RepeatApplicationCheckBlocked",
-                        tenant_id=TenantId(tenant_id),
-                        payload={"failureCode": exc.code},
+                    _record_repeat_check_blocked(
+                        conn, job_id=candidate["job_id"], tenant_id=tenant_id, failure_code=exc.code,
                     )
         conn.commit()
     try:
@@ -859,13 +878,8 @@ def _acquire_job_candidate(
                         target_job_id=candidate["job_id"],
                     )
                 except DeterminationFailure as exc:
-                    record_job_event(
-                        conn,
-                        candidate["job_id"],
-                        "apply",
-                        "RepeatApplicationCheckBlocked",
-                        tenant_id=TenantId(tenant_id),
-                        payload={"failureCode": exc.code},
+                    _record_repeat_check_blocked(
+                        conn, job_id=candidate["job_id"], tenant_id=tenant_id, failure_code=exc.code,
                     )
                     continue
                 if candidate_assessment["status"] in {"clear", "override_ready"}:

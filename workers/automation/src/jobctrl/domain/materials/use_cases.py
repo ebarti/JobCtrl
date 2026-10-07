@@ -1964,6 +1964,7 @@ class TailorResumeUseCase:
 
         judge_record = final_candidate.record.get("judge")
         report["final_judge"] = judge_record
+        report["adversarial_review"] = final_candidate.record.get("adversarial_review")
         resume_template = _resolve_effective_resume_template(
             self._repository,
             tenant_id,

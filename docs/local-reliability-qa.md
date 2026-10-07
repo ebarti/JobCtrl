@@ -223,7 +223,22 @@ persona audit. Optional voice provider or shape failures retain the already
 verified candidate and record the rejected rewrite. An unresolved repeat check
 parks its own candidate while another eligible candidate can be claimed. A new
 Discovery run retries unconsumed listings from durable intake even when the board
-does not return them again.
+does not return them again. Recovery runs inside the heartbeating source-family
+activity, is capped at one configured batch and the run's remaining limit, and
+honors cancellation before ingestion. Provider failure retains that batch and
+allows fresh listings to enter durable intake. Workday persists a posting payload
+before triage, so recovery needs no second board search.
+
+CI runs the full browser interaction suite against the isolated API fixture for
+explicit model results and controlled failure cases. A separate browser step
+uses the production API entry and Python JSON-RPC subprocess in another owned
+workspace, with profile-suggestion stubs disabled. It covers Discovery source
+views and the canonical preference read, repeat-application preparation and
+confirmation, and dry-run dispatch. Material workflow dispatch in this suite is
+synthetic; the local live-worker suite exercises actual Temporal dispatch and
+worker persistence. Opposing-verdict and failure tests exercise the production
+determination services through fake `LlmPort` implementations; these tests prove
+model authority and binding, without grading model decisions.
 
 Use the exact native schema-13 boundary to test migration from every supported
 source schema, stopped-runtime paired backups, source preservation, fenced
