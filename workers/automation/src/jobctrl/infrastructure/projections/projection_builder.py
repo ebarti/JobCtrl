@@ -987,6 +987,7 @@ class ProjectionBuilder:
         dirty_job_ids.update(self._stale_artifact_projection_jobs())
         dirty_job_ids.update(self._stale_stage_projection_jobs())
         dirty_job_ids.update(self._stale_compensation_projection_jobs())
+        dirty_job_ids.update(self._stale_analysis_projection_jobs())
 
         # One-time score-audit backfill (see SCORE_AUDIT_BACKFILL): rebuild any
         # already-projected scored job whose audit columns are still NULL. This
@@ -2880,6 +2881,29 @@ class ProjectionBuilder:
                    )
                 """,
                 (str(self._tenant_id),),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return set()
+        return {
+            str(row["job_id"] if not isinstance(row, tuple) else row[0])
+            for row in rows
+            if (row["job_id"] if not isinstance(row, tuple) else row[0])
+        }
+
+    def _stale_analysis_projection_jobs(self) -> set[str]:
+        """Rebuild cached analyses from older contracts even after event folding."""
+        from jobctrl.domain.materials.analysis import PROMPT_VERSION
+
+        try:
+            rows = self._conn.execute(
+                """
+                SELECT job_id FROM job_detail_projections
+                WHERE tenant_id = ? AND employer_analysis_json IS NOT NULL
+                  AND (CASE WHEN json_valid(employer_analysis_json)
+                       THEN json_extract(employer_analysis_json, '$.prompt_version')
+                       END) IS NOT ?
+                """,
+                (str(self._tenant_id), PROMPT_VERSION),
             ).fetchall()
         except sqlite3.OperationalError:
             return set()

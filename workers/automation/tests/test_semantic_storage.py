@@ -55,6 +55,23 @@ def test_cutover_preserves_accepted_artifact_bytes_and_authored_metadata(tmp_pat
         "INSERT INTO job_bullet_provenance (tenant_id,job_id,generation,bullet_id,artifact_id,section,transform_type,control,generated_text,created_at,voice_json) VALUES ('local',?,1,'line:1','owned-artifact','experience','rephrase','optional','Owned synthetic accepted artifact','2026-10-07',?)",
         (job_id, json.dumps({"accepted": True, "reason": "legacy lexical delta"})),
     )
+    connection.execute(
+        """INSERT INTO job_employer_analysis (
+            tenant_id,job_id,generation,snapshot_hash,prompt_version,sdk_set_version,
+            cache_key,inferred_seniority,legs_attempted,legs_succeeded,created_at
+        ) VALUES ('local',?,1,'historical','employer-analysis-v3','old-sdk',
+            'historical-cache','Historical free-text value',1,1,'2026-10-07')""",
+        (job_id,),
+    )
+    connection.execute(
+        "INSERT INTO job_detail_projections (tenant_id,job_id,employer_analysis_json) VALUES ('local',?,?)",
+        (job_id, json.dumps({"prompt_version": "employer-analysis-v3", "generation": 1})),
+    )
+    connection.execute(
+        "INSERT INTO event_watermarks (projection_name,last_event_id,updated_at) VALUES ('python:operations_projections:local',101,'2026-10-07')"
+    )
+    analysis_before = connection.execute("SELECT * FROM job_employer_analysis").fetchall()
+    watermark_before = connection.execute("SELECT * FROM event_watermarks").fetchall()
     connection.commit()
     upgrade_exact_v12_schema_to_v13(connection)
     assert source.read_bytes() == contents
@@ -71,6 +88,9 @@ def test_cutover_preserves_accepted_artifact_bytes_and_authored_metadata(tmp_pat
         }
     line = connection.execute("SELECT generated_text,voice_json FROM job_bullet_provenance").fetchone()
     assert line == ("Owned synthetic accepted artifact", None)
+    assert connection.execute("SELECT employer_analysis_json FROM job_detail_projections").fetchone() == (None,)
+    assert connection.execute("SELECT * FROM job_employer_analysis").fetchall() == analysis_before
+    assert connection.execute("SELECT * FROM event_watermarks").fetchall() == watermark_before
     connection.close()
 
 

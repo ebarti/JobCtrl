@@ -1256,7 +1256,9 @@ function applyAuditApplicationUrl(row: JobListProjectionRow): string | null {
 function parseEmployerAnalysis(value: string | null): EmployerAnalysis | null {
   if (!value) return null;
   try {
-    return JSON.parse(value) as EmployerAnalysis;
+    const analysis: unknown = JSON.parse(value);
+    if (!isRecord(analysis) || analysis.prompt_version !== EMPLOYER_ANALYSIS_PROMPT_VERSION) return null;
+    return analysis as unknown as EmployerAnalysis;
   } catch {
     return null;
   }

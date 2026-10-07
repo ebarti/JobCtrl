@@ -435,6 +435,14 @@ unchanged inputs reuse accepted determinations with zero calls. Failed refreshes
 preserve the last accepted artifact. Do not create eval sets, labeled corpora,
 baseline comparisons, English sentence corpora or recorded-output replay fixtures.
 
+For version changes, seed an obsolete analysis projection with already-folded
+event cursors. Both builders must rebuild it from the current canonical version
+without a new event, or expose no current analysis if none exists. The native
+cutover removes the cached shape while preserving canonical history, cursors
+and accepted artifact bytes. Citation format checks must reject fragments of
+numbers and dotted identifiers while accepting complete values followed by
+sentence punctuation or separated by commas.
+
 For interview preparation, inspect each actual drafting prompt with a supported
 question and explicitly empty selections. Only that question's selected evidence
 may appear. Drive unsupported/accepted outcomes with verifier verdicts; the

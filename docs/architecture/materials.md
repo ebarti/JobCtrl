@@ -71,7 +71,11 @@ tailoring step or through the standalone `analyze_job` method. Prompt
 `employer-analysis-v4-determinations` fences every active analysis read, including
 projections, interview context, review and cache reuse. Older generations remain
 untouched as history and cannot become current inputs; absent current analysis
-requires a new determination. Even a same-version cache hit is checked for
+requires a new determination. Both projection builders rebuild older cached
+analysis shapes by prompt version even when all events are already folded.
+The native v13 cutover withdraws those cached shapes, and API reads enforce the
+same version boundary. Canonical history and accepted artifacts stay intact.
+Even a same-version cache hit is checked for
 invalid candidate prose before reuse. A standalone `analyze_job` request with
 `tenantId`, `jobId`, and `force: true` regenerates one affected analysis. Failed
 validation or provider execution leaves the last accepted generation intact.

@@ -620,7 +620,8 @@ DELETE FROM application_outcome_suggestions
 UPDATE job_bullet_provenance SET evidence_ids_json='[]', requirement_ids_json='[]',
  matched_keywords_json='[]', rationale='', coverage_json=NULL, voice_json=NULL;
 UPDATE resume_review_comment_threads SET risk_label=NULL;
-UPDATE job_detail_projections SET compensation_summary_json=NULL, compensation_audit_json=NULL;
+UPDATE job_detail_projections SET compensation_summary_json=NULL, compensation_audit_json=NULL,
+ employer_analysis_json=NULL;
 UPDATE discovery_search_units SET state='failed',lease_owner=NULL,last_error_code='query_plan_recompute_required',last_error_retryable=0
  WHERE json_extract(request_json,'$.schema_version')=1 AND state IN ('pending','running','retrying');
 

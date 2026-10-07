@@ -802,6 +802,9 @@ function runRefreshPassInTransaction(db: SqliteDatabase, tenantId: string): bool
   for (const jobId of staleCompensationProjectionJobs(db, tenantId)) {
     dirtyJobs.add(jobId);
   }
+  for (const jobId of staleAnalysisProjectionJobs(db, tenantId)) {
+    dirtyJobs.add(jobId);
+  }
 
   // L5 (round-1 review): nothing dirty AND no new events ⇒ skip the
   // O(jobs × stages) dashboard / apply-run rebuilds.
@@ -2395,6 +2398,19 @@ function staleStageProjectionJobs(db: SqliteDatabase, tenantId: string): string[
           )
         )`,
     [tenantId],
+  );
+  return rows.map((row) => row.job_id).filter(Boolean);
+}
+
+function staleAnalysisProjectionJobs(db: SqliteDatabase, tenantId: string): string[] {
+  const rows = allRows<{ job_id: string }>(
+    db,
+    `SELECT job_id FROM job_detail_projections
+     WHERE tenant_id = ? AND employer_analysis_json IS NOT NULL
+       AND (CASE WHEN json_valid(employer_analysis_json)
+            THEN json_extract(employer_analysis_json, '$.prompt_version')
+            END) IS NOT ?`,
+    [tenantId, EMPLOYER_ANALYSIS_PROMPT_VERSION],
   );
   return rows.map((row) => row.job_id).filter(Boolean);
 }
