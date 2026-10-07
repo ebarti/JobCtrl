@@ -25,6 +25,7 @@ from typing import Any
 
 from temporalio import activity, workflow
 from temporalio.common import RetryPolicy
+from temporalio.exceptions import ActivityError, ApplicationError, CancelledError
 
 # The finalize activities are tiny local SQLite writes; a run's terminal state
 # is only durable once recorded, so they retry a handful of times but stay
@@ -217,21 +218,38 @@ async def emit_workflow_started(
 ) -> None:
     """Record the start marker. Called at the top of a workflow's ``run``."""
     info = workflow.info()
-    await workflow.execute_activity(
-        record_workflow_started,
-        WorkflowStartedInput(
-            tenant_id=tenant_id,
-            workflow_id=info.workflow_id,
-            workflow_type=workflow_type,
-            input_summary=input_summary,
-            started_at=started_at.isoformat(),
-            temporal_run_id=info.run_id,
-            expected_app_dir=expected_app_dir,
-            expected_db_path=expected_db_path,
-        ),
-        start_to_close_timeout=_FINALIZE_TIMEOUT,
-        retry_policy=_FINALIZE_RETRY,
-    )
+    try:
+        await workflow.execute_activity(
+            record_workflow_started,
+            WorkflowStartedInput(
+                tenant_id=tenant_id,
+                workflow_id=info.workflow_id,
+                workflow_type=workflow_type,
+                input_summary=input_summary,
+                started_at=started_at.isoformat(),
+                temporal_run_id=info.run_id,
+                expected_app_dir=expected_app_dir,
+                expected_db_path=expected_db_path,
+            ),
+            start_to_close_timeout=_FINALIZE_TIMEOUT,
+            retry_policy=_FINALIZE_RETRY,
+        )
+    except ActivityError as error:
+        if isinstance(error.cause, CancelledError):
+            raise
+        if workflow.patched("workflow-start-failure-outcome-v1"):
+            await emit_workflow_outcome(
+                tenant_id=tenant_id,
+                workflow_type=workflow_type,
+                status="failed",
+                started_at=started_at,
+                error_code=(error.cause.type if isinstance(error.cause, ApplicationError) else None)
+                or "workflow_start_failed",
+                error_message="Workflow start recording failed.",
+                expected_app_dir=expected_app_dir,
+                expected_db_path=expected_db_path,
+            )
+        raise
 
 
 async def emit_workflow_outcome(
