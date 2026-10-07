@@ -1,4 +1,3 @@
-import { DiscoveryTriagePanel } from "../../contexts/discovery/components/DiscoveryTriagePanel.js";
 import {
   DiscoveryProductControls,
   type DiscoverySourceTableControls,
@@ -39,12 +38,6 @@ export function DiscoveryView({
         </div>
         <div className="discovery-task-section" id="discovery-runtime">
           <DiscoveryRuntimeSettingsPanel />
-        </div>
-        <div
-          className="discovery-task-section"
-          id="discovery-listing-decisions"
-        >
-          <DiscoveryTriagePanel />
         </div>
         <div className="discovery-task-section" id="discovery-source-controls">
           <DiscoveryProductControls

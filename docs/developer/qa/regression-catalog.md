@@ -23,7 +23,7 @@ individual regression to exact test files.
 ## Ashby Listing And Location Admission
 
 The Ashby public posting adapter excludes only explicit boolean
-`isListed: false`. Listed and legacy postings with no flag enter model triage;
+`isListed: false`. Listed and legacy postings with no flag enter canonical ingestion;
 the adapter does not decide their title, description or location relevance. The
 primary location or existing `locationName` fallback leads the retained metadata;
 trimmed valid `secondaryLocations[].location` strings follow, deduplicated
@@ -443,7 +443,7 @@ and accepted artifact bytes. Citation format checks must reject fragments of
 numbers and dotted identifiers while accepting complete values followed by
 sentence punctuation or separated by commas.
 
-For Discovery, save literal target settings and plan a run without any interpretation receipt or second approval. Inspect the actual board query/location parameters. Prove provider failure leaves intake pending, opposite valid model verdicts still control admission, and each API/UI citation joins the saved target snapshot captured for that attempt. Profile changes must not rewrite earlier sources. Native cutover preserves authored cells, canonical jobs, accepted files and recoverable raw posting captures while withdrawing obsolete intake decisions.
+For Discovery, save literal target settings and plan a run without an interpretation receipt or second approval. Inspect the actual JobStreaming query/location/remote parameters and provider capability warnings. Structurally valid fetched results must ingest without an extra model gate, even when they do not lexically resemble the query. Exact user-authored title exclusions retain durable filtered receipts. Exercise capture/ack interruption, lease fencing, retry idempotency and limits. Full-posting interpretation/scoring retain model authority and source provenance. Historical native cutovers preserve authored cells, canonical jobs, accepted files and raw captures.
 
 For interview preparation, inspect each actual drafting prompt with a supported
 question and explicitly empty selections. Only that question's selected evidence

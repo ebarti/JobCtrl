@@ -12,7 +12,6 @@ Sites are loaded from config/sites.yaml, with {query_encoded} and {location_enco
 placeholders replaced from the user's search configuration.
 """
 
-from jobctrl.infrastructure.discovery.triage import PersistedPostingTriage
 import json
 import logging
 import re
@@ -124,15 +123,13 @@ def load_sites() -> list[dict]:
 def _store_jobs(
     conn, jobs, site, strategy, *, search_cfg, limit=0, source_url=None, run_id="smartextract", discovery_execution=None
 ):
-    from jobctrl.infrastructure.discovery.triage import triage_postings
-
     repository = SqliteJobRepository(
         conn,
         discovery_execution=discovery_execution,
         source_family="smartextract" if discovery_execution is not None else None,
     )
     use_case = DiscoverJobsUseCase(
-        triage=PersistedPostingTriage(conn, search_cfg=search_cfg),
+        exact_title_exclusions=tuple(search_cfg.get("exact_title_exclusions") or ()),
         repository=repository,
         publisher=DurableJobEventPublisher(conn, stage="discover"),
     )
@@ -159,9 +156,8 @@ def _store_jobs(
                 canonical_url=url,
             )
         )
-    accepted = triage_postings(conn, postings, search_cfg=search_cfg)
     new, existing = 0, 0
-    for posting in accepted:
+    for posting in postings:
         if limit > 0 and new >= limit:
             break
         summary = use_case.execute(tenant_id=LOCAL_TENANT, postings=(posting,), run_id=run_id)

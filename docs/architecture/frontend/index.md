@@ -397,6 +397,6 @@ extends the workspace base). The target frontend goes further:
 
 ## Semantic Determination Authority
 
-Affected offline-demo capabilities report unavailable: generation/verification, triage, profile interpretation, compensation refresh, Gmail/page/report interpretation and form mapping. The demo may render historical synthetic data and accept ordinary authored edits, but never synthesizes semantic verdicts from lexical rules.
+Affected offline-demo capabilities report unavailable: generation/verification, profile interpretation, compensation refresh, Gmail/page/report interpretation and form mapping. The demo may render historical synthetic data and accept ordinary authored edits, but never synthesizes semantic verdicts from lexical rules.
 
 See [the decision](../../decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.

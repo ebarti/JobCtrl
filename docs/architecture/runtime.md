@@ -116,7 +116,7 @@ explicit `legacy` lane before v11 activation. The legacy lane contributes to
 global USD totals but is never a runtime write target. Exact v11 adds generation
 bindings through private v12, then v13 withdraws heuristic classifications and
 adds persisted determinations. Exact v14 removes the redundant search-preference
-approval binding and retains raw intake captures for triage against saved settings.
+approval binding and retains historical raw intake captures. New source results ingest without a separate intake model gate.
 Historical employer-analysis generations remain
 stored, while current readers select only the v4 determination contract.
 Neither Python nor the

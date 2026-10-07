@@ -321,7 +321,6 @@ def _config(
     boards: tuple[str, ...] = ("indeed",),
 ) -> dict:
     return {
-        "triage_batch_size": 1,
         "boards": list(boards),
         "queries": [{"query": query} for query in queries],
         "locations": [{"label": "remote", "location": "Remote", "remote": True}],
@@ -623,9 +622,7 @@ def test_filtered_count_survives_loss_after_acknowledgement(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     conn, _db_path = discovery_db
-    from tests.workflow_determination_fakes import install_discovery_models
 
-    install_discovery_models(monkeypatch, verdict="reject")
     execution = _execution("temporal-run-filtered")
     original_save = SqliteDiscoverySearchUnitCheckpointStore.save
     interrupted = False
@@ -648,7 +645,7 @@ def test_filtered_count_survives_loss_after_acknowledgement(
         match="simulated worker loss after filtered acknowledgement",
     ):
         jobspy.run_discovery(
-            cfg=_config(),
+            cfg={**_config(), "exact_title_exclusions": ["Accountant"]},
             discovery_execution=execution,
             activity_attempt=1,
             activity_owner_token="filtered-attempt-1",
@@ -662,7 +659,7 @@ def test_filtered_count_survives_loss_after_acknowledgement(
     assert repository.execution_filtered_count(execution) == 1
 
     result = jobspy.run_discovery(
-        cfg=_config(),
+        cfg={**_config(), "exact_title_exclusions": ["Accountant"]},
         discovery_execution=execution,
         activity_attempt=2,
         activity_owner_token="filtered-attempt-2",
@@ -1367,7 +1364,6 @@ async def test_temporal_worker_loss_after_store_before_ack_reclaims_and_complete
 
 @pytest.fixture(autouse=True)
 def semantic_workflow_models(monkeypatch):
-    from tests.workflow_determination_fakes import install_discovery_models, install_page_models
+    from tests.workflow_determination_fakes import install_page_models
 
-    install_discovery_models(monkeypatch)
     install_page_models(monkeypatch)

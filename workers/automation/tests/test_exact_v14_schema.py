@@ -6,7 +6,6 @@ import sqlite3
 import pytest
 
 from jobctrl.domain.determinations import DeterminationEnvelope
-from jobctrl.domain.discovery.triage import IntakeSnapshot
 from jobctrl.infrastructure.determinations import SqliteDeterminationRepository
 from jobctrl.infrastructure.migrations.schema_manifest import EXACT_V14_MANIFEST, assert_exact_manifest
 from jobctrl.infrastructure.migrations.schema_v13 import create_exact_v13_schema
@@ -97,9 +96,8 @@ def test_native_cutover_preserves_authored_cells_history_and_unconsumed_capture(
     row = conn.execute(
         "SELECT listing_json,posting_json,status,consumed_at,determination_id FROM posting_triage"
     ).fetchone()
-    snapshot = IntakeSnapshot.model_validate_json(row[0])
-    assert snapshot.listing.model_dump() == listing
-    assert snapshot.target_sources == [] and snapshot.profile_version is None
+    snapshot = json.loads(row[0])
+    assert snapshot == {"listing": listing, "target_sources": [], "profile_version": None}
     assert row[1:] == (posting, "superseded", None, None)
     assert accepted.read_bytes() == b"Owned accepted artifact bytes"
     assert source.read_bytes() == original

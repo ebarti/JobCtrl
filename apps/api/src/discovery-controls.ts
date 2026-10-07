@@ -69,8 +69,6 @@ const DEFAULT_DISCOVERY_SETTINGS: DiscoverySettings = {
   hoursOld: 72,
   schedulingEnabled: false,
   scheduleCron: "0 7 * * *",
-  triageBatchSize: 20,
-  triageModel: null,
   maxParallelFamilies: 1,
   crawlUserAgentProduct: "JobCtrl",
   crawlUserAgentContact: "https://github.com/ebarti/JobCtrl",
@@ -254,8 +252,6 @@ export function writeDiscoverySettings(
     hoursOld: request.hoursOld ?? current.hoursOld,
     schedulingEnabled: request.schedulingEnabled ?? current.schedulingEnabled,
     scheduleCron: request.scheduleCron ?? current.scheduleCron,
-    triageBatchSize: request.triageBatchSize ?? current.triageBatchSize,
-    triageModel: request.triageModel === undefined ? current.triageModel : request.triageModel,
     maxParallelFamilies: request.maxParallelFamilies ?? current.maxParallelFamilies,
     crawlUserAgentProduct: request.crawlUserAgentProduct ?? current.crawlUserAgentProduct,
     crawlUserAgentContact: request.crawlUserAgentContact ?? current.crawlUserAgentContact,
@@ -315,8 +311,6 @@ function discoverySettingsFromConfig(config: Record<string, unknown>): Discovery
     hoursOld: positiveInt(defaults.hours_old, DEFAULT_DISCOVERY_SETTINGS.hoursOld),
     schedulingEnabled: boolValue(config.scheduling_enabled, DEFAULT_DISCOVERY_SETTINGS.schedulingEnabled),
     scheduleCron: nonEmptyString(config.schedule_cron, DEFAULT_DISCOVERY_SETTINGS.scheduleCron),
-    triageBatchSize: boundedInt(config.triage_batch_size, 20, 1, 100),
-    triageModel: nullableString(config.triage_model),
     maxParallelFamilies: boundedInt(config.max_parallel_families, DEFAULT_DISCOVERY_SETTINGS.maxParallelFamilies, 1, 4),
     crawlUserAgentProduct: nonEmptyString(
       recordValue(config.crawl_user_agent).product,
@@ -346,8 +340,6 @@ function configFromDiscoverySettings(
     boards: settings.boards,
     scheduling_enabled: settings.schedulingEnabled,
     schedule_cron: settings.scheduleCron,
-    triage_batch_size: settings.triageBatchSize,
-    triage_model: settings.triageModel,
     max_parallel_families: settings.maxParallelFamilies,
     crawl_user_agent: {
       ...recordValue(base.crawl_user_agent),
@@ -413,16 +405,6 @@ function resolvedDiscoverySettings(
       stored.scheduleCron,
       "restart",
       persisted && Object.hasOwn(config, "schedule_cron"),
-    ),
-    triageBatchSize: setting(
-      stored.triageBatchSize,
-      "next_source_family",
-      persisted && Object.hasOwn(config, "triage_batch_size"),
-    ),
-    triageModel: setting(
-      stored.triageModel,
-      "next_source_family",
-      persisted && Object.hasOwn(config, "triage_model"),
     ),
     maxParallelFamilies: setting(
       stored.maxParallelFamilies,

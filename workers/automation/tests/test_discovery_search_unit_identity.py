@@ -113,7 +113,6 @@ def test_accepted_receipts_reject_url_shaped_identity(search_db) -> None:
 
 @pytest.fixture(autouse=True)
 def semantic_workflow_models(monkeypatch):
-    from tests.workflow_determination_fakes import install_discovery_models, install_page_models
+    from tests.workflow_determination_fakes import install_page_models
 
-    install_discovery_models(monkeypatch)
     install_page_models(monkeypatch)

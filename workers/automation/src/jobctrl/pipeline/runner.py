@@ -1445,42 +1445,10 @@ def run_discovery_source_family(
         )
         return {"family": family, "status": status, "result": {}, "source_ids": [s.source_id for s in sources]}
 
-    def fetch_with_pending_intake(fetch, sources, run_id):
-        # The source-family activity already owns heartbeats and cancellation.
-        # Bound recovery to one configured batch, preserve the run's limit, and
-        # let new intake continue when the old batch is still unavailable.
-        from jobctrl.domain.determinations import DeterminationFailure
-        from jobctrl.infrastructure.discovery.triage import retry_pending_postings
-
-        resumed = 0
-        failure_code = None
-        runnable_ids = tuple(item.source_id for item in sources if item.should_run)
-        remaining = _discover_remaining_limit(start_count, limit)
-        if runnable_ids and not (family == "jobspy" and search_cfg.get("disable_jobspy", False)):
-            if not limit or remaining > 0:
-                try:
-                    resumed = retry_pending_postings(
-                        conn,
-                        search_cfg=search_cfg,
-                        discovery_execution=discovery_execution,
-                        source_ids=runnable_ids,
-                        source_family=family,
-                        limit=remaining,
-                        max_batches=1,
-                        cancel_event=cancel_event,
-                    )
-                except DeterminationFailure as exc:
-                    failure_code = exc.code
+    def fetch_with_limits(fetch, run_id):
         if cancel_event.is_set() or (limit > 0 and _discover_limit_consumed(start_count, limit)):
-            result = {"new": 0, "existing": 0}
-        else:
-            result = dict(fetch(run_id) or {})
-        if resumed:
-            result["new"] = int(result.get("new") or 0) + resumed
-            result["triage_resumed"] = resumed
-        if failure_code is not None:
-            result["pending_triage_retry_failure"] = failure_code
-        return result
+            return {"new": 0, "existing": 0}
+        return dict(fetch(run_id) or {})
 
     if family == "jobspy":
         if source_filter_active and not jobspy_sources:
@@ -1534,7 +1502,7 @@ def run_discovery_source_family(
         result_holder: dict[str, Any] = {}
 
         def capture_jobstreaming(run_id: str | None = None) -> dict:
-            result_holder.update(fetch_with_pending_intake(run_jobspy, jobspy_sources, run_id))
+            result_holder.update(fetch_with_limits(run_jobspy, run_id))
             return result_holder
 
         status = _run_discovery_source(
@@ -1575,7 +1543,7 @@ def run_discovery_source_family(
         result_holder: dict[str, Any] = {}
 
         def capture_ats(run_id: str | None = None) -> dict:
-            result_holder.update(fetch_with_pending_intake(run_ats, ats_sources, run_id))
+            result_holder.update(fetch_with_limits(run_ats, run_id))
             return result_holder
 
         status = _run_discovery_source(
@@ -1621,7 +1589,7 @@ def run_discovery_source_family(
         result_holder: dict[str, Any] = {}
 
         def capture_workday(run_id: str | None = None) -> dict:
-            result_holder.update(fetch_with_pending_intake(run_workday, workday_sources, run_id))
+            result_holder.update(fetch_with_limits(run_workday, run_id))
             return result_holder
 
         status = _run_discovery_source(
@@ -1667,7 +1635,7 @@ def run_discovery_source_family(
         result_holder: dict[str, Any] = {}
 
         def capture_smart_extract(run_id: str | None = None) -> dict:
-            result_holder.update(fetch_with_pending_intake(run_smart_extract_source, smart_extract_sources, run_id))
+            result_holder.update(fetch_with_limits(run_smart_extract_source, run_id))
             return result_holder
 
         status = _run_discovery_source(
@@ -1704,8 +1672,6 @@ def _snapshot_discovery_next_run_settings(search_cfg: dict[str, Any]) -> dict[st
                 "queries",
                 "locations",
                 "confirmed_targets",
-                "triage_batch_size",
-                "triage_model",
                 "exact_title_exclusions",
             )
         },
@@ -1730,8 +1696,6 @@ def _apply_discovery_next_run_settings(
         "queries",
         "locations",
         "confirmed_targets",
-        "triage_batch_size",
-        "triage_model",
         "exact_title_exclusions",
     ):
         if key in snapshot and snapshot[key] is not None:

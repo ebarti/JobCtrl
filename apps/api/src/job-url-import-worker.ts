@@ -88,9 +88,6 @@ export function createWorkerJobUrlImporter(
         alreadyExisted: workflowResult.already_existed,
       };
     }
-    if (workflowResult.outcome !== "manual_capture_required") {
-      return {ok:true,status:workflowResult.outcome,reason:workflowResult.reason};
-    }
     return {
       ok: true,
       status: "manual_capture_required",

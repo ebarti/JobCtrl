@@ -5162,8 +5162,6 @@ export const DiscoverySettingsUpdateRequestSchema = z
     hoursOld: z.coerce.number().int().min(1).max(8760).optional(),
     schedulingEnabled: z.boolean().optional(),
     scheduleCron: z.string().min(1).optional(),
-    triageBatchSize: z.number().int().min(1).max(100).optional(),
-    triageModel: z.string().trim().max(160).nullable().optional(),
     maxParallelFamilies: z.coerce.number().int().min(1).max(4).optional(),
     crawlUserAgentProduct: z.string().trim().min(1).max(80).optional(),
     crawlUserAgentContact: z.string().trim().max(240).optional(),
@@ -5180,8 +5178,6 @@ export interface DiscoverySettings {
   hoursOld: number;
   schedulingEnabled: boolean;
   scheduleCron: string;
-  triageBatchSize: number;
-  triageModel: string | null;
   maxParallelFamilies: number;
   crawlUserAgentProduct: string;
   crawlUserAgentContact: string;
@@ -5197,8 +5193,6 @@ export interface EffectiveDiscoverySettings {
   hoursOld: EffectiveSetting<number>;
   schedulingEnabled: EffectiveSetting<boolean>;
   scheduleCron: EffectiveSetting<string>;
-  triageBatchSize: EffectiveSetting<DiscoverySettings["triageBatchSize"]>;
-  triageModel: EffectiveSetting<string | null>;
   maxParallelFamilies: EffectiveSetting<number>;
   crawlUserAgentProduct: EffectiveSetting<string>;
   crawlUserAgentContact: EffectiveSetting<string>;
@@ -5217,8 +5211,6 @@ export const DiscoverySettingsResponseSchema = z
         hoursOld: z.number(),
         schedulingEnabled: z.boolean(),
         scheduleCron: z.string(),
-        triageBatchSize: z.number().int().min(1).max(100),
-        triageModel: z.string().nullable(),
         maxParallelFamilies: z.number(),
         crawlUserAgentProduct: z.string(),
         crawlUserAgentContact: z.string(),
@@ -5237,8 +5229,6 @@ export const DiscoverySettingsResponseSchema = z
         hoursOld: effectiveSettingSchema(z.number()),
         schedulingEnabled: effectiveSettingSchema(z.boolean()),
         scheduleCron: effectiveSettingSchema(z.string()),
-        triageBatchSize: effectiveSettingSchema(z.number().int().min(1).max(100)),
-        triageModel: effectiveSettingSchema(z.string().nullable()),
         maxParallelFamilies: effectiveSettingSchema(z.number()),
         crawlUserAgentProduct: effectiveSettingSchema(z.string()),
         crawlUserAgentContact: effectiveSettingSchema(z.string()),
@@ -6245,7 +6235,6 @@ export const JobUrlImportRequestSchema = z
 export type JobUrlImportRequest = z.infer<typeof JobUrlImportRequestSchema>;
 
 export type JobUrlImportResponse =
-  | { ok: true; status: "pending_triage" | "triage_rejected" | "triage_uncertain"; reason: string; }
   | {
       ok: true;
       status: "imported";

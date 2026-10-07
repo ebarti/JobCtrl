@@ -704,7 +704,7 @@ type and policy metadata are visible as columns instead of compact badges:
 
 - `GET /v1/discovery/settings` returns the SQLite-backed runtime discovery
   settings used by board discovery: boards, per-site and age limits, schedule,
-  triage batch size/model, bounded source-family parallelism, and crawl
+  bounded source-family parallelism, and crawl
   user-agent product/contact. Managed fields include effective source,
   editability, and activation metadata.
 - `PATCH /v1/discovery/settings` updates those runtime settings without
@@ -1780,23 +1780,9 @@ location-less Remote row keeps an empty board location. Unsupported controls
 produce the non-retryable `invalid_saved_work_model` planning failure; readers,
 scoring and network identity do not materialize board controls.
 
-Intake rows are stored before model spending. `triageBatchSize` defaults to `20`
-and accepts `1–100`; `triageModel` optionally overrides the configured Discovery
-model. A cited posting-triage determination returns `admit`, `reject` or
-`uncertain` per listing ID. Only admits create or update jobs. Rejected and
-uncertain rows remain visible; provider failures stay `pending_triage` with a
-safe failure code. Unchanged inputs, model and versions reuse accepted results.
-Stored jobs are not retroactively soft-deleted by semantic word filters.
+JobStreaming executes supported source search/filter parameters and exposes unsupported-filter warnings. Structurally valid fetched listings are stored under exact identity and proceed to full-posting analysis/scoring; there is no separate metadata-only intake model, listing-decision endpoint or batch/model setting. Direct company ATS adapters may return a whole listed feed. Literal exact-title exclusions, source-native listing flags, security checks and run limits remain mechanical. Broad-board capture, ingestion and filtered receipts are durable before provider checkpoint acknowledgement; retries preserve idempotency and lease fencing. Historical intake captures and envelopes stay in local storage under the frozen native schema and are not a new admission gate.
 
-`GET /v1/discovery/triage?offset=0&limit=50` exposes recorded intake decisions,
-rationales, citations and their determination envelope; `offset` is nonnegative
-and `limit` is bounded to `1–200`. It never computes meaning on reads. The
-Discovery page pages these records, including rejects and pending failures.
-`targetSources` and `targetProfileVersion` describe the saved settings captured
-for that attempt; later profile edits do not replace those citation sources.
-The listing snapshot fences every determination. Native v14 withdraws obsolete
-intake decisions as `superseded`, preserves their raw captures and makes
-unconsumed captures recoverable against the current saved settings.
+Explicit URL import fetches and interprets the requested page, then creates or re-observes its canonical job. Saved search exclusions do not override an explicit import. A blocked page can still require manual capture; page/extraction model failures remain distinct and cannot create a guessed job.
 
 ## Worker runtime and health
 

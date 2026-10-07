@@ -64,14 +64,6 @@ function patchDiscoverySettings(
       body.schedulingEnabled,
     ),
     scheduleCron: persistedValue(current.effectiveSettings.scheduleCron, body.scheduleCron),
-    triageBatchSize: persistedValue(
-      current.effectiveSettings.triageBatchSize,
-      body.triageBatchSize,
-    ),
-    triageModel: persistedValue(
-      current.effectiveSettings.triageModel,
-      body.triageModel,
-    ),
     maxParallelFamilies: persistedValue(
       current.effectiveSettings.maxParallelFamilies,
       body.maxParallelFamilies,
@@ -101,8 +93,6 @@ function patchDiscoverySettings(
         ? { schedulingEnabled: body.schedulingEnabled }
         : {}),
       ...(body.scheduleCron !== undefined ? { scheduleCron: body.scheduleCron } : {}),
-      ...(body.triageBatchSize !== undefined ? { triageBatchSize: body.triageBatchSize } : {}),
-      ...(body.triageModel !== undefined ? { triageModel: body.triageModel } : {}),
       ...(body.maxParallelFamilies !== undefined
         ? { maxParallelFamilies: body.maxParallelFamilies }
         : {}),

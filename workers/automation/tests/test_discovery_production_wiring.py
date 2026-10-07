@@ -53,15 +53,9 @@ def import_manual_capture_item(conn, capture, **kwargs):
 
 
 @pytest.fixture(autouse=True)
-def triage_and_page_models(monkeypatch):
-    from tests.test_discovery_determinations import Model
-    from tests.compensation_fakes import dependencies
+def page_models(monkeypatch):
     from tests.page_fakes import interpreter
 
-    monkeypatch.setattr(
-        "jobctrl.infrastructure.discovery.triage.determination_dependencies",
-        lambda conn, **kwargs: dependencies(conn, Model(), "discovery"),
-    )
     monkeypatch.setattr("jobctrl.enrichment.detail.build_page_interpreter", lambda *args, **kwargs: interpreter())
     monkeypatch.setattr(
         "jobctrl.infrastructure.enrichment.page_interpretation.build_page_interpreter",
@@ -588,7 +582,7 @@ def test_canonical_ats_scheduler_fetches_each_source_once_then_filters_queries(
     assert "https://boards-api.greenhouse.io/v1/boards/barcelonatech/jobs?content=true" in calls
 
 
-def test_intake_triage_admits_a_listing_before_description_fetch(
+def test_ats_ingests_a_listing_without_an_intake_model_or_description_fetch(
     conn: sqlite3.Connection,
 ) -> None:
     registry = _barcelona_registry()
@@ -624,12 +618,8 @@ def test_intake_triage_admits_a_listing_before_description_fetch(
         ("https://boards.greenhouse.io/barcelonatech/jobs/101",),
     ).fetchone()
     assert row is not None
-    assert (
-        conn.execute(
-            "SELECT COUNT(*) FROM posting_triage WHERE status='admit' AND determination_id IS NOT NULL"
-        ).fetchone()[0]
-        == 3
-    )
+    assert conn.execute("SELECT count(*) FROM semantic_determinations").fetchone()[0] == 0
+
 
 
 def test_canonical_ats_limit_counts_new_jobs_not_existing_observations(

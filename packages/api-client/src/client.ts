@@ -1,4 +1,3 @@
-import { DiscoveryTriageResponseSchema,type DiscoveryTriageResponse } from "@jobctrl/contracts";
 import type {
   ActionRunResponse,
   ActivityEventResponse,
@@ -335,10 +334,6 @@ export class JobCtrlApiClient {
 
   discoverySources(): Promise<SourceRegistryListResponse> {
     return this.get("/v1/discovery/sources");
-  }
-
-  async discoveryTriage(offset=0):Promise<DiscoveryTriageResponse>{
-    return DiscoveryTriageResponseSchema.parse(await this.get("/v1/discovery/triage",{offset,limit:50}));
   }
 
   discoverySettings(): Promise<DiscoverySettingsResponse> {

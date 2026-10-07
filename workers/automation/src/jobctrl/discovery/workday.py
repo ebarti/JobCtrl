@@ -9,7 +9,6 @@ Employer registry is loaded from config/employers.yaml instead of being
 hardcoded. Supports sequential search + detail fetching with proxy.
 """
 
-from jobctrl.infrastructure.discovery.triage import PersistedPostingTriage
 import logging
 import re
 import sqlite3
@@ -25,7 +24,7 @@ from jobctrl.database import get_connection, init_db
 from jobctrl.domain.discovery.identity import AtsKind
 from jobctrl.domain.discovery.execution import DiscoveryExecutionRef
 from jobctrl.domain.discovery.source_registry import WORKDAY_API_POLICY
-from jobctrl.domain.discovery.use_cases import DiscoverJobsUseCase
+from jobctrl.domain.discovery.use_cases import DiscoverJobsUseCase, matches_exact_title_exclusion
 from jobctrl.domain.discovery.value_objects import Employer, JobMetadata, PostingUrl, SearchStrategy, Source
 from jobctrl.domain.errors import TransientNetworkError
 from jobctrl.domain.events.base import DomainEvent
@@ -38,7 +37,6 @@ from jobctrl.infrastructure.network import (
     PolitenessSourceContext,
     build_opener,
 )
-from jobctrl.infrastructure.discovery.triage import posting_listing, triage_listings
 from jobctrl.infrastructure.discovery.sqlite_repository import SqliteJobRepository
 from jobctrl.infrastructure.discovery.live_browser import (
     LiveChromeDiscoveryClient,
@@ -62,9 +60,6 @@ def load_employers() -> dict:
         log.warning("employers.yaml not found at %s", CONFIG_DIR / "employers.yaml")
         return {}
     return data.get("employers", {})
-
-
-# -- Location filtering from search config -----------------------------------
 
 
 # -- HTML stripper -----------------------------------------------------------
@@ -500,11 +495,13 @@ def store_results(
     limit: int = 0,
     run_id: str | None = None,
     discovery_execution: DiscoveryExecutionRef | None = None,
+    search_cfg: dict | None = None,
 ) -> tuple[int, int]:
     """Store corporate jobs through the Discovery write boundary."""
     now = datetime.now(timezone.utc).isoformat()
+    active_cfg = search_cfg if search_cfg is not None else config.load_saved_search_settings()
     use_case = DiscoverJobsUseCase(
-        triage=PersistedPostingTriage(conn),
+        exact_title_exclusions=tuple(active_cfg.get("exact_title_exclusions") or ()),
         repository=SqliteJobRepository(
             conn,
             discovery_execution=discovery_execution,
@@ -584,7 +581,8 @@ def _process_one(
         return result
     conn = get_connection()
     (new, existing) = store_results(
-        conn, jobs, employers, limit=limit, run_id=run_id, discovery_execution=discovery_execution
+        conn, jobs, employers, limit=limit, run_id=run_id, discovery_execution=discovery_execution,
+        search_cfg=search_cfg,
     )
     log.info("%s: %d new, %d already in DB", result["employer"], new, existing)
     return {**result, "new": new, "existing": existing}
@@ -614,21 +612,9 @@ def _search_and_fetch_one(
     if not jobs:
         return {"employer": emp["name"], "query": search_text, "found": 0, "new": 0, "existing": 0}
     active_cfg = search_cfg if search_cfg is not None else config.load_search_config()
-    listing_rows = []
-    valid_jobs = []
-    postings = {}
-    for job in jobs:
-        posting = _posting_from_job(job, employers)
-        if posting is None:
-            continue
-        listing = posting_listing(posting)
-        listing_rows.append(listing)
-        postings[listing.listing_id] = posting
-        valid_jobs.append(job)
-    decisions = triage_listings(get_connection(), listing_rows, search_cfg=active_cfg, postings=postings)
-    jobs = [
-        job for job, listing in zip(valid_jobs, listing_rows, strict=True) if decisions[listing.listing_id] == "admit"
-    ]
+    exclusions = tuple(active_cfg.get("exact_title_exclusions") or ())
+    jobs = [job for job in jobs if (posting := _posting_from_job(job, employers)) is not None
+            and not matches_exact_title_exclusion(posting.metadata.title, exclusions)]
     try:
         jobs = fetch_details(emp, jobs, cancel_event=cancel_event)
     except TransientNetworkError:
@@ -659,6 +645,7 @@ def scrape_employers(
     Sequential by default. When workers > 1, processes employers in parallel
     using ThreadPoolExecutor.
     """
+    search_cfg = search_cfg if search_cfg is not None else config.load_search_config()
     if employer_keys is None:
         employer_keys = list(employers.keys())
     init_db()
@@ -721,6 +708,7 @@ def scrape_employers(
                             limit=remaining if limit > 0 else 0,
                             run_id=run_id,
                             discovery_execution=discovery_execution,
+                            search_cfg=search_cfg,
                         )
                         result = {**result, "found": len(jobs), "new": new, "existing": existing}
                 total_new += result["new"]

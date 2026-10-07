@@ -95,7 +95,7 @@ the active page as a user-mediated manual capture, then the normal discovery
 import path dedupes, snapshots, and surfaces the job in Jobs.
 
 To add one posting without running Discover, open **Jobs**, choose **Import
-job**, and paste its public HTTP(S) URL. JobCtrl fetches that page through the local worker. Model determinations identify and extract the posting, then triage its title, location and employer against confirmed preferences. Accepted listings deduplicate by exact canonical identity and open Job Detail; pending, rejected and uncertain triage decisions are visible in Discovery. If the page is blocked,
+job**, and paste its public HTTP(S) URL. JobCtrl fetches that page through the local worker. Model determinations identify and extract the requested posting. It is ingested by exact canonical identity and opens Job Detail without a separate intake filter; full-posting analysis/scoring assess fit. If the page is blocked,
 login-walled, rate-limited, or cannot be identified safely as a posting, no
 placeholder job is created; the URL is placed in **Discovery → Manual Capture**
 for user-provided content instead. Different URLs can be imported concurrently

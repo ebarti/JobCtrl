@@ -397,31 +397,11 @@ def test_ashby_preserves_native_id_and_canonical_url_fallback(use_apply_url: boo
     assert posting.metadata.description == "Operate synthetic infrastructure systems."
 
 
-@pytest.mark.parametrize("admitted", [True, False])
 def test_ashby_scheduled_discovery_persists_secondary_target_and_repeat_identity(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    admitted: bool,
 ) -> None:
     primary, secondary, target = "Synthetic primary", "Synthetic secondary", "Synthetic target"
-    from tests.test_discovery_determinations import Model
-    from jobctrl.infrastructure.determinations import SqliteDeterminationRepository
-    import jobctrl.infrastructure.discovery.triage as triage
-
-    model = Model("admit" if admitted else "reject")
-    monkeypatch.setattr(
-        triage,
-        "determination_dependencies",
-        lambda conn, **kwargs: dict(
-            llm=model,
-            repository=SqliteDeterminationRepository(conn),
-            tenant_id="local",
-            provider="fake",
-            model="synthetic",
-            lane="discovery",
-            preflight=lambda: None,
-        ),
-    )
     from jobctrl import config
     from jobctrl.database import close_connection, init_db
     from jobctrl.domain.discovery.scheduler import DiscoveryScheduler
@@ -493,7 +473,7 @@ def test_ashby_scheduled_discovery_persists_secondary_target_and_repeat_identity
                 http=http,
             )
             assert result["failed_sources"] == []
-            expected_count = 2 if admitted else 0
+            expected_count = 2
             assert result["total"] == expected_count
             assert result["new_jobs"] == (expected_count if run_number == 0 else 0)
             assert result["observed_jobs"] == (0 if run_number == 0 else expected_count)
@@ -502,8 +482,6 @@ def test_ashby_scheduled_discovery_persists_secondary_target_and_repeat_identity
             current_ids = {row["url"]: row["job_id"] for row in rows}
             expected_urls = (
                 {f"https://jobs.ashbyhq.com/synthetic/{native_id}" for native_id in ("listed", "legacy")}
-                if admitted
-                else set()
             )
             assert set(current_ids) == expected_urls
             if run_number:

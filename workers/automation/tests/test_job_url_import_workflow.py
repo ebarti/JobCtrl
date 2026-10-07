@@ -151,52 +151,10 @@ def test_url_import_fetches_and_persists_real_posting_content(tmp_path: Path) ->
     assert tuple(snapshot) == (1, "active")
 
 
-@pytest.mark.parametrize("verdict", ["reject", "uncertain"])
-def test_url_import_returns_the_non_admitted_intake_decision(tmp_path, monkeypatch, verdict):
-    from tests.workflow_determination_fakes import install_discovery_models
-
-    conn = init_db(tmp_path / "jobctrl.db")
-    install_discovery_models(monkeypatch, verdict=verdict)
-    result = execute_job_url_import(
-        _payload(), conn=conn, fetcher=_Fetcher(_job_page()), url_validator=_allow_public_url
-    )
-    assert result.outcome == {"reject": "triage_rejected", "uncertain": "triage_uncertain"}[verdict]
-    row = conn.execute("SELECT status,reason_code,determination_id,listing_json FROM posting_triage").fetchone()
-    assert result.reason == row["reason_code"] == "insufficient_information"
-    assert row["status"] == verdict and row["determination_id"]
-    assert json.loads(row["listing_json"])["listing"]["url"] == _URL
-    assert conn.execute("SELECT count(*) FROM jobs").fetchone()[0] == 0
 
 
-def test_url_import_preserves_pending_intake_on_provider_failure(tmp_path, monkeypatch):
-    from jobctrl.domain.determinations import DeterminationFailure
-    from tests.workflow_determination_fakes import install_discovery_models
-
-    conn = init_db(tmp_path / "jobctrl.db")
-    model = install_discovery_models(monkeypatch)
-    model.failure = RuntimeError("private provider detail")
-    with pytest.raises(DeterminationFailure) as raised:
-        execute_job_url_import(_payload(), conn=conn, fetcher=_Fetcher(_job_page()), url_validator=_allow_public_url)
-    assert raised.value.code == "provider_error"
-    assert "private provider detail" not in str(raised.value)
-    assert conn.execute("SELECT count(*) FROM jobs").fetchone()[0] == 0
-    assert conn.execute("SELECT failure_code FROM posting_triage").fetchone()[0] == "provider_error"
 
 
-def test_url_import_returns_a_literal_title_exclusion_without_a_triage_call(tmp_path, monkeypatch):
-    from jobctrl import config
-
-    conn = init_db(tmp_path / "jobctrl.db")
-    monkeypatch.setattr(
-        config, "load_saved_search_settings", lambda: {"exact_title_exclusions": ["Staff Platform Engineer"]}
-    )
-    result = execute_job_url_import(
-        _payload(), conn=conn, fetcher=_Fetcher(_job_page()), url_validator=_allow_public_url
-    )
-    assert result.outcome == "triage_rejected" and result.reason == "literal_exact_title_exclusion"
-    assert conn.execute("SELECT count(*) FROM jobs").fetchone()[0] == 0
-    row = conn.execute("SELECT status,determination_id FROM posting_triage").fetchone()
-    assert row["status"] == "literal_excluded" and row["determination_id"] is None
 
 
 def test_custom_careers_page_with_embedded_ats_form_imports_as_a_job(tmp_path: Path, semantic_workflow_models) -> None:
@@ -1241,9 +1199,8 @@ def test_jsonrpc_handler_awaits_job_url_import_workflow(monkeypatch: pytest.Monk
 
 @pytest.fixture(autouse=True)
 def semantic_workflow_models(monkeypatch):
-    from tests.workflow_determination_fakes import install_discovery_models, install_page_models
+    from tests.workflow_determination_fakes import install_page_models
 
-    install_discovery_models(monkeypatch)
     install_page_models(monkeypatch)
     from tests.workflow_determination_fakes import install_import_models
 

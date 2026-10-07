@@ -206,10 +206,7 @@ lexical substitute and leaves accepted artifacts current. Capture the canonical
 prompt, lane and preflight order. Re-running unchanged inputs must make zero
 additional calls, including concurrent requests for one fingerprint.
 
-Run intake triage over N synthetic listings. Record batch count, cost and latency,
-check the configurable default batch size of 20, and read every admit/reject or
-pending decision through `/v1/discovery/triage`. No listing disappears without a
-persisted verdict. Exercise profile import/save and explicit confirmation without
+Run synthetic broad-board and company-ATS source paths with saved controls. Inspect exact provider request parameters and canonical ingestion, including a result that does not resemble the query. No separate intake model call may block or reject it. Exercise literal exclusions, limits, provider capability warnings, capture/checkpoint interruption and retry idempotency. Exercise profile import/save and explicit confirmation without
 writing inferred facts into achievement evidence. Exercise actual artifact
 writes, per-question isolation, empty evidence selections, user edits and PDF
 source fences. Apply Review joins pins and findings by line ID and labels missing
@@ -222,13 +219,7 @@ For high-fit resumes, exercise all six typed persona verdicts and read actual
 worker-produced metadata through the API; a persisted receipt must accompany the
 persona audit. Optional voice provider or shape failures retain the already
 verified candidate and record the rejected rewrite. An unresolved repeat check
-parks its own candidate while another eligible candidate can be claimed. A new
-Discovery run retries unconsumed listings from durable intake even when the board
-does not return them again. Recovery runs inside the heartbeating source-family
-activity, is capped at one configured batch and the run's remaining limit, and
-honors cancellation before ingestion. Provider failure retains that batch and
-allows fresh listings to enter durable intake. Workday persists a posting payload
-before triage, so recovery needs no second board search.
+parks its own candidate while another eligible candidate can be claimed. Broad-board retry drains durable unprocessed events before fetching more results, retains exact execution/lease ownership and honors cancellation and remaining new-job limits. Company ATS observations retain exact provider identity across retries. Historical captures stay preserved without an active model admission path.
 
 CI runs the full browser interaction suite against the isolated API fixture for
 explicit model results and controlled failure cases. A separate browser step
@@ -263,9 +254,7 @@ Exercise native exact-v14 creation and the stopped-runtime v13-to-v14 cutover,
 including source drift and candidate corruption. Preserve authored profile cells,
 canonical jobs, historical envelopes, accepted files and raw pending captures.
 Then use the actual Discovery path with saved targets and no interpretation
-receipt: board planning is literal and makes no provider call. Posting triage
-retains model authority and distinct failure handling. Verify the API and web
-join citations to the captured target sources and show no second approval step.
+receipt: board planning is literal and makes no provider call. Fetched results ingest without an additional model pre-filter. Full-posting interpretation/scoring retain model authority and distinct failure handling. Verify the rendered settings have one checkbox per work model, no intake queue and no second approval step.
 Load the profile editor's actual serialized location rows and comma-separated
 work-model codes, including a location-less Remote row. Inspect their paired
 board parameters. Invalid work-model controls must produce a typed planning

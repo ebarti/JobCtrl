@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from jobctrl.infrastructure.discovery.triage import PersistedPostingTriage
 
 from pathlib import Path
 
@@ -449,7 +448,6 @@ def test_smart_extract_dedups_against_ats_first_content_owner(
             repository=repository,
             publisher=DurableJobEventPublisher(conn, stage="discover"),
             clock=lambda: "2026-05-12T00:00:00Z",
-            triage=PersistedPostingTriage(conn, search_cfg={}),
         )
         use_case.execute(
             tenant_id=LOCAL_TENANT,
@@ -524,7 +522,6 @@ def test_ats_dedups_against_smart_extract_first_content_owner(
             repository=repository,
             publisher=DurableJobEventPublisher(conn, stage="discover"),
             clock=lambda: "2026-05-12T00:00:00Z",
-            triage=PersistedPostingTriage(conn, search_cfg={}),
         )
         summary = use_case.execute(
             tenant_id=LOCAL_TENANT,
@@ -574,7 +571,6 @@ def test_smart_extract_keeps_distinct_roles_at_same_employer_separate(
             repository=repository,
             publisher=DurableJobEventPublisher(conn, stage="discover"),
             clock=lambda: "2026-05-12T00:00:00Z",
-            triage=PersistedPostingTriage(conn, search_cfg={}),
         )
         use_case.execute(
             tenant_id=LOCAL_TENANT,
@@ -657,15 +653,13 @@ def test_smart_extract_api_response_extracts_company() -> None:
 
 @pytest.fixture(autouse=True)
 def semantic_workflow_models(monkeypatch):
-    from tests.workflow_determination_fakes import install_discovery_models, install_page_models
+    from tests.workflow_determination_fakes import install_page_models
 
-    install_discovery_models(monkeypatch)
     install_page_models(monkeypatch)
 
 
 @pytest.fixture(autouse=True)
 def explicit_semantic_ports(monkeypatch):
-    from tests.workflow_determination_fakes import install_discovery_models, install_page_models
+    from tests.workflow_determination_fakes import install_page_models
 
-    install_discovery_models(monkeypatch)
     install_page_models(monkeypatch)

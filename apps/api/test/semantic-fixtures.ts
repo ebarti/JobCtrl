@@ -33,9 +33,7 @@ export function recordModelDecision(
             "apply_terminal_report",
           ].includes(kind)
         ? "apply"
-        : kind === "posting_triage"
-          ? "discovery"
-          : [
+        : [
                 "required_bullet_coaching",
                 "candidate_interpretation",
                 "resume_extraction",

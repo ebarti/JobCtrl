@@ -9,7 +9,6 @@ into the TS API or the scoring context.
 from __future__ import annotations
 
 from jobctrl.domain.determinations import DeterminationFailure
-from jobctrl.infrastructure.discovery.triage import PersistedPostingTriage
 from jobctrl.infrastructure.enrichment.page_interpretation import build_page_interpreter
 from jobctrl.domain.enrichment.snapshot_services import ActiveStateVerifier
 
@@ -69,7 +68,6 @@ from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.ports.discovery import ScrapedJobPosting
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 from jobctrl.discovery.target_queries import query_specs_for_source
-from jobctrl.infrastructure.discovery.triage import triage_postings
 from jobctrl.infrastructure.discovery.ats_adapters import (
     AshbyBoardAdapter,
     GreenhouseBoardAdapter,
@@ -580,7 +578,7 @@ def run_scheduled_ats_sources(
     )
     enrichment_repository = SqliteEnrichmentRepository(conn)
     use_case = DiscoverJobsUseCase(
-        triage=PersistedPostingTriage(conn, search_cfg=dict(search_cfg)),
+        exact_title_exclusions=tuple(search_cfg.get("exact_title_exclusions") or ()),
         repository=job_repository,
         publisher=DurableJobEventPublisher(conn, stage="discover"),
     )
@@ -606,14 +604,10 @@ def run_scheduled_ats_sources(
                     raise TransientNetworkError("ATS discovery canceled")
                 if remaining_new is not None and remaining_new <= 0:
                     break
-                for posting in triage_postings(
-                    conn,
-                    adapter.scrape(
-                        tenant_id=LOCAL_TENANT,
-                        query="",
-                        location=location,
-                    ),
-                    search_cfg=dict(search_cfg),
+                for posting in adapter.scrape(
+                    tenant_id=LOCAL_TENANT,
+                    query="",
+                    location=location,
                 ):
                     if cancel_event is not None and cancel_event.is_set():
                         raise TransientNetworkError("ATS discovery canceled")
@@ -850,7 +844,6 @@ def import_manual_capture_item(
 
     repository = SqliteJobRepository(conn)
     use_case = DiscoverJobsUseCase(
-        triage=PersistedPostingTriage(conn),
         repository=repository,
         publisher=DurableJobEventPublisher(conn, stage="discover"),
     )

@@ -479,7 +479,6 @@ async def test_real_discover_workflow_closes_empty_fanout_before_enrichment(
 
 @pytest.fixture(autouse=True)
 def explicit_semantic_ports(monkeypatch):
-    from tests.workflow_determination_fakes import install_discovery_models, install_page_models
+    from tests.workflow_determination_fakes import install_page_models
 
-    install_discovery_models(monkeypatch)
     install_page_models(monkeypatch)

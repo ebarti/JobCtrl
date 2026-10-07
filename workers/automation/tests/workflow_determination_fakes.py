@@ -8,7 +8,6 @@ import json
 import importlib
 from tests.compensation_fakes import dependencies
 from tests.page_fakes import PageModel, interpreter
-from tests.test_discovery_determinations import Model
 
 
 def install_page_models(monkeypatch, *, model=None):
@@ -32,39 +31,6 @@ def install_page_models(monkeypatch, *, model=None):
     return selected
 
 
-def install_discovery_models(monkeypatch, *, verdict="admit"):
-    from jobctrl.infrastructure.discovery import triage
-
-    original = triage.triage_listings
-    model = Model(verdict)
-
-    def decided(conn, listings, *, search_cfg, tenant_id="local", dependencies=None, postings=None):
-        cfg = dict(search_cfg)
-        cfg["confirmed_targets"] = {
-            "profile_version": 1,
-            "roles": ["Synthetic target"],
-            **(cfg.get("confirmed_targets") or {}),
-        }
-        if not cfg["confirmed_targets"].get("roles"):
-            cfg["confirmed_targets"]["roles"] = ["Synthetic target"]
-        return original(
-            conn, listings, search_cfg=cfg, tenant_id=tenant_id, dependencies=dependencies, postings=postings
-        )
-
-    monkeypatch.setattr(
-        triage,
-        "determination_dependencies",
-        lambda conn, **kw: dependencies(conn, model, "discovery", tenant_id=kw["tenant_id"]),
-    )
-    for module_name in [
-        "jobctrl.infrastructure.discovery.triage",
-        "jobctrl.discovery.jobspy",
-        "jobctrl.discovery.workday",
-    ]:
-        module = importlib.import_module(module_name)
-        if module and hasattr(module, "triage_listings"):
-            monkeypatch.setattr(module, "triage_listings", decided)
-    return model
 
 
 class ImportModel:
@@ -83,8 +49,6 @@ class ImportModel:
         title = response_schema["title"]
         if title in {"PageInterpretation", "DescriptionQuality"}:
             return self.page.chat_json(messages, response_schema=response_schema, **kwargs)
-        if title == "PostingTriage":
-            return Model("admit").chat_json(messages, response_schema=response_schema, **kwargs)
         if title == "PostingExtraction":
             sources = {row["source_id"]: row["text"] for row in data["sources"]}
             selected = str(self.selected_posting)

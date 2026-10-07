@@ -58,18 +58,6 @@ const RUNTIME_SETTING_HELP = {
       "Limit broad-board discovery to postings no older than this many hours when the provider supports age filtering. The next Discover run uses the new window.",
     href: `${DISCOVERY_GUIDE_URL}#runtime-setting-posting-lookback-hours`,
   },
-  triageBatchSize: {
-    title: "Listings per triage call",
-    description:
-      "A model decides intake admission in batches. Default 20; provider failure keeps listings pending with a visible reason.",
-    href: `${DISCOVERY_GUIDE_URL}#runtime-setting-triage-batch-size`,
-  },
-  triageModel: {
-    title: "Discovery triage model",
-    description:
-      "Optionally pin the model used for model-backed title matching. Leave this blank to use configured provider routing. The next source family uses changes.",
-    href: `${DISCOVERY_GUIDE_URL}#runtime-setting-role-filter-model`,
-  },
   maxParallelFamilies: {
     title: "Parallel source families",
     description:
@@ -112,8 +100,6 @@ function toFormValues(response: DiscoverySettingsResponse): DiscoverySettingsUpd
     scheduleCron: settings.scheduleCron,
   };
   for (const field of [
-    "triageBatchSize",
-    "triageModel",
     "maxParallelFamilies",
     "crawlUserAgentProduct",
     "crawlUserAgentContact",
@@ -246,12 +232,6 @@ export function DiscoveryRuntimeSettingsForm({ initial }: { initial: DiscoverySe
         <form.Field name="hoursOld">
           {(field) => <NumberControl help={RUNTIME_SETTING_HELP.hoursOld} id="discovery-lookback" name="hoursOld" label="Posting lookback hours" min={1} max={8760} value={field.state.value ?? 72} metadata={effective.hoursOld} onChange={field.handleChange} />}
         </form.Field>
-        <form.Field name="triageBatchSize">
-          {(field) => <NumberControl help={RUNTIME_SETTING_HELP.triageBatchSize} id="discovery-triage-batch" name="triageBatchSize" label="Listings per triage call" min={1} max={100} value={field.state.value ?? 20} metadata={effective.triageBatchSize} onChange={field.handleChange} />}
-        </form.Field>
-        <form.Field name="triageModel">
-          {(field) => <TextControl help={RUNTIME_SETTING_HELP.triageModel} id="discovery-role-model" name="triageModel" label="Discovery triage model" value={String(field.state.value ?? "")} metadata={effective.triageModel} optional onChange={(value) => field.handleChange(value || null)} />}
-        </form.Field>
         <form.Field name="maxParallelFamilies">
           {(field) => <NumberControl help={RUNTIME_SETTING_HELP.maxParallelFamilies} id="discovery-max-parallel" name="maxParallelFamilies" label="Parallel source families" min={1} max={4} value={field.state.value ?? initial.settings.maxParallelFamilies} metadata={effective.maxParallelFamilies} onChange={field.handleChange} />}
         </form.Field>
@@ -377,7 +357,7 @@ function DiscoverySettingLegend({
 
 function NumberControl({ help, name, id, label, min, max, metadata, value, onChange }: {
   help: DiscoverySettingHelpContent;
-  name: "resultsPerSite" | "hoursOld" | "maxParallelFamilies" | "triageBatchSize";
+  name: "resultsPerSite" | "hoursOld" | "maxParallelFamilies";
   id: string;
   label: string;
   min: number;
@@ -400,7 +380,7 @@ function NumberControl({ help, name, id, label, min, max, metadata, value, onCha
 function TextControl({ help, id, name, label, value, metadata, onChange, optional = false }: {
   help: DiscoverySettingHelpContent;
   id: string;
-  name: "triageModel" | "crawlUserAgentProduct" | "crawlUserAgentContact";
+  name: "crawlUserAgentProduct" | "crawlUserAgentContact";
   label: string;
   value: string;
   metadata: EffectiveSetting<string | null> | EffectiveSetting<string>;

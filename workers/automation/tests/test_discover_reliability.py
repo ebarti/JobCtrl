@@ -723,7 +723,6 @@ def test_source_planning_does_not_run_hygiene_before_sources(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(runner, "init_db", lambda: object())
-    monkeypatch.setattr("jobctrl.infrastructure.discovery.triage.retry_pending_postings", lambda *_args, **_kwargs: 0)
     monkeypatch.setattr(runner.config, "load_search_config", lambda: {})
     monkeypatch.setattr(runner.config, "load_source_registry", lambda **_kwargs: [])
     monkeypatch.setattr(runner, "seed_discovery_control_queues", lambda *_args, **_kwargs: None)
@@ -3050,7 +3049,6 @@ async def test_fanout_activity_emits_failed_preparation_progress(
 
 @pytest.fixture(autouse=True)
 def explicit_semantic_ports(monkeypatch):
-    from tests.workflow_determination_fakes import install_discovery_models, install_page_models
+    from tests.workflow_determination_fakes import install_page_models
 
-    install_discovery_models(monkeypatch)
     install_page_models(monkeypatch)

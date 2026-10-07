@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 from importlib.resources import files
-from jobctrl.domain.discovery.triage import Listing
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr
 from jobctrl.infrastructure.migrations.schema_manifest import (
     EXACT_V13_MANIFEST,
     EXACT_V14_MANIFEST,
@@ -15,12 +15,25 @@ from jobctrl.infrastructure.migrations.schema_manifest import (
 from jobctrl.infrastructure.migrations.schema_v13 import create_exact_v13_schema
 
 
+class _V13CapturedListing(BaseModel):
+    """Frozen serialized capture format, owned solely by the native cutover."""
+
+    model_config = ConfigDict(extra="forbid")
+    listing_id: StrictStr = Field(min_length=1, max_length=240)
+    source_id: StrictStr = Field(min_length=1, max_length=240)
+    url: StrictStr = Field(min_length=1, max_length=4000)
+    title: StrictStr = Field(max_length=2000)
+    company: StrictStr = Field(max_length=2000)
+    location: StrictStr = Field(max_length=4000)
+    remote: StrictBool | None
+
+
 def _extend(conn):
     # Validate the frozen v13 capture format before withdrawing its judgments.
     # Raw postings and canonical jobs/materials remain available for recovery.
     for row in conn.execute("SELECT listing_json FROM posting_triage"):
         try:
-            Listing.model_validate_json(row[0])
+            _V13CapturedListing.model_validate_json(row[0])
         except ValueError:
             raise SchemaManifestError("invalid exact-v13 intake capture") from None
     pending = ""

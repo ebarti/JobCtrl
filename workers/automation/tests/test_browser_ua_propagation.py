@@ -380,7 +380,6 @@ def test_enrichment_batch_context_uses_owner_overridden_ua(tmp_path: Path, monke
 
 @pytest.fixture(autouse=True)
 def explicit_semantic_ports(monkeypatch):
-    from tests.workflow_determination_fakes import install_discovery_models, install_page_models
+    from tests.workflow_determination_fakes import install_page_models
 
-    install_discovery_models(monkeypatch)
     install_page_models(monkeypatch)

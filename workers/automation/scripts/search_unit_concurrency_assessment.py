@@ -27,7 +27,6 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Iterator
-from unittest.mock import patch
 
 
 SCHEMA_VERSION = 2
@@ -184,7 +183,6 @@ def _config(
     results_per_site: int = 1,
 ) -> dict[str, Any]:
     return {
-        "triage_batch_size": 1,
         "boards": list(sources),
         "queries": [{"query": query} for query in queries],
         "locations": [{"label": "remote", "location": FIXED_LOCATION, "remote": True}],
@@ -272,52 +270,8 @@ def _synthetic_registry(
     return registry
 
 
-class _SyntheticSemanticModel:
-    """Fixed decisions for transport/concurrency QA, never language classification."""
-
-    def chat_json(self, messages, *, response_schema, **kwargs):
-        data = json.loads(messages[1].content)
-        return {
-            "listings": [
-                {
-                    "listing_id": row["listing_id"],
-                    "verdict": "admit",
-                    "reason_code": "compatible",
-                    "rationale": "Explicit QA choice",
-                    "citations": [{"source_id": f"listing:{row['listing_id']}:title", "quote": row["title"]}],
-                }
-                for row in data["context"]["listings"]
-            ]
-        }
 
 
-@contextlib.contextmanager
-def _owned_semantic_ports():
-    from jobctrl.infrastructure.discovery.triage import triage_listings
-    from jobctrl.infrastructure.determinations import SqliteDeterminationRepository
-
-    model = _SyntheticSemanticModel()
-
-    def dependencies(conn, lane):
-        return dict(
-            llm=model,
-            repository=SqliteDeterminationRepository(conn),
-            tenant_id="local",
-            provider="synthetic",
-            model="synthetic",
-            lane=lane,
-            preflight=lambda: None,
-        )
-
-    def decided(conn, listings, *, search_cfg, tenant_id="local", **kwargs):
-        cfg = {**search_cfg, "confirmed_targets": {"profile_version": 1, "roles": ["Owned target"]}}
-        return triage_listings(conn, listings, search_cfg=cfg, dependencies=dependencies(conn, "discovery"))
-
-    with (
-        patch("jobctrl.discovery.jobspy.triage_listings", decided),
-        patch("jobctrl.infrastructure.discovery.triage.triage_listings", decided),
-    ):
-        yield
 
 
 @contextlib.contextmanager
@@ -391,8 +345,7 @@ def _patched_durable_path(
     if policy_override is not None:
         jobspy.BROAD_BOARD_LEAD_POLICY = policy_override
     try:
-        with _owned_semantic_ports():
-            yield jobspy
+        yield jobspy
     finally:
         jobspy.init_db = original_init_db
         jobspy.get_connection = original_get_connection

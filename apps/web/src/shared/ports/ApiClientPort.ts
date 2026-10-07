@@ -1,4 +1,3 @@
-import type { DiscoveryTriageResponse } from "@jobctrl/contracts";
 import type {
   ActionRunResponse,
   ActivityEventResponse,
@@ -233,7 +232,6 @@ export interface ApiClientPort extends EndpointClientMethods {
   acknowledgeDigest(body?: DigestAcknowledgeRequest): Promise<DigestAcknowledgeResponse>;
   activity(query?: Partial<ActivityListQuery>): Promise<PaginatedResponse<ActivityEventSummary>>;
   activityEvent(eventId: string): Promise<ActivityEventResponse>;
-  discoveryTriage(offset?:number):Promise<DiscoveryTriageResponse>;
   discoverySettings(): Promise<DiscoverySettingsResponse>;
   updateDiscoverySettings(body: DiscoverySettingsUpdateRequest): Promise<DiscoverySettingsResponse>;
   discoverySources(): Promise<SourceRegistryListResponse>;

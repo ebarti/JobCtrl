@@ -755,7 +755,6 @@ def test_snapshot_failure_uses_current_job_id_for_state_and_events(tmp_path: Pat
 
 @pytest.fixture(autouse=True)
 def semantic_workflow_models(monkeypatch):
-    from tests.workflow_determination_fakes import install_discovery_models, install_page_models
+    from tests.workflow_determination_fakes import install_page_models
 
-    install_discovery_models(monkeypatch)
     install_page_models(monkeypatch)

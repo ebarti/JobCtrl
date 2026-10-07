@@ -232,7 +232,6 @@ export const JobUrlImportParamsSchema = z
 export type JobUrlImportParams = z.infer<typeof JobUrlImportParamsSchema>;
 
 export const JobUrlImportWorkflowResultSchema = z.union([
-  z.object({status:z.literal("succeeded"),outcome:z.enum(["pending_triage","triage_rejected","triage_uncertain"]),job_id:z.null(),item_id:z.null(),reason:z.string().min(1),imported_at:z.null(),already_existed:z.literal(false),error:z.null(),error_code:z.null()}).strict(),
   z
     .object({
       status: z.literal("succeeded"),

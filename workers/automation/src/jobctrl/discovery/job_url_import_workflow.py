@@ -1,7 +1,6 @@
 """Temporal orchestration for importing one explicit job-posting URL."""
 
 from __future__ import annotations
-from jobctrl.infrastructure.discovery.triage import PersistedPostingTriage
 from jobctrl.domain.enrichment.snapshot_services import ActiveStateVerifier
 
 import hashlib
@@ -458,14 +457,6 @@ def execute_job_url_import(
     if identity is None:
         try:
             DiscoverJobsUseCase(
-                triage=PersistedPostingTriage(
-                    connection,
-                    dependencies=(
-                        {**determination_dependencies, "lane": "discovery"}
-                        if determination_dependencies is not None
-                        else None
-                    ),
-                ),
                 repository=repository,
                 publisher=_DeferredEventPublisher(),
             ).execute(
@@ -481,24 +472,7 @@ def execute_job_url_import(
             PostingUrl(value=canonical_url),
         )
     if identity is None:
-        triage_row = connection.execute(
-            "SELECT status,reason_code,failure_code FROM posting_triage WHERE tenant_id=? AND source_id='manual_url_import' AND json_extract(listing_json,'$.listing.url')=? ORDER BY created_at DESC LIMIT 1",
-            (str(tenant_id), canonical_url),
-        ).fetchone()
-        if triage_row is None:
-            from jobctrl.domain.determinations import DeterminationFailure
-
-            raise DeterminationFailure("triage_binding_invalid")
-        status, reason, failure = triage_row
-        return JobUrlImportActivityOutput(
-            outcome={
-                "pending_triage": "pending_triage",
-                "reject": "triage_rejected",
-                "uncertain": "triage_uncertain",
-                "literal_excluded": "triage_rejected",
-            }.get(status, "pending_triage"),
-            reason=failure or reason or "triage_pending",
-        )
+        raise ApplicationError("Canonical job import was not persisted.", type="job_import_not_persisted", non_retryable=True)
     _ensure_discovery_events(
         connection,
         repository=repository,

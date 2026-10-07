@@ -49,7 +49,7 @@ The acquisition and scheduling policy is owned by
 
 ## Retrieval Before Scoring
 
-`PendingJobSelector` orders eligible work mechanically by recency and stable job ID. `--limit` applies a spend/work cap to that order. No vocabulary overlap, BM25 or embedding fallback decides which pending jobs are relevant. Intake admission comes from persisted posting triage, and scoring uses the current canonical job interpretation.
+`PendingJobSelector` orders eligible work mechanically by recency and stable job ID. `--limit` applies a spend/work cap to that order. No vocabulary overlap, BM25 or embedding fallback decides which pending jobs are relevant. Provider searches execute saved settings directly. Fetched listings enter canonical ingestion without a separate model admission gate; scoring uses the full posting and current canonical job interpretation.
 
 ## Scoring Fit Assessment
 

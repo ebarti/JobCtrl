@@ -465,11 +465,6 @@ def effective_discovery_search_config(
     """Normalize the SQLite-owned discovery settings for execution."""
     effective = json.loads(json.dumps(dict(search_cfg or _default_discovery_search_config())))
 
-    size = effective.get("triage_batch_size", 20)
-    if type(size) is not int or not 1 <= size <= 100:
-        raise ValueError("triage_batch_size must be an integer between 1 and 100")
-    effective["triage_batch_size"] = size
-
     effective["max_parallel_families"] = min(
         4,
         max(1, _positive_int(effective.get("max_parallel_families")) or 1),

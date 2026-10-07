@@ -2,6 +2,8 @@
 
 # Semantic Heuristics Audit And LLM-Determination Plan
 
+Owner amendments (2026-10-07): saved search settings execute directly, with no query-plan determination or second confirmation. The separate metadata-only intake model filter, queue and batch/model controls are removed. JobStreaming executes supported provider search/filter parameters; fetched jobs proceed to full-posting interpretation/scoring. The audit below is the original historical proposal; these amendments supersede its query planning and intake triage sections.
+
 Date: 2026-10-06. Base: `main` @ `315aa3238`. Trigger: PR #1063 and
 `workers/automation/src/jobctrl/domain/interview/question_generation.py`.
 

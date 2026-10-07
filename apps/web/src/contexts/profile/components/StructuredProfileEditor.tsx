@@ -1053,12 +1053,12 @@ export function StructuredProfileEditor({
       focusAfterDraftUpdate(locationFocusKey(rows.length));
       updateRows([...rows, { location: "", workModel: "" }]);
     };
-    const toggleWorkModel = (index: number, value: string, checked: boolean) => {
+    const toggleWorkModel = (index: number, value: string, label: string, checked: boolean) => {
       const selected = new Set(commaListAt(rows[index]?.workModel ?? ""));
+      selected.delete(value);
+      selected.delete(label);
       if (checked) {
         selected.add(value);
-      } else {
-        selected.delete(value);
       }
       const next = [...rows];
       next[index] = { ...(next[index] ?? emptyRow), workModel: Array.from(selected).join(", ") };
@@ -1092,8 +1092,13 @@ export function StructuredProfileEditor({
               <FieldSet className="target-work-model-group">
                 <FieldLegend className="sr-only">Target work model {index + 1}</FieldLegend>
                 <FieldGroup className="target-work-model-options">
-                  {workModelOptions.map(([value, label]) => {
-                    const checkboxId = `target-work-model-${index}-${value.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+                  {[
+                    ...workModelOptions,
+                    ...Array.from(new Set(commaListAt(row.workModel)))
+                      .filter((value) => !workModelOptions.some(([code, label]) => code === value || label === value))
+                      .map((value) => [value, value] as const),
+                  ].map(([value, label], optionIndex) => {
+                    const checkboxId = `target-work-model-${index}-${optionIndex}`;
                     return (
                       <Field
                         className="target-work-model-option"
@@ -1102,18 +1107,13 @@ export function StructuredProfileEditor({
                       >
                         <Checkbox
                           id={checkboxId}
-                          checked={commaListAt(row.workModel).includes(value)}
-                          onCheckedChange={(checked) => toggleWorkModel(index, value, checked)}
+                          checked={commaListAt(row.workModel).some((saved) => saved === value || saved === label)}
+                          onCheckedChange={(checked) => toggleWorkModel(index, value, label, checked)}
                         />
                         <FieldLabel htmlFor={checkboxId}>{label}</FieldLabel>
                       </Field>
                     );
                   })}
-                  {commaListAt(row.workModel).filter((value) => !workModelOptions.some(([code]) => code === value)).map((value) => (
-                    <Button key={value} type="button" variant="outline" onClick={() => toggleWorkModel(index, value, false)}>
-                      Remove saved work model: {value}
-                    </Button>
-                  ))}
                 </FieldGroup>
               </FieldSet>
               <Button

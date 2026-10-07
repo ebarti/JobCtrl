@@ -2,7 +2,6 @@ import { readTargetRoleProposal } from "./candidate-interpretations.js";
 import { ResumeEditIntentReviewSchema } from "@jobctrl/contracts";
 import { readDetermination } from "./semantic-determinations.js";
 import { isDeepStrictEqual } from "node:util";
-import { readDiscoveryTriage } from "./discovery-triage.js";
 import { FormSnapshotSchema, FormMappingResponseSchema } from "@jobctrl/contracts";
 import { ResumeEditReviewSchema } from "@jobctrl/contracts";
 import cors from "@fastify/cors";
@@ -3125,12 +3124,6 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     } finally {
       db.close();
     }
-  });
-
-  app.get("/v1/discovery/triage", (request,reply)=>{
-    const parsed=z.object({offset:z.coerce.number().int().min(0).default(0),limit:z.coerce.number().int().min(1).max(200).default(50)}).strict().safeParse(request.query);
-    if(!parsed.success){void reply.code(400);return {ok:false,error:"invalid_triage_query"};}
-    return withDb(reply,options.dbPath,db=>readDiscoveryTriage(db,parsed.data.offset,parsed.data.limit));
   });
 
   app.post("/v1/profile/target-role-suggestions", async (request, reply) => {

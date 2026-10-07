@@ -12,7 +12,7 @@ describe("<DiscoveryRuntimeSettingsPanel>", () => {
     const user = userEvent.setup();
     renderWithProviders(<DiscoveryRuntimeSettingsPanel />);
 
-    expect(await screen.findByRole("spinbutton", { name: "Listings per triage call" })).toHaveValue(20);
+    expect(await screen.findByRole("spinbutton", { name: "Results per board" })).toHaveValue(50);
     expect(screen.getByLabelText("Parallel source families")).toHaveValue(1);
     expect(screen.getByLabelText("Crawler product name")).toHaveValue("JobCtrl");
     expect(screen.queryByText(/Saved in SQLite/i)).not.toBeInTheDocument();
@@ -22,8 +22,6 @@ describe("<DiscoveryRuntimeSettingsPanel>", () => {
       "Job boards",
       "Results per board",
       "Posting lookback hours",
-      "Listings per triage call",
-      "Discovery triage model",
       "Parallel source families",
       "Crawler product name",
       "Crawler contact",

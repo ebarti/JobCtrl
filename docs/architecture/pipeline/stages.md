@@ -75,11 +75,7 @@ Key facts about the four activities:
   progress totals, and the starting job count) from the source registry, source
   quality, and the global limit. Literal saved roles and location/work-model controls
   become board parameters without a model or a second approval. The captured
-  execution settings remain stable on retries. Intake triage determines whether
-  each returned listing matches the saved inputs; code never reclassifies its
-  title, seniority or geography. Each row records the actual target-source snapshot
-  and profile version used, alongside its model receipt. The activity preserves
-  determination failures as typed `ApplicationError` values with their retry policy.
+  execution settings remain stable on retries. JobStreaming owns execution of supported provider search/filter parameters. Fetched, structurally valid postings proceed to canonical ingestion; no metadata-only model decides admission. Full-posting analysis/scoring assess meaning. Page or extraction determination failures retain typed `ApplicationError` values with their retry policy.
 - **`discovery_source_family`** runs *one* source family under
   `run_blocking_with_heartbeat` with a cooperative `cancel_event` and a 6-hour
   window (crawls legitimately run long). Each family is isolated: a broad-board, ATS,
@@ -94,13 +90,7 @@ Key facts about the four activities:
   budget** — rediscoveries record observations but do not consume the budget, so
   exact-query duplicates never starve later recall queries or sources.
 
-  Before fetching, the heartbeating activity recovers at most one configured
-  batch of unconsumed intake from its runnable sources, bounded by the remaining
-  new-job budget. A failed determination leaves that batch pending and allows
-  fresh intake to be captured. Cancellation prevents further ingestion. All
-  sources, including Workday, persist the canonical posting payload before triage;
-  recovery therefore needs no board re-fetch and retains the original source
-  family in execution lineage.
+  Cancellation prevents further ingestion. The broad-board family persists source events before processing, so retries drain unfinished capture under the same execution/lease and exact identity fences without a new intake model call.
 
   The broad-board family further decomposes the immutable search plan into one
   query/location/board unit per JobStreaming stream. Each admitted lead is
@@ -604,7 +594,7 @@ survive failed refreshes. These gates grant no submission authority.
 
 ## Semantic Determination Authority
 
-Intake triage persists every listing before admission; failures remain pending. Search planning uses saved controls directly. Semantic calls run only in activities/sync RPC and pass lane/spend preflight. Scoring preselection uses recency/ID order. Job interpretation and typed blockers supply constraint meaning. Replay reads persisted results and makes no provider call.
+Search planning uses saved controls directly and JobStreaming executes provider filtering. Fetched listings proceed to canonical ingestion without a separate intake model. Semantic calls run only in activities/sync RPC and pass lane/spend preflight. Scoring preselection uses recency/ID order. Job interpretation and typed blockers supply constraint meaning. Replay reads persisted results and makes no provider call.
 
 See [the decision](../../decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.
 

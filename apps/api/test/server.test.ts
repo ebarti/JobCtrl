@@ -11310,8 +11310,6 @@ describe("local TypeScript API", () => {
       method: "PATCH",
       url: "/v1/discovery/settings",
       payload: {
-        triageBatchSize: 20,
-        triageModel: "claude:sonnet",
         maxParallelFamilies: 3,
         crawlUserAgentProduct: "JobCtrlResearch",
         crawlUserAgentContact: "ops@example.test",
@@ -11323,8 +11321,6 @@ describe("local TypeScript API", () => {
     expect(response.statusCode, response.body).toBe(200);
     expect(response.json()).toMatchObject({
       settings: {
-        triageBatchSize: 20,
-        triageModel: "claude:sonnet",
         maxParallelFamilies: 3,
         crawlUserAgentProduct: "JobCtrlResearch",
         crawlUserAgentContact: "ops@example.test",
@@ -11332,7 +11328,6 @@ describe("local TypeScript API", () => {
         scheduleCron: "0 8 * * 1-5",
       },
       effectiveSettings: {
-        triageBatchSize: { source: "persisted", activation: "next_source_family", editable: true },
         maxParallelFamilies: { source: "persisted", activation: "next_run", editable: true },
         schedulingEnabled: { source: "persisted", activation: "restart", editable: true },
       },

@@ -30,7 +30,6 @@ export const DEMO_CAPABILITY_MANIFEST = {
   acknowledgeDigest: local("Acknowledges a digest only in browser-local state."),
   activity: local("Reads synthetic activity history."),
   activityEvent: local("Reads a synthetic activity event."),
-  discoveryTriage: unavailable("Listing decisions need the local model runtime."),
   discoverySettings: local("Reads synthetic discovery preferences."),
   updateDiscoverySettings: local("Edits synthetic discovery preferences locally."),
   discoverySources: local("Reads synthetic discovery sources."),

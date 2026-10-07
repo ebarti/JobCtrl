@@ -7,7 +7,6 @@ Search queries, locations, and filtering rules are loaded from database-backed
 discovery settings plus the profile target-search fields.
 """
 
-from jobctrl.infrastructure.discovery.triage import PersistedPostingTriage
 import logging
 import json
 import re
@@ -47,9 +46,7 @@ from jobctrl.infrastructure.discovery.production_wiring import (
     DurableJobEventPublisher,
 )
 from jobctrl.infrastructure.discovery.sqlite_repository import SqliteJobRepository
-from jobctrl.domain.discovery.use_cases import DiscoverJobsUseCase
-from jobctrl.domain.discovery.triage import Listing
-from jobctrl.infrastructure.discovery.triage import listing_id, triage_listings
+from jobctrl.domain.discovery.use_cases import DiscoverJobsUseCase, matches_exact_title_exclusion
 from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.infrastructure.network import (
     PolitenessGateway,
@@ -118,41 +115,11 @@ def _jobspy_salary_from_row(row):
     return _nullable_str(row.get("salary"))
 
 
-def _triaged_frame(conn, frame, search_cfg):
-    listings, ordinals, postings = [], [], {}
-    for ordinal, (_, row) in enumerate(frame.iterrows()):
-        url = _nullable_str(row.get("job_url"))
-        if not url:
-            continue
-        source = _jobspy_source_id(str(row.get("site") or "jobspy"))
-        fields = dict(
-            title=_nullable_str(row.get("title")) or "",
-            company=_nullable_str(row.get("company")) or "Unknown",
-            location=_nullable_str(row.get("location")) or "",
-            remote=_truthy_remote(row.get("is_remote")) if row.get("is_remote") is not None else None,
-        )
-        listing = Listing(listing_id=listing_id(source, url, **fields), source_id=source, url=url, **fields)
-        listings.append(listing)
-        postings[listing.listing_id] = _jobspy_posting_from_row(
-            url=url,
-            source_id=source,
-            source_native_id=_jobspy_source_native_id(row, url),
-            site_label=str(row.get("site") or "jobspy"),
-            company=fields["company"],
-            title=fields["title"],
-            salary=_jobspy_salary_from_row(row),
-            description=_nullable_str(row.get("description")),
-            location=fields["location"],
-            structured_remote=fields["remote"],
-        )
-        ordinals.append(ordinal)
-    decisions = triage_listings(conn, listings, search_cfg=search_cfg, postings=postings)
+def _filter_exact_title_exclusions(frame, search_cfg):
+    exclusions = tuple(search_cfg.get("exact_title_exclusions") or ())
     return frame.iloc[
-        [
-            ordinal
-            for ordinal, listing in zip(ordinals, listings, strict=True)
-            if decisions[listing.listing_id] == "admit"
-        ]
+        [index for index, (_, row) in enumerate(frame.iterrows())
+         if not matches_exact_title_exclusion(_nullable_str(row.get("title")), exclusions)]
     ]
 
 
@@ -171,7 +138,7 @@ def store_jobspy_results(
     new = 0
     existing = 0
     active_search_cfg = search_cfg if search_cfg is not None else config.load_search_config()
-    df = _triaged_frame(conn, df, active_search_cfg)
+    df = _filter_exact_title_exclusions(df, active_search_cfg)
     repository = SqliteJobRepository(
         conn,
         discovery_execution=discovery_execution,
@@ -398,7 +365,6 @@ def store_jobspy_results(
             continue
 
         use_case = DiscoverJobsUseCase(
-            triage=PersistedPostingTriage(conn, search_cfg=active_search_cfg),
             repository=repository,
             publisher=DurableJobEventPublisher(
                 conn,
@@ -832,7 +798,7 @@ def _needs_linkedin_detail_for_content_identity(
     """Return whether one admitted sparse listing needs collision evidence.
 
     This is not another suitability filter. The listing has already passed the
-    persisted model triage decision. Detail is requested only when a
+    literal saved-title exclusion. Detail is requested only when a
     descriptionless LinkedIn card could be the same opening as a stored Job at
     another URL with the same normalized role and genuine employer. Without
     description evidence, the content-identity boundary must safely under-merge
@@ -1613,7 +1579,7 @@ def _persist_intake_event(conn, repository, lease, event, frame):
     conn.commit()
 
 
-def _drain_intake_events(conn, repository, lease, *, query, run_id, search_cfg, limit, detail_fetcher=None):
+def _drain_intake_events(conn, repository, lease, *, query, run_id, search_cfg, limit, detail_fetcher=None, cancel_event=None):
     import pandas as pd
     import json
 
@@ -1625,21 +1591,20 @@ def _drain_intake_events(conn, repository, lease, *, query, run_id, search_cfg, 
                 lease.execution.workflow_id,
                 lease.execution.temporal_run_id,
                 lease.unit_id,
-                int(search_cfg.get("triage_batch_size", 20)),
+                100,
             ),
         ).fetchall()
         if not rows:
             return False
         payloads = [json.loads(row[1])[0] for row in rows]
         frames = [pd.DataFrame(payload["frame"]) for payload in payloads]
-        # One call per intake batch, followed by ID-based reads while writing each
-        # result through the existing canonical job and consumption fences.
-        _triaged_frame(conn, pd.concat(frames, ignore_index=True), search_cfg)
         for row, frame, payload in zip(rows, frames, payloads, strict=True):
+            if cancel_event is not None and cancel_event.is_set():
+                raise DiscoveryCancelled("JobStreaming discovery canceled")
             counts = repository.execution_counts(lease.execution)
             if limit > 0 and counts["new"] >= limit:
                 return True
-            accepted = _triaged_frame(conn, frame, search_cfg)
+            accepted = _filter_exact_title_exclusions(frame, search_cfg)
             if not accepted.empty:
                 if detail_fetcher is not None:
                     accepted = detail_fetcher(accepted, payload, row[0])
@@ -1653,8 +1618,8 @@ def _drain_intake_events(conn, repository, lease, *, query, run_id, search_cfg, 
                     search_unit_lease=lease,
                 )
             else:
-                # The model's persisted reject/uncertain decision owns this
-                # outcome. The triage surface retains its distinction and reason.
+                # Only a literal user-authored title exclusion can filter a
+                # structurally valid provider result at this boundary.
                 repository.record_filtered_result(lease, row[0])
             repository.fence_write(lease)
             conn.execute(
@@ -1846,6 +1811,7 @@ def _durable_full_crawl(
                 search_cfg=search_cfg,
                 limit=limit,
                 detail_fetcher=fill_identity_detail,
+                cancel_event=cancel_event,
             )
             if stopped_for_limit:
                 repository.mark_skipped(lease)
@@ -1884,36 +1850,26 @@ def _durable_full_crawl(
                                 break
                             frame = gateway.frame_for_job_event(event, provider_spec)
                             _persist_intake_event(conn, repository, lease, event, frame)
-                            pending_count = conn.execute(
-                                "SELECT COUNT(*) FROM discovery_intake_events WHERE tenant_id=? AND discover_workflow_id=? AND discover_run_id=? AND unit_id=? AND processed=0",
-                                (
-                                    str(discovery_execution.tenant_id),
-                                    discovery_execution.workflow_id,
-                                    discovery_execution.temporal_run_id,
-                                    lease.unit_id,
-                                ),
-                            ).fetchone()[0]
-                            if pending_count >= int(search_cfg.get("triage_batch_size", 20)):
-                                stopped_for_limit = _drain_intake_events(
-                                    conn,
-                                    repository,
-                                    lease,
-                                    query=unit.spec.query,
-                                    run_id=run_id,
-                                    search_cfg=search_cfg,
-                                    limit=limit,
-                                    detail_fetcher=fill_identity_detail,
-                                )
-                                emit_progress(unit, "Listing batch triaged")
-                            # Acknowledge after the durable intake and any full
-                            # batch is stored; replay can resume either boundary.
+                            stopped_for_limit = _drain_intake_events(
+                                conn,
+                                repository,
+                                lease,
+                                query=unit.spec.query,
+                                run_id=run_id,
+                                search_cfg=search_cfg,
+                                limit=limit,
+                                detail_fetcher=fill_identity_detail,
+                                cancel_event=cancel_event,
+                            )
+                            # Capture and canonical ingestion are durable before
+                            # acknowledgement advances the provider checkpoint.
                             stream.ack(event)
-                            if pending_count >= int(search_cfg.get("triage_batch_size", 20)):
-                                if stopped_for_limit:
-                                    repository.mark_skipped(lease)
-                                    repository.mark_pending_skipped(discovery_execution)
-                                    stream.close()
-                                    break
+                            emit_progress(unit, "Listing stored")
+                            if stopped_for_limit:
+                                repository.mark_skipped(lease)
+                                repository.mark_pending_skipped(discovery_execution)
+                                stream.close()
+                                break
                         elif isinstance(event, ErrorEvent):
                             repository.record_failure(
                                 lease,
@@ -1944,6 +1900,7 @@ def _durable_full_crawl(
                                 search_cfg=search_cfg,
                                 limit=limit,
                                 detail_fetcher=fill_identity_detail,
+                                cancel_event=cancel_event,
                             )
                             if stopped_for_limit:
                                 repository.mark_skipped(lease)
@@ -2011,7 +1968,7 @@ def _durable_full_crawl(
                             stream.ack(event)
                         else:  # pragma: no cover - pinned event union is exhaustive
                             raise TypeError(f"unsupported JobStreaming event: {type(event).__name__}")
-        except StreamCancelledError as exc:
+        except (StreamCancelledError, DiscoveryCancelled) as exc:
             repository.mark_execution_canceled(lease)
             emit_progress(unit, "JobStreaming discovery canceled")
             raise DiscoveryCancelled("JobStreaming discovery canceled") from exc

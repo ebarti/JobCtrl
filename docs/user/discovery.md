@@ -16,7 +16,7 @@ ceiling, use [Configuration](configuration.md).
 ::: info One persistence authority
 Discovery settings and source records editable on `/discovery` are stored in
 `~/.jobctrl/jobctrl.db`. SQLite is the sole persistence authority for target
-search, Automation settings, broad-board controls and limits, intake triage, source-family parallelism, crawler identity, runtime and schedule,
+search, Automation settings, broad-board controls and limits, source-family parallelism, crawler identity, runtime and schedule,
 the source registry, locator candidates, quarantine, manual capture, and other
 Discovery domain state. `config.json` does not own or provide a fallback for any
 of these fields. Source-review table filters and sorting live in the URL;
@@ -49,10 +49,10 @@ preferences, rather than silently reapplying an older named view's filters.
 ## Runtime, Sources, And Schedule
 
 Use **Discovery → Runtime settings** for boards, results per site, posting age,
-schedule, triage batch size/model, bounded source-family parallelism, and the
+schedule, bounded source-family parallelism, and the
 outbound user-agent identity. Every saved value goes to SQLite. Schedule
 changes need a worker restart; boards, limits, and parallelism apply on the
-next run; triage and user-agent changes apply to the next source family.
+next run; user-agent changes apply to the next source family.
 
 Parallel families are capped at four and should not exceed the worker's active
 activity slots. See
@@ -71,7 +71,7 @@ starts, so a change affects the next run rather than work already in progress.
 <a id="runtime-setting-results-per-board"></a>
 **Results per board.** Set the maximum number of results requested from each
 selected board for one search unit. This is a provider request limit, not a
-promise that every board will return that many admitted leads; model intake decisions, provider age bounds, and exact identity checks still apply. The next Discover run snapshots the
+promise that every board will return that many admitted leads; provider search/age bounds and exact identity checks still apply. The next Discover run snapshots the
 new value. Admission means a lead is eligible for persistence and enrichment;
 it is not a relevance score or a judgment that the job is suitable.
 
@@ -88,21 +88,6 @@ title and employer alone.
 **Posting lookback hours.** Limit broad-board discovery to postings no older
 than this many hours when the provider supports age filtering. The next
 Discover run snapshots the window.
-
-<a id="runtime-setting-triage-batch-size"></a>
-**Listings per triage.** The intake determination reviews batches of 20 by
-default, configurable from 1 to 100. Every decision and pending failure appears
-in **Intake decisions**; rejected rows remain inspectable.
-
-Pending listings retain their posting payload. A later run can retry them even
-when the board no longer returns the listing, using at most one triage batch per
-source family and respecting the remaining new-job limit. If the provider is
-still unavailable, the saved batch remains pending and new listings can still
-enter intake.
-
-<a id="runtime-setting-triage-model"></a>
-**Triage model.** Optionally pin the configured Discovery model. An unavailable
-provider leaves intake rows pending. There is no local title/location fallback.
 
 <a id="runtime-setting-parallel-source-families"></a>
 **Parallel source families.** Limit how many source families may crawl at the
@@ -141,20 +126,11 @@ their behavior is documented in
 The Ashby adapter consumes the [official public job posting
 API](https://developers.ashbyhq.com/docs/public-job-posting-api). It excludes
 postings explicitly marked `isListed: false`; `true` and an omitted flag retain
-normal admission. Title, description, and location checks still apply.
+normal admission. Listed postings proceed to ingestion and downstream analysis/scoring.
 
 Ashby location metadata retains the primary `location` (or the existing
 `locationName` fallback) first, then valid `secondaryLocations[].location`
-names in source order. Names are trimmed, deduplicated without regard to case
-while retaining the first spelling, and separated by `; `. Empty or malformed
-secondary values are ignored. An Austin-primary/Madrid-secondary posting can
-therefore match a Madrid target while preserving `Austin; Madrid`. Each name
-retains its own geography context for filtering: a configured reject in any
-name excludes the posting, and a complete target must match within one name.
-For example, secondary `Madrid, Spain` cannot mask a Canada reject on primary
-`Toronto, ON, CA`. Primary `Barcelona, Venezuela` and secondary `Madrid, Spain`
-cannot together satisfy a `Barcelona, Spain` target. Empty-location behavior
-is unchanged.
+names in source order. Names are trimmed, deduplicated without regard to case while retaining the first spelling, and separated by `; `. These are provider location fields, not a local geography classifier. Full-posting interpretation and scoring assess location suitability from the saved targets and source evidence.
 
 ### Canonical identity and repeat applications
 
@@ -318,12 +294,12 @@ location, and board under the exact Discover workflow/run identity. JobCtrl,
 not the provider, owns whether that unit is pending, running, completed, failed,
 skipped, or canceled.
 
-For each posting event, JobCtrl applies the title/location admission policy and
+For each posting event, JobCtrl executes only literal saved title exclusions and
 commits the admitted lead, source observation, event records, and an idempotent unit
 receipt before acknowledging the JobStreaming event. The acknowledgement then
 advances the provider checkpoint. If the process stops in that gap, the event
 is delivered again and the durable receipt makes the replay harmless. Results
-rejected by the caller's title/location policy get a separate hashed receipt
+excluded by a literal saved whole-title filter get a separate hashed receipt
 before acknowledgement. Accepted new/existing counts, filtered counts, and the
 run-wide new-job limit are therefore read from durable receipts, so a retry
 cannot lose progress or start the limit over. This intake admission remains
@@ -362,9 +338,9 @@ Saving Target search is sufficient to authorize those settings. Discovery execut
 
 Each location row uses only the work models checked in that row. Multiple checked models produce the board's remote and non-remote parameters as needed; a Remote row with no location searches without a place restriction. Invalid saved work-model controls block Discovery planning with an actionable settings error. They do not prevent fetching, scoring or reading saved sources.
 
-Every fetched listing enters intake triage using title, company, location and the structured remote flag. The default batch is 20, configurable from 1–100; an optional Discovery model setting overrides the configured lane model. The model returns admit, reject or uncertain with cited sources and a reason code. **Listing decisions** shows all statuses, their determination provenance and the exact saved settings captured for each attempt. Earlier intake decisions withdrawn by the native cutover appear as `superseded`; recoverable unconsumed posting captures remain available for a new determination. A provider/spend/validation failure keeps rows `pending_triage` with its reason. Nothing silently disappears or is soft-deleted because of posting words.
+JobStreaming executes the saved title, location, remote and lookback parameters supported by each board. Unsupported provider filters appear as source warnings. JobCtrl stores fetched listings under exact canonical identity and sends them to full-posting analysis and scoring. There is no separate intake model call, listing-decision queue or second search confirmation. Direct company ATS adapters may return a whole company feed; full-posting scoring assesses those jobs too.
 
-After the provider or budget recovers, retry Discovery. Its planning activity drains persisted intake before fetching new listings, including accepted batches interrupted before ingestion. The captured source fields and identity travel with the listing, so a source's time window cannot strand it. Intake is acknowledged only after admission and canonical ingestion finish.
+Broad-board captures are durable before checkpoint acknowledgement and canonical ingestion is idempotent across retry. Limits, leases, source listing flags and literal exact-title exclusions remain mechanical. Historical intake captures and model receipts remain preserved in local storage and do not decide admission for new searches.
 
 Literal user-approved exact-title exclusions remain literal. Saved free-text criteria are supplied verbatim to posting and scoring determinations; they do not create another search-approval step. Historical experience locations do not imply relocation or remote consent. Profile import/save creates pending candidate interpretations. **Target search suggestions** calls the configured model in production; selected suggestions change targets only through a version-fenced user save.
 

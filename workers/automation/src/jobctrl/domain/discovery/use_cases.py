@@ -77,6 +77,11 @@ from jobctrl.infrastructure.observability.adapter_spans import (
 )
 
 
+def matches_exact_title_exclusion(title: str | None, exclusions: Iterable[str]) -> bool:
+    """Execute only the user's literal, whole-title exclusions."""
+    return (title or "").strip().casefold() in {value.strip().casefold() for value in exclusions}
+
+
 MIN_AUTO_MERGE_CONFIDENCE: float = 0.75
 """Confidence threshold for auto-merging duplicate observations.
 
@@ -186,7 +191,7 @@ class DiscoverJobsUseCase:
         repository: JobRepository,
         publisher: EventPublisher,
         resolver: CanonicalIdentityResolver | None = None,
-        triage,
+        exact_title_exclusions: Iterable[str] = (),
         run_id_factory: object | None = None,
         clock: object | None = None,
         observation_id_factory: Callable[[], str] | None = None,
@@ -196,7 +201,7 @@ class DiscoverJobsUseCase:
         self._repository = repository
         self._publisher = publisher
         self._resolver = resolver or default_canonical_identity
-        self._triage = triage
+        self._exact_title_exclusions = tuple(exact_title_exclusions)
         self._run_id_factory = run_id_factory or (lambda: f"run:{uuid.uuid4().hex}")
         self._clock = clock or (lambda: datetime.now(timezone.utc).isoformat())
         self._observation_id_factory = observation_id_factory or (lambda: f"obs:{uuid.uuid4().hex}")
@@ -216,13 +221,14 @@ class DiscoverJobsUseCase:
         once so the same adapter can be replayed in tests.
         """
 
-        supplied = list(postings)
-        materialised = list(self._triage.admit(tenant_id=tenant_id, postings=supplied))
+        materialised = [
+            posting for posting in postings
+            if not matches_exact_title_exclusion(posting.metadata.title, self._exact_title_exclusions)
+        ]
         run_id = run_id or self._run_id_factory()
         decisions: list[DiscoveryDecision] = [
             self._ingest_one(tenant_id=tenant_id, posting=p, run_id=run_id) for p in materialised
         ]
-        self._triage.complete(tenant_id=tenant_id, postings=supplied)
         return DiscoveryRunSummary(
             total=len(decisions),
             new_jobs=sum(1 for d in decisions if d.is_new_job),

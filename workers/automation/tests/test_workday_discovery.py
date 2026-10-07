@@ -64,7 +64,7 @@ def test_workday_store_results_publishes_discovery_events(
     assert json.loads(observed["payload_json"])["source_id"] == "workday:acme"
 
 
-def test_workday_store_results_retains_model_admitted_blank_descriptions_before_limit(
+def test_workday_store_results_retains_blank_descriptions_before_limit(
     conn: sqlite3.Connection,
 ) -> None:
     jobs = [
@@ -117,7 +117,7 @@ def test_workday_store_results_retains_model_admitted_blank_descriptions_before_
 
 
 @pytest.mark.parametrize("description", ["None", "nan", "<NA>"])
-def test_workday_store_results_retains_model_admitted_empty_descriptions_before_limit(
+def test_workday_store_results_retains_empty_descriptions_before_limit(
     conn: sqlite3.Connection,
     description: str,
 ) -> None:
@@ -168,6 +168,37 @@ def test_workday_store_results_retains_model_admitted_empty_descriptions_before_
             "",
         )
     ]
+
+
+def test_workday_storage_uses_frozen_literal_exclusions(
+    conn: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(config, "load_saved_search_settings", lambda: pytest.fail("must use the run snapshot"))
+    employers = {
+        "acme": {
+            "name": "Acme",
+            "base_url": "https://acme.wd1.myworkdayjobs.com",
+            "site_id": "External",
+            "_source_id": "workday:acme",
+        }
+    }
+    jobs = [
+        {
+            "title": title,
+            "job_req_id": f"JR-{index}",
+            "apply_url": f"https://acme.wd1.myworkdayjobs.com/External/job/JR-{index}",
+            "employer_key": "acme",
+            "employer_name": "Acme",
+        }
+        for index, title in enumerate(("  ACCOUNTANT  ", "Senior Accountant"))
+    ]
+
+    assert store_results(
+        conn, jobs, employers,
+        search_cfg={"exact_title_exclusions": ["Accountant"]},
+    ) == (1, 0)
+    assert [row["title"] for row in conn.execute("SELECT title FROM jobs")] == ["Senior Accountant"]
 
 
 def test_limited_workday_search_respects_page_cap(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -221,6 +252,7 @@ def test_parallel_limited_workday_scrape_enforces_global_limit(monkeypatch: pyte
         for key in ("acme", "globex", "initech")
     }
     stored_jobs: list[dict] = []
+    run_settings = {"exact_title_exclusions": ["Accountant"]}
 
     def fake_search_and_fetch_one(
         employer_key: str,
@@ -231,6 +263,7 @@ def test_parallel_limited_workday_scrape_enforces_global_limit(monkeypatch: pyte
         cancel_event=None,
         search_cfg=None,
     ) -> dict:
+        assert search_cfg is run_settings
         assert limit == 2
         assert max_pages_per_employer == 1
         jobs = [
@@ -254,7 +287,9 @@ def test_parallel_limited_workday_scrape_enforces_global_limit(monkeypatch: pyte
         limit: int = 0,
         run_id: str | None = None,
         discovery_execution: workday.DiscoveryExecutionRef | None = None,
+        search_cfg: dict | None = None,
     ) -> tuple[int, int]:
+        assert search_cfg is run_settings
         assert limit == 2
         assert run_id == "run-1"
         assert discovery_execution is None
@@ -273,6 +308,7 @@ def test_parallel_limited_workday_scrape_enforces_global_limit(monkeypatch: pyte
         limit=2,
         max_pages_per_employer=1,
         run_id="run-1",
+        search_cfg=run_settings,
     )
 
     assert result == {"found": 2, "new": 2, "existing": 0}
@@ -281,7 +317,6 @@ def test_parallel_limited_workday_scrape_enforces_global_limit(monkeypatch: pyte
 
 @pytest.fixture(autouse=True)
 def semantic_workflow_models(monkeypatch):
-    from tests.workflow_determination_fakes import install_discovery_models, install_page_models
+    from tests.workflow_determination_fakes import install_page_models
 
-    install_discovery_models(monkeypatch)
     install_page_models(monkeypatch)
