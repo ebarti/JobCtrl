@@ -121,6 +121,49 @@ def test_actual_spawned_transport_is_cancelled_and_no_child_survives_the_deadlin
     assert {process.pid for process in multiprocessing.active_children()} == before
 
 
+@pytest.mark.parametrize("exits", [True, False, None])
+def test_browser_cleanup_observes_detached_group_exit_within_existing_grace(monkeypatch, exits):
+    from types import SimpleNamespace
+
+    instant = [0.0]
+    signals = []
+    events = []
+    scans = []
+    monkeypatch.setattr(availability.time, "monotonic", lambda: instant[0])
+    monkeypatch.setattr(availability.time, "sleep", lambda duration: instant.__setitem__(0, instant[0] + duration))
+    monkeypatch.setattr(availability.os, "getpgrp", lambda: 10)
+    monkeypatch.setattr(availability.os, "getpgid", lambda _pid: 20)
+    monkeypatch.setattr(availability.os, "killpg", lambda group, signum: signals.append((group, signum)))
+    monkeypatch.setattr(availability, "_owned_browser_groups", lambda _pid: {20, 30})
+
+    def inventory(*_args, **kwargs):
+        scans.append(kwargs["timeout"])
+        if exits is None:
+            raise availability.subprocess.TimeoutExpired("ps", kwargs["timeout"])
+        # The wrapper has exited; a detached Chromium group is still exiting.
+        remaining = "30 Ds\n" if not exits or len(scans) == 1 else "30 Z\n"
+        return SimpleNamespace(stdout="10 R\n40 S\n" + remaining)
+
+    monkeypatch.setattr(availability.subprocess, "run", inventory)
+    process = SimpleNamespace(
+        pid=20, is_alive=lambda: False, join=lambda **_: events.append("joined"), close=lambda: events.append("closed")
+    )
+    if exits:
+        availability._stop_browser_process(process, {10, 30})
+        assert len(scans) == 2
+        assert 0 < instant[0] < availability.BROWSER_CLEANUP_GRACE_SECONDS
+    else:
+        with pytest.raises(availability.DeferredCheck, match="browser_cleanup_failed"):
+            availability._stop_browser_process(process, {10, 30})
+        if exits is None:
+            assert instant[0] < availability.BROWSER_CLEANUP_GRACE_SECONDS
+        else:
+            assert instant[0] == availability.BROWSER_CLEANUP_GRACE_SECONDS
+    assert all(0 < timeout <= 1 for timeout in scans)
+    assert events == ["joined", "closed"]
+    assert {group for group, _signum in signals} == {20, 30}
+
+
 def test_aggregate_acquisition_deadline_stops_before_lease_can_expire(saved_job, monkeypatch):
     instant = [0.0]
     monkeypatch.setattr(availability.time, "monotonic", lambda: instant[0])

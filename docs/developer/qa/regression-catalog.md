@@ -1077,6 +1077,11 @@ through actual-host reservations, blocked service-worker/native connections with
 owned HTTP/UDP sinks, and failed status-resource hashes. A hung renderer or
 capture/close RPC must terminate and reap the owned browser processes within the
 acquisition budget, before five-minute leases admit a successor.
+Kill signals alone do not prove cleanup: observe every owned non-zombie browser
+group exit within the existing cleanup grace. A surviving group or failed process
+inventory must return `browser_cleanup_failed`; parent and foreign groups remain
+untouched. Prove delayed group exit, grace exhaustion and inventory failure
+mechanically, alongside the real Chromium cancellation fixtures.
 Prove a second writer can acquire during transport. GET must make zero employer
 requests. Failed observations retain success clocks and byte-identical accepted
 content/material/generation/approval/outcome fingerprints. Closure must never

@@ -646,6 +646,9 @@ def _owned_browser_groups(process_id: int) -> set[int]:
 
 def _stop_browser_process(process: Any, known_groups: set[int] | None = None) -> None:
     """Kill/reap owned browser descendants even if Playwright close hangs."""
+    cleanup_deadline = time.monotonic() + BROWSER_CLEANUP_GRACE_SECONDS
+    groups = set(known_groups or ())
+    inventory_failed = False
     if os.name == "nt":
         try:
             subprocess.run(
@@ -657,6 +660,7 @@ def _stop_browser_process(process: Any, known_groups: set[int] | None = None) ->
         except (OSError, subprocess.TimeoutExpired):
             pass
     else:
+        groups.discard(os.getpgrp())
         try:
             # Freeze the driver group before inspecting detached Chromium groups.
             # Never signal the parent's group if startup has not reached setsid.
@@ -666,7 +670,6 @@ def _stop_browser_process(process: Any, known_groups: set[int] | None = None) ->
                 os.kill(process.pid, signal.SIGSTOP)
         except ProcessLookupError:
             pass
-        groups = set(known_groups or ())
         try:
             groups.update(_owned_browser_groups(process.pid))
             for group in groups:
@@ -675,6 +678,7 @@ def _stop_browser_process(process: Any, known_groups: set[int] | None = None) ->
                 except ProcessLookupError:
                     pass
         except (OSError, subprocess.SubprocessError, ValueError):
+            inventory_failed = True
             for group in groups:
                 try:
                     os.killpg(group, signal.SIGKILL)
@@ -688,10 +692,37 @@ def _stop_browser_process(process: Any, known_groups: set[int] | None = None) ->
                 pass
     if process.is_alive():
         process.kill()
-    process.join(timeout=1)
+    process.join(timeout=min(1, max(0, cleanup_deadline - time.monotonic())))
     if process.is_alive():
         raise DeferredCheck("browser_cleanup_failed")
     process.close()
+    if inventory_failed:
+        raise DeferredCheck("browser_cleanup_failed")
+    if os.name != "nt" and groups:
+        # SIGKILL is asynchronous; joining the wrapper does not wait for detached
+        # Chromium groups. Observe their exit inside the reserved cleanup grace.
+        while True:
+            remaining = cleanup_deadline - time.monotonic()
+            if remaining <= 0:
+                raise DeferredCheck("browser_cleanup_failed")
+            try:
+                inventory = subprocess.run(
+                    ["ps", "-axo", "pgid=,stat="],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                    timeout=min(1, remaining),
+                )
+                live_groups = {
+                    int(row.split()[0])
+                    for row in inventory.stdout.splitlines()
+                    if row.strip() and not row.split()[1].startswith("Z")
+                }
+            except (OSError, subprocess.SubprocessError, ValueError, IndexError):
+                raise DeferredCheck("browser_cleanup_failed") from None
+            if not groups.intersection(live_groups):
+                return
+            time.sleep(min(0.05, max(0, cleanup_deadline - time.monotonic())))
 
 
 def anonymous_browser(
