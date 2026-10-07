@@ -23,33 +23,23 @@ individual regression to exact test files.
 ## Ashby Listing And Location Admission
 
 The Ashby public posting adapter excludes only explicit boolean
-`isListed: false`. Listed and legacy postings with no flag still pass through
-the existing title, description, and location rules. The primary location or
-existing `locationName` fallback leads the retained metadata; trimmed valid
-`secondaryLocations[].location` strings follow, deduplicated case-insensitively
-with first spelling preserved and joined by `; `. Malformed secondary
-containers/entries and empty names add no fabricated location. Ashby uses the
-unchanged shared reject aliases within each name's geography context, rejecting
-the posting if any name is rejected. At least one name must independently pass
-the unchanged target matcher; joined metadata is not the admission input.
+`isListed: false`. Listed and legacy postings with no flag enter model triage;
+the adapter does not decide their title, description or location relevance. The
+primary location or existing `locationName` fallback leads the retained metadata;
+trimmed valid `secondaryLocations[].location` strings follow, deduplicated
+case-insensitively with first spelling preserved and joined by `; `. Malformed
+secondary containers/entries and empty names add no fabricated location.
 
 `workers/automation/tests/test_ats_adapters.py` covers listing flags, malformed
-secondary data, duplicates, primary fallback, empty-location policy, title and
-description admission, and native-ID/canonical-URL preservation. Its synthetic
-`run_scheduled_ats_sources` fixture injects HTTP data and uses an owned temporary
-SQLite database: Austin-primary/Madrid-secondary postings must match Madrid,
-retain both names in `jobs`, exclude the unlisted peer, and preserve canonical
-identity and source observations over two runs without creating another job.
-The same production-path fixture rejects primary `Toronto, ON, CA` plus
-secondary `Madrid, Spain` for a Madrid target with a Canada reject, and rejects
-primary `Barcelona, Venezuela` plus secondary `Madrid, Spain` for a
-`Barcelona, Spain` target. Both location orders are covered, alongside accepted
-controls for the actual secondary target and Spain's region abbreviations.
-`test_discovery_location_filter.py` guards secondary-target matching and reject
-precedence and individual country/composite-target semantics. The original
-mapper fails the explicit-false, secondary-location retention/admission, and
-secondary-reject regressions; the joined-string mapper fails both geography
-context regressions in both location orders.
+secondary data, duplicate labels, primary fallback and native-ID/canonical-URL
+preservation. Its synthetic `run_scheduled_ats_sources` fixture injects HTTP data
+into an owned temporary SQLite database and uses opposing valid `LlmPort`
+verdicts for the same listing payload. Admission follows the model, retains both
+location names and preserves identity and observations across runs; rejection
+persists the model decision without creating a job. An unlisted peer is excluded
+mechanically. `test_discovery_determinations.py` covers durable pending intake,
+bounded recovery and foreign-listing citation rejection. No alias table or
+geography sentence corpus establishes the expected semantic verdict.
 These fixtures contact no live board and use no real user data. Local fixture
 proof does not replace the independent review, QA, or CI gates.
 

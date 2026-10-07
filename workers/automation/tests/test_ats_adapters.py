@@ -284,8 +284,6 @@ def _scrape_ashby_fixture(
     raw: dict[str, Any],
     *,
     location: str = "Austin",
-    accept: tuple[str, ...] = (),
-    reject: tuple[str, ...] = (),
 ) -> list[Any]:
     adapter = AshbyBoardAdapter(
         source_id="ashby:synthetic",
@@ -374,33 +372,18 @@ def test_ashby_preserves_distinct_location_names_primary_first(
     fields: dict[str, Any],
     expected: str,
 ) -> None:
-    # Unrestricted empty locations remain admissible; target the primary otherwise.
     postings = _scrape_ashby_fixture(_ashby_posting(**fields), location=expected.split("; ")[0])
     assert len(postings) == 1
     assert postings[0].metadata.location == expected
 
 
-def test_ashby_secondary_location_matches_target_without_losing_primary() -> None:
+def test_ashby_retains_secondary_location_independently_of_query_location() -> None:
     postings = _scrape_ashby_fixture(
         _ashby_posting(secondaryLocations=[{"location": "Madrid"}]),
-        location="Madrid",
-        accept=("Madrid",),
+        location="Unrelated literal search parameter",
     )
     assert len(postings) == 1
     assert postings[0].metadata.location == "Austin; Madrid"
-
-
-_ASHBY_LOCATION_CONTEXT_CASES = [
-    ("Austin", "Madrid", "Madrid", (), True),
-    ("Toronto, ON, CA", "Madrid, Spain", "Madrid, Spain", ("Canada",), False),
-    ("Madrid, Spain", "Toronto, ON, CA", "Madrid, Spain", ("Canada",), False),
-    ("Barcelona, Venezuela", "Madrid, Spain", "Barcelona, Spain", (), False),
-    ("Madrid, Spain", "Barcelona, Venezuela", "Barcelona, Spain", (), False),
-    ("Toronto, ON, CA", "Madrid, Spain", "Madrid, Spain", (), True),
-    ("Barcelona, Venezuela", "Madrid, Spain", "Madrid, Spain", (), True),
-    ("Barcelona, CT, ES", "Madrid, Spain", "Barcelona, Spain", ("Canada",), True),
-    ("Barcelona, CT, ES", "Madrid, Spain", "Barcelona, Spain", ("USA",), True),
-]
 
 
 @pytest.mark.parametrize("use_apply_url", [False, True])
@@ -420,7 +403,7 @@ def test_ashby_scheduled_discovery_persists_secondary_target_and_repeat_identity
     monkeypatch: pytest.MonkeyPatch,
     admitted: bool,
 ) -> None:
-    primary, secondary, target, reject = "Synthetic primary", "Synthetic secondary", "Synthetic target", ()
+    primary, secondary, target = "Synthetic primary", "Synthetic secondary", "Synthetic target"
     from tests.test_discovery_determinations import Model
     from jobctrl.infrastructure.determinations import SqliteDeterminationRepository
     import jobctrl.infrastructure.discovery.triage as triage
@@ -496,8 +479,6 @@ def test_ashby_scheduled_discovery_persists_secondary_target_and_repeat_identity
     search_cfg = {
         "queries": [{"query": "Engineer", "tier": 1}],
         "locations": [{"location": target}],
-        "location_accept": [target],
-        "location_reject_non_remote": list(reject),
     }
     from tests.determination_fakes import confirm_test_preferences
 

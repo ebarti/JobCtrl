@@ -17,8 +17,8 @@ rule, or accepted learning recommendation.
    message belongs to before its body is read.
 3. **A second determination classifies the linked body.** It cites a verbatim
    span and returns confidence and rationale.
-4. **Both decisions are persisted.** Prompt/model versions and an input
-   fingerprint let the dashboard suggestion trace to its recorded evidence. If
+4. **Both decisions are persisted.** They record prompt/model versions and an input
+   fingerprint. The dashboard suggestion traces to that recorded evidence. If
    the provider is unavailable, spend is denied or binding is invalid, the scan
    reports its blocked reason and creates no suggestion. Existing reviewed
    outcomes remain unchanged.
