@@ -211,6 +211,7 @@ import {
 } from "./discovery-controls.js";
 import { registerEventStreamRoute } from "./event-stream.js";
 import { registerEndpointRoutes } from "./endpoint-routes.js";
+import { registerLocaleDownloads } from "./locale-variants.js";
 import { InterviewCatalogAssetError, loadInterviewCatalogAsset, type InterviewCatalogAsset } from "./interview-catalog-asset.js";
 import {
   createInterviewCatalogReader,
@@ -961,6 +962,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     withDb(reply, options.dbPath, (db) => listScoringKeywords(db)),
   );
 
+  registerLocaleDownloads(app, providerDispatcher, { appDir, dbPath: options.dbPath });
   registerEndpointRoutes(app, {
     dispatcher: providerDispatcher,
     dispatchContext: {

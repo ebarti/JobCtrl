@@ -1203,8 +1203,32 @@ def rollback_tailoring_policy(params: dict[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+def material_locale_variants(params):
+    from pydantic import ValidationError
+    from jobctrl import config
+    from jobctrl.database import init_db
+    from jobctrl.domain.determinations import DeterminationFailure
+    from jobctrl.domain.materials.locale_variants import LocaleCommand
+    from jobctrl.infrastructure.materials.locale_variants import LocaleVariants
+
+    assert_expected_runtime(expected_app_dir=str(_require(params, "expectedAppDir")), expected_db_path=str(_require(params, "expectedDbPath")))
+    try:
+        command = LocaleCommand.model_validate({key: value for key, value in params.items() if key not in {"tenantId", "expectedAppDir", "expectedDbPath"}})
+        canonical_job_id(command.jobId)
+    except (ValidationError, ValueError):
+        raise invalid_params("invalid_locale_command") from None
+    connection = init_db(config.DB_PATH)
+    try:
+        return LocaleVariants(connection, app_dir=config.APP_DIR, tenant_id=_tenant_id(params)).execute(command)
+    except DeterminationFailure as error:
+        raise invalid_params(error.code) from None
+    finally:
+        connection.close()
+
+
 def register_default_handlers(server: JsonRpcServer, *, canceler: WorkflowCanceler) -> None:
     """Wire the default JobCtrl method set onto *server*."""
+    server.register("material_locale_variants", material_locale_variants, mode="sync")
     server.register("map_extension_form", map_extension_form, mode="sync")
     server.register("review_resume_edit", review_resume_edit, mode="sync")
     server.register("prepare_repeat_application_determinations", prepare_repeat_application_determinations, mode="sync")

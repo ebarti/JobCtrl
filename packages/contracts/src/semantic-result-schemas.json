@@ -2319,6 +2319,263 @@
     },
     "schemaVersion": "1"
   },
+  "material_locale_review": {
+    "promptVersion": "material-locale-review-v1",
+    "schema": {
+      "$defs": {
+        "Citation": {
+          "additionalProperties": false,
+          "properties": {
+            "exact_values": {
+              "description": "Literal numbers, dates or currency tokens copied exactly from this quote. Leave empty when none are cited. Never include inferred or normalized taxonomy/place codes.",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 32,
+              "title": "Exact Values",
+              "type": "array"
+            },
+            "quote": {
+              "description": "Copy one contiguous verbatim span from that source's text, preserving case and punctuation. Do not join or paraphrase fields.",
+              "maxLength": 4000,
+              "minLength": 1,
+              "title": "Quote",
+              "type": "string"
+            },
+            "source_id": {
+              "description": "Use an outer sources[].source_id. IDs mentioned inside source text are data, not citation IDs.",
+              "maxLength": 240,
+              "minLength": 1,
+              "title": "Source Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "source_id",
+            "quote"
+          ],
+          "title": "Citation",
+          "type": "object"
+        },
+        "LocaleIssue": {
+          "additionalProperties": false,
+          "properties": {
+            "citation": {
+              "$ref": "#/$defs/Citation"
+            },
+            "explanation": {
+              "maxLength": 1500,
+              "minLength": 1,
+              "title": "Explanation",
+              "type": "string"
+            },
+            "kind": {
+              "enum": [
+                "missing_term",
+                "ambiguous_credential",
+                "unsupported_language",
+                "factual_uncertainty"
+              ],
+              "title": "Kind",
+              "type": "string"
+            },
+            "line_id": {
+              "title": "Line Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "line_id",
+            "kind",
+            "citation",
+            "explanation"
+          ],
+          "title": "LocaleIssue",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "formatting": {
+          "enum": [
+            "pass",
+            "fail"
+          ],
+          "title": "Formatting",
+          "type": "string"
+        },
+        "issues": {
+          "items": {
+            "$ref": "#/$defs/LocaleIssue"
+          },
+          "maxItems": 100,
+          "title": "Issues",
+          "type": "array"
+        },
+        "rationale": {
+          "maxLength": 1500,
+          "minLength": 1,
+          "title": "Rationale",
+          "type": "string"
+        },
+        "terminology": {
+          "enum": [
+            "pass",
+            "fail"
+          ],
+          "title": "Terminology",
+          "type": "string"
+        },
+        "verdict": {
+          "enum": [
+            "pass",
+            "fail"
+          ],
+          "title": "Verdict",
+          "type": "string"
+        }
+      },
+      "required": [
+        "verdict",
+        "terminology",
+        "formatting",
+        "issues",
+        "rationale"
+      ],
+      "title": "LocaleReview",
+      "type": "object"
+    },
+    "schemaVersion": "1"
+  },
+  "material_locale_translation": {
+    "promptVersion": "material-locale-translation-v1",
+    "schema": {
+      "$defs": {
+        "Citation": {
+          "additionalProperties": false,
+          "properties": {
+            "exact_values": {
+              "description": "Literal numbers, dates or currency tokens copied exactly from this quote. Leave empty when none are cited. Never include inferred or normalized taxonomy/place codes.",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 32,
+              "title": "Exact Values",
+              "type": "array"
+            },
+            "quote": {
+              "description": "Copy one contiguous verbatim span from that source's text, preserving case and punctuation. Do not join or paraphrase fields.",
+              "maxLength": 4000,
+              "minLength": 1,
+              "title": "Quote",
+              "type": "string"
+            },
+            "source_id": {
+              "description": "Use an outer sources[].source_id. IDs mentioned inside source text are data, not citation IDs.",
+              "maxLength": 240,
+              "minLength": 1,
+              "title": "Source Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "source_id",
+            "quote"
+          ],
+          "title": "Citation",
+          "type": "object"
+        },
+        "LocaleIssue": {
+          "additionalProperties": false,
+          "properties": {
+            "citation": {
+              "$ref": "#/$defs/Citation"
+            },
+            "explanation": {
+              "maxLength": 1500,
+              "minLength": 1,
+              "title": "Explanation",
+              "type": "string"
+            },
+            "kind": {
+              "enum": [
+                "missing_term",
+                "ambiguous_credential",
+                "unsupported_language",
+                "factual_uncertainty"
+              ],
+              "title": "Kind",
+              "type": "string"
+            },
+            "line_id": {
+              "title": "Line Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "line_id",
+            "kind",
+            "citation",
+            "explanation"
+          ],
+          "title": "LocaleIssue",
+          "type": "object"
+        },
+        "TranslatedLine": {
+          "additionalProperties": false,
+          "properties": {
+            "line_id": {
+              "title": "Line Id",
+              "type": "string"
+            },
+            "source": {
+              "$ref": "#/$defs/Citation"
+            },
+            "text": {
+              "maxLength": 16000,
+              "minLength": 1,
+              "title": "Text",
+              "type": "string"
+            }
+          },
+          "required": [
+            "line_id",
+            "text",
+            "source"
+          ],
+          "title": "TranslatedLine",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "issues": {
+          "items": {
+            "$ref": "#/$defs/LocaleIssue"
+          },
+          "maxItems": 100,
+          "title": "Issues",
+          "type": "array"
+        },
+        "lines": {
+          "items": {
+            "$ref": "#/$defs/TranslatedLine"
+          },
+          "maxItems": 1000,
+          "minItems": 1,
+          "title": "Lines",
+          "type": "array"
+        }
+      },
+      "required": [
+        "lines",
+        "issues"
+      ],
+      "title": "LocaleTranslation",
+      "type": "object"
+    },
+    "schemaVersion": "1"
+  },
   "message_link": {
     "promptVersion": "message-link-v2",
     "schema": {

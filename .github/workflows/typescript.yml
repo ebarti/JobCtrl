@@ -59,6 +59,21 @@ jobs:
           corepack pnpm api:check
       - name: Test shared domain types
         run: corepack pnpm --filter @jobctrl/domain-types test
+      - name: Set up Python for API worker boundary cases
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Set up pinned uv for API worker boundary cases
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: 0.11.7
+      - name: Prepare locked worker and verify Materials aggregate
+        run: |
+          unset UV_PROJECT UV_PROJECT_ENVIRONMENT VIRTUAL_ENV UV_EXCLUDE_NEWER
+          uv --project workers/automation sync --locked --all-extras
+          uv --project workers/automation run --locked --all-extras pytest -q workers/automation/tests/test_materials_aggregate.py
+      - name: Install Chromium for locale export boundary cases
+        run: uv --project workers/automation run --locked --all-extras playwright install --with-deps chromium
       - name: Test API
         run: corepack pnpm api:test
 

@@ -3774,5 +3774,49 @@ def gmail_auth(
     console.print(f"[green]Gmail token saved:[/green] {token_path}")
 
 
+@app.command('locale-variants')
+def locale_variants_command(
+    job_id: str,
+    operation: str = typer.Option('list', help='list, generate, review or export'),
+    artifact_id: Optional[str] = typer.Option(None),
+    source_locale: Optional[str] = typer.Option(None),
+    target_locale: Optional[str] = typer.Option(None),
+    expected_revision: int = typer.Option(0, help='Exact locale history revision returned by list'),
+    variant_id: Optional[str] = typer.Option(None),
+    terminology: Optional[str] = typer.Option(None, help='confirmed or rejected'),
+    formatting: Optional[str] = typer.Option(None, help='confirmed or rejected'),
+    decision: Optional[str] = typer.Option(None, help='accepted or rejected'),
+    export_format: Optional[str] = typer.Option(None, '--format', help='text, html, pdf or docx'),
+    output: Optional[Path] = typer.Option(None, help='New destination for accepted export; existing files are refused'),
+):
+    """Generate and independently review source-linked locale variants without replacing originals."""
+    import base64
+    from pydantic import ValidationError
+    from jobctrl import config
+    from jobctrl.database import init_db
+    from jobctrl.domain.materials.locale_variants import LocaleCommand
+    from jobctrl.domain.determinations import DeterminationFailure
+    from jobctrl.infrastructure.materials.locale_variants import LocaleVariants
+
+    try:
+        command = LocaleCommand(operation=operation, jobId=job_id, artifactId=artifact_id, sourceLocale=source_locale, targetLocale=target_locale, expectedRevision=expected_revision, variantId=variant_id, terminology=terminology, formatting=formatting, decision=decision, format=export_format)
+        if operation == 'export' and output is None:
+            raise ValueError('Export requires --output to a new file')
+        connection = init_db(config.DB_PATH)
+        try:
+            result = LocaleVariants(connection, app_dir=config.APP_DIR).execute(command)
+        finally:
+            connection.close()
+        if operation == 'export':
+            with output.open('xb') as destination:
+                destination.write(base64.b64decode(result.pop('data'), validate=True))
+            result['output'] = str(output)
+        typer.echo(json.dumps(result, ensure_ascii=False))
+    except (DeterminationFailure, ValidationError, ValueError, OSError) as error:
+        message = error.code if isinstance(error, DeterminationFailure) else 'invalid_locale_command_or_output'
+        typer.echo(json.dumps({'ok': False, 'error': message}), err=True)
+        raise typer.Exit(1) from None
+
+
 if __name__ == "__main__":
     app()

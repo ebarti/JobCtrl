@@ -137,3 +137,7 @@ See [Local Development](docs/local-development.md).
 ## License
 
 [AGPL-3.0-only](LICENSE). Copyright (C) 2026 Eloi Barti. See [NOTICE](NOTICE).
+
+Accepted resumes and cover letters support [reviewed locale
+variants](docs/user/locale-variants.md), with separate terminology and formatting
+review, retained originals and accepted text/HTML/PDF/DOCX exports.

@@ -106,6 +106,12 @@ function createOwnedE2eWorkspace(parentOverride) {
           parentOverride,
           "JOBCTRL_E2E_APP_DIR parent",
         );
+  // A canonical root can itself be beneath another permitted root (macOS
+  // TMPDIR). An override must never adopt any of the roots, even in that case.
+  if (parentOverride !== undefined && roots.includes(parent))
+    throw new Error(
+      "JOBCTRL_E2E_APP_DIR parent must be a strict descendant of a canonical temporary root",
+    );
   const temporaryRoot = roots.find((root) =>
     parentOverride === undefined
       ? root === parent

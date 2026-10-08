@@ -6956,3 +6956,27 @@ export const ScheduleFollowUpRequestSchema = z
   })
   .strict();
 export type ScheduleFollowUpRequest = z.infer<typeof ScheduleFollowUpRequestSchema>;
+
+// Reviewed locale variants bind accepted source bytes; historical absence is empty.
+export const MATERIAL_LOCALES = ["en", "es", "fr", "de", "it", "pt", "ca"] as const;
+export const MaterialLocaleSchema = z.enum(MATERIAL_LOCALES);
+const LocaleCitationSchema = z.object({ source_id: z.string(), quote: z.string(), exact_values: z.array(z.string()) }).strict();
+const LocaleIssueSchema = z.object({ line_id: z.string(), kind: z.enum(["missing_term", "ambiguous_credential", "unsupported_language", "factual_uncertainty"]), citation: LocaleCitationSchema, explanation: z.string() }).strict();
+export const LocaleGenerateRequestSchema = z.object({ artifactId: z.string().min(1).max(240), sourceLocale: MaterialLocaleSchema, targetLocale: MaterialLocaleSchema, expectedRevision: z.number().int().nonnegative() }).strict();
+export const LocaleReviewRequestSchema = z.object({ variantId: z.string().min(1).max(240), expectedRevision: z.number().int().nonnegative(), terminology: z.enum(["confirmed", "rejected"]).optional(), formatting: z.enum(["confirmed", "rejected"]).optional(), decision: z.enum(["accepted", "rejected"]) }).strict();
+export const LocaleVariantSchema = z.object({
+  variantId: z.string(), revision: z.number().int().positive(),
+  binding: z.object({ artifactId: z.string(), jobId: z.string().uuid(), generation: z.number().int(), kind: z.enum(["resume", "cover_letter"]), sourceHash: z.string(), sourceMetadataHash: z.string(), sourceAcceptance: z.object({ status: z.literal("approved"), artifactCreatedAt: z.string() }).strict(), profileVersion: z.number().int(), profileHash: z.string(), sourceLocale: MaterialLocaleSchema, targetLocale: MaterialLocaleSchema, facts: z.array(z.object({ source_id: z.string(), text: z.string() }).strict()), lines: z.array(z.object({ line_id: z.string(), text: z.string(), protected: z.array(z.string()) }).strict()), identity: z.string() }).strict(),
+  lines: z.array(z.object({ line_id: z.string(), text: z.string(), source: LocaleCitationSchema }).strict()),
+  issues: z.array(LocaleIssueSchema), eligible: z.boolean(),
+  determinations: z.array(z.object({ determination_id: z.string(), tenant_id: z.string(), entity_id: z.string(), kind: z.string(), schema_version: z.string(), prompt_version: z.string(), provider: z.string(), model: z.string(), lane: z.literal("tailoring"), input_fingerprint: z.string(), created_at: z.string(), result: z.record(z.string(), z.unknown()) }).strict()),
+  semanticReview: z.object({ verdict: z.enum(["pass", "fail"]), terminology: z.enum(["pass", "fail"]), formatting: z.enum(["pass", "fail"]), issues: z.array(LocaleIssueSchema), rationale: z.string() }).strict(),
+  status: z.enum(["candidate", "accepted", "rejected"]),
+  reviews: z.array(z.object({ kind: z.enum(["terminology", "formatting", "acceptance"]), decision: z.enum(["confirmed", "rejected", "accepted"]), reviewedAt: z.string(), sourceHash: z.string(), documentHash: z.string() }).strict()),
+  exports: z.record(z.string(), z.object({ path: z.string(), hash: z.string(), documentHash: z.string(), lineIds: z.array(z.string()) }).strict()), createdAt: z.string(),
+}).strict();
+export const LocaleHistorySchema = z.object({ ok: z.literal(true), revision: z.number().int().nonnegative(), locales: z.array(MaterialLocaleSchema), sources: z.array(z.object({ artifactId: z.string(), generation: z.number().int(), kind: z.enum(["resume", "cover_letter"]) }).strict()), variants: z.array(LocaleVariantSchema) }).strict();
+export const LocaleExportRequestSchema = z.object({ variantId: z.string().min(1).max(240), format: z.enum(["text", "html", "pdf", "docx"]) }).strict();
+export const LocaleExportSchema = z.object({ ok: z.literal(true), data: z.string(), hash: z.string().regex(/^[a-f0-9]{64}$/), format: z.enum(["text", "html", "pdf", "docx"]) }).strict();
+export type LocaleVariant = z.infer<typeof LocaleVariantSchema>;
+export type LocaleHistory = z.infer<typeof LocaleHistorySchema>;

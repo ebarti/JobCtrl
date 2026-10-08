@@ -2277,3 +2277,32 @@ Local admission refusals do not change observation clocks or evidence backoff;
 accepted content, materials, decisions and outcomes remain intact.
 The [Enrichment guide](../user/enrichment-and-extraction.md#saved-posting-availability)
 owns the complete acquisition, cohort and retry policy.
+
+## Material locale variant contract
+
+[Jobs & Materials — Reviewed locale variants](jobs-and-materials.md#reviewed-locale-variants)
+owns the route table. Requests are strict: generation requires `artifactId`,
+`sourceLocale`, `targetLocale` and a nonnegative `expectedRevision`; review
+requires `variantId`, `expectedRevision`, `decision` and separate confirmations
+for acceptance. Export/download require `variantId` and `format`.
+
+History returns `{ok:true,revision,locales,sources,variants}`. Each variant records
+`variantId`, `revision`, immutable `binding`, ordered translated `lines` with
+verbatim `source` citations, `issues`, `eligible`, the four `determinations`,
+`semanticReview`, terminal `status`, separate `reviews`, accepted `exports` and
+`createdAt`. The binding records exact artifact/job/generation, source and
+metadata hashes, source approved lifecycle state and artifact creation time,
+profile version/hash/facts, selected locales and original ordered lines with
+protected literal values. Determination envelopes retain schema/prompt versions,
+provider/model, lane, input fingerprint and citations. No source approval time
+is inferred from artifact creation time.
+
+The shared RPC method is `material_locale_variants`, with `tenantId`, required
+`expectedAppDir`/`expectedDbPath`, `jobId` and operation
+`list/generate/review/export`. It is synchronous and requires no Temporal starter.
+The result is history or `{ok:true,data,hash,format}` for export. The worker refuses
+foreign/inactive jobs, unsupported or identical locales, stale revisions or
+source/profile bindings, invalid semantic output, failed independent review and
+missing/tampered exports. Accepted bytes use safe attachment filenames, `no-store`,
+`nosniff` and a sandbox content-security policy. Original artifacts and older
+accepted locale records survive any failed replacement.

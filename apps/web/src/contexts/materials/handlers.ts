@@ -37,6 +37,8 @@ export const resumeApprovedHandler = (
   event: ResumeApproved,
 ): readonly InvalidationItem[] => [
   invalidate(interviewKeys.history(event.tenantId, event.payload.jobId)),
+  // Locale reads are descendants of job detail, so these source-material
+  // invalidations also refresh locale history after approval/suppression.
   // Patch already-registered rows. Approval can also register PDFs and suppress
   // older artifacts, so every artifact page still needs canonical reconciliation.
   patchQuery(

@@ -970,3 +970,16 @@ need a new synthetic seed variant or capture surface, not a missing product
 capability. Class-C assets (2 actual import mutation, 7 live evidence, 8 stop
 lifecycle, 9) are defined driven flows, never faked with a staged static image.
 No asset regenerates from a real workspace.
+
+## Locale variant owners
+
+The worker's `jobctrl locale-variants` command and the production HTTP/RPC
+operations share the [reviewed locale contract](user/locale-variants.md). Focused
+feature regressions are `test_locale_variants.py`,
+`test_locale_variants_integration.py`, API `locale-variants.test.ts`, Web
+`MaterialLocaleVariants.test.tsx`/`.a11y.test.tsx`, and Playwright
+`locale-variants.spec.ts`. Integration exports require the locked Python
+Chromium revision. Model doubles exercise structural authority and failures;
+they do not evaluate translation accuracy. Required complete Materials and
+semantic inventories include `test_materials_aggregate.py`; complete API/Web
+and controller product-path checks remain separate from focused tests.

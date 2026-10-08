@@ -73,6 +73,8 @@ has one defining page; other pages summarize it briefly and link to that owner.
   consumes the employer analysis owned by Discovery.
 - [`user/materials-and-tailoring.md`](user/materials-and-tailoring.md): generated
   materials, provenance, validation, review, and accepted-artifact history.
+- [`user/locale-variants.md`](user/locale-variants.md): reviewed translations,
+  original-source bindings, credential warnings and four accepted export formats.
 - [`user/apply.md`](user/apply.md): application fields, approval and automation
   modes, browser capabilities, Gmail, and follow-up controls.
 - [`user/outcomes-and-feedback.md`](user/outcomes-and-feedback.md): application
@@ -143,6 +145,8 @@ has one defining page; other pages summarize it briefly and link to that owner.
   evidence, policy, and calibration.
 - [`architecture/materials.md`](architecture/materials.md): employer analysis
   and cross-artifact auditability.
+- [`architecture/material-locale-variants.md`](architecture/material-locale-variants.md):
+  locale authority, independent reviews, metadata fences and immutable exports.
 - [Leadership Practice — future architecture (not implemented)](architecture/leadership-practice.md):
   bounded management reflection and experiments.
 - [Material Variant Comparison](architecture/material-variant-comparison.md): future proposal (not implemented).

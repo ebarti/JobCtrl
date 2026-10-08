@@ -1,5 +1,12 @@
 # Local TypeScript API
 
+Reviewed locale variant operations use shared endpoint contracts and the
+workspace-fenced `material_locale_variants` worker RPC. See the
+[Materials API](api/jobs-and-materials.md#reviewed-locale-variants) for generation,
+history, independent review and accepted exports, and the
+[locale architecture](architecture/material-locale-variants.md) for source and
+revision fences.
+
 The local Fastify API is the browser-facing boundary for JobCtrl. It serves
 projection-backed and canonical detail reads, accepts explicit commands, starts Temporal workflows,
 and streams domain-event invalidations to the web app.

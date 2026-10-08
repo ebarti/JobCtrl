@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -17,6 +18,26 @@ const {
   assertE2eWorkspaceEnvironment,
 } = ownedWorkspace;
 const repoRoot = path.resolve(fileURLToPath(new URL("../", import.meta.url)));
+
+test("nested canonical temporary roots are refused before allocation and preserve owned resources", (t) => {
+  const parent = parentFixture(t);
+  const workspace = createOwnedE2eWorkspace(parent);
+  const sentinel = path.join(workspace.appDir, "sentinel");
+  fs.writeFileSync(sentinel, "preserved");
+  const before = fs.readdirSync(parent);
+  const originalTmpdir = os.tmpdir;
+  const originalMkdtemp = fs.mkdtempSync;
+  let allocations = 0;
+  t.after(() => { os.tmpdir = originalTmpdir; fs.mkdtempSync = originalMkdtemp; });
+  os.tmpdir = () => parent;
+  fs.mkdtempSync = () => { allocations += 1; throw new Error("unexpected allocation"); };
+  assert.throws(() => createOwnedE2eWorkspace(parent), /strict descendant/);
+  assert.equal(allocations, 0);
+  assert.deepEqual(fs.readdirSync(parent), before);
+  assertOwnedE2eWorkspace(workspace);
+  assert.equal(fs.readFileSync(sentinel, "utf8"), "preserved");
+  removeOwnedE2eWorkspace(workspace);
+});
 
 function parentFixture(t) {
   const parent = fs.mkdtempSync(

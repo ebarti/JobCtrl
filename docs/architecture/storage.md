@@ -435,3 +435,11 @@ update availability on `posting_snapshot_sets`; unchanged positives advance
 only the observation clock. No availability path writes hide/delete tombstones,
 application outcomes, approvals, scores or materials. A location-policy finding
 keeps its separate gate when external availability becomes active.
+
+Materials locale history uses the versioned `__jobctrl_locale_variants_v1`
+namespace in `job_materials.metadata_json` and existing semantic determination
+and entity-binding tables. Same-generation aggregate writes preserve the stored
+namespace. Locale exports live beneath `<workspace>/locale-variants/` in private,
+immutable accepted directories with recorded SHA-256 hashes; they are sensitive
+material like the original artifacts. There is no locale DDL migration or
+manufactured legacy acceptance. See [the owning contract](material-locale-variants.md).

@@ -85,3 +85,4 @@ export {
   resumeApprovedHandler,
   resumeFailedHandler,
 } from "./handlers.js";
+export { MaterialLocaleVariants } from "./components/MaterialLocaleVariants.js";

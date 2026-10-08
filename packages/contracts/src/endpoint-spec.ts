@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { LocaleGenerateRequestSchema, LocaleReviewRequestSchema, LocaleHistorySchema, LocaleExportRequestSchema, LocaleExportSchema } from "./schemas.js";
+import { LocaleVariantsParamsSchema } from "./rpc.js";
 import {
   InterviewCatalogQuerySchema,
   InterviewCatalogResponseSchema,
@@ -562,7 +564,33 @@ function interviewJobPath(suffix: string) {
   });
 }
 
+const LocaleListQuerySchema = z.object({}).strict().optional().transform((value) => value ?? {});
+
+function localeFailure(failure: EndpointDispatchFailure): EndpointFailureResponse {
+  return { status: failure.kind === "transport" ? 503 : failure.kind === "rpc" ? 409 : 502, error: "locale_variant_failed", message: failure.kind === "rpc" ? failure.error.message : "Locale variants are unavailable." };
+}
+
 export const ENDPOINTS = {
+  localeVariants: defineEndpoint({
+    name: "localeVariants", method: "GET", path: interviewJobPath("locale-variants"), request: LocaleListQuerySchema, response: LocaleHistorySchema,
+    demo: { class: "unavailable", reason: "Locale translation requires accepted source material and a configured worker." },
+    dispatch: { rpcMethod: RpcMethods.LocaleVariants, params: ({ pathParam }, context) => ({ tenantId: context.tenantId, expectedAppDir: context.appDir, expectedDbPath: context.dbPath, operation: "list" as const, jobId: pathParam }), paramsSchema: LocaleVariantsParamsSchema, result: LocaleHistorySchema, response: ({ pathParam, result }) => result.variants.every((variant) => variant.binding.jobId === pathParam) ? result : null, error: localeFailure } satisfies RpcEndpointDispatch<typeof LocaleListQuerySchema, string, typeof LocaleVariantsParamsSchema, typeof LocaleHistorySchema>,
+  }),
+  generateLocaleVariant: defineEndpoint({
+    name: "generateLocaleVariant", method: "POST", path: interviewJobPath("locale-variants"), request: LocaleGenerateRequestSchema, response: LocaleHistorySchema,
+    demo: { class: "unavailable", reason: "Locale translation requires accepted source material and a configured worker." },
+    dispatch: { rpcMethod: RpcMethods.LocaleVariants, params: ({ request, pathParam }, context) => ({ ...request, tenantId: context.tenantId, expectedAppDir: context.appDir, expectedDbPath: context.dbPath, operation: "generate" as const, jobId: pathParam }), paramsSchema: LocaleVariantsParamsSchema, result: LocaleHistorySchema, response: ({ request, pathParam, result }) => result.variants.every((variant) => variant.binding.jobId === pathParam) && result.variants.some((variant) => variant.binding.artifactId === request.artifactId && variant.binding.sourceLocale === request.sourceLocale && variant.binding.targetLocale === request.targetLocale) ? result : null, error: localeFailure } satisfies RpcEndpointDispatch<typeof LocaleGenerateRequestSchema, string, typeof LocaleVariantsParamsSchema, typeof LocaleHistorySchema>,
+  }),
+  reviewLocaleVariant: defineEndpoint({
+    name: "reviewLocaleVariant", method: "POST", path: interviewJobPath("locale-variants/review"), request: LocaleReviewRequestSchema, response: LocaleHistorySchema,
+    demo: { class: "unavailable", reason: "Locale review requires persisted translation authority." },
+    dispatch: { rpcMethod: RpcMethods.LocaleVariants, params: ({ request, pathParam }, context) => ({ ...request, tenantId: context.tenantId, expectedAppDir: context.appDir, expectedDbPath: context.dbPath, operation: "review" as const, jobId: pathParam }), paramsSchema: LocaleVariantsParamsSchema, result: LocaleHistorySchema, response: ({ request, pathParam, result }) => result.variants.every((variant) => variant.binding.jobId === pathParam) && result.variants.some((variant) => variant.variantId === request.variantId && variant.status === request.decision) && result.revision === request.expectedRevision + 1 ? result : null, error: localeFailure } satisfies RpcEndpointDispatch<typeof LocaleReviewRequestSchema, string, typeof LocaleVariantsParamsSchema, typeof LocaleHistorySchema>,
+  }),
+  localeVariantExport: defineEndpoint({
+    name: "localeVariantExport", method: "GET", path: interviewJobPath("locale-variants/export"), request: LocaleExportRequestSchema, response: LocaleExportSchema,
+    demo: { class: "unavailable", reason: "Only accepted locale exports are available." },
+    dispatch: { rpcMethod: RpcMethods.LocaleVariants, params: ({ request, pathParam }, context) => ({ ...request, tenantId: context.tenantId, expectedAppDir: context.appDir, expectedDbPath: context.dbPath, operation: "export" as const, jobId: pathParam }), paramsSchema: LocaleVariantsParamsSchema, result: LocaleExportSchema, response: ({ request, result }) => result.format === request.format ? result : null, error: localeFailure } satisfies RpcEndpointDispatch<typeof LocaleExportRequestSchema, string, typeof LocaleVariantsParamsSchema, typeof LocaleExportSchema>,
+  }),
   checkPostingAvailability: defineEndpoint({
     name: "checkPostingAvailability",
     method: "POST",

@@ -71,6 +71,7 @@ export type JsonRpcResponse = z.infer<typeof JsonRpcResponseSchema>;
 /* ------------------------------------------------------------------ methods */
 
 export const RpcMethods = {
+  LocaleVariants: "material_locale_variants",
   RunStage: "run_stage",
   RescoreJob: "rescore_job",
   RescoreJobsNotOnCurrentScoringPolicy: "rescore_jobs_not_on_current_scoring_policy",
@@ -810,3 +811,11 @@ export function buildJsonRpcRequest<P extends Record<string, unknown>>(
 ): JsonRpcRequest {
   return { jsonrpc: "2.0", method, params, id } satisfies JsonRpcRequest;
 }
+
+export const LocaleVariantsParamsSchema = z.object({
+  tenantId: TenantParam, expectedAppDir: z.string().min(1), expectedDbPath: z.string().min(1),
+  operation: z.enum(["generate", "list", "review", "export"]), jobId: CanonicalJobIdParam,
+  artifactId: z.string().min(1).max(240).optional(), sourceLocale: z.enum(["en", "es", "fr", "de", "it", "pt", "ca"]).optional(), targetLocale: z.enum(["en", "es", "fr", "de", "it", "pt", "ca"]).optional(),
+  expectedRevision: z.number().int().nonnegative().default(0), variantId: z.string().min(1).max(240).optional(),
+  terminology: z.enum(["confirmed", "rejected"]).optional(), formatting: z.enum(["confirmed", "rejected"]).optional(), decision: z.enum(["accepted", "rejected"]).optional(), format: z.enum(["text", "html", "pdf", "docx"]).optional(),
+}).strict();

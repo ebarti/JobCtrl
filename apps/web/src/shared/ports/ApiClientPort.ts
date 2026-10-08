@@ -444,6 +444,10 @@ export interface ApiClientPort extends EndpointClientMethods {
   runJobStage(jobKey: string, body: RunJobStageRequest): Promise<ActionRunResponse>;
   generateMaterials(jobKey: string, body?: Partial<GenerateMaterialsRequest>): Promise<ActionRunResponse>;
   interviewCatalog: EndpointClientMethods["interviewCatalog"];
+  localeVariants: EndpointClientMethods["localeVariants"];
+  generateLocaleVariant: EndpointClientMethods["generateLocaleVariant"];
+  reviewLocaleVariant: EndpointClientMethods["reviewLocaleVariant"];
+  localeVariantExport: EndpointClientMethods["localeVariantExport"];
   interviewQuestion: EndpointClientMethods["interviewQuestion"];
   interviewPrepHistory: EndpointClientMethods["interviewPrepHistory"];
   interviewNotes: EndpointClientMethods["interviewNotes"];

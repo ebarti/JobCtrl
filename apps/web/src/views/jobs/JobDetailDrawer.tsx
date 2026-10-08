@@ -13,6 +13,7 @@ import { PostingAvailability } from "../../contexts/enrichment/index.js";
 import { CompensationAuditSection } from "../../contexts/enrichment/components/CompensationEvidence.js";
 import { JobContactsPanel } from "../../contexts/outreach/components/JobContactsPanel.js";
 import { ArtifactStatusBadge } from "../../contexts/materials/components/ArtifactStatusBadge.js";
+import { MaterialLocaleVariants } from "../../contexts/materials/index.js";
 import {
   EmployerAnalysisPanel,
   type EmployerAnalysisEvidenceReference,
@@ -280,6 +281,7 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
             </details>
           ) : null}
         </> : <Empty title="No artifacts recorded." />}
+        <MaterialLocaleVariants jobKey={detail.job.jobKey} />
       </Section>,
     },
     {

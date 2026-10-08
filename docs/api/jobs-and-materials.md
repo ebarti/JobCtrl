@@ -220,3 +220,28 @@ remain drafts until their review gate is satisfied.
 
 <a id="contact-research"></a>
 <a id="outreach-drafts"></a>
+
+## Reviewed locale variants
+
+The canonical job-ID routes are:
+
+| Method | Route suffix under `/v1/jobs/:jobKey` | Operation |
+| --- | --- | --- |
+| GET | `/locale-variants` | History, accepted sources, locale catalog and current revision |
+| POST | `/locale-variants` | Generate from `artifactId`, `sourceLocale`, `targetLocale`, `expectedRevision` |
+| POST | `/locale-variants/review` | Review `variantId` at `expectedRevision`, with separate `terminology`, `formatting` and `decision` |
+| GET | `/locale-variants/export` | Accepted base64 bytes/hash using `variantId` and `format` query parameters |
+| GET | `/locale-variants/download` | The same accepted bytes as a safe file attachment |
+
+Locales are `en/es/fr/de/it/pt/ca`; formats are `text/html/pdf/docx`.
+Terminology/formatting choices are `confirmed/rejected`; acceptance decisions are
+`accepted/rejected`. Acceptance requires both confirmations and passing model
+reviews. Client text, facts and acceptance provenance are never accepted as
+source authority. The worker derives these from the selected approved artifact
+and canonical profile and fences the source, profile and locale revision.
+Invalid request schemas return 400, rejected worker operations 409, unavailable
+transport 503 and invalid worker results 502. Downloads require a persisted
+accepted revision and matching file/document hashes. Failures preserve history
+and accepted files. [Locale variants](../user/locale-variants.md) describes the
+review flow; [the architecture owner](../architecture/material-locale-variants.md)
+defines persistence and authority.
