@@ -394,7 +394,6 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
         reason: "manual_tailor",
         tailorModels: ["gemini:test"],
         tailorJudgeModel: "judge:test",
-        tailorJudgeMinScore: 0.82,
       },
       context,
     );
@@ -407,7 +406,6 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
         suppressExistingArtifacts: false,
         tailorModels: ["gemini:test"],
         tailorJudgeModel: "judge:test",
-        tailorJudgeMinScore: 0.82,
       },
       context,
     );
@@ -457,7 +455,6 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
           reason: "manual_tailor",
           tailorModels: ["gemini:test"],
           tailorJudgeModel: "judge:test",
-          tailorJudgeMinScore: 0.82,
         },
       },
       {
@@ -471,7 +468,6 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
           suppressExistingArtifacts: false,
           tailorModels: ["gemini:test"],
           tailorJudgeModel: "judge:test",
-          tailorJudgeMinScore: 0.82,
         },
       },
       {
@@ -951,7 +947,6 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
         stages: ["tailor"],
         tailorModels: ["local:draft-a", "openai:draft-b"],
         tailorJudgeModel: "gemini:judge-c",
-        tailorJudgeMinScore: 0.9,
         model: "sonnet",
       },
       { appDir: "/tmp", dbPath: "/tmp/jobctrl.db" },
@@ -965,7 +960,6 @@ describe("createActionDispatcher (JSON-RPC adapter)", () => {
       llmModel: DEFAULT_PIPELINE_LLM_MODEL,
       tailorModels: ["local:draft-a", "openai:draft-b"],
       tailorJudgeModel: "gemini:judge-c",
-      tailorJudgeMinScore: 0.9,
     });
   });
 

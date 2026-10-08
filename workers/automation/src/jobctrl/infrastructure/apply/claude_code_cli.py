@@ -1,16 +1,17 @@
 """ClaudeCodeCliAdapter — local-mode ``AutonomousAgentPort`` adapter.
 
 Spawns the resolved Claude apply runtime as a subprocess, pipes the rendered
-prompt in via stdin, streams the JSON output, parses ``RESULT:...`` lines, and
+prompt in via stdin, streams the JSON output, validates a typed terminal report, and
 assembles an ``AgentResult``. The logic is lifted out of the legacy
 ``apply/launcher.run_job`` function — same Popen invocation, same stdout reader
-thread pattern, same RESULT parsing — but relocated behind the port so the use
+thread pattern, typed terminal-report validation — but relocated behind the port so the use
 cases never touch ``subprocess`` or ``threading`` directly.
 """
 
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
 import os
 import platform
@@ -27,12 +28,7 @@ from typing import Any, Mapping
 from jobctrl import config
 from jobctrl.domain.apply.value_objects import (
     ApplyPrompt,
-    Captcha,
-    DryRunComplete,
-    EmailOnlyApplication,
-    Expired,
     Failed,
-    LoginIssue,
     Manual,
     SubmissionResult,
     TokenUsage,
@@ -93,8 +89,7 @@ PLAYWRIGHT_TOOL_EXCLUSIONS = frozenset(
     }
 )
 PLAYWRIGHT_APPLY_TOOLS = frozenset(
-    f"mcp__playwright__{tool}"
-    for tool in sorted(PINNED_PLAYWRIGHT_MCP_TOOLS - PLAYWRIGHT_TOOL_EXCLUSIONS)
+    f"mcp__playwright__{tool}" for tool in sorted(PINNED_PLAYWRIGHT_MCP_TOOLS - PLAYWRIGHT_TOOL_EXCLUSIONS)
 )
 GMAIL_APPLY_TOOLS = frozenset()
 BASE_OWNED_APPLY_TOOLS = frozenset()
@@ -125,9 +120,7 @@ DISALLOWED_CLAUDE_TOOLS = (
     UPLOAD_ARTIFACT_TOOL,
     *sorted(PLAYWRIGHT_WRITE_TOOLS),
 )
-_ALLOWED_TOOLS = ",".join(
-    sorted(PLAYWRIGHT_APPLY_TOOLS | GMAIL_APPLY_TOOLS | BASE_OWNED_APPLY_TOOLS)
-)
+_ALLOWED_TOOLS = ",".join(sorted(PLAYWRIGHT_APPLY_TOOLS | GMAIL_APPLY_TOOLS | BASE_OWNED_APPLY_TOOLS))
 _DISALLOWED_TOOLS = ",".join(DISALLOWED_CLAUDE_TOOLS)
 
 _ENV_ALLOWLIST = {
@@ -138,19 +131,6 @@ _ENV_ALLOWLIST = {
     "TMPDIR",
 }
 
-# The dedicated terminal result field accepts one exact record. Assistant
-# narration is retained for audit, but never enters these parsers.
-_RESULT_RECORD_RE = re.compile(
-    r"RESULT:(APPLIED|DRY_RUN|EXPIRED|CAPTCHA|LOGIN_ISSUE)\Z"
-)
-_EMAIL_ONLY_RE = re.compile(
-    r"RESULT:EMAIL_ONLY:([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})\Z"
-)
-_FAILED_RE = re.compile(r"RESULT:FAILED(?::([^\r\n]{1,500}))?\Z")
-
-# Reasons that get promoted from ``RESULT:FAILED:reason`` to a
-# dedicated SubmissionResult variant.
-_PROMOTED_FAILED_REASONS = {"captcha", "expired", "login_issue"}
 _DEFAULT_MODEL_SENTINELS = {"", "default"}
 _ACTIVE_CLAUDE_PROCS: dict[int, subprocess.Popen] = {}
 _ACTIVE_CLAUDE_LOCK = threading.Lock()
@@ -166,10 +146,6 @@ def _enqueue_stdout_lines(stream: Any, out: "queue.Queue[str | None]") -> None:
             out.put(line)
     finally:
         out.put(None)
-
-
-def _clean_reason(s: str) -> str:
-    return re.sub(r'[*`"]+$', '', s).strip()
 
 
 def kill_active_claude_processes() -> None:
@@ -205,14 +181,10 @@ class ClaudeCodeCliAdapter:
         self._log_dir = Path(log_dir) if log_dir else config.LOG_DIR
         self._app_dir = Path(app_dir) if app_dir else config.APP_DIR
         self._default_timeout = (
-            int(default_timeout_seconds)
-            if default_timeout_seconds is not None
-            else config.get_apply_timeout_seconds()
+            int(default_timeout_seconds) if default_timeout_seconds is not None else config.get_apply_timeout_seconds()
         )
         self._max_budget_usd = (
-            float(max_budget_usd)
-            if max_budget_usd is not None
-            else config.get_apply_max_budget_usd()
+            float(max_budget_usd) if max_budget_usd is not None else config.get_apply_max_budget_usd()
         )
 
     # ------------------------------------------------------------------
@@ -269,29 +241,35 @@ class ClaudeCodeCliAdapter:
         if _claude_supports_budget_flag(claude_bin, bare=bundled):
             cmd.extend(["--max-budget-usd", f"{self._max_budget_usd:.2f}"])
         allowed_tools = _allowed_tools_for_mcp_config(prompt.mcp_config)
-        cmd.extend([
-            "-p",
-            "--mcp-config", str(mcp_config_path),
-            "--no-session-persistence",
-            "--allowedTools", allowed_tools,
-            "--disallowedTools", _DISALLOWED_TOOLS,
-            "--output-format", "stream-json",
-            "--verbose", "-",
-        ])
+        cmd.extend(
+            [
+                "-p",
+                "--mcp-config",
+                str(mcp_config_path),
+                "--no-session-persistence",
+                "--allowedTools",
+                allowed_tools,
+                "--disallowedTools",
+                _DISALLOWED_TOOLS,
+                "--output-format",
+                "stream-json",
+                "--verbose",
+                "-",
+            ]
+        )
 
         env = _apply_subprocess_env()
 
         worker_log = self._log_dir / f"worker-{worker_id}.log"
-        deadline_seconds = (
-            int(timeout_seconds)
-            if timeout_seconds is not None
-            else self._default_timeout
-        )
+        deadline_seconds = int(timeout_seconds) if timeout_seconds is not None else self._default_timeout
 
         events: list[dict[str, Any]] = []
         text_parts: list[str] = []
         result_records: list[str] = []
         result_envelopes_valid: list[bool] = []
+        browser_observations: list[str] = []
+        browser_tool_use_ids: set[str] = set()
+        consumed_browser_results: set[str] = set()
         stats: dict[str, Any] = {}
         usage_recorded = False
         proc: subprocess.Popen | None = None
@@ -338,15 +316,11 @@ class ClaudeCodeCliAdapter:
 
             with open(worker_log, "a", encoding="utf-8") as lf:
                 lf.write(
-                    f"\n{'=' * 60}\n"
-                    f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] worker {worker_id}\n"
-                    f"{'=' * 60}\n"
+                    f"\n{'=' * 60}\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] worker {worker_id}\n{'=' * 60}\n"
                 )
                 while True:
                     if proc.poll() is None and time.monotonic() > wall_deadline:
-                        raise TimeoutError(
-                            f"claude timed out after {deadline_seconds}s"
-                        )
+                        raise TimeoutError(f"claude timed out after {deadline_seconds}s")
                     try:
                         queued_line = stdout_queue.get(timeout=0.25)
                     except queue.Empty:
@@ -384,6 +358,8 @@ class ClaudeCodeCliAdapter:
                                     }
                                 )
                             elif bt == "tool_use":
+                                if block.get("name") in PLAYWRIGHT_APPLY_TOOLS and isinstance(block.get("id"), str):
+                                    browser_tool_use_ids.add(block["id"])
                                 name = (
                                     block.get("name", "")
                                     .replace("mcp__playwright__", "")
@@ -403,6 +379,26 @@ class ClaudeCodeCliAdapter:
                                     }
                                 )
                                 lf.write(f"  >> {name}\n")
+                    elif msg_type == "user":
+                        content = msg.get("message", {}).get("content", [])
+                        if isinstance(content, list):
+                            for block in content:
+                                if (
+                                    isinstance(block, dict)
+                                    and block.get("type") == "tool_result"
+                                    and block.get("tool_use_id") in browser_tool_use_ids
+                                    and block.get("tool_use_id") not in consumed_browser_results
+                                ):
+                                    consumed_browser_results.add(block["tool_use_id"])
+                                    payload = block.get("content", "")
+                                    if isinstance(payload, str):
+                                        browser_observations.append(payload)
+                                    elif isinstance(payload, list):
+                                        browser_observations.extend(
+                                            part["text"]
+                                            for part in payload
+                                            if isinstance(part, dict) and isinstance(part.get("text"), str)
+                                        )
                     elif msg_type == "result":
                         usage = msg.get("usage", {}) or {}
                         stats = {
@@ -414,8 +410,7 @@ class ClaudeCodeCliAdapter:
                             "turns": int(msg.get("num_turns", 0) or 0),
                         }
                         if not usage_recorded and any(
-                            stats[key] > 0
-                            for key in ("input", "output", "cache_read", "cache_create", "cost_usd")
+                            stats[key] > 0 for key in ("input", "output", "cache_read", "cache_create", "cost_usd")
                         ):
                             from jobctrl.llm import record_llm_spend
 
@@ -434,10 +429,7 @@ class ClaudeCodeCliAdapter:
                             else json.dumps(raw_result, sort_keys=True, default=str)
                         )
                         result_records.append(result_text)
-                        result_envelopes_valid.append(
-                            msg.get("subtype") == "success"
-                            and msg.get("is_error") is False
-                        )
+                        result_envelopes_valid.append(msg.get("subtype") == "success" and msg.get("is_error") is False)
                         text_parts.append(result_text)
 
             proc.wait(timeout=5)
@@ -463,9 +455,7 @@ class ClaudeCodeCliAdapter:
             # ``Failed("SKIPPED")`` rather than fabricating a result.
             if returncode is not None and returncode < 0:
                 return AgentResult(
-                    submission_result=Failed(
-                        error="SKIPPED: process killed by signal", retryable=True
-                    ),
+                    submission_result=Failed(error="SKIPPED: process killed by signal", retryable=True),
                     token_usage=token_usage,
                     duration_ms=duration_ms,
                     events=tuple(events),
@@ -488,10 +478,31 @@ class ClaudeCodeCliAdapter:
                     retryable=False,
                 )
             else:
-                submission = self._parse_result(
-                    result_records[0],
-                    dry_run=dry_run,
-                )
+                from jobctrl.domain.apply.terminal_report import parse_terminal_report, submission_from_report
+                from jobctrl.domain.determinations import DeterminationFailure
+
+                observations = "\n".join(browser_observations)
+                try:
+                    report = parse_terminal_report(result_records[0], observations)
+                    submission = submission_from_report(report, dry_run=dry_run)
+                    fingerprint = hashlib.sha256(
+                        json.dumps({"prompt": prompt.text, "observations": observations}, sort_keys=True).encode()
+                    ).hexdigest()
+                    events.append(
+                        {
+                            "event_type": "ApplyTerminalDetermination",
+                            "occurred_at": _utc_now(),
+                            "level": "info",
+                            "message": "Agent terminal determination recorded",
+                            "payload": {
+                                "result": report.model_dump(),
+                                "model": model_label,
+                                "input_fingerprint": fingerprint,
+                            },
+                        }
+                    )
+                except DeterminationFailure as failure:
+                    submission = Failed(error=failure.code, retryable=False)
             return AgentResult(
                 submission_result=submission,
                 token_usage=token_usage,
@@ -517,83 +528,10 @@ class ClaudeCodeCliAdapter:
             except Exception:  # noqa: BLE001
                 log.debug("failed to delete apply MCP config %s", mcp_config_path, exc_info=True)
 
-    # ------------------------------------------------------------------
-    # RESULT line parsing
-    # ------------------------------------------------------------------
-
-    def _parse_result(self, output: str, *, dry_run: bool) -> SubmissionResult:
-        """Translate one exact dedicated terminal result record.
-
-        Streamed assistant text and raw non-JSON output are audit material only.
-        Extra prose, newlines, multiple tokens, and conflicting records fail
-        closed instead of being searched for a privileged substring.
-        """
-        if (
-            not isinstance(output, str)
-            or not output
-            or output != output.strip()
-            or output.count("RESULT:") != 1
-        ):
-            return Failed(error="invalid_result_record", retryable=False)
-
-        email_only = _EMAIL_ONLY_RE.fullmatch(output)
-        if email_only:
-            return EmailOnlyApplication(recipient_email=email_only.group(1))
-
-        result_record = _RESULT_RECORD_RE.fullmatch(output)
-        if result_record:
-            code = result_record.group(1)
-            if code == "APPLIED":
-                if dry_run:
-                    return Failed(
-                        error="dry_run_violation: agent reported applied during dry-run",
-                        retryable=False,
-                    )
-                return Failed(
-                    error="untrusted_applied_result",
-                    retryable=False,
-                )
-            if code == "DRY_RUN":
-                if not dry_run:
-                    return Failed(
-                        error="unexpected_dry_run_result",
-                        retryable=False,
-                    )
-                return DryRunComplete(
-                    navigated_to="",
-                    coverage="partial",
-                    blocked_channels=("semantic_review_unverified",),
-                )
-            if code == "EXPIRED":
-                return Expired()
-            if code == "CAPTCHA":
-                return Captcha(details="agent reported CAPTCHA")
-            return LoginIssue(details="agent reported login issue")
-
-        failed = _FAILED_RE.fullmatch(output)
-        if failed:
-            raw_reason = failed.group(1)
-            reason = _clean_reason(raw_reason or "unknown")
-            if raw_reason is not None and not reason:
-                return Failed(error="invalid_result_record", retryable=False)
-            if reason in _PROMOTED_FAILED_REASONS:
-                if reason == "captcha":
-                    return Captcha(details="agent reported CAPTCHA")
-                if reason == "expired":
-                    return Expired()
-                return LoginIssue(details="agent reported login issue")
-            if reason == "manual" or reason.startswith("manual"):
-                return Manual(reason=reason)
-            if reason.startswith("missing_profile_data:"):
-                return Failed(error=reason, retryable=False)
-            return Failed(error=reason or "unknown", retryable=True)
-
-        return Failed(error="invalid_result_record", retryable=False)
-
 
 def _allowed_tools_for_mcp_config(mcp_config: Mapping[str, Any]) -> str:
     tools = set(PLAYWRIGHT_APPLY_TOOLS | GMAIL_APPLY_TOOLS | BASE_OWNED_APPLY_TOOLS)
-    apply_tools = ((mcp_config.get("mcpServers") or {}).get("apply_tools") or {})
+    apply_tools = (mcp_config.get("mcpServers") or {}).get("apply_tools") or {}
     env = apply_tools.get("env") if isinstance(apply_tools, Mapping) else {}
     if isinstance(env, Mapping):
         if str(env.get("CAPSOLVER_API_KEY") or "").strip():

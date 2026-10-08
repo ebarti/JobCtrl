@@ -1,3 +1,4 @@
+import { FormSnapshotSchema, FormMappingResponseSchema, type FormSnapshot, type FormMappingResponse } from "@jobctrl/contracts";
 import {
   ExtensionCaptureIngestSchema,
   type ExtensionAutofillProfileResponse,
@@ -104,6 +105,12 @@ export async function getExtensionAutofillProfile(
     throw new LocalApiError(`Local JobCtrl API rejected autofill profile: ${response.status}.`, response.status);
   }
   return (await response.json()) as ExtensionAutofillProfileResponse;
+}
+
+export async function getExtensionFormMapping(token:string,snapshot:FormSnapshot,options:LocalApiOptions={}):Promise<FormMappingResponse>{
+  const response=await fetchWithTimeout(options.fetchImpl??fetch,`${normalizeLoopbackBaseUrl(options.baseUrl)}/v1/extension/autofill/mapping`,{method:"POST",headers:{authorization:`Bearer ${requireBearerToken(token)}`,"content-type":"application/json"},body:JSON.stringify(FormSnapshotSchema.parse(snapshot))},options.timeoutMs??DEFAULT_TIMEOUT_MS);
+  if(!response.ok)throw new LocalApiError(`Form mapping unavailable: ${response.status}.`,response.status);
+  return FormMappingResponseSchema.parse(await response.json());
 }
 
 export async function getNextDiscoveryBrowserTask(

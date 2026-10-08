@@ -160,6 +160,42 @@ class SqliteInterviewPrepRepository:
                     _dump_object(item.to_read_model().get("questionMetadata")),
                 ),
             )
+            context = prep.generation_context or {}
+            determination_ids = context.get("determinations", {}).get("claimVerification", [])
+            anchors = (item.question_metadata or {}).get("lineAnchors", [])
+            if prep.status == "accepted" and anchors:
+                determination_id = determination_ids[position]
+                for anchor in anchors:
+                    self._conn.execute(
+                        "INSERT INTO artifact_line_anchors VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            tenant,
+                            "interview",
+                            str(job_id),
+                            prep.generation,
+                            anchor["lineId"],
+                            _dump(anchor["evidenceIds"]),
+                            _dump(anchor["requirementIds"]),
+                            anchor["transformType"],
+                            anchor["reason"],
+                            determination_id,
+                        ),
+                    )
+        if prep.status == "accepted":
+            from jobctrl.infrastructure.determinations import SqliteDeterminationRepository
+
+            determinations = (prep.generation_context or {}).get("determinations", {})
+            store = SqliteDeterminationRepository(self._conn)
+            for kind in ("plan", "quality"):
+                if kind in determinations:
+                    store.bind(
+                        tenant_id=tenant,
+                        entity_kind="interview",
+                        entity_id=str(job_id),
+                        entity_version=str(prep.generation),
+                        determination_kind=kind,
+                        determination_id=determinations[kind],
+                    )
 
     def load_latest(
         self,

@@ -13,19 +13,49 @@ from importlib.resources import files
 from typing import Any, Literal, NotRequired, TypedDict
 
 InterviewAnswerFormat = Literal["historical", "situational", "principle", "negotiation", "narrative", "preference"]
-InterviewRoleLens = Literal["ic", "senior_ic", "staff_principal", "first_time_manager", "engineering_manager", "director", "executive", "unknown"]
+InterviewRoleLens = Literal[
+    "ic",
+    "senior_ic",
+    "staff_principal",
+    "first_time_manager",
+    "engineering_manager",
+    "director",
+    "executive",
+    "unknown",
+]
 InterviewStage = Literal["recruiter", "behavioral", "management", "technical", "executive", "mixed", "unknown"]
 InterviewFormat = Literal["phone", "video", "onsite", "written", "unspecified"]
 InterviewSelectionErrorCode = Literal[
-    "unknown_question", "retired_question", "duplicate_question", "selection_over_budget",
-    "catalog_mismatch", "invalid_selection", "evidence_profile_changed", "invalid_evidence_selection",
+    "unknown_question",
+    "retired_question",
+    "duplicate_question",
+    "selection_over_budget",
+    "catalog_mismatch",
+    "invalid_selection",
+    "evidence_profile_changed",
+    "invalid_evidence_selection",
 ]
 INTERVIEW_SELECTION_ERROR_CODES = (
-    "unknown_question", "retired_question", "duplicate_question", "selection_over_budget",
-    "catalog_mismatch", "invalid_selection", "evidence_profile_changed", "invalid_evidence_selection",
+    "unknown_question",
+    "retired_question",
+    "duplicate_question",
+    "selection_over_budget",
+    "catalog_mismatch",
+    "invalid_selection",
+    "evidence_profile_changed",
+    "invalid_evidence_selection",
 )
 INTERVIEW_ANSWER_FORMATS = ("historical", "situational", "principle", "negotiation", "narrative", "preference")
-INTERVIEW_ROLE_LENSES = ("ic", "senior_ic", "staff_principal", "first_time_manager", "engineering_manager", "director", "executive", "unknown")
+INTERVIEW_ROLE_LENSES = (
+    "ic",
+    "senior_ic",
+    "staff_principal",
+    "first_time_manager",
+    "engineering_manager",
+    "director",
+    "executive",
+    "unknown",
+)
 INTERVIEW_STAGES = ("recruiter", "behavioral", "management", "technical", "executive", "mixed", "unknown")
 INTERVIEW_FORMATS = ("phone", "video", "onsite", "written", "unspecified")
 MAX_INTERVIEW_SELECTED_QUESTIONS = 16
@@ -104,7 +134,7 @@ class InterviewSelectedQuestion(TypedDict):
     answerFormat: InterviewAnswerFormat
     selectionRationale: str
     snapshot: InterviewQuestionCard
-    evidenceSelectionMode: Literal["user_selected", "deterministic"]
+    evidenceSelectionMode: Literal["user_selected", "model", "deterministic"]
     selectedEvidenceIds: list[str]
 
 
@@ -160,12 +190,12 @@ class InterviewModelContext(TypedDict):
 
 
 class InterviewGenerationContext(TypedDict):
-    schemaVersion: Literal["1"]
+    schemaVersion: Literal["1", "2"]
     catalogBinding: InterviewCatalogBinding
     contextDigest: str
     selectedQuestionIds: list[str]
     selectedQuestions: list[InterviewSelectedQuestion]
-    selectionMode: Literal["user_selected", "deterministic"]
+    selectionMode: Literal["user_selected", "model", "deterministic"]
     interviewStage: InterviewStage
     interviewFormat: InterviewFormat
     roleLens: InterviewRoleLens
@@ -299,32 +329,52 @@ def parse_interview_catalog(raw: bytes) -> InterviewCatalog:
     ids_by_collection = {}
     for key in ("questions", "topics", "sources", "authors", "retiredQuestions"):
         ids = [row.get("id") for row in catalog[key] if isinstance(row, dict)]
-        if len(ids) != len(catalog[key]) or any(not isinstance(value, str) for value in ids) or len(ids) != len(set(ids)):
+        if (
+            len(ids) != len(catalog[key])
+            or any(not isinstance(value, str) for value in ids)
+            or len(ids) != len(set(ids))
+        ):
             raise ValueError(f"invalid/duplicate interview {key} IDs")
         ids_by_collection[key] = set(ids)
     question_ids = ids_by_collection["questions"]
     if ids_by_collection["retiredQuestions"] != {"C08"} or "C08" in question_ids:
         raise ValueError("C08 must remain reserved-retired")
     for card in catalog["questions"]:
-        if set(card) != set(InterviewQuestionCard.__required_keys__) or card["status"] != "active" or card["maturity"] != "research_draft":
+        if (
+            set(card) != set(InterviewQuestionCard.__required_keys__)
+            or card["status"] != "active"
+            or card["maturity"] != "research_draft"
+        ):
             raise ValueError("invalid interview question fields/status/maturity")
         if len(card["id"]) > MAX_INTERVIEW_QUESTION_ID_LENGTH or not re.fullmatch(r"[A-Z]+\d{2}", card["id"]):
             raise ValueError("invalid interview question ID")
         for key, vocabulary in (("roleLenses", INTERVIEW_ROLE_LENSES), ("answerFormats", INTERVIEW_ANSWER_FORMATS)):
             values = card[key]
-            if not isinstance(values, list) or not values or any(value not in vocabulary for value in values) or len(values) != len(set(values)):
+            if (
+                not isinstance(values, list)
+                or not values
+                or any(value not in vocabulary for value in values)
+                or len(values) != len(set(values))
+            ):
                 raise ValueError(f"invalid interview question {key}")
         if card["defaultAnswerFormat"] not in card["answerFormats"]:
             raise ValueError("interview question default format is not supported")
         for key in ("responsibilityTags", "competencyTags"):
             values = card[key]
-            if not isinstance(values, list) or not values or any(not isinstance(value, str) or not re.fullmatch(r"[a-z][a-z0-9_]*", value) for value in values):
+            if (
+                not isinstance(values, list)
+                or not values
+                or any(not isinstance(value, str) or not re.fullmatch(r"[a-z][a-z0-9_]*", value) for value in values)
+            ):
                 raise ValueError(f"invalid interview question {key}")
         if card["topic"] not in ids_by_collection["topics"] or not set(card["sources"]) <= ids_by_collection["sources"]:
             raise ValueError("dangling interview question topic/source")
         if canonical_json_digest(card["rubric"]) != card["rubricDigest"]:
             raise ValueError("interview rubric digest mismatch")
-        if canonical_json_digest({key: value for key, value in card.items() if key != "cardDigest"}) != card["cardDigest"]:
+        if (
+            canonical_json_digest({key: value for key, value in card.items() if key != "cardDigest"})
+            != card["cardDigest"]
+        ):
             raise ValueError("interview card digest mismatch")
     for topic in catalog["topics"]:
         expected_ids = [card["id"] for card in catalog["questions"] if card["topic"] == topic["id"]]
@@ -341,7 +391,11 @@ def parse_interview_catalog(raw: bytes) -> InterviewCatalog:
         if author["sourceIds"] != expected_ids:
             raise ValueError("interview author/source membership mismatch")
     for edge in catalog["relationships"]:
-        if edge["kind"] != "editorial_related" or edge["fromQuestionId"] not in question_ids or edge["toQuestionId"] not in question_ids:
+        if (
+            edge["kind"] != "editorial_related"
+            or edge["fromQuestionId"] not in question_ids
+            or edge["toQuestionId"] not in question_ids
+        ):
             raise ValueError("dangling interview editorial relationship")
     by_id = {card["id"]: card for card in catalog["questions"]}
     if any(by_id[key]["defaultAnswerFormat"] != "principle" for key in ("B11", "TS09")):
@@ -357,7 +411,11 @@ def load_interview_catalog() -> InterviewCatalog:
 
 
 def get_interview_question(question_id: str, *, catalog: InterviewCatalog | None = None) -> InterviewQuestionCard:
-    if not isinstance(question_id, str) or len(question_id) > MAX_INTERVIEW_QUESTION_ID_LENGTH or not re.fullmatch(r"[A-Z]+\d{2}", question_id):
+    if (
+        not isinstance(question_id, str)
+        or len(question_id) > MAX_INTERVIEW_QUESTION_ID_LENGTH
+        or not re.fullmatch(r"[A-Z]+\d{2}", question_id)
+    ):
         raise InterviewSelectionError("invalid_selection")
     catalog = load_interview_catalog() if catalog is None else catalog
     if any(card["id"] == question_id for card in catalog["retiredQuestions"]):
@@ -380,8 +438,12 @@ def validate_interview_selection(
         raise InterviewSelectionError("invalid_selection")
     if len(selected_question_ids) > MAX_INTERVIEW_SELECTED_QUESTIONS:
         raise InterviewSelectionError("selection_over_budget")
-    if any(not isinstance(question_id, str) or len(question_id) > MAX_INTERVIEW_QUESTION_ID_LENGTH or not re.fullmatch(r"[A-Z]+\d{2}", question_id)
-           for question_id in selected_question_ids):
+    if any(
+        not isinstance(question_id, str)
+        or len(question_id) > MAX_INTERVIEW_QUESTION_ID_LENGTH
+        or not re.fullmatch(r"[A-Z]+\d{2}", question_id)
+        for question_id in selected_question_ids
+    ):
         raise InterviewSelectionError("invalid_selection")
     if len(set(selected_question_ids)) != len(selected_question_ids):
         raise InterviewSelectionError("duplicate_question")

@@ -54,6 +54,21 @@ export const EXACT_V12_SCHEMA_MANIFEST: SchemaManifest = {
   fingerprint: "10a8edc30fbfa77e7bea57f3c939a80d836ef3d579f4c5378e7e6e49c6754b56",
 };
 
+export const EXACT_V13_SCHEMA_MANIFEST: SchemaManifest = {
+  version: 13,
+  objectCount: 286,
+  tableCount: 128,
+  fingerprint: "24f551f62457dd2190db390df3d72db50620fc0ae60de3706a6dfc4f38934138",
+};
+
+export const EXACT_V14_SCHEMA_MANIFEST: SchemaManifest = {
+  version: 14,
+  objectCount: 286,
+  tableCount: 128,
+  fingerprint:
+    "d84e0f30dc509e70e270f74993cb2c7d8e5f1905b0f583626553b5a16adda09f",
+};
+
 type SqliteMasterRow = [type: string, name: string, tableName: string, sql: string];
 
 type SqliteMasterQueryRow = {
@@ -140,6 +155,16 @@ export function hasExactV11SchemaManifest(db: Pick<Database.Database, "prepare">
 
 export function hasExactV12SchemaManifest(db: Pick<Database.Database, "prepare">): boolean {
   return hasExactSchemaManifest(db, EXACT_V12_SCHEMA_MANIFEST);
+}
+
+export function hasExactV13SchemaManifest(db: Pick<Database.Database, "prepare">): boolean {
+  return hasExactSchemaManifest(db, EXACT_V13_SCHEMA_MANIFEST);
+}
+
+export function hasExactV14SchemaManifest(
+  db: Pick<Database.Database, "prepare">,
+): boolean {
+  return hasExactSchemaManifest(db, EXACT_V14_SCHEMA_MANIFEST);
 }
 
 function hasExactSchemaManifest(

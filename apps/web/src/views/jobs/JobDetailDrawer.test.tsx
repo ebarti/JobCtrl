@@ -1097,6 +1097,7 @@ describe("<JobDetailDrawer>", () => {
                 posted: {
                   ok: true,
                   recordStatus: "recorded",
+                  determination: sampleCompensationAudit.posted.recordStatus === "recorded" ? sampleCompensationAudit.posted.determination : (() => {throw new Error("Expected fixture decision");})(),
                   fact: postedFact,
                 },
                 market: { ok: true, recordStatus: "recorded", estimate },

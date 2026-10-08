@@ -1,3 +1,4 @@
+import { FormSnapshotSchema } from "@jobctrl/contracts";
 import { ExtensionCaptureIngestSchema, type ExtensionCaptureIngestRequest } from "@jobctrl/contracts";
 
 import { getBrowserApi, type BrowserApi, type BrowserTab } from "./browser";
@@ -7,6 +8,7 @@ import {
   checkLocalApiReady,
   claimDiscoveryBrowserInstallation,
   getExtensionAutofillProfile,
+  getExtensionFormMapping,
   LocalApiError,
   postExtensionCapture,
 } from "./local-api";
@@ -261,10 +263,15 @@ async function reviewAutofill(browser: BrowserApi): Promise<BackgroundResponse> 
     return { ok: false, error: "unsupported_page", message: "JobCtrl autofill is not available on this page." };
   }
   try {
+    const captured=await browser.tabs.sendMessage<unknown>(tab.id,{type:"jobctrl.autofill.capture"});
+    const snapshot=FormSnapshotSchema.parse(captured);
     const profile = await getExtensionAutofillProfile(token);
+    const mapping=await getExtensionFormMapping(token,snapshot);
+    if(profile.profileVersion!==mapping.profileVersion)throw new Error("Profile changed; reopen the autofill review.");
     const response = await browser.tabs.sendMessage<BackgroundResponse>(tab.id, {
       type: "jobctrl.autofill.review",
       profile,
+      mapping,
     });
     return response;
   } catch (error) {

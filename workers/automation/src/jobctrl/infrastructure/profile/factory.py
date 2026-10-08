@@ -22,6 +22,8 @@ from jobctrl.domain.ports.events import EventPublisher
 from jobctrl.database import init_db
 from jobctrl.infrastructure.events import get_default_publisher, reset_default_publisher
 from jobctrl.infrastructure.profile.pdf_parser import PyPdfProfileParser
+from jobctrl.infrastructure.profile.interpretation import PersistedCandidateInterpreter
+from jobctrl.infrastructure.determinations import determination_dependencies
 from jobctrl.infrastructure.profile.sqlite_repository import SqliteProfileRepository
 
 _lock = threading.Lock()
@@ -43,7 +45,8 @@ def build_profile_repository(
     return SqliteProfileRepository(
         conn,
         publisher=publisher or get_default_publisher(),
-        pdf_parser=PyPdfProfileParser(),
+        candidate_interpreter=PersistedCandidateInterpreter(conn, tenant_id="local"),
+        pdf_parser=PyPdfProfileParser(dependencies=determination_dependencies(conn, tenant_id="local", lane="profile")),
     )
 
 

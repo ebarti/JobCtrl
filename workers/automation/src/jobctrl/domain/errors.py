@@ -17,6 +17,13 @@ class ConfigurationError(JobCtrlError):
     code = "configuration"
 
 
+class SavedSearchSettingsError(ConfigurationError):
+    code = "invalid_saved_work_model"
+
+    def __init__(self) -> None:
+        super().__init__("Saved work-model selections are invalid. Update Target search and retry Discovery.")
+
+
 class MissingInputError(JobCtrlError):
     retryable = False
     code = "missing_input"
@@ -64,6 +71,7 @@ __all__ = [
     "JobCtrlError",
     "LlmTransientError",
     "MissingInputError",
+    "SavedSearchSettingsError",
     "SourceUnavailableError",
     "TransientNetworkError",
     "to_application_error",

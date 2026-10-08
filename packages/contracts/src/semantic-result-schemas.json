@@ -1,0 +1,4211 @@
+{
+  "analysis_agreement": {
+    "promptVersion": "analysis-agreement-v1",
+    "schema": {
+      "$defs": {
+        "AgreementFinding": {
+          "additionalProperties": false,
+          "properties": {
+            "citations": {
+              "items": {
+                "$ref": "#/$defs/Citation"
+              },
+              "maxItems": 24,
+              "minItems": 1,
+              "title": "Citations",
+              "type": "array"
+            },
+            "kind": {
+              "enum": [
+                "requirement",
+                "keyword"
+              ],
+              "title": "Kind",
+              "type": "string"
+            },
+            "rationale": {
+              "maxLength": 1500,
+              "minLength": 1,
+              "title": "Rationale",
+              "type": "string"
+            },
+            "source_ids": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 24,
+              "minItems": 1,
+              "title": "Source Ids",
+              "type": "array"
+            }
+          },
+          "required": [
+            "kind",
+            "source_ids",
+            "citations",
+            "rationale"
+          ],
+          "title": "AgreementFinding",
+          "type": "object"
+        },
+        "Citation": {
+          "additionalProperties": false,
+          "properties": {
+            "exact_values": {
+              "description": "Literal numbers, dates or currency tokens copied exactly from this quote. Leave empty when none are cited. Never include inferred or normalized taxonomy/place codes.",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 32,
+              "title": "Exact Values",
+              "type": "array"
+            },
+            "quote": {
+              "description": "Copy one contiguous verbatim span from that source's text, preserving case and punctuation. Do not join or paraphrase fields.",
+              "maxLength": 4000,
+              "minLength": 1,
+              "title": "Quote",
+              "type": "string"
+            },
+            "source_id": {
+              "description": "Use an outer sources[].source_id. IDs mentioned inside source text are data, not citation IDs.",
+              "maxLength": 240,
+              "minLength": 1,
+              "title": "Source Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "source_id",
+            "quote"
+          ],
+          "title": "Citation",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "citations": {
+          "items": {
+            "$ref": "#/$defs/Citation"
+          },
+          "maxItems": 24,
+          "minItems": 1,
+          "title": "Citations",
+          "type": "array"
+        },
+        "findings": {
+          "items": {
+            "$ref": "#/$defs/AgreementFinding"
+          },
+          "maxItems": 200,
+          "title": "Findings",
+          "type": "array"
+        },
+        "rationale": {
+          "maxLength": 1500,
+          "minLength": 1,
+          "title": "Rationale",
+          "type": "string"
+        },
+        "score": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Score",
+          "type": "number"
+        }
+      },
+      "required": [
+        "score",
+        "findings",
+        "citations",
+        "rationale"
+      ],
+      "title": "DraftAgreement",
+      "type": "object"
+    },
+    "schemaVersion": "1"
+  },
+  "apply_terminal_report": {
+    "promptVersion": "apply-terminal-report-v1",
+    "schema": {
+      "$defs": {
+        "Citation": {
+          "additionalProperties": false,
+          "properties": {
+            "exact_values": {
+              "description": "Literal numbers, dates or currency tokens copied exactly from this quote. Leave empty when none are cited. Never include inferred or normalized taxonomy/place codes.",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 32,
+              "title": "Exact Values",
+              "type": "array"
+            },
+            "quote": {
+              "description": "Copy one contiguous verbatim span from that source's text, preserving case and punctuation. Do not join or paraphrase fields.",
+              "maxLength": 4000,
+              "minLength": 1,
+              "title": "Quote",
+              "type": "string"
+            },
+            "source_id": {
+              "description": "Use an outer sources[].source_id. IDs mentioned inside source text are data, not citation IDs.",
+              "maxLength": 240,
+              "minLength": 1,
+              "title": "Source Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "source_id",
+            "quote"
+          ],
+          "title": "Citation",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "citations": {
+          "items": {
+            "$ref": "#/$defs/Citation"
+          },
+          "maxItems": 20,
+          "minItems": 1,
+          "title": "Citations",
+          "type": "array"
+        },
+        "rationale": {
+          "maxLength": 1000,
+          "minLength": 1,
+          "title": "Rationale",
+          "type": "string"
+        },
+        "reason": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
+        },
+        "recipient_email": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Recipient Email"
+        },
+        "retryable": {
+          "title": "Retryable",
+          "type": "boolean"
+        },
+        "status": {
+          "enum": [
+            "applied",
+            "dry_run_complete",
+            "expired",
+            "captcha",
+            "login_issue",
+            "manual",
+            "email_only",
+            "failed"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "retryable",
+        "reason",
+        "recipient_email",
+        "citations",
+        "rationale"
+      ],
+      "title": "ApplyTerminalReport",
+      "type": "object"
+    },
+    "schemaVersion": "1"
+  },
+  "artifact_quality": {
+    "promptVersion": "artifact-quality-v2",
+    "schema": {
+      "$defs": {
+        "Citation": {
+          "additionalProperties": false,
+          "properties": {
+            "exact_values": {
+              "description": "Literal numbers, dates or currency tokens copied exactly from this quote. Leave empty when none are cited. Never include inferred or normalized taxonomy/place codes.",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 32,
+              "title": "Exact Values",
+              "type": "array"
+            },
+            "quote": {
+              "description": "Copy one contiguous verbatim span from that source's text, preserving case and punctuation. Do not join or paraphrase fields.",
+              "maxLength": 4000,
+              "minLength": 1,
+              "title": "Quote",
+              "type": "string"
+            },
+            "source_id": {
+              "description": "Use an outer sources[].source_id. IDs mentioned inside source text are data, not citation IDs.",
+              "maxLength": 240,
+              "minLength": 1,
+              "title": "Source Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "source_id",
+            "quote"
+          ],
+          "title": "Citation",
+          "type": "object"
+        },
+        "QualityFinding": {
+          "additionalProperties": false,
+          "properties": {
+            "category": {
+              "enum": [
+                "relevance",
+                "clarity",
+                "completeness",
+                "structure",
+                "voice",
+                "interview_defensibility"
+              ],
+              "title": "Category",
+              "type": "string"
+            },
+            "citation": {
+              "$ref": "#/$defs/Citation"
+            },
+            "line_id": {
+              "maxLength": 240,
+              "minLength": 1,
+              "title": "Line Id",
+              "type": "string"
+            },
+            "rationale": {
+              "maxLength": 1500,
+              "minLength": 1,
+              "title": "Rationale",
+              "type": "string"
+            },
+            "repair_instruction": {
+              "maxLength": 1500,
+              "minLength": 1,
+              "title": "Repair Instruction",
+              "type": "string"
+            }
+          },
+          "required": [
+            "line_id",
+            "category",
+            "citation",
+            "rationale",
+            "repair_instruction"
+          ],
+          "title": "QualityFinding",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "evidence_corrections": {
+          "items": {
+            "$ref": "#/$defs/Citation"
+          },
+          "maxItems": 32,
+          "title": "Evidence Corrections",
+          "type": "array"
+        },
+        "findings": {
+          "items": {
+            "$ref": "#/$defs/QualityFinding"
+          },
+          "maxItems": 100,
+          "title": "Findings",
+          "type": "array"
+        },
+        "rationale": {
+          "maxLength": 1500,
+          "minLength": 1,
+          "title": "Rationale",
+          "type": "string"
+        },
+        "score": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Score",
+          "type": "number"
+        },
+        "verdict": {
+          "enum": [
+            "pass",
+            "fail"
+          ],
+          "title": "Verdict",
+          "type": "string"
+        }
+      },
+      "required": [
+        "verdict",
+        "score",
+        "findings",
+        "evidence_corrections",
+        "rationale"
+      ],
+      "title": "ArtifactQuality",
+      "type": "object"
+    },
+    "schemaVersion": "2"
+  },
+  "benchmark_classification": {
+    "promptVersion": "benchmark-classification-v1",
+    "schema": {
+      "$defs": {
+        "Citation": {
+          "additionalProperties": false,
+          "properties": {
+            "exact_values": {
+              "description": "Literal numbers, dates or currency tokens copied exactly from this quote. Leave empty when none are cited. Never include inferred or normalized taxonomy/place codes.",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 32,
+              "title": "Exact Values",
+              "type": "array"
+            },
+            "quote": {
+              "description": "Copy one contiguous verbatim span from that source's text, preserving case and punctuation. Do not join or paraphrase fields.",
+              "maxLength": 4000,
+              "minLength": 1,
+              "title": "Quote",
+              "type": "string"
+            },
+            "source_id": {
+              "description": "Use an outer sources[].source_id. IDs mentioned inside source text are data, not citation IDs.",
+              "maxLength": 240,
+              "minLength": 1,
+              "title": "Source Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "source_id",
+            "quote"
+          ],
+          "title": "Citation",
+          "type": "object"
+        },
+        "InterpretedField_Literal__company____market___": {
+          "additionalProperties": false,
+          "properties": {
+            "citations": {
+              "items": {
+                "$ref": "#/$defs/Citation"
+              },
+              "maxItems": 8,
+              "minItems": 1,
+              "title": "Citations",
+              "type": "array"
+            },
+            "rationale": {
+              "maxLength": 1000,
+              "minLength": 1,
+              "title": "Rationale",
+              "type": "string"
+            },
+            "value": {
+              "enum": [
+                "company",
+                "market"
+              ],
+              "title": "Value",
+              "type": "string"
+            }
+          },
+          "required": [
+            "value",
+            "citations",
+            "rationale"
+          ],
+          "title": "InterpretedField[Literal['company', 'market']]",
+          "type": "object"
+        },
+        "InterpretedField_Literal__junior____mid____senior____staff____principal____manager____senior_manager____director____vp____svp____c_level____unknown___": {
+          "additionalProperties": false,
+          "properties": {
+            "citations": {
+              "items": {
+                "$ref": "#/$defs/Citation"
+              },
+              "maxItems": 8,
+              "minItems": 1,
+              "title": "Citations",
+              "type": "array"
+            },
+            "rationale": {
+              "maxLength": 1000,
+              "minLength": 1,
+              "title": "Rationale",
+              "type": "string"
+            },
+            "value": {
+              "enum": [
+                "junior",
+                "mid",
+                "senior",
+                "staff",
+                "principal",
+                "manager",
+                "senior_manager",
+                "director",
+                "vp",
+                "svp",
+                "c_level",
+                "unknown"
+              ],
+              "title": "Value",
+              "type": "string"
+            }
+          },
+          "required": [
+            "value",
+            "citations",
+            "rationale"
+          ],
+          "title": "InterpretedField[Literal['junior', 'mid', 'senior', 'staff', 'principal', 'manager', 'senior_manager', 'director', 'vp', 'svp', 'c_level', 'unknown']]",
+          "type": "object"
+        },
+        "InterpretedField_Literal__software_engineering____engineering_management____executive_leadership____data_science____data_engineering____machine_learning____information_technology____product_management____product_design____sales____marketing____finance____human_resources____operations____other____unknown___": {
+          "additionalProperties": false,
+          "properties": {
+            "citations": {
+              "items": {
+                "$ref": "#/$defs/Citation"
+              },
+              "maxItems": 8,
+              "minItems": 1,
+              "title": "Citations",
+              "type": "array"
+            },
+            "rationale": {
+              "maxLength": 1000,
+              "minLength": 1,
+              "title": "Rationale",
+              "type": "string"
+            },
+            "value": {
+              "enum": [
+                "software_engineering",
+                "engineering_management",
+                "executive_leadership",
+                "data_science",
+                "data_engineering",
+                "machine_learning",
+                "information_technology",
+                "product_management",
+                "product_design",
+                "sales",
+                "marketing",
+                "finance",
+                "human_resources",
+                "operations",
+                "other",
+                "unknown"
+              ],
+              "title": "Value",
+              "type": "string"
+            }
+          },
+          "required": [
+            "value",
+            "citations",
+            "rationale"
+          ],
+          "title": "InterpretedField[Literal['software_engineering', 'engineering_management', 'executive_leadership', 'data_science', 'data_engineering', 'machine_learning', 'information_technology', 'product_management', 'product_design', 'sales', 'marketing', 'finance', 'human_resources', 'operations', 'other', 'unknown']]",
+          "type": "object"
+        },
+        "InterpretedField_Literal__tier_1_local____tier_2_ambitious____tier_3_top_of_market____unknown___": {
+          "additionalProperties": false,
+          "properties": {
+            "citations": {
+              "items": {
+                "$ref": "#/$defs/Citation"
+              },
+              "maxItems": 8,
+              "minItems": 1,
+              "title": "Citations",
+              "type": "array"
+            },
+            "rationale": {
+              "maxLength": 1000,
+              "minLength": 1,
+              "title": "Rationale",
+              "type": "string"
+            },
+            "value": {
+              "enum": [
+                "tier_1_local",
+                "tier_2_ambitious",
+                "tier_3_top_of_market",
+                "unknown"
+              ],
+              "title": "Value",
+              "type": "string"
+            }
+          },
+          "required": [
+            "value",
+            "citations",
+            "rationale"
+          ],
+          "title": "InterpretedField[Literal['tier_1_local', 'tier_2_ambitious', 'tier_3_top_of_market', 'unknown']]",
+          "type": "object"
+        },
+        "InterpretedPlace": {
+          "additionalProperties": false,
+          "properties": {
+            "citations": {
+              "items": {
+                "$ref": "#/$defs/Citation"
+              },
+              "maxItems": 8,
+              "minItems": 1,
+              "title": "Citations",
+              "type": "array"
+            },
+            "country_code": {
+              "anyOf": [
+                {
+                  "pattern": "^[A-Z]{2}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Country Code"
+            },
+            "locality": {
+              "anyOf": [
+                {
+                  "maxLength": 160,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Locality"
+            },
+            "rationale": {
+              "maxLength": 1000,
+              "minLength": 1,
+              "title": "Rationale",
+              "type": "string"
+            },
+            "region": {
+              "enum": [
+                "africa",
+                "asia",
+                "europe",
+                "north_america",
+                "south_america",
+                "oceania",
+                "global",
+                "unknown"
+              ],
+              "title": "Region",
+              "type": "string"
+            }
+          },
+          "required": [
+            "country_code",
+            "region",
+            "locality",
+            "citations",
+            "rationale"
+          ],
+          "title": "InterpretedPlace",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "company_tier": {
+          "$ref": "#/$defs/InterpretedField_Literal__tier_1_local____tier_2_ambitious____tier_3_top_of_market____unknown___"
+        },
+        "market_scope": {
+          "$ref": "#/$defs/InterpretedField_Literal__company____market___"
+        },
+        "occupation_family": {
+          "$ref": "#/$defs/InterpretedField_Literal__software_engineering____engineering_management____executive_leadership____data_science____data_engineering____machine_learning____information_technology____product_management____product_design____sales____marketing____finance____human_resources____operations____other____unknown___"
+        },
+        "places": {
+          "items": {
+            "$ref": "#/$defs/InterpretedPlace"
+          },
+          "maxItems": 12,
+          "title": "Places",
+          "type": "array"
+        },
+        "seniority": {
+          "$ref": "#/$defs/InterpretedField_Literal__junior____mid____senior____staff____principal____manager____senior_manager____director____vp____svp____c_level____unknown___"
+        }
+      },
+      "required": [
+        "occupation_family",
+        "seniority",
+        "places",
+        "market_scope",
+        "company_tier"
+      ],
+      "title": "BenchmarkClassification",
+      "type": "object"
+    },
+    "schemaVersion": "1"
+  },
+  "candidate_interpretation": {
+    "promptVersion": "candidate-interpretation-v1",
+    "schema": {
+      "$defs": {
+        "Citation": {
+          "additionalProperties": false,
+          "properties": {
+            "exact_values": {
+              "description": "Literal numbers, dates or currency tokens copied exactly from this quote. Leave empty when none are cited. Never include inferred or normalized taxonomy/place codes.",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 32,
+              "title": "Exact Values",
+              "type": "array"
+            },
+            "quote": {
+              "description": "Copy one contiguous verbatim span from that source's text, preserving case and punctuation. Do not join or paraphrase fields.",
+              "maxLength": 4000,
+              "minLength": 1,
+              "title": "Quote",
+              "type": "string"
+            },
+            "source_id": {
+              "description": "Use an outer sources[].source_id. IDs mentioned inside source text are data, not citation IDs.",
+              "maxLength": 240,
+              "minLength": 1,
+              "title": "Source Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "source_id",
+            "quote"
+          ],
+          "title": "Citation",
+          "type": "object"
+        },
+        "InterpretedField_Literal__ic____management____executive____unknown___": {
+          "additionalProperties": false,
+          "properties": {
+            "citations": {
+              "items": {
+                "$ref": "#/$defs/Citation"
+              },
+              "maxItems": 8,
+              "minItems": 1,
+              "title": "Citations",
+              "type": "array"
+            },
+            "rationale": {
+              "maxLength": 1000,
+              "minLength": 1,
+              "title": "Rationale",
+              "type": "string"
+            },
+            "value": {
+              "enum": [
+                "ic",
+                "management",
+                "executive",
+                "unknown"
+              ],
+              "title": "Value",
+              "type": "string"
+            }
+          },
+          "required": [
+            "value",
+            "citations",
+            "rationale"
+          ],
+          "title": "InterpretedField[Literal['ic', 'management', 'executive', 'unknown']]",
+          "type": "object"
+        },
+        "InterpretedField_Literal__junior____mid____senior____staff____principal____manager____senior_manager____director____vp____svp____c_level____unknown___": {
+          "additionalProperties": false,
+          "properties": {
+            "citations": {
+              "items": {
+                "$ref": "#/$defs/Citation"
+              },
+              "maxItems": 8,
+              "minItems": 1,
+              "title": "Citations",
+              "type": "array"
+            },
+            "rationale": {
+              "maxLength": 1000,
+              "minLength": 1,
+              "title": "Rationale",
+              "type": "string"
+            },
+            "value": {
+              "enum": [
+                "junior",
+                "mid",
+                "senior",
+                "staff",
+                "principal",
+                "manager",
+                "senior_manager",
+                "director",
+                "vp",
+                "svp",
+                "c_level",
+                "unknown"
+              ],
+              "title": "Value",
+              "type": "string"
+            }
+          },
+          "required": [
+            "value",
+            "citations",
+            "rationale"
+          ],
+          "title": "InterpretedField[Literal['junior', 'mid', 'senior', 'staff', 'principal', 'manager', 'senior_manager', 'director', 'vp', 'svp', 'c_level', 'unknown']]",
+          "type": "object"
+        },
+        "InterpretedField_Literal__software_engineering____engineering_management____executive_leadership____data_science____data_engineering____machine_learning____information_technology____product_management____product_design____sales____marketing____finance____human_resources____operations____other____unknown___": {
+          "additionalProperties": false,
+          "properties": {
+            "citations": {
+              "items": {
+                "$ref": "#/$defs/Citation"
+              },
+              "maxItems": 8,
+              "minItems": 1,
+              "title": "Citations",
+              "type": "array"
+            },
+            "rationale": {
+              "maxLength": 1000,
+              "minLength": 1,
+              "title": "Rationale",
+              "type": "string"
+            },
+            "value": {
+              "enum": [
+                "software_engineering",
+                "engineering_management",
+                "executive_leadership",
+                "data_science",
+                "data_engineering",
+                "machine_learning",
+                "information_technology",
+                "product_management",
+                "product_design",
+                "sales",
+                "marketing",
+                "finance",
+                "human_resources",
+                "operations",
+                "other",
+                "unknown"
+              ],
+              "title": "Value",
+              "type": "string"
+            }
+          },
+          "required": [
+            "value",
+            "citations",
+            "rationale"
+          ],
+          "title": "InterpretedField[Literal['software_engineering', 'engineering_management', 'executive_leadership', 'data_science', 'data_engineering', 'machine_learning', 'information_technology', 'product_management', 'product_design', 'sales', 'marketing', 'finance', 'human_resources', 'operations', 'other', 'unknown']]",
+          "type": "object"
+        },
+        "InterpretedPlace": {
+          "additionalProperties": false,
+          "properties": {
+            "citations": {
+              "items": {
+                "$ref": "#/$defs/Citation"
+              },
+              "maxItems": 8,
+              "minItems": 1,
+              "title": "Citations",
+              "type": "array"
+            },
+            "country_code": {
+              "anyOf": [
+                {
+                  "pattern": "^[A-Z]{2}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Country Code"
+            },
+            "locality": {
+              "anyOf": [
+                {
+                  "maxLength": 160,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Locality"
+            },
+            "rationale": {
+              "maxLength": 1000,
+              "minLength": 1,
+              "title": "Rationale",
+              "type": "string"
+            },
+            "region": {
+              "enum": [
+                "africa",
+                "asia",
+                "europe",
+                "north_america",
+                "south_america",
+                "oceania",
+                "global",
+                "unknown"
+              ],
+              "title": "Region",
+              "type": "string"
+            }
+          },
+          "required": [
+            "country_code",
+            "region",
+            "locality",
+            "citations",
+            "rationale"
+          ],
+          "title": "InterpretedPlace",
+          "type": "object"
+        },
+        "TargetPreference": {
+          "additionalProperties": false,
+          "properties": {
+            "citations": {
+              "items": {
+                "$ref": "#/$defs/Citation"
+              },
+              "maxItems": 8,
+              "minItems": 1,
+              "title": "Citations",
+              "type": "array"
+            },
+            "location": {
+              "maxLength": 100,
+              "title": "Location",
+              "type": "string"
+            },
+            "rationale": {
+              "maxLength": 240,
+              "minLength": 1,
+              "title": "Rationale",
+              "type": "string"
+            },
+            "work_model": {
+              "enum": [
+                "remote",
+                "hybrid",
+                "onsite",
+                "unknown"
+              ],
+              "title": "Work Model",
+              "type": "string"
+            }
+          },
+          "required": [
+            "location",
+            "work_model",
+            "citations",
+            "rationale"
+          ],
+          "title": "TargetPreference",
+          "type": "object"
+        },
+        "TargetRole": {
+          "additionalProperties": false,
+          "properties": {
+            "citations": {
+              "items": {
+                "$ref": "#/$defs/Citation"
+              },
+              "maxItems": 8,
+              "minItems": 1,
+              "title": "Citations",
+              "type": "array"
+            },
+            "classification": {
+              "enum": [
+                "direct",
+                "adjacent"
+              ],
+              "title": "Classification",
+              "type": "string"
+            },
+            "rationale": {
+              "maxLength": 240,
+              "minLength": 1,
+              "title": "Rationale",
+              "type": "string"
+            },
+            "seniority": {
+              "enum": [
+                "junior",
+                "mid",
+                "senior",
+                "staff",
+                "principal",
+                "manager",
+                "senior_manager",
+                "director",
+                "vp",
+                "svp",
+                "c_level",
+                "unknown"
+              ],
+              "title": "Seniority",
+              "type": "string"
+            },
+            "title": {
+              "maxLength": 100,
+              "minLength": 1,
+              "title": "Title",
+              "type": "string"
+            },
+            "track": {
+              "enum": [
+                "ic",
+                "management",
+                "executive",
+                "unknown"
+              ],
+              "title": "Track",
+              "type": "string"
+            }
+          },
+          "required": [
+            "title",
+            "classification",
+            "track",
+            "seniority",
+            "citations",
+            "rationale"
+          ],
+          "title": "TargetRole",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "experience_places": {
+          "items": {
+            "$ref": "#/$defs/InterpretedPlace"
+          },
+          "maxItems": 24,
+          "title": "Experience Places",
+          "type": "array"
+        },
+        "functions": {
+          "items": {
+            "$ref": "#/$defs/InterpretedField_Literal__software_engineering____engineering_management____executive_leadership____data_science____data_engineering____machine_learning____information_technology____product_management____product_design____sales____marketing____finance____human_resources____operations____other____unknown___"
+          },
+          "maxItems": 16,
+          "title": "Functions",
+          "type": "array"
+        },
+        "seniority": {
+          "$ref": "#/$defs/InterpretedField_Literal__junior____mid____senior____staff____principal____manager____senior_manager____director____vp____svp____c_level____unknown___"
+        },
+        "target_preferences": {
+          "items": {
+            "$ref": "#/$defs/TargetPreference"
+          },
+          "maxItems": 5,
+          "title": "Target Preferences",
+          "type": "array"
+        },
+        "target_roles": {
+          "items": {
+            "$ref": "#/$defs/TargetRole"
+          },
+          "maxItems": 5,
+          "title": "Target Roles",
+          "type": "array"
+        },
+        "track": {
+          "$ref": "#/$defs/InterpretedField_Literal__ic____management____executive____unknown___"
+        }
+      },
+      "required": [
+        "track",
+        "seniority",
+        "functions",
+        "target_roles",
+        "target_preferences",
+        "experience_places"
+      ],
+      "title": "CandidateInterpretation",
+      "type": "object"
+    },
+    "schemaVersion": "1"
+  },
+  "claim_verification": {
+    "promptVersion": "claim-verification-v2",
+    "schema": {
+      "$defs": {
+        "Citation": {
+          "additionalProperties": false,
+          "properties": {
+            "exact_values": {
+              "description": "Literal numbers, dates or currency tokens copied exactly from this quote. Leave empty when none are cited. Never include inferred or normalized taxonomy/place codes.",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 32,
+              "title": "Exact Values",
+              "type": "array"
+            },
+            "quote": {
+              "description": "Copy one contiguous verbatim span from that source's text, preserving case and punctuation. Do not join or paraphrase fields.",
+              "maxLength": 4000,
+              "minLength": 1,
+              "title": "Quote",
+              "type": "string"
+            },
+            "source_id": {
+              "description": "Use an outer sources[].source_id. IDs mentioned inside source text are data, not citation IDs.",
+              "maxLength": 240,
+              "minLength": 1,
+              "title": "Source Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "source_id",
+            "quote"
+          ],
+          "title": "Citation",
+          "type": "object"
+        },
+        "LineVerification": {
+          "additionalProperties": false,
+          "properties": {
+            "claims": {
+              "items": {
+                "$ref": "#/$defs/VerifiedClaim"
+              },
+              "maxItems": 40,
+              "title": "Claims",
+              "type": "array"
+            },
+            "findings": {
+              "items": {
+                "$ref": "#/$defs/VerificationFinding"
+              },
+              "maxItems": 20,
+              "title": "Findings",
+              "type": "array"
+            },
+            "line_id": {
+              "maxLength": 240,
+              "minLength": 1,
+              "title": "Line Id",
+              "type": "string"
+            },
+            "served_requirements": {
+              "description": "At most one entry per requirement_id on this line. Combine its support into one citation and rationale; do not repeat an ID for each claim. Use an empty list when no requirement is demonstrated.",
+              "items": {
+                "$ref": "#/$defs/ServedRequirement"
+              },
+              "maxItems": 400,
+              "title": "Served Requirements",
+              "type": "array"
+            },
+            "source_evidence": {
+              "items": {
+                "$ref": "#/$defs/Citation"
+              },
+              "maxItems": 400,
+              "title": "Source Evidence",
+              "type": "array"
+            },
+            "verdict": {
+              "enum": [
+                "pass",
+                "fail"
+              ],
+              "title": "Verdict",
+              "type": "string"
+            }
+          },
+          "required": [
+            "line_id",
+            "verdict",
+            "served_requirements",
+            "source_evidence",
+            "claims",
+            "findings"
+          ],
+          "title": "LineVerification",
+          "type": "object"
+        },
+        "ServedRequirement": {
+          "additionalProperties": false,
+          "properties": {
+            "citation": {
+              "$ref": "#/$defs/Citation"
+            },
+            "rationale": {
+              "maxLength": 1000,
+              "minLength": 1,
+              "title": "Rationale",
+              "type": "string"
+            },
+            "requirement_id": {
+              "maxLength": 240,
+              "minLength": 1,
+              "title": "Requirement Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "requirement_id",
+            "citation",
+            "rationale"
+          ],
+          "title": "ServedRequirement",
+          "type": "object"
+        },
+        "VerificationFinding": {
+          "additionalProperties": false,
+          "properties": {
+            "citation": {
+              "$ref": "#/$defs/Citation"
+            },
+            "kind": {
+              "enum": [
+                "unsupported_claim",
+                "prohibited_claim",
+                "voice",
+                "self_talk",
+                "negotiation_guidance",
+                "process_narration"
+              ],
+              "title": "Kind",
+              "type": "string"
+            },
+            "rationale": {
+              "maxLength": 1000,
+              "minLength": 1,
+              "title": "Rationale",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "rationale",
+            "citation"
+          ],
+          "title": "VerificationFinding",
+          "type": "object"
+        },
+        "VerifiedClaim": {
+          "additionalProperties": false,
+          "properties": {
+            "evidence": {
+              "items": {
+                "$ref": "#/$defs/Citation"
+              },
+              "maxItems": 32,
+              "title": "Evidence",
+              "type": "array"
+            },
+            "kind": {
+              "enum": [
+                "candidate_fact",
+                "hypothetical",
+                "target_role",
+                "employer_statement",
+                "advice"
+              ],
+              "title": "Kind",
+              "type": "string"
+            },
+            "rationale": {
+              "maxLength": 1000,
+              "minLength": 1,
+              "title": "Rationale",
+              "type": "string"
+            },
+            "support": {
+              "enum": [
+                "supported",
+                "unsupported",
+                "not_factual",
+                "uncertain"
+              ],
+              "title": "Support",
+              "type": "string"
+            },
+            "text": {
+              "$ref": "#/$defs/Citation"
+            }
+          },
+          "required": [
+            "kind",
+            "support",
+            "text",
+            "evidence",
+            "rationale"
+          ],
+          "title": "VerifiedClaim",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "lines": {
+          "items": {
+            "$ref": "#/$defs/LineVerification"
+          },
+          "maxItems": 1000,
+          "minItems": 1,
+          "title": "Lines",
+          "type": "array"
+        },
+        "rationale": {
+          "maxLength": 1500,
+          "minLength": 1,
+          "title": "Rationale",
+          "type": "string"
+        },
+        "verdict": {
+          "enum": [
+            "pass",
+            "fail"
+          ],
+          "title": "Verdict",
+          "type": "string"
+        }
+      },
+      "required": [
+        "verdict",
+        "lines",
+        "rationale"
+      ],
+      "title": "ClaimVerification",
+      "type": "object"
+    },
+    "schemaVersion": "2"
+  },
+  "description_quality": {
+    "promptVersion": "description-quality-v1",
+    "schema": {
+      "$defs": {
+        "Citation": {
+          "additionalProperties": false,
+          "properties": {
+            "exact_values": {
+              "description": "Literal numbers, dates or currency tokens copied exactly from this quote. Leave empty when none are cited. Never include inferred or normalized taxonomy/place codes.",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 32,
+              "title": "Exact Values",
+              "type": "array"
+            },
+            "quote": {
+              "description": "Copy one contiguous verbatim span from that source's text, preserving case and punctuation. Do not join or paraphrase fields.",
+              "maxLength": 4000,
+              "minLength": 1,
+              "title": "Quote",
+              "type": "string"
+            },
+            "source_id": {
+              "description": "Use an outer sources[].source_id. IDs mentioned inside source text are data, not citation IDs.",
+              "maxLength": 240,
+              "minLength": 1,
+              "title": "Source Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "source_id",
+            "quote"
+          ],
+          "title": "Citation",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "citations": {
+          "items": {
+            "$ref": "#/$defs/Citation"
+          },
+          "maxItems": 8,
+          "minItems": 1,
+          "title": "Citations",
+          "type": "array"
+        },
+        "confidence": {
+          "enum": [
+            "high",
+            "medium",
+            "low"
+          ],
+          "title": "Confidence",
+          "type": "string"
+        },
+        "rationale": {
+          "maxLength": 1000,
+          "minLength": 1,
+          "title": "Rationale",
+          "type": "string"
+        }
+      },
+      "required": [
+        "confidence",
+        "citations",
+        "rationale"
+      ],
+      "title": "DescriptionQuality",
+      "type": "object"
+    },
+    "schemaVersion": "1"
+  },
+  "edit_intent": {
+    "promptVersion": "edit-intent-v1",
+    "schema": {
+      "$defs": {
+        "Citation": {
+          "additionalProperties": false,
+          "properties": {
+            "exact_values": {
+              "description": "Literal numbers, dates or currency tokens copied exactly from this quote. Leave empty when none are cited. Never include inferred or normalized taxonomy/place codes.",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 32,
+              "title": "Exact Values",
+              "type": "array"
+            },
+            "quote": {
+              "description": "Copy one contiguous verbatim span from that source's text, preserving case and punctuation. Do not join or paraphrase fields.",
+              "maxLength": 4000,
+              "minLength": 1,
+              "title": "Quote",
+              "type": "string"
+            },
+            "source_id": {
+              "description": "Use an outer sources[].source_id. IDs mentioned inside source text are data, not citation IDs.",
+              "maxLength": 240,
+              "minLength": 1,
+              "title": "Source Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "source_id",
+            "quote"
+          ],
+          "title": "Citation",
+          "type": "object"
+        },
+        "EditIntent": {
+          "additionalProperties": false,
+          "properties": {
+            "citations": {
+              "items": {
+                "$ref": "#/$defs/Citation"
+              },
+              "maxItems": 10,
+              "minItems": 1,
+              "title": "Citations",
+              "type": "array"
+            },
+            "edit_id": {
+              "title": "Edit Id",
+              "type": "string"
+            },
+            "kind": {
+              "enum": [
+                "factual_correction",
+                "claim_policy_correction",
+                "style_preference",
+                "provenance_dispute"
+              ],
+              "title": "Kind",
+              "type": "string"
+            },
+            "rationale": {
+              "maxLength": 500,
+              "minLength": 1,
+              "title": "Rationale",
+              "type": "string"
+            }
+          },
+          "required": [
+            "edit_id",
+            "kind",
+            "citations",
+            "rationale"
+          ],
+          "title": "EditIntent",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "edits": {
+          "items": {
+            "$ref": "#/$defs/EditIntent"
+          },
+          "maxItems": 1000,
+          "minItems": 1,
+          "title": "Edits",
+          "type": "array"
+        }
+      },
+      "required": [
+        "edits"
+      ],
+      "title": "EditIntents",
+      "type": "object"
+    },
+    "schemaVersion": "1"
+  },
+  "form_mapping": {
+    "promptVersion": "form-mapping-v1",
+    "schema": {
+      "$defs": {
+        "Citation": {
+          "additionalProperties": false,
+          "properties": {
+            "exact_values": {
+              "description": "Literal numbers, dates or currency tokens copied exactly from this quote. Leave empty when none are cited. Never include inferred or normalized taxonomy/place codes.",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 32,
+              "title": "Exact Values",
+              "type": "array"
+            },
+            "quote": {
+              "description": "Copy one contiguous verbatim span from that source's text, preserving case and punctuation. Do not join or paraphrase fields.",
+              "maxLength": 4000,
+              "minLength": 1,
+              "title": "Quote",
+              "type": "string"
+            },
+            "source_id": {
+              "description": "Use an outer sources[].source_id. IDs mentioned inside source text are data, not citation IDs.",
+              "maxLength": 240,
+              "minLength": 1,
+              "title": "Source Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "source_id",
+            "quote"
+          ],
+          "title": "Citation",
+          "type": "object"
+        },
+        "FormMapping": {
+          "additionalProperties": false,
+          "properties": {
+            "citations": {
+              "items": {
+                "$ref": "#/$defs/Citation"
+              },
+              "maxItems": 20,
+              "minItems": 1,
+              "title": "Citations",
+              "type": "array"
+            },
+            "decision": {
+              "enum": [
+                "mapped",
+                "missing",
+                "unmapped"
+              ],
+              "title": "Decision",
+              "type": "string"
+            },
+            "fact_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Fact Id"
+            },
+            "option_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Option Id"
+            },
+            "question_id": {
+              "title": "Question Id",
+              "type": "string"
+            },
+            "rationale": {
+              "maxLength": 1000,
+              "minLength": 1,
+              "title": "Rationale",
+              "type": "string"
+            },
+            "value": {
+              "maxLength": 4000,
+              "title": "Value",
+              "type": "string"
+            }
+          },
+          "required": [
+            "question_id",
+            "decision",
+            "fact_id",
+            "value",
+            "option_id",
+            "citations",
+            "rationale"
+          ],
+          "title": "FormMapping",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "mappings": {
+          "items": {
+            "$ref": "#/$defs/FormMapping"
+          },
+          "maxItems": 200,
+          "minItems": 1,
+          "title": "Mappings",
+          "type": "array"
+        }
+      },
+      "required": [
+        "mappings"
+      ],
+      "title": "FormMappings",
+      "type": "object"
+    },
+    "schemaVersion": "1"
+  },
+  "interview_plan": {
+    "promptVersion": "interview-plan-v1",
+    "schema": {
+      "$defs": {
+        "Citation": {
+          "additionalProperties": false,
+          "properties": {
+            "exact_values": {
+              "description": "Literal numbers, dates or currency tokens copied exactly from this quote. Leave empty when none are cited. Never include inferred or normalized taxonomy/place codes.",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 32,
+              "title": "Exact Values",
+              "type": "array"
+            },
+            "quote": {
+              "description": "Copy one contiguous verbatim span from that source's text, preserving case and punctuation. Do not join or paraphrase fields.",
+              "maxLength": 4000,
+              "minLength": 1,
+              "title": "Quote",
+              "type": "string"
+            },
+            "source_id": {
+              "description": "Use an outer sources[].source_id. IDs mentioned inside source text are data, not citation IDs.",
+              "maxLength": 240,
+              "minLength": 1,
+              "title": "Source Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "source_id",
+            "quote"
+          ],
+          "title": "Citation",
+          "type": "object"
+        },
+        "PlannedEvidence": {
+          "additionalProperties": false,
+          "properties": {
+            "citation": {
+              "$ref": "#/$defs/Citation"
+            },
+            "evidence_id": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Evidence Id",
+              "type": "string"
+            },
+            "rationale": {
+              "maxLength": 1000,
+              "minLength": 1,
+              "title": "Rationale",
+              "type": "string"
+            },
+            "scope": {
+              "enum": [
+                "direct",
+                "transferable"
+              ],
+              "title": "Scope",
+              "type": "string"
+            }
+          },
+          "required": [
+            "evidence_id",
+            "scope",
+            "citation",
+            "rationale"
+          ],
+          "title": "PlannedEvidence",
+          "type": "object"
+        },
+        "PlannedQuestion": {
+          "additionalProperties": false,
+          "properties": {
+            "citations": {
+              "items": {
+                "$ref": "#/$defs/Citation"
+              },
+              "maxItems": 16,
+              "minItems": 1,
+              "title": "Citations",
+              "type": "array"
+            },
+            "evidence": {
+              "items": {
+                "$ref": "#/$defs/PlannedEvidence"
+              },
+              "maxItems": 8,
+              "title": "Evidence",
+              "type": "array"
+            },
+            "question_id": {
+              "maxLength": 12,
+              "minLength": 1,
+              "title": "Question Id",
+              "type": "string"
+            },
+            "rationale": {
+              "maxLength": 2000,
+              "minLength": 1,
+              "title": "Rationale",
+              "type": "string"
+            },
+            "requirement_ids": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 20,
+              "title": "Requirement Ids",
+              "type": "array"
+            }
+          },
+          "required": [
+            "question_id",
+            "rationale",
+            "citations",
+            "evidence",
+            "requirement_ids"
+          ],
+          "title": "PlannedQuestion",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "questions": {
+          "items": {
+            "$ref": "#/$defs/PlannedQuestion"
+          },
+          "maxItems": 16,
+          "minItems": 1,
+          "title": "Questions",
+          "type": "array"
+        }
+      },
+      "required": [
+        "questions"
+      ],
+      "title": "InterviewPlan",
+      "type": "object"
+    },
+    "schemaVersion": "1"
+  },
+  "job_interpretation": {
+    "promptVersion": "job-interpretation-v1",
+    "schema": {
+      "$defs": {
+        "Citation": {
+          "additionalProperties": false,
+          "properties": {
+            "exact_values": {
+              "description": "Literal numbers, dates or currency tokens copied exactly from this quote. Leave empty when none are cited. Never include inferred or normalized taxonomy/place codes.",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 32,
+              "title": "Exact Values",
+              "type": "array"
+            },
+            "quote": {
+              "description": "Copy one contiguous verbatim span from that source's text, preserving case and punctuation. Do not join or paraphrase fields.",
+              "maxLength": 4000,
+              "minLength": 1,
+              "title": "Quote",
+              "type": "string"
+            },
+            "source_id": {
+              "description": "Use an outer sources[].source_id. IDs mentioned inside source text are data, not citation IDs.",
+              "maxLength": 240,
+              "minLength": 1,
+              "title": "Source Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "source_id",
+            "quote"
+          ],
+          "title": "Citation",
+          "type": "object"
+        },
+        "InterpretedCompensation": {
+          "additionalProperties": false,
+          "properties": {
+            "citations": {
+              "items": {
+                "$ref": "#/$defs/Citation"
+              },
+              "maxItems": 8,
+              "title": "Citations",
+              "type": "array"
+            },
+            "component": {
+              "enum": [
+                "base_salary",
+                "ote",
+                "bonus",
+                "commission",
+                "equity",
+                "unknown"
+              ],
+              "title": "Component",
+              "type": "string"
+            },
+            "currency": {
+              "anyOf": [
+                {
+                  "pattern": "^[A-Z]{3}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Currency"
+            },
+            "lower": {
+              "anyOf": [
+                {
+                  "pattern": "^\\d+(?:\\.\\d+)?$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Lower"
+            },
+            "period": {
+              "enum": [
+                "hour",
+                "day",
+                "week",
+                "month",
+                "year",
+                "unknown"
+              ],
+              "title": "Period",
+              "type": "string"
+            },
+            "rationale": {
+              "maxLength": 1000,
+              "minLength": 1,
+              "title": "Rationale",
+              "type": "string"
+            },
+            "state": {
+              "enum": [
+                "stated",
+                "uncertain",
+                "not_stated"
+              ],
+              "title": "State",
+              "type": "string"
+            },
+            "upper": {
+              "anyOf": [
+                {
+                  "pattern": "^\\d+(?:\\.\\d+)?$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Upper"
+            }
+          },
+          "required": [
+            "state",
+            "lower",
+            "upper",
+            "currency",
+            "period",
+            "component",
+            "citations",
+            "rationale"
+          ],
+          "title": "InterpretedCompensation",
+          "type": "object"
+        },
+        "InterpretedConstraint": {
+          "additionalProperties": false,
+          "properties": {
+            "category": {
+              "enum": [
+                "work_authorization",
+                "clearance",
+                "citizenship",
+                "language",
+                "qualification",
+                "explicit_exclusion"
+              ],
+              "title": "Category",
+              "type": "string"
+            },
+            "citations": {
+              "items": {
+                "$ref": "#/$defs/Citation"
+              },
+              "maxItems": 8,
+              "minItems": 1,
+              "title": "Citations",
+              "type": "array"
+            },
+            "rationale": {
+              "maxLength": 1000,
+              "minLength": 1,
+              "title": "Rationale",
+              "type": "string"
+            },
+            "required": {
+              "title": "Required",
+              "type": "boolean"
+            },
+            "value": {
+              "maxLength": 500,
+              "minLength": 1,
+              "title": "Value",
+              "type": "string"
+            }
+          },
+          "required": [
+            "category",
+            "required",
+            "value",
+            "citations",
+            "rationale"
+          ],
+          "title": "InterpretedConstraint",
+          "type": "object"
+        },
+        "InterpretedField_Literal__ic____management____executive____unknown___": {
+          "additionalProperties": false,
+          "properties": {
+            "citations": {
+              "items": {
+                "$ref": "#/$defs/Citation"
+              },
+              "maxItems": 8,
+              "minItems": 1,
+              "title": "Citations",
+              "type": "array"
+            },
+            "rationale": {
+              "maxLength": 1000,
+              "minLength": 1,
+              "title": "Rationale",
+              "type": "string"
+            },
+            "value": {
+              "enum": [
+                "ic",
+                "management",
+                "executive",
+                "unknown"
+              ],
+              "title": "Value",
+              "type": "string"
+            }
+          },
+          "required": [
+            "value",
+            "citations",
+            "rationale"
+          ],
+          "title": "InterpretedField[Literal['ic', 'management', 'executive', 'unknown']]",
+          "type": "object"
+        },
+        "InterpretedField_Literal__junior____mid____senior____staff____principal____manager____senior_manager____director____vp____svp____c_level____unknown___": {
+          "additionalProperties": false,
+          "properties": {
+            "citations": {
+              "items": {
+                "$ref": "#/$defs/Citation"
+              },
+              "maxItems": 8,
+              "minItems": 1,
+              "title": "Citations",
+              "type": "array"
+            },
+            "rationale": {
+              "maxLength": 1000,
+              "minLength": 1,
+              "title": "Rationale",
+              "type": "string"
+            },
+            "value": {
+              "enum": [
+                "junior",
+                "mid",
+                "senior",
+                "staff",
+                "principal",
+                "manager",
+                "senior_manager",
+                "director",
+                "vp",
+                "svp",
+                "c_level",
+                "unknown"
+              ],
+              "title": "Value",
+              "type": "string"
+            }
+          },
+          "required": [
+            "value",
+            "citations",
+            "rationale"
+          ],
+          "title": "InterpretedField[Literal['junior', 'mid', 'senior', 'staff', 'principal', 'manager', 'senior_manager', 'director', 'vp', 'svp', 'c_level', 'unknown']]",
+          "type": "object"
+        },
+        "InterpretedField_Literal__remote____hybrid____onsite____unknown___": {
+          "additionalProperties": false,
+          "properties": {
+            "citations": {
+              "items": {
+                "$ref": "#/$defs/Citation"
+              },
+              "maxItems": 8,
+              "minItems": 1,
+              "title": "Citations",
+              "type": "array"
+            },
+            "rationale": {
+              "maxLength": 1000,
+              "minLength": 1,
+              "title": "Rationale",
+              "type": "string"
+            },
+            "value": {
+              "enum": [
+                "remote",
+                "hybrid",
+                "onsite",
+                "unknown"
+              ],
+              "title": "Value",
+              "type": "string"
+            }
+          },
+          "required": [
+            "value",
+            "citations",
+            "rationale"
+          ],
+          "title": "InterpretedField[Literal['remote', 'hybrid', 'onsite', 'unknown']]",
+          "type": "object"
+        },
+        "InterpretedField_Literal__software_engineering____engineering_management____executive_leadership____data_science____data_engineering____machine_learning____information_technology____product_management____product_design____sales____marketing____finance____human_resources____operations____other____unknown___": {
+          "additionalProperties": false,
+          "properties": {
+            "citations": {
+              "items": {
+                "$ref": "#/$defs/Citation"
+              },
+              "maxItems": 8,
+              "minItems": 1,
+              "title": "Citations",
+              "type": "array"
+            },
+            "rationale": {
+              "maxLength": 1000,
+              "minLength": 1,
+              "title": "Rationale",
+              "type": "string"
+            },
+            "value": {
+              "enum": [
+                "software_engineering",
+                "engineering_management",
+                "executive_leadership",
+                "data_science",
+                "data_engineering",
+                "machine_learning",
+                "information_technology",
+                "product_management",
+                "product_design",
+                "sales",
+                "marketing",
+                "finance",
+                "human_resources",
+                "operations",
+                "other",
+                "unknown"
+              ],
+              "title": "Value",
+              "type": "string"
+            }
+          },
+          "required": [
+            "value",
+            "citations",
+            "rationale"
+          ],
+          "title": "InterpretedField[Literal['software_engineering', 'engineering_management', 'executive_leadership', 'data_science', 'data_engineering', 'machine_learning', 'information_technology', 'product_management', 'product_design', 'sales', 'marketing', 'finance', 'human_resources', 'operations', 'other', 'unknown']]",
+          "type": "object"
+        },
+        "InterpretedPlace": {
+          "additionalProperties": false,
+          "properties": {
+            "citations": {
+              "items": {
+                "$ref": "#/$defs/Citation"
+              },
+              "maxItems": 8,
+              "minItems": 1,
+              "title": "Citations",
+              "type": "array"
+            },
+            "country_code": {
+              "anyOf": [
+                {
+                  "pattern": "^[A-Z]{2}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Country Code"
+            },
+            "locality": {
+              "anyOf": [
+                {
+                  "maxLength": 160,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Locality"
+            },
+            "rationale": {
+              "maxLength": 1000,
+              "minLength": 1,
+              "title": "Rationale",
+              "type": "string"
+            },
+            "region": {
+              "enum": [
+                "africa",
+                "asia",
+                "europe",
+                "north_america",
+                "south_america",
+                "oceania",
+                "global",
+                "unknown"
+              ],
+              "title": "Region",
+              "type": "string"
+            }
+          },
+          "required": [
+            "country_code",
+            "region",
+            "locality",
+            "citations",
+            "rationale"
+          ],
+          "title": "InterpretedPlace",
+          "type": "object"
+        },
+        "RequirementInterpretation": {
+          "additionalProperties": false,
+          "properties": {
+            "citations": {
+              "items": {
+                "$ref": "#/$defs/Citation"
+              },
+              "maxItems": 8,
+              "minItems": 1,
+              "title": "Citations",
+              "type": "array"
+            },
+            "protected_class": {
+              "title": "Protected Class",
+              "type": "boolean"
+            },
+            "rationale": {
+              "maxLength": 1000,
+              "minLength": 1,
+              "title": "Rationale",
+              "type": "string"
+            },
+            "requirement_id": {
+              "maxLength": 240,
+              "minLength": 1,
+              "title": "Requirement Id",
+              "type": "string"
+            },
+            "scope": {
+              "enum": [
+                "resume",
+                "eligibility",
+                "logistics",
+                "employer_condition"
+              ],
+              "title": "Scope",
+              "type": "string"
+            }
+          },
+          "required": [
+            "requirement_id",
+            "scope",
+            "protected_class",
+            "citations",
+            "rationale"
+          ],
+          "title": "RequirementInterpretation",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "compensation": {
+          "items": {
+            "$ref": "#/$defs/InterpretedCompensation"
+          },
+          "maxItems": 20,
+          "title": "Compensation",
+          "type": "array"
+        },
+        "constraints": {
+          "items": {
+            "$ref": "#/$defs/InterpretedConstraint"
+          },
+          "maxItems": 40,
+          "title": "Constraints",
+          "type": "array"
+        },
+        "occupation_family": {
+          "$ref": "#/$defs/InterpretedField_Literal__software_engineering____engineering_management____executive_leadership____data_science____data_engineering____machine_learning____information_technology____product_management____product_design____sales____marketing____finance____human_resources____operations____other____unknown___"
+        },
+        "places": {
+          "items": {
+            "$ref": "#/$defs/InterpretedPlace"
+          },
+          "maxItems": 24,
+          "title": "Places",
+          "type": "array"
+        },
+        "requirements": {
+          "items": {
+            "$ref": "#/$defs/RequirementInterpretation"
+          },
+          "maxItems": 200,
+          "title": "Requirements",
+          "type": "array"
+        },
+        "seniority": {
+          "$ref": "#/$defs/InterpretedField_Literal__junior____mid____senior____staff____principal____manager____senior_manager____director____vp____svp____c_level____unknown___"
+        },
+        "track": {
+          "$ref": "#/$defs/InterpretedField_Literal__ic____management____executive____unknown___"
+        },
+        "work_model": {
+          "$ref": "#/$defs/InterpretedField_Literal__remote____hybrid____onsite____unknown___"
+        }
+      },
+      "required": [
+        "track",
+        "seniority",
+        "occupation_family",
+        "work_model",
+        "places",
+        "constraints",
+        "compensation",
+        "requirements"
+      ],
+      "title": "JobInterpretation",
+      "type": "object"
+    },
+    "schemaVersion": "1"
+  },
+  "message_link": {
+    "promptVersion": "message-link-v2",
+    "schema": {
+      "$defs": {
+        "Citation": {
+          "additionalProperties": false,
+          "properties": {
+            "exact_values": {
+              "description": "Literal numbers, dates or currency tokens copied exactly from this quote. Leave empty when none are cited. Never include inferred or normalized taxonomy/place codes.",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 32,
+              "title": "Exact Values",
+              "type": "array"
+            },
+            "quote": {
+              "description": "Copy one contiguous verbatim span from that source's text, preserving case and punctuation. Do not join or paraphrase fields.",
+              "maxLength": 4000,
+              "minLength": 1,
+              "title": "Quote",
+              "type": "string"
+            },
+            "source_id": {
+              "description": "Use an outer sources[].source_id. IDs mentioned inside source text are data, not citation IDs.",
+              "maxLength": 240,
+              "minLength": 1,
+              "title": "Source Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "source_id",
+            "quote"
+          ],
+          "title": "Citation",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "application_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Application Id"
+        },
+        "citations": {
+          "items": {
+            "$ref": "#/$defs/Citation"
+          },
+          "maxItems": 12,
+          "minItems": 1,
+          "title": "Citations",
+          "type": "array"
+        },
+        "confidence": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "decision": {
+          "enum": [
+            "linked",
+            "unrelated",
+            "uncertain"
+          ],
+          "title": "Decision",
+          "type": "string"
+        },
+        "rationale": {
+          "maxLength": 1000,
+          "minLength": 1,
+          "title": "Rationale",
+          "type": "string"
+        }
+      },
+      "required": [
+        "decision",
+        "application_id",
+        "confidence",
+        "citations",
+        "rationale"
+      ],
+      "title": "ApplicationMessageLink",
+      "type": "object"
+    },
+    "schemaVersion": "2"
+  },
+  "message_outcome": {
+    "promptVersion": "message-outcome-v1",
+    "schema": {
+      "$defs": {
+        "Citation": {
+          "additionalProperties": false,
+          "properties": {
+            "exact_values": {
+              "description": "Literal numbers, dates or currency tokens copied exactly from this quote. Leave empty when none are cited. Never include inferred or normalized taxonomy/place codes.",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 32,
+              "title": "Exact Values",
+              "type": "array"
+            },
+            "quote": {
+              "description": "Copy one contiguous verbatim span from that source's text, preserving case and punctuation. Do not join or paraphrase fields.",
+              "maxLength": 4000,
+              "minLength": 1,
+              "title": "Quote",
+              "type": "string"
+            },
+            "source_id": {
+              "description": "Use an outer sources[].source_id. IDs mentioned inside source text are data, not citation IDs.",
+              "maxLength": 240,
+              "minLength": 1,
+              "title": "Source Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "source_id",
+            "quote"
+          ],
+          "title": "Citation",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "citations": {
+          "items": {
+            "$ref": "#/$defs/Citation"
+          },
+          "maxItems": 12,
+          "minItems": 1,
+          "title": "Citations",
+          "type": "array"
+        },
+        "confidence": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "kind": {
+          "enum": [
+            "offer",
+            "rejection",
+            "interview",
+            "assessment",
+            "applied_confirmation",
+            "recruiter_reply",
+            "bounced",
+            "unknown"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "rationale": {
+          "maxLength": 1000,
+          "minLength": 1,
+          "title": "Rationale",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "confidence",
+        "citations",
+        "rationale"
+      ],
+      "title": "MessageOutcome",
+      "type": "object"
+    },
+    "schemaVersion": "1"
+  },
+  "page_interpretation": {
+    "promptVersion": "page-interpretation-v1",
+    "schema": {
+      "$defs": {
+        "Citation": {
+          "additionalProperties": false,
+          "properties": {
+            "exact_values": {
+              "description": "Literal numbers, dates or currency tokens copied exactly from this quote. Leave empty when none are cited. Never include inferred or normalized taxonomy/place codes.",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 32,
+              "title": "Exact Values",
+              "type": "array"
+            },
+            "quote": {
+              "description": "Copy one contiguous verbatim span from that source's text, preserving case and punctuation. Do not join or paraphrase fields.",
+              "maxLength": 4000,
+              "minLength": 1,
+              "title": "Quote",
+              "type": "string"
+            },
+            "source_id": {
+              "description": "Use an outer sources[].source_id. IDs mentioned inside source text are data, not citation IDs.",
+              "maxLength": 240,
+              "minLength": 1,
+              "title": "Source Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "source_id",
+            "quote"
+          ],
+          "title": "Citation",
+          "type": "object"
+        },
+        "InterpretedField_Literal__active____closed____expired____removed____unknown___": {
+          "additionalProperties": false,
+          "properties": {
+            "citations": {
+              "items": {
+                "$ref": "#/$defs/Citation"
+              },
+              "maxItems": 8,
+              "minItems": 1,
+              "title": "Citations",
+              "type": "array"
+            },
+            "rationale": {
+              "maxLength": 1000,
+              "minLength": 1,
+              "title": "Rationale",
+              "type": "string"
+            },
+            "value": {
+              "enum": [
+                "active",
+                "closed",
+                "expired",
+                "removed",
+                "unknown"
+              ],
+              "title": "Value",
+              "type": "string"
+            }
+          },
+          "required": [
+            "value",
+            "citations",
+            "rationale"
+          ],
+          "title": "InterpretedField[Literal['active', 'closed', 'expired', 'removed', 'unknown']]",
+          "type": "object"
+        },
+        "InterpretedField_Literal__available____unavailable____unknown___": {
+          "additionalProperties": false,
+          "properties": {
+            "citations": {
+              "items": {
+                "$ref": "#/$defs/Citation"
+              },
+              "maxItems": 8,
+              "minItems": 1,
+              "title": "Citations",
+              "type": "array"
+            },
+            "rationale": {
+              "maxLength": 1000,
+              "minLength": 1,
+              "title": "Rationale",
+              "type": "string"
+            },
+            "value": {
+              "enum": [
+                "available",
+                "unavailable",
+                "unknown"
+              ],
+              "title": "Value",
+              "type": "string"
+            }
+          },
+          "required": [
+            "value",
+            "citations",
+            "rationale"
+          ],
+          "title": "InterpretedField[Literal['available', 'unavailable', 'unknown']]",
+          "type": "object"
+        },
+        "InterpretedField_Literal__clear____login_required____challenge____unknown___": {
+          "additionalProperties": false,
+          "properties": {
+            "citations": {
+              "items": {
+                "$ref": "#/$defs/Citation"
+              },
+              "maxItems": 8,
+              "minItems": 1,
+              "title": "Citations",
+              "type": "array"
+            },
+            "rationale": {
+              "maxLength": 1000,
+              "minLength": 1,
+              "title": "Rationale",
+              "type": "string"
+            },
+            "value": {
+              "enum": [
+                "clear",
+                "login_required",
+                "challenge",
+                "unknown"
+              ],
+              "title": "Value",
+              "type": "string"
+            }
+          },
+          "required": [
+            "value",
+            "citations",
+            "rationale"
+          ],
+          "title": "InterpretedField[Literal['clear', 'login_required', 'challenge', 'unknown']]",
+          "type": "object"
+        },
+        "InterpretedField_Literal__posting____listing____other____unknown___": {
+          "additionalProperties": false,
+          "properties": {
+            "citations": {
+              "items": {
+                "$ref": "#/$defs/Citation"
+              },
+              "maxItems": 8,
+              "minItems": 1,
+              "title": "Citations",
+              "type": "array"
+            },
+            "rationale": {
+              "maxLength": 1000,
+              "minLength": 1,
+              "title": "Rationale",
+              "type": "string"
+            },
+            "value": {
+              "enum": [
+                "posting",
+                "listing",
+                "other",
+                "unknown"
+              ],
+              "title": "Value",
+              "type": "string"
+            }
+          },
+          "required": [
+            "value",
+            "citations",
+            "rationale"
+          ],
+          "title": "InterpretedField[Literal['posting', 'listing', 'other', 'unknown']]",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "access_state": {
+          "$ref": "#/$defs/InterpretedField_Literal__clear____login_required____challenge____unknown___"
+        },
+        "apply_control": {
+          "$ref": "#/$defs/InterpretedField_Literal__available____unavailable____unknown___"
+        },
+        "availability": {
+          "$ref": "#/$defs/InterpretedField_Literal__active____closed____expired____removed____unknown___"
+        },
+        "page_kind": {
+          "$ref": "#/$defs/InterpretedField_Literal__posting____listing____other____unknown___"
+        }
+      },
+      "required": [
+        "availability",
+        "page_kind",
+        "access_state",
+        "apply_control"
+      ],
+      "title": "PageInterpretation",
+      "type": "object"
+    },
+    "schemaVersion": "1"
+  },
+  "posted_compensation": {
+    "promptVersion": "posted-compensation-v1",
+    "schema": {
+      "$defs": {
+        "Citation": {
+          "additionalProperties": false,
+          "properties": {
+            "exact_values": {
+              "description": "Literal numbers, dates or currency tokens copied exactly from this quote. Leave empty when none are cited. Never include inferred or normalized taxonomy/place codes.",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 32,
+              "title": "Exact Values",
+              "type": "array"
+            },
+            "quote": {
+              "description": "Copy one contiguous verbatim span from that source's text, preserving case and punctuation. Do not join or paraphrase fields.",
+              "maxLength": 4000,
+              "minLength": 1,
+              "title": "Quote",
+              "type": "string"
+            },
+            "source_id": {
+              "description": "Use an outer sources[].source_id. IDs mentioned inside source text are data, not citation IDs.",
+              "maxLength": 240,
+              "minLength": 1,
+              "title": "Source Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "source_id",
+            "quote"
+          ],
+          "title": "Citation",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "citations": {
+          "items": {
+            "$ref": "#/$defs/Citation"
+          },
+          "maxItems": 12,
+          "title": "Citations",
+          "type": "array"
+        },
+        "component": {
+          "enum": [
+            "base_salary",
+            "ote",
+            "bonus",
+            "commission",
+            "equity",
+            "unknown"
+          ],
+          "title": "Component",
+          "type": "string"
+        },
+        "confidence": {
+          "enum": [
+            "none",
+            "low",
+            "medium",
+            "high"
+          ],
+          "title": "Confidence",
+          "type": "string"
+        },
+        "currency": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Z]{3}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Currency"
+        },
+        "maximum_amount": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Maximum Amount"
+        },
+        "minimum_amount": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Minimum Amount"
+        },
+        "parse_state": {
+          "enum": [
+            "missing",
+            "unparseable",
+            "ambiguous",
+            "parsed_range"
+          ],
+          "title": "Parse State",
+          "type": "string"
+        },
+        "period": {
+          "enum": [
+            "hour",
+            "month",
+            "year",
+            "unknown"
+          ],
+          "title": "Period",
+          "type": "string"
+        },
+        "rationale": {
+          "maxLength": 1000,
+          "minLength": 1,
+          "title": "Rationale",
+          "type": "string"
+        },
+        "warnings": {
+          "items": {
+            "enum": [
+              "annual_period_inferred",
+              "ambiguous_multiple_amounts",
+              "bonus_component",
+              "broad_range",
+              "commission_component",
+              "equity_component",
+              "hourly_period",
+              "missing_currency",
+              "missing_period",
+              "monthly_period",
+              "no_amount_found",
+              "one_sided_range",
+              "ote_component",
+              "source_text_truncated"
+            ],
+            "type": "string"
+          },
+          "maxItems": 16,
+          "title": "Warnings",
+          "type": "array"
+        }
+      },
+      "required": [
+        "parse_state",
+        "currency",
+        "period",
+        "component",
+        "minimum_amount",
+        "maximum_amount",
+        "confidence",
+        "warnings",
+        "citations",
+        "rationale"
+      ],
+      "title": "PostedPayExtraction",
+      "type": "object"
+    },
+    "schemaVersion": "1"
+  },
+  "posting_extraction": {
+    "promptVersion": "posting-extraction-v3",
+    "schema": {
+      "$defs": {
+        "Citation": {
+          "additionalProperties": false,
+          "properties": {
+            "exact_values": {
+              "description": "Literal numbers, dates or currency tokens copied exactly from this quote. Leave empty when none are cited. Never include inferred or normalized taxonomy/place codes.",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 32,
+              "title": "Exact Values",
+              "type": "array"
+            },
+            "quote": {
+              "description": "Copy one contiguous verbatim span from that source's text, preserving case and punctuation. Do not join or paraphrase fields.",
+              "maxLength": 4000,
+              "minLength": 1,
+              "title": "Quote",
+              "type": "string"
+            },
+            "source_id": {
+              "description": "Use an outer sources[].source_id. IDs mentioned inside source text are data, not citation IDs.",
+              "maxLength": 240,
+              "minLength": 1,
+              "title": "Source Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "source_id",
+            "quote"
+          ],
+          "title": "Citation",
+          "type": "object"
+        },
+        "PostingField": {
+          "additionalProperties": false,
+          "properties": {
+            "citations": {
+              "items": {
+                "$ref": "#/$defs/Citation"
+              },
+              "maxItems": 20,
+              "title": "Citations",
+              "type": "array"
+            },
+            "rationale": {
+              "maxLength": 1000,
+              "minLength": 1,
+              "title": "Rationale",
+              "type": "string"
+            },
+            "value": {
+              "maxLength": 64000,
+              "title": "Value",
+              "type": "string"
+            }
+          },
+          "required": [
+            "value",
+            "citations",
+            "rationale"
+          ],
+          "title": "PostingField",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "application_url": {
+          "$ref": "#/$defs/PostingField"
+        },
+        "description": {
+          "$ref": "#/$defs/PostingField"
+        },
+        "employer": {
+          "$ref": "#/$defs/PostingField"
+        },
+        "location": {
+          "$ref": "#/$defs/PostingField"
+        },
+        "salary": {
+          "$ref": "#/$defs/PostingField"
+        },
+        "title": {
+          "$ref": "#/$defs/PostingField"
+        }
+      },
+      "required": [
+        "title",
+        "employer",
+        "description",
+        "location",
+        "salary",
+        "application_url"
+      ],
+      "title": "PostingExtraction",
+      "type": "object"
+    },
+    "schemaVersion": "3"
+  },
+  "repeat_equivalence": {
+    "promptVersion": "repeat-equivalence-v2",
+    "schema": {
+      "$defs": {
+        "Citation": {
+          "additionalProperties": false,
+          "properties": {
+            "exact_values": {
+              "description": "Literal numbers, dates or currency tokens copied exactly from this quote. Leave empty when none are cited. Never include inferred or normalized taxonomy/place codes.",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 32,
+              "title": "Exact Values",
+              "type": "array"
+            },
+            "quote": {
+              "description": "Copy one contiguous verbatim span from that source's text, preserving case and punctuation. Do not join or paraphrase fields.",
+              "maxLength": 4000,
+              "minLength": 1,
+              "title": "Quote",
+              "type": "string"
+            },
+            "source_id": {
+              "description": "Use an outer sources[].source_id. IDs mentioned inside source text are data, not citation IDs.",
+              "maxLength": 240,
+              "minLength": 1,
+              "title": "Source Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "source_id",
+            "quote"
+          ],
+          "title": "Citation",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "citations": {
+          "items": {
+            "$ref": "#/$defs/Citation"
+          },
+          "maxItems": 12,
+          "minItems": 1,
+          "title": "Citations",
+          "type": "array"
+        },
+        "rationale": {
+          "maxLength": 1000,
+          "minLength": 1,
+          "title": "Rationale",
+          "type": "string"
+        },
+        "verdict": {
+          "enum": [
+            "equivalent",
+            "different",
+            "uncertain"
+          ],
+          "title": "Verdict",
+          "type": "string"
+        }
+      },
+      "required": [
+        "verdict",
+        "citations",
+        "rationale"
+      ],
+      "title": "RoleEquivalence",
+      "type": "object"
+    },
+    "schemaVersion": "2"
+  },
+  "required_bullet_coaching": {
+    "promptVersion": "required-bullet-coaching-v2",
+    "schema": {
+      "$defs": {
+        "Citation": {
+          "additionalProperties": false,
+          "properties": {
+            "exact_values": {
+              "description": "Literal numbers, dates or currency tokens copied exactly from this quote. Leave empty when none are cited. Never include inferred or normalized taxonomy/place codes.",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 32,
+              "title": "Exact Values",
+              "type": "array"
+            },
+            "quote": {
+              "description": "Copy one contiguous verbatim span from that source's text, preserving case and punctuation. Do not join or paraphrase fields.",
+              "maxLength": 4000,
+              "minLength": 1,
+              "title": "Quote",
+              "type": "string"
+            },
+            "source_id": {
+              "description": "Use an outer sources[].source_id. IDs mentioned inside source text are data, not citation IDs.",
+              "maxLength": 240,
+              "minLength": 1,
+              "title": "Source Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "source_id",
+            "quote"
+          ],
+          "title": "Citation",
+          "type": "object"
+        },
+        "Finding": {
+          "additionalProperties": false,
+          "properties": {
+            "citations": {
+              "items": {
+                "$ref": "#/$defs/Citation"
+              },
+              "maxItems": 20,
+              "minItems": 1,
+              "title": "Citations",
+              "type": "array"
+            },
+            "guidance": {
+              "maxLength": 500,
+              "minLength": 1,
+              "title": "Guidance",
+              "type": "string"
+            },
+            "kind": {
+              "enum": [
+                "grammar",
+                "relevance",
+                "achievement_framing",
+                "missing_evidence"
+              ],
+              "title": "Kind",
+              "type": "string"
+            },
+            "proposedText": {
+              "anyOf": [
+                {
+                  "maxLength": 2000,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Proposedtext"
+            },
+            "reference": {
+              "maxLength": 240,
+              "minLength": 1,
+              "title": "Reference",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reference",
+            "kind",
+            "guidance",
+            "proposedText",
+            "citations"
+          ],
+          "title": "Finding",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "citations": {
+          "items": {
+            "$ref": "#/$defs/Citation"
+          },
+          "maxItems": 512,
+          "minItems": 1,
+          "title": "Citations",
+          "type": "array"
+        },
+        "rationale": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Rationale",
+          "type": "string"
+        },
+        "suggestions": {
+          "items": {
+            "$ref": "#/$defs/Finding"
+          },
+          "maxItems": 24,
+          "title": "Suggestions",
+          "type": "array"
+        }
+      },
+      "required": [
+        "suggestions",
+        "citations",
+        "rationale"
+      ],
+      "title": "Findings",
+      "type": "object"
+    },
+    "schemaVersion": "1"
+  },
+  "resume_adversarial": {
+    "promptVersion": "resume-adversarial-v1",
+    "schema": {
+      "$defs": {
+        "Citation": {
+          "additionalProperties": false,
+          "properties": {
+            "exact_values": {
+              "description": "Literal numbers, dates or currency tokens copied exactly from this quote. Leave empty when none are cited. Never include inferred or normalized taxonomy/place codes.",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 32,
+              "title": "Exact Values",
+              "type": "array"
+            },
+            "quote": {
+              "description": "Copy one contiguous verbatim span from that source's text, preserving case and punctuation. Do not join or paraphrase fields.",
+              "maxLength": 4000,
+              "minLength": 1,
+              "title": "Quote",
+              "type": "string"
+            },
+            "source_id": {
+              "description": "Use an outer sources[].source_id. IDs mentioned inside source text are data, not citation IDs.",
+              "maxLength": 240,
+              "minLength": 1,
+              "title": "Source Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "source_id",
+            "quote"
+          ],
+          "title": "Citation",
+          "type": "object"
+        },
+        "PersonaJudgment": {
+          "additionalProperties": false,
+          "properties": {
+            "citations": {
+              "items": {
+                "$ref": "#/$defs/Citation"
+              },
+              "maxItems": 20,
+              "minItems": 1,
+              "title": "Citations",
+              "type": "array"
+            },
+            "findings": {
+              "items": {
+                "$ref": "#/$defs/QualityFinding"
+              },
+              "maxItems": 100,
+              "title": "Findings",
+              "type": "array"
+            },
+            "persona": {
+              "enum": [
+                "ats_parser",
+                "skeptical_recruiter",
+                "hiring_manager_domain_expert",
+                "evidence_auditor",
+                "anti_ai_voice_critic",
+                "interview_defensibility_critic"
+              ],
+              "title": "Persona",
+              "type": "string"
+            },
+            "rationale": {
+              "maxLength": 1500,
+              "minLength": 1,
+              "title": "Rationale",
+              "type": "string"
+            },
+            "score": {
+              "maximum": 1,
+              "minimum": 0,
+              "title": "Score",
+              "type": "number"
+            },
+            "verdict": {
+              "enum": [
+                "pass",
+                "fail"
+              ],
+              "title": "Verdict",
+              "type": "string"
+            }
+          },
+          "required": [
+            "persona",
+            "verdict",
+            "score",
+            "rationale",
+            "citations",
+            "findings"
+          ],
+          "title": "PersonaJudgment",
+          "type": "object"
+        },
+        "QualityFinding": {
+          "additionalProperties": false,
+          "properties": {
+            "category": {
+              "enum": [
+                "relevance",
+                "clarity",
+                "completeness",
+                "structure",
+                "voice",
+                "interview_defensibility"
+              ],
+              "title": "Category",
+              "type": "string"
+            },
+            "citation": {
+              "$ref": "#/$defs/Citation"
+            },
+            "line_id": {
+              "maxLength": 240,
+              "minLength": 1,
+              "title": "Line Id",
+              "type": "string"
+            },
+            "rationale": {
+              "maxLength": 1500,
+              "minLength": 1,
+              "title": "Rationale",
+              "type": "string"
+            },
+            "repair_instruction": {
+              "maxLength": 1500,
+              "minLength": 1,
+              "title": "Repair Instruction",
+              "type": "string"
+            }
+          },
+          "required": [
+            "line_id",
+            "category",
+            "citation",
+            "rationale",
+            "repair_instruction"
+          ],
+          "title": "QualityFinding",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "personas": {
+          "items": {
+            "$ref": "#/$defs/PersonaJudgment"
+          },
+          "maxItems": 6,
+          "minItems": 6,
+          "title": "Personas",
+          "type": "array"
+        },
+        "rationale": {
+          "maxLength": 1500,
+          "minLength": 1,
+          "title": "Rationale",
+          "type": "string"
+        },
+        "score": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Score",
+          "type": "number"
+        },
+        "verdict": {
+          "enum": [
+            "pass",
+            "fail"
+          ],
+          "title": "Verdict",
+          "type": "string"
+        }
+      },
+      "required": [
+        "verdict",
+        "score",
+        "rationale",
+        "personas"
+      ],
+      "title": "ResumeAdversarialReview",
+      "type": "object"
+    },
+    "schemaVersion": "1"
+  },
+  "resume_extraction": {
+    "promptVersion": "resume-extraction-v2",
+    "schema": {
+      "$defs": {
+        "Citation": {
+          "additionalProperties": false,
+          "properties": {
+            "exact_values": {
+              "description": "Literal numbers, dates or currency tokens copied exactly from this quote. Leave empty when none are cited. Never include inferred or normalized taxonomy/place codes.",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 32,
+              "title": "Exact Values",
+              "type": "array"
+            },
+            "quote": {
+              "description": "Copy one contiguous verbatim span from that source's text, preserving case and punctuation. Do not join or paraphrase fields.",
+              "maxLength": 4000,
+              "minLength": 1,
+              "title": "Quote",
+              "type": "string"
+            },
+            "source_id": {
+              "description": "Use an outer sources[].source_id. IDs mentioned inside source text are data, not citation IDs.",
+              "maxLength": 240,
+              "minLength": 1,
+              "title": "Source Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "source_id",
+            "quote"
+          ],
+          "title": "Citation",
+          "type": "object"
+        },
+        "ExtractedEducation": {
+          "additionalProperties": false,
+          "properties": {
+            "date": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ExtractedText"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "degree": {
+              "$ref": "#/$defs/ExtractedText"
+            },
+            "institution": {
+              "$ref": "#/$defs/ExtractedText"
+            },
+            "location": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ExtractedText"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "institution",
+            "degree",
+            "date",
+            "location"
+          ],
+          "title": "ExtractedEducation",
+          "type": "object"
+        },
+        "ExtractedExperience": {
+          "additionalProperties": false,
+          "properties": {
+            "bullets": {
+              "items": {
+                "$ref": "#/$defs/ExtractedText"
+              },
+              "maxItems": 100,
+              "title": "Bullets",
+              "type": "array"
+            },
+            "company": {
+              "$ref": "#/$defs/ExtractedText"
+            },
+            "date_range": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ExtractedText"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "location": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ExtractedText"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "summary": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ExtractedText"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "title": {
+              "$ref": "#/$defs/ExtractedText"
+            }
+          },
+          "required": [
+            "title",
+            "company",
+            "date_range",
+            "location",
+            "summary",
+            "bullets"
+          ],
+          "title": "ExtractedExperience",
+          "type": "object"
+        },
+        "ExtractedPersonal": {
+          "additionalProperties": false,
+          "properties": {
+            "city": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ExtractedText"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "country": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ExtractedText"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "email": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ExtractedText"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "full_name": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ExtractedText"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "github": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ExtractedText"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "linkedin": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ExtractedText"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "phone": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ExtractedText"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "website": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ExtractedText"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "full_name",
+            "email",
+            "phone",
+            "linkedin",
+            "github",
+            "website",
+            "city",
+            "country"
+          ],
+          "title": "ExtractedPersonal",
+          "type": "object"
+        },
+        "ExtractedSkills": {
+          "additionalProperties": false,
+          "properties": {
+            "items": {
+              "items": {
+                "$ref": "#/$defs/ExtractedText"
+              },
+              "maxItems": 100,
+              "title": "Items",
+              "type": "array"
+            },
+            "label": {
+              "$ref": "#/$defs/ExtractedText"
+            }
+          },
+          "required": [
+            "label",
+            "items"
+          ],
+          "title": "ExtractedSkills",
+          "type": "object"
+        },
+        "ExtractedText": {
+          "additionalProperties": false,
+          "properties": {
+            "citations": {
+              "items": {
+                "$ref": "#/$defs/Citation"
+              },
+              "maxItems": 8,
+              "minItems": 1,
+              "title": "Citations",
+              "type": "array"
+            },
+            "value": {
+              "maxLength": 4000,
+              "minLength": 1,
+              "title": "Value",
+              "type": "string"
+            }
+          },
+          "required": [
+            "value",
+            "citations"
+          ],
+          "title": "ExtractedText",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "education": {
+          "items": {
+            "$ref": "#/$defs/ExtractedEducation"
+          },
+          "maxItems": 30,
+          "title": "Education",
+          "type": "array"
+        },
+        "executive_profile": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExtractedText"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "experience": {
+          "items": {
+            "$ref": "#/$defs/ExtractedExperience"
+          },
+          "maxItems": 50,
+          "title": "Experience",
+          "type": "array"
+        },
+        "personal": {
+          "$ref": "#/$defs/ExtractedPersonal"
+        },
+        "skills": {
+          "items": {
+            "$ref": "#/$defs/ExtractedSkills"
+          },
+          "maxItems": 30,
+          "title": "Skills",
+          "type": "array"
+        }
+      },
+      "required": [
+        "personal",
+        "executive_profile",
+        "experience",
+        "education",
+        "skills"
+      ],
+      "title": "ResumeExtraction",
+      "type": "object"
+    },
+    "schemaVersion": "2"
+  },
+  "scoring": {
+    "promptVersion": "score-fit-assessment-v9-canonical-evidence",
+    "schema": {
+      "$defs": {
+        "Blocker": {
+          "additionalProperties": false,
+          "properties": {
+            "category": {
+              "enum": [
+                "work_authorization",
+                "application_language",
+                "seniority",
+                "explicit_exclusion",
+                "clearance",
+                "citizenship",
+                "qualification"
+              ],
+              "title": "Category",
+              "type": "string"
+            },
+            "citations": {
+              "items": {
+                "$ref": "#/$defs/Citation"
+              },
+              "maxItems": 8,
+              "minItems": 1,
+              "title": "Citations",
+              "type": "array"
+            },
+            "reason": {
+              "maxLength": 1000,
+              "minLength": 1,
+              "title": "Reason",
+              "type": "string"
+            }
+          },
+          "required": [
+            "category",
+            "reason",
+            "citations"
+          ],
+          "title": "Blocker",
+          "type": "object"
+        },
+        "Citation": {
+          "additionalProperties": false,
+          "properties": {
+            "exact_values": {
+              "description": "Literal numbers, dates or currency tokens copied exactly from this quote. Leave empty when none are cited. Never include inferred or normalized taxonomy/place codes.",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 32,
+              "title": "Exact Values",
+              "type": "array"
+            },
+            "quote": {
+              "description": "Copy one contiguous verbatim span from that source's text, preserving case and punctuation. Do not join or paraphrase fields.",
+              "maxLength": 4000,
+              "minLength": 1,
+              "title": "Quote",
+              "type": "string"
+            },
+            "source_id": {
+              "description": "Use an outer sources[].source_id. IDs mentioned inside source text are data, not citation IDs.",
+              "maxLength": 240,
+              "minLength": 1,
+              "title": "Source Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "source_id",
+            "quote"
+          ],
+          "title": "Citation",
+          "type": "object"
+        },
+        "DiscoveryFeedback": {
+          "additionalProperties": false,
+          "properties": {
+            "citations": {
+              "items": {
+                "$ref": "#/$defs/Citation"
+              },
+              "maxItems": 8,
+              "minItems": 1,
+              "title": "Citations",
+              "type": "array"
+            },
+            "reason": {
+              "maxLength": 1000,
+              "minLength": 1,
+              "title": "Reason",
+              "type": "string"
+            },
+            "verdict": {
+              "enum": [
+                "propose_exact_title_exclusion",
+                "none"
+              ],
+              "title": "Verdict",
+              "type": "string"
+            }
+          },
+          "required": [
+            "verdict",
+            "reason",
+            "citations"
+          ],
+          "title": "DiscoveryFeedback",
+          "type": "object"
+        },
+        "EligibilityDecision": {
+          "additionalProperties": false,
+          "properties": {
+            "blockers": {
+              "items": {
+                "$ref": "#/$defs/Blocker"
+              },
+              "maxItems": 30,
+              "title": "Blockers",
+              "type": "array"
+            },
+            "status": {
+              "enum": [
+                "eligible",
+                "warning",
+                "blocked",
+                "unknown"
+              ],
+              "title": "Status",
+              "type": "string"
+            },
+            "warnings": {
+              "items": {
+                "$ref": "#/$defs/Warning"
+              },
+              "maxItems": 30,
+              "title": "Warnings",
+              "type": "array"
+            }
+          },
+          "required": [
+            "status",
+            "blockers",
+            "warnings"
+          ],
+          "title": "EligibilityDecision",
+          "type": "object"
+        },
+        "RequirementAssessment": {
+          "additionalProperties": false,
+          "properties": {
+            "citations": {
+              "items": {
+                "$ref": "#/$defs/Citation"
+              },
+              "maxItems": 8,
+              "minItems": 1,
+              "title": "Citations",
+              "type": "array"
+            },
+            "fit": {
+              "$ref": "#/$defs/RequirementFit"
+            },
+            "job_evidence_span": {
+              "title": "Job Evidence Span",
+              "type": "string"
+            },
+            "requirement_id": {
+              "title": "Requirement Id",
+              "type": "string"
+            },
+            "requirement_text": {
+              "title": "Requirement Text",
+              "type": "string"
+            },
+            "target_keywords": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 40,
+              "title": "Target Keywords",
+              "type": "array"
+            },
+            "tier": {
+              "enum": [
+                "must_have",
+                "nice_to_have"
+              ],
+              "title": "Tier",
+              "type": "string"
+            },
+            "weight": {
+              "maximum": 1,
+              "minimum": 0,
+              "title": "Weight",
+              "type": "number"
+            }
+          },
+          "required": [
+            "requirement_id",
+            "requirement_text",
+            "tier",
+            "weight",
+            "job_evidence_span",
+            "fit",
+            "target_keywords",
+            "citations"
+          ],
+          "title": "RequirementAssessment",
+          "type": "object"
+        },
+        "RequirementFit": {
+          "additionalProperties": false,
+          "properties": {
+            "blocker": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Blocker"
+            },
+            "bridge": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Bridge"
+            },
+            "evidence_ids": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 30,
+              "title": "Evidence Ids",
+              "type": "array"
+            },
+            "gap": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Gap"
+            },
+            "kind": {
+              "enum": [
+                "matched",
+                "transferable",
+                "missing",
+                "blocked",
+                "not_assessed"
+              ],
+              "title": "Kind",
+              "type": "string"
+            },
+            "reason": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Reason"
+            },
+            "strength": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "direct",
+                    "strong"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Strength"
+            }
+          },
+          "required": [
+            "kind",
+            "evidence_ids",
+            "strength",
+            "gap",
+            "bridge",
+            "reason",
+            "blocker"
+          ],
+          "title": "RequirementFit",
+          "type": "object"
+        },
+        "Warning": {
+          "additionalProperties": false,
+          "properties": {
+            "category": {
+              "enum": [
+                "compensation_preference",
+                "location_preference",
+                "work_model_preference",
+                "uncertain_constraint",
+                "other"
+              ],
+              "title": "Category",
+              "type": "string"
+            },
+            "citations": {
+              "items": {
+                "$ref": "#/$defs/Citation"
+              },
+              "maxItems": 8,
+              "minItems": 1,
+              "title": "Citations",
+              "type": "array"
+            },
+            "reason": {
+              "maxLength": 1000,
+              "minLength": 1,
+              "title": "Reason",
+              "type": "string"
+            }
+          },
+          "required": [
+            "category",
+            "reason",
+            "citations"
+          ],
+          "title": "Warning",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "citations": {
+          "items": {
+            "$ref": "#/$defs/Citation"
+          },
+          "maxItems": 30,
+          "minItems": 1,
+          "title": "Citations",
+          "type": "array"
+        },
+        "confidence": {
+          "enum": [
+            "high",
+            "medium",
+            "low"
+          ],
+          "title": "Confidence",
+          "type": "string"
+        },
+        "discovery_feedback": {
+          "$ref": "#/$defs/DiscoveryFeedback"
+        },
+        "eligibility": {
+          "$ref": "#/$defs/EligibilityDecision"
+        },
+        "experience_fit": {
+          "maximum": 10,
+          "minimum": 0,
+          "title": "Experience Fit",
+          "type": "integer"
+        },
+        "fit_band": {
+          "enum": [
+            "excellent",
+            "strong",
+            "plausible",
+            "stretch",
+            "poor"
+          ],
+          "title": "Fit Band",
+          "type": "string"
+        },
+        "keywords": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 80,
+          "minItems": 1,
+          "title": "Keywords",
+          "type": "array"
+        },
+        "matched_signals": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 40,
+          "title": "Matched Signals",
+          "type": "array"
+        },
+        "missing_signals": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 40,
+          "title": "Missing Signals",
+          "type": "array"
+        },
+        "reasoning": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Reasoning",
+          "type": "string"
+        },
+        "requirement_assessments": {
+          "items": {
+            "$ref": "#/$defs/RequirementAssessment"
+          },
+          "maxItems": 200,
+          "title": "Requirement Assessments",
+          "type": "array"
+        },
+        "role_fit": {
+          "maximum": 10,
+          "minimum": 0,
+          "title": "Role Fit",
+          "type": "integer"
+        },
+        "score": {
+          "maximum": 10,
+          "minimum": 1,
+          "title": "Score",
+          "type": "integer"
+        },
+        "technical_fit": {
+          "maximum": 10,
+          "minimum": 0,
+          "title": "Technical Fit",
+          "type": "integer"
+        },
+        "transferable_signals": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 40,
+          "title": "Transferable Signals",
+          "type": "array"
+        }
+      },
+      "required": [
+        "score",
+        "technical_fit",
+        "experience_fit",
+        "role_fit",
+        "fit_band",
+        "confidence",
+        "eligibility",
+        "matched_signals",
+        "missing_signals",
+        "transferable_signals",
+        "requirement_assessments",
+        "keywords",
+        "discovery_feedback",
+        "reasoning",
+        "citations"
+      ],
+      "title": "ScoringDecision",
+      "type": "object"
+    },
+    "schemaVersion": "score-fit-assessment-v5-determinations"
+  }
+}

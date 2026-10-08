@@ -10,97 +10,13 @@ from jobctrl.domain.compensation import (
     ReportedCompensationObservation,
     build_direct_benchmark_fact,
     build_price_level_fact,
-    classify_role,
     extrapolate_benchmark,
-    resolve_benchmark_geography,
-    resolve_country_code,
 )
-from jobctrl.domain.compensation.benchmarks import classify_seniority
+from tests.compensation_fakes import classified_row
 from jobctrl.infrastructure.compensation import (
     FxRateToEur,
     canonicalize_reported_observations,
 )
-
-
-def test_role_and_country_classification_is_deterministic() -> None:
-    security = classify_role("Staff Application Security Engineer")
-    assert security.role_family_code == "security_privacy"
-    assert security.seniority_label == "staff"
-
-    data = classify_role("Senior Data Engineer")
-    assert data.role_family_code == "data_ai"
-    assert data.seniority_label == "senior"
-
-    platform = classify_role("Principal Platform Engineer")
-    assert platform.role_family_code == "infrastructure_platform"
-    assert platform.seniority_label == "principal"
-
-    privacy_director = classify_role("Privacy Engineering Director")
-    assert privacy_director.role_family_code == "security_privacy"
-    assert privacy_director.seniority_label == "director"
-
-    assert resolve_country_code("Remote — Barcelona, Spain") == "ES"
-    assert resolve_country_code("London / UK") == "GB"
-    assert resolve_country_code("Remote") is None
-    assert resolve_benchmark_geography("Madrid, Spain") == BenchmarkGeography(
-        "ES",
-        scope="locality",
-        locality="Madrid",
-    )
-    assert resolve_benchmark_geography("Remote - Spain") == BenchmarkGeography("ES")
-
-
-@pytest.mark.parametrize(("title", "context", "role", "level"), [
-    ("Head of Engineering, Payment Gateway", "Software backend services using Kubernetes and Java",
-     "software_engineering", "director"),
-    ("Head of Engineering, Sales & Marketing Tools", "Software backend platform using Java",
-     "software_engineering", "director"),
-    ("Head of Technology — Ecommerce", "Backend/frontend commerce APIs on React and AWS",
-     "software_engineering", "director"),
-    ("Head of Engineering Marketplace", "Software APIs and cloud services", "software_engineering", "director"),
-    ("Head of Engineering (Marketplace)", "Software APIs for marketplace", "software_engineering", "director"),
-    ("Head of Engineering (Marketplace)", "Own the software team for a digital marketplace",
-     "software_engineering", "director"),
-    ("Engineering Director - Ecommerce", "Software delivery for ecommerce", "software_engineering", "director"),
-    ("Director of Engineering (Technology Consulting)", "Cloud and Azure architecture",
-     "software_engineering", "director"),
-    ("Director of Engineering", "Own the AI platform and data and AI vision with hands-on coding",
-     "data_ai", "director"),
-    ("Director of Engineering – Manage (Identity, Fraud & CS)",
-     "Gaming platform technical vision for identity and fraud with engineering teams building scalable solutions",
-     "software_engineering", "director"),
-    ("Director of Engineering – Manage (Identity, Fraud & CS)",
-     "Gaming identity and fraud operations without technical engineering ownership", None, "director"),
-    ("Senior Technical Director, Release Management & Automation (AI)",
-     "Lead release engineers and own central software solutions and deployment automation",
-     "software_engineering", "director"),
-    ("Senior Technical Director, Release Management & Automation (AI)",
-     "Game products need cross platform delivery, release quality, delivery velocity, and internal CSO solutions",
-     "software_engineering", "director"),
-    ("Senior Technical Director, Release Management & Automation (AI)",
-     "Coordinate release management and automation across a platform", None, "director"),
-    ("HEAD OF AI ENGINEERING", None, "data_ai", "director"),
-    ("Engineering Director - AI Solutions", None, "data_ai", "director"),
-    ("Director of Data Engineering", "Software platform", "data_ai", "director"),
-    ("Head of Platform Engineering", "Software backend", "infrastructure_platform", "director"),
-    ("Director of Engineering & Platform", "Software backend", "infrastructure_platform", "director"),
-    ("Head of Network Engineering & Architecture", "Cloud and network infrastructure",
-     "infrastructure_platform", "director"),
-    ("CISO", None, "security_privacy", "executive"),
-    ("BESS Engineering Director", "Electrical construction and energy storage", None, "director"),
-    ("Director of Engineering", "Industrial electrical manufacturing platform", None, "director"),
-    ("Head of Industrial Engineering", "Factory maintenance and mechanical systems", None, "director"),
-    ("Director of Hotel Engineering", "Building maintenance, HVAC and facilities", None, "director"),
-    ("Industrial Engineer", None, None, "unknown"),
-    ("Hotel Chief Engineer", None, None, "executive"),
-    ("Engineering Manager", "Software backend systems using Kubernetes", "software_engineering", "manager"),
-    ("Engineering Manager", None, None, "manager"),
-    ("Head of Engineering, Payment Gateway", None, None, "director"),
-])
-def test_leadership_role_uses_supported_title_or_current_job_context(title, context, role, level) -> None:
-    result = classify_role(title, job_context=context)
-    assert result.role_family_code == role
-    assert result.seniority_label == level
 
 
 def test_reported_observations_become_content_addressed_direct_facts() -> None:
@@ -122,6 +38,7 @@ def test_reported_observations_become_content_addressed_direct_facts() -> None:
         attribution="Licensed compensation data",
         source_url="https://example.com/levels/acme",
     )
+    observation = classified_row(observation, country="DE", locality="Berlin", scope="company")
     fx = FxRateToEur(
         currency="USD",
         rate=0.9,
@@ -148,37 +65,13 @@ def test_reported_observations_become_content_addressed_direct_facts() -> None:
     assert first.rejected == ()
     assert first == second
     fact = first.facts[0]
-    assert fact.role_family_code == "infrastructure_platform"
+    assert fact.role_family_code == "software_engineering"
     assert fact.seniority_label == "senior"
     assert fact.geography == BenchmarkGeography("DE", scope="locality", locality="Berlin")
-    assert fact.normalized_company == "acme"
+    assert fact.normalized_company == "acme gmbh"
     assert fact.eur_annual_minimum_amount == 86_400
     assert fact.eur_annual_maximum_amount == 108_000
     assert fact.fx_reference["reference_id"] == "ecb-2026-08-12"
-
-
-@pytest.mark.parametrize(("title", "bucket", "seniority"), [
-    ("Principal Infrastructure Engineer", "Principal / Director", "principal"),
-    ("Director of Software Engineering", "Principal / Director", "director"),
-    ("Software Engineer", "Principal / Director", "unknown"),
-    ("Principal / Director Software Engineer", "Principal / Director", "unknown"),
-    ("Staff Software Engineer", "Staff / Engineering Manager", "staff"),
-    ("Software Engineering Manager", "Staff / Engineering Manager", "manager"),
-    ("Software Engineer", "Staff / Engineering Manager", "unknown"),
-    ("Senior Software Engineer", "Principal / Director", "unknown"),
-])
-def test_canonical_ingestion_resolves_mixed_bucket_from_actual_source_role(title, bucket, seniority) -> None:
-    observation = ReportedCompensationObservation(
-        source_id="euro_top_tech", source_provenance="public", company_name="Euro Top Tech community",
-        role_title=title, level_label=bucket, minimum_amount=150_000, maximum_amount=160_000,
-        location="Spain", sample_count=1,
-    )
-    result = canonicalize_reported_observations((observation,), tenant_id="local",
-        fetched_at="2026-08-12T08:00:00Z", fresh_until="2026-08-19T08:00:00Z")
-    assert result.rejected == ()
-    assert result.facts[0].seniority_label == seniority
-    assert result.facts[0].role_family_code == classify_role(title).role_family_code
-    assert observation.level_label == bucket
 
 
 def test_posted_salary_is_rejected_from_direct_market_authority() -> None:
@@ -215,9 +108,11 @@ def test_invalid_observation_does_not_discard_independent_valid_evidence() -> No
         location="Spain",
         level_label="Senior",
         snapshot_version="/tmp/private-feed.json",
+        sample_count=20,
         attribution="Data source: Levels.fyi (https://www.levels.fyi)",
         source_url="https://www.levels.fyi/t/software-engineer",
     )
+    invalid = classified_row(invalid)
     valid = replace(invalid, snapshot_version="levels-public-2026")
 
     result = canonicalize_reported_observations(
@@ -228,44 +123,6 @@ def test_invalid_observation_does_not_discard_independent_valid_evidence() -> No
     )
 
     assert len(result.facts) == 1
-    assert result.rejected[0].reason == "invalid_observation"
-
-
-@pytest.mark.parametrize(
-    "location",
-    (
-        r"C:\Users\alice\private-salary.csv, Spain",
-        "/tmp/private-salary.csv, Spain",
-        "./private-salary.csv, Spain",
-        "https://private.example/Spain",
-        f"{'A' * 129}, Spain",
-    ),
-)
-def test_local_or_unbounded_geography_is_rejected_from_canonical_facts(
-    location: str,
-) -> None:
-    observation = ReportedCompensationObservation(
-        source_id="levels_fyi",
-        source_provenance="public",
-        company_name="Levels.fyi market aggregate",
-        role_title="Senior Software Engineer",
-        minimum_amount=80_000,
-        maximum_amount=100_000,
-        location=location,
-        level_label="Senior",
-        snapshot_version="levels-public-2026",
-        attribution="Data source: Levels.fyi (https://www.levels.fyi)",
-        source_url="https://www.levels.fyi/t/software-engineer",
-    )
-
-    result = canonicalize_reported_observations(
-        (observation,),
-        tenant_id="local",
-        fetched_at="2026-08-12T08:00:00Z",
-        fresh_until="2026-08-19T08:00:00Z",
-    )
-
-    assert result.facts == ()
     assert result.rejected[0].reason == "invalid_observation"
 
 
@@ -615,18 +472,3 @@ def _price_fact(*, country: str, index: float, marker: str):
         fetched_at="2026-08-12T08:00:00Z",
         fresh_until="2026-08-19T08:00:00Z",
     )
-
-
-@pytest.mark.parametrize(("value", "expected"), [
-    ("Executive", "executive"),
-    ("Executive level", "executive"),
-    ("Chief Executive Officer", "executive"),
-    ("Executive Vice President", "executive"),
-    ("Account Executive", "unknown"),
-    ("Sales Executive", "unknown"),
-    ("Executive Assistant", "unknown"),
-    ("Executive Director", "director"),
-    ("Senior Account Executive", "senior"),
-])
-def test_executive_seniority_requires_a_level_label_or_c_level_title(value, expected) -> None:
-    assert classify_seniority(value) == expected

@@ -56,7 +56,7 @@ def test_fresh_creation_evicts_cached_connection_for_reused_missing_path(tmp_pat
 
         fresh = create_exact_v12_database(db_path)
         assert fresh is not original
-        assert fresh.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+        assert fresh.execute("PRAGMA user_version").fetchone()[0] == 12
         assert fresh.execute("SELECT name FROM sqlite_master WHERE name = 'predecessor_only'").fetchone() is None
         with pytest.raises(sqlite3.ProgrammingError):
             original.execute("SELECT 1")
@@ -130,10 +130,7 @@ def test_newer_schema_version_fails_closed_before_migrations(tmp_path) -> None:
     assert _user_version(db_path) == SCHEMA_VERSION + 1
     check = sqlite3.connect(db_path)
     try:
-        tables = {
-            row[0]
-            for row in check.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
-        }
+        tables = {row[0] for row in check.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()}
     finally:
         check.close()
     assert tables == set()

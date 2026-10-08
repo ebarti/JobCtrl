@@ -594,28 +594,29 @@ describe("<ProfileForm>", () => {
       );
     }
     expect(screen.getByRole("group", { name: "Target tracks" })).toBeInTheDocument();
-    expect(screen.getByRole("checkbox", { name: "Individual Contributor" })).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Individual contributor" })).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: "Management" })).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: "Executive" })).toBeInTheDocument();
     const seniorityGroup = screen.getByRole("group", { name: "Seniority floors" });
     const seniorityLevels = [
-      "Junior IC",
-      "Mid IC",
-      "Senior IC",
-      "Staff IC",
-      "Principal IC",
+      "Junior",
+      "Mid-level",
+      "Senior",
+      "Staff",
+      "Principal",
       "Manager",
-      "Senior Manager",
+      "Senior manager",
       "Director",
-      "VP",
-      "SVP",
-      "C-Level",
+      "Vice president",
+      "Senior vice president",
+      "C-level",
+      "Unknown",
     ];
     for (const level of seniorityLevels) {
-      expect(screen.getByRole("checkbox", { name: level })).toBeInTheDocument();
+      expect(within(seniorityGroup).getByRole("checkbox", { name: level })).toBeInTheDocument();
     }
     expect(within(seniorityGroup).getAllByRole("checkbox")).toEqual(
-      seniorityLevels.map((level) => screen.getByRole("checkbox", { name: level })),
+      seniorityLevels.map((level) => within(seniorityGroup).getByRole("checkbox", { name: level })),
     );
     expect(screen.queryByRole("checkbox", { name: /\b(?:engineer|engineering|cto)\b/i })).not.toBeInTheDocument();
     expect(screen.getByLabelText("Role areas 1")).toBeInTheDocument();
@@ -656,8 +657,8 @@ describe("<ProfileForm>", () => {
 
     await user.click(await screen.findByRole("checkbox", { name: "Management" }));
     await user.click(screen.getByRole("checkbox", { name: "Executive" }));
-    await user.click(screen.getByRole("checkbox", { name: "Senior Manager" }));
-    await user.click(screen.getByRole("checkbox", { name: "C-Level" }));
+    await user.click(screen.getByRole("checkbox", { name: "Senior manager" }));
+    await user.click(screen.getByRole("checkbox", { name: "C-level" }));
     await user.click(screen.getByRole("button", { name: /^save changes$/i }));
 
     await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(1));
@@ -665,33 +666,6 @@ describe("<ProfileForm>", () => {
     const profile = JSON.parse(request.profileText);
     expect(profile.experience.target_track).toBe("management; executive");
     expect(profile.experience.target_seniority_floor).toBe("senior_manager; c_level");
-  });
-
-  it("maps legacy engineering-specific seniority values onto the canonical ladder", async () => {
-    const user = userEvent.setup();
-    const initial = JSON.parse(JSON.stringify(sampleProfileResponse));
-    initial.profile.experience = {
-      target_seniority_floor: "engineer; cto",
-    };
-    const updateProfile = vi.fn(async (request) => ({
-      ...sampleProfileResponse,
-      profile: JSON.parse(request.profileText),
-    }));
-    renderWithProviders(<ProfileForm initial={initial} section="target-search" />, {
-      ports: buildTestPorts({ api: { updateProfile } }),
-    });
-
-    expect(screen.getByRole("checkbox", { name: "Mid IC" })).toBeChecked();
-    expect(screen.getByRole("checkbox", { name: "C-Level" })).toBeChecked();
-    expect(screen.queryByText("Unsupported saved values")).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole("checkbox", { name: "Senior IC" }));
-    await user.click(screen.getByRole("button", { name: /^save changes$/i }));
-
-    await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(1));
-    const request = updateProfile.mock.calls[0]?.[0];
-    const profile = JSON.parse(request.profileText);
-    expect(profile.experience.target_seniority_floor).toBe("mid; senior; c_level");
   });
 
   it("shows unsupported target values so they can be removed", async () => {
@@ -1083,21 +1057,23 @@ describe("<ProfileForm>", () => {
       resolveSuggestions?.({
         ok: true,
         profileVersion: 3,
+        determinationId: "a".repeat(64),
+        status: "pending_confirmation" as const,
         suggestions: [
           {
             title: "vp engineering",
             classification: "direct",
-            track: "Management",
+            track: "management",
             seniority: "VP",
-            evidenceIds: ["experience:exp-1"],
+            evidenceIds: ["experience:exp-1"], citations: [{ source_id: "experience:exp-1", quote: "Synthetic source", exact_values: [] }],
             rationale: "Matches the saved role evidence.",
           },
           {
             title: "Head of Platform",
             classification: "adjacent",
-            track: "Management",
-            seniority: "Director",
-            evidenceIds: ["experience:exp-1", "exp-1_bullet_1"],
+            track: "management",
+            seniority: "director",
+            evidenceIds: ["experience:exp-1", "exp-1_bullet_1"], citations: [{ source_id: "experience:exp-1", quote: "Synthetic source", exact_values: [] }],
             rationale: "Saved delivery evidence supports adjacent scope.",
           },
         ],
@@ -1132,19 +1108,21 @@ describe("<ProfileForm>", () => {
     const targetRoleSuggestions = vi.fn(async () => ({
       ok: true as const,
       profileVersion: 3,
+        determinationId: "a".repeat(64),
+        status: "pending_confirmation" as const,
       suggestions: [
         { title: "Platform Engineering Manager", classification: "direct" as const,
-          track: "Management", seniority: "Manager", evidenceIds: ["experience:exp-1"],
+          track: "management", seniority: "manager", evidenceIds: ["experience:exp-1"], citations: [{ source_id: "experience:exp-1", quote: "Synthetic source", exact_values: [] }],
           rationale: "Saved title." },
         { title: "Platform Reliability Manager", classification: "adjacent" as const,
-          track: "Management", seniority: "Manager", evidenceIds: ["experience:exp-1", "ev-1"],
+          track: "management", seniority: "manager", evidenceIds: ["experience:exp-1", "ev-1"], citations: [{ source_id: "experience:exp-1", quote: "Synthetic source", exact_values: [] }],
           rationale: "Saved achievement." },
       ],
       preferenceSuggestions: [
-        { location: "London", workModel: "On-site" as const, evidenceIds: ["experience:exp-1"] },
-        { location: "", workModel: "Remote" as const, evidenceIds: ["experience:exp-2"] },
+        { location: "London", workModel: "onsite" as const, evidenceIds: ["experience:exp-1"], citations: [{ source_id: "experience:exp-1", quote: "Synthetic source", exact_values: [] }], rationale: "Model preference decision" },
+        { location: "", workModel: "remote" as const, evidenceIds: ["experience:exp-2"], citations: [{ source_id: "experience:exp-1", quote: "Synthetic source", exact_values: [] }], rationale: "Model preference decision" },
       ],
-      strategy: "deterministic" as const,
+      strategy: "model" as const,
       warnings: ["provider_token_or_cost_bound_unsupported"],
     }));
     const updateProfile = vi.fn(async (request) => ({
@@ -1185,7 +1163,7 @@ describe("<ProfileForm>", () => {
     expect(JSON.parse(request.profileText).experience).toMatchObject({
       target_role: "Director of Platform; Platform Delivery Manager",
       target_locations: "Madrid; Barcelona; ",
-      target_work_models: "Hybrid; On-site; Remote",
+      target_work_models: "Hybrid; onsite; remote",
     });
   });
 
@@ -1195,13 +1173,15 @@ describe("<ProfileForm>", () => {
     const targetRoleSuggestions = vi.fn(async () => ({
       ok: true as const,
       profileVersion: 3,
+        determinationId: "a".repeat(64),
+        status: "pending_confirmation" as const,
       suggestions: [
         {
           title: "Head of Platform",
           classification: "adjacent" as const,
-          track: "Management",
-          seniority: "Director",
-          evidenceIds: ["experience:exp-1", "exp-1_bullet_1"],
+          track: "management",
+          seniority: "director",
+          evidenceIds: ["experience:exp-1", "exp-1_bullet_1"], citations: [{ source_id: "experience:exp-1", quote: "Synthetic source", exact_values: [] }],
           rationale: "Saved delivery evidence supports adjacent scope.",
         },
       ],
@@ -1255,14 +1235,14 @@ describe("<ProfileForm>", () => {
     let resolveFirstSave: ((response: typeof sampleProfileResponse) => void) | undefined;
     const suggestion = (title: string, profileVersion: number): TargetRoleSuggestionResponse => ({
       ok: true,
-      profileVersion,
+      profileVersion, determinationId: "a".repeat(64), status: "pending_confirmation",
       suggestions: [
         {
           title,
           classification: "adjacent",
-          track: "Management",
-          seniority: "Director",
-          evidenceIds: ["experience:exp-1", "exp-1_bullet_1"],
+          track: "management",
+          seniority: "director",
+          evidenceIds: ["experience:exp-1", "exp-1_bullet_1"], citations: [{ source_id: "experience:exp-1", quote: "Synthetic source", exact_values: [] }],
           rationale: "Saved delivery evidence supports adjacent scope.",
         },
       ],
@@ -1334,13 +1314,15 @@ describe("<ProfileForm>", () => {
     const targetRoleSuggestions = vi.fn(async () => ({
       ok: true as const,
       profileVersion: 3,
+        determinationId: "a".repeat(64),
+        status: "pending_confirmation" as const,
       suggestions: [
         {
           title: "Head of Platform",
           classification: "adjacent" as const,
-          track: "Management",
-          seniority: "Director",
-          evidenceIds: ["experience:exp-1", "exp-1_bullet_1"],
+          track: "management",
+          seniority: "director",
+          evidenceIds: ["experience:exp-1", "exp-1_bullet_1"], citations: [{ source_id: "experience:exp-1", quote: "Synthetic source", exact_values: [] }],
           rationale: "Saved delivery evidence supports adjacent scope.",
         },
       ],
@@ -1375,12 +1357,14 @@ describe("<ProfileForm>", () => {
     const targetRoleSuggestions = vi.fn(async () => ({
       ok: true as const,
       profileVersion: 3,
+        determinationId: "a".repeat(64),
+        status: "pending_confirmation" as const,
       suggestions: [{
         title: "Head of Platform", classification: "adjacent" as const,
-        track: "Management", seniority: "Director", evidenceIds: ["experience:exp-1", "ev-1"],
+        track: "management", seniority: "director", evidenceIds: ["experience:exp-1", "ev-1"], citations: [{ source_id: "experience:exp-1", quote: "Synthetic source", exact_values: [] }],
         rationale: "Saved achievement.",
       }],
-      strategy: "deterministic" as const,
+      strategy: "model" as const,
       warnings: [],
     }));
     const initialV4 = { ...sampleProfileResponse, profileVersion: 4 };
@@ -1416,14 +1400,14 @@ describe("<ProfileForm>", () => {
     initialV4.profile = canonicalV4Profile;
     const targetRoleSuggestions = vi.fn(async ({ expectedProfileVersion }) => ({
       ok: true as const,
-      profileVersion: expectedProfileVersion,
+      profileVersion: expectedProfileVersion, determinationId: "a".repeat(64), status: "pending_confirmation" as const,
       suggestions: [
         {
           title: "Head of Platform",
           classification: "adjacent" as const,
-          track: "Management",
-          seniority: "Director",
-          evidenceIds: ["experience:exp-1", "exp-1_bullet_1"],
+          track: "management",
+          seniority: "director",
+          evidenceIds: ["experience:exp-1", "exp-1_bullet_1"], citations: [{ source_id: "experience:exp-1", quote: "Synthetic source", exact_values: [] }],
           rationale: "Saved delivery evidence supports adjacent scope.",
         },
       ],
@@ -1498,13 +1482,15 @@ describe("<ProfileForm>", () => {
       .mockResolvedValueOnce({
         ok: true as const,
         profileVersion: 3,
+        determinationId: "a".repeat(64),
+        status: "pending_confirmation" as const,
         suggestions: [
           {
             title: "Head of Platform",
             classification: "adjacent" as const,
-            track: "Management",
-            seniority: "Director",
-            evidenceIds: ["experience:exp-1", "exp-1_bullet_1"],
+            track: "management",
+            seniority: "director",
+            evidenceIds: ["experience:exp-1", "exp-1_bullet_1"], citations: [{ source_id: "experience:exp-1", quote: "Synthetic source", exact_values: [] }],
             rationale: "Saved delivery evidence supports adjacent scope.",
           },
         ],
@@ -1515,7 +1501,7 @@ describe("<ProfileForm>", () => {
         ok: true as const,
         profileVersion: 4,
         suggestions: [],
-        strategy: "none" as const,
+        strategy: "model" as const,
         warnings: ["provider_token_or_cost_bound_unsupported"],
       });
     const updateProfile = vi.fn()
@@ -1555,7 +1541,7 @@ describe("<ProfileForm>", () => {
 
     await user.click(screen.getByRole("button", { name: "Suggest roles" }));
     expect(await screen.findByText(
-      "The saved evidence did not support a conservative role suggestion.",
+      "The model returned no target suggestions for this profile version.",
     )).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(updateProfile).toHaveBeenCalledTimes(2));
@@ -1577,21 +1563,23 @@ describe("<ProfileForm>", () => {
     const targetRoleSuggestions = vi.fn(async () => ({
       ok: true as const,
       profileVersion: 3,
+        determinationId: "a".repeat(64),
+        status: "pending_confirmation" as const,
       suggestions: [
         {
           title: "Platform Director",
           classification: "direct" as const,
-          track: "Management",
-          seniority: "Director",
-          evidenceIds: ["experience:exp-1"],
+          track: "management",
+          seniority: "director",
+          evidenceIds: ["experience:exp-1"], citations: [{ source_id: "experience:exp-1", quote: "Synthetic source", exact_values: [] }],
           rationale: "Recent saved title.",
         },
         {
           title: "Infrastructure Director",
           classification: "adjacent" as const,
-          track: "Management",
-          seniority: "Director",
-          evidenceIds: ["experience:exp-1", "exp-1_bullet_1"],
+          track: "management",
+          seniority: "director",
+          evidenceIds: ["experience:exp-1", "exp-1_bullet_1"], citations: [{ source_id: "experience:exp-1", quote: "Synthetic source", exact_values: [] }],
           rationale: "Saved platform and reliability evidence.",
         },
       ],
@@ -1604,7 +1592,7 @@ describe("<ProfileForm>", () => {
 
     await user.click(screen.getByRole("button", { name: "Suggest roles" }));
     expect(
-      await screen.findByText("This demo result uses deterministic fixture evidence; no model ran."),
+      await screen.findByText("Model suggestions require your confirmation before they change your search."),
     ).toBeInTheDocument();
     const edited = await screen.findByLabelText("Suggested role 2");
     await user.clear(edited);
@@ -1631,27 +1619,6 @@ describe("<ProfileForm>", () => {
     expect(await screen.findByText("Suggestions are temporarily unavailable.")).toBeInTheDocument();
     expect(screen.getByLabelText("Target roles 1")).toHaveValue("");
     expect(screen.queryByRole("button", { name: "Add selected roles" })).not.toBeInTheDocument();
-  });
-
-  it("labels the production bounded-provider fallback honestly", async () => {
-    const user = userEvent.setup();
-    const targetRoleSuggestions = vi.fn(async () => ({
-      ok: true as const,
-      profileVersion: 3,
-      suggestions: [],
-      strategy: "none" as const,
-      warnings: ["provider_token_or_cost_bound_unsupported"],
-    }));
-    renderWithProviders(<ProfileForm initial={sampleProfileResponse} section="target-search" />, {
-      ports: buildTestPorts({ api: { targetRoleSuggestions } }),
-    });
-
-    await user.click(screen.getByRole("button", { name: "Suggest roles" }));
-
-    expect(await screen.findByText(
-      "No model ran: the configured provider cannot enforce this feature's token and spend ceiling. Suggestions use saved evidence only.",
-    )).toBeInTheDocument();
-    expect(screen.getByLabelText("Target roles 1")).toHaveValue("");
   });
 
   it("binds ordinary manual target-role persistence to its saved form version", async () => {
@@ -1743,7 +1710,6 @@ describe("<ProfileForm>", () => {
       tools: [],
       metrics: ["10x"],
       outcome: "Scaled the platform 10x.",
-      seniority_signal: "",
       evidence_strength: "verified",
       claim_confidence: 1,
       user_confirmed: true,

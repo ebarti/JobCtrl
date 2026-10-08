@@ -24,6 +24,7 @@ from typing import Any, Protocol
 from jobctrl.domain.ports.llm import LlmMessage
 from jobctrl.infrastructure.llm.codex_turn import run_codex_turn
 from jobctrl.infrastructure.llm.provider_errors import ProviderCallError, provider_exception_error
+
 _DEFAULT_MODEL_SENTINELS = {"", "default"}
 _ROUTED_PROVIDERS = {"claude", "codex", "gemini", "google"}
 _LIVE_SMOKE_PROVIDER_ENV = "JOBCTRL_LIVE_WORKER_SMOKE_PROVIDER_URL"
@@ -66,15 +67,10 @@ def _normalize_unsupported_sdk_controls(
     the request or smuggling unsupported flags through private interfaces.
     """
 
-    controls = [
-        name
-        for name, value in (("temperature", temperature), ("max_tokens", max_tokens))
-        if value is not None
-    ]
+    controls = [name for name, value in (("temperature", temperature), ("max_tokens", max_tokens)) if value is not None]
     if controls:
         warnings.warn(
-            f"{provider} agent SDK does not support {', '.join(controls)}; "
-            "normalized to provider SDK defaults",
+            f"{provider} agent SDK does not support {', '.join(controls)}; normalized to provider SDK defaults",
             SdkControlNormalizationWarning,
             stacklevel=3,
         )
@@ -174,6 +170,7 @@ def _fixture_controls(kwargs: dict[str, Any]) -> dict[str, Any]:
         "maxTokens": kwargs.get("max_tokens"),
         "thinkingBudget": kwargs.get("thinking_budget"),
         "structured": isinstance(kwargs.get("response_schema"), dict),
+        "schemaTitle": (kwargs.get("response_schema") or {}).get("title"),
     }
 
 
@@ -197,9 +194,7 @@ def _live_worker_smoke_provider_config(
         return None
     missing = [name for name, value in values.items() if not value]
     if missing:
-        raise RuntimeError(
-            "Incomplete live-worker smoke provider configuration: " + ", ".join(missing)
-        )
+        raise RuntimeError("Incomplete live-worker smoke provider configuration: " + ", ".join(missing))
 
     provider_url = values[_LIVE_SMOKE_PROVIDER_ENV]
     token = values[_LIVE_SMOKE_TOKEN_ENV]
@@ -295,11 +290,7 @@ def _run_sync(awaitable: Awaitable[Any]) -> Any:
 
 def _prompt_parts(messages: list[dict[str, str]]) -> tuple[str, str]:
     systems = [item["content"] for item in messages if item["role"] == "system"]
-    turns = [
-        f"{item['role'].upper()}:\n{item['content']}"
-        for item in messages
-        if item["role"] != "system"
-    ]
+    turns = [f"{item['role'].upper()}:\n{item['content']}" for item in messages if item["role"] != "system"]
     return "\n\n".join(systems), "\n\n".join(turns)
 
 
@@ -381,9 +372,7 @@ class ClaudeSdkBackend:
         )
         if thinking_budget is not None:
             kwargs["thinking"] = (
-                {"type": "disabled"}
-                if thinking_budget == 0
-                else {"type": "enabled", "budget_tokens": thinking_budget}
+                {"type": "disabled"} if thinking_budget == 0 else {"type": "enabled", "budget_tokens": thinking_budget}
             )
         if response_schema is not None:
             kwargs["output_format"] = {"type": "json_schema", "schema": response_schema}
@@ -616,9 +605,7 @@ class GoogleSdkBackend:
         config_kwargs: dict[str, Any] = {
             "model": self.model,
             "system_instructions": system_prompt,
-            "capabilities": types_module.CapabilitiesConfig(
-                enabled_tools=[types_module.BuiltinTools.FINISH]
-            ),
+            "capabilities": types_module.CapabilitiesConfig(enabled_tools=[types_module.BuiltinTools.FINISH]),
             "policies": [],
             "workspaces": [],
             "save_dir": _runtime_subdir("llm-sessions"),
@@ -722,9 +709,7 @@ def _default_provider() -> str:
 
     ready = ready_llm_providers()
     if not ready:
-        raise RuntimeError(
-            "No core LLM provider is ready. Authenticate Claude, Codex, or Google."
-        )
+        raise RuntimeError("No core LLM provider is ready. Authenticate Claude, Codex, or Google.")
     return ready[0]
 
 
@@ -733,9 +718,7 @@ def _make_backend(provider: str | None, model: str | None) -> _Backend:
     smoke_config = _live_worker_smoke_provider_config()
     if smoke_config is not None:
         if selected != LiveWorkerSmokeBackend.provider_id:
-            raise RuntimeError(
-                "Live-worker smoke refuses non-fixture provider selection"
-            )
+            raise RuntimeError("Live-worker smoke refuses non-fixture provider selection")
         return LiveWorkerSmokeBackend(model=model)
     if selected == LiveWorkerSmokeBackend.provider_id:
         raise RuntimeError("Live-worker smoke provider is not configured")

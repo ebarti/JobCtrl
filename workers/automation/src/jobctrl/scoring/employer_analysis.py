@@ -64,6 +64,7 @@ class EmployerAnalyzedEventRecorder:
 def build_analyze_use_case(
     *,
     conn: sqlite3.Connection,
+    tenant_id: TenantId = TenantId("local"),
     publisher: EventPublisher | None = None,
     event_stage: str,
     record_cached_hits: bool = True,
@@ -126,10 +127,19 @@ def build_analyze_use_case(
         model=llm.model,
     )
 
+    from jobctrl.infrastructure.determinations import determination_dependencies
+    from jobctrl.domain.materials.claim_verification import ModelClaimVerifier
+    from jobctrl.domain.materials.analysis_agreement import ModelAnalysisAgreementJudge
+    from jobctrl.infrastructure.enrichment.interpretation import PersistedJobInterpreter
+
+    deps = determination_dependencies(conn, tenant_id=tenant_id, lane="enrichment", adapter=llm)
     return AnalyzeJobUseCase(
         repository=SqliteEmployerAnalysisRepository(conn),
         adapters=tuple(adapters),
         synthesizer=synthesizer,
+        claim_verifier=ModelClaimVerifier(**deps),
+        agreement_judge=ModelAnalysisAgreementJudge(**deps),
+        job_interpreter=PersistedJobInterpreter(conn, tenant_id=tenant_id, dependencies=deps),
         publisher=publisher
         or EmployerAnalyzedEventRecorder(conn, stage=event_stage, record_cached_hits=record_cached_hits),
         sdk_set_version=analysis_sdk_set_version(

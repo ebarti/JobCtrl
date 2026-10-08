@@ -40,11 +40,7 @@ from jobctrl.domain.contact.outreach_use_cases import (
     LogOutreachSendUseCase,
     ScheduleFollowUpUseCase,
 )
-from jobctrl.domain.materials.value_objects import (
-    ArtifactStatus,
-    JudgeVerdict,
-    ValidationResult,
-)
+from jobctrl.domain.ports.artifact_review import ArtifactStatus, JudgeVerdict, ValidationResult
 from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.infrastructure.contact.outreach_repository import (
     SqliteOutreachThreadRepository,
@@ -85,9 +81,7 @@ def _candidate_draft(draft_id: str = "d1") -> OutreachDraft:
     )
 
 
-def _seed_candidate_thread(
-    repo: SqliteOutreachThreadRepository, *, draft_id: str = "d1"
-) -> None:
+def _seed_candidate_thread(repo: SqliteOutreachThreadRepository, *, draft_id: str = "d1") -> None:
     repo.save(
         LOCAL_TENANT,
         OutreachThread(
@@ -104,8 +98,7 @@ def _seed_candidate_thread(
 
 def _event_types(conn: sqlite3.Connection) -> list[str]:
     return [
-        str(row["event_type"])
-        for row in conn.execute("SELECT event_type FROM job_events ORDER BY rowid").fetchall()
+        str(row["event_type"]) for row in conn.execute("SELECT event_type FROM job_events ORDER BY rowid").fetchall()
     ]
 
 
@@ -121,9 +114,7 @@ def test_no_transport_is_invoked_on_any_outreach_path(monkeypatch) -> None:
     """
     connects: list[object] = []
     smtp_uses: list[object] = []
-    monkeypatch.setattr(
-        socket.socket, "connect", lambda self, address: connects.append(address)
-    )
+    monkeypatch.setattr(socket.socket, "connect", lambda self, address: connects.append(address))
 
     def _smtp_guard(*args: object, **kwargs: object) -> object:
         smtp_uses.append(args)
@@ -143,9 +134,7 @@ def test_no_transport_is_invoked_on_any_outreach_path(monkeypatch) -> None:
     ScheduleFollowUpUseCase(repository=repo, clock=lambda: "t4").execute(
         LOCAL_TENANT, thread_id="t1", submitted_at="2026-07-01T00:00:00+00:00"
     )
-    CompleteFollowUpUseCase(repository=repo, clock=lambda: "t5").execute(
-        LOCAL_TENANT, thread_id="t1"
-    )
+    CompleteFollowUpUseCase(repository=repo, clock=lambda: "t5").execute(LOCAL_TENANT, thread_id="t1")
 
     assert connects == []
     assert smtp_uses == []
@@ -173,9 +162,7 @@ def test_logging_a_send_is_a_separate_explicit_action() -> None:
     ApproveOutreachDraftUseCase(repository=repo, clock=lambda: "t2").execute(
         LOCAL_TENANT, thread_id="t1", draft_id="d1"
     )
-    thread = LogOutreachSendUseCase(
-        repository=repo, clock=lambda: "t3", new_id=lambda: "s1"
-    ).execute(
+    thread = LogOutreachSendUseCase(repository=repo, clock=lambda: "t3", new_id=lambda: "s1").execute(
         LOCAL_TENANT, thread_id="t1", draft_id="d1", channel="email", sent_at="2026-07-07"
     )
     assert thread.is_sent is True
@@ -189,9 +176,7 @@ def test_logging_a_send_rejects_contact_data_channel_before_event() -> None:
         LOCAL_TENANT, thread_id="t1", draft_id="d1"
     )
     with pytest.raises(ValueError, match="supported labels"):
-        LogOutreachSendUseCase(
-            repository=repo, clock=lambda: "t3", new_id=lambda: "s1"
-        ).execute(
+        LogOutreachSendUseCase(repository=repo, clock=lambda: "t3", new_id=lambda: "s1").execute(
             LOCAL_TENANT,
             thread_id="t1",
             draft_id="d1",
@@ -210,9 +195,7 @@ def test_logging_a_send_before_approval_is_refused_and_stays_unsent() -> None:
     # The domain refuses to send-log a non-approved draft (INV-1). No send log is
     # written and the thread stays "not sent".
     with pytest.raises(ValueError, match="approved draft"):
-        LogOutreachSendUseCase(
-            repository=repo, clock=lambda: "t3", new_id=lambda: "s1"
-        ).execute(
+        LogOutreachSendUseCase(repository=repo, clock=lambda: "t3", new_id=lambda: "s1").execute(
             LOCAL_TENANT, thread_id="t1", draft_id="d1", channel="email", sent_at="2026-07-07"
         )
     reloaded = repo.load(LOCAL_TENANT, "t1")

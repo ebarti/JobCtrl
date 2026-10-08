@@ -84,10 +84,7 @@ def _portable_path(path: Path | str, repo_root: Path) -> str:
 
 
 def _portable_argv(argv: list[str], repo_root: Path) -> list[str]:
-    return [
-        _portable_path(value, repo_root) if Path(value).is_absolute() else value
-        for value in argv
-    ]
+    return [_portable_path(value, repo_root) if Path(value).is_absolute() else value for value in argv]
 
 
 @contextlib.contextmanager
@@ -225,9 +222,7 @@ def _synthetic_registry(
 
     def register(site: Site) -> None:
         class SyntheticAdapter(Scraper):
-            capabilities = AdapterCapabilities(
-                filters=frozenset({"location", "is_remote", "hours_old"})
-            )
+            capabilities = AdapterCapabilities(filters=frozenset({"location", "is_remote", "hours_old"}))
 
             def __init__(self, **_: object) -> None:
                 super().__init__(site)
@@ -255,15 +250,9 @@ def _synthetic_registry(
                                 id=f"{site.value}-{slug}-{offset}",
                                 title=f"{query} {offset}",
                                 company_name=f"Synthetic {site.value}",
-                                job_url=(
-                                    f"https://synthetic.invalid/{site.value}/{slug}/{offset}"
-                                ),
+                                job_url=(f"https://synthetic.invalid/{site.value}/{slug}/{offset}"),
                                 location=Location(city=FIXED_LOCATION),
-                                description=(
-                                    "Synthetic role evidence for a fixed, offline benchmark "
-                                    "cohort. "
-                                    * 6
-                                ),
+                                description=("Synthetic role evidence for a fixed, offline benchmark cohort. " * 6),
                                 is_remote=True,
                             ),
                             {"next": offset},
@@ -279,6 +268,10 @@ def _synthetic_registry(
     for source in FIXED_SOURCES:
         register(Site(source))
     return registry
+
+
+
+
 
 
 @contextlib.contextmanager
@@ -328,10 +321,7 @@ def _patched_durable_path(
         nonlocal checkpoint_fault_pending
         started = time.perf_counter()
         try:
-            if (
-                checkpoint_fault_pending
-                and getattr(checkpoint, "revision", None) == fail_checkpoint_revision_once
-            ):
+            if checkpoint_fault_pending and getattr(checkpoint, "revision", None) == fail_checkpoint_revision_once:
                 checkpoint_fault_pending = False
                 raise RuntimeError("synthetic worker loss before checkpoint acknowledgement")
             original_checkpoint_save(self, checkpoint)
@@ -401,9 +391,7 @@ def _db_evidence(db_path: Path, execution: object) -> dict[str, Any]:
         "unit_count": len(units),
         "receipt_counts": repository.execution_counts(execution),
         "job_rows": int(conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]),
-        "receipt_rows": int(
-            conn.execute("SELECT COUNT(*) FROM discovery_search_unit_jobs").fetchone()[0]
-        ),
+        "receipt_rows": int(conn.execute("SELECT COUNT(*) FROM discovery_search_unit_jobs").fetchone()[0]),
         "checkpointed_units": int(
             conn.execute(
                 "SELECT COUNT(*) FROM discovery_search_units WHERE checkpoint_revision IS NOT NULL"
@@ -412,9 +400,7 @@ def _db_evidence(db_path: Path, execution: object) -> dict[str, Any]:
         "checkpoint_revisions": [unit.checkpoint_revision for unit in units],
         "job_event_rows": int(conn.execute("SELECT COUNT(*) FROM job_events").fetchone()[0]),
         "recovery_count": sum(unit.recovery_count for unit in units),
-        "durable_invocation_count": sum(
-            1 + unit.recovery_count for unit in units if unit.lease_attempt > 0
-        ),
+        "durable_invocation_count": sum(1 + unit.recovery_count for unit in units if unit.lease_attempt > 0),
         "budget_exhausted_rows": [
             {
                 "outcome": str(row[0]),
@@ -442,25 +428,17 @@ def _sample_payload(
     starts = sorted(recorder.adapter_starts)
     gaps = [later - earlier for earlier, later in zip(starts, starts[1:])]
     first_accepted = (
-        recorder.first_accepted_at - recorder.run_started
-        if recorder.first_accepted_at is not None
-        else None
+        recorder.first_accepted_at - recorder.run_started if recorder.first_accepted_at is not None else None
     )
     complete = db_evidence["unit_states"] == ["completed"] * expected_units
     return {
         "wall_seconds": round(wall_seconds, 6),
-        "time_to_first_accepted_seconds": (
-            round(first_accepted, 6) if first_accepted is not None else None
-        ),
+        "time_to_first_accepted_seconds": (round(first_accepted, 6) if first_accepted is not None else None),
         "provider_service_seconds": [round(value, 6) for value in recorder.adapter_durations],
         "limiter_wait_seconds": [round(value, 6) for value in recorder.limiter_waits],
         "persistence_seconds": [round(value, 6) for value in recorder.persistence_durations],
-        "checkpoint_save_seconds": [
-            round(value, 6) for value in recorder.checkpoint_save_durations
-        ],
-        "adapter_start_offsets_seconds": [
-            round(value - recorder.run_started, 6) for value in starts
-        ],
+        "checkpoint_save_seconds": [round(value, 6) for value in recorder.checkpoint_save_durations],
+        "adapter_start_offsets_seconds": [round(value - recorder.run_started, 6) for value in starts],
         "adapter_start_gaps_seconds": [round(value, 6) for value in gaps],
         "adapter_calls": recorder.adapter_calls,
         "max_active_adapters": recorder.max_active_adapters,
@@ -635,9 +613,7 @@ def _run_interrupted_durable_scenario(
                 recorder=recorder,
                 limiter=limiter,
                 fail_checkpoint_revision_once=(
-                    int(spec["checkpoint_fault"])
-                    if isinstance(spec["checkpoint_fault"], int)
-                    else None
+                    int(spec["checkpoint_fault"]) if isinstance(spec["checkpoint_fault"], int) else None
                 ),
                 fail_mark_skipped_once=bool(spec["skip_fault"]),
                 policy_override=policy,
@@ -689,27 +665,20 @@ def _run_interrupted_durable_scenario(
         budget_rows = final["budget_exhausted_rows"]
         invariants = {
             "real_host_rate_limiter_used": (
-                recorder.adapter_calls == 2
-                and len(recorder.limiter_waits) == recorder.adapter_calls
+                recorder.adapter_calls == 2 and len(recorder.limiter_waits) == recorder.adapter_calls
             ),
-            "interrupted_states_recorded": (
-                after_interruption["unit_states"] == spec["interrupted_states"]
-            ),
+            "interrupted_states_recorded": (after_interruption["unit_states"] == spec["interrupted_states"]),
             "interrupted_unit_recovered_once": final["recovery_count"] == 1,
             "expected_terminal_states": final["unit_states"] == spec["expected_states"],
             "expected_checkpoint_revisions": (
-                after_interruption["checkpoint_revisions"]
-                == spec["interrupted_checkpoints"]
+                after_interruption["checkpoint_revisions"] == spec["interrupted_checkpoints"]
                 and final["checkpoint_revisions"] == spec["expected_checkpoints"]
             ),
             "exact_accepted_job_count": final["job_rows"] == 1 and result["new"] == 1,
             "exact_receipt_limit": final["receipt_rows"] == 1,
-            "exact_receipt_counts": final["receipt_counts"]
-            == {"accepted": 1, "new": 1, "existing": 0},
-            "exact_result_limit": int(spec["limit"]) != 1
-            or (result["new"] == 1 and final["job_rows"] == 1),
-            "expected_skipped_units": result["skipped_units"]
-            == spec["expected_skipped"],
+            "exact_receipt_counts": final["receipt_counts"] == {"accepted": 1, "new": 1, "existing": 0},
+            "exact_result_limit": int(spec["limit"]) != 1 or (result["new"] == 1 and final["job_rows"] == 1),
+            "expected_skipped_units": result["skipped_units"] == spec["expected_skipped"],
             "host_spacing_preserved": all(value >= 0.98 for value in gaps),
             "provider_concurrency_at_most_policy": recorder.max_active_adapters <= 1,
             "budget_evidence_matches_policy": (
@@ -732,10 +701,7 @@ def _run_interrupted_durable_scenario(
                 "limiter_wait_count": len(recorder.limiter_waits),
                 "result": result,
             }
-            raise AssertionError(
-                f"{scenario} invariant failure: "
-                f"{json.dumps(failure_evidence, sort_keys=True)}"
-            )
+            raise AssertionError(f"{scenario} invariant failure: {json.dumps(failure_evidence, sort_keys=True)}")
         return {
             "scenario": scenario,
             "durable_path": True,
@@ -753,9 +719,7 @@ def _run_interrupted_durable_scenario(
             "result": result,
             "final_database": final,
             "adapter_calls": recorder.adapter_calls,
-            "limiter_wait_seconds": [
-                round(value, 6) for value in recorder.limiter_waits
-            ],
+            "limiter_wait_seconds": [round(value, 6) for value in recorder.limiter_waits],
             "adapter_start_gaps_seconds": [round(value, 6) for value in gaps],
             "wall_seconds": round(wall_seconds, 6),
             "invariants": invariants,
@@ -826,11 +790,7 @@ def _run_cancellation_scenario(
             else:
                 with ThreadPoolExecutor(max_workers=1) as executor:
                     future = executor.submit(run)
-                    ready = (
-                        recorder.adapter_started
-                        if scenario == "active_provider_wait"
-                        else recorder.limiter_entered
-                    )
+                    ready = recorder.adapter_started if scenario == "active_provider_wait" else recorder.limiter_entered
                     if not ready.wait(timeout=5):
                         raise RuntimeError(f"{scenario} did not reach its measured wait")
                     if scenario == "limiter_wait":
@@ -848,15 +808,12 @@ def _run_cancellation_scenario(
             "scenario": scenario,
             "outcome": outcome,
             "wall_seconds": round(wall_seconds, 6),
-            "cancel_to_return_seconds": (
-                round(cancel_latency, 6) if cancel_latency is not None else None
-            ),
+            "cancel_to_return_seconds": (round(cancel_latency, 6) if cancel_latency is not None else None),
             "adapter_calls": recorder.adapter_calls,
             "limiter_wait_seconds": [round(value, 6) for value in recorder.limiter_waits],
             "unit_states": evidence["unit_states"],
             "all_unfinished_terminalized": all(
-                state in {"canceled", "completed", "failed", "skipped"}
-                for state in evidence["unit_states"]
+                state in {"canceled", "completed", "failed", "skipped"} for state in evidence["unit_states"]
             ),
         }
     finally:
@@ -936,18 +893,12 @@ def _arm_summary(samples: list[dict[str, Any]]) -> dict[str, Any]:
         "provider_service": _timing_summary(
             [value for sample in samples for value in sample["provider_service_seconds"]]
         ),
-        "limiter_wait": _timing_summary(
-            [value for sample in samples for value in sample["limiter_wait_seconds"]]
-        ),
-        "persistence": _timing_summary(
-            [value for sample in samples for value in sample["persistence_seconds"]]
-        ),
+        "limiter_wait": _timing_summary([value for sample in samples for value in sample["limiter_wait_seconds"]]),
+        "persistence": _timing_summary([value for sample in samples for value in sample["persistence_seconds"]]),
         "checkpoint_save": _timing_summary(
             [value for sample in samples for value in sample["checkpoint_save_seconds"]]
         ),
-        "all_invariants_met": all(
-            all(sample["invariants"].values()) for sample in samples
-        ),
+        "all_invariants_met": all(all(sample["invariants"].values()) for sample in samples),
     }
 
 
@@ -1062,10 +1013,7 @@ def run_assessment(
                 service_delay_seconds=service_delay_seconds,
                 fail_first_call=True,
             )
-            retry["retry_completed"] = (
-                retry["adapter_calls"] == 2
-                and retry["database"]["unit_states"] == ["completed"]
-            )
+            retry["retry_completed"] = retry["adapter_calls"] == 2 and retry["database"]["unit_states"] == ["completed"]
             scenarios["provider_retry"] = retry
 
     artifact = {
@@ -1092,15 +1040,9 @@ def run_assessment(
         },
         "current_policy": {
             "min_request_interval_seconds": BROAD_BOARD_LEAD_POLICY.min_request_interval_seconds,
-            "max_concurrent_requests_per_host": (
-                BROAD_BOARD_LEAD_POLICY.max_concurrent_requests_per_host
-            ),
-            "max_search_unit_invocations_per_run": (
-                BROAD_BOARD_LEAD_POLICY.max_requests_per_run
-            ),
-            "default_max_parallel_source_families": (
-                DEFAULT_MAX_PARALLEL_DISCOVERY_FAMILIES
-            ),
+            "max_concurrent_requests_per_host": (BROAD_BOARD_LEAD_POLICY.max_concurrent_requests_per_host),
+            "max_search_unit_invocations_per_run": (BROAD_BOARD_LEAD_POLICY.max_requests_per_run),
+            "default_max_parallel_source_families": (DEFAULT_MAX_PARALLEL_DISCOVERY_FAMILIES),
             "default_worker_activity_slots": DEFAULT_MAX_CONCURRENT_ACTIVITIES,
         },
         "arms": {

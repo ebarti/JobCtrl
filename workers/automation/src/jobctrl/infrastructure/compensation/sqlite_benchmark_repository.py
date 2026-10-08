@@ -36,8 +36,35 @@ class SqliteCompensationBenchmarkRepository:
         if fact.source_provenance == "employer_posted" or fact.source_id == "posted_salary_text":
             raise ValueError("employer-posted compensation must use the posted compensation authority")
         fact.assert_integrity()
+        from jobctrl.domain.determinations import DeterminationFailure, parse_model_result
+        from jobctrl.domain.compensation.classification import BenchmarkClassification
+        from jobctrl.infrastructure.determinations import SqliteDeterminationRepository
+
+        ident = fact.fx_reference.get("classification_id")
+        envelope = SqliteDeterminationRepository(self._conn).find(fact.tenant_id, ident) if ident else None
+        if (
+            envelope is None
+            or envelope.kind != "benchmark_classification"
+            or envelope.entity_id != fact.fx_reference.get("classification_entity_id")
+            or envelope.lane != "compensation"
+            or envelope.schema_version != "1"
+            or envelope.prompt_version != "benchmark-classification-v1"
+        ):
+            raise DeterminationFailure("benchmark_classification_unavailable")
+        classification = parse_model_result(BenchmarkClassification, envelope.result)
+        if (
+            classification.occupation_family.value != fact.role_family_code
+            or classification.seniority.value != fact.seniority_label
+            or classification.market_scope.value != fact.market_scope
+            or fact.geography.country_code not in {place.country_code for place in classification.places}
+        ):
+            raise DeterminationFailure("benchmark_classification_binding_invalid")
         existing = self.get_direct_by_evidence_hash(fact.tenant_id, fact.evidence_hash)
         if existing is not None:
+            self._conn.execute(
+                "DELETE FROM compensation_unclassified_source_inputs WHERE tenant_id=? AND source_id=? AND source_snapshot_id=?",
+                (fact.tenant_id, fact.source_id, fact.source_snapshot_id),
+            )
             return existing
         try:
             self._conn.execute(
@@ -69,6 +96,10 @@ class SqliteCompensationBenchmarkRepository:
             if existing is not None:
                 return existing
             raise
+        self._conn.execute(
+            "DELETE FROM compensation_unclassified_source_inputs WHERE tenant_id=? AND source_id=? AND source_snapshot_id=?",
+            (fact.tenant_id, fact.source_id, fact.source_snapshot_id),
+        )
         return fact
 
     def save_price_level(self, fact: PriceLevelFact) -> PriceLevelFact:
@@ -389,8 +420,15 @@ class SqliteCompensationBenchmarkRepository:
         return _direct_from_row(row) if row is not None else None
 
     def fresh_company_peers(
-        self, *, tenant_id: str, taxonomy_version: str, role_family_code: str,
-        seniority_label: str, country_code: str, component: str, fresh_at: str,
+        self,
+        *,
+        tenant_id: str,
+        taxonomy_version: str,
+        role_family_code: str,
+        seniority_label: str,
+        country_code: str,
+        component: str,
+        fresh_at: str,
     ) -> tuple[DirectBenchmarkFact, ...]:
         """One latest non-overlapping source slice per company in the target country."""
         cursor = self._conn.execute(
@@ -406,8 +444,15 @@ class SqliteCompensationBenchmarkRepository:
                   AND market_scope = 'company' AND fresh_until >= ?
             ) WHERE peer_position = 1 ORDER BY normalized_company, source_id LIMIT 20
             """,
-            (tenant_id, taxonomy_version, role_family_code, seniority_label, country_code,
-             component, canonical_benchmark_timestamp(fresh_at, "fresh_at")),
+            (
+                tenant_id,
+                taxonomy_version,
+                role_family_code,
+                seniority_label,
+                country_code,
+                component,
+                canonical_benchmark_timestamp(fresh_at, "fresh_at"),
+            ),
         )
         return tuple(_direct_from_row(row) for row in _fetchall_mappings(cursor))
 

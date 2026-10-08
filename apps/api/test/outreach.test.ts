@@ -18,7 +18,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { OutreachDraftGateResults, OutreachThreadDetail } from "../src/contracts.js";
 import type { OutreachDraftGenerator } from "../src/local-actions.js";
 import { buildApp } from "../src/server.js";
-import { initializeExactV7Database } from "./v7-schema.js";
+import { initializeExactDatabase } from "./exact-schema.js";
 
 const SECRET_BODY = "Hi Dana, I boosted revenue 40% and would love to connect.";
 const SECRET_RATIONALE = "Grounded in the confirmed employer attribute.";
@@ -52,7 +52,7 @@ afterEach(() => {
 function withTempApp(generator?: OutreachDraftGenerator) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-api-outreach-"));
   const dbPath = path.join(dir, "jobs.db");
-  initializeExactV7Database(dbPath);
+  initializeExactDatabase(dbPath);
   const app = buildApp({
     dbPath,
     configPath: path.join(dir, "config.json"),

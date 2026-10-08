@@ -12,8 +12,8 @@ why a run failed at that stage.
 ## Discover
 
 Discover finds postings from configured sources, creates canonical job records
-and source observations, drains detail enrichment for jobs that pass the initial
-title/location filter, and then fans out per-job preparation. It owns source
+and source observations, drains detail enrichment for jobs admitted by the
+persisted intake determination, and then fans out per-job preparation. It owns source
 scheduling, source-quality feedback, canonical identity, dedupe, protected-source
 manual-capture queue entries, and posting hygiene. Scoring and Materials still
 own their own writes.
@@ -73,9 +73,9 @@ Key facts about the four activities:
 
 - **`plan_discovery_sources`** compiles the plan (which source families to run,
   progress totals, and the starting job count) from the source registry, source
-  quality, and the global limit. Target roles from the profile become two query
-  kinds — exact queries (from saved role text) and recall queries (generated from
-  target-role intent, enforcing track and seniority before scoring).
+  quality, and the global limit. Literal saved roles and location/work-model controls
+  become board parameters without a model or a second approval. The captured
+  execution settings remain stable on retries. JobStreaming owns execution of supported provider search/filter parameters. Fetched, structurally valid postings proceed to canonical ingestion; no metadata-only model decides admission. Full-posting analysis/scoring assess meaning. Page or extraction determination failures retain typed `ApplicationError` values with their retry policy.
 - **`discovery_source_family`** runs *one* source family under
   `run_blocking_with_heartbeat` with a cooperative `cancel_event` and a 6-hour
   window (crawls legitimately run long). Each family is isolated: a broad-board, ATS,
@@ -89,6 +89,8 @@ Key facts about the four activities:
   placeholder like `failed: failed`. With `limit > 0` the cap is a **new-job
   budget** — rediscoveries record observations but do not consume the budget, so
   exact-query duplicates never starve later recall queries or sources.
+
+  Cancellation prevents further ingestion. The broad-board family persists source events before processing, so retries drain unfinished capture under the same execution/lease and exact identity fences without a new intake model call.
 
   The broad-board family further decomposes the immutable search plan into one
   query/location/board unit per JobStreaming stream. Each admitted lead is
@@ -309,10 +311,9 @@ subwork; explicit rescore actions are maintenance controls.
 The scoring path has three distinct parts, and it is worth being precise about
 which model machinery each uses:
 
-1. **Retrieval preselection is BM25-only.** `domain/scoring/retrieval.py`
-   implements BM25 lexical ranking with *optional* semantic reciprocal-rank
-   fusion, but the local build's default semantic adapter is a no-op (no hosted
-   embedding service), so ranking is lexical. `limit` applies after preselection.
+1. **Work ordering is mechanical.** `domain/scoring/retrieval.py` uses recency
+   and stable IDs. `limit` applies to that ordering; token overlap and BM25 do
+   not suppress jobs before model scoring.
 2. **Employer analysis is the mandatory front-half.** Before the fit score,
    scoring ensures a canonical employer analysis via
    `scoring/employer_analysis.py` / `scoring/scorer.py`. This is produced by the
@@ -358,19 +359,17 @@ resume generation, validation mode, retry/re-tailor decisions, and artifact
 registration; it never submits applications. In the product flow it is Discover
 subwork, with first-time manual tailoring exposed on the job detail page.
 
-The mechanism, in brief: one or more configured provider/model specs draft
-structured resume candidates; each candidate is validated independently against
-the profile contract, the rendered-text contract, and the tailoring quality
-plan; then `normal`/`strict` modes require a separate structured judge to return
-`PASS` at or above the configured threshold before approval (`lenient` skips the
-judge for low-cost local runs). Approved artifacts carry the selected generator,
-candidate summaries, judge model, judge score/verdict, prompt/schema versions,
-quality checks, and retry feedback as audit metadata; provider URLs and API keys
-are never persisted.
+Configured generators draft structured resume candidates with source anchors.
+Each candidate passes mechanical schema, ID, exact-value and rendering checks,
+then separate claim verification and quality judging. High-fit resumes also
+receive the six-persona determination. Typed model verdicts control acceptance;
+diagnostic scores and validation modes cannot bypass semantic verification.
+Approved artifacts carry the selected generator, candidate summaries,
+prompt/schema versions, model receipts, final line anchors and repair findings.
+Provider URLs and API keys are never persisted.
 
-Tailoring is where the fabrication gate and per-bullet claim grounding live.
-**For gate depth — the fabrication detector, claim-grounding, judge and
-adversarial personas, and repair loop — see [Resume Tailoring Logic](../tailoring.md).**
+For claim binding, the independent judge, adversarial personas and the repair
+loop, see [Resume Tailoring Logic](../tailoring.md).
 The Tailor stage emits `EmployerAnalyzed` (shared with scoring), `ResumeApproved`
 / `ResumeFailed`, and `BulletProvenanceRecorded`; successful tailoring proceeds
 into the Cover step. A terminal Tailor failure instead blocks unstarted Cover
@@ -591,3 +590,12 @@ submit-time availability refusal after an Apply run has started remains a
 retryable terminal failure and consumes that already-claimed attempt, without
 persisting submit intent or sending. Accepted content and artifacts
 survive failed refreshes. These gates grant no submission authority.
+
+
+## Semantic Determination Authority
+
+Search planning uses saved controls directly and JobStreaming executes provider filtering. Fetched listings proceed to canonical ingestion without a separate intake model. Semantic calls run only in activities/sync RPC and pass lane/spend preflight. Scoring preselection uses recency/ID order. Job interpretation and typed blockers supply constraint meaning. Replay reads persisted results and makes no provider call.
+
+See [the decision](../../decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.
+
+A running activity can become blocked when a semantic determination reports a provider-unavailable, spend-denied, or invalid-output status. It retains its distinct failure code and the last accepted artifact. A provider transport error follows the bounded retry path; no semantic fallback runs.

@@ -158,7 +158,7 @@ def test_legacy_prompt_keeps_reviewed_files_outside_worker_and_model(monkeypatch
     assert "browser_file_upload" not in rendered
     assert "Do not solve CAPTCHAs manually" in rendered
     assert "call solve_captcha(kind, sitekey, page_url) exactly once" in rendered
-    assert "solve_captcha failure -> output RESULT:CAPTCHA and stop" in rendered
+    assert "solve_captcha failure -> return terminal status captcha and stop" in rendered
     assert "missing_profile_data:<field>" not in rendered
     assert "missing_attestation" not in rendered
     assert "answer YES only when" not in rendered
@@ -169,11 +169,11 @@ def test_legacy_prompt_keeps_reviewed_files_outside_worker_and_model(monkeypatch
     assert "read_email" not in rendered
     assert "Do not open Gmail in the browser" not in rendered
     assert 'type_credential(kind="job_site_password")' not in rendered
-    assert "RESULT:LOGIN_ISSUE" in rendered
-    assert "\nRESULT:DRY_RUN\n" in rendered
+    assert "login_issue" in rendered
+    assert "dry_run_complete" in rendered
     assert "\nRESULT:APPLIED\n" not in rendered
     assert "RESULT:APPLIED --" not in rendered
-    assert "terminal record must contain no explanation" in rendered
+    assert "rationale" in rendered
     assert "Do not upload into hidden controls" not in rendered
 
     dry_run_rendered = prompt_mod.build_prompt(
@@ -191,7 +191,7 @@ def test_legacy_prompt_keeps_reviewed_files_outside_worker_and_model(monkeypatch
         upload_dir=worker_dir,
         dry_run=True,
     )
-    assert "\nRESULT:DRY_RUN\n" in dry_run_rendered
+    assert "dry_run_complete" in dry_run_rendered
     assert "RESULT:DRY_RUN with a note" not in dry_run_rendered
 
 
@@ -233,7 +233,7 @@ def test_legacy_prompt_keeps_apply_secrets_and_fake_capabilities_out_of_model_co
     assert "browser_evaluate" not in rendered
     assert "browser_file_upload" not in rendered
     assert "send_email" not in rendered
-    assert "RESULT:EMAIL_ONLY:<address>" in rendered
+    assert "recipient_email" in rendered
     assert "Age 18+: Yes" not in rendered
     assert "Felony: No" not in rendered
     assert "Background check consent: Yes" not in rendered
@@ -353,10 +353,7 @@ def test_default_mcp_config_does_not_derive_credential_authority_from_applicatio
     apply_tools = config["mcpServers"]["apply_tools"]
     assert "JOBCTRL_APPLY_ALLOWED_CREDENTIAL_ORIGINS" not in apply_tools["env"]
     assert "JOBCTRL_APPLY_PROFILE_DB_PATH" not in apply_tools["env"]
-    assert (
-        "mcp__apply_tools__type_credential"
-        not in claude_code_cli._allowed_tools_for_mcp_config(config)
-    )
+    assert "mcp__apply_tools__type_credential" not in claude_code_cli._allowed_tools_for_mcp_config(config)
 
 
 def test_default_mcp_config_never_restores_credential_authority_for_enrolled_origin(
@@ -385,10 +382,7 @@ def test_default_mcp_config_never_restores_credential_authority_for_enrolled_ori
         apply_env = config["mcpServers"]["apply_tools"]["env"]
         assert "JOBCTRL_APPLY_ALLOWED_CREDENTIAL_ORIGINS" not in apply_env
         assert "JOBCTRL_APPLY_PROFILE_DB_PATH" not in apply_env
-        assert (
-            claude_code_cli.CREDENTIAL_APPLY_TOOL
-            not in claude_code_cli._allowed_tools_for_mcp_config(config)
-        )
+        assert claude_code_cli.CREDENTIAL_APPLY_TOOL not in claude_code_cli._allowed_tools_for_mcp_config(config)
 
 
 @pytest.mark.parametrize(
@@ -459,9 +453,7 @@ def test_bundled_mcp_config_uses_only_signed_payload_commands(
         "--cdp-endpoint=http://localhost:9222",
         f"--viewport-size={jobctrl_config.DEFAULTS['viewport']}",
     ]
-    for name, module in (
-        ("apply_tools", "jobctrl.infrastructure.apply_tools.mcp_server"),
-    ):
+    for name, module in (("apply_tools", "jobctrl.infrastructure.apply_tools.mcp_server"),):
         server = config["mcpServers"][name]
         assert server["command"] == sys.executable
         assert server["args"] == ["-I", "-B", "-m", module]

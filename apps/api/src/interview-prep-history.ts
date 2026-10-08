@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import {
+  EMPLOYER_ANALYSIS_PROMPT_VERSION,
   InterviewPrepHistoryQuerySchema,
   InterviewPrepHistoryResponseSchema,
   InterviewPrepSchema,
@@ -68,8 +69,8 @@ export function interviewPrepStaleReasons(
   const jobHash = createHash("sha256").update(title ? `${title}\n\n${description}` : description).digest("hex");
   if (!job || context.jobContext.jobId !== jobId || jobHash !== context.jobContext.snapshotHash
     || (job.company ?? "").trim() !== context.jobContext.company) reasons.push("job_changed");
-  const analysis = db.prepare("SELECT generation, snapshot_hash FROM job_employer_analysis WHERE tenant_id = ? AND job_id = ? ORDER BY generation DESC LIMIT 1")
-    .get(tenantId, jobId) as { generation: number; snapshot_hash: string } | undefined;
+  const analysis = db.prepare("SELECT generation, snapshot_hash FROM job_employer_analysis WHERE tenant_id = ? AND job_id = ? AND prompt_version = ? ORDER BY generation DESC LIMIT 1")
+    .get(tenantId, jobId, EMPLOYER_ANALYSIS_PROMPT_VERSION) as { generation: number; snapshot_hash: string } | undefined;
   if ((analysis?.generation ?? null) !== (context.employerAnalysis?.generation ?? null)
     || (analysis?.snapshot_hash ?? null) !== (context.employerAnalysis?.snapshotHash ?? null)) reasons.push("employer_analysis_changed");
   const materials = currentApprovedMaterialBindings(db, tenantId, jobId);

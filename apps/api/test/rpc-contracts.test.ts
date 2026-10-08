@@ -268,19 +268,20 @@ describe("cancel_run RPC contract", () => {
     expect(
       TargetRoleSuggestionResultSchema.parse({
         profileVersion: 4,
+        determinationId:"a".repeat(64),status:"pending_confirmation",
         suggestions: [
           {
             title: "Staff Platform Engineer",
             classification: "direct",
-            track: "IC",
-            seniority: "Staff",
-            evidenceIds: ["experience:role_1"],
+            track: "ic",
+            seniority: "staff",
+            evidenceIds: ["experience:role_1"],citations:[{source_id:"experience:role_1",quote:"Canonical recent title",exact_values:[]}],
             rationale: "The canonical recent title and scope support this role.",
           },
         ],
         preferenceSuggestions: [
-          { location: "London", workModel: "Hybrid", evidenceIds: ["experience:role_1"] },
-          { location: "", workModel: "Remote", evidenceIds: ["experience:role_2"] },
+          { location: "London", workModel: "hybrid", evidenceIds: ["experience:role_1"],citations:[{source_id:"experience:role_1",quote:"Canonical location",exact_values:[]}],rationale:"Model location suggestion" },
+          { location: "", workModel: "remote", evidenceIds: ["experience:role_2"],citations:[{source_id:"experience:role_2",quote:"Canonical location",exact_values:[]}],rationale:"Model location suggestion" },
         ],
         strategy: "model",
         warnings: [],
@@ -798,12 +799,7 @@ describe("preparation RPC contracts", () => {
 
   it("rejects invalid tailor_job request payloads", () => {
     expect(() => TailorJobParamsSchema.parse({})).toThrow();
-    expect(() =>
-      TailorJobParamsSchema.parse({
-        jobId: CANONICAL_JOB_ID,
-        tailorJudgeMinScore: 1.1,
-      }),
-    ).toThrow();
+    expect(TailorJobParamsSchema.parse({jobId:CANONICAL_JOB_ID})).toMatchObject({jobId:CANONICAL_JOB_ID});
     expect(() =>
       TailorJobParamsSchema.parse({ jobUrl: "https://example.test/job/1" }),
     ).toThrow();
@@ -818,12 +814,7 @@ describe("preparation RPC contracts", () => {
         jobUrl: "https://example.test/job/1",
       }),
     ).toThrow();
-    expect(() =>
-      RetailorJobParamsSchema.parse({
-        jobId: CANONICAL_JOB_ID,
-        tailorJudgeMinScore: 1.1,
-      }),
-    ).toThrow();
+    expect(RetailorJobParamsSchema.parse({jobId:CANONICAL_JOB_ID})).toMatchObject({jobId:CANONICAL_JOB_ID});
   });
 
   it("parses and defaults bulk retailor request payloads", () => {

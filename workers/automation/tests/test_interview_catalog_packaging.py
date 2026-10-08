@@ -19,28 +19,79 @@ def test_wheel_sdist_and_source_absent_install_have_identical_raw_catalog(tmp_pa
     raw = (project / "src/jobctrl/assets/interview/catalog.v1.json").read_bytes()
     expected = hashlib.sha256(raw).hexdigest()
     artifacts = tmp_path / "artifacts"
-    subprocess.run([sys.executable, "-m", "build", "--no-isolation", "--outdir", str(artifacts), str(project)], check=True, capture_output=True, text=True, timeout=120)
+    subprocess.run(
+        [sys.executable, "-m", "build", "--no-isolation", "--outdir", str(artifacts), str(project)],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
     wheel = next(artifacts.glob("*.whl"))
     sdist = next(artifacts.glob("*.tar.gz"))
     with zipfile.ZipFile(wheel) as archive:
         assert archive.read("jobctrl/assets/interview/catalog.v1.json") == raw
         assert not any("docs/research" in name or "prototype" in name for name in archive.namelist())
     with tarfile.open(sdist) as archive:
-        member = next(member for member in archive.getmembers() if member.name.endswith("/src/jobctrl/assets/interview/catalog.v1.json"))
+        member = next(
+            member
+            for member in archive.getmembers()
+            if member.name.endswith("/src/jobctrl/assets/interview/catalog.v1.json")
+        )
         assert archive.extractfile(member).read() == raw
     installed = tmp_path / "worker/site-packages"
     uv = shutil.which("uv")
     assert uv is not None
     isolated = tmp_path / "isolated-python"
     environment = {key: value for key, value in os.environ.items() if key not in {"PYTHONPATH", "UV_EXCLUDE_NEWER"}}
-    subprocess.run([uv, "venv", "--python", sys.executable, str(isolated)], env=environment, check=True, capture_output=True, text=True, timeout=60)
+    subprocess.run(
+        [uv, "venv", "--python", sys.executable, str(isolated)],
+        env=environment,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
     executable = isolated / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
     requirements = tmp_path / "production-requirements.txt"
-    subprocess.run([uv, "--project", str(project), "export", "--locked", "--no-default-groups", "--no-dev", "--no-emit-project", "--format", "requirements-txt", "--output-file", str(requirements)], env=environment, check=True, capture_output=True, text=True, timeout=60)
+    subprocess.run(
+        [
+            uv,
+            "--project",
+            str(project),
+            "export",
+            "--locked",
+            "--no-default-groups",
+            "--no-dev",
+            "--no-emit-project",
+            "--format",
+            "requirements-txt",
+            "--output-file",
+            str(requirements),
+        ],
+        env=environment,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
     # The real installed worker includes these already-declared, locked runtime
     # dependencies. No editable source install or provider pack is involved.
-    subprocess.run([uv, "pip", "sync", "--python", str(executable), str(requirements)], env=environment, check=True, capture_output=True, text=True, timeout=120)
-    subprocess.run([uv, "pip", "install", "--no-deps", "--target", str(installed), str(wheel)], env=environment, check=True, capture_output=True, text=True, timeout=60)
+    subprocess.run(
+        [uv, "pip", "sync", "--python", str(executable), str(requirements)],
+        env=environment,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    subprocess.run(
+        [uv, "pip", "install", "--no-deps", "--target", str(installed), str(wheel)],
+        env=environment,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
     sandbox = tmp_path / "source-absent"
     sandbox.mkdir()
     script = """
@@ -51,20 +102,52 @@ if len(sys.argv) > 3:
     sys.path.append(sys.argv[3])
 import jobctrl
 from jobctrl.domain.interview.catalog import catalog_raw_digest, load_interview_catalog
+from jobctrl.domain.interview.question_generation import (
+    question_generation_prompt, question_items_from_candidate,
+)
 catalog = load_interview_catalog()
 assert Path(jobctrl.__file__).is_relative_to(Path(sys.argv[1]))
 assert not Path('docs').exists()
 source_root = Path(sys.argv[2]).resolve()
 assert not any(Path(entry).resolve().is_relative_to(source_root) for entry in sys.path)
 assert not any('/plugins/' in entry for entry in sys.path)
+# Execute the repaired boundary from the installed wheel, with the source
+# checkout absent. Another question's synthetic evidence must never be sent.
+card = next(card for card in catalog['questions'] if card['id'] == 'M02')
+context = {'profile': {'profileId': 'default', 'version': 1,
+                      'evidence': [{'evidenceId': 'other-question-sentinel'}]},
+           'selectedQuestionIds': ['B11', 'M02'],
+           'selectedQuestions': [{'questionId': 'M02', 'evidenceSelectionMode': 'user_selected'}]}
+prompt = question_generation_prompt(cards=(card,), plans={'M02': []}, context=context,
+                                    job_context={}, employer_context=None, requirements=())
+assert 'other-question-sentinel' not in prompt
+data = json.loads(prompt.split('CONTEXT:\\n', 1)[1])
+assert data['generation_context']['selectedQuestionIds'] == ['M02']
+candidate = {'items': [{'question_id': 'M02', 'outline': [{
+    'heading': 'Prospective criteria', 'text': 'I would state what evidence would change my recommendation.',
+    'evidence_ids': [], 'requirement_ids': [], 'factual_support': 'hypothetical', 'transform_type': 'hypothetical', 'reason': 'Synthetic reason'}],
+    'gaps': [{'prompt': 'What is the team context for this role, including the technical responsibilities expected of the manager?',
+              'reason': 'Role expectations remain open.'}], 'probes': [], 'rationale': 'Synthetic rationale'}]}
+selection = {'selectionMode': 'user_selected', 'evidenceSelections': [{'questionId': 'M02', 'evidenceIds': []}]}
+items = question_items_from_candidate(candidate, cards=(card,), plans={'M02': []}, selection=selection, requirements=())
+assert len(items) == 1 and items[0].evidence_ids == ()
 print(json.dumps({'rawDigest':catalog_raw_digest(),'catalogDigest':catalog['catalogDigest'],'questionCount':len(catalog['questions']),'loadedFromWheel':True}))
 """
     command = [str(executable), "-I", "-c", script, str(installed), str(source_root)]
-    result = subprocess.run(command, cwd=sandbox, env=environment, check=True, capture_output=True, text=True, timeout=30)
+    result = subprocess.run(
+        command, cwd=sandbox, env=environment, check=True, capture_output=True, text=True, timeout=30
+    )
     observed = json.loads(result.stdout)
-    assert observed == {"rawDigest": expected, "catalogDigest": json.loads(raw)["catalogDigest"], "questionCount": 121, "loadedFromWheel": True}
+    assert observed == {
+        "rawDigest": expected,
+        "catalogDigest": json.loads(raw)["catalogDigest"],
+        "questionCount": 121,
+        "loadedFromWheel": True,
+    }
     for leaked_source in (source_root, project / "src"):
-        leaked = subprocess.run([*command, str(leaked_source)], cwd=sandbox, env=environment, capture_output=True, text=True, timeout=30)
+        leaked = subprocess.run(
+            [*command, str(leaked_source)], cwd=sandbox, env=environment, capture_output=True, text=True, timeout=30
+        )
         assert leaked.returncode != 0 and "AssertionError" in leaked.stderr
     (installed / "jobctrl/assets/interview/catalog.v1.json").unlink()
     missing = subprocess.run(command, cwd=sandbox, env=environment, capture_output=True, text=True, timeout=30)

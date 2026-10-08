@@ -37,8 +37,16 @@ class _StrongLlm:
     def __init__(self) -> None:
         self.calls = 0
 
-    def chat_json(self, *_args, **_kwargs) -> dict:
+    def chat_json(self, messages, **_kwargs) -> dict:
         self.calls += 1
+        request = json.loads(messages[1].content)
+        source = request["sources"][0]
+        cite = {"source_id": source["source_id"], "quote": source["text"][:1000], "exact_values": []}
+        fit_inputs = request["context"].get("requirement_fit_inputs", "")
+        inputs = (
+            json.loads(fit_inputs.split("\n", 1)[1]) if fit_inputs else {"requirements": [], "profile_evidence": []}
+        )
+        evidence = [row["id"] for row in inputs["profile_evidence"]]
         return {
             "score": 8,
             "technical_fit": 8,
@@ -48,23 +56,53 @@ class _StrongLlm:
             "confidence": "high",
             "eligibility": {
                 "status": "eligible",
-                "hard_blockers": [],
+                "blockers": [],
                 "warnings": [],
             },
             "matched_signals": ["Python"],
             "missing_signals": [],
             "transferable_signals": [],
             "keywords": ["python"],
+            "requirement_assessments": [
+                {
+                    "requirement_id": row["id"],
+                    "requirement_text": row["text"],
+                    "tier": row["tier"],
+                    "weight": row["weight"],
+                    "job_evidence_span": row["evidence_span"],
+                    "fit": {
+                        "kind": "matched" if evidence else "not_assessed",
+                        "evidence_ids": evidence[:1],
+                        "strength": "direct" if evidence else None,
+                        "gap": None,
+                        "bridge": None,
+                        "reason": "Explicit synthetic fit",
+                        "blocker": None,
+                    },
+                    "target_keywords": [],
+                    "citations": [{"source_id": row["id"], "quote": row["evidence_span"]}],
+                }
+                for row in inputs["requirements"]
+            ],
+            "discovery_feedback": {"verdict": "none", "reason": "Explicit decision", "citations": [cite]},
             "reasoning": "Strong fit.",
+            "citations": [cite],
         }
 
 
 class _BlockedLlm(_StrongLlm):
     def chat_json(self, *_args, **_kwargs) -> dict:
         payload = super().chat_json(*_args, **_kwargs)
+        super_payload_citations = payload["citations"]
         payload["eligibility"] = {
             "status": "blocked",
-            "hard_blockers": ["Work authorization required."],
+            "blockers": [
+                {
+                    "category": "work_authorization",
+                    "reason": "Work authorization required.",
+                    "citations": super_payload_citations,
+                }
+            ],
             "warnings": [],
         }
         return payload
@@ -74,6 +112,34 @@ class _BlockedLlm(_StrongLlm):
 def conn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> sqlite3.Connection:
     connection = init_db(tmp_path / "jobctrl-v7.db")
     monkeypatch.setattr(scorer_module, "get_connection", lambda: connection)
+    from tests.determination_fakes import job_interpretation
+    from jobctrl.domain.determinations import Source
+    from jobctrl.infrastructure.determinations import SqliteDeterminationRepository
+
+    original_build = scorer_module._build_use_case
+
+    def build(**kwargs):
+        kwargs.setdefault(
+            "determination_dependencies",
+            dict(
+                llm=kwargs.get("llm_port"),
+                repository=SqliteDeterminationRepository(connection),
+                tenant_id="local",
+                provider="synthetic",
+                model="synthetic",
+                lane="scoring",
+                preflight=lambda: None,
+            ),
+        )
+        kwargs.setdefault("job_interpretation_reader", lambda job: job_interpretation())
+        kwargs.setdefault(
+            "confirmed_preferences_reader",
+            lambda snapshot, criteria: [Source(source_id="target:roles:0", text="Synthetic saved target")],
+        )
+        return original_build(**kwargs)
+
+    monkeypatch.setattr(scorer_module, "_build_use_case", build)
+
     return connection
 
 
@@ -90,6 +156,17 @@ def _profile_snapshot(tenant_id: TenantId) -> ProfileSnapshot:
                         "title": "Platform Engineer",
                         "company": "Previous Co",
                         "bullets": ["Built Python services."],
+                        "achievement_evidence": [
+                            {
+                                "id": "platform",
+                                "source_text": "Built Python services.",
+                                "action": "Built Python services.",
+                                "metrics": [],
+                                "outcome": "Authored synthetic outcome",
+                                "evidence_strength": "supported",
+                                "user_confirmed": True,
+                            }
+                        ],
                     }
                 ],
                 "education_entries": [],
@@ -138,6 +215,7 @@ def _seed_target(
         (str(tenant_id), str(job_id), now, now),
     )
     from .availability_fixture import seed_fresh_availability
+
     seed_fresh_availability(conn, str(job_id), str(tenant_id))
     conn.commit()
 
@@ -150,8 +228,11 @@ def _score_by_id(
     llm: _StrongLlm,
     criteria: ScoringCriteria | None = None,
 ):
+    from tests.determination_fakes import scoring_case
+
     return scorer_module.score_job_by_id(
         job_id,
+        use_case=scoring_case(conn, llm),
         tenant_id=tenant_id,
         profile_snapshot=_profile_snapshot(tenant_id),
         resume_text="Python platform engineer.",
@@ -248,8 +329,7 @@ def test_score_by_id_persists_analysis_ensemble_failure_as_retryable(
     assert "private raw output" not in row["error_message"]
     assert json.loads(row["metadata_json"])["activityOwner"] == "score-workflow-run-1"
     events = conn.execute(
-        "SELECT event_type FROM job_events WHERE tenant_id = ? AND job_id = ? "
-        "AND stage = 'score' ORDER BY event_id",
+        "SELECT event_type FROM job_events WHERE tenant_id = ? AND job_id = ? AND stage = 'score' ORDER BY event_id",
         (str(_TENANT_A), str(_JOB_ID_A)),
     ).fetchall()
     assert [event["event_type"] for event in events] == ["StageStarted", "StageFailed"]
@@ -333,9 +413,7 @@ def test_score_by_id_persists_the_current_criteria_threshold_decision(
     ).fetchall()
     assert {row["state"] for row in rows} == {"skipped"}
     assert {row["error_code"] for row in rows} == {"MIN_SCORE"}
-    assert {row["error_message"] for row in rows} == {
-        "Fit score 8/10 is below the materials threshold 9/10."
-    }
+    assert {row["error_message"] for row in rows} == {"Fit score 8/10 is below the materials threshold 9/10."}
 
 
 def test_existing_score_repairs_stage_only_when_not_stale(

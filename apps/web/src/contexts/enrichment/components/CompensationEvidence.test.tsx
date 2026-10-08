@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import {
   sampleCompensationAudit,
   sampleCompensationSummary,
+  samplePostedDetermination,
 } from "../../../test/fixtures/projections.js";
 import { CompensationAuditSection } from "./CompensationEvidence.js";
 
@@ -54,6 +55,7 @@ describe("<CompensationAuditSection>", () => {
       posted: {
         ok: true,
         recordStatus: "recorded",
+        determination: samplePostedDetermination,
         fact: {
           ...posted,
           sourceText: "Equity compensation: USD 100,000/year in stock options.",

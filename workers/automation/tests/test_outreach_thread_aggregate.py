@@ -27,11 +27,7 @@ from jobctrl.domain.contact.outreach import (
     OutreachThread,
 )
 from jobctrl.domain.contact.outreach_gates import DraftGateResults
-from jobctrl.domain.materials.value_objects import (
-    ArtifactStatus,
-    JudgeVerdict,
-    ValidationResult,
-)
+from jobctrl.domain.ports.artifact_review import ArtifactStatus, JudgeVerdict, ValidationResult
 from jobctrl.domain.tenant import LOCAL_TENANT
 
 _JUDGE_PASS = JudgeVerdict.passed(score=0.95, criterion_scores={"evidence_support": 1.0})
@@ -39,9 +35,7 @@ _JUDGE_PASS = JudgeVerdict.passed(score=0.95, criterion_scores={"evidence_suppor
 
 def _gates(*, passed: bool) -> DraftGateResults:
     if passed:
-        return DraftGateResults(
-            fabrications=(), validation=ValidationResult.success(), judge=_JUDGE_PASS
-        )
+        return DraftGateResults(fabrications=(), validation=ValidationResult.success(), judge=_JUDGE_PASS)
     return DraftGateResults(
         fabrications=(
             {
@@ -105,9 +99,7 @@ def test_approving_a_draft_is_not_sending() -> None:
 
 def test_log_send_marks_thread_sent_over_approved_draft() -> None:
     thread = _thread().add_draft(_draft("d1", 1), at="t1").approve_draft("d1", approved_at="t2")
-    sent = thread.log_send(
-        send_log_id="s1", draft_id="d1", channel="email", sent_at="2026-07-02", logged_at="t3"
-    )
+    sent = thread.log_send(send_log_id="s1", draft_id="d1", channel="email", sent_at="2026-07-02", logged_at="t3")
     assert sent.is_sent is True
     assert sent.last_send_log is not None
     assert sent.last_send_log.draft_id == "d1"
@@ -119,9 +111,7 @@ def test_log_send_requires_an_approved_draft() -> None:
     # distinct user actions (INV-1).
     thread = _thread().add_draft(_draft("d1", 1), at="t1")
     with pytest.raises(ValueError, match="approved draft can be send-logged"):
-        thread.log_send(
-            send_log_id="s1", draft_id="d1", channel="email", sent_at="x", logged_at="y"
-        )
+        thread.log_send(send_log_id="s1", draft_id="d1", channel="email", sent_at="x", logged_at="y")
 
 
 def test_cannot_rehydrate_sent_state_without_an_approved_draft() -> None:
@@ -259,9 +249,7 @@ def test_next_generation_increments() -> None:
 
 
 def test_schedule_then_complete_follow_up() -> None:
-    thread = _thread().schedule_follow_up(
-        due_at="2026-07-08T00:00:00+00:00", basis="application_submitted", at="t1"
-    )
+    thread = _thread().schedule_follow_up(due_at="2026-07-08T00:00:00+00:00", basis="application_submitted", at="t1")
     assert thread.follow_up.is_scheduled
     assert thread.follow_up.due_at == "2026-07-08T00:00:00+00:00"
     assert thread.follow_up.basis == "application_submitted"

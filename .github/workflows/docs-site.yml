@@ -16,6 +16,7 @@ on:
       - "scripts/check-install-asset.mjs"
       - "scripts/check-docs-site-links.mjs"
       - "scripts/check-docs-site-redirects.mjs"
+      - "scripts/check-docs-site-runtime.mjs"
       - "scripts/get"
       - ".github/workflows/docs-site.yml"
   pull_request:
@@ -30,6 +31,7 @@ on:
       - "scripts/check-install-asset.mjs"
       - "scripts/check-docs-site-links.mjs"
       - "scripts/check-docs-site-redirects.mjs"
+      - "scripts/check-docs-site-runtime.mjs"
       - "scripts/get"
       - ".github/workflows/docs-site.yml"
   workflow_dispatch:
@@ -75,6 +77,12 @@ jobs:
 
       - name: Build docs site
         run: corepack pnpm docs:build
+
+      - name: Install Playwright Chromium
+        run: corepack pnpm --filter @jobctrl/web exec playwright install --with-deps chromium
+
+      - name: Check rendered docs site
+        run: corepack pnpm docs:check:runtime
 
       - name: Upload site artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

@@ -3,13 +3,14 @@ import { randomUUID } from "node:crypto";
 import { expect, test } from "@playwright/test";
 import Database from "better-sqlite3";
 
-import { loadE2eDbPath, QA_PLATFORM_JOB_ID } from "../fixtures/e2e-state.js";
+import { loadE2eDbPath, QA_PLATFORM_JOB_ID, refreshE2eWorkerHeartbeat } from "../fixtures/e2e-state.js";
 
 const FINISHED_AT = "2026-09-11T11:00:04.000Z";
 
 test("DryRunCompleted alone refreshes apply history without submitting the job", async ({
   page,
 }) => {
+  refreshE2eWorkerHeartbeat();
   const db = new Database(loadE2eDbPath());
   const runId = `qa-dry-run-completed-${randomUUID()}`;
   let completionEventId: number | bigint | undefined;

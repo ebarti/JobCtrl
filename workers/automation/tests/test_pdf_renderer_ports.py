@@ -19,6 +19,7 @@ from html.parser import HTMLParser
 from importlib.metadata import version
 import json
 import os
+from bs4 import BeautifulSoup
 from pathlib import Path
 import platform
 import re
@@ -270,21 +271,22 @@ def test_build_resume_html_matches_moderncv_contact_and_experience_layout() -> N
         '<span class="resume-contact-item resume-contact-linkedin"><a href="https://www.linkedin.com/in/janedoe">janedoe</a></span>'
         in html
     )
-    assert (
-        '<span class="resume-entry-row resume-entry-company-row"><span class="resume-entry-company">Acme</span><span class="resume-entry-location">Remote</span></span>'
-        in html
-    )
+    dom = BeautifulSoup(html, "html.parser")
+    company_row = dom.select_one(".resume-entry-company-row")
+    assert company_row.select_one(".resume-entry-company").get_text() == "Acme"
+    assert company_row.select_one(".resume-entry-location").get_text() == "Remote"
+    assert company_row.select_one(".resume-entry-company")["data-resume-layout-target"] == "experience:acme_swe:company"
     assert document["experience"][0]["date_range"] == "Mar 2024 - Present"
-    assert (
-        '<span class="resume-entry-row resume-entry-role-row"><span class="resume-entry-title">Senior SWE</span><span class="resume-entry-date">Mar 2024 - Present</span></span>'
-        in html
-    )
+    role_row = dom.select_one(".resume-entry-role-row")
+    assert role_row.select_one(".resume-entry-title").get_text() == "Senior SWE"
+    assert role_row.select_one(".resume-entry-date").get_text() == "Mar 2024 - Present"
+    assert role_row.select_one(".resume-entry-date")["data-resume-layout-target"] == "experience:acme_swe:date_range"
     assert "Mar 2024 -- Present" not in html
     assert html.index("resume-entry-company-row") < html.index("resume-entry-role-row")
     assert 'data-resume-layout-target="experience:acme_swe:summary"' in html
     assert "Owned the distributed systems mandate." in html
     assert html.index("experience:acme_swe:heading") < html.index("experience:acme_swe:summary")
-    assert html.index("experience:acme_swe:summary") < html.index("experience:acme_swe:bullet:1")
+    assert html.index("experience:acme_swe:summary") < html.index("experience:acme_swe#0")
 
 
 def test_resume_preserves_profile_experience_order_and_places_education_degree_below_institution() -> None:
@@ -322,16 +324,15 @@ def test_resume_preserves_profile_experience_order_and_places_education_degree_b
     html = build_resume_html(document)
 
     assert [entry["id"] for entry in document["experience"]] == ["older", "current", "recent"]
-    assert text.index("Older role | Older company") < text.index(
-        "Current role | Current company"
-    )
-    assert text.index("Current role | Current company") < text.index(
-        "Recent role | Recent company"
-    )
+    assert text.index("Older role | Older company") < text.index("Current role | Current company")
+    assert text.index("Current role | Current company") < text.index("Recent role | Recent company")
+    education_row = BeautifulSoup(html, "html.parser").select_one(".resume-entry-education-row")
+    assert education_row.select_one(".resume-entry-institution").get_text() == "State"
+    assert education_row.select_one(".resume-entry-location").get_text() == "City"
+    assert education_row.select_one(".resume-entry-date").get_text() == "2015"
     assert (
-        '<span class="resume-entry-row resume-entry-education-row"><span class="resume-entry-main '
-        'resume-entry-institution">State | City</span><span class="resume-entry-date">2015</span></span>'
-        in html
+        education_row.select_one(".resume-entry-institution")["data-resume-layout-target"]
+        == "education:edu:institution"
     )
     assert html.index('data-resume-layout-target="education:edu:subtitle"') < html.index(
         'data-resume-layout-target="education:edu:degree"'
@@ -363,9 +364,7 @@ def test_build_resume_html_compacts_experience_without_bullets() -> None:
 
 def test_position_summary_matches_sanitized_text_and_html_ordering() -> None:
     profile = _profile()
-    profile["resume"]["experience_entries"][0]["summary"] = (
-        "Owned distributed systems — across regions."
-    )
+    profile["resume"]["experience_entries"][0]["summary"] = "Owned distributed systems — across regions."
     payload = _payload()
 
     text = ResumeAssembler().assemble_resume_text(payload, profile)
@@ -379,12 +378,8 @@ def test_position_summary_matches_sanitized_text_and_html_ordering() -> None:
     assert text.index("Senior SWE | Acme") < text.index("Remote | 2020-Present")
     assert text.index("Remote | 2020-Present") < text.index(sanitized_summary)
     assert text.index(sanitized_summary) < text.index("- Cut latency.")
-    assert html.index("experience:acme_swe:heading") < html.index(
-        "experience:acme_swe:summary"
-    )
-    assert html.index("experience:acme_swe:summary") < html.index(
-        "experience:acme_swe:bullet:1"
-    )
+    assert html.index("experience:acme_swe:heading") < html.index("experience:acme_swe:summary")
+    assert html.index("experience:acme_swe:summary") < html.index("experience:acme_swe#0")
 
 
 def test_html_resume_adapter_returns_resume_pdf_with_layout_metadata(
@@ -396,7 +391,7 @@ def test_html_resume_adapter_returns_resume_pdf_with_layout_metadata(
         Path(output_path).write_bytes(b"%PDF-html")
         return [
             {
-                "semantic_id": "experience:acme_swe:bullet:1",
+                "semantic_id": "experience:acme_swe#0",
                 "page_number": 1,
                 "line_number": 6,
                 "text_excerpt": "Cut latency.",
@@ -426,7 +421,7 @@ def test_html_resume_adapter_returns_resume_pdf_with_layout_metadata(
     assert artifact.size_bytes == len(b"%PDF-html")
     assert artifact.metadata["html_path"] == str(out.with_suffix(".html"))
     assert artifact.metadata["layout_source"] == "html_resume_dom"
-    assert artifact.metadata["layout_boxes"][0]["semantic_id"] == "experience:acme_swe:bullet:1"
+    assert artifact.metadata["layout_boxes"][0]["semantic_id"] == "experience:acme_swe#0"
 
 
 def test_render_resume_html_to_pdf_passes_full_html_to_playwright(
@@ -453,10 +448,17 @@ def test_render_resume_html_to_pdf_passes_full_html_to_playwright(
 
 def test_pdf_adapter_receives_selected_optional_roles_and_mandatory_metadata(monkeypatch, tmp_path) -> None:
     profile = _profile()
-    profile["resume"]["experience_entries"].extend([
-        {"id": "older", "title": "Engineer", "company": "Mandatory Older Co", "bullets": []},
-        {"id": "unselected", "title": "Researcher", "company": "Unselected Lab", "bullets": ["Catalogued samples."]},
-    ])
+    profile["resume"]["experience_entries"].extend(
+        [
+            {"id": "older", "title": "Engineer", "company": "Mandatory Older Co", "bullets": []},
+            {
+                "id": "unselected",
+                "title": "Researcher",
+                "company": "Unselected Lab",
+                "bullets": ["Catalogued samples."],
+            },
+        ]
+    )
     profile["resume"]["tailoring_rules"]["required_experience_entry_ids"] = ["older"]
     payload = _payload()
     payload["experience_updates"].append({"id": "older", "title": "", "bullets": []})
@@ -470,7 +472,10 @@ def test_pdf_adapter_receives_selected_optional_roles_and_mandatory_metadata(mon
     monkeypatch.setattr(html_resume_pdf, "_render_resume_pdf_playwright", render)
     out = tmp_path / "selected.pdf"
     artifact = HtmlResumePdfAdapter().render_resume_to_pdf(
-        tailored_payload=payload, profile_dict=profile, output_path=str(out), created_at="2026-09-13T00:00:00Z",
+        tailored_payload=payload,
+        profile_dict=profile,
+        output_path=str(out),
+        created_at="2026-09-13T00:00:00Z",
     )
     assert artifact.path == str(out)
     assert captured == [out.with_suffix(".html").read_text()]
@@ -678,8 +683,7 @@ def _pagination_profile(case: str, *, boundary_bullets: int = 1) -> tuple[dict, 
             "experience_entries": [],
             "education_entries": [],
             "skill_categories": [],
-            "tailoring_rules": {"max_experience_bullets": 96,
-                                "tailoring_policy": {"allow_summary_rewrite": False}},
+            "tailoring_rules": {"max_experience_bullets": 96, "tailoring_policy": {"allow_summary_rewrite": False}},
         },
     }
     resume = profile["resume"]
@@ -695,32 +699,42 @@ def _pagination_profile(case: str, *, boundary_bullets: int = 1) -> tuple[dict, 
         }
         if case == "oversized":
             # One li is taller than a page; break-inside: avoid cannot keep it whole.
-            role["bullets"] = [" ".join(
-                marked("Recorded an invented experiment with synthetic inputs, explicit checkpoints and repeatable outcomes.")
-                for _ in range(96)
-            )]
+            role["bullets"] = [
+                " ".join(
+                    marked(
+                        "Recorded an invented experiment with synthetic inputs, explicit checkpoints and repeatable outcomes."
+                    )
+                    for _ in range(96)
+                )
+            ]
         elif case == "dense":
             role["bullets"] = [
-                marked("Measured invented queues with wrapped explanatory text, synthetic evidence, repeatable checkpoints "
-                       "and a deliberately verbose description of an imaginary outcome.")
+                marked(
+                    "Measured invented queues with wrapped explanatory text, synthetic evidence, repeatable checkpoints "
+                    "and a deliberately verbose description of an imaginary outcome."
+                )
                 for _ in range(8)
             ]
         else:
             role["bullets"] = [marked("Recorded synthetic boundary evidence.") for _ in range(boundary_bullets)]
         resume["experience_entries"].append(role)
-    resume["education_entries"] = [{
-        "id": "trial-education",
-        "institution": marked("Invented QA Institute"),
-        "degree": marked("Synthetic Computing Degree"),
-        "details": marked("Studied deterministic examples and imaginary systems."),
-        "location": "QA City",
-        "date": "2019",
-    }]
-    resume["skill_categories"] = [{
-        "id": "trial-skills",
-        "label": marked("Synthetic Tools"),
-        "items": [marked("Invented Queue"), marked("X" * 144)],
-    }]
+    resume["education_entries"] = [
+        {
+            "id": "trial-education",
+            "institution": marked("Invented QA Institute"),
+            "degree": marked("Synthetic Computing Degree"),
+            "details": marked("Studied deterministic examples and imaginary systems."),
+            "location": "QA City",
+            "date": "2019",
+        }
+    ]
+    resume["skill_categories"] = [
+        {
+            "id": "trial-skills",
+            "label": marked("Synthetic Tools"),
+            "items": [marked("Invented Queue"), marked("X" * 144)],
+        }
+    ]
     return profile, markers
 
 
@@ -766,10 +780,12 @@ class _PaginationTargets(HTMLParser):
             return
         self.depth -= 1
         if self.depth == 0:
-            self.targets.append({
-                "semantic_id": self.active["semantic_id"],
-                "text": " ".join(self.active["parts"]),
-            })
+            self.targets.append(
+                {
+                    "semantic_id": self.active["semantic_id"],
+                    "text": " ".join(self.active["parts"]),
+                }
+            )
             self.active = None
 
     def handle_data(self, data: str) -> None:
@@ -779,11 +795,16 @@ class _PaginationTargets(HTMLParser):
 
 @pytest.fixture(scope="module")
 def pagination_environment() -> dict:
-    if not any(os.environ.get(flag) == "1" for flag in (
-        "JOBCTRL_RUN_DENSE_HTML_PAGINATION_TESTS", "JOBCTRL_RUN_PAGINATION_TRIAL",
-    )):
+    if not any(
+        os.environ.get(flag) == "1"
+        for flag in (
+            "JOBCTRL_RUN_DENSE_HTML_PAGINATION_TESTS",
+            "JOBCTRL_RUN_PAGINATION_TRIAL",
+        )
+    ):
         pytest.skip("explicit real-render trial: set JOBCTRL_RUN_DENSE_HTML_PAGINATION_TESTS=1 (see catalog #907)")
     from playwright.sync_api import sync_playwright
+
     tools = {name: shutil.which(name) for name in ("pdftotext", "pdftoppm")}
     assert all(tools.values()), "pagination trial requires Poppler pdftotext and pdftoppm; no skipped cases"
     tool_versions = {}
@@ -794,7 +815,9 @@ def pagination_environment() -> dict:
         browser = playwright.chromium.launch()  # same bundled browser selection as the product
         try:
             page = browser.new_page(viewport=html_resume_pdf.RESUME_PAGE_VIEWPORT)
-            page.set_content(html_resume_pdf.build_resume_html_document("<main>Geist QA</main>", {"fontFamily": "sans"}))
+            page.set_content(
+                html_resume_pdf.build_resume_html_document("<main>Geist QA</main>", {"fontFamily": "sans"})
+            )
             page.evaluate("() => document.fonts.ready")
             font_faces = page.evaluate("() => Array.from(document.fonts, f => ({family: f.family, status: f.status}))")
             assert any("Geist" in face["family"] and face["status"] == "loaded" for face in font_faces)
@@ -812,8 +835,10 @@ def pagination_environment() -> dict:
         "chromium_launch": "product defaults: bundled headless Chromium, no channel or executable override",
         "poppler": tool_versions,
         "font_faces": font_faces,
-        "font_sha256": {name: hashlib.sha256((font_root / name).read_bytes()).hexdigest()
-                        for name, _ in html_resume_pdf.GEIST_FONT_RESOURCES},
+        "font_sha256": {
+            name: hashlib.sha256((font_root / name).read_bytes()).hexdigest()
+            for name, _ in html_resume_pdf.GEIST_FONT_RESOURCES
+        },
         "uv_lock_sha256": hashlib.sha256((automation_root / "uv.lock").read_bytes()).hexdigest(),
         "viewport": html_resume_pdf.RESUME_PAGE_VIEWPORT,
     }
@@ -827,21 +852,31 @@ def _pagination_pdf_observation(pdf: Path, environment: dict) -> dict:
     crop_boxes = [[float(value) for value in page.cropbox] for page in reader.pages]
     normalized_pages = [_pagination_normalize(page.extract_text()) for page in reader.pages]
     bbox_file = pdf.with_suffix(".bbox.html")
-    subprocess.run([environment["tools"]["pdftotext"], "-bbox", str(pdf), str(bbox_file)],
-                   check=True, capture_output=True, timeout=30)
+    subprocess.run(
+        [environment["tools"]["pdftotext"], "-bbox", str(pdf), str(bbox_file)],
+        check=True,
+        capture_output=True,
+        timeout=30,
+    )
     words: list[dict] = []
     # Poppler bbox uses top-left points, already the origin needed by layout_pct.
     for page_number, node in enumerate(ET.parse(bbox_file).getroot().iter("{http://www.w3.org/1999/xhtml}page"), 1):
         for word in node.iter("{http://www.w3.org/1999/xhtml}word"):
-            words.append({
-                "page": page_number,
-                "text": word.text or "",
-                "rect_pt": [float(word.attrib[key]) for key in ("xMin", "yMin", "xMax", "yMax")],
-            })
+            words.append(
+                {
+                    "page": page_number,
+                    "text": word.text or "",
+                    "rect_pt": [float(word.attrib[key]) for key in ("xMin", "yMin", "xMax", "yMax")],
+                }
+            )
     assert words, "independent PDF geometry extraction produced no words"
     image_prefix = pdf.with_suffix("")
-    subprocess.run([environment["tools"]["pdftoppm"], "-png", "-r", "110", str(pdf), str(image_prefix)],
-                   check=True, capture_output=True, timeout=60)
+    subprocess.run(
+        [environment["tools"]["pdftoppm"], "-png", "-r", "110", str(pdf), str(image_prefix)],
+        check=True,
+        capture_output=True,
+        timeout=60,
+    )
     images = sorted(pdf.parent.glob(f"{pdf.stem}-*.png"))
     assert len(images) == len(reader.pages), "every physical PDF page needs a visual inspection image"
     clipped = []
@@ -870,9 +905,15 @@ def _pagination_pdf_observation(pdf: Path, environment: dict) -> dict:
         "normalized_pages": normalized_pages,
         "words": words,
         "markers_by_page": markers_by_page,
-        "page_breaks": [{"page": index + 1, "first": markers[0] if markers else None,
-                         "last": markers[-1] if markers else None, "marker_count": len(markers)}
-                        for index, markers in enumerate(markers_by_page)],
+        "page_breaks": [
+            {
+                "page": index + 1,
+                "first": markers[0] if markers else None,
+                "last": markers[-1] if markers else None,
+                "marker_count": len(markers),
+            }
+            for index, markers in enumerate(markers_by_page)
+        ],
         "blank_pages": [index + 1 for index, text in enumerate(normalized_pages) if not text],
         "outside_page_candidates": clipped,
         "overlap_candidates": overlaps,
@@ -895,12 +936,23 @@ def _pagination_correspondence(targets: list[dict], boxes: list[dict], observati
     for target in targets:
         text = _pagination_normalize(target["text"])
         start = pdf_text.find(text)
-        selected = [word for left, right, word in word_ranges if start >= 0 and left < start + len(text) and right > start]
+        selected = [
+            word for left, right, word in word_ranges if start >= 0 and left < start + len(text) and right > start
+        ]
         fragments = []
         for page_number in sorted({word["page"] for word in selected}):
             rects = [word["rect_pt"] for word in selected if word["page"] == page_number]
-            fragments.append({"page": page_number, "rect_pt": [min(r[0] for r in rects), min(r[1] for r in rects),
-                                                                   max(r[2] for r in rects), max(r[3] for r in rects)]})
+            fragments.append(
+                {
+                    "page": page_number,
+                    "rect_pt": [
+                        min(r[0] for r in rects),
+                        min(r[1] for r in rects),
+                        max(r[2] for r in rects),
+                        max(r[3] for r in rects),
+                    ],
+                }
+            )
         box = by_id.get(target["semantic_id"])
         errors = []
         predicted = None
@@ -913,9 +965,12 @@ def _pagination_correspondence(targets: list[dict], boxes: list[dict], observati
             errors.append("layout_page_out_of_range")
         else:
             width, height = observation["dimensions_pt"][box["page_number"] - 1]
-            predicted = [box["left_pct"] * width / 100, box["top_pct"] * height / 100,
-                         (box["left_pct"] + box["width_pct"]) * width / 100,
-                         (box["top_pct"] + box["height_pct"]) * height / 100]
+            predicted = [
+                box["left_pct"] * width / 100,
+                box["top_pct"] * height / 100,
+                (box["left_pct"] + box["width_pct"]) * width / 100,
+                (box["top_pct"] + box["height_pct"]) * height / 100,
+            ]
             if fragments and [fragment["page"] for fragment in fragments] != [box["page_number"]]:
                 errors.append("physical_page_or_fragment_mismatch")
             elif fragments:
@@ -923,33 +978,53 @@ def _pagination_correspondence(targets: list[dict], boxes: list[dict], observati
                 escape = max(0, predicted[0] - x0, predicted[1] - y0, x1 - predicted[2], y1 - predicted[3])
                 if escape > _PAGINATION_BOX_TOLERANCE_PT:
                     errors.append("pdf_text_outside_layout_box")
-        results.append({"semantic_id": target["semantic_id"], "pdf_fragments": fragments,
-                        "layout_box": box, "layout_rect_pt": predicted, "escape_pt": escape, "errors": errors})
+        results.append(
+            {
+                "semantic_id": target["semantic_id"],
+                "pdf_fragments": fragments,
+                "layout_box": box,
+                "layout_rect_pt": predicted,
+                "escape_pt": escape,
+                "errors": errors,
+            }
+        )
     orphan_headings = []
     for current, following in zip(results, results[1:]):
-        if (current["semantic_id"].startswith("section:") or current["semantic_id"].endswith(":heading")):
+        if current["semantic_id"].startswith("section:") or current["semantic_id"].endswith(":heading"):
             pages = [fragment["page"] for fragment in current["pdf_fragments"]]
             next_pages = [fragment["page"] for fragment in following["pdf_fragments"]]
             if pages and next_pages and max(pages) < min(next_pages):
-                orphan_headings.append({"heading": current["semantic_id"], "pages": pages, "following_pages": next_pages})
-    return {"targets": results,
-            "extra_layout_targets": sorted(set(by_id) - {target["semantic_id"] for target in targets}),
-            "duplicate_layout_targets": [key for key, count in Counter(box["semantic_id"] for box in boxes).items()
-                                         if count > 1],
-            # An extraction gap has no independently observed rectangle/page.
-            # Keep it visible without declaring a physical mismatch from [] != [1].
-            "unlocated_pdf_targets": [result["semantic_id"] for result in results if not result["pdf_fragments"]],
-            "mismatch_count": sum(any(error != "pdf_target_not_located" for error in result["errors"])
-                                  for result in results),
-            "orphan_heading_candidates": orphan_headings}
+                orphan_headings.append(
+                    {"heading": current["semantic_id"], "pages": pages, "following_pages": next_pages}
+                )
+    return {
+        "targets": results,
+        "extra_layout_targets": sorted(set(by_id) - {target["semantic_id"] for target in targets}),
+        "duplicate_layout_targets": [
+            key for key, count in Counter(box["semantic_id"] for box in boxes).items() if count > 1
+        ],
+        # An extraction gap has no independently observed rectangle/page.
+        # Keep it visible without declaring a physical mismatch from [] != [1].
+        "unlocated_pdf_targets": [result["semantic_id"] for result in results if not result["pdf_fragments"]],
+        "mismatch_count": sum(
+            any(error != "pdf_target_not_located" for error in result["errors"]) for result in results
+        ),
+        "orphan_heading_candidates": orphan_headings,
+    }
 
 
 def _pagination_repeat_comparison(baseline: dict, current: dict) -> dict:
     first = baseline["words"]
     second = current["words"]
     same_words = [(word["page"], word["text"]) for word in first] == [(word["page"], word["text"]) for word in second]
-    delta = max((abs(a - b) for left, right in zip(first, second)
-                 for a, b in zip(left["rect_pt"], right["rect_pt"])), default=0.0) if same_words else None
+    delta = (
+        max(
+            (abs(a - b) for left, right in zip(first, second) for a, b in zip(left["rect_pt"], right["rect_pt"])),
+            default=0.0,
+        )
+        if same_words
+        else None
+    )
     return {
         "same_page_count": baseline["page_count"] == current["page_count"],
         "same_normalized_pages": baseline["normalized_pages"] == current["normalized_pages"],
@@ -1008,11 +1083,16 @@ def test_dense_resume_pagination_trial(
     source = build_resume_html(build_resume_document({}, profile), theme)
     targets = _PaginationTargets(source).targets
     report = {
-        "issue": 907, "case": case, "theme": theme, "environment": pagination_environment,
-        "boundary": boundary, "expected_markers": expected_markers,
+        "issue": 907,
+        "case": case,
+        "theme": theme,
+        "environment": pagination_environment,
+        "boundary": boundary,
+        "expected_markers": expected_markers,
         "geometry_tolerance_pt": _PAGINATION_GEOMETRY_TOLERANCE_PT,
         "layout_containment_tolerance_pt": _PAGINATION_BOX_TOLERANCE_PT,
-        "renders": [], "repeatability": [],
+        "renders": [],
+        "repeatability": [],
     }
     for repeat in range(1, 4):
         repeat_dir = tmp_path / f"repeat-{repeat}"
@@ -1021,8 +1101,11 @@ def test_dense_resume_pagination_trial(
             pdf = repeat_dir / f"{entry_point}.pdf"
             if entry_point == "adapter":
                 artifact = HtmlResumePdfAdapter().render_resume_to_pdf(
-                    tailored_payload={}, profile_dict=profile, output_path=str(pdf),
-                    created_at="2026-10-03T00:00:00Z", resume_theme=theme,
+                    tailored_payload={},
+                    profile_dict=profile,
+                    output_path=str(pdf),
+                    created_at="2026-10-03T00:00:00Z",
+                    resume_theme=theme,
                 )
                 boxes = artifact.metadata["layout_boxes"]
                 assert pdf.with_suffix(".html").read_text(encoding="utf-8") == source
@@ -1039,8 +1122,9 @@ def test_dense_resume_pagination_trial(
             observation["missing_markers"] = sorted(set(expected_markers) - set(actual_markers))
             observation["duplicate_markers"] = [marker for marker, n in Counter(actual_markers).items() if n > 1]
             all_text = "".join(observation["normalized_pages"])
-            observation["missing_content_targets"] = [target["semantic_id"] for target in targets
-                                                      if _pagination_normalize(target["text"]) not in all_text]
+            observation["missing_content_targets"] = [
+                target["semantic_id"] for target in targets if _pagination_normalize(target["text"]) not in all_text
+            ]
             report["renders"].append(observation)
             (tmp_path / "measurements.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     baseline = report["renders"][0]
@@ -1055,15 +1139,23 @@ def test_dense_resume_pagination_trial(
         assert not render["missing_content_targets"], render["missing_content_targets"]
         assert render["reading_order_matches"], {key: render[key] for key in ("missing_markers", "duplicate_markers")}
         assert not render["blank_pages"], render["blank_pages"]
-        assert all(abs(actual - expected) <= 1 for dims in render["dimensions_pt"]
-                   for actual, expected in zip(dims, expected_dimensions))
+        assert all(
+            abs(actual - expected) <= 1
+            for dims in render["dimensions_pt"]
+            for actual, expected in zip(dims, expected_dimensions)
+        )
         if case.startswith("boundary-"):
             assert render["page_count"] == (1 if case == "boundary-below" else 2)
         else:
             assert render["page_count"] >= 2, "dense and oversized fixtures must actually paginate"
         if case == "oversized":
-            bullet = next(target for target in render["layout_correspondence"]["targets"]
-                          if target["semantic_id"] == "experience:trial-role-0:bullet:1")
+            bullet = next(
+                target
+                for target in render["layout_correspondence"]["targets"]
+                if target["semantic_id"] == "experience:trial-role-0#0"
+            )
             assert len(bullet["pdf_fragments"]) >= 2, "one oversized bullet must fragment across physical pages"
-    assert all(all(value is True for key, value in result.items() if key != "max_geometry_delta_pt")
-               for result in report["repeatability"]), report["repeatability"]
+    assert all(
+        all(value is True for key, value in result.items() if key != "max_geometry_delta_pt")
+        for result in report["repeatability"]
+    ), report["repeatability"]

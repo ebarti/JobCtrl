@@ -38,16 +38,11 @@ export type {
   DemoRouteName,
   DemoRouteRecord,
   DemoReadModel,
-  DemoQueuedScenarioStep,
-  DemoRunningScenarioStep,
-  DemoScenario,
-  DemoScenarioTerminal,
   DemoSeed,
 } from "./contracts.js";
 export type {
   DemoClock,
   DemoTimestampToken,
   MaterializedDemoRouteData,
-  MaterializedDemoScenario,
   MaterializedDemoSeed,
 } from "./clock.js";

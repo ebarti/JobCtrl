@@ -72,9 +72,7 @@ def test_linkedin_robots_block_records_the_typed_recovery_condition(tmp_path: Pa
             (str(LOCAL_TENANT), str(_job_id(conn, url))),
         ).fetchone()
         assert row is not None
-        assert json.loads(row[0])["blockedConditions"] == [
-            "discovery_browser_extension_unavailable"
-        ]
+        assert json.loads(row[0])["blockedConditions"] == ["discovery_browser_extension_unavailable"]
     finally:
         close_connection(db_path)
 
@@ -141,9 +139,7 @@ def _blocked_metric(conn: sqlite3.Connection, url: str) -> sqlite3.Row | None:
 
 
 def _enrichment_status(conn: sqlite3.Connection, url: str) -> str | None:
-    row = conn.execute(
-        "SELECT current_status FROM job_enrichments WHERE job_id = ?", (_job_id(conn, url),)
-    ).fetchone()
+    row = conn.execute("SELECT current_status FROM job_enrichments WHERE job_id = ?", (_job_id(conn, url),)).fetchone()
     return None if row is None else row[0]
 
 
@@ -281,9 +277,7 @@ def tier1_extraction(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(detail, "_collect_main_content", lambda _page: "<main>role</main>")
 
 
-def test_wttj_bootstrap_uses_the_guard_decision_identity(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_wttj_bootstrap_uses_the_guard_decision_identity(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     db_path = tmp_path / "jobs.db"
     conn = init_db(db_path)
     try:
@@ -418,9 +412,7 @@ def test_detail_fetch_ignores_robots_without_requesting_it(
 # ---------------------------------------------------------------------------
 
 
-def test_budget_exhausted_defers_job_without_navigation(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_budget_exhausted_defers_job_without_navigation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     db_path = tmp_path / "jobs.db"
     conn = init_db(db_path)
     url = "https://example.test/jobs/1"
@@ -572,7 +564,13 @@ class _FakeLiveChrome:
         )
 
 
-@pytest.mark.parametrize("site,url", [("linkedin", "https://www.linkedin.com/jobs/view/live-profile"), ("RemoteOK", "https://careers.example.test/jobs/live-profile")])
+@pytest.mark.parametrize(
+    "site,url",
+    [
+        ("linkedin", "https://www.linkedin.com/jobs/view/live-profile"),
+        ("RemoteOK", "https://careers.example.test/jobs/live-profile"),
+    ],
+)
 @pytest.mark.parametrize("legacy_blocked", [False, True])
 def test_live_profile_enrichment_never_consults_robots_and_recovers_legacy_blocks(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tier1_extraction: None, site: str, url: str, legacy_blocked: bool
@@ -587,7 +585,13 @@ def test_live_profile_enrichment_never_consults_robots_and_recovers_legacy_block
     try:
         _seed_pending(conn, url, site)
         if legacy_blocked:
-            detail._record_enrich_robots_blocked(conn, _job_id(conn, url), url, PolitenessDecision(False, PolitenessOutcome.ROBOTS_DISALLOWED, "JobCtrl/1"), site=site)
+            detail._record_enrich_robots_blocked(
+                conn,
+                _job_id(conn, url),
+                url,
+                PolitenessDecision(False, PolitenessOutcome.ROBOTS_DISALLOWED, "JobCtrl/1"),
+                site=site,
+            )
             conn.commit()
         _FakeLiveChrome.instances = []
         monkeypatch.setattr(detail, "LiveChromeDiscoveryClient", _FakeLiveChrome)
@@ -631,18 +635,29 @@ def test_temporal_enrich_offline_keeps_anonymous_policy_and_never_opens_opted_in
     db_path = tmp_path / "jobs.db"
     conn = init_db(db_path)
     url = "https://www.linkedin.com/jobs/view/optional-extension"
-    broker = FixtureBrowserBroker(tmp_path, lambda _url: pytest.fail("offline broker must not acquire pages"), connected=False)
+    broker = FixtureBrowserBroker(
+        tmp_path, lambda _url: pytest.fail("offline broker must not acquire pages"), connected=False
+    )
     spy = _SpyPlaywright()
     monkeypatch.setattr(detail, "LiveChromeDiscoveryClient", broker.client)
     monkeypatch.setattr(detail, "sync_playwright", lambda: spy)
     monkeypatch.setattr(detail, "linkedin_apply_resolver_enabled", lambda: True)
-    monkeypatch.setattr(detail, "LinkedInApplyUrlResolver", lambda **_kw: pytest.fail("integrated fallback opened a copied profile"))
-    monkeypatch.setattr(detail, "PolitenessGateway", lambda: offline_gateway(robots=AllowAllRobots() if allow_robots else DenyAllRobots()))
+    monkeypatch.setattr(
+        detail, "LinkedInApplyUrlResolver", lambda **_kw: pytest.fail("integrated fallback opened a copied profile")
+    )
+    monkeypatch.setattr(
+        detail,
+        "PolitenessGateway",
+        lambda: offline_gateway(robots=AllowAllRobots() if allow_robots else DenyAllRobots()),
+    )
     try:
         _seed_pending(conn, url, "linkedin")
         stats = detail._run_detail_scraper(
-            conn, workers=1, job_ids=(_job_id(conn, url),),
-            workflow_id="optional-enrich", workflow_run_id="optional-enrich-run",
+            conn,
+            workers=1,
+            job_ids=(_job_id(conn, url),),
+            workflow_id="optional-enrich",
+            workflow_run_id="optional-enrich-run",
         )
         assert stats["ok"] == 1
         assert stats["site_errors"] == {}
@@ -710,9 +725,7 @@ def test_run_enrichment_binds_temporal_extension_before_legacy_wttj_repair(
         monkeypatch.setattr(
             detail,
             "sync_playwright",
-            lambda: (_ for _ in ()).throw(
-                AssertionError("Temporal Enrich must not launch Playwright")
-            ),
+            lambda: (_ for _ in ()).throw(AssertionError("Temporal Enrich must not launch Playwright")),
         )
 
         def _capture_scraper(_conn: object, **kwargs: object) -> dict[str, object]:
@@ -739,9 +752,9 @@ def test_run_enrichment_binds_temporal_extension_before_legacy_wttj_repair(
             workflow_id="global-enrich-live-profile",
             temporal_run_id="global-enrich-run",
         )
-        assert conn.execute(
-            "SELECT url FROM jobs WHERE site = 'WelcomeToTheJungle'"
-        ).fetchone()[0] == "wttj-relative-slug"
+        assert (
+            conn.execute("SELECT url FROM jobs WHERE site = 'WelcomeToTheJungle'").fetchone()[0] == "wttj-relative-slug"
+        )
     finally:
         close_connection(db_path)
 
@@ -889,9 +902,7 @@ class _GrantRecordingLimiter(HostRateLimiter):
         self.granted: list[tuple[str, float]] = []
 
     @contextmanager
-    def slot(
-        self, host: str, *, min_interval_seconds: float, max_concurrency: int
-    ) -> Iterator[None]:
+    def slot(self, host: str, *, min_interval_seconds: float, max_concurrency: int) -> Iterator[None]:
         with super().slot(
             host,
             min_interval_seconds=min_interval_seconds,
@@ -927,9 +938,7 @@ def test_parallel_two_host_run_paces_each_host_via_shared_limiter(
         sink_lock = threading.Lock()
         monkeypatch.setattr(detail, "sync_playwright", lambda: _SpyPlaywright(sink, sink_lock))
 
-        stats = detail._run_detail_scraper(
-            conn, workers=2, reset_linkedin_candidates=False
-        )
+        stats = detail._run_detail_scraper(conn, workers=2, reset_linkedin_candidates=False)
 
         # Parallel enrichment across two hosts still processes every job.
         assert stats["processed"] == 4
@@ -971,7 +980,9 @@ def test_legacy_robots_blocked_job_re_enriches_without_robots_evaluation(
 
         # Seed the historical canonical outcome without re-enabling enforcement.
         detail._record_enrich_robots_blocked(
-            conn, _job_id(conn, url), url,
+            conn,
+            _job_id(conn, url),
+            url,
             decision=PolitenessDecision(False, PolitenessOutcome.ROBOTS_DISALLOWED, "JobCtrl/1"),
         )
         conn.commit()
@@ -993,8 +1004,7 @@ def test_legacy_robots_blocked_job_re_enriches_without_robots_evaluation(
         # The unblock is auditable — exactly one StageReset event marks the
         # robots re-evaluation of the previously blocked job.
         reset_events = conn.execute(
-            "SELECT COUNT(*) FROM job_events WHERE job_id = ? AND stage = 'enrich' "
-            "AND event_type = 'StageReset'",
+            "SELECT COUNT(*) FROM job_events WHERE job_id = ? AND stage = 'enrich' AND event_type = 'StageReset'",
             (_job_id(conn, url),),
         ).fetchone()[0]
         assert reset_events == 1
@@ -1017,12 +1027,22 @@ def test_live_browser_task_failure_isolated_from_remaining_enrich_jobs(
         if url == urls[0]:
             return {**retryable_page_failure(), "retryable": retryable}
         return {
-            "status": "succeeded", "finalUrl": url, "statusCode": 200,
-            "contentType": "text/html", "title": "Role", "bodyText": LONG_DESC,
-            "bodyHtml": '<html><body><script type="application/ld+json">' + json.dumps({
-                "@type": "JobPosting", "description": LONG_DESC,
-                "url": "https://example.test/apply", "directApply": True,
-            }) + f'</script><main><article class="job-description">{LONG_DESC}</article></main></body></html>',
+            "status": "succeeded",
+            "finalUrl": url,
+            "statusCode": 200,
+            "contentType": "text/html",
+            "title": "Role",
+            "bodyText": LONG_DESC,
+            "bodyHtml": '<html><body><script type="application/ld+json">'
+            + json.dumps(
+                {
+                    "@type": "JobPosting",
+                    "description": LONG_DESC,
+                    "url": "https://example.test/apply",
+                    "directApply": True,
+                }
+            )
+            + f'</script><main><article class="job-description">{LONG_DESC}</article></main></body></html>',
         }
 
     broker = FixtureBrowserBroker(tmp_path, result_for)
@@ -1031,8 +1051,11 @@ def test_live_browser_task_failure_isolated_from_remaining_enrich_jobs(
         for url in urls:
             _seed_pending(conn, url, "linkedin")
         stats = scrape_site_batch(
-            conn, "linkedin", [(_job_id(conn, url), "Role") for url in urls],
-            gateway=offline_gateway(robots=DenyAllRobots()), discovery_execution=execution,
+            conn,
+            "linkedin",
+            [(_job_id(conn, url), "Role") for url in urls],
+            gateway=offline_gateway(robots=DenyAllRobots()),
+            discovery_execution=execution,
         )
         assert stats["error"] == 1
         assert stats["ok"] == 2
@@ -1077,7 +1100,9 @@ def test_extension_disconnect_still_aborts_enrich_before_the_next_job(
             _seed_pending(conn, url, "linkedin")
         with pytest.raises(ConfigurationError, match="fixture disconnected"):
             scrape_site_batch(
-                conn, "linkedin", [(_job_id(conn, url), "Role") for url in urls],
+                conn,
+                "linkedin",
+                [(_job_id(conn, url), "Role") for url in urls],
                 gateway=offline_gateway(robots=DenyAllRobots()),
                 discovery_execution=DiscoveryExecutionRef(
                     tenant_id="local", workflow_id="fixture-disconnect", temporal_run_id="fixture-run"
@@ -1088,3 +1113,10 @@ def test_extension_disconnect_still_aborts_enrich_before_the_next_job(
         assert _enrich_stage(conn, urls[1]) is None
     finally:
         close_connection(db_path)
+
+
+@pytest.fixture(autouse=True)
+def semantic_workflow_models(monkeypatch):
+    from tests.workflow_determination_fakes import install_page_models
+
+    install_page_models(monkeypatch)

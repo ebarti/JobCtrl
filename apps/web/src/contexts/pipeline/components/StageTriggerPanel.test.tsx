@@ -387,7 +387,6 @@ describe("StageTriggerPanel", () => {
       continuous: false,
       sourceIds: ["jobspy:linkedin", "jobspy:indeed"],
     });
-    expect(request).not.toHaveProperty("tailorJudgeMinScore");
   }, 10_000);
 
   it("caps explicit discovery source selection at the API limit", async () => {
@@ -637,7 +636,6 @@ describe("StageTriggerPanel", () => {
       llmModel: DEFAULT_PIPELINE_LLM_MODEL,
       continuous: true,
     });
-    expect(request).not.toHaveProperty("tailorJudgeMinScore");
     expect(
       await screen.findByText("Apply queued successfully (run apply-run-123)."),
     ).toBeInTheDocument();

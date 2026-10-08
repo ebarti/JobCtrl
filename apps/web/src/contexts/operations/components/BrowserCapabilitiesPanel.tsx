@@ -369,9 +369,7 @@ export function BrowserCapabilitiesPanel() {
                     <CardTitle>
                       <h3>{LABELS[capability.id]}</h3>
                     </CardTitle>
-                    <CardDescription>
-                      <p>{capability.detail}</p>
-                    </CardDescription>
+                    <CardDescription>{capability.detail}</CardDescription>
                   </div>
                   <StatusBadge
                     icon={false}

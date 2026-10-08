@@ -15,9 +15,9 @@ vi.mock("../src/read-model.js", async (importOriginal) => ({
   getJobDetail,
 }));
 
-import { hasExactV12SchemaManifest } from "../src/schema-manifest.js";
+import { hasExactV14SchemaManifest } from "../src/schema-manifest.js";
 import { buildApp } from "../src/server.js";
-import { initializeExactV7Database } from "./v7-schema.js";
+import { initializeExactDatabase } from "./exact-schema.js";
 
 const CORRECTED_JOB_ID = "00000000-0000-4000-8000-000000000081";
 const CORRECTED_JOB_URL = "https://jobs.example.test/score-correction";
@@ -32,12 +32,12 @@ afterEach(() => {
   }
 });
 
-describe("score correction exact-v7 identity", () => {
+describe("score correction exact-current identity", () => {
   it("resolves URL locators at the API boundary and persists corrections, policy staleness, and events by JobId", async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-score-correction-v7-"));
     directories.push(directory);
     const dbPath = path.join(directory, "jobctrl.db");
-    initializeExactV7Database(dbPath);
+    initializeExactDatabase(dbPath);
     seedScores(dbPath);
 
     const app = buildApp({
@@ -104,7 +104,7 @@ describe("score correction exact-v7 identity", () => {
             event_type: "ScoreCorrected",
           }),
         ]);
-        expect(hasExactV12SchemaManifest(db)).toBe(true);
+        expect(hasExactV14SchemaManifest(db)).toBe(true);
       } finally {
         db.close();
       }
@@ -136,7 +136,7 @@ describe("score correction exact-v7 identity", () => {
           identity_version: 1,
           event_type: "ScoreRescoreRequested",
         }));
-        expect(hasExactV12SchemaManifest(resetDb)).toBe(true);
+        expect(hasExactV14SchemaManifest(resetDb)).toBe(true);
       } finally {
         resetDb.close();
       }

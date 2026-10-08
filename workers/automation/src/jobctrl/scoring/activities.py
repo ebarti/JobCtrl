@@ -313,6 +313,14 @@ def _raise_on_failure(stage: str, result: dict[str, Any], error_type: type[JobCt
     errors = result.get("errors") or {}
     status = str(result.get("status") or "ok").lower()
     if errors or status not in _SUCCESS_STATUSES:
+        from jobctrl.domain.determinations import serialized_determination_failure
+
+        values = list(errors.values()) if isinstance(errors, dict) else []
+        values.append(result.get("error"))
+        for value in values:
+            failure = serialized_determination_failure(value)
+            if failure:
+                raise failure
         detail = errors or result.get("error") or result.get("status") or "stage failed"
         raise error_type(f"{stage} failed: {detail}")
 
@@ -347,7 +355,7 @@ async def score_job_activity(payload: ScoreJobActivityInput) -> ScoreJobActivity
         )
         status = str(result.get("status") or "ok")
         if status != "ok":
-            raise LlmTransientError(str(result.get("error") or "scoring failed"))
+            _raise_on_failure("score", result, LlmTransientError)
         return ScoreJobActivityOutput(
             status=status,
             score_version=result.get("score_version"),

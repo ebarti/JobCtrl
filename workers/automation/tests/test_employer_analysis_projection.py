@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from dataclasses import replace
 from collections.abc import Iterator
 
 import pytest
@@ -282,3 +283,74 @@ def test_projection_requirement_fit_report_is_null_when_no_report_exists(
     ).fetchone()
     assert row is not None
     assert row["requirement_fit_report_json"] is None
+
+
+def test_projection_refresh_preserves_historical_analysis_without_parsing_it(
+    conn: sqlite3.Connection,
+) -> None:
+    repository = SqliteEmployerAnalysisRepository(conn)
+    repository.save(replace(_analysis(1), prompt_version="employer-analysis-v3"))
+    conn.execute(
+        "UPDATE job_employer_analysis SET inferred_seniority = 'Historical free-text value'"
+    )
+    conn.commit()
+    before = tuple(conn.execute("SELECT * FROM job_employer_analysis").fetchone())
+
+    ProjectionBuilder(conn_factory=lambda: conn).refresh()
+
+    row = conn.execute(
+        "SELECT employer_analysis_json FROM job_detail_projections WHERE job_id = ?",
+        (str(JOB_ID),),
+    ).fetchone()
+    assert row is not None and row["employer_analysis_json"] is None
+    assert tuple(conn.execute("SELECT * FROM job_employer_analysis").fetchone()) == before
+    assert repository.next_generation(LOCAL_TENANT, JOB_ID) == 2
+
+
+@pytest.mark.parametrize("projected_version", [None, "employer-analysis-v3"])
+@pytest.mark.parametrize("has_current_analysis", [False, True])
+def test_settled_analysis_projection_is_rebuilt_by_version_without_new_events(
+    conn: sqlite3.Connection, projected_version: str | None, has_current_analysis: bool
+) -> None:
+    repository = SqliteEmployerAnalysisRepository(conn)
+    historical = replace(_analysis(1), prompt_version="employer-analysis-v3")
+    repository.save(historical)
+    current = _analysis(2)
+    if has_current_analysis:
+        repository.save(current)
+    conn.execute(
+        """INSERT INTO job_events (
+            tenant_id, job_id, identity_version, stage, event_type,
+            level, message, occurred_at, payload_json
+        ) VALUES (?, ?, 1, 'score', 'EmployerAnalyzed', 'info', 'analyzed', ?, '{}')""",
+        (str(LOCAL_TENANT), str(JOB_ID), historical.created_at),
+    )
+    conn.commit()
+    builder = ProjectionBuilder(conn_factory=lambda: conn)
+    builder.refresh()
+    assert builder.refresh() == 0
+    canonical_before = [tuple(row) for row in conn.execute("SELECT * FROM job_employer_analysis")]
+    watermarks_before = [tuple(row) for row in conn.execute("SELECT * FROM event_watermarks")]
+    events_before = conn.execute("SELECT COUNT(*) FROM job_events").fetchone()[0]
+
+    cached = historical.to_read_model()
+    if projected_version is None:
+        cached.pop("prompt_version")
+    else:
+        cached["prompt_version"] = projected_version
+    conn.execute(
+        "UPDATE job_detail_projections SET employer_analysis_json=? WHERE tenant_id=? AND job_id=?",
+        (json.dumps(cached), str(LOCAL_TENANT), str(JOB_ID)),
+    )
+    conn.commit()
+
+    assert builder.refresh() == 1
+    value = conn.execute(
+        "SELECT employer_analysis_json FROM job_detail_projections WHERE tenant_id=? AND job_id=?",
+        (str(LOCAL_TENANT), str(JOB_ID)),
+    ).fetchone()[0]
+    assert (json.loads(value) if value else None) == (current.to_read_model() if has_current_analysis else None)
+    assert [tuple(row) for row in conn.execute("SELECT * FROM job_employer_analysis")] == canonical_before
+    assert [tuple(row) for row in conn.execute("SELECT * FROM event_watermarks")] == watermarks_before
+    assert conn.execute("SELECT COUNT(*) FROM job_events").fetchone()[0] == events_before
+    assert builder.refresh() == 0

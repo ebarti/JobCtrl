@@ -46,7 +46,6 @@ export type EndpointHttpMethod = (typeof ENDPOINT_HTTP_METHODS)[number];
 
 export const ENDPOINT_DEMO_CAPABILITY_CLASSES = [
   "browser_local",
-  "simulated_async",
   "rehearsed_external",
   "unavailable",
 ] as const;

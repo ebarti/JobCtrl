@@ -88,7 +88,9 @@ test("source review saves, switches, reloads and resets independently of Jobs", 
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   page.on("console", (message) => {
-    if (message.type() === "error") errors.push(message.text());
+    if (message.type() === "error") {
+      errors.push(`${message.text()} ${message.location().url}`);
+    }
   });
   // The Playwright server owns this synthetic SQLite workspace. No source fetch
   // or worker dispatch is needed to exercise the production review table.
