@@ -1216,6 +1216,55 @@
                                   "generated",
                                   "user_edited"
                                 ]
+                              },
+                              "lineAnchors": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "lineId": {
+                                      "type": "string"
+                                    },
+                                    "text": {
+                                      "type": "string"
+                                    },
+                                    "evidenceIds": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 200
+                                      }
+                                    },
+                                    "requirementIds": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "transformType": {
+                                      "type": "string",
+                                      "enum": [
+                                        "evidence_reframed",
+                                        "hypothetical",
+                                        "clarification",
+                                        "advice"
+                                      ]
+                                    },
+                                    "reason": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "lineId",
+                                    "text",
+                                    "evidenceIds",
+                                    "requirementIds",
+                                    "transformType",
+                                    "reason"
+                                  ],
+                                  "additionalProperties": false
+                                }
                               }
                             },
                             "required": [
@@ -1266,7 +1315,10 @@
                       "properties": {
                         "schemaVersion": {
                           "type": "string",
-                          "const": "1"
+                          "enum": [
+                            "1",
+                            "2"
+                          ]
                         },
                         "catalogBinding": {
                           "type": "object",
@@ -1562,6 +1614,7 @@
                                 "type": "string",
                                 "enum": [
                                   "user_selected",
+                                  "model",
                                   "deterministic"
                                 ]
                               },
@@ -1594,6 +1647,7 @@
                           "type": "string",
                           "enum": [
                             "user_selected",
+                            "model",
                             "deterministic"
                           ]
                         },
@@ -1888,6 +1942,31 @@
                             "model",
                             "promptVersion",
                             "gateVersion"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "determinations": {
+                          "type": "object",
+                          "properties": {
+                            "plan": {
+                              "type": "string",
+                              "pattern": "^[a-f0-9]{64}$"
+                            },
+                            "claimVerification": {
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "pattern": "^[a-f0-9]{64}$"
+                              }
+                            },
+                            "quality": {
+                              "type": "string",
+                              "pattern": "^[a-f0-9]{64}$"
+                            }
+                          },
+                          "required": [
+                            "plan",
+                            "claimVerification"
                           ],
                           "additionalProperties": false
                         }

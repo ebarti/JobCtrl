@@ -58,7 +58,6 @@ class DiscoverWorkflowInput:
     validation_mode: str = "normal"
     tailor_models: tuple[str, ...] = ()
     tailor_judge_model: str | None = None
-    tailor_judge_min_score: float | None = None
     source_ids: tuple[str, ...] = ()
     llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
 
@@ -100,9 +99,7 @@ _DEFAULT_TIMEOUT = timedelta(minutes=30)
 _DISCOVERY_TIMEOUT = timedelta(hours=6)
 _LIVE_ENRICH_HEARTBEAT_TIMEOUT = timedelta(seconds=5)
 _DEFAULT_HEARTBEAT_TIMEOUT = timedelta(minutes=2)
-_AUTOMATIC_COMPENSATION_REFRESH_PATCH = (
-    "discover-automatic-compensation-refresh-v1"
-)
+_AUTOMATIC_COMPENSATION_REFRESH_PATCH = "discover-automatic-compensation-refresh-v1"
 
 
 @workflow.defn(name="DiscoverWorkflow")
@@ -616,7 +613,6 @@ def _enrichment_activity_input(
         llm_model=payload.llm_model,
         tailor_models=payload.tailor_models,
         tailor_judge_model=payload.tailor_judge_model,
-        tailor_judge_min_score=payload.tailor_judge_min_score,
         discovery_execution=discovery_execution,
         pipeline_step_item_key=pipeline_step_item_key,
         pipeline_step_detail_code=pipeline_step_detail_code,
@@ -648,7 +644,6 @@ async def _start_preparation_workflows(
             validation_mode=payload.validation_mode,
             tailor_models=payload.tailor_models,
             tailor_judge_model=payload.tailor_judge_model,
-            tailor_judge_min_score=payload.tailor_judge_min_score,
             llm_model=payload.llm_model,
             progress_completed=progress_completed,
             progress_total=progress_total,

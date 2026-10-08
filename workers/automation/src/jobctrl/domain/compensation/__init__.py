@@ -17,14 +17,8 @@ from jobctrl.domain.compensation.benchmarks import (
     build_direct_benchmark_fact,
     build_price_level_fact,
     canonical_benchmark_timestamp,
-    classify_role,
-    classify_seniority,
     extrapolate_benchmark,
     factor_bound_state,
-    normalize_company_name,
-    resolve_benchmark_geography,
-    resolve_country_code,
-    resolve_reported_seniority,
 )
 from jobctrl.domain.compensation.market import (
     ESTIMATOR_VERSION,
@@ -52,7 +46,6 @@ from jobctrl.domain.compensation.posted import (
     SOURCE_TEXT_LIMIT,
     WARNING_CODES,
     PostedCompensationFact,
-    parse_posted_compensation,
 )
 
 __all__ = [
@@ -92,16 +85,9 @@ __all__ = [
     "build_direct_benchmark_fact",
     "build_price_level_fact",
     "canonical_benchmark_timestamp",
-    "classify_role",
-    "classify_seniority",
     "estimate_market_compensation",
     "extrapolate_benchmark",
     "factor_bound_state",
-    "normalize_company_name",
     "not_requested_market_estimate",
-    "parse_posted_compensation",
-    "resolve_country_code",
-    "resolve_reported_seniority",
-    "resolve_benchmark_geography",
     "sanitize_market_source_snapshot",
 ]

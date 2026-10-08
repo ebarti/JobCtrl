@@ -13,7 +13,7 @@ individual regression to exact test files.
 | Durable workflows | Accepted work resumes or terminalizes correctly across restart, cancellation, and history loss. | Workflow tests plus targeted fault injection. |
 | Storage and projections | Schema versions are guarded; canonical writes and read projections agree; accepted artifacts survive retries, including failed cover-letter refreshes whose rejected bytes remain on separate audit paths; the explicit job-data purge backs up first, clears the Job/generated-material and job/Discovery execution boundary (including stale retry manifests, source-quality summaries, job-stage operational attempts, and projection-rebuilding events), and proves profile/search/template/settings plus unrelated-history preservation. | Repository/projection tests, guarded purge fixtures, and API readback. |
 | Credentials and privacy | Secrets, profile content, raw mail, contact values, paths, and artifacts do not leak into settings, events, logs, or projections. | Boundary tests plus response/event inspection. |
-| Scoring and materials | Evidence, policy version, provenance, judge output, and fabrication gates remain inspectable and honest; free-form review/prior-output text remains audit-only while retries use bounded code-owned guidance. Cover generation never treats job-post numbers/dates as candidate evidence and retries them with qualitative, code-owned guidance. | Deterministic fixtures, quality evals, retry prompt-boundary regressions, and inspector smoke. |
+| Scoring and materials | Evidence, policy version, provenance, judge output, and fabrication gates remain inspectable and honest; all semantic findings come from cited, persisted model determinations. Retries use the model findings bound to their line and source IDs. Cover generation never treats job-post facts as candidate evidence. | Opposite model-verdict tests, distinct failure/preservation checks, canonical prompt boundaries, and product-path inspector QA. No eval sets, baselines or recorded model-output replay. |
 | Frontend state | URL/server/client state stay in their owning layers; every event and stage state has a handler/rendering path. | Hook/component/type tests plus parity tests. |
 | Rhea/Base UI system | Tokens, cards, statuses, accessible primitive behavior, and route parity remain coherent across theme, density, and viewport. | Token/boundary tests, focused wrapper tests, route visual QA, and the browser matrix. |
 | Pipeline operations | Execution topology, privacy, refresh behavior, ETA, freshness, queue, and capacity remain truthful and separately inspectable. | API/read-model tests, deterministic fixtures, invalidation/polling tests, and browser observation. |
@@ -23,37 +23,35 @@ individual regression to exact test files.
 ## Ashby Listing And Location Admission
 
 The Ashby public posting adapter excludes only explicit boolean
-`isListed: false`. Listed and legacy postings with no flag still pass through
-the existing title, description, and location rules. The primary location or
-existing `locationName` fallback leads the retained metadata; trimmed valid
-`secondaryLocations[].location` strings follow, deduplicated case-insensitively
-with first spelling preserved and joined by `; `. Malformed secondary
-containers/entries and empty names add no fabricated location. Ashby uses the
-unchanged shared reject aliases within each name's geography context, rejecting
-the posting if any name is rejected. At least one name must independently pass
-the unchanged target matcher; joined metadata is not the admission input.
+`isListed: false`. Listed and legacy postings with no flag enter canonical ingestion;
+the adapter does not decide their title, description or location relevance. The
+primary location or existing `locationName` fallback leads the retained metadata;
+trimmed valid `secondaryLocations[].location` strings follow, deduplicated
+case-insensitively with first spelling preserved and joined by `; `. Malformed
+secondary containers/entries and empty names add no fabricated location.
 
 `workers/automation/tests/test_ats_adapters.py` covers listing flags, malformed
-secondary data, duplicates, primary fallback, empty-location policy, title and
-description admission, and native-ID/canonical-URL preservation. Its synthetic
-`run_scheduled_ats_sources` fixture injects HTTP data and uses an owned temporary
-SQLite database: Austin-primary/Madrid-secondary postings must match Madrid,
-retain both names in `jobs`, exclude the unlisted peer, and preserve canonical
-identity and source observations over two runs without creating another job.
-The same production-path fixture rejects primary `Toronto, ON, CA` plus
-secondary `Madrid, Spain` for a Madrid target with a Canada reject, and rejects
-primary `Barcelona, Venezuela` plus secondary `Madrid, Spain` for a
-`Barcelona, Spain` target. Both location orders are covered, alongside accepted
-controls for the actual secondary target and Spain's region abbreviations.
-`test_discovery_location_filter.py` guards secondary-target matching and reject
-precedence and individual country/composite-target semantics. The original
-mapper fails the explicit-false, secondary-location retention/admission, and
-secondary-reject regressions; the joined-string mapper fails both geography
-context regressions in both location orders.
+secondary data, duplicate labels, primary fallback and native-ID/canonical-URL
+preservation. Its synthetic `run_scheduled_ats_sources` fixture injects HTTP data
+into an owned temporary SQLite database. Listed postings enter canonical
+ingestion without an admission model, retain both location names and preserve
+identity and observations across runs. An unlisted peer is excluded mechanically.
+`test_captured_posting_recovery.py` covers bounded recovery of archived raw
+postings, literal exclusions, limits and interruption before consumption. No
+alias table or geography sentence corpus decides suitability.
 These fixtures contact no live board and use no real user data. Local fixture
 proof does not replace the independent review, QA, or CI gates.
 
 ## Temporal Fault Injection
+
+Use an owned file-backed database and a reused activity thread to prove that
+failed and unfinished activity writes release SQLite's writer. Independent
+heartbeat writes must succeed afterward, with committed artifacts unchanged.
+Hold heartbeat persistence blocked and prove activity coroutines still progress.
+During posting interpretation, allow an independent writer and supersede the
+lease; the stale producer must not persist a snapshot or terminal success.
+`test_activity_connection_lifetime.py`, `test_worker_heartbeat_loop.py` and
+`test_discover_reliability.py` cover these boundaries.
 
 For the affected workflow, prove four outcomes:
 
@@ -430,6 +428,37 @@ trial artifacts and processes; retain no generated candidate material in Git.
 
 ## Auditability Checks
 
+Every displayed semantic judgment must trace to a persisted determination:
+kind, schema/prompt versions, provider/model, input fingerprint, canonical source
+IDs and verbatim citations. Inspect the canonical writer, the accepted artifact
+binding, projection/API reads and actual UI joins. Unanchored lines must say
+"no recorded source". Read-side similarity cannot repair missing provenance.
+
+Use explicit fake `LlmPort` verdicts to prove authority: the same canonical input
+with two different valid model decisions must produce different outcomes. Test
+provider unavailable, spend denied, malformed JSON, schema/enum violation,
+foreign IDs, non-verbatim quotes and exact-value mismatch distinctly, without a
+lexical fallback. Check the lane and spend preflight run before each new call;
+unchanged inputs reuse accepted determinations with zero calls. Failed refreshes
+preserve the last accepted artifact. Do not create eval sets, labeled corpora,
+baseline comparisons, English sentence corpora or recorded-output replay fixtures.
+
+For version changes, seed an obsolete analysis projection with already-folded
+event cursors. Both builders must rebuild it from the current canonical version
+without a new event, or expose no current analysis if none exists. The native
+cutover removes the cached shape while preserving canonical history, cursors
+and accepted artifact bytes. Citation format checks must reject fragments of
+numbers and dotted identifiers while accepting complete values followed by
+sentence punctuation or separated by commas.
+
+For Discovery, save literal target settings and plan a run without an interpretation receipt or second approval. Inspect the actual JobStreaming query/location/remote parameters and each provider’s supported filters; capability warnings are not currently displayed in JobCtrl. Structurally valid fetched results must ingest without an extra model gate, even when they do not lexically resemble the query. Exact user-authored title exclusions retain durable filtered receipts. Exercise capture/ack interruption, lease fencing, retry idempotency and limits. Full-posting interpretation/scoring retain model authority and source provenance. Historical native cutovers preserve authored cells, canonical jobs, accepted files and raw captures.
+
+For interview preparation, inspect each actual drafting prompt with a supported
+question and explicitly empty selections. Only that question's selected evidence
+may appear. Drive unsupported/accepted outcomes with verifier verdicts; the
+empty selection produces gaps and never borrows another question's evidence.
+Accepted preparation and independent notes survive a failed replacement.
+
 When the human flags a visible defect, especially in review, rationale, audit, evidence, scoring, tailoring, or apply-approval surfaces, treat the screenshot as a symptom, not the bug. Do not start by hiding, filtering, renaming, or moving the displayed value. First state the product invariant the surface is supposed to prove, then trace the value end to end: source input, extraction, profile evidence, selected controls, prompt or deterministic transform, generated artifact, validator/judge output, persistence, projection/API read model, and UI rendering.
 
 For auditability features, every displayed claim must have an explicit source of truth. Before editing code, identify whether the source is canonical user profile data, the job post, score evidence, tailoring policy, generated artifact text/PDF, validator output, judge/adversarial response, event log, projection row, or derived read-model computation. If the correct source is missing, compute or persist the missing audit data at the owning layer; do not remove the UI field just because the current data is embarrassing.
@@ -481,10 +510,9 @@ cleanup that would equal another saved bullet or Required pin must not be
 applicable. Rebase a different
 bullet in the same experience entry after a committed write with a lost
 response; keep overlapping or reordered bullet identities blocked.
-Model evaluation cases should distinguish stated results from verification,
-action counts from changed outcomes, and real results from planned or negated
-claims. These are prompt/model evaluation cases, never lexical assertions in
-runtime code. Hold an accept
+Do not grade model judgments with a sentence table or evaluation corpus. Test
+opposite valid model verdicts and source-binding failures on minimal owned
+synthetic inputs. Hold an accept
 pending, advance
 the five-second autosave timer, and prove no second write occurs on either
 success or failure while unrelated draft fields remain. Fence ordinary manual
@@ -507,9 +535,10 @@ retain every factual token, the achievement
 identity, bullet order, and Required pin. Missing evidence must remain a question
 without an applicable fabricated replacement. Verify persistence and reload
 through `/profile` and the real API with temporary SQLite storage; label
-synthetic preview or provider dependencies separately. The deterministic path
-must make zero provider calls and does not establish model quality or spend
-enforcement.
+synthetic provider dependencies separately. An unchanged accepted determination
+must make zero new provider calls; a first determination must prove the lane and
+spend preflight before its call. These checks prove wiring and model authority,
+not model judgment quality.
 
 ## Cumulative Redesign Boundaries
 
@@ -1046,6 +1075,8 @@ enrichment, 25-job selection,
 100 posting acquisitions/hour with 20 reserved for foreground work, once/minute
 coalescing, two-second actual-host pacing,
 backoff/Retry-After, independent process leases, crash recovery and stale fences.
+Pacing waits recheck the stored next-start time after wakeup and remain bounded
+by the acquisition deadline; an early wakeup never admits a premature request.
 Hidden/inactive status templates cannot close a visible posting. Computed browser
 visibility and blocked subresources must survive conversion; incomplete renders
 remain unknown with reason/hash lineage. Only explicit refused commands surface coalesced durable request
@@ -1056,6 +1087,11 @@ through actual-host reservations, blocked service-worker/native connections with
 owned HTTP/UDP sinks, and failed status-resource hashes. A hung renderer or
 capture/close RPC must terminate and reap the owned browser processes within the
 acquisition budget, before five-minute leases admit a successor.
+Kill signals alone do not prove cleanup: observe every owned non-zombie browser
+group exit within the existing cleanup grace. A surviving group or failed process
+inventory must return `browser_cleanup_failed`; parent and foreign groups remain
+untouched. Prove delayed group exit, grace exhaustion and inventory failure
+mechanically, alongside the real Chromium cancellation fixtures.
 Prove a second writer can acquire during transport. GET must make zero employer
 requests. Failed observations retain success clocks and byte-identical accepted
 content/material/generation/approval/outcome fingerprints. Closure must never

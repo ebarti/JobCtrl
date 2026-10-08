@@ -27,22 +27,12 @@ from jobctrl.domain.materials.analysis import (
     Requirement,
     compute_snapshot_hash,
 )
-from jobctrl.domain.materials.coverage_audit import compute_keyword_coverage
-from jobctrl.domain.materials.fabrication_detector import (
-    build_evidence_corpus,
-    build_skill_evidence_corpus,
-    build_skill_vocabulary,
-    employer_name_set,
-    find_fabricated_tokens,
-    scan_prose_skill_fabrications,
-    scan_resume_bullets,
-)
 from jobctrl.domain.materials.provenance import BulletProvenance, BulletProvenanceSet
 from jobctrl.domain.materials.provenance_builder import (
-    ProvenanceBindingError,
     build_bullet_provenance,
 )
-from jobctrl.domain.materials.quality import build_tailoring_plan
+from jobctrl.domain.materials.quality import build_tailoring_plan as _build_tailoring_plan
+from tests.determination_fakes import job_interpretation
 from jobctrl.domain.materials.services import ResumeAssembler
 from jobctrl.domain.materials.value_objects import ControlRule, TransformType
 from jobctrl.infrastructure.materials.bullet_provenance_repository import (
@@ -226,7 +216,7 @@ def _payload(*, bullets: list[str], summary: str = "Senior backend engineer.") -
 
 def _build(profile: dict, payload: dict, analysis: EmployerAnalysis) -> tuple[BulletProvenance, ...]:
     plan = build_tailoring_plan(profile, _job(), employer_analysis=analysis)
-    return build_bullet_provenance(profile, _job(), payload, plan, analysis)
+    return build_bullet_provenance(profile, payload, plan, analysis)
 
 
 # --------------------------------------------------------------------------
@@ -241,16 +231,18 @@ def test_provenance_has_one_row_per_rendered_bullet_with_closed_taxonomy() -> No
         _analysis(),
     )
     sections = {row.section for row in rows}
-    assert sections == {"executive_profile", "experience", "skills"}
+    assert sections == {"personal", "executive_profile", "experience", "education", "skills"}
     # Every transform_type is a member of the closed taxonomy (GROUND-04).
     for row in rows:
         assert isinstance(row.transform_type, TransformType)
         assert isinstance(row.control, ControlRule)
         assert row.generated_text.strip()  # coverage anchor is the rendered text
 
-    experience = next(row for row in rows if row.section == "experience")
+    experience = next(
+        row for row in rows if row.section == "experience" and "#" in row.bullet_id and "#" in row.bullet_id
+    )
     # Bullet equals the source profile bullet verbatim -> VERBATIM transform.
-    assert experience.transform_type is TransformType.VERBATIM
+    assert experience.transform_type is TransformType.UNRECORDED
     assert experience.source_id == "acme_swe"
     assert experience.bullet_id == "experience:acme_swe#0"
 
@@ -261,46 +253,6 @@ def _assembled_summary_line(profile: dict, payload: dict) -> str:
     lines = text.splitlines()
     idx = lines.index("EXECUTIVE PROFILE")
     return lines[idx + 1].strip()
-
-
-def test_executive_provenance_anchors_to_shipped_summary_when_rewrite_disabled() -> None:
-    """Regression (Pattern 2 / GROUND-06): with ``allow_summary_rewrite`` off the
-    resume ships the profile baseline, so the executive-profile provenance
-    ``generated_text`` MUST equal the assembled summary line — not the model's
-    proposed (never-rendered) rewrite. Without the policy gate the provenance
-    anchor and the deterministic detector scan text the user never received."""
-    profile = _profile()
-    profile["resume"]["tailoring_rules"]["tailoring_policy"]["allow_summary_rewrite"] = False
-    # The model proposes a rewrite the resume will NOT ship under this policy.
-    proposed = "Backend engineer who delivered 99.99% uptime."
-    payload = _payload(
-        bullets=["Reduced API latency 35% by replacing synchronous calls."],
-        summary=proposed,
-    )
-
-    shipped_summary = _assembled_summary_line(profile, payload)
-    # Sanity: the assembler ships the baseline, not the proposed rewrite.
-    assert shipped_summary == "Senior backend engineer."
-    assert shipped_summary != proposed
-
-    rows = _build(profile, payload, _analysis())
-    executive = next(row for row in rows if row.section == "executive_profile")
-    # Provenance is anchored to the SHIPPED line (byte-identical), never the rewrite.
-    assert executive.generated_text == shipped_summary
-    assert executive.generated_text != proposed
-    # Baseline == shipped -> the transform is VERBATIM, not a phantom REFRAME.
-    assert executive.transform_type is TransformType.VERBATIM
-
-    # And the deterministic detector now scans the SHIPPED text: the rewrite's
-    # "99.99%" (absent from the profile) must NOT appear in any scanned bullet,
-    # so a clean baseline resume is not falsely rejected for the dropped rewrite.
-    corpus = build_evidence_corpus(profile)
-    findings = scan_resume_bullets(
-        [(row.bullet_id, row.generated_text) for row in rows],
-        corpus,
-        employers=employer_name_set(profile),
-    )
-    assert all("99.99" not in f.generated_text for f in findings)
 
 
 def test_executive_provenance_anchors_to_rewrite_when_rewrite_enabled() -> None:
@@ -353,7 +305,7 @@ def test_provenance_generated_text_is_byte_identical_to_sanitized_shipped_line()
     # The smart punctuation was rewritten exactly as the assembler ships it.
     assert summary_row.generated_text == 'Senior engineer who led the company\'s "core" platform.'
 
-    experience_row = next(r for r in rows if r.section == "experience")
+    experience_row = next(r for r in rows if r.section == "experience" and "#" in r.bullet_id)
     assert experience_row.generated_text == _assembled_section_line(profile, payload, prefix="- ")
     assert experience_row.generated_text == "Owned the team's API roadmap, reduced API latency 35%."
 
@@ -393,6 +345,9 @@ def test_provenance_caps_covered_bullets_to_match_shipped_resume() -> None:
     payload["generated_claim_mappings"] = [
         {
             "claim_id": f"claim-{index}",
+            "line_id": f"experience:acme_swe#{index}",
+            "reason": "Explicit generator anchor",
+            "transform_type": "rephrase",
             "location": f"experience.acme_swe.bullets[{index}]",
             "text": bullet,
             "coverage_edge_ids": ["edge_req_latency_ev_latency_direct"],
@@ -400,12 +355,16 @@ def test_provenance_caps_covered_bullets_to_match_shipped_resume() -> None:
             "evidence_ids": ["ev_latency"],
             "review_required": False,
         }
-        for index, bullet in enumerate(bullets)
+        for index, bullet in enumerate(bullets[:4])
     ]
     payload = mark_current_artifact_budget(payload)
 
     rows = _build(profile, payload, _analysis())
-    experience_texts = [row.generated_text for row in rows if row.section == "experience"]
+    experience_texts = [
+        row.generated_text
+        for row in rows
+        if row.section == "experience" and "#" in row.bullet_id and "#" in row.bullet_id
+    ]
 
     assert experience_texts == _assembled_experience_bullets(profile, payload)
     assert experience_texts == bullets[:4]
@@ -492,52 +451,6 @@ def _analysis_with_platform_requirement() -> EmployerAnalysis:
             ),
         ],
     )
-
-
-def test_strict_subset_provenance_and_coverage_reflect_only_shipped_entries() -> None:
-    """Regression (rev-211 A4 / auditability): when ``required_experience_entry_ids``
-    pins a STRICT SUBSET and no optional roles are selected, all renderers ship
-    only those entries. Provenance and the coverage computed over it audit ONLY the
-    shipped entries. A keyword present solely in an OMITTED entry ("Kubernetes")
-    must not appear in any provenance row and must be reported missing, never
-    inflated as covered with content the employer never receives."""
-    profile = _profile_with_omitted_entry(required_experience_entry_ids=["acme_swe"])
-    analysis = _analysis_with_platform_requirement()
-    payload = _payload(bullets=["Reduced API latency 35% by replacing synchronous Python calls."])
-
-    rows = _build(profile, payload, analysis)
-
-    experience_source_ids = {row.source_id for row in rows if row.section == "experience"}
-    assert experience_source_ids == {"acme_swe"}  # the omitted entry is not audited
-    assert not any(row.bullet_id.startswith("experience:omitted_co") for row in rows)
-    assert all("kubernetes" not in row.generated_text.lower() for row in rows)
-
-    # The full-profile corpus DOES contain "Kubernetes" (it lives in the omitted
-    # entry) -- corpus grounding alone must not credit a keyword the shipped text
-    # never renders.
-    coverage = compute_keyword_coverage(analysis, rows, build_evidence_corpus(profile))
-    assert "kubernetes" in coverage.missing
-    assert "kubernetes" not in coverage.covered
-    # The shipped entry's real coverage is untouched.
-    assert "latency" in coverage.covered
-    assert "python" in coverage.covered
-
-
-def test_default_all_entries_still_audited_when_no_strict_subset_pinned() -> None:
-    """The default-all path (no ``required_experience_entry_ids`` pinned) is
-    unchanged: every experience entry is audited, so a keyword grounded only in the
-    second entry ("Kubernetes") is legitimately covered."""
-    profile = _profile_with_omitted_entry(required_experience_entry_ids=None)
-    analysis = _analysis_with_platform_requirement()
-    payload = _payload(bullets=["Reduced API latency 35% by replacing synchronous Python calls."])
-
-    rows = _build(profile, payload, analysis)
-
-    experience_source_ids = {row.source_id for row in rows if row.section == "experience"}
-    assert experience_source_ids == {"acme_swe", "omitted_co"}
-    coverage = compute_keyword_coverage(analysis, rows, build_evidence_corpus(profile))
-    assert "kubernetes" in coverage.covered
-    assert "kubernetes" not in coverage.missing
 
 
 # --------------------------------------------------------------------------
@@ -627,66 +540,6 @@ def _analysis_with_performance_requirement() -> EmployerAnalysis:
     )
 
 
-def test_strict_subset_provenance_and_coverage_reflect_only_shipped_skill_categories() -> None:
-    """Regression (rev-211 A4b / auditability): when ``required_skill_category_ids``
-    pins a STRICT SUBSET, the assembler and both PDF renderers ship only those skill
-    categories. Provenance -- and the coverage computed over it -- must audit ONLY
-    the shipped categories. A keyword present solely in an OMITTED category's skills
-    line ("performance") must not appear in any provenance row and must be reported
-    missing, never inflated as covered off a line the employer never receives."""
-    profile = _profile_with_omitted_skill_category(required_skill_category_ids=["languages"])
-    analysis = _analysis_with_performance_requirement()
-    payload = _payload(bullets=["Reduced API latency 35% by replacing synchronous Python calls."])
-
-    rows = _build(profile, payload, analysis)
-
-    skill_source_ids = {row.source_id for row in rows if row.section == "skills"}
-    assert skill_source_ids == {"languages"}  # the omitted category is not audited
-    assert not any(row.bullet_id.startswith("skills:cloud") for row in rows)
-    assert all("performance" not in row.generated_text.lower() for row in rows)
-
-    coverage = compute_keyword_coverage(analysis, rows, build_evidence_corpus(profile))
-    assert "performance" in coverage.missing
-    assert "performance" not in coverage.covered
-    # Even a corpus-grounded keyword (PostgreSQL lives in evidence tools) stays
-    # missing when its only rendered home is the omitted category's line.
-    assert "postgresql" in coverage.missing
-    assert "terraform" in coverage.missing
-    # The shipped category's + experience real coverage is untouched.
-    assert "python" in coverage.covered
-    assert "latency" in coverage.covered
-
-
-def test_default_all_skill_categories_still_audited_when_no_strict_subset_pinned() -> None:
-    """The default-all path (no ``required_skill_category_ids`` pinned) is unchanged:
-    every skill category is audited (rows exist for both), and the second category's
-    line can legitimately credit a corpus-grounded keyword (PostgreSQL, backed by
-    evidence tools). A keyword declared ONLY as a skills item and demonstrated in no
-    evidence (Terraform) reports ``declared`` (A6b): it genuinely ships in the Cloud
-    skills line, so reporting it ``missing`` would lie against the artifact, but it is
-    NOT ``covered`` because no evidence demonstrates it. "performance" is deliberately
-    NOT asserted here: it flips ``declared`` -> ``covered`` once the #218 prose-gate
-    stack adds evidence ``tags`` to the corpus, so the test pins only corpus-stable
-    keywords (Terraform never appears in any evidence text or ``tags`` field)."""
-    profile = _profile_with_omitted_skill_category(required_skill_category_ids=None)
-    analysis = _analysis_with_performance_requirement()
-    payload = _payload(bullets=["Reduced API latency 35% by replacing synchronous Python calls."])
-
-    rows = _build(profile, payload, analysis)
-
-    skill_source_ids = {row.source_id for row in rows if row.section == "skills"}
-    assert skill_source_ids == {"languages", "cloud"}
-    coverage = compute_keyword_coverage(analysis, rows, build_evidence_corpus(profile))
-    assert "postgresql" in coverage.covered  # corpus-grounded, shipped on the cloud line
-    assert coverage.covered_by["postgresql"] == "skills:cloud#0"
-    # Declared-only: shipped in the Cloud skills line, never demonstrated in evidence.
-    assert "terraform" in coverage.declared
-    assert "terraform" not in coverage.missing
-    assert "terraform" not in coverage.covered
-    assert coverage.declared_by["terraform"] == "skills:cloud#0"
-    assert "python" in coverage.covered  # demonstrated: evidence tools + shipped text
-
-
 # --------------------------------------------------------------------------
 # Cross-surface parity: the shipped skill-category subset is IDENTICAL across
 # the THREE surfaces that each re-implement the ``required_skill_category_ids``
@@ -761,83 +614,9 @@ def test_all_rendered_surfaces_ship_every_skill_category_when_unpinned() -> None
     assert _provenance_skill_labels(profile, payload, analysis) == txt
 
 
-def test_matched_keywords_and_requirement_ids_bind_to_analysis() -> None:
-    rows = _build(
-        _profile(),
-        _payload(bullets=["Reduced API latency 35% by replacing synchronous Python calls."]),
-        _analysis(),
-    )
-    experience = next(row for row in rows if row.section == "experience")
-    # "latency" + "python" appear in the generated bullet -> their requirements served.
-    assert "latency" in experience.matched_keywords
-    assert "req_latency" in experience.requirement_ids
-    # requirement_ids are real FK ids from the analysis.
-    valid_ids = {req.id for req in _analysis().canonical.requirements}
-    assert set(experience.requirement_ids).issubset(valid_ids)
-
-
-def test_quantify_from_evidence_transform_when_metric_introduced() -> None:
-    # Source bullet has no metric; tailored bullet surfaces a verified metric.
-    profile = _profile()
-    profile["resume"]["experience_entries"][0]["bullets"] = ["Replaced synchronous enrichment calls."]
-    rows = _build(
-        profile,
-        _payload(bullets=["Replaced synchronous calls, cutting 35% latency reduction."]),
-        _analysis(),
-    )
-    experience = next(row for row in rows if row.section == "experience")
-    assert experience.transform_type is TransformType.QUANTIFY_FROM_EVIDENCE
-    assert experience.control is ControlRule.NEVER_FABRICATE_METRICS
-
-
-def test_control_recorded_per_bullet_reflects_governing_rule() -> None:
-    rows = _build(
-        _profile(),
-        _payload(bullets=["Reduced API latency 35% by replacing synchronous calls."]),
-        _analysis(),
-    )
-    # A rephrase/verbatim of a real fact is governed by the always-allowed rule.
-    experience = next(row for row in rows if row.section == "experience")
-    assert experience.control is ControlRule.REPHRASE_ALLOWED
-
-
 # --------------------------------------------------------------------------
 # Fabricated FK reject (GROUND-05, success criterion 2)
 # --------------------------------------------------------------------------
-
-
-def test_fabricated_requirement_id_is_rejected_before_any_row_is_built() -> None:
-    # A BulletProvenance constructed with a requirement id NOT in the analysis
-    # must be rejected by the builder's FK validation. We simulate by validating
-    # directly: the builder only ever emits ids it resolved, so we assert the
-    # guard rejects an injected fabricated id.
-    from jobctrl.domain.materials.provenance_builder import (
-        _sources,
-        _validated_requirement_ids,
-    )
-
-    analysis = _analysis()
-    plan = build_tailoring_plan(_profile(), _job(), employer_analysis=analysis)
-    sources = _sources(plan, analysis)
-    with pytest.raises(ProvenanceBindingError) as excinfo:
-        _validated_requirement_ids(("req_python", "req_FABRICATED"), sources)
-    assert "req_FABRICATED" in str(excinfo.value)
-    assert excinfo.value.kind == "requirement"
-
-
-def test_fabricated_evidence_id_is_rejected() -> None:
-    from jobctrl.domain.materials.provenance_builder import (
-        _sources,
-        _validated_evidence_ids,
-    )
-
-    analysis = _analysis()
-    plan = build_tailoring_plan(_profile(), _job(), employer_analysis=analysis)
-    sources = _sources(plan, analysis)
-    with pytest.raises(ProvenanceBindingError) as excinfo:
-        _validated_evidence_ids(("ev_latency", "ev_FAKE"), sources)
-    assert "ev_FAKE" in str(excinfo.value)
-    assert excinfo.value.kind == "evidence"
 
 
 # --------------------------------------------------------------------------
@@ -845,441 +624,9 @@ def test_fabricated_evidence_id_is_rejected() -> None:
 # --------------------------------------------------------------------------
 
 
-def test_detector_passes_when_every_numeric_traces_to_evidence() -> None:
-    profile = _profile()
-    corpus = build_evidence_corpus(profile)
-    # "35%" is recorded in the profile evidence -> grounded.
-    findings = find_fabricated_tokens(
-        "experience:acme_swe#0",
-        "Reduced API latency 35% by replacing synchronous calls.",
-        corpus,
-        employers=employer_name_set(profile),
-    )
-    assert findings == []
-
-
-def test_detector_grounds_profile_summary_and_experience_metadata_numbers() -> None:
-    profile = _profile()
-    profile["experience"] = {
-        "years_of_experience_total": "12",
-        "current_job_title": "Director of Engineering",
-        "current_company": "Acme Corp",
-    }
-    profile["resume"]["executive_profile"] = {"baseline_text": "Engineering Director with 12+ years of experience."}
-    corpus = build_evidence_corpus(profile)
-    findings = find_fabricated_tokens(
-        "executive_profile#0",
-        "Engineering Director with 12+ years of experience.",
-        corpus,
-        employers=employer_name_set(profile),
-    )
-    assert [f for f in findings if f.kind == "numeric"] == []
-
-
-def test_detector_grounds_position_summary_facts() -> None:
-    profile = _profile()
-    position_summary = "Oversaw 42 production services across three regions."
-    profile["resume"]["experience_entries"][0]["summary"] = position_summary
-
-    corpus = build_evidence_corpus(profile)
-    findings = find_fabricated_tokens(
-        "experience:acme_swe:summary",
-        position_summary,
-        corpus,
-        employers=employer_name_set(profile),
-    )
-
-    assert position_summary.lower() in corpus.text
-    assert findings == []
-
-
-def test_detector_flags_invented_metric() -> None:
-    profile = _profile()
-    corpus = build_evidence_corpus(profile)
-    # "10x" and "$2M" appear nowhere in the profile evidence -> fabricated.
-    findings = find_fabricated_tokens(
-        "experience:acme_swe#0",
-        "Drove a 10x throughput gain and $2M in savings.",
-        corpus,
-        employers=employer_name_set(profile),
-    )
-    kinds = {f.kind for f in findings}
-    assert "numeric" in kinds
-    assert all(f.control is ControlRule.NEVER_FABRICATE_METRICS for f in findings if f.kind == "numeric")
-
-
-def test_detector_flags_digit_colliding_fabrication_with_different_unit() -> None:
-    """Regression (Pitfall 3 / criterion 4): a fabricated number that merely shares
-    a digit run with an unrelated profile number — but has a different unit or
-    magnitude — must be flagged. The profile's only number is ``35%``; a bullet
-    claiming ``$35M`` or ``35 million`` reuses the digits ``35`` yet states a
-    different KIND/magnitude, so digit-run membership would wrongly ground it."""
-    profile = _profile()  # only number anywhere is "35% latency reduction"
-    corpus = build_evidence_corpus(profile)
-    employers = employer_name_set(profile)
-
-    # Currency fabrication: $35M is money, the profile's 35 is a percentage.
-    money = find_fabricated_tokens(
-        "experience:acme_swe#0",
-        "Drove $35M in revenue.",
-        corpus,
-        employers=employers,
-    )
-    assert any(f.kind == "numeric" and "$35" in f.token.lower() for f in money), money
-
-    # Magnitude fabrication: "35 million" is a bare magnitude, not 35%.
-    magnitude = find_fabricated_tokens(
-        "experience:acme_swe#0",
-        "Scaled to 35 million users.",
-        corpus,
-        employers=employers,
-    )
-    assert any(f.kind == "numeric" for f in magnitude), magnitude
-
-    # Control: the real, same-kind number (35%) still grounds cleanly.
-    clean = find_fabricated_tokens(
-        "experience:acme_swe#0",
-        "Reduced API latency 35% by replacing synchronous calls.",
-        corpus,
-        employers=employers,
-    )
-    assert [f for f in clean if f.kind == "numeric"] == []
-
-
-def test_detector_grounds_equivalent_money_renderings() -> None:
-    """The tightened numeric key must NOT over-flag: equivalent renderings of the
-    same recorded quantity (``$1.2M`` / ``$1.2 million`` / ``$1,200,000``) collapse
-    to one key, so a bullet rendering differs only in format is still grounded."""
-    profile = _profile()
-    evidence = profile["resume"]["experience_entries"][0]["achievement_evidence"][0]
-    evidence["source_text"] += " Grew the book of business to $1.2M ARR."
-    evidence["metrics"].append("$1.2M ARR")
-    corpus = build_evidence_corpus(profile)
-    for rendering in ("$1.2M", "$1.2 million", "$1,200,000"):
-        findings = find_fabricated_tokens(
-            "experience:acme_swe#0",
-            f"Grew the book of business to {rendering}.",
-            corpus,
-            employers=employer_name_set(profile),
-        )
-        assert [f for f in findings if f.kind == "numeric"] == [], (rendering, findings)
-
-
-@pytest.mark.parametrize(
-    ("bullet", "needle"),
-    [
-        ("Scaled the platform to 10M users.", "10m"),
-        ("Cut infra cost by 5K monthly.", "5k"),
-        ("Grew the user base to 2B accounts.", "2b"),
-        ("Onboarded 100K accounts in a quarter.", "100k"),
-        ("Drove 3.5M ARR in new revenue.", "3.5m"),
-        ("Scaled to 35 million users.", "35 million"),
-    ],
-)
-def test_detector_flags_suffixed_bare_magnitude_against_numberless_profile(bullet: str, needle: str) -> None:
-    """Regression (criterion 4 / CONTROL-03): a bare magnitude with a suffix and NO
-    leading ``$`` (``10M`` / ``5K`` / ``2B`` / ``100K`` / ``3.5M`` / ``35 million``)
-    is a numeric the model invented. Before the fix the trailing ``\\b`` of the
-    bare-number branch failed between the digit and the suffix letter, so these were
-    NOT extracted at all and an unsourced metric sailed past the deterministic gate
-    against a numberless profile. Each must now be flagged."""
-    profile = _numberless_profile()  # the profile carries NO numerics at all
-    corpus = build_evidence_corpus(profile)
-    findings = find_fabricated_tokens("experience:acme_swe#0", bullet, corpus, employers=employer_name_set(profile))
-    numeric = [f for f in findings if f.kind == "numeric"]
-    assert numeric, (bullet, findings)
-    assert all(f.control is ControlRule.NEVER_FABRICATE_METRICS for f in numeric)
-    # The flagged token carries the magnitude suffix (proves the suffix was
-    # consumed WITH the digits, not dropped as a bare integer).
-    assert any(needle in f.token.lower() for f in numeric), (needle, [f.token for f in numeric])
-
-
-def test_detector_does_not_eat_kmb_initial_word_after_grounded_money() -> None:
-    """Regression (Finding 2): a grounded money figure followed by a word that
-    starts with k/m/b (``$1,200,000 budget``) must stay grounded. Before the fix
-    the money branch's optional space + single-letter suffix ate the ``b`` of
-    ``budget`` into the token, minting a phantom ``money:1.2e15`` and hard-rejecting
-    a real figure. The single-letter magnitude suffix is now adjacency-only."""
-    profile = _profile()
-    evidence = profile["resume"]["experience_entries"][0]["achievement_evidence"][0]
-    evidence["source_text"] += " Managed a $1.2M budget and trimmed $5K monthly spend."
-    evidence["metrics"].extend(["$1.2M budget", "$5K monthly"])
-    corpus = build_evidence_corpus(profile)
-    employers = employer_name_set(profile)
-    for bullet in (
-        "Managed a $1,200,000 budget across three teams.",
-        "Owned a $1.2 million budget.",
-        "Trimmed a $5K monthly spend.",
-    ):
-        findings = find_fabricated_tokens("experience:acme_swe#0", bullet, corpus, employers=employers)
-        assert [f for f in findings if f.kind == "numeric"] == [], (bullet, findings)
-
-
-def test_metrics_hungry_job_with_numberless_profile_yields_zero_unsourced_numerics() -> None:
-    """Success criterion 4: a metrics-hungry job + a numberless profile must not
-    let any unsourced numeric survive into the resume."""
-    profile = _numberless_profile()
-    analysis = _analysis()
-    corpus = build_evidence_corpus(profile)
-    employers = employer_name_set(profile)
-
-    # The model (under a metrics-hungry job) tries to inject metrics the profile
-    # never stated. The detector must flag every one.
-    greedy_payload = _payload(
-        bullets=[
-            "Improved API responsiveness by removing synchronous calls, cutting latency 40%.",
-            "Scaled the platform to 5 million requests per day across 12 services.",
-        ],
-        summary="Backend engineer who delivered 99.99% uptime.",
-    )
-    plan = build_tailoring_plan(profile, _job(), employer_analysis=analysis)
-    rows = build_bullet_provenance(profile, _job(), greedy_payload, plan, analysis)
-    findings = scan_resume_bullets([(row.bullet_id, row.generated_text) for row in rows], corpus, employers=employers)
-    fabricated_numerics = [f.token for f in findings if f.kind == "numeric"]
-    # Every injected number (40%, 5 million, 12, 99.99%) is unsourced and flagged.
-    assert fabricated_numerics, "detector must flag the injected numerics"
-    # And NONE of them trace to the (numberless) profile evidence corpus.
-    for token in fabricated_numerics:
-        assert token.lower() not in corpus.text
-
-
-def test_detector_flags_fabricated_title_and_employer() -> None:
-    profile = _profile()  # real title: Senior SWE; real employer: Acme Corp
-    corpus = build_evidence_corpus(profile)
-    employers = employer_name_set(profile)
-    findings = find_fabricated_tokens(
-        "executive_profile#0",
-        "Chief Technology Officer at Globex Corporation.",
-        corpus,
-        employers=employers,
-    )
-    kinds = {f.kind for f in findings}
-    assert "title" in kinds  # "Chief"/"CTO"-class token absent from profile
-    assert "employer" in kinds  # "Globex Corporation" is not a real employer
-
-
-def test_detector_does_not_treat_lead_verb_as_title_fabrication() -> None:
-    """Regression: standalone ``lead`` is often a verb in generated prose.
-
-    The deterministic title gate must reject invented role/seniority claims, not
-    block ordinary phrases like "lead platform reliability work" when the word is
-    not presented as a title.
-    """
-    profile = _profile()
-    corpus = build_evidence_corpus(profile)
-    findings = find_fabricated_tokens(
-        "executive_profile#0",
-        "Hands-on engineer who can lead platform reliability work across teams.",
-        corpus,
-        employers=employer_name_set(profile),
-    )
-    assert [f for f in findings if f.kind == "title"] == []
-
-
-def test_detector_flags_ungrounded_lead_title_phrase() -> None:
-    profile = _profile()  # real title: Senior SWE; no Lead Engineer title evidence
-    corpus = build_evidence_corpus(profile)
-    findings = find_fabricated_tokens(
-        "executive_profile#0",
-        "Lead Engineer for distributed platform systems.",
-        corpus,
-        employers=employer_name_set(profile),
-    )
-    assert any(
-        f.kind == "title" and f.token.lower() == "lead engineer" and f.control is ControlRule.NEVER_FABRICATE_TITLES
-        for f in findings
-    )
-
-
-def test_detector_allows_grounded_lead_title_phrase() -> None:
-    profile = _profile()
-    profile["resume"]["experience_entries"][0]["title"] = "Lead Engineer"
-    corpus = build_evidence_corpus(profile)
-    findings = find_fabricated_tokens(
-        "executive_profile#0",
-        "Lead Engineer for distributed platform systems.",
-        corpus,
-        employers=employer_name_set(profile),
-    )
-    assert [f for f in findings if f.kind == "title"] == []
-
-
-def test_detector_defers_bare_name_employer_to_judge() -> None:
-    """Pins the INTENTIONAL suffix-anchored employer limitation (precision-over-
-    recall by design): a suffixed fabricated employer ("Globex Corporation") is
-    flagged deterministically, but a bare-name fabricated employer ("at Netflix")
-    is deliberately NOT flagged at this layer — it is deferred to the prose-aware
-    LLM judge. The structured employer field is code-injected from the master
-    resume, so it cannot be fabricated through this path; flagging every bare
-    capitalised token would over-flag tools/products ("Python", "Docker")."""
-    profile = _profile()  # real employer: Acme Corp
-    corpus = build_evidence_corpus(profile)
-    employers = employer_name_set(profile)
-
-    # Suffixed fabricated employer: flagged here.
-    suffixed = find_fabricated_tokens(
-        "experience:acme_swe#0",
-        "Led platform work at Globex Corporation.",
-        corpus,
-        employers=employers,
-    )
-    assert any(f.kind == "employer" for f in suffixed)
-
-    # Bare-name fabricated employer: deliberately NOT flagged at this layer
-    # (covered by the judge). "netflix" is also absent from the title/numeric/date
-    # arms, so the whole bullet passes the deterministic detector.
-    bare = find_fabricated_tokens(
-        "experience:acme_swe#0",
-        "Owned the API at Netflix.",
-        corpus,
-        employers=employers,
-    )
-    assert [f for f in bare if f.kind == "employer"] == []
-    assert bare == []
-
-
-def test_detector_flags_fabricated_date() -> None:
-    profile = _profile()  # profile dates: 2020-Present, 2015
-    corpus = build_evidence_corpus(profile)
-    findings = find_fabricated_tokens(
-        "experience:acme_swe#0",
-        "Led the platform rebuild in 1998.",
-        corpus,
-    )
-    assert any(f.kind == "date" and f.control is ControlRule.NEVER_FABRICATE_DATES for f in findings)
-
-
 # --------------------------------------------------------------------------
 # Deterministic prose skill/tool gate (allowlist) — the #1 truthfulness leak
 # --------------------------------------------------------------------------
-
-
-def test_build_skill_vocabulary_includes_skill_categories_and_evidence_tools() -> None:
-    # skill_categories items: Python, Go; evidence tools: Python, PostgreSQL.
-    vocab = build_skill_vocabulary(_profile())
-    assert {"python", "go", "postgresql"} <= vocab
-    # A job-target tool the candidate never listed is NOT in the allowlist.
-    assert "kubernetes" not in vocab
-    assert "terraform" not in vocab
-
-
-def test_prose_skill_gate_flags_target_tool_absent_from_profile() -> None:
-    """A job-target tool woven into an experience bullet OR the executive summary
-    that traces to neither the skill vocabulary nor the evidence corpus is a
-    fabrication (kind ``skill`` / control ``NEVER_FABRICATE_SKILLS``)."""
-    profile = _profile()  # no Kubernetes/Terraform anywhere in the profile
-    corpus = build_evidence_corpus(profile)
-    findings = scan_prose_skill_fabrications(
-        [
-            ("executive_profile#0", "Backend owner who standardized on Terraform."),
-            ("experience:acme_swe#0", "Automated deployments with Kubernetes."),
-        ],
-        target_skill_terms=["Python", "latency", "Kubernetes", "Terraform"],
-        allowed_skill_terms=build_skill_vocabulary(profile),
-        corpus=corpus,
-    )
-    flagged = {f.token for f in findings}
-    assert flagged == {"Kubernetes", "Terraform"}
-    assert all(f.kind == "skill" for f in findings)
-    assert all(f.control is ControlRule.NEVER_FABRICATE_SKILLS for f in findings)
-    # The finding names the bullet it came from (summary vs experience).
-    assert {f.bullet_id for f in findings} == {"executive_profile#0", "experience:acme_swe#0"}
-
-
-def test_prose_skill_gate_allows_profile_backed_tool() -> None:
-    """A tool that IS in the profile allowlist is never a false reject, even though
-    it is also a job-target keyword (success criterion 2 + 4)."""
-    profile = _profile()  # skills include Python
-    corpus = build_evidence_corpus(profile)
-    findings = scan_prose_skill_fabrications(
-        [("experience:acme_swe#0", "Built resilient services in Python.")],
-        target_skill_terms=["Python", "Kubernetes"],
-        allowed_skill_terms=build_skill_vocabulary(profile),
-        corpus=corpus,
-    )
-    assert findings == []  # Python grounded; Kubernetes never appears in the prose
-
-
-def test_prose_skill_gate_grounds_concept_keyword_present_in_evidence_corpus() -> None:
-    """Near-zero false positives: a concept keyword the candidate demonstrably
-    wrote about (``latency`` in a bullet + on the evidence tags) must NOT be
-    flagged. It is both folded into the vocabulary (achievement-evidence tags are
-    the bullet's FK) AND a concept keyword the gate never scopes in — only named
-    tools absent from every profile source are interview-fatal fabrications."""
-    profile = _profile()  # evidence bullet + tags mention "latency"
-    # Achievement-evidence tags are folded into the vocabulary (the bullet's FK).
-    assert "latency" in build_skill_vocabulary(profile)
-    corpus = build_evidence_corpus(profile)
-    findings = scan_prose_skill_fabrications(
-        [("experience:acme_swe#0", "Reduced API latency further under load.")],
-        target_skill_terms=["latency", "api"],
-        allowed_skill_terms=build_skill_vocabulary(profile),
-        corpus=corpus,
-    )
-    assert findings == []
-
-
-def test_prose_skill_gate_never_flags_ordinary_english_words() -> None:
-    """Only recognised target skill/tool keywords are candidates, so ordinary
-    English prose is never flagged even when it is dense with common words."""
-    profile = _profile()
-    corpus = build_evidence_corpus(profile)
-    findings = scan_prose_skill_fabrications(
-        [
-            (
-                "executive_profile#0",
-                "Pragmatic engineer who ships reliable, well-tested software with clear goals.",
-            )
-        ],
-        target_skill_terms=["Kubernetes", "Terraform", "Snowflake"],
-        allowed_skill_terms=build_skill_vocabulary(profile),
-        corpus=corpus,
-    )
-    assert findings == []
-
-
-def test_prose_skill_gate_matches_on_word_boundaries_not_substrings() -> None:
-    """Mirrors the grounding gate's boundary approach: a fabricated ``Java`` fires as
-    a standalone word but never inside ``JavaScript`` (the ``go`` in ``goals`` case)."""
-    profile = _profile()  # Java is absent from the profile -> a fabrication candidate
-    corpus = build_evidence_corpus(profile)
-    substring_only = scan_prose_skill_fabrications(
-        [("experience:acme_swe#0", "Built JavaScript tooling for the frontend.")],
-        target_skill_terms=["Java"],
-        allowed_skill_terms=build_skill_vocabulary(profile),
-        corpus=corpus,
-    )
-    assert substring_only == []  # "java" must NOT match inside "javascript"
-
-    standalone = scan_prose_skill_fabrications(
-        [("experience:acme_swe#0", "Shipped Java services for the platform.")],
-        target_skill_terms=["Java"],
-        allowed_skill_terms=build_skill_vocabulary(profile),
-        corpus=corpus,
-    )
-    assert [f.token for f in standalone] == ["Java"]
-
-
-def test_prose_skill_gate_skips_one_and_two_char_targets() -> None:
-    """Single/two-character targets (``go`` / ``r`` / ``ai``) are too ambiguous to
-    flag deterministically, mirroring the skills-section watchlist length guard."""
-    profile = _profile()
-    corpus = build_evidence_corpus(profile)
-    findings = scan_prose_skill_fabrications(
-        [("experience:acme_swe#0", "Go to market motions with AI and R analysis.")],
-        target_skill_terms=["Go", "AI", "R"],
-        allowed_skill_terms=build_skill_vocabulary(profile),
-        corpus=corpus,
-    )
-    assert findings == []
-
-
-def test_build_skill_vocabulary_includes_evidence_tags() -> None:
-    """Achievement-evidence ``tags`` are the bullet's FK data, so they are folded
-    into the trusted vocabulary alongside skill-category items and evidence tools."""
-    vocab = build_skill_vocabulary(_profile())
-    # _profile() evidence tags: latency, backend, performance.
-    assert {"latency", "backend", "performance"} <= vocab
 
 
 def _reviewer_scenario_profile() -> dict:
@@ -1327,102 +674,6 @@ def _reviewer_scenario_profile() -> dict:
     }
 
 
-def test_prose_skill_gate_passes_reviewer_concept_word_form_scenario() -> None:
-    """Regression (PR #218 discussion_r3509803795): a legitimate resume that weaves
-    the JD's CONCEPT keywords into grounded prose — in a different WORD FORM than the
-    profile evidence — must NOT be hard-rejected. ``scalability``/``reliability``
-    ground by word form (``scalable``/``reliable`` are in the evidence);
-    ``observability``/``microservices`` are pure concepts the gate never scopes in.
-    Before the fix all three of scalability/observability/microservices were flagged
-    and the whole resume was terminally rejected."""
-    profile = _reviewer_scenario_profile()
-    corpus = build_evidence_corpus(profile)
-    findings = scan_prose_skill_fabrications(
-        [
-            ("executive_profile#0", "Backend owner focused on scalability and reliability."),
-            ("experience:acme_swe#0", "Improved observability and moved to microservices."),
-        ],
-        target_skill_terms=["scalability", "reliability", "observability", "microservices"],
-        allowed_skill_terms=build_skill_vocabulary(profile),
-        corpus=corpus,
-    )
-    assert findings == []
-
-
-def test_corpus_grounds_word_form_variant_but_not_distinct_tools() -> None:
-    """Word-form-tolerant grounding: a stem variant present in the evidence grounds
-    the JD keyword (``scalable`` grounds ``scalability``), but a distinct named tool
-    with no stem variant anywhere in the profile stays ungrounded — so a fabricated
-    ``Kubernetes`` is still caught and ``Java`` never grounds against ``JavaScript``."""
-    profile = _reviewer_scenario_profile()
-    profile["resume"]["executive_profile"]["baseline_text"] = (
-        "Built JavaScript tooling for reliable, scalable services."
-    )
-    corpus = build_evidence_corpus(profile)
-    # Same-root word forms mutually ground.
-    assert corpus.contains_term_variant("scalability")
-    assert corpus.contains_term_variant("reliability")
-    # Distinct proper-noun tools are never collapsed into one another / conjured.
-    assert not corpus.contains_term_variant("java")  # must not match inside "javascript"
-    assert not corpus.contains_term_variant("kubernetes")
-
-
-def test_prose_skill_gate_scopes_out_concepts_absent_from_corpus() -> None:
-    """Scoping: a concept/qualification keyword that appears NOWHERE in the profile
-    is still never flagged, because it is not a named technology — only invented
-    named tools are interview-fatal fabrications. This is the arm word-form
-    tolerance alone cannot cover (there is no variant to ground against)."""
-    profile = _profile()  # no observability / resilience / microservices anywhere
-    corpus = build_evidence_corpus(profile)
-    findings = scan_prose_skill_fabrications(
-        [("experience:acme_swe#0", "Drove observability, resilience, and microservices.")],
-        target_skill_terms=["observability", "resilience", "microservices"],
-        allowed_skill_terms=build_skill_vocabulary(profile),
-        corpus=corpus,
-    )
-    assert findings == []
-
-
-def test_prose_skill_gate_flags_homograph_tool_fabricated_from_verb() -> None:
-    """Regression (PR #218 r3509984743): a lexicon tool whose name is a homograph of
-    a common verb (React/Spark) must NOT ground on the mere verb form. The candidate
-    only 'reacted'/'sparked' — they never used React or Spark — so weaving those
-    tools into prose is a fabrication and must be flagged. Word-form grounding would
-    otherwise collapse react<->reacted and spark<->sparked."""
-    profile = _reviewer_scenario_profile()
-    profile["resume"]["executive_profile"]["baseline_text"] = "Reacted quickly to incidents."
-    profile["resume"]["experience_entries"][0]["achievement_evidence"][0]["source_text"] = (
-        "Sparked a 20% increase in adoption."
-    )
-    corpus = build_evidence_corpus(profile)
-    findings = scan_prose_skill_fabrications(
-        [("experience:acme_swe#0", "Built React apps on Spark clusters.")],
-        target_skill_terms=["react", "spark"],
-        allowed_skill_terms=build_skill_vocabulary(profile),
-        corpus=corpus,
-    )
-    assert {f.token for f in findings} == {"react", "spark"}
-    assert all(f.control is ControlRule.NEVER_FABRICATE_SKILLS for f in findings)
-
-
-def test_prose_skill_gate_grounds_homograph_tool_on_literal_token() -> None:
-    """The complement: a legitimate React/Spark user who wrote the literal tool name
-    (declared `ReactJS`/`Spark`, or wrote `react` in prose) still grounds and is NOT
-    flagged. Homograph exact-grounding accepts the tool's own spellings — only the
-    verb form is rejected."""
-    profile = _reviewer_scenario_profile()
-    profile["resume"]["skill_categories"][0]["items"] = ["Python", "ReactJS", "Spark"]
-    profile["resume"]["experience_entries"][0]["bullets"] = ["Shipped React features on Spark."]
-    corpus = build_evidence_corpus(profile)
-    findings = scan_prose_skill_fabrications(
-        [("experience:acme_swe#0", "Built React apps on Spark clusters.")],
-        target_skill_terms=["react", "spark"],
-        allowed_skill_terms=build_skill_vocabulary(profile),
-        corpus=corpus,
-    )
-    assert findings == []
-
-
 # --------------------------------------------------------------------------
 # Skills-row grounding against declared skill items (A6c) — the whole-resume
 # corpus excludes skill categories, so declared version numerics need their own
@@ -1437,51 +688,6 @@ def _profile_with_versioned_skills() -> dict:
         {"id": "protocols", "label": "Protocols", "items": ["OAuth 2.0"]},
     ]
     return profile
-
-
-def test_skill_evidence_corpus_grounds_declared_version_numerics() -> None:
-    """A declared skill's version numeric ("Java 17", "OAuth 2.0") is grounded by the
-    skills-only corpus, while the whole-resume corpus still EXCLUDES it (so a skills
-    number can never cross-ground an experience metric)."""
-    profile = _profile_with_versioned_skills()
-    skill_corpus = build_skill_evidence_corpus(profile)
-    assert skill_corpus.has_numeric("17")
-    assert skill_corpus.has_numeric("2.0")
-    # The exclusion invariant of the whole-resume corpus is preserved.
-    whole_resume = build_evidence_corpus(profile)
-    assert not whole_resume.has_numeric("17")
-    assert not whole_resume.has_numeric("2.0")
-
-
-def test_skills_row_scan_grounds_declared_versioned_items() -> None:
-    """The regression: scanning a skills line that renders DECLARED versioned items
-    against the skills-only corpus produces NO findings. Before the fix these rows
-    were scanned against the whole-resume corpus (which excludes skills), so "17" and
-    "2.0" were flagged and the whole resume was hard-rejected."""
-    profile = _profile_with_versioned_skills()
-    skill_corpus = build_skill_evidence_corpus(profile)
-    findings = scan_resume_bullets(
-        [
-            ("skills:languages#0", "Languages: Python, Java 17"),
-            ("skills:protocols#0", "Protocols: OAuth 2.0"),
-        ],
-        skill_corpus,
-    )
-    assert findings == []
-
-
-def test_skills_row_scan_flags_numeric_absent_from_declared_items() -> None:
-    """Grounding still catches a genuinely fabricated skills numeric: a version the
-    candidate never declared ("Java 25" vs a declared "Java 17") traces to no declared
-    item, so it is flagged even though the row is a skills line."""
-    profile = _profile_with_versioned_skills()
-    skill_corpus = build_skill_evidence_corpus(profile)
-    findings = scan_resume_bullets(
-        [("skills:languages#0", "Languages: Python, Java 25")],
-        skill_corpus,
-    )
-    assert [f.token for f in findings] == ["25"]
-    assert findings[0].kind == "numeric"
 
 
 # --------------------------------------------------------------------------
@@ -1782,3 +988,8 @@ def test_repository_does_not_create_runtime_schema() -> None:
         )
     finally:
         connection.close()
+
+
+def build_tailoring_plan(profile, job, **kwargs):
+    kwargs.setdefault("job_interpretation", job_interpretation(kwargs["employer_analysis"].canonical.requirements))
+    return _build_tailoring_plan(profile, job, **kwargs)

@@ -71,7 +71,6 @@ class JobPipelineWorkflowInput:
     retailor: bool = False
     tailor_models: tuple[str, ...] = ()
     tailor_judge_model: str | None = None
-    tailor_judge_min_score: float | None = None
     job_id: JobId | None = None
     job_ids: tuple[JobId, ...] = ()
     # Independently frozen ``pending_cover`` backlog for a resolved global
@@ -336,9 +335,7 @@ def _resolved_material_dispatch_job_ids(
         # ``job_ids`` holds the frozen Tailor backlog in these runs; Cover
         # unions its own frozen backlog with the subset Tailor approved. A
         # ``None`` derived value means Tailor no-opped on an empty cohort.
-        return _canonical_job_ids(
-            (*payload.cover_job_ids, *(derived_preparation_job_ids or ()))
-        )
+        return _canonical_job_ids((*payload.cover_job_ids, *(derived_preparation_job_ids or ())))
     # Cover is the only requested material stage: its frozen backlog rides in
     # ``job_ids`` like any other single-cohort selection.
     return _canonical_job_ids((*payload.cover_job_ids, *_selected_job_ids(payload)))
@@ -426,7 +423,6 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
                 validation_mode=payload.validation_mode,
                 tailor_models=payload.tailor_models,
                 tailor_judge_model=payload.tailor_judge_model,
-                tailor_judge_min_score=payload.tailor_judge_min_score,
                 source_ids=payload.source_ids,
                 llm_model=payload.llm_model,
             ),
@@ -488,15 +484,11 @@ async def _execute_stage(stage: str, payload: JobPipelineWorkflowInput) -> Any:
                 dry_run=payload.dry_run,
                 retailor=payload.retailor,
                 job_ids=_selected_job_ids(payload),
-                current_policy_only=(
-                    payload.tailor_current_policy_only
-                    and not payload.material_selection_resolved
-                ),
+                current_policy_only=(payload.tailor_current_policy_only and not payload.material_selection_resolved),
                 suppress_existing_artifacts=payload.suppress_existing_artifacts,
                 allow_low_fit_override=payload.allow_low_fit_override,
                 tailor_models=payload.tailor_models,
                 tailor_judge_model=payload.tailor_judge_model,
-                tailor_judge_min_score=payload.tailor_judge_min_score,
                 llm_model=payload.llm_model,
                 workflow_id=activity_owner,
                 recovery_workflow_id=workflow_id if payload.automatic_recovery else None,
@@ -560,13 +552,7 @@ async def _check_spend(payload: JobPipelineWorkflowInput) -> None:
         "cover": "tailoring",
         "apply": "apply",
     }
-    lanes = tuple(
-        dict.fromkeys(
-            lane_by_stage[stage]
-            for stage in payload.stages
-            if stage in lane_by_stage
-        )
-    )
+    lanes = tuple(dict.fromkeys(lane_by_stage[stage] for stage in payload.stages if stage in lane_by_stage))
     for lane in lanes:
         await workflow.execute_activity(
             check_spend_budget,

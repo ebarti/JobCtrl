@@ -1,3 +1,4 @@
+import { refreshE2eWorkerHeartbeat } from "../fixtures/e2e-state.js";
 import Database from "better-sqlite3";
 import { expect, test, type Page } from "@playwright/test";
 import { checkA11y, injectAxe } from "axe-playwright";
@@ -82,6 +83,10 @@ function inspectionResponse(response: { url(): string; request(): { method(): st
   return new URL(response.url()).pathname === "/v1/profile/required-bullet-suggestions"
     && response.request().method() === "POST";
 }
+
+test.beforeEach(() => {
+  if (process.env["JOBCTRL_E2E_ISOLATED"] === "1") refreshE2eWorkerHeartbeat();
+});
 
 test("Required coaching inspects saved sources, rejects without writes, and accepts one edit through reload @mobile", async ({ page, baseURL }, testInfo) => {
   const { apiOrigin, entryId, saved } = await seedRequiredBullets(page, baseURL!);
@@ -297,7 +302,8 @@ test("a same-bullet manual edit during acceptance keeps its Required pin through
     .getByRole("button", { name: "Accept" }).click();
   await expect.poll(() => didHold).toBe(true);
   await page.getByRole("button", { name: /^Experience entries\b/ }).click();
-  const bullet = page.getByRole("textbox", { name: "Bullet 1", exact: true });
+  const bullet = page.locator(".experience-repeat-section").first()
+    .getByRole("textbox", { name: "Bullet 1", exact: true });
   const manualBullet = "Helped with incident response during synthetic drills.";
   await bullet.fill(manualBullet);
   releaseSave();
@@ -352,7 +358,8 @@ test("a committed cleanup with a lost response rebases a different bullet edit",
     .getByRole("button", { name: "Accept" }).click();
   await expect.poll(() => committed).toBe(true);
   await page.getByRole("button", { name: /^Experience entries\b/ }).click();
-  const optional = page.getByRole("textbox", { name: "Bullet 3", exact: true });
+  const experience = page.locator(".experience-repeat-section").first();
+  const optional = experience.getByRole("textbox", { name: "Bullet 3", exact: true });
   const manualOptional = "Documented synthetic runbooks with a manual revision.";
   await optional.fill(manualOptional);
   releaseResponse();
@@ -363,7 +370,7 @@ test("a committed cleanup with a lost response rebases a different bullet edit",
   await expect(page.getByRole("button", { name: "Rebase edits onto saved profile" })).toBeVisible();
   await page.getByRole("button", { name: "Rebase edits onto saved profile" }).click();
 
-  await expect(page.getByRole("textbox", { name: "Bullet 1", exact: true })).toHaveValue(cleanedBullet);
+  await expect(experience.getByRole("textbox", { name: "Bullet 1", exact: true })).toHaveValue(cleanedBullet);
   await expect(optional).toHaveValue(manualOptional);
   await page.getByRole("button", { name: "Save changes" }).click();
   await expect.poll(async () => (await (await page.request.get(`${apiOrigin}/v1/profile`)).json())

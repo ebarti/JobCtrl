@@ -9,12 +9,13 @@ from datetime import datetime, timezone
 from statistics import median
 from typing import Literal
 
-from jobctrl.domain.compensation.benchmarks import (
-    classify_role, classify_seniority, resolve_country_code, resolve_reported_seniority,
-)
+from jobctrl.domain.compensation.classification import BenchmarkClassification
+from jobctrl.domain.enrichment.interpretation import JobInterpretation
+from jobctrl.domain.job_content_identity import normalize_identity_text as canonical_company_key
+from jobctrl.domain.determinations import DeterminationFailure
 from jobctrl.domain.identifiers import JobId, canonical_job_id
 
-ESTIMATOR_VERSION = "company-role-reported-compensation-v4"
+ESTIMATOR_VERSION = "company-role-reported-compensation-v5-determinations"
 
 MarketEstimateState = Literal[
     "not_requested",
@@ -140,7 +141,6 @@ SUPPORTED_COMPONENTS = frozenset({"base_salary", "total_compensation"})
 STALE_THRESHOLD_MONTHS = 36
 LOW_SAMPLE_THRESHOLD = 3
 MIN_ESTIMATE_SCORE = 0.62
-MIN_CRITICAL_FACTOR_SCORE = 0.55
 MAX_DISPERSION_RATIO = 0.45
 POSTED_CONFLICT_RATIO = 0.30
 SOURCE_DISPLAY_NAMES: dict[MarketSourceId, str] = {
@@ -174,97 +174,6 @@ UNSAFE_SOURCE_TEXT_PATTERNS = tuple(
         r"/users/",
         r"\\users\\",
     )
-)
-LEGAL_SUFFIX_RE = re.compile(
-    r"\b(?:inc|incorporated|ltd|limited|llc|gmbh|ag|sa|sas|sarl|sl|plc|bv|nv|ab|oy|srl|spa)\b\.?",
-    re.IGNORECASE,
-)
-SENIORITY_WORDS = frozenset(
-    {
-        "ceo",
-        "chief",
-        "cio",
-        "ciso",
-        "coo",
-        "cpo",
-        "cto",
-        "junior",
-        "jr",
-        "mid",
-        "senior",
-        "sr",
-        "staff",
-        "principal",
-        "lead",
-        "manager",
-        "director",
-        "head",
-        "president",
-        "vice",
-        "vp",
-    }
-)
-ROLE_STOP_WORDS = frozenset({"remote", "full", "time", "the"})
-ROLE_FAMILY_MARKERS: dict[str, frozenset[str]] = {
-    "engineering": frozenset(
-        {
-            "architect",
-            "backend",
-            "developer",
-            "devops",
-            "engineer",
-            "engineering",
-            "frontend",
-            "golang",
-            "java",
-            "kotlin",
-            "mobile",
-            "node",
-            "platform",
-            "python",
-            "software",
-            "tech",
-            "technical",
-            "technology",
-        }
-    ),
-    "security": frozenset({"security", "privacy", "trust", "infrastructure", "operations"}),
-    "data": frozenset({"ai", "analytics", "data", "ml", "machine", "omnichannel"}),
-    "leadership": frozenset({"chief", "cto", "director", "head", "manager", "principal", "staff", "vp"}),
-}
-EUROPE_MARKERS = frozenset(
-    {
-        "europe",
-        "eu",
-        "emea",
-        "spain",
-        "madrid",
-        "barcelona",
-        "france",
-        "germany",
-        "netherlands",
-        "ireland",
-        "united kingdom",
-        "uk",
-        "switzerland",
-        "poland",
-        "portugal",
-        "italy",
-        "sweden",
-        "denmark",
-        "norway",
-        "andorra",
-        "austria",
-        "belgium",
-        "czechia",
-        "czech",
-        "finland",
-        "greece",
-        "hungary",
-        "luxembourg",
-        "slovakia",
-        "slovenia",
-    }
 )
 
 
@@ -312,6 +221,11 @@ class MarketEvidenceRow:
     level_score: float
     location_score: float
     freshness_score: float
+    determination_id: str | None = None
+    classification_entity_id: str | None = None
+    occupation_family_code: str | None = None
+    seniority_code: str | None = None
+    country_codes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -333,6 +247,9 @@ class ReportedCompensationObservation:
     sample_count: int | None = None
     attribution: str | None = None
     source_url: str | None = None
+    classification: BenchmarkClassification | None = None
+    determination_id: str | None = None
+    classification_entity_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -373,564 +290,116 @@ class MarketCompensationEstimate:
     match_scope: MarketMatchScope = "none"
 
 
-def accepted_estimate_matches_job(
-    estimate: MarketCompensationEstimate | None, *, title: str, location: str | None,
-    target_country_code: str | None = None,
-    job_context: str | None = None,
-    accepted_role_family_code: str | None = None,
-) -> bool:
-    """Check retained evidence against current job inputs across estimator encodings."""
-
-    if estimate is None or estimate.estimate_state != "estimated_range" or not estimate.role_title:
+def accepted_estimate_matches_job(estimate, *, interpretation: JobInterpretation) -> bool:
+    if estimate is None or estimate.estimate_state != "estimated_range":
         return False
-    requested = classify_role(title, job_context=job_context)
-    accepted = classify_role(estimate.role_title,
-                             job_context=job_context if estimate.role_title == title else None)
-    if (not requested.role_family_code
-            or requested.role_family_code != (accepted_role_family_code or accepted.role_family_code)
-            or requested.seniority_label != accepted.seniority_label):
-        return False
-    country = resolve_country_code(location)
-    if accepted_role_family_code is None:
-        # v4 accepted a narrow same-location Principal software/infrastructure
-        # adjacency before the source-family guard existed. Keep that already
-        # accepted artifact only while its job title is unchanged; the current
-        # estimator still cannot create a new cross-family range.
-        legacy_adjacent_principal = (
-            estimate.estimator_version == ESTIMATOR_VERSION
-            and estimate.match_scope == "same_location_role_fallback"
-            and estimate.role_title == title
-            and estimate.seniority_label == "staff_plus"
-            and requested.role_family_code == "software_engineering"
-            and requested.seniority_label == "principal"
-            and country is not None
-        )
-        for row in estimate.evidence:
-            reported_family = classify_role(row.role_title).role_family_code
-            if reported_family == requested.role_family_code:
-                continue
-            if (legacy_adjacent_principal
-                    and reported_family == "infrastructure_platform"
-                    and _legacy_infrastructure_engineer_title(row.role_title)
-                    and resolve_country_code(row.location) == country
-                    and _role_score(_normalize_role(title), row.role_title) >= 0.55):
-                continue
-            return False
-    if target_country_code is not None:
-        if country != target_country_code:
-            return False
-    elif not _normalize_location(location):
-        return False
-    else:
-        # Non-canonical estimates keep the estimator's own location semantics:
-        # evidence that resolves to a country must match the job country, while
-        # Europe-wide or unlabeled evidence stays accepted at the same 0.78
-        # ``_location_score`` the estimator used when it produced the range.
-        for row in estimate.evidence:
-            row_country = resolve_country_code(row.location)
-            if country is not None and row_country is not None:
-                if row_country != country:
-                    return False
-            elif _location_score(location, row.location) < 0.78:
-                return False
-    # Old accepted results may themselves contain a wrongly promoted mixed
-    # source bucket. Retention must not perpetuate that unsupported population.
-    return requested.seniority_label == "unknown" or all(
-        resolve_reported_seniority(row.role_title, row.level_label) == requested.seniority_label
+    countries = {place.country_code for place in interpretation.places if place.country_code}
+    return bool(estimate.evidence) and all(
+        row.determination_id
+        and row.occupation_family_code == interpretation.occupation_family.value
+        and row.seniority_code == interpretation.seniority.value
+        and set(row.country_codes) & countries
         for row in estimate.evidence
     )
 
 
-def _legacy_infrastructure_engineer_title(value: str | None) -> bool:
-    """Recognize the accepted v4 occupation, allowing only clear domain suffixes."""
-
-    match = re.fullmatch(r"\s*principal\s+infrastructure\s+engineer\b(.*)", value or "", re.IGNORECASE)
-    if match is None:
-        return False
-    suffix = match.group(1).strip()
-    if not suffix:
-        return True
-    if suffix.startswith("(") and suffix.endswith(")"):
-        domain = suffix[1:-1].strip()
-    elif suffix[0] in {",", "/", "-", "–", "—"}:
-        domain = suffix[1:].strip()
-    else:
-        return False
-    if not re.fullmatch(r"[a-z0-9]+(?:[ &/\-]+[a-z0-9]+)*", domain, re.IGNORECASE):
-        return False
-    tokens = _role_tokens(domain)
-    terminal_domain = bool(tokens) and (
-        tokens[-1] in {"tool", "platform"}
-        or (len(tokens) >= 2 and tokens[-1] == "team" and tokens[-2] in {"tool", "platform"})
-    )
-    return terminal_domain and not set(tokens) & {
-        "engineer", "engineering", "presale", "consultant", "executive", "manager", "director",
-    }
-
-
 def estimate_market_compensation(
     *,
-    job_id: JobId,
-    title: str,
-    company: str | None,
-    location: str | None,
-    job_context: str | None = None,
-    observations: tuple[ReportedCompensationObservation, ...],
-    tenant_id: str = "local",
-    component: str = "total_compensation",
-    seniority_label: str | None = None,
-    posted_annualized_minimum: int | None = None,
-    posted_annualized_maximum: int | None = None,
-    estimated_at: str | None = None,
+    job_id,
+    title,
+    company,
+    location,
+    observations,
+    interpretation: JobInterpretation,
+    tenant_id="local",
+    component="total_compensation",
+    posted_annualized_minimum=None,
+    posted_annualized_maximum=None,
+    estimated_at=None,
 ) -> MarketCompensationEstimate:
-    """Estimate compensation from reported company-role salary observations."""
-
     job_id = canonical_job_id(str(job_id))
     now = estimated_at or datetime.now(timezone.utc).isoformat()
-    warnings: list[MarketWarningCode] = []
-    unsupported_reasons: list[MarketReasonCode] = []
-    source_unavailable_reasons: list[MarketReasonCode] = []
-    insufficient_reasons: list[MarketReasonCode] = []
-    factors: list[MarketConfidenceFactor] = []
-    component_value = _market_component(component)
-
-    normalized_company = _normalize_company(company)
-    normalized_role = _normalize_role(title)
-    inferred_level = seniority_label or _level_from_title(title)
-
-    if component_value is None:
-        unsupported_reasons.append("unsupported_component")
-        factors.append(_factor("component", 0.0, "Unsupported compensation component."))
-        return _estimate(
-            tenant_id=tenant_id,
-            job_id=job_id,
-            state="unsupported",
-            component="total_compensation",
-            factors=factors,
-            unsupported=unsupported_reasons,
-            warnings=warnings,
-            estimated_at=now,
-            company_name=_clean_display(company),
-            normalized_company=normalized_company or None,
-            role_title=_clean_display(title),
-            normalized_role=normalized_role or None,
-        )
-    if not normalized_company:
-        insufficient_reasons.append("missing_company")
-        factors.append(_factor("company", 0.0, "The job has no company name to match reported compensation."))
-        return _estimate(
-            tenant_id=tenant_id,
-            job_id=job_id,
-            state="insufficient_evidence",
-            component=component_value,
-            factors=factors,
-            insufficient=insufficient_reasons,
-            warnings=warnings,
-            estimated_at=now,
-            role_title=_clean_display(title),
-            normalized_role=normalized_role or None,
-        )
-    if not normalized_role:
-        has_title = bool(_clean_display(title))
-        insufficient_reasons.append("weak_role_match" if has_title else "missing_role")
-        factors.append(_factor(
-            "role", 0.0,
-            "The job title does not identify a supported role family."
-            if has_title else "The job title has no role terms to match reported compensation.",
-        ))
-        return _estimate(
-            tenant_id=tenant_id,
-            job_id=job_id,
-            state="insufficient_evidence",
-            component=component_value,
-            factors=factors,
-            insufficient=insufficient_reasons,
-            warnings=warnings,
-            estimated_at=now,
-            company_name=_clean_display(company),
-            normalized_company=normalized_company,
-        )
-
-    reported_observations = tuple(
+    family, level = interpretation.occupation_family.value, interpretation.seniority.value
+    countries = {place.country_code for place in interpretation.places if place.country_code}
+    if any(row.classification is None or not row.determination_id for row in observations):
+        raise DeterminationFailure("benchmark_classification_unavailable")
+    matched = [
         row
         for row in observations
-        if row.source_id != "posted_salary_text" and row.source_provenance != "employer_posted"
-    )
-    unsupported_sources = sorted(
-        str(row.source_id) for row in reported_observations if row.source_id not in MARKET_SOURCE_IDS
-    )
-    if unsupported_sources:
-        unsupported_reasons.append("unsupported_source")
-        factors.append(_factor("company", 0.0, "Unsupported reported-compensation source evidence was rejected."))
-        return _estimate(
-            tenant_id=tenant_id,
-            job_id=job_id,
-            state="unsupported",
-            component=component_value,
-            factors=factors,
-            unsupported=unsupported_reasons,
-            warnings=warnings,
-            estimated_at=now,
-            company_name=_clean_display(company),
-            normalized_company=normalized_company,
-            role_title=_clean_display(title),
-            normalized_role=normalized_role,
-        )
-
-    requested_family = classify_role(title, job_context=job_context).role_family_code
-    if requested_family is None:
-        return _insufficient(
-            tenant_id=tenant_id, job_id=job_id, component=component_value,
-            company=company, normalized_company=normalized_company,
-            role=title, normalized_role=normalized_role,
-            factors=[_factor("role", 0.0, "The current job has no supported role family.")],
-            insufficient=["weak_role_match"], warnings=warnings, estimated_at=now,
-        )
-    component_rows = tuple(
-        row for row in reported_observations if row.source_id in MARKET_SOURCE_IDS and row.component == component_value
-    )
-    if not component_rows:
-        insufficient_reasons.append("missing_reported_observation")
-        factors.append(_factor("component", 0.0, f"No reported compensation observations use {component_value}."))
-        return _insufficient(
-            tenant_id=tenant_id,
-            job_id=job_id,
-            component=component_value,
-            company=company,
-            normalized_company=normalized_company,
-            role=title,
-            normalized_role=normalized_role,
-            factors=factors,
-            insufficient=insufficient_reasons,
-            warnings=warnings,
-            estimated_at=now,
-        )
-    compatible_rows = tuple(
-        row for row in component_rows
-        if classify_role(row.role_title).role_family_code == requested_family
-    )
-    if not compatible_rows:
-        return _insufficient(
-            tenant_id=tenant_id,
-            job_id=job_id,
-            component=component_value,
-            company=company,
-            normalized_company=normalized_company,
-            role=title,
-            normalized_role=normalized_role,
-            factors=[_factor("role", 0.0,
-                             "Reported source roles do not support the job's current role family.")],
-            insufficient=["weak_role_match"],
-            warnings=warnings,
-            estimated_at=now,
-        )
-    component_rows = compatible_rows
-    warnings.extend(_source_sample_warnings(component_rows))
-
-    usable_rows: list[ReportedCompensationObservation] = []
-    for row in component_rows:
-        if row.release_year is not None and _age_months(row.release_year, now) > STALE_THRESHOLD_MONTHS:
-            source_unavailable_reasons.append("stale_source_snapshot")
-            warnings.append("stale_source_snapshot")
-            continue
-        if row.minimum_amount is None and row.maximum_amount is None:
-            insufficient_reasons.append("missing_reported_observation")
-            continue
-        if row.sample_count is not None and row.sample_count <= 0:
-            insufficient_reasons.append("low_sample_count")
-            warnings.append("low_sample_count")
-            continue
-        usable_rows.append(row)
-
-    if source_unavailable_reasons and not usable_rows:
-        factors.append(_factor("freshness", 0.0, "Reported compensation source snapshots are stale."))
-        return _estimate(
-            tenant_id=tenant_id,
-            job_id=job_id,
-            state="source_unavailable",
-            component=component_value,
-            factors=factors,
-            source_unavailable=source_unavailable_reasons,
-            warnings=warnings,
-            estimated_at=now,
-            company_name=_clean_display(company),
-            normalized_company=normalized_company,
-            role_title=_clean_display(title),
-            normalized_role=normalized_role,
-        )
-    if not usable_rows:
-        factors.append(_factor("sample", 0.0, "No reported compensation row had usable amount evidence."))
-        return _insufficient(
-            tenant_id=tenant_id,
-            job_id=job_id,
-            component=component_value,
-            company=company,
-            normalized_company=normalized_company,
-            role=title,
-            normalized_role=normalized_role,
-            factors=factors,
-            insufficient=insufficient_reasons or ["missing_reported_observation"],
-            warnings=warnings,
-            estimated_at=now,
-        )
-
-    company_context_rows = usable_rows
-    requested_seniority = classify_seniority(seniority_label or title)
-    if requested_seniority != "unknown":
-        level_matches = [row for row in usable_rows
-                         if resolve_reported_seniority(row.role_title, row.level_label) == requested_seniority
-                         and _role_score(normalized_role, row.role_title) >= 0.55]
-        # Company-role evidence stays primary: the job's own company rows for the
-        # requested level are kept whatever their geography. Among the remaining
-        # level matches the narrowest geography with evidence wins (country, then
-        # the wider region), so generic aggregates and exact-company rows for a
-        # different level cannot crowd out regional level evidence. Level matches
-        # from another region never replace same-region context on their own; the
-        # requested level is then withheld instead of borrowed.
-        company_matches = [row for row in level_matches
-                           if _company_score(normalized_company, row.company_name) >= 0.95]
-        country = resolve_country_code(location)
-        country_matches = [row for row in level_matches if country and resolve_country_code(row.location) == country]
-        local_matches = [row for row in level_matches if _location_score(location, row.location) >= 0.78]
-        regional_matches = country_matches or local_matches
-        if company_matches or regional_matches:
-            kept = {id(row) for row in company_matches}
-            usable_rows = company_matches + [row for row in regional_matches if id(row) not in kept]
-
-    selected_rows, match_scope, scope_warning = _select_rows(
-        usable_rows,
-        normalized_company=normalized_company,
-        normalized_role=normalized_role,
-        location=location,
-        inferred_level=inferred_level,
-        company_context_rows=company_context_rows,
-    )
-    if scope_warning:
-        warnings.append(scope_warning)
-    if not selected_rows:
-        factors.extend(
-            [
-                _factor("company", 0.0, f"No reported compensation rows matched company {company}."),
-                _factor("role", 0.0, f"No reported compensation rows matched role {title}."),
-            ]
-        )
-        return _insufficient(
-            tenant_id=tenant_id,
-            job_id=job_id,
-            component=component_value,
-            company=company,
-            normalized_company=normalized_company,
-            role=title,
-            normalized_role=normalized_role,
-            factors=factors,
-            insufficient=["missing_reported_observation"],
-            warnings=warnings,
-            estimated_at=now,
-        )
-
-    company_scores = tuple(_company_score(normalized_company, row.company_name) for row in selected_rows)
-    role_scores = tuple(_role_score(normalized_role, row.role_title) for row in selected_rows)
-    level_scores = tuple(
-        0.0 if requested_seniority != "unknown"
-        and resolve_reported_seniority(row.role_title, row.level_label) != requested_seniority
-        else _level_score(inferred_level, resolve_reported_seniority(row.role_title, row.level_label))
-        for row in selected_rows
-    )
-    location_scores = tuple(_location_score(location, row.location) for row in selected_rows)
-    freshness_scores = tuple(_freshness_score(row.release_year, now) for row in selected_rows)
-    source_count = len({row.source_id for row in selected_rows})
-    sample_count = _combined_sample_count(selected_rows)
-    sample_score = _sample_score(sample_count)
-    agreement_score, dispersion_warning, dispersion_insufficient = _agreement_score(selected_rows)
-    company_tier, tier_inferred = _company_tier(selected_rows)
-    tier_score = _tier_score(company_tier, match_scope)
-
-    if tier_inferred:
-        warnings.append("trimodal_tier_inferred")
-    if sample_count is not None and sample_count < LOW_SAMPLE_THRESHOLD:
-        warnings.append("low_sample_count")
-        insufficient_reasons.append("low_sample_count")
-    if min(location_scores) < MIN_CRITICAL_FACTOR_SCORE:
-        warnings.append("location_mismatch")
-        insufficient_reasons.append("weak_location_match")
-    if dispersion_warning:
-        warnings.append("company_role_fallback")
-    if dispersion_insufficient:
-        insufficient_reasons.append("source_dispersion_too_high")
-
-    minimum = min(_row_minimum(row) for row in selected_rows)
-    maximum = max(_row_maximum(row) for row in selected_rows)
-    if _posted_conflicts(minimum, maximum, posted_annualized_minimum, posted_annualized_maximum):
-        warnings.append("source_conflict_with_posted_salary")
-
-    company_score = min(company_scores)
-    if match_scope == "tier_role_fallback":
-        company_score = max(company_score, 0.62)
-    if match_scope == "same_location_role_fallback":
-        company_score = max(company_score, 0.45)
-    if match_scope == "market_baseline_fallback":
-        company_score = max(company_score, 0.32)
-    role_score = min(role_scores)
-    if match_scope == "company_adjacent_role":
-        role_score = max(role_score, 0.62)
-    if match_scope == "market_baseline_fallback":
-        role_score = max(role_score, 0.35)
-    level_score = min(level_scores)
-    location_score = min(location_scores)
-    freshness_score = min(freshness_scores)
-    company_percent = round(company_score * 100)
-    role_percent = round(role_score * 100)
-    level_percent = round(level_score * 100)
-    company_reason = {
-        "exact_company_role": f"Direct reported salary rows matched {company}; company support is {company_percent}%.",
-        "company_adjacent_role": (
-            f"Direct {company} rows matched, but only for adjacent roles; company support is {company_percent}%."
-        ),
-        "tier_role_fallback": (
-            f"No direct {company} salary row matched; comparable companies provide {company_percent}% company support."
-        ),
-        "same_location_role_fallback": (
-            f"No direct {company} salary row matched; comparable roles in the same location provide "
-            f"{company_percent}% company support."
-        ),
-        "market_baseline_fallback": (
-            f"No direct {company} salary row matched; broader market evidence provides {company_percent}% company support."
-        ),
-    }.get(match_scope, f"Company evidence provides {company_percent}% support.")
-    role_reason = f"Selected salary rows provide {role_percent}% role support for {title}."
-    level_reason = (
-        f"The requested {requested_seniority} level has no matching evidence; observed source levels: "
-        + ", ".join(sorted({str(row.level_label or "unknown") for row in selected_rows})) + "."
-        if requested_seniority != "unknown" and level_score == 0
-        else f"The job title was classified as {inferred_level}; selected rows provide {level_percent}% seniority support."
-    )
-    factors.extend(
-        [
-            _factor("company", company_score, company_reason),
-            _factor("role", role_score, role_reason),
-            _factor("level", level_score, level_reason),
-            _factor(
-                "location", location_score, "Location compatibility was evaluated but company-role evidence is primary."
-            ),
-            _factor("component", 1.0, f"Component {component_value} matches the reported compensation rows."),
-            _factor("freshness", freshness_score, "Reported source snapshots are inside the freshness window."),
-            _factor(
-                "sample",
-                sample_score,
-                (
-                    f"Reported compensation sample count: {sample_count}."
-                    if sample_count is not None
-                    else "Reported compensation sample support is unknown."
-                ),
-            ),
-            _factor(
-                "agreement", agreement_score, "Selected reported compensation rows are within dispersion tolerance."
-            ),
-            _factor("trimodal_tier", tier_score, f"Company tier context: {company_tier}."),
-        ]
-    )
-
-    if company_score < MIN_CRITICAL_FACTOR_SCORE:
-        insufficient_reasons.append("weak_company_match")
-    if role_score < MIN_CRITICAL_FACTOR_SCORE:
-        insufficient_reasons.append("weak_role_match")
-    if level_score < MIN_CRITICAL_FACTOR_SCORE:
-        insufficient_reasons.append("weak_level_match")
-
-    confidence_score = round(
-        min(
-            company_score,
-            role_score,
-            level_score,
-            location_score,
-            freshness_score,
-            sample_score,
-            agreement_score,
-            tier_score,
-        ),
-        2,
-    )
-    confidence_interval_minimum, confidence_interval_maximum = _confidence_interval(
-        minimum,
-        maximum,
-        match_scope=match_scope,
-        confidence_score=confidence_score,
-        sample_count=sample_count,
-        warnings=warnings,
-        rows=selected_rows,
-        dispersion_insufficient=dispersion_insufficient,
-    )
-    evidence = tuple(
-        _evidence_row(
-            row,
-            company_score=company_scores[index],
-            role_score=role_scores[index],
-            level_score=level_scores[index],
-            location_score=location_scores[index],
-            freshness_score=freshness_scores[index],
-        )
-        for index, row in enumerate(selected_rows)
-    )
-
-    minimum_score = _minimum_estimate_score(selected_rows, match_scope)
-    if confidence_score < minimum_score or (requested_seniority != "unknown" and level_score == 0):
-        return _estimate(
-            tenant_id=tenant_id,
-            job_id=job_id,
-            state="insufficient_evidence",
-            component=component_value,
-            factors=factors,
-            insufficient=insufficient_reasons or ["missing_reported_observation"],
-            warnings=warnings,
-            sources=tuple(_snapshot(row) for row in selected_rows),
-            evidence=evidence,
-            source_count=source_count,
-            sample_count=sample_count,
-            aggregate_bucket=_estimate_aggregate_bucket(company, title, match_scope, selected_rows),
-            geography_scope=_geography_scope(location, selected_rows),
-            occupation_code=normalized_company,
-            occupation_label=normalized_role,
-            seniority_label=inferred_level,
-            confidence_score=confidence_score,
-            estimated_at=now,
-            company_name=_clean_display(company),
-            normalized_company=normalized_company,
-            role_title=_clean_display(title),
-            normalized_role=normalized_role,
-            company_tier=company_tier,
-            match_scope=match_scope,
-        )
-
-    return _estimate(
+        if row.source_id != "posted_salary_text"
+        and row.component == component
+        and row.classification.occupation_family.value == family
+        and row.classification.seniority.value == level
+        and {place.country_code for place in row.classification.places if place.country_code} & countries
+        and family != "unknown"
+        and level != "unknown"
+        and (row.minimum_amount is not None or row.maximum_amount is not None)
+    ]
+    exact = [row for row in matched if canonical_company_key(row.company_name) == canonical_company_key(company or "")]
+    rows = exact or matched
+    scope = "exact_company_role" if exact else "same_location_role_fallback"
+    common = dict(
         tenant_id=tenant_id,
         job_id=job_id,
+        component=component,
+        estimated_at=now,
+        company_name=company,
+        normalized_company=canonical_company_key(company or "") or None,
+        role_title=title,
+        normalized_role=family,
+        occupation_code=family,
+        occupation_label=family,
+        seniority_label=level,
+        geography_scope=", ".join(sorted(countries)),
+        match_scope=scope,
+    )
+    if rows:
+        tiers = {row.classification.company_tier.value for row in rows}
+        common["company_tier"] = next(iter(tiers)) if len(tiers) == 1 else "unknown"
+    if not rows:
+        return _estimate(state="insufficient_evidence", insufficient=["missing_reported_observation"], **common)
+    # Amounts must have one explicit currency and period; no inferred conversions.
+    if len({(row.currency, row.period) for row in rows}) != 1:
+        return _estimate(state="insufficient_evidence", insufficient=["source_dispersion_too_high"], **common)
+    minimum, maximum = min(_row_minimum(row) for row in rows), max(_row_maximum(row) for row in rows)
+    freshness = min(_freshness_score(row.release_year, now) for row in rows)
+    warnings = (
+        ["source_conflict_with_posted_salary"]
+        if _posted_conflicts(minimum, maximum, posted_annualized_minimum, posted_annualized_maximum)
+        else []
+    )
+    factors = [
+        _factor("role", 1, "Equal persisted occupation codes."),
+        _factor("level", 1, "Equal persisted seniority codes."),
+        _factor("location", 1, "Equal persisted country codes."),
+        _factor("freshness", freshness, "Source release dates."),
+    ]
+    return _estimate(
         state="estimated_range",
-        currency=selected_rows[0].currency,
-        period=selected_rows[0].period,
-        component=component_value,
+        currency=rows[0].currency,
+        period=rows[0].period,
         minimum_amount=minimum,
         maximum_amount=maximum,
-        confidence_interval_minimum_amount=confidence_interval_minimum,
-        confidence_interval_maximum_amount=confidence_interval_maximum,
+        confidence_interval_minimum_amount=minimum,
+        confidence_interval_maximum_amount=maximum,
+        confidence_score=freshness,
+        source_count=len({row.source_id for row in rows}),
+        sample_count=_combined_sample_count(rows),
         factors=factors,
         warnings=warnings,
-        sources=tuple(_snapshot(row) for row in selected_rows),
-        evidence=evidence,
-        source_count=source_count,
-        sample_count=sample_count,
-        aggregate_bucket=_estimate_aggregate_bucket(company, title, match_scope, selected_rows),
-        geography_scope=_geography_scope(location, selected_rows),
-        occupation_code=normalized_company,
-        occupation_label=normalized_role,
-        seniority_label=inferred_level,
-        confidence_score=confidence_score,
-        estimated_at=now,
-        company_name=_clean_display(company),
-        normalized_company=normalized_company,
-        role_title=_clean_display(title),
-        normalized_role=normalized_role,
-        company_tier=company_tier,
-        match_scope=match_scope,
+        sources=tuple(_snapshot(row) for row in rows),
+        evidence=tuple(
+            _evidence_row(
+                row,
+                company_score=1 if row in exact else 0,
+                role_score=1,
+                level_score=1,
+                location_score=1,
+                freshness_score=_freshness_score(row.release_year, now),
+            )
+            for row in rows
+        ),
+        **common,
     )
 
 
@@ -1061,86 +530,6 @@ def _estimate(
     )
 
 
-def _select_rows(
-    rows: list[ReportedCompensationObservation],
-    *,
-    normalized_company: str,
-    normalized_role: str,
-    location: str | None,
-    inferred_level: str | None,
-    company_context_rows: list[ReportedCompensationObservation],
-) -> tuple[list[ReportedCompensationObservation], MarketMatchScope, MarketWarningCode | None]:
-    exact = [
-        row
-        for row in rows
-        if _company_score(normalized_company, row.company_name) >= 0.95
-        and _role_score(normalized_role, row.role_title) >= 0.72
-    ]
-    if exact:
-        return exact, "exact_company_role", None
-
-    adjacent = [
-        row
-        for row in rows
-        if _company_score(normalized_company, row.company_name) >= 0.95
-        and _role_score(normalized_role, row.role_title) >= 0.30
-    ]
-    if adjacent:
-        return adjacent, "company_adjacent_role", "company_role_fallback"
-
-    company_rows = [row for row in company_context_rows if _company_score(normalized_company, row.company_name) >= 0.95]
-    company_tier, _ = _company_tier(company_rows)
-    target_level = _normalize_level(inferred_level)
-    if company_tier != "unknown":
-        tier_rows = [
-            row
-            for row in rows
-            if row.company_tier == company_tier
-            and _role_score(normalized_role, row.role_title) >= 0.72
-            and _fallback_level_score(target_level, row) >= 0.78
-        ]
-        if tier_rows:
-            return tier_rows, "tier_role_fallback", "company_role_fallback"
-
-    same_location_role_threshold = 0.72 if target_level == "executive" else 0.55
-    same_location_role = [
-        row
-        for row in rows
-        if _role_score(normalized_role, row.role_title) >= same_location_role_threshold
-        and _fallback_level_score(target_level, row) >= 0.78
-        and _location_score(location, row.location) >= 0.78
-    ]
-    if same_location_role:
-        return (
-            _prefer_levels_fyi_market_aggregate(same_location_role),
-            "same_location_role_fallback",
-            "company_role_fallback",
-        )
-
-    baseline = [
-        row
-        for row in rows
-        if _fallback_level_score(target_level, row) >= 0.78 and _location_score(location, row.location) >= 0.5
-    ]
-    if baseline:
-        return _prefer_levels_fyi_market_aggregate(baseline), "market_baseline_fallback", "company_role_fallback"
-
-    return [], "none", None
-
-
-def _prefer_levels_fyi_market_aggregate(
-    rows: list[ReportedCompensationObservation],
-) -> list[ReportedCompensationObservation]:
-    aggregates = [
-        row for row in rows if row.source_id == "levels_fyi" and row.company_name == LEVELS_FYI_MARKET_AGGREGATE_COMPANY
-    ]
-    if not aggregates:
-        return rows
-    return [
-        row for row in rows if row.source_id != "levels_fyi" or row.company_name == LEVELS_FYI_MARKET_AGGREGATE_COMPANY
-    ]
-
-
 def _snapshot(row: ReportedCompensationObservation) -> MarketSourceSnapshot:
     return sanitize_market_source_snapshot(
         MarketSourceSnapshot(
@@ -1150,7 +539,7 @@ def _snapshot(row: ReportedCompensationObservation) -> MarketSourceSnapshot:
             source_type=_source_type(row.source_id),
             release_year=row.release_year,
             snapshot_version=row.snapshot_version,
-            geography_scope=_safe_text(_reported_geography(row.location)),
+            geography_scope=", ".join(place.country_code for place in row.classification.places if place.country_code),
             aggregate_bucket=_source_aggregate_bucket(row.source_id),
             attribution=row.attribution or "",
             sample_count=row.sample_count,
@@ -1170,13 +559,18 @@ def _evidence_row(
     source_id = row.source_id if row.source_id in MARKET_SOURCE_IDS else "manual_reported_compensation"
     return MarketEvidenceRow(
         source_id=source_id,
+        determination_id=row.determination_id,
+        classification_entity_id=row.classification_entity_id,
+        occupation_family_code=row.classification.occupation_family.value if row.classification else None,
+        seniority_code=row.classification.seniority.value if row.classification else None,
+        country_codes=tuple(place.country_code for place in row.classification.places) if row.classification else (),
         display_name=_display_name(source_id),
         source_url=_safe_source_url(row.source_url),
         company_name=_safe_text(row.company_name) or "unknown company",
         role_title=_safe_text(row.role_title) or "unknown role",
         location=_safe_text(row.location) or None,
         level_label=_safe_text(row.level_label) or None,
-        company_tier=row.company_tier if row.company_tier in COMPANY_TIERS else "unknown",
+        company_tier=row.classification.company_tier.value if row.classification else "unknown",
         component=row.component if row.component in SUPPORTED_COMPONENTS else "total_compensation",
         currency=_safe_text(row.currency)[:3].upper() or "EUR",
         period=row.period if row.period in {"year", "month"} else "year",
@@ -1347,211 +741,6 @@ def _confidence_band(
     return "none"
 
 
-def _normalize_company(value: str | None) -> str:
-    text = str(value or "").casefold()
-    text = LEGAL_SUFFIX_RE.sub(" ", text)
-    text = re.sub(r"[^a-z0-9]+", " ", text)
-    return re.sub(r"\s+", " ", text).strip()
-
-
-def _normalize_role(value: str | None) -> str:
-    tokens = _role_tokens(value)
-    return " ".join(token for token in tokens if token not in SENIORITY_WORDS)
-
-
-def _role_tokens(value: str | None) -> tuple[str, ...]:
-    text = str(value or "").casefold()
-    tokens = tuple(re.findall(r"[a-z0-9]+", text))
-    return tuple(_singularize(token) for token in tokens if token not in ROLE_STOP_WORDS)
-
-
-def _singularize(token: str) -> str:
-    if len(token) > 4 and token.endswith("ies"):
-        return f"{token[:-3]}y"
-    if len(token) > 3 and token.endswith("s") and not token.endswith("ss"):
-        return token[:-1]
-    return token
-
-
-def _company_score(normalized_company: str, reported_company: str | None) -> float:
-    reported = _normalize_company(reported_company)
-    if not normalized_company or not reported:
-        return 0.0
-    if normalized_company == reported:
-        return 1.0
-    if normalized_company in reported or reported in normalized_company:
-        return 0.82
-    return 0.0
-
-
-def _role_score(normalized_role: str, reported_title: str | None) -> float:
-    reported = _normalize_role(reported_title)
-    if not normalized_role or not reported:
-        return 0.0
-    if normalized_role == reported:
-        return 1.0
-    wanted = set(normalized_role.split())
-    seen = set(reported.split())
-    if not wanted or not seen:
-        return 0.0
-    overlap = len(wanted & seen) / len(wanted | seen)
-    wanted_families = _role_families(wanted)
-    seen_families = _role_families(seen)
-    if wanted_families & seen_families:
-        overlap = max(overlap, 0.55)
-    if "engineering" in wanted_families and "engineering" in seen_families:
-        overlap = max(overlap, 0.65)
-    return round(overlap, 2)
-
-
-def _role_families(tokens: set[str]) -> set[str]:
-    return {family for family, markers in ROLE_FAMILY_MARKERS.items() if tokens & markers}
-
-
-def _level_from_title(title: str | None) -> str:
-    tokens = set(_role_tokens(title))
-    if {"ceo", "chief", "cio", "ciso", "coo", "cpo", "cto", "president", "vice", "vp"} & tokens:
-        return "executive"
-    if {"director", "head"} & tokens:
-        return "director"
-    if {"staff", "principal", "lead"} & tokens:
-        return "staff_plus"
-    if {"senior", "sr"} & tokens:
-        return "senior"
-    if {"junior", "jr"} & tokens:
-        return "junior"
-    if "manager" in tokens:
-        return "manager"
-    return "mid"
-
-
-def _level_score(expected: str | None, observed: str | None) -> float:
-    expected_level = _normalize_level(expected)
-    observed_level = _normalize_level(observed)
-    if observed_level == "unknown":
-        return 0.5 if expected_level == "executive" else 0.75
-    if expected_level == observed_level:
-        return 0.95
-    if expected_level == "executive" and observed_level in {"director", "staff_plus", "manager"}:
-        return 0.45
-    if observed_level == "executive" and expected_level in {"director", "staff_plus", "manager"}:
-        return 0.45
-    if expected_level == "director" and observed_level in {"staff_plus", "manager"}:
-        return 0.82
-    if observed_level == "director" and expected_level in {"staff_plus", "manager"}:
-        return 0.82
-    if expected_level == "senior" and observed_level == "staff_plus":
-        return 0.82
-    if expected_level == "staff_plus" and observed_level == "senior":
-        return 0.78
-    if expected_level == "mid" and observed_level in {"senior", "junior"}:
-        return 0.65
-    return 0.5
-
-
-def _normalize_level(value: str | None) -> str:
-    text = str(value or "").casefold()
-    tokens = set(re.findall(r"[a-z0-9]+", text))
-    if "all" in tokens and {"level", "levels"} & tokens:
-        return "unknown"
-    if {"ceo", "chief", "cio", "ciso", "coo", "cpo", "cto", "executive", "president", "vice", "vp"} & tokens:
-        return "executive"
-    if {"director", "head"} & tokens:
-        return "director"
-    if {"staff", "principal", "lead", "l6", "l7", "l8"} & tokens:
-        return "staff_plus"
-    if {"senior", "sr", "l5"} & tokens:
-        return "senior"
-    if {"junior", "jr", "graduate", "l3"} & tokens:
-        return "junior"
-    if {"manager"} & tokens:
-        return "manager"
-    if tokens:
-        return "mid"
-    return "unknown"
-
-
-def _fallback_level_score(target_level: str, row: ReportedCompensationObservation) -> float:
-    observed_level = resolve_reported_seniority(row.role_title, row.level_label)
-    if observed_level == "unknown":
-        return 0.5 if target_level == "executive" else 0.78
-    return _level_score(target_level, observed_level)
-
-
-def _location_score(job_location: str | None, observed_location: str | None) -> float:
-    job = _normalize_location(job_location)
-    observed = _normalize_location(observed_location)
-    if not job or not observed:
-        return 0.78
-    if job == observed or job in observed or observed in job:
-        return 0.95
-    if _is_europe(job) and _is_europe(observed):
-        return 0.78
-    return 0.5
-
-
-def _normalize_location(value: str | None) -> str:
-    text = str(value or "").casefold()
-    text = re.sub(r"\bu\.k\.", " uk ", text)
-    text = re.sub(r"\be\.u\.", " eu ", text)
-    text = re.sub(r"[^a-z0-9]+", " ", text)
-    return re.sub(r"\s+", " ", text).strip()
-
-
-def _is_europe(value: str) -> bool:
-    tokens = set(value.split())
-    if tokens & EUROPE_MARKERS:
-        return True
-    return any(marker in value for marker in EUROPE_MARKERS if " " in marker)
-
-
-def _reported_geography(value: str | None) -> str:
-    normalized = _normalize_location(value)
-    if not normalized:
-        return "reported"
-    if _is_europe(normalized):
-        return "Europe"
-    return "reported"
-
-
-def _company_tier(
-    rows: list[ReportedCompensationObservation],
-) -> tuple[CompanyCompensationTier, bool]:
-    tiers = [row.company_tier for row in rows if row.company_tier != "unknown"]
-    if tiers:
-        return max(set(tiers), key=tiers.count), False
-    if not rows:
-        return "unknown", False
-    midpoint = median((_row_minimum(row) + _row_maximum(row)) / 2 for row in rows)
-    if midpoint >= 160_000:
-        return "tier_3_top_of_market", True
-    if midpoint >= 90_000:
-        return "tier_2_ambitious", True
-    return "tier_1_local", True
-
-
-def _tier_score(company_tier: CompanyCompensationTier, match_scope: MarketMatchScope) -> float:
-    if company_tier == "unknown":
-        return 0.62 if match_scope == "exact_company_role" else 0.45
-    if match_scope == "tier_role_fallback":
-        return 0.62
-    if match_scope == "market_baseline_fallback":
-        return 0.5
-    return 0.82
-
-
-def _minimum_estimate_score(rows: list[ReportedCompensationObservation], match_scope: MarketMatchScope) -> float:
-    if match_scope == "market_baseline_fallback":
-        return 0.3
-    if match_scope in {"same_location_role_fallback", "company_adjacent_role"}:
-        return 0.42
-    if match_scope == "tier_role_fallback":
-        return 0.38
-    if rows and all(row.source_id == "posted_salary_text" for row in rows):
-        return 0.5
-    return 0.3
-
-
 def _confidence_interval(
     minimum: int,
     maximum: int,
@@ -1684,48 +873,6 @@ def _aggregate_bucket(company: str | None, title: str | None, match_scope: Marke
     if match_scope == "market_baseline_fallback":
         return "trimodal market baseline fallback"
     return f"reported compensation for {_clean_display(company) or 'unknown company'} {_clean_display(title) or 'unknown role'}"
-
-
-def _is_unidentified_employer(row: ReportedCompensationObservation) -> bool:
-    name = _normalize_location(row.company_name)
-    return name in {"", "unknown", "unknown company"} or name.endswith(" community")
-
-
-def _estimate_aggregate_bucket(
-    company: str | None,
-    title: str | None,
-    match_scope: MarketMatchScope,
-    rows: list[ReportedCompensationObservation],
-) -> str:
-    # The persisted bucket is the read model's source of truth for the regional
-    # comparison disclosure, so the explicit estimator names the population the
-    # same way the automatic materialization does.
-    regional_scopes = {"same_location_role_fallback", "tier_role_fallback", "market_baseline_fallback"}
-    if rows and match_scope in regional_scopes and any(_is_unidentified_employer(row) for row in rows):
-        return "reported regional source sample"
-    if rows and match_scope == "same_location_role_fallback" and all(
-        row.company_name != LEVELS_FYI_MARKET_AGGREGATE_COMPANY for row in rows
-    ):
-        return "reported regional company peer cohort"
-    if rows and all(row.source_id == "posted_salary_text" for row in rows):
-        if match_scope == "same_location_role_fallback":
-            return "employer-posted same-location role compensation"
-        if match_scope == "tier_role_fallback":
-            return "employer-posted trimodal tier compensation"
-        if match_scope == "market_baseline_fallback":
-            return "employer-posted trimodal market baseline"
-        return "employer-posted company-role compensation"
-    return _aggregate_bucket(company, title, match_scope)
-
-
-def _geography_scope(location: str | None, rows: list[ReportedCompensationObservation]) -> str:
-    if _is_europe(_normalize_location(location)):
-        return "Europe"
-    for row in rows:
-        geography = _reported_geography(row.location)
-        if geography:
-            return geography
-    return "reported"
 
 
 def _clean_display(value: str | None) -> str | None:

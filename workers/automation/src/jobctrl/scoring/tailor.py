@@ -56,7 +56,6 @@ from jobctrl.domain.ports.materials import (
 from jobctrl.domain.profile.snapshot import ProfileSnapshot
 from jobctrl.domain.scoring.eligibility import (
     eligibility_blocks_downstream,
-    normalize_eligibility_for_downstream,
 )
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
 from jobctrl.infrastructure.llm import get_llm_adapter
@@ -127,24 +126,20 @@ def _build_llm_policy(
     *,
     tailor_models: tuple[str, ...] = (),
     tailor_judge_model: str | None = None,
-    tailor_judge_min_score: float | None = None,
     llm_model: str | None = DEFAULT_PIPELINE_LLM_MODEL_SPEC,
 ) -> TailoringLlmPolicy:
     configured_models = config.get_tailoring_generator_models()
     configured_judge_model = config.get_tailoring_judge_model()
-    judge_min_score = (
-        config.get_tailoring_judge_min_score() if tailor_judge_min_score is None else tailor_judge_min_score
-    )
     return TailoringLlmPolicy(
         candidate_models=tailor_models or configured_models or ((llm_model,) if llm_model else ()),
         judge_model=tailor_judge_model or configured_judge_model or llm_model,
-        judge_min_score=judge_min_score,
     )
 
 
 def _build_analyze_use_case(
     *,
     conn,
+    tenant_id: TenantId = LOCAL_TENANT,
     publisher: EventPublisher | None = None,
 ):
     """Construct the :class:`AnalyzeJobUseCase` for the tailor sub-step (D-20).
@@ -156,7 +151,7 @@ def _build_analyze_use_case(
     projection + SSE). A missing Gemini key degrades the Antigravity leg to a
     recorded per-leg failure (failure mode #2), never a hard fail.
     """
-    return build_analyze_use_case(conn=conn, publisher=publisher, event_stage="tailor")
+    return build_analyze_use_case(conn=conn, tenant_id=tenant_id, publisher=publisher, event_stage="tailor")
 
 
 def _build_voice_port():
@@ -178,10 +173,15 @@ def _build_voice_port():
 
 def _build_use_case(
     *,
+    tenant_id: TenantId = LOCAL_TENANT,
     repository: MaterialsRepository | None = None,
     llm_port: LlmPort | None = None,
     publisher: EventPublisher | None = None,
     validator: ContentValidator | None = None,
+    claim_verifier=None,
+    quality_judge=None,
+    job_interpreter=None,
+    preflight=None,
     assembler: ResumeAssembler | None = None,
     llm_policy: TailoringLlmPolicy | None = None,
     policy_repository: TailoringPolicyRepository | None = None,
@@ -221,16 +221,29 @@ def _build_use_case(
     if llm_policy is None:
         llm_policy = _build_llm_policy()
     if analyze_use_case is None:
-        analyze_use_case = _build_analyze_use_case(conn=conn, publisher=publisher)
+        analyze_use_case = _build_analyze_use_case(conn=conn, tenant_id=tenant_id, publisher=publisher)
     if voice is None:
         voice = _build_voice_port()
     if pdf_renderer is None:
         pdf_renderer = _build_pdf_renderer()
+    from jobctrl.infrastructure.determinations import determination_dependencies
+    from jobctrl.domain.materials.claim_verification import ModelClaimVerifier
+
+    deps = determination_dependencies(conn, tenant_id=tenant_id, lane="tailoring", adapter=llm_port)
+    from jobctrl.domain.materials.artifact_quality import ModelArtifactQualityJudge
+    from jobctrl.infrastructure.enrichment.interpretation import PersistedJobInterpreter
+
     return TailorResumeUseCase(
         repository=repository,
         llm=llm_port,
         validator=validator,
+        claim_verifier=claim_verifier if claim_verifier is not None else ModelClaimVerifier(**deps),
+        preflight=preflight if preflight is not None else deps["preflight"],
         assembler=assembler,
+        job_interpreter=job_interpreter
+        if job_interpreter is not None
+        else PersistedJobInterpreter(conn, tenant_id=tenant_id),
+        quality_judge=quality_judge if quality_judge is not None else ModelArtifactQualityJudge(**deps),
         publisher=publisher,
         llm_policy=llm_policy,
         policy_repository=policy_repository,
@@ -351,7 +364,7 @@ def _tailor_one_job(
     """
     _ = resume_text  # legacy parameter — ignored
     if use_case is None:
-        use_case = _build_use_case(llm_policy=llm_policy, pdf_renderer=pdf_renderer)
+        use_case = _build_use_case(tenant_id=tenant_id, llm_policy=llm_policy, pdf_renderer=pdf_renderer)
         requirement_fit_report = _load_requirement_fit_report_for_job(
             tenant_id=tenant_id,
             job=job,
@@ -454,7 +467,6 @@ def run_tailoring(
     tenant_id: TenantId = LOCAL_TENANT,
     tailor_models: tuple[str, ...] = (),
     tailor_judge_model: str | None = None,
-    tailor_judge_min_score: float | None = None,
     llm_model: str | None = DEFAULT_PIPELINE_LLM_MODEL_SPEC,
     workflow_id: str | None = None,
     cancel_event: threading.Event | None = None,
@@ -476,26 +488,37 @@ def run_tailoring(
     conn = get_connection()
     min_score = db_module.effective_tailoring_min_score(min_score)
     jobs = get_jobs_by_stage(
-        conn=conn, stage="pending_tailor", min_score=min_score,
-        limit=0, retailor=retailor,
+        conn=conn,
+        stage="pending_tailor",
+        min_score=min_score,
+        limit=0,
+        retailor=retailor,
     )
-    job_ids = tuple(dict.fromkeys(
-        canonical_job_id(str(job["job_id"]))
-        for job in jobs
-        if str(job.get("tenant_id") or tenant_id) == str(tenant_id)
-        and (not workflow_id or not stage_completed_by_activity_owner(
-            conn, tenant_id=str(tenant_id), job_id=str(job["job_id"]),
-            stage="tailor", workflow_id=workflow_id,
-        ))
-    ))
+    job_ids = tuple(
+        dict.fromkeys(
+            canonical_job_id(str(job["job_id"]))
+            for job in jobs
+            if str(job.get("tenant_id") or tenant_id) == str(tenant_id)
+            and (
+                not workflow_id
+                or not stage_completed_by_activity_owner(
+                    conn,
+                    tenant_id=str(tenant_id),
+                    job_id=str(job["job_id"]),
+                    stage="tailor",
+                    workflow_id=workflow_id,
+                )
+            )
+        )
+    )
     if limit > 0:
         job_ids = job_ids[:limit]
     if not job_ids:
         return {"approved": 0, "failed": 0, "errors": 0, "elapsed": 0.0}
 
     llm_policy = _build_llm_policy(
-        tailor_models=tailor_models, tailor_judge_model=tailor_judge_model,
-        tailor_judge_min_score=tailor_judge_min_score, llm_model=llm_model,
+        tailor_models=tailor_models,
+        tailor_judge_model=tailor_judge_model,
     )
     if pdf_renderer is None:
         pdf_renderer = _build_pdf_renderer()
@@ -504,13 +527,20 @@ def run_tailoring(
     def run_one(job_id: JobId) -> dict:
         try:
             return tailor_job_by_id(
-                job_id, min_score=min_score, validation_mode=validation_mode,
-                workers=workers, retailor=retailor, snapshot=snapshot,
-                tenant_id=tenant_id, llm_model=llm_model,
-                tailor_models=tailor_models, tailor_judge_model=tailor_judge_model,
-                tailor_judge_min_score=tailor_judge_min_score,
-                pdf_renderer=pdf_renderer, llm_policy=llm_policy,
-                workflow_id=workflow_id, cancel_event=cancel_event,
+                job_id,
+                min_score=min_score,
+                validation_mode=validation_mode,
+                workers=workers,
+                retailor=retailor,
+                snapshot=snapshot,
+                tenant_id=tenant_id,
+                llm_model=llm_model,
+                tailor_models=tailor_models,
+                tailor_judge_model=tailor_judge_model,
+                pdf_renderer=pdf_renderer,
+                llm_policy=llm_policy,
+                workflow_id=workflow_id,
+                cancel_event=cancel_event,
                 suppress_existing_artifacts=suppress_existing_artifacts,
                 allow_low_fit_override=allow_low_fit_override,
             )
@@ -525,8 +555,11 @@ def run_tailoring(
 
     counts = {"approved": 0, "blocked": 0, "failed": 0, "errors": 0, "exhausted": 0}
     for _job_id, result in run_material_jobs(
-        job_ids, workers=workers, cancel_event=cancel_event,
-        stage="tailor", run_one=run_one,
+        job_ids,
+        workers=workers,
+        cancel_event=cancel_event,
+        stage="tailor",
+        run_one=run_one,
     ):
         status = str(result.get("status") or "error")
         if status == "exhausted":
@@ -555,7 +588,6 @@ def tailor_job_by_url(
     llm_model: str | None = DEFAULT_PIPELINE_LLM_MODEL_SPEC,
     tailor_models: tuple[str, ...] = (),
     tailor_judge_model: str | None = None,
-    tailor_judge_min_score: float | None = None,
     pdf_renderer: PdfRendererPort | None = None,
     suppress_existing_artifacts: bool = False,
     allow_low_fit_override: bool = False,
@@ -580,7 +612,6 @@ def tailor_job_by_url(
         llm_model=llm_model,
         tailor_models=tailor_models,
         tailor_judge_model=tailor_judge_model,
-        tailor_judge_min_score=tailor_judge_min_score,
         pdf_renderer=pdf_renderer,
         suppress_existing_artifacts=suppress_existing_artifacts,
         allow_low_fit_override=allow_low_fit_override,
@@ -600,7 +631,6 @@ def tailor_job_by_id(
     llm_model: str | None = DEFAULT_PIPELINE_LLM_MODEL_SPEC,
     tailor_models: tuple[str, ...] = (),
     tailor_judge_model: str | None = None,
-    tailor_judge_min_score: float | None = None,
     pdf_renderer: PdfRendererPort | None = None,
     llm_policy: TailoringLlmPolicy | None = None,
     suppress_existing_artifacts: bool = False,
@@ -621,7 +651,11 @@ def tailor_job_by_id(
     stable_job_id = canonical_job_id(str(job_id))
     conn = get_connection()
     if recovery_workflow_id and not owns_preparation_reservation(
-        conn, tenant_id=tenant_id, job_id=stable_job_id, stage="tailor", workflow_id=recovery_workflow_id,
+        conn,
+        tenant_id=tenant_id,
+        job_id=stable_job_id,
+        stage="tailor",
+        workflow_id=recovery_workflow_id,
     ):
         return {"job_id": str(stable_job_id), "status": "skipped", "reason": "reservation_lost"}
     target_reader = SqlitePreparationTargetReader(conn)
@@ -726,10 +760,24 @@ def tailor_job_by_id(
     # provider setup and release any reconciler writes before network I/O.
     conn.commit()
     from jobctrl.enrichment.availability import require_fresh_active
+
     expected_posting_url = job["url"]
-    require_fresh_active(str(stable_job_id), tenant_id=str(tenant_id), conn=conn, expected_posting_url=expected_posting_url, allow_unknown=True)
-    with claim_preparation_reservation(conn, tenant_id=tenant_id, job_id=stable_job_id,
-            stage="tailor", workflow_id=None, cancel_event=cancel_event, expected_posting_url=expected_posting_url):
+    require_fresh_active(
+        str(stable_job_id),
+        tenant_id=str(tenant_id),
+        conn=conn,
+        expected_posting_url=expected_posting_url,
+        allow_unknown=True,
+    )
+    with claim_preparation_reservation(
+        conn,
+        tenant_id=tenant_id,
+        job_id=stable_job_id,
+        stage="tailor",
+        workflow_id=None,
+        cancel_event=cancel_event,
+        expected_posting_url=expected_posting_url,
+    ):
         job = target_reader.load(tenant_id, stable_job_id)
     if job is None:
         return {"job_id": str(stable_job_id), "status": "skipped", "reason": "availability_candidate_changed"}
@@ -747,7 +795,6 @@ def tailor_job_by_id(
     llm_policy = llm_policy or _build_llm_policy(
         tailor_models=tailor_models,
         tailor_judge_model=tailor_judge_model,
-        tailor_judge_min_score=tailor_judge_min_score,
         llm_model=llm_model,
     )
 
@@ -756,8 +803,12 @@ def tailor_job_by_id(
     if recovery_workflow_id:
         conn.commit()
     with claim_preparation_reservation(
-        conn, tenant_id=tenant_id, job_id=stable_job_id,
-        stage="tailor", workflow_id=recovery_workflow_id, cancel_event=cancel_event,
+        conn,
+        tenant_id=tenant_id,
+        job_id=stable_job_id,
+        stage="tailor",
+        workflow_id=recovery_workflow_id,
+        cancel_event=cancel_event,
         expected_posting_url=expected_posting_url,
     ):
         ensure_job_stage_rows(
@@ -1124,7 +1175,7 @@ def _reconcile_score_eligibility_skip(
     score = SqliteScoreRepository(conn).load(tenant_id, stable_job_id)
     if score is None:
         return None
-    eligibility = normalize_eligibility_for_downstream(score.breakdown.eligibility)
+    eligibility = score.breakdown.eligibility
     if not eligibility_blocks_downstream(eligibility):
         reconcile_score_eligibility_blockers(
             conn,
@@ -1132,12 +1183,10 @@ def _reconcile_score_eligibility_skip(
             job_id=score.job_id,
             eligibility_status=eligibility.status,
             hard_blockers=list(eligibility.hard_blockers),
+            hard_blocker_categories=eligibility.hard_blocker_categories,
+            hard_blocker_citations=eligibility.hard_blocker_citations,
         )
-        effective_min_score = (
-            0
-            if allow_low_fit_override
-            else db_module.effective_tailoring_min_score(min_score)
-        )
+        effective_min_score = 0 if allow_low_fit_override else db_module.effective_tailoring_min_score(min_score)
         if score.fit_score.value < effective_min_score:
             row = conn.execute(
                 "SELECT discovered_at FROM jobs WHERE tenant_id = ? AND job_id = ?",
@@ -1175,6 +1224,8 @@ def _reconcile_score_eligibility_skip(
         job_id=score.job_id,
         eligibility_status=eligibility.status,
         hard_blockers=list(eligibility.hard_blockers),
+        hard_blocker_categories=eligibility.hard_blocker_categories,
+        hard_blocker_citations=eligibility.hard_blocker_citations,
     )
     return "score_eligibility_blocked"
 
@@ -1244,10 +1295,7 @@ def _record_tailor_requirement_fit_block(
 ) -> None:
     """Block Tailor on incoherent Score evidence without consuming a retry."""
 
-    message = (
-        "Tailoring is waiting for Scoring to refresh requirement-fit evidence "
-        "for the current posting analysis."
-    )
+    message = "Tailoring is waiting for Scoring to refresh requirement-fit evidence for the current posting analysis."
     block_metadata = {
         **(metadata or {}),
         "condition": error.reason,
@@ -1391,15 +1439,18 @@ def _load_tailor_eligible_job_by_id(
     ).fetchone()
     if score_stage is not None and str(score_stage["state"]) != "succeeded":
         return None
-    if conn.execute(
-        """
+    if (
+        conn.execute(
+            """
         SELECT 1
         FROM job_score_staleness
         WHERE tenant_id = ? AND job_id = ? AND resolved = 0
         LIMIT 1
         """,
-        (str(tenant_id), str(stable_job_id)),
-    ).fetchone() is not None:
+            (str(tenant_id), str(stable_job_id)),
+        ).fetchone()
+        is not None
+    ):
         return None
     posting_state = conn.execute(
         """
@@ -1419,9 +1470,7 @@ def _load_tailor_eligible_job_by_id(
         }:
             return None
         confidence = str(posting_state["latest_confidence"] or "").lower()
-        quarantine_reason = str(
-            posting_state["latest_quarantine_reason"] or ""
-        ).lower()
+        quarantine_reason = str(posting_state["latest_quarantine_reason"] or "").lower()
         if confidence == "low" and quarantine_reason not in {"", "none"}:
             return None
     tailor_stage = conn.execute(
@@ -1438,14 +1487,23 @@ def _load_tailor_eligible_job_by_id(
         if tailor_state == "exhausted" or attempt_count >= MAX_ATTEMPTS:
             return None
         owns_queue = tailor_state == "queued" and owns_preparation_reservation(
-            conn, tenant_id=tenant_id, job_id=stable_job_id, stage="tailor", workflow_id=recovery_workflow_id,
+            conn,
+            tenant_id=tenant_id,
+            job_id=stable_job_id,
+            stage="tailor",
+            workflow_id=recovery_workflow_id,
         )
-        if not retailor and not owns_queue and tailor_state not in {
-            "pending",
-            "running",
-            "failed",
-            "stale",
-        }:
+        if (
+            not retailor
+            and not owns_queue
+            and tailor_state
+            not in {
+                "pending",
+                "running",
+                "failed",
+                "stale",
+            }
+        ):
             return None
     score = SqliteScoreRepository(conn).load(tenant_id, stable_job_id)
     if score is None:

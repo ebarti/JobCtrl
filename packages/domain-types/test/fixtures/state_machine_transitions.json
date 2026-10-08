@@ -1,51 +1,107 @@
 {
-  "description": "Shared TS↔Python parity fixture for the §8.5 state machine. Every row of VALID_KIND_TRANSITIONS is exercised, plus a sampling of rejections. Both the TS and Python parity tests load this file and assert identical outputs.",
+  "description": "Shared TS\u2194Python parity fixture for the \u00a78.5 state machine. Every row of VALID_KIND_TRANSITIONS is exercised, plus a sampling of rejections. Both the TS and Python parity tests load this file and assert identical outputs.",
   "validTransitions": [
     {
       "name": "row1_pending_to_queued",
-      "from": { "kind": "Pending", "attemptCount": 0, "maxAttempts": 5 },
+      "from": {
+        "kind": "Pending",
+        "attemptCount": 0,
+        "maxAttempts": 5
+      },
       "trigger": "Enqueue",
-      "inputs": { "queuedAt": "2026-05-05T10:00:00+00:00" },
-      "expected": { "kind": "Queued", "queuedAt": "2026-05-05T10:00:00+00:00" }
+      "inputs": {
+        "queuedAt": "2026-05-05T10:00:00+00:00"
+      },
+      "expected": {
+        "kind": "Queued",
+        "queuedAt": "2026-05-05T10:00:00+00:00"
+      }
     },
     {
       "name": "row2_pending_to_running",
-      "from": { "kind": "Pending", "attemptCount": 1, "maxAttempts": 5 },
+      "from": {
+        "kind": "Pending",
+        "attemptCount": 1,
+        "maxAttempts": 5
+      },
       "trigger": "Start",
-      "inputs": { "startedAt": "2026-05-05T10:01:00+00:00" },
-      "expected": { "kind": "Running", "attemptCount": 2, "startedAt": "2026-05-05T10:01:00+00:00" }
+      "inputs": {
+        "startedAt": "2026-05-05T10:01:00+00:00"
+      },
+      "expected": {
+        "kind": "Running",
+        "attemptCount": 2,
+        "startedAt": "2026-05-05T10:01:00+00:00"
+      }
     },
     {
       "name": "row3_pending_to_blocked",
-      "from": { "kind": "Pending", "attemptCount": 0, "maxAttempts": 3 },
+      "from": {
+        "kind": "Pending",
+        "attemptCount": 0,
+        "maxAttempts": 3
+      },
       "trigger": "Block",
-      "inputs": { "blockedBy": ["enrich"], "errorCode": "MISSING_SCORE", "errorMessage": "no fit_score" },
+      "inputs": {
+        "blockedBy": [
+          "enrich"
+        ],
+        "errorCode": "MISSING_SCORE",
+        "errorMessage": "no fit_score"
+      },
       "expected": {
         "kind": "Blocked",
-        "blockedBy": ["enrich"],
+        "blockedBy": [
+          "enrich"
+        ],
         "errorCode": "MISSING_SCORE",
         "errorMessage": "no fit_score"
       }
     },
     {
       "name": "row4_pending_to_skipped",
-      "from": { "kind": "Pending", "attemptCount": 0, "maxAttempts": 3 },
+      "from": {
+        "kind": "Pending",
+        "attemptCount": 0,
+        "maxAttempts": 3
+      },
       "trigger": "Skip",
-      "inputs": { "reason": "low_score" },
-      "expected": { "kind": "Skipped", "reason": "low_score" }
+      "inputs": {
+        "reason": "low_score"
+      },
+      "expected": {
+        "kind": "Skipped",
+        "reason": "low_score"
+      }
     },
     {
       "name": "row5_queued_to_running",
-      "from": { "kind": "Queued", "queuedAt": "2026-05-05T10:00:00+00:00" },
+      "from": {
+        "kind": "Queued",
+        "queuedAt": "2026-05-05T10:00:00+00:00"
+      },
       "trigger": "Start",
-      "inputs": { "attemptCount": 1, "startedAt": "2026-05-05T10:00:01+00:00" },
-      "expected": { "kind": "Running", "attemptCount": 1, "startedAt": "2026-05-05T10:00:01+00:00" }
+      "inputs": {
+        "attemptCount": 1,
+        "startedAt": "2026-05-05T10:00:01+00:00"
+      },
+      "expected": {
+        "kind": "Running",
+        "attemptCount": 1,
+        "startedAt": "2026-05-05T10:00:01+00:00"
+      }
     },
     {
       "name": "row6_queued_to_canceled",
-      "from": { "kind": "Queued", "queuedAt": "2026-05-05T10:00:00+00:00" },
+      "from": {
+        "kind": "Queued",
+        "queuedAt": "2026-05-05T10:00:00+00:00"
+      },
       "trigger": "Cancel",
-      "inputs": { "canceledAt": "2026-05-05T10:00:30+00:00", "reason": "user_aborted" },
+      "inputs": {
+        "canceledAt": "2026-05-05T10:00:30+00:00",
+        "reason": "user_aborted"
+      },
       "expected": {
         "kind": "Canceled",
         "canceledAt": "2026-05-05T10:00:30+00:00",
@@ -54,9 +110,16 @@
     },
     {
       "name": "row7_running_to_succeeded",
-      "from": { "kind": "Running", "attemptCount": 2, "startedAt": "2026-05-05T10:00:00+00:00" },
+      "from": {
+        "kind": "Running",
+        "attemptCount": 2,
+        "startedAt": "2026-05-05T10:00:00+00:00"
+      },
       "trigger": "Complete",
-      "inputs": { "finishedAt": "2026-05-05T10:00:30+00:00", "durationMs": 30000 },
+      "inputs": {
+        "finishedAt": "2026-05-05T10:00:30+00:00",
+        "durationMs": 30000
+      },
       "expected": {
         "kind": "Succeeded",
         "attemptCount": 2,
@@ -66,7 +129,11 @@
     },
     {
       "name": "row8_running_to_failed",
-      "from": { "kind": "Running", "attemptCount": 1, "startedAt": "2026-05-05T10:00:00+00:00" },
+      "from": {
+        "kind": "Running",
+        "attemptCount": 1,
+        "startedAt": "2026-05-05T10:00:00+00:00"
+      },
       "trigger": "Fail",
       "inputs": {
         "maxAttempts": 5,
@@ -87,9 +154,16 @@
     },
     {
       "name": "row9_running_to_canceled",
-      "from": { "kind": "Running", "attemptCount": 1, "startedAt": "2026-05-05T10:00:00+00:00" },
+      "from": {
+        "kind": "Running",
+        "attemptCount": 1,
+        "startedAt": "2026-05-05T10:00:00+00:00"
+      },
       "trigger": "Cancel",
-      "inputs": { "canceledAt": "2026-05-05T10:00:05+00:00", "reason": "shutdown" },
+      "inputs": {
+        "canceledAt": "2026-05-05T10:00:05+00:00",
+        "reason": "shutdown"
+      },
       "expected": {
         "kind": "Canceled",
         "canceledAt": "2026-05-05T10:00:05+00:00",
@@ -107,7 +181,10 @@
         "retryable": true
       },
       "trigger": "Reset",
-      "inputs": { "resetAttempts": false, "nextAction": "jobctrl retry tailor" },
+      "inputs": {
+        "resetAttempts": false,
+        "nextAction": "jobctrl retry tailor"
+      },
       "expected": {
         "kind": "Pending",
         "attemptCount": 2,
@@ -126,8 +203,14 @@
         "retryable": true
       },
       "trigger": "Reset",
-      "inputs": { "resetAttempts": true },
-      "expected": { "kind": "Pending", "attemptCount": 0, "maxAttempts": 5 }
+      "inputs": {
+        "resetAttempts": true
+      },
+      "expected": {
+        "kind": "Pending",
+        "attemptCount": 0,
+        "maxAttempts": 5
+      }
     },
     {
       "name": "row11_failed_to_exhausted",
@@ -140,7 +223,9 @@
         "retryable": false
       },
       "trigger": "Exhaust",
-      "inputs": { "nextAction": "investigate" },
+      "inputs": {
+        "nextAction": "investigate"
+      },
       "expected": {
         "kind": "Exhausted",
         "attemptCount": 5,
@@ -154,13 +239,22 @@
       "name": "row12_blocked_to_pending",
       "from": {
         "kind": "Blocked",
-        "blockedBy": ["enrich"],
+        "blockedBy": [
+          "enrich"
+        ],
         "errorCode": "MISSING_SCORE",
         "errorMessage": "no fit_score"
       },
       "trigger": "Unblock",
-      "inputs": { "attemptCount": 0, "maxAttempts": 3 },
-      "expected": { "kind": "Pending", "attemptCount": 0, "maxAttempts": 3 }
+      "inputs": {
+        "attemptCount": 0,
+        "maxAttempts": 3
+      },
+      "expected": {
+        "kind": "Pending",
+        "attemptCount": 0,
+        "maxAttempts": 3
+      }
     },
     {
       "name": "row13_exhausted_to_pending",
@@ -172,7 +266,9 @@
         "errorMessage": "boom"
       },
       "trigger": "Reset",
-      "inputs": { "nextAction": "manual" },
+      "inputs": {
+        "nextAction": "manual"
+      },
       "expected": {
         "kind": "Pending",
         "attemptCount": 0,
@@ -182,10 +278,21 @@
     },
     {
       "name": "row14_canceled_to_pending",
-      "from": { "kind": "Canceled", "canceledAt": "2026-05-05T10:00:00+00:00", "reason": "user" },
+      "from": {
+        "kind": "Canceled",
+        "canceledAt": "2026-05-05T10:00:00+00:00",
+        "reason": "user"
+      },
       "trigger": "Reset",
-      "inputs": { "attemptCount": 0, "maxAttempts": 3 },
-      "expected": { "kind": "Pending", "attemptCount": 0, "maxAttempts": 3 }
+      "inputs": {
+        "attemptCount": 0,
+        "maxAttempts": 3
+      },
+      "expected": {
+        "kind": "Pending",
+        "attemptCount": 0,
+        "maxAttempts": 3
+      }
     },
     {
       "name": "row15_succeeded_to_stale",
@@ -196,15 +303,50 @@
         "durationMs": 1000
       },
       "trigger": "MarkStale",
-      "inputs": { "reason": "profile_changed" },
-      "expected": { "kind": "Stale", "reason": "profile_changed" }
+      "inputs": {
+        "reason": "profile_changed"
+      },
+      "expected": {
+        "kind": "Stale",
+        "reason": "profile_changed"
+      }
     },
     {
       "name": "row16_stale_to_pending",
-      "from": { "kind": "Stale", "reason": "profile_changed" },
+      "from": {
+        "kind": "Stale",
+        "reason": "profile_changed"
+      },
       "trigger": "Reset",
-      "inputs": { "attemptCount": 0, "maxAttempts": 3 },
-      "expected": { "kind": "Pending", "attemptCount": 0, "maxAttempts": 3 }
+      "inputs": {
+        "attemptCount": 0,
+        "maxAttempts": 3
+      },
+      "expected": {
+        "kind": "Pending",
+        "attemptCount": 0,
+        "maxAttempts": 3
+      }
+    },
+    {
+      "name": "running_semantic_failure_blocks",
+      "from": {
+        "kind": "Running",
+        "attemptCount": 1,
+        "startedAt": "2026-05-05T10:00:00+00:00"
+      },
+      "trigger": "Block",
+      "inputs": {
+        "blockedBy": [],
+        "errorCode": "SEMANTIC_SCHEMA_VIOLATION",
+        "errorMessage": "Correct the model response and retry."
+      },
+      "expected": {
+        "kind": "Blocked",
+        "blockedBy": [],
+        "errorCode": "SEMANTIC_SCHEMA_VIOLATION",
+        "errorMessage": "Correct the model response and retry."
+      }
     }
   ],
   "rejections": [
@@ -220,22 +362,27 @@
     },
     {
       "name": "pending_cannot_complete",
-      "from": { "kind": "Pending", "attemptCount": 0, "maxAttempts": 3 },
+      "from": {
+        "kind": "Pending",
+        "attemptCount": 0,
+        "maxAttempts": 3
+      },
       "trigger": "Complete"
     },
     {
-      "name": "running_cannot_block",
-      "from": { "kind": "Running", "attemptCount": 1, "startedAt": "2026-05-05T10:00:00+00:00" },
-      "trigger": "Block"
-    },
-    {
       "name": "skipped_cannot_reset",
-      "from": { "kind": "Skipped", "reason": "low_score" },
+      "from": {
+        "kind": "Skipped",
+        "reason": "low_score"
+      },
       "trigger": "Reset"
     },
     {
       "name": "queued_cannot_complete",
-      "from": { "kind": "Queued", "queuedAt": "2026-05-05T10:00:00+00:00" },
+      "from": {
+        "kind": "Queued",
+        "queuedAt": "2026-05-05T10:00:00+00:00"
+      },
       "trigger": "Complete"
     }
   ]

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // @vitest-environment-options {"url":"https://careers.example.com/jobs"}
 
-import { DiscoveryBrowserTaskResultSchema, type ExtensionAutofillProfileField } from "@jobctrl/contracts";
+import { DiscoveryBrowserTaskResultSchema, type FormMappingResponse, type FormSnapshot, type ExtensionAutofillProfileField } from "@jobctrl/contracts";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 let getBoundingClientRectSpy: ReturnType<typeof vi.spyOn>;
@@ -34,7 +34,7 @@ afterEach(() => {
   getClientRectsSpy.mockRestore();
 });
 
-describe("deterministic autofill content script", () => {
+describe("source-bound autofill content script", () => {
   it("observes only a visible Apply link positively bound to the selected job header", async () => {
     const { captureVisibleApplyControls } = await import("./content-script");
     document.body.innerHTML = `
@@ -282,323 +282,80 @@ describe("deterministic autofill content script", () => {
     fetchSpy.mockRestore();
   });
 
-  it("opens a review response that matches the background popup contract", async () => {
-    const { showAutofillReview } = await import("./content-script");
-    document.body.innerHTML = `<label>Email <input name="email" /></label>`;
-
-    const response = showAutofillReview(
-      { ok: true, profileVersion: 1, fields: profileFields() },
-      document,
-      "https://jobs.ashbyhq.com/acme/senior-platform-engineer",
-    );
-
-    expect(response).toEqual({
-      ok: true,
-      status: "review_opened",
-      suggestions: 1,
-      missing: 0,
-    });
-    expect(document.getElementById("jobctrl-autofill-root")).not.toBeNull();
+  it("uses the model mapping and keeps unaccepted values out of the page", async () => {
+    const { showAutofillReview, captureAutofillForm } = await import("./content-script");
+    document.body.innerHTML = `<form id="application"><label>Question <input name="answer" /></label></form>`;
+    const snapshot=captureAutofillForm(document);
+    const mapping=chosenMapping(snapshot, [{fact_id:"personal.email",value:"jordan@example.com"}]);
+    const response=showAutofillReview({ok:true,profileVersion:1,fields:profileFields()},mapping);
+    expect(response).toEqual({ok:true,status:"review_opened",suggestions:1,missing:0});
+    expect(document.body.textContent).toContain("Profile value ready");
+    expect(document.body.textContent).not.toContain("jordan@example.com");
+    const input=document.querySelector("[name='answer']") as HTMLInputElement;
+    expect(input.value).toBe("");
+    const fill=Array.from(document.querySelectorAll("button")).find(button=>button.textContent==="Fill selected");
+    fill?.click(); // Untrusted page clicks cannot authorize filling.
+    expect(input.value).toBe("");
   });
 
-  it("offers deterministic review on a generic HTTPS application form", async () => {
-    const { showAutofillReview } = await import("./content-script");
-    document.body.innerHTML = `<label>Email <input name="email" /></label>`;
-
-    const response = showAutofillReview(
-      { ok: true, profileVersion: 1, fields: profileFields() },
-      document,
-      "https://example.com/jobs/1",
-    );
-
-    expect(response).toEqual({
-      ok: true,
-      status: "review_opened",
-      suggestions: 1,
-      missing: 0,
-    });
+  it("allows opposite valid model decisions for the same question", async () => {
+    const { buildAutofillSuggestions, collectFieldTargets, captureAutofillForm } = await import("./content-script");
+    document.body.innerHTML=`<label>Question <input name="answer" /></label>`;
+    const snapshot=captureAutofillForm(document),targets=collectFieldTargets(document);
+    expect(buildAutofillSuggestions(profileFields(),targets,chosenMapping(snapshot,[{fact_id:"personal.email",value:"jordan@example.com"}]))).toHaveLength(1);
+    expect(buildAutofillSuggestions(profileFields(),targets,chosenMapping(snapshot,[{decision:"unmapped",fact_id:null,value:""}]))).toEqual([]);
+    expect(buildAutofillSuggestions(profileFields(),targets,chosenMapping(snapshot,[{decision:"missing",fact_id:null,value:""}]))[0]).toMatchObject({status:"missing",value:""});
   });
 
-  it("rejects non-web pages before suggesting fields", async () => {
-    const { showAutofillReview } = await import("./content-script");
-    document.body.innerHTML = `<label>Email <input name="email" /></label>`;
-
-    const response = showAutofillReview(
-      { ok: true, profileVersion: 1, fields: profileFields() },
-      document,
-      "file:///tmp/application.html",
-    );
-
-    expect(response).toMatchObject({ ok: false, error: "unsupported_page" });
+  it("fills confirmed mapped controls without submitting", async () => {
+    const { applyAcceptedSuggestions, buildAutofillSuggestions, collectFieldTargets, captureAutofillForm } = await import("./content-script");
+    document.body.innerHTML=`<form id="application"><input name="first" /><input name="second" /><input name="third" /><button type="submit">Submit</button></form>`;
+    let submits=0;document.querySelector("form")!.addEventListener("submit",()=>submits++);
+    const snapshot=captureAutofillForm(document),targets=collectFieldTargets(document);
+    const mapping=chosenMapping(snapshot,[{fact_id:"personal.full_name",value:"Jordan Candidate"},{fact_id:"personal.email",value:"jordan@example.com"},{fact_id:"personal.linkedin_url",value:"https://linkedin.com/in/jordan"}]);
+    expect(applyAcceptedSuggestions(buildAutofillSuggestions(profileFields(),targets,mapping))).toBe(3);
+    expect(Array.from(document.querySelectorAll("form input")).map(input=>(input as HTMLInputElement).value)).toEqual(["Jordan Candidate","jordan@example.com","https://linkedin.com/in/jordan"]);
+    expect(submits).toBe(0);
   });
 
-  it("does not expose unaccepted profile values into the page DOM", async () => {
-    const { showAutofillReview } = await import("./content-script");
-    document.body.innerHTML = `
-      <form id="application">
-        <label>Your name <input name="candidate_name" /></label>
-        <label>Email <input name="email" /></label>
-        <label>LinkedIn <input name="linkedin" /></label>
-      </form>
-    `;
-
-    const response = showAutofillReview(
-      { ok: true, profileVersion: 1, fields: profileFields() },
-      document,
-      "https://jobs.ashbyhq.com/acme/senior-platform-engineer",
-    );
-
-    const pageText = document.body.textContent ?? "";
-    const inputValues = Array.from(document.querySelectorAll("input"))
-      .map((input) => input.value)
-      .join("\n");
-    expect(response).toMatchObject({ ok: true, status: "review_opened" });
-    expect(pageText).toContain("Profile value ready");
-    expect(pageText).not.toContain("Jordan Candidate");
-    expect(pageText).not.toContain("jordan@example.com");
-    expect(pageText).not.toContain("https://linkedin.com/in/jordan");
-    expect(inputValues).not.toContain("Jordan Candidate");
-    expect(inputValues).not.toContain("jordan@example.com");
-    expect(inputValues).not.toContain("https://linkedin.com/in/jordan");
+  it("uses option IDs for radio and select controls", async () => {
+    const { applyAcceptedSuggestions, buildAutofillSuggestions, collectFieldTargets, captureAutofillForm } = await import("./content-script");
+    document.body.innerHTML=`<form><input type="radio" name="choice" value="a" /><input type="radio" name="choice" value="b" /><select name="choice2"><option value="a">A</option><option value="b">B</option></select></form>`;
+    const snapshot=captureAutofillForm(document),targets=collectFieldTargets(document);
+    const mapping=chosenMapping(snapshot,[{fact_id:"personal.email",value:"jordan@example.com",option_id:snapshot.questions[0]!.options[1]!.option_id},{fact_id:"personal.email",value:"jordan@example.com",option_id:snapshot.questions[1]!.options[1]!.option_id}]);
+    expect(applyAcceptedSuggestions(buildAutofillSuggestions(profileFields(),targets,mapping))).toBe(2);
+    expect((document.querySelector("input[value='b']") as HTMLInputElement).checked).toBe(true);
+    expect((document.querySelector("input[value='a']") as HTMLInputElement).checked).toBe(false);
+    expect((document.querySelector("select") as HTMLSelectElement).value).toBe("b");
   });
 
-  it("ignores scripted fill clicks from the page before user acceptance", async () => {
-    const { showAutofillReview } = await import("./content-script");
-    document.body.innerHTML = `
-      <form id="application">
-        <label>First name <input name="first_name" /></label>
-        <label>Last name <input name="last_name" /></label>
-        <label>Email <input name="email" /></label>
-      </form>
-    `;
-
-    showAutofillReview(
-      { ok: true, profileVersion: 1, fields: profileFields() },
-      document,
-      "https://jobs.ashbyhq.com/acme/senior-platform-engineer",
-    );
-    const fill = Array.from(document.querySelectorAll("button")).find((button) => button.textContent === "Fill selected");
-    fill?.click();
-
-    expect((document.querySelector("[name='first_name']") as HTMLInputElement).value).toBe("");
-    expect((document.querySelector("[name='last_name']") as HTMLInputElement).value).toBe("");
-    expect((document.querySelector("[name='email']") as HTMLInputElement).value).toBe("");
+  it("captures only visible controls and rechecks visibility at confirmation", async () => {
+    const { applyAcceptedSuggestions, buildAutofillSuggestions, collectFieldTargets, captureAutofillForm } = await import("./content-script");
+    document.body.innerHTML=`<form><input name="hidden" style="display:none" /><div style="visibility:hidden"><input name="ancestor" /></div><input name="zero" data-rect="zero" /><input name="offscreen" data-rect="offscreen" /><input name="clipped" style="clip-path:inset(50%)" /><input name="visible" /></form>`;
+    const snapshot=captureAutofillForm(document),targets=collectFieldTargets(document);
+    expect(targets.map(target=>target.control.name)).toEqual(["visible"]);
+    const suggestions=buildAutofillSuggestions(profileFields(),targets,chosenMapping(snapshot,[{fact_id:"personal.email",value:"jordan@example.com"}]));
+    targets[0]!.control.style.display="none";
+    expect(applyAcceptedSuggestions(suggestions)).toBe(0);
+    expect(targets[0]!.control.value).toBe("");
   });
 
-  it("fills accepted profile-backed fields without submitting the form", async () => {
-    const { applyAcceptedSuggestions, buildAutofillSuggestions, collectFieldTargets } = await import("./content-script");
-    document.body.innerHTML = `
-      <form id="application">
-        <label>First name <input name="first_name" /></label>
-        <label>Last name <input name="last_name" /></label>
-        <label>Email <input name="email" /></label>
-        <label>LinkedIn <input name="linkedin" /></label>
-        <button type="submit">Submit application</button>
-      </form>
-    `;
-    let submitCount = 0;
-    document.getElementById("application")?.addEventListener("submit", () => {
-      submitCount += 1;
-    });
-
-    const suggestions = buildAutofillSuggestions(profileFields(), collectFieldTargets(document));
-    const filled = applyAcceptedSuggestions(suggestions);
-
-    expect(filled).toBe(4);
-    expect((document.querySelector("[name='first_name']") as HTMLInputElement).value).toBe("Jordan");
-    expect((document.querySelector("[name='last_name']") as HTMLInputElement).value).toBe("Candidate");
-    expect((document.querySelector("[name='email']") as HTMLInputElement).value).toBe("jordan@example.com");
-    expect((document.querySelector("[name='linkedin']") as HTMLInputElement).value).toBe("https://linkedin.com/in/jordan");
-    expect(submitCount).toBe(0);
+  it("refuses stale form snapshots and profile versions", async () => {
+    const { showAutofillReview,captureAutofillForm } = await import("./content-script");
+    document.body.innerHTML=`<label>Question <input name="answer" /></label>`;
+    const snapshot=captureAutofillForm(document),mapping=chosenMapping(snapshot,[{fact_id:"personal.email",value:"jordan@example.com"}]);
+    expect(showAutofillReview({ok:true,profileVersion:2,fields:profileFields()},mapping)).toMatchObject({ok:false,error:"stale_form_snapshot"});
+    document.querySelector("label")!.prepend("Changed ");
+    expect(showAutofillReview({ok:true,profileVersion:1,fields:profileFields()},mapping)).toMatchObject({ok:false,error:"stale_form_snapshot"});
   });
 
-  it("selects the matching yes-no radio option once per logical field", async () => {
-    const { applyAcceptedSuggestions, buildAutofillSuggestions, collectFieldTargets } = await import("./content-script");
-    document.body.innerHTML = `
-      <form id="application">
-        <fieldset>
-          <legend>Are you legally authorized to work?</legend>
-          <label><input type="radio" name="legally_authorized_to_work" value="yes" /> Yes</label>
-          <label><input type="radio" name="legally_authorized_to_work" value="no" /> No</label>
-        </fieldset>
-        <fieldset>
-          <legend>Will you require sponsorship?</legend>
-          <label><input type="radio" name="require_sponsorship" value="yes" /> Yes</label>
-          <label><input type="radio" name="require_sponsorship" value="no" /> No</label>
-        </fieldset>
-      </form>
-    `;
-
-    const suggestions = buildAutofillSuggestions(
-      profileFields([
-        field("work_authorization.legally_authorized_to_work", "Profile > Work authorization > Legally authorized to work", "Yes"),
-        field("work_authorization.require_sponsorship", "Profile > Work authorization > Requires sponsorship", "No"),
-      ]),
-      collectFieldTargets(document),
-    );
-    const filled = applyAcceptedSuggestions(suggestions);
-
-    expect(suggestions.map((suggestion) => suggestion.profilePath)).toEqual([
-      "work_authorization.legally_authorized_to_work",
-      "work_authorization.require_sponsorship",
-    ]);
-    expect(filled).toBe(2);
-    expect((document.querySelector("[name='legally_authorized_to_work'][value='yes']") as HTMLInputElement).checked).toBe(true);
-    expect((document.querySelector("[name='legally_authorized_to_work'][value='no']") as HTMLInputElement).checked).toBe(false);
-    expect((document.querySelector("[name='require_sponsorship'][value='yes']") as HTMLInputElement).checked).toBe(false);
-    expect((document.querySelector("[name='require_sponsorship'][value='no']") as HTMLInputElement).checked).toBe(true);
+  it("rejects non-web pages before opening review", async () => {
+    const { showAutofillReview,captureAutofillForm } = await import("./content-script");
+    document.body.innerHTML=`<input />`;
+    const mapping=chosenMapping(captureAutofillForm(document),[{fact_id:"personal.email",value:"jordan@example.com"}]);
+    expect(showAutofillReview({ok:true,profileVersion:1,fields:profileFields()},mapping,document,"file:///tmp/application.html")).toMatchObject({ok:false,error:"unsupported_page"});
   });
 
-  it("selects matching yes-no select options for availability answers", async () => {
-    const { applyAcceptedSuggestions, buildAutofillSuggestions, collectFieldTargets } = await import("./content-script");
-    document.body.innerHTML = `
-      <form id="application">
-        <label>
-          Available for full time
-          <select name="available_for_full_time">
-            <option value="">Select</option>
-            <option value="yes">Yes</option>
-            <option value="no">No</option>
-          </select>
-        </label>
-        <label>
-          Available for contract work
-          <select name="available_for_contract">
-            <option value="">Select</option>
-            <option value="yes">Yes</option>
-            <option value="no">No</option>
-          </select>
-        </label>
-      </form>
-    `;
-
-    const suggestions = buildAutofillSuggestions(
-      profileFields([
-        field("availability.available_for_full_time", "Profile > Availability > Full time", "Yes"),
-        field("availability.available_for_contract", "Profile > Availability > Contract", "No"),
-      ]),
-      collectFieldTargets(document),
-    );
-    const filled = applyAcceptedSuggestions(suggestions);
-
-    expect(suggestions.map((suggestion) => suggestion.profilePath)).toEqual([
-      "availability.available_for_full_time",
-      "availability.available_for_contract",
-    ]);
-    expect(filled).toBe(2);
-    expect((document.querySelector("[name='available_for_full_time']") as HTMLSelectElement).value).toBe("yes");
-    expect((document.querySelector("[name='available_for_contract']") as HTMLSelectElement).value).toBe("no");
-  });
-
-  it("does not suggest or fill CSS-hidden controls", async () => {
-    const { applyAcceptedSuggestions, buildAutofillSuggestions, collectFieldTargets } = await import("./content-script");
-    document.body.innerHTML = `
-      <form id="application">
-        <label>Email <input name="hidden_email_display" style="display: none" /></label>
-        <label style="display: none">First name <input name="hidden_first_name_ancestor" /></label>
-        <label>LinkedIn <input name="hidden_linkedin_visibility" style="visibility: hidden" /></label>
-        <label>Email <input name="visible_email" /></label>
-      </form>
-    `;
-
-    const suggestions = buildAutofillSuggestions(profileFields(), collectFieldTargets(document));
-    const suggestionNames = suggestions.map((suggestion) => suggestion.target.control.getAttribute("name"));
-    const filled = applyAcceptedSuggestions(suggestions);
-
-    expect(suggestionNames).toEqual(["visible_email"]);
-    expect(filled).toBe(1);
-    expect((document.querySelector("[name='hidden_email_display']") as HTMLInputElement).value).toBe("");
-    expect((document.querySelector("[name='hidden_first_name_ancestor']") as HTMLInputElement).value).toBe("");
-    expect((document.querySelector("[name='hidden_linkedin_visibility']") as HTMLInputElement).value).toBe("");
-    expect((document.querySelector("[name='visible_email']") as HTMLInputElement).value).toBe("jordan@example.com");
-  });
-
-  it("does not suggest or fill zero-size, offscreen, or clipped controls", async () => {
-    const { applyAcceptedSuggestions, buildAutofillSuggestions, collectFieldTargets } = await import("./content-script");
-    document.body.innerHTML = `
-      <form id="application">
-        <label>Email <input name="zero_size_email" data-rect="zero" /></label>
-        <label>Email <input name="offscreen_email" data-rect="offscreen" /></label>
-        <label>Email <input name="clipped_email" style="clip-path: inset(50%)" /></label>
-        <label>Email <input name="visible_email" /></label>
-      </form>
-    `;
-
-    const suggestions = buildAutofillSuggestions(profileFields(), collectFieldTargets(document));
-    const suggestionNames = suggestions.map((suggestion) => suggestion.target.control.getAttribute("name"));
-    const filled = applyAcceptedSuggestions(suggestions);
-
-    expect(suggestionNames).toEqual(["visible_email"]);
-    expect(filled).toBe(1);
-    expect((document.querySelector("[name='zero_size_email']") as HTMLInputElement).value).toBe("");
-    expect((document.querySelector("[name='offscreen_email']") as HTMLInputElement).value).toBe("");
-    expect((document.querySelector("[name='clipped_email']") as HTMLInputElement).value).toBe("");
-    expect((document.querySelector("[name='visible_email']") as HTMLInputElement).value).toBe("jordan@example.com");
-  });
-
-  it("rechecks visibility before filling accepted suggestions", async () => {
-    const { applyAcceptedSuggestions, buildAutofillSuggestions, collectFieldTargets } = await import("./content-script");
-    document.body.innerHTML = `<label>Email <input name="email" /></label>`;
-
-    const [suggestion] = buildAutofillSuggestions(profileFields(), collectFieldTargets(document));
-    const email = document.querySelector("[name='email']") as HTMLInputElement;
-    email.style.display = "none";
-    const filled = applyAcceptedSuggestions(suggestion ? [suggestion] : []);
-
-    expect(filled).toBe(0);
-    expect(email.value).toBe("");
-  });
-
-  it("labels recognized fields as missing instead of inventing values", async () => {
-    const { buildAutofillSuggestions, collectFieldTargets } = await import("./content-script");
-    document.body.innerHTML = `<label>Postal code <input name="zip" /></label>`;
-
-    const [suggestion] = buildAutofillSuggestions(profileFields(), collectFieldTargets(document));
-
-    expect(suggestion).toMatchObject({
-      profilePath: "personal.postal_code",
-      status: "missing",
-      value: "",
-    });
-  });
-
-  it("does not map unrelated entity-name fields to the candidate full name", async () => {
-    const { buildAutofillSuggestions, collectFieldTargets } = await import("./content-script");
-    document.body.innerHTML = `<label>Company name <input name="company_name" /></label>`;
-
-    const suggestions = buildAutofillSuggestions(profileFields(), collectFieldTargets(document));
-
-    expect(suggestions).toEqual([]);
-  });
-
-  it("does not map ambiguous citizenship, contract-type, or address-line-two fields", async () => {
-    const { buildAutofillSuggestions, collectFieldTargets } = await import("./content-script");
-    document.body.innerHTML = `
-      <form id="application">
-        <label>Country of citizenship <input name="country_of_citizenship" /></label>
-        <label>Country <input name="country" /></label>
-        <label>Contract type <select name="contract_type"><option>W2</option></select></label>
-        <label>Available for contract work <select name="available_for_contract"><option>Yes</option></select></label>
-        <label>Address line 2 <input name="address_line_2" /></label>
-        <label>Street address <input name="street_address" /></label>
-      </form>
-    `;
-
-    const suggestions = buildAutofillSuggestions(
-      profileFields([
-        field("personal.country", "Profile > Personal information > Country", "United States"),
-        field("availability.available_for_contract", "Profile > Availability > Contract", "Yes"),
-        field("personal.address", "Profile > Personal information > Street address", "123 Market St"),
-      ]),
-      collectFieldTargets(document),
-    );
-
-    expect(suggestions.map((suggestion) => suggestion.target.control.getAttribute("name"))).toEqual([
-      "country",
-      "available_for_contract",
-      "street_address",
-    ]);
-  });
 });
 
 function profileFields(extra: ExtensionAutofillProfileField[] = []): ExtensionAutofillProfileField[] {
@@ -641,4 +398,8 @@ function makeRect(left: number, top: number, width: number, height: number): DOM
     bottom: top + height,
     toJSON: () => ({}),
   } as DOMRect;
+}
+
+function chosenMapping(snapshot:FormSnapshot,choices:Array<Partial<FormMappingResponse["mappings"][number]>>):FormMappingResponse {
+ return {ok:true,snapshotId:snapshot.snapshotId,profileVersion:1,determinationId:"synthetic",mappings:choices.map((choice,index)=>({question_id:snapshot.questions[index]!.question_id,decision:"mapped",fact_id:null,value:"",option_id:null,citations:[],rationale:"Explicit model decision",...choice}))};
 }

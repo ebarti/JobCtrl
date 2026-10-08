@@ -10,7 +10,7 @@ import { createActionDispatcher } from "../src/local-actions.js";
 import { interviewPrepStaleReasons } from "../src/interview-prep-history.js";
 import { buildApp } from "../src/server.js";
 import { syntheticInterviewCatalogAsset, syntheticInterviewGenerationContext } from "./interview-fixture.js";
-import { initializeExactV7Database } from "./v7-schema.js";
+import { initializeExactDatabase } from "./exact-schema.js";
 
 const JOB_ID = "11111111-1111-4111-8111-111111111111";
 const OTHER_JOB_ID = "22222222-2222-4222-8222-222222222222";
@@ -22,7 +22,7 @@ describe("canonical interview prep history and dispatch", () => {
   const options = () => ({ appDir: directory, dbPath, configPath: path.join(directory, "config.json"), interviewCatalogAssetLoader: syntheticInterviewCatalogAsset });
   beforeEach(() => {
     directory = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-prep-history-")));
-    dbPath = path.join(directory, "jobctrl.db"); initializeExactV7Database(dbPath);
+    dbPath = path.join(directory, "jobctrl.db"); initializeExactDatabase(dbPath);
     db = new Database(dbPath); db.pragma("foreign_keys = ON");
     for (const [tenantId, jobId] of [["local", JOB_ID], ["local", OTHER_JOB_ID], ["other", JOB_ID]]) {
       db.prepare("INSERT INTO jobs (tenant_id, job_id, url, title, company, description) VALUES (?, ?, ?, 'Synthetic job', 'Example', 'Synthetic responsibilities')")

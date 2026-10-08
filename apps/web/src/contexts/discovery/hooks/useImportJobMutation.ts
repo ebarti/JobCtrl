@@ -31,7 +31,7 @@ export function useImportJobMutation(): UseMutationResult<
         ]);
         return;
       }
-      await queryClient.invalidateQueries({ queryKey: discoveryKeys.manualCapture(tenantId) });
+      await queryClient.invalidateQueries({ queryKey: discoveryKeys.all(tenantId) });
     },
   });
 }

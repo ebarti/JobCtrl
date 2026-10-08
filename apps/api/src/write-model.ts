@@ -760,7 +760,6 @@ export function writeSettingsConfig(
     if (request.analysisLegs !== undefined) assign("analysis_legs", request.analysisLegs);
     if (request.tailoringGeneratorModels !== undefined) assign("tailoring_generator_models", request.tailoringGeneratorModels);
     if (request.tailoringJudgeModel !== undefined) assign("tailoring_judge_model", request.tailoringJudgeModel);
-    if (request.tailoringJudgeMinScore !== undefined) assign("tailoring_judge_min_score", request.tailoringJudgeMinScore);
     if (request.applyMaxBudgetUsd !== undefined) assign("apply_max_budget_usd", request.applyMaxBudgetUsd);
     if (request.applyTimeoutSeconds !== undefined) assign("apply_timeout_seconds", request.applyTimeoutSeconds);
     if (request.scoreCriteria !== undefined) assign("score_criteria", request.scoreCriteria);

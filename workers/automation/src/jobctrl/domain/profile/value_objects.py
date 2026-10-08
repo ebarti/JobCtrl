@@ -243,9 +243,7 @@ class ApplicationAttestations:
             age_18_plus=_optional_bool(data.get("age_18_plus")),
             background_check_consent=_optional_bool(data.get("background_check_consent")),
             felony_conviction=_optional_bool(data.get("felony_conviction")),
-            previously_worked_at_employer=_optional_bool(
-                data.get("previously_worked_at_employer")
-            ),
+            previously_worked_at_employer=_optional_bool(data.get("previously_worked_at_employer")),
             additional=MappingProxyType(dict(additional)),
         )
 
@@ -303,17 +301,16 @@ class AchievementEvidence:
     tools: tuple[str, ...] = ()
     metrics: tuple[str, ...] = ()
     outcome: str = ""
-    seniority_signal: str = ""
-    evidence_strength: str = "supported"
+    evidence_strength: str = "draft"
     claim_confidence: float = 0.0
     user_confirmed: bool = False
     tags: tuple[str, ...] = ()
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "AchievementEvidence":
-        strength = _str(data.get("evidence_strength"), "supported")
+        strength = _str(data.get("evidence_strength"), "draft")
         if strength not in EVIDENCE_STRENGTHS:
-            strength = "supported"
+            strength = "draft"
         return cls(
             id=_str(data.get("id"), ""),
             source_text=_str(data.get("source_text"), ""),
@@ -322,7 +319,6 @@ class AchievementEvidence:
             tools=_str_tuple(data.get("tools")),
             metrics=_str_tuple(data.get("metrics")),
             outcome=_str(data.get("outcome"), ""),
-            seniority_signal=_str(data.get("seniority_signal"), ""),
             evidence_strength=strength,
             claim_confidence=_float(data.get("claim_confidence"), 0.0),
             user_confirmed=_bool(data.get("user_confirmed"), False),
@@ -338,7 +334,6 @@ class AchievementEvidence:
             "tools": list(self.tools),
             "metrics": list(self.metrics),
             "outcome": self.outcome,
-            "seniority_signal": self.seniority_signal,
             "evidence_strength": self.evidence_strength,
             "claim_confidence": self.claim_confidence,
             "user_confirmed": self.user_confirmed,
@@ -624,12 +619,8 @@ class TailoringRules:
     required_experience_entry_ids: tuple[str, ...] = ()
     required_education_entry_ids: tuple[str, ...] = ()
     required_skill_category_ids: tuple[str, ...] = ()
-    required_bullets_by_experience_id: Mapping[str, tuple[str, ...]] = field(
-        default_factory=lambda: _EMPTY_MAPPING
-    )
-    required_skills_by_category_id: Mapping[str, tuple[str, ...]] = field(
-        default_factory=lambda: _EMPTY_MAPPING
-    )
+    required_bullets_by_experience_id: Mapping[str, tuple[str, ...]] = field(default_factory=lambda: _EMPTY_MAPPING)
+    required_skills_by_category_id: Mapping[str, tuple[str, ...]] = field(default_factory=lambda: _EMPTY_MAPPING)
     max_experience_bullets: int = 4
     custom_tailoring_prompt: str = ""
     tailoring_policy: TailoringPolicy = field(default_factory=TailoringPolicy)
@@ -687,12 +678,10 @@ class TailoringRules:
             "required_education_entry_ids": list(self.required_education_entry_ids),
             "required_skill_category_ids": list(self.required_skill_category_ids),
             "required_bullets_by_experience_id": {
-                entry_id: list(bullets)
-                for entry_id, bullets in self.required_bullets_by_experience_id.items()
+                entry_id: list(bullets) for entry_id, bullets in self.required_bullets_by_experience_id.items()
             },
             "required_skills_by_category_id": {
-                category_id: list(skills)
-                for category_id, skills in self.required_skills_by_category_id.items()
+                category_id: list(skills) for category_id, skills in self.required_skills_by_category_id.items()
             },
             "max_experience_bullets": self.max_experience_bullets,
             "tailoring_policy": self.tailoring_policy.to_dict(),

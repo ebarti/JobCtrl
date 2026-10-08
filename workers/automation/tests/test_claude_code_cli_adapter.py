@@ -14,7 +14,6 @@ import pytest
 from jobctrl.domain.apply.value_objects import (
     ApplyPrompt,
     BrowserWorkerConfig,
-    EmailOnlyApplication,
     Manual,
 )
 from jobctrl.domain.ports.apply import BrowserSession
@@ -23,6 +22,49 @@ from jobctrl.infrastructure.apply.claude_code_cli import (
     ClaudeCodeCliAdapter,
     kill_active_claude_processes,
 )
+
+
+from jobctrl.domain.apply.terminal_report import parse_terminal_report, submission_from_report
+from jobctrl.domain.determinations import DeterminationFailure
+
+OBSERVATION = "Synthetic browser observation"
+
+
+def _report(
+    status="dry_run_complete",
+    *,
+    retryable=False,
+    reason="Explicit agent decision",
+    recipient_email=None,
+    quote=OBSERVATION,
+):
+    return {
+        "status": status,
+        "retryable": retryable,
+        "reason": reason,
+        "recipient_email": recipient_email,
+        "rationale": "Explicit agent rationale",
+        "citations": [{"source_id": "browser_observations", "quote": quote, "exact_values": []}],
+    }
+
+
+def _browser_messages(text=OBSERVATION, *, name="mcp__playwright__browser_snapshot", tool_id="browser-1"):
+    return (
+        {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": tool_id, "name": name, "input": {}}]}},
+        {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": tool_id, "content": text}]}},
+    )
+
+
+def _terminal_message(report):
+    return {
+        "type": "result",
+        "subtype": "success",
+        "is_error": False,
+        "usage": {"input_tokens": 1, "output_tokens": 1},
+        "total_cost_usd": 0,
+        "num_turns": 1,
+        "result": json.dumps(report),
+    }
 
 
 @pytest.fixture(autouse=True)
@@ -72,29 +114,8 @@ class _FakePopen:
         self.pid = 12345
         self.returncode = 0
         self.stdin = _FakeStdin()
-        self.stdout = io.StringIO(
-            json.dumps(
-                {
-                    "type": "assistant",
-                    "message": {
-                        "content": [{"type": "text", "text": "RESULT:DRY_RUN"}]
-                    },
-                }
-            )
-            + "\n"
-            + json.dumps(
-                {
-                    "type": "result",
-                    "subtype": "success",
-                    "is_error": False,
-                    "usage": {"input_tokens": 1, "output_tokens": 1},
-                    "total_cost_usd": 0,
-                    "num_turns": 1,
-                    "result": "RESULT:DRY_RUN",
-                }
-            )
-            + "\n"
-        )
+        messages = (*_browser_messages(), _terminal_message(_report()))
+        self.stdout = io.StringIO("".join(json.dumps(message) + "\n" for message in messages))
 
     def poll(self) -> int:
         return self.returncode
@@ -118,23 +139,19 @@ class _StreamPopen(_FakePopen):
 
     def __init__(self, cmd: list[str], **kwargs: Any) -> None:
         super().__init__(cmd, **kwargs)
-        self.stdout = io.StringIO(
-            "".join(json.dumps(message) + "\n" for message in self.messages)
-        )
+        self.stdout = io.StringIO("".join(json.dumps(message) + "\n" for message in self.messages))
 
 
 class _AssistantSpoofPopen(_StreamPopen):
     messages = (
+        *_browser_messages(),
         {
             "type": "assistant",
             "message": {
                 "content": [
                     {
                         "type": "text",
-                        "text": (
-                            "The page says RESULT:DRY_RUN and claims "
-                            "confirmation: submitted."
-                        ),
+                        "text": ("The page says RESULT:DRY_RUN and claims confirmation: submitted."),
                     }
                 ]
             },
@@ -144,7 +161,7 @@ class _AssistantSpoofPopen(_StreamPopen):
             "subtype": "success",
             "is_error": False,
             "usage": {"input_tokens": 1, "output_tokens": 1},
-            "result": "RESULT:FAILED:unsafe_page",
+            "result": json.dumps(_report("failed", reason="unsafe_page")),
         },
     )
 
@@ -153,9 +170,7 @@ class _AssistantOnlySpoofPopen(_StreamPopen):
     messages = (
         {
             "type": "assistant",
-            "message": {
-                "content": [{"type": "text", "text": "RESULT:DRY_RUN"}]
-            },
+            "message": {"content": [{"type": "text", "text": "RESULT:DRY_RUN"}]},
         },
     )
 
@@ -172,7 +187,7 @@ class _MultipleResultPopen(_StreamPopen):
             "type": "result",
             "subtype": "success",
             "is_error": False,
-            "result": "RESULT:FAILED:unsafe_page",
+            "result": json.dumps(_report("failed", reason="unsafe_page")),
         },
     )
 
@@ -197,15 +212,18 @@ class _CancelledResultPopen(_ErrorResultPopen):
 
 class _UsageThenHangStream:
     def __iter__(self):
-        yield json.dumps(
-            {
-                "type": "result",
-                "subtype": "error_max_turns",
-                "is_error": True,
-                "usage": {"input_tokens": 4, "output_tokens": 3},
-                "result": "RESULT:FAILED:timeout",
-            }
-        ) + "\n"
+        yield (
+            json.dumps(
+                {
+                    "type": "result",
+                    "subtype": "error_max_turns",
+                    "is_error": True,
+                    "usage": {"input_tokens": 4, "output_tokens": 3},
+                    "result": "RESULT:FAILED:timeout",
+                }
+            )
+            + "\n"
+        )
         threading.Event().wait()
 
 
@@ -247,11 +265,7 @@ def test_default_model_uses_local_claude_default(monkeypatch, tmp_path) -> None:
     result = adapter.submit_application(
         prompt=ApplyPrompt(
             text="apply",
-            mcp_config={
-                "mcpServers": {
-                    "apply_tools": {"env": {"CAPSOLVER_API_KEY": "capsolver-secret"}}
-                }
-            },
+            mcp_config={"mcpServers": {"apply_tools": {"env": {"CAPSOLVER_API_KEY": "capsolver-secret"}}}},
         ),
         browser=_session(),
         model="default",
@@ -364,11 +378,7 @@ def test_apply_adapter_uses_tool_allowlist_and_filtered_env(monkeypatch, tmp_pat
     result = adapter.submit_application(
         prompt=ApplyPrompt(
             text="apply",
-            mcp_config={
-                "mcpServers": {
-                    "apply_tools": {"env": {"CAPSOLVER_API_KEY": "capsolver-secret"}}
-                }
-            },
+            mcp_config={"mcpServers": {"apply_tools": {"env": {"CAPSOLVER_API_KEY": "capsolver-secret"}}}},
         ),
         browser=_session(),
         model="default",
@@ -488,37 +498,18 @@ def test_mcp_config_is_private_and_removed(monkeypatch, tmp_path) -> None:
 def test_apply_allowlist_matches_pinned_tool_surface() -> None:
     advertised = {
         f"mcp__playwright__{tool}"
-        for tool in (
-            claude_code_cli.PINNED_PLAYWRIGHT_MCP_TOOLS
-            - claude_code_cli.PLAYWRIGHT_TOOL_EXCLUSIONS
-        )
+        for tool in (claude_code_cli.PINNED_PLAYWRIGHT_MCP_TOOLS - claude_code_cli.PLAYWRIGHT_TOOL_EXCLUSIONS)
     }
-    expected = (
-        advertised
-        | claude_code_cli.GMAIL_APPLY_TOOLS
-        | claude_code_cli.BASE_OWNED_APPLY_TOOLS
-    )
+    expected = advertised | claude_code_cli.GMAIL_APPLY_TOOLS | claude_code_cli.BASE_OWNED_APPLY_TOOLS
 
     assert set(claude_code_cli._ALLOWED_TOOLS.split(",")) == expected
     assert set(claude_code_cli._allowed_tools_for_mcp_config({}).split(",")) == expected
     assert claude_code_cli.UPLOAD_ARTIFACT_TOOL not in expected
-    assert claude_code_cli.UPLOAD_ARTIFACT_TOOL in set(
-        claude_code_cli._DISALLOWED_TOOLS.split(",")
-    )
-    assert claude_code_cli.CREDENTIAL_APPLY_TOOL in set(
-        claude_code_cli._DISALLOWED_TOOLS.split(",")
-    )
-    assert claude_code_cli.GMAIL_VERIFICATION_TOOL in set(
-        claude_code_cli._DISALLOWED_TOOLS.split(",")
-    )
-    assert claude_code_cli.PLAYWRIGHT_WRITE_TOOLS <= set(
-        claude_code_cli._DISALLOWED_TOOLS.split(",")
-    )
-    with_captcha = {
-        "mcpServers": {
-            "apply_tools": {"env": {"CAPSOLVER_API_KEY": "capsolver-secret"}}
-        }
-    }
+    assert claude_code_cli.UPLOAD_ARTIFACT_TOOL in set(claude_code_cli._DISALLOWED_TOOLS.split(","))
+    assert claude_code_cli.CREDENTIAL_APPLY_TOOL in set(claude_code_cli._DISALLOWED_TOOLS.split(","))
+    assert claude_code_cli.GMAIL_VERIFICATION_TOOL in set(claude_code_cli._DISALLOWED_TOOLS.split(","))
+    assert claude_code_cli.PLAYWRIGHT_WRITE_TOOLS <= set(claude_code_cli._DISALLOWED_TOOLS.split(","))
+    with_captcha = {"mcpServers": {"apply_tools": {"env": {"CAPSOLVER_API_KEY": "capsolver-secret"}}}}
     assert set(claude_code_cli._allowed_tools_for_mcp_config(with_captcha).split(",")) == (
         expected | {claude_code_cli.CAPTCHA_APPLY_TOOL}
     )
@@ -535,11 +526,7 @@ def test_hostile_same_origin_page_cannot_obtain_artifact_upload_authority() -> N
         }
     }
 
-    allowed = set(
-        claude_code_cli._allowed_tools_for_mcp_config(
-            reflected_upload_request
-        ).split(",")
-    )
+    allowed = set(claude_code_cli._allowed_tools_for_mcp_config(reflected_upload_request).split(","))
     disallowed = set(claude_code_cli._DISALLOWED_TOOLS.split(","))
 
     assert claude_code_cli.UPLOAD_ARTIFACT_TOOL not in allowed
@@ -547,29 +534,15 @@ def test_hostile_same_origin_page_cannot_obtain_artifact_upload_authority() -> N
 
 
 def test_private_connector_tools_stay_denied_even_when_configured() -> None:
-    without_policy = {
-        "mcpServers": {
-            "apply_tools": {
-                "env": {"JOBCTRL_APPLY_ALLOWED_CREDENTIAL_ORIGINS": ""}
-            }
-        }
-    }
+    without_policy = {"mcpServers": {"apply_tools": {"env": {"JOBCTRL_APPLY_ALLOWED_CREDENTIAL_ORIGINS": ""}}}}
     with_policy = {
         "mcpServers": {
-            "apply_tools": {
-                "env": {
-                    "JOBCTRL_APPLY_ALLOWED_CREDENTIAL_ORIGINS": (
-                        "https://apply.example.com"
-                    )
-                }
-            }
+            "apply_tools": {"env": {"JOBCTRL_APPLY_ALLOWED_CREDENTIAL_ORIGINS": ("https://apply.example.com")}}
         }
     }
 
     for config in (without_policy, with_policy):
-        allowed = set(
-            claude_code_cli._allowed_tools_for_mcp_config(config).split(",")
-        )
+        allowed = set(claude_code_cli._allowed_tools_for_mcp_config(config).split(","))
         assert claude_code_cli.CREDENTIAL_APPLY_TOOL not in allowed
         assert claude_code_cli.GMAIL_VERIFICATION_TOOL not in allowed
 
@@ -605,20 +578,6 @@ def test_adapter_records_llm_spend_from_sdk_usage(monkeypatch, tmp_path) -> None
     ]
 
 
-def test_dry_run_applied_result_is_reported_as_violation(tmp_path) -> None:
-    adapter = ClaudeCodeCliAdapter(
-        log_dir=tmp_path,
-        app_dir=tmp_path,
-        default_timeout_seconds=5,
-    )
-
-    result = adapter._parse_result("RESULT:APPLIED", dry_run=True)
-
-    assert result.kind == "failed"
-    assert result.retryable is False
-    assert "dry_run_violation" in result.error
-
-
 def test_apply_adapter_uses_only_the_dedicated_terminal_result(
     monkeypatch,
     tmp_path,
@@ -640,7 +599,7 @@ def test_apply_adapter_uses_only_the_dedicated_terminal_result(
     assert result.submission_result.error == "unsafe_page"
     assert result.raw_output is not None
     assert "RESULT:DRY_RUN" in result.raw_output
-    assert "RESULT:FAILED:unsafe_page" in result.raw_output
+    assert "unsafe_page" in result.raw_output
 
 
 def test_apply_adapter_rejects_assistant_token_without_terminal_result(
@@ -722,9 +681,7 @@ def test_apply_failure_records_usage_before_result_validation(monkeypatch, tmp_p
     )
 
     assert result.submission_result.kind == "failed"
-    assert [(call["input_tokens"], call["output_tokens"], call["lane"]) for call in calls] == [
-        (3, 2, "apply")
-    ]
+    assert [(call["input_tokens"], call["output_tokens"], call["lane"]) for call in calls] == [(3, 2, "apply")]
 
 
 def test_apply_cancelled_process_keeps_observed_usage(monkeypatch, tmp_path) -> None:
@@ -743,83 +700,7 @@ def test_apply_cancelled_process_keeps_observed_usage(monkeypatch, tmp_path) -> 
     assert [(call["input_tokens"], call["output_tokens"]) for call in calls] == [(3, 2)]
 
 
-@pytest.mark.parametrize(
-    "record",
-    [
-        "Finished safely.\nRESULT:DRY_RUN",
-        "RESULT:DRY_RUN\nRESULT:FAILED:unsafe_page",
-        "RESULT:DRY_RUN -- complete",
-    ],
-)
-def test_result_parser_rejects_noncanonical_records(record: str, tmp_path) -> None:
-    result = ClaudeCodeCliAdapter(
-        log_dir=tmp_path,
-        app_dir=tmp_path,
-        default_timeout_seconds=5,
-    )._parse_result(record, dry_run=True)
-
-    assert result.kind == "failed"
-    assert result.error == "invalid_result_record"
-    assert result.retryable is False
-
-
-def test_applied_result_without_owned_receipt_is_rejected(tmp_path) -> None:
-    result = ClaudeCodeCliAdapter(
-        log_dir=tmp_path,
-        app_dir=tmp_path,
-        default_timeout_seconds=5,
-    )._parse_result("RESULT:APPLIED", dry_run=False)
-
-    assert result.kind == "failed"
-    assert result.error == "untrusted_applied_result"
-    assert result.retryable is False
-
-
-def test_dry_run_result_is_only_partial_semantic_evidence(tmp_path) -> None:
-    result = ClaudeCodeCliAdapter(
-        log_dir=tmp_path,
-        app_dir=tmp_path,
-        default_timeout_seconds=5,
-    )._parse_result("RESULT:DRY_RUN", dry_run=True)
-
-    assert result.kind == "dry_run_complete"
-    assert result.coverage == "partial"
-    assert result.blocked_channels == ("semantic_review_unverified",)
-
-
-def test_missing_profile_data_failure_is_non_retryable(tmp_path) -> None:
-    adapter = ClaudeCodeCliAdapter(
-        log_dir=tmp_path,
-        app_dir=tmp_path,
-        default_timeout_seconds=5,
-    )
-
-    result = adapter._parse_result(
-        "RESULT:FAILED:missing_profile_data:age_18_plus",
-        dry_run=False,
-    )
-
-    assert result.kind == "failed"
-    assert result.retryable is False
-    assert result.error == "missing_profile_data:age_18_plus"
-
-
-def test_email_only_result_parses_valid_recipient(tmp_path) -> None:
-    adapter = ClaudeCodeCliAdapter(
-        log_dir=tmp_path,
-        app_dir=tmp_path,
-        default_timeout_seconds=5,
-    )
-
-    result = adapter._parse_result("RESULT:EMAIL_ONLY:apply@example.com", dry_run=True)
-
-    assert isinstance(result, EmailOnlyApplication)
-    assert result.recipient_email == "apply@example.com"
-
-
-def test_claude_subprocess_starts_in_isolated_unix_session(
-    monkeypatch, tmp_path
-) -> None:
+def test_claude_subprocess_starts_in_isolated_unix_session(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr("subprocess.Popen", _FakePopen)
     monkeypatch.setattr("platform.system", lambda: "Darwin")
     _FakePopen.calls.clear()
@@ -842,9 +723,7 @@ def test_claude_subprocess_starts_in_isolated_unix_session(
     assert _FakePopen.kwargs[0]["start_new_session"] is True
 
 
-def test_timeout_kills_only_registered_claude_process_tree(
-    monkeypatch, tmp_path
-) -> None:
+def test_timeout_kills_only_registered_claude_process_tree(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr("subprocess.Popen", _HangingPopen)
     monkeypatch.setattr("platform.system", lambda: "Darwin")
     _HangingPopen.calls.clear()
@@ -902,9 +781,7 @@ def test_timeout_keeps_usage_received_before_process_hangs(monkeypatch, tmp_path
             timeout_seconds=0,
         )
 
-    assert [(call["input_tokens"], call["output_tokens"], call["lane"]) for call in calls] == [
-        (4, 3, "apply")
-    ]
+    assert [(call["input_tokens"], call["output_tokens"], call["lane"]) for call in calls] == [(4, 3, "apply")]
 
 
 def test_adapter_active_process_registry_kills_registered_process(monkeypatch) -> None:
@@ -922,3 +799,79 @@ def test_adapter_active_process_registry_kills_registered_process(monkeypatch) -
     kill_active_claude_processes()
 
     assert killed == [12345]
+
+
+@pytest.mark.parametrize("retryable", [True, False])
+def test_agent_owns_retryability_for_identical_browser_evidence(retryable):
+    report = parse_terminal_report(json.dumps(_report("failed", retryable=retryable)), OBSERVATION)
+    assert submission_from_report(report, dry_run=True).retryable is retryable
+
+
+@pytest.mark.parametrize("dry_run", [True, False])
+def test_applied_claim_requires_owned_receipt(dry_run):
+    report = parse_terminal_report(json.dumps(_report("applied")), OBSERVATION)
+    result = submission_from_report(report, dry_run=dry_run)
+    assert result.kind == "failed"
+    assert result.error == "untrusted_applied_result"
+    assert result.retryable is False
+
+
+def test_dry_run_result_remains_partial_evidence():
+    report = parse_terminal_report(json.dumps(_report()), OBSERVATION)
+    result = submission_from_report(report, dry_run=True)
+    assert result.kind == "dry_run_complete"
+    assert result.coverage == "partial"
+    assert result.blocked_channels == ("semantic_review_unverified",)
+
+
+def test_email_report_requires_exact_recipient_in_browser_quote():
+    observations = "Visible address apply@example.com"
+    report = parse_terminal_report(
+        json.dumps(_report("email_only", recipient_email="apply@example.com", quote=observations)), observations
+    )
+    assert submission_from_report(report, dry_run=True).recipient_email == "apply@example.com"
+    with pytest.raises(DeterminationFailure, match="mismatched_value"):
+        parse_terminal_report(
+            json.dumps(_report("email_only", recipient_email="other@example.com", quote=observations)), observations
+        )
+
+
+@pytest.mark.parametrize(
+    "mutation, code",
+    [
+        (lambda report: report.update(extra=True), "schema_violation"),
+        (lambda report: report.update(status="unknown"), "schema_violation"),
+        (lambda report: report["citations"][0].update(source_id="foreign"), "foreign_source_id"),
+        (lambda report: report["citations"][0].update(quote="Unobserved content"), "non_verbatim_quote"),
+    ],
+)
+def test_invalid_terminal_report_fails_without_fallback(mutation, code):
+    report = _report()
+    mutation(report)
+    with pytest.raises(DeterminationFailure) as failure:
+        parse_terminal_report(json.dumps(report), OBSERVATION)
+    assert failure.value.code == code
+
+
+def test_prose_terminal_report_is_malformed_json():
+    with pytest.raises(DeterminationFailure, match="malformed_json"):
+        parse_terminal_report("Agent prose", OBSERVATION)
+
+
+@pytest.mark.parametrize(
+    "name, tool_id", [("mcp__gmail__read_email", "mail-1"), ("mcp__playwright__browser_snapshot", "unknown-id")]
+)
+def test_unbound_tool_result_cannot_supply_browser_evidence(monkeypatch, tmp_path, name, tool_id):
+    messages = list(_browser_messages(name=name))
+    messages[1]["message"]["content"][0]["tool_use_id"] = tool_id
+
+    class Process(_StreamPopen):
+        pass
+
+    Process.messages = (*messages, _terminal_message(_report()))
+    monkeypatch.setattr("subprocess.Popen", Process)
+    result = ClaudeCodeCliAdapter(log_dir=tmp_path, app_dir=tmp_path).submit_application(
+        prompt=ApplyPrompt(text="apply", mcp_config={}), browser=_session(), model="default", dry_run=True
+    )
+    assert result.submission_result.kind == "failed"
+    assert result.submission_result.error == "non_verbatim_quote"

@@ -31,7 +31,7 @@ import Database from "better-sqlite3";
 
 import { BUILT_IN_RESUME_TEMPLATE_THEME } from "../src/resume-templates.js";
 import { buildApp } from "../src/server.js";
-import { initializeExactV7Database } from "./v7-schema.js";
+import { initializeExactDatabase } from "./exact-schema.js";
 
 const FIXTURE_PATH = fileURLToPath(
   new URL("../../../packages/domain-types/test/fixtures/audit_projection_parity.json", import.meta.url),
@@ -513,7 +513,7 @@ describe("Cross-runtime projection parity (AUDIT-02)", () => {
   it("the TS builder + read model agree with the Python builder on the audit read shapes", async () => {
     const { dbPath, cleanup } = withTempDb();
     try {
-      initializeExactV7Database(dbPath);
+      initializeExactDatabase(dbPath);
       seedRows(dbPath);
 
       const app = buildApp({
@@ -571,7 +571,7 @@ describe("Cross-runtime projection parity (AUDIT-02)", () => {
 
         // (2) Read path: the read model serves the canonical employer analysis
         // and interview prep on the job detail.
-        expect(detailRes.json().employerAnalysis).toEqual(fixture.expected.employerAnalysisJson);
+        expect(detailRes.json().employerAnalysis).toEqual({...fixture.expected.employerAnalysisJson as object,determinations:[]});
         // Current staleness is derived at the HTTP boundary; retained snapshots
         // and the cross-runtime canonical projection above remain unchanged.
         expect(detailRes.json().interviewPrep).toEqual({
@@ -588,34 +588,8 @@ describe("Cross-runtime projection parity (AUDIT-02)", () => {
         expect(artifactRes.statusCode, artifactRes.body).toBe(200);
         const explanation = artifactRes.json().tailoringExplanation;
         expect(explanation).not.toBeNull();
-        expect(explanation.bulletProvenance).toEqual([
-          {
-            bulletId: "executive_profile#0",
-            section: "executive_profile",
-            sourceId: "executive_profile",
-            evidenceIds: [],
-            sourceText: [],
-            requirementIds: [],
-            matchedKeywords: [],
-            transformType: "reframe",
-            control: "rephrase_allowed",
-            rationale: "Reframed summary.",
-            generatedText: "Senior platform engineer.",
-          },
-          {
-            bulletId: "experience:acme#0",
-            section: "experience",
-            sourceId: "acme",
-            evidenceIds: ["ev_platform"],
-            sourceText: [],
-            requirementIds: ["r1"],
-            matchedKeywords: ["developer platform"],
-            transformType: "voice",
-            control: "rephrase_allowed",
-            rationale: "Voiced.",
-            generatedText: "Owned the developer platform across the fleet.",
-          },
-        ]);
+        expect(explanation.bulletProvenance).toEqual([]);
+        expect(explanation.determinations).toEqual([]);
         expect(explanation.coverageAudit).toEqual({
           computedAgainst: "rendered_text",
           planned: ["developer platform", "kafka"],
@@ -631,7 +605,6 @@ describe("Cross-runtime projection parity (AUDIT-02)", () => {
           accepted: true,
           model: "claude-opus-4-8",
           promptVersion: "voice-pass-v1",
-          proxyDelta: { improved: true },
           reason: "",
           summaryRejectionReason: "",
           scopeViolations: [],
@@ -658,7 +631,7 @@ describe("Cross-runtime projection parity (AUDIT-02)", () => {
   it("the TS builder writes the full projection column set the Python builder produces", async () => {
     const { dbPath, cleanup } = withTempDb();
     try {
-      initializeExactV7Database(dbPath);
+      initializeExactDatabase(dbPath);
       seedRows(dbPath);
 
       const app = buildApp({

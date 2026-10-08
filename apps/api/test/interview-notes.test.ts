@@ -9,7 +9,7 @@ import { JobCtrlApiClient, JobCtrlApiError } from "@jobctrl/api-client";
 import { InterviewNoteRevisionConflictError, listInterviewNotes, readInterviewNote, saveInterviewNote } from "../src/interview-notes.js";
 import { buildApp } from "../src/server.js";
 import { syntheticInterviewCatalogAsset, syntheticInterviewGenerationContext } from "./interview-fixture.js";
-import { initializeExactV7Database } from "./v7-schema.js";
+import { initializeExactDatabase } from "./exact-schema.js";
 
 const JOB_ID = "11111111-1111-4111-8111-111111111111";
 const OTHER_JOB_ID = "22222222-2222-4222-8222-222222222222";
@@ -22,7 +22,7 @@ describe("revisioned interview notes", () => {
   beforeEach(() => {
     directory = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-notes-"));
     dbPath = path.join(directory, "jobctrl.db");
-    initializeExactV7Database(dbPath);
+    initializeExactDatabase(dbPath);
     db = new Database(dbPath);
     db.pragma("foreign_keys = ON");
     for (const [tenantId, jobId] of [["local", JOB_ID], ["local", OTHER_JOB_ID], ["other", JOB_ID]]) {

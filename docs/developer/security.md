@@ -27,7 +27,7 @@ JSON-RPC/Temporal, and a Python worker performs discovery, enrichment, scoring,
 resume and cover-letter generation, PDF rendering, Gmail-assisted verification,
 and guarded apply automation. A Chromium extension is integrated Discovery's
 live-profile browser transport and can also capture the active page and run
-deterministic autofill against the local API.
+source-bound model autofill against the local API.
 
 Primary assets are the candidate profile and resume baseline, generated resumes
 and cover letters, application history, SQLite event/projection data, local
@@ -124,7 +124,7 @@ HTML preview path as sensitive.
 surface. After pairing with the local capability token it can POST active-page
 captures, GET a whitelisted autofill profile DTO, and lease bounded
 execution-bound Discovery tasks from the memory-only broker. It has no
-apply/submit route, and deterministic autofill excludes password and resume
+apply/submit route, and source-bound model autofill excludes password and resume
 content. The content script intentionally matches all HTTP(S) pages so source
 and application hosts do not require per-host releases; autofill remains passive
 until an explicit review click, while the background worker may open temporary
@@ -191,7 +191,7 @@ cover-letter generation combine untrusted job/contact text with sensitive
 profile facts. Main impacts are privacy leakage to configured providers and
 integrity attacks on scores, recommendations, generated materials, or
 applicant-side outreach drafts. Controls include structured schemas,
-deterministic requirement/evidence grounding, provenance rows, rendered-text
+source-bound model claim verification and mechanical citation binding, provenance rows, rendered-text
 keyword coverage, never-fabricate detectors, structured judge review,
 adversarial review for high-fit jobs, and fail-closed preservation of the last
 accepted artifact. Prompt injection that only changes a reviewable score or

@@ -18,15 +18,11 @@ import jobctrl.infrastructure.events as events_module
 from jobctrl.database import close_connection, get_connection
 from jobctrl.infrastructure.events import get_default_publisher, reset_default_publisher
 from jobctrl.infrastructure.events.in_process_bus import InProcessEventBus
-from jobctrl.infrastructure.gmail.client import _safe_query_hints
 from jobctrl.infrastructure.gmail.feedback import (
-    ApplicationAnchor,
-    _anchor_query,
     _apply_run_anchors,
     _outcome_anchors,
-    classify_outcome,
     ensure_application_feedback_tables,
-    scan_gmail_feedback,
+    scan_gmail_feedback as _scan_gmail_feedback,
 )
 from jobctrl.infrastructure.projections.projection_builder import (
     PROJECTION_NAME,
@@ -34,7 +30,7 @@ from jobctrl.infrastructure.projections.projection_builder import (
 )
 
 
-from jobctrl.infrastructure.migrations.schema_v12 import create_exact_v12_schema
+from jobctrl.infrastructure.migrations.schema_v14 import create_exact_v14_schema
 
 RECIPIENT = "candidate@example.com"
 JOB_URL = "https://jobs.example.com/platform-engineer"
@@ -42,12 +38,68 @@ APPLIED_AT = "2026-06-01T10:00:00+00:00"
 JOB_ID = "3f2504e0-4f89-41d3-9a0c-0305e82c3301"
 
 
+class FeedbackModel:
+    def __init__(self, linked=True, kind="applied_confirmation"):
+        self.linked, self.kind, self.calls = linked, kind, []
+
+    def chat_json(self, messages, *, response_schema, **kwargs):
+        data = json.loads(messages[1].content)
+        self.calls.append(data)
+        sources = {row["source_id"]: row["text"] for row in data["sources"]}
+
+        def cite(ident):
+            return {"source_id": ident, "quote": sources[ident][:4000], "exact_values": []}
+
+        if response_schema["title"] == "ApplicationMessageLink":
+            ident = data["context"]["application_ids"][0] if self.linked else None
+            return {
+                "decision": "linked" if self.linked else "unrelated",
+                "application_id": ident,
+                "confidence": 0.63,
+                "citations": [cite("message_headers"), cite("application:" + ident)]
+                if ident
+                else [cite("message_headers")],
+                "rationale": "Explicit synthetic linking verdict",
+            }
+        return {
+            "kind": self.kind,
+            "confidence": 0.64,
+            "citations": [{"source_id": "message", "quote": sources["message"].splitlines()[0], "exact_values": []}],
+            "rationale": "Explicit synthetic outcome verdict",
+        }
+
+
+def scan_gmail_feedback(**kwargs):
+    from jobctrl.infrastructure.determinations import SqliteDeterminationRepository
+
+    client = kwargs["client"]
+    return _scan_gmail_feedback(
+        **kwargs,
+        determination_dependencies_override=dict(
+            llm=client.model,
+            repository=SqliteDeterminationRepository(
+                __import__("jobctrl.database", fromlist=["open_exact_v14_database"]).open_exact_v14_database(
+                    kwargs["db_path"]
+                )
+            ),
+            tenant_id="local",
+            provider="synthetic",
+            model="synthetic",
+            lane="enrichment",
+            preflight=lambda: None,
+        ),
+    )
+
+
 class FakeGmailClient:
     def __init__(
         self,
         metadata: list[dict[str, Any]],
         bodies: dict[str, dict[str, Any]] | None = None,
+        *,
+        linked: bool = True,
     ) -> None:
+        self.model = FeedbackModel(linked)
         self.metadata = metadata
         self.bodies = bodies or {}
         self.search_calls: list[dict[str, Any]] = []
@@ -138,26 +190,6 @@ def _linked_message_body(message_id: str, body_text: str) -> dict[str, Any]:
     }
 
 
-def test_anchor_query_prioritizes_application_hints_before_job_url() -> None:
-    anchor = ApplicationAnchor(
-        job_id=JOB_ID,
-        job_url="https://www.linkedin.com/jobs/view/4123456789",
-        title="Staff Engineer",
-        company="Acme",
-        application_url="https://jobs.lever.co/acme/1b2c3d4e",
-        anchor_at=datetime.fromisoformat(APPLIED_AT),
-    )
-
-    assert _safe_query_hints(_anchor_query(anchor)) == [
-        "Acme",
-        "Staff",
-        "jobs.lever.co",
-        "1b2c3d4e",
-        "lever",
-        "www.linkedin.com",
-    ]
-
-
 def test_unlinked_metadata_does_not_read_email_body(tmp_path: Path) -> None:
     db_path = seed_feedback_db(tmp_path)
     client = FakeGmailClient(
@@ -172,7 +204,8 @@ def test_unlinked_metadata_does_not_read_email_body(tmp_path: Path) -> None:
                 "snippet": "General career content with no application signal.",
                 "internalDate": str(epoch_ms("2026-06-01T11:00:00+00:00")),
             }
-        ]
+        ],
+        linked=False,
     )
 
     summary = scan_gmail_feedback(
@@ -190,46 +223,7 @@ def test_unlinked_metadata_does_not_read_email_body(tmp_path: Path) -> None:
     assert search["to_email"] == RECIPIENT
     assert search["after"] == datetime(2026, 6, 1, 10, 0, tzinfo=timezone.utc)
     assert search["before"] == datetime(2026, 6, 8, 10, 0, tzinfo=timezone.utc)
-    assert "ExampleCo" in query
-    assert "Platform" in query
-    assert "greenhouse" in query
-    assert client.read_calls == []
-    assert summary["linkedEvidenceCount"] == 0
-    assert summary["unlinkedCandidateCount"] == 1
-
-
-def test_body_snippet_does_not_contribute_to_pre_link_decision(tmp_path: Path) -> None:
-    db_path = seed_feedback_db(tmp_path)
-    client = FakeGmailClient(
-        [
-            {
-                "id": "snippet-only-match",
-                "threadId": "thread-snippet",
-                "subject": "Weekly engineering newsletter",
-                "from": "newsletter@other.example",
-                "to": RECIPIENT,
-                "date": "Mon, 01 Jun 2026 11:00:00 +0000",
-                "snippet": "ExampleCo Platform Engineer application received via greenhouse.",
-                "internalDate": str(epoch_ms("2026-06-01T11:00:00+00:00")),
-            }
-        ],
-        {
-            "snippet-only-match": {
-                "id": "snippet-only-match",
-                "body_text": "This body must not be fetched from a snippet-only match.",
-            }
-        },
-    )
-
-    summary = scan_gmail_feedback(
-        db_path=db_path,
-        client=client,
-        recipient_email=RECIPIENT,
-        limit=1,
-        max_results_per_anchor=5,
-        window_days=7,
-    )
-
+    assert query == ""  # Recipient/date bound search; meaning belongs to the model.
     assert client.read_calls == []
     assert summary["linkedEvidenceCount"] == 0
     assert summary["unlinkedCandidateCount"] == 1
@@ -282,7 +276,9 @@ def test_linked_body_is_ingested_and_suggested(tmp_path: Path) -> None:
             "evidenceId": summary["evidence"][0]["evidenceId"],
             "jobId": JOB_ID,
             "kind": "applied_confirmation",
-            "confidence": pytest.approx(0.9),
+            "confidence": pytest.approx(0.64),
+            "determinationId": summary["suggestions"][0]["determinationId"],
+            "citations": summary["suggestions"][0]["citations"],
         }
     ]
 
@@ -295,92 +291,26 @@ def test_linked_body_is_ingested_and_suggested(tmp_path: Path) -> None:
             FROM application_email_evidence
             """
         ).fetchone()
-        assert evidence == (
-            "linked-message",
-            body_text,
-            hashlib.sha256(body_text.encode("utf-8")).hexdigest(),
-            pytest.approx(1.0),
-            json.dumps(
-                [
-                    "recipient",
-                    "time_window",
-                    "company",
-                    "job_title",
-                    "application_domain",
-                    "outcome_term",
-                ],
-                sort_keys=True,
-            ),
+        assert evidence[:3] == ("linked-message", body_text, hashlib.sha256(body_text.encode("utf-8")).hexdigest())
+        assert evidence[3] == pytest.approx(0.63)
+        signals = json.loads(evidence[4])
+        assert signals[:2] == ["recipient", "time_window"]
+        assert signals[2].startswith("determination:")
+        linked_id = signals[2].split(":", 1)[1]
+        assert (
+            conn.execute("SELECT kind FROM semantic_determinations WHERE determination_id=?", (linked_id,)).fetchone()[
+                0
+            ]
+            == "message_link"
         )
         suggestion = conn.execute(
             "SELECT suggested_kind, confidence, rationale FROM application_outcome_suggestions"
         ).fetchone()
         assert suggestion[0] == "applied_confirmation"
-        assert suggestion[1] == pytest.approx(0.9)
-        assert "application confirmation" in suggestion[2].lower()
+        assert suggestion[1] == pytest.approx(0.64)
+        assert suggestion[2] == "Explicit synthetic outcome verdict"
     finally:
         conn.close()
-
-
-@pytest.mark.parametrize(
-    ("subject", "snippet", "body", "expected"),
-    [
-        (
-            "Application received",
-            "Thank you for applying",
-            "We received your application.",
-            "applied_confirmation",
-        ),
-        (
-            "Recruiter follow-up",
-            "Talent acquisition reply",
-            "Thanks for reaching out. I am the recruiter for this role.",
-            "recruiter_reply",
-        ),
-        (
-            "Interview availability",
-            "Schedule a call",
-            "Can you share times for a technical interview?",
-            "interview",
-        ),
-        (
-            "Assessment invitation",
-            "Coding challenge",
-            "Please complete this take-home assessment.",
-            "assessment",
-        ),
-        (
-            "Application update",
-            "Unfortunately",
-            "We are not moving forward with your application.",
-            "rejection",
-        ),
-        (
-            "Offer from ExampleCo",
-            "Congratulations",
-            "We are pleased to offer you the position.",
-            "offer",
-        ),
-        (
-            "Delivery Status Notification",
-            "Undeliverable",
-            "Address not found and message bounced.",
-            "bounced",
-        ),
-        ("Hello", "A general note", "No recognizable outcome.", "unknown"),
-    ],
-)
-def test_classification_kinds(
-    subject: str,
-    snippet: str,
-    body: str,
-    expected: str,
-) -> None:
-    result = classify_outcome(subject=subject, snippet=snippet, body_text=body)
-
-    assert result.kind == expected
-    assert 0 <= result.confidence <= 1
-    assert result.rationale
 
 
 def test_duplicate_gmail_message_id_is_deduped(tmp_path: Path) -> None:
@@ -492,35 +422,53 @@ def test_job_deleted_during_body_read_is_not_persisted(
     assert published_event_types == []
 
     with closing(sqlite3.connect(db_path)) as conn:
-        assert conn.execute(
-            "SELECT COUNT(*) FROM jobs WHERE tenant_id = ? AND job_id = ?",
-            ("local", JOB_ID),
-        ).fetchone()[0] == 0
-        assert conn.execute(
-            "SELECT COUNT(*) FROM jobs WHERE tenant_id = ? AND job_id = ?",
-            ("other", JOB_ID),
-        ).fetchone()[0] == 1
-        assert conn.execute(
-            "SELECT COUNT(*) FROM application_email_evidence WHERE tenant_id = ?",
-            ("local",),
-        ).fetchone()[0] == 0
-        assert conn.execute(
-            "SELECT COUNT(*) FROM application_email_evidence WHERE body_text = ?",
-            (body_text,),
-        ).fetchone()[0] == 0
-        assert conn.execute(
-            "SELECT COUNT(*) FROM application_outcome_suggestions WHERE tenant_id = ?",
-            ("local",),
-        ).fetchone()[0] == 0
-        assert conn.execute(
-            """
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) FROM jobs WHERE tenant_id = ? AND job_id = ?",
+                ("local", JOB_ID),
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) FROM jobs WHERE tenant_id = ? AND job_id = ?",
+                ("other", JOB_ID),
+            ).fetchone()[0]
+            == 1
+        )
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) FROM application_email_evidence WHERE tenant_id = ?",
+                ("local",),
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) FROM application_email_evidence WHERE body_text = ?",
+                (body_text,),
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) FROM application_outcome_suggestions WHERE tenant_id = ?",
+                ("local",),
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            conn.execute(
+                """
             SELECT COUNT(*)
             FROM job_events
             WHERE tenant_id = ? AND job_id = ?
               AND event_type = 'ApplicationEmailFeedbackIngested'
             """,
-            ("local", JOB_ID),
-        ).fetchone()[0] == 0
+                ("local", JOB_ID),
+            ).fetchone()[0]
+            == 0
+        )
         assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
 
 
@@ -582,27 +530,36 @@ def test_concurrent_scans_dedupe_after_body_read(
     assert published_event_types == ["ApplicationEmailFeedbackIngested"]
 
     with closing(sqlite3.connect(db_path)) as conn:
-        assert conn.execute(
-            """
+        assert (
+            conn.execute(
+                """
             SELECT COUNT(*)
             FROM application_email_evidence
             WHERE tenant_id = ? AND provider = ? AND provider_message_id = ?
             """,
-            ("local", "gmail", message_id),
-        ).fetchone()[0] == 1
-        assert conn.execute(
-            "SELECT COUNT(*) FROM application_outcome_suggestions WHERE tenant_id = ?",
-            ("local",),
-        ).fetchone()[0] == 1
-        assert conn.execute(
-            """
+                ("local", "gmail", message_id),
+            ).fetchone()[0]
+            == 1
+        )
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) FROM application_outcome_suggestions WHERE tenant_id = ?",
+                ("local",),
+            ).fetchone()[0]
+            == 1
+        )
+        assert (
+            conn.execute(
+                """
             SELECT COUNT(*)
             FROM job_events
             WHERE tenant_id = ? AND job_id = ?
               AND event_type = 'ApplicationEmailFeedbackIngested'
             """,
-            ("local", JOB_ID),
-        ).fetchone()[0] == 1
+                ("local", JOB_ID),
+            ).fetchone()[0]
+            == 1
+        )
         assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
 
 
@@ -648,9 +605,7 @@ def test_raw_body_is_not_written_to_events_or_summary(tmp_path: Path) -> None:
     assert body_text not in json.dumps(summary)
     conn = sqlite3.connect(db_path)
     try:
-        payloads = "\n".join(
-            row[0] or "" for row in conn.execute("SELECT payload_json FROM job_events").fetchall()
-        )
+        payloads = "\n".join(row[0] or "" for row in conn.execute("SELECT payload_json FROM job_events").fetchall())
         assert body_text not in payloads
     finally:
         conn.close()
@@ -661,7 +616,7 @@ def test_outcome_anchors_join_v10_job_id(tmp_path: Path) -> None:
     db_path = tmp_path / "jobctrl.db"
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
-    create_exact_v12_schema(conn)
+    create_exact_v14_schema(conn)
     conn.execute(
         """
         INSERT INTO jobs (tenant_id, job_id, url, title, company)
@@ -742,7 +697,7 @@ def test_apply_run_anchors_join_v10_tenant_and_job_id(tmp_path: Path) -> None:
     db_path = tmp_path / "jobctrl.db"
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
-    create_exact_v12_schema(conn)
+    create_exact_v14_schema(conn)
     conn.executemany(
         """
         INSERT INTO jobs (tenant_id, job_id, url, title, company)
@@ -815,7 +770,7 @@ def test_v10_scan_writes_canonical_job_id_and_sse_event(tmp_path: Path) -> None:
     """The production scanner persists canonical records and an SSE-ready event."""
     db_path = tmp_path / "jobctrl.db"
     conn = sqlite3.connect(db_path)
-    create_exact_v12_schema(conn)
+    create_exact_v14_schema(conn)
     conn.execute(
         """
         INSERT INTO jobs (
@@ -881,12 +836,8 @@ def test_v10_scan_writes_canonical_job_id_and_sse_event(tmp_path: Path) -> None:
     assert summary["linkedEvidenceCount"] == 1
     conn = sqlite3.connect(db_path)
     try:
-        evidence_job_id = conn.execute(
-            "SELECT job_id FROM application_email_evidence"
-        ).fetchone()[0]
-        suggestion_job_id = conn.execute(
-            "SELECT job_id FROM application_outcome_suggestions"
-        ).fetchone()[0]
+        evidence_job_id = conn.execute("SELECT job_id FROM application_email_evidence").fetchone()[0]
+        suggestion_job_id = conn.execute("SELECT job_id FROM application_outcome_suggestions").fetchone()[0]
         event = conn.execute(
             """
             SELECT tenant_id, job_id, identity_version, stage, event_type,
@@ -986,9 +937,7 @@ def test_feedback_events_publish_after_commit_for_projection_refresh(
         )
 
         projection_conn = get_connection(db_path)
-        max_event_id = projection_conn.execute(
-            "SELECT MAX(event_id) FROM job_events"
-        ).fetchone()[0]
+        max_event_id = projection_conn.execute("SELECT MAX(event_id) FROM job_events").fetchone()[0]
         watermark = projection_conn.execute(
             "SELECT last_event_id FROM event_watermarks WHERE projection_name = ?",
             (f"python:{PROJECTION_NAME}:local",),
@@ -1019,7 +968,7 @@ def seed_feedback_db(tmp_path: Path) -> Path:
     db_path = tmp_path / "jobctrl.db"
     conn = sqlite3.connect(db_path)
     conn.execute("PRAGMA journal_mode=WAL")
-    create_exact_v12_schema(conn)
+    create_exact_v14_schema(conn)
     conn.execute(
         "INSERT INTO jobs(tenant_id,job_id,url,title,company,site,applied_at,apply_status,discovered_at) "
         "VALUES('local',?,?, 'Principal Platform Engineer','ExampleCo','ExampleCo',?,'applied','2026-05-31T10:00:00+00:00')",
@@ -1081,38 +1030,55 @@ def epoch_ms(value: str) -> int:
 
 
 def test_exact_scan_preserves_other_tenant_and_schema_and_writes_canonical_references(tmp_path: Path) -> None:
-    from jobctrl.infrastructure.migrations.schema_manifest import EXACT_V12_MANIFEST, assert_exact_manifest, schema_dump
+    from jobctrl.infrastructure.migrations.schema_manifest import EXACT_V14_MANIFEST, assert_exact_manifest, schema_dump
 
     db_path = seed_feedback_db(tmp_path)
     with sqlite3.connect(db_path) as conn:
-        conn.execute("INSERT INTO jobs(tenant_id,job_id,url,title,company,applied_at) VALUES('other', ?, ?, 'Other title', 'Other tenant', ?)", (JOB_ID, JOB_URL, APPLIED_AT))
-        conn.execute("INSERT INTO job_enrichments(tenant_id,job_id,current_status,application_url,updated_at) VALUES('other',?,'pending','https://other.example/apply',?)", (JOB_ID, APPLIED_AT))
-        conn.execute("INSERT INTO application_outcomes(tenant_id,outcome_id,job_id,kind,source,occurred_at,recorded_at) VALUES('other','other-outcome',?,'offer','user',?,?)", (JOB_ID, APPLIED_AT, APPLIED_AT))
+        conn.execute(
+            "INSERT INTO jobs(tenant_id,job_id,url,title,company,applied_at) VALUES('other', ?, ?, 'Other title', 'Other tenant', ?)",
+            (JOB_ID, JOB_URL, APPLIED_AT),
+        )
+        conn.execute(
+            "INSERT INTO job_enrichments(tenant_id,job_id,current_status,application_url,updated_at) VALUES('other',?,'pending','https://other.example/apply',?)",
+            (JOB_ID, APPLIED_AT),
+        )
+        conn.execute(
+            "INSERT INTO application_outcomes(tenant_id,outcome_id,job_id,kind,source,occurred_at,recorded_at) VALUES('other','other-outcome',?,'offer','user',?,?)",
+            (JOB_ID, APPLIED_AT, APPLIED_AT),
+        )
         other_before = conn.execute("SELECT * FROM jobs WHERE tenant_id='other'").fetchall()
         schema_before = schema_dump(conn)
-    metadata = {'id':'tenant-message','subject':'ExampleCo Platform application received','from':'recruiting@exampleco.com','to':RECIPIENT,'internalDate':str(epoch_ms('2026-06-01T11:00:00+00:00'))}
-    client = FakeGmailClient([metadata], {'tenant-message': dict(metadata, body_text='Thank you for applying.')})
+    metadata = {
+        "id": "tenant-message",
+        "subject": "ExampleCo Platform application received",
+        "from": "recruiting@exampleco.com",
+        "to": RECIPIENT,
+        "internalDate": str(epoch_ms("2026-06-01T11:00:00+00:00")),
+    }
+    client = FakeGmailClient([metadata], {"tenant-message": dict(metadata, body_text="Thank you for applying.")})
     summary = scan_gmail_feedback(db_path=db_path, client=client, recipient_email=RECIPIENT)
-    assert summary['scannedAnchorCount'] == 1 and summary['linkedEvidenceCount'] == 1
-    assert summary['evidence'][0]['jobId'] == JOB_ID
+    assert summary["scannedAnchorCount"] == 1 and summary["linkedEvidenceCount"] == 1
+    assert summary["evidence"][0]["jobId"] == JOB_ID
     with sqlite3.connect(db_path) as conn:
-        assert_exact_manifest(conn, EXACT_V12_MANIFEST)
+        assert_exact_manifest(conn, EXACT_V14_MANIFEST)
         assert schema_dump(conn) == schema_before
         assert conn.execute("SELECT * FROM jobs WHERE tenant_id='other'").fetchall() == other_before
-        for table in ('application_email_evidence', 'application_outcome_suggestions'):
-            assert conn.execute(f'SELECT tenant_id,job_id FROM {table}').fetchall() == [('local',JOB_ID)]
-        event = conn.execute('SELECT tenant_id,job_id,identity_version,payload_json FROM job_events').fetchone()
-        assert event[:3] == ('local',JOB_ID,1)
-        assert json.loads(event[3])['jobId'] == JOB_ID
-        assert conn.execute('PRAGMA foreign_key_check').fetchall() == []
-        assert conn.execute('SELECT tenant_id,outcome_id FROM application_outcomes').fetchall() == [('other','other-outcome')]
+        for table in ("application_email_evidence", "application_outcome_suggestions"):
+            assert conn.execute(f"SELECT tenant_id,job_id FROM {table}").fetchall() == [("local", JOB_ID)]
+        event = conn.execute("SELECT tenant_id,job_id,identity_version,payload_json FROM job_events").fetchone()
+        assert event[:3] == ("local", JOB_ID, 1)
+        assert json.loads(event[3])["jobId"] == JOB_ID
+        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+        assert conn.execute("SELECT tenant_id,outcome_id FROM application_outcomes").fetchall() == [
+            ("other", "other-outcome")
+        ]
 
 
 def test_feedback_rejects_old_schema_before_any_table_mutation(tmp_path: Path) -> None:
     from jobctrl.database import SchemaMigrationRequiredError, close_connection
     from jobctrl.infrastructure.migrations.schema_v9 import create_unstamped_exact_v9_candidate
 
-    db_path = tmp_path / 'old.db'
+    db_path = tmp_path / "old.db"
     with sqlite3.connect(db_path) as conn:
         create_unstamped_exact_v9_candidate(conn)
     before = db_path.read_bytes()

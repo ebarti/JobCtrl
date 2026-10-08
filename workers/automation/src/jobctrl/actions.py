@@ -48,7 +48,6 @@ class LocalActionRequest:
     retailor: bool = False
     tailor_models: tuple[str, ...] = ()
     tailor_judge_model: str | None = None
-    tailor_judge_min_score: float | None = None
     model: str = "default"
     headless: bool = False
     continuous: bool = False
@@ -165,7 +164,6 @@ def run_stage_action(
     retailor: bool = False,
     tailor_models: tuple[str, ...] = (),
     tailor_judge_model: str | None = None,
-    tailor_judge_min_score: float | None = None,
 ) -> LocalActionResult:
     """Convenience entrypoint for a pipeline stage action."""
     return run_local_action(
@@ -181,7 +179,6 @@ def run_stage_action(
             retailor=retailor,
             tailor_models=tailor_models,
             tailor_judge_model=tailor_judge_model,
-            tailor_judge_min_score=tailor_judge_min_score,
         )
     )
 
@@ -212,7 +209,6 @@ def _execute_action(
                     "retailor": request.retailor,
                     "tailorModels": request.tailor_models,
                     "tailorJudgeModel": request.tailor_judge_model,
-                    "tailorJudgeMinScore": request.tailor_judge_min_score,
                 }
             )
         )
@@ -400,7 +396,6 @@ def _record_dry_run_metric(
             "retailor": request.retailor,
             "tailor_models": list(request.tailor_models),
             "tailor_judge_model": request.tailor_judge_model,
-            "tailor_judge_min_score": request.tailor_judge_min_score,
         },
     )
     conn.commit()

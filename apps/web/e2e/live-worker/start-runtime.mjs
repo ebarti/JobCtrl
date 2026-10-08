@@ -106,32 +106,36 @@ const controlServer = http.createServer(async (request, response) => {
       const payload = await readJson(request);
       state.providerCalls += 1;
       if (
-        state.providerCalls !== 1 ||
-        payload?.operation !== "chat" ||
+        payload?.operation !== "chat_json" ||
         payload?.model !== "live-worker-smoke-fixture" ||
-        !Array.isArray(payload?.messages)
+        !Array.isArray(payload?.messages) ||
+        !["GeneratedProseDraft", "ClaimVerification", "ArtifactQuality"].includes(payload?.controls?.schemaTitle)
       ) {
         state.unexpectedProviderCalls += 1;
         writeJson(response, 409, { error: "unexpected_provider_call" });
         return;
       }
-      state.providerWaiting = true;
-      const released = await Promise.race([
-        providerRelease.then(() => true),
-        new Promise((resolve) => setTimeout(() => resolve(false), 60_000)),
-      ]);
-      state.providerWaiting = false;
-      if (!released) {
-        writeJson(response, 504, { error: "provider_release_timeout" });
-        return;
+      if (state.providerCalls === 1) {
+        state.providerWaiting = true;
+        const released = await Promise.race([
+          providerRelease.then(() => true),
+          new Promise((resolve) => setTimeout(() => resolve(false), 60_000)),
+        ]);
+        state.providerWaiting = false;
+        if (!released) {
+          writeJson(response, 504, { error: "provider_release_timeout" });
+          return;
+        }
       }
-      writeJson(response, 200, {
-        text:
-          "Dear Hiring Manager,\n\n" +
-          "I have led platform and security engineering work focused on reliability and incident response. " +
-          "I would welcome the opportunity to bring that experience to this role.\n\n" +
-          "John Doe\nEND_OF_COVER_LETTER",
-      });
+      // Explicit model choices test wiring and persistence, never language accuracy.
+      const schema = payload.controls.schemaTitle;
+      const input = JSON.parse(payload.messages.find((message) => message.role === "user").content);
+      const result = schema === "GeneratedProseDraft"
+        ? { lines: [{ line_id: "cover:1", text: "I welcome the opportunity to discuss this role.", evidence_ids: [], requirement_ids: [], transform_type: "reframe", reason: "Explicit model draft" }] }
+        : schema === "ArtifactQuality"
+          ? { verdict: "pass", score: 0.9, findings: [], evidence_corrections: [], rationale: "Explicit independent quality decision" }
+          : { verdict: "pass", lines: input.context.lines.map((line) => ({ line_id: line.line_id, verdict: "pass", source_evidence: [], served_requirements: [], claims: [], findings: [] })), rationale: "Explicit claim-verification decision" };
+      writeJson(response, 200, { json: result });
       return;
     }
     if (request.method === "POST" && url.pathname === "/shutdown") {

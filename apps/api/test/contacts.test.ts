@@ -10,7 +10,7 @@ import type {
   ContactSummary,
 } from "../src/contracts.js";
 import { buildApp } from "../src/server.js";
-import { initializeExactV7Database } from "./v7-schema.js";
+import { initializeExactDatabase } from "./exact-schema.js";
 
 const SECRET_NAME = "Jane Recruiter";
 const SECRET_EMAIL = "jane@acme.example";
@@ -28,7 +28,7 @@ afterEach(() => {
 function withTempApp() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-api-contacts-"));
   const dbPath = path.join(dir, "jobs.db");
-  initializeExactV7Database(dbPath);
+  initializeExactDatabase(dbPath);
   const db = new Database(dbPath);
   db.pragma("foreign_keys = ON");
   const insertJob = db.prepare(

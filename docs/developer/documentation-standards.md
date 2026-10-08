@@ -71,6 +71,7 @@ Update the existing owner rather than creating a parallel page:
 | QA expectations, regression matrix, or manually verified product paths | `docs/local-reliability-qa.md` or its focused `docs/developer/qa/` owner |
 | API route family, JSON-RPC dispatch behavior, or SSE contract | `docs/local-ts-api.md` and the owning `docs/api/` page; field-level changes also update `docs/api/complete-contract.md` |
 | Runtime process ownership or local-first boundary | `docs/architecture/runtime.md` or `docs/architecture/index.md` |
+| Semantic judgments, determination schemas, confirmation, or failure handling | The owning architecture and user page, API contract, `docs/decisions.md`, and Auditability Checks; update `docs/requirements.md` when its contract changes. Validation proves model authority and citation binding without eval corpora |
 | Shared contract/type boundary | `docs/architecture/contracts-types-and-api-boundaries.md` |
 | Canonical data/event/projection flow | `docs/architecture/data-events-and-projections.md`; physical table/file ownership stays in `storage.md` |
 | Pipeline workflow, activity, concurrency, persistence, or failure behavior | The owning `docs/architecture/pipeline/` page |

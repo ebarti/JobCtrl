@@ -18,6 +18,8 @@ import type {
   PostedCompensationWarning,
 } from "@jobctrl/contracts";
 
+import type { DeterminationEnvelope } from "../../operations/types.js";
+
 import { Empty } from "../../../shared/ui/empty.js";
 import { Button } from "../../../shared/ui/button.js";
 import { ContextHelp } from "../../../shared/ui/context-help.js";
@@ -217,6 +219,7 @@ function marketReliabilityText(market: JobMarketCompensationSummary): string {
 }
 
 function postedAuthorityText(posted: JobPostedCompensationSummary): string {
+  if (posted.recordStatus === "unavailable") return "posted interpretation unavailable";
   if (
     posted.recordStatus === "recorded" &&
     posted.parseState === "parsed_range"
@@ -970,9 +973,11 @@ function BenchmarkLineage({
 function PostedPanel({
   posted,
   fact,
+  determination,
 }: {
   readonly posted: JobPostedCompensationSummary;
   readonly fact: JobCompensationAuditPostedFact | null;
+  readonly determination: DeterminationEnvelope | null;
 }) {
   const hasPostedRange =
     posted.recordStatus === "recorded" && Boolean(posted.displayRange);
@@ -993,11 +998,11 @@ function PostedPanel({
       <header className="compensation-result-header">
         <h4 aria-label="Employer posted" className="eyebrow" data-typography="label">
           Employer posted
-          <ContextHelp label="Employer posted compensation" description="An amount extracted from the saved job posting when parsing was safe. Not stated or no safe amount extracted means no structured posted range is available; inspect the source field, excerpt, and interpretation notes below." />
+          <ContextHelp label="Employer posted compensation" description="A model interprets compensation in the saved posting and cites its source. An unavailable interpretation requires a refresh before a structured range can be displayed." />
         </h4>
         <b className="compensation-result-value">
           {posted.displayRange ||
-            (posted.recordStatus === "recorded"
+            (posted.recordStatus === "unavailable" ? "Posted interpretation unavailable" : posted.recordStatus === "recorded"
               ? "No safe amount extracted"
               : "Not stated")}
         </b>
@@ -1005,6 +1010,7 @@ function PostedPanel({
           {hasPostedRange ? "stated in posting" : "no posted range"}
         </StatusBadge>
       </header>
+      {posted.recordStatus === "unavailable" ? <p role="status">Refresh compensation to retry the interpretation. Reason: {posted.failureCode}.</p> : null}
       {hasPostedRange ? (
         <p className="compensation-result-explanation">
           {amountIsEquity
@@ -1043,8 +1049,9 @@ function PostedPanel({
               <DetailRow
                 label="Extraction certainty"
                 value={formatToken(fact.confidence)}
-                help="The parser's confidence in the saved posting extraction. This does not verify the live posting or guarantee the stated component is cash."
+                help="The model's certainty in its cited interpretation of the saved posting."
               />
+              {determination ? <><DetailRow label="Determination" value={determination.determination_id} /><DetailRow label="Model" value={`${determination.provider} / ${determination.model}`} /><DetailRow label="Prompt version" value={determination.prompt_version} /><DetailRow label="Input fingerprint" value={determination.input_fingerprint} /></> : null}
             </dl>
             {"sourceText" in fact && fact.sourceText ? (
               <blockquote className="compensation-posting-excerpt">
@@ -1114,7 +1121,10 @@ function MarketPanel({
     estimate && isLegacyMarketAssessment(estimate)
       ? " This is a stored legacy assessment; refresh this job to use the current role and level classifier."
       : "";
-  const outcome = hasRange
+  const outcome = market.recordStatus === "unavailable"
+    ? {value:"Market interpretation unavailable",badge:"unavailable",tone:"warn" as const,
+       explanation:`Refresh compensation to record the missing model determinations. ${market.failureCode ?? "compensation_determination_unavailable"}.`}
+    : hasRange
     ? {
         value: market.displayRange,
         badge: `${formatToken(market.confidenceBand)} reliability`,
@@ -1179,6 +1189,9 @@ function MarketPanel({
             sampleCount={market.sampleCount}
           />
           <MarketAssessmentDetails market={market} estimate={estimate} />
+          {estimate.determinations.length ? <details><summary>Classification sources</summary>
+            {estimate.determinations.map(row => <details key={row.determination_id}><summary>{row.kind.replaceAll("_", " ")} · {row.provider} · {row.model}</summary><p>{row.prompt_version} · input {row.input_fingerprint}</p><pre>{JSON.stringify(row.result, null, 2)}</pre></details>)}
+          </details> : <p>No recorded classification sources.</p>}
         </div>
       ) : null}
     </article>
@@ -1276,6 +1289,7 @@ export function CompensationAuditSection({
             posted: {
               sourceKind: "posted" as const,
               recordStatus: audit.posted.recordStatus,
+              ...(audit.posted.recordStatus === "unavailable" ? {failureCode: audit.posted.failureCode} : {}),
               parseState:
                 audit.posted.recordStatus === "recorded"
                   ? audit.posted.fact.parseState
@@ -1294,6 +1308,7 @@ export function CompensationAuditSection({
             market: {
               sourceKind: "reported_company_role_market" as const,
               recordStatus: audit.market.recordStatus,
+              ...(audit.market.recordStatus === "unavailable" ? {failureCode:audit.market.failureCode} : {}),
               benchmarkKind:
                 audit.market.recordStatus === "recorded"
                   ? (audit.market.estimate.benchmarkLineage?.kind ?? null)
@@ -1335,7 +1350,7 @@ export function CompensationAuditSection({
   const marketEstimate =
     audit?.market.recordStatus === "recorded" ? audit.market.estimate : null;
   const rawPostedFallback =
-    effectiveSummary?.posted.displayRange || postedFact
+    effectiveSummary?.posted.recordStatus === "unavailable" || effectiveSummary?.posted.displayRange || postedFact
       ? null
       : effectiveSummary?.legacyRawSalary || fallbackSalary || null;
 
@@ -1353,7 +1368,7 @@ export function CompensationAuditSection({
           {rawPostedFallback ? (
             <RawPostedFallbackPanel value={rawPostedFallback} />
           ) : (
-            <PostedPanel posted={effectiveSummary.posted} fact={postedFact} />
+            <PostedPanel posted={effectiveSummary.posted} fact={postedFact} determination={audit?.posted.recordStatus === "recorded" ? audit.posted.determination : null} />
           )}
           <MarketPanel
             market={effectiveSummary.market}

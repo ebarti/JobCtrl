@@ -14,14 +14,15 @@ from jobctrl.infrastructure.compensation.sqlite_market_repository import (
 from jobctrl.infrastructure.compensation.sqlite_repository import (
     SqlitePostedCompensationRepository,
 )
-from jobctrl.infrastructure.migrations.schema_v7 import create_exact_v7_schema
+from jobctrl.infrastructure.migrations.schema_v14 import create_exact_v14_schema
+from tests.compensation_fakes import pay_extractor, record_job_interpretation
 
 
 def _connection() -> sqlite3.Connection:
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
-    create_exact_v7_schema(conn)
+    create_exact_v14_schema(conn)
     return conn
 
 
@@ -65,7 +66,7 @@ def test_repositories_scope_compensation_facts_and_estimates_by_tenant_and_job_i
         salary="€200,000-€230,000/year",
     )
 
-    posted = SqlitePostedCompensationRepository(conn)
+    posted = SqlitePostedCompensationRepository(conn, extractor=pay_extractor(conn, minimum=100000, maximum=130000))
     posted.parse_and_save_job_salary(
         local_job_id,
         "€100,000-€130,000/year",
@@ -78,6 +79,7 @@ def test_repositories_scope_compensation_facts_and_estimates_by_tenant_and_job_i
     assert fact.job_id == local_job_id
     assert posted.get_fact("other", other_job_id) is None
 
+    record_job_interpretation(conn, local_job_id)
     market = SqliteMarketCompensationRepository(conn)
     assert market.backfill_from_jobs((), tenant_id="local", job_id=local_job_id) == 1
 
@@ -90,7 +92,7 @@ def test_repositories_scope_compensation_facts_and_estimates_by_tenant_and_job_i
     assert market.get_estimate("other", other_job_id) is None
 
 
-def test_jobspy_posted_compensation_producer_resolves_the_tenant_scoped_job_id() -> None:
+def test_jobspy_posted_compensation_producer_resolves_the_tenant_scoped_job_id(monkeypatch) -> None:
     conn = _connection()
     local_job_id = JobId("33333333-3333-4333-8333-333333333333")
     other_job_id = JobId("44444444-4444-4444-8444-444444444444")
@@ -110,6 +112,11 @@ def test_jobspy_posted_compensation_producer_resolves_the_tenant_scoped_job_id()
         salary="€150,000-€180,000/year",
     )
 
+    original = SqlitePostedCompensationRepository
+    monkeypatch.setattr(
+        "jobctrl.infrastructure.compensation.SqlitePostedCompensationRepository",
+        lambda connection: original(connection, extractor=pay_extractor(connection, minimum=90000, maximum=110000)),
+    )
     _upsert_posted_compensation_fact(
         conn,
         tenant_id="local",

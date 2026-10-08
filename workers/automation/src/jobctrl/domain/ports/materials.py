@@ -27,11 +27,8 @@ from jobctrl.domain.materials.analysis import (
 from jobctrl.domain.materials.entities import Artifact
 from jobctrl.domain.materials.policy import TailoringPolicy, TailoringPolicyRollbackReason
 from jobctrl.domain.materials.provenance import BulletProvenanceSet
-from jobctrl.domain.materials.value_objects import (
-    ArtifactStatus,
-    ArtifactType,
-    RenderFormat,
-)
+from jobctrl.domain.ports.artifact_review import ArtifactStatus
+from jobctrl.domain.materials.value_objects import ArtifactType, RenderFormat
 from jobctrl.domain.materials.voice import VoiceRequest, VoiceResult
 from jobctrl.domain.operations.learning import (
     LearningRecommendationDecision,
@@ -63,11 +60,9 @@ class UnitOfWork(Protocol):
     back to the per-call-commit behaviour of each repository.
     """
 
-    def __enter__(self) -> "UnitOfWork":
-        ...
+    def __enter__(self) -> "UnitOfWork": ...
 
-    def __exit__(self, exc_type: object, exc: object, tb: object) -> bool | None:
-        ...
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> bool | None: ...
 
 
 # ---------------------------------------------------------------------------

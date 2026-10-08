@@ -16,8 +16,7 @@ ceiling, use [Configuration](configuration.md).
 ::: info One persistence authority
 Discovery settings and source records editable on `/discovery` are stored in
 `~/.jobctrl/jobctrl.db`. SQLite is the sole persistence authority for target
-search, Automation settings, broad-board controls and limits, role-filter
-execution, source-family parallelism, crawler identity, runtime and schedule,
+search, Automation settings, broad-board controls and limits, source-family parallelism, crawler identity, runtime and schedule,
 the source registry, locator candidates, quarantine, manual capture, and other
 Discovery domain state. `config.json` does not own or provide a fallback for any
 of these fields. Source-review table filters and sorting live in the URL;
@@ -50,10 +49,10 @@ preferences, rather than silently reapplying an older named view's filters.
 ## Runtime, Sources, And Schedule
 
 Use **Discovery → Runtime settings** for boards, results per site, posting age,
-schedule, role-filter mode/model, bounded source-family parallelism, and the
+schedule, bounded source-family parallelism, and the
 outbound user-agent identity. Every saved value goes to SQLite. Schedule
 changes need a worker restart; boards, limits, and parallelism apply on the
-next run; role-filter and user-agent changes apply to the next source family.
+next run; user-agent changes apply to the next source family.
 
 Parallel families are capped at four and should not exceed the worker's active
 activity slots. See
@@ -72,8 +71,7 @@ starts, so a change affects the next run rather than work already in progress.
 <a id="runtime-setting-results-per-board"></a>
 **Results per board.** Set the maximum number of results requested from each
 selected board for one search unit. This is a provider request limit, not a
-promise that every board will return that many admitted leads; title, location,
-age, and deduplication checks still apply. The next Discover run snapshots the
+promise that every board will return that many admitted leads; provider search/age bounds and exact identity checks still apply. The next Discover run snapshots the
 new value. Admission means a lead is eligible for persistence and enrichment;
 it is not a relevance score or a judgment that the job is suitable.
 
@@ -90,18 +88,6 @@ title and employer alone.
 **Posting lookback hours.** Limit broad-board discovery to postings no older
 than this many hours when the provider supports age filtering. The next
 Discover run snapshots the window.
-
-<a id="runtime-setting-role-title-filtering"></a>
-**Role title filtering.** Choose how returned titles are checked against the
-target-search plan. **Auto** uses model-backed matching when a configured model
-provider is ready and otherwise uses deterministic local title rules.
-**Deterministic** always uses local rules. **LLM** requires model-backed
-matching. A change applies to the next source family.
-
-<a id="runtime-setting-role-filter-model"></a>
-**Role filter model.** Optionally pin the model used by model-backed role-title
-matching. Leave the value blank to use the configured provider routing. A
-change applies to the next source family.
 
 <a id="runtime-setting-parallel-source-families"></a>
 **Parallel source families.** Limit how many source families may crawl at the
@@ -140,20 +126,11 @@ their behavior is documented in
 The Ashby adapter consumes the [official public job posting
 API](https://developers.ashbyhq.com/docs/public-job-posting-api). It excludes
 postings explicitly marked `isListed: false`; `true` and an omitted flag retain
-normal admission. Title, description, and location checks still apply.
+normal admission. Listed postings proceed to ingestion and downstream analysis/scoring.
 
 Ashby location metadata retains the primary `location` (or the existing
 `locationName` fallback) first, then valid `secondaryLocations[].location`
-names in source order. Names are trimmed, deduplicated without regard to case
-while retaining the first spelling, and separated by `; `. Empty or malformed
-secondary values are ignored. An Austin-primary/Madrid-secondary posting can
-therefore match a Madrid target while preserving `Austin; Madrid`. Each name
-retains its own geography context for filtering: a configured reject in any
-name excludes the posting, and a complete target must match within one name.
-For example, secondary `Madrid, Spain` cannot mask a Canada reject on primary
-`Toronto, ON, CA`. Primary `Barcelona, Venezuela` and secondary `Madrid, Spain`
-cannot together satisfy a `Barcelona, Spain` target. Empty-location behavior
-is unchanged.
+names in source order. Names are trimmed, deduplicated without regard to case while retaining the first spelling, and separated by `; `. These are provider location fields, not a local geography classifier. Full-posting interpretation and scoring assess location suitability from the saved targets and source evidence.
 
 ### Canonical identity and repeat applications
 
@@ -317,12 +294,12 @@ location, and board under the exact Discover workflow/run identity. JobCtrl,
 not the provider, owns whether that unit is pending, running, completed, failed,
 skipped, or canceled.
 
-For each posting event, JobCtrl applies the title/location admission policy and
+For each posting event, JobCtrl executes only literal saved title exclusions and
 commits the admitted lead, source observation, event records, and an idempotent unit
 receipt before acknowledging the JobStreaming event. The acknowledgement then
 advances the provider checkpoint. If the process stops in that gap, the event
 is delivered again and the durable receipt makes the replay harmless. Results
-rejected by the caller's title/location policy get a separate hashed receipt
+excluded by a literal saved whole-title filter get a separate hashed receipt
 before acknowledgement. Accepted new/existing counts, filtered counts, and the
 run-wide new-job limit are therefore read from durable receipts, so a retry
 cannot lose progress or start the limit over. This intake admission remains
@@ -357,102 +334,25 @@ API selections; it no longer names the provider library.
 
 ### How target search controls are used
 
-These controls do not divide cleanly into “search fields” and “filter fields.”
-Together they compile the target-search plan, but each one contributes a
-different kind of intent:
+Saving Target search is sufficient to authorize those settings. Discovery executes the saved role titles and location/work-model controls literally; it makes no model query plan and asks for no second interpretation or confirmation. Board country parameters and enabled sources keep their saved values. It does not infer aliases, adjacent titles or geographic scope from prose.
 
-| Control | Meaning | Search and filtering behavior |
-| --- | --- | --- |
-| **Target roles** | Specific job titles you want, such as “Director of Engineering.” | Become the primary exact search queries, replace the fallback query list, and act as strict title checks on returned postings. They also seed broader recall queries. |
-| **Role areas** | Broad domains such as engineering, security, or platform. | Combine with tracks and floors to generate additional title queries and supply the domain signal required by recall matches. They are not a standalone post-storage filter. |
-| **Seniority floors** | A role-area-independent minimum career level: Junior IC, Mid IC, Senior IC, Staff IC, Principal IC, Manager, Senior Manager, Director, VP, SVP, or C-Level. | Limit generated recall queries to that level or higher and reject lower-ranked recall titles. A Staff IC floor can include Staff and Principal IC roles; a VP floor can include VP, SVP, and C-Level roles; an SVP floor excludes VP roles and treats EVP titles as the same floor. |
-| **Target tracks** | The career lane: individual contributor, management, or executive. | Keep recall within the selected lane so, for example, an IC recall query does not accept a management title. |
-| **Specializations** | Additional, narrower domain hints. | Contribute to recall-domain inference when they contain recognized domain vocabulary. Unrecognized free text may not change the generated plan. |
+Each location row uses only the work models checked in that row. Multiple checked models produce the board's remote and non-remote parameters as needed; a Remote row with no location searches without a place restriction. Invalid saved work-model controls block Discovery planning with an actionable settings error. They do not prevent fetching, scoring or reading saved sources.
 
-Seniority is deliberately separate from role area. The ladder describes career
-scope, while **Role areas** supplies domains such as engineering, security, or
-platform. Existing saved `engineer` and `cto` values remain compatible and are
-shown as **Mid IC** and **C-Level**; the next seniority edit writes the
-canonical `mid` and `c_level` values. VP, SVP, and C-Level are distinct floors
-in both query generation and title acceptance; EVP titles map to SVP.
+JobStreaming executes the saved title, location, remote and lookback parameters supported by each board. Provider support for location, remote and lookback filters varies by board. JobStreaming emits capability warnings, but JobCtrl currently does not display them. JobCtrl stores fetched listings under exact canonical identity and sends them to full-posting analysis and scoring. There is no separate intake model call, listing-decision queue or second search confirmation. Direct company ATS adapters may return a whole company feed; full-posting scoring assesses those jobs too.
 
-Discovery then applies that plan in four steps:
+Broad-board captures are durable before checkpoint acknowledgement and canonical ingestion is idempotent across retry. Limits, leases, source listing flags and literal exact-title exclusions remain mechanical. Historical intake captures and model receipts remain preserved. Each runnable source family recovers up to 100 unconsumed raw posting captures before fetching, using canonical ingestion, current literal exclusions and the remaining new-job limit. Successful ingestion marks a capture consumed; interruption retains it for an idempotent retry. The retired model status, preferences and envelope are never read.
 
-1. Target roles and the structured controls compile into exact and recall query
-   specifications.
-2. Broad boards are searched with those query strings. Direct ATS and Workday
-   sources enumerate their postings and use the same intent as an internal title
-   check.
-3. Returned postings must pass title and location acceptance before JobCtrl
-   persists them.
-4. JobCtrl scores accepted jobs afterward. Of these target-search controls,
-   target roles currently become scoring preferences; role areas, target tracks,
-   and seniority floors affect discovery planning and title acceptance rather
-   than the fit score.
+A structurally invalid archived capture stays stored with its safe failure code
+and a warning in Activity. It is excluded from automatic recovery so valid
+captures and fresh searches continue. Captures for sources that are no longer
+runnable remain archived. Recovery never overwrites newer job data or restores
+an owner's deleted job.
 
-An explicitly entered target role remains an exact query without a separate
-seniority floor attached. An exact title match can therefore pass even when it
-is below a selected floor; the floor is principally enforced on generated
-recall queries.
+Role-match suggestions use current scoring determinations. A score from an older
+prompt or schema remains in history but contributes no new title-exclusion
+suggestion until a current score is accepted.
 
-The **Evidence-backed target search suggestions** card is an optional authoring
-aid. It reads the canonical saved profile version and returns editable role
-titles and historical location/work-model rows with evidence references; it
-does not inspect the unsaved browser draft or change an active Discovery
-execution. Rejecting or dismissing proposals writes nothing. Every role and
-historical preference proposal starts unselected. Accepting selected titles
-appends and case-insensitively deduplicates them. If you explicitly select a preference, its location/model pair
-is appended to the same Target Search draft without replacing existing rows or
-filling an empty counterpart. The subsequent version-checked save affects only
-future Discovery plans. The card labels the original evidence separately when
-you edit a proposal.
-
-Discovery keeps those saved rows aligned while compiling the next plan. A
-location-empty Remote row supplies remote search without assigning that model
-to the next city. A location-empty Hybrid or On-site row supplies no inferred
-city; a location-only row remains local. Rows with both fields empty are ignored,
-so an empty draft row cannot displace the existing home-location fallback.
-
-Current managed model providers cannot enforce this feature's hard token and
-maximum-cost bounds. JobCtrl therefore makes no provider call for production
-suggestions. It may offer exact saved titles and a small set of adjacent titles
-when the title wording, saved track/seniority, and linked achievement evidence
-support them. Sparse or incompatible evidence may produce no role proposal.
-Historical preference rows come only from explicit experience locations and
-unambiguous `Remote`, `Hybrid`, or `On-site` markers in those locations. Past
-work location or arrangement is not current willingness to search there or use
-that work model. You can always enter target roles, locations, and work models
-manually. The local demo's broader proposal is labeled as fixture evidence.
-
-If the saved profile changes after you accept a proposal, the form keeps your
-draft but blocks suggestion-derived saving. Use **Rebase edits onto saved
-profile** to carry non-overlapping edits onto the refreshed profile, then
-generate and review suggestions again. This covers accepted role and historical
-preference rows, including edits after acceptance. When the same field changed both
-locally and in the saved profile, discard or resolve that field manually.
-
-::: warning Multiple tracks and floors
-Tracks and seniority floors are currently stored as independent ordered lists,
-not as explicit track-to-floor pairs. Recall generation can associate those
-values with target roles by list position, so selecting several tracks and
-floors does not create a clean per-track matrix and can produce surprising
-expansions.
-
-For a predictable mixed-track search, treat **Target roles** as the authority:
-list every title you would accept, including Staff or Principal roles when
-desired, instead of relying on several simultaneous track/floor selections.
-:::
-
-A scraping proxy, when needed, is part of the SQLite discovery settings
-(`host:port:user:pass` form); there is no `PROXY` environment variable.
-
-![JobCtrl Discovery workspace with target search, sources, schedules, runtime, capture, and diagnostics](../assets/screenshots/discovery.png)
-*Discovery owns the SQLite-backed controls that shape source intake; Pipelines launches and observes the resulting execution.*
-
-Discovery scheduling is also a SQLite-backed setting: `scheduling_enabled`
-defaults to `false`, `schedule_cron` defaults to `0 7 * * *`, and worker
-startup reconciles the local Temporal schedule — creating it (with `SKIP`
-overlap semantics) when enabled and deleting it when disabled.
+Literal user-approved exact-title exclusions remain literal. Saved free-text criteria are supplied verbatim to posting and scoring determinations; they do not create another search-approval step. Historical experience locations do not imply relocation or remote consent. Profile import/save creates pending candidate interpretations. **Target search suggestions** calls the configured model in production; selected suggestions change targets only through a version-fenced user save.
 
 ## Employer Analysis Perspectives
 

@@ -189,7 +189,7 @@ describe("Chromium loaded extension privacy boundary", () => {
       expect(await sendExtensionMessage(controller, { type: "getStatus" })).toMatchObject({
         ok: true,
         status: "ready",
-        protocolVersion: 1,
+        protocolVersion: 2,
         paired: true,
         apiReady: true,
         discoverySelected: true,
@@ -225,6 +225,9 @@ describe("Chromium loaded extension privacy boundary", () => {
       expect(autofill).toMatchObject({ ok: true, status: "review_opened", suggestions: 1, missing: 0 });
       expect(await applicationPage.locator("input[name='email']").inputValue()).toBe("");
       await expectPageText(applicationPage, "Profile value ready");
+      await applicationPage.getByRole("button",{name:"Fill selected",exact:true}).click();
+      expect(await applicationPage.locator("input[name='email']").inputValue()).toBe("jordan@example.com");
+      await expectPageText(applicationPage,"Filled 1 field. Review the form before submitting.");
 
       expect(api.requests.map((request) => `${request.method} ${request.path}`)).toContain("POST /v1/extension/captures");
       expect(api.requests.map((request) => `${request.method} ${request.path}`)).toContain(
@@ -451,6 +454,11 @@ async function installFakeLoopbackApi(
           futureManualActionRequired: false,
         },
       }, headers);
+      return;
+    }
+    if (requestUrl.pathname === "/v1/extension/autofill/mapping") {
+      const snapshot=request.postDataJSON() as {snapshotId:string;questions:Array<{question_id:string}>};
+      await json(route,{ok:true,snapshotId:snapshot.snapshotId,profileVersion:1,determinationId:"synthetic-model-receipt",mappings:snapshot.questions.map((question,index)=>({question_id:question.question_id,decision:index===0?"mapped":"unmapped",fact_id:index===0?"personal.email":null,value:index===0?"jordan@example.com":"",option_id:null,citations:[],rationale:"Explicit synthetic model decision"}))},headers);
       return;
     }
     if (requestUrl.pathname === "/v1/extension/autofill/profile") {

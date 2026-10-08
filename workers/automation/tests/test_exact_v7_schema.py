@@ -13,10 +13,10 @@ from jobctrl.database import (
     close_connection,
     init_db,
 )
-from jobctrl.infrastructure.migrations import schema_v12
+from jobctrl.infrastructure.migrations import schema_v14
+from jobctrl.infrastructure.migrations.schema_v14 import EXACT_V14_MANIFEST
 from jobctrl.infrastructure.migrations.schema_manifest import (
     EXACT_V7_MANIFEST,
-    EXACT_V12_MANIFEST,
     SchemaManifestError,
     assert_exact_manifest,
     schema_dump,
@@ -67,17 +67,11 @@ def _complete_database_dump(path: Path) -> tuple[object, ...]:
         rows = tuple(
             (
                 table,
-                tuple(
-                    conn.execute(
-                        f'SELECT * FROM "{table.replace(chr(34), chr(34) * 2)}"'
-                    ).fetchall()
-                ),
+                tuple(conn.execute(f'SELECT * FROM "{table.replace(chr(34), chr(34) * 2)}"').fetchall()),
             )
             for table in tables
         )
-        sequence_exists = conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE name = 'sqlite_sequence'"
-        ).fetchone()
+        sequence_exists = conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'sqlite_sequence'").fetchone()
         sequence = (
             tuple(conn.execute("SELECT name, seq FROM sqlite_sequence ORDER BY name"))
             if sequence_exists is not None
@@ -104,23 +98,13 @@ def test_fresh_runtime_creation_matches_the_exact_v9_manifest(tmp_path: Path) ->
 
     conn = init_db(db_path)
 
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == EXACT_V12_MANIFEST.version
-    assert_exact_manifest(conn, EXACT_V12_MANIFEST)
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == EXACT_V14_MANIFEST.version
+    assert_exact_manifest(conn, EXACT_V14_MANIFEST)
     assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
-    assert conn.execute(
-        "SELECT name FROM sqlite_master WHERE name = 'job_identity_aliases'"
-    ).fetchone() is None
-    tables = {
-        str(row[0])
-        for row in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type = 'table'"
-        ).fetchall()
-    }
+    assert conn.execute("SELECT name FROM sqlite_master WHERE name = 'job_identity_aliases'").fetchone() is None
+    tables = {str(row[0]) for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()}
     assert _CROSS_RUNTIME_DURABLE_TABLES <= tables
-    profile_columns = {
-        str(row[1])
-        for row in conn.execute("PRAGMA table_info(candidate_profiles)").fetchall()
-    }
+    profile_columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(candidate_profiles)").fetchall()}
     assert {
         "application_attestation_age_18_plus",
         "application_attestation_background_check_consent",
@@ -142,11 +126,7 @@ def test_unstamped_v7_candidate_matches_the_exact_manifest_without_version_stamp
         _database: str | None,
         _source: str | None,
     ) -> int:
-        if (
-            action == sqlite3.SQLITE_PRAGMA
-            and argument1 == "user_version"
-            and argument2 is not None
-        ):
+        if action == sqlite3.SQLITE_PRAGMA and argument1 == "user_version" and argument2 is not None:
             return sqlite3.SQLITE_DENY
         return sqlite3.SQLITE_OK
 
@@ -251,7 +231,7 @@ def test_worker_heartbeat_does_not_drift_the_exact_v9_schema(
 
     reopened = init_db(db_path)
     assert schema_dump(reopened) == before_schema
-    assert_exact_manifest(reopened, EXACT_V12_MANIFEST)
+    assert_exact_manifest(reopened, EXACT_V14_MANIFEST)
     close_connection(db_path)
 
 
@@ -259,12 +239,8 @@ def test_manifest_preserves_semantic_quotes_inside_defaults() -> None:
     quoted = sqlite3.connect(":memory:")
     unquoted = sqlite3.connect(":memory:")
     try:
-        quoted.execute(
-            """CREATE TABLE example (value TEXT DEFAULT '"quoted"')"""
-        )
-        unquoted.execute(
-            """CREATE TABLE example (value TEXT DEFAULT 'quoted')"""
-        )
+        quoted.execute("""CREATE TABLE example (value TEXT DEFAULT '"quoted"')""")
+        unquoted.execute("""CREATE TABLE example (value TEXT DEFAULT 'quoted')""")
 
         assert schema_manifest(quoted, version=7) != schema_manifest(
             unquoted,
@@ -401,13 +377,14 @@ def test_job_score_keywords_exact_schema_contract(tmp_path: Path) -> None:
         "display_keyword",
         "position",
     )
-    assert tuple(
-        str(column[1]) for column in columns if int(column[5])
-    ) == ("tenant_id", "job_id", "score_version", "normalized_keyword")
+    assert tuple(str(column[1]) for column in columns if int(column[5])) == (
+        "tenant_id",
+        "job_id",
+        "score_version",
+        "normalized_keyword",
+    )
 
-    foreign_keys = conn.execute(
-        "PRAGMA foreign_key_list(job_score_keywords)"
-    ).fetchall()
+    foreign_keys = conn.execute("PRAGMA foreign_key_list(job_score_keywords)").fetchall()
     score_foreign_keys = [foreign_key for foreign_key in foreign_keys if foreign_key[2] == "job_scores"]
     assert {(foreign_key[3], foreign_key[4]) for foreign_key in score_foreign_keys} == {
         ("tenant_id", "tenant_id"),
@@ -477,16 +454,10 @@ def test_job_score_keywords_exact_schema_contract(tmp_path: Path) -> None:
             ("local", job_id),
         )
 
-    indexes = {
-        str(index[1]): index
-        for index in conn.execute("PRAGMA index_list(job_score_keywords)")
-    }
+    indexes = {str(index[1]): index for index in conn.execute("PRAGMA index_list(job_score_keywords)")}
     assert indexes["idx_job_score_keywords_tenant_normalized"][2] == 0
     assert tuple(
-        str(column[2])
-        for column in conn.execute(
-            "PRAGMA index_info(idx_job_score_keywords_tenant_normalized)"
-        )
+        str(column[2]) for column in conn.execute("PRAGMA index_info(idx_job_score_keywords_tenant_normalized)")
     ) == ("tenant_id", "normalized_keyword", "job_id", "score_version")
 
     conn.execute(
@@ -679,9 +650,7 @@ def test_tailoring_feedback_reviews_are_structured_append_only_facts(
             """
         )
 
-    conn.execute(
-        "DELETE FROM tailoring_feedback_signals WHERE tenant_id = 'local' AND signal_id = 'signal-1'"
-    )
+    conn.execute("DELETE FROM tailoring_feedback_signals WHERE tenant_id = 'local' AND signal_id = 'signal-1'")
     assert [
         tuple(row)
         for row in conn.execute(
@@ -697,19 +666,13 @@ def test_tailoring_feedback_reviews_are_structured_append_only_facts(
     ]
     assert conn.execute("PRAGMA foreign_key_check").fetchone() is None
 
-    indexes = {
-        str(index[1])
-        for index in conn.execute("PRAGMA index_list(tailoring_feedback_signal_reviews)")
-    }
+    indexes = {str(index[1]) for index in conn.execute("PRAGMA index_list(tailoring_feedback_signal_reviews)")}
     assert {
         "idx_tailoring_feedback_signal_reviews_signal",
         "idx_tailoring_feedback_signal_reviews_decision",
     } <= indexes
     contradiction_indexes = {
-        str(index[1])
-        for index in conn.execute(
-            "PRAGMA index_list(tailoring_feedback_signal_contradictions)"
-        )
+        str(index[1]) for index in conn.execute("PRAGMA index_list(tailoring_feedback_signal_contradictions)")
     }
     assert {
         "idx_tailoring_feedback_signal_contradictions_signal",
@@ -1143,15 +1106,18 @@ def test_learning_recommendation_storage_is_structured_append_only_and_private(
             """,
             ("2026-08-01T04:00:00Z", "2026-08-01T04:00:01Z"),
         )
-    assert tuple(
-        conn.execute(
-            """
+    assert (
+        tuple(
+            conn.execute(
+                """
             SELECT tombstone_id, reason_code, tombstoned_at, rederived_at
             FROM learning_recommendation_tombstones
             WHERE tenant_id = 'local' AND tombstone_id = 'tombstone-1'
             """
-        ).fetchone()
-    ) == tombstone_before
+            ).fetchone()
+        )
+        == tombstone_before
+    )
 
     append_only_mutations = (
         "UPDATE learning_recommendations SET derived_at = derived_at WHERE recommendation_id = 'recommendation-1'",
@@ -1184,15 +1150,11 @@ def test_learning_recommendation_storage_is_structured_append_only_and_private(
         "learning_recommendation_jobs",
         "learning_recommendation_tombstones",
     ):
-        columns = {
-            str(column[1])
-            for column in conn.execute(f"PRAGMA table_info({table})").fetchall()
-        }
+        columns = {str(column[1]) for column in conn.execute(f"PRAGMA table_info({table})").fetchall()}
         assert not {
             column
             for column in columns
-            if column in forbidden_fragments
-            or any(column.endswith(f"_{fragment}") for fragment in forbidden_fragments)
+            if column in forbidden_fragments or any(column.endswith(f"_{fragment}") for fragment in forbidden_fragments)
         }
 
     assert conn.execute("PRAGMA foreign_key_check").fetchone() is None
@@ -1532,7 +1494,7 @@ def test_failed_fresh_init_removes_its_file_and_can_retry(
     tmp_path: Path,
 ) -> None:
     db_path = tmp_path / "jobctrl.db"
-    create_schema = schema_v12.create_exact_v12_schema
+    create_schema = schema_v14.create_exact_v14_schema
 
     def fail_after_partial_creation(conn: sqlite3.Connection) -> None:
         executed = 0
@@ -1544,9 +1506,10 @@ def test_failed_fresh_init_removes_its_file_and_can_retry(
                 raise RuntimeError("fixture creation failure")
             return conn.execute(statement)
 
-        create_schema(conn, _execute=fail_second_statement)
+        conn.execute("CREATE TABLE partial_creation (id INTEGER)")
+        raise RuntimeError("fixture creation failure")
 
-    monkeypatch.setattr(schema_v12, "create_exact_v12_schema", fail_after_partial_creation)
+    monkeypatch.setattr(schema_v14, "create_exact_v14_schema", fail_after_partial_creation)
     with pytest.raises(RuntimeError, match="fixture creation failure"):
         init_db(db_path)
 
@@ -1554,7 +1517,7 @@ def test_failed_fresh_init_removes_its_file_and_can_retry(
     assert not Path(f"{db_path}-wal").exists()
     assert not Path(f"{db_path}-shm").exists()
 
-    monkeypatch.setattr(schema_v12, "create_exact_v12_schema", create_schema)
+    monkeypatch.setattr(schema_v14, "create_exact_v14_schema", create_schema)
     conn = init_db(db_path)
-    assert_exact_manifest(conn, EXACT_V12_MANIFEST)
+    assert_exact_manifest(conn, EXACT_V14_MANIFEST)
     close_connection(db_path)

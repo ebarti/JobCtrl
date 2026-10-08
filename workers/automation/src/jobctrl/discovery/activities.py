@@ -97,7 +97,6 @@ class DiscoveryEnrichmentActivityInput:
     llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
     tailor_models: tuple[str, ...] = ()
     tailor_judge_model: str | None = None
-    tailor_judge_min_score: float | None = None
     discovery_execution: DiscoveryExecutionRef | None = None
     pipeline_step_item_key: str = "terminal"
     pipeline_step_detail_code: PipelineStepDetailCode = "terminal_reconciliation"
@@ -149,7 +148,6 @@ class DiscoveryPreparationFanoutInput:
     validation_mode: str = "normal"
     tailor_models: tuple[str, ...] = ()
     tailor_judge_model: str | None = None
-    tailor_judge_min_score: float | None = None
     llm_model: str = DEFAULT_PIPELINE_LLM_MODEL_SPEC
     progress_completed: int = 0
     progress_total: int = 0
@@ -192,6 +190,7 @@ def plan_discovery_sources(payload: PlanDiscoverySourcesInput) -> PlanDiscoveryS
         plan = plan_discovery_source_families(
             limit=payload.limit,
             source_ids=payload.source_ids,
+            discovery_execution=payload.discovery_execution,
         )
         output = PlanDiscoverySourcesOutput(
             families=list(plan.get("families") or []),
@@ -206,6 +205,8 @@ def plan_discovery_sources(payload: PlanDiscoverySourcesInput) -> PlanDiscoveryS
                 exc,
                 fallback_error_code="source_plan_failed",
             )
+        if isinstance(exc, JobCtrlError):
+            raise to_application_error(exc) from exc
         raise
     if lifecycle is not None:
         lifecycle.completed(item_count=len(output.families))
@@ -553,7 +554,6 @@ def _build_per_job_handoff(
                 llm_model=payload.llm_model,
                 tailor_models=payload.tailor_models,
                 tailor_judge_model=payload.tailor_judge_model,
-                tailor_judge_min_score=payload.tailor_judge_min_score,
                 tenant_id=TenantId(payload.tenant_id),
                 discovery_execution=payload.discovery_execution,
                 discovery_cohort_kind="observed_this_run",
@@ -619,7 +619,6 @@ async def discovery_preparation_fanout_activity(
                 llm_model=payload.llm_model,
                 tailor_models=payload.tailor_models,
                 tailor_judge_model=payload.tailor_judge_model,
-                tailor_judge_min_score=payload.tailor_judge_min_score,
                 tenant_id=TenantId(payload.tenant_id),
                 include_pending_tailor=payload.include_pending_tailor,
                 discovery_execution=payload.discovery_execution,

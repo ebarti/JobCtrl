@@ -11,7 +11,7 @@ import {
   ManualCaptureImportError,
   type ManualCaptureImporter,
 } from "../src/manual-capture-worker.js";
-import { initializeExactV7Database } from "./v7-schema.js";
+import { initializeExactDatabase } from "./exact-schema.js";
 
 const CHROME_EXTENSION_ORIGIN = "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const FEEDBACK_JOB_ID = "40000000-0000-4000-8000-000000000001";
@@ -24,7 +24,7 @@ const REPLAY_JOB_ID = "40000000-0000-4000-8000-000000000006";
 function withTempDb(): { dbPath: string; dir: string; cleanup: () => void } {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-api-discovery-controls-"));
   const dbPath = path.join(dir, "jobs.db");
-  initializeExactV7Database(dbPath);
+  initializeExactDatabase(dbPath);
   return {
     dbPath,
     dir,

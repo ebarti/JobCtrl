@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vite
 import type { ActionDispatcher } from "../src/local-actions.js";
 import { buildApp } from "../src/server.js";
 import { syntheticInterviewCatalogAsset } from "./interview-fixture.js";
-import { initializeExactV7Database } from "./v7-schema.js";
+import { initializeExactDatabase } from "./exact-schema.js";
 
 const JOB_ID = "11111111-1111-4111-8111-111111111111";
 
@@ -16,7 +16,7 @@ describe("canonical explicit interview evidence admission", () => {
   let dbPath: string;
   beforeEach(() => {
     directory = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-interview-choice-"));
-    dbPath = path.join(directory, "jobctrl.db"); initializeExactV7Database(dbPath); db = new Database(dbPath);
+    dbPath = path.join(directory, "jobctrl.db"); initializeExactDatabase(dbPath); db = new Database(dbPath);
     db.prepare("INSERT INTO jobs (tenant_id,job_id,url,title) VALUES ('local',?,'https://example.test/job','Synthetic')").run(JOB_ID);
     db.prepare("INSERT INTO candidate_profiles (tenant_id,profile_id,version,updated_at) VALUES ('local','default',3,'2026-10-01')").run();
     evidence("Role_Bullet_1", 1, "supported"); evidence("verified-fact", 1, "verified"); evidence(" raw canonical ID ", 1, "supported"); evidence("x".repeat(200), 1, "supported");

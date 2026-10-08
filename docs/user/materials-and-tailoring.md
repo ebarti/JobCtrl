@@ -42,57 +42,29 @@ Solid arrows show the path to an accepted resume; dashed arrows return
 repairable failures to the candidate pool. A failed retry never replaces the
 last accepted resume.
 
-1. **Build one deterministic plan.** JobCtrl combines the accepted posting and
-   employer analysis with a versioned Candidate Profile snapshot, requirement
-   fit, tailoring permissions, required evidence pins, and writing style. The
-   posting may guide emphasis; only profile evidence may support claims about
-   you. Each target requirement initially keeps only its strongest grounded
-   achievement edge, while one achievement may cover several requirements.
-2. **Ask each ready generator for structured content.** Configured candidate
-   models receive the same plan. Their response must reference known experience
-   and skill-category IDs, preserve source titles, respect bullet limits, and
-   use skills that already exist in the profile. The generator selects the
-   smallest sufficient achievement set: a maximum bullet count is a ceiling,
-   not a quota, and optional inventory does not become required content. Required
-   experience pins are a mandatory minimum: target-covered or explicitly pinned
-   achievements can select additional known roles. A bullet pin also requires
-   its owning role, even if that role has no separate role pin. Unselected optional roles are
-   omitted consistently from text, HTML/PDF, and the provenance audit. Required
-   roles with neither achievement evidence nor required bullet pins retain their
-   existing role details without generated bullets. If a required bullet remains
-   pinned after its supporting achievement is removed, restore that role's
-   evidence or remove the pin before tailoring; pins are still mandatory.
-   Requiring a role does not pin every achievement within it. Without selected
-   requirement evidence or a bullet pin, that role gets one grounded positioning
-   bullet when evidence is available.
-3. **Validate the assembled resume, not just model JSON.** Deterministic checks
-   run over the actual candidate text for grounding, preserved employers,
-   education, section structure, prohibited claims, metrics, seniority, and
-   requirement/keyword coverage. Every experience bullet cites exactly one
-   achievement, and every number must occur in that same achievement's evidence.
-   A keyword counts as covered only when it is in the rendered grounded text.
-4. **Repair bounded quality failures.** The current post-generation defaults
-   require fit of at least `8/10` and must-have coverage of at least `85%`, with
-   one revision attempt. These are artifact-quality gates after generation, not
-   the Discovery minimum-fit eligibility threshold.
-5. **Require approval from every enabled gate.** In guarded validation, the
-   structured judge must return `PASS`, reach the configurable threshold
-   (`0.82` by default), and report no unsupported claims, fabrications, or
-   missing required evidence. Jobs at or above `8/10` fit also receive a
-   six-persona adversarial review. A judge can identify canonical evidence to
-   reconsider on a bounded retry. JobCtrl may select a comparable alternative
-   already supported by fit analysis, keeping one achievement per requirement
-   and checking the same pins and bullet budget again. Unsupported demands and
-   raw review instructions stay in the audit; they cannot add facts or override
-   the gates.
-6. **Select and persist the best clean candidate.** JobCtrl chooses the approved
-   candidate with the best judge result. An optional voice pass may edit only
-   lines containing a configured buzzword and is kept only when it removes one
-   without changing the claim. The final voiced artifact is re-bound to its
-   evidence and re-runs deterministic validation, provenance, fabrication,
-   quality, and the structured judge. Rendering and generation persistence
-   complete together, so a PDF failure or rejected replacement leaves the last
-   accepted generation intact.
+1. **Bind canonical inputs.** JobCtrl combines the accepted posting and job
+   interpretation, profile snapshot, requirement-fit ledger, permissions, pins
+   and writing style. Models determine seniority and requirement scope; code
+   checks source IDs, versions and the available artifact budget.
+2. **Generate candidates with anchors.** Each candidate records its line IDs,
+   evidence IDs, requirement IDs, transform and reason. A posting provides
+   employer context and cannot establish a candidate fact.
+3. **Verify the final text.** A separate claim-verification call determines
+   factual support, prohibited claims, voice and model self-talk. Code checks
+   verbatim quotations, IDs and exact values against the supplied sources.
+   The independent quality judge returns its own pass/fail verdict.
+   Resumes for jobs in the high-fit band also receive all six persona judgments,
+   with citations and a recorded determination. Their pass/fail verdicts govern
+   acceptance; diagnostic scores do not set a cutoff.
+4. **Repair bounded failures.** Model findings and recorded fit gaps guide
+   repairs under the configured attempt budget. A failed or unavailable
+   determination blocks acceptance with an actionable failure status.
+5. **Persist accepted output.** Accepted text, PDF lineage, determinations,
+   anchors and coverage are recorded together. Any optional voice rewrite
+   receives fresh claim verification and quality review on the final text.
+   A failed optional voice rewrite retains the candidate already verified by
+   those checks and records the rejected voice attempt.
+   Failed refreshes preserve the last accepted generation.
 
 The artifact inspector exposes the plan, gates, coverage, provenance, judge,
 adversarial result, and lifecycle of warnings so you can inspect why the chosen
@@ -210,7 +182,7 @@ Review the focused question selection and its rationale. Add or remove cards
 and adjust the order before generating. A request accepts at most 16 unique,
 active questions from the selected catalog revision. This bounds a generation;
 it does not limit the library. Old callers without a selection receive a
-deterministic selection. JobCtrl generates only the selected cards, rather than
+a cited model selection. JobCtrl generates only the selected cards, rather than
 121 personalized answers.
 
 Choose accepted profile evidence for each selected question before generating.
@@ -219,6 +191,11 @@ records, or choose none to ask for gaps instead of a factual outline. An empty
 choice is preserved; JobCtrl does not silently fill it. If the profile changes,
 review and reselect against its current version before generating. Notes and
 new recollections cannot be selected as accepted facts.
+
+Generation drafts each question separately with its selected evidence, then
+reviews the complete preparation. More selected questions mean more provider
+calls. If a question fails its checks, generation stops and keeps your last
+accepted preparation and notes.
 
 Evidence selection precedes prose. Historical answers use relevant accepted
 profile evidence; transferable experience keeps its scope limits. Principle,
@@ -394,13 +371,13 @@ the local-file boundary.
    quality, and live threshold decide whether automatic tailoring may start. A
    deliberate first-time per-job action can request tailoring without changing
    the batch threshold.
-2. **Plan evidence coverage.** The deterministic planner connects employer
-   requirements to existing profile achievements, identifies uncovered needs,
-   and preserves pinned or required evidence.
+2. **Plan evidence coverage.** The accepted requirement-fit determinations
+   connect requirements to confirmed achievements. Code retains their ID links,
+   applies the job interpretation's scope and preserves pinned evidence.
 3. **Generate candidates.** Configured ready models produce structured resume
    candidates from the same profile and analysis contract.
 4. **Validate and select.** Independent schema, grounding, rendering, quality,
-   judge/adversarial, and fabrication controls reject unsupported content and
+   claim verification and independent model quality review reject unsupported content and
    feed bounded repair attempts. The detailed order and mode-dependent behavior
    are owned by the [Tailoring Contract](../architecture/tailoring.md), rather
    than duplicated here. The post-generation fit pass may request one truthful
@@ -436,3 +413,10 @@ generations: a failed replacement does not destroy the last accepted record.
 | Worker implementation | `workers/automation/src/jobctrl/domain/materials/`, the `tailor.py` and `cover_letter.py` paths in `workers/automation/src/jobctrl/scoring/`, and `workers/automation/src/jobctrl/infrastructure/materials/`. |
 | API and web implementation | In `apps/api/src/`: `resume-review-drafts.ts`, `resume-templates.ts`, and `read-model.ts`; in the web app: `apps/web/src/contexts/materials/`, `apps/web/src/views/artifacts/`, and `apps/web/src/views/apply-review/`. |
 | Deep architecture | [Employer Analysis & Materials Audit](../architecture/materials.md), [Tailoring Contract](../architecture/tailoring.md), and [Stage Walkthrough → Tailor](../architecture/pipeline/stages.md#tailor). |
+
+
+## Semantic Determination Authority
+
+Every generated artifact has a claim-verification determination and recorded line anchors. A separate quality judge remains. Open **Verification sources** on any artifact to inspect its model, prompt version, input fingerprint and structured verdict. Models decide claim support, seniority, voice, prohibited claims and requirement demonstration. Code validates IDs, quotes, exact values and versions. Interview generation isolates each question's selected evidence; explicit empty selection produces gaps. Failed refreshes keep accepted material. Apply Review joins line IDs and says “No recorded source” where an anchor is absent.
+
+See [the decision](../decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.

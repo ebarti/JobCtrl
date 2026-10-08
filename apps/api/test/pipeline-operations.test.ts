@@ -7,7 +7,7 @@ import { PipelineOperationsSnapshotSchema } from "@jobctrl/contracts";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { buildPipelineOperationsSnapshot } from "../src/pipeline-operations.js";
-import { initializeExactV7Database } from "./v7-schema.js";
+import { initializeExactDatabase } from "./exact-schema.js";
 
 const NOW = new Date("2026-07-14T12:00:00.000Z");
 const DISCOVER_WORKFLOW_ID = "discover-local";
@@ -1448,7 +1448,7 @@ function createFixture(): Fixture {
   const dbPath = path.join(directory, "jobctrl.db");
   const configPath = path.join(directory, "config.json");
   fs.writeFileSync(configPath, JSON.stringify({ daily_budget_usd: 25 }));
-  initializeExactV7Database(dbPath);
+  initializeExactDatabase(dbPath);
   const db = new Database(dbPath);
   const fixture = { directory, dbPath, configPath, db };
   fixtures.push(fixture);

@@ -241,11 +241,10 @@ PDFs) for jobs that pass the scoring threshold.
 
 **Responsibilities:**
 - Generate tailored resumes from profile + job description via LLM
-- Validate tailored content (banned words, fabrication, structural integrity)
-- Optionally run LLM-as-judge for quality assessment
-- Run deterministic tailoring quality checks for unsupported metrics, keyword
-  stuffing, stock-phrase warnings, weak seniority alignment, and missing evidence
-- Run adversarial review for high-fit jobs after normal validation and judge pass
+- Verify final claims through a persisted, cited model determination
+- Run an independent model quality judge with typed line findings
+- Validate schemas, IDs, quotations, exact values and version fences
+- Preserve accepted artifacts during failed refreshes
 - Generate cover letters
 - Render documents to PDF (resume via HTML/CSS + Playwright; cover letter via
   HTML/Playwright)
@@ -506,3 +505,10 @@ canonical write side (`contact_attributes.value_json`); event payloads,
 projections, logs, and telemetry carry only safe references.
 
 ---
+
+
+## Semantic Determination Authority
+
+Each bounded context owns its determinations: Enrichment job/page interpretation, Profile extraction/interpretation, Materials claim verification. Interview and Outreach call shared ports. TS read models join accepted determination/anchor IDs and perform no semantic inference. Strict schemas, source binding and arithmetic remain code.
+
+See [the decision](../../decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.

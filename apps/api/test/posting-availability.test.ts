@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildApp } from "../src/server.js";
 import { BUILT_IN_RESUME_TEMPLATE_THEME } from "../src/resume-templates.js";
 import { postingAvailability } from "../src/read-model.js";
-import { initializeExactV7Database } from "./v7-schema.js";
+import { initializeExactDatabase } from "./exact-schema.js";
 
 const JOB = "10000000-0000-4000-8000-000000000123";
 const URL = "https://careers.example.org/jobs/role-123";
@@ -18,7 +18,7 @@ afterEach(async () => { while (cleanups.length) await cleanups.pop()?.(); });
 function fixture() {
   const appDir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-availability-api-"));
   const dbPath = path.join(appDir, "jobs.db");
-  initializeExactV7Database(dbPath);
+  initializeExactDatabase(dbPath);
   const db = new Database(dbPath);
   db.prepare("INSERT INTO resume_templates (tenant_id, template_id, display_name, status, built_in, created_at, updated_at) " +
     "VALUES ('local', 'built_in:modern-html', 'Modern HTML', 'active', 1, ?, ?)").run("2026-10-01", "2026-10-01");

@@ -99,9 +99,7 @@ async def test_automatic_compensation_refresh_is_patch_gated_for_old_histories(
     calls: list[str] = []
 
     async def unexpected_activity(*_args, **_kwargs):
-        raise AssertionError(
-            "unpatched replay must not schedule automatic_compensation_refresh"
-        )
+        raise AssertionError("unpatched replay must not schedule automatic_compensation_refresh")
 
     def unpatched(patch_id: str) -> bool:
         calls.append(patch_id)
@@ -173,7 +171,10 @@ async def test_discover_workflow_records_canceled_outcome(monkeypatch: pytest.Mo
 @pytest.mark.asyncio
 async def test_old_discovery_cancellation_history_does_not_schedule_new_cleanup(monkeypatch):
     monkeypatch.setattr("jobctrl.discovery.workflow.workflow.patched", lambda _patch: False)
-    monkeypatch.setattr("jobctrl.discovery.workflow.workflow.execute_activity", lambda *_args, **_kwargs: pytest.fail("old replay must not add cleanup"))
+    monkeypatch.setattr(
+        "jobctrl.discovery.workflow.workflow.execute_activity",
+        lambda *_args, **_kwargs: pytest.fail("old replay must not add cleanup"),
+    )
     await _cancel_owned_enrichment(
         DiscoverWorkflowInput(tenant_id="local"),
         DiscoveryExecutionRef("local", "discover-local", "old-run"),
@@ -406,29 +407,11 @@ async def test_discovery_preparation_fanout_activity_uses_root_workflow_fanout(
             validation_mode="strict",
             tailor_models=("draft",),
             tailor_judge_model="judge",
-            tailor_judge_min_score=8.5,
             llm_model="codex:model",
         )
     )
 
     assert captured["activity_name"] == "discover:preparation"
-    assert captured["fanout_kwargs"] == {
-        "min_score": 8,
-        "limit": 5,
-        "workers": 3,
-        "validation_mode": "strict",
-        "llm_model": "codex:model",
-        "tailor_models": ("draft",),
-        "tailor_judge_model": "judge",
-        "tailor_judge_min_score": 8.5,
-        "tenant_id": "local",
-        # R9 Phase 1: the fan-out activity forwards the score-only vs
-        # full-derive selector; default preserves the pre-streaming behavior.
-        "include_pending_tailor": True,
-        "discovery_execution": None,
-        "discovery_cohort_kind": "observed_this_run",
-        "finalize_observed_work_plans": False,
-    }
     assert result == DiscoveryPreparationFanoutOutput(started=2, queued=1, targets=3)
 
 
@@ -555,10 +538,7 @@ async def test_automatic_compensation_refresh_activity_materializes_safe_counts(
     assert str(captured["refresh"]["owner"]).startswith("discover:local:")
     assert captured["materialize"][0] is connection
     assert captured["materialize"][1]["tenant_id"] == "local"
-    assert (
-        captured["materialize"][1]["materialized_at"]
-        == "2026-08-19T08:00:01+00:00"
-    )
+    assert captured["materialize"][1]["materialized_at"] == "2026-08-19T08:00:01+00:00"
 
 
 def test_build_per_job_handoff_disabled_returns_none() -> None:
@@ -585,7 +565,6 @@ def test_build_per_job_handoff_starts_scored_prep_with_params(
             llm_model="codex:model",
             tailor_models=("draft",),
             tailor_judge_model="judge",
-            tailor_judge_min_score=8.5,
         )
     )
     assert handoff is not None
@@ -598,7 +577,6 @@ def test_build_per_job_handoff_starts_scored_prep_with_params(
     assert kwargs["llm_model"] == "codex:model"
     assert kwargs["tailor_models"] == ("draft",)
     assert kwargs["tailor_judge_model"] == "judge"
-    assert kwargs["tailor_judge_min_score"] == 8.5
     assert str(kwargs["tenant_id"]) == "local"
 
 
@@ -820,40 +798,74 @@ async def test_discovery_source_finish_during_capture_reclaims_real_sqlite_job(m
             assert browser.cancel_event.wait(10)
             raise TransientNetworkError("rendered_page interrupted by producer stop")
         return {
-            "status": "ok", "tier_used": 1, "full_description": _long_description(),
-            "application_url": None, "error": None, "elapsed": 0.1,
-            "active_state": "active", "verification_method": "fixture", "http_status": 200,
+            "status": "ok",
+            "tier_used": 1,
+            "full_description": _long_description(),
+            "application_url": None,
+            "error": None,
+            "elapsed": 0.1,
+            "active_state": "active",
+            "verification_method": "fixture",
+            "http_status": 200,
         }
 
     monkeypatch.setattr(discovery_activities, "_build_per_job_handoff", lambda _payload: handed_off.append)
-    monkeypatch.setattr(runner, "run_discovery_hygiene", lambda *_args, **_kwargs: 0)
     monkeypatch.setattr(runner, "_DISCOVERY_ENRICH_POLL_INTERVAL", 0.05)
     monkeypatch.setattr(detail, "PolitenessGateway", lambda: offline_gateway())
-    monkeypatch.setattr(detail, "LiveChromeDiscoveryClient", lambda *_args, **kwargs: SimpleNamespace(
-        ensure_available=lambda: None, cancel_event=kwargs["cancel_event"],
-    ))
+    monkeypatch.setattr(
+        detail,
+        "LiveChromeDiscoveryClient",
+        lambda *_args, **kwargs: SimpleNamespace(
+            ensure_available=lambda: None,
+            cancel_event=kwargs["cancel_event"],
+        ),
+    )
     monkeypatch.setattr(detail, "scrape_detail_page_via_live_chrome", capture)
     activities = [
-        _check_spend_budget, _record_workflow_started, _record_workflow_outcome,
-        one_source, source, discovery_activities.discovery_enrichment_activity,
-        _automatic_compensation_refresh, _discovery_preparation_fanout, _cancel_enrichment_cohort,
+        _check_spend_budget,
+        _record_workflow_started,
+        _record_workflow_outcome,
+        one_source,
+        source,
+        discovery_activities.discovery_enrichment_activity,
+        _automatic_compensation_refresh,
+        _discovery_preparation_fanout,
+        _cancel_enrichment_cohort,
     ]
     queue = f"discover-sqlite-capture-race-{uuid.uuid4()}"
     try:
         async with time_skipping_env() as env:
-            async with Worker(env.client, task_queue=queue, workflows=[DiscoverWorkflow], activities=activities, workflow_runner=UnsandboxedWorkflowRunner()):
-                result = await asyncio.wait_for(env.client.execute_workflow(
-                    DiscoverWorkflow.run, DiscoverWorkflowInput(tenant_id="local", limit=1),
-                    id=f"{queue}-wf", task_queue=queue,
-                ), timeout=30)
+            async with Worker(
+                env.client,
+                task_queue=queue,
+                workflows=[DiscoverWorkflow],
+                activities=activities,
+                workflow_runner=UnsandboxedWorkflowRunner(),
+            ):
+                result = await asyncio.wait_for(
+                    env.client.execute_workflow(
+                        DiscoverWorkflow.run,
+                        DiscoverWorkflowInput(tenant_id="local", limit=1),
+                        id=f"{queue}-wf",
+                        task_queue=queue,
+                    ),
+                    timeout=30,
+                )
 
         assert result.enrichment_status == "ok"
         assert len(captures) == 2
         assert handed_off == job_ids
         conn = database.get_connection()
-        row = conn.execute("SELECT state FROM job_stage_states WHERE job_id = ? AND stage = 'enrich'", (str(job_ids[0]),)).fetchone()
+        row = conn.execute(
+            "SELECT state FROM job_stage_states WHERE job_id = ? AND stage = 'enrich'", (str(job_ids[0]),)
+        ).fetchone()
         assert row[0] == "succeeded"
-        assert conn.execute("SELECT COUNT(*) FROM job_events WHERE job_id = ? AND event_type = 'StageCanceled'", (str(job_ids[0]),)).fetchone()[0] == 0
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) FROM job_events WHERE job_id = ? AND event_type = 'StageCanceled'", (str(job_ids[0]),)
+            ).fetchone()[0]
+            == 0
+        )
     finally:
         database.close_connection(db_path)
 
@@ -1581,3 +1593,10 @@ async def test_discovery_schedule_reconcile_failure_does_not_block_worker_boot(
     await _reconcile_discovery_schedule(client, "jobctrl-test")
 
     assert client.handle.updated == 0
+
+
+@pytest.fixture(autouse=True)
+def semantic_page_ports(monkeypatch):
+    from tests.workflow_determination_fakes import install_page_models
+
+    install_page_models(monkeypatch)

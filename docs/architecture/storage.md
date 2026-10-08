@@ -336,7 +336,7 @@ on that epoch. `completed`, `failed`, `skipped`, and `canceled` units are
 terminal.
 
 `discovery_search_unit_filtered_events` is the matching fenced receipt set for
-provider results rejected by JobCtrl's title/location policy. It stores only a
+provider results excluded by literal user-authored whole-title filters. It stores only a
 SHA-256 digest of the provider event key. Filtered-result progress is aggregated
 from these receipts, so an acknowledged result remains counted after recovery
 without exposing provider payloads or counting replay twice.

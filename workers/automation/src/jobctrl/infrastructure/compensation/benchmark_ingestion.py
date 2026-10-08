@@ -2,20 +2,18 @@
 
 from __future__ import annotations
 
+from jobctrl.domain.job_content_identity import normalize_identity_text as canonical_company_key
+from jobctrl.infrastructure.compensation.interpretation import classified_geography
+
 import math
 from dataclasses import dataclass
 from typing import Literal
 
 from jobctrl.domain.compensation import (
-    LEVELS_FYI_MARKET_AGGREGATE_COMPANY,
     DirectBenchmarkFact,
     ReportedCompensationObservation,
     annualize_and_convert_to_eur,
     build_direct_benchmark_fact,
-    classify_role,
-    resolve_reported_seniority,
-    normalize_company_name,
-    resolve_benchmark_geography,
 )
 
 
@@ -26,6 +24,7 @@ BenchmarkObservationRejectionReason = Literal[
     "missing_country",
     "missing_fx_rate",
     "missing_role_family",
+    "missing_sample_count",
 ]
 
 
@@ -130,10 +129,14 @@ def _canonicalize_one(
     if maximum < minimum:
         minimum, maximum = maximum, minimum
 
-    classification = classify_role(observation.role_title)
-    if classification.role_family_code is None:
+    classification = observation.classification
+    if classification is None or not observation.determination_id:
+        from jobctrl.domain.determinations import DeterminationFailure
+
+        raise DeterminationFailure("benchmark_classification_unavailable")
+    if classification.occupation_family.value == "unknown":
         return _rejection(observation, observation_index, "missing_role_family")
-    geography = resolve_benchmark_geography(observation.location)
+    geography = classified_geography(classification)
     if geography is None:
         return _rejection(observation, observation_index, "missing_country")
     currency = observation.currency.strip().upper()
@@ -151,7 +154,9 @@ def _canonicalize_one(
         period=observation.period,
         rate_to_eur=rate.rate,
     )
-    sample_count = max(1, int(observation.sample_count or 1))
+    if observation.sample_count is None or observation.sample_count < 1:
+        return _rejection(observation, observation_index, "missing_sample_count")
+    sample_count = int(observation.sample_count)
     confidence_score = _direct_confidence(
         observation.source_provenance,
         sample_count,
@@ -162,14 +167,14 @@ def _canonicalize_one(
         annual_maximum,
         round(annual_maximum * (1 + uncertainty_margin)),
     )
-    market_scope = _market_scope(observation.company_name)
-    normalized_company = normalize_company_name(observation.company_name) if market_scope == "company" else None
-    seniority = resolve_reported_seniority(observation.role_title, observation.level_label)
+    market_scope = classification.market_scope.value
+    normalized_company = canonical_company_key(observation.company_name) if market_scope == "company" else None
+    seniority = classification.seniority.value
     as_of_date = f"{observation.release_year:04d}-01-01" if observation.release_year is not None else fetched_at[:10]
     attribution = str(observation.attribution or "").strip() or f"Reported compensation source: {observation.source_id}"
     return build_direct_benchmark_fact(
         tenant_id=tenant_id,
-        role_family_code=classification.role_family_code,
+        role_family_code=classification.occupation_family.value,
         seniority_label=seniority,
         geography=geography,
         market_scope=market_scope,
@@ -191,6 +196,8 @@ def _canonicalize_one(
         source_url=observation.source_url,
         attribution=attribution,
         fx_reference={
+            "classification_id": observation.determination_id,
+            "classification_entity_id": observation.classification_entity_id,
             "currency": currency,
             "rate_to_eur": rate.rate,
             "source_id": rate.source_id,
@@ -213,15 +220,6 @@ def _rejection(
         source_id=observation.source_id,
         reason=reason,
     )
-
-
-def _market_scope(company_name: str) -> Literal["market", "company"]:
-    normalized = company_name.strip().casefold()
-    if company_name == LEVELS_FYI_MARKET_AGGREGATE_COMPANY:
-        return "market"
-    if "market aggregate" in normalized or normalized.endswith(" community"):
-        return "market"
-    return "company"
 
 
 def _direct_confidence(provenance: str, sample_count: int) -> float:

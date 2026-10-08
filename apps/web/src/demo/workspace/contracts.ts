@@ -1,114 +1,18 @@
 import type { DomainEventUnion } from "@jobctrl/domain-types";
-import type { Stage } from "@jobctrl/contracts";
 
 import type { MaterializedDemoSeed } from "../clock.js";
 import type {
   DemoExternalRehearsalOperation,
   DemoReceipt,
   DemoReadModel,
-  DemoSimulatedAsyncOperation,
 } from "../contracts.js";
 
 export const DEMO_WORKSPACE_DATABASE = "jobctrl-demo";
 export const DEMO_WORKSPACE_DATABASE_VERSION = 1;
 export const DEMO_WORKSPACE_STORE = "workspace";
 export const DEMO_BLOBS_STORE = "blobs";
-export const DEMO_WORKSPACE_SCHEMA_VERSION = 4;
+export const DEMO_WORKSPACE_SCHEMA_VERSION = 5;
 export const DEMO_WORKSPACE_EVENT_LOG_LIMIT = 128;
-
-export interface DemoLegacyPendingScenario {
-  readonly scenarioId: string;
-  readonly deadlineAt: string;
-  readonly resetEpoch: number;
-}
-
-export type DemoScenarioPhase = "queued" | "running";
-
-export interface DemoScenarioTargetRefs {
-  readonly jobKey: string | null;
-  readonly jobKeys: readonly string[];
-  readonly draftId: string | null;
-  readonly artifactId: string | null;
-  readonly contactId: string | null;
-  readonly taskId: string | null;
-  readonly threadId: string | null;
-  readonly stage: Stage | null;
-}
-
-/** Bounded, credential-free command facts needed to recover a scenario. */
-export interface DemoScenarioSafeCommand {
-  readonly stages: readonly Stage[];
-  readonly dryRun: boolean;
-  readonly force: boolean;
-  readonly allMatching: boolean;
-  readonly limit: number | null;
-  readonly generation: number | null;
-  readonly kind: string | null;
-}
-
-export type DemoScenarioOutcome =
-  | {
-      readonly state: "succeeded";
-      readonly summary: string;
-    }
-  | {
-      readonly state: "failed";
-      readonly errorCode: string;
-      readonly retryable: true;
-      readonly summary: string;
-    };
-
-export interface DemoScenarioDefinition {
-  readonly queuedMessage: string;
-  readonly runningMessage: string;
-  readonly runningDelayMs: number;
-  readonly terminalDelayMs: number;
-  readonly outcome: DemoScenarioOutcome;
-}
-
-export type DemoScenarioRecoveryInput =
-  | { readonly kind: "none" }
-  | {
-      readonly kind: "resume_render";
-      readonly renderFormat: "text" | "html_pdf";
-    }
-  | {
-      readonly kind: "outreach_generate";
-      readonly draftKind: "intro_request" | "follow_up";
-      readonly applicationRole: string | null;
-    }
-  | {
-      readonly kind: "outreach_revise";
-      /** Contract-bounded to 8,000 characters before reaching this adapter. */
-      readonly editedBodyText: string;
-      readonly draftKind: "intro_request" | "follow_up" | null;
-      readonly applicationRole: string | null;
-    };
-
-export interface DemoScenarioInvocation extends DemoLegacyPendingScenario {
-  readonly invocationVersion: 1;
-  readonly operation: DemoSimulatedAsyncOperation;
-  readonly phase: DemoScenarioPhase;
-  readonly dedupeKey: string;
-  readonly runId: string;
-  readonly actionId: string;
-  readonly attempt: number;
-  readonly targetRefs: DemoScenarioTargetRefs;
-  readonly safeCommand: DemoScenarioSafeCommand;
-  readonly requestedAt: string;
-  readonly definition: DemoScenarioDefinition;
-  readonly recoveryInput: DemoScenarioRecoveryInput;
-}
-
-export type DemoPendingScenario =
-  | DemoLegacyPendingScenario
-  | DemoScenarioInvocation;
-
-export function isDemoScenarioInvocation(
-  pending: DemoPendingScenario,
-): pending is DemoScenarioInvocation {
-  return "invocationVersion" in pending && pending.invocationVersion === 1;
-}
 
 export interface DemoDynamicReceipt {
   readonly receiptId: string;
@@ -125,9 +29,7 @@ export interface DemoDynamicReceipt {
   readonly recordedAt: string;
   readonly wouldHaveDone: string;
   readonly didNotDo: string;
-  readonly operation:
-    | DemoExternalRehearsalOperation
-    | DemoSimulatedAsyncOperation;
+  readonly operation: DemoExternalRehearsalOperation;
   readonly scenarioId?: string;
   readonly runId?: string;
   readonly entityType:
@@ -181,7 +83,6 @@ export interface DemoWorkspaceSnapshot {
     readonly routeData: MaterializedDemoSeed["routeData"];
     readonly receipts: readonly DemoWorkspaceReceipt[];
   };
-  readonly pendingScenarios: readonly DemoPendingScenario[];
 }
 
 export type DemoWorkspaceStorageMode = "indexeddb" | "memory";

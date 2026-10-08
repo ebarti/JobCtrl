@@ -53,35 +53,29 @@ The canonical, generation-versioned analysis stores:
 - quoted posting evidence for every claim, plus per-leg output/failure and
   agreement metadata.
 
+Agreement is diagnostic. A single surviving draft records no comparison and
+makes no agreement call. With multiple drafts, a model compares their meaning;
+an unavailable agreement call records its safe failure without blocking an
+otherwise verified canonical analysis.
+
 ### Grounding Gate
 
-Every evidence span must match the posting snapshot after formatting-only
-normalization (whitespace, dash/quote variants, and case). A successful match is
-snapped back to the posting's verbatim text and must align to token boundaries.
-Paraphrases, synonyms, hallucinations, and substrings inside larger words fail.
-
-This deterministic check runs on every draft and the synthesis. The result is
-persisted in canonical `job_employer_analysis*` rows and projected identically by
-Python and TypeScript.
-
-Candidate prose has a separate acceptance check: role framing and the ideal
-candidate narrative describe only candidate capabilities and role needs.
-`analysis_content.validate_candidate_prose` rejects generation/process
-commentary, including past-tense expert agreement or analysis conclusions, on
-draft and synthesized output. It matches a process subject at a sentence or
-clause start, so domain prose about the candidate's own models, assessments, or
-analyses is accepted. Draft and synthesis retries include the rejection as
-corrective feedback. `AnalyzeJobUseCase` repeats the check before persistence.
-This is a generation boundary, not a destructive rewrite or a restriction on
-reading historical records.
+Code checks requirement/evidence ID membership and verbatim employer spans. Every draft and synthesis receives source-bound claim verification, including candidate facts and process narration. The separate model quality judge remains where used. There is no process-subject grammar, protected-class phrase screen or fabrication lexicon. Job interpretation records requirement scope and protected-class flags before consumers use the analysis. Invalid or unsupported output enters repair/failure without replacing accepted analysis.
 
 ### Reuse And Lifecycle
 
 Analysis is cached by posting snapshot, prompt version, and SDK-set version.
 Re-tailoring reuses that record; an explicit force recompute writes a superseding
 generation instead of deleting history. `AnalyzeJobUseCase` can run as the first
-tailoring step or through the standalone `analyze_job` method. Prompt v3
-invalidates prior prompt caches; even a same-version cache hit is checked for
+tailoring step or through the standalone `analyze_job` method. Prompt
+`employer-analysis-v4-determinations` fences every active analysis read, including
+projections, interview context, review and cache reuse. Older generations remain
+untouched as history and cannot become current inputs; absent current analysis
+requires a new determination. Both projection builders rebuild older cached
+analysis shapes by prompt version even when all events are already folded.
+The native v13 cutover withdraws those cached shapes, and API reads enforce the
+same version boundary. Canonical history and accepted artifacts stay intact.
+Even a same-version cache hit is checked for
 invalid candidate prose before reuse. A standalone `analyze_job` request with
 `tenantId`, `jobId`, and `force: true` regenerates one affected analysis. Failed
 validation or provider execution leaves the last accepted generation intact.
@@ -93,7 +87,7 @@ stable provenance row. It records:
 
 - section and rendered text;
 - source profile fact and canonical evidence IDs;
-- linked requirement IDs and verified matched keywords;
+- verifier-declared served requirement IDs and generation-time source anchors;
 - a closed transform type and control rule; and
 - a human-readable rationale.
 
@@ -102,31 +96,9 @@ requirement identifiers are real foreign keys, not model-authored labels. An
 accepted generation writes provenance transactionally with its artifacts; a
 failed or forced generation never destroys the previous accepted rows.
 
-## Deterministic Truthfulness Gates
+## Source-Bound Claim Verification
 
-Prompt instructions are not the safety boundary. Independent checks run before
-candidate selection and again after the optional voice pass.
-
-### Facts, Metrics, And Named Technologies
-
-Numeric values, dates, percentages, money, titles, and employer tokens must
-trace to profile evidence. Named technologies mentioned in prose must ground in
-the declared skill vocabulary or evidence corpus. Word-form variants may ground
-concepts, while ambiguous technology names such as React require exact evidence.
-
-Concept keywords such as scalability or observability are not mistaken for
-named tools. The skills section has its own profile-backed allowlist.
-
-A failing candidate is removed from selection and its exact findings become
-repair guidance for the next attempt. If no candidate clears the gate, the run
-fails closed and preserves the last accepted artifact.
-
-### Cover Letters
-
-Cover letters use the same fact and named-technology checks. The salutation is
-excluded, and the target role/company may be named because they describe the
-application—not the candidate's history. Numeric/date claims remain strict. An
-unsafe letter is rejected and retains a minimal fabrication audit.
+A strict model determination extracts each final proposition, classifies candidate fact/hypothetical/target-role/employer/advice, and judges support from allowed evidence. Findings cite exact line IDs and verbatim spans. Code verifies IDs, quotes and exact values; it does not classify English. Generators record anchors and the verifier affirms source contributions. Resume, cover letter, outreach, interview and analysis use the shared port, with separate artifact quality review. Failed refreshes preserve accepted artifacts. See [Tailoring Contract](tailoring.md#validation-layers).
 
 ## Stored Interview Preparation
 
@@ -157,75 +129,27 @@ endorsement, personal factual support, readiness, or validated assessment.
 
 ### Selection, Evidence, And Acceptance
 
-The request carries selected IDs/order, optional catalog binding, stage/format,
-role lens, responsibilities, known criteria, and rationale. Omitted stage and
-role lens stay unknown. Explicit selection accepts 1–16 unique active IDs; unknown, retired,
-duplicate, over-budget, or mismatched-catalog selection fails before provider
-spending. Legacy calls without selection use deterministic bounded selection.
-Only selected cards and bounded relevant context enter the generation prompt.
-Known user/employer criteria remain distinct from inferred selection guidance.
+Explicit selection accepts 1–16 unique active question IDs. Catalog, ownership,
+profile version and the per-question eight-evidence limit are checked before
+spending. Omitted selections use a cached model selection determination.
+Evidence relevance and direct versus transferable support also come from a
+model determination. An explicit empty evidence selection remains empty.
 
-The owning activity loads a versioned ProfileSnapshot, relevant profile/evidence
-excerpts, the employer-analysis generation/snapshot hash, and coherent
-requirement fit. Stale fit is excluded and labeled; it cannot prove a personal
-claim. Approved-material inputs come from `load_current_approved` with verified
-registered-artifact bindings and raw approved artifact byte hashes. Artifact
-reads are bounded to 1 MiB; unavailable or mismatched inputs are excluded and
-labeled. The maximum bullet-provenance generation alone is not proof of an
-approved resume input.
+Each question is drafted separately with only its selected canonical evidence.
+The drafting prompt contains no other question's personal evidence. Structured
+parsing checks IDs and the declared support/ID shape. A separate claim-verifier
+call determines the meaning and support of every final line, including headings,
+gaps and probes. It cites line IDs and evidence spans. The existing quality
+judge remains a separate call. C07 negotiation guidance has its own semantic
+rubric; code never infers speech acts, personal authority, salary guidance or
+hypothetical status from grammar.
 
-Evidence is selected before prose. Per-question user selections bind accepted
-canonical evidence IDs to the current tenant/profile version. They are bounded
-to eight records for each of at most 16 selected questions. Omitted selections
-allow automatic selection; an explicit empty list produces gaps without silent
-replacement. Ownership, accepted status, version, question membership, unique
-IDs, and bounds are validated before provider spending. Stale selection rejects
-the request while preserving the browser draft for reselection. Notes and new
-recollections cannot enter this accepted-evidence path.
-
-`question_outline` items retain their
-question/card/rubric bindings, answer format, selection rationale, evidence
-links with direct/transferable scope, structured outline, marked gaps, probes,
-and guidance references. Personal assertions and specific past presuppositions,
-including factual headings and assertions embedded in future or conditional
-prose, require that question's selected canonical evidence. A model-supplied
-factual-support label or an unrelated supported body cannot substantiate a
-heading claim. Evidence from another question, authored examples, and advertised
-job responsibilities cannot become personal evidence.
-
-Generated outline sections couple `factualSupport` with `evidenceIds` as accepted
-personal proof. `accepted_profile_fact` requires nonempty IDs from that
-question's selected evidence and claims confined to those excerpts;
-`hypothetical` and `needs_clarification` require `evidenceIds: []`. A canonical
-fact may appear as a separate factual anchor; a clarification can refer to it
-while keeping its proof IDs empty. Question-level `evidenceLinks` retain context
-separately. Incompatible support/ID combinations fail parsing; dropping IDs or
-relabeling the section cannot make the original output acceptable.
-
-Generic behavioral invitations and open questions request recollection or
-clarification without establishing an event as fact. Genuinely hypothetical or
-prospective guidance, including first-time-manager scenarios, may lack
-historical evidence. Generic planned missing-answer slots request particulars;
-specific events, metrics, employers, tools, or authority embedded in them remain
-bound to selected sources. A question about the canonical advertised role's
-expectations clarifies the job rather than asserting candidate history.
-An explicit empty evidence selection stays empty and
-produces focused gaps or prospective guidance. Source/job text remains data
-rather than an instruction that can add facts. B11/TS09 preserve decision
-criteria, limits, and alternatives; C07 never infers/discloses a private salary
-minimum.
-
-The grounding assessment must keep each local proposition's speech/operator
-scope, actual or presupposed claim status, source-query status, and source-check
-text together. Metric, tool, role, and possessive checks must use the same local
-spans; verdicts are aggregated only after local assessment. Fieldwide query
-flags or flattened prose cannot let a separate valid invitation or hypothetical
-clause exempt an independent assertion. Sentence, heading/newline, and
-independent-conjunct boundaries preserve local scope.
-
-`InterviewPrepWorkflow` retains the existing model port/lane, spend preflight,
-heartbeats, retry identity, and completed-run reuse. Its generation gate is a
-truthfulness/grounding check, not practice assessment or quality calibration.
+The immutable generation context records the profile, analysis, fit, catalog,
+selected evidence and determination IDs. Accepted material inputs use registered
+artifact bindings and byte hashes. Notes and new recollections cannot supply
+confirmed personal facts. Failed refreshes preserve accepted preparation and
+independently revisioned notes. The activity owns calls, lane accounting,
+heartbeats and retries; completed-run reuse spends nothing.
 
 ### Immutable Inputs, Independent Notes
 
@@ -278,30 +202,7 @@ transcript, microphone, streaming, or in-session state in this release.
 
 ## Voice Pass And Final Audit
 
-An optional Claude voice transform de-buzzwords and varies structure after a
-candidate is selected. Skill lists are left untouched. The voiced version is
-adopted only when deterministic proxies show lower buzzword density or greater
-structural variety.
-
-After voice, JobCtrl reruns provenance and fabrication checks against the final
-rendered lines. If voice introduces an unsupported claim, the voiced payload is
-discarded and the clean pre-voice candidate remains selected. The failed voice
-attempt stays in audit history.
-
-### Coverage Means Rendered And Grounded
-
-Generation-time coverage partitions employer keywords into:
-
-| State | Meaning |
-| --- | --- |
-| Covered | Appears in rendered text backed by canonical profile evidence. |
-| Declared | Appears in a validated profile-backed skills line but has no demonstrated evidence. |
-| Missing | Appears nowhere the employer will read. |
-
-A requirement link alone cannot create coverage; that would let a keyword
-ground itself. `coverage_ratio` counts demonstrated coverage only. The read
-model uses the persisted coverage audit and never infers misses from the job
-description at read time.
+A model chooses voice changes using stable line IDs. Any changed artifact receives fresh claim verification and separate quality review, plus the six-persona determination for a high-fit resume. Typed verdicts decide adoption; buzzword and structural-variety proxies are removed. An optional rewrite provider or shape failure records a rejected attempt and retains the already-verified candidate. Verification failures for changed text block the refresh. Accepted final text, source anchors and determination IDs commit together. Requirement coverage is arithmetic over verifier-declared served requirement IDs, never keyword appearance.
 
 ## Tailoring Explanation Read Model
 

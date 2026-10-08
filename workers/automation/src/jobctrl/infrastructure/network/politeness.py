@@ -52,7 +52,7 @@ def resolve_honest_user_agent(
     if search_cfg is None:
         from jobctrl import config
 
-        search_cfg = config.load_search_config()
+        search_cfg = config.load_saved_search_settings()
     crawl_user_agent = search_cfg.get("crawl_user_agent") if search_cfg else None
     crawl_user_agent = crawl_user_agent if isinstance(crawl_user_agent, Mapping) else {}
     configured_product = str(crawl_user_agent.get("product") or "").strip()

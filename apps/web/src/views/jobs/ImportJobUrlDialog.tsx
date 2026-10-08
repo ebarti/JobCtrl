@@ -59,7 +59,10 @@ export function ImportJobUrlDialog({ onImported }: ImportJobUrlDialogProps): JSX
           onImported(result.jobKey);
           return;
         }
-        setManualCapture({ itemId: result.itemId, reason: result.reason });
+        if (result.status === "manual_capture_required") {
+          setManualCapture({ itemId: result.itemId, reason: result.reason });
+
+        }
       } catch {
         // The mutation error is rendered inside the dialog.
       }
@@ -72,7 +75,7 @@ export function ImportJobUrlDialog({ onImported }: ImportJobUrlDialogProps): JSX
       open={open}
       onOpenChange={(nextOpen) => {
         setOpen(nextOpen);
-        if (!nextOpen) setManualCapture(null);
+        if (!nextOpen) {setManualCapture(null);}
       }}
     >
       <DialogTrigger render={<Button title={availability.reason ?? undefined} />}>

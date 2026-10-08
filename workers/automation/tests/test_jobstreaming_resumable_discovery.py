@@ -622,6 +622,7 @@ def test_filtered_count_survives_loss_after_acknowledgement(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     conn, _db_path = discovery_db
+
     execution = _execution("temporal-run-filtered")
     original_save = SqliteDiscoverySearchUnitCheckpointStore.save
     interrupted = False
@@ -644,7 +645,7 @@ def test_filtered_count_survives_loss_after_acknowledgement(
         match="simulated worker loss after filtered acknowledgement",
     ):
         jobspy.run_discovery(
-            cfg=_config(),
+            cfg={**_config(), "exact_title_exclusions": ["Accountant"]},
             discovery_execution=execution,
             activity_attempt=1,
             activity_owner_token="filtered-attempt-1",
@@ -658,7 +659,7 @@ def test_filtered_count_survives_loss_after_acknowledgement(
     assert repository.execution_filtered_count(execution) == 1
 
     result = jobspy.run_discovery(
-        cfg=_config(),
+        cfg={**_config(), "exact_title_exclusions": ["Accountant"]},
         discovery_execution=execution,
         activity_attempt=2,
         activity_owner_token="filtered-attempt-2",
@@ -968,13 +969,11 @@ def test_linkedin_listing_only_discovery_persists_job_for_detail_enrichment(
 
     assert _ListingOnlyLinkedIn.fetch_description_requests == [False]
     assert result["new"] == 1, json.dumps(result, sort_keys=True)
-    stored = conn.execute(
-        "SELECT job_id, description, full_description, location FROM jobs"
-    ).fetchone()
+    stored = conn.execute("SELECT job_id, description, full_description, location FROM jobs").fetchone()
     assert stored is not None
     assert stored["description"] == ""
     assert stored["full_description"] is None
-    assert stored["location"] == "Spain (Remote)"
+    assert stored["location"] == "Spain"
     assert conn.execute("SELECT COUNT(*) FROM job_enrichments").fetchone()[0] == 0
     assert {row["job_id"] for row in get_jobs_by_stage(conn, "pending_detail", limit=0)} == {stored["job_id"]}
 
@@ -1074,7 +1073,9 @@ def test_selective_detail_replays_safely_when_provider_acknowledgement_is_lost(
         adapter_registry=registry,
     )
 
-    assert _ContentCollisionLinkedIn.detail_requests == ["101", "101"]
+    assert _ContentCollisionLinkedIn.detail_requests == ["101"]
+    # The durable intake decision and stored opening survive a lost provider ACK.
+    # Replaying the provider event does not repeat an already accepted detail fetch.
     assert result["new"] == 1
     assert result["existing"] == 1
     assert result["raw_total"] == 2
@@ -1359,3 +1360,10 @@ async def test_temporal_worker_loss_after_store_before_ack_reclaims_and_complete
     finally:
         close_connection(db_path)
         _TEMPORAL_REGISTRY = None
+
+
+@pytest.fixture(autouse=True)
+def semantic_workflow_models(monkeypatch):
+    from tests.workflow_determination_fakes import install_page_models
+
+    install_page_models(monkeypatch)

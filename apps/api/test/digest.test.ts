@@ -10,7 +10,7 @@ import { buildDashboardSummary, buildDigest, readDigestState } from "../src/read
 import { BUILT_IN_RESUME_TEMPLATE_THEME } from "../src/resume-templates.js";
 import { buildApp } from "../src/server.js";
 import { describe, expect, it } from "vitest";
-import { initializeExactV7Database } from "./v7-schema.js";
+import { initializeExactDatabase } from "./exact-schema.js";
 
 interface FixtureJob {
   jobId: string;
@@ -278,7 +278,7 @@ function makeTempDb(): { dbPath: string; configPath: string; tempDir: string; cl
 }
 
 function seedDigestDatabase(dbPath: string, tempDir: string): void {
-  initializeExactV7Database(dbPath);
+  initializeExactDatabase(dbPath);
   const db = new Database(dbPath);
   seedBuiltInResumeTemplate(db);
   seedJobs(db, tempDir);

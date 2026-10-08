@@ -280,6 +280,7 @@ export interface ApiClientPort extends EndpointClientMethods {
     jobKey: string,
     body: ApplyReviewDecisionRequest,
   ): Promise<ApplyReviewDecisionResponse>;
+  checkRepeatApplication(jobKey:string):Promise<RepeatApplicationOverrideResponse>;
   confirmRepeatApplication(
     jobKey: string,
     body: RepeatApplicationOverrideRequest,
