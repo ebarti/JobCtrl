@@ -27,7 +27,9 @@ let app: ReturnType<typeof buildApp>;
 const python = path.join(AUTOMATION_PROJECT_DIR, ".venv", "bin", "python");
 
 beforeEach(() => {
-  root = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-owned-locale-"));
+  root = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-owned-locale-")),
+  );
   const env = {
     ...process.env,
     JOBCTRL_DIR: root,
@@ -96,9 +98,26 @@ async function generation(
 }
 
 describe("reviewed material locale variants through real API-to-Python dispatch", () => {
-  it.each(["resume", "cover_letter"] as const)(
-    "persists %s, independently reviews, reloads and exports every accepted format",
-    async (kind) => {
+  it.each([
+    { kind: "resume", workspace: "canonical" },
+    { kind: "cover_letter", workspace: "canonical" },
+    { kind: "resume", workspace: "alias" },
+    { kind: "cover_letter", workspace: "alias" },
+  ] as const)(
+    "persists $kind in a $workspace workspace, independently reviews, reloads and exports every accepted format",
+    async ({ kind, workspace }) => {
+      if (workspace === "alias") {
+        const alias = path.join(root, "workspace-alias");
+        fs.symlinkSync(root, alias, "dir");
+        await app.close();
+        app = buildApp({
+          appDir: alias,
+          dbPath: path.join(alias, "jobctrl.db"),
+          configPath: path.join(alias, "config.json"),
+          providerDispatcher: adapter,
+          pythonRuntime: runtime,
+        });
+      }
       let state = await generation(kind);
       expect(
         state.variants[0]?.determinations.map((item) => item.kind),
@@ -172,6 +191,40 @@ describe("reviewed material locale variants through real API-to-Python dispatch"
       });
       expect(detail.statusCode, detail.body).toBe(200);
       expect(detail.json().localeVariants.variants[0].exports).toHaveLength(4);
+      const textExport = state.variants[0]!.exports.find(
+        (item) => item.format === "text",
+      )!;
+      const downloadText = () => app.inject({
+        method: "GET",
+        url: `/v1/jobs/${JOB}/locale-variants/exports/${textExport.export_id}`,
+      });
+      // Identical bytes elsewhere cannot grant authority to a redirected file.
+      const redirected = path.join(root, "unregistered-copy.txt");
+      fs.copyFileSync(textExport.path, redirected);
+      fs.renameSync(textExport.path, textExport.path + ".original");
+      try {
+        fs.symlinkSync(redirected, textExport.path);
+        expect((await downloadText()).statusCode).toBe(409);
+      } finally {
+        fs.unlinkSync(textExport.path);
+        fs.renameSync(textExport.path + ".original", textExport.path);
+      }
+      // Canonicalizing the workspace must not canonicalize an escaping export root.
+      const exportRoot = path.dirname(textExport.path);
+      const movedRoot = path.join(root, "redirected-exports");
+      fs.renameSync(exportRoot, movedRoot);
+      try {
+        fs.symlinkSync(movedRoot, exportRoot, "dir");
+        expect((await downloadText()).statusCode).toBe(409);
+      } finally {
+        fs.unlinkSync(exportRoot);
+        fs.renameSync(movedRoot, exportRoot);
+      }
+      const restored = await downloadText();
+      expect(restored.statusCode, restored.body).toBe(200);
+      expect(createHash("sha256").update(restored.rawPayload).digest("hex")).toBe(
+        textExport.sha256,
+      );
       expect(
         fs.readFileSync(
           path.join(

@@ -154,7 +154,13 @@ export function readMaterialLocaleExport(
     registered.document_sha256 !== variant.document_sha256
   )
     throw new Error("locale_export_not_found");
-  const root = path.resolve(appDir, "tailored_resumes", "locale_variants");
+  // Python records canonical workspace paths. Resolve the workspace alias only;
+  // resolving the export directory here could authorize a redirected directory.
+  const root = path.join(
+    fs.realpathSync(appDir),
+    "tailored_resumes",
+    "locale_variants",
+  );
   const resolved = fs.realpathSync(registered.path);
   const extension = registered.format === "text" ? "txt" : registered.format;
   if (

@@ -56,7 +56,10 @@ ordered extracted text. DOCX uses standard-library ZIP/XML and verifies ordered
 paragraphs. Export failure removes only its new staging file and records a safe
 failure. Source bytes and accepted locale documents/exports remain intact.
 Downloads require a recorded export ID, accepted revision/document binding,
-contained real path and registered byte hash.
+contained real path and registered byte hash. The API resolves workspace aliases
+to the canonical workspace before checking the exact registered export filename.
+Redirecting an export file or its generated directory elsewhere is rejected,
+even when the redirected bytes match the registered hash.
 
 The synchronous `material_locale_variants` RPC is runtime-bound to the API's exact
 workspace/database and dispatches the same strict operations as the CLI.
