@@ -381,3 +381,7 @@ The release privacy
 check scans for secret/profile needles, blocked file types, and unsafe
 distribution paths before publication, but it cannot protect a private file you
 manually copy into a new tracked path.
+
+## Private Screening History
+
+[Screening answers](screening-answers.md), selected source facts and manual-use text are private local SQLite history. Only deliberate selected facts and exact saved question/posting context go to the configured Apply model lane. General activity and SSE carry safe references. Copying and manual-use attestation grant no form-entry or submission authority.

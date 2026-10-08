@@ -3774,5 +3774,49 @@ def gmail_auth(
     console.print(f"[green]Gmail token saved:[/green] {token_path}")
 
 
+
+
+
+screening_app = typer.Typer(help="Review local screening answers; never enter or submit forms.")
+app.add_typer(screening_app, name="screening")
+
+
+def _screening_cli_response(job_id, tenant, command=None):
+    from jobctrl import config
+    from jobctrl.infrastructure.rpc.handlers import screening_answers
+    from jobctrl.infrastructure.rpc.server import _RpcParamError
+    params = {"tenantId": tenant, "jobId": job_id, "expectedAppDir": str(config.APP_DIR), "expectedDbPath": str(config.DB_PATH)}
+    if command is not None:
+        params["command"] = command
+    try:
+        return screening_answers(params)
+    except _RpcParamError as failure:
+        console.print(f"Screening request refused: {failure}")
+        raise typer.Exit(1) from None
+    except Exception:
+        console.print("Screening request unavailable; accepted history is preserved.")
+        raise typer.Exit(1) from None
+
+
+@screening_app.command("read")
+def screening_read(job_id: str, tenant: str = "local") -> None:
+    """Inspect the library and application-bound history."""
+    print(json.dumps(_screening_cli_response(job_id, tenant), ensure_ascii=False))
+
+
+@screening_app.command("write")
+def screening_write(job_id: str, command_file: Path, tenant: str = "local") -> None:
+    """Execute capture/draft/edit/review/reuse/use from an explicit JSON command."""
+    try:
+        command = json.loads(command_file.read_text())
+    except (OSError, ValueError):
+        console.print("Invalid screening command file.")
+        raise typer.Exit(1) from None
+    if not isinstance(command, dict):
+        console.print("Invalid screening command file.")
+        raise typer.Exit(1)
+    print(json.dumps(_screening_cli_response(job_id, tenant, command), ensure_ascii=False))
+
+
 if __name__ == "__main__":
     app()

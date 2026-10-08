@@ -137,3 +137,5 @@ See [Local Development](docs/local-development.md).
 ## License
 
 [AGPL-3.0-only](LICENSE). Copyright (C) 2026 Eloi Barti. See [NOTICE](NOTICE).
+
+Reviewed open-ended screening answers are available in Job Detail and Apply Review. See [Screening Answers](docs/user/screening-answers.md) for deliberate source selection, review, reuse and manual-use history.

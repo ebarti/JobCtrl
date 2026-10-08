@@ -73,6 +73,7 @@ has one defining page; other pages summarize it briefly and link to that owner.
   consumes the employer analysis owned by Discovery.
 - [`user/materials-and-tailoring.md`](user/materials-and-tailoring.md): generated
   materials, provenance, validation, review, and accepted-artifact history.
+- [`user/screening-answers.md`](user/screening-answers.md): reviewed reusable answers and application-bound history.
 - [`user/apply.md`](user/apply.md): application fields, approval and automation
   modes, browser capabilities, Gmail, and follow-up controls.
 - [`user/outcomes-and-feedback.md`](user/outcomes-and-feedback.md): application
@@ -141,6 +142,7 @@ has one defining page; other pages summarize it briefly and link to that owner.
   projection details.
 - [`architecture/scoring.md`](architecture/scoring.md): scoring algorithm,
   evidence, policy, and calibration.
+- [`architecture/reviewed-screening-answers.md`](architecture/reviewed-screening-answers.md): private answer revisions, application contexts and model/review fences.
 - [`architecture/materials.md`](architecture/materials.md): employer analysis
   and cross-artifact auditability.
 - [Leadership Practice — future architecture (not implemented)](architecture/leadership-practice.md):
