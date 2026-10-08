@@ -114,6 +114,7 @@ def test_live_worker_smoke_provider_calls_only_the_owned_fixture_boundary(
                     "maxTokens": 128,
                     "thinkingBudget": None,
                     "structured": False,
+                    "schemaTitle": None,
                 },
             }
         ]
@@ -200,13 +201,7 @@ def test_live_worker_bootstrap_rejects_provider_config_credentials_and_host_home
     workspace = tmp_path / "owned"
     _credential_free_bootstrap_environment(monkeypatch, workspace)
     (workspace / "config.json").write_text(
-        json.dumps(
-            {
-                "provider_connections": {
-                    "google": {"mode": "vertex", "project_id": "real-project"}
-                }
-            }
-        ),
+        json.dumps({"provider_connections": {"google": {"mode": "vertex", "project_id": "real-project"}}}),
         encoding="utf-8",
     )
     with pytest.raises(RuntimeError, match="refuses persisted provider configuration"):

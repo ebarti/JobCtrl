@@ -1,6 +1,8 @@
 """SQLite repository for company-role reported compensation estimates."""
 
 from __future__ import annotations
+from jobctrl.infrastructure.compensation.interpretation import job_interpretation_for_id, classify_observations
+from jobctrl.domain.determinations import DeterminationFailure
 
 import csv
 import json
@@ -41,11 +43,9 @@ from jobctrl.domain.compensation import (
     MarketSourceSnapshot,
     ReportedCompensationObservation,
     estimate_market_compensation,
-    classify_role,
     sanitize_market_source_snapshot,
 )
 from jobctrl.domain.compensation.market import accepted_estimate_matches_job
-from jobctrl.infrastructure.compensation.benchmark_lineage import load_market_benchmark_lineage
 from jobctrl.domain.events.base import DomainEvent
 from jobctrl.domain.identifiers import JobId, canonical_job_id
 from jobctrl.domain.ports.events import EventHandler, Subscription
@@ -77,7 +77,9 @@ SAFE_MATCH_SCOPES = frozenset(
         "none",
     }
 )
-DEFAULT_FACTOR_REASON = "Reported compensation estimate factor recorded by the deterministic company-role estimator."
+log = logging.getLogger(__name__)
+
+DEFAULT_FACTOR_REASON = "Recorded compensation arithmetic over persisted model classifications."
 MAX_FACTOR_REASON_LENGTH = 240
 UNSAFE_FACTOR_REASON_TERMS = (
     "/users/",
@@ -163,56 +165,6 @@ def _levels_fyi_public_fetcher(
     return fetch
 
 
-EURO_TOP_TECH_EUROPE_COUNTRIES = frozenset(
-    {
-        "albania",
-        "andorra",
-        "austria",
-        "belarus",
-        "belgium",
-        "bosnia and herzegovina",
-        "bulgaria",
-        "croatia",
-        "cyprus",
-        "czech republic",
-        "czechia",
-        "denmark",
-        "estonia",
-        "finland",
-        "france",
-        "germany",
-        "greece",
-        "hungary",
-        "iceland",
-        "ireland",
-        "italy",
-        "latvia",
-        "liechtenstein",
-        "lithuania",
-        "luxembourg",
-        "malta",
-        "moldova",
-        "monaco",
-        "montenegro",
-        "netherlands",
-        "north macedonia",
-        "norway",
-        "poland",
-        "portugal",
-        "romania",
-        "serbia",
-        "slovakia",
-        "slovenia",
-        "spain",
-        "sweden",
-        "switzerland",
-        "ukraine",
-        "united kingdom",
-    }
-)
-log = logging.getLogger(__name__)
-
-
 @dataclass(frozen=True)
 class ReportedCompensationSourceLoad:
     observations: tuple[ReportedCompensationObservation, ...]
@@ -266,7 +218,19 @@ class SqliteMarketCompensationRepository:
             raise ValueError("not_requested market estimates are read-side markers and must not be persisted")
         estimate = replace(estimate, job_id=canonical_job_id(str(estimate.job_id)))
         with self._atomic_event_write() as publisher:
+            from jobctrl.infrastructure.compensation.interpretation import job_interpretation_for_id
+            from jobctrl.infrastructure.determinations import SqliteDeterminationRepository
+
+            interpretation = job_interpretation_for_id(self._conn, estimate.tenant_id, str(estimate.job_id))
             self._save_estimate_row(estimate)
+            SqliteDeterminationRepository(self._conn).bind(
+                tenant_id=estimate.tenant_id,
+                entity_kind="market_compensation",
+                entity_id=str(estimate.job_id),
+                entity_version=estimate.estimator_version,
+                determination_kind="job_interpretation",
+                determination_id=interpretation._determination_id,
+            )
             self._record_updated_event(estimate, publisher=publisher)
 
     def _save_estimate_row(self, estimate: MarketCompensationEstimate) -> None:
@@ -404,29 +368,14 @@ class SqliteMarketCompensationRepository:
             )
             return True
 
-    def can_retain_estimate(
-        self, estimate: MarketCompensationEstimate | None, *, title: str, location: str | None,
-        job_context: str | None = None,
-    ) -> bool:
-        target_country = None
-        accepted_role_family_code = None
-        if (estimate is not None
-                and estimate.estimator_version.startswith("company-role-reported-compensation-canonical-benchmark-v")
-                and any(f":{kind}:" in estimate.estimator_version for kind in ("direct", "extrapolated"))):
-            lineage = load_market_benchmark_lineage(self._conn, tenant_id=estimate.tenant_id,
-                                                   estimator_version=estimate.estimator_version)
-            requested = classify_role(title, job_context=job_context)
-            if (lineage is None or lineage["taxonomyVersion"] != requested.taxonomy_version
-                    or lineage["roleFamilyCode"] != requested.role_family_code
-                    or lineage["seniorityLabel"] != requested.seniority_label
-                    or lineage["component"] != estimate.component):
-                return False
-            target_country = lineage["targetGeography"]["countryCode"]
-            accepted_role_family_code = lineage["roleFamilyCode"]
-        return accepted_estimate_matches_job(estimate, title=title, location=location,
-                                            target_country_code=target_country,
-                                            job_context=job_context,
-                                            accepted_role_family_code=accepted_role_family_code)
+    def can_retain_estimate(self, estimate) -> bool:
+        if estimate is None:
+            return False
+        try:
+            interpretation = job_interpretation_for_id(self._conn, estimate.tenant_id, str(estimate.job_id))
+        except DeterminationFailure:
+            return False
+        return accepted_estimate_matches_job(estimate, interpretation=interpretation)
 
     @contextmanager
     def _atomic_event_write(self) -> Iterator[_BufferedEventPublisher]:
@@ -457,11 +406,9 @@ class SqliteMarketCompensationRepository:
         title: str,
         company: str | None,
         location: str | None,
-        job_context: str | None = None,
         observations: tuple[ReportedCompensationObservation, ...],
         tenant_id: str = "local",
         component: str = "total_compensation",
-        seniority_label: str | None = None,
         estimated_at: str | None = None,
     ) -> MarketCompensationEstimate:
         job_id = canonical_job_id(str(job_id))
@@ -471,10 +418,8 @@ class SqliteMarketCompensationRepository:
             title=title,
             company=company,
             location=location,
-            job_context=job_context,
             observations=observations,
             component=component,
-            seniority_label=seniority_label,
             estimated_at=estimated_at,
         )
         self.save_estimate(estimate)
@@ -487,11 +432,9 @@ class SqliteMarketCompensationRepository:
         title: str,
         company: str | None,
         location: str | None,
-        job_context: str | None = None,
         observations: tuple[ReportedCompensationObservation, ...],
         tenant_id: str,
         component: str,
-        seniority_label: str | None = None,
         estimated_at: str | None = None,
     ) -> MarketCompensationEstimate:
         job_id = canonical_job_id(str(job_id))
@@ -502,10 +445,9 @@ class SqliteMarketCompensationRepository:
             title=title,
             company=company,
             location=location,
-            job_context=job_context,
+            interpretation=job_interpretation_for_id(self._conn, tenant_id, str(job_id)),
             component=component,
-            seniority_label=seniority_label,
-            observations=observations,
+            observations=classify_observations(self._conn, observations, tenant_id=tenant_id),
             posted_annualized_minimum=posted_minimum,
             posted_annualized_maximum=posted_maximum,
             estimated_at=estimated_at,
@@ -545,32 +487,44 @@ class SqliteMarketCompensationRepository:
             title = str(_row_value(row, "title") or "")
             company = _nullable_str(_row_value(row, "company")) or _nullable_str(_row_value(row, "site"))
             location = _nullable_str(_row_value(row, "location"))
-            job_context = _nullable_str(_row_value(row, "enrichment_description"))
             estimate = self._estimate_job(
                 tenant_id=tenant_id,
                 job_id=current_job_id,
                 title=title,
                 company=company,
                 location=location,
-                job_context=job_context,
                 observations=observations,
                 component="total_compensation",
                 estimated_at=estimated_at,
             )
-            if (preserve_accepted_on_failure
-                    and estimate.insufficient_reasons == ("missing_reported_observation",)
-                    and not estimate.evidence):
-                estimate = replace(estimate, estimate_state="source_unavailable", insufficient_reasons=(),
-                                   source_unavailable_reasons=("missing_reported_observation",))
+            if (
+                preserve_accepted_on_failure
+                and estimate.insufficient_reasons == ("missing_reported_observation",)
+                and not estimate.evidence
+            ):
+                estimate = replace(
+                    estimate,
+                    estimate_state="source_unavailable",
+                    insufficient_reasons=(),
+                    source_unavailable_reasons=("missing_reported_observation",),
+                )
             if preserve_accepted_on_failure and estimate.estimate_state != "estimated_range":
-                estimate = replace(estimate, factors=tuple(
-                    replace(factor, reason=f"The requested role and level lookup could not retrieve supporting source pages. {factor.reason}")
-                    if factor.name == "level" else factor for factor in estimate.factors
-                ))
-            current = self.get_estimate(tenant_id, current_job_id) if estimate.estimate_state != "estimated_range" else None
-            if (estimate.estimate_state != "estimated_range"
-                    and self.can_retain_estimate(current, title=title, location=location,
-                                                 job_context=job_context)):
+                estimate = replace(
+                    estimate,
+                    factors=tuple(
+                        replace(
+                            factor,
+                            reason=f"The requested role and level lookup could not retrieve supporting source pages. {factor.reason}",
+                        )
+                        if factor.name == "level"
+                        else factor
+                        for factor in estimate.factors
+                    ),
+                )
+            current = (
+                self.get_estimate(tenant_id, current_job_id) if estimate.estimate_state != "estimated_range" else None
+            )
+            if estimate.estimate_state != "estimated_range" and self.can_retain_estimate(current):
                 continue
             self.save_estimate(estimate)
         self._conn.commit()
@@ -676,7 +630,6 @@ def load_default_reported_compensation_observations(
     recorder_conn: sqlite3.Connection | None = None,
     run_id: str | None = None,
     opener: Any | None = None,
-    preserve_levels_fyi_source_currency: bool = False,
 ) -> ReportedCompensationSourceLoad:
     """Load every configured reported-compensation source for refresh paths.
 
@@ -737,13 +690,15 @@ def load_default_reported_compensation_observations(
             levels_fyi_targets,
             fetch_text=levels_fyi_public_fetch,
             max_pages=levels_fyi_public_max_pages,
-            preserve_source_currency=preserve_levels_fyi_source_currency,
             on_load_outcome=levels_fyi_outcomes.append,
         )
         if str(source_env.get("JOBCTRL_LEVELS_FYI_ACCESS_MODE") or "").strip().casefold() == "public_markdown"
         else ()
     )
-    if any(outcome.unavailable or outcome.level_lookup_unavailable or outcome.reachable_pages < outcome.requested_pages for outcome in levels_fyi_outcomes):
+    if any(
+        outcome.unavailable or outcome.level_lookup_unavailable or outcome.reachable_pages < outcome.requested_pages
+        for outcome in levels_fyi_outcomes
+    ):
         source_errors.append("levels_fyi_public_unavailable")
     levels_fyi = (*levels_fyi_public, *levels_fyi_licensed)
     glassdoor = _load_configured_provider_observations(
@@ -1111,10 +1066,9 @@ def _cursor_url(base_url: str, cursor: str) -> str:
 
 def _euro_top_tech_observation(data: dict[str, Any]) -> ReportedCompensationObservation | None:
     amount = _nullable_int(data.get("preTaxTC"))
-    country = _text(data.get("country"), default=None)
-    if amount is None or amount < 10_000 or country is None or country.casefold() not in EURO_TOP_TECH_EUROPE_COUNTRIES:
+    if amount is None or amount <= 0:
         return None
-    role = _text(data.get("jobTitle"), default=None) or _role_from_euro_top_tech_seniority(data.get("seniority"))
+    role = _text(data.get("jobTitle"), default="")
     level = _text(data.get("seniority"), default=None)
     submitted_month = _text(data.get("submittedMonth"), default=None)
     return ReportedCompensationObservation(
@@ -1138,17 +1092,12 @@ def _euro_top_tech_observation(data: dict[str, Any]) -> ReportedCompensationObse
     )
 
 
-def _role_from_euro_top_tech_seniority(value: Any) -> str:
-    text = str(value or "").strip()
-    return f"{text} Software Engineer" if text else "Software Engineer"
-
-
 def _euro_top_tech_location(data: dict[str, Any]) -> str:
     country = _text(data.get("country"), default="")
     city = _text(data.get("city"), default="")
     if city and country:
         return f"{city}, {country}"
-    return str(country or city or "Europe")
+    return str(country or city or "")
 
 
 def _euro_top_tech_snapshot_version(submitted_month: str | None) -> str:
@@ -1323,6 +1272,11 @@ def _source_from_dict(value: Any) -> MarketSourceSnapshot | None:
 
 def _evidence_to_dict(row: MarketEvidenceRow) -> dict[str, Any]:
     return {
+        "determination_id": row.determination_id,
+        "classification_entity_id": row.classification_entity_id,
+        "occupation_family_code": row.occupation_family_code,
+        "seniority_code": row.seniority_code,
+        "country_codes": list(row.country_codes),
         "source_id": row.source_id,
         "display_name": row.display_name,
         "source_url": _safe_evidence_url(row.source_url),
@@ -1360,6 +1314,11 @@ def _evidence_from_dict(value: Any) -> MarketEvidenceRow | None:
     if maximum_amount is None:
         maximum_amount = minimum_amount
     return MarketEvidenceRow(
+        determination_id=data.get("determination_id"),
+        classification_entity_id=data.get("classification_entity_id"),
+        occupation_family_code=data.get("occupation_family_code"),
+        seniority_code=data.get("seniority_code"),
+        country_codes=tuple(data.get("country_codes") or ()),
         source_id=source_id,
         display_name=_display_name(source_id),
         source_url=_safe_evidence_url(data.get("source_url")),

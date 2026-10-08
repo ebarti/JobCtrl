@@ -107,12 +107,7 @@ def _job_ids(params: dict[str, Any]) -> tuple[JobId, ...]:
     if not raw:
         return ()
     try:
-        return tuple(
-            dict.fromkeys(
-                canonical_job_id(str(item))
-                for item in raw
-            )
-        )
+        return tuple(dict.fromkeys(canonical_job_id(str(item)) for item in raw))
     except ValueError as exc:
         raise invalid_params(str(exc)) from exc
 
@@ -229,7 +224,6 @@ def retailor_job(params: dict[str, Any]) -> WorkflowStartSpec:
             job_id=requested_job_id,
         )
     )
-    raw_judge_min_score = params.get("tailorJudgeMinScore")
     return build_preparation_workflow_spec(
         tenant_id=tenant_id,
         job_id=job_id,
@@ -248,7 +242,6 @@ def retailor_job(params: dict[str, Any]) -> WorkflowStartSpec:
         suppress_existing_artifacts=_bool_param(params, "suppressExistingArtifacts", default=False),
         tailor_models=tuple(str(item) for item in (params.get("tailorModels") or ())),
         tailor_judge_model=(str(params["tailorJudgeModel"]) if params.get("tailorJudgeModel") else None),
-        tailor_judge_min_score=(float(raw_judge_min_score) if raw_judge_min_score is not None else None),
         llm_model=str(params.get("llmModel") or DEFAULT_PIPELINE_LLM_MODEL_SPEC),
         expected_app_dir=params.get("expectedAppDir"),
         expected_db_path=params.get("expectedDbPath"),
@@ -266,7 +259,6 @@ def tailor_job(params: dict[str, Any]) -> WorkflowStartSpec:
             job_id=requested_job_id,
         )
     )
-    raw_judge_min_score = params.get("tailorJudgeMinScore")
     return build_preparation_workflow_spec(
         tenant_id=tenant_id,
         job_id=job_id,
@@ -285,7 +277,6 @@ def tailor_job(params: dict[str, Any]) -> WorkflowStartSpec:
         allow_low_fit_override=_bool_param(params, "allowLowFitOverride", default=True),
         tailor_models=tuple(str(item) for item in (params.get("tailorModels") or ())),
         tailor_judge_model=(str(params["tailorJudgeModel"]) if params.get("tailorJudgeModel") else None),
-        tailor_judge_min_score=(float(raw_judge_min_score) if raw_judge_min_score is not None else None),
         llm_model=str(params.get("llmModel") or DEFAULT_PIPELINE_LLM_MODEL_SPEC),
         expected_app_dir=params.get("expectedAppDir"),
         expected_db_path=params.get("expectedDbPath"),
@@ -310,11 +301,9 @@ def analyze_job(params: dict[str, Any]) -> dict[str, Any]:
     conn = get_connection()
     job = _load_current_job_by_id(conn, tenant_id=tenant_id, job_id=job_id)
     if not (job.get("full_description") or job.get("description")):
-        raise invalid_params(
-            f"jobId {job_id} has no description to analyze; enrich it first"
-        )
+        raise invalid_params(f"jobId {job_id} has no description to analyze; enrich it first")
 
-    use_case = _build_analyze_use_case(conn=conn)
+    use_case = _build_analyze_use_case(conn=conn, tenant_id=tenant_id)
     outcome = use_case.execute(job=job, tenant_id=tenant_id, force=force)
     record = outcome.analysis
     return {
@@ -353,6 +342,93 @@ def provider_models(params: dict[str, Any]) -> dict[str, Any]:
     return provider_model_catalog()
 
 
+def map_extension_form(params):
+    assert_expected_runtime(
+        expected_app_dir=str(_require(params, "expectedAppDir")),
+        expected_db_path=str(_require(params, "expectedDbPath")),
+    )
+    if set(params) - {
+        "tenantId",
+        "expectedAppDir",
+        "expectedDbPath",
+        "snapshotId",
+        "pageUrl",
+        "questions",
+        "expectedProfileVersion",
+    }:
+        raise invalid_params("Unknown form mapping parameter")
+    from jobctrl.database import init_db
+    from jobctrl.domain.determinations import DeterminationFailure
+    from jobctrl.infrastructure.apply.form_mapping import map_saved_profile_form
+    from jobctrl.infrastructure.network.url_safety import validate_public_http_url
+
+    try:
+        if not validate_public_http_url(str(_require(params, "pageUrl"))).allowed:
+            raise invalid_params("unsafe_form_page_url")
+        return map_saved_profile_form(
+            init_db(),
+            tenant_id=_tenant_id(params),
+            snapshot_id=str(_require(params, "snapshotId")),
+            page_url=str(_require(params, "pageUrl")),
+            questions=_require(params, "questions"),
+            expected_profile_version=_require(params, "expectedProfileVersion"),
+        )
+    except DeterminationFailure as error:
+        raise invalid_params(error.code) from None
+
+
+def review_resume_edit(params):
+    assert_expected_runtime(
+        expected_app_dir=str(_require(params, "expectedAppDir")),
+        expected_db_path=str(_require(params, "expectedDbPath")),
+    )
+    if set(params) - {"tenantId", "expectedAppDir", "expectedDbPath", "draftId", "revisionId", "operation"}:
+        raise invalid_params("Unknown resume edit review parameter")
+    from jobctrl.database import init_db
+    from jobctrl.infrastructure.materials.user_edit_review import review_saved_resume_edit, review_saved_edit_intent
+    from jobctrl.domain.determinations import DeterminationFailure
+
+    operation = params.get("operation", "artifact")
+    if operation not in {"artifact", "intent"}:
+        raise invalid_params("Invalid resume edit review operation")
+    connection = init_db()
+    try:
+        result = (review_saved_edit_intent if operation == "intent" else review_saved_resume_edit)(
+            connection,
+            tenant_id=_tenant_id(params),
+            draft_id=str(_require(params, "draftId")),
+            revision_id=str(_require(params, "revisionId")),
+        )
+        connection.commit()
+        return result
+    except DeterminationFailure as error:
+        connection.commit()
+        raise invalid_params(error.code) from None
+    finally:
+        connection.close()
+
+
+def prepare_repeat_application_determinations(params):
+    assert_expected_runtime(
+        expected_app_dir=str(_require(params, "expectedAppDir")),
+        expected_db_path=str(_require(params, "expectedDbPath")),
+    )
+    from jobctrl.database import init_db
+    from jobctrl.domain.apply.repeat_application import prepare_repeat_application
+    from jobctrl.domain.identifiers import canonical_job_id
+    from jobctrl.domain.determinations import DeterminationFailure
+
+    try:
+        assessment = prepare_repeat_application(
+            init_db(),
+            target_job_id=canonical_job_id(str(_require(params, "jobId"))),
+            tenant_id=TenantId(_tenant_id(params)),
+        )
+    except DeterminationFailure as error:
+        raise invalid_params(error.code) from None
+    return {"ok": True, "assessment": assessment}
+
+
 def profile_target_role_suggestions(params: dict[str, Any]) -> dict[str, Any]:
     """Generate transient suggestions from the exact canonical profile version."""
 
@@ -362,52 +438,43 @@ def profile_target_role_suggestions(params: dict[str, Any]) -> dict[str, Any]:
     )
     expected_version = _require(params, "expectedProfileVersion")
     maximum = params.get("maximumSuggestions", 3)
-    if (
-        not isinstance(expected_version, int)
-        or isinstance(expected_version, bool)
-        or expected_version < 1
-    ):
+    if not isinstance(expected_version, int) or isinstance(expected_version, bool) or expected_version < 1:
         raise invalid_params("expectedProfileVersion must be a positive integer")
     if not isinstance(maximum, int) or isinstance(maximum, bool) or not 1 <= maximum <= 5:
         raise invalid_params("maximumSuggestions must be an integer from 1 to 5")
 
-    from jobctrl.domain.profile.target_role_suggestions import suggest_target_roles
+    from jobctrl.infrastructure.profile.interpretation import PersistedCandidateInterpreter
+    from jobctrl.database import init_db
     from jobctrl.infrastructure.profile.factory import get_profile_repository
 
     snapshot = get_profile_repository().load_snapshot(TenantId(_tenant_id(params)))
     if snapshot.version != expected_version:
-        raise invalid_params(
-            f"stale_profile_version: expected {expected_version}, current {snapshot.version}"
-        )
-    # None of the managed production adapters currently enforces max_tokens.
-    # Until a provider can prove both token and call-cost ceilings, this route
-    # fails closed to the canonical exact-title/empty deterministic result.
-    result = suggest_target_roles(
-        snapshot,
-        llm=None,
-        maximum_suggestions=maximum,
-        allow_model=False,
-        fallback_warning="provider_token_or_cost_bound_unsupported",
-    )
-    return result.as_dict()
+        raise invalid_params(f"stale_profile_version: expected {expected_version}, current {snapshot.version}")
+    with init_db() as connection:
+        return PersistedCandidateInterpreter(connection, tenant_id=_tenant_id(params)).suggest(snapshot, maximum)
 
 
 def profile_required_bullet_suggestions(params: dict[str, Any]) -> dict[str, Any]:
     """Call the configured provider for a version-fenced, read-only inspection."""
     import re
-    from temporalio.exceptions import ApplicationError
     from jobctrl.domain.profile.required_bullet_coaching import (
-        InvalidCoachingResponse, coach_required_bullets, normalize_source_text,
+        coach_required_bullets,
+        normalize_source_text,
     )
-    from jobctrl.infrastructure.llm.provider_errors import ProviderCallError
     from jobctrl.infrastructure.profile.factory import get_profile_repository
-    from jobctrl.infrastructure.llm.llm_client import get_llm_adapter
-    from jobctrl.llm import enforce_spend_budget, read_spend_budget_status
-    from jobctrl.llm_lanes import bind_llm_lane
 
-    assert_expected_runtime(expected_app_dir=str(_require(params, "expectedAppDir")),
-                            expected_db_path=str(_require(params, "expectedDbPath")))
-    if set(params) - {"tenantId", "expectedAppDir", "expectedDbPath", "expectedProfileVersion", "maximumSuggestions", "sources"}:
+    assert_expected_runtime(
+        expected_app_dir=str(_require(params, "expectedAppDir")),
+        expected_db_path=str(_require(params, "expectedDbPath")),
+    )
+    if set(params) - {
+        "tenantId",
+        "expectedAppDir",
+        "expectedDbPath",
+        "expectedProfileVersion",
+        "maximumSuggestions",
+        "sources",
+    }:
         raise invalid_params("Unknown Required coaching parameter")
     version = _require(params, "expectedProfileVersion")
     maximum = _require(params, "maximumSuggestions")
@@ -425,11 +492,19 @@ def profile_required_bullet_suggestions(params: dict[str, Any]) -> dict[str, Any
     references: set[str] = set()
     for source in sources:
         if not isinstance(source, dict) or set(source) != {
-            "reference", "originalText", "experienceTitle", "experienceCompany", "evidence"
+            "reference",
+            "originalText",
+            "experienceTitle",
+            "experienceCompany",
+            "evidence",
         }:
             raise invalid_params("Invalid Required coaching source shape")
         reference = source["reference"]
-        match = re.fullmatch(r"profile:v(\d+):experience\[(\d+)\]:bullet\[(\d+)\]:required\[(\d+)\]", reference) if isinstance(reference, str) else None
+        match = (
+            re.fullmatch(r"profile:v(\d+):experience\[(\d+)\]:bullet\[(\d+)\]:required\[(\d+)\]", reference)
+            if isinstance(reference, str)
+            else None
+        )
         if not match or reference in references or int(match[1]) != version:
             raise invalid_params("Invalid Required coaching reference")
         references.add(reference)
@@ -437,51 +512,58 @@ def profile_required_bullet_suggestions(params: dict[str, Any]) -> dict[str, Any
             entry = entries[int(match[2])]
             text = entry["bullets"][int(match[3])]
             required = pins[entry["id"]][int(match[4])]
-            evidence = [item for item in entry["achievement_evidence"]
-                        if normalize_source_text(item["source_text"]) == normalize_source_text(text)]
-            expected = {"reference": reference, "originalText": text,
-                        "experienceTitle": entry["title"], "experienceCompany": entry["company"],
-                        "evidence": [{key: item[key] for key in (
-                            "id", "source_text", "metrics", "outcome", "evidence_strength", "user_confirmed"
-                        )} for item in evidence]}
+            evidence = [
+                item
+                for item in entry["achievement_evidence"]
+                if normalize_source_text(item["source_text"]) == normalize_source_text(text)
+            ]
+            expected = {
+                "reference": reference,
+                "originalText": text,
+                "experienceTitle": entry["title"],
+                "experienceCompany": entry["company"],
+                "evidence": [
+                    {
+                        key: item[key]
+                        for key in ("id", "source_text", "metrics", "outcome", "evidence_strength", "user_confirmed")
+                    }
+                    for item in evidence
+                ],
+            }
             if text != required or source != expected:
                 raise invalid_params("Required coaching source does not match saved profile")
         except (KeyError, IndexError, TypeError) as exc:
             raise invalid_params("Invalid Required coaching source") from exc
-    # Failure codes are application-owned. Never send raw provider/model errors
-    # through the RPC error data (which may contain prompts or profile prose).
-    def failure(code: str, **details: str) -> dict[str, Any]:
-        return {"profileVersion": version, "failure": {"code": code, **details}}
 
-    with bind_llm_lane("profile"):
-        try:
-            enforce_spend_budget(lane="profile")
-            try:
-                adapter = get_llm_adapter()
-            except Exception:
-                return failure("provider_unready")
-            result = coach_required_bullets(sources, llm=adapter, maximum=maximum)
-        except ApplicationError as exc:
-            if exc.type != "budget_exceeded":
-                return failure("provider_failed")
-            status = read_spend_budget_status(lane="profile")
-            scope = "both" if status.global_exceeded and status.lane_exceeded else (
-                "profile_lane" if status.lane_exceeded else "daily"
-            )
-            return failure("budget_exceeded", scope=scope)
-        except InvalidCoachingResponse:
-            return failure("invalid_model_response")
-        except ProviderCallError as exc:
-            if exc.envelope.http_status in (401, 403) or exc.envelope.code == "unauthorized":
-                return failure("provider_unready")
-            return failure("provider_failed")
-        except Exception as exc:
-            if getattr(exc, "status_code", None) in (401, 403):
-                return failure("provider_unready")
-            return failure("provider_failed")
-    if repository.load_saved_resume(TenantId(_tenant_id(params)))[0] != version:
-        raise invalid_params("stale_profile_version")
-    return {"profileVersion": version, **result}
+    from jobctrl.database import init_db
+    from jobctrl.domain.determinations import DeterminationFailure
+    from jobctrl.infrastructure.determinations import determination_dependencies, SqliteDeterminationRepository
+
+    connection = init_db()
+    try:
+        result, envelope = coach_required_bullets(
+            sources,
+            maximum=maximum,
+            profile_version=version,
+            entity_id="profile:required_bullets",
+            **determination_dependencies(connection, tenant_id=_tenant_id(params), lane="profile"),
+        )
+        if repository.load_saved_resume(TenantId(_tenant_id(params)))[0] != version:
+            raise invalid_params("stale_profile_version")
+        SqliteDeterminationRepository(connection).bind(
+            tenant_id=_tenant_id(params),
+            entity_kind="profile_coaching",
+            entity_id=envelope.entity_id,
+            entity_version=str(version),
+            determination_kind=envelope.kind,
+            determination_id=envelope.determination_id,
+        )
+        connection.commit()
+        return {"profileVersion": version, **result.model_dump(), "determination": envelope.model_dump()}
+    except DeterminationFailure as error:
+        return {"profileVersion": version, "failure": {"code": error.code}}
+    finally:
+        connection.close()
 
 
 def provider_verify(params: dict[str, Any]) -> dict[str, Any]:
@@ -524,9 +606,7 @@ def _browser_capabilities_payload() -> dict[str, object]:
     )
 
     detected_browsers = detect_supported_browsers()
-    detected_profiles = {
-        browser.id: detect_browser_profiles(browser.id) for browser in detected_browsers
-    }
+    detected_profiles = {browser.id: detect_browser_profiles(browser.id) for browser in detected_browsers}
 
     return {
         "capabilities": [_browser_status_payload(item) for item in list_browser_capabilities()],
@@ -535,13 +615,9 @@ def _browser_capabilities_payload() -> dict[str, object]:
                 "id": browser.id,
                 "label": browser.label,
                 "defaultProfileAvailable": any(
-                    profile.directory_name == "Default"
-                    for profile in detected_profiles[browser.id]
+                    profile.directory_name == "Default" for profile in detected_profiles[browser.id]
                 ),
-                "profiles": [
-                    {"id": profile.id, "label": profile.label}
-                    for profile in detected_profiles[browser.id]
-                ],
+                "profiles": [{"id": profile.id, "label": profile.label} for profile in detected_profiles[browser.id]],
             }
             for browser in detected_browsers
         ],
@@ -621,9 +697,7 @@ def browser_profile_copy(params: dict[str, Any]) -> dict[str, object]:
             copy_detected_authenticated_linkedin_profile(
                 str(_require(params, "detectedBrowserId")),
                 detected_profile_id=(
-                    str(_require(params, "detectedProfileId"))
-                    if "detectedProfileId" in params
-                    else None
+                    str(_require(params, "detectedProfileId")) if "detectedProfileId" in params else None
                 ),
                 consent=True,
                 consent_method="explicit-ui-v1",
@@ -644,6 +718,7 @@ def browser_profile_copy(params: dict[str, Any]) -> dict[str, object]:
 
 def check_posting_availability(params: dict[str, Any]) -> WorkflowStartSpec:
     from jobctrl.enrichment.availability_workflow import availability_workflow_spec
+
     try:
         return availability_workflow_spec(params)
     except ValueError as exc:
@@ -743,8 +818,6 @@ def job_url_import(params: dict[str, Any]) -> WorkflowStartSpec:
 # ---------------------------------------------------------------------------
 # Workflow handlers
 # ---------------------------------------------------------------------------
-
-
 
 
 def apply_action(params: dict[str, Any]) -> WorkflowStartSpec:
@@ -853,6 +926,11 @@ def generate_outreach_draft(params: dict[str, Any]) -> dict[str, Any]:
     contact_repo = SqliteContactRepository(conn, publisher=publisher)
     thread_repo = SqliteOutreachThreadRepository(conn, publisher=publisher)
     llm = get_llm_adapter()
+    from jobctrl.infrastructure.determinations import determination_dependencies
+    from jobctrl.domain.materials.claim_verification import ModelClaimVerifier
+    from jobctrl.domain.materials.artifact_quality import ModelArtifactQualityJudge
+
+    determination_deps = determination_dependencies(conn, tenant_id=tenant, lane="contact", adapter=llm)
     new_id = lambda: uuid.uuid4().hex  # noqa: E731 — trivial id seam
 
     try:
@@ -861,6 +939,9 @@ def generate_outreach_draft(params: dict[str, Any]) -> dict[str, Any]:
                 repository=thread_repo,
                 contact_repository=contact_repo,
                 llm=llm,
+                claim_verifier=ModelClaimVerifier(**determination_deps),
+                quality_judge=ModelArtifactQualityJudge(**determination_deps),
+                preflight=determination_deps["preflight"],
                 new_id=new_id,
             ).execute(
                 tenant,
@@ -882,6 +963,9 @@ def generate_outreach_draft(params: dict[str, Any]) -> dict[str, Any]:
                 repository=thread_repo,
                 contact_repository=contact_repo,
                 llm=llm,
+                claim_verifier=ModelClaimVerifier(**determination_deps),
+                quality_judge=ModelArtifactQualityJudge(**determination_deps),
+                preflight=determination_deps["preflight"],
                 new_id=new_id,
             ).execute(
                 tenant,
@@ -1033,9 +1117,7 @@ def rederive_learning_recommendations(params: dict[str, Any]) -> dict[str, Any]:
         expected_app_dir=params.get("expectedAppDir"),
         expected_db_path=params.get("expectedDbPath"),
     )
-    recommendations = SqliteLearningRecommendationRepository(
-        get_connection()
-    ).rederive_tailoring(
+    recommendations = SqliteLearningRecommendationRepository(get_connection()).rederive_tailoring(
         tenant_id,
         source_changes=None,
         rederived_at=datetime.now(UTC).isoformat(),
@@ -1043,9 +1125,7 @@ def rederive_learning_recommendations(params: dict[str, Any]) -> dict[str, Any]:
     return {
         "status": "succeeded",
         "recommendationCount": len(recommendations),
-        "recommendationIds": [
-            recommendation.recommendation_id for recommendation in recommendations
-        ],
+        "recommendationIds": [recommendation.recommendation_id for recommendation in recommendations],
     }
 
 
@@ -1062,9 +1142,7 @@ def review_learning_recommendation(params: dict[str, Any]) -> dict[str, Any]:
         expected_db_path=params.get("expectedDbPath"),
     )
     try:
-        review = SqliteLearningRecommendationReviewRepository(
-            get_connection()
-        ).review(
+        review = SqliteLearningRecommendationReviewRepository(get_connection()).review(
             tenant_id,
             recommendation_id=recommendation_id,
             decision=decision,
@@ -1090,11 +1168,7 @@ def rollback_tailoring_policy(params: dict[str, Any]) -> dict[str, Any]:
 
     tenant_id = TenantId(_tenant_id(params))
     target_version = _require(params, "targetVersion")
-    if (
-        not isinstance(target_version, int)
-        or isinstance(target_version, bool)
-        or target_version < 1
-    ):
+    if not isinstance(target_version, int) or isinstance(target_version, bool) or target_version < 1:
         raise invalid_params("targetVersion must be a positive integer")
     assert_expected_runtime(
         expected_app_dir=params.get("expectedAppDir"),
@@ -1131,6 +1205,9 @@ def rollback_tailoring_policy(params: dict[str, Any]) -> dict[str, Any]:
 
 def register_default_handlers(server: JsonRpcServer, *, canceler: WorkflowCanceler) -> None:
     """Wire the default JobCtrl method set onto *server*."""
+    server.register("map_extension_form", map_extension_form, mode="sync")
+    server.register("review_resume_edit", review_resume_edit, mode="sync")
+    server.register("prepare_repeat_application_determinations", prepare_repeat_application_determinations, mode="sync")
     server.register("profile_required_bullet_suggestions", profile_required_bullet_suggestions, mode="sync")
     server.register("profile_import", profile_import, mode="workflow")
     server.register("job_url_import", job_url_import, mode="workflow")

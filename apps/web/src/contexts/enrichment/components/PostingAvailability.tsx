@@ -20,6 +20,8 @@ export function PostingAvailability({ jobId, postingUrl, availability }: {
         availability?.verdict && availability.verdict !== "unknown" ? `Last check: ${availability.verdict}` : "Availability unverified"}
       {availability?.overdue ? " · Check overdue" : ""}
     </p>
+    {availability?.failureCode ? <p role="status">Availability determination blocked: {availability.failureCode.replaceAll("_", " ")}. Retry after restoring the configured provider or budget.</p> : null}
+    {availability?.determinations.length ? <details><summary>Availability decision sources</summary>{availability.determinations.map(row => <details key={row.determination_id}><summary>{row.provider} · {row.model} · {row.prompt_version}</summary><p>Input: {row.input_fingerprint}</p><pre>{JSON.stringify(row.result,null,2)}</pre></details>)}</details> : null}
     <p className="muted">Last attempt: {time(availability?.lastAttemptedAt)}. Last successful verification: {time(availability?.lastSuccessfullyVerifiedAt)}{availability?.lastSuccessfulState ? ` (${availability.lastSuccessfulState})` : ""}.</p>
     {availability?.reason && availability.reason !== "not_yet_checked" ? <p>Latest evidence: {availability.reason.replaceAll("_", " ")}.</p> : null}
     <p className="muted">Checks run while your local worker is available. Sleep or offline time can leave evidence overdue. Saved descriptions and materials remain available after a failed check.</p>

@@ -1,3 +1,5 @@
+import { recordEditedReview } from "./semantic-fixtures.js";
+import { writeProfileConfig } from "../src/profile-store.js";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -9,7 +11,8 @@ import type { ResumeHtmlPdfRenderInput, ResumeHtmlPdfRenderer } from "../src/res
 import { BUILT_IN_RESUME_TEMPLATE_THEME } from "../src/resume-templates.js";
 import { buildApp, type BuildAppOptions } from "../src/server.js";
 import type { ActionDispatcher, ActionDispatchResult } from "../src/local-actions.js";
-import { initializeExactV7Database } from "./v7-schema.js";
+import { initializeExactDatabase } from "./exact-schema.js";
+import { EMPLOYER_ANALYSIS_PROMPT_VERSION } from "../src/contracts.js";
 
 const JOB_KEY = "https://example.com/jobs/live-editor";
 const JOB_ID = "00000000-0000-4000-8000-000000000201";
@@ -34,6 +37,7 @@ beforeEach(() => {
     dbPath: path.join(tempDir, "jobctrl.db"),
     configPath: path.join(tempDir, "config.json"),
     resumePdfRenderer,
+    providerDispatcher: {call: async (_method,params) => {const db=new Database(options.dbPath);try{return {jsonrpc:"2.0",id:1,result:recordEditedReview(db,params)};}finally{db.close();}},close:async()=>{}},
     actionDispatcher: vi.fn(async (): Promise<ActionDispatchResult> => ({
       status: "succeeded",
       result: {
@@ -1464,11 +1468,12 @@ function seedDatabase(dbPath: string): void {
   fs.writeFileSync(pdfV1Path, "%PDF v1");
   fs.writeFileSync(pdfV2Path, "%PDF v2");
 
-  initializeExactV7Database(dbPath);
+  initializeExactDatabase(dbPath);
   const db = new Database(dbPath);
   db.pragma("foreign_keys = ON");
   try {
     seedBuiltInTemplate(db);
+    writeProfileConfig(db,{profile:{personal:{full_name:"Owned candidate"},resume:{experience_entries:[{id:"owned",title:"Owned role",company:"Owned employer",bullets:["Owned source"]}],education_entries:[],skill_categories:[]}}});
     db.prepare(
       `INSERT INTO jobs (tenant_id, job_id, url, title, company, site, discovered_at)
        VALUES ('local', ?, ?, 'Platform Reliability Engineer', 'Example', 'example', ?)`,
@@ -1485,6 +1490,7 @@ function seedDatabase(dbPath: string): void {
          last_validation_json, last_verdict_json, metadata_json
        ) VALUES ('local', ?, ?, 'resume_approved', ?, ?, '{}', '{}', '{}')`,
     ).run(JOB_ID, 2, NOW, NOW);
+    db.prepare("INSERT INTO job_employer_analysis (tenant_id,job_id,generation,snapshot_hash,prompt_version,sdk_set_version,cache_key,legs_attempted,legs_succeeded,created_at) VALUES ('local',?,1,'synthetic',?,'synthetic','synthetic',1,1,?)").run(JOB_ID,EMPLOYER_ANALYSIS_PROMPT_VERSION,NOW);
     const insert = db.prepare(
       `INSERT INTO job_materials_artifacts (
          tenant_id, job_id, generation, artifact_id, artifact_type, status, path,

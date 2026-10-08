@@ -12,6 +12,7 @@ import { buildTestPorts } from "../../../test/testPorts.js";
 import { PostingAvailability } from "./PostingAvailability.js";
 
 const evidence: Availability = {
+  failureCode: null, determinations: [],
   jobId: sampleJob.jobKey, postingUrl: sampleJob.url, verdict: "unknown", reason: "http_error",
   method: "public_http", lastAttemptedAt: "2026-10-04T10:00:00Z",
   lastSuccessfullyVerifiedAt: "2026-10-01T10:00:00Z", lastSuccessfulState: "active",

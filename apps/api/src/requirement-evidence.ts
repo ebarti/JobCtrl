@@ -1,4 +1,5 @@
 import type { RequirementArtifactCoverage, RequirementFitReport } from "./contracts.js";
+import { readArtifactLineAnchors } from "./semantic-determinations.js";
 import { allRows, getRow, type SqliteDatabase } from "./db.js";
 
 export interface RequirementIdentity {
@@ -49,8 +50,8 @@ export function requirementCoverageForArtifact(
 ): Map<string, RequirementArtifactCoverage> {
   const result = new Map(requirements.map((requirement) => [requirement.id, unrecordedRequirementCoverage()]));
   if (!artifactId) return result;
-  const artifact = getRow<{ metadata_json: string | null }>(db,
-    `SELECT metadata_json FROM job_materials_artifacts
+  const artifact = getRow<{ metadata_json: string | null;generation:number;artifact_type:string }>(db,
+    `SELECT metadata_json,generation,artifact_type FROM job_materials_artifacts
      WHERE tenant_id = 'local' AND job_id = ? AND artifact_id = ?
      ORDER BY generation DESC LIMIT 1`, [jobId, artifactId]);
   let directives: unknown;
@@ -70,16 +71,18 @@ export function requirementCoverageForArtifact(
     return matches.length === 1 && typeof text === "string" && identityText(text) === identityText(requirement.text);
   });
   if (!bound.length) return result;
-  const rows = allRows<{ generated_text: string; requirement_ids_json: string }>(db,
-    `SELECT generated_text, requirement_ids_json FROM job_bullet_provenance
+  if(!artifact)return result;
+  const anchors=readArtifactLineAnchors(db,"local",artifact.artifact_type,artifactId,artifact.generation,jobId);
+  const rows = allRows<{ bullet_id:string;generated_text: string; requirement_ids_json: string }>(db,
+    `SELECT bullet_id,generated_text,requirement_ids_json FROM job_bullet_provenance
      WHERE tenant_id = 'local' AND job_id = ? AND artifact_id = ? ORDER BY position, bullet_id`,
     [jobId, artifactId]);
-  if (!rows.length) return result;
+  if (!rows.length || !anchors.size) return result;
   for (const requirement of bound) {
     const hits = rows.filter((row) => {
       try {
         const ids: unknown = JSON.parse(row.requirement_ids_json);
-        return Array.isArray(ids) && ids.includes(requirement.id);
+        return Array.isArray(ids) && ids.includes(requirement.id) && anchors.get(row.bullet_id)?.requirementIds.includes(requirement.id) === true;
       } catch {
         return false;
       }

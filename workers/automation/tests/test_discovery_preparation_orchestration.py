@@ -287,7 +287,7 @@ def test_derive_preparation_targets_uses_exact_v7_job_identity_queries(
         conn.close()
 
 
-def test_derive_preparation_targets_admits_repairable_historical_salary_block() -> None:
+def test_derive_preparation_targets_uses_model_declared_compensation_advice() -> None:
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
     create_exact_v7_schema(conn)
@@ -316,7 +316,7 @@ def test_derive_preparation_targets_admits_repairable_historical_salary_block() 
             (
                 str(LOCAL_TENANT),
                 str(job_id),
-                '{"eligibility":{"status":"blocked","hard_blockers":["Salary is below target."]}}',
+                '{"eligibility":{"status":"eligible","hard_blockers":[],"hard_blocker_categories":[],"hard_blocker_citations":[],"warnings":["Salary is below target."]}}',
                 now,
             ),
         )
@@ -606,5 +606,3 @@ def test_discovery_source_failure_records_failed_progress(monkeypatch: pytest.Mo
         "status": "failed",
         "message": "JobSpy failed",
     }
-
-

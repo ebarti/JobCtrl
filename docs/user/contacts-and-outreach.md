@@ -18,16 +18,13 @@ confirmed contact, and a generated message must become an approved draft.
    provenance-bearing candidates in `needs_review`. Explicit confirmation
    promotes a proposal into the canonical contact record and preserves where
    each fact came from.
-3. **Ground the actual draft.** A draft may use Candidate Profile evidence,
-   confirmed contact facts, and the linked application context. The
-   never-fabricate check runs on the rendered message itself, not merely on the
-   prompt or recipient record.
-4. **Run the approval stack.** Structural checks require a usable greeting and
-   sign-off and flag prohibited wording, model self-talk, and length problems.
-   The structured judge then evaluates relevance, evidence support,
-   relationship accuracy, safety, and professionalism. Approval requires
-   `PASS`, a score of at least `0.82`, no unsupported claims, and no fabricated
-   relationship.
+3. **Verify the actual draft.** A separate model determination checks its claims
+   against confirmed profile and contact facts, with verbatim quotations and
+   recorded line IDs. The linked application provides context.
+4. **Run independent quality review.** A second call judges relevance, clarity,
+   relationship accuracy and professionalism. Both model verdicts must pass;
+   code validates IDs, citations, exact values and schemas.
+
 5. **Persist the gate result as authority.** Generated and user-edited drafts
    run the same checks. An edit creates a new generation; it cannot inherit the
    previous pass. Rejection or a failed replacement leaves the prior approved
@@ -61,7 +58,7 @@ outcomes and candidate provenance remain visible even when nothing can be
 fetched. A proposal becomes a contact only after you explicitly confirm it.
 
 For a confirmed contact, you can generate or revise an outreach draft, inspect
-its deterministic checks, judge result, and claim-to-fact bindings, then approve
+its claim verification, quality verdict and recorded source bindings, then approve
 or reject it. Only an approved draft can be copied. After you send that copy
 through your own channel, **log a send** records your attestation; it is not a
 send action. Follow-ups are editable reminders that you complete or dismiss
@@ -192,3 +189,10 @@ scoring or Apply decisions.
 | Worker implementation | `workers/automation/src/jobctrl/domain/contact/`, `workers/automation/src/jobctrl/contact/`, and `workers/automation/src/jobctrl/infrastructure/contact/`. |
 | Web implementation | `apps/web/src/contexts/outreach/`, `apps/web/src/views/outreach/`, and the `/outreach` route files. |
 | Deep architecture | [Stage Walkthrough → Contact Research](../architecture/pipeline/stages.md#contact-research-supervised-off-pipeline), [Outreach Draft Gates](../architecture/tailoring.md#outreach-draft-gates-reused-materials-stack), and [Sensitive Projection Families](../architecture/read-model.md#contacts-research-and-outreach). |
+
+
+## Semantic Determination Authority
+
+Outreach generation and user edits receive source-bound claim verification using only confirmed contact facts and canonical profile sources, plus separate model quality review. Findings and source anchors are persisted by line ID. Provider and validation failures block approval and preserve the accepted draft; stock-phrase and technology word lists do not decide support. Sending still requires the user's separate explicit action.
+
+See [the decision](../decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.

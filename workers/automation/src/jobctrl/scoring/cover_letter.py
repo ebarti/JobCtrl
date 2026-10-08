@@ -40,9 +40,8 @@ from jobctrl.domain.ports.materials import (
 from jobctrl.domain.profile.snapshot import ProfileSnapshot
 from jobctrl.domain.scoring.eligibility import eligibility_blocks_downstream
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
-from jobctrl.domain.materials.value_objects import ArtifactStatus
+from jobctrl.domain.ports.artifact_review import ArtifactStatus
 from jobctrl.infrastructure.discovery.sqlite_identity_resolver import SqliteJobIdentityResolver
-from jobctrl.infrastructure.llm import LlmAdapter, get_llm_adapter
 from jobctrl.infrastructure.materials import (
     PlaywrightHtmlPdfAdapter,
     SqliteEmployerAnalysisRepository,
@@ -84,6 +83,7 @@ def _build_use_case(
     validator: ContentValidator | None = None,
     analysis_repository: EmployerAnalysisRepository | None = None,
     unit_of_work: SqliteUnitOfWork | None = None,
+    tenant_id: TenantId = LOCAL_TENANT,
 ) -> GenerateCoverLetterUseCase:
     conn = get_connection()
     shared_unit_of_work = unit_of_work or SqliteUnitOfWork(conn)
@@ -93,27 +93,27 @@ def _build_use_case(
             conn,
             unit_of_work=shared_unit_of_work,
         )
-    if llm_port is None:
-        llm_port = (
-            LlmAdapter(default_model=llm_model)
-            if llm_model
-            else get_llm_adapter()
-        )
     if validator is None:
         validator = ContentValidator()
     if analysis_repository is None:
         analysis_repository = SqliteEmployerAnalysisRepository(conn)
+    from jobctrl.infrastructure.determinations import determination_dependencies
+    from jobctrl.domain.materials.claim_verification import ModelClaimVerifier
+    from jobctrl.domain.materials.artifact_quality import ModelArtifactQualityJudge
+
+    deps = determination_dependencies(
+        conn, tenant_id=tenant_id, lane="tailoring", adapter=llm_port, model_spec=llm_model
+    )
     return GenerateCoverLetterUseCase(
         repository=repository,
-        llm=llm_port,
+        llm=deps["llm"],
         validator=validator,
+        claim_verifier=ModelClaimVerifier(**deps),
+        quality_judge=ModelArtifactQualityJudge(**deps),
+        preflight=deps["preflight"],
         publisher=publisher,
         analysis_repository=analysis_repository,
-        unit_of_work=(
-            shared_unit_of_work
-            if default_repository or unit_of_work is not None
-            else None
-        ),
+        unit_of_work=(shared_unit_of_work if default_repository or unit_of_work is not None else None),
     )
 
 
@@ -162,6 +162,7 @@ def generate_cover_letter(
     :class:`GenerateCoverLetterUseCase` directly.
     """
     from jobctrl.enrichment.availability import require_fresh_active
+
     require_fresh_active(str(job["job_id"]), expected_posting_url=job["url"], allow_unknown=True)
     _ = resume_text  # use case reads the tailored resume from the repo
     use_case = _build_use_case()
@@ -250,13 +251,29 @@ def cover_letter_by_id(
     if materials.resume_pdf is None or materials.resume_pdf.status is not ArtifactStatus.APPROVED:
         return _skipped_result(stable_job_id, reason="missing_approved_resume_pdf", url=str(job.get("url") or ""))
     if _cover_stage_succeeded(conn, tenant_id=tenant_id, job_id=stable_job_id):
-        return _skipped_result(stable_job_id, reason="already_done", url=str(job.get("url") or ""), status="already_done")
+        return _skipped_result(
+            stable_job_id, reason="already_done", url=str(job.get("url") or ""), status="already_done"
+        )
 
     from jobctrl.enrichment.availability import require_fresh_active
+
     expected_posting_url = job["url"]
-    require_fresh_active(str(stable_job_id), tenant_id=str(tenant_id), conn=conn, expected_posting_url=expected_posting_url, allow_unknown=True)
-    with claim_preparation_reservation(conn, tenant_id=tenant_id, job_id=stable_job_id,
-            stage="cover", workflow_id=None, cancel_event=cancel_event, expected_posting_url=expected_posting_url):
+    require_fresh_active(
+        str(stable_job_id),
+        tenant_id=str(tenant_id),
+        conn=conn,
+        expected_posting_url=expected_posting_url,
+        allow_unknown=True,
+    )
+    with claim_preparation_reservation(
+        conn,
+        tenant_id=tenant_id,
+        job_id=stable_job_id,
+        stage="cover",
+        workflow_id=None,
+        cancel_event=cancel_event,
+        expected_posting_url=expected_posting_url,
+    ):
         job = SqlitePreparationTargetReader(conn).load(tenant_id, stable_job_id)
     if job is None:
         return _skipped_result(stable_job_id, reason="availability_candidate_changed")
@@ -275,6 +292,7 @@ def cover_letter_by_id(
         llm_model=llm_model,
         publisher=publisher,
         unit_of_work=material_unit_of_work,
+        tenant_id=tenant_id,
     )
     if pdf_renderer is None:
         pdf_renderer = _build_pdf_renderer()
@@ -283,8 +301,12 @@ def cover_letter_by_id(
     if recovery_workflow_id:
         conn.commit()
     with claim_preparation_reservation(
-        conn, tenant_id=tenant_id, job_id=stable_job_id,
-        stage="cover", workflow_id=recovery_workflow_id, cancel_event=cancel_event,
+        conn,
+        tenant_id=tenant_id,
+        job_id=stable_job_id,
+        stage="cover",
+        workflow_id=recovery_workflow_id,
+        cancel_event=cancel_event,
         expected_posting_url=expected_posting_url,
     ):
         ensure_job_stage_rows(
@@ -315,8 +337,11 @@ def cover_letter_by_id(
                 {
                     "activityOwner": workflow_id,
                     "attemptCountBasis": "completed",
-                    **({"automaticRecovery": True, "workflowId": recovery_workflow_id, "temporalRunId": workflow_id}
-                       if recovery_workflow_id else {}),
+                    **(
+                        {"automaticRecovery": True, "workflowId": recovery_workflow_id, "temporalRunId": workflow_id}
+                        if recovery_workflow_id
+                        else {}
+                    ),
                 }
                 if workflow_id
                 else None
@@ -376,9 +401,7 @@ def cover_letter_by_id(
                     output_path=str(pdf_path),
                     created_at=utc_now(),
                 )
-                materials = outcome.materials.with_cover_letter_pdf(
-                    pdf_artifact, updated_at=utc_now()
-                )
+                materials = outcome.materials.with_cover_letter_pdf(pdf_artifact, updated_at=utc_now())
                 if material_unit_of_work is not None:
                     with material_unit_of_work:
                         commit_guard()
@@ -435,8 +458,7 @@ def cover_letter_by_id(
             started_at=started_at,
             finished_at=finished_at,
             error_code="COVER_FAILED",
-            error_message=outcome.error
-            or f"Cover letter generation failed ({outcome.status})",
+            error_message=outcome.error or f"Cover letter generation failed ({outcome.status})",
             retryable=not exhausted,
             next_action=(
                 f"jobctrl retry cover {url or stable_job_id} --reset-attempts"
@@ -452,8 +474,7 @@ def cover_letter_by_id(
             "StageFailed",
             tenant_id=tenant_id,
             level="error",
-            message=outcome.error
-            or f"Cover letter generation failed ({outcome.status})",
+            message=outcome.error or f"Cover letter generation failed ({outcome.status})",
         )
     return {
         "jobId": str(stable_job_id),
@@ -576,15 +597,18 @@ def _cover_eligibility_reason(
     ).fetchone()
     if score_stage is not None and str(score_stage["state"]) != "succeeded":
         return "score_not_current"
-    if conn.execute(
-        """
+    if (
+        conn.execute(
+            """
         SELECT 1
         FROM job_score_staleness
         WHERE tenant_id = ? AND job_id = ? AND resolved = 0
         LIMIT 1
         """,
-        (str(tenant_id), str(job_id)),
-    ).fetchone() is not None:
+            (str(tenant_id), str(job_id)),
+        ).fetchone()
+        is not None
+    ):
         return "score_stale"
 
     posting_state = conn.execute(
@@ -600,9 +624,7 @@ def _cover_eligibility_reason(
         if active_state in {"closed", "expired", "removed", "location_incompatible"}:
             return "posting_inactive"
         confidence = str(posting_state["latest_confidence"] or "").lower()
-        quarantine_reason = str(
-            posting_state["latest_quarantine_reason"] or ""
-        ).lower()
+        quarantine_reason = str(posting_state["latest_quarantine_reason"] or "").lower()
         if confidence == "low" and quarantine_reason not in {"", "none"}:
             return "posting_quarantined"
 
@@ -622,7 +644,11 @@ def _cover_eligibility_reason(
         if cover_state == "exhausted" or attempt_count >= _COVER_MAX_ATTEMPTS:
             return "cover_exhausted"
         owns_queue = cover_state == "queued" and owns_preparation_reservation(
-            conn, tenant_id=tenant_id, job_id=job_id, stage="cover", workflow_id=recovery_workflow_id,
+            conn,
+            tenant_id=tenant_id,
+            job_id=job_id,
+            stage="cover",
+            workflow_id=recovery_workflow_id,
         )
         if cover_state not in {"pending", "running", "failed", "stale"} and not owns_queue:
             return "cover_not_retryable"

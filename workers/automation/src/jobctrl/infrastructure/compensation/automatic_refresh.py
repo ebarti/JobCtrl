@@ -121,7 +121,6 @@ def refresh_automatic_compensation_benchmarks(
             recorder_conn=active_conn,
             run_id=run_id,
             opener=opener,
-            preserve_levels_fyi_source_currency=True,
         )
 
     ecb_client = compensation_feed_client(
@@ -252,8 +251,24 @@ def run_automatic_compensation_refresh(
             load_errors.append("ecb_fx_unavailable")
             warnings.add("ecb_fx_unavailable")
 
+    from jobctrl.infrastructure.compensation.interpretation import classify_observations
+    from jobctrl.domain.determinations import DeterminationFailure
+
+    try:
+        classified = classify_observations(conn, source_load.observations, tenant_id=tenant_id)
+    except DeterminationFailure as failure:
+        completed_at = _completion_timestamp(completion_clock)
+        for lease in claimed:
+            state_repository.mark_failed(
+                lease,
+                completed_at=completed_at,
+                retry_at=_shift_timestamp(completed_at, timedelta(minutes=15)),
+                error_code=failure.code,
+            )
+        conn.commit()
+        raise
     batch = canonicalize_reported_observations(
-        source_load.observations,
+        classified,
         tenant_id=tenant_id,
         fetched_at=canonical_now,
         fresh_until=fresh_until,
@@ -322,14 +337,16 @@ def run_automatic_compensation_refresh(
             # fallback into a failed slice; FX, price-level or derivation errors
             # never did and never claim that the lookup missed its source pages.
             lookup_error = (
-                _levels_lookup_error(load_errors)
-                if direct.seniority_label != benchmark_slice.seniority_label
-                else None
+                _levels_lookup_error(load_errors) if direct.seniority_label != benchmark_slice.seniority_label else None
             )
             previous = state_repository.get(benchmark_slice)
             if lookup_error and previous is not None and previous.last_result_kind != "none":
-                state_repository.mark_failed(lease, completed_at=_completion_timestamp(completion_clock),
-                                             retry_at=retry_at, error_code=lookup_error)
+                state_repository.mark_failed(
+                    lease,
+                    completed_at=_completion_timestamp(completion_clock),
+                    retry_at=retry_at,
+                    error_code=lookup_error,
+                )
                 failed_results += 1
                 continue
             state_repository.mark_result(
@@ -533,9 +550,9 @@ def _levels_fyi_targets(
         targets.setdefault(
             key,
             LevelsFyiPublicTarget(
-                role_title=benchmark_slice.title_hint,
-                location=benchmark_slice.geography.country_code,
-                seniority_label=benchmark_slice.seniority_label,
+                occupation_family_code=benchmark_slice.role_family_code,
+                country_code=benchmark_slice.geography.country_code,
+                seniority_code=benchmark_slice.seniority_label,
             ),
         )
     return tuple(targets[key] for key in sorted(targets))

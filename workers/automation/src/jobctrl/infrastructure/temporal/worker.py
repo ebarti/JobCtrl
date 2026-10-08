@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from temporalio import workflow
@@ -23,7 +22,7 @@ from jobctrl.infrastructure.temporal.concurrency import (
     activity_executor_max_workers,
     resolve_max_concurrent_activities,
 )
-from jobctrl.infrastructure.temporal.run_in_activity import set_activity_executor
+from jobctrl.infrastructure.temporal.run_in_activity import ActivityThreadPoolExecutor, set_activity_executor
 from jobctrl.infrastructure.temporal.task_queues import JOBCTRL_TASK_QUEUE
 
 
@@ -75,11 +74,11 @@ def build_worker(
         if max_concurrent_activities is not None
         else _max_concurrent_activities()
     )
-    activity_executor = ThreadPoolExecutor(
+    activity_executor = ActivityThreadPoolExecutor(
         max_workers=activity_executor_max_workers(active_max_concurrent_activities),
         thread_name_prefix="jobctrl-temporal-sync-activity",
     )
-    blocking_activity_executor = ThreadPoolExecutor(
+    blocking_activity_executor = ActivityThreadPoolExecutor(
         max_workers=activity_executor_max_workers(active_max_concurrent_activities),
         thread_name_prefix="jobctrl-blocking-activity",
     )

@@ -1,4 +1,4 @@
-import type { DemoReadModel, DemoRelativeTimestamp, DemoRouteData, DemoScenario, DemoSeed } from "./contracts.js";
+import type { DemoReadModel, DemoRelativeTimestamp, DemoRouteData, DemoSeed } from "./contracts.js";
 
 const DEMO_TIMESTAMP_PREFIX = "demo-time:";
 
@@ -16,26 +16,6 @@ export function demoTimestamp(offsetMinutes: number): DemoTimestampToken {
   return `${DEMO_TIMESTAMP_PREFIX}${offsetMinutes}`;
 }
 
-export interface MaterializedDemoScenario {
-  readonly scenarioId: string;
-  readonly operation: DemoScenario["operation"];
-  readonly steps: readonly {
-    readonly state: "queued" | "running";
-    readonly at: string;
-    readonly message: string;
-  }[];
-  readonly terminal:
-    | { readonly state: "succeeded"; readonly summary: string; readonly at: string }
-    | {
-        readonly state: "failed";
-        readonly errorCode: string;
-        readonly retryable: true;
-        readonly summary: string;
-        readonly at: string;
-      }
-    | { readonly state: "cancelled"; readonly summary: string; readonly at: string };
-}
-
 export interface MaterializedDemoSeed {
   readonly schemaVersion: DemoSeed["schemaVersion"];
   readonly seedVersion: DemoSeed["seedVersion"];
@@ -44,7 +24,6 @@ export interface MaterializedDemoSeed {
   readonly generatedAt: string;
   readonly readModel: DemoReadModel;
   readonly routeData: MaterializedDemoRouteData;
-  readonly scenarios: readonly MaterializedDemoScenario[];
   readonly receipts: readonly (Omit<DemoSeed["receipts"][number], "recordedAt"> & {
     readonly recordedAt: string;
   })[];
@@ -120,19 +99,6 @@ export function materializeDemoSeed(seed: DemoSeed, clock: DemoClock): Materiali
     generatedAt: materializeRelativeTimestamp(clock, { offsetMinutes: 0 }),
     readModel: materializeDemoReadModel(seed.readModel, clock),
     routeData: materializeRouteData(seed.routeData, clock),
-    scenarios: seed.scenarios.map((scenario) => ({
-      scenarioId: scenario.scenarioId,
-      operation: scenario.operation,
-      steps: scenario.steps.map((step) => ({
-        state: step.state,
-        at: materializeRelativeTimestamp(clock, step.at),
-        message: step.message,
-      })),
-      terminal: {
-        ...scenario.terminal,
-        at: materializeRelativeTimestamp(clock, scenario.terminal.at),
-      },
-    })),
     receipts: seed.receipts.map((receipt) => ({
       ...receipt,
       recordedAt: materializeRelativeTimestamp(clock, receipt.recordedAt),

@@ -1,742 +1,155 @@
-from __future__ import annotations
+"""Saved controls are authoritative; only posting judgments call the model."""
 
+from copy import deepcopy
 import json
 import sqlite3
-
+import pytest
 from jobctrl import config
-from jobctrl.infrastructure.discovery.location_filter import (
-    configured_local_location_accepts,
-    configured_location_filters,
-    location_matches_target,
-)
-from jobctrl.infrastructure.discovery.production_wiring import _ats_query_specs, _location_values
-from jobctrl.discovery.target_queries import build_target_role_queries, query_applies_to_source, title_matches_any_query
+from jobctrl.discovery.target_queries import query_applies_to_source
+from jobctrl.infrastructure.migrations.schema_v14 import create_exact_v14_schema
 
 
-def test_profile_target_search_overrides_discovery_queries_and_locations() -> None:
-    search_cfg = {
-        "queries": [{"query": "software engineer", "tier": 1}],
-        "locations": [{"label": "sf", "location": "San Francisco, CA"}],
-        "defaults": {"results_per_site": 100},
+@pytest.mark.parametrize("scope", ["jobspy", "ats_api", "workday", "smartextract"])
+def test_query_source_scope_is_a_literal_code(scope):
+    assert query_applies_to_source({"query": "Literal query", "source_scope": [scope]}, scope)
+    assert not query_applies_to_source(
+        {"query": "Literal query", "source_scope": ["ats_api" if scope != "ats_api" else "jobspy"]}, scope
+    )
+
+
+def test_saved_search_roles_execute_literally_without_a_second_approval():
+    raw = {
+        "queries": [{"query": "Old configured query", "tier": 2}],
+        "locations": [{"location": "Saved board location", "remote": False}],
+        "defaults": {"country_indeed": "saved-country-parameter"},
     }
-
-    merged = config._apply_profile_target_search(
-        search_cfg,
-        {
-            "roles": ["Engineering Manager", "Head of Engineering"],
-            "locations": ["Barcelona, Spain"],
-            "work_models": ["Hybrid, Remote"],
-        },
-    )
-
-    assert merged["queries"][:2] == [
-        {"query": "Engineering Manager", "tier": 1},
-        {"query": "Head of Engineering", "tier": 1},
+    target = {"roles": ["Authored role A", "Authored role B"], "profile_version": 7}
+    original = deepcopy(raw)
+    result = config._apply_profile_target_search(raw, target)
+    assert result["queries"] == [
+        {"query": "Authored role A", "tier": 1},
+        {"query": "Authored role B", "tier": 1},
     ]
-    assert {
-        "query": "Engineering Director",
-        "tier": 1,
-        "match_mode": "recall",
-        "generated_from": "target_roles",
-        "target_track": "management",
-        "seniority_floor": "manager",
-    } in merged["queries"]
-    recall_query = next(item for item in merged["queries"] if item.get("query") == "Engineering Director")
-    assert query_applies_to_source(recall_query, "jobspy")
-    assert query_applies_to_source(recall_query, "workday")
-    assert query_applies_to_source(recall_query, "ats_api")
-    assert query_applies_to_source({"query": "Engineering", "source_scope": "smart_extract"}, "smartextract")
-    assert query_applies_to_source({"query": "Engineering", "source_scope": "smartextract"}, "smart_extract")
-    assert merged["workday_max_tier"] == 1
-    assert merged["ats_max_tier"] == 1
-    assert merged["locations"] == [
-        {"label": "barcelona-spain", "location": "Barcelona, Spain", "remote": False},
-        {"label": "spain", "location": "Spain", "remote": True},
-        {"label": "europe-remote", "location": "European Union", "remote": True},
-    ]
-    assert merged["defaults"]["hours_old"] == 720
-    assert merged["defaults"]["country_indeed"] == "spain"
-    assert "Barcelona, Spain" in merged["location_accept"]
-    assert "Spain" in merged["location_accept"]
-    assert "Europe" in merged["location_accept"]
-    assert merged["location_accept_local"] == ["Barcelona, Spain"]
-    assert "Canada" in merged["location_reject_non_remote"]
+    assert result["locations"] == raw["locations"]
+    assert result["defaults"] == raw["defaults"]
+    assert result["confirmed_targets"] == target
+    assert raw == original
 
 
-def test_profile_target_search_strips_role_notes_from_queries() -> None:
-    merged = config._apply_profile_target_search(
-        {"queries": [{"query": "software engineer", "tier": 1}]},
-        {
-            "roles": [
-                "Head of Platform | Preferred work model: Remote | Onsite if required: Barcelona, Spain",
-                "CISO",
-            ],
-            "locations": [],
-            "work_models": [],
-        },
-    )
-
-    assert merged["queries"][:2] == [
-        {"query": "Head of Platform", "tier": 1},
-        {"query": "CISO", "tier": 1},
-    ]
-    assert {
-        "query": "Platform Director",
-        "tier": 1,
-        "match_mode": "recall",
-        "generated_from": "target_roles",
-        "target_track": "management",
-        "seniority_floor": "head",
-    } in merged["queries"]
-    assert {
-        "query": "Chief Information Security Officer",
-        "tier": 1,
-        "match_mode": "recall",
-        "generated_from": "target_roles",
-        "target_track": "executive",
-        "seniority_floor": "ciso",
-    } in merged["queries"]
-    assert not any(item.get("query") == "CTO" for item in merged["queries"])
 
 
-def test_recall_queries_expand_ats_internal_title_filters_without_query_pairs() -> None:
-    merged = config._apply_profile_target_search(
-        {"queries": [{"query": "software engineer", "tier": 1}]},
-        {
-            "roles": ["Head of Platform"],
-            "locations": ["Barcelona, Spain"],
-            "work_models": ["Hybrid"],
-        },
-    )
-
-    query_specs = _ats_query_specs(merged)
-    assert _location_values(merged) == ("Barcelona, Spain",)
-    assert any(item["query"] == "Head of Platform" for item in query_specs)
-    assert any(item["query"] == "Platform Director" for item in query_specs)
-    assert title_matches_any_query("Platform Director", query_specs)
-    assert not title_matches_any_query("Platform Engineering Manager", query_specs)
-
-
-def test_profile_target_locations_replace_legacy_location_accept_patterns() -> None:
-    merged = config._apply_profile_target_search(
-        {
-            "queries": [{"query": "software engineer", "tier": 1}],
-            "locations": [{"label": "zurich", "location": "Zurich"}],
-            "location_accept": ["Switzerland", "Zurich"],
-            "location": {
-                "accept_patterns": ["Remote", "Switzerland", "Zurich", "Europe", "EMEA"],
-                "reject_patterns": ["United States"],
-            },
-        },
-        {
-            "roles": ["Director of Engineering"],
-            "locations": ["Barcelona, Spain"],
-            "work_models": ["Remote, Hybrid"],
-        },
-    )
-
-    accept, reject = configured_location_filters(merged)
-    local_accept = configured_local_location_accepts(merged)
-
-    assert "Barcelona, Spain" in accept
-    assert local_accept == ["Barcelona, Spain"]
-    assert "Switzerland" not in accept
-    assert "Zurich" not in accept
-    assert location_matches_target("Barcelona, Spain (Remote)", accept=accept, reject=reject)
-    assert location_matches_target("Remote EMEA", accept=accept, reject=reject)
-    assert not location_matches_target("Switzerland - Zurich", accept=accept, reject=reject)
-
-
-def test_hybrid_target_locations_filter_to_exact_target_location() -> None:
-    merged = config._apply_profile_target_search(
-        {
-            "queries": [{"query": "software engineer", "tier": 1}],
-            "locations": [{"label": "remote", "location": "Remote", "remote": True}],
-        },
-        {
-            "roles": ["Director of Engineering"],
-            "locations": ["Barcelona, Spain"],
-            "work_models": ["Hybrid"],
-        },
-    )
-
-    accept, reject = configured_location_filters(merged)
-    local_accept = configured_local_location_accepts(merged)
-
-    assert merged["locations"] == [{"label": "barcelona-spain", "location": "Barcelona, Spain", "remote": False}]
-    assert local_accept == ["Barcelona, Spain"]
-    assert "Europe" not in accept
-    assert "EMEA" not in accept
-    assert location_matches_target("Barcelona, CT, ES", accept=accept, reject=reject)
-    assert location_matches_target("Barcelona, Spain", accept=accept, reject=reject)
-    assert not location_matches_target("Remote EMEA", accept=accept, reject=reject)
-    assert not location_matches_target("Remote Spain", accept=accept, reject=reject)
-    assert not location_matches_target("Madrid, MD, ES", accept=accept, reject=reject)
-
-
-def test_remote_european_target_locations_filter_country_and_europe_remote() -> None:
-    merged = config._apply_profile_target_search(
-        {"queries": [{"query": "software engineer", "tier": 1}]},
-        {
-            "roles": ["Director of Engineering"],
-            "locations": ["Barcelona, Spain"],
-            "work_models": ["Remote"],
-        },
-    )
-
-    accept, reject = configured_location_filters(merged)
-    local_accept = configured_local_location_accepts(merged)
-
-    assert merged["locations"] == [
-        {"label": "spain", "location": "Spain", "remote": True},
-        {"label": "europe-remote", "location": "European Union", "remote": True},
-    ]
-    assert "Barcelona, Spain" not in accept
-    assert local_accept == []
-    assert "Spain" in accept
-    assert "Europe" in accept
-    assert location_matches_target("Remote Spain", accept=accept, reject=reject)
-    assert location_matches_target("Remote EMEA", accept=accept, reject=reject)
-    assert location_matches_target("Barcelona, CT, ES", accept=accept, reject=reject)
-    assert not location_matches_target(
-        "Barcelona, CT, ES",
-        accept=accept,
-        reject=reject,
-        search_location="Spain",
-        remote_required=True,
-        is_remote=False,
-        local_accept=local_accept,
-    )
-    assert not location_matches_target("Remote United States", accept=accept, reject=reject)
-    assert not location_matches_target("Barcelona, Venezuela", accept=accept, reject=reject)
-
-
-def test_remote_plus_local_target_rejects_non_remote_country_only_hits() -> None:
-    merged = config._apply_profile_target_search(
-        {"queries": [{"query": "software engineer", "tier": 1}]},
-        {
-            "roles": ["Chief Information Officer"],
-            "locations": ["Barcelona, Spain"],
-            "work_models": ["Remote, Hybrid, On-site"],
-        },
-    )
-
-    accept, reject = configured_location_filters(merged)
-    local_accept = configured_local_location_accepts(merged)
-
-    assert "Spain" in accept
-    assert "Europe" in accept
-    assert local_accept == ["Barcelona, Spain"]
-    assert not location_matches_target(
-        "La Rinconada, AN, ES",
-        accept=accept,
-        reject=reject,
-        search_location="Spain",
-        remote_required=True,
-        is_remote=False,
-        local_accept=local_accept,
-    )
-    assert location_matches_target(
-        "Barcelona, CT, ES",
-        accept=accept,
-        reject=reject,
-        search_location="Spain",
-        remote_required=True,
-        is_remote=False,
-        local_accept=local_accept,
-    )
-    assert location_matches_target(
-        "La Rinconada, AN, ES",
-        accept=accept,
-        reject=reject,
-        search_location="Spain",
-        remote_required=True,
-        is_remote=True,
-        local_accept=local_accept,
-    )
-
-
-def test_profile_target_search_preserves_larger_configured_lookback() -> None:
-    merged = config._apply_profile_target_search(
-        {
-            "queries": [{"query": "software engineer", "tier": 1}],
-            "defaults": {"hours_old": 1440},
-        },
-        {
-            "roles": ["Director of Engineering"],
-            "locations": ["Barcelona, Spain"],
-            "work_models": ["Remote"],
-        },
-    )
-
-    assert merged["defaults"]["hours_old"] == 1440
-
-
-def test_load_search_config_reads_profile_target_search_from_db(tmp_path, monkeypatch) -> None:
+def test_saved_config_loads_literal_queries_and_criteria_without_touching_the_profile(tmp_path, monkeypatch):
     db_path = tmp_path / "jobctrl.db"
-    conn = sqlite3.connect(db_path)
-    conn.execute(
-        """
-        CREATE TABLE candidate_profiles (
-          tenant_id TEXT NOT NULL,
-          profile_id TEXT NOT NULL,
-          experience_target_role TEXT NOT NULL,
-          experience_target_locations TEXT NOT NULL,
-          experience_target_work_models TEXT NOT NULL,
-          personal_city TEXT NOT NULL DEFAULT '',
-          personal_country TEXT NOT NULL DEFAULT ''
-        )
-        """
+    settings = tmp_path / "config.json"
+    settings.write_text(
+        json.dumps({"score_criteria": "Authored scoring criteria", "target_criteria": "Authored target criteria"})
     )
+    monkeypatch.setattr(config, "DB_PATH", db_path)
+    monkeypatch.setenv("JOBCTRL_CONFIG_PATH", str(settings))
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    create_exact_v14_schema(conn)
     conn.execute(
-        """
-        INSERT INTO candidate_profiles (
-          tenant_id, profile_id, experience_target_role,
-          experience_target_locations, experience_target_work_models,
-          personal_city, personal_country
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            "local",
-            "default",
-            "Target roles: Director of Engineering; VP Engineering",
-            "",
-            "Hybrid",
-            "Barcelona",
-            "Spain",
-        ),
+        "INSERT INTO candidate_profiles(tenant_id,profile_id,version,experience_target_role,updated_at) VALUES('local','default',7,'Authored role','2026-10-07')"
+    )
+    conn.commit()
+    before = dict(conn.execute("SELECT * FROM candidate_profiles").fetchone())
+    result = config.load_search_config()
+    assert result["queries"] == [{"query": "Authored role", "tier": 1}]
+    assert result["confirmed_targets"]["profile_version"] == 7
+    assert result["confirmed_targets"]["criteria"] == ["Authored scoring criteria", "Authored target criteria"]
+    assert dict(conn.execute("SELECT * FROM candidate_profiles").fetchone()) == before
+    assert conn.execute("SELECT count(*) FROM semantic_determinations").fetchone()[0] == 0
+    conn.close()
+
+
+def test_location_and_work_model_controls_execute_without_geography_inference():
+    raw = {"defaults": {"country_indeed": "saved-board-parameter"}}
+    target = {
+        "locations": ["Authored location A", ""],
+        "work_models": ["hybrid, onsite", "remote"],
+    }
+    result = config._apply_profile_target_search(raw, target)
+    assert result["locations"] == [
+        {"label": "Authored location A", "location": "Authored location A", "remote": False},
+        {"label": "Remote", "location": "", "remote": True},
+    ]
+    assert result["defaults"] == raw["defaults"]
+    assert result["confirmed_targets"] == target
+
+
+def _saved_location_rows(tmp_path, monkeypatch, locations, models):
+    db_path = tmp_path / "jobctrl.db"
+    monkeypatch.setattr(config, "DB_PATH", db_path)
+    conn = sqlite3.connect(db_path)
+    create_exact_v14_schema(conn)
+    conn.execute(
+        "INSERT INTO candidate_profiles(tenant_id,profile_id,version,experience_target_locations,experience_target_work_models,updated_at) VALUES('local','default',7,?,?,'2026-10-07')",
+        (locations, models),
     )
     conn.commit()
     conn.close()
 
-    monkeypatch.setattr(config, "DB_PATH", db_path)
 
-    loaded = config.load_search_config()
-
-    assert [item["query"] for item in loaded["queries"][:2]] == [
-        "Director of Engineering",
-        "VP Engineering",
-    ]
-    assert any(
-        item.get("query") == "Head of Engineering"
-        and item.get("tier") == 1
-        and item.get("match_mode") == "recall"
-        and item.get("target_track") == "management"
-        and item.get("seniority_floor") == "director"
-        and "source_scope" not in item
-        for item in loaded["queries"]
-    )
-    # An accepted model-only Hybrid row does not imply the profile home location.
-    assert loaded["locations"] == []
-
-
-def test_saved_target_rows_keep_positions_and_existing_discovery_plan_snapshot(tmp_path, monkeypatch) -> None:
-    db_path = tmp_path / "jobctrl.db"
-    conn = sqlite3.connect(db_path)
-    conn.execute(
-        """CREATE TABLE candidate_profiles (
-          tenant_id TEXT NOT NULL, profile_id TEXT NOT NULL,
-          experience_target_role TEXT NOT NULL,
-          experience_target_track TEXT NOT NULL,
-          experience_target_seniority_floor TEXT NOT NULL,
-          experience_target_locations TEXT NOT NULL,
-          experience_target_work_models TEXT NOT NULL,
-          personal_city TEXT NOT NULL, personal_country TEXT NOT NULL
-        )"""
-    )
-    conn.execute(
-        "INSERT INTO candidate_profiles VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        ("local", "default", "Director of Platform", "Management", "Director",
-         "; ", "; ", "Home City", "Home Country"),
-    )
-    conn.commit()
-    monkeypatch.setattr(config, "DB_PATH", db_path)
-
-    empty_rows_plan = config.load_search_config()
-    assert empty_rows_plan["locations"] == [
-        {"label": "home-city-home-country", "location": "Home City, Home Country", "remote": False},
-    ]
-    assert empty_rows_plan["location_accept_local"] == ["Home City, Home Country"]
-
-    conn.execute(
-        """UPDATE candidate_profiles SET experience_target_locations = ?,
-          experience_target_work_models = ? WHERE tenant_id = ? AND profile_id = ?""",
-        ("; ; ; Barcelona; ", "; Remote; ; Hybrid; ", "local", "default"),
-    )
-    conn.commit()
-    running_plan = config.load_search_config()
-    running_plan_snapshot = json.dumps(running_plan, sort_keys=True)
-    assert running_plan["locations"] == [
-        {"label": "remote", "location": "Remote", "remote": True},
-        {"label": "barcelona", "location": "Barcelona", "remote": False},
-    ]
-    assert running_plan["location_accept_local"] == ["Barcelona"]
-    assert title_matches_any_query("Platform Director", running_plan["queries"])
-    assert not title_matches_any_query("Chief Platform Officer", running_plan["queries"])
-    assert sum(item.get("match_mode") == "recall" for item in running_plan["queries"]) <= 14
-
-    conn.execute(
-        """UPDATE candidate_profiles SET experience_target_role = ?,
-          experience_target_track = ?, experience_target_seniority_floor = ?,
-          experience_target_locations = ?, experience_target_work_models = ?
-          WHERE tenant_id = ? AND profile_id = ?""",
-        ("Chief Technology Officer", "Executive", "c_level", "Madrid;; London", "; Remote; On-site", "local", "default"),
-    )
-    conn.commit()
-    conn.close()
-    next_plan = config.load_search_config()
-
-    assert next_plan["locations"] == [
-        {"label": "madrid", "location": "Madrid", "remote": False},
-        {"label": "remote", "location": "Remote", "remote": True},
-        {"label": "london", "location": "London", "remote": False},
-    ]
-    assert next_plan["location_accept_local"] == ["Madrid", "London"]
-    assert next_plan["queries"] != running_plan["queries"]
-    assert json.dumps(running_plan, sort_keys=True) == running_plan_snapshot
-    assert sum(item.get("match_mode") == "recall" for item in next_plan["queries"]) <= 14
-
-
-def test_target_role_compiler_keeps_exact_queries_and_recall_cap() -> None:
-    domains = (
-        "Platform", "Engineering", "Product", "Security", "Data", "Infrastructure",
-        "Reliability", "Cloud", "Software", "Operations", "AI", "Backend",
-        "Technology", "Machine Learning", "DevOps",
-    )
-    exact = [f"Manager of {domain}" for domain in domains]
-
-    queries = build_target_role_queries(exact)
-
-    assert [item["query"] for item in queries[:len(exact)]] == exact
-    assert sum(item.get("match_mode") == "recall" for item in queries) == 14
-    assert len(queries) == len(exact) + 14
-
-
-def test_legacy_config_target_fields_are_ignored_when_profile_target_is_empty(tmp_path, monkeypatch) -> None:
-    db_path = tmp_path / "jobctrl.db"
-    dashboard_path = tmp_path / "config.json"
-    dashboard_path.write_text(
-        '{"location_filter": "Legacy City", "target_role": "Legacy Role"}',
-        encoding="utf-8",
-    )
-    conn = sqlite3.connect(db_path)
-    conn.execute(
-        """
-        CREATE TABLE candidate_profiles (
-          tenant_id TEXT NOT NULL, profile_id TEXT NOT NULL,
-          experience_target_role TEXT NOT NULL,
-          experience_target_locations TEXT NOT NULL,
-          experience_target_work_models TEXT NOT NULL,
-          personal_city TEXT NOT NULL DEFAULT '', personal_country TEXT NOT NULL DEFAULT ''
-        )
-        """
-    )
-    conn.execute(
-        "INSERT INTO candidate_profiles VALUES (?, ?, ?, ?, ?, ?, ?)",
-        ("local", "default", "", "", "", "Home City", "Home Country"),
-    )
-    conn.commit()
-    conn.close()
-    monkeypatch.setattr(config, "DB_PATH", db_path)
-    monkeypatch.setenv("JOBCTRL_CONFIG_PATH", str(dashboard_path))
-
-    loaded = config.load_search_config()
-
-    assert loaded["queries"][0]["query"] == "Software Engineer"
-    assert loaded["locations"] == [
-        {
-            "label": "home-city-home-country",
-            "location": "Home City, Home Country",
-            "remote": False,
-        }
+def test_profile_editor_serialized_rows_become_their_own_board_parameters(tmp_path, monkeypatch):
+    _saved_location_rows(tmp_path, monkeypatch, "Authored location A; Authored location B; ", "Hybrid; onsite; remote")
+    assert config.load_search_config()["locations"] == [
+        {"label": "Authored location A", "location": "Authored location A", "remote": False},
+        {"label": "Authored location B", "location": "Authored location B", "remote": False},
+        {"label": "Remote", "location": "", "remote": True},
     ]
 
 
-def test_load_search_config_prefers_database_discovery_settings(tmp_path, monkeypatch) -> None:
-    db_path = tmp_path / "jobctrl.db"
-    conn = sqlite3.connect(db_path)
-    conn.execute(
-        """
-        CREATE TABLE discovery_settings (
-          tenant_id TEXT PRIMARY KEY,
-          search_config_json TEXT NOT NULL,
-          created_at TEXT NOT NULL,
-          updated_at TEXT NOT NULL
-        )
-        """
-    )
-    conn.execute(
-        """
-        INSERT INTO discovery_settings (
-          tenant_id, search_config_json, created_at, updated_at
-        ) VALUES (?, ?, ?, ?)
-        """,
-        (
-            "local",
-            json.dumps(
-                {
-                    "boards": ["linkedin"],
-                    "defaults": {"results_per_site": 17, "hours_old": 96},
-                    "queries": [{"query": "Database Role", "tier": 1}],
-                    "locations": [{"label": "database", "location": "Barcelona, Spain", "remote": False}],
-                }
-            ),
-            "2026-06-04T00:00:00+00:00",
-            "2026-06-04T00:00:00+00:00",
-        ),
-    )
-    conn.commit()
-    conn.close()
-
-    monkeypatch.setattr(config, "DB_PATH", db_path)
-
-    loaded = config.load_search_config()
-
-    assert loaded["boards"] == ["linkedin"]
-    assert loaded["defaults"]["results_per_site"] == 17
-    assert loaded["queries"][0]["query"] == "Database Role"
-    assert loaded["locations"] == [{"label": "database", "location": "Barcelona, Spain", "remote": False}]
-
-
-def test_structured_profile_target_search_builds_track_and_seniority_aware_queries() -> None:
-    merged = config._apply_profile_target_search(
-        {"queries": [{"query": "software engineer", "tier": 1}]},
-        {
-            "roles": [],
-            "tracks": ["IC"],
-            "seniority": ["Principal"],
-            "functions": ["Platform"],
-            "specializations": ["SaaS"],
-            "locations": [],
-            "work_models": [],
-        },
-    )
-
-    assert merged["queries"] == [
-        {"query": "Principal Platform Engineer", "tier": 1},
-        {"query": "Principal Platform Architect", "tier": 1},
+def test_multiple_editor_choices_in_one_row_decode_exact_codes(tmp_path, monkeypatch):
+    _saved_location_rows(tmp_path, monkeypatch, "Authored location", "remote, hybrid, onsite")
+    assert config.load_search_config()["locations"] == [
+        {"label": "Authored location", "location": "Authored location", "remote": True},
+        {"label": "Authored location", "location": "Authored location", "remote": False},
     ]
 
 
-def test_structured_management_senior_manager_floor_excludes_manager_level_queries() -> None:
-    queries = build_target_role_queries(
-        [],
-        tracks=["management"],
-        seniority=["senior_manager"],
-        functions=["Engineering"],
+def test_invalid_board_control_only_blocks_planning_and_keeps_raw_sources(tmp_path, monkeypatch):
+    from jobctrl.discovery import activities
+    from jobctrl.infrastructure.network.politeness import PolitenessGateway
+    from temporalio.exceptions import ApplicationError
+
+    _saved_location_rows(tmp_path, monkeypatch, "Authored location", "unsupported_saved_value")
+    assert PolitenessGateway().user_agent.startswith("JobCtrl/")
+    assert config.load_source_registry()
+    assert config.load_saved_search_settings()["confirmed_targets"]["work_models"] == ["unsupported_saved_value"]
+    monkeypatch.setattr(activities, "begin_pipeline_step_attempt", lambda _scope: None)
+    with pytest.raises(ApplicationError) as raised:
+        activities.plan_discovery_sources(activities.PlanDiscoverySourcesInput(tenant_id="local"))
+    assert raised.value.type == "invalid_saved_work_model"
+    assert raised.value.non_retryable
+    assert "unsupported_saved_value" not in str(raised.value)
+
+
+def test_scoring_reads_saved_sources_without_materializing_board_controls(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from jobctrl.scoring import scorer
+    from jobctrl.domain.determinations import DeterminationFailure
+
+    _saved_location_rows(tmp_path, monkeypatch, "Authored location", "unsupported_saved_value")
+    monkeypatch.setattr(scorer, "ScoreJobUseCase", lambda **kwargs: SimpleNamespace(**kwargs))
+    use_case = scorer._build_use_case(
+        repository=object(),
+        determination_dependencies={"llm": None},
+        job_interpretation_reader=lambda _job: None,
     )
-
-    query_texts = [item["query"] for item in queries]
-    assert "Engineering Manager" not in query_texts
-    assert query_texts[:2] == ["Senior Engineering Manager", "Engineering Director"]
-    assert title_matches_any_query("Senior Engineering Manager", queries)
-    assert title_matches_any_query("Head of Engineering", queries)
-    assert not title_matches_any_query("Engineering Manager", queries)
-
-
-def test_role_agnostic_mid_ic_floor_includes_mid_and_preserves_legacy_engineer_alias() -> None:
-    canonical = build_target_role_queries(
-        [],
-        tracks=["ic"],
-        seniority=["mid"],
-        functions=["Engineering"],
-    )
-    legacy = build_target_role_queries(
-        [],
-        tracks=["ic"],
-        seniority=["engineer"],
-        functions=["Engineering"],
-    )
-
-    assert [item["query"] for item in canonical] == [
-        "Mid Software Engineer",
-        "Software Engineer",
-        "Senior Software Engineer",
-        "Lead Software Engineer",
-        "Staff Software Engineer",
-        "Principal Software Engineer",
-    ]
-    assert legacy == canonical
+    criteria = SimpleNamespace(criteria_text="Authored criteria", target_criteria=None)
+    sources = use_case.confirmed_preferences_reader(SimpleNamespace(version=7), criteria)
+    assert {source.source_id: source.text for source in sources}["target:work_models:0"] == "unsupported_saved_value"
+    with pytest.raises(DeterminationFailure) as raised:
+        use_case.confirmed_preferences_reader(SimpleNamespace(version=8), criteria)
+    assert raised.value.code == "stale_profile_version"
 
 
-def test_role_agnostic_executive_floors_distinguish_vp_svp_and_c_level() -> None:
-    def queries_for(floor: str) -> list[str]:
-        return [
-            item["query"]
-            for item in build_target_role_queries(
-                [],
-                tracks=["executive"],
-                seniority=[floor],
-                functions=["Technology"],
-            )
-        ]
-
-    assert queries_for("vp") == [
-        "VP Technology",
-        "SVP Technology",
-        "EVP Technology",
-        "CTO",
-        "Chief Technology Officer",
-    ]
-    assert queries_for("svp") == ["SVP Technology", "EVP Technology", "CTO", "Chief Technology Officer"]
-    assert queries_for("c_level") == ["CTO", "Chief Technology Officer"]
-    assert queries_for("cto") == queries_for("c_level")
-
-    vp_plan = build_target_role_queries(
-        [],
-        tracks=["executive"],
-        seniority=["vp"],
-        functions=["Technology"],
-    )
-    assert title_matches_any_query("Executive Vice President, Technology", vp_plan)
-    assert title_matches_any_query("EVP Technology", vp_plan)
-
-    svp_plan = build_target_role_queries(
-        [],
-        tracks=["executive"],
-        seniority=["svp"],
-        functions=["Technology"],
-    )
-    assert title_matches_any_query("Executive Vice President, Technology", svp_plan)
-    assert title_matches_any_query("EVP Technology", svp_plan)
-
-
-def test_partial_structured_target_search_preserves_configured_queries_when_planner_is_empty() -> None:
-    search_cfg = {"queries": [{"query": "software engineer", "tier": 1}]}
-
-    merged = config._apply_profile_target_search(
-        search_cfg,
-        {
-            "roles": [],
-            "tracks": [],
-            "seniority": ["C-level"],
-            "functions": ["Security"],
-            "specializations": [],
-            "locations": [],
-            "work_models": [],
-        },
-    )
-
-    assert merged == search_cfg
-
-
-def test_c_suite_structured_target_generates_only_chief_level_queries() -> None:
-    for seniority in ("C-level", "C suite"):
-        queries = build_target_role_queries(
-            [],
-            tracks=["Executive"],
-            seniority=[seniority],
-            functions=["Technology"],
-        )
-
-        query_texts = [item["query"] for item in queries]
-        assert query_texts == ["CTO", "Chief Technology Officer"]
-        assert not any("Director" in query or "Head of" in query or query.startswith("VP ") for query in query_texts)
-
-
-def test_source_registry_filters_america_only_sources_for_europe_target(
-    tmp_path,
-    monkeypatch,
-) -> None:
-    monkeypatch.setattr(config, "DB_PATH", tmp_path / "jobctrl.db")
-
-    registry = config.load_source_registry(
-        search_cfg={"target_region": "europe", "boards": ["linkedin"]},
-        sites_cfg={
-            "sites": [
-                {
-                    "name": "Job Bank Canada",
-                    "url": "https://www.jobbank.gc.ca/jobsearch/jobsearch?searchstring={query_encoded}",
-                    "type": "search",
-                },
-                {
-                    "name": "Wellfound",
-                    "url": "https://wellfound.com/location/spain",
-                    "type": "static",
-                },
-                {
-                    "name": "Wellfound Canada",
-                    "url": "https://wellfound.com/role/l/software-engineer/canada",
-                    "type": "static",
-                },
-                {
-                    "name": "WelcomeToTheJungle",
-                    "url": "https://www.welcometothejungle.com/en/jobs?query={query_encoded}",
-                    "type": "search",
-                },
-            ]
-        },
-        employers_cfg={"employers": {}},
-    )
-
-    by_id = {entry.source_id for entry in registry}
-    assert "smart_extract:job-bank-canada" not in by_id
-    assert "smart_extract:wellfound" in by_id
-    assert "smart_extract:wellfound-canada" not in by_id
-    assert "smart_extract:welcometothejungle" in by_id
-
-
-def test_local_source_registry_row_preserves_search_site_type(tmp_path, monkeypatch) -> None:
-    db_path = tmp_path / "jobctrl.db"
-    conn = sqlite3.connect(db_path)
-    conn.execute(
-        """
-        CREATE TABLE source_registry_entries (
-          tenant_id TEXT NOT NULL,
-          source_id TEXT NOT NULL,
-          kind TEXT NOT NULL,
-          display_name TEXT NOT NULL,
-          owner TEXT NOT NULL,
-          priority TEXT NOT NULL,
-          state TEXT NOT NULL,
-          policy_id TEXT NOT NULL,
-          seed_url TEXT,
-          created_at TEXT NOT NULL,
-          updated_at TEXT NOT NULL,
-          PRIMARY KEY (tenant_id, source_id)
-        )
-        """
-    )
-    conn.execute(
-        """
-        INSERT INTO source_registry_entries (
-          tenant_id, source_id, kind, display_name, owner, priority,
-          state, policy_id, seed_url, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            "local",
-            "smart_extract:welcometothejungle",
-            "smart_extract",
-            "WelcomeToTheJungle",
-            "system",
-            "fallback",
-            "experimental",
-            "smart_extract_experimental",
-            "https://www.welcometothejungle.com/en/jobs?query={query_encoded}",
-            "2026-05-18T00:00:00Z",
-            "2026-05-18T00:00:00Z",
-        ),
-    )
-    conn.commit()
-    conn.close()
-    monkeypatch.setattr(config, "DB_PATH", db_path)
-
-    registry = config.load_source_registry(
-        search_cfg={"target_region": "europe", "boards": ["linkedin"]},
-        sites_cfg={
-            "sites": [
-                {
-                    "name": "WelcomeToTheJungle",
-                    "url": "https://www.welcometothejungle.com/en/jobs?query={query_encoded}",
-                    "type": "search",
-                    "query_mode": "source_first",
-                }
-            ]
-        },
-        employers_cfg={"employers": {}},
-    )
-
-    by_id = {entry.source_id: entry for entry in registry}
-    assert by_id["smart_extract:welcometothejungle"].adapter_config["type"] == "search"
-    assert by_id["smart_extract:welcometothejungle"].adapter_config["query_mode"] == "source_first"
+def test_unchanged_literal_settings_preserve_native_board_parameters():
+    raw = {
+        "queries": [{"query": "Authored query", "tier": 2, "source_scope": ["jobspy"]}],
+        "locations": [{"location": "Authored location", "remote": True}],
+        "defaults": {"country_indeed": "saved-board-parameter"},
+    }
+    result = config._apply_profile_target_search(raw, {"profile_version": 1})
+    assert result == {**raw, "confirmed_targets": {"profile_version": 1}}

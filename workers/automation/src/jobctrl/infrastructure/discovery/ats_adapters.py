@@ -43,12 +43,6 @@ from jobctrl.domain.discovery.value_objects import (
 )
 from jobctrl.domain.ports.discovery import ScrapedJobPosting
 from jobctrl.domain.tenant import TenantId
-from jobctrl.infrastructure.discovery.location_filter import (
-    _matches_reject,
-    _normalize,
-    location_matches_target,
-)
-from jobctrl.discovery.title_filter import title_matches_query
 from jobctrl.infrastructure.observability.adapter_spans import adapter_fetch_span
 
 log = logging.getLogger(__name__)
@@ -116,35 +110,19 @@ class WorkdayBoardAdapter:
     """
 
     def __init__(
-        self,
-        *,
-        source_id: str,
-        employer: WorkdayEmployer,
-        http: HttpFetcher,
-        page_size: int = 20,
-        max_pages: int = 25,
-        location_accept: Iterable[str] = (),
-        location_reject: Iterable[str] = (),
+        self, *, source_id: str, employer: WorkdayEmployer, http: HttpFetcher, page_size: int = 20, max_pages: int = 25
     ) -> None:
         self._source_id = source_id
         self._employer = employer
         self._http = http
         self._page_size = page_size
         self._max_pages = max_pages
-        self._location_accept = tuple(location_accept)
-        self._location_reject = tuple(location_reject)
 
     @property
     def source_id(self) -> str:
         return self._source_id
 
-    def scrape(
-        self,
-        *,
-        tenant_id: TenantId,
-        query: str,
-        location: str,
-    ) -> Iterable[ScrapedJobPosting]:
+    def scrape(self, *, tenant_id: TenantId, query: str, location: str) -> Iterable[ScrapedJobPosting]:
         run_id = f"workday:{self._source_id}:{query}:{location}"
         results: list[ScrapedJobPosting] = []
         pages = 0
@@ -158,17 +136,9 @@ class WorkdayBoardAdapter:
         ):
             for posting in self._iter_postings(query=query, location=location):
                 results.append(posting)
-            # iter exhausted — pages updated below from the last loop
             pages = self._last_page_count
-            log.info(
-                "workday adapter %s: %d postings across %d pages",
-                self._source_id,
-                len(results),
-                pages,
-            )
+            log.info("workday adapter %s: %d postings across %d pages", self._source_id, len(results), pages)
         return results
-
-    # ----- internal -------------------------------------------------------
 
     _last_page_count: int = 0
 
@@ -180,12 +150,7 @@ class WorkdayBoardAdapter:
             payload = self._http(
                 url,
                 method="POST",
-                json_body={
-                    "appliedFacets": {},
-                    "limit": self._page_size,
-                    "offset": offset,
-                    "searchText": query,
-                },
+                json_body={"appliedFacets": {}, "limit": self._page_size, "offset": offset, "searchText": query},
             )
             postings = (payload or {}).get("jobPostings") or []
             if not postings:
@@ -201,43 +166,19 @@ class WorkdayBoardAdapter:
                 break
         self._last_page_count = pages
 
-    def _to_scraped(
-        self,
-        posting: dict[str, Any],
-        *,
-        query: str,
-        location_filter: str,
-    ) -> ScrapedJobPosting | None:
+    def _to_scraped(self, posting: dict[str, Any], *, query: str, location_filter: str) -> ScrapedJobPosting | None:
         external_path = str(posting.get("externalPath") or "").strip()
         title = str(posting.get("title") or "").strip()
         if not external_path or not title:
             return None
-        # Workday CXS sometimes returns extra postings beyond the
-        # filtered set (the API treats ``searchText`` as a soft hint).
-        # Re-apply the filter on title so the adapter contract holds:
-        # "yield postings matching the query".
-        if not title_matches_query(title, query):
-            return None
         canonical_url = f"{self._employer.base_url}/{self._employer.site_id}{external_path}"
         source_native_id = external_path.split("/")[-1] or external_path
         location = str(posting.get("locationsText") or "").strip()
-        if not location_matches_target(
-            location,
-            accept=self._location_accept,
-            reject=self._location_reject,
-            search_location=location_filter,
-        ):
-            return None
         return ScrapedJobPosting(
             posting_url=PostingUrl(value=canonical_url),
             source=Source(board=self._employer.board),
             employer=_employer_from_optional(self._employer.name),
-            metadata=JobMetadata(
-                title=title,
-                salary="",
-                description="",
-                location=location,
-            ),
+            metadata=JobMetadata(title=title, salary="", description="", location=location),
             strategy=SearchStrategy.WORKDAY_API,
             source_id=self._source_id,
             source_native_id=source_native_id,
@@ -260,22 +201,11 @@ class GreenhouseBoardAdapter:
     the public API, so adapters scrape once and yield each result.
     """
 
-    def __init__(
-        self,
-        *,
-        source_id: str,
-        board_token: str,
-        http: HttpFetcher,
-        company: str | None = None,
-        location_accept: Iterable[str] = (),
-        location_reject: Iterable[str] = (),
-    ) -> None:
+    def __init__(self, *, source_id: str, board_token: str, http: HttpFetcher, company: str | None = None) -> None:
         self._source_id = source_id
         self._board_token = board_token
         self._http = http
         self._company = company
-        self._location_accept = tuple(location_accept)
-        self._location_reject = tuple(location_reject)
 
     @property
     def source_id(self) -> str:
@@ -285,13 +215,7 @@ class GreenhouseBoardAdapter:
     def url(self) -> str:
         return f"https://boards-api.greenhouse.io/v1/boards/{self._board_token}/jobs?content=true"
 
-    def scrape(
-        self,
-        *,
-        tenant_id: TenantId,
-        query: str,
-        location: str,
-    ) -> Iterable[ScrapedJobPosting]:
+    def scrape(self, *, tenant_id: TenantId, query: str, location: str) -> Iterable[ScrapedJobPosting]:
         run_id = f"greenhouse:{self._source_id}:{query}:{location}"
         results: list[ScrapedJobPosting] = []
         with adapter_fetch_span(
@@ -310,21 +234,11 @@ class GreenhouseBoardAdapter:
                     results.append(posting)
         return results
 
-    def _to_scraped(
-        self,
-        raw: dict[str, Any],
-        *,
-        query: str,
-        location: str,
-    ) -> ScrapedJobPosting | None:
+    def _to_scraped(self, raw: dict[str, Any], *, query: str, location: str) -> ScrapedJobPosting | None:
         title = str(raw.get("title") or "").strip()
         absolute_url = str(raw.get("absolute_url") or "").strip()
         gh_id = raw.get("id")
         if not title or not absolute_url or gh_id is None:
-            return None
-        if not title_matches_query(title, query):
-            # Lightweight server-side filter so callers can pass a
-            # non-empty query without the API raising.
             return None
         canonical_url = absolute_url
         source_native_id = str(gh_id)
@@ -334,28 +248,14 @@ class GreenhouseBoardAdapter:
             loc = str(loc_obj.get("name") or "").strip()
         elif isinstance(loc_obj, str):
             loc = loc_obj.strip()
-        if not location_matches_target(
-            loc,
-            accept=self._location_accept,
-            reject=self._location_reject,
-            search_location=location,
-        ):
-            return None
         description = _html_to_text(raw.get("content"))
-        if not description:
-            return None
         company = str(raw.get("company_name") or self._company or "").strip()
         return ScrapedJobPosting(
             posting_url=PostingUrl(value=canonical_url),
             source=Source(board="greenhouse"),
             employer=_employer_from_optional(company),
-            metadata=JobMetadata(
-                title=title,
-                salary="",
-                description=description,
-                location=loc,
-            ),
-            strategy=SearchStrategy.WORKDAY_API,  # ATS family marker
+            metadata=JobMetadata(title=title, salary="", description=description, location=loc),
+            strategy=SearchStrategy.WORKDAY_API,
             source_id=self._source_id,
             source_native_id=source_native_id,
             canonical_url=canonical_url,
@@ -376,22 +276,11 @@ class LeverBoardAdapter:
     the response is machine-readable.
     """
 
-    def __init__(
-        self,
-        *,
-        source_id: str,
-        site: str,
-        http: HttpFetcher,
-        company: str | None = None,
-        location_accept: Iterable[str] = (),
-        location_reject: Iterable[str] = (),
-    ) -> None:
+    def __init__(self, *, source_id: str, site: str, http: HttpFetcher, company: str | None = None) -> None:
         self._source_id = source_id
         self._site = site
         self._http = http
         self._company = company
-        self._location_accept = tuple(location_accept)
-        self._location_reject = tuple(location_reject)
 
     @property
     def source_id(self) -> str:
@@ -401,13 +290,7 @@ class LeverBoardAdapter:
     def url(self) -> str:
         return f"https://api.lever.co/v0/postings/{self._site}?mode=json"
 
-    def scrape(
-        self,
-        *,
-        tenant_id: TenantId,
-        query: str,
-        location: str,
-    ) -> Iterable[ScrapedJobPosting]:
+    def scrape(self, *, tenant_id: TenantId, query: str, location: str) -> Iterable[ScrapedJobPosting]:
         run_id = f"lever:{self._source_id}:{query}:{location}"
         results: list[ScrapedJobPosting] = []
         with adapter_fetch_span(
@@ -426,42 +309,20 @@ class LeverBoardAdapter:
                     results.append(posting)
         return results
 
-    def _to_scraped(
-        self,
-        raw: dict[str, Any],
-        *,
-        query: str,
-        location: str,
-    ) -> ScrapedJobPosting | None:
+    def _to_scraped(self, raw: dict[str, Any], *, query: str, location: str) -> ScrapedJobPosting | None:
         text = str(raw.get("text") or "").strip()
         hosted_url = str(raw.get("hostedUrl") or raw.get("applyUrl") or "").strip()
         posting_id = str(raw.get("id") or "").strip()
-        if not text or not hosted_url or not posting_id:
-            return None
-        if not title_matches_query(text, query):
+        if not text or not hosted_url or (not posting_id):
             return None
         cats = raw.get("categories") or {}
         loc = str(cats.get("location") or "").strip() if isinstance(cats, dict) else ""
-        if not location_matches_target(
-            loc,
-            accept=self._location_accept,
-            reject=self._location_reject,
-            search_location=location,
-        ):
-            return None
         description = _lever_description(raw)
-        if not description:
-            return None
         return ScrapedJobPosting(
             posting_url=PostingUrl(value=hosted_url),
             source=Source(board="lever"),
             employer=_employer_from_optional(self._company),
-            metadata=JobMetadata(
-                title=text,
-                salary="",
-                description=description,
-                location=loc,
-            ),
+            metadata=JobMetadata(title=text, salary="", description=description, location=loc),
             strategy=SearchStrategy.WORKDAY_API,
             source_id=self._source_id,
             source_native_id=posting_id,
@@ -482,22 +343,11 @@ class AshbyBoardAdapter:
     listing endpoint returns one page of postings per board name.
     """
 
-    def __init__(
-        self,
-        *,
-        source_id: str,
-        board_name: str,
-        http: HttpFetcher,
-        company: str | None = None,
-        location_accept: Iterable[str] = (),
-        location_reject: Iterable[str] = (),
-    ) -> None:
+    def __init__(self, *, source_id: str, board_name: str, http: HttpFetcher, company: str | None = None) -> None:
         self._source_id = source_id
         self._board_name = board_name
         self._http = http
         self._company = company
-        self._location_accept = tuple(location_accept)
-        self._location_reject = tuple(location_reject)
 
     @property
     def source_id(self) -> str:
@@ -507,13 +357,7 @@ class AshbyBoardAdapter:
     def url(self) -> str:
         return f"https://api.ashbyhq.com/posting-api/job-board/{self._board_name}"
 
-    def scrape(
-        self,
-        *,
-        tenant_id: TenantId,
-        query: str,
-        location: str,
-    ) -> Iterable[ScrapedJobPosting]:
+    def scrape(self, *, tenant_id: TenantId, query: str, location: str) -> Iterable[ScrapedJobPosting]:
         run_id = f"ashby:{self._source_id}:{query}:{location}"
         results: list[ScrapedJobPosting] = []
         with adapter_fetch_span(
@@ -532,54 +376,22 @@ class AshbyBoardAdapter:
                     results.append(posting)
         return results
 
-    def _to_scraped(
-        self,
-        raw: dict[str, Any],
-        *,
-        query: str,
-        location: str,
-    ) -> ScrapedJobPosting | None:
+    def _to_scraped(self, raw: dict[str, Any], *, query: str, location: str) -> ScrapedJobPosting | None:
         if raw.get("isListed") is False:
             return None
         title = str(raw.get("title") or "").strip()
         job_url = str(raw.get("jobUrl") or raw.get("applyUrl") or "").strip()
         posting_id = str(raw.get("id") or "").strip()
-        if not title or not job_url or not posting_id:
-            return None
-        if not title_matches_query(title, query):
+        if not title or not job_url or (not posting_id):
             return None
         locations = _ashby_locations(raw)
-        # Reuse the shared reject aliases within each name's geography context.
-        # A matching secondary must not mask a rejected primary (or vice versa).
-        if any(
-            _matches_reject(_normalize(name), self._location_reject, accept=self._location_accept)
-            for name in locations
-        ):
-            return None
-        if not any(
-            location_matches_target(
-                name,
-                accept=self._location_accept,
-                reject=self._location_reject,
-                search_location=location,
-            )
-            for name in locations or [""]
-        ):
-            return None
         loc = "; ".join(locations)
         description = _ashby_description(raw)
-        if not description:
-            return None
         return ScrapedJobPosting(
             posting_url=PostingUrl(value=job_url),
             source=Source(board="ashby"),
             employer=_employer_from_optional(self._company),
-            metadata=JobMetadata(
-                title=title,
-                salary="",
-                description=description,
-                location=loc,
-            ),
+            metadata=JobMetadata(title=title, salary="", description=description, location=loc),
             strategy=SearchStrategy.WORKDAY_API,
             source_id=self._source_id,
             source_native_id=posting_id,
@@ -620,10 +432,7 @@ def _lever_description(raw: dict[str, Any]) -> str:
 
 def _ashby_description(raw: dict[str, Any]) -> str:
     return _html_to_text(
-        raw.get("descriptionPlain")
-        or raw.get("descriptionHtml")
-        or raw.get("description")
-        or raw.get("jobDescription")
+        raw.get("descriptionPlain") or raw.get("descriptionHtml") or raw.get("description") or raw.get("jobDescription")
     )
 
 

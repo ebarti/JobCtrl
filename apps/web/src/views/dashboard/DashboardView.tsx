@@ -92,7 +92,7 @@ export function DashboardView() {
               {outcomes.isFetching && !outcomes.data ? (
                 <Empty title="Loading outcome suggestions." />
               ) : null}
-              {outcomes.data ? <OutcomeSuggestionsPanel suggestions={pendingSuggestions} /> : null}
+              {outcomes.data ? <OutcomeSuggestionsPanel suggestions={pendingSuggestions} interpretationStatus={outcomes.data.interpretationStatus} /> : null}
             </section>
           </div>
         </div>

@@ -42,7 +42,7 @@ from jobctrl.domain.contact.outreach_gates import (
     OutreachClaimProvenance,
 )
 from jobctrl.domain.identifiers import JobId, canonical_job_id
-from jobctrl.domain.materials.value_objects import ArtifactStatus
+from jobctrl.domain.ports.artifact_review import ArtifactStatus
 from jobctrl.domain.ports.events import EventPublisher
 from jobctrl.domain.tenant import TenantId
 from jobctrl.state import record_job_event
@@ -123,9 +123,7 @@ class SqliteOutreachThreadRepository:
             ),
         )
 
-    def _load_send_logs(
-        self, tenant_id: TenantId, thread_id: str
-    ) -> tuple[OutreachSendLog, ...]:
+    def _load_send_logs(self, tenant_id: TenantId, thread_id: str) -> tuple[OutreachSendLog, ...]:
         rows = self._conn.execute(
             """
             SELECT send_log_id, thread_id, draft_id, channel, sent_at, logged_at
@@ -169,8 +167,7 @@ class SqliteOutreachThreadRepository:
                 body_text=str(row["body_text"] or ""),
                 gate_results=DraftGateResults.from_read_model(_decode(row["gate_results_json"])),
                 provenance=tuple(
-                    OutreachClaimProvenance.from_read_model(item)
-                    for item in _decode_list(row["provenance_json"])
+                    OutreachClaimProvenance.from_read_model(item) for item in _decode_list(row["provenance_json"])
                 ),
                 created_at=str(row["created_at"] or ""),
                 approved_at=row["approved_at"],
@@ -273,12 +270,25 @@ class SqliteOutreachThreadRepository:
                         draft.reason,
                     ),
                 )
+                if draft.gate_results.determination_ids:
+                    from jobctrl.infrastructure.determinations import save_artifact_anchors
+
+                    save_artifact_anchors(
+                        self._conn,
+                        tenant_id=tenant,
+                        artifact_kind="outreach",
+                        artifact_id=draft.draft_id,
+                        generation=draft.generation,
+                        determination_id=draft.gate_results.determination_ids[0],
+                        quality_determination_id=draft.gate_results.determination_ids[1],
+                        anchors=draft.gate_results.line_anchors,
+                        require_pass=draft.gate_results.passed,
+                        expected_entity_id=str(thread.contact_id),
+                    )
 
     # ---------------------------------------------------------------- events
 
-    def _emit_events(
-        self, tenant_id: TenantId, thread: OutreachThread, previous: OutreachThread | None
-    ) -> None:
+    def _emit_events(self, tenant_id: TenantId, thread: OutreachThread, previous: OutreachThread | None) -> None:
         tenant = str(tenant_id)
         thread_id = str(thread.thread_id)
         job_id = thread.job_id or None

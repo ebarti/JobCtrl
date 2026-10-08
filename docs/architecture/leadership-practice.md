@@ -16,7 +16,7 @@ thinking-partner research. No implementation is authorized by this page.
 The current [Candidate Profile](../user/candidate-profile.md) owns canonical
 facts and its read-only Evidence Map. Current [Interview Prep](materials.md#stored-interview-preparation)
 owns job-specific preparation and revisioned personal notes. Required-bullet
-coaching is an opt-in deterministic aid for saved profile wording and missing
+coaching is an opt-in model-assisted aid for saved profile wording and missing
 evidence; none of these establishes a leadership assessment.
 
 ### Practice loop
@@ -118,3 +118,10 @@ invalidating affected interpretations. Acceptance requires inspectable provenanc
 uncertainty and user choice throughout the loop. Private episodes and book
 excerpts are excluded. This design adds no APIs, storage specification, schemas,
 UI or validated coaching claims.
+
+
+## Semantic Determination Authority
+
+Required-bullet coaching is an opt-in model-assisted capability whose findings cite saved sources and versions. The same determination authority applies to semantic judgments across the product; word lists and canned questions cannot replace the model.
+
+See [the decision](../decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.

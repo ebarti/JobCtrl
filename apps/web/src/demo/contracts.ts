@@ -6,7 +6,6 @@ export type DemoAppMode = Extract<AppMode, "demo">;
 
 export const DEMO_CAPABILITY_CLASSES = [
   "browser_local",
-  "simulated_async",
   "rehearsed_external",
   "unavailable",
 ] as const;
@@ -27,26 +26,6 @@ export type ApiClientResponse<TMethod extends keyof ApiClientPort> = ApiClientPo
   ? TResponse
   : never;
 
-export const DEMO_SIMULATED_ASYNC_OPERATIONS = [
-  "renderResumeReviewDraft",
-  "ensureCurrentResumeMaterials",
-  "retryFailedJobs",
-  "runPendingPreparation",
-  "rescoreJob",
-  "rescoreJobsNotOnCurrentScoringPolicy",
-  "retailorJob",
-  "tailorJob",
-  "retailorCurrentPolicy",
-  "runPipelineStages",
-  "generateOutreachDraft",
-  "reviseOutreachDraft",
-  "retryStage",
-  "runJobStage",
-  "generateMaterials",
-  "generateInterviewPrep",
-] as const satisfies readonly (keyof ApiClientPort)[];
-export type DemoSimulatedAsyncOperation = (typeof DEMO_SIMULATED_ASYNC_OPERATIONS)[number];
-
 export const DEMO_EXTERNAL_REHEARSAL_OPERATIONS = [
   "openArtifact",
   "applyJob",
@@ -57,46 +36,6 @@ export type DemoExternalRehearsalOperation = (typeof DEMO_EXTERNAL_REHEARSAL_OPE
 export interface DemoRelativeTimestamp {
   /** Offset from the injected scenario clock, not a wall-clock timestamp. */
   readonly offsetMinutes: number;
-}
-
-export type DemoScenarioTerminal =
-  | {
-      readonly state: "succeeded";
-      readonly summary: string;
-    }
-  | {
-      readonly state: "failed";
-      readonly errorCode: string;
-      readonly retryable: true;
-      readonly summary: string;
-    }
-  | {
-      readonly state: "cancelled";
-      readonly summary: string;
-    };
-
-export interface DemoQueuedScenarioStep {
-  readonly state: "queued";
-  readonly at: DemoRelativeTimestamp;
-  readonly message: string;
-}
-
-export interface DemoRunningScenarioStep {
-  readonly state: "running";
-  readonly at: DemoRelativeTimestamp;
-  readonly message: string;
-}
-
-/**
- * A scenario can only describe a valid queued -> running -> terminal sequence.
- * The scheduler is deliberately deferred to P1; this is immutable input data.
- */
-export interface DemoScenario {
-  readonly scenarioId: string;
-  readonly capability: "simulated_async";
-  readonly operation: DemoSimulatedAsyncOperation;
-  readonly steps: readonly [DemoQueuedScenarioStep, DemoRunningScenarioStep];
-  readonly terminal: DemoScenarioTerminal & { readonly at: DemoRelativeTimestamp };
 }
 
 export type DemoReceiptKind =
@@ -123,7 +62,6 @@ export interface DemoReceipt {
   /** Dynamic P3b receipts add bounded operation/entity identity only. */
   readonly operation?:
     | DemoExternalRehearsalOperation
-    | DemoSimulatedAsyncOperation
     | "discoverySourcePreview";
   readonly scenarioId?: string;
   readonly runId?: string;
@@ -260,7 +198,6 @@ export interface DemoSeedValue {
   readonly artifacts: DemoArtifacts;
   readonly readModel: DemoReadModel;
   readonly routeData: DemoRouteData;
-  readonly scenarios: readonly DemoScenario[];
   readonly receipts: readonly DemoReceipt[];
 }
 

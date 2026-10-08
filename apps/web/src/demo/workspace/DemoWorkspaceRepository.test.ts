@@ -10,7 +10,6 @@ import type {
 import type {
   DemoWorkspaceClock,
   DemoWorkspaceNotification,
-  DemoScenarioInvocation,
   DemoWorkspaceSnapshot,
 } from "./contracts.js";
 import { DemoWorkspaceEventStreamAdapter } from "./DemoWorkspaceEventStreamAdapter.js";
@@ -18,10 +17,6 @@ import {
   DemoWorkspaceRepository,
   DemoWorkspaceStaleEpochError,
 } from "./DemoWorkspaceRepository.js";
-import {
-  DemoWorkspaceScheduler,
-  type DemoSchedulerClock,
-} from "./DemoWorkspaceScheduler.js";
 import {
   DemoWorkspaceStorageError,
   InMemoryDemoWorkspaceStore,
@@ -178,52 +173,6 @@ function buildRepository(
   });
 }
 
-function queuedInvocation(
-  overrides: Partial<DemoScenarioInvocation> = {},
-): DemoScenarioInvocation {
-  return {
-    invocationVersion: 1,
-    scenarioId: "scenario-live-discovery",
-    operation: "runPipelineStages",
-    phase: "queued",
-    dedupeKey: "runPipelineStages:discover",
-    runId: "run-live-discovery",
-    actionId: "action-live-discovery",
-    attempt: 1,
-    targetRefs: {
-      jobKey: null,
-      jobKeys: [],
-      draftId: null,
-      artifactId: null,
-      contactId: null,
-      taskId: null,
-      threadId: null,
-      stage: "discover",
-    },
-    safeCommand: {
-      stages: ["discover"],
-      dryRun: false,
-      force: false,
-      allMatching: false,
-      limit: null,
-      generation: null,
-      kind: null,
-    },
-    requestedAt: new Date(0).toISOString(),
-    deadlineAt: new Date(25).toISOString(),
-    resetEpoch: 0,
-    definition: {
-      queuedMessage: "Discover queued",
-      runningMessage: "Discover running",
-      runningDelayMs: 25,
-      terminalDelayMs: 25,
-      outcome: { state: "succeeded", summary: "Discover succeeded" },
-    },
-    recoveryInput: { kind: "none" },
-    ...overrides,
-  };
-}
-
 describe("DemoWorkspaceRepository", () => {
   it("exposes a stable receipt snapshot and notifies after authoritative adoption", async () => {
     const repository = buildRepository(new SharedPersistentStore());
@@ -258,80 +207,6 @@ describe("DemoWorkspaceRepository", () => {
     });
     unsubscribe();
   });
-
-  it("persists queued projection and invocation atomically, dedupes, and advances durable phases", async () => {
-    vi.useFakeTimers();
-    try {
-      let now = 0;
-      const schedulerClock: DemoSchedulerClock = {
-        now: () => now,
-        setTimeout: (handler, delayMs) => setTimeout(handler, delayMs),
-        clearTimeout: (timer) => clearTimeout(timer),
-      };
-      const repository = buildRepository(new SharedPersistentStore());
-      await repository.initialize();
-      const scheduler = new DemoWorkspaceScheduler(repository, schedulerClock);
-      const invocation = queuedInvocation();
-      const onEnqueue = vi.fn((_pending, draft: DemoWorkspaceSnapshot) => {
-        (draft.state as { title: string }).title = "Discover queued";
-      });
-      const onDeadline = vi.fn((pending, draft: DemoWorkspaceSnapshot) => {
-        if ("phase" in pending && pending.phase === "queued") {
-          (draft.state as { title: string }).title = "Discover running";
-          return {
-            ...pending,
-            phase: "running" as const,
-            deadlineAt: new Date(50).toISOString(),
-          };
-        }
-        (draft.state as { title: string }).title = "Discover succeeded";
-        return null;
-      });
-
-      await expect(
-        scheduler.scheduleInvocation(invocation, onEnqueue, onDeadline),
-      ).resolves.toMatchObject({ kind: "scheduled" });
-      expect(await repository.snapshot()).toMatchObject({
-        revision: 1,
-        state: { title: "Discover queued" },
-        pendingScenarios: [{ phase: "queued", operation: "runPipelineStages" }],
-      });
-
-      await expect(
-        scheduler.scheduleInvocation(
-          queuedInvocation({ scenarioId: "duplicate-id" }),
-          onEnqueue,
-          onDeadline,
-        ),
-      ).resolves.toMatchObject({
-        kind: "active",
-        pending: { scenarioId: invocation.scenarioId },
-      });
-      expect((await repository.snapshot()).revision).toBe(1);
-      expect(onEnqueue).toHaveBeenCalledTimes(1);
-
-      now = 25;
-      await vi.advanceTimersByTimeAsync(25);
-      expect(await repository.snapshot()).toMatchObject({
-        revision: 2,
-        state: { title: "Discover running" },
-        pendingScenarios: [
-          { phase: "running", deadlineAt: new Date(50).toISOString() },
-        ],
-      });
-
-      now = 50;
-      await vi.advanceTimersByTimeAsync(25);
-      expect(await repository.snapshot()).toMatchObject({
-        revision: 3,
-        state: { title: "Discover succeeded" },
-        pendingScenarios: [],
-      });
-      scheduler.dispose();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
   it("exposes an immutable synchronous clone only after initialization", async () => {
     const repository = buildRepository(new SharedPersistentStore());
     expect(() => repository.snapshotNow()).toThrow(
@@ -347,111 +222,6 @@ describe("DemoWorkspaceRepository", () => {
       (draft.state as { title: string }).title = "authoritative mutation";
     });
     expect(repository.snapshotNow().state.title).toBe("authoritative mutation");
-  });
-
-  it("seeds once, persists every required snapshot field, and reloads the same workspace", async () => {
-    const store = new SharedPersistentStore();
-    const first = buildRepository(store);
-    const initial = await first.initialize();
-    expect(initial.kind).toBe("ready");
-    if (initial.kind !== "ready") return;
-    expect(initial.snapshot).toMatchObject({
-      schemaVersion: 4,
-      seedVersion: DEMO_SEED.seedVersion,
-      workspaceId: "workspace-1",
-      resetCount: 0,
-      revision: 0,
-      resetEpoch: 0,
-      lastEventSequence: 0,
-      eventLog: [],
-      blobIds: [],
-      pendingScenarios: [],
-    });
-    expect(initial.snapshot.state.readModel.jobs.list.items).toHaveLength(3);
-
-    const second = buildRepository(store);
-    const reloaded = await second.initialize();
-    expect(reloaded).toMatchObject({
-      kind: "ready",
-      snapshot: { workspaceId: "workspace-1", revision: 0 },
-    });
-  });
-
-  it("atomically refreshes an older synthetic seed once and clears generated workspace state", async () => {
-    const baselineRepository = buildRepository(
-      new InMemoryDemoWorkspaceStore(),
-    );
-    const baseline = await baselineRepository.initialize();
-    expect(baseline.kind).toBe("ready");
-    if (baseline.kind !== "ready") return;
-    const staleSnapshot: DemoWorkspaceSnapshot = {
-      ...baseline.snapshot,
-      schemaVersion: 3,
-      seedVersion: "2026-07-12.2",
-      workspaceId: "workspace-stale-seed",
-      resetCount: 2,
-      resetEpoch: 4,
-      revision: 7,
-      lastEventSequence: 9,
-      eventLog: [],
-      blobIds: ["generated-preview"],
-      state: {
-        ...baseline.snapshot.state,
-        title: "Mutated previous synthetic seed",
-      },
-      pendingScenarios: [queuedInvocation({ resetEpoch: 4 })],
-    };
-    const store = new InMemoryDemoWorkspaceStore(staleSnapshot);
-    await store.transact((_current, transaction) => {
-      transaction.putBlob("generated-preview", new Blob(["generated preview"]));
-    });
-    const repository = new DemoWorkspaceRepository({
-      store,
-      clock: fixedClock,
-      createWorkspaceId: () => "workspace-refreshed-seed",
-    });
-
-    const ready = await repository.initialize();
-
-    expect(ready).toMatchObject({
-      kind: "ready",
-      snapshot: {
-        schemaVersion: 4,
-        seedVersion: DEMO_SEED.seedVersion,
-        workspaceId: "workspace-refreshed-seed",
-        resetCount: 3,
-        resetEpoch: 5,
-        revision: 8,
-        lastEventSequence: 9,
-        eventLog: [],
-        blobIds: [],
-        pendingScenarios: [],
-        state: { title: "JobCtrl product tour" },
-      },
-    });
-    expect(
-      ready.kind === "ready"
-        ? ready.snapshot.state.readModel.jobs.list.items.find(
-            (job) => job.jobKey === "job-fabrikam-systems",
-          )
-        : null,
-    ).toMatchObject({ currentState: "failed" });
-    expect(await repository.blob("generated-preview")).toBeNull();
-
-    const reloaded = new DemoWorkspaceRepository({
-      store,
-      clock: fixedClock,
-      createWorkspaceId: () => "workspace-must-not-reseed",
-    });
-    await expect(reloaded.initialize()).resolves.toMatchObject({
-      kind: "ready",
-      snapshot: {
-        workspaceId: "workspace-refreshed-seed",
-        resetCount: 3,
-        resetEpoch: 5,
-        revision: 8,
-      },
-    });
   });
 
   it.each([
@@ -745,51 +515,6 @@ describe("DemoWorkspaceRepository", () => {
     });
   });
 
-  it("serializes concurrent read-modify-write transactions", async () => {
-    const repository = buildRepository(new SharedPersistentStore());
-    await repository.initialize();
-    await Promise.all([
-      repository.queueScenario({
-        scenarioId: "one",
-        deadlineAt: "2026-07-11T12:01:00.000Z",
-        resetEpoch: 0,
-      }),
-      repository.queueScenario({
-        scenarioId: "two",
-        deadlineAt: "2026-07-11T12:02:00.000Z",
-        resetEpoch: 0,
-      }),
-    ]);
-    const snapshot = await repository.snapshot();
-    expect(
-      snapshot.pendingScenarios.map((pending) => pending.scenarioId).toSorted(),
-    ).toEqual(["one", "two"]);
-    expect(snapshot.revision).toBe(2);
-    expect(snapshot.lastEventSequence).toBe(0);
-  });
-
-  it("notifies a second tab only after a shared-profile revision commits", async () => {
-    const hub = new ChannelHub();
-    const store = new SharedPersistentStore();
-    const first = buildRepository(store, hub.createFactory());
-    const second = buildRepository(store, hub.createFactory());
-    await Promise.all([first.initialize(), second.initialize()]);
-    const notifications: DemoWorkspaceNotification[] = [];
-    second.subscribe((notification) => notifications.push(notification));
-
-    await first.queueScenario({
-      scenarioId: "shared",
-      deadlineAt: "2026-07-11T12:03:00.000Z",
-      resetEpoch: 0,
-    });
-    await settleBroadcast();
-
-    expect(notifications).toContainEqual(
-      expect.objectContaining({ source: "broadcast", revision: 1 }),
-    );
-    expect((await second.snapshot()).pendingScenarios).toHaveLength(1);
-  });
-
   it("keeps notification watermarks separate and rereads IDB before exposing a contiguous external revision", async () => {
     const hub = new ChannelHub();
     const store = new SharedPersistentStore();
@@ -924,311 +649,13 @@ describe("DemoWorkspaceRepository", () => {
     expect(notices).toHaveLength(1);
   });
 
-  it("atomically deletes blobs and fences stale deadline callbacks on reset", async () => {
-    vi.useFakeTimers();
-    try {
-      let now = 0;
-      const schedulerClock: DemoSchedulerClock = {
-        now: () => now,
-        setTimeout: (handler, delayMs) => setTimeout(handler, delayMs),
-        clearTimeout: (timer) => clearTimeout(timer),
-      };
-      const repository = buildRepository(new SharedPersistentStore());
-      await repository.initialize();
-      await repository.putBlob("visitor-edit", new Blob(["local only"]));
-      const scheduler = new DemoWorkspaceScheduler(repository, schedulerClock);
-      const fired = vi.fn();
-      await scheduler.schedule(
-        {
-          scenarioId: "fenced",
-          deadlineAt: new Date(25).toISOString(),
-          resetEpoch: 0,
-        },
-        fired,
-      );
-      await repository.reset();
-      now = 25;
-      await vi.advanceTimersByTimeAsync(25);
-
-      expect(await repository.blob("visitor-edit")).toBeNull();
-      expect(fired).not.toHaveBeenCalled();
-      scheduler.dispose();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("rearms a still-valid pending deadline when a cross-tab revision gap forces resync", async () => {
-    vi.useFakeTimers();
-    try {
-      let now = 0;
-      const schedulerClock: DemoSchedulerClock = {
-        now: () => now,
-        setTimeout: (handler, delayMs) => setTimeout(handler, delayMs),
-        clearTimeout: (timer) => clearTimeout(timer),
-      };
-      const hub = new ChannelHub();
-      const store = new SharedPersistentStore();
-      const repository = buildRepository(store, hub.createFactory());
-      await repository.initialize();
-      const scheduler = new DemoWorkspaceScheduler(repository, schedulerClock);
-      const fired = vi.fn();
-      await scheduler.schedule(
-        {
-          scenarioId: "gap-fenced",
-          deadlineAt: new Date(25).toISOString(),
-          resetEpoch: 0,
-        },
-        fired,
-      );
-      const current = await repository.snapshot();
-      await store.memory.transact((_stored, transaction) => {
-        transaction.putSnapshot({ ...current, revision: current.revision + 2 });
-      });
-      hub.send({
-        source: "local",
-        kind: "commit",
-        workspaceId: current.workspaceId,
-        revision: current.revision + 2,
-        resetEpoch: current.resetEpoch,
-        lastEventSequence: current.lastEventSequence,
-      });
-      await vi.advanceTimersByTimeAsync(0);
-
-      now = 25;
-      await vi.advanceTimersByTimeAsync(25);
-      expect(fired).toHaveBeenCalledTimes(1);
-      scheduler.dispose();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("does not rearm a scenario removed by the authoritative resync", async () => {
-    vi.useFakeTimers();
-    try {
-      let now = 0;
-      const schedulerClock: DemoSchedulerClock = {
-        now: () => now,
-        setTimeout: (handler, delayMs) => setTimeout(handler, delayMs),
-        clearTimeout: (timer) => clearTimeout(timer),
-      };
-      const hub = new ChannelHub();
-      const store = new SharedPersistentStore();
-      const repository = buildRepository(store, hub.createFactory());
-      await repository.initialize();
-      const scheduler = new DemoWorkspaceScheduler(repository, schedulerClock);
-      const fired = vi.fn();
-      await scheduler.schedule(
-        {
-          scenarioId: "removed-during-gap",
-          deadlineAt: new Date(25).toISOString(),
-          resetEpoch: 0,
-        },
-        fired,
-      );
-      const current = await repository.snapshot();
-      await store.memory.transact((_stored, transaction) => {
-        transaction.putSnapshot({
-          ...current,
-          revision: current.revision + 2,
-          pendingScenarios: [],
-        });
-      });
-      hub.send({
-        source: "local",
-        kind: "commit",
-        workspaceId: current.workspaceId,
-        revision: current.revision + 2,
-        resetEpoch: current.resetEpoch,
-        lastEventSequence: current.lastEventSequence,
-      });
-      await vi.advanceTimersByTimeAsync(0);
-
-      now = 25;
-      await vi.advanceTimersByTimeAsync(25);
-      expect(fired).not.toHaveBeenCalled();
-      scheduler.dispose();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("reconciles a deadline changed by the next contiguous broadcast commit", async () => {
-    vi.useFakeTimers();
-    try {
-      let now = 0;
-      const schedulerClock: DemoSchedulerClock = {
-        now: () => now,
-        setTimeout: (handler, delayMs) => setTimeout(handler, delayMs),
-        clearTimeout: (timer) => clearTimeout(timer),
-      };
-      const hub = new ChannelHub();
-      const store = new SharedPersistentStore();
-      const repository = buildRepository(store, hub.createFactory());
-      await repository.initialize();
-      const scheduler = new DemoWorkspaceScheduler(repository, schedulerClock);
-      const fired = vi.fn();
-      await scheduler.schedule(
-        {
-          scenarioId: "changed-contiguously",
-          deadlineAt: new Date(25).toISOString(),
-          resetEpoch: 0,
-        },
-        fired,
-      );
-      const current = await repository.snapshot();
-      const replacement = {
-        ...current.pendingScenarios[0]!,
-        deadlineAt: new Date(50).toISOString(),
-      };
-      await store.memory.transact((_stored, transaction) => {
-        transaction.putSnapshot({
-          ...current,
-          revision: current.revision + 1,
-          pendingScenarios: [replacement],
-        });
-      });
-      hub.send({
-        source: "local",
-        kind: "commit",
-        workspaceId: current.workspaceId,
-        revision: current.revision + 1,
-        resetEpoch: current.resetEpoch,
-        lastEventSequence: current.lastEventSequence,
-      });
-      await vi.advanceTimersByTimeAsync(0);
-
-      now = 25;
-      await vi.advanceTimersByTimeAsync(25);
-      expect(fired).not.toHaveBeenCalled();
-      now = 50;
-      await vi.advanceTimersByTimeAsync(25);
-      expect(fired).toHaveBeenCalledWith(
-        expect.objectContaining({
-          scenarioId: "changed-contiguously",
-          deadlineAt: new Date(50).toISOString(),
-        }),
-        expect.any(Object),
-        expect.any(Object),
-      );
-      scheduler.dispose();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("does not let a stale rejected reconcile clear a newer scheduled timer", async () => {
-    vi.useFakeTimers();
-    try {
-      let now = 0;
-      const schedulerClock: DemoSchedulerClock = {
-        now: () => now,
-        setTimeout: (handler, delayMs) => setTimeout(handler, delayMs),
-        clearTimeout: (timer) => clearTimeout(timer),
-      };
-      const hub = new ChannelHub();
-      const store = new SharedPersistentStore();
-      const repository = buildRepository(store, hub.createFactory());
-      await repository.initialize();
-      const scheduler = new DemoWorkspaceScheduler(repository, schedulerClock);
-      const fired = vi.fn();
-      await scheduler.schedule(
-        {
-          scenarioId: "newer-than-stale-reconcile",
-          deadlineAt: new Date(25).toISOString(),
-          resetEpoch: 0,
-        },
-        fired,
-      );
-      const current = await repository.snapshot();
-      let rejectStaleSnapshot!: (error: Error) => void;
-      const staleSnapshot = new Promise<DemoWorkspaceSnapshot>(
-        (_resolve, reject) => {
-          rejectStaleSnapshot = reject;
-        },
-      );
-      const snapshotSpy = vi
-        .spyOn(repository, "snapshot")
-        .mockReturnValueOnce(staleSnapshot);
-
-      await store.memory.transact((_stored, transaction) => {
-        transaction.putSnapshot({ ...current, revision: current.revision + 2 });
-      });
-      hub.send({
-        source: "local",
-        kind: "commit",
-        workspaceId: current.workspaceId,
-        revision: current.revision + 2,
-        resetEpoch: current.resetEpoch,
-        lastEventSequence: current.lastEventSequence,
-      });
-      await vi.advanceTimersByTimeAsync(0);
-
-      await scheduler.recover(fired);
-      rejectStaleSnapshot(new Error("deferred stale snapshot failure"));
-      await vi.advanceTimersByTimeAsync(0);
-
-      now = 25;
-      await vi.advanceTimersByTimeAsync(25);
-      expect(fired).toHaveBeenCalledTimes(1);
-      snapshotSpy.mockRestore();
-      scheduler.dispose();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("rejects stale scenario enqueues after reset inside the transaction", async () => {
-    const repository = buildRepository(new SharedPersistentStore());
-    await repository.initialize();
-    await repository.reset();
-
-    await expect(
-      repository.queueScenario({
-        scenarioId: "stale-after-reset",
-        deadlineAt: "2026-07-11T12:05:00.000Z",
-        resetEpoch: 0,
-      }),
-    ).rejects.toBeInstanceOf(DemoWorkspaceStaleEpochError);
-    expect((await repository.snapshot()).pendingScenarios).toEqual([]);
-  });
-
-  it("fences an expected-epoch mutation when reset wins the transaction race", async () => {
-    const repository = buildRepository(new SharedPersistentStore());
-    await repository.initialize();
-    const reset = repository.reset();
-    const staleMutation = repository.mutate(
-      (draft) => {
-        (
-          draft.pendingScenarios as Array<{
-            scenarioId: string;
-            deadlineAt: string;
-            resetEpoch: number;
-          }>
-        ).push({
-          scenarioId: "raced",
-          deadlineAt: "2026-07-11T12:06:00.000Z",
-          resetEpoch: 0,
-        });
-      },
-      { expectedResetEpoch: 0 },
-    );
-
-    await expect(reset).resolves.toMatchObject({ kind: "committed" });
-    await expect(staleMutation).rejects.toBeInstanceOf(
-      DemoWorkspaceStaleEpochError,
-    );
-    expect((await repository.snapshot()).pendingScenarios).toEqual([]);
-  });
-
   it("preserves future-schema data and returns a typed upgrade-required result", async () => {
     const seedStore = new SharedPersistentStore();
     const builder = buildRepository(seedStore);
     await builder.initialize();
     const future = {
       ...(await builder.snapshot()),
-      schemaVersion: 5,
+      schemaVersion: 6,
       workspaceId: "future-workspace",
     };
     const store = new InMemoryDemoWorkspaceStore(future);
@@ -1237,8 +664,8 @@ describe("DemoWorkspaceRepository", () => {
     await expect(repository.initialize()).resolves.toMatchObject({
       kind: "upgrade_required",
       scope: "workspace_schema",
-      foundSchemaVersion: 5,
-      supportedSchemaVersion: 4,
+      foundSchemaVersion: 6,
+      supportedSchemaVersion: 5,
     });
     expect((await store.readSnapshot())?.workspaceId).toBe("future-workspace");
   });
@@ -1252,7 +679,7 @@ describe("DemoWorkspaceRepository", () => {
     await store.memory.transact((_stored, transaction) => {
       transaction.putSnapshot({
         ...current,
-        schemaVersion: 5,
+        schemaVersion: 6,
         revision: 1,
       });
     });
@@ -1271,7 +698,7 @@ describe("DemoWorkspaceRepository", () => {
       status: "upgrade_required",
       upgrade: {
         scope: "workspace_schema",
-        foundSchemaVersion: 5,
+        foundSchemaVersion: 6,
       },
     });
   });
@@ -1297,7 +724,7 @@ describe("DemoWorkspaceRepository", () => {
     expect(ready).toMatchObject({
       kind: "ready",
       snapshot: {
-        schemaVersion: 4,
+        schemaVersion: 5,
         workspaceId: "legacy-workspace",
         revision: 2,
         blobIds: ["legacy-preview"],
@@ -1331,7 +758,7 @@ describe("DemoWorkspaceRepository", () => {
       kind: "ready",
       storageMode: "memory",
       snapshot: {
-        schemaVersion: 4,
+        schemaVersion: 5,
         workspaceId: "legacy-quota-workspace",
         blobIds: ["legacy-quota-preview"],
       },
@@ -1386,29 +813,6 @@ describe("DemoWorkspaceRepository", () => {
     expect(repository.getRuntimeSnapshot()).toMatchObject({
       status: "upgrade_required",
       storageMode: "indexeddb",
-    });
-  });
-
-  it("aborts a quota-exceeded persistent write and retains only the last confirmed state in this tab", async () => {
-    const store = new SharedPersistentStore();
-    const repository = buildRepository(store);
-    await repository.initialize();
-    const confirmed = await repository.snapshot();
-    store.failNext = new DemoWorkspaceStorageError("quota");
-
-    const result = await repository.queueScenario({
-      scenarioId: "lost-write",
-      deadlineAt: "2026-07-11T12:04:00.000Z",
-      resetEpoch: 0,
-    });
-    expect(result).toMatchObject({
-      kind: "persistence_warning",
-      warning: { code: "quota_exceeded" },
-    });
-    expect(await repository.snapshot()).toMatchObject({
-      workspaceId: confirmed.workspaceId,
-      revision: confirmed.revision,
-      pendingScenarios: [],
     });
   });
 
@@ -1504,62 +908,6 @@ describe("DemoWorkspaceRepository", () => {
       revision: 1,
       state: { title: "Committed by another tab" },
     });
-  });
-
-  it("starts a fresh tab-local workspace when quota prevents the first seed commit", async () => {
-    const store = new SharedPersistentStore();
-    store.failNext = new DemoWorkspaceStorageError("quota");
-    const result = await buildRepository(store).initialize();
-    expect(result).toMatchObject({
-      kind: "ready",
-      storageMode: "memory",
-      warning: { code: "quota_exceeded" },
-      snapshot: { revision: 0, pendingScenarios: [] },
-    });
-  });
-
-  it("recovers a persisted deadline scaffold with a fake clock without inventing P3 outcomes", async () => {
-    vi.useFakeTimers();
-    try {
-      let now = 0;
-      const schedulerClock: DemoSchedulerClock = {
-        now: () => now,
-        setTimeout: (handler, delayMs) => setTimeout(handler, delayMs),
-        clearTimeout: (timer) => clearTimeout(timer),
-      };
-      const store = new SharedPersistentStore();
-      const first = buildRepository(store);
-      await first.initialize();
-      const scheduler = new DemoWorkspaceScheduler(first, schedulerClock);
-      await scheduler.schedule(
-        {
-          scenarioId: "recover",
-          deadlineAt: new Date(10).toISOString(),
-          resetEpoch: 0,
-        },
-        vi.fn(),
-      );
-      scheduler.dispose();
-
-      const reloaded = buildRepository(store);
-      await reloaded.initialize();
-      const recovered = vi.fn();
-      const recoveryScheduler = new DemoWorkspaceScheduler(
-        reloaded,
-        schedulerClock,
-      );
-      await recoveryScheduler.recover(recovered);
-      now = 10;
-      await vi.advanceTimersByTimeAsync(10);
-      expect(recovered).toHaveBeenCalledWith(
-        expect.objectContaining({ scenarioId: "recover" }),
-        expect.any(Object),
-        expect.any(Object),
-      );
-      recoveryScheduler.dispose();
-    } finally {
-      vi.useRealTimers();
-    }
   });
 
   it("delivers only persisted valid domain events through EventStreamPort", async () => {

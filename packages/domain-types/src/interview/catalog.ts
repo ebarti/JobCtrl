@@ -92,17 +92,17 @@ export interface InterviewSelectedQuestion {
   questionId: string; cardRevision: string; cardDigest: string;
   rubricRevision: string; rubricDigest: string; answerFormat: InterviewAnswerFormat;
   selectionRationale: string; snapshot: InterviewQuestionCard;
-  evidenceSelectionMode: "user_selected" | "deterministic";
+  evidenceSelectionMode: "user_selected" | "model" | "deterministic";
   selectedEvidenceIds: string[];
 }
 /** Generation-time inputs remain available after current profile/job/catalog changes. */
 export interface InterviewGenerationContext {
-  schemaVersion: "1";
+  schemaVersion: "1" | "2";
   catalogBinding: InterviewCatalogBinding;
   contextDigest: string;
   selectedQuestionIds: string[];
   selectedQuestions: InterviewSelectedQuestion[];
-  selectionMode: "user_selected" | "deterministic";
+  selectionMode: "user_selected" | "model" | "deterministic";
   interviewStage: InterviewStage;
   interviewFormat: InterviewFormat;
   roleLens: InterviewRoleLens;
@@ -117,6 +117,7 @@ export interface InterviewGenerationContext {
   fitReport: { generation: number; employerAnalysisGeneration: number; profileSnapshotVersion: number; status: "current" | "stale_excluded" } | null;
   approvedMaterials: { materialId: string; generation: number; sha256: string }[];
   model: { model: string; promptVersion: string; gateVersion: string };
+  determinations?: { plan: string; claimVerification: string[]; quality?: string | undefined } | undefined;
 }
 export type InterviewFactualSupport = "accepted_profile_fact" | "hypothetical" | "new_user_statement" | "needs_clarification";
 export interface InterviewQuestionMetadata {
@@ -130,6 +131,8 @@ export interface InterviewQuestionMetadata {
   sourceGuidanceRefs: string[];
   factualSupport: InterviewFactualSupport;
   userEditStatus: "generated" | "user_edited";
+  lineAnchors?: { lineId: string; text: string; evidenceIds: string[]; requirementIds: string[];
+    transformType: "evidence_reframed" | "hypothetical" | "clarification" | "advice"; reason: string }[] | undefined;
 }
 export const INTERVIEW_STALE_REASONS = ["catalog_changed", "profile_changed", "job_changed", "employer_analysis_changed", "approved_materials_changed", "legacy_unbound"] as const;
 export type InterviewStaleReason = (typeof INTERVIEW_STALE_REASONS)[number];

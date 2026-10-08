@@ -113,8 +113,8 @@ def _insert_ready_job(
             ),
         )
     from .availability_fixture import seed_fresh_availability
-    seed_fresh_availability(conn, str(job_id), str(tenant_id))
 
+    seed_fresh_availability(conn, str(job_id), str(tenant_id))
 
 
 def _insert_profile(conn: sqlite3.Connection, tenant_id: str, version: int) -> None:
@@ -125,6 +125,64 @@ def _insert_profile(conn: sqlite3.Connection, tenant_id: str, version: int) -> N
         """,
         (tenant_id, version, TIMESTAMP),
     )
+
+
+@pytest.mark.parametrize("failure_code", ["provider_unavailable", "budget_denied", "repeat_equivalence_uncertain"])
+def test_an_unresolved_candidate_does_not_stall_the_next_apply_claim(conn, monkeypatch, failure_code):
+    from jobctrl.domain.determinations import DeterminationFailure
+
+    blocked_id = "90000000-0000-4000-8000-000000000091"
+    clear_id = "90000000-0000-4000-8000-000000000092"
+    _insert_ready_job(conn, LOCAL_TENANT, blocked_id, url="https://example.test/jobs/a")
+    _insert_ready_job(conn, LOCAL_TENANT, clear_id, url="https://example.test/jobs/b")
+    conn.commit()
+    monkeypatch.setattr("jobctrl.apply.launcher.get_connection", lambda: conn)
+    monkeypatch.setattr("jobctrl.apply.launcher.add_event", lambda _message: None)
+    visited = []
+
+    def prepare(_connection, *, target_job_id, tenant_id):
+        visited.append(str(target_job_id))
+        if str(target_job_id) == blocked_id:
+            raise DeterminationFailure(failure_code)
+
+    monkeypatch.setattr("jobctrl.domain.apply.repeat_application.prepare_repeat_application", prepare)
+    # Exercise selection and the durable claim only; no application is submitted.
+    claimed = acquire_job(tenant_id=LOCAL_TENANT, approval_required=False)
+    assert claimed["job_id"] == clear_id
+    assert visited == [blocked_id, clear_id]
+    event = conn.execute(
+        "SELECT job_id,payload_json FROM job_events WHERE event_type='RepeatApplicationCheckBlocked'"
+    ).fetchone()
+    assert event["job_id"] == blocked_id
+    assert json.loads(event["payload_json"])["failureCode"] == failure_code
+    assert (
+        conn.execute("SELECT state FROM job_stage_states WHERE job_id=? AND stage='apply'", (clear_id,)).fetchone()[0]
+        == "running"
+    )
+    assert conn.execute("SELECT COUNT(*) FROM job_events WHERE event_type='ApplicationSubmitted'").fetchone()[0] == 0
+
+
+def test_repeat_block_events_record_only_a_changed_failure_state(conn, monkeypatch):
+    from jobctrl.domain.determinations import DeterminationFailure
+
+    job_id = "90000000-0000-4000-8000-000000000093"
+    _insert_ready_job(conn, LOCAL_TENANT, job_id, url="https://example.test/jobs/blocked")
+    conn.commit()
+    monkeypatch.setattr("jobctrl.apply.launcher.get_connection", lambda: conn)
+    failure = ["repeat_equivalence_uncertain"]
+
+    def prepare(_connection, **kwargs):
+        raise DeterminationFailure(failure[0])
+
+    monkeypatch.setattr("jobctrl.domain.apply.repeat_application.prepare_repeat_application", prepare)
+    for _ in range(4):
+        assert acquire_job(tenant_id=LOCAL_TENANT, approval_required=False) is None
+    assert conn.execute("SELECT COUNT(*) FROM job_events WHERE event_type='RepeatApplicationCheckBlocked'").fetchone()[0] == 1
+    failure[0] = "budget_denied"
+    for _ in range(3):
+        assert acquire_job(tenant_id=LOCAL_TENANT, approval_required=False) is None
+    assert conn.execute("SELECT COUNT(*) FROM job_events WHERE event_type='RepeatApplicationCheckBlocked'").fetchone()[0] == 2
+    assert conn.execute("SELECT COUNT(*) FROM job_events WHERE event_type='ApplicationSubmitted'").fetchone()[0] == 0
 
 
 def _insert_approval_with_dry_run(
@@ -767,14 +825,17 @@ def test_late_apply_completion_does_not_overwrite_cancellation(
     ).fetchone()
     assert state is not None
     assert state["state"] == "canceled"
-    assert conn.execute(
-        """
+    assert (
+        conn.execute(
+            """
         SELECT COUNT(*) FROM job_events
         WHERE tenant_id = ? AND job_id = ?
           AND event_type = 'ApplicationSubmitted'
         """,
-        (LOCAL_TENANT, LOCAL_JOB_ID),
-    ).fetchone()[0] == 0
+            (LOCAL_TENANT, LOCAL_JOB_ID),
+        ).fetchone()[0]
+        == 0
+    )
 
 
 def test_matching_terminal_event_reconciles_running_state_without_duplication(
@@ -837,14 +898,17 @@ def test_matching_terminal_event_reconciles_running_state_without_duplication(
         (LOCAL_TENANT, LOCAL_JOB_ID),
     ).fetchone()
     assert state["state"] == "skipped"
-    assert conn.execute(
-        """
+    assert (
+        conn.execute(
+            """
         SELECT COUNT(*) FROM job_events
         WHERE tenant_id = ? AND job_id = ?
           AND event_type = 'DryRunCompleted'
         """,
-        (LOCAL_TENANT, LOCAL_JOB_ID),
-    ).fetchone()[0] == 1
+            (LOCAL_TENANT, LOCAL_JOB_ID),
+        ).fetchone()[0]
+        == 1
+    )
 
 
 def _record_submitted_application(

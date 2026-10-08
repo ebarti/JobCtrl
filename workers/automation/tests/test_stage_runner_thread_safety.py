@@ -19,12 +19,13 @@ This file pins both invariants so they never silently regress.
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
 
-from jobctrl.database import get_connection, init_db
+from jobctrl.database import close_connection, get_connection, init_db
 from jobctrl.domain.identifiers import generate_job_id
 from jobctrl.infrastructure.materials import SqliteMaterialsRepository
 from jobctrl.infrastructure.profile import factory as profile_factory
@@ -32,17 +33,21 @@ from jobctrl.state import set_stage_state, ensure_job_stage_rows
 
 
 @pytest.fixture()
-def db(tmp_path: Path, monkeypatch) -> sqlite3.Connection:
+def db(tmp_path: Path, monkeypatch) -> Iterator[sqlite3.Connection]:
     db_path = tmp_path / "jobctrl.db"
-    init_db(db_path)
     # Force ``get_connection()`` to use the temp DB path so worker threads
     # build their own thread-local connection against the same DB the
-    # test fixture initialised.
-    monkeypatch.setenv("JOBCTRL_DIR", str(tmp_path))
-    return get_connection()
+    # test fixture initialised. JOBCTRL_DIR is read at import time, so changing
+    # the environment here would keep using the shared session database.
+    monkeypatch.setattr("jobctrl.database.DB_PATH", db_path)
+    connection = init_db(db_path)
+    try:
+        yield connection
+    finally:
+        close_connection(db_path)
 
 
-def test_thread_local_sqlite_connection_isolation(db: sqlite3.Connection) -> None:
+def test_thread_local_sqlite_connection_isolation(db: sqlite3.Connection, tmp_path: Path) -> None:
     """``get_connection()`` is the per-thread SQLite cache that the stage
     runners rely on after the cross-thread fix. Pin that two threads see
     two different connection objects so a future refactor can't silently
@@ -50,6 +55,8 @@ def test_thread_local_sqlite_connection_isolation(db: sqlite3.Connection) -> Non
     ``ProgrammingError: SQLite objects created in a thread can only be
     used in that same thread``)."""
 
+    assert get_connection() is db
+    assert Path(db.execute("PRAGMA database_list").fetchone()[2]) == tmp_path / "jobctrl.db"
     main_thread_conn_id = id(get_connection())
 
     def worker_gets_own_conn() -> tuple[int, int]:

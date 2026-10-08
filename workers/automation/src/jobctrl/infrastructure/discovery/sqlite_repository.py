@@ -835,7 +835,6 @@ class SqliteJobRepository:
                 continue
             basis = content_match_basis(
                 incoming_key=incoming_key,
-                incoming_description=description,
                 candidate_title=existing["title"],
                 candidate_employer=stored_employer,
                 candidate_descriptions=(

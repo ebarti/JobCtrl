@@ -427,9 +427,9 @@ consent read, and exact denied/granted cookie boundary.
 
 ## Verify
 
-Schema v12 migrations must run with JobCtrl stopped and must write a separate
-candidate. For a synthetic exact-v11 source, exercise the private boundary with
-`python -m jobctrl.infrastructure.migrations.v11_to_v12_execute --source
+Schema v14 migrations must run with JobCtrl stopped and must write a separate
+candidate. For a synthetic exact-v13 source, exercise the private boundary with
+`python -m jobctrl.infrastructure.migrations.v13_to_v14_execute --source
 <source.db> --candidate <candidate.db>`. The command never installs the
 candidate. Normal installations use `jobctrl update`, whose native lifecycle
 owns quiescence, paired backup, candidate activation, readiness, and rollback.
@@ -460,8 +460,9 @@ runs the native launcher race suite together with the cross-runtime migration
 boundary (Go opens the candidate with the locked Python migration runtime,
 then the TypeScript API reopens it); `distribution.yml` audits the fail-closed
 release contracts when dependency locks or packaging inputs change — the
-surface Dependabot PRs touch; `docs-site.yml` and `demo-site.yml` build (and
-on `main`, deploy) their sites. Two workflows deliberately take no paths
+surface Dependabot PRs touch; `docs-site.yml` builds and verifies its rendered
+site in Chromium, and `demo-site.yml` builds its site. Both deploy on `main`.
+Two workflows deliberately take no paths
 filter: `release-check.yml` (any file can leak PII) and `repo-scripts.yml`,
 whose `scripts:test` suite asserts contracts across inputs that sprawl the
 repository (docs launch copy, version parity into `launcher.go` and the
@@ -834,10 +835,10 @@ state; inspect the log with `corepack pnpm dev:logs docs`.
 `scripts/check-docs-site-links.mjs`, which fails if any href/src emitted into
 the built site does not resolve to a built page or asset (this catches links
 to pages relocated by `rewrites`, which VitePress's source-level dead-link
-check cannot see). Together they are the docs link-integrity gate; CI runs
-them on pushes to `main`, and maintainers can run the docs workflow manually for
-pull requests after review.
-(`.github/workflows/docs-site.yml`). Mermaid diagrams render client-side in
+check cannot see). Together they are the docs link-integrity gate. The docs
+workflow (`.github/workflows/docs-site.yml`) runs these checks and the rendered
+Chromium regression gate on matching pull requests and pushes to `main`, before
+uploading the site artifact. It also supports manual runs. Mermaid diagrams render client-side in
 the browser, so a build that passes can still contain a diagram that fails to
 parse. `corepack pnpm docs:check:runtime` starts a fresh preview and checks hydration,
 images, navigation, responsive diagrams, search, the comparison screenshot-carousel

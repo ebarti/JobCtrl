@@ -42,10 +42,9 @@ async function harness(
 }
 
 describe("DemoExternalRehearsalExecutor initial slice", () => {
-  it("keeps its execute table exhaustive for the three assigned methods", () => {
+  it("keeps its execute table exhaustive for the two local rehearsal methods", () => {
     expect(DEMO_INITIAL_EXTERNAL_REHEARSAL_OPERATIONS).toEqual([
       "openArtifact",
-      "applyJob",
       "markApplied",
     ]);
   });
@@ -108,75 +107,6 @@ describe("DemoExternalRehearsalExecutor initial slice", () => {
     expect(open).not.toHaveBeenCalled();
   });
 
-  it("forces apply into a completed no-effect dry run with typed events and safe receipt", async () => {
-    const { executor, repository } = await harness();
-    const before = repository.snapshotNow();
-    const response = await executor.execute("applyJob", [
-      JOB,
-      { dryRun: false, headless: true, limit: 3, model: "caller-provider" },
-    ]);
-
-    expect(Object.keys(response).sort()).toEqual([
-      "action",
-      "actionId",
-      "command",
-      "eventCursor",
-      "jobKey",
-      "message",
-      "ok",
-      "result",
-      "runId",
-      "status",
-      "workflowId",
-    ]);
-    expect(response).toMatchObject({
-      ok: true,
-      action: "apply",
-      status: "dry_run_complete",
-      jobKey: JOB,
-      command: {
-        action: "apply",
-        jobKey: JOB,
-        dryRun: true,
-        headless: false,
-        limit: 3,
-        model: "simulated",
-      },
-      result: { simulated: true, externalEffectOccurred: false, result: "dry_run" },
-    });
-    const after = repository.snapshotNow();
-    const job = after.state.readModel.jobs.list.items.find((item) => item.jobKey === JOB)!;
-    expect(job.applyStatus).toBe(before.state.readModel.jobs.list.items[0]!.applyStatus);
-    expect(job.appliedAt).toBe(before.state.readModel.jobs.list.items[0]!.appliedAt);
-    expect(after.state.readModel.apply.queue.items[0]?.latestApplyRun).toMatchObject({
-      runId: response.runId,
-      dryRun: true,
-      status: "dry_run_complete",
-    });
-    expect(after.state.readModel.runs.details[response.runId]).toMatchObject({
-      status: "dry_run_complete",
-      inputSummary: { simulated: true, operation: "applyJob", dryRun: true },
-    });
-    const events = after.eventLog.slice(before.eventLog.length).map((record) => record.event);
-    expect(events.map((event) => event.eventType)).toEqual([
-      "ApplyRunStarted",
-      "ApplyRunEventRecorded",
-    ]);
-    expect(events.some((event) => event.eventType === "ApplySubmitIntended")).toBe(false);
-    expect(events.some((event) => event.eventType === "ApplicationSubmitted")).toBe(false);
-    const receipt = after.state.receipts.at(-1)!;
-    expect(receipt).toMatchObject({
-      kind: "application",
-      operation: "applyJob",
-      entityId: JOB,
-      simulated: true,
-      externalEffectOccurred: false,
-    });
-    expect(JSON.stringify({ receipt, events, input: after.state.readModel.runs.details[response.runId]?.inputSummary }))
-      .not.toContain("caller-provider");
-    expect(scanDemoPrivacy(JSON.stringify({ receipt, events }))).toEqual([]);
-  });
-
   it("records an explicitly simulated applied projection without a submission event", async () => {
     const { executor, repository } = await harness();
     const before = repository.snapshotNow();
@@ -228,37 +158,5 @@ describe("DemoExternalRehearsalExecutor initial slice", () => {
     expect(JSON.stringify({ receipt, events, audit: detail.auditHistory[0] })).not.toContain(
       "outside.invalid",
     );
-  });
-
-  it("rejects invalid job IDs without mutating events or receipts", async () => {
-    const { executor, repository } = await harness();
-    const before = repository.snapshotNow();
-
-    await expect(executor.execute("applyJob", ["job-missing", {}])).rejects.toBeInstanceOf(
-      DemoExternalResourceNotFoundError,
-    );
-    await expect(executor.execute("markApplied", ["job-missing", {}])).rejects.toBeInstanceOf(
-      DemoExternalResourceNotFoundError,
-    );
-    const after = repository.snapshotNow();
-    expect(after.lastEventSequence).toBe(before.lastEventSequence);
-    expect(after.state.receipts).toEqual(before.state.receipts);
-  });
-
-  it("never touches network, provider, browser automation, or messaging globals", async () => {
-    const fetchSpy = vi.fn();
-    const xhrSpy = vi.fn();
-    const eventSourceSpy = vi.fn();
-    vi.stubGlobal("fetch", fetchSpy);
-    vi.stubGlobal("XMLHttpRequest", xhrSpy);
-    vi.stubGlobal("EventSource", eventSourceSpy);
-    const { executor } = await harness();
-
-    await executor.execute("applyJob", [JOB, { dryRun: false }]);
-    await executor.execute("markApplied", ["job-fabrikam-systems", {}]);
-
-    expect(fetchSpy).not.toHaveBeenCalled();
-    expect(xhrSpy).not.toHaveBeenCalled();
-    expect(eventSourceSpy).not.toHaveBeenCalled();
   });
 });

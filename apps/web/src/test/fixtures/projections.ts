@@ -10,6 +10,7 @@ import type {
   RepeatApplicationAssessment,
   CredentialsResponse,
   DashboardSummary,
+  DeterminationEnvelope,
   DailyDigest,
   DiscoverySettingsResponse,
   EvidenceMapResponse,
@@ -147,11 +148,20 @@ export const sampleCompensationSummary: JobCompensationSummary = {
   },
 };
 
+export const samplePostedDetermination: DeterminationEnvelope = {
+  determination_id: "c".repeat(64), tenant_id: "local", entity_id: "job-2",
+  kind: "posted_compensation", schema_version: "1", prompt_version: "posted-compensation-v1",
+  provider: "synthetic", model: "synthetic", lane: "compensation",
+  input_fingerprint: "d".repeat(64), created_at: "2026-06-20T08:00:00Z",
+  result: { parse_state: "parsed_range", currency: "EUR", period: "year", component: "base_salary", minimum: 70000, maximum: 90000, confidence: "high", citations: [{source_id:"salary",quote:"EUR 70000-90000/year",exact_values:["70000","90000"]}], rationale:"Explicit synthetic decision" },
+};
+
 export const sampleCompensationAudit: JobCompensationAudit = {
   projectionVersion: 3,
   posted: {
     ok: true,
     recordStatus: "recorded",
+    determination: samplePostedDetermination,
     fact: {
       tenantId: "local",
       jobId: "job-2",
@@ -245,8 +255,10 @@ export const sampleCompensationAudit: JobCompensationAudit = {
           reason: "Seven reported rows support the estimate.",
         },
       ],
+      determinations: [],
       evidence: [
         {
+          determinationId: null,
           sourceId: "levels_fyi",
           displayName: "Levels.fyi",
           sourceUrl: "https://www.levels.fyi/companies/globex/salaries/software-engineer",
@@ -855,7 +867,8 @@ export const sampleApplicationOutcomes: ApplicationOutcomeListResponse = {
       suggestionId: "suggestion-1",
       jobKey: sampleSecondaryJob.jobKey,
       evidenceId: "evidence-1",
-      suggestedKind: "interview",
+      determination: null, citations: [],
+    suggestedKind: "interview",
       confidence: 0.84,
       rationale: "Recruiter reply indicates an interview request.",
       status: "pending",
@@ -1160,7 +1173,6 @@ export function makeArtifactTailoringExplanation(
     },
     evidence: {
       requiredIds: [],
-      seniorityIds: [],
       representedIds: [],
       missingIds: [],
       verifiedMetricCount: null,
@@ -1177,7 +1189,7 @@ export function makeArtifactTailoringExplanation(
       passed: true,
       verdict: "PASS",
       score: 0.91,
-      minScore: 0.82,
+
       issues: [],
       unsupportedClaims: [],
       fabrications: [],
@@ -1209,7 +1221,7 @@ export function makeArtifactDetail(
   artifact: ArtifactSummary = sampleArtifact,
   tailoringExplanation: ArtifactTailoringExplanation | null = null,
 ): ArtifactDetail {
-  return { ok: true, artifact, layoutBoxes: [], tailoringExplanation };
+  return { ok: true, artifact, layoutBoxes: [], determinations: [], tailoringExplanation };
 }
 
 export const sampleDashboardSummary: DashboardSummary = {
@@ -1792,7 +1804,6 @@ export const sampleSettingsResponse: SettingsResponse = {
     analysisLegs: ["claude", "codex", "google"],
     tailoringGeneratorModels: null,
     tailoringJudgeModel: null,
-    tailoringJudgeMinScore: 0.82,
     applyMaxBudgetUsd: 5,
     applyTimeoutSeconds: 900,
     scoreCriteria: "Platform reliability and team leadership.",
@@ -1816,7 +1827,6 @@ export const sampleSettingsResponse: SettingsResponse = {
     analysisLegs: { value: ["claude", "codex", "google"], source: "default", activation: "next_analysis", editable: true },
     tailoringGeneratorModels: { value: null, source: "default", activation: "next_workflow", editable: true },
     tailoringJudgeModel: { value: null, source: "default", activation: "next_workflow", editable: true },
-    tailoringJudgeMinScore: { value: 0.82, source: "default", activation: "next_workflow", editable: true },
     applyMaxBudgetUsd: { value: 5, source: "default", activation: "next_apply_job", editable: true },
     applyTimeoutSeconds: { value: 900, source: "default", activation: "next_apply_job", editable: true },
     scoreCriteria: { value: "Platform reliability and team leadership.", source: "persisted", activation: "next_run", editable: true },
@@ -1932,8 +1942,6 @@ export const sampleDiscoverySettingsResponse: DiscoverySettingsResponse = {
     hoursOld: 72,
     schedulingEnabled: false,
     scheduleCron: "0 7 * * *",
-    roleFilterMode: "auto",
-    roleFilterModel: null,
     maxParallelFamilies: 1,
     crawlUserAgentProduct: "JobCtrl",
     crawlUserAgentContact: "demo-contact",
@@ -1948,8 +1956,6 @@ export const sampleDiscoverySettingsResponse: DiscoverySettingsResponse = {
     hoursOld: { value: 72, source: "persisted" as const, activation: "next_run" as const, editable: true as const },
     schedulingEnabled: { value: false, source: "persisted" as const, activation: "restart" as const, editable: true as const },
     scheduleCron: { value: "0 7 * * *", source: "persisted" as const, activation: "restart" as const, editable: true as const },
-    roleFilterMode: { value: "auto" as const, source: "default" as const, activation: "next_source_family" as const, editable: true as const },
-    roleFilterModel: { value: null, source: "default" as const, activation: "next_source_family" as const, editable: true as const },
     maxParallelFamilies: { value: 1, source: "default" as const, activation: "next_run" as const, editable: true as const },
     crawlUserAgentProduct: { value: "JobCtrl", source: "default" as const, activation: "next_source_family" as const, editable: true as const },
     crawlUserAgentContact: { value: "demo-contact", source: "default" as const, activation: "next_source_family" as const, editable: true as const },

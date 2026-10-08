@@ -1,3 +1,4 @@
+import { readBoundDetermination, readDetermination } from "./semantic-determinations.js";
 import type {
   MarketCompensationGeographyScope,
   MarketCompensationEstimate,
@@ -250,12 +251,16 @@ export function getMarketCompensationEstimate(
   if (usesEmployerPostedMarketAuthority(row.source_snapshot_json)) {
     return notRequested(job);
   }
+  const authority = estimateDeterminations(db, row);
+  if (authority === null) return {ok:true, recordStatus:"unavailable",jobKey:job.job_id,failureCode:"compensation_determination_unavailable"};
   return {
     ok: true,
     recordStatus: "recorded",
     estimate: mapEstimateRow(
       row,
+      db,
       loadMarketCompensationBenchmarkLineage(db, tenantId, row.estimator_version),
+      authority,
     ),
   };
 }
@@ -281,12 +286,41 @@ function notRequested(job: JobRow): MarketCompensationEstimateResponse {
   };
 }
 
+/** Binding and code equality only; the model owns all classifications. */
+function estimateDeterminations(db: SqliteDatabase, row: MarketCompensationRecordedEstimateRow) {
+  const job = readBoundDetermination(db,row.tenant_id,"market_compensation",row.job_id,row.estimator_version,"job_interpretation");
+  if (!job || job.entity_id !== row.job_id || job.kind !== "job_interpretation" || job.lane !== "enrichment") return null;
+  const jobResult = job.result as {occupation_family:{value:string};seniority:{value:string};places:Array<{country_code:string|null}>};
+  if (row.occupation_code !== jobResult.occupation_family.value || row.seniority_label !== jobResult.seniority.value) return null;
+  const determinations = [job];
+  const evidence = parseObjects(row.selected_evidence_json);
+  if (row.estimate_state === "estimated_range" && evidence.length === 0) return null;
+  for (const source of evidence) {
+    if (typeof source.determination_id !== "string" || typeof source.classification_entity_id !== "string") return null;
+    const classification = readDetermination(db,row.tenant_id,source.determination_id);
+    if (!classification || classification.kind !== "benchmark_classification" || classification.entity_id !== source.classification_entity_id || classification.lane !== "compensation") return null;
+    // Private local paths and credential-bearing URLs stay behind the existing privacy boundary.
+    if (/(?:\/users\/|file:\/\/|[?&](?:token|api[_-]?key|password|secret)=)/i.test(JSON.stringify(classification.result))) return null;
+    const result = classification.result as {occupation_family:{value:string};seniority:{value:string};places:Array<{country_code:string|null}>};
+    const countryCodes = source.country_codes;
+    if (result.occupation_family.value !== source.occupation_family_code || result.seniority.value !== source.seniority_code ||
+      result.occupation_family.value !== jobResult.occupation_family.value || result.seniority.value !== jobResult.seniority.value ||
+      !Array.isArray(countryCodes) || !result.places.some(place => place.country_code !== null && countryCodes.includes(place.country_code) && jobResult.places.some(jobPlace => jobPlace.country_code === place.country_code))) return null;
+    if (!determinations.some(item => item.determination_id === classification.determination_id)) determinations.push(classification);
+  }
+  return determinations;
+}
+
 function mapEstimateRow(
   row: MarketCompensationRecordedEstimateRow,
+  db: SqliteDatabase,
   benchmarkLineage: MarketCompensationEstimate["benchmarkLineage"],
+  determinations: NonNullable<ReturnType<typeof estimateDeterminations>>,
 ): MarketCompensationEstimate {
   const sources = parseSources(row.source_snapshot_json);
+  const evidence = parseEvidence(row.selected_evidence_json);
   const base = {
+    determinations,
     tenantId: row.tenant_id,
     jobKey: row.job_id,
     estimateState: row.estimate_state,
@@ -307,32 +341,13 @@ function mapEstimateRow(
     matchScope: matchScope(row.match_scope),
     sources,
     factors: parseFactors(row.factor_reasons_json),
-    evidence: parseEvidence(row.selected_evidence_json),
+    evidence,
     warnings: parseWarnings(row.warnings_json),
     benchmarkLineage,
     estimatorVersion: row.estimator_version,
     estimatedAt: row.estimated_at,
   };
 
-  // Older canonical benchmarks recorded the population mismatch as a warning
-  // while still emitting a target-level range. Keep the observed evidence,
-  // but enforce applicability on passive reads as well as new materialization.
-  if (
-    row.estimator_version.startsWith("company-role-reported-compensation-canonical-benchmark-") &&
-    base.warnings.some((warning) => warning.code === "benchmark_level_fallback")
-  ) {
-    return {
-      ...base,
-      estimateState: "insufficient_evidence",
-      confidenceBand: "none",
-      confidenceScore: 0,
-      factors: base.factors.map((factor) => factor.name === "level"
-        ? { ...factor, score: 0, band: "none", reason: REASON_MESSAGES.weak_level_match }
-        : factor),
-      evidence: base.evidence.map((evidence) => ({ ...evidence, levelScore: 0 })),
-      insufficientReasons: [{ code: "weak_level_match", message: REASON_MESSAGES.weak_level_match }],
-    };
-  }
   if (row.estimate_state === "unsupported") {
     return {
       ...base,
@@ -421,6 +436,7 @@ function parseEvidence(value: string): MarketCompensationEvidenceRow[] {
       const maximumAmount = nullableNumber(entry.maximum_amount);
       if (minimumAmount === null && maximumAmount === null) return null;
       return {
+        determinationId: typeof entry.determination_id === "string" ? entry.determination_id : null,
         sourceId: typedSourceId,
         displayName: SOURCE_DEFAULTS[typedSourceId].displayName,
         sourceUrl: safeEvidenceUrl(entry.source_url),

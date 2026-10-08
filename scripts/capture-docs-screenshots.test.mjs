@@ -32,7 +32,7 @@ test("workspace overrides cannot adopt the system temp root or an external direc
   fs.writeFileSync(file, "preserved");
   for (const root of canonicalTemporaryRoots())
     assert.throws(() => createOwnedE2eWorkspace(root), /strict descendant/);
-  assert.throws(() => createOwnedE2eWorkspace(repoRoot), /strict descendant/);
+  assert.throws(() => createOwnedE2eWorkspace(path.parse(repoRoot).root), /strict descendant/);
   assert.throws(() => createOwnedE2eWorkspace(file), /must be a directory/);
   assert.equal(fs.readFileSync(file, "utf8"), "preserved");
 });

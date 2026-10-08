@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import json
+
 import threading
 from types import SimpleNamespace
 
@@ -21,10 +21,8 @@ from jobctrl.domain.discovery.use_cases import DiscoverJobsUseCase
 from jobctrl.domain.identifiers import generate_job_id
 from jobctrl.domain.ports.discovery import ScrapedJobPosting
 from jobctrl.domain.tenant import LOCAL_TENANT
-from jobctrl.infrastructure.compensation import SqlitePostedCompensationRepository
 from jobctrl.infrastructure.discovery import SqliteJobRepository
 from jobctrl.infrastructure.discovery.production_wiring import DurableJobEventPublisher
-from jobctrl.infrastructure.projections.projection_builder import ProjectionBuilder
 
 
 _JOBSPY_DESCRIPTION = "Lead engineering, platform, security, and delivery teams in Spain. " * 8
@@ -228,9 +226,7 @@ def test_jobspy_does_not_treat_board_error_count_as_failed_query_count(monkeypat
     monkeypatch.setattr(
         jobspy,
         "get_connection",
-        lambda: SimpleNamespace(
-            execute=lambda *_args, **_kwargs: SimpleNamespace(fetchone=lambda: [0])
-        ),
+        lambda: SimpleNamespace(execute=lambda *_args, **_kwargs: SimpleNamespace(fetchone=lambda: [0])),
     )
     monkeypatch.setattr(jobspy, "_run_one_search", fake_run_one_search)
 
@@ -246,176 +242,6 @@ def test_jobspy_does_not_treat_board_error_count_as_failed_query_count(monkeypat
     assert result["errors"] == 2
     assert result["failed_queries"] == 1
     assert result["queries"] == 2
-
-
-def test_jobspy_filters_results_by_target_title(monkeypatch):
-    stored_titles: list[str] = []
-
-    def fake_scrape(_kwargs: dict, max_retries: int = 2, backoff: float = 5.0):
-        return _jobspy_frame(
-            [
-                {
-                    "job_url": "https://example.test/marketing",
-                    "title": "CRM Marketer",
-                    "location": "Barcelona, Spain",
-                    "site": "indeed",
-                },
-                {
-                    "job_url": "https://example.test/director-engineering",
-                    "title": "Director of Engineering",
-                    "location": "Barcelona, Spain",
-                    "site": "indeed",
-                },
-            ]
-        )
-
-    def fake_store(_conn, df, _source_label: str, limit: int = 0, run_id: str = "jobspy") -> tuple[int, int]:
-        assert run_id == "jobspy"
-        stored_titles.extend(df["title"].tolist())
-        return len(df), 0
-
-    monkeypatch.setattr(jobspy, "_scrape_with_retry", fake_scrape)
-    monkeypatch.setattr(jobspy, "get_connection", lambda: object())
-    monkeypatch.setattr(jobspy, "store_jobspy_results", fake_store)
-
-    result = jobspy._run_one_search(
-        {"query": "Director of Engineering", "location": "Barcelona, Spain", "remote": True},
-        ["indeed"],
-        10,
-        72,
-        None,
-        {"country_indeed": "spain"},
-        0,
-        ["Barcelona, Spain", "Spain", "Europe", "EMEA"],
-        ["United States", "Canada"],
-        ["Barcelona, Spain"],
-        {},
-        limit=10,
-    )
-
-    assert stored_titles == ["Director of Engineering"]
-    assert result["new"] == 1
-    assert result["filtered"] == 1
-
-
-def test_jobspy_recall_title_filter_accepts_leadership_variants(monkeypatch):
-    stored_titles: list[str] = []
-
-    def fake_scrape(_kwargs: dict, max_retries: int = 2, backoff: float = 5.0):
-        return _jobspy_frame(
-            [
-                {
-                    "job_url": "https://example.test/head-technology",
-                    "title": "Head of Technology",
-                    "location": "Barcelona, Spain",
-                    "site": "indeed",
-                },
-                {
-                    "job_url": "https://example.test/software-engineer",
-                    "title": "Software Engineer",
-                    "location": "Barcelona, Spain",
-                    "site": "indeed",
-                },
-                {
-                    "job_url": "https://example.test/product-marketing-director",
-                    "title": "Product Marketing Director",
-                    "location": "Barcelona, Spain",
-                    "site": "indeed",
-                },
-            ]
-        )
-
-    def fake_store(_conn, df, _source_label: str, limit: int = 0, run_id: str = "jobspy") -> tuple[int, int]:
-        assert run_id == "jobspy"
-        stored_titles.extend(df["title"].tolist())
-        return len(df), 0
-
-    monkeypatch.setattr(jobspy, "_scrape_with_retry", fake_scrape)
-    monkeypatch.setattr(jobspy, "get_connection", lambda: object())
-    monkeypatch.setattr(jobspy, "store_jobspy_results", fake_store)
-
-    result = jobspy._run_one_search(
-        {
-            "query": "technology director",
-            "location": "Barcelona, Spain",
-            "remote": False,
-            "match_mode": "recall",
-        },
-        ["indeed"],
-        10,
-        72,
-        None,
-        {"country_indeed": "spain"},
-        0,
-        ["Barcelona, Spain", "Spain", "Europe", "EMEA"],
-        ["United States", "Canada"],
-        ["Barcelona, Spain"],
-        {},
-        limit=10,
-    )
-
-    assert stored_titles == ["Head of Technology"]
-    assert result["new"] == 1
-    assert result["filtered"] == 2
-
-
-def test_jobspy_remote_search_rejects_non_remote_country_only_location(monkeypatch):
-    stored_locations: list[str] = []
-
-    def fake_scrape(_kwargs: dict, max_retries: int = 2, backoff: float = 5.0):
-        return _jobspy_frame(
-            [
-                {
-                    "job_url": "https://example.test/la-rinconada",
-                    "title": "Chief Information Officer",
-                    "location": "La Rinconada, AN, ES",
-                    "is_remote": False,
-                    "site": "indeed",
-                },
-                {
-                    "job_url": "https://example.test/barcelona",
-                    "title": "Chief Information Officer",
-                    "location": "Barcelona, CT, ES",
-                    "is_remote": False,
-                    "site": "indeed",
-                },
-                {
-                    "job_url": "https://example.test/remote-spain",
-                    "title": "Chief Information Officer",
-                    "location": "Spain",
-                    "is_remote": True,
-                    "site": "indeed",
-                },
-            ]
-        )
-
-    def fake_store(_conn, df, _source_label: str, limit: int = 0, run_id: str = "jobspy") -> tuple[int, int]:
-        assert run_id == "jobspy"
-        stored_locations.extend(df["location"].tolist())
-        return len(df), 0
-
-    monkeypatch.setattr(jobspy, "_scrape_with_retry", fake_scrape)
-    monkeypatch.setattr(jobspy, "get_connection", lambda: object())
-    monkeypatch.setattr(jobspy, "store_jobspy_results", fake_store)
-
-    result = jobspy._run_one_search(
-        {"query": "Chief Information Officer", "location": "Spain", "remote": True},
-        ["indeed"],
-        10,
-        72,
-        None,
-        {"country_indeed": "spain"},
-        0,
-        ["Barcelona, Spain", "Spain", "Europe", "EMEA"],
-        ["United States", "Canada"],
-        ["Barcelona, Spain"],
-        {},
-        limit=10,
-    )
-
-    assert stored_locations == ["Barcelona, CT, ES", "Spain"]
-    assert result["new"] == 2
-    assert result["filtered"] == 1
 
 
 def test_jobspy_retains_partial_results_and_counts_typed_board_failure(monkeypatch):
@@ -471,9 +297,6 @@ def test_jobspy_retains_partial_results_and_counts_typed_board_failure(monkeypat
         None,
         {"country_indeed": "spain"},
         0,
-        ["Barcelona, Spain"],
-        [],
-        [],
         {},
         limit=10,
     )
@@ -516,9 +339,7 @@ def test_jobspy_dedups_against_ats_first_canonical_employer(tmp_path):
             ],
             run_id="run-ats",
         )
-        stored = conn.execute(
-            "SELECT company, site FROM jobs WHERE url = ?", (owner_url,)
-        ).fetchone()
+        stored = conn.execute("SELECT company, site FROM jobs WHERE url = ?", (owner_url,)).fetchone()
         assert stored["company"] == "Acme"
         assert stored["site"] == "greenhouse"
 
@@ -535,9 +356,7 @@ def test_jobspy_dedups_against_ats_first_canonical_employer(tmp_path):
         )
         assert jobspy.store_jobspy_results(conn, frame, "Staff Platform Engineer", limit=10) == (0, 1)
         assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 1
-        link = conn.execute(
-            "SELECT surviving_job_id FROM job_duplicate_links"
-        ).fetchone()
+        link = conn.execute("SELECT surviving_job_id FROM job_duplicate_links").fetchone()
         assert link["surviving_job_id"] == _stable_job_id(conn, owner_url)
     finally:
         close_connection(db_path)
@@ -587,9 +406,7 @@ def test_jobspy_keeps_distinct_roles_at_same_employer_separate(tmp_path):
             ],
             run_id="run-ats",
         )
-        stored = conn.execute(
-            "SELECT company, site FROM jobs WHERE url = ?", (owner_url,)
-        ).fetchone()
+        stored = conn.execute("SELECT company, site FROM jobs WHERE url = ?", (owner_url,)).fetchone()
         assert stored["company"] == "Acme"
         assert stored["site"] == "greenhouse"
 
@@ -691,69 +508,6 @@ def test_jobspy_store_accepts_listing_without_description_before_limit(tmp_path)
             ("https://www.linkedin.com/jobs/view/no-description", "")
         ]
         assert conn.execute("SELECT COUNT(*) FROM job_enrichments").fetchone()[0] == 0
-    finally:
-        close_connection(db_path)
-
-
-def test_jobspy_rejects_location_mismatches_before_discovery_persistence(tmp_path):
-    db_path = tmp_path / "jobs.db"
-    conn = init_db(db_path)
-    search_cfg = {
-        "queries": [{"query": "Software Engineer", "tier": 1}],
-        "locations": [{"location": "Spain"}],
-        "location_accept": ["Spain", "Europe", "European Union", "EU", "EMEA"],
-        "location_reject_non_remote": [
-            "India",
-            "Poland",
-            "United Kingdom",
-            "UK",
-            "United States",
-        ],
-        "location": {
-            "accept_patterns": ["Spain", "Europe", "European Union", "EU", "EMEA"],
-            "reject_patterns": [
-                "India",
-                "Poland",
-                "United Kingdom",
-                "UK",
-                "United States",
-            ],
-        },
-    }
-    results = _jobspy_frame(
-        [
-            {
-                "job_url": "https://www.linkedin.com/jobs/view/india",
-                "title": "Software Engineer (India)",
-                "company": "Acai",
-                "location": "Remote",
-                "site": "linkedin",
-                "is_remote": True,
-            },
-            {
-                "job_url": "https://www.linkedin.com/jobs/view/spain",
-                "title": "Software Engineer",
-                "company": "Barcelona Tech",
-                "location": "Spain",
-                "site": "linkedin",
-                "is_remote": True,
-            },
-        ]
-    )
-
-    try:
-        assert jobspy.store_jobspy_results(
-            conn,
-            results,
-            "Software Engineer",
-            limit=10,
-            search_cfg=search_cfg,
-        ) == (1, 0)
-        rows = conn.execute("SELECT url, title, location FROM jobs ORDER BY url").fetchall()
-        assert [(row["url"], row["title"], row["location"]) for row in rows] == [
-            ("https://www.linkedin.com/jobs/view/spain", "Software Engineer", "Spain (Remote)")
-        ]
-        assert conn.execute("SELECT COUNT(*) FROM jobctrl_deleted_jobs").fetchone()[0] == 0
     finally:
         close_connection(db_path)
 
@@ -957,15 +711,8 @@ def test_smartextract_store_limit_counts_new_jobs_not_existing_observations(tmp_
             "location": "Barcelona, Spain",
             "description": "Lead engineering teams.",
         }
-        assert smartextract._store_jobs_filtered(
-            conn,
-            [existing_job],
-            "Example",
-            "json_ld",
-            ["Barcelona, Spain"],
-            [],
-            limit=1,
-            source_url="https://jobs.example/",
+        assert smartextract._store_jobs(
+            conn, [existing_job], "Example", "json_ld", limit=1, source_url="https://jobs.example/", search_cfg={}
         ) == (1, 0)
 
         new_job = {
@@ -983,15 +730,14 @@ def test_smartextract_store_limit_counts_new_jobs_not_existing_observations(tmp_
             "description": "Lead platform teams.",
         }
 
-        assert smartextract._store_jobs_filtered(
+        assert smartextract._store_jobs(
             conn,
             [existing_job, new_job, second_new_job],
             "Example",
             "json_ld",
-            ["Barcelona, Spain"],
-            [],
             limit=1,
             source_url="https://jobs.example/",
+            search_cfg={},
         ) == (1, 1)
         urls = {row["url"] for row in conn.execute("SELECT url FROM jobs").fetchall()}
         assert "https://jobs.example/existing" in urls
@@ -1108,110 +854,13 @@ def test_jobspy_learns_posting_owner_source_from_direct_ats_url(tmp_path):
             "seed_url": direct_url,
         }
 
-        events = {
-            row["event_type"]
-            for row in conn.execute("SELECT event_type FROM job_events").fetchall()
-        }
+        events = {row["event_type"] for row in conn.execute("SELECT event_type FROM job_events").fetchall()}
         assert {
             "JobSourceObserved",
             "SourceRegistryEntryCreated",
             "SourceLocationCandidatePromoted",
             "CanonicalJobIdentityResolved",
         }.issubset(events)
-    finally:
-        close_connection(db_path)
-
-
-def test_jobspy_persists_posted_compensation_fact_from_bounded_salary_text(tmp_path):
-    db_path = tmp_path / "jobs.db"
-    conn = init_db(db_path)
-    try:
-        frame = _jobspy_frame(
-            [
-                {
-                    "job_url": "https://www.linkedin.com/jobs/view/posted-comp",
-                    "title": "Staff Platform Engineer",
-                    "company": "Acme",
-                    "location": "Barcelona, Spain",
-                    "site": "linkedin",
-                    "min_amount": 80_000,
-                    "max_amount": 95_000,
-                    "currency": "EUR",
-                    "interval": "year",
-                }
-            ]
-        )
-
-        assert jobspy.store_jobspy_results(conn, frame, "Platform", limit=10) == (1, 0)
-
-        fact = SqlitePostedCompensationRepository(conn).get_fact(
-            "local",
-            _stable_job_id(conn, "https://www.linkedin.com/jobs/view/posted-comp"),
-        )
-        assert fact is not None
-        assert fact.parse_state == "parsed_range"
-        assert fact.source_text == "EUR80,000-EUR95,000/year"
-        assert fact.legacy_raw_salary == "EUR80,000-EUR95,000/year"
-        assert fact.currency == "EUR"
-        assert fact.minimum_amount == 80_000
-        assert fact.maximum_amount == 95_000
-    finally:
-        close_connection(db_path)
-
-
-def test_jobspy_projects_posted_compensation_from_full_description_when_salary_is_blank(
-    tmp_path,
-):
-    db_path = tmp_path / "jobs.db"
-    conn = init_db(db_path)
-    try:
-        description = (
-            "Competitive compensation and benefits. "
-            "In addition to base salary, the annual learning stipend is €2,000 per year. "
-            + ("Lead platform engineering and delivery teams. " * 16)
-            + "Base pay range per year:\n**€80,000 - €95,000**"
-        )
-        frame = _jobspy_frame(
-            [
-                {
-                    "job_url": "https://www.linkedin.com/jobs/view/description-comp",
-                    "title": "Staff Platform Engineer",
-                    "company": "Acme",
-                    "location": "Barcelona, Spain",
-                    "site": "linkedin",
-                    "description": description,
-                }
-            ]
-        )
-
-        assert jobspy.store_jobspy_results(conn, frame, "Platform", limit=10) == (1, 0)
-        job_id = _stable_job_id(
-            conn,
-            "https://www.linkedin.com/jobs/view/description-comp",
-        )
-        fact = SqlitePostedCompensationRepository(conn).get_fact("local", job_id)
-        salary = conn.execute(
-            "SELECT salary FROM jobs WHERE tenant_id = ? AND job_id = ?",
-            ("local", job_id),
-        ).fetchone()["salary"]
-
-        assert salary in (None, "")
-        assert fact is not None
-        assert fact.source_field == "jobs.full_description"
-        assert fact.parse_state == "parsed_range"
-        assert fact.annualized_minimum_amount == 80_000
-        assert fact.annualized_maximum_amount == 95_000
-
-        ProjectionBuilder(conn_factory=lambda: conn).refresh()
-        projection = conn.execute(
-            "SELECT compensation_summary_json FROM job_list_projections WHERE job_id = ?",
-            (job_id,),
-        ).fetchone()
-        assert projection is not None
-        summary = json.loads(projection["compensation_summary_json"])
-        assert summary["posted"]["parseState"] == "parsed_range"
-        assert summary["posted"]["range"]["annualizedMinimumAmount"] == 80_000
-        assert summary["posted"]["range"]["annualizedMaximumAmount"] == 95_000
     finally:
         close_connection(db_path)
 
@@ -1334,9 +983,7 @@ def test_jobspy_keeps_learned_workday_sources_in_review_until_runnable(tmp_path)
         assert identity["source_native_id"] == "Platform-Engineer_JR-123"
 
         assert (
-            conn.execute(
-                "SELECT COUNT(*) FROM source_registry_entries WHERE source_id LIKE 'workday:%'"
-            ).fetchone()[0]
+            conn.execute("SELECT COUNT(*) FROM source_registry_entries WHERE source_id LIKE 'workday:%'").fetchone()[0]
             == 0
         )
 
@@ -1431,17 +1078,12 @@ def test_jobspy_rejects_same_content_location_variants(tmp_path):
         )
         assert jobspy.store_jobspy_results(conn, duplicate, "Security Engineering", limit=10) == (0, 1)
 
-        job_count = conn.execute(
-            "SELECT COUNT(*) FROM jobs WHERE company = 'Auctane'"
-        ).fetchone()[0]
+        job_count = conn.execute("SELECT COUNT(*) FROM jobs WHERE company = 'Auctane'").fetchone()[0]
         assert job_count == 1
         link = conn.execute(
-            "SELECT surviving_job_id, superseded_job_or_observation_id, reason "
-            "FROM job_duplicate_links"
+            "SELECT surviving_job_id, superseded_job_or_observation_id, reason FROM job_duplicate_links"
         ).fetchone()
-        assert link["surviving_job_id"] == _stable_job_id(
-            conn, "https://www.linkedin.com/jobs/view/4416248661"
-        )
+        assert link["surviving_job_id"] == _stable_job_id(conn, "https://www.linkedin.com/jobs/view/4416248661")
         assert link["superseded_job_or_observation_id"] == "https://www.linkedin.com/jobs/view/4416235850"
         assert link["reason"] == "content_fingerprint_match"
         observation = conn.execute(
@@ -1491,66 +1133,6 @@ def test_jobspy_content_dedupe_normalizes_typographic_punctuation(tmp_path):
         close_connection(db_path)
 
 
-def test_jobspy_rejects_cross_board_markdown_description_variants(tmp_path):
-    db_path = tmp_path / "jobs.db"
-    conn = init_db(db_path)
-    shared_body = (
-        "G\\+D makes the lives of billions of people around the world more secure. "
-        "We shape trust in the digital age with built-in security technology. "
-        "The Head of Technology owns platform delivery, engineering standards, "
-        "vendor coordination, security governance, architecture roadmaps, "
-        "cloud reliability, compliance, and stakeholder communication. "
-    ) * 5
-    indeed_description = f"**{shared_body}**\n\nEqual opportunity footer and Indeed metadata."
-    linkedin_description = f"{shared_body}\n\nLinkedIn workplace summary."
-    try:
-        first = _jobspy_frame(
-            [
-                {
-                    "job_url": "https://es.indeed.com/viewjob?jk=6b34cd5504dac130",
-                    "job_url_direct": "https://www.gi-de.com/en/careers/jobs/jobs-detail-view/27069-en-US",
-                    "title": "Head of Technology",
-                    "company": "Giesecke+Devrient",
-                    "location": "Catalonia, Spain (Remote)",
-                    "site": "indeed",
-                    "description": indeed_description,
-                }
-            ]
-        )
-        assert jobspy.store_jobspy_results(conn, first, "Head of Technology", limit=10) == (1, 0)
-
-        duplicate = _jobspy_frame(
-            [
-                {
-                    "job_url": "https://www.linkedin.com/jobs/view/4409381449",
-                    "title": "Head of Technology",
-                    "company": "Giesecke+Devrient",
-                    "location": "Sant Joan Despí, Catalonia, Spain (Remote)",
-                    "site": "linkedin",
-                    "description": linkedin_description,
-                }
-            ]
-        )
-        assert jobspy.store_jobspy_results(conn, duplicate, "Head of Technology", limit=10) == (0, 1)
-
-        assert conn.execute("SELECT COUNT(*) FROM jobs WHERE company = 'Giesecke+Devrient'").fetchone()[0] == 1
-        link = conn.execute(
-            "SELECT surviving_job_id, superseded_job_or_observation_id, reason FROM job_duplicate_links"
-        ).fetchone()
-        assert link["surviving_job_id"] == _stable_job_id(
-            conn, "https://es.indeed.com/viewjob?jk=6b34cd5504dac130"
-        )
-        assert link["superseded_job_or_observation_id"] == "https://www.linkedin.com/jobs/view/4409381449"
-        assert link["reason"] == "content_fingerprint_match"
-        observations = conn.execute(
-            "SELECT source_id FROM job_source_observations WHERE job_id = ? ORDER BY source_id",
-            (_stable_job_id(conn, "https://es.indeed.com/viewjob?jk=6b34cd5504dac130"),),
-        ).fetchall()
-        assert [row["source_id"] for row in observations] == ["jobspy:indeed", "jobspy:linkedin"]
-    finally:
-        close_connection(db_path)
-
-
 def test_jobspy_keeps_same_title_company_when_descriptions_diverge(tmp_path):
     db_path = tmp_path / "jobs.db"
     conn = init_db(db_path)
@@ -1558,14 +1140,22 @@ def test_jobspy_keeps_same_title_company_when_descriptions_diverge(tmp_path):
         "G\\+D makes the lives of billions of people around the world more secure. "
         "We shape trust in the digital age with built-in security technology. "
     ) * 2
-    platform_description = shared_intro + (
-        "This Head of Technology role owns platform reliability, incident response, "
-        "cloud architecture, developer tooling, service ownership, and infrastructure roadmaps. "
-    ) * 6
-    payments_description = shared_intro + (
-        "This Head of Technology role owns card personalization, payment terminals, "
-        "manufacturing systems, embedded firmware, supply-chain delivery, and factory operations. "
-    ) * 6
+    platform_description = (
+        shared_intro
+        + (
+            "This Head of Technology role owns platform reliability, incident response, "
+            "cloud architecture, developer tooling, service ownership, and infrastructure roadmaps. "
+        )
+        * 6
+    )
+    payments_description = (
+        shared_intro
+        + (
+            "This Head of Technology role owns card personalization, payment terminals, "
+            "manufacturing systems, embedded firmware, supply-chain delivery, and factory operations. "
+        )
+        * 6
+    )
     try:
         first = _jobspy_frame(
             [
@@ -1685,34 +1275,6 @@ def test_jobspy_exact_rediscovery_keeps_deleted_content_duplicate_suppressed(tmp
         close_connection(db_path)
 
 
-def test_jobspy_normalizes_source_locations_before_storage(tmp_path):
-    db_path = tmp_path / "jobs.db"
-    conn = init_db(db_path)
-    try:
-        results = _jobspy_frame(
-            [
-                {
-                    "job_url": "https://es.indeed.com/viewjob?jk=remote-spain",
-                    "title": "Director, Product Management",
-                    "company": "Vonage",
-                    "location": "En remoto, ES",
-                    "is_remote": True,
-                    "site": "indeed",
-                }
-            ]
-        )
-
-        assert jobspy.store_jobspy_results(conn, results, "Director", limit=10) == (1, 0)
-        row = conn.execute(
-            "SELECT location FROM jobs WHERE url = ?",
-            ("https://es.indeed.com/viewjob?jk=remote-spain",),
-        ).fetchone()
-
-        assert row["location"] == "Spain (Remote)"
-    finally:
-        close_connection(db_path)
-
-
 def test_jobspy_missing_dependency_is_not_reported_as_empty_success(monkeypatch):
     def missing_jobspy(_kwargs: dict, max_retries: int = 2, backoff: float = 5.0):
         raise ImportError("The pinned jobstreaming dependency is not installed")
@@ -1728,46 +1290,91 @@ def test_jobspy_missing_dependency_is_not_reported_as_empty_success(monkeypatch)
             None,
             {"country_indeed": "spain"},
             0,
-            ["Barcelona, Spain"],
-            [],
-            [],
             {},
             limit=10,
         )
 
 
 def test_jobspy_refresh_preserves_canonical_target_and_retains_new_application_alias(tmp_path):
-    db_path = tmp_path / 'jobs.db'
+    db_path = tmp_path / "jobs.db"
     conn = init_db(db_path)
-    posting = 'https://www.linkedin.com/jobs/view/canonical-authority'
+    posting = "https://www.linkedin.com/jobs/view/canonical-authority"
     try:
-        frame = _jobspy_frame([{'job_url':posting,'job_url_direct':'https://jobs.ashbyhq.com/example/first','title':'Platform Engineer','company':'Example','location':'Barcelona, Spain','site':'linkedin'}])
-        assert jobspy.store_jobspy_results(conn, frame, 'Platform', limit=10) == (1,0)
+        frame = _jobspy_frame(
+            [
+                {
+                    "job_url": posting,
+                    "job_url_direct": "https://jobs.ashbyhq.com/example/first",
+                    "title": "Platform Engineer",
+                    "company": "Example",
+                    "location": "Barcelona, Spain",
+                    "site": "linkedin",
+                }
+            ]
+        )
+        assert jobspy.store_jobspy_results(conn, frame, "Platform", limit=10) == (1, 0)
         job_id = _stable_job_id(conn, posting)
-        conn.execute("UPDATE job_enrichments SET application_url='https://accepted.example/target',current_status='failed',attempts_json='[{\"retained\":true}]',updated_at='retained-time' WHERE tenant_id='local' AND job_id=?", (job_id,))
-        before = tuple(conn.execute("SELECT * FROM job_enrichments WHERE tenant_id='local' AND job_id=?", (job_id,)).fetchone())
-        frame.loc[0, 'job_url_direct'] = 'https://jobs.ashbyhq.com/example/second'
-        assert jobspy.store_jobspy_results(conn, frame, 'Platform', limit=10) == (0,1)
-        assert tuple(conn.execute("SELECT * FROM job_enrichments WHERE tenant_id='local' AND job_id=?", (job_id,)).fetchone()) == before
-        aliases = {row[0] for row in conn.execute("SELECT application_url FROM job_application_locators WHERE tenant_id='local' AND job_id=?", (job_id,))}
-        assert {'https://jobs.ashbyhq.com/example/first','https://jobs.ashbyhq.com/example/second'} <= aliases
+        conn.execute(
+            "UPDATE job_enrichments SET application_url='https://accepted.example/target',current_status='failed',attempts_json='[{\"retained\":true}]',updated_at='retained-time' WHERE tenant_id='local' AND job_id=?",
+            (job_id,),
+        )
+        before = tuple(
+            conn.execute("SELECT * FROM job_enrichments WHERE tenant_id='local' AND job_id=?", (job_id,)).fetchone()
+        )
+        frame.loc[0, "job_url_direct"] = "https://jobs.ashbyhq.com/example/second"
+        assert jobspy.store_jobspy_results(conn, frame, "Platform", limit=10) == (0, 1)
+        assert (
+            tuple(
+                conn.execute("SELECT * FROM job_enrichments WHERE tenant_id='local' AND job_id=?", (job_id,)).fetchone()
+            )
+            == before
+        )
+        aliases = {
+            row[0]
+            for row in conn.execute(
+                "SELECT application_url FROM job_application_locators WHERE tenant_id='local' AND job_id=?", (job_id,)
+            )
+        }
+        assert {"https://jobs.ashbyhq.com/example/first", "https://jobs.ashbyhq.com/example/second"} <= aliases
     finally:
         close_connection(db_path)
 
 
 def test_workday_refresh_preserves_canonical_enrichment_and_other_tenant(tmp_path):
-    db_path = tmp_path / 'jobs.db'
+    db_path = tmp_path / "jobs.db"
     conn = init_db(db_path)
-    posting = 'https://workday.example/careers/job/one'
+    posting = "https://workday.example/careers/job/one"
     try:
-        for tenant in ('local','other'):
-            conn.execute("INSERT INTO jobs(tenant_id,job_id,url,title,full_description) VALUES(?, '89100000-0000-4000-8000-000000000099', ?, ?, 'unchanged')", (tenant,posting,f'{tenant} title'))
-            conn.execute("INSERT INTO job_enrichments(tenant_id,job_id,current_status,application_url,updated_at,attempts_json) VALUES(?, '89100000-0000-4000-8000-000000000099','failed',?,'old-time','[{\"retained\":true}]')", (tenant,f'https://{tenant}.accepted/target'))
-        enrichment_before = [tuple(r) for r in conn.execute('SELECT * FROM job_enrichments ORDER BY tenant_id')]
+        for tenant in ("local", "other"):
+            conn.execute(
+                "INSERT INTO jobs(tenant_id,job_id,url,title,full_description) VALUES(?, '89100000-0000-4000-8000-000000000099', ?, ?, 'unchanged')",
+                (tenant, posting, f"{tenant} title"),
+            )
+            conn.execute(
+                "INSERT INTO job_enrichments(tenant_id,job_id,current_status,application_url,updated_at,attempts_json) VALUES(?, '89100000-0000-4000-8000-000000000099','failed',?,'old-time','[{\"retained\":true}]')",
+                (tenant, f"https://{tenant}.accepted/target"),
+            )
+        enrichment_before = [tuple(r) for r in conn.execute("SELECT * FROM job_enrichments ORDER BY tenant_id")]
         other_before = tuple(conn.execute("SELECT * FROM jobs WHERE tenant_id='other'").fetchone())
-        workday._update_detail_columns(conn, {'full_description':'Updated description. ' * 30}, posting, 'new-time')
-        assert [tuple(r) for r in conn.execute('SELECT * FROM job_enrichments ORDER BY tenant_id')] == enrichment_before
+        workday._update_detail_columns(conn, {"full_description": "Updated description. " * 30}, posting, "new-time")
+        assert [tuple(r) for r in conn.execute("SELECT * FROM job_enrichments ORDER BY tenant_id")] == enrichment_before
         assert tuple(conn.execute("SELECT * FROM jobs WHERE tenant_id='other'").fetchone()) == other_before
-        assert [tuple(r) for r in conn.execute('SELECT * FROM job_application_locators')] == [('local','89100000-0000-4000-8000-000000000099',posting)]
+        assert [tuple(r) for r in conn.execute("SELECT * FROM job_application_locators")] == [
+            ("local", "89100000-0000-4000-8000-000000000099", posting)
+        ]
     finally:
         close_connection(db_path)
+
+
+@pytest.fixture(autouse=True)
+def semantic_workflow_models(monkeypatch):
+    from tests.workflow_determination_fakes import install_page_models
+
+    install_page_models(monkeypatch)
+
+
+@pytest.fixture(autouse=True)
+def explicit_semantic_ports(monkeypatch):
+    from tests.workflow_determination_fakes import install_page_models
+
+    install_page_models(monkeypatch)

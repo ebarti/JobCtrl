@@ -6,7 +6,7 @@ import path from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { JobListQuery } from "../src/contracts.js";
+import { EMPLOYER_ANALYSIS_PROMPT_VERSION, type JobListQuery } from "../src/contracts.js";
 import {
   buildDashboardSummary,
   getJobDetail,
@@ -17,9 +17,9 @@ import {
   matchingJobKeys,
 } from "../src/read-model.js";
 import { BUILT_IN_RESUME_TEMPLATE_THEME } from "../src/resume-templates.js";
-import { EXACT_V12_SCHEMA_MANIFEST, schemaManifest } from "../src/schema-manifest.js";
+import { EXACT_V14_SCHEMA_MANIFEST, schemaManifest } from "../src/schema-manifest.js";
 import { correctScore, hideJob, restoreJob, softDeleteJob, unhideJob } from "../src/write-model.js";
-import { initializeExactV7Database } from "./v7-schema.js";
+import { initializeExactDatabase } from "./exact-schema.js";
 
 const JOB_ID = "00000000-0000-4000-8000-000000000081";
 const HIDDEN_JOB_ID = "00000000-0000-4000-8000-000000000082";
@@ -39,7 +39,7 @@ afterEach(() => {
 function seededDatabase(): Database.Database {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jobctrl-read-model-v7-"));
   const dbPath = path.join(dir, "jobs.db");
-  initializeExactV7Database(dbPath);
+  initializeExactDatabase(dbPath);
   const db = new Database(dbPath);
   db.pragma("foreign_keys = ON");
   cleanups.push(() => {
@@ -200,7 +200,7 @@ describe("exact-v7 read model job ids", () => {
       db.prepare(`INSERT INTO job_employer_analysis (
         tenant_id, job_id, generation, snapshot_hash, prompt_version, sdk_set_version,
         cache_key, legs_attempted, legs_succeeded, created_at
-      ) VALUES ('local', ?, ?, 'snapshot', 'v1', 'v1', ?, 1, 1, ?)`).run(JOB_ID, generation, `cache-${generation}`, NOW);
+      ) VALUES ('local', ?, ?, 'snapshot', '${EMPLOYER_ANALYSIS_PROMPT_VERSION}', 'v1', ?, 1, 1, ?)`).run(JOB_ID, generation, `cache-${generation}`, NOW);
       db.prepare(`INSERT INTO job_events (tenant_id, job_id, identity_version, stage, event_type, occurred_at)
         VALUES ('local', ?, 1, 'score', 'AnalysisSaved', ?)`).run(JOB_ID, NOW);
     };
@@ -242,7 +242,7 @@ describe("exact-v7 read model job ids", () => {
     db.prepare(`INSERT INTO job_employer_analysis (
       tenant_id, job_id, generation, snapshot_hash, prompt_version, sdk_set_version,
       cache_key, legs_attempted, legs_succeeded, created_at
-    ) VALUES ('local', ?, 1, 'snapshot', 'v1', 'v1', 'cache-1', 1, 1, ?)`).run(JOB_ID, NOW);
+    ) VALUES ('local', ?, 1, 'snapshot', '${EMPLOYER_ANALYSIS_PROMPT_VERSION}', 'v1', 'cache-1', 1, 1, ?)`).run(JOB_ID, NOW);
     insertScoreWithKeywords(db, "local", JOB_ID, 1, []);
     db.prepare(`INSERT INTO job_requirement_fit_reports (
       tenant_id, job_id, score_version, employer_analysis_generation,
@@ -310,7 +310,7 @@ describe("exact-v7 read model job ids", () => {
 
   it("keeps same-UUID tenants isolated while preserving URL locators and material/template state", () => {
     const db = seededDatabase();
-    const before = schemaManifest(db, EXACT_V12_SCHEMA_MANIFEST.version);
+    const before = schemaManifest(db, EXACT_V14_SCHEMA_MANIFEST.version);
 
     const jobs = listJobs(db, activeJobQuery);
     const detail = getJobDetail(db, JOB_ID);
@@ -332,7 +332,7 @@ describe("exact-v7 read model job ids", () => {
     expect(detail?.job.resumeTemplate).toEqual(expect.any(Object));
     expect(detail?.stages.find((stage) => stage.stage === "score")).toMatchObject({ retryable: false });
     expect(dashboard.totals.jobs).toBe(1);
-    expect(schemaManifest(db, EXACT_V12_SCHEMA_MANIFEST.version)).toEqual(before);
+    expect(schemaManifest(db, EXACT_V14_SCHEMA_MANIFEST.version)).toEqual(before);
   });
 
   it("returns canonical artifact generations without changing accepted lifecycle statuses", () => {

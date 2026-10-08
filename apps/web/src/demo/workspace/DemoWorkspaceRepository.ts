@@ -11,7 +11,6 @@ import {
   DEMO_WORKSPACE_EVENT_LOG_LIMIT,
   DEMO_WORKSPACE_SCHEMA_VERSION,
   systemDemoWorkspaceClock,
-  type DemoPendingScenario,
   type DemoWorkspaceReceipt,
   type DemoWorkspaceClock,
   type DemoWorkspaceCommit,
@@ -357,26 +356,6 @@ export class DemoWorkspaceRepository {
     }
   }
 
-  async queueScenario(
-    pending: DemoPendingScenario,
-  ): Promise<DemoWorkspaceCommit> {
-    return this.mutate(
-      (draft) => {
-        if (
-          draft.pendingScenarios.some(
-            (scenario) => scenario.scenarioId === pending.scenarioId,
-          )
-        ) {
-          throw new Error(
-            `Demo scenario ${pending.scenarioId} is already pending.`,
-          );
-        }
-        (draft.pendingScenarios as DemoPendingScenario[]).push(pending);
-      },
-      { expectedResetEpoch: pending.resetEpoch },
-    );
-  }
-
   async reset(): Promise<DemoWorkspaceCommit> {
     this.requireReady();
     const confirmed =
@@ -513,15 +492,13 @@ export class DemoWorkspaceRepository {
       if (stored.schemaVersion >= DEMO_WORKSPACE_SCHEMA_VERSION) {
         return stored;
       }
+      const { pendingScenarios: _discardedOperations, ...savedState } = stored as DemoWorkspaceSnapshot & { pendingScenarios?: unknown };
       const migrated: DemoWorkspaceSnapshot = {
-        ...stored,
+        ...savedState,
         schemaVersion: DEMO_WORKSPACE_SCHEMA_VERSION,
         revision: stored.revision + 1,
         eventLog: stored.eventLog ?? [],
         blobIds: optionalBlobIds(stored) ?? migratedBlobIds,
-        // P1 stored only a deadline and cannot recover the bounded command or
-        // projection transform required by the P3 state machine.
-        pendingScenarios: [],
         updatedAt: this.clock.now().toISOString(),
       };
       transaction.putSnapshot(migrated);
@@ -680,8 +657,9 @@ export class DemoWorkspaceRepository {
     const copiedBlobIds = declaredBlobIds.filter((blobId) =>
       durableBlobs.has(blobId),
     );
+    const { pendingScenarios: _discardedOperations, ...savedState } = snapshot as DemoWorkspaceSnapshot & { pendingScenarios?: unknown };
     const memorySnapshot: DemoWorkspaceSnapshot = {
-      ...snapshot,
+      ...savedState,
       schemaVersion: DEMO_WORKSPACE_SCHEMA_VERSION,
       eventLog: snapshot.eventLog ?? [],
       blobIds: copiedBlobIds,
@@ -957,7 +935,6 @@ export class DemoWorkspaceRepository {
         routeData: materialized.routeData,
         receipts: materialized.receipts,
       },
-      pendingScenarios: [],
     };
   }
 }

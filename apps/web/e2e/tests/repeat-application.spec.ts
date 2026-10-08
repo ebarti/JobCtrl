@@ -3,6 +3,7 @@ import path from "node:path";
 
 import { expect, test } from "@playwright/test";
 import Database from "better-sqlite3";
+import { recordRepeatDecision } from "../../../api/test/semantic-fixtures.js";
 
 import {
   loadE2eDbPath,
@@ -189,6 +190,11 @@ test("repeat application block and reasoned override reach only the simulated su
     db.prepare(
       "DELETE FROM job_canonical_identities WHERE tenant_id = 'local' AND job_id IN (?, ?)",
     ).run(TARGET_JOB_ID, PRIOR_JOB_ID);
+    // Explicit model verdicts, including other confirmed applications in the
+    // shared owned workspace. No title/employer matching is performed here.
+    for (const row of db.prepare("SELECT job_id FROM jobs WHERE tenant_id='local' AND job_id != ?").all(TARGET_JOB_ID) as Array<{job_id: string}>) {
+      recordRepeatDecision(db, TARGET_JOB_ID, row.job_id, row.job_id === PRIOR_JOB_ID ? "equivalent" : "different");
+    }
     await page.reload();
     await expect(
       page.getByText("Review prior application before live submit", { exact: true }),

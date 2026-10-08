@@ -305,7 +305,7 @@ def test_serializes_every_v7_column_from_canonical_uuid_rows() -> None:
         assert row["title"] == "Platform Engineer"
         assert row["employer"] == "Unknown company"
         assert row["source"] == "greenhouse"
-        assert row["location"] == "Community of Madrid, Spain (Remote)"
+        assert row["location"] == "MD, ES, remoto"
         assert row["full_description"] == "Canonical enriched description"
         assert row["fit_score"] == 8
         assert row["fit_band"] == "strong"
@@ -349,9 +349,9 @@ def test_serializes_every_v7_column_from_canonical_uuid_rows() -> None:
         assert row["apply_mode"] == "automated_live"
         assert row["deleted_at"] == "2026-07-30T14:00:00+00:00"
         assert row["last_updated_at"] == _MIGRATION_AT
-        assert candidate.execute(
-            "SELECT metadata_json FROM job_materials WHERE generation = 4"
-        ).fetchone() == (_INERT_CONTEXT_JSON,)
+        assert candidate.execute("SELECT metadata_json FROM job_materials WHERE generation = 4").fetchone() == (
+            _INERT_CONTEXT_JSON,
+        )
     finally:
         candidate.close()
 

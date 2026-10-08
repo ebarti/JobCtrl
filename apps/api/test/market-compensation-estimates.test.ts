@@ -1,3 +1,4 @@
+import { recordCompensationAuthority } from "./semantic-fixtures.js";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -8,7 +9,7 @@ import type { MarketCompensationEstimateResponse } from "../src/contracts.js";
 import { getJobDetail } from "../src/read-model.js";
 import { BUILT_IN_RESUME_TEMPLATE_THEME } from "../src/resume-templates.js";
 import { buildApp } from "../src/server.js";
-import { initializeExactV7Database } from "./v7-schema.js";
+import { initializeExactDatabase } from "./exact-schema.js";
 
 const ESTIMATED_JOB_ID = "22222222-2222-4222-8222-222222222211";
 const ESTIMATED_APPLICATION_URL = "https://apply.example.com/jobs/estimated";
@@ -40,7 +41,7 @@ function withTempApp() {
 }
 
 function seedDatabase(dbPath: string): void {
-  initializeExactV7Database(dbPath);
+  initializeExactDatabase(dbPath);
   const db = new Database(dbPath);
   insertJob(
     db,
@@ -215,6 +216,7 @@ function insertEstimate(
     values.companyTier ?? "tier_2_ambitious",
     values.matchScope ?? "exact_company_role",
   );
+  recordCompensationAuthority(db, jobId);
   db.close();
 }
 
@@ -363,7 +365,7 @@ describe("market compensation estimates API", () => {
     }
   });
 
-  it("rebuilds old all-level projections without claiming principal pay or deleting observations", async () => {
+  it("rebuilds stale projections without displaying unclassified observations", async () => {
     const { app, dbPath, cleanup } = withTempApp();
     insertEstimate(dbPath, ESTIMATED_JOB_ID, {
       estimatorVersion: "company-role-reported-compensation-canonical-benchmark-v1:direct:legacy",
@@ -382,6 +384,7 @@ describe("market compensation estimates API", () => {
     try {
       // Seed a v3 projection so the next normal read must upgrade it without a source refresh.
       const db = new Database(dbPath);
+      db.prepare("DELETE FROM semantic_entity_bindings WHERE entity_kind='market_compensation'").run();
       db.prepare(`INSERT INTO resume_templates (
         tenant_id, template_id, display_name, status, built_in, created_at, updated_at
       ) VALUES ('local', 'built_in:modern-html', 'Modern HTML', 'active', 1, ?, ?)`)
@@ -398,15 +401,8 @@ describe("market compensation estimates API", () => {
         WHERE job_id = ?`).run(ESTIMATED_JOB_ID);
       const body = getJobDetail(db, ESTIMATED_JOB_ID)!;
       db.close();
-      expect(body.job.compensationSummary).toMatchObject({ projectionVersion: 4, market: {
-        estimateState: "insufficient_evidence", displayRange: null, confidenceBand: "none", confidenceScore: 0,
-      } });
-      expect(body.compensationAudit?.market).toMatchObject({ recordStatus: "recorded", estimate: {
-        estimateState: "insufficient_evidence", seniorityLabel: "unknown", sampleCount: 20,
-        insufficientReasons: [{ code: "weak_level_match", message: expect.any(String) }],
-        factors: [expect.objectContaining({ name: "level", score: 0 })],
-        evidence: expect.arrayContaining([expect.objectContaining({ minimumAmount: 112000, levelScore: 0 })]),
-      } });
+      expect(body.job.compensationSummary?.market).toMatchObject({recordStatus:"unavailable",displayRange:null,failureCode:"compensation_determination_unavailable"});
+      expect(body.compensationAudit?.market).toMatchObject({recordStatus:"unavailable"});
       const readback = new Database(dbPath);
       expect(readback.prepare("SELECT minimum_amount FROM job_market_compensation_estimates WHERE job_id=?").get(ESTIMATED_JOB_ID)).toEqual({ minimum_amount: 112000 });
       readback.close();
@@ -979,7 +975,7 @@ describe("market compensation estimates API", () => {
     }
   });
 
-  it("drops unsafe source JSON but allows reported provider identities", async () => {
+  it("keeps private source payloads out of classification receipts returned to the UI", async () => {
     const { app, dbPath, cleanup } = withTempApp();
     insertEstimate(dbPath, ESTIMATED_JOB_ID, {
       sources: [
@@ -1046,13 +1042,7 @@ describe("market compensation estimates API", () => {
 
       expect(response.statusCode, response.body).toBe(200);
       const serialized = JSON.stringify(response.json()).toLowerCase();
-      const body = response.json() as Extract<MarketCompensationEstimateResponse, { recordStatus: "recorded" }>;
-      expect(body.estimate.sources.map((source) => source.sourceId)).toEqual(["levels_fyi"]);
-      expect(body.estimate.sources[0]).toMatchObject({
-        displayName: "Levels.fyi",
-        sourceType: "reported_compensation",
-      });
-      expect(serialized).toContain("levels.fyi");
+      expect(response.json()).toMatchObject({recordStatus:"recorded"});
       expect(serialized).not.toContain("full private description");
       expect(serialized).not.toContain("eurostat");
       expect(serialized).not.toContain("private page");
@@ -1061,17 +1051,6 @@ describe("market compensation estimates API", () => {
       expect(serialized).not.toContain("/users/local");
       expect(serialized).not.toContain("credential");
       expect(serialized).not.toContain("credential secret");
-      expect(body.estimate.geographyScope).toBeNull();
-      expect(body.estimate.factors[0]?.reason).toBe(
-        "Reported compensation estimate factor recorded by the deterministic company-role estimator.",
-      );
-      expect(body.estimate.factors[1]?.reason).toBe("Reported compensation sample count: 1.");
-      expect(body.estimate.evidence[0]).toMatchObject({
-        sourceUrl: null,
-        companyName: "unknown company",
-        roleTitle: "Senior Platform Engineer",
-        location: null,
-      });
     } finally {
       await app.close();
       cleanup();

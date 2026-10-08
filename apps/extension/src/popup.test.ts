@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { EXTENSION_MESSAGE_PROTOCOL_VERSION } from "./message-protocol";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 describe("extension popup", () => {
@@ -21,9 +22,9 @@ describe("extension popup", () => {
 
   it("preserves successful autofill feedback after refreshing readiness state", async () => {
     const sendMessage = stubRuntimeMessages([
-      { ok: true, status: "ready", protocolVersion: 1, paired: true, apiReady: true, discoverySelected: true, queueSize: 0, installationIdSuffix: "00000099" },
+      { ok: true, status: "ready", protocolVersion: EXTENSION_MESSAGE_PROTOCOL_VERSION, paired: true, apiReady: true, discoverySelected: true, queueSize: 0, installationIdSuffix: "00000099" },
       { ok: true, status: "review_opened", suggestions: 2, missing: 1 },
-      { ok: true, status: "ready", protocolVersion: 1, paired: true, apiReady: true, discoverySelected: true, queueSize: 0, installationIdSuffix: "00000099" },
+      { ok: true, status: "ready", protocolVersion: EXTENSION_MESSAGE_PROTOCOL_VERSION, paired: true, apiReady: true, discoverySelected: true, queueSize: 0, installationIdSuffix: "00000099" },
     ]);
 
     await import("./popup");
@@ -46,9 +47,9 @@ describe("extension popup", () => {
 
   it("preserves successful capture feedback after refreshing readiness state", async () => {
     const sendMessage = stubRuntimeMessages([
-      { ok: true, status: "ready", protocolVersion: 1, paired: true, apiReady: true, discoverySelected: true, queueSize: 0, installationIdSuffix: "00000099" },
+      { ok: true, status: "ready", protocolVersion: EXTENSION_MESSAGE_PROTOCOL_VERSION, paired: true, apiReady: true, discoverySelected: true, queueSize: 0, installationIdSuffix: "00000099" },
       { ok: true, status: "captured", jobKey: "job-123", queueSize: 0 },
-      { ok: true, status: "ready", protocolVersion: 1, paired: true, apiReady: true, discoverySelected: true, queueSize: 0, installationIdSuffix: "00000099" },
+      { ok: true, status: "ready", protocolVersion: EXTENSION_MESSAGE_PROTOCOL_VERSION, paired: true, apiReady: true, discoverySelected: true, queueSize: 0, installationIdSuffix: "00000099" },
     ]);
 
     await import("./popup");
@@ -81,9 +82,9 @@ describe("extension popup", () => {
 
   it("lets a paired but unselected installation claim Discovery without copying the token again", async () => {
     const sendMessage = stubRuntimeMessages([
-      { ok: true, status: "ready", protocolVersion: 1, paired: true, apiReady: true, discoverySelected: false, queueSize: 0, installationIdSuffix: "00000099" },
+      { ok: true, status: "ready", protocolVersion: EXTENSION_MESSAGE_PROTOCOL_VERSION, paired: true, apiReady: true, discoverySelected: false, queueSize: 0, installationIdSuffix: "00000099" },
       { ok: true, status: "profile_selected" },
-      { ok: true, status: "ready", protocolVersion: 1, paired: true, apiReady: true, discoverySelected: true, queueSize: 0, installationIdSuffix: "00000099" },
+      { ok: true, status: "ready", protocolVersion: EXTENSION_MESSAGE_PROTOCOL_VERSION, paired: true, apiReady: true, discoverySelected: true, queueSize: 0, installationIdSuffix: "00000099" },
     ]);
 
     await import("./popup");

@@ -18,11 +18,11 @@ describe("<EmployerAnalysisPanel>", () => {
 
     await user.click(screen.getByRole("button", { name: "Help for Model agreement" }));
     const explanation = await screen.findByRole("dialog", { name: "Model agreement explanation" });
-    expect(explanation).toHaveTextContent("pairwise Jaccard overlap");
-    expect(explanation).toHaveTextContent("exact requirement-text sets and keyword sets");
-    expect(explanation).toHaveTextContent("single surviving draft scores 100% by convention");
-    expect(explanation).toHaveTextContent("neither candidate fit nor factual confidence");
-    expect(explanation).toHaveTextContent("does not prove a claim true");
+    expect(explanation).toHaveTextContent("persisted model determination");
+    expect(explanation).toHaveTextContent("cites divergent requirements or keywords");
+    expect(explanation).toHaveTextContent("With one draft, there is no cross-draft comparison");
+    expect(explanation).toHaveTextContent("diagnostic and does not gate acceptance");
+    expect(explanation).toHaveTextContent("does not establish factual support");
   });
 
   it("shows requirement evidence initially and toggles requirements independently with mouse and keyboard", async () => {

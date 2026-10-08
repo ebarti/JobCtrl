@@ -41,8 +41,6 @@ from jobctrl.domain.materials.analysis import (
     EnsembleOutcome,
     compute_snapshot_hash,
 )
-from jobctrl.domain.materials.analysis_content import AnalysisContentError, validate_candidate_prose
-from jobctrl.domain.materials.analysis_eeo_screen import screen_eeo_red_flags
 from jobctrl.domain.materials.analysis_grounding import ground_and_snap
 from jobctrl.domain.ports.events import EventPublisher
 from jobctrl.domain.ports.materials import (
@@ -51,26 +49,18 @@ from jobctrl.domain.ports.materials import (
     EmployerAnalysisRepository,
 )
 from jobctrl.domain.tenant import LOCAL_TENANT, TenantId
+from jobctrl.domain.job_snapshot import build_jd_snapshot
+from jobctrl.domain.determinations import Source, DeterminationFailure
+from jobctrl.domain.ports.claim_verification import ArtifactLine, ClaimVerifier
+from jobctrl.domain.ports.analysis_agreement import AnalysisAgreementJudge
+from jobctrl.domain.ports.job_interpretation import JobInterpreter
+from jobctrl.domain.materials.analysis import EeoScreenHit
+import json
 
 log = logging.getLogger(__name__)
 
 # Signature of the injected ensemble runner (defaults to the infra helper).
 EnsembleRunner = Callable[..., Awaitable[EnsembleOutcome]]
-
-
-def build_jd_snapshot(job: dict) -> str:
-    """Build the deterministic JD snapshot the analysis reasons from.
-
-    Title + the full posting description, verbatim and uncapped — evidence
-    spans must remain literal substrings of THIS text, so it must NOT be
-    truncated (truncation would silently break grounding, failure mode #1). The
-    snapshot is hashed for the reproducibility cache (D-11).
-    """
-    title = str(job.get("title") or "").strip()
-    description = str(job.get("full_description") or job.get("description") or "").strip()
-    if title:
-        return f"{title}\n\n{description}"
-    return description
 
 
 @dataclass(frozen=True)
@@ -90,6 +80,9 @@ class AnalyzeJobUseCase:
         repository: EmployerAnalysisRepository,
         adapters: tuple[AnalysisDraftPort, ...],
         synthesizer: AnalysisSynthesizerPort,
+        claim_verifier: ClaimVerifier,
+        agreement_judge: AnalysisAgreementJudge,
+        job_interpreter: JobInterpreter,
         publisher: EventPublisher | None = None,
         system_prompt: str | None = None,
         synthesizer_system_prompt: str | None = None,
@@ -102,6 +95,9 @@ class AnalyzeJobUseCase:
         self._repository = repository
         self._adapters = adapters
         self._synthesizer = synthesizer
+        self._claim_verifier = claim_verifier
+        self._agreement_judge = agreement_judge
+        self._job_interpreter = job_interpreter
         self._publisher = publisher
         self._system_prompt = system_prompt
         self._synthesizer_system_prompt = synthesizer_system_prompt
@@ -151,16 +147,34 @@ class AnalyzeJobUseCase:
         if not force:
             cached = self._repository.get_by_cache_key(tenant_id, job_id, key)
             if cached is not None:
-                try:
-                    validate_candidate_prose(cached.canonical)
-                except AnalysisContentError:
-                    log.info("Employer analysis cache needs candidate-prose refresh for %s", job_id)
-                else:
-                    log.info("Employer analysis cache hit for %s (gen %d)", job_id, cached.generation)
-                    self._publish(cached, cached=True)
-                    return AnalyzeJobOutcome(analysis=cached, cached=True)
+                self._job_interpreter.interpret(job=job, employer_analysis=cached)
+                self._publish(cached, cached=True)
+                return AnalyzeJobOutcome(analysis=cached, cached=True)
 
-        outcome = await self._run_ensemble(jd_snapshot)
+        verification_ids = {}
+
+        def verify_prose(analysis):
+            lines = self._analysis_lines(analysis)
+            result, envelope = self._claim_verifier.verify(
+                artifact_kind="employer_analysis",
+                entity_id=str(job_id),
+                lines=lines,
+                evidence=[],
+                requirements=[Source(source_id="posting", text=jd_snapshot)],
+                rubric={
+                    "process_narration": "Describe only employer needs and ideal candidate capabilities. No narration about models, drafts, experts, reconciliation or the analysis process.",
+                    "support": "Employer statements and target-role requirements must rest on the posting. Candidate fact claims have no personal evidence.",
+                },
+            )
+            if result.verdict == "fail":
+                error = DeterminationFailure("claim_verification_failed")
+                error.repair_feedback = json.dumps(result.model_dump(), ensure_ascii=False)
+                raise error
+            verification_ids[getattr(analysis, "model_id", "canonical")] = envelope.determination_id
+            return envelope.determination_id
+
+        outcome = await self._run_ensemble(jd_snapshot, verify_prose=verify_prose, entity_id=str(job_id))
+        verify_prose(outcome.canonical)
 
         # Defense in depth: re-validate the synthesized canonical's grounding AND
         # snap its evidence spans to verbatim JD text before persistence (the
@@ -168,23 +182,9 @@ class AnalyzeJobUseCase:
         # never persist a fabricated span, and the persisted spans must be
         # content-exact / copy-paste-findable in the posting per D-15). Idempotent
         # on an already-snapped canonical; raises GroundingError on any absent span.
-        validate_candidate_prose(outcome.canonical)
         grounded_canonical = ground_and_snap(outcome.canonical, jd_snapshot)
 
-        # EEO red-flag screen (AI-SPEC §6 Dimension 9): deterministically DROP
-        # any requirement/keyword that matches a protected-attribute signal so it
-        # never becomes something downstream tailoring satisfies, and record each
-        # drop as an audit note on the record. Never aborts the run.
-        screen = screen_eeo_red_flags(grounded_canonical)
-        canonical = screen.analysis
-        if screen.has_hits:
-            log.warning(
-                "EEO red-flag screen dropped %d item(s) for %s: %s",
-                len(screen.hits),
-                job_id,
-                [hit.describe() for hit in screen.hits],
-            )
-
+        canonical = grounded_canonical
         generation = self._next_generation(tenant_id, job_id)
         record = EmployerAnalysis.build(
             tenant_id=tenant_id,
@@ -196,9 +196,47 @@ class AnalyzeJobUseCase:
             failures=outcome.failures,
             agreement=outcome.agreement,
             legs_attempted=outcome.legs_attempted,
-            eeo_screen_hits=screen.hits,
+            determination_ids={**verification_ids, **({"analysis_agreement": outcome.agreement_determination_id} if outcome.agreement_determination_id else {})},
+            line_anchors=tuple(
+                {
+                    "line_id": row.line_id,
+                    "evidence_ids": [],
+                    "requirement_ids": [],
+                    "transform_type": "synthesize_from_related",
+                    "reason": "Model-grounded employer analysis",
+                }
+                for row in self._analysis_lines(canonical)
+            ),
             prompt_version=self._prompt_version,
             sdk_set_version=self._sdk_set_version,
+        )
+        interpretation = self._job_interpreter.interpret(job=job, employer_analysis=record)
+        interpreted = {row.requirement_id: row for row in interpretation.requirements}
+        canonical = canonical.model_copy(
+            update={
+                "inferred_seniority": interpretation.seniority.value,
+                "requirements": [
+                    row.model_copy(update={"coverage_scope": interpreted[row.id].scope})
+                    for row in canonical.requirements
+                ],
+            }
+        )
+        from dataclasses import replace
+
+        record = replace(
+            record,
+            canonical=canonical,
+            determination_ids={**record.determination_ids, "job_interpretation": interpretation._determination_id},
+            eeo_screen_hits=tuple(
+                EeoScreenHit(
+                    kind="requirement",
+                    ref_id=row.requirement_id,
+                    category="protected_class",
+                    matched_text=row.citations[0].quote,
+                )
+                for row in interpretation.requirements
+                if row.protected_class
+            ),
         )
         self._repository.save(record)  # supersede, never destroy (D-13)
         if record.is_degraded:
@@ -213,7 +251,19 @@ class AnalyzeJobUseCase:
 
     # --------------------------------------------------------------- helpers
 
-    async def _run_ensemble(self, jd_snapshot: str) -> EnsembleOutcome:
+    @staticmethod
+    def _analysis_lines(analysis):
+        fields = [
+            ("role_framing", analysis.role_framing),
+            ("ideal_candidate_narrative", analysis.ideal_candidate_narrative),
+        ]
+        fields += [("requirement:" + row.id, row.text) for row in analysis.requirements]
+        return [
+            ArtifactLine(line_id=ident, text=text, allowed_evidence_ids=[], allowed_requirement_ids=["posting"])
+            for ident, text in fields
+        ]
+
+    async def _run_ensemble(self, jd_snapshot: str, *, verify_prose, entity_id) -> EnsembleOutcome:
         runner = self._ensemble_runner or _default_ensemble_runner
         system_prompt, synth_prompt = self._resolve_prompts()
         return await runner(
@@ -222,6 +272,9 @@ class AnalyzeJobUseCase:
             adapters=self._adapters,
             synthesizer=self._synthesizer,
             synthesizer_system_prompt=synth_prompt,
+            verify_prose=verify_prose,
+            agreement_judge=self._agreement_judge,
+            entity_id=entity_id,
         )
 
     def _resolve_prompts(self) -> tuple[str, str]:
@@ -279,5 +332,4 @@ async def _default_ensemble_runner(*args, **kwargs) -> EnsembleOutcome:
 __all__ = [
     "AnalyzeJobUseCase",
     "AnalyzeJobOutcome",
-    "build_jd_snapshot",
 ]

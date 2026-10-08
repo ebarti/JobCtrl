@@ -12,7 +12,7 @@ import pytest
 
 from jobctrl.database import init_db
 from jobctrl.domain.identifiers import canonical_job_id
-from jobctrl.domain.materials.value_objects import ArtifactStatus
+from jobctrl.domain.ports.artifact_review import ArtifactStatus
 from jobctrl.domain.tenant import LOCAL_TENANT
 from jobctrl.infrastructure.preparation_recovery import (
     CancelPreparationStateInput,
@@ -121,8 +121,7 @@ def test_tailor_recovery_accepts_only_a_newly_committed_retailor_generation(
     states = {
         row["job_id"]: (row["state"], row["attempt_count"])
         for row in conn.execute(
-            "SELECT job_id, state, attempt_count FROM job_stage_states "
-            "WHERE stage = 'tailor'"
+            "SELECT job_id, state, attempt_count FROM job_stage_states WHERE stage = 'tailor'"
         ).fetchall()
     }
     assert states[restored_job] == ("succeeded", 2)
@@ -217,18 +216,13 @@ def test_cover_recovery_reuses_committed_cover_and_ignores_another_owner(
     )
 
     assert (result.restored, result.failed) == (1, 0)
-    states = dict(conn.execute(
-        "SELECT job_id, state FROM job_stage_states WHERE stage = 'cover'"
-    ).fetchall())
+    states = dict(conn.execute("SELECT job_id, state FROM job_stage_states WHERE stage = 'cover'").fetchall())
     assert states[owned] == "succeeded"
     assert states[other] == "running"
 
 
 def test_selected_material_fanout_stops_scheduling_after_cancellation() -> None:
-    job_ids = tuple(
-        canonical_job_id(f"10000000-0000-4000-8000-{index:012d}")
-        for index in range(4)
-    )
+    job_ids = tuple(canonical_job_id(f"10000000-0000-4000-8000-{index:012d}") for index in range(4))
     cancel_event = threading.Event()
     first_wave_started = threading.Event()
     release_first_wave = threading.Event()
@@ -313,11 +307,7 @@ def test_material_cancellation_preserves_successor_owner_and_cancels_pending(
         ),
     )
 
-    states = dict(
-        conn.execute(
-            "SELECT job_id, state FROM job_stage_states WHERE stage = 'cover'"
-        ).fetchall()
-    )
+    states = dict(conn.execute("SELECT job_id, state FROM job_stage_states WHERE stage = 'cover'").fetchall())
     assert result.canceled == 2
     assert result.restored == 0
     assert states[owned] == "canceled"
