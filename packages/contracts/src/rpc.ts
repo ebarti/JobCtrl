@@ -7,6 +7,7 @@ import { DeterminationCitationSchema, DeterminationEnvelopeSchema } from "./sema
  * worker over the local subprocess transport (target §6.5).
  */
 import { z } from "zod";
+import { MaterialLocaleMutationSchema } from "./schemas.js";
 import { GenerateInterviewPrepRequestSchema, refineInterviewEvidenceSelection } from "./interview.js";
 
 import {
@@ -71,6 +72,7 @@ export type JsonRpcResponse = z.infer<typeof JsonRpcResponseSchema>;
 /* ------------------------------------------------------------------ methods */
 
 export const RpcMethods = {
+  MaterialLocaleVariants: "material_locale_variants",
   RunStage: "run_stage",
   RescoreJob: "rescore_job",
   RescoreJobsNotOnCurrentScoringPolicy: "rescore_jobs_not_on_current_scoring_policy",
@@ -810,3 +812,8 @@ export function buildJsonRpcRequest<P extends Record<string, unknown>>(
 ): JsonRpcRequest {
   return { jsonrpc: "2.0", method, params, id } satisfies JsonRpcRequest;
 }
+
+export const MaterialLocaleRpcParamsSchema = z.object({
+  tenantId: TenantParam, expectedAppDir: z.string().min(1), expectedDbPath: z.string().min(1),
+  jobId: CanonicalJobIdParam, mutation: MaterialLocaleMutationSchema,
+}).strict();

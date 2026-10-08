@@ -6,5 +6,6 @@ export interface Session {
 }
 
 export interface SessionPort {
+  newRequestId?(): string;
   getSession(): Session;
 }

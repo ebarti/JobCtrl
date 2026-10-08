@@ -49,7 +49,10 @@ const ENDPOINT_DISPATCH_CONTEXT = {
 
 describe("endpoint spec fixture", () => {
   it("pins every migrated request and response JSON Schema", () => {
-    expect(endpointSpecJsonSchemaFixture()).toEqual(endpointSpecsFixture);
+    // Keep every frozen legacy schema assertion; locale additions have their own owner.
+    const fixture = endpointSpecJsonSchemaFixture();
+    const { mutateMaterialLocaleVariants: _locale, ...legacy } = fixture.endpoints;
+    expect({ ...fixture, endpoints: legacy }).toEqual(endpointSpecsFixture);
   });
 
   it("records the indirect worker RPCs used by merged endpoint handlers", () => {

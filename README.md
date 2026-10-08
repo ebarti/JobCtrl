@@ -72,6 +72,9 @@ JobCtrl also shows posted salaries and market estimates with their evidence,
 records application outcomes, keeps contacts, and drafts outreach for you to
 send. Explore the local [interview question library and job preparation](https://jobctrl.dev/user/materials-and-tailoring#interview-preparation);
 its guidance is a research draft, and personal prep remains in beta.
+Create [reviewed locale variants](https://jobctrl.dev/user/locale-variants) of
+accepted resumes and letters, with separate terminology/formatting review and
+text, HTML, PDF and DOCX exports. The original and accepted histories stay intact.
 
 ## Safety
 

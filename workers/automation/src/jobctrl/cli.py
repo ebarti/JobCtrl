@@ -3774,5 +3774,55 @@ def gmail_auth(
     console.print(f"[green]Gmail token saved:[/green] {token_path}")
 
 
+locale_app = typer.Typer(help="Generate, inspect, independently review and export source-linked locale variants.")
+app.add_typer(locale_app, name="locale-variants")
+
+
+def _locale_command(job_id: str, mutation: dict | None = None):
+    from jobctrl import config
+    from jobctrl.database import init_db
+    from jobctrl.domain.determinations import DeterminationFailure
+    from jobctrl.infrastructure.materials.locale_variants import mutate_locale_variants, read_locale_state
+
+    connection = init_db()
+    try:
+        result = (read_locale_state(connection, tenant_id="local", job_id=job_id) if mutation is None else
+                  mutate_locale_variants(connection, tenant_id="local", job_id=job_id, app_dir=config.APP_DIR, mutation=mutation))
+        connection.commit()
+        typer.echo(json.dumps(result, ensure_ascii=False))
+    except DeterminationFailure as error:
+        connection.commit()
+        typer.echo(error.code, err=True)
+        raise typer.Exit(1) from None
+    finally:
+        connection.close()
+
+
+@locale_app.command("inspect")
+def locale_inspect(job_id: str):
+    _locale_command(job_id)
+
+
+@locale_app.command("generate")
+def locale_generate(job_id: str, kind: str, source_locale: str, target_locale: str,
+                    expected_revision: int = typer.Option(...), request_id: str = typer.Option(...)):
+    _locale_command(job_id, dict(operation="generate", kind=kind, source_locale=source_locale,
+                               target_locale=target_locale, expected_revision=expected_revision, request_id=request_id))
+
+
+@locale_app.command("review")
+def locale_review(job_id: str, variant_id: str, review_kind: str, decision: str,
+                  expected_revision: int = typer.Option(...), expected_variant_revision: int = typer.Option(...)):
+    _locale_command(job_id, dict(operation="review", variant_id=variant_id, review_kind=review_kind, decision=decision,
+                               expected_revision=expected_revision, expected_variant_revision=expected_variant_revision))
+
+
+@locale_app.command("export")
+def locale_export(job_id: str, variant_id: str, export_format: str,
+                  expected_revision: int = typer.Option(...), expected_variant_revision: int = typer.Option(...)):
+    _locale_command(job_id, dict(operation="export", variant_id=variant_id, export_format=export_format,
+                               expected_revision=expected_revision, expected_variant_revision=expected_variant_revision))
+
+
 if __name__ == "__main__":
     app()

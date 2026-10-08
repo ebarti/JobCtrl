@@ -165,6 +165,7 @@ const SIDEBAR: DefaultTheme.SidebarItem[] = [
       { text: "Enrichment & Extraction", link: "/user/enrichment-and-extraction" },
       { text: "Scoring", link: "/user/scoring-and-employer-analysis" },
       { text: "Materials & Tailoring", link: "/user/materials-and-tailoring" },
+      { text: "Reviewed Locale Variants", link: "/user/locale-variants" },
       { text: "Apply", link: "/user/apply" },
       { text: "Outcomes & Feedback", link: "/user/outcomes-and-feedback" },
       { text: "Contacts & Outreach", link: "/user/contacts-and-outreach" },
@@ -243,6 +244,7 @@ const SIDEBAR: DefaultTheme.SidebarItem[] = [
         items: [
           { text: "Scoring Policy", link: "/architecture/scoring" },
           { text: "Employer Analysis & Materials Audit", link: "/architecture/materials" },
+          { text: "Material Locale Variants", link: "/architecture/material-locale-variants" },
           { text: "Tailoring Contract", link: "/architecture/tailoring" },
         ],
       },

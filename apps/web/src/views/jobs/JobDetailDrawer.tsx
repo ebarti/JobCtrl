@@ -18,6 +18,7 @@ import {
   type EmployerAnalysisEvidenceReference,
 } from "../../contexts/materials/components/EmployerAnalysisPanel.js";
 import { InterviewPrepPanel } from "../../contexts/materials/components/InterviewPrepPanel.js";
+import { MaterialLocaleVariants } from "../../contexts/materials/index.js";
 import { OpenArtifactButton } from "../../contexts/materials/components/OpenArtifactButton.js";
 import { JobAuditHistory } from "../../contexts/operations/components/JobAuditHistory.js";
 import { useDiscoverySettingsQuery } from "../../contexts/operations/hooks/useDiscoverySettingsQuery.js";
@@ -280,6 +281,7 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
             </details>
           ) : null}
         </> : <Empty title="No artifacts recorded." />}
+        <MaterialLocaleVariants jobId={detail.job.jobKey} />
       </Section>,
     },
     {

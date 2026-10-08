@@ -522,7 +522,11 @@ class SqliteMaterialsRepository:
                 updated_at = excluded.updated_at,
                 last_validation_json = excluded.last_validation_json,
                 last_verdict_json = excluded.last_verdict_json,
-                metadata_json = excluded.metadata_json
+                metadata_json = CASE
+                    WHEN json_type(job_materials.metadata_json, '$.locale_variants_v1') IS NOT NULL
+                    THEN json_set(excluded.metadata_json, '$.locale_variants_v1',
+                                  json_extract(job_materials.metadata_json, '$.locale_variants_v1'))
+                    ELSE excluded.metadata_json END
             WHERE COALESCE(
                       json_extract(
                           job_materials.metadata_json,

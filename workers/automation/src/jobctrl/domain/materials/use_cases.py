@@ -26,6 +26,8 @@ can swap fakes without monkey-patching.
 """
 
 from __future__ import annotations
+
+import hashlib
 import json
 import logging
 import re
@@ -2001,6 +2003,7 @@ class TailorResumeUseCase:
             "judge": judge_record,
             "final_judge": judge_record,
             "claim_verification_id": final_candidate.record.get("claim_verification_id"),
+            "accepted_text_sha256": hashlib.sha256(text_path.read_bytes()).hexdigest(),
             "quality_determination_id": (judge_record or {}).get("determination_id"),
             "resume_adversarial_id": final_candidate.adversarial_review.determination_id
             if final_candidate.adversarial_review
@@ -3656,6 +3659,7 @@ class GenerateCoverLetterUseCase:
             size_bytes=size_bytes,
             metadata={
                 "validation_mode": validation_mode,
+                "accepted_text_sha256": hashlib.sha256(cl_path.read_bytes()).hexdigest(),
                 "passed": validation.passed,
                 "claim_verification_id": verification["determination_id"],
                 "quality_determination_id": verification["quality_determination_id"],

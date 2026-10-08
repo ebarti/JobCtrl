@@ -435,3 +435,14 @@ update availability on `posting_snapshot_sets`; unchanged positives advance
 only the observation clock. No availability path writes hide/delete tombstones,
 application outcomes, approvals, scores or materials. A location-policy finding
 keeps its separate gate when external availability becomes active.
+
+## Locale Variant Storage
+
+Materials owns `job_materials.metadata_json.locale_variants_v1`, a versioned
+namespace containing source-linked locale snapshots, independent revisions,
+accepted histories, human decisions, registered exports and safe failures. It
+uses existing exact-v14 semantic tables without a physical migration. Generated
+locale exports live below `tailored_resumes/locale_variants`; download reads
+require recorded IDs, containment and matching hashes. Aggregate enrichment
+retains the namespace, while locale writes merge the latest metadata without
+replacing companion fields. See [the owning contract](material-locale-variants.md).

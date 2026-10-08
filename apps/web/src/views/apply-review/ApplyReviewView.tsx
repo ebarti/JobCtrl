@@ -29,6 +29,7 @@ import {
 } from "../../contexts/apply/hooks/useApplyReviewMutations.js";
 import { CompensationSummaryStrip } from "../../contexts/enrichment/components/CompensationEvidence.js";
 import { ArtifactComparison } from "../../contexts/materials/components/ArtifactComparison.js";
+import { MaterialLocaleVariants } from "../../contexts/materials/index.js";
 import {
   ArtifactGroundingRiskPanel,
   ResumePlateEditor,
@@ -1772,6 +1773,7 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
             </CardTitle>
           </CardHeader>
           <CardContent className="apply-review-pane-scroll apply-review-materials-scroll">
+            <MaterialLocaleVariants jobId={item.jobKey} />
             <div className="apply-review-resume-template-control">
               <JobResumeTemplateSelect
                 current={item.materialsPreview.resumeTemplate}

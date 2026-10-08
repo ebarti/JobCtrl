@@ -2,6 +2,7 @@ import type { InterviewPrep, InterviewSelectionInput } from "@jobctrl/domain-typ
 import { z } from "zod";
 import { type DeterminationEnvelope, type DeterminationCitation, DeterminationCitationSchema, DeterminationEnvelopeSchema, TrackCodeSchema, SeniorityCodeSchema, WorkModelCodeSchema } from "./semantic-determinations.js";
 import { CONTACT_ROLES, CONTACT_SOURCE_KINDS } from "@jobctrl/domain-types";
+import { MATERIAL_LOCALE_KINDS, MATERIAL_LOCALE_REVIEW_KINDS, MATERIAL_LOCALE_EXPORT_FORMATS } from "@jobctrl/domain-types";
 
 export const STAGES = ["discover", "enrich", "score", "tailor", "cover", "apply"] as const;
 export type Stage = (typeof STAGES)[number];
@@ -4135,6 +4136,8 @@ export interface EmployerAnalysis {
 }
 
 export interface JobDetail {
+  localeVariants?: MaterialLocaleState;
+  localeVariantsError?: "locale_history_unavailable";
   ok: true;
   job: JobSummary & {
     descriptionPreview: string;
@@ -6956,3 +6959,48 @@ export const ScheduleFollowUpRequestSchema = z
   })
   .strict();
 export type ScheduleFollowUpRequest = z.infer<typeof ScheduleFollowUpRequestSchema>;
+
+// Materials locale variants are additive to exact-v14 source-generation metadata.
+const LocaleHashSchema = z.string().regex(/^[a-f0-9]{64}$/);
+const LocaleTagSchema = z.string().regex(/^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$/).max(80);
+export const MaterialLocaleConcernSchema = z.object({
+  kind: z.enum(["missing_term", "ambiguous_credential", "unsupported_locale"]),
+  source: DeterminationCitationSchema,
+  explanation: z.string().min(1).max(1500),
+}).strict();
+export const MaterialLocaleExportSchema = z.object({
+  export_id: z.string().uuid(), format: z.enum(MATERIAL_LOCALE_EXPORT_FORMATS),
+  path: z.string().min(1), sha256: LocaleHashSchema, document_sha256: LocaleHashSchema,
+  accepted_revision: z.number().int().positive(), created_at: z.string().min(1),
+}).strict();
+export const MaterialLocaleVariantSchema = z.object({
+  semantic_entity_id: z.string().min(1),
+  stale_reasons: z.array(z.string()).optional(),
+  variant_id: z.string().uuid(), request_id: z.string().uuid(), tenant_id: z.string().min(1), job_id: z.string().uuid(),
+  kind: z.enum(MATERIAL_LOCALE_KINDS), source_locale: LocaleTagSchema, target_locale: LocaleTagSchema,
+  artifact_id: z.string().min(1), artifact_type: z.enum(["tailored_resume", "cover_letter"]),
+  source_status: z.literal("approved"), source_created_at: z.string().min(1),
+  generation: z.number().int().positive(), sha256: LocaleHashSchema, verification_id: LocaleHashSchema,
+  text: z.string().min(1).max(64000), profile_version: z.number().int().positive(), profile_json: z.string().min(1), profile_sha256: LocaleHashSchema,
+  locale_generation: z.number().int().positive(), revision: z.number().int().positive(), created_at: z.string().min(1),
+  status: z.enum(["candidate", "accepted", "refused"]), gate_passed: z.boolean(),
+  terminology_review: z.enum(["pending", "accepted", "rejected"]), formatting_review: z.enum(["pending", "accepted", "rejected"]),
+  lines: z.array(z.object({ line_id: z.string().min(1), text: z.string().min(1).max(4000), source: DeterminationCitationSchema }).strict()).max(1000),
+  concerns: z.array(MaterialLocaleConcernSchema).max(200), determinations: z.array(DeterminationEnvelopeSchema).max(4),
+  reviews: z.array(z.object({ review_kind: z.enum(MATERIAL_LOCALE_REVIEW_KINDS), decision: z.enum(["accepted", "rejected"]), revision: z.number().int().positive(), at: z.string().min(1) }).strict()),
+  exports: z.array(MaterialLocaleExportSchema), accepted_at: z.string().optional(), accepted_revision: z.number().int().positive().optional(), document_sha256: LocaleHashSchema.optional(),
+}).strict();
+export const MaterialLocaleStateSchema = z.object({
+  revision: z.number().int().nonnegative(), variants: z.array(MaterialLocaleVariantSchema),
+  failures: z.array(z.object({ operation: z.string().min(1), code: z.string().min(1), at: z.string().min(1) }).strict()),
+}).strict();
+export type MaterialLocaleState = z.infer<typeof MaterialLocaleStateSchema>;
+export type MaterialLocaleVariant = z.infer<typeof MaterialLocaleVariantSchema>;
+const LocaleRevisionFields = { expected_revision: z.number().int().nonnegative() };
+const LocaleVariantRevisionFields = { ...LocaleRevisionFields, variant_id: z.string().uuid(), expected_variant_revision: z.number().int().positive() };
+export const MaterialLocaleMutationSchema = z.discriminatedUnion("operation", [
+  z.object({ operation: z.literal("generate"), ...LocaleRevisionFields, request_id: z.string().uuid(), kind: z.enum(MATERIAL_LOCALE_KINDS), source_locale: LocaleTagSchema, target_locale: LocaleTagSchema }).strict(),
+  z.object({ operation: z.literal("review"), ...LocaleVariantRevisionFields, review_kind: z.enum(MATERIAL_LOCALE_REVIEW_KINDS), decision: z.enum(["accepted", "rejected"]) }).strict(),
+  z.object({ operation: z.literal("export"), ...LocaleVariantRevisionFields, export_format: z.enum(MATERIAL_LOCALE_EXPORT_FORMATS) }).strict(),
+]);
+export type MaterialLocaleMutation = z.infer<typeof MaterialLocaleMutationSchema>;

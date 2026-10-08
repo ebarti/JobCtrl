@@ -1074,6 +1074,7 @@ function persistRefreshRows(
     renderFormat: "text",
     sizeBytes: fs.statSync(textPath).size,
     metadata: {
+      ...parseJsonRecord(material.text.metadata_json),
       source: TEMPLATE_REFRESH_SOURCE,
       base_resume_text_artifact_id: material.text.artifact_id,
       [TEMPLATE_METADATA_KEY]: templateMetadata,
@@ -1098,6 +1099,17 @@ function persistRefreshRows(
     createdAt: now,
   });
   replaceLayoutBoxes(db, jobId, generation, pdfArtifactId, layoutBoxes, now);
+  // A render-only refresh can retain semantic authority only for identical text bytes.
+  const sourceMetadata = parseJsonRecord(material.text.metadata_json);
+  const refreshedHash = crypto.createHash("sha256").update(fs.readFileSync(textPath)).digest("hex");
+  if (sourceMetadata.claim_verification_id && sourceMetadata.accepted_text_sha256 === refreshedHash
+      && material.text.path && refreshedHash
+      === crypto.createHash("sha256").update(fs.readFileSync(material.text.path)).digest("hex")) {
+    db.prepare("INSERT INTO semantic_entity_bindings SELECT tenant_id,entity_kind,?, ?,determination_kind,determination_id FROM semantic_entity_bindings WHERE tenant_id=? AND entity_kind='artifact' AND entity_id=? AND entity_version=?")
+      .run(textArtifactId, String(generation), DEFAULT_TENANT, material.text.artifact_id, String(material.generation));
+    db.prepare("INSERT INTO artifact_line_anchors SELECT tenant_id,artifact_kind,?, ?,line_id,evidence_ids_json,requirement_ids_json,transform_type,reason,determination_id FROM artifact_line_anchors WHERE tenant_id=? AND artifact_id=? AND generation=?")
+      .run(textArtifactId, generation, DEFAULT_TENANT, material.text.artifact_id, material.generation);
+  }
 }
 
 function insertMaterialArtifact(
@@ -1128,7 +1140,9 @@ function insertMaterialArtifact(
     input.path,
     input.renderFormat,
     input.sizeBytes,
-    JSON.stringify(input.metadata),
+    JSON.stringify(input.artifactType === "tailored_resume"
+      ? { ...input.metadata, accepted_text_sha256: crypto.createHash("sha256").update(fs.readFileSync(input.path)).digest("hex") }
+      : input.metadata),
     input.createdAt,
   );
 }

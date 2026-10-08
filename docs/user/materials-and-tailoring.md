@@ -420,3 +420,13 @@ generations: a failed replacement does not destroy the last accepted record.
 Every generated artifact has a claim-verification determination and recorded line anchors. A separate quality judge remains. Open **Verification sources** on any artifact to inspect its model, prompt version, input fingerprint and structured verdict. Models decide claim support, seniority, voice, prohibited claims and requirement demonstration. Code validates IDs, quotes, exact values and versions. Interview generation isolates each question's selected evidence; explicit empty selection produces gaps. Failed refreshes keep accepted material. Apply Review joins line IDs and says “No recorded source” where an anchor is absent.
 
 See [the decision](../decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.
+
+## Reviewed Translations
+
+Job Detail and Apply Review offer [Reviewed Locale Variants](locale-variants.md)
+for accepted resumes and cover letters. Select explicit source/target locales,
+inspect terminology and source-line mappings, then accept terminology and
+formatting independently before exporting text, HTML, PDF or DOCX. Historical
+names, titles, dates, credentials and achievement values keep their original
+wording/values. Unsupported locales and unresolved terms remain explicit; failed
+refreshes preserve the original and accepted locale history.

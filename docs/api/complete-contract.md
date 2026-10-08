@@ -2277,3 +2277,51 @@ Local admission refusals do not change observation clocks or evidence backoff;
 accepted content, materials, decisions and outcomes remain intact.
 The [Enrichment guide](../user/enrichment-and-extraction.md#saved-posting-availability)
 owns the complete acquisition, cohort and retry policy.
+
+## Material Locale Variants
+
+`GET /v1/jobs/:jobId/locale-variants` returns the canonical locale state. The same
+state is included as `localeVariants` on Job Detail. GETs perform no model calls.
+
+`POST /v1/jobs/:jobId/locale-variants` synchronously dispatches the runtime-bound
+`material_locale_variants` RPC. Requests are strict discriminated objects:
+
+| `operation` | Required fields |
+| --- | --- |
+| `generate` | `kind` (`resume` or `cover_letter`), `source_locale`, `target_locale`, `expected_revision`, `request_id` (UUID) |
+| `review` | `variant_id` (UUID), `expected_revision`, `expected_variant_revision`, `review_kind` (`terminology` or `formatting`), `decision` (`accepted` or `rejected`) |
+| `export` | `variant_id` (UUID), `expected_revision`, `expected_variant_revision`, `export_format` (`text`, `html`, `pdf` or `docx`) |
+
+Revisions are integers; the job revision permits zero, and candidate revisions
+are positive. Locale tags are explicit syntactic language tags. The model decides
+whether the source and target languages are supported. Generation refuses equal
+source/target tags. An identical generation request UUID returns its existing
+variant without model calls; a conflicting UUID payload is rejected.
+
+A successful command returns `200` with `{revision, variants, failures}`.
+Variants contain source artifact/generation/byte/verification bindings,
+canonical Profile snapshot/version/hash, locales, independent locale generation
+and revision, full source text, mapped translated lines with verbatim citations,
+recorded determination envelopes, concerns, semantic gate state, separate human
+review states/history and registered exports. Accepted variants also contain
+`accepted_at`, `accepted_revision` and `document_sha256`. The API joins recorded
+determination IDs and adds structural `stale_reasons` on reads. A refusal is a
+stored variant with `status: refused`, no translated lines and an explicit
+`unsupported_locale` concern.
+
+Malformed requests return `400`; worker-reported invalid/stale source, Profile,
+review, semantic or export operations return `409`. Transport/invalid-result
+failures return `503`. The error is `locale_operation_failed` with a safe worker
+code or availability explanation. Accepted artifacts/history remain intact.
+The worker requires `tenantId`, `jobId`, `expectedAppDir`, `expectedDbPath` and
+`mutation`; arbitrary paths are not accepted as command parameters.
+
+`GET /v1/jobs/:jobId/locale-variants/exports/:exportId` downloads only a registered,
+contained, hash-matching export bound to an accepted document revision. It uses
+an attachment content disposition and the format's content type. Missing, foreign,
+changed or uncontained files return `409 locale_export_unavailable`. Previously
+registered exports remain readable after their source becomes stale.
+
+The typed endpoint is `mutateMaterialLocaleVariants`; it is unavailable in the
+offline demo. See [the locale workflow](../user/locale-variants.md) and
+[storage/authority contract](../architecture/material-locale-variants.md).

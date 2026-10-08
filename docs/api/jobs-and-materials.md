@@ -220,3 +220,12 @@ remain drafts until their review gate is satisfied.
 
 <a id="contact-research"></a>
 <a id="outreach-drafts"></a>
+
+## Reviewed Locale Variants
+
+Job Detail includes `localeVariants` from canonical Materials metadata. Explicit
+locale generation, independent human reviews and text/HTML/PDF/DOCX exports use
+`POST /v1/jobs/:jobId/locale-variants`. State and registered downloads use GETs
+without model calls. See the [strict field contract](complete-contract.md#material-locale-variants)
+and [user workflow](../user/locale-variants.md). These variants retain the original
+material and do not replace Apply's selected source.

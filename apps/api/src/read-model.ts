@@ -1,4 +1,5 @@
 import { resolveJobLocator } from "./job-locators.js";
+import { materialLocaleFieldsForJob } from "./locale-variants.js";
 import { EMPLOYER_ANALYSIS_PROMPT_VERSION } from "./contracts.js";
 import { readDetermination, readArtifactLineAnchors, determinationOwnsArtifact } from "./semantic-determinations.js";
 /**
@@ -1194,6 +1195,7 @@ export function getJobDetail(db: SqliteDatabase, jobKey: string): JobDetail | nu
       )
       : null,
     interviewPrep: parseInterviewPrep(detailRow?.interview_prep_json ?? null),
+    ...materialLocaleFieldsForJob(db, DEFAULT_TENANT, jobId),
     compensationAudit: parseCompensationAudit(detailRow?.compensation_audit_json ?? null),
   };
 }

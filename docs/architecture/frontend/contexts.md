@@ -530,3 +530,14 @@ clipboard write, never `navigator.clipboard` directly and never a network send.
 There is no send action anywhere (INV-1).
 
 ---
+
+## Materials Locale Review
+
+`MaterialLocaleVariants` composes accepted source/translated previews, unresolved
+terms, two human review boundaries and four registered exports in Job Detail and
+Apply Review. It consumes the Operations Job Detail kernel; mutations remain in
+Materials' `useResumeTemplateMaterialMutations.ts`. Types are inferred through
+that read kernel and the API port. Optimistic review flags roll back only their
+own pending write; newer revisions or replaced sources take precedence over
+late responses. Draft locale inputs survive errors. Session's local adapter
+supplies request UUIDs, and the offline demo disables these mutations.

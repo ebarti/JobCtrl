@@ -236,3 +236,11 @@ These read guards preserve accepted artifacts and their original audit history.
 Shared Python/TypeScript parity fixtures seed scores, stages, analysis,
 provenance, and artifacts, then compare every dual-written projection column and
 JSON shape. That is the drift guard for what the inspector displays.
+
+## Locale Materials
+
+[Material Locale Variants](material-locale-variants.md) owns a separate reviewed
+translation lifecycle inside source-generation metadata. It records accepted
+byte/source/Profile bindings, translation and independent semantic review IDs,
+two fenced human decisions and four export formats. It neither replaces accepted
+source artifacts nor changes Apply state. Legacy unbound sources remain explicit.

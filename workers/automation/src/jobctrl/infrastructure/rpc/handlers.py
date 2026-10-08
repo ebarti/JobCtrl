@@ -377,6 +377,31 @@ def map_extension_form(params):
         raise invalid_params(error.code) from None
 
 
+def material_locale_variants(params):
+    assert_expected_runtime(
+        expected_app_dir=str(_require(params, "expectedAppDir")),
+        expected_db_path=str(_require(params, "expectedDbPath")),
+    )
+    if set(params) != {"tenantId", "expectedAppDir", "expectedDbPath", "jobId", "mutation"}:
+        raise invalid_params("invalid_locale_request")
+    from jobctrl.database import init_db
+    from jobctrl.domain.determinations import DeterminationFailure
+    from jobctrl.infrastructure.materials.locale_variants import mutate_locale_variants
+
+    connection = init_db()
+    try:
+        result = mutate_locale_variants(connection, tenant_id=_tenant_id(params),
+                                       job_id=str(_require(params, "jobId")),
+                                       app_dir=str(params["expectedAppDir"]), mutation=params["mutation"])
+        connection.commit()
+        return result
+    except DeterminationFailure as error:
+        connection.commit()
+        raise invalid_params(error.code) from None
+    finally:
+        connection.close()
+
+
 def review_resume_edit(params):
     assert_expected_runtime(
         expected_app_dir=str(_require(params, "expectedAppDir")),
@@ -1254,6 +1279,7 @@ def register_default_handlers(server: JsonRpcServer, *, canceler: WorkflowCancel
     server.register("check_posting_availability", check_posting_availability, mode="workflow")
     server.register("refresh_compensation", refresh_compensation, mode="workflow")
     server.register("generate_interview_prep", generate_interview_prep, mode="workflow")
+    server.register("material_locale_variants", material_locale_variants)
     server.register("run_contact_research", run_contact_research, mode="workflow")
     # Outreach draft generation/revision — synchronous (LLM + gate stack inline,
     # like analyze_job); persists a gated draft. No send path (INV-1).

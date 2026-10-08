@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { MaterialLocaleMutationSchema, MaterialLocaleStateSchema } from "./schemas.js";
+import { MaterialLocaleRpcParamsSchema } from "./rpc.js";
 import {
   InterviewCatalogQuerySchema,
   InterviewCatalogResponseSchema,
@@ -563,6 +565,24 @@ function interviewJobPath(suffix: string) {
 }
 
 export const ENDPOINTS = {
+  mutateMaterialLocaleVariants: defineEndpoint({
+    name: "mutateMaterialLocaleVariants", method: "POST",
+    path: defineEndpointPath({
+      route: "/v1/jobs/:jobId/locale-variants", paramName: "jobId", paramSchema: z.string().uuid(),
+      invalid: { status: 400, error: "invalid_job_id" },
+      build: (jobId: string) => `/v1/jobs/${encodeURIComponent(jobId)}/locale-variants`,
+    }),
+    request: MaterialLocaleMutationSchema, response: MaterialLocaleStateSchema,
+    rpcDependencies: [RpcMethods.MaterialLocaleVariants],
+    demo: { class: "unavailable", reason: "Locale variants require accepted local materials and the configured Materials model." },
+    dispatch: {
+      rpcMethod: RpcMethods.MaterialLocaleVariants,
+      params: ({ request, pathParam }, context) => ({ tenantId: context.tenantId, expectedAppDir: context.appDir, expectedDbPath: context.dbPath, jobId: pathParam, mutation: request }),
+      paramsSchema: MaterialLocaleRpcParamsSchema, result: MaterialLocaleStateSchema,
+      response: ({ result }) => result,
+      error: (failure) => ({ status: failure.kind === "rpc" && failure.error.code === JsonRpcErrorCodes.InvalidParams ? 409 : 503, error: "locale_operation_failed", message: failure.kind === "rpc" ? String(failure.error.data ?? failure.error.message) : "Locale operation unavailable; accepted materials are preserved." }),
+    } satisfies RpcEndpointDispatch<typeof MaterialLocaleMutationSchema, string, typeof MaterialLocaleRpcParamsSchema, typeof MaterialLocaleStateSchema>,
+  }),
   checkPostingAvailability: defineEndpoint({
     name: "checkPostingAvailability",
     method: "POST",

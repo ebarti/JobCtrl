@@ -282,3 +282,9 @@ architecture. Specific controls:
   prevents duplicate runs.
 
 ---
+
+Locale histories use the additive, versioned Materials metadata namespace
+`locale_variants_v1`, not a new physical schema. Source generations retain their
+own immutable locale snapshots and accepted exports; job reads combine their
+histories. See [Material Locale Variants](../material-locale-variants.md) for
+source/Profile/revision fences and atomic namespace merging.

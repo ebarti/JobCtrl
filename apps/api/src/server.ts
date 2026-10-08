@@ -1,6 +1,7 @@
 import { readTargetRoleProposal } from "./candidate-interpretations.js";
 import { ResumeEditIntentReviewSchema } from "@jobctrl/contracts";
 import { readDetermination } from "./semantic-determinations.js";
+import { readMaterialLocaleVariants, readMaterialLocaleExport } from "./locale-variants.js";
 import { isDeepStrictEqual } from "node:util";
 import { FormSnapshotSchema, FormMappingResponseSchema } from "@jobctrl/contracts";
 import { ResumeEditReviewSchema } from "@jobctrl/contracts";
@@ -1620,6 +1621,36 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     }
     return withWritableDb(reply, options.dbPath, (db) => setDefaultResumeTemplate(db, body));
   });
+
+  app.get<{ Params: { jobId: string } }>("/v1/jobs/:jobId/locale-variants", async (request, reply) =>
+    withDb(reply, options.dbPath, (db) => {
+      const jobId = resolveExistingJobId(reply, db, request.params.jobId);
+      if (!jobId) return { ok: false, error: "job_not_found" };
+      try {
+        return readMaterialLocaleVariants(db, "local", jobId);
+      } catch {
+        void reply.code(409);
+        return { ok: false, error: "locale_history_unavailable" };
+      }
+    }),
+  );
+  app.get<{ Params: { jobId: string; exportId: string } }>("/v1/jobs/:jobId/locale-variants/exports/:exportId", async (request, reply) =>
+    withDb(reply, options.dbPath, (db) => {
+      const jobId = resolveExistingJobId(reply, db, request.params.jobId);
+      if (!jobId) return { ok: false, error: "job_not_found" };
+      try {
+        const output = readMaterialLocaleExport(db, "local", jobId, request.params.exportId, appDir);
+        const types = { text: "text/plain; charset=utf-8", html: "text/html; charset=utf-8", pdf: "application/pdf", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" };
+        void reply.header("Content-Type", types[output.format]);
+        void reply.header("Content-Disposition", `attachment; filename="${output.filename}"`);
+        void reply.header("X-Content-Type-Options", "nosniff");
+        return output.bytes;
+      } catch {
+        void reply.code(409);
+        return { ok: false, error: "locale_export_unavailable" };
+      }
+    }),
+  );
 
   app.patch<{ Params: { jobKey: string } }>("/v1/jobs/:jobKey/resume-template", async (request, reply) => {
     const body = parseBody(reply, JobResumeTemplateAssignmentRequestSchema, request.body ?? {});

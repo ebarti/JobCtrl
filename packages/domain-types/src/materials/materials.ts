@@ -131,3 +131,11 @@ export function createMaterialsSet(input: MaterialsSet): MaterialsSet {
   }
   return input;
 }
+
+/** Locale documents have their own review lifecycle; source artifact enums stay unchanged. */
+export const MATERIAL_LOCALE_KINDS = ["resume", "cover_letter"] as const;
+export type MaterialLocaleKind = (typeof MATERIAL_LOCALE_KINDS)[number];
+export const MATERIAL_LOCALE_REVIEW_KINDS = ["terminology", "formatting"] as const;
+export type MaterialLocaleReviewKind = (typeof MATERIAL_LOCALE_REVIEW_KINDS)[number];
+export const MATERIAL_LOCALE_EXPORT_FORMATS = ["text", "html", "pdf", "docx"] as const;
+export type MaterialLocaleExportFormat = (typeof MATERIAL_LOCALE_EXPORT_FORMATS)[number];

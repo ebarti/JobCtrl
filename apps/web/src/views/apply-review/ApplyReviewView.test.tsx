@@ -202,7 +202,7 @@ async function chooseSelectOption(
     await screen.findByRole("combobox", { name: comboboxName }),
   );
   await userEvent.click(
-    await screen.findByRole("option", { name: optionName }),
+    await within(await screen.findByRole("listbox")).findByRole("option", { name: optionName }),
   );
 }
 

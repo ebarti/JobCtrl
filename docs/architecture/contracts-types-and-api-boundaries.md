@@ -282,3 +282,13 @@ fixtures and RPC registration observations are updated together.
 Contracts owns the versioned semantic codes/labels and strict read envelopes. Worker determinations own meaning, with closed enums, extra-field rejection and canonical citations. API/web/extension consumers join IDs and read persisted verdicts; they never construct provenance or categories from text overlap. Interactive calls are sync RPC, activity calls remain outside Temporal replay.
 
 See [the decision](../decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.
+
+## Locale Variant Boundary
+
+`MaterialLocaleMutationSchema` and `MaterialLocaleStateSchema` describe strict,
+additive locale operations and source-linked histories. The generated endpoint
+client supplies `mutateMaterialLocaleVariants`; its RPC requires the exact local
+workspace/database identity. The semantic schema generator discovers the
+translation/terminology owners, while claim/quality schemas remain shared.
+Legacy endpoint schema fixtures remain pinned separately from additive locale
+coverage. See [the locale owner](material-locale-variants.md).

@@ -1253,6 +1253,7 @@ function insertRenderedDraftArtifacts(
     fs.statSync(textPath).size,
     JSON.stringify({
       source: DRAFT_RENDERER_METADATA_SOURCE,
+      accepted_text_sha256: crypto.createHash("sha256").update(fs.readFileSync(textPath)).digest("hex"),
       claim_verification_id: semanticReview.claimVerificationId,
       quality_determination_id: semanticReview.qualityDeterminationId,
       draft_id: draft.draft_id,
