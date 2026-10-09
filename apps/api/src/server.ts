@@ -268,6 +268,7 @@ import {
   type ProfileImporter,
 } from "./local-actions.js";
 import type { JsonRpcDispatcher } from "./json-rpc-adapter.js";
+import { materialLocaleVariants, LocaleVariantError } from "./locale-variants.js";
 import {
   createWorkerManualCaptureImporter,
   ManualCaptureImportError,
@@ -969,6 +970,16 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       dbPath: options.dbPath,
     },
     handlers: {
+      materialLocaleVariants: async ({ request, pathParam: jobId }, reply) => {
+        const exists = withReadOnlyDb(reply, options.dbPath, (db) => resolveExistingJobId(reply, db, jobId));
+        if (typeof exists !== "string") return exists ?? { ok: false, error: "job_not_found" };
+        try {
+          return await materialLocaleVariants(providerDispatcher, { tenantId: "local", expectedAppDir: appDir, expectedDbPath: options.dbPath, jobId }, request);
+        } catch (error) {
+          if (error instanceof LocaleVariantError) { void reply.code(error.status); return { ok: false, error: error.code }; }
+          throw error;
+        }
+      },
       checkPostingAvailability: async ({ pathParam: jobId }, reply) => {
         const exists = withReadOnlyDb(reply, options.dbPath, (db) => resolveExistingJobId(reply, db, jobId));
         if (!exists) return { ok: false, error: "job_not_found" };

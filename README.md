@@ -137,3 +137,7 @@ See [Local Development](docs/local-development.md).
 ## License
 
 [AGPL-3.0-only](LICENSE). Copyright (C) 2026 Eloi Barti. See [NOTICE](NOTICE).
+
+For source-linked translations of accepted resumes and cover letters, see
+[Reviewed Locale Variants](docs/user/locale-variants.md). Terminology and formatting
+are reviewed independently before locale acceptance and export.

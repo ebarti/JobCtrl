@@ -13,6 +13,7 @@ import { PostingAvailability } from "../../contexts/enrichment/index.js";
 import { CompensationAuditSection } from "../../contexts/enrichment/components/CompensationEvidence.js";
 import { JobContactsPanel } from "../../contexts/outreach/components/JobContactsPanel.js";
 import { ArtifactStatusBadge } from "../../contexts/materials/components/ArtifactStatusBadge.js";
+import { MaterialLocaleVariants } from "../../contexts/materials/index.js";
 import {
   EmployerAnalysisPanel,
   type EmployerAnalysisEvidenceReference,
@@ -287,6 +288,12 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
       title: "Compensation",
       description: "Posted pay and market evidence",
       content: <CompensationAuditSection jobId={detail.job.jobKey} summary={detail.job.compensationSummary} audit={detail.compensationAudit} fallbackSalary={detail.job.salary} />,
+    },
+    {
+      id: "locales",
+      title: "Locale variants",
+      description: "Independently reviewed resume and letter translations",
+      content: <MaterialLocaleVariants jobId={detail.job.jobKey} />,
     },
     {
       id: "description",

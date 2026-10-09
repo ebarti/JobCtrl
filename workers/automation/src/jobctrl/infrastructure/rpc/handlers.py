@@ -1205,6 +1205,7 @@ def rollback_tailoring_policy(params: dict[str, Any]) -> dict[str, Any]:
 
 def register_default_handlers(server: JsonRpcServer, *, canceler: WorkflowCanceler) -> None:
     """Wire the default JobCtrl method set onto *server*."""
+    server.register("material_locale_variants", material_locale_variants, mode="sync")
     server.register("map_extension_form", map_extension_form, mode="sync")
     server.register("review_resume_edit", review_resume_edit, mode="sync")
     server.register("prepare_repeat_application_determinations", prepare_repeat_application_determinations, mode="sync")
@@ -1261,3 +1262,22 @@ def register_default_handlers(server: JsonRpcServer, *, canceler: WorkflowCancel
     server.register("apply", apply_action, mode="workflow")
     # Cooperative cancellation of in-flight workflows.
     server.register("cancel_run", make_cancel_run(canceler), mode="sync")
+
+
+def material_locale_variants(params):
+    """Runtime-bound, source-fenced locale workflow; generation never approves Apply."""
+    if set(params) != {"tenantId", "expectedAppDir", "expectedDbPath", "jobId", "request"}:
+        raise invalid_params("invalid_locale_request")
+    assert_expected_runtime(expected_app_dir=str(_require(params, "expectedAppDir")),
+                            expected_db_path=str(_require(params, "expectedDbPath")))
+    from jobctrl.database import init_db
+    from jobctrl.domain.determinations import DeterminationFailure
+    from jobctrl.infrastructure.materials.locale_variants import operation
+    connection = init_db()
+    try:
+        return operation(connection, tenant_id=_tenant_id(params), job_id=str(_require(params, "jobId")),
+                         root=params["expectedAppDir"], request=params["request"])
+    except DeterminationFailure as error:
+        raise invalid_params(error.code) from None
+    finally:
+        connection.close()

@@ -111,7 +111,7 @@ function createOwnedE2eWorkspace(parentOverride) {
       ? root === parent
       : isStrictDescendant(root, parent),
   );
-  if (!temporaryRoot)
+  if (!temporaryRoot || (parentOverride !== undefined && roots.includes(parent)))
     throw new Error(
       "JOBCTRL_E2E_APP_DIR parent must be a strict descendant of a canonical temporary root",
     );

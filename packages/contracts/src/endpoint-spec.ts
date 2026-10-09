@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MaterialLocaleRequestSchema, MaterialLocaleHistorySchema } from "./schemas.js";
 import {
   InterviewCatalogQuerySchema,
   InterviewCatalogResponseSchema,
@@ -563,6 +564,15 @@ function interviewJobPath(suffix: string) {
 }
 
 export const ENDPOINTS = {
+  materialLocaleVariants: defineEndpoint({
+    name: "materialLocaleVariants",
+    method: "POST",
+    path: defineEndpointPath({ route: "/v1/jobs/:jobId/material-locales", paramName: "jobId", paramSchema: z.string().uuid(), invalid: { status: 400, error: "invalid_job_id" }, build: (jobId: string) => `/v1/jobs/${encodeURIComponent(jobId)}/material-locales` }),
+    request: MaterialLocaleRequestSchema,
+    response: MaterialLocaleHistorySchema,
+    rpcDependencies: [RpcMethods.MaterialLocaleVariants],
+    demo: { class: "unavailable", reason: "Locale translation requires accepted local material and a configured model." },
+  }),
   checkPostingAvailability: defineEndpoint({
     name: "checkPostingAvailability",
     method: "POST",

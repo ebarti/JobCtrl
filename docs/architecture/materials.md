@@ -236,3 +236,12 @@ These read guards preserve accepted artifacts and their original audit history.
 Shared Python/TypeScript parity fixtures seed scores, stages, analysis,
 provenance, and artifacts, then compare every dual-written projection column and
 JSON shape. That is the drift guard for what the inspector displays.
+
+## Reviewed Locale Variants
+
+Materials also owns source-linked translations of accepted resumes and cover
+letters, separate from application approval. The separately versioned contract
+uses the existing schema-14 artifact registry and semantic determination bindings;
+it does not replace source generations or require a companion branch. See
+[Material Locale Variants](material-locale-variants.md) for authority, independent
+reviews, version fences, failure preservation and export ownership.

@@ -381,3 +381,10 @@ The release privacy
 check scans for secret/profile needles, blocked file types, and unsafe
 distribution paths before publication, but it cannot protect a private file you
 manually copy into a new tracked path.
+
+Reviewed locale revisions retain the original accepted source snapshot, selected
+canonical facts, translator/verifier determinations and review history locally.
+Generation sends that minimized source context to the configured tailoring model
+under its spend policy. Locale acceptance never submits an application. Accepted
+TXT/HTML/PDF/DOCX files remain registered local artifacts; failed refreshes preserve
+prior bytes. See [Reviewed Locale Variants](locale-variants.md).

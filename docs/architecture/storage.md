@@ -435,3 +435,10 @@ update availability on `posting_snapshot_sets`; unchanged positives advance
 only the observation clock. No availability path writes hide/delete tombstones,
 application outcomes, approvals, scores or materials. A location-policy finding
 keeps its separate gate when external availability becomes active.
+
+Reviewed locale variants use `job_artifacts` with a separately versioned
+`material-locale-v1` metadata contract, plus the existing semantic determination
+and entity-binding tables. Original Materials rows and legacy registry metadata
+remain unchanged. Locale revision text and four export formats use unique owned
+files under `generated/locale-variants`; failed publication removes only newly
+staged files. See [Material Locale Variants](material-locale-variants.md).

@@ -220,3 +220,12 @@ remain drafts until their review gate is satisfied.
 
 <a id="contact-research"></a>
 <a id="outreach-drafts"></a>
+
+## Reviewed Locale Variants
+
+`POST /v1/jobs/:jobId/material-locales` provides history, source-linked generation,
+independent terminology/formatting review, explicit acceptance/rejection and four
+accepted exports. Requests bind source/profile/revision versions; history reads
+stored authority and never retranslates. See the
+[wire contract](complete-contract.md#material-locale-variants) and
+[user flow](../user/locale-variants.md).

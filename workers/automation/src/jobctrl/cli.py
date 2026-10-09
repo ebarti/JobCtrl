@@ -3774,5 +3774,47 @@ def gmail_auth(
     console.print(f"[green]Gmail token saved:[/green] {token_path}")
 
 
+@app.command("material-locale")
+def material_locale(
+    job_id: str,
+    operation_name: str = typer.Option("history", "--operation"),
+    source_artifact_id: str = typer.Option("", "--source-artifact-id"),
+    source_locale: str = typer.Option("en", "--source-locale"),
+    target_locale: str = typer.Option("es", "--target-locale"),
+    generation: int = typer.Option(1, "--generation"),
+    profile_version: int = typer.Option(1, "--profile-version"),
+    revision_id: str = typer.Option("", "--revision-id"),
+    expected_version: int = typer.Option(1, "--expected-version"),
+    dimension: str = typer.Option("terminology", "--dimension"),
+    decision: str = typer.Option("accepted", "--decision"),
+    note: str = typer.Option("", "--note"),
+    format_name: str = typer.Option("txt", "--format"),
+):
+    """Generate, independently review, accept and export source-linked locale revisions."""
+    from jobctrl.database import init_db
+    from jobctrl.config import APP_DIR
+    from jobctrl.infrastructure.materials.locale_variants import operation
+    from jobctrl.domain.determinations import DeterminationFailure
+    request = {"operation": operation_name}
+    if operation_name == "generate":
+        request.update(sourceArtifactId=source_artifact_id, sourceLocale=source_locale, targetLocale=target_locale,
+                       expectedGeneration=generation, expectedProfileVersion=profile_version)
+    elif operation_name != "history":
+        request.update(revisionId=revision_id, expectedVersion=expected_version)
+        if operation_name == "review":
+            request.update(dimension=dimension, decision=decision, note=note)
+        elif operation_name == "export":
+            request.update(format=format_name)
+    connection = init_db()
+    try:
+        result = operation(connection, tenant_id="local", job_id=job_id, root=APP_DIR, request=request)
+        typer.echo(json.dumps(result, ensure_ascii=False))
+    except DeterminationFailure as error:
+        typer.echo(error.code, err=True)
+        raise typer.Exit(1) from None
+    finally:
+        connection.close()
+
+
 if __name__ == "__main__":
     app()

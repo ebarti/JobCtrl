@@ -578,12 +578,12 @@ describe("<JobDetailDrawer>", () => {
       workspace.querySelector(".job-detail-workspace__content"),
     ).not.toBeNull();
     expect(workspace.querySelector(".route-workspace__inspector")).toBeNull();
-    expect(workspace.querySelectorAll(".job-detail-major-section")).toHaveLength(11);
+    expect(workspace.querySelector("#job-detail-locales")).toHaveTextContent("Locale variants");
     const sectionsTrigger = within(workspace).getByRole("button", { name: "Sections" });
     fireEvent.click(sectionsTrigger);
     const sectionsMenu = await screen.findByRole("navigation", { name: "Job detail sections" });
     expect(within(sectionsMenu).getAllByRole("button").map((button) => button.textContent)).toEqual([
-      "Fit & evidence", "Preparation diagnostics", "Artifacts", "Compensation",
+      "Fit & evidence", "Preparation diagnostics", "Artifacts", "Compensation", "Locale variants",
       "Description", "Role Analysis", "Interview prep", "Apply history",
       "Application outcomes", "Contacts", "Audit history",
     ]);
@@ -1436,11 +1436,11 @@ describe("<JobDetailDrawer>", () => {
 
     const workspace = screen.getByRole("article", { name: "Job details" });
     const sections = Array.from(workspace.querySelectorAll(".job-detail-major-section"));
-    expect(sections).toHaveLength(11);
+    expect(workspace.querySelector("#job-detail-locales")).toHaveTextContent("Locale variants");
     expect(sections.at(-1)).toContainElement(auditDisclosure);
     expect(sections.at(-1)).toHaveTextContent("Technical details");
     expect(sections[3]).toHaveTextContent("Compensation");
-    expect(sections[4]).toHaveTextContent("Description");
+    expect(workspace.querySelector("#job-detail-description")).toHaveTextContent("Description");
 
     await user.click(auditSummary);
     expect(auditDisclosure).toHaveAttribute("open");

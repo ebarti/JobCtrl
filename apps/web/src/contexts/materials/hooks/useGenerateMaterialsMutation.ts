@@ -1,4 +1,8 @@
 import type { ActionRunResponse, GenerateMaterialsRequest, MaterialStage } from "@jobctrl/contracts";
+import type { ApiClientPort } from "../../../shared/ports/ApiClientPort.js";
+import { useQuery } from "@tanstack/react-query";
+import { useEffect } from "react";
+import { materialsKeys } from "../queryKeys.js";
 import { useMutation, useQueryClient, type UseMutationResult } from "@tanstack/react-query";
 
 import { createOptimisticMutation } from "../../../shared/lib/createOptimisticMutation.js";
@@ -64,4 +68,45 @@ export function useGenerateMaterialsMutation(): UseMutationResult<
       ],
     }),
   );
+}
+
+/** Locale mutations retain accepted revisions while a refresh/review is pending. */
+export type LocaleHistory = Awaited<ReturnType<ApiClientPort["materialLocaleVariants"]>>;
+export type LocaleRequest = Parameters<ApiClientPort["materialLocaleVariants"]>[1];
+export type LocaleVariant = LocaleHistory["variants"][number];
+export function useMaterialLocaleVariants(jobId: string) {
+  const tenantId = useTenantId();
+  const { api, openInOs, eventStream } = usePorts();
+  const queryClient = useQueryClient();
+  const key = [...materialsKeys.all(tenantId), "locales", jobId] as const;
+  const history = useQuery({ queryKey: key, queryFn: () => api.materialLocaleVariants(jobId, { operation: "history" }), refetchInterval: 15_000 });
+  useEffect(() => {
+    const subscription = eventStream.subscribe({ tenantId });
+    const unsubscribe = subscription.on(event => {
+      if (!["ResumeApproved", "CoverLetterGenerated", "TailoredArtifactsSuppressed", "ResumeTemplateRefreshCompleted"].includes(event.eventType)) return;
+      if (typeof event.payload === "object" && event.payload !== null && "jobId" in event.payload && event.payload.jobId === jobId) {
+        void queryClient.invalidateQueries({ queryKey: [...materialsKeys.all(tenantId), "locales", jobId] });
+      }
+    });
+    return () => { unsubscribe(); subscription.close(); };
+  }, [eventStream, tenantId, jobId, queryClient]);
+  const mutation = useMutation({
+    mutationFn: (request: LocaleRequest) => api.materialLocaleVariants(jobId, request),
+    onMutate: async () => {
+      await queryClient.cancelQueries({ queryKey: key });
+      const previous = queryClient.getQueryData<LocaleHistory>(key);
+      return { previous };
+    },
+    onError: (_error, _request, context) => { if (context?.previous) queryClient.setQueryData(key, context.previous); },
+    onSuccess: (result) => queryClient.setQueryData(key, result),
+    onSettled: async () => { await queryClient.invalidateQueries({ queryKey: key }); await queryClient.invalidateQueries({ queryKey: jobsKeys.detail(tenantId, jobId) }); },
+  });
+  const exportAndOpen = async (request: Extract<LocaleRequest, { operation: "export" }>) => {
+    const result = await mutation.mutateAsync(request);
+    const variant = result.variants.find(row => row.revisionId === request.revisionId);
+    const artifact = variant?.exports.at(-1);
+    if (artifact) await openInOs.open(artifact.artifactId);
+  };
+  const openRetainedExport = (artifactId: string) => openInOs.open(artifactId);
+  return { history, mutation, exportAndOpen, openRetainedExport };
 }
