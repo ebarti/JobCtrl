@@ -47,6 +47,7 @@ describe("TypeScript/Python JSON-RPC boundary", () => {
     const expected = Object.values(RpcMethods).sort();
     const actual = probe.inventory.map(({ method }) => method).sort();
     expect(actual).toEqual(expected);
+    expect(probe.inventory.find(({ method }) => method === RpcMethods.ScreeningAnswers)?.mode).toBe("sync");
     expect(probe.inventory.find(({ method }) => method === RpcMethods.ProviderModels)?.mode).toBe("sync");
     expect(probe.inventory.find(({ method }) => method === RpcMethods.RunStage)?.mode).toBe("workflow");
 

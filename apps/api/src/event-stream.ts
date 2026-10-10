@@ -1,3 +1,4 @@
+import { screeningEventReferences } from "./screening-answers.js";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
 import { LOCAL_TENANT } from "@jobctrl/domain-types";
@@ -305,6 +306,10 @@ function canonicalSseEnvelope(row: EventRow): Record<string, unknown> | null {
   }
   if (!isRecord(payload)) {
     return null;
+  }
+  if (row.event_type === "ScreeningAnswerRecorded") {
+    payload = screeningEventReferences(payload);
+    if (!isRecord(payload)) return null;
   }
   const legacyJobAliases = ["jobKey", "job_key", "jobUrl", "job_url", "job_id"];
   if (legacyJobAliases.some((key) => Object.hasOwn(payload, key))) {

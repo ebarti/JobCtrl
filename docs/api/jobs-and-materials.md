@@ -220,3 +220,7 @@ remain drafts until their review gate is satisfied.
 
 <a id="contact-research"></a>
 <a id="outreach-drafts"></a>
+
+## Screening Answers
+
+`GET /v1/jobs/:jobId/screening-answers` reads private current questions, application-bound history, reviewed library revisions, available facts, source bindings/failures and persisted determination receipts. `POST` executes `capture`, `draft`, `edit`, `review`, `reuse` or `use` with `expectedRevision` and `idempotencyKey`. The [user command reference](../user/screening-answers.md#cli-and-local-api) describes action fields. API-derived tenant and mandatory workspace/database identity bind the registered `screening_answers` RPC; callers cannot supply runtime identity inside commands. Conflicts/source/model failures preserve accepted content. The public demo classifies both endpoints unavailable. These routes never enter/submit forms or create submitted outcomes.

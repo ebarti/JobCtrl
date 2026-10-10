@@ -1205,6 +1205,7 @@ def rollback_tailoring_policy(params: dict[str, Any]) -> dict[str, Any]:
 
 def register_default_handlers(server: JsonRpcServer, *, canceler: WorkflowCanceler) -> None:
     """Wire the default JobCtrl method set onto *server*."""
+    server.register("screening_answers", screening_answers, mode="sync")
     server.register("map_extension_form", map_extension_form, mode="sync")
     server.register("review_resume_edit", review_resume_edit, mode="sync")
     server.register("prepare_repeat_application_determinations", prepare_repeat_application_determinations, mode="sync")
@@ -1261,3 +1262,38 @@ def register_default_handlers(server: JsonRpcServer, *, canceler: WorkflowCancel
     server.register("apply", apply_action, mode="workflow")
     # Cooperative cancellation of in-flight workflows.
     server.register("cancel_run", make_cancel_run(canceler), mode="sync")
+
+
+def screening_answers(params):
+    """Private local snapshots; runtime identity is mandatory at this boundary."""
+    from pydantic import ValidationError
+    from jobctrl.domain.apply.screening_answers import ScreeningAnswerService, ScreeningCommand
+    from jobctrl.domain.determinations import DeterminationFailure
+    from jobctrl.domain.materials.screening_answers import ScreeningAnswerGenerator
+    from jobctrl.infrastructure.determinations import determination_dependencies
+    from jobctrl.infrastructure.materials.screening_answers import ScreeningAnswerRepository
+    from jobctrl.llm_lanes import bind_llm_lane
+
+    assert_expected_runtime(
+        expected_app_dir=str(_require(params, "expectedAppDir")),
+        expected_db_path=str(_require(params, "expectedDbPath")),
+    )
+    if set(params) - {"tenantId", "expectedAppDir", "expectedDbPath", "jobId", "command"}:
+        raise invalid_params("screening_unknown_parameter")
+    tenant, job = str(_require(params, "tenantId")), str(_require(params, "jobId"))
+    conn = get_connection()
+    repo = ScreeningAnswerRepository(conn)
+    try:
+        if "command" not in params:
+            return repo.read(tenant, job)
+        command = ScreeningCommand.model_validate(params["command"])
+        with bind_llm_lane("apply"):
+            generator = None
+            if command.action in {"draft", "edit", "reuse"}:
+                generator = ScreeningAnswerGenerator(**determination_dependencies(conn, tenant_id=tenant, lane="apply"))
+            result = ScreeningAnswerService(repo, generator).execute(tenant, job, command)
+        return {"ok": True, "jobId": job, "state": result}
+    except ValidationError:
+        raise invalid_params("screening_invalid_command") from None
+    except DeterminationFailure as failure:
+        raise invalid_params(failure.code) from None

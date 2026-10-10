@@ -970,3 +970,7 @@ need a new synthetic seed variant or capture surface, not a missing product
 capability. Class-C assets (2 actual import mutation, 7 live evidence, 8 stop
 lifecycle, 9) are defined driven flows, never faked with a staged static image.
 No asset regenerates from a real workspace.
+
+## Screening CLI
+
+The installed CLI supports `jobctrl screening read JOB_ID` and `jobctrl screening write JOB_ID command.json`. From source use the prepared locked interpreter with `PYTHONPATH=workers/automation/src workers/automation/.venv/bin/python -m jobctrl.cli screening read JOB_ID`. The [user reference](user/screening-answers.md#cli-and-local-api) defines command fields and source/privacy boundaries.

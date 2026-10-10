@@ -202,3 +202,7 @@ documentation, not the historical plan that first proposed it.
 | ID | Date | Requirement | Users | Purpose | References |
 | --- | --- | --- | --- | --- | --- |
 | BR-073 | 2026-10-07 | Every semantic decision uses a strict, cited, cached model determination. Code performs only format/identity/source/version/security checks and arithmetic. Provider, spend and binding failures are distinct, preserve accepted artifacts and have no lexical fallback. Unconfirmed interpretations never become profile facts; read sides join recorded IDs. Affected offline demos report unavailable. | Job seekers | One auditable authority for meaning. | [Decision](decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations), [QA](local-reliability-qa.md#semantic-determinations) |
+
+## Reviewed Screening Answers
+
+Reusable reviewed answers must retain exact selected profile facts and profile/posting/material versions, distinct application attempts, question/context revisions, model authority, human review and actual manually used text. Changed sources or question meaning require current verification and human review before reuse. Failed or competing refreshes preserve accepted material bytes, answers and history. Sensitive facts require deliberate selection; no screening operation grants form-entry/submission authority or records a submitted outcome.

@@ -236,3 +236,7 @@ These read guards preserve accepted artifacts and their original audit history.
 Shared Python/TypeScript parity fixtures seed scores, stages, analysis,
 provenance, and artifacts, then compare every dual-written projection column and
 JSON shape. That is the drift guard for what the inspector displays.
+
+## Reviewed Screening Answer Ownership
+
+Materials owns the source-bound generator, claim/quality determinations and immutable reviewed library revisions described in [Reviewed Screening Answers](reviewed-screening-answers.md). Apply separately owns question/context versions and application-bound review/use snapshots.

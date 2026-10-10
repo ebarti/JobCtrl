@@ -1,3 +1,4 @@
+import { ScreeningAnswerLibrary } from "../../contexts/materials/components/ScreeningAnswerLibrary.js";
 import type {
   ApplyAuditFact,
   ApplyAuditSource,
@@ -1621,6 +1622,7 @@ function SelectedReview({ item }: { readonly item: ApplyReviewQueueItem }) {
 
   return (
     <section className="apply-review-selected" aria-label={`Application decision for ${item.title}`}>
+      <ScreeningAnswerLibrary key={item.jobKey} jobId={item.jobKey} />
       <Card className="apply-review-decision-card">
         <CardHeader
           className="apply-review-selected-head border-b"

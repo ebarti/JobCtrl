@@ -124,6 +124,7 @@ def test_default_handlers_are_registered(monkeypatch) -> None:
     monkeypatch.setattr(model_catalog, "provider_model_catalog", lambda: {"providers": []})
     server = _server()
     methods = {
+        "screening_answers",
         "cancel_run",
         "run_stage",
         "rescore_job",

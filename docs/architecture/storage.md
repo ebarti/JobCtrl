@@ -435,3 +435,7 @@ update availability on `posting_snapshot_sets`; unchanged positives advance
 only the observation clock. No availability path writes hide/delete tombstones,
 application outcomes, approvals, scores or materials. A location-policy finding
 keeps its separate gate when external availability becomes active.
+
+## Screening Answer Ledger
+
+Exact-v14 screening answer revisions use existing indexed `job_events` entries with `screening_question`, `screening_library`, `screening_failure` and `screening_notification` entity kinds. Private snapshots and supporting facts are exposed only by the screening owner; general activity/SSE retain references. The [owning contract](reviewed-screening-answers.md) defines atomic revision comparisons and source/version fences. No schema migration is introduced.
