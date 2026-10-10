@@ -21,6 +21,9 @@ export const JobStagesFilterSchema = z.preprocess(
   },
   z.array(z.enum(STAGES)).max(STAGES.length).transform((values) => Array.from(new Set(values))),
 );
+// Accept undefined before array preprocessing so typed optional filters retain
+// scalar fallback; malformed optional arrays use the same absence value.
+const OptionalJobStagesFilterSchema = z.union([z.undefined(), JobStagesFilterSchema]).catch(undefined).optional();
 export const PIPELINE_RUN_STAGES = ["discover", "score", "tailor", "cover", "apply"] as const;
 export type PipelineRunStage = (typeof PIPELINE_RUN_STAGES)[number];
 export const DEFAULT_PIPELINE_LLM_MODEL = "default" as const;
@@ -1550,7 +1553,7 @@ export const BulkJobMutationFilterSchema = z
   .object({
     q: optionalText,
     stage: z.enum(STAGES).optional().catch(undefined),
-    stages: JobStagesFilterSchema.optional().catch(undefined),
+    stages: OptionalJobStagesFilterSchema,
     state: z.enum(STAGE_STATES).optional().catch(undefined),
     deleted: z.enum(JOB_DELETED_FILTERS).default("active").catch("active"),
     jobStates: JobStatesFilterSchema.optional().catch(undefined),
@@ -2314,7 +2317,7 @@ export const JobListQuerySchema = z
     dir: SortDirectionSchema,
     q: optionalText,
     stage: z.enum(STAGES).optional().catch(undefined),
-    stages: JobStagesFilterSchema.optional().catch(undefined),
+    stages: OptionalJobStagesFilterSchema,
     state: z.enum(STAGE_STATES).optional().catch(undefined),
     deleted: z.enum(JOB_DELETED_FILTERS).default("active").catch("active"),
     jobStates: JobStatesFilterSchema.optional().catch(undefined),

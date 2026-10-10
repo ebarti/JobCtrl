@@ -352,9 +352,10 @@ deduplication; duplicate values retain their first occurrence. Invalid members,
 malformed values, and arrays longer than six are ignored as a whole, matching
 the existing optional-filter fallback convention. They fall back to scalar
 `stage`, if supplied. Valid `stages` overrides scalar `stage`; `[]` (query
-`stages=`) explicitly removes any stage restriction. Omission preserves scalar
-behavior. Stage membership is ORed and then intersected with every other list
-filter before count, global sorting, and pagination. All-matching bulk selection
+`stages=`) explicitly removes any stage restriction. Omission or explicit
+TypeScript `stages: undefined` preserves scalar behavior. Stage membership is
+ORed and then intersected with every other list filter before count, global
+sorting, and pagination. All-matching bulk selection
 uses the same membership and also accepts exact `normalizedScoreKeyword`.
 
 `pagination.total` is the globally filtered count, `pages` is

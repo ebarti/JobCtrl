@@ -142,6 +142,29 @@ function ordered(rows: FixtureRow[], field: JobSortField, dir: "asc" | "desc"): 
 }
 
 describe("combined-stage list pagination", () => {
+  it.each([undefined, "apply"] as const)("treats explicit undefined stages as omission with scalar %s", (stage) => {
+    const { db, rows } = seed();
+    const expectedIds = rows.filter((row) => row.visibility === "active" && (!stage || row.stage === stage))
+      .map((row) => row.id).sort();
+    for (const sort of ["discovered_at", "source"] as const) {
+      const input = { stage, sort, page: 999, pageSize: 5 };
+      const omitted = JobListQuerySchema.parse(input);
+      const explicit = JobListQuerySchema.parse({ ...input, stages: undefined });
+      expect(explicit.stages).toBeUndefined();
+      expect(explicit.stage).toBe(stage);
+      const result = listJobs(db, explicit);
+      expect(result).toEqual(listJobs(db, omitted));
+      expect(result.pagination.total).toBe(expectedIds.length);
+      expect(result.filter.stages).toEqual(stage ? [stage] : []);
+    }
+    const omitted = BulkJobMutationFilterSchema.parse({ stage });
+    const explicit = BulkJobMutationFilterSchema.parse({ stage, stages: undefined });
+    expect(explicit.stages).toBeUndefined();
+    expect(explicit.stage).toBe(stage);
+    expect(matchingJobKeys(db, explicit).sort()).toEqual(expectedIds);
+    expect(matchingJobKeys(db, explicit)).toEqual(matchingJobKeys(db, omitted));
+  });
+
   it("parses bounded comma/repeated arrays, duplicates, precedence, and empty values", async () => {
     expect(JobListQuerySchema.parse({ stages: ["discover,apply", "discover"] }).stages).toEqual(["discover", "apply"]);
     expect(JobListQuerySchema.parse({ stages: " apply , discover " }).stages).toEqual(["apply", "discover"]);

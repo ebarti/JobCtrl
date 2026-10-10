@@ -77,7 +77,8 @@ accepted. Up to six values are validated before duplicates are removed;
 surrounding whitespace is trimmed. A valid `stages` value overrides scalar
 `stage`. An empty array (serialized as `stages=`) clears the stage restriction,
 including a supplied scalar. Invalid or oversized arrays are ignored as a whole,
-so the legacy scalar remains effective. Scalar-only requests keep their behavior.
+so the legacy scalar remains effective. Omission or an explicit TypeScript
+`stages: undefined` preserves scalar behavior.
 The current projection groups preparation substages under Discover or Apply;
 membership uses that public stage rather than `currentSubstage`.
 
