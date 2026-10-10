@@ -89,6 +89,12 @@ field.
 
 ## Jobs Read Model And Lifecycle
 
+The jobs list supports globally paginated `stages` membership alongside legacy
+scalar `stage`. The shared API client serializes arrays as comma-separated query
+values, including an empty array as `stages=`. Membership, precedence, metadata,
+and bulk-selection semantics are owned by [Jobs & Materials](api/jobs-and-materials.md)
+and the [complete contract](api/complete-contract.md).
+
 Jobs list/detail include Enrichment's persisted `availability` observation:
 latest attempt/verdict, last successful verification, next due, acquisition
 evidence and computed overdue/in-progress state. These GETs never fetch an

@@ -722,6 +722,23 @@ describe("exact-v7 read model job ids", () => {
     expect(getJobDetail(db, "not-a-canonical-job-id")).toBeNull();
   });
 
+  it("combines stages with canonical visibility before counting, paging, and bulk selection", () => {
+    const db = seededDatabase();
+    for (const stage of ["discover", "enrich", "score", "tailor", "cover"]) {
+      db.prepare(`INSERT INTO job_stage_states (tenant_id, job_id, stage, state, updated_at, version)
+        VALUES ('local', ?, ?, 'succeeded', ?, 1)`).run(DELETED_JOB_ID, stage, NOW);
+    }
+    const query: JobListQuery = { ...activeJobQuery, stages: ["discover", "apply", "discover"],
+      stage: "score", jobStates: ["active", "deleted", "hidden"], pageSize: 1, page: 999 };
+    const result = listJobs(db, query);
+    expect(result.pagination).toEqual({ page: 3, pageSize: 1, total: 3, pages: 3 });
+    expect(result.filter).toMatchObject({ stage: "score", stages: ["discover", "apply"] });
+    expect(listJobs(db, { ...query, stages: ["apply"] }).items.map((job) => job.jobKey)).toEqual([DELETED_JOB_ID]);
+    expect(matchingJobKeys(db, { stages: ["discover", "apply"], jobStates: ["active", "deleted", "hidden"] }).sort())
+      .toEqual([JOB_ID, HIDDEN_JOB_ID, DELETED_JOB_ID].sort());
+    expect(matchingJobKeys(db, { stages: ["apply"], jobStates: ["deleted"] })).toEqual([DELETED_JOB_ID]);
+  });
+
   it("filters canonical job states before count, pagination, and bulk selection", () => {
     const db = seededDatabase();
     db.prepare(

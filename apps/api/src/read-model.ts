@@ -83,6 +83,7 @@ import {
   WORKFLOW_RUN_STATUSES,
   STATE_RANK,
   compareJobs,
+  effectiveJobStages,
   compareValues,
   filterJob,
   paginate,
@@ -1013,18 +1014,22 @@ export function listJobs(db: SqliteDatabase, query: JobListQuery): PaginatedResp
   const projectionSelect = jobProjectionSelect();
 
   if (!query.q && !IN_MEMORY_JOB_SORT_FIELDS.has(query.sort)) {
-    const total = countJobProjections(db, filter);
-    const pages = Math.max(1, Math.ceil(total / query.pageSize));
-    const page = Math.min(query.page, pages);
-    const offset = (page - 1) * query.pageSize;
-    const direction = query.dir === "asc" ? "ASC" : "DESC";
-    const rows = allRows<JobListProjectionRow>(
-      db,
-      `SELECT ${projectionSelect} FROM job_list_projections${filter.where} ORDER BY ${sortColumn} ${direction}, job_id ASC LIMIT ? OFFSET ?`,
-      [...filter.params, query.pageSize, offset],
-    );
-    const summaries = rows.map((row) => rowToJobSummary(row, db));
-    return paginateWithTotal(summaries, total, page, query.pageSize, query.sort, query.dir, jobFilterPayload(query));
+    // Count and page (including canonical summary joins) must see one WAL
+    // snapshot even if the worker commits between these SELECTs.
+    return db.transaction(() => {
+      const total = countJobProjections(db, filter);
+      const pages = Math.max(1, Math.ceil(total / query.pageSize));
+      const page = Math.min(query.page, pages);
+      const offset = (page - 1) * query.pageSize;
+      const direction = query.dir === "asc" ? "ASC" : "DESC";
+      const rows = allRows<JobListProjectionRow>(
+        db,
+        `SELECT ${projectionSelect} FROM job_list_projections${filter.where} ORDER BY ${sortColumn} ${direction}, job_id ASC LIMIT ? OFFSET ?`,
+        [...filter.params, query.pageSize, offset],
+      );
+      const summaries = rows.map((row) => rowToJobSummary(row, db));
+      return paginateWithTotal(summaries, total, page, query.pageSize, query.sort, query.dir, jobFilterPayload(query));
+    })();
   }
 
   // Free-text search and projected-JSON sort fields use the in-memory path.
@@ -4348,12 +4353,14 @@ function normalizeMutationFilter(filter: Partial<BulkJobMutationFilter>): JobLis
     sort: "discovered_at",
     dir: "desc",
     stage: filter.stage,
+    stages: filter.stages,
     state: filter.state,
     deleted: filter.deleted ?? "active",
     jobStates: filter.jobStates,
     applyStatus: filter.applyStatus ?? "all",
     source: filter.source ?? "",
     company: filter.company ?? "",
+    normalizedScoreKeyword: filter.normalizedScoreKeyword,
     minFitScore: filter.minFitScore,
     maxFitScore: filter.maxFitScore,
     discoveredSince: filter.discoveredSince,
@@ -4395,9 +4402,10 @@ function jobSqlFilter(query: JobListQuery): { where: string; params: SqliteValue
   } else if (query.deleted === "hidden") {
     clauses.push(hiddenPredicate);
   }
-  if (query.stage) {
-    clauses.push("job_list_projections.current_stage = ?");
-    params.push(query.stage);
+  const stages = effectiveJobStages(query);
+  if (stages.length) {
+    clauses.push(`job_list_projections.current_stage IN (${stages.map(() => "?").join(", ")})`);
+    params.push(...stages);
   }
   if (query.state) {
     if (query.state === "failed") {
@@ -4627,6 +4635,7 @@ function jobFilterPayload(query: JobListQuery): Record<string, unknown> {
   return {
     q: query.q,
     stage: query.stage ?? "",
+    stages: effectiveJobStages(query),
     state: query.state ?? "",
     source: query.source,
     company: query.company,

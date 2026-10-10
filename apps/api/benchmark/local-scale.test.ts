@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import Database from "better-sqlite3";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -47,12 +48,21 @@ describe("local scale benchmark support", () => {
     expect(fs.existsSync(directory)).toBe(false);
   });
 
-  it.runIf(uvAvailable)("seeds the smallest declared exact-v11 dataset with fixed totals", async () => {
+  it.runIf(uvAvailable)("seeds the smallest declared exact-v14 dataset with fixed totals", async () => {
     await withOwnedWorkspace((workspace) => {
-      const result = seedSyntheticDataset(workspace, DATASET_SIZES[0]);
-      expect(result).toMatchObject({ jobs: 100, events: 300, eventsPerJob: 3 });
-      expect(result.artifacts.pdfBytes).toBe(256 * 1_024);
-      expect(result.artifacts.htmlBytes).toBe(128 * 1_024);
+      const db = new Database(workspace.dbPath, { readonly: true });
+      const template = db.prepare("SELECT * FROM resume_templates WHERE tenant_id = 'local' AND template_id = 'built_in:modern-html'").get();
+      const versions = db.prepare("SELECT * FROM resume_template_versions WHERE tenant_id = 'local' AND template_id = 'built_in:modern-html'").all();
+      try {
+        expect(template).toBeDefined();
+        expect(versions).toHaveLength(1);
+        const result = seedSyntheticDataset(workspace, DATASET_SIZES[0]);
+        expect(result).toMatchObject({ jobs: 100, events: 300, eventsPerJob: 3 });
+        expect(result.artifacts.pdfBytes).toBe(256 * 1_024);
+        expect(result.artifacts.htmlBytes).toBe(128 * 1_024);
+        expect(db.prepare("SELECT * FROM resume_templates WHERE tenant_id = 'local' AND template_id = 'built_in:modern-html'").get()).toEqual(template);
+        expect(db.prepare("SELECT * FROM resume_template_versions WHERE tenant_id = 'local' AND template_id = 'built_in:modern-html'").all()).toEqual(versions);
+      } finally { db.close(); }
     });
   }, 30_000);
 
@@ -71,6 +81,24 @@ describe("local scale benchmark support", () => {
         { provider: "claude", configured: false, ready: false, modelCount: 0 },
         { provider: "google", configured: false, ready: false, modelCount: 0 },
       ]);
+    });
+  }, 120_000);
+
+  it.runIf(uvAvailable)("verifies separate combined-stage pages, ties, deep reads, and retained memory samples", async () => {
+    const { runCombinedStageDataset } = await import("./run-local-scale.js");
+    await withOwnedWorkspace(async (workspace) => {
+      const result = await runCombinedStageDataset(workspace, DATASET_SIZES[0]);
+      expect(result).toMatchObject({ jobs: 100, stageCounts: { discover: 66, apply: 34 }, correctnessVerified: true });
+      expect(result.scenarios).toHaveLength(12);
+      for (const scenario of result.scenarios) {
+        expect(scenario.latency.samples).toHaveLength(7);
+        expect(scenario.memory.samples).toHaveLength(7);
+        expect(scenario.observedJobIds).toEqual(scenario.expectedJobIds);
+      }
+      expect(result.scenarios.find((scenario) => scenario.name === "sql-clamped"))
+        .toMatchObject({ expectedPage: 4, expectedTotal: 100 });
+      expect(result.scenarios.find((scenario) => scenario.name === "empty-membership"))
+        .toMatchObject({ expectedPage: 1, expectedTotal: 0, observedJobIds: [] });
     });
   }, 120_000);
 

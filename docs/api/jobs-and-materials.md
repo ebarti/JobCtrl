@@ -70,6 +70,26 @@ precedence over the legacy `deleted` filter; when absent, legacy links keep the
 existing `active`, `closed`, `deleted`, `hidden`, and `all` behavior. The same
 optional filter is accepted by all-matching bulk job mutations.
 
+`GET /v1/jobs` and all-matching bulk filters also accept `stages`, an OR filter
+on the projected `currentStage`. JSON arrays, comma serialization
+(`stages=discover,apply`), repeated values, and repeated comma groups are
+accepted. Up to six values are validated before duplicates are removed;
+surrounding whitespace is trimmed. A valid `stages` value overrides scalar
+`stage`. An empty array (serialized as `stages=`) clears the stage restriction,
+including a supplied scalar. Invalid or oversized arrays are ignored as a whole,
+so the legacy scalar remains effective. Omission or an explicit TypeScript
+`stages: undefined` preserves scalar behavior.
+The current projection groups preparation substages under Discover or Apply;
+membership uses that public stage rather than `currentSubstage`.
+
+Stage membership and all other filters apply before the global total, sort,
+and page slice. Pages clamp to the last page; an empty result has page one and
+one page. SQL-paged requests read the total and page from one SQLite snapshot.
+Response `filter.stages` records the effective deduplicated membership (an empty
+array means unrestricted); `filter.stage` retains the requested legacy scalar
+for compatibility. Clients can request combined pages through the existing
+API client without assembling stage-local pages.
+
 ## Saved Posting Availability
 
 `POST /v1/jobs/:jobId/actions/check-availability` accepts `{}` with no additional

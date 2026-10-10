@@ -5,6 +5,25 @@ import { CONTACT_ROLES, CONTACT_SOURCE_KINDS } from "@jobctrl/domain-types";
 
 export const STAGES = ["discover", "enrich", "score", "tailor", "cover", "apply"] as const;
 export type Stage = (typeof STAGES)[number];
+/** Comma serialization and repeated query values share the JSON-array contract. */
+export const JobStagesFilterSchema = z.preprocess(
+  (value) => {
+    if (typeof value === "string") {
+      return value.trim() ? value.split(",", STAGES.length + 1).map((item) => item.trim()) : [];
+    }
+    if (Array.isArray(value)) {
+      if (value.length > STAGES.length) return value;
+      return value.flatMap((item: unknown) =>
+        typeof item === "string" ? item.split(",", STAGES.length + 1).map((stage) => stage.trim()) : [item],
+      );
+    }
+    return value;
+  },
+  z.array(z.enum(STAGES)).max(STAGES.length).transform((values) => Array.from(new Set(values))),
+);
+// Accept undefined before array preprocessing so typed optional filters retain
+// scalar fallback; malformed optional arrays use the same absence value.
+const OptionalJobStagesFilterSchema = z.union([z.undefined(), JobStagesFilterSchema]).catch(undefined).optional();
 export const PIPELINE_RUN_STAGES = ["discover", "score", "tailor", "cover", "apply"] as const;
 export type PipelineRunStage = (typeof PIPELINE_RUN_STAGES)[number];
 export const DEFAULT_PIPELINE_LLM_MODEL = "default" as const;
@@ -1534,12 +1553,14 @@ export const BulkJobMutationFilterSchema = z
   .object({
     q: optionalText,
     stage: z.enum(STAGES).optional().catch(undefined),
+    stages: OptionalJobStagesFilterSchema,
     state: z.enum(STAGE_STATES).optional().catch(undefined),
     deleted: z.enum(JOB_DELETED_FILTERS).default("active").catch("active"),
     jobStates: JobStatesFilterSchema.optional().catch(undefined),
     applyStatus: z.enum(JOB_APPLY_STATUS_FILTERS).default("all").catch("all"),
     source: optionalText,
     company: optionalText,
+    normalizedScoreKeyword: z.string().min(1).optional(),
     minFitScore: optionalNumber,
     maxFitScore: optionalNumber,
     discoveredSince: IsoTimestampSchema.optional().catch(undefined),
@@ -2296,6 +2317,7 @@ export const JobListQuerySchema = z
     dir: SortDirectionSchema,
     q: optionalText,
     stage: z.enum(STAGES).optional().catch(undefined),
+    stages: OptionalJobStagesFilterSchema,
     state: z.enum(STAGE_STATES).optional().catch(undefined),
     deleted: z.enum(JOB_DELETED_FILTERS).default("active").catch("active"),
     jobStates: JobStatesFilterSchema.optional().catch(undefined),

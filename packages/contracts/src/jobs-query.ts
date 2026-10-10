@@ -13,7 +13,7 @@
  * case-insensitive ORDER BY collation for text sort fields.
  */
 
-import type { JobCompensationSummary, JobListQuery, JobSummary, PaginatedResponse, StageState } from "./schemas.js";
+import type { JobCompensationSummary, JobListQuery, JobSummary, PaginatedResponse, Stage, StageState } from "./schemas.js";
 
 /** Terminal-first ranking used by the current_state sort arm. */
 export const STATE_RANK: Readonly<Record<StageState, number>> = {
@@ -58,7 +58,8 @@ export function timestampBefore(value: string | null | undefined, before: string
  * demo's wrapper applies it before delegating here.
  */
 export function filterJob(job: JobSummary, query: JobListQuery, normalizedQuery: string): boolean {
-  if (query.stage && job.currentStage !== query.stage) return false;
+  const stages = effectiveJobStages(query);
+  if (stages.length && !stages.includes(job.currentStage)) return false;
   if (query.state && job.currentState !== query.state) return false;
   if (
     query.applyStatus === "applied"
@@ -101,6 +102,11 @@ export function filterJob(job: JobSummary, query: JobListQuery, normalizedQuery:
     job.currentSubstage,
     job.currentState,
   ].some((value) => value.toLowerCase().includes(normalizedQuery));
+}
+
+/** An explicit empty array clears the scalar stage restriction. */
+export function effectiveJobStages(query: Pick<JobListQuery, "stage" | "stages">): Stage[] {
+  return query.stages !== undefined ? Array.from(new Set(query.stages)) : query.stage ? [query.stage] : [];
 }
 
 export function jobSourceSortValue(job: JobSummary): string {

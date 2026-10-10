@@ -3,7 +3,7 @@
 The local scale benchmark is a reproducible, synthetic baseline for JobCtrl's
 production read paths. It creates a new owned temporary app directory, config,
 SQLite database, and artifact directory for each dataset, initializes the
-database with the exact schema-v11 constructor, and removes the workspace after
+database with the exact schema-v14 constructor, and removes the workspace after
 the dataset finishes. It has no flag for an existing app directory or database.
 
 Run it from the repository root with a new output path:
@@ -28,7 +28,7 @@ must pass the production schema with no ready provider and no models. Any
 failure stops the run before provider model discovery can execute.
 
 The focused harness checks statistics, unsafe arguments, cleanup after failure,
-exact-v11 seed totals, deliberately perturbed correctness oracles, an ambient
+exact-v14 seed totals, deliberately perturbed correctness oracles, an ambient
 Bedrock/AWS/provider-credential counterfactual, and a
 smallest-dataset integration through the real HTTP, timer SSE, preview,
 projection, and `SubprocessJsonRpcAdapter` paths:
@@ -37,9 +37,12 @@ projection, and `SubprocessJsonRpcAdapter` paths:
 corepack pnpm --filter @jobctrl/api benchmark:local-scale:test
 ```
 
-The exact-v11 and production-path integration cases require `uv`. They are
+The exact-v14 and production-path integration cases require `uv`. They are
 skipped when `uv` is unavailable so ordinary TypeScript CI can still test the
-runtime-independent harness contracts.
+runtime-independent harness contracts. Accepted delivery verification requires
+`uv` and execution of every integration case; skipped cases do not establish
+correctness. Prepare the locked worker environment before running the offline
+harness: its provider isolation deliberately blocks dependency downloads too.
 
 ## Method and proposed budgets
 
@@ -54,6 +57,40 @@ Warm HTTP, preview, and RPC results use two warmups followed by seven retained
 samples. Percentiles use nearest rank, so p95 selects the maximum when only
 seven samples are retained. These are exploratory, tail-sample-limited local
 observations rather than stable population estimates.
+
+The `combinedStages` report extension runs only after all original scenarios at
+all three sizes. Each extension dataset gets another owned exact-v14 workspace.
+The original seed, scenarios, two warmups, seven retained samples, and report
+fields remain available in `datasets`; their measurements precede the extension's
+allocations and writes. The exact schema constructor supplies the canonical
+built-in resume template required by current list summaries. Job and event totals,
+descriptions, scores, and preview bytes retain their original seed definitions.
+
+The extension uses seed `jobctrl-local-scale-v1:combined-stages-v1`, with every
+third job in Apply and the rest in Discover. Groups of four share discovery
+timestamps across stages to exercise ascending job-ID ties. It measures combined
+SQL first, adjacent, deep, and clamped pages; duplicate-stage input; scalar/array
+precedence; explicit empty arrays; empty membership; search first, deep, and
+clamped pages; and a materialized compensation sort with absent-value ties.
+Pages contain 25 jobs. Deep pages request the penultimate page of the matching
+set (or page one when the set is small). Expected totals, clamped pages, complete
+page IDs, and filter membership come from deterministic synthetic inputs;
+each HTTP sample must agree before a report is emitted.
+
+Each extended scenario retains the same latency distribution plus seven raw
+before/after Node RSS and heap observations. Peak growth and signed end deltas
+use the first retained request's baseline, without forced garbage collection.
+The scope includes the benchmark's loopback server and client in the same Node
+PID. Boundary sampling can miss transient allocation peaks; values are local
+observations, not allocation counts or leak proof. The report includes actual
+schema version and manifest hash, source/lock hashes, Git status, and worktree
+diff hash so pre-optimization observations can be tied to their candidate.
+
+For a new optimization, retain the expanded JSON, command, full stdout/stderr,
+UTC timestamps, and candidate/source/lock hashes in the controller's allocated
+evidence location before changing query strategy. The historical repository
+baseline below remains its original measurement; it does not supply expanded
+measurements for a later candidate.
 
 The sustained scenario runs for at least 1.5 seconds and seven iterations, with
 a 100-iteration cap. Each iteration directly writes 10 synthetic events,
@@ -79,7 +116,7 @@ or CI gates:
 ## Measured baseline
 
 The archived results below and the linked JSON retain their original v10 schema
-and measurements. Current runs use v11; compare schema identities explicitly
+and measurements. Current runs use v14; compare schema identities explicitly
 before drawing performance conclusions across revisions.
 
 This baseline measured commit `8c80b31b584c7ef92b80f92ea9e496c968a8269a`
