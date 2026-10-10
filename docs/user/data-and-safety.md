@@ -388,3 +388,7 @@ Generation sends that minimized source context to the configured tailoring model
 under its spend policy. Locale acceptance never submits an application. Accepted
 TXT/HTML/PDF/DOCX files remain registered local artifacts; failed refreshes preserve
 prior bytes. See [Reviewed Locale Variants](locale-variants.md).
+
+## Private Screening History
+
+[Screening answers](screening-answers.md), selected source facts and manual-use text are private local SQLite history. Only deliberate selected facts and exact saved question/posting context go to the configured Apply model lane. General activity and SSE carry safe references. Copying and manual-use attestation grant no form-entry or submission authority.

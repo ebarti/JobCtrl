@@ -78,3 +78,9 @@ export const useInterviewDraftStore = create<InterviewDraftState>((set) => ({
     return { notes: new Map(state.notes).set(key, { ...current, expectedRevision: revision, conflictRevision: null }) };
   }),
 }));
+
+// Screening edits survive navigation and failed refreshes; they are never facts.
+export const useScreeningDraftStore = create<{
+  texts: Record<string, string>;
+  edit: (key: string, text: string) => void;
+}>((set) => ({ texts: {}, edit: (key, text) => set((state) => ({ texts: { ...state.texts, [key]: text } })) }));

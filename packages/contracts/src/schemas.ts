@@ -6997,3 +6997,51 @@ export const MaterialLocaleRequestSchema = z.discriminatedUnion("operation", [
   z.object({ operation: z.literal("export"), ...localeRevisionFields, format: z.enum(["txt", "html", "pdf", "docx"]) }).strict(),
 ]);
 export type MaterialLocaleRequest = z.infer<typeof MaterialLocaleRequestSchema>;
+// Private screening answers: generated endpoint clients share these exact shapes.
+const ScreeningIdSchema = z.string().min(1).max(160);
+export const ScreeningFactSchema = z.object({ id: z.string().min(1).max(240), text: z.string().max(64000), sensitive: z.boolean() }).strict();
+export const ScreeningBindingSchema = z.object({
+  profileVersion: z.number().int().positive(), profileHash: z.string().length(64),
+  postingHash: z.string().length(64), destination: z.string().min(1), posting: z.string(),
+  materials: z.array(z.record(z.string(), z.unknown())), facts: z.array(ScreeningFactSchema),
+  sensitiveFactIds: z.array(z.string()), question: z.string().optional(), context: z.string().optional(), applicationId: ScreeningIdSchema.optional(),
+}).strict();
+export const ScreeningAnswerSchema = z.object({
+  answerId: ScreeningIdSchema, text: z.string().min(1).max(16000), uncertainty: z.string().max(1500),
+  binding: ScreeningBindingSchema, question: z.string(), context: z.string(),
+  determinationIds: z.array(z.string().length(64)).min(3), libraryId: ScreeningIdSchema.nullable(),
+  reviewId: ScreeningIdSchema.optional(), staleReason: z.string().nullable().optional(),
+}).strict();
+export const ScreeningStateSchema = z.object({
+  questionId: ScreeningIdSchema, jobId: ScreeningIdSchema, applicationId: ScreeningIdSchema,
+  revision: z.number().int().positive(), question: z.string(), context: z.string(),
+  captureBinding: ScreeningBindingSchema, draft: ScreeningAnswerSchema.nullable(), accepted: ScreeningAnswerSchema.nullable(),
+  action: z.enum(["capture", "draft", "edit", "review", "reuse", "use"]), snapshotId: ScreeningIdSchema, recordedAt: z.string(),
+  decision: z.enum(["approved", "rejected"]).optional(),
+  selection: z.object({ factIds: z.array(z.string()), sensitiveFactIds: z.array(z.string()) }).strict().optional(),
+  manualUse: z.object({ useId: ScreeningIdSchema, reviewId: ScreeningIdSchema, answerId: ScreeningIdSchema, text: z.string().max(16000), attested: z.literal(true), changed: z.boolean() }).strict().optional(),
+}).strict();
+export const ScreeningLibraryEntrySchema = z.object({
+  libraryId: ScreeningIdSchema, questionId: ScreeningIdSchema, jobId: ScreeningIdSchema, applicationId: ScreeningIdSchema,
+  snapshotId: ScreeningIdSchema, recordedAt: z.string(), answer: ScreeningAnswerSchema, originSnapshot: ScreeningStateSchema,
+}).strict();
+export const ScreeningReadResponseSchema = z.object({
+  ok: z.literal(true), jobId: ScreeningIdSchema, questions: z.array(ScreeningStateSchema), history: z.array(ScreeningStateSchema),
+  library: z.array(ScreeningLibraryEntrySchema), facts: z.array(ScreeningFactSchema), sourceBinding: ScreeningBindingSchema.nullable(), sourceFailure: z.string().nullable(),
+  determinations: z.array(z.record(z.string(), z.unknown())),
+  failures: z.array(z.object({ jobId: ScreeningIdSchema, questionId: ScreeningIdSchema.nullable(), action: z.string(), expectedRevision: z.number().int(), code: z.string(), requestHash: z.string().length(64), recordedAt: z.string() }).strict()),
+}).strict();
+export const ScreeningCommandSchema = z.object({
+  action: z.enum(["capture", "draft", "edit", "review", "reuse", "use"]),
+  idempotencyKey: ScreeningIdSchema, expectedRevision: z.number().int().nonnegative(),
+  questionId: ScreeningIdSchema.optional(), applicationId: ScreeningIdSchema.optional(),
+  question: z.string().min(1).max(4000).optional(), context: z.string().min(1).max(4000).optional(),
+  selectedFactIds: z.array(z.string().min(1).max(240)).max(100).default([]),
+  sensitiveFactIds: z.array(z.string().min(1).max(240)).max(100).default([]),
+  text: z.string().min(1).max(16000).optional(), decision: z.enum(["approved", "rejected"]).optional(),
+  libraryId: ScreeningIdSchema.optional(), attested: z.boolean().default(false),
+}).strict();
+export const ScreeningWriteResponseSchema = z.object({ ok: z.literal(true), jobId: ScreeningIdSchema, state: ScreeningStateSchema }).strict();
+export type ScreeningCommand = z.infer<typeof ScreeningCommandSchema>;
+export type ScreeningReadResponse = z.infer<typeof ScreeningReadResponseSchema>;
+export type ScreeningState = z.infer<typeof ScreeningStateSchema>;

@@ -2314,3 +2314,7 @@ survive every failed operation. Application approval is separate.
 
 For language capabilities, review flow and CLI examples, see
 [Reviewed Locale Variants](../user/locale-variants.md).
+
+## Screening Answer Contract
+
+GET/POST `/v1/jobs/:jobId/screening-answers` use `ScreeningReadResponseSchema`, `ScreeningCommandSchema` and `ScreeningWriteResponseSchema` from shared contracts. Read responses retain `questions`, `history`, `library`, `facts`, nullable `sourceBinding`/`sourceFailure` persisted `determinations` and safe `failures`. Commands reject unknown fields, bound text to 16,000 characters and require expected revisions/idempotency keys; capture questions/context are each limited to 4,000 characters. The [owning route reference](jobs-and-materials.md#screening-answers) and [action fields](../user/screening-answers.md#cli-and-local-api) define behavior. Runtime identity comes from the API, never the request body. Transport failures return 503, invalid worker parameters 409, and malformed/foreign completions 502 with safe errors; body-schema failures return 400.

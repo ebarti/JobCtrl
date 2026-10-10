@@ -167,6 +167,7 @@ const SIDEBAR: DefaultTheme.SidebarItem[] = [
       { text: "Materials & Tailoring", link: "/user/materials-and-tailoring" },
       { text: "Reviewed Locale Variants", link: "/user/locale-variants" },
       { text: "Apply", link: "/user/apply" },
+      { text: "Screening Answers", link: "/user/screening-answers" },
       { text: "Outcomes & Feedback", link: "/user/outcomes-and-feedback" },
       { text: "Contacts & Outreach", link: "/user/contacts-and-outreach" },
       { text: "Compensation Evidence", link: "/user/compensation-evidence" },
@@ -244,6 +245,7 @@ const SIDEBAR: DefaultTheme.SidebarItem[] = [
         items: [
           { text: "Scoring Policy", link: "/architecture/scoring" },
           { text: "Employer Analysis & Materials Audit", link: "/architecture/materials" },
+          { text: "Reviewed Screening Answers", link: "/architecture/reviewed-screening-answers" },
           { text: "Tailoring Contract", link: "/architecture/tailoring" },
           { text: "Material Locale Variants", link: "/architecture/material-locale-variants" },
         ],

@@ -141,3 +141,5 @@ See [Local Development](docs/local-development.md).
 For source-linked translations of accepted resumes and cover letters, see
 [Reviewed Locale Variants](docs/user/locale-variants.md). Terminology and formatting
 are reviewed independently before locale acceptance and export.
+
+Reviewed open-ended screening answers are available in Job Detail and Apply Review. See [Screening Answers](docs/user/screening-answers.md) for deliberate source selection, review, reuse and manual-use history.

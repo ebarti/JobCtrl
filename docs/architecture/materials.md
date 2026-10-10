@@ -245,3 +245,7 @@ uses the existing schema-14 artifact registry and semantic determination binding
 it does not replace source generations or require a companion branch. See
 [Material Locale Variants](material-locale-variants.md) for authority, independent
 reviews, version fences, failure preservation and export ownership.
+
+## Reviewed Screening Answer Ownership
+
+Materials owns the source-bound generator, claim/quality determinations and immutable reviewed library revisions described in [Reviewed Screening Answers](reviewed-screening-answers.md). Apply separately owns question/context versions and application-bound review/use snapshots.

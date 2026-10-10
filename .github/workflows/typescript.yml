@@ -12,16 +12,8 @@ on:
       - "package.json"
       - "pnpm-workspace.yaml"
       - ".github/workflows/typescript.yml"
+  # Required branch checks must exist for every PR, including docs-only changes.
   pull_request:
-    paths:
-      - "apps/**"
-      - "packages/**"
-      - "workers/**"
-      - "scripts/**"
-      - "pnpm-lock.yaml"
-      - "package.json"
-      - "pnpm-workspace.yaml"
-      - ".github/workflows/typescript.yml"
   workflow_dispatch:
 
 permissions:

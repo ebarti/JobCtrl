@@ -1,3 +1,4 @@
+import { ScreeningAnswerLibrary } from "../../contexts/materials/components/ScreeningAnswerLibrary.js";
 import { JobCtrlApiError } from "@jobctrl/api-client";
 import type { JobAuditEntry, StageSummary } from "@jobctrl/contracts";
 import { IconArrowLeft, IconChevronDown } from "@tabler/icons-react";
@@ -312,6 +313,12 @@ export function JobDetailDrawer({ jobId, onClose }: JobDetailDrawerProps) {
       title: "Role Analysis",
       description: "Employer interpretation and requirement evidence",
       content: <EmployerAnalysisPanel analysis={detail.employerAnalysis} className="section job-detail-role-analysis" requirementFitReport={detail.requirementFitReport} resolveEvidenceReference={resolveEvidenceReference} />,
+    },
+    {
+      id: "screening-answers",
+      title: "Screening answers",
+      description: "Reviewed library and application history",
+      content: <ScreeningAnswerLibrary jobId={detail.job.jobKey} />,
     },
     {
       id: "interview",

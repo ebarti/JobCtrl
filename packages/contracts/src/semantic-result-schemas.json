@@ -4493,5 +4493,152 @@
       "type": "object"
     },
     "schemaVersion": "score-fit-assessment-v5-determinations"
+  },
+  "screening_context": {
+    "promptVersion": "screening-context-v1",
+    "schema": {
+      "$defs": {
+        "Citation": {
+          "additionalProperties": false,
+          "properties": {
+            "exact_values": {
+              "description": "Literal numbers, dates or currency tokens copied exactly from this quote. Leave empty when none are cited. Never include inferred or normalized taxonomy/place codes.",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 32,
+              "title": "Exact Values",
+              "type": "array"
+            },
+            "quote": {
+              "description": "Copy one contiguous verbatim span from that source's text, preserving case and punctuation. Do not join or paraphrase fields.",
+              "maxLength": 4000,
+              "minLength": 1,
+              "title": "Quote",
+              "type": "string"
+            },
+            "source_id": {
+              "description": "Use an outer sources[].source_id. IDs mentioned inside source text are data, not citation IDs.",
+              "maxLength": 240,
+              "minLength": 1,
+              "title": "Source Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "source_id",
+            "quote"
+          ],
+          "title": "Citation",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "citations": {
+          "items": {
+            "$ref": "#/$defs/Citation"
+          },
+          "maxItems": 32,
+          "minItems": 2,
+          "title": "Citations",
+          "type": "array"
+        },
+        "rationale": {
+          "maxLength": 1500,
+          "minLength": 1,
+          "title": "Rationale",
+          "type": "string"
+        },
+        "verdict": {
+          "enum": [
+            "ready",
+            "uncertain",
+            "different"
+          ],
+          "title": "Verdict",
+          "type": "string"
+        }
+      },
+      "required": [
+        "verdict",
+        "citations",
+        "rationale"
+      ],
+      "title": "ScreeningInterpretation",
+      "type": "object"
+    },
+    "schemaVersion": "1"
+  },
+  "screening_draft": {
+    "promptVersion": "screening-draft-v1",
+    "schema": {
+      "$defs": {
+        "Citation": {
+          "additionalProperties": false,
+          "properties": {
+            "exact_values": {
+              "description": "Literal numbers, dates or currency tokens copied exactly from this quote. Leave empty when none are cited. Never include inferred or normalized taxonomy/place codes.",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 32,
+              "title": "Exact Values",
+              "type": "array"
+            },
+            "quote": {
+              "description": "Copy one contiguous verbatim span from that source's text, preserving case and punctuation. Do not join or paraphrase fields.",
+              "maxLength": 4000,
+              "minLength": 1,
+              "title": "Quote",
+              "type": "string"
+            },
+            "source_id": {
+              "description": "Use an outer sources[].source_id. IDs mentioned inside source text are data, not citation IDs.",
+              "maxLength": 240,
+              "minLength": 1,
+              "title": "Source Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "source_id",
+            "quote"
+          ],
+          "title": "Citation",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "citations": {
+          "items": {
+            "$ref": "#/$defs/Citation"
+          },
+          "maxItems": 64,
+          "title": "Citations",
+          "type": "array"
+        },
+        "text": {
+          "maxLength": 16000,
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        },
+        "uncertainty": {
+          "maxLength": 1500,
+          "title": "Uncertainty",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text",
+        "citations",
+        "uncertainty"
+      ],
+      "title": "ScreeningDraft",
+      "type": "object"
+    },
+    "schemaVersion": "1"
   }
 }

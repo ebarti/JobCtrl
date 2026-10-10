@@ -11,6 +11,7 @@ import { MaterialLocaleRequestSchema } from "./schemas.js";
 import { GenerateInterviewPrepRequestSchema, refineInterviewEvidenceSelection } from "./interview.js";
 
 import {
+  ScreeningCommandSchema, ScreeningReadResponseSchema, ScreeningWriteResponseSchema,
   DEFAULT_PIPELINE_LLM_MODEL,
   JobUrlImportUrlSchema,
   LearningRecommendationIdSchema,
@@ -73,6 +74,7 @@ export type JsonRpcResponse = z.infer<typeof JsonRpcResponseSchema>;
 
 export const RpcMethods = {
   MaterialLocaleVariants: "material_locale_variants",
+  ScreeningAnswers: "screening_answers",
   RunStage: "run_stage",
   RescoreJob: "rescore_job",
   RescoreJobsNotOnCurrentScoringPolicy: "rescore_jobs_not_on_current_scoring_policy",
@@ -817,3 +819,8 @@ export const MaterialLocaleParamsSchema = z.object({
   tenantId: z.string().min(1), expectedAppDir: z.string().min(1), expectedDbPath: z.string().min(1),
   jobId: z.string().uuid(), request: MaterialLocaleRequestSchema,
 }).strict();
+export const ScreeningAnswersParamsSchema = z.object({
+  tenantId: z.string().min(1), expectedAppDir: z.string().min(1), expectedDbPath: z.string().min(1),
+  jobId: z.string().min(1).max(160), command: ScreeningCommandSchema.optional(),
+}).strict();
+export const ScreeningAnswersResultSchema = z.union([ScreeningReadResponseSchema, ScreeningWriteResponseSchema]);

@@ -75,6 +75,8 @@ has one defining page; other pages summarize it briefly and link to that owner.
   materials, provenance, validation, review, and accepted-artifact history.
 - [`user/locale-variants.md`](user/locale-variants.md): source-linked translations,
   independent reviews and accepted locale exports.
+
+- [`user/screening-answers.md`](user/screening-answers.md): reviewed reusable answers and application-bound history.
 - [`user/apply.md`](user/apply.md): application fields, approval and automation
   modes, browser capabilities, Gmail, and follow-up controls.
 - [`user/outcomes-and-feedback.md`](user/outcomes-and-feedback.md): application
@@ -143,6 +145,7 @@ has one defining page; other pages summarize it briefly and link to that owner.
   projection details.
 - [`architecture/scoring.md`](architecture/scoring.md): scoring algorithm,
   evidence, policy, and calibration.
+- [`architecture/reviewed-screening-answers.md`](architecture/reviewed-screening-answers.md): private answer revisions, application contexts and model/review fences.
 - [`architecture/materials.md`](architecture/materials.md): employer analysis
   and cross-artifact auditability.
 - [`architecture/material-locale-variants.md`](architecture/material-locale-variants.md):

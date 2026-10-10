@@ -339,3 +339,7 @@ has no outreach-send capability. Their posture:
   **Follow-ups** list and badge — it never sends and never acts on your behalf.
 - **A follow-up is due** purely as a read-time computation over its date and the
   clock; marking one done or dismissing it is always your explicit action.
+
+## Reviewed Screening Answers
+
+Job Detail and Apply Review include a [Screening Answers](screening-answers.md) library for open-ended questions. Generation, human review, copying and explicit manual-use recording are separate actions; none grants form-entry or submission authority or records an application-submitted outcome.

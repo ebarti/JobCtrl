@@ -14,6 +14,7 @@ import {
 } from "./interview.js";
 
 import {
+  ScreeningCommandSchema, ScreeningReadResponseSchema, ScreeningWriteResponseSchema,
   APPLICATION_OUTCOME_KINDS,
   IsoTimestampSchema,
   LearningPaginationQuerySchema,
@@ -30,6 +31,7 @@ import {
   TailoringPolicyLearnedRuleSchema,
 } from "./schemas.js";
 import {
+  ScreeningAnswersParamsSchema, ScreeningAnswersResultSchema,
   JsonRpcErrorCodes,
   CheckPostingAvailabilityParamsSchema,
   AvailabilityWorkflowStartSchema,
@@ -563,6 +565,18 @@ function interviewJobPath(suffix: string) {
   });
 }
 
+const screeningJobPath = defineEndpointPath({
+  route: "/v1/jobs/:jobId/screening-answers", paramName: "jobId",
+  paramSchema: z.string().min(1).max(160), invalid: { status: 400, error: "invalid_job_id" },
+  build: (jobId: string) => `/v1/jobs/${encodeURIComponent(jobId)}/screening-answers`,
+});
+const ScreeningReadRequestSchema = z.object({}).strict().optional();
+const screeningFailure = (failure: EndpointDispatchFailure): EndpointFailureResponse => ({
+  status: failure.kind === "transport" ? 503 : failure.kind === "rpc" && failure.error.code === JsonRpcErrorCodes.InvalidParams ? 409 : 502,
+  error: "screening_answers_failed",
+  message: failure.kind === "rpc" && /^(screening_[a-z_]+|provider_unavailable|provider_error|budget_denied|spend_denied|source_schema_violation|duplicate_source_id|cache_binding_invalid|cache_lock_unavailable|schema_violation|foreign_source_id|non_verbatim_quote|mismatched_value|malformed_json|persistence_error)$/.test(failure.error.message) ? failure.error.message : "Screening answer operation unavailable; saved history is preserved.",
+});
+
 export const ENDPOINTS = {
   materialLocaleVariants: defineEndpoint({
     name: "materialLocaleVariants",
@@ -573,6 +587,31 @@ export const ENDPOINTS = {
     rpcDependencies: [RpcMethods.MaterialLocaleVariants],
     demo: { class: "unavailable", reason: "Locale translation requires accepted local material and a configured model." },
   }),
+  screeningAnswers: defineEndpoint({
+    name: "screeningAnswers", method: "GET", path: screeningJobPath,
+    request: ScreeningReadRequestSchema, response: ScreeningReadResponseSchema,
+    dispatch: {
+      rpcMethod: RpcMethods.ScreeningAnswers,
+      params: ({ pathParam }, context) => ({ tenantId: context.tenantId, jobId: pathParam, expectedAppDir: context.appDir, expectedDbPath: context.dbPath }),
+      paramsSchema: ScreeningAnswersParamsSchema, result: ScreeningAnswersResultSchema,
+      response: ({ pathParam, result }) => "questions" in result && result.jobId === pathParam && result.questions.every((question) => question.jobId === pathParam) && result.history.every((question) => question.jobId === pathParam) ? result : null,
+      error: screeningFailure,
+    } satisfies RpcEndpointDispatch<typeof ScreeningReadRequestSchema, string, typeof ScreeningAnswersParamsSchema, typeof ScreeningAnswersResultSchema>,
+    demo: { class: "unavailable", reason: "Private reviewed screening answers require the local worker and saved sources." },
+  }),
+  writeScreeningAnswer: defineEndpoint({
+    name: "writeScreeningAnswer", method: "POST", path: screeningJobPath,
+    request: ScreeningCommandSchema, response: ScreeningWriteResponseSchema,
+    dispatch: {
+      rpcMethod: RpcMethods.ScreeningAnswers,
+      params: ({ request, pathParam }, context) => ({ tenantId: context.tenantId, jobId: pathParam, expectedAppDir: context.appDir, expectedDbPath: context.dbPath, command: request }),
+      paramsSchema: ScreeningAnswersParamsSchema, result: ScreeningAnswersResultSchema,
+      response: ({ request, pathParam, result }) => "state" in result && result.jobId === pathParam && result.state.jobId === pathParam && result.state.action === request.action && result.state.revision === request.expectedRevision + 1 && (!request.questionId || result.state.questionId === request.questionId) ? result : null,
+      error: screeningFailure,
+    } satisfies RpcEndpointDispatch<typeof ScreeningCommandSchema, string, typeof ScreeningAnswersParamsSchema, typeof ScreeningAnswersResultSchema>,
+    demo: { class: "unavailable", reason: "Drafting, review and manual-use attestations require local persisted authority." },
+  }),
+
   checkPostingAvailability: defineEndpoint({
     name: "checkPostingAvailability",
     method: "POST",
