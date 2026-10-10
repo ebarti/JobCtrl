@@ -495,6 +495,15 @@ applications to one posting. Missing or conflicting application identity/clocks
 would remain uncertainty, requiring clarification rather than silently using
 discovery time as verified submission time.
 
+Eligibility would require actual reviewed submission evidence tied to the exact
+application attempt, such as an accepted submission receipt or an explicit
+user-reviewed manual submission record. Drafts and unknown or unverified
+submissions would be excluded. Discovery, first-seen, generic status and missing
+mail dates could not establish submission or substitute for its reviewed clock.
+The user would choose an explicit minimum age measured from that clock and the
+reviewed application statuses included in a bounded cohort. The preview would
+show the filters, included count and excluded/unresolved count before any write.
+
 A review would show independently:
 
 - reviewed response history and the exact canonical outcome/evidence references;
@@ -513,6 +522,18 @@ review would distinguish “no reviewed response,” “no candidates returned,�
 be translated into rejection. Unknown classification would remain a message
 classification limit. A user-recorded `no_response` would carry its observation
 period and provenance rather than becoming a verified employer decision.
+
+Recording `no_response` would require per-item acceptance or a deliberate
+selected-batch acceptance after previewing the exact applications and evidence.
+Selection would never be implicit for every matching item. Unresolved identities,
+missing submission evidence and stale proposals would not be eligible for batch
+acceptance. The committing transaction would revalidate the selected attempts,
+submission receipts, cohort inputs and outcome revisions before applying the
+batch; a stale selection would require a fresh preview without partial writes.
+Accepted annotations and later corrections would append to the existing outcome
+history, preserving prior outcomes and using the existing analytics projection.
+Silence, unavailable mail access and unscanned periods could never automatically
+close an application or become a rejection.
 
 Choosing an observation duration or surfacing an overdue-review prompt would be
 a product design choice. The existing 45-day scan default and 7/14-day reminder
